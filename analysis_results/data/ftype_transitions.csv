@@ -1,0 +1,22 @@
+,,allows_federated,allows_federated,type
+,,count,mean,<lambda>
+input_pattern,output_ftype,,,
+COL,NULL,3,1.0,{'UnaryOp': 3}
+COL+ROW,NULL,3,1.0,{'AggBinaryOp': 3}
+ROW,COL,4,1.0,{'ReorgOp': 4}
+ROW,NULL,13,0.8461538461538461,"{'AggUnaryOp': 11, 'ReorgOp': 2}"
+ROW,ROW,6,1.0,{'AggUnaryOp': 6}
+ROW+ROW,NULL,3,1.0,{'BinaryOp': 3}
+ROW+ROW,ROW,6,1.0,{'BinaryOp': 6}
+ROW+null,NULL,9,1.0,"{'AggBinaryOp': 5, 'BinaryOp': 4}"
+ROW+null,ROW,12,1.0,"{'BinaryOp': 8, 'AggBinaryOp': 4}"
+ROW+null+null+null+null+null+null+null,NULL,2,1.0,{'FunctionOp': 2}
+null,NULL,134,0.7014925373134329,"{'DataOp': 64, 'UnaryOp': 40, 'AggUnaryOp': 18, 'ReorgOp': 12}"
+null+null,NULL,94,0.0,"{'BinaryOp': 76, 'NaryOp': 10, 'AggBinaryOp': 6, 'TernaryOp': 2}"
+null+null+null,NULL,24,0.0,"{'TernaryOp': 12, 'DataGenOp': 10, 'ParameterizedBuiltinOp': 2}"
+null+null+null,ROW,1,1.0,{'DataOp': 1}
+null+null+null+null,NULL,2,0.0,{'NaryOp': 2}
+null+null+null+null+null,NULL,16,0.0,"{'IndexingOp': 12, 'ParameterizedBuiltinOp': 4}"
+null+null+null+null+null+null,NULL,10,0.0,"{'LeftIndexingOp': 8, 'TernaryOp': 2}"
+null+null+null+null+null+null+null,NULL,2,0.0,{'DataOp': 2}
+null+null+null+null+null+null+null+null,NULL,14,0.0,{'DataGenOp': 14}

@@ -1,0 +1,15 @@
+type,total_ops,allowed_ops,allow_rate,valid_ftype_ops,valid_ftype_rate
+FunctionOp,3,3,1.0,3,1.0
+DataOp,101,99,0.98,101,1.0
+UnaryOp,45,33,0.733,45,1.0
+AggBinaryOp,18,12,0.667,18,1.0
+AggUnaryOp,35,15,0.429,35,1.0
+ReorgOp,18,6,0.333,18,1.0
+BinaryOp,119,21,0.176,119,1.0
+DataGenOp,24,0,0.0,24,1.0
+IndexingOp,12,0,0.0,12,1.0
+LeftIndexingOp,8,0,0.0,8,1.0
+LiteralOp,190,0,0.0,190,1.0
+NaryOp,12,0,0.0,12,1.0
+ParameterizedBuiltinOp,6,0,0.0,6,1.0
+TernaryOp,16,0,0.0,16,1.0

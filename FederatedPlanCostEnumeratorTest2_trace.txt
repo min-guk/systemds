@@ -1,0 +1,18 @@
+[Todo]detectAndResolveConflictFedPlan call has been commented out.
+Additional Cost: 0.0
+(R) ROOT [Root] (31) {Total: 1408.0}
+(31) u(print) [LOUT] (34,34) {Total: 1408.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:34, X, C:1407.0, F:0.0, FW:1.0),(ID:34, X, C:1407.0, F:0.0, FW:1.0),}
+(34) b(+) [LOUT] (32,33,32,33) {Total: 1407.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:32, X, C:552.9, F:0.0, FW:1.0),(ID:33, X, C:853.1, F:0.0, FW:1.0),(ID:32, X, C:552.9, F:0.0, FW:1.0),(ID:33, X, C:853.1, F:0.0, FW:1.0),}
+(32) ua(+RC) [LOUT] (26,26) {Total: 552.9, Self: 400.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> -MB] [Edges]{(ID:26, X, C:152.9, F:0.0, FW:1.0),(ID:26, X, C:152.9, F:0.0, FW:1.0),}
+(26) b(+) [LOUT] (16,25,16,25) {Total: 305.7, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:25, X, C:205.5, F:0.0, FW:1.0),(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:25, X, C:205.5, F:0.0, FW:1.0),}
+(16) LiteralOp 7 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(25) b(^) [LOUT] (23,24,23,24) {Total: 205.5, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, 100] [-, 0, - -> 0MB] [Edges]{(ID:23, X, C:104.5, F:0.0, FW:1.0),(ID:24, X, C:1.0, F:0.0, FW:1.0),(ID:23, X, C:104.5, F:0.0, FW:1.0),(ID:24, X, C:1.0, F:0.0, FW:1.0),}
+(23) dg(rand) [LOUT] (15,16,17,18,16,15,21,21,15,16,17,18,16,15,21,21) {Total: 104.5, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, 100] [0, 0, - -> 0MB] [Edges]{(ID:15, X, C:0.5, F:0.0, FW:1.0),(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:17, X, C:1.0, F:0.0, FW:1.0),(ID:18, X, C:1.0, F:0.0, FW:1.0),(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:15, X, C:0.5, F:0.0, FW:1.0),(ID:21, X, C:0.5, F:0.0, FW:1.0),(ID:21, X, C:0.5, F:0.0, FW:1.0),(ID:15, X, C:0.5, F:0.0, FW:1.0),(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:17, X, C:1.0, F:0.0, FW:1.0),(ID:18, X, C:1.0, F:0.0, FW:1.0),(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:15, X, C:0.5, F:0.0, FW:1.0),(ID:21, X, C:0.5, F:0.0, FW:1.0),(ID:21, X, C:0.5, F:0.0, FW:1.0),}
+(15) LiteralOp 1.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(17) LiteralOp uniform [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(18) LiteralOp -1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(21) LiteralOp 10 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(24) LiteralOp 2 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(33) ua(+RC) [LOUT] (28,28) {Total: 853.1, Self: 400.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> -MB] [Edges]{(ID:28, X, C:453.1, F:0.0, FW:1.0),(ID:28, X, C:453.1, F:0.0, FW:1.0),}
+(28) u(sqrt) [LOUT] (27,27) {Total: 453.1, Self: 200.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:27, X, C:253.1, F:0.0, FW:1.0),(ID:27, X, C:253.1, F:0.0, FW:1.0),}
+(27) b(*) [LOUT] (16,26,16,26) {Total: 253.1, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:26, X, C:152.9, F:0.0, FW:1.0),(ID:16, X, C:0.2, F:0.0, FW:1.0),(ID:26, X, C:152.9, F:0.0, FW:1.0),}

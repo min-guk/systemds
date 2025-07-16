@@ -1,0 +1,17 @@
+hop_id,name,op_code,allows_federated,result_ftype,reason_code,input_ftype_pattern,ftype_category,matrix_size
+988,sample_col_map,ctable,False,,UNKNOWN_HOP_TYPE,NULL_x3,,1
+988,sample_col_map,ctable,False,,DISALLOWED_OP,NULL_x3,,1
+964,tmp,+*,False,,UNKNOWN_HOP_TYPE,NULL_x3,,341
+964,tmp,+*,False,,DISALLOWED_OP,NULL_x3,,341
+271,centroid_placer,ctable,False,,UNKNOWN_HOP_TYPE,NULL_x6,,4
+271,centroid_placer,ctable,False,,DISALLOWED_OP,NULL_x6,,4
+862,tmp,+*,False,,UNKNOWN_HOP_TYPE,NULL_x3,,1
+862,tmp,+*,False,,DISALLOWED_OP,NULL_x3,,1
+1001,tmp,-*,False,,UNKNOWN_HOP_TYPE,NULL_x3,,341
+1001,tmp,-*,False,,DISALLOWED_OP,NULL_x3,,341
+290,min_distances,ifelse,False,,UNKNOWN_HOP_TYPE,NULL_x3,,341
+290,min_distances,ifelse,False,,DISALLOWED_OP,NULL_x3,,341
+518,termination_bitmap_raw,ctable,False,,UNKNOWN_HOP_TYPE,NULL_x2,,1
+518,termination_bitmap_raw,ctable,False,,DISALLOWED_OP,NULL_x2,,1
+882,tmp,+*,False,,UNKNOWN_HOP_TYPE,NULL_x3,,1
+882,tmp,+*,False,,DISALLOWED_OP,NULL_x3,,1

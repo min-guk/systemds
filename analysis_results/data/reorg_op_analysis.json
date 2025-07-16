@@ -1,0 +1,23 @@
+{
+  "r'": {
+    "total_count": 18,
+    "allows_federated": {
+      "false": "12",
+      "true": "6"
+    },
+    "reason_codes": {
+      "UNKNOWN_HOP_TYPE": "8",
+      "DISALLOWED_OP": "6",
+      "REORG_TRANS_COL_ROW": "2",
+      "PROPAGATE_FROM_INPUT": "2"
+    },
+    "result_ftypes": {
+      "NaN": "14",
+      "COL": "4"
+    },
+    "input_patterns": {
+      "null": "12",
+      "ROW": "6"
+    }
+  }
+}

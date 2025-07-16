@@ -35,8 +35,7 @@ public abstract class Instruction
 		BREAKPOINT,
 		SPARK,
 		GPU,
-		FEDERATED,
-		OUT_OF_CORE
+		FEDERATED
 	}
 	
 	protected static final Log LOG = LogFactory.getLog(Instruction.class.getName());
@@ -54,7 +53,6 @@ public abstract class Instruction
 	public static final String SP_INST_PREFIX = "sp_";
 	public static final String GPU_INST_PREFIX = "gpu_";
 	public static final String FEDERATED_INST_PREFIX = "fed_";
-	public static final String OOC_INST_PREFIX = "ooc_";
 	
 	//basic instruction meta data
 	protected String instString = null;
@@ -186,8 +184,6 @@ public abstract class Instruction
 				extendedOpcode = GPU_INST_PREFIX + getOpcode();
 			else if( getType() == IType.FEDERATED)
 				extendedOpcode = FEDERATED_INST_PREFIX + getOpcode();
-			else if( getType() == IType.OUT_OF_CORE)
-				extendedOpcode = OOC_INST_PREFIX + getOpcode();
 			else
 				extendedOpcode = getOpcode();
 		}

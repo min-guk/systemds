@@ -1,0 +1,221 @@
+Operation Type,OPCode,isSupported,Condition,return Type
+Global Condition,ALL,X,hop.isScalar(),
+Global Condition,ALL,X,ft.length == 0,
+DataGenOp,ALL,X,hop instanceof DataGenOp,
+DnnOp,ALL,X,hop instanceof DnnOp,
+FunctionOp,ALL,X,hop instanceof FunctionOp,
+LiteralOp,ALL,X,hop instanceof LiteralOp,
+AggBinaryOp,one federated,O,(ft[0] != null) != (ft[1] != null),ft[0] != null ? ft[0] : ft[1]
+AggBinaryOp,COL × COL,O,ft[0] == FType.COL && ft[1] == FType.COL,ft[0]
+AggBinaryOp,COL × ROW,O,ft[0] == FType.COL && ft[1] == FType.ROW,FType.ROW
+AggBinaryOp,ROW × ROW,O,ft[0] == FType.ROW && ft[1] == FType.ROW,ft[0]
+AggBinaryOp,X'X (LEFT),O,mmtsj.isLeft() && ft[0] == FType.ROW,FType.BROADCAST
+AggBinaryOp,XX' (RIGHT),O,mmtsj.isRight() && ft[0] == FType.COL,FType.BROADCAST
+AggUnaryOp,COL+RowAgg,X,ft[0] == FType.COL && !isColAgg,
+AggUnaryOp,FULL/BROADCAST,X,ft[0] == FType.FULL || ft[0] == FType.BROADCAST,
+AggUnaryOp,ROW+ColAgg,X,ft[0] == FType.ROW && isColAgg,
+AggUnaryOp,OTHER,X,not in supported OpCode list,
+AggUnaryOp,COUNT_DISTINCT,X,,
+AggUnaryOp,COUNT_DISTINCT_APPROX,X,,
+AggUnaryOp,PROD,X,,
+AggUnaryOp,SUM_PROD,X,,
+AggUnaryOp,TRACE,X,,
+AggUnaryOp,UNIQUE,X,,
+AggUnaryOp,COL+ColAgg,O,ft[0] == FType.COL && isColAgg,FType.COL
+AggUnaryOp,ROW+RowAgg,O,ft[0] == FType.ROW && !isColAgg,FType.ROW
+AggUnaryOp,MAX,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,MAXINDEX,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,MEAN,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,MIN,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,MININDEX,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,SUM,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,SUM_SQ,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+AggUnaryOp,VAR,O,ft[0] == FType.ROW || ft[0] == FType.COL,see direction rules
+BinaryOp,ALL,X,ft[0] != null && ft[1] != null && ft[0] != ft[1],
+BinaryOp,ALL,X,ft[0] == null && ft[1] == null,
+BinaryOp,ALL (scalar),X,hop.getDataType().isScalar(),
+BinaryOp,APPLY_SCHEMA,X,,
+BinaryOp,CAST_AS_FRAME,X,,
+BinaryOp,CBIND,X,,
+BinaryOp,CONCAT,X,,
+BinaryOp,COV,X,,
+BinaryOp,DROP_INVALID_LENGTH,X,,
+BinaryOp,DROP_INVALID_TYPE,X,,
+BinaryOp,INTERQUANTILE,X,,
+BinaryOp,IQM,X,,
+BinaryOp,LOG_NZ,X,,
+BinaryOp,MEDIAN,X,,
+BinaryOp,MINUS_NZ,X,,
+BinaryOp,MINUS1_MULT,X,,
+BinaryOp,MOMENT,X,,
+BinaryOp,PRINT,X,,
+BinaryOp,QUANTILE,X,,
+BinaryOp,QUANTIZE_COMPRESS,X,,
+BinaryOp,RBIND,X,,
+BinaryOp,SOLVE,X,,
+BinaryOp,VALUE_SWAP,X,,
+BinaryOp,AND,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,BITWAND,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,BITWOR,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,BITWSHIFTL,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,BITWSHIFTR,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,BITWXOR,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,COMPRESS,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,DIV,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,EQUAL,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,FRAME_ROW_REPLICATE,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,GREATER,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,GREATEREQUAL,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,INTDIV,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,LESS,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,LESSEQUAL,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,LOG,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,MAX,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,MIN,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,MINUS,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,MODULUS,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,MULT,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,NOTEQUAL,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,OR,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,PLUS,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,POW,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+BinaryOp,XOR,O,(ft[0] != null && ft[1] == null) || (ft[0] == null && ft[1] != null) || (ft[0] != null && ft[0] == ft[1]),ft[0] != null ? ft[0] : ft[1]
+DataOp,FUNCTIONOUTPUT,X,,
+DataOp,PERSISTENTREAD,X,,
+DataOp,PERSISTENTWRITE,X,,
+DataOp,SQLREAD,X,,
+DataOp,TRANSIENTREAD,O,ft.length == 0 || ft[0] != null,ft[0]
+DataOp,TRANSIENTWRITE,O,ft.length > 0 && ft[0] != null,ft[0]
+DataOp,FEDERATED,O,,deriveFType()
+IndexingOp,MapLeftIndex,O,ft[0] != null,ft[0]
+IndexingOp,RightIndex,O,ft[0] != null,ft[0]
+LeftIndexingOp,LeftIndex,O,ft[0] != null,ft[0]
+NaryOp,CBIND (list),X,hop.getInput().get(0).getDataType().isList(),
+NaryOp,RBIND (list),X,hop.getInput().get(0).getDataType().isList(),
+NaryOp,OTHER,X,not matching above conditions,
+NaryOp,Cell operations,X,op.isCellOp() && hop.getInput().stream().allMatch(h -> h.getDataType().isScalar()),
+NaryOp,EVAL,X,,
+NaryOp,LIST,X,,
+NaryOp,PRINTF,X,,
+NaryOp,CBIND,O,!isList,ft[0] != null ? ft[0] : ft[1]
+NaryOp,RBIND,O,!isList,ft[0] != null ? ft[0] : ft[1]
+NaryOp,MAX,O,,ft[0] != null ? ft[0] : ft[1]
+NaryOp,MIN,O,,ft[0] != null ? ft[0] : ft[1]
+NaryOp,MULT,O,,ft[0] != null ? ft[0] : ft[1]
+NaryOp,PLUS,O,,ft[0] != null ? ft[0] : ft[1]
+ParameterizedBuiltinOp,OTHER,X,not matching above conditions,
+ParameterizedBuiltinOp,AUTODIFF,X,,
+ParameterizedBuiltinOp,CDF,X,,
+ParameterizedBuiltinOp,CONTAINS,X,,
+ParameterizedBuiltinOp,GROUPEDAGG,X,,
+ParameterizedBuiltinOp,INVALID,X,,
+ParameterizedBuiltinOp,INVCDF,X,,
+ParameterizedBuiltinOp,LIST,X,,
+ParameterizedBuiltinOp,PARAMSERV,X,,
+ParameterizedBuiltinOp,REXPAND,X,,
+ParameterizedBuiltinOp,TOSTRING,X,,
+ParameterizedBuiltinOp,TRANSFORMCOLMAP,X,,
+ParameterizedBuiltinOp,TRANSFORMMETA,X,,
+ParameterizedBuiltinOp,LOWER_TRI,O,ft[0] != null,ft[0]
+ParameterizedBuiltinOp,REPLACE,O,ft[0] != null,ft[0]
+ParameterizedBuiltinOp,RMEMPTY,O,ft[0] != null,ft[0]
+ParameterizedBuiltinOp,TOKENIZE,O,ft[0] != null,ft[0]
+ParameterizedBuiltinOp,TRANSFORMAPPLY,O,ft[0] != null,ft[0]
+ParameterizedBuiltinOp,TRANSFORMDECODE,O,ft[0] != null,ft[0]
+ParameterizedBuiltinOp,UPPER_TRI,O,ft[0] != null,ft[0]
+QuaternaryOp,WDIVMM,O,at least one ft[i] != null,first non-null ft[i]
+QuaternaryOp,ALL,O,ft.length > 0 && ft[0] != null (allowsFederated),조건에 따라 다름
+QuaternaryOp,OTHER,O,ft[0] != null,ft[0]
+QuaternaryOp,WSIGMOID,O,ft[0] != null,ft[0]
+QuaternaryOp,WUMM,O,ft[0] != null,ft[0]
+QuaternaryOp,WCEMM,O,,getFederatedType: null / allowsFederated: true
+QuaternaryOp,WSLOSS,O,,getFederatedType: null / allowsFederated: true
+ReorgOp,RESHAPE,X,,
+ReorgOp,SORT,X,,
+ReorgOp,DIAG,O,ft[0] != null,ft[0]
+ReorgOp,REV,O,ft[0] != null,ft[0]
+ReorgOp,ROLL,O,ft[0] != null,ft[0]
+ReorgOp,TRANS (COL),O,ft[0] == FType.COL,FType.ROW
+ReorgOp,TRANS (FULL/BROADCAST),O,ft[0] == FType.FULL || ft[0] == FType.BROADCAST,ft[0]
+ReorgOp,TRANS (ROW),O,ft[0] == FType.ROW,FType.COL
+TernaryOp,ALL (scalar),X,hop.getDataType().isScalar(),
+TernaryOp,COV,X,,
+TernaryOp,IFELSE,X,,
+TernaryOp,MAP,X,,
+TernaryOp,MOMENT,X,,
+TernaryOp,INTERQUANTILE,O,hasAnyFederatedInput,ft[0] != null ? ft[0] : (ft[1] != null ? ft[1] : ft[2])
+TernaryOp,MINUS_MULT,O,hasAnyFederatedInput,ft[0] != null ? ft[0] : (ft[1] != null ? ft[1] : ft[2])
+TernaryOp,PLUS_MULT,O,hasAnyFederatedInput,ft[0] != null ? ft[0] : (ft[1] != null ? ft[1] : ft[2])
+TernaryOp,QUANTILE,O,hasAnyFederatedInput,ft[0] != null ? ft[0] : (ft[1] != null ? ft[1] : ft[2])
+TernaryOp,CTABLE,O,hasRowPartition,ft[0] != null ? ft[0] : (ft[1] != null ? ft[1] : ft[2])
+UnaryOp,LIST input,X,hop.getInput().get(0).getDataType() == DataType.LIST,
+UnaryOp,Metadata operations,X,uop.isMetadataOperation(),
+UnaryOp,_EVICT,X,,
+UnaryOp,ASSERT,X,,
+UnaryOp,BROADCAST,X,,
+UnaryOp,CAST_AS_BOOLEAN,X,,
+UnaryOp,CAST_AS_DOUBLE,X,,
+UnaryOp,CAST_AS_FRAME,X,,
+UnaryOp,CAST_AS_INT,X,,
+UnaryOp,CAST_AS_LIST,X,,
+UnaryOp,CAST_AS_MATRIX,X,,
+UnaryOp,CAST_AS_SCALAR,X,,
+UnaryOp,CHOLESKY,X,,
+UnaryOp,COLNAMES,X,,
+UnaryOp,COMPRESS,X,,
+UnaryOp,DECOMPRESS,X,,
+UnaryOp,DET,X,,
+UnaryOp,DETECTSCHEMA,X,,
+UnaryOp,EIGEN,X,,
+UnaryOp,EXISTS,X,,
+UnaryOp,INVERSE,X,,
+UnaryOp,IQM,X,,
+UnaryOp,LENGTH,X,,
+UnaryOp,LINEAGE,X,,
+UnaryOp,LOCAL,X,,
+UnaryOp,MEDIAN,X,,
+UnaryOp,NCOL,X,,
+UnaryOp,NROW,X,,
+UnaryOp,PREFETCH,X,,
+UnaryOp,PRINT,X,,
+UnaryOp,SQRT_MATRIX_JAVA,X,,
+UnaryOp,STOP,X,,
+UnaryOp,SVD,X,,
+UnaryOp,TRIGREMOTE,X,,
+UnaryOp,TYPEOF,X,,
+UnaryOp,ABS,O,ft[0] != null,ft[0]
+UnaryOp,ACOS,O,ft[0] != null,ft[0]
+UnaryOp,ASIN,O,ft[0] != null,ft[0]
+UnaryOp,ATAN,O,ft[0] != null,ft[0]
+UnaryOp,CEIL,O,ft[0] != null,ft[0]
+UnaryOp,COS,O,ft[0] != null,ft[0]
+UnaryOp,COSH,O,ft[0] != null,ft[0]
+UnaryOp,CUMMAX,O,ft[0] != null,ft[0]
+UnaryOp,CUMMIN,O,ft[0] != null,ft[0]
+UnaryOp,CUMPROD,O,ft[0] != null,ft[0]
+UnaryOp,CUMSUM,O,ft[0] != null,ft[0]
+UnaryOp,CUMSUMPROD,O,ft[0] != null,ft[0]
+UnaryOp,EXP,O,ft[0] != null,ft[0]
+UnaryOp,FLOOR,O,ft[0] != null,ft[0]
+UnaryOp,ISINF,O,ft[0] != null,ft[0]
+UnaryOp,ISNA,O,ft[0] != null,ft[0]
+UnaryOp,ISNAN,O,ft[0] != null,ft[0]
+UnaryOp,LOG,O,ft[0] != null,ft[0]
+UnaryOp,LOG_NZ,O,ft[0] != null,ft[0]
+UnaryOp,MINUS_RIGHT,O,ft[0] != null,ft[0]
+UnaryOp,MINUS1_MULT,O,ft[0] != null,ft[0]
+UnaryOp,MULT2,O,ft[0] != null,ft[0]
+UnaryOp,NOT,O,ft[0] != null,ft[0]
+UnaryOp,POW2,O,ft[0] != null,ft[0]
+UnaryOp,ROUND,O,ft[0] != null,ft[0]
+UnaryOp,SIGMOID,O,ft[0] != null,ft[0]
+UnaryOp,SIGN,O,ft[0] != null,ft[0]
+UnaryOp,SIN,O,ft[0] != null,ft[0]
+UnaryOp,SINH,O,ft[0] != null,ft[0]
+UnaryOp,SOFTMAX,O,ft[0] != null,ft[0]
+UnaryOp,SPROP,O,ft[0] != null,ft[0]
+UnaryOp,SQRT,O,ft[0] != null,ft[0]
+UnaryOp,SUBTRACT_NZ,O,ft[0] != null,ft[0]
+UnaryOp,TAN,O,ft[0] != null,ft[0]
+UnaryOp,TANH,O,ft[0] != null,ft[0]
+Unknown,ALL,X,default,

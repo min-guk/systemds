@@ -1,0 +1,15 @@
+[Todo]detectAndResolveConflictFedPlan call has been commented out.
+Additional Cost: 0.0
+(R) ROOT [Root] (14) {Total: 907.0}
+(14) u(print) [LOUT] (13,13) {Total: 907.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:13, X, C:906.0, F:0.0, FW:1.0),(ID:13, X, C:906.0, F:0.0, FW:1.0),}
+(13) ua(+RC) [LOUT] (12,12) {Total: 906.0, Self: 400.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:12, X, C:506.0, F:0.0, FW:1.0),(ID:12, X, C:506.0, F:0.0, FW:1.0),}
+(12) u(sqrt) [LOUT] (11,11) {Total: 506.0, Self: 200.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:11, X, C:306.0, F:0.0, FW:1.0),(ID:11, X, C:306.0, F:0.0, FW:1.0),}
+(11) b(+) [LOUT] (1,10,1,10) {Total: 306.0, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:1, X, C:0.3, F:0.0, FW:1.0),(ID:10, X, C:205.7, F:0.0, FW:1.0),(ID:1, X, C:0.3, F:0.0, FW:1.0),(ID:10, X, C:205.7, F:0.0, FW:1.0),}
+(1) LiteralOp 7 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(10) b(^) [LOUT] (8,9,8,9) {Total: 205.7, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, 100] [-, 0, - -> 0MB] [Edges]{(ID:8, X, C:104.7, F:0.0, FW:1.0),(ID:9, X, C:1.0, F:0.0, FW:1.0),(ID:8, X, C:104.7, F:0.0, FW:1.0),(ID:9, X, C:1.0, F:0.0, FW:1.0),}
+(8) dg(rand) [LOUT] (0,1,2,3,1,0,6,6,0,1,2,3,1,0,6,6) {Total: 104.7, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, 100] [0, 0, - -> 0MB] [Edges]{(ID:0, X, C:0.5, F:0.0, FW:1.0),(ID:1, X, C:0.3, F:0.0, FW:1.0),(ID:2, X, C:1.0, F:0.0, FW:1.0),(ID:3, X, C:1.0, F:0.0, FW:1.0),(ID:1, X, C:0.3, F:0.0, FW:1.0),(ID:0, X, C:0.5, F:0.0, FW:1.0),(ID:6, X, C:0.5, F:0.0, FW:1.0),(ID:6, X, C:0.5, F:0.0, FW:1.0),(ID:0, X, C:0.5, F:0.0, FW:1.0),(ID:1, X, C:0.3, F:0.0, FW:1.0),(ID:2, X, C:1.0, F:0.0, FW:1.0),(ID:3, X, C:1.0, F:0.0, FW:1.0),(ID:1, X, C:0.3, F:0.0, FW:1.0),(ID:0, X, C:0.5, F:0.0, FW:1.0),(ID:6, X, C:0.5, F:0.0, FW:1.0),(ID:6, X, C:0.5, F:0.0, FW:1.0),}
+(0) LiteralOp 1.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(2) LiteralOp uniform [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(3) LiteralOp -1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(6) LiteralOp 10 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(9) LiteralOp 2 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]

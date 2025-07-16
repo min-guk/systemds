@@ -1,0 +1,174 @@
+{
+  "opcode_analysis": {
+    "+": {
+      "total_count": 19,
+      "allows_fed_true": 9,
+      "allows_fed_false": 10,
+      "reason_codes": {
+        "UNKNOWN_HOP_TYPE": 5,
+        "DISALLOWED_OP": 5,
+        "AGGR_UNARY_ALLOWED": 3,
+        "SCALAR_HOP": 1,
+        "PROPAGATE_FROM_INPUT": 3,
+        "AGGR_DIRECTION_MISMATCH": 2
+      },
+      "input_ftypes": {
+        "null": 10,
+        "ROW": 9
+      },
+      "result_ftypes": {
+        "NaN": 17,
+        "ROW": 2
+      },
+      "examples": [
+        {
+          "hop_id": 178,
+          "name": "is_row_in_samples",
+          "allows_federated": false,
+          "reason_code": "UNKNOWN_HOP_TYPE",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 963, 'name': 'tmp', 'ftype': 'null'}]",
+          "dimensions": "341x1"
+        },
+        {
+          "hop_id": 178,
+          "name": "is_row_in_samples",
+          "allows_federated": false,
+          "reason_code": "DISALLOWED_OP",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 963, 'name': 'tmp', 'ftype': 'null'}]",
+          "dimensions": "341x1"
+        },
+        {
+          "hop_id": 240,
+          "name": "parsertemp116",
+          "allows_federated": false,
+          "reason_code": "UNKNOWN_HOP_TYPE",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 239, 'name': 'parsertemp115', 'ftype': 'null'}]",
+          "dimensions": "1x1"
+        }
+      ]
+    },
+    "min": {
+      "total_count": 6,
+      "allows_fed_true": 6,
+      "allows_fed_false": 0,
+      "reason_codes": {
+        "AGGR_UNARY_ALLOWED": 2,
+        "AGGR_DIRECTION_MISMATCH": 2,
+        "PROPAGATE_FROM_INPUT": 2
+      },
+      "input_ftypes": {
+        "ROW": 6
+      },
+      "result_ftypes": {
+        "NaN": 2,
+        "ROW": 4
+      },
+      "examples": [
+        {
+          "hop_id": 366,
+          "name": "minD",
+          "allows_federated": true,
+          "reason_code": "AGGR_UNARY_ALLOWED",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 364, 'name': 'D', 'ftype': 'ROW'}]",
+          "dimensions": "1000x1"
+        },
+        {
+          "hop_id": 366,
+          "name": "minD",
+          "allows_federated": true,
+          "reason_code": "AGGR_DIRECTION_MISMATCH",
+          "result_ftype": "ROW",
+          "input_ftypes": "[{'hop_id': 364, 'name': 'D', 'ftype': 'ROW'}]",
+          "dimensions": "1000x1"
+        },
+        {
+          "hop_id": 366,
+          "name": "minD",
+          "allows_federated": true,
+          "reason_code": "PROPAGATE_FROM_INPUT",
+          "result_ftype": "ROW",
+          "input_ftypes": "[{'hop_id': 364, 'name': 'D', 'ftype': 'ROW'}]",
+          "dimensions": "1000x1"
+        }
+      ]
+    },
+    "sq+": {
+      "total_count": 10,
+      "allows_fed_true": 0,
+      "allows_fed_false": 10,
+      "reason_codes": {
+        "AGGR_UNARY_DISALLOWED": 1,
+        "DISALLOWED_OP": 5,
+        "UNKNOWN_HOP_TYPE": 4
+      },
+      "input_ftypes": {
+        "ROW": 2,
+        "null": 8
+      },
+      "result_ftypes": {
+        "NaN": 10
+      },
+      "examples": [
+        {
+          "hop_id": 845,
+          "name": "X",
+          "allows_federated": false,
+          "reason_code": "AGGR_UNARY_DISALLOWED",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 160, 'name': 'X', 'ftype': 'ROW'}]",
+          "dimensions": "-1x-1"
+        },
+        {
+          "hop_id": 845,
+          "name": "X",
+          "allows_federated": false,
+          "reason_code": "DISALLOWED_OP",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 160, 'name': 'X', 'ftype': 'ROW'}]",
+          "dimensions": "-1x-1"
+        },
+        {
+          "hop_id": 848,
+          "name": "X_samples",
+          "allows_federated": false,
+          "reason_code": "UNKNOWN_HOP_TYPE",
+          "result_ftype": NaN,
+          "input_ftypes": "[{'hop_id': 180, 'name': 'X_samples', 'ftype': 'null'}]",
+          "dimensions": "341x1"
+        }
+      ]
+    }
+  },
+  "discrepancies": [
+    {
+      "opcode": "+",
+      "total_disallowed": 10,
+      "total_allowed": 9,
+      "has_valid_input_ftype": true,
+      "has_null_result_ftype": false,
+      "top_reason_codes": [
+        "UNKNOWN_HOP_TYPE",
+        "DISALLOWED_OP",
+        "AGGR_UNARY_ALLOWED"
+      ],
+      "recommendation": "CRITICAL: + should be supported in federated mode. Add proper FType propagation rules."
+    },
+    {
+      "opcode": "sq+",
+      "total_disallowed": 10,
+      "total_allowed": 0,
+      "has_valid_input_ftype": true,
+      "has_null_result_ftype": false,
+      "top_reason_codes": [
+        "DISALLOWED_OP",
+        "UNKNOWN_HOP_TYPE",
+        "AGGR_UNARY_DISALLOWED"
+      ],
+      "recommendation": "CRITICAL: sq+ should be supported in federated mode. Add proper FType propagation rules."
+    }
+  ]
+}

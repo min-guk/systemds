@@ -1,0 +1,49 @@
+{
+  "total_operations": 584,
+  "unique_hop_types": 14,
+  "unique_op_codes": 37,
+  "federated_allowed_rate": 0.3219178082191781,
+  "ftype_distribution": {
+    "NULL": 552,
+    "ROW": 28,
+    "COL": 4
+  },
+  "operation_type_distribution": {
+    "LiteralOp": 190,
+    "DataOp": 101,
+    "BinaryOp": 97,
+    "UnaryOp": 45,
+    "AggUnaryOp": 35,
+    "DataGenOp": 24,
+    "AggBinaryOp": 18,
+    "ReorgOp": 18,
+    "TernaryOp": 16,
+    "IndexingOp": 12,
+    "NaryOp": 12,
+    "LeftIndexingOp": 8,
+    "ParameterizedBuiltinOp": 6,
+    "FunctionOp": 2
+  },
+  "reason_code_distribution": {
+    "DISALLOWED_OP": 209,
+    "UNKNOWN_HOP_TYPE": 192,
+    "PROPAGATE_FROM_INPUT": 110,
+    "SCALAR_HOP": 17,
+    "UNARY_ALLOWED": 11,
+    "FIRST_NON_NULL": 7,
+    "AGGR_UNARY_ALLOWED": 5,
+    "TSMM_PATTERN": 4,
+    "BINARY_MIXED_NULL": 4,
+    "AGGR_DIRECTION_MISMATCH": 4,
+    "UNARY_DISALLOWED_OP": 4,
+    "AGGR_BINARY_PROPAGATE": 3,
+    "AGGR_BINARY_MIXED_NULL": 3,
+    "BINARY_SAME_FTYPE": 3,
+    "REORG_TRANS_COL_ROW": 2,
+    "UNARY_METADATA_OP": 2,
+    "BINARY_MIN_DISALLOWED": 1,
+    "AGGR_BINARY_COL_ROW": 1,
+    "DERIVED_FROM_FED_RANGES": 1,
+    "AGGR_UNARY_DISALLOWED": 1
+  }
+}

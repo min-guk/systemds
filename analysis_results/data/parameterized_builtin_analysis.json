@@ -1,0 +1,58 @@
+{
+  "summary": [
+    {
+      "op_code": "REPLACE",
+      "total_count": 2,
+      "allows_fed_rate": 0.0,
+      "fed_supported": true,
+      "inconsistencies": [
+        "FED-supported but allows_federated=False (2 entries)"
+      ],
+      "main_reason_codes": [
+        "UNKNOWN_HOP_TYPE",
+        "DISALLOWED_OP"
+      ],
+      "result_ftype_null_rate": 0.0
+    },
+    {
+      "op_code": "REXPAND",
+      "total_count": 4,
+      "allows_fed_rate": 0.0,
+      "fed_supported": false,
+      "inconsistencies": [],
+      "main_reason_codes": [
+        "UNKNOWN_HOP_TYPE",
+        "DISALLOWED_OP"
+      ],
+      "result_ftype_null_rate": 0.0
+    }
+  ],
+  "fed_supported_opcodes": [
+    "TOKENIZE",
+    "REPLACE",
+    "LOWERTRI",
+    "RMEMPTY",
+    "UPPERTRI",
+    "CONTAINS",
+    "TRANSFORMAPPLY",
+    "TRANSFORMDECODE"
+  ],
+  "found_opcodes": [
+    "REXPAND",
+    "REPLACE"
+  ],
+  "missing_from_data": [
+    "TOKENIZE",
+    "LOWERTRI",
+    "RMEMPTY",
+    "UPPERTRI",
+    "CONTAINS",
+    "TRANSFORMAPPLY",
+    "TRANSFORMDECODE"
+  ],
+  "extra_in_data": [
+    "REXPAND"
+  ],
+  "total_entries": 6,
+  "analysis_timestamp": "2025-06-12T22:24:15.507713"
+}

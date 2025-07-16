@@ -1,0 +1,11 @@
+[Todo]detectAndResolveConflictFedPlan call has been commented out.
+Additional Cost: 0.0
+(R) ROOT [Root] (482) {Total: 504.0}
+(482) u(print) [LOUT] (481,481) {Total: 504.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:481, X, C:503.0, F:0.0, FW:1.0),(ID:481, X, C:503.0, F:0.0, FW:1.0),}
+(481) ua(+RC) [LOUT] (485,485) {Total: 503.0, Self: 400.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:485, X, C:103.0, F:0.0, FW:1.0),(ID:485, X, C:103.0, F:0.0, FW:1.0),}
+(485) dg(rand) [LOUT] (466,483,468,469,483,466,472,472,466,483,468,469,483,466,472,472) {Total: 103.0, Self: 100.0, Net: 0.0, Weight: 1.0} [10, 10, 1000, 100] [-, 0, - -> 0MB] [Edges]{(ID:466, X, C:0.2, F:0.0, FW:1.0),(ID:483, X, C:0.5, F:0.0, FW:1.0),(ID:468, X, C:0.5, F:0.0, FW:1.0),(ID:469, X, C:0.5, F:0.0, FW:1.0),(ID:483, X, C:0.5, F:0.0, FW:1.0),(ID:466, X, C:0.2, F:0.0, FW:1.0),(ID:472, X, C:0.2, F:0.0, FW:1.0),(ID:472, X, C:0.2, F:0.0, FW:1.0),(ID:466, X, C:0.2, F:0.0, FW:1.0),(ID:483, X, C:0.5, F:0.0, FW:1.0),(ID:468, X, C:0.5, F:0.0, FW:1.0),(ID:469, X, C:0.5, F:0.0, FW:1.0),(ID:483, X, C:0.5, F:0.0, FW:1.0),(ID:466, X, C:0.2, F:0.0, FW:1.0),(ID:472, X, C:0.2, F:0.0, FW:1.0),(ID:472, X, C:0.2, F:0.0, FW:1.0),}
+(466) LiteralOp 1.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(483) LiteralOp 8.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(468) LiteralOp uniform [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(469) LiteralOp -1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(472) LiteralOp 10 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]

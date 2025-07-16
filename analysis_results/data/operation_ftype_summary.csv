@@ -1,0 +1,8 @@
+type,input_ftype_pattern,ftype_category,total_operations,allowed_operations,allow_rate,result_ftypes,top_reasons
+AggBinaryOp,ROW+NULL,ROW,4,4,1.0,['ROW'],"['TSMM_PATTERN', 'PROPAGATE_FROM_INPUT']"
+AggUnaryOp,ROW,ROW,6,6,1.0,['ROW'],"['AGGR_DIRECTION_MISMATCH', 'PROPAGATE_FROM_INPUT']"
+BinaryOp,ROW+NULL,ROW,8,8,1.0,['ROW'],"['FIRST_NON_NULL', 'PROPAGATE_FROM_INPUT']"
+BinaryOp,ROW+ROW,ROW,6,6,1.0,['ROW'],"['FIRST_NON_NULL', 'PROPAGATE_FROM_INPUT']"
+DataOp,NO_INPUT,ROW,3,3,1.0,['ROW'],['PROPAGATE_FROM_INPUT']
+DataOp,NULL_x3,ROW,1,1,1.0,['ROW'],['DERIVED_FROM_FED_RANGES']
+ReorgOp,ROW,COL,4,4,1.0,['COL'],"['REORG_TRANS_COL_ROW', 'PROPAGATE_FROM_INPUT']"

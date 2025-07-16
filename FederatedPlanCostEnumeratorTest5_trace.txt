@@ -1,0 +1,13 @@
+[Todo]detectAndResolveConflictFedPlan call has been commented out.
+Additional Cost: 0.0
+(R) ROOT [Root] (99,91,93,95) {Total: 600.0}
+(99) u(print) [LOUT] (98,98) {Total: 300.0, Self: 100.0, Net: 0.0, Weight: 100.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:98, X, C:200.0, F:0.1, FW:100.0),(ID:98, X, C:200.0, F:0.1, FW:100.0),}
+(98) b(+) [LOUT] (96,97,97) {Total: 200.0, Self: 100.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:96, X, C:0.0, F:0.1, FW:100.0),(ID:97, X, C:100.0, F:0.1, FW:100.0),(ID:97, X, C:100.0, F:0.1, FW:100.0),}
+(96) TRead i [LOUT] {Total: 0.0, Self: 0.0, Net: 0.0, Weight: 100.0} [0, 0, 0, -1] [0, 0, - -> 0MB]
+(97) LiteralOp 1 [LOUT] {Total: 100.0, Self: 100.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(91) TWrite __pred [LOUT] (90,90) {Total: 100.0, Self: 0.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:90, X, C:100.0, F:0.1, FW:100.0),(ID:90, X, C:100.0, F:0.1, FW:100.0),}
+(90) LiteralOp 1 [LOUT] {Total: 100.0, Self: 100.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(93) TWrite __pred [LOUT] (92,92) {Total: 100.0, Self: 0.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:92, X, C:100.0, F:0.1, FW:100.0),(ID:92, X, C:100.0, F:0.1, FW:100.0),}
+(92) LiteralOp 100 [LOUT] {Total: 100.0, Self: 100.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(95) TWrite __pred [LOUT] (94,94) {Total: 100.0, Self: 0.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:94, X, C:100.0, F:0.1, FW:100.0),(ID:94, X, C:100.0, F:0.1, FW:100.0),}
+(94) LiteralOp 1 [LOUT] {Total: 100.0, Self: 100.0, Net: 0.0, Weight: 100.0} [0, 0, -1, -1] [0, 0, - -> 0MB]

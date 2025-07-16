@@ -1,0 +1,310 @@
+[RewireTransHop] (hopName: i, hopID: 211) child hops is empty
+[RewireTransHop] (hopName: run_index, hopID: 328) child hops is empty
+[RewireTransHop] (hopName: run_index, hopID: 478) child hops is empty
+[Todo]detectAndResolveConflictFedPlan call has been commented out.
+Additional Cost: 0.0
+(R) ROOT [Root] (205,351,291,438,451,327,664,432,705,503,341,688,207,447,325,774,571,782) {Total: 63599717.9}
+(205) TWrite __pred [LOUT] (204) {Total: 4.0, Self: 0.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:204, X, C:4.0, F:0.0, FW:4.0),}
+(204) LiteralOp 1 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(351) TWrite __pred [LOUT] (350) {Total: 20.5, Self: 0.0, Net: 0.0, Weight: 10.0} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:350, X, C:20.5, F:0.0, FW:10.0),}
+(350) b(==) [LOUT] (348,349) {Total: 20.5, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:348, X, C:0.5, F:0.0, FW:10.0),(ID:349, X, C:10.0, F:0.0, FW:10.0),}
+(348) TRead term_code [LOUT] (345) {Total: 0.5, Self: 0.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:345, X, C:0.5, F:0.0, FW:1.0),}
+(345) TWrite term_code [LOUT] (342) {Total: 0.5, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:342, X, C:0.5, F:0.0, FW:1.0),}
+(342) LiteralOp 0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(349) LiteralOp 0 [LOUT] {Total: 10.0, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(291) TWrite min_distances [LOUT] (290) {Total: 16311030.8, Self: 0.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:290, X, C:16311030.8, F:0.0, FW:4.0),}
+(290) t(ifelse) [LOUT] (287,288,289) {Total: 16311030.8, Self: 2728.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> -MB] [Edges]{(ID:287, X, C:4.3, F:0.0, FW:4.0),(ID:288, O, C:8411406.1, F:0.0, FW:4.0),(ID:289, O, C:7896892.4, F:0.0, FW:4.0),}
+(287) b(==) [LOUT] (211,808) {Total: 4.3, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:211, X, C:0.0, F:0.0, FW:4.0),(ID:808, X, C:0.3, F:0.0, FW:4.0),}
+(211) TRead i [LOUT] {Total: 0.0, Self: 0.0, Net: 0.0, Weight: 4.0} [0, 0, 0, -1] [0, 0, - -> 0MB]
+(808) LiteralOp 1 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(288) b(*) [FOUT] (213,1001) {Total: 8411406.1, Self: 1364.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:213, O, C:771770.5, F:0.0, FW:4.0),(ID:1001, X, C:7638953.6, F:0.0, FW:4.0),}
+(213) TRead is_row_in_samples [LOUT] (921) {Total: 771770.5, Self: 0.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:921, X, C:771770.5, F:0.0, FW:1.0),}
+(921) TWrite is_row_in_samples [LOUT] (178) {Total: 771770.5, Self: 0.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:178, X, C:771770.5, F:0.0, FW:1.0),}
+(178) ua(+R) [LOUT] (963) {Total: 1543541.0, Self: 1364000.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> -MB] [Edges]{(ID:963, X, C:179541.0, F:0.0, FW:1.0),}
+(963) REXPAND [LOUT] (964,980,983,984,985) {Total: 359082.1, Self: 341000.0, Net: 0.0, Weight: 1.0} [341, 1000, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:964, X, C:18078.6, F:0.0, FW:1.0),(ID:980, X, C:0.5, F:0.0, FW:1.0),(ID:983, X, C:1.0, F:0.0, FW:1.0),(ID:984, X, C:1.0, F:0.0, FW:1.0),(ID:985, X, C:1.0, F:0.0, FW:1.0),}
+(964) t(+*) [LOUT] (965,981,982) {Total: 18078.6, Self: 682.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:965, X, C:13643.4, F:0.0, FW:1.0),(ID:981, X, C:1.0, F:0.0, FW:1.0),(ID:982, X, C:3752.2, F:0.0, FW:1.0),}
+(965) b(*) [LOUT] (966,979) {Total: 13643.4, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:966, X, C:9891.5, F:0.0, FW:1.0),(ID:979, X, C:3411.0, F:0.0, FW:1.0),}
+(966) u(ucumk+) [LOUT] (967) {Total: 19782.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:967, X, C:19441.9, F:0.0, FW:1.0),}
+(967) u(round) [LOUT] (968) {Total: 19441.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:968, X, C:19100.9, F:0.0, FW:1.0),}
+(968) b(+) [LOUT] (969,978) {Total: 19100.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:969, X, C:18759.4, F:0.0, FW:1.0),(ID:978, X, C:0.5, F:0.0, FW:1.0),}
+(969) b(/) [LOUT] (970,977) {Total: 18759.4, Self: 7502.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:970, X, C:11256.4, F:0.0, FW:1.0),(ID:977, X, C:1.0, F:0.0, FW:1.0),}
+(970) u(log) [LOUT] (971) {Total: 11256.4, Self: 10912.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:971, X, C:344.4, F:0.0, FW:1.0),}
+(971) dg(rand) [LOUT] (972,973,974,975,972,972,961,976) {Total: 344.4, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, 341] [-, 0, - -> 0MB] [Edges]{(ID:972, X, C:0.2, F:0.0, FW:1.0),(ID:973, X, C:1.0, F:0.0, FW:1.0),(ID:974, X, C:0.5, F:0.0, FW:1.0),(ID:975, X, C:1.0, F:0.0, FW:1.0),(ID:972, X, C:0.2, F:0.0, FW:1.0),(ID:972, X, C:0.2, F:0.0, FW:1.0),(ID:961, X, C:0.2, F:0.0, FW:1.0),(ID:976, X, C:0.2, F:0.0, FW:1.0),}
+(972) LiteralOp 1.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(973) LiteralOp 0.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(974) LiteralOp uniform [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(975) LiteralOp 93 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(961) LiteralOp 341 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(976) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(977) LiteralOp -0.2231435513142097 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(978) LiteralOp 0.5 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(979) b(<=) [LOUT] (966,980) {Total: 10233.0, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:966, X, C:9891.5, F:0.0, FW:1.0),(ID:980, X, C:0.5, F:0.0, FW:1.0),}
+(980) LiteralOp 1000 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(981) LiteralOp 1001 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(982) b(-) [LOUT] (976,979) {Total: 3752.2, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:976, X, C:0.2, F:0.0, FW:1.0),(ID:979, X, C:3411.0, F:0.0, FW:1.0),}
+(983) LiteralOp cols [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(984) LiteralOp false [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(985) LiteralOp true [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(1001) t(-*) [FOUT] (275,279,283) {Total: 15277907.2, Self: 2728.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:275, O, C:2.0, F:0.0, FW:4.0),(ID:279, X, C:9353957.0, F:0.0, FW:4.0),(ID:283, X, C:5922584.1, F:0.0, FW:4.0),}
+(275) LiteralOp 2 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(279) b(+) [FOUT] (868,209) {Total: 18707914.1, Self: 1364.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:868, O, C:1469706.4, F:0.0, FW:4.0),(ID:209, X, C:17237525.7, F:0.0, FW:4.0),}
+(868) b(*) [LOUT] (870,208) {Total: 1469706.4, Self: 1364.0, Net: 0.0, Weight: 4.0} [341, -1, 1000, -1] [-, 0, - -> 3000MB] [Edges]{(ID:870, X, C:1461688.0, F:0.0, FW:4.0),(ID:208, X, C:6654.5, F:0.0, FW:4.0),}
+(870) ua(sq+RC) [LOUT] (258) {Total: 2923376.0, Self: 2000.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [-, 0, - -> -MB] [Edges]{(ID:258, O, C:2921376.0, F:0.0, FW:4.0),}
+(258) ba(+*) [FOUT] (861,218) {Total: 8764127.9, Self: 272800.0, Net: 0.0, Weight: 4.0} [1, 100, 1000, -1] [-, 0, - -> -MB] [Edges]{(ID:861, O, C:51590.1, F:0.0, FW:4.0),(ID:218, X, C:8576137.8, F:0.0, FW:4.0),}
+(861) REXPAND [LOUT] (862,1005,858,219,270) {Total: 51590.1, Self: 1364.0, Net: 0.0, Weight: 4.0} [1, 341, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:862, X, C:50217.5, F:0.0, FW:4.0),(ID:1005, X, C:0.6, F:0.0, FW:4.0),(ID:858, X, C:4.0, F:0.0, FW:4.0),(ID:219, X, C:2.0, F:0.0, FW:4.0),(ID:270, X, C:2.0, F:0.0, FW:4.0),}
+(862) t(+*) [LOUT] (243,1005,251) {Total: 50217.5, Self: 8.0, Net: 0.0, Weight: 4.0} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:243, X, C:50205.4, F:0.0, FW:4.0),(ID:1005, X, C:0.6, F:0.0, FW:4.0),(ID:251, X, C:3.5, F:0.0, FW:4.0),}
+(243) b(+) [LOUT] (863,808) {Total: 100410.9, Self: 4.0, Net: 0.0, Weight: 4.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:863, X, C:100406.6, F:0.0, FW:4.0),(ID:808, X, C:0.3, F:0.0, FW:4.0),}
+(863) u(castdtm) [LOUT] (240) {Total: 200813.2, Self: 4.0, Net: 0.0, Weight: 4.0} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:240, X, C:200809.2, F:0.0, FW:4.0),}
+(240) ua(+RC) [LOUT] (239) {Total: 200809.2, Self: 5456.0, Net: 0.0, Weight: 4.0} [1, 1, -1, -1] [-, 0, - -> -MB] [Edges]{(ID:239, X, C:195353.2, F:0.0, FW:4.0),}
+(239) b(<) [LOUT] (222,872) {Total: 195353.2, Self: 1364.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:222, X, C:129310.4, F:0.0, FW:4.0),(ID:872, X, C:64678.8, F:0.0, FW:4.0),}
+(222) u(ucumk+) [LOUT] (217) {Total: 258620.8, Self: 1364.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:217, X, C:257256.8, F:0.0, FW:4.0),}
+(217) TRead min_distances [LOUT] (203) {Total: 771770.5, Self: 0.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:203, X, C:771770.5, F:0.0, FW:1.0),}
+(203) TWrite min_distances [LOUT] (178) {Total: 771770.5, Self: 0.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:178, X, C:771770.5, F:0.0, FW:1.0),}
+(872) b(*) [LOUT] (871,865) {Total: 64678.8, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:871, X, C:14.8, F:0.0, FW:4.0),(ID:865, X, C:64660.0, F:0.0, FW:4.0),}
+(871) u(castdts) [LOUT] (234) {Total: 14.8, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:234, X, C:10.8, F:0.0, FW:4.0),}
+(234) dg(rand) [LOUT] (268,229,230,226,268,268,808,808) {Total: 21.5, Self: 4.0, Net: 0.0, Weight: 4.0} [1, 1, 1000, 1] [0, 0, - -> 0MB] [Edges]{(ID:268, X, C:1.0, F:0.0, FW:4.0),(ID:229, X, C:4.0, F:0.0, FW:4.0),(ID:230, X, C:4.0, F:0.0, FW:4.0),(ID:226, X, C:6.0, F:0.0, FW:4.0),(ID:268, X, C:1.0, F:0.0, FW:4.0),(ID:268, X, C:1.0, F:0.0, FW:4.0),(ID:808, X, C:0.3, F:0.0, FW:4.0),(ID:808, X, C:0.3, F:0.0, FW:4.0),}
+(268) LiteralOp 1.0 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(229) LiteralOp 0.0 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(230) LiteralOp uniform [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(226) b(+) [LOUT] (211,809) {Total: 6.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:211, X, C:0.0, F:0.0, FW:4.0),(ID:809, X, C:2.0, F:0.0, FW:4.0),}
+(809) LiteralOp 93 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(865) u(castdts) [LOUT] (237) {Total: 129320.1, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:237, X, C:129316.1, F:0.0, FW:4.0),}
+(237) rix [LOUT] (222,1005,1005,808,808) {Total: 129316.1, Self: 4.0, Net: 0.0, Weight: 4.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:222, X, C:129310.4, F:0.0, FW:4.0),(ID:1005, X, C:0.6, F:0.0, FW:4.0),(ID:1005, X, C:0.6, F:0.0, FW:4.0),(ID:808, X, C:0.3, F:0.0, FW:4.0),(ID:808, X, C:0.3, F:0.0, FW:4.0),}
+(1005) LiteralOp 341 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(251) dg(seq) [LOUT] (808,854,854) {Total: 6.9, Self: 4.0, Net: 0.0, Weight: 4.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:808, X, C:0.3, F:0.0, FW:4.0),(ID:854, X, C:1.3, F:0.0, FW:4.0),(ID:854, X, C:1.3, F:0.0, FW:4.0),}
+(854) LiteralOp 0 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(858) LiteralOp cols [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(219) LiteralOp false [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(270) LiteralOp true [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(218) TRead X_samples [FOUT] (181) {Total: 17152275.7, Self: 0.0, Net: 0.0, Weight: 4.0} [341, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:181, X, C:17152275.7, F:0.0, FW:1.0),}
+(181) TWrite X_samples [FOUT] (180) {Total: 17152275.7, Self: 0.0, Net: 0.0, Weight: 1.0} [341, 100, 1000, -1] [-, 0, - -> -MB] [Edges]{(ID:180, X, C:17152275.7, F:0.0, FW:1.0),}
+(180) ba(+*) [FOUT] (963,160) {Total: 34304551.3, Self: 68200000.0, Net: 0.0, Weight: 1.0} [341, 100, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:963, O, C:179541.0, F:0.0, FW:1.0),(ID:160, X, C:25010.3, F:0.0, FW:1.0),}
+(160) TRead X [FOUT] (764) {Total: 50020.5, Self: 0.0, Net: 0.0, Weight: 1.0} [1000, 100, 1000, -1] [0, 0, - -> 1MB] [Edges]{(ID:764, X, C:50020.5, F:0.0, FW:1.0),}
+(764) Fed X [FOUT] (710,762,763) {Total: 50020.5, Self: 100000.0, Net: 0.0, Weight: 1.0} [1000, 100, 1000, -1] [-, 0, - -> 0MB] [rblk] [Edges]{(ID:710, O, C:4.0, F:0.0, FW:1.0),(ID:762, O, C:15.5, F:0.0, FW:1.0),(ID:763, O, C:1.0, F:0.0, FW:1.0),}
+(710) m(list) [LOUT] (708,709) {Total: 4.0, Self: 2.0, Net: 0.0, Weight: 1.0} [2, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:708, X, C:1.0, F:0.0, FW:1.0),(ID:709, X, C:1.0, F:0.0, FW:1.0),}
+(708) LiteralOp localhost:46023/target/testTemp/functions/privacy/fedplanning/FederatedKMeansPlanningTest/in/X1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(709) LiteralOp localhost:38735/target/testTemp/functions/privacy/fedplanning/FederatedKMeansPlanningTest/in/X2 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(762) m(list) [LOUT] (738,747,756,761) {Total: 15.5, Self: 4.0, Net: 0.0, Weight: 1.0} [4, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:738, X, C:2.7, F:0.0, FW:1.0),(ID:747, X, C:3.0, F:0.0, FW:1.0),(ID:756, X, C:2.8, F:0.0, FW:1.0),(ID:761, X, C:3.0, F:0.0, FW:1.0),}
+(738) m(list) [LOUT] (736,736) {Total: 2.7, Self: 2.0, Net: 0.0, Weight: 1.0} [2, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:736, X, C:0.3, F:0.0, FW:1.0),(ID:736, X, C:0.3, F:0.0, FW:1.0),}
+(736) LiteralOp 0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(747) m(list) [LOUT] (787,746) {Total: 3.0, Self: 2.0, Net: 0.0, Weight: 1.0} [2, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:787, X, C:0.5, F:0.0, FW:1.0),(ID:746, X, C:0.5, F:0.0, FW:1.0),}
+(787) LiteralOp 500.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(746) LiteralOp 100 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(756) m(list) [LOUT] (787,736) {Total: 2.8, Self: 2.0, Net: 0.0, Weight: 1.0} [2, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:787, X, C:0.5, F:0.0, FW:1.0),(ID:736, X, C:0.3, F:0.0, FW:1.0),}
+(761) m(list) [LOUT] (743,746) {Total: 3.0, Self: 2.0, Net: 0.0, Weight: 1.0} [2, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:743, X, C:0.5, F:0.0, FW:1.0),(ID:746, X, C:0.5, F:0.0, FW:1.0),}
+(743) LiteralOp 1000 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(763) LiteralOp matrix [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(208) TRead samples_vs_runs_map [LOUT] (986) {Total: 13308.9, Self: 0.0, Net: 0.0, Weight: 4.0} [341, -1, 1000, -1] [0, 0, - -> 3000MB] [Edges]{(ID:986, X, C:13308.9, F:0.0, FW:1.0),}
+(986) TWrite samples_vs_runs_map [LOUT] (987) {Total: 13308.9, Self: 0.0, Net: 0.0, Weight: 1.0} [341, -1, 1000, -1] [-, 0, - -> 3000MB] [Edges]{(ID:987, X, C:13308.9, F:0.0, FW:1.0),}
+(987) rix [LOUT] (988,976,961,976,1000) {Total: 13308.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, -1, 1000, -1] [0, 0, - -> 3000MB] [Edges]{(ID:988, X, C:6483.2, F:0.0, FW:1.0),(ID:976, X, C:0.2, F:0.0, FW:1.0),(ID:961, X, C:0.2, F:0.0, FW:1.0),(ID:976, X, C:0.2, F:0.0, FW:1.0),(ID:1000, X, C:6484.2, F:0.0, FW:1.0),}
+(988) t(ctable) [LOUT] (989,994,972) {Total: 12966.3, Self: 3.0, Net: 0.0, Weight: 1.0} [-1, -1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:989, X, C:4435.9, F:0.0, FW:1.0),(ID:994, X, C:8527.2, F:0.0, FW:1.0),(ID:972, X, C:0.2, F:0.0, FW:1.0),}
+(989) b(-) [LOUT] (990,991) {Total: 4435.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:990, X, C:1.0, F:0.0, FW:1.0),(ID:991, X, C:4093.9, F:0.0, FW:1.0),}
+(990) LiteralOp 342 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(991) b(*) [LOUT] (979,992) {Total: 4093.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:979, X, C:3411.0, F:0.0, FW:1.0),(ID:992, X, C:341.9, F:0.0, FW:1.0),}
+(992) dg(seq) [LOUT] (993,961,976) {Total: 341.9, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:993, X, C:0.5, F:0.0, FW:1.0),(ID:961, X, C:0.2, F:0.0, FW:1.0),(ID:976, X, C:0.2, F:0.0, FW:1.0),}
+(993) LiteralOp -1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(994) u(round) [LOUT] (995) {Total: 8527.2, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:995, X, C:8186.2, F:0.0, FW:1.0),}
+(995) b(+) [LOUT] (978,996) {Total: 8186.2, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:978, X, C:0.5, F:0.0, FW:1.0),(ID:996, X, C:7844.7, F:0.0, FW:1.0),}
+(996) b(/) [LOUT] (997,961) {Total: 7844.7, Self: 7502.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:997, X, C:342.5, F:0.0, FW:1.0),(ID:961, X, C:0.2, F:0.0, FW:1.0),}
+(997) dg(seq) [LOUT] (976,998,999) {Total: 342.5, Self: 341.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:976, X, C:0.2, F:0.0, FW:1.0),(ID:998, X, C:0.3, F:0.0, FW:1.0),(ID:999, X, C:1.0, F:0.0, FW:1.0),}
+(998) LiteralOp 0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(999) LiteralOp 340 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(1000) u(ncol) [LOUT] (988) {Total: 6484.2, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:988, X, C:6483.2, F:0.0, FW:1.0),}
+(209) TRead X_samples_sq_norms [FOUT] (185) {Total: 17237525.7, Self: 0.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:185, X, C:17237525.7, F:0.0, FW:1.0),}
+(185) TWrite X_samples_sq_norms [FOUT] (848) {Total: 17237525.7, Self: 0.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:848, X, C:17237525.7, F:0.0, FW:1.0),}
+(848) ua(sq+R) [FOUT] (180) {Total: 17237525.7, Self: 170500.0, Net: 0.0, Weight: 1.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:180, X, C:17152275.7, F:0.0, FW:1.0),}
+(283) ua(+R) [FOUT] (282) {Total: 11845168.2, Self: 545600.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [-, 0, - -> -MB] [Edges]{(ID:282, X, C:11572368.2, F:0.0, FW:4.0),}
+(282) b(*) [FOUT] (218,281) {Total: 11572368.2, Self: 136400.0, Net: 0.0, Weight: 4.0} [341, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:218, X, C:8576137.8, F:0.0, FW:4.0),(ID:281, X, C:2928030.4, F:0.0, FW:4.0),}
+(281) ba(+*) [FOUT] (208,258) {Total: 2928030.4, Self: -0.0, Net: 0.0, Weight: 4.0} [341, 100, 1000, -1] [3000, 0, - -> 3000MB] [Edges]{(ID:208, O, C:6654.5, F:0.0, FW:4.0),(ID:258, X, C:2921376.0, F:0.0, FW:4.0),}
+(289) b(min) [FOUT] (217,1001) {Total: 7896892.4, Self: 1364.0, Net: 0.0, Weight: 4.0} [341, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:217, O, C:257256.8, F:0.0, FW:4.0),(ID:1001, X, C:7638953.6, F:0.0, FW:4.0),}
+(438) TWrite __pred [LOUT] (437) {Total: 20.2, Self: 0.0, Net: 0.0, Weight: 5.0} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:437, X, C:20.2, F:0.0, FW:10.0),}
+(437) b(>=) [LOUT] (436,825) {Total: 20.2, Self: 5.0, Net: 0.0, Weight: 5.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:436, X, C:10.2, F:0.0, FW:10.0),(ID:825, X, C:5.0, F:0.0, FW:10.0),}
+(436) TRead iter_count [LOUT] (425) {Total: 10.2, Self: 0.0, Net: 0.0, Weight: 5.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:425, X, C:10.2, F:0.0, FW:10.0),}
+(425) TWrite iter_count [LOUT] (424) {Total: 20.5, Self: 0.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:424, X, C:20.5, F:0.0, FW:10.0),}
+(424) b(+) [LOUT] (411,423) {Total: 20.5, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:411, X, C:0.5, F:0.0, FW:10.0),(ID:423, X, C:10.0, F:0.0, FW:10.0),}
+(411) TRead iter_count [LOUT] (343) {Total: 0.5, Self: 0.0, Net: 0.0, Weight: 10.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:343, X, C:0.5, F:0.0, FW:1.0),}
+(343) TWrite iter_count [LOUT] (342) {Total: 0.5, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:342, X, C:0.5, F:0.0, FW:1.0),}
+(423) LiteralOp 1 [LOUT] {Total: 10.0, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(825) LiteralOp 120 [LOUT] {Total: 5.0, Self: 5.0, Net: 0.0, Weight: 5.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(451) TWrite C_old [FOUT] (450) {Total: 8180633.2, Self: 0.0, Net: 0.0, Weight: 1.3} [4, 100, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:450, X, C:8180633.2, F:0.0, FW:10.0),}
+(450) TRead C [FOUT] (340) {Total: 8180633.2, Self: 0.0, Net: 0.0, Weight: 1.3} [4, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:340, X, C:8180633.2, F:0.0, FW:1.0),}
+(340) TWrite C [FOUT] (339) {Total: 16361266.3, Self: 0.0, Net: 0.0, Weight: 1.0} [4, 100, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:339, X, C:16361266.3, F:0.0, FW:1.0),}
+(339) rix [FOUT] (329,335,337,331,873) {Total: 16361266.3, Self: 400.0, Net: 0.0, Weight: 1.0} [4, 100, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:329, O, C:16361059.3, F:0.0, FW:1.0),(ID:335, O, C:4.2, F:0.0, FW:1.0),(ID:337, O, C:1.5, F:0.0, FW:1.0),(ID:331, O, C:0.3, F:0.0, FW:1.0),(ID:873, O, C:1.0, F:0.0, FW:1.0),}
+(329) TRead All_Centroids [LOUT] (291,774) {Total: 16361059.3, Self: 0.0, Net: 0.0, Weight: 1.0} [4, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:291, X, C:16311030.8, F:0.0, FW:1.0),(ID:774, X, C:50028.5, F:0.0, FW:1.0),}
+(774) fcall .builtinNS m_kmeans [LOUT] (767,768,769,770,771,772,773,764) {Total: 50028.5, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:767, X, C:1.0, F:0.0, FW:1.0),(ID:768, X, C:1.0, F:0.0, FW:1.0),(ID:769, X, C:1.0, F:0.0, FW:1.0),(ID:770, X, C:1.0, F:0.0, FW:1.0),(ID:771, X, C:1.0, F:0.0, FW:1.0),(ID:772, X, C:1.0, F:0.0, FW:1.0),(ID:773, X, C:1.0, F:0.0, FW:1.0),(ID:764, O, C:50020.5, F:0.0, FW:1.0),}
+(767) LiteralOp 4 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(768) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(769) LiteralOp 120 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(770) LiteralOp 93 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(771) LiteralOp 1.0E-6 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(772) LiteralOp false [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(773) LiteralOp 50 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(335) b(+) [LOUT] (333,331) {Total: 4.2, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:333, X, C:2.8, F:0.0, FW:1.0),(ID:331, X, C:0.3, F:0.0, FW:1.0),}
+(333) b(*) [LOUT] (811,332) {Total: 2.8, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:811, X, C:0.5, F:0.0, FW:1.0),(ID:332, X, C:1.3, F:0.0, FW:1.0),}
+(811) LiteralOp 4 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(332) b(-) [LOUT] (328,331) {Total: 1.3, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:328, X, C:0.0, F:0.0, FW:1.0),(ID:331, X, C:0.3, F:0.0, FW:1.0),}
+(328) TRead run_index [LOUT] {Total: 0.0, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, 0, -1] [0, 0, - -> 0MB]
+(331) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(337) b(*) [LOUT] (328,811) {Total: 1.5, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:328, X, C:0.0, F:0.0, FW:1.0),(ID:811, X, C:0.5, F:0.0, FW:1.0),}
+(873) LiteralOp 100 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(327) TWrite __pred [LOUT] (831) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:831, X, C:1.0, F:0.0, FW:1.0),}
+(831) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(664) TWrite Y [LOUT] (663) {Total: 753715.9, Self: 0.0, Net: 0.0, Weight: 0.5} [1000, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:663, X, C:753715.9, F:0.0, FW:1.0),}
+(663) b(+) [LOUT] (661,578) {Total: 753715.9, Self: 500.0, Net: 0.0, Weight: 0.5} [1000, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:661, X, C:753215.8, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),}
+(661) ua(+R) [LOUT] (660) {Total: 753215.8, Self: 8000.0, Net: 0.0, Weight: 0.5} [1000, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:660, O, C:745215.8, F:0.0, FW:1.0),}
+(660) b(==) [FOUT] (576,658) {Total: 745215.8, Self: 2000.0, Net: 0.0, Weight: 0.5} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:576, O, C:0.2, F:0.0, FW:1.0),(ID:658, X, C:744215.7, F:0.0, FW:1.0),}
+(576) LiteralOp 0 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(658) r(r') [FOUT] (657) {Total: 744215.7, Self: 2000.0, Net: 0.0, Weight: 0.5} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:657, X, C:743215.7, F:0.0, FW:1.0),}
+(657) u(ucumk+) [FOUT] (656) {Total: 743215.7, Self: 2000.0, Net: 0.0, Weight: 0.5} [4, 1000, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:656, X, C:742215.7, F:0.0, FW:1.0),}
+(656) r(r') [FOUT] (655) {Total: 742215.7, Self: 2000.0, Net: 0.0, Weight: 0.5} [4, 1000, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:655, X, C:741215.7, F:0.0, FW:1.0),}
+(655) b(<=) [FOUT] (654,653) {Total: 741215.7, Self: 2000.0, Net: 0.0, Weight: 0.5} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:654, O, C:371107.8, F:0.0, FW:1.0),(ID:653, X, C:369107.8, F:0.0, FW:1.0),}
+(654) ua(minR) [LOUT] (653) {Total: 371107.8, Self: 2000.0, Net: 0.0, Weight: 0.5} [1000, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:653, O, C:369107.8, F:0.0, FW:1.0),}
+(653) b(+) [FOUT] (648,652) {Total: 738215.7, Self: 2000.0, Net: 0.0, Weight: 0.5} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:648, O, C:594417.8, F:0.0, FW:1.0),(ID:652, X, C:142797.8, F:0.0, FW:1.0),}
+(648) b(*) [LOUT] (645,647) {Total: 594417.8, Self: 2000.0, Net: 0.0, Weight: 0.5} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:645, X, C:0.5, F:0.0, FW:1.0),(ID:647, X, C:592417.3, F:0.0, FW:1.0),}
+(645) LiteralOp -2 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(647) ba(+*) [LOUT] (631,646) {Total: 592417.3, Self: 400000.0, Net: 0.0, Weight: 0.5} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:631, O, C:50020.5, F:0.0, FW:1.0),(ID:646, O, C:142396.8, F:0.0, FW:1.0),}
+(631) TRead X [FOUT] (764) {Total: 50020.5, Self: 0.0, Net: 0.0, Weight: 0.5} [1000, 100, 1000, -1] [0, 0, - -> 1MB] [Edges]{(ID:764, X, C:50020.5, F:0.0, FW:1.0),}
+(646) r(r') [FOUT] (643) {Total: 142396.8, Self: 200.0, Net: 0.0, Weight: 0.5} [100, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:643, X, C:142296.8, F:0.0, FW:1.0),}
+(643) rix [FOUT] (632,639,641,578,900) {Total: 426890.5, Self: 200.0, Net: 0.0, Weight: 0.5} [4, 100, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:632, O, C:50028.5, F:0.0, FW:1.0),(ID:639, O, C:188381.3, F:0.0, FW:1.0),(ID:641, O, C:188380.2, F:0.0, FW:1.0),(ID:578, O, C:0.0, F:0.0, FW:1.0),(ID:900, O, C:0.5, F:0.0, FW:1.0),}
+(632) TRead All_Centroids [LOUT] (491) {Total: 50028.5, Self: 0.0, Net: 0.0, Weight: 0.5} [4, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:491, X, C:50028.5, F:0.0, FW:1.0),}
+(491) TWrite All_Centroids [LOUT] (472) {Total: 50028.5, Self: 0.0, Net: 0.0, Weight: 1.0} [4, 100, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:472, X, C:50028.5, F:0.0, FW:1.0),}
+(472) TRead C [LOUT] (774) {Total: 50028.5, Self: 0.0, Net: 0.0, Weight: 1.0} [4, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:774, X, C:50028.5, F:0.0, FW:1.0),}
+(639) b(+) [LOUT] (637,578) {Total: 188381.3, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:637, X, C:188380.7, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),}
+(637) b(*) [LOUT] (815,636) {Total: 188380.7, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:815, X, C:0.2, F:0.0, FW:1.0),(ID:636, X, C:188380.0, F:0.0, FW:1.0),}
+(815) LiteralOp 4 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(636) b(-) [LOUT] (611,578) {Total: 188380.0, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:611, X, C:188379.4, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),}
+(611) u(castvti) [LOUT] (610) {Total: 376758.8, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:610, X, C:376758.3, F:0.0, FW:1.0),}
+(610) b(+) [LOUT] (899,578) {Total: 376758.3, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:899, X, C:376757.8, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),}
+(899) b(!=) [LOUT] (889,881) {Total: 376757.8, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:889, X, C:297159.5, F:0.0, FW:1.0),(ID:881, X, C:79597.8, F:0.0, FW:1.0),}
+(889) b(*) [LOUT] (888,879) {Total: 1188637.8, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:888, X, C:1188633.4, F:0.0, FW:1.0),(ID:879, X, C:4.0, F:0.0, FW:1.0),}
+(888) u(castdts) [LOUT] (577) {Total: 1188633.4, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:577, X, C:1188632.9, F:0.0, FW:1.0),}
+(577) REPLACE [LOUT] (574,575,576) {Total: 2377265.7, Self: 0.5, Net: 0.0, Weight: 0.5} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:574, X, C:2377264.6, F:0.0, FW:1.0),(ID:575, X, C:0.5, F:0.0, FW:1.0),(ID:576, X, C:0.2, F:0.0, FW:1.0),}
+(574) TRead final_wcss [LOUT] (495,774,503) {Total: 2377264.6, Self: 0.0, Net: 0.0, Weight: 0.5} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:495, X, C:2327222.6, F:0.0, FW:1.0),(ID:774, X, C:50028.5, F:0.0, FW:1.0),(ID:503, X, C:13.5, F:0.0, FW:1.0),}
+(495) TWrite final_wcss [LOUT] (494) {Total: 2327222.6, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:494, X, C:2327222.6, F:0.0, FW:1.0),}
+(494) lix [LOUT] (478,478,473,480,482,482) {Total: 2327222.6, Self: 1.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:478, X, C:0.0, F:0.0, FW:1.0),(ID:478, X, C:0.0, F:0.0, FW:1.0),(ID:473, X, C:2.0, F:0.0, FW:1.0),(ID:480, X, C:2327219.3, F:0.0, FW:1.0),(ID:482, X, C:0.1, F:0.0, FW:1.0),(ID:482, X, C:0.1, F:0.0, FW:1.0),}
+(478) TRead run_index [LOUT] {Total: 0.0, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, 0, -1] [0, 0, - -> 0MB]
+(473) TRead final_wcss [LOUT] (310) {Total: 2.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:310, X, C:2.0, F:0.0, FW:1.0),}
+(310) TWrite final_wcss [LOUT] (300) {Total: 2.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, 0] [-, 0, - -> 0MB] [Edges]{(ID:300, X, C:2.0, F:0.0, FW:1.0),}
+(300) dg(rand) [LOUT] (293,294,295,296,294,293,810,810) {Total: 6.0, Self: 1.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, 0] [-, 0, - -> 0MB] [Edges]{(ID:293, X, C:0.5, F:0.0, FW:1.0),(ID:294, X, C:0.5, F:0.0, FW:1.0),(ID:295, X, C:1.0, F:0.0, FW:1.0),(ID:296, X, C:1.0, F:0.0, FW:1.0),(ID:294, X, C:0.5, F:0.0, FW:1.0),(ID:293, X, C:0.5, F:0.0, FW:1.0),(ID:810, X, C:0.5, F:0.0, FW:1.0),(ID:810, X, C:0.5, F:0.0, FW:1.0),}
+(293) LiteralOp 1.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(294) LiteralOp 0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(295) LiteralOp uniform [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(296) LiteralOp -1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(810) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(480) TRead wcss [LOUT] (371) {Total: 2327219.3, Self: 0.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:371, X, C:2327219.3, F:0.0, FW:1.0),}
+(371) TWrite wcss [LOUT] (370) {Total: 4654438.6, Self: 0.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:370, X, C:4654438.6, F:0.0, FW:10.0),}
+(370) b(+) [LOUT] (353,369) {Total: 4654438.6, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:353, X, C:525010.3, F:0.0, FW:10.0),(ID:369, X, C:4129418.4, F:0.0, FW:10.0),}
+(353) TRead sumXsq [LOUT] (164) {Total: 525010.3, Self: 0.0, Net: 0.0, Weight: 10.0} [0, 0, 0, -1] [0, 0, - -> 0MB] [Edges]{(ID:164, X, C:525010.3, F:0.0, FW:1.0),}
+(164) TWrite sumXsq [LOUT] (845) {Total: 525010.3, Self: 0.0, Net: 0.0, Weight: 1.0} [-1, -1, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:845, X, C:525010.3, F:0.0, FW:1.0),}
+(845) ua(sq+RC) [LOUT] (160) {Total: 525010.3, Self: 500000.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [1, 0, - -> 1MB] [Edges]{(ID:160, O, C:25010.3, F:0.0, FW:1.0),}
+(369) ua(+RC) [LOUT] (366) {Total: 4129418.4, Self: 40000.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> -MB] [Edges]{(ID:366, X, C:4089418.4, F:0.0, FW:10.0),}
+(366) ua(minR) [LOUT] (364) {Total: 8178836.7, Self: 40000.0, Net: 0.0, Weight: 10.0} [1000, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:364, O, C:8138836.7, F:0.0, FW:10.0),}
+(364) b(+) [FOUT] (359,363) {Total: 16277673.4, Self: 40000.0, Net: 0.0, Weight: 10.0} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:359, O, C:12157336.8, F:0.0, FW:10.0),(ID:363, X, C:4100336.6, F:0.0, FW:10.0),}
+(359) b(*) [LOUT] (356,358) {Total: 12157336.8, Self: 40000.0, Net: 0.0, Weight: 10.0} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:356, X, C:10.0, F:0.0, FW:10.0),(ID:358, X, C:12117326.8, F:0.0, FW:10.0),}
+(356) LiteralOp -2 [LOUT] {Total: 10.0, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(358) ba(+*) [LOUT] (354,357) {Total: 12117326.8, Self: 8000000.0, Net: 0.0, Weight: 10.0} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:354, O, C:25010.3, F:0.0, FW:10.0),(ID:357, O, C:4092316.6, F:0.0, FW:10.0),}
+(354) TRead X [FOUT] (764) {Total: 50020.5, Self: 0.0, Net: 0.0, Weight: 10.0} [1000, 100, 1000, -1] [0, 0, - -> 1MB] [Edges]{(ID:764, X, C:50020.5, F:0.0, FW:1.0),}
+(357) r(r') [FOUT] (352) {Total: 4092316.6, Self: 4000.0, Net: 0.0, Weight: 10.0} [100, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:352, X, C:4090316.6, F:0.0, FW:10.0),}
+(352) TRead C [FOUT] (340) {Total: 8180633.2, Self: 0.0, Net: 0.0, Weight: 10.0} [4, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:340, X, C:8180633.2, F:0.0, FW:1.0),}
+(363) r(r') [FOUT] (874) {Total: 4100336.6, Self: 40.0, Net: 0.0, Weight: 10.0} [1, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:874, X, C:4100316.6, F:0.0, FW:10.0),}
+(874) ua(sq+R) [FOUT] (352) {Total: 4100316.6, Self: 20000.0, Net: 0.0, Weight: 10.0} [4, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:352, X, C:4090316.6, F:0.0, FW:10.0),}
+(482) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(503) TWrite num_iterations [LOUT] (502) {Total: 13.5, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:502, X, C:13.5, F:0.0, FW:1.0),}
+(502) lix [LOUT] (478,478,474,476,482,482) {Total: 13.5, Self: 1.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:478, X, C:0.0, F:0.0, FW:1.0),(ID:478, X, C:0.0, F:0.0, FW:1.0),(ID:474, X, C:2.0, F:0.0, FW:1.0),(ID:476, X, C:10.2, F:0.0, FW:1.0),(ID:482, X, C:0.1, F:0.0, FW:1.0),(ID:482, X, C:0.1, F:0.0, FW:1.0),}
+(474) TRead num_iterations [LOUT] (319) {Total: 2.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:319, X, C:2.0, F:0.0, FW:1.0),}
+(319) TWrite num_iterations [LOUT] (300) {Total: 2.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, 0] [0, 0, - -> 0MB] [Edges]{(ID:300, X, C:2.0, F:0.0, FW:1.0),}
+(476) TRead iter_count [LOUT] (425) {Total: 10.2, Self: 0.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:425, X, C:10.2, F:0.0, FW:1.0),}
+(575) LiteralOp Infinity [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(879) u(castdts) [LOUT] (582) {Total: 7.9, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:582, X, C:7.4, F:0.0, FW:1.0),}
+(582) rix [LOUT] (572,578,578,578,578) {Total: 14.9, Self: 0.5, Net: 0.0, Weight: 0.5} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:572, X, C:14.2, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),(ID:578, X, C:0.0, F:0.0, FW:1.0),}
+(572) TRead termination_bitmap [LOUT] (524) {Total: 14.2, Self: 0.0, Net: 0.0, Weight: 0.5} [1, 3, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:524, X, C:14.2, F:0.0, FW:1.0),}
+(524) TWrite termination_bitmap [LOUT] (523) {Total: 14.2, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 3, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:523, X, C:14.2, F:0.0, FW:1.0),}
+(523) lix [LOUT] (513,518,814,814,814,522) {Total: 28.4, Self: 3.0, Net: 0.0, Weight: 1.0} [1, 3, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:513, X, C:7.8, F:0.0, FW:1.0),(ID:518, X, C:8.2, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:522, X, C:9.2, F:0.0, FW:1.0),}
+(513) dg(rand) [LOUT] (506,507,508,509,507,506,814,512) {Total: 7.8, Self: 3.0, Net: 0.0, Weight: 1.0} [1, 3, 1000, 0] [-, 0, - -> 0MB] [Edges]{(ID:506, X, C:0.3, F:0.0, FW:1.0),(ID:507, X, C:0.5, F:0.0, FW:1.0),(ID:508, X, C:1.0, F:0.0, FW:1.0),(ID:509, X, C:1.0, F:0.0, FW:1.0),(ID:507, X, C:0.5, F:0.0, FW:1.0),(ID:506, X, C:0.3, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:512, X, C:1.0, F:0.0, FW:1.0),}
+(506) LiteralOp 1.0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(507) LiteralOp 0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(508) LiteralOp uniform [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(509) LiteralOp -1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(814) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(512) LiteralOp 3 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(518) t(ctable) [LOUT] (876,504,506) {Total: 16.3, Self: 3.0, Net: 0.0, Weight: 1.0} [-1, -1, 1000, -1] [0, 0, - -> 0MB], CP [Edges]{(ID:876, X, C:1.0, F:0.0, FW:1.0),(ID:504, X, C:12.0, F:0.0, FW:1.0),(ID:506, X, C:0.3, F:0.0, FW:1.0),}
+(876) LiteralOp seq(1, 1) [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(504) TRead termination_code [LOUT] (499) {Total: 12.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:499, X, C:12.0, F:0.0, FW:1.0),}
+(499) TWrite termination_code [LOUT] (498) {Total: 12.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:498, X, C:12.0, F:0.0, FW:1.0),}
+(498) lix [LOUT] (478,478,477,475,482,482) {Total: 12.0, Self: 1.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:478, X, C:0.0, F:0.0, FW:1.0),(ID:478, X, C:0.0, F:0.0, FW:1.0),(ID:477, X, C:2.0, F:0.0, FW:1.0),(ID:475, X, C:8.7, F:0.0, FW:1.0),(ID:482, X, C:0.1, F:0.0, FW:1.0),(ID:482, X, C:0.1, F:0.0, FW:1.0),}
+(477) TRead termination_code [LOUT] (301) {Total: 2.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:301, X, C:2.0, F:0.0, FW:1.0),}
+(301) TWrite termination_code [LOUT] (300) {Total: 2.0, Self: 0.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, 0] [0, 0, - -> 0MB] [Edges]{(ID:300, X, C:2.0, F:0.0, FW:1.0),}
+(475) TRead term_code [LOUT] (434,440,449) {Total: 8.7, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:434, X, C:5.0, F:0.0, FW:1.0),(ID:440, X, C:2.5, F:0.0, FW:1.0),(ID:449, X, C:1.2, F:0.0, FW:1.0),}
+(434) TWrite term_code [LOUT] (433) {Total: 5.0, Self: 0.0, Net: 0.0, Weight: 5.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:433, X, C:5.0, F:0.0, FW:10.0),}
+(433) LiteralOp 1 [LOUT] {Total: 5.0, Self: 5.0, Net: 0.0, Weight: 5.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(440) TWrite term_code [LOUT] (439) {Total: 2.5, Self: 0.0, Net: 0.0, Weight: 2.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:439, X, C:2.5, F:0.0, FW:10.0),}
+(439) LiteralOp 2 [LOUT] {Total: 2.5, Self: 2.5, Net: 0.0, Weight: 2.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(449) TWrite term_code [LOUT] (448) {Total: 1.2, Self: 0.0, Net: 0.0, Weight: 1.3} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:448, X, C:1.2, F:0.0, FW:10.0),}
+(448) LiteralOp 3 [LOUT] {Total: 1.2, Self: 1.2, Net: 0.0, Weight: 1.3} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(522) u(ncol) [LOUT] (518) {Total: 9.2, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:518, X, C:8.2, F:0.0, FW:1.0),}
+(578) LiteralOp 1 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(881) u(castdts) [LOUT] (882) {Total: 318391.3, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:882, X, C:318390.8, F:0.0, FW:1.0),}
+(882) t(+*) [LOUT] (583,589,596) {Total: 318390.8, Self: 1.0, Net: 0.0, Weight: 0.5} [1, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:583, X, C:169805.3, F:0.0, FW:1.0),(ID:589, X, C:148580.5, F:0.0, FW:1.0),(ID:596, X, C:4.0, F:0.0, FW:1.0),}
+(583) b(*) [LOUT] (577,879) {Total: 1188637.3, Self: 0.5, Net: 0.0, Weight: 0.5} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:577, X, C:1188632.9, F:0.0, FW:1.0),(ID:879, X, C:4.0, F:0.0, FW:1.0),}
+(589) b(+) [LOUT] (587,586) {Total: 297161.0, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:587, X, C:297160.2, F:0.0, FW:1.0),(ID:586, X, C:0.2, F:0.0, FW:1.0),}
+(587) b(*) [LOUT] (586,889) {Total: 297160.2, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:586, X, C:0.2, F:0.0, FW:1.0),(ID:889, X, C:297159.5, F:0.0, FW:1.0),}
+(586) LiteralOp 10 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(596) b(-) [LOUT] (578,582) {Total: 8.0, Self: 0.5, Net: 0.0, Weight: 0.5} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:578, X, C:0.0, F:0.0, FW:1.0),(ID:582, X, C:7.4, F:0.0, FW:1.0),}
+(641) b(*) [LOUT] (815,611) {Total: 188380.2, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:815, X, C:0.2, F:0.0, FW:1.0),(ID:611, X, C:188379.4, F:0.0, FW:1.0),}
+(900) LiteralOp 100 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(652) r(r') [FOUT] (901) {Total: 142797.8, Self: 2.0, Net: 0.0, Weight: 0.5} [1, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:901, X, C:142796.8, F:0.0, FW:1.0),}
+(901) ua(sq+R) [FOUT] (643) {Total: 142796.8, Self: 1000.0, Net: 0.0, Weight: 0.5} [4, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:643, X, C:142296.8, F:0.0, FW:1.0),}
+(432) TWrite __pred [LOUT] (431) {Total: 2327260.3, Self: 0.0, Net: 0.0, Weight: 10.0} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:431, X, C:2327260.3, F:0.0, FW:10.0),}
+(431) b(<) [LOUT] (429,430) {Total: 2327260.3, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:429, X, C:1163620.7, F:0.0, FW:10.0),(ID:430, X, C:1163629.7, F:0.0, FW:10.0),}
+(429) b(-) [LOUT] (428,427) {Total: 1163620.7, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:428, X, C:1.0, F:0.0, FW:10.0),(ID:427, X, C:1163609.7, F:0.0, FW:10.0),}
+(428) TRead wcss_old [LOUT] (368) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 10.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:368, X, C:1.0, F:0.0, FW:10.0),}
+(368) TWrite wcss_old [LOUT] (355) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 10.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:355, X, C:1.0, F:0.0, FW:10.0),}
+(355) TRead wcss [LOUT] (347) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 10.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:347, X, C:1.0, F:0.0, FW:1.0),}
+(347) TWrite wcss [LOUT] (346) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:346, X, C:1.0, F:0.0, FW:1.0),}
+(346) LiteralOp Infinity [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(427) TRead wcss [LOUT] (371) {Total: 2327219.3, Self: 0.0, Net: 0.0, Weight: 10.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:371, X, C:2327219.3, F:0.0, FW:10.0),}
+(430) b(*) [LOUT] (824,427) {Total: 1163629.7, Self: 10.0, Net: 0.0, Weight: 10.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:824, X, C:10.0, F:0.0, FW:10.0),(ID:427, X, C:1163609.7, F:0.0, FW:10.0),}
+(824) LiteralOp 1.0E-6 [LOUT] {Total: 10.0, Self: 10.0, Net: 0.0, Weight: 10.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(705) TWrite Y [LOUT] (704) {Total: 501.6, Self: 0.0, Net: 0.0, Weight: 0.5} [1, 1000, 1000, 1000] [-, 0, - -> 0MB] [Edges]{(ID:704, X, C:501.6, F:0.0, FW:1.0),}
+(704) dg(rand) [LOUT] (689,692,691,692,692,689,703,817) {Total: 501.6, Self: 500.0, Net: 0.0, Weight: 0.5} [1, 1000, 1000, 1000] [-, 0, - -> 0MB] [Edges]{(ID:689, X, C:0.1, F:0.0, FW:1.0),(ID:692, X, C:0.1, F:0.0, FW:1.0),(ID:691, X, C:0.2, F:0.0, FW:1.0),(ID:692, X, C:0.1, F:0.0, FW:1.0),(ID:692, X, C:0.1, F:0.0, FW:1.0),(ID:689, X, C:0.1, F:0.0, FW:1.0),(ID:703, X, C:0.5, F:0.0, FW:1.0),(ID:817, X, C:0.2, F:0.0, FW:1.0),}
+(689) LiteralOp 1.0 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(692) LiteralOp -1 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(691) LiteralOp uniform [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(703) LiteralOp 1 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(817) LiteralOp 1000 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(341) TWrite C_old [FOUT] (339) {Total: 16361266.3, Self: 0.0, Net: 0.0, Weight: 1.0} [4, 100, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:339, X, C:16361266.3, F:0.0, FW:1.0),}
+(688) u(print) [LOUT] (687) {Total: 1.0, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:687, X, C:0.5, F:0.0, FW:1.0),}
+(687) LiteralOp K-means: No output is produced. Try increasing the number of iterations and/or lower eps. [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(207) TWrite __pred [LOUT] (830) {Total: 4.0, Self: 0.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:830, X, C:4.0, F:0.0, FW:4.0),}
+(830) LiteralOp 4 [LOUT] {Total: 4.0, Self: 4.0, Net: 0.0, Weight: 4.0} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(447) TWrite __pred [LOUT] (446) {Total: 3252113.8, Self: 0.0, Net: 0.0, Weight: 2.5} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:446, X, C:3252113.8, F:0.0, FW:10.0),}
+(446) b(>) [LOUT] (444,442) {Total: 3252113.8, Self: 2.5, Net: 0.0, Weight: 2.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:444, X, C:3252110.0, F:0.0, FW:10.0),(ID:442, X, C:1.2, F:0.0, FW:10.0),}
+(444) ua(+RC) [LOUT] (443) {Total: 3252110.0, Self: 40.0, Net: 0.0, Weight: 2.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:443, O, C:3252070.0, F:0.0, FW:10.0),}
+(443) b(<=) [FOUT] (442,441) {Total: 3252070.0, Self: 10.0, Net: 0.0, Weight: 2.5} [1, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:442, O, C:1.2, F:0.0, FW:10.0),(ID:441, X, C:3252063.8, F:0.0, FW:10.0),}
+(442) LiteralOp 0 [LOUT] {Total: 2.5, Self: 2.5, Net: 0.0, Weight: 2.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(441) TRead P_denom [FOUT] (417) {Total: 3252063.8, Self: 0.0, Net: 0.0, Weight: 2.5} [1, 4, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:417, X, C:3252063.8, F:0.0, FW:10.0),}
+(417) TWrite P_denom [FOUT] (416) {Total: 3252063.8, Self: 0.0, Net: 0.0, Weight: 10.0} [1, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:416, X, C:3252063.8, F:0.0, FW:10.0),}
+(416) ua(+C) [FOUT] (415) {Total: 6504127.5, Self: 160000.0, Net: 0.0, Weight: 10.0} [1, 4, 1000, -1] [-, 0, - -> -MB] [Edges]{(ID:415, X, C:6424127.5, F:0.0, FW:10.0),}
+(415) b(/) [FOUT] (414,413) {Total: 12848255.1, Self: 880000.0, Net: 0.0, Weight: 10.0} [1000, 4, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:414, O, C:6284127.5, F:0.0, FW:10.0),(ID:413, X, C:6124127.5, F:0.0, FW:10.0),}
+(414) ua(+R) [LOUT] (413) {Total: 6284127.5, Self: 160000.0, Net: 0.0, Weight: 10.0} [1000, 1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:413, O, C:6124127.5, F:0.0, FW:10.0),}
+(413) b(<=) [FOUT] (366,364) {Total: 12248255.1, Self: 40000.0, Net: 0.0, Weight: 10.0} [1000, 4, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:366, O, C:4089418.4, F:0.0, FW:10.0),(ID:364, X, C:8138836.7, F:0.0, FW:10.0),}
+(325) TWrite __pred [LOUT] (324) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:324, X, C:1.0, F:0.0, FW:1.0),}
+(324) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(571) TWrite __pred [LOUT] (570) {Total: 18.5, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:570, X, C:18.5, F:0.0, FW:1.0),}
+(570) b(>) [LOUT] (568,569) {Total: 18.5, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:568, X, C:16.5, F:0.0, FW:1.0),(ID:569, X, C:1.0, F:0.0, FW:1.0),}
+(568) TRead num_successful_runs [LOUT] (567) {Total: 16.5, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, 0, -1] [0, 0, - -> 0MB] [Edges]{(ID:567, X, C:16.5, F:0.0, FW:1.0),}
+(567) TWrite num_successful_runs [LOUT] (566) {Total: 16.5, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:566, X, C:16.5, F:0.0, FW:1.0),}
+(566) u(castdts) [LOUT] (565) {Total: 16.5, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:565, X, C:15.5, F:0.0, FW:1.0),}
+(565) rix [LOUT] (523,814,814,814,814) {Total: 15.5, Self: 1.0, Net: 0.0, Weight: 1.0} [1, 1, 1000, -1] [0, 0, - -> 0MB] [Edges]{(ID:523, X, C:14.2, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),(ID:814, X, C:0.1, F:0.0, FW:1.0),}
+(569) LiteralOp 0 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(782) PWrite C [LOUT] (775,776,777,778,779,777,781) {Total: 16363083.7, Self: 4.0, Net: 0.0, Weight: 1.0} [4, -1, -1, -1] [-, 0, - -> 3000MB] [Edges]{(ID:775, X, C:16363074.7, F:0.0, FW:1.0),(ID:776, X, C:1.0, F:0.0, FW:1.0),(ID:777, X, C:0.5, F:0.0, FW:1.0),(ID:778, X, C:1.0, F:0.0, FW:1.0),(ID:779, X, C:1.0, F:0.0, FW:1.0),(ID:777, X, C:0.5, F:0.0, FW:1.0),(ID:781, X, C:1.0, F:0.0, FW:1.0),}
+(775) TRead C [LOUT] (696,291,774,503) {Total: 16363074.7, Self: 0.0, Net: 0.0, Weight: 1.0} [4, -1, 1000, -1] [0, 0, - -> 3000MB] [Edges]{(ID:696, X, C:2001.9, F:0.0, FW:1.0),(ID:291, X, C:16311030.8, F:0.0, FW:1.0),(ID:774, X, C:50028.5, F:0.0, FW:1.0),(ID:503, X, C:13.5, F:0.0, FW:1.0),}
+(696) TWrite C [LOUT] (695) {Total: 2001.9, Self: 0.0, Net: 0.0, Weight: 0.5} [4, 1000, 1000, 0] [-, 0, - -> 0MB] [Edges]{(ID:695, X, C:2001.9, F:0.0, FW:1.0),}
+(695) dg(rand) [LOUT] (689,690,691,692,690,689,816,817) {Total: 2001.9, Self: 2000.0, Net: 0.0, Weight: 0.5} [4, 1000, 1000, 0] [0, 0, - -> 0MB] [Edges]{(ID:689, X, C:0.1, F:0.0, FW:1.0),(ID:690, X, C:0.2, F:0.0, FW:1.0),(ID:691, X, C:0.2, F:0.0, FW:1.0),(ID:692, X, C:0.1, F:0.0, FW:1.0),(ID:690, X, C:0.2, F:0.0, FW:1.0),(ID:689, X, C:0.1, F:0.0, FW:1.0),(ID:816, X, C:0.5, F:0.0, FW:1.0),(ID:817, X, C:0.2, F:0.0, FW:1.0),}
+(690) LiteralOp 0 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(816) LiteralOp 4 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(776) LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedKMeansPlanningTest/out/Z [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(777) LiteralOp false [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(778) LiteralOp : [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(779) LiteralOp text [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(781) LiteralOp , [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]

@@ -1,0 +1,7 @@
+operation_type,input_pattern,output_ftype,count,allow_rate,total
+AggBinaryOp,ROW+NULL,ROW,4,1.0,4
+AggUnaryOp,ROW,ROW,6,1.0,6
+BinaryOp,ROW+NULL,ROW,8,1.0,8
+BinaryOp,ROW+ROW,ROW,6,1.0,6
+DataOp,NO_INPUT,ROW,3,1.0,3
+ReorgOp,ROW,COL,4,1.0,4

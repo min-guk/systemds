@@ -1,0 +1,13 @@
+hop_id,name,op_code,allows_federated,result_ftype,reason_code,input_ftype_pattern,ftype_category,matrix_size
+710,parsertemp424,LIST,False,,UNKNOWN_HOP_TYPE,NULL_x2,,2
+710,parsertemp424,LIST,False,,DISALLOWED_OP,NULL_x2,,2
+738,parsertemp425,LIST,False,,UNKNOWN_HOP_TYPE,NULL_x2,,2
+738,parsertemp425,LIST,False,,DISALLOWED_OP,NULL_x2,,2
+747,parsertemp427,LIST,False,,UNKNOWN_HOP_TYPE,NULL_x2,,2
+747,parsertemp427,LIST,False,,DISALLOWED_OP,NULL_x2,,2
+756,parsertemp429,LIST,False,,UNKNOWN_HOP_TYPE,NULL_x2,,2
+756,parsertemp429,LIST,False,,DISALLOWED_OP,NULL_x2,,2
+761,parsertemp430,LIST,False,,UNKNOWN_HOP_TYPE,NULL_x2,,2
+761,parsertemp430,LIST,False,,DISALLOWED_OP,NULL_x2,,2
+762,parsertemp431,LIST,False,,UNKNOWN_HOP_TYPE,NULL_x4,,4
+762,parsertemp431,LIST,False,,DISALLOWED_OP,NULL_x4,,4

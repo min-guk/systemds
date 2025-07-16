@@ -1,0 +1,7 @@
+hop_id,name,op_code,allows_federated,result_ftype,reason_code,input_ftype_pattern,ftype_category,matrix_size
+963,tmp,REXPAND,False,,UNKNOWN_HOP_TYPE,NULL_x5,,341000
+963,tmp,REXPAND,False,,DISALLOWED_OP,NULL_x5,,341000
+861,tmp,REXPAND,False,,UNKNOWN_HOP_TYPE,NULL_x5,,341
+861,tmp,REXPAND,False,,DISALLOWED_OP,NULL_x5,,341
+577,parsertemp362,REPLACE,False,,UNKNOWN_HOP_TYPE,NULL_x3,,1
+577,parsertemp362,REPLACE,False,,DISALLOWED_OP,NULL_x3,,1

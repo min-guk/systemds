@@ -1,0 +1,23 @@
+[Todo]detectAndResolveConflictFedPlan call has been commented out.
+Additional Cost: 0.0
+(R) ROOT [Root] (448,443,457,435,433,439) {Total: 19.0}
+(448) fcall .defaultNS factorialUser [LOUT] (444,444) {Total: 2.0, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:444, X, C:1.0, F:0.0, FW:1.0),(ID:444, X, C:1.0, F:0.0, FW:1.0),}
+(444) LiteralOp 5 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(443) TWrite result [LOUT] (442,442) {Total: 1.5, Self: 0.0, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:442, X, C:1.5, F:0.0, FW:1.0),(ID:442, X, C:1.5, F:0.0, FW:1.0),}
+(442) b(*) [LOUT] (441,440,441) {Total: 1.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:441, X, C:1.0, F:0.0, FW:1.0),(ID:440, X, C:0.0, F:0.0, FW:1.0),(ID:441, X, C:1.0, F:0.0, FW:1.0),}
+(441) TRead n [LOUT] (444,444) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:444, X, C:1.0, F:0.0, FW:1.0),(ID:444, X, C:1.0, F:0.0, FW:1.0),}
+(440) TRead _funvar1 [LOUT] {Total: 0.0, Self: 0.0, Net: 0.0, Weight: 0.5} [-1, -1, -1, -1] [0, 0, - -> 0MB]
+(457) u(print) [LOUT] (456,456) {Total: 9.5, Self: 1.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:456, X, C:8.5, F:0.0, FW:1.0),(ID:456, X, C:8.5, F:0.0, FW:1.0),}
+(456) b(+) [LOUT] (461,449,461,449) {Total: 8.5, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:461, X, C:1.0, F:0.0, FW:1.0),(ID:449, X, C:6.5, F:0.0, FW:1.0),(ID:461, X, C:1.0, F:0.0, FW:1.0),(ID:449, X, C:6.5, F:0.0, FW:1.0),}
+(461) LiteralOp Factorial of 5:  [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(449) TRead fact_result [LOUT] (435,443,448,439,435,443,448,439) {Total: 6.5, Self: 0.0, Net: 0.0, Weight: 1.0} [-1, -1, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:435, X, C:0.5, F:0.0, FW:1.0),(ID:443, X, C:1.5, F:0.0, FW:1.0),(ID:448, X, C:2.0, F:0.0, FW:1.0),(ID:439, X, C:2.5, F:0.0, FW:1.0),(ID:435, X, C:0.5, F:0.0, FW:1.0),(ID:443, X, C:1.5, F:0.0, FW:1.0),(ID:448, X, C:2.0, F:0.0, FW:1.0),(ID:439, X, C:2.5, F:0.0, FW:1.0),}
+(435) TWrite result [LOUT] (434,434) {Total: 0.5, Self: 0.0, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:434, X, C:0.5, F:0.0, FW:1.0),(ID:434, X, C:0.5, F:0.0, FW:1.0),}
+(434) LiteralOp 1 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(439) fcall .defaultNS factorialUser [LOUT] (438,438) {Total: 2.5, Self: 0.5, Net: 0.0, Weight: 0.5} [-1, -1, 1000, -1] [-, 0, - -> 0MB] [Edges]{(ID:438, X, C:2.0, F:0.0, FW:1.0),(ID:438, X, C:2.0, F:0.0, FW:1.0),}
+(438) b(-) [LOUT] (436,437,436,437) {Total: 2.0, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:436, X, C:1.0, F:0.0, FW:1.0),(ID:437, X, C:0.5, F:0.0, FW:1.0),(ID:436, X, C:1.0, F:0.0, FW:1.0),(ID:437, X, C:0.5, F:0.0, FW:1.0),}
+(436) TRead n [LOUT] (444,444) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:444, X, C:1.0, F:0.0, FW:1.0),(ID:444, X, C:1.0, F:0.0, FW:1.0),}
+(437) LiteralOp 1 [LOUT] {Total: 0.5, Self: 0.5, Net: 0.0, Weight: 0.5} [0, 0, -1, -1] [0, 0, - -> 0MB]
+(433) TWrite __pred [LOUT] (432,432) {Total: 3.0, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, 0, -1] [-, 0, - -> 0MB] [Edges]{(ID:432, X, C:3.0, F:0.0, FW:1.0),(ID:432, X, C:3.0, F:0.0, FW:1.0),}
+(432) b(<=) [LOUT] (430,431,430,431) {Total: 3.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [-, 0, - -> 0MB] [Edges]{(ID:430, X, C:1.0, F:0.0, FW:1.0),(ID:431, X, C:1.0, F:0.0, FW:1.0),(ID:430, X, C:1.0, F:0.0, FW:1.0),(ID:431, X, C:1.0, F:0.0, FW:1.0),}
+(430) TRead n [LOUT] (444,444) {Total: 1.0, Self: 0.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB] [Edges]{(ID:444, X, C:1.0, F:0.0, FW:1.0),(ID:444, X, C:1.0, F:0.0, FW:1.0),}
+(431) LiteralOp 1 [LOUT] {Total: 1.0, Self: 1.0, Net: 0.0, Weight: 1.0} [0, 0, -1, -1] [0, 0, - -> 0MB]

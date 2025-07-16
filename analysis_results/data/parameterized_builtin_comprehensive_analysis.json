@@ -1,0 +1,173 @@
+{
+  "summary": {
+    "total_fed_supported": 8,
+    "found_in_data": 2,
+    "overlap_count": 1,
+    "missing_count": 7,
+    "extra_count": 1,
+    "consistent_count": 0,
+    "inconsistent_count": 1
+  },
+  "fed_supported_opcodes": [
+    "RMEMPTY",
+    "TRANSFORMAPPLY",
+    "TOKENIZE",
+    "LOWERTRI",
+    "UPPERTRI",
+    "REPLACE",
+    "CONTAINS",
+    "TRANSFORMDECODE"
+  ],
+  "found_opcodes": [
+    "REPLACE",
+    "REXPAND"
+  ],
+  "missing_from_data": [
+    "RMEMPTY",
+    "TRANSFORMAPPLY",
+    "TOKENIZE",
+    "LOWERTRI",
+    "UPPERTRI",
+    "CONTAINS",
+    "TRANSFORMDECODE"
+  ],
+  "extra_in_data": [
+    "REXPAND"
+  ],
+  "overlap_opcodes": [
+    "REPLACE"
+  ],
+  "coverage_analysis": [
+    {
+      "opcode": "CONTAINS",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "LOWERTRI",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "RMEMPTY",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "TOKENIZE",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "TRANSFORMAPPLY",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "TRANSFORMDECODE",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "UPPERTRI",
+      "fed_supported": true,
+      "found_in_data": false,
+      "data_entries": 0,
+      "allows_fed_rate": 0.0,
+      "status": "MISSING_FROM_DATA",
+      "inconsistency": "Implementation exists but no data found"
+    },
+    {
+      "opcode": "REXPAND",
+      "fed_supported": false,
+      "found_in_data": true,
+      "data_entries": 4,
+      "allows_fed_rate": 0.0,
+      "status": "NO_FED_IMPL",
+      "inconsistency": null
+    },
+    {
+      "opcode": "REPLACE",
+      "fed_supported": true,
+      "found_in_data": true,
+      "data_entries": 2,
+      "allows_fed_rate": 0.0,
+      "status": "INCONSISTENT_NEGATIVE",
+      "inconsistency": "FED implementation exists but all entries have allows_federated=False"
+    }
+  ],
+  "detailed_analysis": {
+    "REPLACE": {
+      "opcode": "REPLACE",
+      "fed_supported": true,
+      "total_entries": 2,
+      "allows_fed_count": 0,
+      "allows_fed_rate": 0.0,
+      "reason_counts": {
+        "UNKNOWN_HOP_TYPE": 1,
+        "DISALLOWED_OP": 1
+      },
+      "result_ftype_counts": {},
+      "null_result_rate": 1.0,
+      "input_pattern_counts": {
+        "('null', 'null', 'null')": 2
+      },
+      "inconsistencies": [
+        {
+          "type": "FED_SUPPORTED_BUT_FALSE",
+          "count": 2,
+          "rate": 1.0,
+          "reasons": {
+            "UNKNOWN_HOP_TYPE": 1,
+            "DISALLOWED_OP": 1
+          },
+          "description": "Has FED implementation but 2/2 entries have allows_federated=False"
+        }
+      ]
+    },
+    "REXPAND": {
+      "opcode": "REXPAND",
+      "fed_supported": false,
+      "total_entries": 4,
+      "allows_fed_count": 0,
+      "allows_fed_rate": 0.0,
+      "reason_counts": {
+        "UNKNOWN_HOP_TYPE": 2,
+        "DISALLOWED_OP": 2
+      },
+      "result_ftype_counts": {},
+      "null_result_rate": 1.0,
+      "input_pattern_counts": {
+        "('null', 'null', 'null', 'null', 'null')": 4
+      },
+      "inconsistencies": []
+    }
+  },
+  "analysis_timestamp": "2025-06-12T22:26:42.031343",
+  "data_source": "enhanced_log_data.csv",
+  "implementation_source": "ParameterizedBuiltinFEDInstruction.java lines 89-91"
+}

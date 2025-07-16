@@ -1,0 +1,13 @@
+hop_id,name,op_code,allows_federated,result_ftype,reason_code,input_ftype_pattern,ftype_category,matrix_size
+987,sample_col_map,UNKNOWN,False,,UNKNOWN_HOP_TYPE,NULL_x5,,-341
+987,sample_col_map,UNKNOWN,False,,DISALLOWED_OP,NULL_x5,,-341
+237,cdf_min_distances,UNKNOWN,False,,UNKNOWN_HOP_TYPE,NULL_x5,,1
+237,cdf_min_distances,UNKNOWN,False,,DISALLOWED_OP,NULL_x5,,1
+339,C,UNKNOWN,False,,UNKNOWN_HOP_TYPE,NULL_x5,,400
+339,C,UNKNOWN,False,,DISALLOWED_OP,NULL_x5,,400
+565,termination_stats,UNKNOWN,False,,UNKNOWN_HOP_TYPE,NULL_x5,,1
+565,termination_stats,UNKNOWN,False,,DISALLOWED_OP,NULL_x5,,1
+582,termination_bitmap,UNKNOWN,False,,UNKNOWN_HOP_TYPE,NULL_x5,,1
+582,termination_bitmap,UNKNOWN,False,,DISALLOWED_OP,NULL_x5,,1
+643,C,UNKNOWN,False,,UNKNOWN_HOP_TYPE,NULL_x5,,400
+643,C,UNKNOWN,False,,DISALLOWED_OP,NULL_x5,,400
