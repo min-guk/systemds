@@ -46,7 +46,6 @@ public abstract class CPInstruction extends Instruction {
 		StringInit, CentralMoment, Covariance, UaggOuterChain, Dnn, Sql, Prefetch, Broadcast, TrigRemote,
 		EvictLineageCache,
 		NoOp,
-		Union,
 		QuantizeCompression
 	 }
 

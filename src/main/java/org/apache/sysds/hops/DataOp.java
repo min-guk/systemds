@@ -24,7 +24,6 @@ import java.util.Map.Entry;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.OpOpData;
@@ -466,9 +465,6 @@ public class DataOp extends Hop {
 		}
 		else //READ
 		{
-			if( DMLScript.USE_OOC )
-				checkAndSetForcedPlatform();
-			
 			//mark for recompile (forever)
 			if( ConfigurationManager.isDynamicRecompilation() && !dimsKnown(true) && letype==ExecType.SPARK 
 				&& (_recompileRead || _requiresCheckpoint) ) 
@@ -477,7 +473,7 @@ public class DataOp extends Hop {
 			}
 			
 			_etype = letype;
-			if ( _etypeForced == ExecType.FED || _etypeForced == ExecType.OOC )
+			if ( _etypeForced == ExecType.FED )
 				_etype = _etypeForced;
 		}
 
