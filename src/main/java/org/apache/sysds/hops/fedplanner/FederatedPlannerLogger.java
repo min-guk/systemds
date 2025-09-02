@@ -164,15 +164,30 @@ public class FederatedPlannerLogger {
      * @param hop The hop being analyzed
      * @param returnFType The FType that will be returned
      * @param reason The reason for the FType decision
+     * @param inputFTypes Array of input FTypes (ft array from getFederatedTypeDebug)
      */
-    public static void logGetFederatedTypeDebug(Hop hop, FType returnFType, String reason) {
+    public static void logGetFederatedTypeDebug(Hop hop, FType returnFType, String reason, FType[] inputFTypes) {
         String hopName = hop.getName() != null ? hop.getName() : "null";
         long hopID = hop.getHopID();
         String operationType = hop.getClass().getSimpleName();
         String opCode = hop.getOpString();
         
+        // Build input FTypes string
+        StringBuilder inputFTypesStr = new StringBuilder();
+        if (inputFTypes != null && inputFTypes.length > 0) {
+            inputFTypesStr.append("[");
+            for (int i = 0; i < inputFTypes.length; i++) {
+                if (i > 0) inputFTypesStr.append(",");
+                inputFTypesStr.append(inputFTypes[i] != null ? inputFTypes[i].toString() : "null");
+            }
+            inputFTypesStr.append("]");
+        } else {
+            inputFTypesStr.append("[]");
+        }
+        
         System.out.println("[GetFederatedType] HopName: " + hopName + " | HopID: " + hopID +
                           " | OperationType: " + operationType + " | OpCode: " + opCode + 
+                          " | InputFTypes: " + inputFTypesStr.toString() +
                           " | ReturnFType: " + (returnFType != null ? returnFType : "null") + 
                           " | Reason: " + reason);
     }
@@ -390,16 +405,21 @@ public class FederatedPlannerLogger {
      */
     public static void printFedPlanTree(FederatedMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
                                         FederatedMemoTable memoTable, double additionalTotalCost) {
+        printFedPlanTree(rootFedPlan, rootHopStatSet, memoTable, additionalTotalCost, false);
+    }
+
+    public static void printFedPlanTree(FederatedMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
+                                        FederatedMemoTable memoTable, double additionalTotalCost, boolean onlyEdge) {
         System.out.println("Additional Cost: " + additionalTotalCost);
         Set<Long> visited = new HashSet<>();
-        printFedPlanTreeRecursive(rootFedPlan, memoTable, visited, 0);
+        printFedPlanTreeRecursive(rootFedPlan, memoTable, visited, 0, onlyEdge);
 
         for (Long hopID : rootHopStatSet) {
             FedPlan plan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
             if (plan == null){
                 plan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
             }
-            printNotReferencedFedPlanRecursive(plan, memoTable, visited, 1);
+            printNotReferencedFedPlanRecursive(plan, memoTable, visited, 1, onlyEdge);
         }
     }
 
@@ -412,7 +432,7 @@ public class FederatedPlannerLogger {
      * @param depth   The current depth level for indentation
      */
     private static void printNotReferencedFedPlanRecursive(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable,
-                                           Set<Long> visited, int depth) {
+                                           Set<Long> visited, int depth, boolean onlyEdge) {
         long hopID = plan.getHopRef().getHopID();
 
         if (visited.contains(hopID)) {
@@ -420,7 +440,7 @@ public class FederatedPlannerLogger {
         }
 
         visited.add(hopID);
-        printFedPlan(plan, memoTable, depth, true);
+        printFedPlan(plan, memoTable, depth, true, onlyEdge);
 
         // Process child nodes
         List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = plan.getChildFedPlans();
@@ -431,7 +451,7 @@ public class FederatedPlannerLogger {
                 continue;
 
             for (FederatedMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
-                printNotReferencedFedPlanRecursive(childPlan, memoTable, visited, depth + 1);
+                printNotReferencedFedPlanRecursive(childPlan, memoTable, visited, depth + 1, onlyEdge);
             }
         }
     }
@@ -445,7 +465,7 @@ public class FederatedPlannerLogger {
      * @param depth   The current depth level for indentation
      */
     private static void printFedPlanTreeRecursive(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable,
-                                           Set<Long> visited, int depth) {
+                                           Set<Long> visited, int depth, boolean onlyEdge) {
         long hopID = 0;
 
         if (depth == 0) {
@@ -459,7 +479,7 @@ public class FederatedPlannerLogger {
         }
 
         visited.add(hopID);
-        printFedPlan(plan, memoTable, depth, false);
+        printFedPlan(plan, memoTable, depth, false, onlyEdge);
         
         // Process child nodes
         List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = plan.getChildFedPlans();
@@ -470,7 +490,7 @@ public class FederatedPlannerLogger {
                 continue;
 
             for (FederatedMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
-                printFedPlanTreeRecursive(childPlan, memoTable, visited, depth + 1);
+                printFedPlanTreeRecursive(childPlan, memoTable, visited, depth + 1, onlyEdge);
             }
         }
     }
@@ -483,18 +503,18 @@ public class FederatedPlannerLogger {
      * @param depth The current depth level for indentation
      * @param isNotReferenced Whether this plan is not referenced
      */
-    private static void printFedPlan(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable, int depth, boolean isNotReferenced) {
+    private static void printFedPlan(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable, int depth, boolean isNotReferenced, boolean onlyEdge) {
         StringBuilder sb = new StringBuilder();
         Hop hop = null;
 
         if (depth == 0){
-            sb.append("(R) ROOT [Root]");
+            sb.append("[HopID]: ROOT, [Name]: ROOT, [FOutType]: Root");
         } else {
             hop = plan.getHopRef();
-            // Add FedPlan information
-            sb.append(String.format("(%d) ", hop.getHopID()))
-                    .append(hop.getOpString())
-                    .append(" [");
+            // Add FedPlan information with explicit labels
+            sb.append("[HopID]: ").append(hop.getHopID())
+                    .append(", [Name]: ").append(hop.getOpString())
+                    .append(", [FOutType]: ");
 
             if (isNotReferenced) {
                 if (depth == 1) {
@@ -505,94 +525,230 @@ public class FederatedPlannerLogger {
             } else{
                 sb.append(plan.getFedOutType());
             }
-            sb.append("]");
         }
 
-        StringBuilder childs = new StringBuilder();
-        childs.append(" (");
+        // Add child hop IDs with explicit label
+        StringBuilder childHopIDs = new StringBuilder();
+        childHopIDs.append(", [ChildHopIDs]: (");
 
         boolean childAdded = false;
         for (Pair<Long, FederatedOutput> childPair : plan.getChildFedPlans()){
-            childs.append(childAdded?",":"");
-            childs.append(childPair.getLeft());
+            childHopIDs.append(childAdded ? ", " : "");
+            childHopIDs.append(childPair.getLeft());
             childAdded = true;
         }
         
-        childs.append(")");
+        childHopIDs.append(")");
 
-        if (childAdded)
-            sb.append(childs.toString());
+        if( childAdded )
+            sb.append(childHopIDs.toString());
+        else
+            sb.append(", [ChildHopIDs]: ()");
 
-        if (depth == 0){
-            sb.append(String.format(" {Total: %.1f}", plan.getCumulativeCost()));
+        // Add parent hop IDs with explicit label
+        if (depth > 0) {
+            List<Hop> parentHops = hop.getParent();
+            StringBuilder parentHopIDs = new StringBuilder();
+            parentHopIDs.append(", [ParentHopIDs]: (");
+            
+            boolean parentAdded = false;
+            if (parentHops != null && !parentHops.isEmpty()) {
+                for (Hop parentHop : parentHops) {
+                    parentHopIDs.append(parentAdded ? ", " : "");
+                    parentHopIDs.append(parentHop.getHopID());
+                    parentAdded = true;
+                }
+            }
+            
+            parentHopIDs.append(")");
+            sb.append(parentHopIDs.toString());
+        }
+
+        // If onlyEdge is true, print only basic information and return
+        if (onlyEdge) {
             System.out.println(sb);
             return;
         }
 
-        sb.append(String.format(" {Total: %.1f, Self: %.1f, Net: %.1f, Weight: %.1f}",
-                plan.getCumulativeCost(),
-                plan.getSelfCost(),
-                plan.getForwardingCost(),
-                plan.getComputeWeight()));
+        if (depth == 0){
+            sb.append(", [CostInfo]: {TotalCost: ").append(String.format("%.1f", plan.getCumulativeCost())).append("}");
+            System.out.println(sb);
+            return;
+        }
 
-        // Add matrix characteristics
-        sb.append(" [")
-                .append(hop.getDim1()).append(", ")
-                .append(hop.getDim2()).append(", ")
-                .append(hop.getBlocksize()).append(", ")
-                .append(hop.getNnz());
+        // Add cost information with explicit labels
+        sb.append(", [CostInfo]: {TotalCost: ").append(String.format("%.1f", plan.getCumulativeCost()))
+                .append(", SelfCost: ").append(String.format("%.1f", plan.getSelfCost()))
+                .append(", NetworkCost: ").append(String.format("%.1f", plan.getForwardingCost()))
+                .append(", ComputeWeight: ").append(String.format("%.1f", plan.getComputeWeight())).append("}");
+
+        // Add matrix characteristics with explicit labels
+        sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
+                .append("), Blocksize: ").append(hop.getBlocksize())
+                .append(", NNZ: ").append(hop.getNnz());
 
         if (hop.getUpdateType().isInPlace()) {
-            sb.append(", ").append(hop.getUpdateType().toString().toLowerCase());
+            sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
         }
-        sb.append("]");
+        sb.append("}");
 
-        // Add memory estimates
-        sb.append(" [")
-                .append(OptimizerUtils.toMB(hop.getInputMemEstimate())).append(", ")
-                .append(OptimizerUtils.toMB(hop.getIntermediateMemEstimate())).append(", ")
-                .append(OptimizerUtils.toMB(hop.getOutputMemEstimate())).append(" -> ")
-                .append(OptimizerUtils.toMB(hop.getMemEstimate())).append("MB]");
+        // Add memory estimates with explicit labels
+        sb.append(", [MemoryInfo]: {InputMem: ").append(OptimizerUtils.toMB(hop.getInputMemEstimate())).append("MB")
+                .append(", IntermediateMem: ").append(OptimizerUtils.toMB(hop.getIntermediateMemEstimate())).append("MB")
+                .append(", OutputMem: ").append(OptimizerUtils.toMB(hop.getOutputMemEstimate())).append("MB")
+                .append(", TotalMem: ").append(OptimizerUtils.toMB(hop.getMemEstimate())).append("MB}");
 
-        // Add reblock and checkpoint requirements
+        // Add execution requirements with explicit labels
+        StringBuilder execInfo = new StringBuilder();
+        execInfo.append(", [ExecutionInfo]: {");
+        
         if (hop.requiresReblock() && hop.requiresCheckpoint()) {
-            sb.append(" [rblk, chkpt]");
+            execInfo.append("RequiresReblock: true, RequiresCheckpoint: true");
         } else if (hop.requiresReblock()) {
-            sb.append(" [rblk]");
+            execInfo.append("RequiresReblock: true, RequiresCheckpoint: false");
         } else if (hop.requiresCheckpoint()) {
-            sb.append(" [chkpt]");
+            execInfo.append("RequiresReblock: false, RequiresCheckpoint: true");
+        } else {
+            execInfo.append("RequiresReblock: false, RequiresCheckpoint: false");
         }
 
         // Add execution type
         if (hop.getExecType() != null) {
-            sb.append(", ").append(hop.getExecType());
+            execInfo.append(", ExecType: ").append(hop.getExecType());
         }
         
+        execInfo.append("}");
+        sb.append(execInfo.toString());
+        
         if (childAdded){
-            sb.append(" [Edges]{");
+            sb.append(", [EdgeInfo]: {");
+            boolean firstEdge = true;
             for (Pair<Long, FederatedOutput> childPair : plan.getChildFedPlans()){
+                if (!firstEdge) sb.append(", ");
+                firstEdge = false;
+                
                 // Add forwarding weight for each edge
                 FedPlan childPlan = memoTable.getFedPlanAfterPrune(childPair.getLeft(), childPair.getRight());
                 
                 if (childPlan == null) {
-                    sb.append(String.format("(ID:%d, NULL)", childPair.getLeft()));
+                    sb.append(String.format("Edge(ID:%d, NULL)", childPair.getLeft()));
                 } else {
                     String isForwardingCostOccured = "";
+                    double totalForwarding = 0.0;
                     if (childPair.getRight() == plan.getFedOutType()){
                         isForwardingCostOccured = "X";
+                        totalForwarding = 0.0;
                     } else {
                         isForwardingCostOccured = "O";
+                        totalForwarding = plan.getChildForwardingWeight(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
                     }
-                    sb.append(String.format("(ID:%d, %s, C:%.1f, F:%.1f, FW:%.1f)", childPair.getLeft(), isForwardingCostOccured, 
+                    sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
+                                childPair.getLeft(), isForwardingCostOccured, 
                                 childPlan.getCumulativeCostPerParents(), 
-                                plan.getChildForwardingWeight(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents(), 
-                                plan.getChildForwardingWeight(childPlan.getLoopContext())));
+                                plan.getChildForwardingWeight(childPlan.getLoopContext()),
+                                totalForwarding));
                 }
-                sb.append(childAdded?",":"");
             }
             sb.append("}");
         }
 
         System.out.println(sb);
+    }
+
+    // ===================================================================================
+    // Wire UnRefTwrite to LiveOut Logging Methods
+    // ===================================================================================
+
+    /**
+     * Logs the start of wireUnRefTwriteToLiveOut processing
+     * @param unRefTwriteSetSize Number of unRefTwrite hops to process
+     */
+    public static void logWireUnRefTwriteStart(int unRefTwriteSetSize) {
+        System.out.println("\n[INFO] wireUnRefTwriteToLiveOut - Processing " + unRefTwriteSetSize + " unRefTwrite hops");
+    }
+
+    /**
+     * Logs the processing of a specific unRefTwrite hop
+     * @param hopName Name of the hop
+     * @param hopID ID of the hop
+     * @param hop The hop being processed
+     * @param fType FType of the hop
+     */
+    public static void logProcessingUnRefTwriteHop(String hopName, long hopID, Hop hop, FType fType) {
+        System.out.println("[INFO] Processing unRefTwrite hop: " + hopName + " (ID: " + hopID + ")");
+        System.out.println("  - Type: " + hop.getClass().getSimpleName());
+        System.out.println("  - DataType: " + hop.getDataType());
+        System.out.println("  - Dimensions: " + hop.getDim1() + "x" + hop.getDim2());
+        System.out.println("  - FType: " + fType);
+    }
+
+    /**
+     * Logs candidate information for wireUnRefTwriteToLiveOut
+     * @param candidateInfo List of candidate information strings
+     */
+    public static void logCandidateInfo(List<String> candidateInfo) {
+        for (String info : candidateInfo) {
+            System.out.println(info);
+        }
+    }
+
+    /**
+     * Logs successful connection in wireUnRefTwriteToLiveOut
+     * @param bestLiveOutHopName Name of the connected hop
+     * @param bestScore Score of the connection
+     */
+    public static void logSuccessfulConnection(String bestLiveOutHopName, int bestScore) {
+        System.out.println("  ✓ CONNECTED to: " + bestLiveOutHopName + " (Score: " + bestScore + ")");
+    }
+
+    /**
+     * Logs no compatible connection found
+     */
+    public static void logNoCompatibleConnection() {
+        System.out.println("  ✗ NO COMPATIBLE CONNECTION FOUND");
+        System.out.println("  - Falling back to original algorithm...");
+    }
+
+    /**
+     * Logs fallback connection in wireUnRefTwriteToLiveOut
+     * @param liveOutHopName Name of the fallback connection
+     */
+    public static void logFallbackConnection(String liveOutHopName) {
+        System.out.println("  ✓ FALLBACK CONNECTION to: " + liveOutHopName + " (No compatibility check)");
+    }
+
+    /**
+     * Logs warning for name matching fallback
+     * @param unRefTwriteHopName Name of the unRefTwrite hop
+     * @param liveOutHopName Name of the liveOut hop
+     */
+    public static void logNameMatchingFallbackWarning(String unRefTwriteHopName, String liveOutHopName) {
+        System.err.println("WARNING: No exact match found, using partial name matching for " + 
+                          unRefTwriteHopName + " -> " + liveOutHopName + 
+                          " - algorithm needs improvement");
+    }
+
+    /**
+     * Creates candidate information string for wireUnRefTwriteToLiveOut
+     * @param liveOutHopName Name of the candidate hop
+     * @param representativeHop Representative hop for the candidate
+     * @param liveOutFType FType of the candidate
+     * @param priority Priority of the candidate
+     * @param score Score of the candidate
+     * @param isCompatible Whether the candidate is compatible
+     * @param reason Reason for the compatibility result
+     * @return Formatted candidate information string
+     */
+    public static String createCandidateInfo(String liveOutHopName, Hop representativeHop, FType liveOutFType,
+                                            int priority, int score, boolean isCompatible, String reason) {
+        return "  - Candidate: " + liveOutHopName + 
+               " (Type: " + representativeHop.getClass().getSimpleName() +
+               ", DataType: " + representativeHop.getDataType() +
+               ", Dims: " + representativeHop.getDim1() + "x" + representativeHop.getDim2() +
+               ", FType: " + liveOutFType +
+               ", Priority: " + priority + 
+               ", Score: " + score +
+               ", Compatible: " + isCompatible + 
+               ", Reason: " + reason + ")";
     }
 }

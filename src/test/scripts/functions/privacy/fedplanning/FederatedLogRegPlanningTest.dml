@@ -1,0 +1,82 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+# Multi-class Logistic Regression with federated input matrices X1, X2 and labels Y
+# Using federated approach similar to L2SVM test
+X = federated(addresses=list($X1, $X2),
+  ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)))
+Y = read($Y)
+
+# Multi-class logistic regression parameters
+tol = 1e-6
+reg = 1.0
+maxi = 10
+icpt = 0
+
+N = nrow(X)
+D = ncol(X)
+
+# Convert Y into indicator matrix
+max_y = max(Y)
+if (min(Y) <= 0) {
+  Y = ifelse(Y <= 0, max_y + 1, Y)
+  max_y = max_y + 1
+}
+Y_indicator = table(seq(1, N, 1), Y, N, max_y)
+K = ncol(Y_indicator) - 1
+
+# Add intercept if needed
+if (icpt == 1) {
+  X = cbind(X, matrix(1, N, 1))
+  D = ncol(X)
+}
+
+scale_lambda = matrix(1, D, 1)
+if (icpt == 1)
+  scale_lambda[D, 1] = 0
+
+lambda = (scale_lambda %*% matrix(1, 1, K)) * reg
+delta = 0.5 * sqrt(D) / max(sqrt(rowSums(X ^ 2)))
+
+B = matrix(0, D, K)
+P = matrix(1, N, K+1)
+P = P / (K + 1)
+obj = N * log(K + 1)
+
+# Simple gradient descent for multi-class logistic regression
+for (iter in 1:maxi) {
+  # Compute probabilities
+  LT = cbind((X %*% B), matrix(0, N, 1))
+  LT = LT - rowMaxs(LT) %*% matrix(1, 1, K+1)
+  exp_LT = exp(LT)
+  P = exp_LT / (rowSums(exp_LT) %*% matrix(1, 1, K+1))
+  
+  # Compute gradient
+  Grad = t(X) %*% (P[, 1:K] - Y_indicator[, 1:K])
+  Grad = Grad + lambda * B
+  
+  # Update parameters
+  step_size = 0.01
+  B = B - step_size * Grad
+}
+
+# Write result
+write(B, $B)

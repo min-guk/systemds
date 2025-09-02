@@ -1,0 +1,86 @@
+Folder_Name,Metric,Value,Percentage
+kmeans,Total Computing Cost,89670684.2,100.00%
+kmeans,Total Network Cost,0.0,100.00%
+kmeans,FOUT Hops Total Computing Cost,87918716.0,98.05%
+kmeans,LOUT Hops Total Computing Cost,1751968.2,1.95%
+kmeans,Number of FOUT Hops,83.0,25.54%
+kmeans,Number of LOUT Hops,242.0,74.46%
+kmeans,Total Hops (excluding ROOT),325.0,100.00%
+kmeans,Fed Parents Analysis,,
+kmeans,Total Fed Parent Nodes,110.0,
+kmeans,Fed Parent FOUT Hops,83.0,76.15%
+kmeans,Fed Parent LOUT Hops,26.0,23.85%
+kmeans,Fed Parent FOUT Cost,87918716.0,100.00%
+kmeans,Fed Parent LOUT Cost,2784.5,0.00%
+CNN,Total Computing Cost,4243658.0,100.00%
+CNN,Total Network Cost,0.0,100.00%
+CNN,FOUT Hops Total Computing Cost,4233622.0,99.76%
+CNN,LOUT Hops Total Computing Cost,10036.0,0.24%
+CNN,Number of FOUT Hops,4.0,11.76%
+CNN,Number of LOUT Hops,30.0,88.24%
+CNN,Total Hops (excluding ROOT),34.0,100.00%
+CNN,Fed Parents Analysis,,
+CNN,Total Fed Parent Nodes,6.0,
+CNN,Fed Parent FOUT Hops,4.0,80.00%
+CNN,Fed Parent LOUT Hops,1.0,20.00%
+CNN,Fed Parent FOUT Cost,4233622.0,100.00%
+CNN,Fed Parent LOUT Cost,1.0,0.00%
+logreg,Total Computing Cost,5620147.5,100.00%
+logreg,Total Network Cost,0.0,100.00%
+logreg,FOUT Hops Total Computing Cost,5593000.0,99.52%
+logreg,LOUT Hops Total Computing Cost,27147.5,0.48%
+logreg,Number of FOUT Hops,19.0,18.27%
+logreg,Number of LOUT Hops,85.0,81.73%
+logreg,Total Hops (excluding ROOT),104.0,100.00%
+logreg,Fed Parents Analysis,,
+logreg,Total Fed Parent Nodes,21.0,
+logreg,Fed Parent FOUT Hops,19.0,95.00%
+logreg,Fed Parent LOUT Hops,1.0,5.00%
+logreg,Fed Parent FOUT Cost,5593000.0,100.00%
+logreg,Fed Parent LOUT Cost,100.0,0.00%
+pca,Total Computing Cost,23666555.5,100.00%
+pca,Total Network Cost,0.0,100.00%
+pca,FOUT Hops Total Computing Cost,23645500.0,99.91%
+pca,LOUT Hops Total Computing Cost,21055.5,0.09%
+pca,Number of FOUT Hops,27.0,29.67%
+pca,Number of LOUT Hops,64.0,70.33%
+pca,Total Hops (excluding ROOT),91.0,100.00%
+pca,Fed Parents Analysis,,
+pca,Total Fed Parent Nodes,37.0,
+pca,Fed Parent FOUT Hops,27.0,75.00%
+pca,Fed Parent LOUT Hops,9.0,25.00%
+pca,Fed Parent FOUT Cost,23645500.0,99.91%
+pca,Fed Parent LOUT Cost,21003.0,0.09%
+l2svm,Total Computing Cost,7236684.5,100.00%
+l2svm,Total Network Cost,0.2,100.00%
+l2svm,FOUT Hops Total Computing Cost,7219500.0,99.76%
+l2svm,LOUT Hops Total Computing Cost,17184.5,0.24%
+l2svm,Number of FOUT Hops,89.0,41.59%
+l2svm,Number of LOUT Hops,125.0,58.41%
+l2svm,Total Hops (excluding ROOT),214.0,100.00%
+l2svm,Fed Parents Analysis,,
+l2svm,Total Fed Parent Nodes,91.0,
+l2svm,Fed Parent FOUT Hops,89.0,98.89%
+l2svm,Fed Parent LOUT Hops,1.0,1.11%
+l2svm,Fed Parent FOUT Cost,7219500.0,100.00%
+l2svm,Fed Parent LOUT Cost,100.0,0.00%
+lm,Total Computing Cost,20421336.0,100.00%
+lm,Total Network Cost,0.0,100.00%
+lm,FOUT Hops Total Computing Cost,20410000.0,99.94%
+lm,LOUT Hops Total Computing Cost,11336.0,0.06%
+lm,Number of FOUT Hops,5.0,13.16%
+lm,Number of LOUT Hops,33.0,86.84%
+lm,Total Hops (excluding ROOT),38.0,100.00%
+lm,Fed Parents Analysis,,
+lm,Total Fed Parent Nodes,8.0,
+lm,Fed Parent FOUT Hops,5.0,71.43%
+lm,Fed Parent LOUT Hops,2.0,28.57%
+lm,Fed Parent FOUT Cost,20410000.0,100.00%
+lm,Fed Parent LOUT Cost,200.0,0.00%
+P2_FFN,Total Computing Cost,106221.0,100.00%
+P2_FFN,Total Network Cost,0.0,100.00%
+P2_FFN,FOUT Hops Total Computing Cost,0.0,0.00%
+P2_FFN,LOUT Hops Total Computing Cost,106217.0,100.00%
+P2_FFN,Number of FOUT Hops,0.0,0.00%
+P2_FFN,Number of LOUT Hops,169.0,94.41%
+P2_FFN,Total Hops (excluding ROOT),179.0,100.00%

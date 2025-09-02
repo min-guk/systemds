@@ -150,3 +150,9 @@ venv/*
 # resource optimization
 scripts/resource/output
 *.pem
+/visualization_output/
+/trace/
+/combined_fout_lout_analysis.txt
+/extract_fout_lout_analysis.py
+/run_visualization.sh
+/trace_output.txt

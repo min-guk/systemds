@@ -1,0 +1,119 @@
+#-------------------------------------------------------------
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#-------------------------------------------------------------
+
+##################################################
+# PIPELINE P2: FFN planning test version         #
+##################################################
+
+# read federated inputs
+Fall = federated(addresses=list($features1, $features2),
+    ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)));
+Fall = as.frame(Fall);
+
+# one hot encoding categorical, other passthrough
+jspec = "{ ids:true, dummycode:[1] }";
+[X0,M] = transformencode(target=Fall, spec=jspec);
+X = X0;
+y = federated(addresses=list($labels1, $labels2),
+    ranges=list(list(0, 0), list($r / 2, 1), list($r / 2, 0), list($r, 1)));
+
+# clipping out of value ranges
+colSD = colSds(X);
+colMean = (colMeans(X));
+upperBound = colMean + 1.5 * colSD;
+lowerBound = colMean - 1.5 * colSD;
+outFilter = (X < lowerBound) | (X > upperBound);
+X = X - outFilter*X + outFilter*colMeans(X); 
+
+# normalization
+X = scale(X=X, center=TRUE, scale=TRUE);
+
+# Use all data for training (federated)
+Xtrain = X;
+ytrain = y;
+
+# Read and preprocess federated test data
+Fall_test = federated(addresses=list($X_test1, $X_test2),
+    ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)));
+Fall_test = as.frame(Fall_test);
+
+# Apply same transformations to test data
+[Xtest0,M_test] = transformencode(target=Fall_test, spec=jspec, meta=M);
+Xtest_raw = Xtest0;
+
+# Apply same preprocessing to test data
+colSD_test = colSds(Xtest_raw);
+colMean_test = colMeans(Xtest_raw);
+upperBound_test = colMean_test + 1.5 * colSD_test;
+lowerBound_test = colMean_test - 1.5 * colSD_test;
+outFilter_test = (Xtest_raw < lowerBound_test) | (Xtest_raw > upperBound_test);
+Xtest_clipped = Xtest_raw - outFilter_test*Xtest_raw + outFilter_test*colMeans(Xtest_raw);
+
+# Apply same scaling to test data (using training data statistics)
+Xtest = scale(X=Xtest_clipped, center=colMean, scale=colSD);
+
+ytest = federated(addresses=list($y_test1, $y_test2),
+    ranges=list(list(0, 0), list($r / 2, 1), list($r / 2, 0), list($r, 1)));
+
+# Parameters from test
+epochs = $epochs;
+batch_size = $batch_size;
+eta = $eta;
+numWorkers = $numWorkers;
+utype = $utype;
+freq = $freq;
+
+# Simple FFN simulation for planning test (without actual paramserv)
+# This is a simplified version for planning test purposes
+N = nrow(Xtrain);
+D = ncol(Xtrain);
+K = ncol(ytrain);
+
+# Create dummy weights for FFN planning
+W1 = rand(rows=D, cols=200, min=-0.1, max=0.1, seed=1);
+b1 = matrix(0, 1, 200);
+W2 = rand(rows=200, cols=200, min=-0.1, max=0.1, seed=2);
+b2 = matrix(0, 1, 200);
+W3 = rand(rows=200, cols=K, min=-0.1, max=0.1, seed=3);
+b3 = matrix(0, 1, K);
+
+# Dummy forward pass for planning purposes
+# Layer 1: affine -> relu
+a1 = Xtrain %*% W1 + b1;
+h1 = max(a1, 0);  # ReLU activation
+
+# Layer 2: affine -> relu  
+a2 = h1 %*% W2 + b2;
+h2 = max(a2, 0);  # ReLU activation
+
+# Layer 3: affine -> output
+a3 = h2 %*% W3 + b3;
+
+# Test prediction on test data
+test_a1 = Xtest %*% W1 + b1;
+test_h1 = max(test_a1, 0);
+test_a2 = test_h1 %*% W2 + b2;
+test_h2 = max(test_a2, 0);
+test_result = test_h2 %*% W3 + b3;
+
+# Write result for test completion
+write(test_result, $Z);
+print("P2 FFN planning test completed");

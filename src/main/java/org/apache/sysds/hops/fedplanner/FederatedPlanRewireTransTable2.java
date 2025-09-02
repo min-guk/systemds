@@ -19,41 +19,33 @@
 
 package org.apache.sysds.hops.fedplanner;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types;
-import org.apache.sysds.common.Types.ParamBuiltinOp;
+import org.apache.sysds.common.Types.*;
 import org.apache.sysds.hops.*;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
-import org.apache.sysds.parser.*;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.FederatedMemoTable.HopCommon;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
-import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
-import org.apache.sysds.runtime.util.UtilFunctions;
-import java.util.*;
-import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
+import org.apache.sysds.lops.MMTSJ.MMTSJType;
+import org.apache.sysds.parser.*;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
+import org.apache.sysds.runtime.util.UtilFunctions;
+
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
+import java.util.*;
 import java.util.concurrent.Future;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
-import org.apache.sysds.hops.fedplanner.FederatedPlannerLogger;
-import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.runtime.DMLRuntimeException;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.common.Types.AggOp;
-import org.apache.sysds.common.Types.OpOp1;
-import org.apache.sysds.common.Types.OpOp3;
-import org.apache.sysds.common.Types.OpOpN;
-import org.apache.sysds.common.Types.DataType;
-import org.apache.sysds.common.Types.ReOrgOp;
-import org.apache.sysds.lops.MMTSJ.MMTSJType;
-import java.util.ArrayList;
-import java.util.List;
 
-public class FederatedPlanRewireTransTable {
+public class FederatedPlanRewireTransTable2 {
     
     private static final double DEFAULT_LOOP_WEIGHT = 10.0;
     private static final double DEFAULT_IF_ELSE_WEIGHT = 0.5;
@@ -282,7 +274,7 @@ public class FederatedPlanRewireTransTable {
         // Identify hops to connect to the root dummy node
         // Connect TWrite pred and u(print) to the root dummy node
         if ((hop instanceof DataOp && (hop.getName().equals("__pred"))) // TWrite "__pred"
-                || (hop instanceof UnaryOp && ((UnaryOp) hop).getOp() == Types.OpOp1.PRINT) // u(print)
+                || (hop instanceof UnaryOp && ((UnaryOp) hop).getOp() == OpOp1.PRINT) // u(print)
                 || (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.PERSISTENTWRITE)) { // PWrite
             progRootHopSet.add(hop);
         } else if (!(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
@@ -512,12 +504,12 @@ public class FederatedPlanRewireTransTable {
 
         // Type
         String type = initFedOp.getInput(initFedOp.getParameterIndex("type")).getName();
-        Types.DataType fedDataType;
+        DataType fedDataType;
 
         if (type.equalsIgnoreCase(FED_MATRIX_IDENTIFIER))
-            fedDataType = Types.DataType.MATRIX;
+            fedDataType = DataType.MATRIX;
         else
-            fedDataType = Types.DataType.FRAME;
+            fedDataType = DataType.FRAME;
 
         // Init Fed Data
         for (int i = 0; i < addressList.size(); i++) {
@@ -561,14 +553,14 @@ public class FederatedPlanRewireTransTable {
 
                         // Map to appropriate PrivacyConstraint value based on input string
                         if (pcLower.equals("private")
-                                || pcLower.equals(FTypes.Privacy.PRIVATE.toString().toLowerCase())) {
-                            tempPrivacy = FTypes.Privacy.PRIVATE;
+                                || pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
+                            tempPrivacy = Privacy.PRIVATE;
                         } else if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate") ||
-                                pcLower.equals(FTypes.Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
-                            tempPrivacy = FTypes.Privacy.PRIVATE_AGGREGATE;
+                                pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
+                            tempPrivacy = Privacy.PRIVATE_AGGREGATE;
                         } else if (pcLower.equals("public")
-                                || pcLower.equals(FTypes.Privacy.PUBLIC.toString().toLowerCase())) {
-                            tempPrivacy = FTypes.Privacy.PUBLIC;
+                                || pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
+                            tempPrivacy = Privacy.PUBLIC;
                         } else {
                             throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints +
                                     ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PUBLIC'.");
@@ -652,8 +644,8 @@ public class FederatedPlanRewireTransTable {
         // ========================================================================
         // PART 1: Universal constraints - operations that NEVER support federated
         // ========================================================================
-
-        // Todo: BoardCasting
+        
+        // Todo: BoardCasting 
         // // Scalar values don't have FType (no partitioning concept for scalars)
         // if (hop.isScalar()) {
         //     reason = "Scalar values don't have FType";
@@ -743,18 +735,17 @@ public class FederatedPlanRewireTransTable {
         
         // TernaryOp: Three-input operations with complex federation patterns
         if (hop instanceof TernaryOp) {
-            // Todo: BroadCasting
+            // Todo: BoardCasting
             // // Scalar output operations don't have FType
             // if (hop.getDataType().isScalar()) {
             //     reason = "TernaryOp: Scalar output operations don't have FType";
             //     FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
             //     return null;
             // }
-
+            
             // Operations that produce scalar output or are unsupported:
             // - MOMENT/COV: Aggregation operations produce scalar
             // - IFELSE/MAP: No federated implementation
-            // TODO: Add federated support for IFELSE operation
             OpOp3 op = ((TernaryOp) hop).getOp();
             if (op == OpOp3.MOMENT || op == OpOp3.COV ||
                 op == OpOp3.IFELSE || op == OpOp3.MAP) {
@@ -831,7 +822,6 @@ public class FederatedPlanRewireTransTable {
                 returnFType = FType.ROW;
                 reason = "AggBinaryOp: COL x ROW multiplication results in ROW";
             }
-
             // ROW x COL multiplication results in ROW partitioning
             else if (firstFType == FType.ROW && secondFType == FType.COL) {
                 returnFType = FType.ROW;
@@ -850,35 +840,23 @@ public class FederatedPlanRewireTransTable {
         
         // BinaryOp: Standard binary operations (+, -, *, /, min, max)
         if (hop instanceof BinaryOp) {
-            // Todo: BoadCasting
-             // Scalar operations don't have FType
-//             if (hop.getDataType().isScalar()) {
-//                 reason = "BinaryOp: Scalar operations don't have FType";
-//                 FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
-//                 return null;
-//             }
+            // Todo: BoardCasting
+            // // Scalar operations don't have FType
+            // if (hop.getDataType().isScalar()) {
+            //     reason = "BinaryOp: Scalar operations don't have FType";
+            //     FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
+            //     return null;
+            // }
             
             FType secondFType = ft.length > 1 ? ft[1] : null;
-            boolean hasFederatedSecondInput = secondFType != null;
-
-            // Unsupported patterns: no federated inputs, or both federated with different types
-            if ((!hasFederatedFirstInput && !hasFederatedSecondInput) ||
-                    (hasFederatedFirstInput && hasFederatedSecondInput && firstFType != secondFType)) {
-                if (!hasFederatedFirstInput && !hasFederatedSecondInput)
-                    reason = "BinaryOp: No federated inputs";
-                else
-                    reason = "BinaryOp: Both inputs federated with different types";
-                FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
-                return null;
-            }
-
+            
             // No federated inputs at all
             if (firstFType == null && secondFType == null) {
                 reason = "BinaryOp: No federated inputs";
                 FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
                 return null;
             }
-
+            
             // Handle mixed federated/local cases (one null, one non-null)
             if (firstFType == null && secondFType != null) {
                 returnFType = secondFType;
@@ -888,11 +866,11 @@ public class FederatedPlanRewireTransTable {
             }
             if (firstFType != null && secondFType == null) {
                 returnFType = firstFType;
-                reason = "BinaryOp: Federated + Local maintains federated structure";
+                reason = "BinaryOp: Federated + Local maintains federated structure"; 
                 FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
                 return returnFType;
             }
-
+            
             // Handle BROADCAST interactions (both non-null)
             if (firstFType == FType.BROADCAST) {
                 returnFType = secondFType;  // null도 가능
@@ -906,7 +884,7 @@ public class FederatedPlanRewireTransTable {
                 FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
                 return returnFType;
             }
-
+            
             // Both non-null and different types
             if (firstFType != null && secondFType != null && firstFType != secondFType) {
                 // ROW + COL pattern
@@ -922,7 +900,7 @@ public class FederatedPlanRewireTransTable {
                 FederatedPlannerLogger.logGetFederatedTypeDebug(hop, returnFType, reason, ft);
                 return null;
             }
-
+            
             // Propagate first non-null FType
             returnFType = firstFType != null ? firstFType : secondFType;
             reason = "BinaryOp: Propagating first non-null FType";
@@ -1056,7 +1034,7 @@ public class FederatedPlanRewireTransTable {
             // - COL partition + row aggregation → scalar per column → local result
             if ((firstFType == FType.ROW && isColAgg) || 
                 (firstFType == FType.COL && !isColAgg)) {
-
+                
                 // Check if this is a basic aggregation that supports federated execution
                 if (aggOp == AggOp.SUM || aggOp == AggOp.SUM_SQ || aggOp == AggOp.MIN || aggOp == AggOp.MAX || aggOp == AggOp.MEAN) {
                     returnFType = FType.BROADCAST;
@@ -1358,6 +1336,26 @@ public class FederatedPlanRewireTransTable {
 
     private static FType getHopFType(Hop hop, Map<Long, FType> fTypeMap) {
         return fTypeMap.get(hop.getHopID());
+    }
+
+    private static boolean areFTypesCompatible(FType unRefTwriteFType, FType liveOutFType) {
+        // 둘 다 null인 경우 (LOUT끼리)
+        if (unRefTwriteFType == null && liveOutFType == null) {
+            return true;
+        }
+        
+        // 하나만 null인 경우 (FOUT ↔ LOUT)
+        if (unRefTwriteFType == null || liveOutFType == null) {
+            return false; // FOUT → LOUT 연결 방지
+        }
+        
+        // 둘 다 페더레이션 타입인 경우
+        if (unRefTwriteFType == liveOutFType) {
+            return true; // ROW ↔ ROW, COL ↔ COL 등
+        }
+        
+        // 호환 가능한 페더레이션 타입들
+        return areCompatibleFederationTypes(unRefTwriteFType, liveOutFType);
     }
 
     private static boolean areCompatibleFederationTypes(FType fType1, FType fType2) {

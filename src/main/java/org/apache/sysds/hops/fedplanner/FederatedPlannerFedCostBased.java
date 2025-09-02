@@ -89,6 +89,10 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 		} else {
 			optimalPlan.setFederatedOutput(FEDInstruction.FederatedOutput.FOUT);
 			optimalPlan.setForcedExecType(ExecType.FED);
+
+			// Todo 
+			// 1) Only Matrix + Scalar
+			// 2) Dummy Operations
 		}
 	}
 }

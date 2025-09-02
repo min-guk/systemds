@@ -15,28 +15,15 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
-# under the License.
+# under the Under.
 #
 #-------------------------------------------------------------
 
-# Create federated training data
-X = federated(addresses=list($X1, $X2),
-        ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)))
-X = X / 255  # Normalize to [0,1]
+source("scripts/builtin/lm.dml") as lm
 
-# Create federated test data  
-Xt = federated(addresses=list($Xt1, $Xt2),
-        ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)))
-Xt = Xt / 255  # Normalize to [0,1]
-
-# Read labels
 Y = read($Y)
-Yt = read($Yt)
+X = federated(addresses=list($X1, $X2),
+    ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)))
 
-# Simple federated operation for testing - compute basic statistics
-# This tests that federated data can be processed correctly
-sum_X = sum(X)
-sum_Y = sum(Y)
-loss = sum_X / (sum_Y + 1)  # Simple calculation to produce a loss value
-
-write(loss, $Z)
+B = lm::lm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=0, verbose=FALSE)
+write(B, $Z);
