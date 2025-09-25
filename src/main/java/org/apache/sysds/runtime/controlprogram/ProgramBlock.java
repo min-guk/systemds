@@ -229,6 +229,31 @@ public abstract class ProgramBlock implements ParseInfo {
 			if(!LineageCache.reuse(tmp, ec)) {
 				long et0 = (!ReuseCacheType.isNone() || DMLScript.LINEAGE_ESTIMATE) ? System.nanoTime() : 0;
 
+				// Debug: Log before FED r' instruction
+				if (tmp.toString().contains("FED") && tmp.toString().contains("r'")) {
+					System.out.println("=== About to execute FED transpose instruction ===");
+					System.out.println("Instruction: " + tmp.toString());
+					System.out.println("All variables in ExecutionContext before instruction:");
+					for (String varName : ec.getVariables().keySet()) {
+						try {
+							Object obj = ec.getVariable(varName);
+							if (obj instanceof org.apache.sysds.runtime.controlprogram.caching.MatrixObject) {
+								org.apache.sysds.runtime.controlprogram.caching.MatrixObject mo =
+									(org.apache.sysds.runtime.controlprogram.caching.MatrixObject) obj;
+								System.out.printf("  %s: federated=%s, dims=%s, fedMapping=%s\n",
+									varName,
+									mo.isFederated(),
+									mo.getDataCharacteristics(),
+									mo.getFedMapping()
+								);
+							}
+						} catch (Exception e) {
+							System.out.printf("  %s: Error accessing - %s\n", varName, e.getMessage());
+						}
+					}
+					System.out.println("=== End Debug ===");
+				}
+
 				// process actual instruction
 				tmp.processInstruction(ec);
 

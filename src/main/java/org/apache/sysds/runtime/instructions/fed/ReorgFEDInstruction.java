@@ -141,13 +141,59 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		// Additional debugging: Check all variables in ExecutionContext
+		System.out.println("=== ReorgFEDInstruction Debug ===");
+		System.out.println("All variables in ExecutionContext:");
+		for (String varName : ec.getVariables().keySet()) {
+			try {
+				Object obj = ec.getVariable(varName);
+				if (obj instanceof MatrixObject) {
+					MatrixObject mo = (MatrixObject) obj;
+					System.out.printf("  %s: %s, federated=%s, dims=%s, fedMapping=%s\n",
+						varName,
+						mo.getClass().getSimpleName(),
+						mo.isFederated(),
+						mo.getDataCharacteristics(),
+						mo.getFedMapping()
+					);
+				} else {
+					System.out.printf("  %s: %s\n", varName, obj.getClass().getSimpleName());
+				}
+			} catch (Exception e) {
+				System.out.printf("  %s: Error accessing - %s\n", varName, e.getMessage());
+			}
+		}
+		System.out.println("=== End Debug ===");
+
 		MatrixObject mo1 = ec.getMatrixObject(input1);
 		ReorgOperator r_op = (ReorgOperator) _optr;
 		boolean isSpark = instString.startsWith("SPARK");
 
-		if( !mo1.isFederated() )
+		if( !mo1.isFederated() ) {
+			String debugInfo = String.format(
+				"Federated Reorg Debug Info:\n" +
+				"- Input variable: %s\n" +
+				"- MatrixObject isFederated: %s\n" +
+				"- MatrixObject class: %s\n" +
+				"- Data characteristics: %s\n" +
+				"- Federation mapping: %s\n" +
+				"- Has federation mapping: %s\n" +
+				"- Instruction opcode: %s\n" +
+				"- Instruction string: %s\n" +
+				"- FederatedOutput: %s",
+				input1.getName(),
+				mo1.isFederated(),
+				mo1.getClass().getSimpleName(),
+				mo1.getDataCharacteristics(),
+				mo1.getFedMapping(),
+				mo1.getFedMapping() != null,
+				instOpcode,
+				instString,
+				_fedOut
+			);
 			throw new DMLRuntimeException("Federated Reorg: "
-				+ "Federated input expected, but invoked w/ "+mo1.isFederated());
+				+ "Federated input expected, but invoked w/ "+mo1.isFederated() + "\n" + debugInfo);
+		}
 		if ( !( mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW) ) )
 			throw new DMLRuntimeException("Federation type " + mo1.getFedMapping().getType()
 				+ " is not supported for Reorg processing");

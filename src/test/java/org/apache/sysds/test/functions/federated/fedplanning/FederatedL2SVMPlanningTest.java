@@ -67,7 +67,6 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
-	@Ignore
 	@Test
 	public void runL2SVMCostBasedTestPrivate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");

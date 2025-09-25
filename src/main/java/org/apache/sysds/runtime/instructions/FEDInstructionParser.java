@@ -63,6 +63,7 @@ public class FEDInstructionParser extends InstructionParser
 			case AggregateUnary:
 				return AggregateUnaryFEDInstruction.parseInstruction(str);
 			case TSMM:
+			case MMTSJ:
 				return TsmmFEDInstruction.parseInstruction(str);
 			case Binary:
 				return BinaryFEDInstruction.parseInstruction(str);

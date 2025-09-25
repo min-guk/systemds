@@ -185,11 +185,11 @@ public class FederatedPlannerLogger {
             inputFTypesStr.append("[]");
         }
         
-        System.out.println("[GetFederatedType] HopName: " + hopName + " | HopID: " + hopID +
-                          " | OperationType: " + operationType + " | OpCode: " + opCode + 
-                          " | InputFTypes: " + inputFTypesStr.toString() +
-                          " | ReturnFType: " + (returnFType != null ? returnFType : "null") + 
-                          " | Reason: " + reason);
+//        System.out.println("[GetFederatedType] HopName: " + hopName + " | HopID: " + hopID +
+//                          " | OperationType: " + operationType + " | OpCode: " + opCode +
+//                          " | InputFTypes: " + inputFTypesStr.toString() +
+//                          " | ReturnFType: " + (returnFType != null ? returnFType : "null") +
+//                          " | Reason: " + reason);
     }
     
     /**
@@ -582,75 +582,75 @@ public class FederatedPlannerLogger {
                 .append(", NetworkCost: ").append(String.format("%.1f", plan.getForwardingCost()))
                 .append(", ComputeWeight: ").append(String.format("%.1f", plan.getComputeWeight())).append("}");
 
-        // Add matrix characteristics with explicit labels
-        sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
-                .append("), Blocksize: ").append(hop.getBlocksize())
-                .append(", NNZ: ").append(hop.getNnz());
+        // // Add matrix characteristics with explicit labels
+        // sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
+        //         .append("), Blocksize: ").append(hop.getBlocksize())
+        //         .append(", NNZ: ").append(hop.getNnz());
 
-        if (hop.getUpdateType().isInPlace()) {
-            sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
-        }
-        sb.append("}");
+        // if (hop.getUpdateType().isInPlace()) {
+        //     sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
+        // }
+        // sb.append("}");
 
-        // Add memory estimates with explicit labels
-        sb.append(", [MemoryInfo]: {InputMem: ").append(OptimizerUtils.toMB(hop.getInputMemEstimate())).append("MB")
-                .append(", IntermediateMem: ").append(OptimizerUtils.toMB(hop.getIntermediateMemEstimate())).append("MB")
-                .append(", OutputMem: ").append(OptimizerUtils.toMB(hop.getOutputMemEstimate())).append("MB")
-                .append(", TotalMem: ").append(OptimizerUtils.toMB(hop.getMemEstimate())).append("MB}");
+        // // Add memory estimates with explicit labels
+        // sb.append(", [MemoryInfo]: {InputMem: ").append(OptimizerUtils.toMB(hop.getInputMemEstimate())).append("MB")
+        //         .append(", IntermediateMem: ").append(OptimizerUtils.toMB(hop.getIntermediateMemEstimate())).append("MB")
+        //         .append(", OutputMem: ").append(OptimizerUtils.toMB(hop.getOutputMemEstimate())).append("MB")
+        //         .append(", TotalMem: ").append(OptimizerUtils.toMB(hop.getMemEstimate())).append("MB}");
 
-        // Add execution requirements with explicit labels
-        StringBuilder execInfo = new StringBuilder();
-        execInfo.append(", [ExecutionInfo]: {");
+        // // Add execution requirements with explicit labels
+        // StringBuilder execInfo = new StringBuilder();
+        // execInfo.append(", [ExecutionInfo]: {");
         
-        if (hop.requiresReblock() && hop.requiresCheckpoint()) {
-            execInfo.append("RequiresReblock: true, RequiresCheckpoint: true");
-        } else if (hop.requiresReblock()) {
-            execInfo.append("RequiresReblock: true, RequiresCheckpoint: false");
-        } else if (hop.requiresCheckpoint()) {
-            execInfo.append("RequiresReblock: false, RequiresCheckpoint: true");
-        } else {
-            execInfo.append("RequiresReblock: false, RequiresCheckpoint: false");
-        }
+        // if (hop.requiresReblock() && hop.requiresCheckpoint()) {
+        //     execInfo.append("RequiresReblock: true, RequiresCheckpoint: true");
+        // } else if (hop.requiresReblock()) {
+        //     execInfo.append("RequiresReblock: true, RequiresCheckpoint: false");
+        // } else if (hop.requiresCheckpoint()) {
+        //     execInfo.append("RequiresReblock: false, RequiresCheckpoint: true");
+        // } else {
+        //     execInfo.append("RequiresReblock: false, RequiresCheckpoint: false");
+        // }
 
-        // Add execution type
-        if (hop.getExecType() != null) {
-            execInfo.append(", ExecType: ").append(hop.getExecType());
-        }
+        // // Add execution type
+        // if (hop.getExecType() != null) {
+        //     execInfo.append(", ExecType: ").append(hop.getExecType());
+        // }
         
-        execInfo.append("}");
-        sb.append(execInfo.toString());
+        // execInfo.append("}");
+        // sb.append(execInfo.toString());
         
-        if (childAdded){
-            sb.append(", [EdgeInfo]: {");
-            boolean firstEdge = true;
-            for (Pair<Long, FederatedOutput> childPair : plan.getChildFedPlans()){
-                if (!firstEdge) sb.append(", ");
-                firstEdge = false;
+        // if (childAdded){
+        //     sb.append(", [EdgeInfo]: {");
+        //     boolean firstEdge = true;
+        //     for (Pair<Long, FederatedOutput> childPair : plan.getChildFedPlans()){
+        //         if (!firstEdge) sb.append(", ");
+        //         firstEdge = false;
                 
-                // Add forwarding weight for each edge
-                FedPlan childPlan = memoTable.getFedPlanAfterPrune(childPair.getLeft(), childPair.getRight());
+        //         // Add forwarding weight for each edge
+        //         FedPlan childPlan = memoTable.getFedPlanAfterPrune(childPair.getLeft(), childPair.getRight());
                 
-                if (childPlan == null) {
-                    sb.append(String.format("Edge(ID:%d, NULL)", childPair.getLeft()));
-                } else {
-                    String isForwardingCostOccured = "";
-                    double totalForwarding = 0.0;
-                    if (childPair.getRight() == plan.getFedOutType()){
-                        isForwardingCostOccured = "X";
-                        totalForwarding = 0.0;
-                    } else {
-                        isForwardingCostOccured = "O";
-                        totalForwarding = plan.getChildForwardingWeight(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
-                    }
-                    sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
-                                childPair.getLeft(), isForwardingCostOccured, 
-                                childPlan.getCumulativeCostPerParents(), 
-                                plan.getChildForwardingWeight(childPlan.getLoopContext()),
-                                totalForwarding));
-                }
-            }
-            sb.append("}");
-        }
+        //         if (childPlan == null) {
+        //             sb.append(String.format("Edge(ID:%d, NULL)", childPair.getLeft()));
+        //         } else {
+        //             String isForwardingCostOccured = "";
+        //             double totalForwarding = 0.0;
+        //             if (childPair.getRight() == plan.getFedOutType()){
+        //                 isForwardingCostOccured = "X";
+        //                 totalForwarding = 0.0;
+        //             } else {
+        //                 isForwardingCostOccured = "O";
+        //                 totalForwarding = plan.getChildForwardingWeight(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
+        //             }
+        //             sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
+        //                         childPair.getLeft(), isForwardingCostOccured, 
+        //                         childPlan.getCumulativeCostPerParents(), 
+        //                         plan.getChildForwardingWeight(childPlan.getLoopContext()),
+        //                         totalForwarding));
+        //         }
+        //     }
+        //     sb.append("}");
+        // }
 
         System.out.println(sb);
     }
