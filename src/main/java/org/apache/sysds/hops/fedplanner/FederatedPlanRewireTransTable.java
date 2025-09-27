@@ -614,7 +614,7 @@ public class FederatedPlanRewireTransTable {
 
         if (hasPrivateAggreate) {
             if (hop instanceof AggUnaryOp || hop instanceof AggBinaryOp || hop instanceof QuaternaryOp) {
-                return Privacy.PUBLIC;
+                return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
             } else if (hop instanceof TernaryOp) {
                 switch (((TernaryOp) hop).getOp()) {
                     case MOMENT:
@@ -622,13 +622,13 @@ public class FederatedPlanRewireTransTable {
                     case CTABLE:
                     case INTERQUANTILE:
                     case QUANTILE:
-                        return Privacy.PUBLIC;
+                        return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
                     default:
                         return Privacy.PRIVATE_AGGREGATE;
                 }
             } else if (hop instanceof ParameterizedBuiltinOp
                     && ((ParameterizedBuiltinOp) hop).getOp() == ParamBuiltinOp.GROUPEDAGG) {
-                return Privacy.PUBLIC;
+                return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
             } else {
                 return Privacy.PRIVATE_AGGREGATE;
             }

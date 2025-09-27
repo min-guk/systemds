@@ -135,6 +135,7 @@ public class FTypes
 	public enum Privacy {
 		PRIVATE,
 		PRIVATE_AGGREGATE,
+		PRIVATE_AGGREGATE_TO_PUBLIC,
 		PUBLIC
 	}
 }

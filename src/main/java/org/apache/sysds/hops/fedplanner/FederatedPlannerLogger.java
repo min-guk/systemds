@@ -741,14 +741,47 @@ public class FederatedPlannerLogger {
      */
     public static String createCandidateInfo(String liveOutHopName, Hop representativeHop, FType liveOutFType,
                                             int priority, int score, boolean isCompatible, String reason) {
-        return "  - Candidate: " + liveOutHopName + 
+        return "  - Candidate: " + liveOutHopName +
                " (Type: " + representativeHop.getClass().getSimpleName() +
                ", DataType: " + representativeHop.getDataType() +
                ", Dims: " + representativeHop.getDim1() + "x" + representativeHop.getDim2() +
                ", FType: " + liveOutFType +
-               ", Priority: " + priority + 
+               ", Priority: " + priority +
                ", Score: " + score +
-               ", Compatible: " + isCompatible + 
+               ", Compatible: " + isCompatible +
                ", Reason: " + reason + ")";
+    }
+
+    /**
+     * Logs placement conflict information when hasPlacement is true
+     * @param currentHop The hop that has placement conflict
+     * @param parentHop The parent hop causing the conflict (if available)
+     * @param currentFedOutType The current federated output type
+     * @param parentFedOutType The parent federated output type
+     * @param logPrefix Prefix string to identify the log source
+     */
+    public static void logPlacementConflict(Hop currentHop, Hop parentHop,
+                                           FEDInstruction.FederatedOutput currentFedOutType,
+                                           FEDInstruction.FederatedOutput parentFedOutType,
+                                           String logPrefix) {
+        System.out.println("[" + logPrefix + "] PLACEMENT CONFLICT DETECTED:");
+
+        // Current hop information
+        System.out.println("  Current Hop - ID:" + currentHop.getHopID() +
+                          " Name:" + (currentHop.getName() != null ? currentHop.getName() : "null") +
+                          " Type:" + currentHop.getClass().getSimpleName() +
+                          " OpCode:" + currentHop.getOpString() +
+                          " CurrentFedOutType:" + currentFedOutType);
+
+        // Parent hop information (if available)
+        if (parentHop != null) {
+            System.out.println("  Parent Hop - ID:" + parentHop.getHopID() +
+                              " Name:" + (parentHop.getName() != null ? parentHop.getName() : "null") +
+                              " Type:" + parentHop.getClass().getSimpleName() +
+                              " OpCode:" + parentHop.getOpString() +
+                              " RequiredFedOutType:" + parentFedOutType);
+        } else {
+            System.out.println("  Parent Hop - RequiredFedOutType:" + parentFedOutType + " (Parent hop details not available)");
+        }
     }
 }

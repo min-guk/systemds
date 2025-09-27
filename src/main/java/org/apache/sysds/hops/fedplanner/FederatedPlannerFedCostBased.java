@@ -19,9 +19,9 @@
 
 package org.apache.sysds.hops.fedplanner;
 
-import java.util.Set;
 import java.util.Map;
-
+import java.util.HashMap;
+import java.util.List;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
@@ -32,8 +32,6 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.hops.fedplanner.FederatedMemoTable.FedPlan;
 import org.apache.commons.lang3.tuple.Pair;
 
-import java.util.HashSet;
-import java.util.List;
 /**
  * Baseline federated planner that compiles all hops
  * that support federated execution on federated inputs to
@@ -45,12 +43,12 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 	{
 		FederatedMemoTable memoTable = new FederatedMemoTable();
 		FedPlan optimalPlan = FederatedPlanCostEnumerator.enumerateProgram(prog, memoTable, true);
-		Set<Long> visited = new HashSet<>();
+		Map<Long, FEDInstruction.FederatedOutput> visited = new HashMap<>();
 
 		List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = optimalPlan.getChildFedPlans();
 		 for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : childFedPlanPairs) {
 			FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
-			rewriteHop(childPlan, memoTable, visited);
+			rewriteHop(childPlan, FEDInstruction.FederatedOutput.LOUT, memoTable, visited);
 		 }
 	}
 
@@ -58,41 +56,56 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
 		FederatedMemoTable memoTable = new FederatedMemoTable();
 		FedPlan optimalPlan = FederatedPlanCostEnumerator.enumerateFunctionDynamic(function, memoTable, true);
-		Set<Long> visited = new HashSet<>();
-		rewriteHop(optimalPlan, memoTable, visited);
+		Map<Long, FEDInstruction.FederatedOutput> visited = new HashMap<>(); // hop ID, parent FOUTType
+		rewriteHop(optimalPlan, FEDInstruction.FederatedOutput.LOUT, memoTable, visited);
 	}
 
-	private void rewriteHop(FedPlan optimalPlan, FederatedMemoTable memoTable, Set<Long> visited) {
+	private void rewriteHop(FedPlan optimalPlan, FEDInstruction.FederatedOutput parentFedOutType, FederatedMemoTable memoTable, Map<Long, FEDInstruction.FederatedOutput> visited) {
 		long hopID = optimalPlan.getHopRef().getHopID();
+		boolean hasPlacementConflict = false;
 
-        if (visited.contains(hopID)) {
-            return;
-        } else {
-            visited.add(hopID);
-        }
+		if (visited.containsKey(hopID)){
+			if (visited.get(hopID) == parentFedOutType){
+				return;
+			} else {
+				// Todo: Conflict
+				hasPlacementConflict = true;
+				FederatedPlannerLogger.logPlacementConflict(optimalPlan.getHopRef(), null,
+					visited.get(hopID), parentFedOutType, "REWRITE_HOP");
+			}
+		} else{
+			visited.put(hopID, parentFedOutType);
+		}
 
         for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
             FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
-            
+
+			// Todo: Remove later
             // DEBUG: Check if getFedPlanAfterPrune returns null
             if (childPlan == null) {
 				FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, optimalPlan, memoTable);
                 continue;
             }
             
-			rewriteHop(childPlan, memoTable, visited);
+			rewriteHop(childPlan, childFedPlanPair.getRight(), memoTable, visited);
         }
 
 		if (optimalPlan.getFedOutType() == FEDInstruction.FederatedOutput.LOUT) {
-			optimalPlan.setFederatedOutput(FEDInstruction.FederatedOutput.LOUT);
 			optimalPlan.setForcedExecType(ExecType.CP);
 		} else {
-			optimalPlan.setFederatedOutput(FEDInstruction.FederatedOutput.FOUT);
 			optimalPlan.setForcedExecType(ExecType.FED);
-
+			
 			// Todo 
 			// 1) Only Matrix + Scalar
 			// 2) Dummy Operations
 		}
+
+		// Todo: 이거 고민해봐야함. 어떻게 runtime이 구현되어 있는지.
+		if (hasPlacementConflict){
+			optimalPlan.setFederatedOutput(FEDInstruction.FederatedOutput.FOUT);
+		} else {
+			optimalPlan.setFederatedOutput(parentFedOutType);
+		}
+		
 	}
 }

@@ -365,7 +365,8 @@ public class FederatedPlanCostEnumerator {
 
 			lOutFedPlanVariants.pruneFedPlans();
 			memoTable.addFedPlanVariants(hopID, FederatedOutput.LOUT, lOutFedPlanVariants);
-		} else if (privacyConstraint == Privacy.PRIVATE || privacyConstraint == Privacy.PRIVATE_AGGREGATE){
+		} else if (privacyConstraint == Privacy.PRIVATE || privacyConstraint == Privacy.PRIVATE_AGGREGATE
+						||privacyConstraint == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC){
 			FedPlanVariants fOutFedPlanVariants = new FedPlanVariants(hopCommon, FederatedOutput.FOUT);
 
 			singleTypeEnumerateChildFedPlan(fOutFedPlanVariants, FederatedOutput.FOUT, childHops,
