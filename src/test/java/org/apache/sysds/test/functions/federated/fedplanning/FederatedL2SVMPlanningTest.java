@@ -78,6 +78,11 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
+	@Test
+	public void runL2SVMCostBasedTestMinSTCutPrivateAggregate(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	}
+
 	@Ignore
 	@Test
 	public void runL2SVMCostBasedTestPublic(){
@@ -189,7 +194,7 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 			programArgs = new String[] { "-stats", "-nvargs",
 				"X1=" + TestUtils.federatedAddress(port1, input("X1")),
 				"X2=" + TestUtils.federatedAddress(port2, input("X2")),
-				"Y=" + input("Y"), "r=" + rows, "c=" + cols, "Z=" + output("Z")};
+				"Y_addr=" + TestUtils.federatedAddress(port1, input("Y")), "r=" + rows, "c=" + cols, "Z=" + output("Z")};
 			runTest(true, false, null, -1);
 
 

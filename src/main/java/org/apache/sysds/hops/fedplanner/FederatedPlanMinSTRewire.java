@@ -56,7 +56,7 @@ public class FederatedPlanMinSTRewire {
     public static final String FED_FRAME_IDENTIFIER = "frame";
 
     public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
-            Map<Long, Vertex> vertexMemoTable, List<Pair<FederatedRange, FederatedData>> fedMap, 
+            FederatedPlanMinSTGraph graph, List<Pair<FederatedRange, FederatedData>> fedMap, 
             Set<Long> unRefTwriteSet, Set<Long> unRefSet, Set<Hop> progRootHopSet) {
         // Maps Hop ID and fedOutType pairs to their plan variants
         Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
@@ -71,14 +71,14 @@ public class FederatedPlanMinSTRewire {
 
         for (StatementBlock sb : prog.getStatementBlocks()) {
             Map<String, List<Hop>> innerTransTable = rewireStatementBlock(sb, prog, visitedHops, rewireTable,
-                    vertexMemoTable, outerTransTableList, null, privacyConstraintMap, fTypeMap,
+                    graph, outerTransTableList, null, privacyConstraintMap, fTypeMap,
                     fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, 1, 1, loopStack);
             outerTransTableList.get(0).putAll(innerTransTable);
         }
     }
 
     public static void rewireFunctionDynamic(FunctionStatementBlock function, Map<Long, List<Hop>> rewireTable,
-            Map<Long, Vertex> vertexMemoTable, List<Pair<FederatedRange, FederatedData>> fedMap, 
+            FederatedPlanMinSTGraph graph, List<Pair<FederatedRange, FederatedData>> fedMap, 
             Set<Long> unRefTwriteSet, Set<Long> unRefSet, Set<Hop> progRootHopSet) {
         Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
@@ -89,13 +89,13 @@ public class FederatedPlanMinSTRewire {
         Map<String, List<Hop>> outerTransTable = new HashMap<>();
         outerTransTableList.add(outerTransTable);
         // Todo (Future): not tested & not used
-        rewireStatementBlock(function, null, visitedHops, rewireTable, vertexMemoTable, outerTransTableList, null,
+        rewireStatementBlock(function, null, visitedHops, rewireTable, graph, outerTransTableList, null,
                 privacyConstraintMap, fTypeMap,
                 fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, 1, 1, loopStack);
     }
 
     public static Map<String, List<Hop>> rewireStatementBlock(StatementBlock sb, DMLProgram prog, Set<Long> visitedHops,
-            Map<Long, List<Hop>> rewireTable, Map<Long, Vertex> vertexMemoTable,
+            Map<Long, List<Hop>> rewireTable, FederatedPlanMinSTGraph graph,
             List<Map<String, List<Hop>>> outerTransTableList, Map<String, List<Hop>> formerTransTable,
             Map<Long, Privacy> privacyConstraintMap, Map<Long, FType> fTypeMap,
             List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
@@ -120,7 +120,7 @@ public class FederatedPlanMinSTRewire {
             IfStatementBlock isb = (IfStatementBlock) sb;
             IfStatement istmt = (IfStatement) isb.getStatement(0);
 
-            rewireHopDAG(isb.getPredicateHops(), prog, visitedHops, rewireTable, vertexMemoTable, newOuterTransTableList,
+                rewireHopDAG(isb.getPredicateHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList,
                     null, innerTransTable,
                     privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                     networkWeight, parentLoopStack);
@@ -132,13 +132,13 @@ public class FederatedPlanMinSTRewire {
 
             for (StatementBlock innerIsb : istmt.getIfBody())
                 newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
-                        vertexMemoTable, newOuterTransTableList, newFormerTransTable,
+                        graph, newOuterTransTableList, newFormerTransTable,
                         privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                         networkWeight, parentLoopStack));
 
             for (StatementBlock innerIsb : istmt.getElseBody())
                 elseFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
-                        vertexMemoTable, newOuterTransTableList, elseFormerTransTable,
+                        graph, newOuterTransTableList, elseFormerTransTable,
                         privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                         networkWeight, parentLoopStack));
 
@@ -176,17 +176,17 @@ public class FederatedPlanMinSTRewire {
             List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
             currentLoopStack.add(Pair.of(sb.getSBID(), loopWeight));
 
-            rewireHopDAG(fsb.getFromHops(), prog, visitedHops, rewireTable, vertexMemoTable, newOuterTransTableList,
+            rewireHopDAG(fsb.getFromHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList,
                     null, innerTransTable,
                     privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                     networkWeight, currentLoopStack);
-            rewireHopDAG(fsb.getToHops(), prog, visitedHops, rewireTable, vertexMemoTable, newOuterTransTableList, null,
+            rewireHopDAG(fsb.getToHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList, null,
                     innerTransTable,
                     privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                     networkWeight, currentLoopStack);
 
             if (fsb.getIncrementHops() != null) {
-                rewireHopDAG(fsb.getIncrementHops(), prog, visitedHops, rewireTable, vertexMemoTable,
+                rewireHopDAG(fsb.getIncrementHops(), prog, visitedHops, rewireTable, graph,
                         newOuterTransTableList, null, innerTransTable,
                         privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                         networkWeight, currentLoopStack);
@@ -195,12 +195,12 @@ public class FederatedPlanMinSTRewire {
 
             for (StatementBlock innerFsb : fstmt.getBody())
                 newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
-                        vertexMemoTable, newOuterTransTableList, newFormerTransTable,
+                        graph, newOuterTransTableList, newFormerTransTable,
                         privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                         networkWeight, currentLoopStack));
 
             // Wire UnRefTwrite to liveOutHops
-            wireUnRefTwriteToLiveOut(fsb, unRefTwriteSet, vertexMemoTable, newFormerTransTable, fTypeMap);
+            wireUnRefTwriteToLiveOut(fsb, unRefTwriteSet, graph, newFormerTransTable, fTypeMap);
         } else if (sb instanceof WhileStatementBlock) {
             WhileStatementBlock wsb = (WhileStatementBlock) sb;
             WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
@@ -212,7 +212,7 @@ public class FederatedPlanMinSTRewire {
             List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
             currentLoopStack.add(Pair.of(sb.getSBID(), DEFAULT_LOOP_WEIGHT));
 
-            rewireHopDAG(wsb.getPredicateHops(), prog, visitedHops, rewireTable, vertexMemoTable, newOuterTransTableList,
+            rewireHopDAG(wsb.getPredicateHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList,
                     null, innerTransTable,
                     privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                     networkWeight, currentLoopStack);
@@ -220,28 +220,28 @@ public class FederatedPlanMinSTRewire {
 
             for (StatementBlock innerWsb : wstmt.getBody())
                 newFormerTransTable.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
-                        vertexMemoTable, newOuterTransTableList, newFormerTransTable,
+                        graph, newOuterTransTableList, newFormerTransTable,
                         privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                         networkWeight, currentLoopStack));
 
             // Wire UnRefTwrite to liveOutHops
-            wireUnRefTwriteToLiveOut(wsb, unRefTwriteSet, vertexMemoTable, newFormerTransTable, fTypeMap);
+            wireUnRefTwriteToLiveOut(wsb, unRefTwriteSet, graph, newFormerTransTable, fTypeMap);
         } else if (sb instanceof FunctionStatementBlock) {
             FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
             FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
 
             for (StatementBlock innerFsb : fstmt.getBody())
                 newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
-                        vertexMemoTable, newOuterTransTableList, newFormerTransTable,
+                        graph, newOuterTransTableList, newFormerTransTable,
                         privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, computeWeight,
                         networkWeight, parentLoopStack));
 
             // Wire fcall operation to liveOutHops
-            wireUnRefTwriteToLiveOut(fsb, unRefTwriteSet, vertexMemoTable, newFormerTransTable, fTypeMap);
+            wireUnRefTwriteToLiveOut(fsb, unRefTwriteSet, graph, newFormerTransTable, fTypeMap);
         } else { // generic (last-level)
             if (sb.getHops() != null) {
                 for (Hop c : sb.getHops())
-                    rewireHopDAG(c, prog, visitedHops, rewireTable, vertexMemoTable, newOuterTransTableList, null,
+                    rewireHopDAG(c, prog, visitedHops, rewireTable, graph, newOuterTransTableList, null,
                             innerTransTable,
                             privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
                             computeWeight, networkWeight, parentLoopStack);
@@ -253,23 +253,49 @@ public class FederatedPlanMinSTRewire {
     }
 
     private static void rewireHopDAG(Hop hop, DMLProgram prog, Set<Long> visitedHops, Map<Long, List<Hop>> rewireTable,
-            Map<Long, Vertex> vertexMemoTable, List<Map<String, List<Hop>>> outerTransTableList,
+            FederatedPlanMinSTGraph graph, List<Map<String, List<Hop>>> outerTransTableList,
             Map<String, List<Hop>> formerTransTable, Map<String, List<Hop>> innerTransTable,
             Map<Long, Privacy> privacyConstraintMap, Map<Long, FType> fTypeMap,
             List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
             Set<Hop> progRootHopSet,
             Set<String> fnStack, double computeWeight, double networkWeight, List<Pair<Long, Double>> loopStack) {
 
+        // DEBUG: Print hop information to find Hop 282
+        System.out.println("[DEBUG-REWIRE] Processing Hop " + hop.getHopID() +
+            " (Type: " + hop.getClass().getSimpleName() +
+            ", Name: " + hop.getName() +
+            ", OpCode: " + hop.getOpString() + ")");
+
+        // Collect all child hops including rewired TRead children
+        List<Hop> childHops = new ArrayList<>();
         if (hop.getInput() != null) {
-            for (Hop inputHop : hop.getInput()) {
-                long inputHopID = inputHop.getHopID();
-                if (!visitedHops.contains(inputHopID)) {
-                    visitedHops.add(inputHopID);
-                    rewireHopDAG(inputHop, prog, visitedHops, rewireTable, vertexMemoTable, outerTransTableList,
-                            formerTransTable, innerTransTable,
-                            privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-                            computeWeight, networkWeight, loopStack);
-                }
+            childHops.addAll(hop.getInput());
+        }
+
+        // TODO: VERIFY - Fix for missing hops in memoTable (e.g., Hop 282)
+        // For TRead: populate rewireTable BEFORE visiting children
+        // This is necessary because rewireTable is normally populated in rewireHop(),
+        // which is called AFTER child visiting, but we need it DURING child visiting
+        if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+            String hopName = hop.getName();
+            List<Hop> transChildHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
+            if (transChildHops != null && !transChildHops.isEmpty()) {
+                rewireTable.put(hop.getHopID(), transChildHops);
+                childHops.addAll(transChildHops);
+            }
+        }
+
+        // Process all child hops
+        for (Hop inputHop : childHops) {
+            long inputHopID = inputHop.getHopID();
+            if (!visitedHops.contains(inputHopID)) {
+                visitedHops.add(inputHopID);
+                rewireHopDAG(inputHop, prog, visitedHops, rewireTable, graph, outerTransTableList,
+                        formerTransTable, innerTransTable,
+                        privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+                        computeWeight, networkWeight, loopStack);
+            } else {
+                System.out.println("[DEBUG-REWIRE] Skipping already visited child Hop " + inputHopID + " (parent: Hop " + hop.getHopID() + ")");
             }
         }
 
@@ -312,7 +338,7 @@ public class FederatedPlanMinSTRewire {
                     }
 
                     Map<String, List<Hop>> functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
-                            rewireTable, vertexMemoTable, outerTransTableList, newFormerTransTable,
+                            rewireTable, graph, outerTransTableList, newFormerTransTable,
                             privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
                             computeWeight, networkWeight, loopStack);
 
@@ -329,14 +355,14 @@ public class FederatedPlanMinSTRewire {
         }
 
         Vertex vertex = rewireHop(hop, rewireTable, outerTransTableList, formerTransTable, innerTransTable, privacyConstraintMap,
-                vertexMemoTable, fTypeMap, fedMap, unRefTwriteSet);
+                graph, fTypeMap, fedMap, unRefTwriteSet);
         vertex.setMetadata(computeWeight, networkWeight, loopStack);
-        vertexMemoTable.put(hop.getHopID(), vertex);
+        graph.addVertex(vertex);
     }
 
     private static Vertex rewireHop(Hop hop, Map<Long, List<Hop>> rewireTable,
             List<Map<String, List<Hop>>> outerTransTableList, Map<String, List<Hop>> formerTransTable,
-            Map<String, List<Hop>> innerTransTable, Map<Long, Privacy> privacyConstraintMap, Map<Long, Vertex> vertexMemoTable,
+            Map<String, List<Hop>> innerTransTable, Map<Long, Privacy> privacyConstraintMap, FederatedPlanMinSTGraph graph,
             Map<Long, FType> fTypeMap, List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet) {
         Privacy privacy = null;
         FType fType = null;
@@ -370,10 +396,15 @@ public class FederatedPlanMinSTRewire {
             FederatedPlannerLogger.logDataOpFTypeDebug(hop, fType, "TRANSIENTWRITE", 
                 "Propagated from single input (HopID: " + hop.getInput(0).getHopID() + ")");
         } else if (opType == Types.OpOpData.TRANSIENTREAD) {
+            // TODO: VERIFY - Avoid duplicate rewireTransRead() calls
             // Rewire TransRead
-            List<Hop> childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
-            // Handle rewire table (TransRead -> TransWrite)
-            rewireTable.put(hop.getHopID(), childHops);
+            // Check if already populated in rewireHopDAG to avoid duplicate work
+            List<Hop> childHops = rewireTable.get(hop.getHopID());
+            if (childHops == null) {
+                childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
+                // Handle rewire table (TransRead -> TransWrite)
+                rewireTable.put(hop.getHopID(), childHops);
+            }
 
             // Todo: Handle exception when TRead has no Child (check why it's missing)
             if (childHops == null || childHops.isEmpty()) {
@@ -578,7 +609,7 @@ public class FederatedPlanMinSTRewire {
     }
 
     private static void wireUnRefTwriteToLiveOut(StatementBlock sb, Set<Long> unRefTwriteSet,
-            Map<Long, Vertex> vertexMemoTable, Map<String, List<Hop>> newFormerTransTable, 
+            FederatedPlanMinSTGraph graph, Map<String, List<Hop>> newFormerTransTable, 
             Map<Long, FType> fTypeMap) {
         if (unRefTwriteSet.isEmpty())
             return;
@@ -592,7 +623,7 @@ public class FederatedPlanMinSTRewire {
         Iterator<Long> unRefTwriteIterator = unRefTwriteSet.iterator();
         while (unRefTwriteIterator.hasNext()) {
             Long unRefTwriteHopID = unRefTwriteIterator.next();
-            Hop unRefTwriteHop = vertexMemoTable.get(unRefTwriteHopID).getHopRef();
+            Hop unRefTwriteHop = graph.getHopRef(unRefTwriteHopID);
             String unRefTwriteHopName = unRefTwriteHop.getName();
 
             if (liveOutHops.containsVariable(unRefTwriteHopName)) {
@@ -616,7 +647,7 @@ public class FederatedPlanMinSTRewire {
                         Hop representativeLiveOutHop = liveOutHopsList.get(0);
                         
                         // 새로운 호환성 우선순위 점수 계산
-                        CompatibilityResult compatResult = calculateCompatibilityScore(unRefTwriteHop, representativeLiveOutHop, fTypeMap, vertexMemoTable);
+                        CompatibilityResult compatResult = calculateCompatibilityScore(unRefTwriteHop, representativeLiveOutHop, fTypeMap, graph);
                         
                         FType unRefTwriteFType = getHopFType(unRefTwriteHop, fTypeMap);
                         FType liveOutFType = getHopFType(representativeLiveOutHop, fTypeMap);
@@ -689,7 +720,7 @@ public class FederatedPlanMinSTRewire {
     }
 
     private static CompatibilityResult calculateCompatibilityScore(Hop unRefTwriteHop, Hop liveOutHop, 
-                                                                  Map<Long, FType> fTypeMap, Map<Long, Vertex> vertexMemoTable) {
+                                                                  Map<Long, FType> fTypeMap, FederatedPlanMinSTGraph graph) {
         FType unRefTwriteFType = getHopFType(unRefTwriteHop, fTypeMap);
         FType liveOutFType = getHopFType(liveOutHop, fTypeMap);
         
@@ -726,7 +757,7 @@ public class FederatedPlanMinSTRewire {
         }
         
         // 4순위: 공통 Child 메모리 추정치
-        double commonChildMemEstimate = findCommonChildrenMemEstimate(unRefTwriteHop, liveOutHop, vertexMemoTable);
+        double commonChildMemEstimate = findCommonChildrenMemEstimate(unRefTwriteHop, liveOutHop, graph);
         if (commonChildMemEstimate > 0) {
             int childScore = 10000 - (int)Math.min(commonChildMemEstimate, 9999);
             return new CompatibilityResult(true, 4, childScore, "Common child memory estimate: " + commonChildMemEstimate);
@@ -808,7 +839,7 @@ public class FederatedPlanMinSTRewire {
     }
 
     // 공통 child들의 메모리 추정치 계산 (재귀적 탐색, depth 5 제한)
-    private static double findCommonChildrenMemEstimate(Hop hop1, Hop hop2, Map<Long, Vertex> vertexMemoTable) {
+    private static double findCommonChildrenMemEstimate(Hop hop1, Hop hop2, FederatedPlanMinSTGraph graph) {
         Set<Long> children1 = getAllChildren(hop1, new HashSet<>(), 5);
         Set<Long> children2 = getAllChildren(hop2, new HashSet<>(), 5);
         
@@ -819,7 +850,7 @@ public class FederatedPlanMinSTRewire {
         // 공통 child들의 총 메모리 추정치 계산 (HopRef 기반)
         double totalMemEstimate = 0.0;
         for (Long childId : commonChildren) {
-            Vertex Vertex = vertexMemoTable.get(childId);
+            Vertex Vertex = graph.getVertex(childId);
             if (Vertex != null) {
                 Hop childHop = Vertex.getHopRef();
                 if (childHop != null) {

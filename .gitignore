@@ -156,3 +156,10 @@ scripts/resource/output
 /extract_fout_lout_analysis.py
 /run_visualization.sh
 /trace_output.txt
+
+# External files
+Z_external/
+Z_scripts/
+Z_conversations/
+.claude/
+trace*/
