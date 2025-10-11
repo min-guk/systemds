@@ -26,7 +26,8 @@ public class FTypes
 		RUNTIME,
 		COMPILE_FED_ALL,
 		COMPILE_FED_HEURISTIC,
-		COMPILE_COST_BASED;
+		COMPILE_COST_BASED,
+		COMPILE_MIN_ST_CUT;
 		public AFederatedPlanner getPlanner() {
 			switch( this ) {
 				case COMPILE_FED_ALL:
@@ -35,6 +36,8 @@ public class FTypes
 					return new FederatedPlannerFedHeuristic();
 				case COMPILE_COST_BASED:
 					return new FederatedPlannerFedCostBased();
+				case COMPILE_MIN_ST_CUT:
+					return new FederatedPlanMinSTCut();
 				case NONE:
 				case RUNTIME:
 				default:

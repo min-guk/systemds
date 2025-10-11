@@ -1,6 +1,7 @@
 package org.apache.sysds.hops.fedplanner.ftype.handlers;
 
 import org.apache.sysds.hops.*;
+import org.apache.sysds.hops.codegen.SpoofFusedOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 
 /**
@@ -202,7 +203,8 @@ public class FederatedTypeHandler {
      */
     public boolean isUnsupportedOperation(Hop hop) {
         return hop instanceof DataGenOp || hop instanceof DnnOp ||
-               hop instanceof FunctionOp || hop instanceof LiteralOp || hop instanceof DataOp;
+               hop instanceof FunctionOp || hop instanceof LiteralOp ||
+               hop instanceof DataOp || hop instanceof SpoofFusedOp;
     }
 
     /**
