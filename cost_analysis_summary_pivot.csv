@@ -1,8 +1,0 @@
-Folder_Name,FOUT Hops Total Computing Cost,Fed Parent FOUT Cost,Fed Parent FOUT Hops,Fed Parent LOUT Cost,Fed Parent LOUT Hops,LOUT Hops Total Computing Cost,Number of FOUT Hops,Number of LOUT Hops,Total Computing Cost,Total Hops (excluding ROOT),Total Network Cost
-CNN,99.76,100.0,80.0,0.0,20.0,0.24,11.76,88.24,100.0,100.0,100.0
-P2_FFN,0.0,,,,,100.0,0.0,94.41,100.0,100.0,100.0
-kmeans,98.05,100.0,76.15,0.0,23.85,1.95,25.54,74.46,100.0,100.0,100.0
-l2svm,99.76,100.0,98.89,0.0,1.11,0.24,41.59,58.41,100.0,100.0,100.0
-lm,99.94,100.0,71.43,0.0,28.57,0.06,13.16,86.84,100.0,100.0,100.0
-logreg,99.52,100.0,95.0,0.0,5.0,0.48,18.27,81.73,100.0,100.0,100.0
-pca,99.91,99.91,75.0,0.09,25.0,0.09,29.67,70.33,100.0,100.0,100.0
