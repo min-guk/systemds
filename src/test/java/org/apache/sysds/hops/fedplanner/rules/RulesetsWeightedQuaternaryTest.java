@@ -1,0 +1,300 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.sysds.hops.fedplanner.rules;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.junit.Test;
+
+public class RulesetsWeightedQuaternaryTest {
+  private static final String SCALAR_DETAIL = "scalar output → LOUT";
+  private static final String WDIVMM_ALIGN_DETAIL = "output dims derive from U/V; partition misalignment risk";
+
+  @Test
+  public void weightedQuaternarySmokeTable() {
+    ShapeHint wdivRowMismatch = hint(10, 5, 20, 4);
+    ShapeHint wdivColMismatch = hint(8, 9, 8, 5);
+    List<Scenario> scenarios = List.of(
+        Scenario.of("wsLoss-row-fed",
+            new Rulesets.WeightedSquaredLossRule(),
+            "wsloss",
+            Map.of("q.type", "WSLOSS"),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.FED,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.OK,
+            SCALAR_DETAIL,
+            null),
+        Scenario.of("wcemm-col-fed",
+            new Rulesets.WeightedCrossEntropyRule(),
+            "wcemm",
+            Map.of("q.type", "WCEMM"),
+            List.of(FType.COL, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.FED,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.OK,
+            SCALAR_DETAIL,
+            null),
+        Scenario.of("wsSigmoid-row-guard-unknown",
+            new Rulesets.WeightedSigmoidRule(),
+            "wsigmoid",
+            Map.of("q.type", "WSIGMOID"),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.FED,
+            Placement.FOUT,
+            true,
+            FType.ROW,
+            ReasonCode.OK,
+            null,
+            ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
+        Scenario.of("wumm-col",
+            new Rulesets.WeightedUnaryMMRule(),
+            "wumm",
+            Map.of("q.type", "WUMM"),
+            List.of(FType.COL, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.FED,
+            Placement.FOUT,
+            true,
+            FType.COL,
+            ReasonCode.OK,
+            null,
+            null),
+        Scenario.of("wdivmm-basic-row",
+            new Rulesets.WeightedDivMMRule(),
+            "wdivmm",
+            Map.ofEntries(
+                Map.entry("q.type", "WDIVMM"),
+                Map.entry("wdivmm.baseType", "0")),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.FED,
+            Placement.FOUT,
+            true,
+            FType.ROW,
+            ReasonCode.OK,
+            null,
+            null),
+        Scenario.of("wdivmm-left-misaligned",
+            new Rulesets.WeightedDivMMRule(),
+            "wdivmm",
+            Map.ofEntries(
+                Map.entry("q.type", "WDIVMM"),
+                Map.entry("wdivmm.baseType", "1")),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            wdivRowMismatch,
+            Exec.FED,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
+            WDIVMM_ALIGN_DETAIL,
+            null),
+        Scenario.of("wdivmm-right-misaligned",
+            new Rulesets.WeightedDivMMRule(),
+            "wdivmm",
+            Map.ofEntries(
+                Map.entry("q.type", "WDIVMM"),
+                Map.entry("wdivmm.baseType", "2")),
+            List.of(FType.COL, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            wdivColMismatch,
+            Exec.FED,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
+            WDIVMM_ALIGN_DETAIL,
+            null),
+        Scenario.of("wdivmm-basetype-missing",
+            new Rulesets.WeightedDivMMRule(),
+            "wdivmm",
+            Map.of("q.type", "WDIVMM"),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.CP,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.OPCODE_UNSUPPORTED,
+            null,
+            null),
+        Scenario.of("wsSigmoid-broadcast",
+            new Rulesets.WeightedSigmoidRule(),
+            "wsigmoid",
+            Map.of("q.type", "WSIGMOID"),
+            List.of(FType.BROADCAST, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.CP,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.BROADCAST_CONSTRAINT,
+            null,
+            null),
+        Scenario.of("wumm-guard-fail",
+            new Rulesets.WeightedUnaryMMRule(),
+            "wumm",
+            Map.ofEntries(
+                Map.entry("q.type", "WUMM"),
+                Map.entry("rc.guardOverride", "false")),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.CP,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.REPR_CHANGE_GUARD_FAIL,
+            "override=false",
+            null),
+        Scenario.of("wcemm-local",
+            new Rulesets.WeightedCrossEntropyRule(),
+            "wcemm",
+            Map.of("q.type", "WCEMM"),
+            List.of(FType.LOCAL, FType.LOCAL, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.CP,
+            Placement.LOUT,
+            false,
+            null,
+            ReasonCode.NO_FED_INPUT,
+            SCALAR_DETAIL,
+            null),
+        Scenario.of("wumm-guard-pass",
+            new Rulesets.WeightedUnaryMMRule(),
+            "wumm",
+            Map.ofEntries(
+                Map.entry("q.type", "WUMM"),
+                Map.entry("rc.guardOverride", "true")),
+            List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
+            null,
+            Exec.FED,
+            Placement.FOUT,
+            true,
+            FType.ROW,
+            ReasonCode.OK,
+            null,
+            ReasonCode.REPR_CHANGE_GUARD_PASS));
+
+    for (Scenario scenario : scenarios) {
+      OpSig sig = quaternarySig(scenario.opcode, scenario.attrs, scenario.inFTypes.size());
+      OpCaps caps = scenario.rule.caps(sig, scenario.inFTypes, scenario.hint);
+      String msg = "scenario=" + scenario.name;
+      assertEquals(msg, scenario.exec, caps.exec());
+      assertEquals(msg, scenario.placement, caps.placement());
+      assertEquals(msg, scenario.reason, caps.reason());
+      assertEquals(msg, scenario.fout, caps.foutEnabled());
+      if (scenario.fout) {
+        assertTrue(msg, caps.foutFType().isPresent());
+        assertEquals(msg, scenario.foutType, caps.foutFType().orElse(null));
+      }
+      else {
+        assertTrue(msg, caps.foutFType().isEmpty());
+      }
+      if (scenario.detail == null) {
+        assertTrue(msg, caps.detail().isEmpty());
+      }
+      else {
+        assertTrue(msg, caps.detail().isPresent());
+        assertEquals(msg, scenario.detail, caps.detail().get());
+      }
+      if (scenario.expectedNote != null) {
+        boolean found = caps.notes().stream()
+            .map(DecisionNote::code)
+            .anyMatch(rc -> rc == scenario.expectedNote);
+        assertTrue(msg + " expected guard note " + scenario.expectedNote, found);
+      }
+    }
+  }
+
+  private static OpSig quaternarySig(String opcode, Map<String,String> attrs, int arity) {
+    InputKind[] kinds = new InputKind[arity];
+    Arrays.fill(kinds, InputKind.MATRIX);
+    return OpSig.of(opcode, OpCategory.QUATERNARY, attrs, kinds);
+  }
+
+  private static ShapeHint hint(long outRows, long outCols, long xRows, long xCols) {
+    return new ShapeHint(outRows, outCols, 1000, Optional.empty(), xRows, xCols, -1, -1);
+  }
+
+  private static final class Scenario {
+    final String name;
+    final Rule rule;
+    final String opcode;
+    final Map<String,String> attrs;
+    final List<FType> inFTypes;
+    final ShapeHint hint;
+    final Exec exec;
+    final Placement placement;
+    final boolean fout;
+    final FType foutType;
+    final ReasonCode reason;
+    final String detail;
+    final ReasonCode expectedNote;
+
+    private Scenario(String name, Rule rule, String opcode, Map<String,String> attrs,
+        List<FType> inFTypes, ShapeHint hint, Exec exec, Placement placement,
+        boolean fout, FType foutType, ReasonCode reason, String detail,
+        ReasonCode expectedNote) {
+      this.name = name;
+      this.rule = rule;
+      this.opcode = opcode;
+      this.attrs = attrs;
+      this.inFTypes = inFTypes;
+      this.hint = hint;
+      this.exec = exec;
+      this.placement = placement;
+      this.fout = fout;
+      this.foutType = foutType;
+      this.reason = reason;
+      this.detail = detail;
+      this.expectedNote = expectedNote;
+    }
+
+    static Scenario of(String name, Rule rule, String opcode, Map<String,String> attrs,
+        List<FType> inFTypes, ShapeHint hint, Exec exec, Placement placement,
+        boolean fout, FType foutType, ReasonCode reason, String detail,
+        ReasonCode expectedNote) {
+      return new Scenario(name, rule, opcode, attrs, inFTypes, hint,
+          exec, placement, fout, foutType, reason, detail, expectedNote);
+    }
+  }
+}

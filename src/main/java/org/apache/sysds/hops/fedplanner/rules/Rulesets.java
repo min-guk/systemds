@@ -1,0 +1,3679 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.sysds.hops.fedplanner.rules;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore.BaseRule;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore.Guard;
+
+/**
+ * Concrete rule implementations (compile-only).
+ */
+public final class Rulesets {
+  private Rulesets() {}
+
+  private static final List<FType> NO_TYPES = List.of();
+  private static final String ATTR_Q_TYPE = "q.type";
+  private static final String ATTR_WDIVMM_BASE_TYPE = "wdivmm.baseType";
+  // map.margin is a rule-layer-only hint (defaults to 0) used by FrameMapRule.
+  private static final String ATTR_MAP_MARGIN = "map.margin";
+  private static final String SCALAR_LOUT_DETAIL = "scalar output → LOUT";
+  private static final String WDIVMM_ALIGN_DETAIL = "output dims derive from U/V; partition misalignment risk";
+  private static final String FED_WRITE_DETAIL = "federated write target";
+  private static final String ATTR_SPOOF_TEMPLATE = "spoof.template";
+  private static final String ATTR_SPOOF_CELL_TYPE = "spoof.cellType";
+  private static final String ATTR_SPOOF_ROW_TYPE = "spoof.rowType";
+  private static final String ATTR_SPOOF_OUTER_TYPE = "spoof.outer.type";
+  private static final String WUMM_X_AXIS_ONLY_DETAIL =
+      "WUMM supports only ROW or COL partitioned X (per QuaternaryWUMMFEDInstruction)";
+  private static final String APPEND_FULL_SINGLE_RANGE_DETAIL =
+      "Append with FType.FULL requires single federated range";
+  private static final String ALIGNMENT_NOT_PROVABLE_NOTE =
+      "alignment not statically provable; runtime may broadcast-slice";
+  private static final String CUMOFF_FULL_SINGLE_RANGE_DETAIL =
+      "FULL input assumed single federated range; runtime validates mapping";
+
+  private static List<FType> candidates(List<List<FType>> in, int pos) {
+    if (in == null || pos < 0 || pos >= in.size())
+      return NO_TYPES;
+    List<FType> res = in.get(pos);
+    return (res == null) ? NO_TYPES : res;
+  }
+
+  private static FType typeAt(List<FType> types, int idx) {
+    if (types == null || idx < 0 || idx >= types.size())
+      return null;
+    return types.get(idx);
+  }
+
+  private static boolean isAxis(FType t) {
+    return t == FType.ROW || t == FType.COL;
+  }
+
+  private static boolean matchesAxis(FType t, FType axis) {
+    return axis != null && axis == t;
+  }
+
+  private static boolean hasAxis(Collection<FType> types, FType axis) {
+    if (types == null || axis == null)
+      return false;
+    for (FType t : types) {
+      if (matchesAxis(t, axis))
+        return true;
+    }
+    return false;
+  }
+
+  private static boolean isScalarLike(FType t) {
+    return t == null || t == FType.NF || t == FType.LOCAL;
+  }
+
+  private static boolean isBroadcastOrScalar(FType t) {
+    return t == FType.BROADCAST || isScalarLike(t);
+  }
+
+  private static boolean isTrueFederated(FType t) {
+    return t == FType.ROW || t == FType.COL || t == FType.PART;
+  }
+
+  private static boolean isFederatedLike(FType t) {
+    return t == FType.ROW || t == FType.COL || t == FType.FULL || t == FType.PART;
+  }
+
+  private static boolean axisKnown(FType axis, ShapeHint hint) {
+    if (axis == null || hint == null)
+      return false;
+    if (axis == FType.ROW)
+      return hint.rows() > 0;
+    if (axis == FType.COL)
+      return hint.cols() > 0;
+    return false;
+  }
+
+  private static boolean aligned(List<FType> left, List<FType> right, FType axis, ShapeHint hint) {
+    return axisKnown(axis, hint) && hasAxis(left, axis) && hasAxis(right, axis);
+  }
+
+  private static boolean aligned(FType left, FType right, FType axis, ShapeHint hint) {
+    return axisKnown(axis, hint) && matchesAxis(left, axis) && matchesAxis(right, axis);
+  }
+
+  private static boolean matrixScalarPair(List<FType> left, List<FType> right, FType axis) {
+    return (hasAxis(left, axis) && hasBroadcastOrScalarFromList(right))
+        || (hasAxis(right, axis) && hasBroadcastOrScalarFromList(left));
+  }
+
+  private static boolean hasBroadcastOrScalarFromList(Collection<FType> types) {
+    if (types == null)
+      return false;
+    for (FType t : types) {
+      if (isBroadcastOrScalar(t))
+        return true;
+    }
+    return false;
+  }
+
+  private static boolean matrixScalarPair(FType left, FType right, FType axis) {
+    return (matchesAxis(left, axis) && isBroadcastOrScalar(right))
+        || (matchesAxis(right, axis) && isBroadcastOrScalar(left));
+  }
+
+  private static boolean isOuterLike(FType left, FType right, ShapeHint hint) {
+    boolean rowCol = matchesAxis(left, FType.ROW) && matchesAxis(right, FType.COL);
+    boolean colRow = matchesAxis(left, FType.COL) && matchesAxis(right, FType.ROW);
+    if (!(rowCol || colRow))
+      return false;
+    if (hint == null)
+      return true;
+    boolean rowsLarge = hint.rows() > 1 || hint.rows() == -1;
+    boolean colsLarge = hint.cols() > 1 || hint.cols() == -1;
+    return rowsLarge && colsLarge;
+  }
+
+  private static FTypeProfile profileOf(Set<FType> outs) {
+    if (outs == null || outs.isEmpty())
+      return FTypeProfile.empty();
+    return FTypeProfile.ofOutput(new ArrayList<>(outs));
+  }
+
+  private static FTypeProfile primaryLikeProfile(List<List<FType>> inFTypeCandidates) {
+    List<FType> primary = candidates(inFTypeCandidates, 0);
+    if (primary.isEmpty())
+      return FTypeProfile.empty();
+    Set<FType> outs = new LinkedHashSet<>();
+    if (primary.contains(FType.ROW))
+      outs.add(FType.ROW);
+    if (primary.contains(FType.COL))
+      outs.add(FType.COL);
+    if (primary.contains(FType.PART))
+      outs.add(FType.PART);
+    if (primary.contains(FType.FULL))
+      outs.add(FType.FULL);
+    return profileOf(outs);
+  }
+
+  private static boolean hasExpectedArity(List<FType> inFTypes, int expected) {
+    return inFTypes != null && inFTypes.size() == expected;
+  }
+
+  private static String attrValue(OpSig sig, String key) {
+    if (sig == null || key == null)
+      return null;
+    Map<String,String> attrs = sig.attrs();
+    if (attrs == null || attrs.isEmpty())
+      return null;
+    return attrs.get(key);
+  }
+
+  private static boolean matchesQType(OpSig sig, String expected) {
+    if (sig == null || expected == null)
+      return false;
+    String raw = attrValue(sig, ATTR_Q_TYPE);
+    return raw != null && raw.equalsIgnoreCase(expected);
+  }
+
+  private static boolean matchesWeightedQuaternary(OpSig sig, Set<String> opcodes, String qType) {
+    if (sig == null || sig.category() != OpCategory.QUATERNARY)
+      return false;
+    String opcode = normalizedOpcode(sig);
+    if (opcodes != null && opcodes.contains(opcode))
+      return true;
+    return matchesQType(sig, qType);
+  }
+
+  private static OpCaps scalarCaps(OpSig sig, Exec exec, ReasonCode reason) {
+    OpCategory category = (sig != null) ? sig.category() : OpCategory.OTHER;
+    String opcode = (sig != null && sig.opcode() != null) ? sig.opcode() : "";
+    return OpCaps.newBuilder()
+        .category(category)
+        .opcode(opcode)
+        .exec(exec)
+        .placement(Placement.LOUT)
+        .fout(false)
+        .reason(reason)
+        .detail(SCALAR_LOUT_DETAIL)
+        .build();
+  }
+
+  private static OpCaps fedLocalWithDetail(OpSig sig, ReasonCode reason, String detail) {
+    OpCategory category = (sig != null) ? sig.category() : OpCategory.OTHER;
+    String opcode = (sig != null && sig.opcode() != null) ? sig.opcode() : "";
+    return OpCaps.newBuilder()
+        .category(category)
+        .opcode(opcode)
+        .exec(Exec.FED)
+        .placement(Placement.LOUT)
+        .fout(false)
+        .reason(reason)
+        .detail(detail)
+        .build();
+  }
+
+  private static Integer parseBaseType(String raw) {
+    if (raw == null || raw.isBlank())
+      return null;
+    try {
+      int code = Integer.parseInt(raw.trim());
+      return (code >= 0 && code <= 4) ? code : null;
+    } catch (NumberFormatException nfe) {
+      return null;
+    }
+  }
+
+  private static boolean isBasicBaseType(int code) {
+    return code == 0;
+  }
+
+  private static boolean isLeftBaseType(int code) {
+    return code == 1 || code == 3;
+  }
+
+  private static boolean isRightBaseType(int code) {
+    return code == 2 || code == 4;
+  }
+
+  private static boolean axisPreserved(FType x, ShapeHint hint) {
+    if (x == null)
+      return false;
+    if (x == FType.PART || x == FType.FULL)
+      return true;
+    if (hint == null)
+      return true;
+    if (x == FType.ROW)
+      return dimsMatch(hint.rows(), hint.rowsA());
+    if (x == FType.COL)
+      return dimsMatch(hint.cols(), hint.colsA());
+    return false;
+  }
+
+  private static boolean dimsMatch(long a, long b) {
+    if (a < 0 || b < 0)
+      return true;
+    return a == b;
+  }
+
+  private static OpCaps cpCaps(OpSig sig, ReasonCode reason) {
+    Objects.requireNonNull(sig, "sig");
+    return OpCaps.newBuilder()
+        .category(sig.category())
+        .opcode(sig.opcode())
+        .exec(Exec.CP)
+        .placement(Placement.LOUT)
+        .fout(false)
+        .reason(reason)
+        .build();
+  }
+
+  private static OpCaps fedFoutCaps(OpSig sig, FType axis, ReasonCode reason) {
+    Objects.requireNonNull(sig, "sig");
+    return OpCaps.newBuilder()
+        .category(sig.category())
+        .opcode(sig.opcode())
+        .exec(Exec.FED)
+        .placement(Placement.FOUT)
+        .fout(true, axis)
+        .reason(reason)
+        .build();
+  }
+
+  private static OpCaps fedLocalCaps(OpSig sig, ReasonCode reason) {
+    Objects.requireNonNull(sig, "sig");
+    return OpCaps.newBuilder()
+        .category(sig.category())
+        .opcode(sig.opcode())
+        .exec(Exec.FED)
+        .placement(Placement.LOUT)
+        .fout(false)
+        .reason(reason)
+        .build();
+  }
+
+  private static OpCaps guardAwareFout(OpSig sig, FType axis, ReasonCode reason, Guard.Result guard) {
+    return guardAwareFout(sig, axis, reason, guard, null);
+  }
+
+  private static OpCaps guardAwareFout(
+      OpSig sig, FType axis, ReasonCode reason, Guard.Result guard, String detail) {
+    if (guard != null && guard.isFail())
+      return guardFallbackBuilder(sig, guard).build();
+
+    OpCaps.Builder builder = OpCaps.newBuilder()
+        .category(sig != null ? sig.category() : OpCategory.OTHER)
+        .opcode(sig != null ? sig.opcode() : "")
+        .exec(Exec.FED)
+        .placement(Placement.FOUT)
+        .fout(true, axis)
+        .reason(reason);
+    if (detail != null && !detail.isBlank())
+      builder.detail(detail);
+    if (guard == null || guard.isUnknown())
+      builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+    else
+      appendGuardPassNote(builder, guard);
+    return builder.build();
+  }
+
+  private static OpCaps.Builder guardFallbackBuilder(OpSig sig, Guard.Result guard) {
+    ReasonCode code = (guard != null && guard.isFail())
+        ? ReasonCode.REPR_CHANGE_GUARD_FAIL
+        : ReasonCode.REPR_CHANGE_GUARD_UNKNOWN;
+    return OpCaps.newBuilder()
+        .category(sig != null ? sig.category() : OpCategory.OTHER)
+        .opcode(sig != null ? sig.opcode() : "")
+        .exec(Exec.CP)
+        .placement(Placement.LOUT)
+        .fout(false)
+        .reason(code)
+        .detail(guardDetail(guard));
+  }
+
+  private static void appendGuardPassNote(OpCaps.Builder builder, Guard.Result guard) {
+    if (builder == null || guard == null || !guard.isPass())
+      return;
+    builder.note(ReasonCode.REPR_CHANGE_GUARD_PASS, guardDetail(guard));
+  }
+
+  private static String guardDetail(Guard.Result guard) {
+    if (guard == null)
+      return "guard result unavailable";
+    String detail = guard.detail();
+    if (detail != null && !detail.isBlank())
+      return detail;
+    if (guard.isFail())
+      return "representation change guard failed";
+    if (guard.isPass())
+      return "representation change guard passed";
+    return "insufficient guard hints";
+  }
+
+  private static OpCaps guardAwareFoutWithNote(OpSig sig, FType axis, ReasonCode reason,
+      Guard.Result guard, String note) {
+    if (note == null || note.isBlank())
+      return guardAwareFout(sig, axis, reason, guard);
+    if (guard != null && guard.isFail())
+      return guardFallbackBuilder(sig, guard).build();
+
+    OpCaps.Builder builder = OpCaps.newBuilder()
+        .category(sig != null ? sig.category() : OpCategory.OTHER)
+        .opcode(sig != null ? sig.opcode() : "")
+        .exec(Exec.FED)
+        .placement(Placement.FOUT)
+        .fout(true, axis)
+        .reason(reason)
+        .detail(note);
+    if (guard == null || guard.isUnknown())
+      builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+    else
+      appendGuardPassNote(builder, guard);
+    return builder.build();
+  }
+
+  private static String normalizedOpcode(OpSig sig) {
+    return (sig == null || sig.opcode() == null)
+        ? ""
+        : sig.opcode().toLowerCase(Locale.ROOT);
+  }
+
+  private static FType defaultType(FType t) {
+    return t == null ? FType.NF : t;
+  }
+
+  private static FType axisOf(FType t) {
+    if (matchesAxis(t, FType.ROW))
+      return FType.ROW;
+    if (matchesAxis(t, FType.COL))
+      return FType.COL;
+    return null;
+  }
+
+  private static ReasonCode reasonForNonAxis(FType t) {
+    return (t == FType.FULL || t == FType.PART)
+        ? ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY
+        : ReasonCode.NO_FED_INPUT;
+  }
+
+  private static boolean isFedAxis(FType t) {
+    return matchesAxis(t, FType.ROW) || matchesAxis(t, FType.COL);
+  }
+
+  private static boolean isScalarHint(ShapeHint hint) {
+    if (hint == null)
+      return false;
+    long rows = hint.rows();
+    long cols = hint.cols();
+    if (rows < 0 || cols < 0)
+      return false;
+    return rows == 1 && cols == 1;
+  }
+
+  private static String axisLabel(FType axis) {
+    return (axis == FType.COL) ? "COL" : "ROW";
+  }
+
+  private static void noteAligned(OpCaps.Builder builder, String name, FType candidate, FType axis) {
+    if (builder == null || axis == null)
+      return;
+    if (matchesAxis(candidate, axis)) {
+      builder.note(ReasonCode.ALIGNED_HINT,
+          String.format(Locale.ROOT, "%s aligned to %s", name, axisLabel(axis)));
+    }
+  }
+
+  private static void appendUVAlignNotes(OpCaps.Builder builder, FType axis, FType u, FType v) {
+    noteAligned(builder, "U", u, axis);
+    noteAligned(builder, "V", v, axis);
+  }
+
+  private static FType preserveOrAxis(FType t) {
+    FType axis = axisOf(t);
+    return (axis != null) ? axis : Objects.requireNonNull(t, "fType");
+  }
+
+  private enum SpoofTemplate { CELLWISE, ROWWISE, MULTIAGG, OUTER }
+  private enum SpoofCellType { FULL_AGG, ROW_AGG, COL_AGG, NO_AGG }
+  private enum SpoofRowType { FULL_AGG, ROW_AGG, NO_AGG, NO_AGG_B1, NO_AGG_CONST, COL_AGG }
+  private enum SpoofOuterType { LEFT_OUTER_PRODUCT, RIGHT_OUTER_PRODUCT, CELLWISE_OUTER_PRODUCT, AGG_OUTER_PRODUCT }
+
+  private static final class AttrValue<T> {
+    final T value;
+    final boolean invalid;
+    final boolean present;
+
+    private AttrValue(T value, boolean invalid, boolean present) {
+      this.value = value;
+      this.invalid = invalid;
+      this.present = present;
+    }
+
+    static <T> AttrValue<T> missing() { return new AttrValue<>(null, false, false); }
+    static <T> AttrValue<T> invalid() { return new AttrValue<>(null, true, true); }
+    static <T> AttrValue<T> of(T value) { return new AttrValue<>(Objects.requireNonNull(value, "value"), false, true); }
+    boolean hasValue() { return present && !invalid && value != null; }
+  }
+
+  private static final class TemplateInfo {
+    final SpoofTemplate template;
+    final boolean invalid;
+
+    TemplateInfo(SpoofTemplate template, boolean invalid) {
+      this.template = template;
+      this.invalid = invalid;
+    }
+  }
+
+  private static final class FedInfo {
+    final boolean hasFederated;
+    final boolean broadcastOnly;
+    final boolean mixedAxes;
+    final FType primary;
+
+    FedInfo(boolean hasFederated, boolean broadcastOnly, boolean mixedAxes, FType primary) {
+      this.hasFederated = hasFederated;
+      this.broadcastOnly = broadcastOnly;
+      this.mixedAxes = mixedAxes;
+      this.primary = primary;
+    }
+  }
+
+  private static TemplateInfo resolveTemplate(OpSig sig) {
+    AttrValue<SpoofTemplate> attr = parseTemplateAttr(sig);
+    boolean invalid = attr.invalid;
+    SpoofTemplate template = attr.value;
+    if (template == null)
+      template = templateFromOpcode(sig);
+    return new TemplateInfo(template, invalid);
+  }
+
+  private static AttrValue<SpoofTemplate> parseTemplateAttr(OpSig sig) {
+    String raw = attrValue(sig, ATTR_SPOOF_TEMPLATE);
+    if (raw == null || raw.isBlank())
+      return AttrValue.missing();
+    String token = normalizedAttrToken(raw);
+    if (token == null)
+      return AttrValue.invalid();
+    switch (token) {
+      case "cellwise": return AttrValue.of(SpoofTemplate.CELLWISE);
+      case "rowwise": return AttrValue.of(SpoofTemplate.ROWWISE);
+      case "multiaggregate":
+      case "multiagg": return AttrValue.of(SpoofTemplate.MULTIAGG);
+      case "outer":
+      case "outerproduct": return AttrValue.of(SpoofTemplate.OUTER);
+      default: return AttrValue.invalid();
+    }
+  }
+
+  private static AttrValue<SpoofCellType> parseCellTypeAttr(OpSig sig) {
+    String raw = attrValue(sig, ATTR_SPOOF_CELL_TYPE);
+    if (raw == null || raw.isBlank())
+      return AttrValue.missing();
+    String token = normalizedAttrToken(raw);
+    if (token == null)
+      return AttrValue.invalid();
+    switch (token) {
+      case "fullagg": return AttrValue.of(SpoofCellType.FULL_AGG);
+      case "rowagg": return AttrValue.of(SpoofCellType.ROW_AGG);
+      case "colagg": return AttrValue.of(SpoofCellType.COL_AGG);
+      case "noagg": return AttrValue.of(SpoofCellType.NO_AGG);
+      default: return AttrValue.invalid();
+    }
+  }
+
+  private static AttrValue<SpoofRowType> parseRowTypeAttr(OpSig sig) {
+    String raw = attrValue(sig, ATTR_SPOOF_ROW_TYPE);
+    if (raw == null || raw.isBlank())
+      return AttrValue.missing();
+    String token = normalizedAttrToken(raw);
+    if (token == null)
+      return AttrValue.invalid();
+    switch (token) {
+      case "fullagg": return AttrValue.of(SpoofRowType.FULL_AGG);
+      case "rowagg": return AttrValue.of(SpoofRowType.ROW_AGG);
+      case "noagg": return AttrValue.of(SpoofRowType.NO_AGG);
+      case "noaggb1": return AttrValue.of(SpoofRowType.NO_AGG_B1);
+      case "noaggconst": return AttrValue.of(SpoofRowType.NO_AGG_CONST);
+      default:
+        if (token.startsWith("colagg"))
+          return AttrValue.of(SpoofRowType.COL_AGG);
+        return AttrValue.invalid();
+    }
+  }
+
+  private static AttrValue<SpoofOuterType> parseOuterTypeAttr(OpSig sig) {
+    String raw = attrValue(sig, ATTR_SPOOF_OUTER_TYPE);
+    if (raw == null || raw.isBlank())
+      return AttrValue.missing();
+    String token = normalizedAttrToken(raw);
+    if (token == null)
+      return AttrValue.invalid();
+    switch (token) {
+      case "leftouterproduct": return AttrValue.of(SpoofOuterType.LEFT_OUTER_PRODUCT);
+      case "rightouterproduct": return AttrValue.of(SpoofOuterType.RIGHT_OUTER_PRODUCT);
+      case "cellwiseouterproduct": return AttrValue.of(SpoofOuterType.CELLWISE_OUTER_PRODUCT);
+      case "aggouterproduct": return AttrValue.of(SpoofOuterType.AGG_OUTER_PRODUCT);
+      default: return AttrValue.invalid();
+    }
+  }
+
+  private static String normalizedAttrToken(String raw) {
+    if (raw == null)
+      return null;
+    StringBuilder sb = new StringBuilder(raw.length());
+    for (int i = 0; i < raw.length(); i++) {
+      char ch = raw.charAt(i);
+      if (ch == '_' || ch == '-')
+        continue;
+      sb.append(Character.toLowerCase(ch));
+    }
+    String res = sb.toString().trim();
+    return res.isEmpty() ? null : res;
+  }
+
+  private static SpoofTemplate templateFromOpcode(OpSig sig) {
+    String opcode = normalizedOpcode(sig);
+    if (opcode.isEmpty() || !opcode.contains("spoof"))
+      return null;
+    if (opcode.contains("spoofcell"))
+      return SpoofTemplate.CELLWISE;
+    if (opcode.contains("spoofrow") || opcode.contains("spoofra"))
+      return SpoofTemplate.ROWWISE;
+    if (opcode.contains("spoofmultiaggregate") || opcode.contains("spoofmulti") || opcode.contains("spoofma"))
+      return SpoofTemplate.MULTIAGG;
+    if (opcode.contains("spoofouterproduct") || opcode.contains("spoofouter") || opcode.contains("spoofop"))
+      return SpoofTemplate.OUTER;
+    return null;
+  }
+
+  private static FedInfo summarizeFedInputs(List<FType> inFTypes) {
+    boolean hasFederated = false;
+    boolean hasBroadcast = false;
+    boolean row = false;
+    boolean col = false;
+    FType primary = null;
+    if (inFTypes != null) {
+      for (FType t : inFTypes) {
+        if (t == null || t == FType.NF || t == FType.LOCAL)
+          continue;
+        if (t == FType.BROADCAST) {
+          hasBroadcast = true;
+          continue;
+        }
+        if (isFederatedLike(t)) {
+          if (!hasFederated)
+            primary = t;
+          hasFederated = true;
+          row |= t == FType.ROW;
+          col |= t == FType.COL;
+        }
+      }
+    }
+    return new FedInfo(hasFederated, hasBroadcast && !hasFederated, row && col, primary);
+  }
+
+  private static OpCaps fedPreconditionFailure(OpSig sig, FedInfo fed) {
+    if (fed == null || !fed.hasFederated) {
+      if (fed != null && fed.broadcastOnly)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+    if (fed.mixedAxes)
+      return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+    if (fed.primary == null)
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    return null;
+  }
+
+  private static boolean matchesSpoofTemplate(OpSig sig, SpoofTemplate expected) {
+    TemplateInfo info = resolveTemplate(sig);
+    return info.template == expected || (info.template == null && info.invalid);
+  }
+
+  // Weighted quaternary policies inspect only X; broadcast auxiliaries (U/V/W/eps) are allowed inputs.
+  public static final class WeightedSquaredLossRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("wsloss", "wslosscp");
+    private static final int EXPECTED_ARITY = 4;
+
+    @Override public OpCategory category() { return OpCategory.QUATERNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return matchesWeightedQuaternary(sig, OPCODES, "WSLOSS");
+    }
+
+    @Override public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
+        return scalarCaps(sig, Exec.CP, ReasonCode.ARITY_MISMATCH);
+
+      FType x = typeAt(inFTypes, 0);
+      if (x == null)
+        return scalarCaps(sig, Exec.CP, ReasonCode.MISSING_IN_FTYPE);
+      if (x == FType.BROADCAST)
+        return scalarCaps(sig, Exec.CP, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(x))
+        return scalarCaps(sig, Exec.CP, ReasonCode.NO_FED_INPUT);
+      return scalarCaps(sig, Exec.FED, ReasonCode.OK);
+    }
+  }
+
+  public static final class WeightedCrossEntropyRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("wcemm", "wcemmcp");
+    private static final int EXPECTED_ARITY = 4;
+
+    @Override public OpCategory category() { return OpCategory.QUATERNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return matchesWeightedQuaternary(sig, OPCODES, "WCEMM");
+    }
+
+    @Override public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
+        return scalarCaps(sig, Exec.CP, ReasonCode.ARITY_MISMATCH);
+
+      FType x = typeAt(inFTypes, 0);
+      if (x == null)
+        return scalarCaps(sig, Exec.CP, ReasonCode.MISSING_IN_FTYPE);
+      if (x == FType.BROADCAST)
+        return scalarCaps(sig, Exec.CP, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(x))
+        return scalarCaps(sig, Exec.CP, ReasonCode.NO_FED_INPUT);
+      return scalarCaps(sig, Exec.FED, ReasonCode.OK);
+    }
+  }
+
+  public static final class WeightedSigmoidRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("wsigmoid", "wsigmoidcp");
+    private static final int EXPECTED_ARITY = 3;
+
+    @Override public OpCategory category() { return OpCategory.QUATERNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return matchesWeightedQuaternary(sig, OPCODES, "WSIGMOID");
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType x = typeAt(inFTypes, 0);
+      if (x == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (x == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(x))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      Guard.Result guard = Guard.eval(sig);
+      return guardAwareFout(sig, x, ReasonCode.OK, guard);
+    }
+  }
+
+  public static final class WeightedUnaryMMRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("wumm", "wummcp");
+    private static final int EXPECTED_ARITY = 3;
+
+    @Override public OpCategory category() { return OpCategory.QUATERNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return matchesWeightedQuaternary(sig, OPCODES, "WUMM");
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      // Restrict profile outputs to ROW/COL axes only (no FULL/PART)
+      List<FType> xCands = candidates(inFTypeCandidates, 0);
+      Set<FType> outs = new LinkedHashSet<>();
+      if (xCands.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (xCands.contains(FType.COL))
+        outs.add(FType.COL);
+      return outs.isEmpty() ? FTypeProfile.empty() : FTypeProfile.ofOutput(new ArrayList<>(outs));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      final int EXPECTED_ARITY = 3;
+      if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType x = typeAt(inFTypes, 0);
+      if (x == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (x == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (x == FType.LOCAL || x == FType.NF)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (x == FType.FULL || x == FType.PART)
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.PARTITION_FORBIDDEN)
+            .detail(WUMM_X_AXIS_ONLY_DETAIL)
+            .build();
+
+      // X is ROW or COL
+      Guard.Result guard = Guard.eval(sig);
+      if (guard != null && guard.isFail())
+        return guardFallbackBuilder(sig, guard).build();
+
+      FType axis = x; // output axis matches X
+      OpCaps.Builder b = OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, axis)
+          .reason(ReasonCode.OK);
+
+      // Guard notes
+      if (guard == null || guard.isUnknown())
+        b.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+      else
+        appendGuardPassNote(b, guard);
+
+      // Alignment / Broadcast notes
+      FType u = typeAt(inFTypes, 1);
+      FType v = typeAt(inFTypes, 2);
+      if (x == FType.ROW) {
+        if (u == FType.ROW)
+          b.note(ReasonCode.ALIGNED_HINT, "U aligned to ROW");
+        else
+          b.note(ReasonCode.BROADCAST_OR_ALIGNED_ROW, "U broadcast-sliced");
+        b.note(ReasonCode.INFO, "V broadcast");
+      }
+      else if (x == FType.COL) {
+        if (v == FType.COL)
+          b.note(ReasonCode.ALIGNED_HINT, "V aligned to COL");
+        else
+          b.note(ReasonCode.BROADCAST_OR_ALIGNED_COL, "V broadcast-sliced");
+        b.note(ReasonCode.INFO, "U broadcast");
+      }
+
+      return b.build();
+    }
+  }
+
+  public static final class WeightedDivMMRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("wdivmm", "wdivmmcp");
+    private static final int EXPECTED_ARITY = 4;
+
+    @Override public OpCategory category() { return OpCategory.QUATERNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return matchesWeightedQuaternary(sig, OPCODES, "WDIVMM");
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType x = typeAt(inFTypes, 0);
+      if (x == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (x == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(x))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      Integer baseType = parseBaseType(attrValue(sig, ATTR_WDIVMM_BASE_TYPE));
+      if (baseType == null)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      Guard.Result guard = Guard.eval(sig);
+      if (isBasicBaseType(baseType))
+        return guardAwareFout(sig, x, ReasonCode.OK, guard);
+
+      if (!isLeftBaseType(baseType) && !isRightBaseType(baseType))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      if (axisPreserved(x, hint))
+        return guardAwareFout(sig, x, ReasonCode.OK, guard);
+
+      return fedLocalWithDetail(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, WDIVMM_ALIGN_DETAIL);
+    }
+  }
+
+  /**
+   * Element-wise unary builtins executed per-partition.
+   * Runtime parity: UnaryMatrixFEDInstruction.java:88-110 (callInstruction + setOutputFedMapping).
+   * The opcode list intentionally stays conservative; extend it as additional builtins
+   * gain verified runtime coverage.
+   */
+  public static final class UnaryElemwiseRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(
+        "exp", "log", "log_nz", "sqrt", "abs", "round", "floor", "ceil",
+        "sin", "cos", "tan", "asin", "acos", "atan",
+        "sinh", "cosh", "tanh",
+        "sign", "sigmoid", "sprop", "plogp", "isna", "isnan", "isinf");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+      Set<FType> outs = new LinkedHashSet<>();
+      for (FType cand : inputs) {
+        if (cand == FType.ROW || cand == FType.COL || cand == FType.PART || cand == FType.FULL)
+          outs.add(cand);
+      }
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (!hasExpectedArity(inFTypes, 1))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null || in == FType.NF || in == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      Guard.Result guard = Guard.eval(sig);
+      return guardAwareFout(sig, in, ReasonCode.OK, guard);
+    }
+  }
+
+  /**
+   * UCUM builtins (row-federated cumulative ops).
+   * Runtime parity: UnaryMatrixFEDInstruction.java:94-156 (row-only cumulative path) and
+   * UnaryFEDInstruction.java:116-120 (COL inputs rejected). Spark routes these via bcumoff*
+   * (UnaryFEDInstruction.java:189-191 + CumulativeOffsetRule), so a missing SP opcode here
+   * is not a contradiction.
+   */
+  public static final class UnaryCumulativeRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("ucumk+", "ucum*", "ucumk+*", "ucummin", "ucummax");
+    private static final String UCUMKPP_STAR_DETAIL = "ucumk+* → n×1 result; fed ranges updated";
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (inputs.contains(FType.ROW))
+        outs.add(FType.ROW);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (!hasExpectedArity(inFTypes, 1))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null || in == FType.NF || in == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (in == FType.COL)
+        return cpCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
+      if (in != FType.ROW)
+        return cpCaps(sig, reasonForNonAxis(in));
+
+      String opcode = normalizedOpcode(sig);
+      Guard.Result guard = Guard.eval(sig);
+      if ("ucumk+*".equals(opcode))
+        return rowGuardAwareFout(sig, guard, UCUMKPP_STAR_DETAIL);
+      return rowGuardAwareFout(sig, guard, null);
+    }
+
+    private static OpCaps rowGuardAwareFout(OpSig sig, Guard.Result guard, String detail) {
+      if (guard != null && guard.isFail())
+        return guardFallbackBuilder(sig, guard).build();
+
+      OpCaps.Builder builder = OpCaps.newBuilder()
+          .category(sig != null ? sig.category() : OpCategory.OTHER)
+          .opcode(sig != null ? sig.opcode() : "")
+          .exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, FType.ROW)
+          .reason(ReasonCode.OK);
+      if (detail != null && !detail.isBlank())
+        builder.detail(detail);
+      if (guard == null || guard.isUnknown())
+        builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+      else
+        appendGuardPassNote(builder, guard);
+      return builder.build();
+    }
+  }
+
+  /**
+   * Reorg ops (transpose/rev/roll/diag). Runtime parity:
+   * ReorgFEDInstruction.java:197-282 (ROW/COL only; PART/FULL rejected).
+   */
+  public static final class ReorgUnaryRule extends BaseRule {
+    private static final Set<String> OPCODES =
+        Set.of("transpose", "diag", "rdiag", "rev", "roll");
+    private static final String REORG_AXIS_ONLY_DETAIL =
+        "ReorgFEDInstruction supports only ROW or COL partitioned input";
+
+    @Override public OpCategory category() { return OpCategory.REORG; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+
+      String opcode = normalizedOpcode(sig);
+      Set<FType> outs = new LinkedHashSet<>();
+      switch (opcode) {
+        case "transpose":
+          if (inputs.contains(FType.ROW))
+            outs.add(FType.COL);
+          if (inputs.contains(FType.COL))
+            outs.add(FType.ROW);
+          break;
+        case "rev":
+        case "roll":
+        case "diag":
+        case "rdiag":
+          if (inputs.contains(FType.ROW))
+            outs.add(FType.ROW);
+          if (inputs.contains(FType.COL))
+            outs.add(FType.COL);
+          break;
+        default:
+          break;
+      }
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      String opcode = normalizedOpcode(sig);
+      boolean isRoll = "roll".equals(opcode);
+      int inCount = (inFTypes == null) ? 0 : inFTypes.size();
+      if (inCount == 0)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+      if (isRoll) {
+        if (inCount > 2)
+          return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+        if (inCount == 2 && sig.inputKind(1) != OpSig.InputKind.SCALAR)
+          return cpCaps(sig, ReasonCode.OP_SHAPE_INCOMPATIBLE);
+      }
+      else if (inCount != 1)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (in == FType.NF || in == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.PART || in == FType.FULL)
+        return axisOnlyCp(sig);
+      if (!isAxis(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      FType outAxis;
+      switch (opcode) {
+        case "transpose":
+          outAxis = (in == FType.ROW) ? FType.COL : FType.ROW;
+          break;
+        case "rev":
+        case "roll":
+        case "diag":
+        case "rdiag":
+          outAxis = in;
+          break;
+        default:
+          return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      }
+      Guard.Result guard = Guard.eval(sig);
+      if (guard != null && guard.isFail())
+        return guardFallbackBuilder(sig, guard).build();
+
+      OpCaps.Builder builder = OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, outAxis)
+          .reason(ReasonCode.OK);
+
+      String infoNote = infoNoteFor(opcode, in);
+      if (infoNote != null)
+        builder.note(ReasonCode.INFO, infoNote);
+
+      if (guard == null || guard.isUnknown())
+        builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+      else
+        appendGuardPassNote(builder, guard);
+
+      return builder.build();
+    }
+
+    private static OpCaps axisOnlyCp(OpSig sig) {
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.CP)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(ReasonCode.PARTITION_FORBIDDEN)
+          .detail(REORG_AXIS_ONLY_DETAIL)
+          .build();
+    }
+
+    private static String infoNoteFor(String opcode, FType inAxis) {
+      switch (opcode) {
+        case "transpose":
+          return "axis flipped ROW↔COL";
+        case "rev":
+          return (inAxis == FType.ROW) ? "ROW mapping reversed on workers" : null;
+        case "roll":
+          return "roll shift applied";
+        case "diag":
+        case "rdiag":
+          return "diag V2M/M2V shape handled at runtime";
+        default:
+          return null;
+      }
+    }
+  }
+
+  public static final class ReshapeRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("rshape");
+    private static final String ATTR_BYROW = "reshape.byrow";
+    private static final String NOTE_GLOBAL_CELLS =
+        "global cells must match (inRows*inCols == rows*cols)";
+    private static final String NOTE_DIVISIBLE_COLS =
+        "per-partition cell count must be divisible by cols";
+    private static final String NOTE_DIVISIBLE_ROWS =
+        "per-partition cell count must be divisible by rows";
+    private static final String AXIS_UNKNOWN_DETAIL =
+        "reshape.byrow not provided; cannot determine FOUT axis at compile time";
+
+    @Override public OpCategory category() { return OpCategory.RESHAPE; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      String byRowAttr = attrValue(sig, ATTR_BYROW);
+      if ("true".equalsIgnoreCase(byRowAttr))
+        return FTypeProfile.ofOutput(List.of(FType.ROW));
+      if ("false".equalsIgnoreCase(byRowAttr))
+        return FTypeProfile.ofOutput(List.of(FType.COL));
+      return FTypeProfile.ofOutput(List.of(FType.ROW, FType.COL));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (inFTypes == null || inFTypes.isEmpty())
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (in == FType.LOCAL || in == FType.NF)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      String byRowAttr = attrValue(sig, ATTR_BYROW);
+      if ("true".equalsIgnoreCase(byRowAttr)) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, FType.ROW)
+            .reason(ReasonCode.OK)
+            .note(ReasonCode.BROADCAST_OR_ALIGNED_ROW, NOTE_DIVISIBLE_COLS)
+            .note(ReasonCode.INFO, NOTE_GLOBAL_CELLS)
+            .build();
+      }
+      if ("false".equalsIgnoreCase(byRowAttr)) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, FType.COL)
+            .reason(ReasonCode.OK)
+            .note(ReasonCode.BROADCAST_OR_ALIGNED_COL, NOTE_DIVISIBLE_ROWS)
+            .note(ReasonCode.INFO, NOTE_GLOBAL_CELLS)
+            .build();
+      }
+
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.FED)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(ReasonCode.INFO)
+          .detail(AXIS_UNKNOWN_DETAIL)
+          .build();
+    }
+  }
+
+  public static final class ReblockRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("rblk");
+    private static final String NOTE_METADATA = "requires input metadata (format) at runtime";
+    private static final String NOTE_BLOCKSIZE = "blocksize is updated to target blen";
+
+    @Override public OpCategory category() { return OpCategory.REORG; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> xs = candidates(inFTypeCandidates, 0);
+      Set<FType> outs = new LinkedHashSet<>();
+      if (xs.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (xs.contains(FType.COL))
+        outs.add(FType.COL);
+      if (xs.contains(FType.PART))
+        outs.add(FType.PART);
+      if (xs.contains(FType.FULL))
+        outs.add(FType.FULL);
+      return outs.isEmpty() ? FTypeProfile.empty() : FTypeProfile.ofOutput(new ArrayList<>(outs));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (inFTypes == null || inFTypes.isEmpty())
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (in == FType.LOCAL || in == FType.NF)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, in)
+          .reason(ReasonCode.OK)
+          .note(ReasonCode.INFO, NOTE_METADATA)
+          .note(ReasonCode.INFO, NOTE_BLOCKSIZE)
+          .build();
+    }
+  }
+
+  public static final class RightIndexRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("rix", "right_index", "rightindex");
+
+    @Override public OpCategory category() { return OpCategory.INDEXING; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> mainInput = candidates(inFTypeCandidates, 0);
+      if (mainInput.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (mainInput.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (mainInput.contains(FType.COL))
+        outs.add(FType.COL);
+      if (mainInput.contains(FType.PART))
+        outs.add(FType.PART);
+      if (mainInput.contains(FType.FULL))
+        outs.add(FType.FULL);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (inFTypes == null || inFTypes.size() != 1)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (!isFederatedLike(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      if (in == FType.PART)
+        return fedFoutCaps(sig, FType.PART, ReasonCode.OK);
+
+      return fedFoutCaps(sig, in, ReasonCode.OK);
+    }
+  }
+
+  public static final class LeftIndexRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("lix", "left_index", "leftindex", "mapleftindex");
+
+    @Override public OpCategory category() { return OpCategory.INDEXING; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> lhs = candidates(inFTypeCandidates, 0);
+      if (lhs.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (lhs.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (lhs.contains(FType.COL))
+        outs.add(FType.COL);
+      if (lhs.contains(FType.PART))
+        outs.add(FType.PART);
+      if (lhs.contains(FType.FULL))
+        outs.add(FType.FULL);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (inFTypes == null || inFTypes.size() < 2)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType lhs = typeAt(inFTypes, 0);
+      FType rhs = typeAt(inFTypes, 1);
+
+      if (lhs == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (!isFederatedLike(lhs))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      if (lhs == FType.PART)
+        return fedFoutCaps(sig, FType.PART, ReasonCode.OK);
+
+      if (lhs == FType.FULL)
+        return fedFoutCaps(sig, FType.FULL, ReasonCode.OK);
+
+      boolean rhsIsScalar = sig.inputKind(1) == OpSig.InputKind.SCALAR;
+      if (rhsIsScalar)
+        return fedFoutCaps(sig, lhs, ReasonCode.OK);
+
+      if (rhs == null || rhs == FType.NF || rhs == FType.LOCAL || rhs == FType.BROADCAST)
+        return fedFoutCaps(sig, lhs, ReasonCode.OK);
+
+      if (isFederatedLike(rhs)) {
+        boolean rowAligned = matchesAxis(lhs, FType.ROW) && matchesAxis(rhs, FType.ROW);
+        boolean colAligned = matchesAxis(lhs, FType.COL) && matchesAxis(rhs, FType.COL);
+        if (rowAligned || colAligned)
+          return guardAwareFout(sig, lhs, ReasonCode.OK, Guard.eval(sig));
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+      }
+
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+  }
+
+  /** Variable cast (matrix <-> frame). */
+  public static final class CastRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("castasframe", "castasmatrix");
+
+    @Override public OpCategory category() { return OpCategory.VARIABLE_CAST; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null || sig.category() != category())
+        return false;
+      String opcode = normalizedOpcode(sig);
+      return OPCODES.contains(opcode);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (inputs.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (inputs.contains(FType.COL))
+        outs.add(FType.COL);
+      if (inputs.contains(FType.PART))
+        outs.add(FType.PART);
+      if (inputs.contains(FType.FULL))
+        outs.add(FType.FULL);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (inFTypes == null || inFTypes.size() != 1)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null || in == FType.NF || in == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      // Smoke scenarios:
+      // in=ROW -> Exec.FED + Placement.FOUT(ROW) + OK
+      // in=BROADCAST -> Exec.CP + Placement.LOUT + BROADCAST_CONSTRAINT
+      // in=FULL -> Exec.FED + Placement.FOUT(FULL) + OK
+      // in=LOCAL -> Exec.CP + Placement.LOUT + NO_FED_INPUT
+
+      if (in == FType.BROADCAST) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.BROADCAST_CONSTRAINT)
+            .detail("broadcast input not supported by CastFEDInstruction")
+            .build();
+      }
+
+      switch (in) {
+        case ROW:
+          return fedFoutCaps(sig, FType.ROW, ReasonCode.OK);
+        case COL:
+          return fedFoutCaps(sig, FType.COL, ReasonCode.OK);
+        case PART:
+          return fedFoutCaps(sig, FType.PART, ReasonCode.OK);
+        case FULL:
+          return fedFoutCaps(sig, FType.FULL, ReasonCode.OK);
+        default:
+          return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      }
+    }
+  }
+
+  /** Variable write rule modeling federated side effects. */
+  public static final class VariableWriteRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("write");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null || sig.category() != category())
+        return false;
+      return OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      int arity = (inFTypes == null) ? 0 : inFTypes.size();
+      if (arity < 2)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      String destAttr = attrValue(sig, "var.write.federated");
+      boolean federatedDest = destAttr != null && destAttr.equalsIgnoreCase("true");
+      if (!federatedDest)
+        return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null || in == FType.NF || in == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (in == FType.ROW || in == FType.COL || in == FType.PART || in == FType.FULL)
+        return fedLocalWithDetail(sig, ReasonCode.OK, FED_WRITE_DETAIL);
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+  }
+
+  /** Transform Encode (frame -> matrix + meta). Primary output is matrix; meta is always local (LOUT). */
+  public static final class TransformEncodeRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("transformencode");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs == null || inputs.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (inputs.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (inputs.contains(FType.COL))
+        outs.add(FType.COL);
+      if (inputs.contains(FType.PART))
+        outs.add(FType.PART);
+      if (inputs.contains(FType.FULL))
+        outs.add(FType.FULL);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      try {
+        if (inFTypes == null || inFTypes.size() != 1)
+          return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+        FType in = typeAt(inFTypes, 0);
+        if (in == null || in == FType.NF || in == FType.LOCAL)
+          return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+        if (in == FType.BROADCAST) {
+          return OpCaps.newBuilder()
+              .category(sig.category())
+              .opcode(sig.opcode())
+              .exec(Exec.CP)
+              .placement(Placement.LOUT)
+              .fout(false)
+              .reason(ReasonCode.BROADCAST_CONSTRAINT)
+              .detail("broadcast input not supported by transformencode")
+              .build();
+        }
+
+        if (in != FType.ROW && in != FType.COL && in != FType.PART && in != FType.FULL)
+          return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, in)
+            .reason(ReasonCode.OK)
+            .detail("second output (meta) is LOUT");
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+      catch (Throwable t) {
+        return cpCaps(sig, ReasonCode.RULE_ERROR);
+      }
+    }
+  }
+
+  /** Aggregate ternary federated instructions (tak+*, tack+*). */
+  public static final class AggTernaryRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("tak+*", "tack+*");
+
+    @Override public OpCategory category() { return OpCategory.AGG_TERNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return profileOf(Set.of(FType.FULL));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!OPCODES.contains(normalizedOpcode(sig)))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (inFTypes == null || inFTypes.size() != 3)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType x = defaultType(typeAt(inFTypes, 0));
+      FType y = defaultType(typeAt(inFTypes, 1));
+      FType z = defaultType(typeAt(inFTypes, 2));
+      FType axis = axisOf(x);
+      if (axis == null)
+        return cpCaps(sig, ReasonCode.UNALIGNED_OR_INSUFFICIENT_FED_INPUTS);
+
+      boolean yAxisFed = matchesAxis(y, axis);
+      boolean zAxisFed = matchesAxis(z, axis);
+      boolean yFedAny = isFedAxis(y);
+      boolean zFedAny = isFedAxis(z);
+      boolean scalarOut = isScalarHint(hint);
+
+      if (yAxisFed && zAxisFed)
+        return fedLocalCaps(sig, ReasonCode.OK);
+
+      if (yAxisFed && !zFedAny) {
+        if (!scalarOut)
+          return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED_FED_MATRIX_OUT);
+        return fedLocalCaps(sig, ReasonCode.OK);
+      }
+
+      if (!yFedAny && !zFedAny && isBroadcastOrScalar(y) && isBroadcastOrScalar(z)) {
+        if (!scalarOut)
+          return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED_FED_MATRIX_OUT);
+        return fedLocalCaps(sig, ReasonCode.OK);
+      }
+
+      if ((yFedAny && !yAxisFed) || (zFedAny && !zAxisFed))
+        return cpCaps(sig, ReasonCode.UNALIGNED_OR_INSUFFICIENT_FED_INPUTS);
+
+      return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+    }
+  }
+
+  /** Frame map ops (frame with scalar expression plus margin hint). */
+  public static final class FrameMapRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("_map");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null)
+        return false;
+      if (!OPCODES.contains(normalizedOpcode(sig)))
+        return false;
+      if (sig.arity() != 3)
+        return false;
+      return frameInputIndex(sig) >= 0;
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      int frameIdx = frameInputIndex(sig);
+      if (frameIdx < 0)
+        return FTypeProfile.empty();
+      List<FType> frameCandidates = candidates(inFTypeCandidates, frameIdx);
+      if (frameCandidates.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      for (FType cand : frameCandidates) {
+        if (cand == FType.ROW || cand == FType.COL || cand == FType.FULL || cand == FType.PART)
+          outs.add(cand);
+      }
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!OPCODES.contains(normalizedOpcode(sig)))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (inFTypes == null || inFTypes.size() != 3)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      int frameIdx = frameInputIndex(sig);
+      if (frameIdx < 0)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType frameType = typeAt(inFTypes, frameIdx);
+      if (!isFederatedLike(frameType))
+        return marginMismatch(sig);
+
+      int margin = parseMargin(attrValue(sig, ATTR_MAP_MARGIN));
+      if (!marginMatches(margin, frameType))
+        return marginMismatch(sig);
+
+      Guard.Result guard = Guard.eval(sig);
+      return guardAwareFout(sig, frameType, ReasonCode.OK, guard);
+    }
+
+    private static int frameInputIndex(OpSig sig) {
+      if (sig == null || sig.arity() != 3)
+        return -1;
+      OpSig.InputKind in0 = sig.inputKind(0);
+      OpSig.InputKind in1 = sig.inputKind(1);
+      OpSig.InputKind in2 = sig.inputKind(2);
+      if (in2 != OpSig.InputKind.SCALAR)
+        return -1;
+      if (in0 == OpSig.InputKind.FRAME && in1 == OpSig.InputKind.SCALAR)
+        return 0;
+      if (in1 == OpSig.InputKind.FRAME && in0 == OpSig.InputKind.SCALAR)
+        return 1;
+      return -1;
+    }
+
+    private static int parseMargin(String raw) {
+      if (raw == null || raw.isBlank())
+        return 0;
+      try {
+        return Integer.parseInt(raw.trim());
+      } catch (NumberFormatException nfe) {
+        return 0;
+      }
+    }
+
+    private static boolean marginMatches(int margin, FType frameType) {
+      if (margin == 0)
+        return true;
+      if (margin == 1)
+        return frameType == FType.ROW;
+      if (margin == 2)
+        return frameType == FType.COL;
+      return false;
+    }
+
+    private static OpCaps marginMismatch(OpSig sig) {
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.CP)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
+          .detail("margin mismatch or non-federated frame")
+          .build();
+    }
+  }
+
+  /** Element-wise ternary ops (ifelse, +*, -*). */
+  public static final class TernaryElemwiseRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("ifelse", "+*", "-*");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && OPCODES.contains(normalizedOpcode(sig))
+          && sig.arity() == 3;
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      Set<FType> outs = new LinkedHashSet<>();
+      for (int i = 0; i < 3; i++) {
+        List<FType> cand = candidates(inFTypeCandidates, i);
+        if (cand.contains(FType.ROW))
+          outs.add(FType.ROW);
+        if (cand.contains(FType.COL))
+          outs.add(FType.COL);
+        if (cand.contains(FType.PART))
+          outs.add(FType.PART);
+        if (cand.contains(FType.FULL))
+          outs.add(FType.FULL);
+      }
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!OPCODES.contains(normalizedOpcode(sig)))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (inFTypes == null || inFTypes.size() != 3)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      int leaderIdx = leadingFedIndex(inFTypes);
+      if (leaderIdx < 0)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      FType leader = typeAt(inFTypes, leaderIdx);
+      if (isOuterPattern(leader, inFTypes, leaderIdx, hint))
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+
+      Guard.Result guard = Guard.eval(sig);
+      return guardAwareFout(sig, leader, ReasonCode.OK, guard);
+    }
+
+    private static int leadingFedIndex(List<FType> types) {
+      if (types == null)
+        return -1;
+      for (int i = 0; i < types.size(); i++) {
+        if (isFederatedLike(typeAt(types, i)))
+          return i;
+      }
+      return -1;
+    }
+
+    private static boolean isOuterPattern(FType leader, List<FType> types, int leaderIdx, ShapeHint hint) {
+      if (!matchesAxis(leader, FType.ROW) && !matchesAxis(leader, FType.COL))
+        return false;
+      for (int i = 0; i < types.size(); i++) {
+        if (i == leaderIdx)
+          continue;
+        FType other = typeAt(types, i);
+        if (isOuterLike(leader, other, hint))
+          return true;
+      }
+      return false;
+    }
+  }
+
+  /** Aggregate unary ops (sum/min/max/var, etc.). */
+  public static final class AggUnaryRule extends BaseRule {
+    private static final String ATTR_DIRECTION = "direction";
+    private static final String ATTR_AGG_OP = "aggOp";
+
+    private enum Dir { ROW, COL, ROWCOL }
+
+    @Override public OpCategory category() { return OpCategory.AGG_UNARY; }
+    @Override public Set<String> opcodes() { return Set.of(); }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && sig.category() == category()
+          && sig.attrs() != null
+          && sig.attrs().containsKey(ATTR_DIRECTION);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+
+      Dir dir = dirOf(sig);
+      String agg = aggOf(sig);
+      if ("VAR".equals(agg) || dir == Dir.ROWCOL || isScalarOutput(dir, hint))
+        return FTypeProfile.empty();
+
+      for (FType cand : inputs) {
+        if (cand != null && axisMatch(cand, dir))
+          return FTypeProfile.ofOutput(List.of(cand));
+      }
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      FType in = typeAt(inFTypes, 0);
+      if (in == null || in == FType.NF)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+
+      Dir dir = dirOf(sig);
+      String agg = aggOf(sig);
+
+      if ("VAR".equals(agg))
+        return cpCaps(sig, ReasonCode.VAR_REQUIRES_CONSOLIDATION);
+
+      if (dir == Dir.ROWCOL)
+        return cpCaps(sig, ReasonCode.FULL_AGG_REQUIRES_CONSOLIDATION);
+
+      if (isScalarOutput(dir, hint))
+        return cpCaps(sig, ReasonCode.SCALAR_CANNOT_BE_FEDERATED);
+
+      if (!isAxis(in))
+        return cpCaps(sig, ReasonCode.NON_ALIGNED_INPUT_FTYPE);
+
+      if (axisMatch(in, dir))
+        return fedFoutCaps(sig, in, ReasonCode.OK);
+
+      // NOTE: Parameter swapping in uarimax/uarimin for column partitions is handled by runtime instructions.
+      return cpCaps(sig, ReasonCode.PARTITION_MISMATCH_PART_NOT_SUPPORTED);
+    }
+
+    private static Dir dirOf(OpSig sig) {
+      String raw = (sig == null || sig.attrs() == null) ? null : sig.attrs().get(ATTR_DIRECTION);
+      if (raw == null)
+        return Dir.ROWCOL;
+      try {
+        return Dir.valueOf(raw.trim().toUpperCase(Locale.ROOT));
+      } catch (IllegalArgumentException iae) {
+        return Dir.ROWCOL;
+      }
+    }
+
+    private static String aggOf(OpSig sig) {
+      String raw = (sig == null || sig.attrs() == null) ? null : sig.attrs().get(ATTR_AGG_OP);
+      return raw == null ? "SUM" : raw.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private static boolean axisMatch(FType in, Dir dir) {
+      return (in == FType.ROW && dir == Dir.ROW) || (in == FType.COL && dir == Dir.COL);
+    }
+
+    private static boolean isScalarOutput(Dir dir, ShapeHint hint) {
+      if (dir == Dir.ROWCOL)
+        return true;
+      if (hint == null)
+        return false;
+      if (dir == Dir.ROW)
+        return hint.rows() == 1;
+      if (dir == Dir.COL)
+        return hint.cols() == 1;
+      return false;
+    }
+
+  }
+
+  // --- Central Moment (AGG_UNARY -> local scalar) -----------------------------------------------
+  public static final class CentralMomentRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("cm", "centralmoment");
+
+    @Override public OpCategory category() { return OpCategory.AGG_UNARY; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null || sig.category() != category())
+        return false;
+      final String op = normalizedOpcode(sig);
+      return OPCODES.contains(op) || hasCentralMomentHint(sig);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      final String op = normalizedOpcode(sig);
+      final boolean opcodeMatch = OPCODES.contains(op);
+      final boolean hintMatch = hasCentralMomentHint(sig);
+      if (!opcodeMatch && !hintMatch)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (inFTypes == null || inFTypes.isEmpty() || typeAt(inFTypes, 0) == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+
+      final FType x = typeAt(inFTypes, 0);
+      final FType w = (inFTypes.size() > 1) ? typeAt(inFTypes, 1) : null;
+      final boolean xIsFed = isFederatedLike(x);
+      if (!xIsFed)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (isFederatedLike(w))
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+
+      return fedLocalCaps(sig, ReasonCode.OK);
+    }
+
+    private static boolean hasCentralMomentHint(OpSig sig) {
+      final Map<String,String> attrs = (sig == null) ? null : sig.attrs();
+      if (attrs == null || attrs.isEmpty())
+        return false;
+      final String aggOp = attrs.getOrDefault("aggOp", "");
+      final String opAttr = attrs.getOrDefault("op", "");
+      final String cmFlag = attrs.getOrDefault("cm", "");
+      return "cm".equalsIgnoreCase(aggOp)
+          || "centralmoment".equalsIgnoreCase(aggOp)
+          || "centralmoment".equalsIgnoreCase(opAttr)
+          || "true".equalsIgnoreCase(cmFlag);
+    }
+  }
+
+  // --- Transpose-self matrix multiply (TSMM) ---------------------------------------------------
+  public static final class TsmmRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("tsmm");
+
+    private static final String TSMM_AXIS_ONLY_DETAIL =
+        "TSMM supports only LEFT with ROW or RIGHT with COL partitioned X (per TsmmFEDInstruction)";
+    private static final String TSMM_AGG_NOTE =
+        "per-partition Gram aggregated to driver";
+    private static final String TSMM_FORCED_BC_NOTE =
+        "forced federated output (BROADCAST)";
+
+    @Override public OpCategory category() { return OpCategory.TSMM; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      // byOpcode가 우선, supports는 보조 확인용
+      if (sig == null || sig.category() != category())
+        return false;
+      String op = normalizedOpcode(sig);
+      if ("tsmm".equals(op))
+        return true;
+      String typ = attrValue(sig, "tsmm.type");
+      return typ != null && (typ.equalsIgnoreCase("LEFT") || typ.equalsIgnoreCase("RIGHT"));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      // 기본: 빈 프로파일 (필요 시 BROADCAST 반환 가능)
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!hasExpectedArity(inFTypes, 1))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType x = typeAt(inFTypes, 0);
+      if (x == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (x == FType.NF || x == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (x == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (x == FType.FULL || x == FType.PART) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.PARTITION_FORBIDDEN)
+            .detail(TSMM_AXIS_ONLY_DETAIL)
+            .build();
+      }
+
+      String typ = attrValue(sig, "tsmm.type");
+      if (typ == null)
+        typ = "LEFT";
+      boolean left = "LEFT".equalsIgnoreCase(typ);
+      boolean right = "RIGHT".equalsIgnoreCase(typ);
+      if (!left && !right)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      boolean axisOK = (left && x == FType.ROW) || (right && x == FType.COL);
+      if (!axisOK) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.UNSUPPORTED_ALIGNMENT)
+            .detail(TSMM_AXIS_ONLY_DETAIL)
+            .build();
+      }
+
+      boolean forced = false;
+      String forceFlag = attrValue(sig, "force_fout");
+      if (forceFlag != null)
+        forced = Boolean.parseBoolean(forceFlag);
+      String fedOut = attrValue(sig, "tsmm.fedOut");
+      if (!forced && fedOut != null)
+        forced = "FORCED".equalsIgnoreCase(fedOut);
+
+      if (forced) {
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, FType.BROADCAST)
+            .reason(ReasonCode.OK)
+            .note(ReasonCode.INFO, TSMM_FORCED_BC_NOTE);
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.FED)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(ReasonCode.OK)
+          .note(ReasonCode.INFO, TSMM_AGG_NOTE)
+          .build();
+    }
+  }
+
+  /**
+   * MMFEDInstruction mirror rule (cases A–E, compile-only).
+   * A) COL×ROW aligned on COL_T (forced FOUT issues partial COL sums),
+   * B) Left ROW/PART (PART emits partial ROW FOUT when forced),
+   * C) Right ROW (vector-matrix partial ROW when forced),
+   * D) Left COL (matrix-vector partial COL when forced),
+   * E) Other layouts fall back to CP/LOUT.
+   */
+  public static final class MMFedRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("mapmm","cpmm","rmm","pmmj");
+    private static final String ATTR_ALIGN = "align";
+    private static final String ATTR_FORCE_LOCAL = "force_local";
+    private static final String ATTR_FORCE_FOUT = "force_fout";
+    private static final String ATTR_R_IS_VECTOR = "r_is_vector";
+    private static final String ALIGN_COL_T = "COL_T";
+
+    private enum TriState { TRUE, FALSE, UNKNOWN }
+
+    @Override public OpCategory category() { return OpCategory.BINARY_MM; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> left = candidates(inFTypeCandidates, 0);
+      if (left == null || left.isEmpty())
+        return FTypeProfile.empty();
+      Set<FType> outs = new LinkedHashSet<>();
+      if (hasAxis(left, FType.ROW))
+        outs.add(FType.ROW);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (inFTypes == null || inFTypes.size() < 2)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType left = defaultType(typeAt(inFTypes, 0));
+      FType right = defaultType(typeAt(inFTypes, 1));
+      if (!isFederatedOperand(left) && !isFederatedOperand(right))
+        return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
+
+      boolean alignedColT = isAlignColT(sig);
+      TriState rState = resolveRightVectorState(sig, hint);
+      boolean vecKnownFalse = (rState == TriState.FALSE);
+      boolean partOut = isPartOut(left, right, vecKnownFalse);
+      boolean forceLocal = attrBoolean(sig, ATTR_FORCE_LOCAL);
+      boolean forceFout = attrBoolean(sig, ATTR_FORCE_FOUT);
+
+      if (forceLocal)
+        return cpCaps(sig, ReasonCode.OK);
+
+      if (left == FType.COL && right == FType.ROW) {
+        if (!alignedColT)
+          return fedLocalCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
+        if (forceFout) {
+          Guard.Result guard = Guard.eval(sig);
+          return guardAwareFoutWithNote(sig, FType.COL, ReasonCode.OK, guard, partialNote(FType.COL));
+        }
+        return fedLocalCaps(sig, ReasonCode.FOUT_ALLOWED_ONLY_IF_FORCED);
+      }
+
+      if (left == FType.ROW || left == FType.PART) {
+        if (partOut) {
+          if (forceFout) {
+            Guard.Result guard = Guard.eval(sig);
+            return guardAwareFoutWithNote(sig, FType.ROW, ReasonCode.OK, guard, partialNote(FType.ROW));
+          }
+          return fedLocalCaps(sig, ReasonCode.FOUT_DISALLOWED_FOR_PART_OUT);
+        }
+        if (left == FType.ROW && (forceFout || vecKnownFalse)) {
+          Guard.Result guard = Guard.eval(sig);
+          return guardAwareFout(sig, FType.ROW, ReasonCode.OK, guard);
+        }
+        return fedLocalCaps(sig, ReasonCode.FOUT_ALLOWED_ONLY_IF_FORCED);
+      }
+
+      if (right == FType.ROW) {
+        if (forceFout) {
+          Guard.Result guard = Guard.eval(sig);
+          return guardAwareFoutWithNote(sig, FType.ROW, ReasonCode.OK, guard, partialNote(FType.ROW));
+        }
+        return fedLocalCaps(sig, ReasonCode.FOUT_ALLOWED_ONLY_IF_FORCED);
+      }
+
+      if (left == FType.COL) {
+        if (forceFout) {
+          Guard.Result guard = Guard.eval(sig);
+          return guardAwareFoutWithNote(sig, FType.COL, ReasonCode.OK, guard, partialNote(FType.COL));
+        }
+        return fedLocalCaps(sig, ReasonCode.FOUT_ALLOWED_ONLY_IF_FORCED);
+      }
+
+      ReasonCode fallback = supports(sig)
+          ? ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY
+          : ReasonCode.OPCODE_UNSUPPORTED;
+      return cpCaps(sig, fallback);
+    }
+
+    private static boolean isFederatedOperand(FType t) {
+      return t == FType.FULL || isTrueFederated(t);
+    }
+
+    private static boolean isPartOut(FType left, FType right, boolean vecKnownFalse) {
+      return left == FType.PART || (vecKnownFalse && right == FType.PART);
+    }
+
+    private static TriState resolveRightVectorState(OpSig sig, ShapeHint hint) {
+      String attr = attr(sig, ATTR_R_IS_VECTOR);
+      if ("true".equalsIgnoreCase(attr))
+        return TriState.TRUE;
+      if ("false".equalsIgnoreCase(attr))
+        return TriState.FALSE;
+      if (hint != null && hint.colsB() == 1 && hint.colsB() >= 0)
+        return TriState.TRUE;
+      return TriState.UNKNOWN;
+    }
+
+    private static boolean attrBoolean(OpSig sig, String key) {
+      String raw = attr(sig, key);
+      return raw != null && Boolean.parseBoolean(raw);
+    }
+
+    private static boolean isAlignColT(OpSig sig) {
+      String align = attr(sig, ATTR_ALIGN);
+      return align != null && ALIGN_COL_T.equalsIgnoreCase(align);
+    }
+
+    private static String attr(OpSig sig, String key) {
+      if (sig == null || key == null)
+        return null;
+      Map<String,String> attrs = sig.attrs();
+      if (attrs == null || attrs.isEmpty())
+        return null;
+      return attrs.get(key);
+    }
+
+    private static String partialNote(FType axis) {
+      String axisName = (axis == null) ? "unknown" : axis.name();
+      return "partial federated output (" + axisName + " axis)";
+    }
+
+  }
+
+  /** Binary matrix multiply (mmult). */
+  public static final class BinaryMMRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("mmult");
+    private static final String OPCODE_MM = "mmult";
+    private static final String ATTR_INNER = "inner";
+    private static final String ATTR_OUTER = "outer";
+    private static final String ATTR_ALIGN = "align";
+    private static final String ATTR_FORCE_FED = "force_federated";
+    private static final String ATTR_FORCE_LOCAL = "force_local";
+    private static final String ATTR_FORCE_FOUT = "force_fout";
+    private static final String ATTR_R_IS_VECTOR = "r_is_vector";
+    private static final String ALIGN_COL_T = "COL_T";
+
+    @Override public OpCategory category() { return OpCategory.BINARY_MM; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null)
+        return false;
+      String opcode = normalizedOpcode(sig);
+      if (OPCODE_MM.equals(opcode))
+        return true;
+      if (sig.category() != OpCategory.BINARY_MM)
+        return false;
+      return matchAttr(sig, ATTR_INNER, "MULT") && matchAttr(sig, ATTR_OUTER, "SUM");
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> left = candidates(inFTypeCandidates, 0);
+      List<FType> right = candidates(inFTypeCandidates, 1);
+      if (!hasFederated(left) && !hasFederated(right))
+        return FTypeProfile.empty();
+
+      boolean leftHasRow = hasAxis(left, FType.ROW);
+      boolean leftHasCol = hasAxis(left, FType.COL);
+      boolean rightHasRow = hasAxis(right, FType.ROW);
+      boolean alignColT = isAlignColT(sig);
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (leftHasRow && !(leftHasCol && rightHasRow && alignColT))
+        outs.add(FType.ROW);
+
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      FType left = normalize(typeAt(inFTypes, 0));
+      FType right = normalize(typeAt(inFTypes, 1));
+      if (!eligible(left, right))
+        return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
+
+      boolean rIsVector = attrBoolean(sig, ATTR_R_IS_VECTOR);
+      boolean alignColT = isAlignColT(sig);
+      boolean forceFed = attrBoolean(sig, ATTR_FORCE_FED);
+      boolean forceLocal = attrBoolean(sig, ATTR_FORCE_LOCAL);
+      boolean forceFout = attrBoolean(sig, ATTR_FORCE_FOUT);
+
+      boolean leftRowLike = isRowPartition(left);
+      boolean leftStrictRow = left == FType.ROW;
+      boolean rightIsRow = right == FType.ROW;
+      boolean partOut = (left == FType.PART) || (!rIsVector && right == FType.PART);
+
+      if (leftRowLike) {
+        if (rIsVector) {
+          if (forceFout && !partOut && leftStrictRow) {
+            Guard.Result guard = Guard.eval(sig);
+            return guardAwareFout(sig, FType.ROW, ReasonCode.OK, guard);
+          }
+          ReasonCode reason = forceFout && partOut
+              ? ReasonCode.FOUT_DISALLOWED_FOR_PART_OUT
+              : ReasonCode.FOUT_ALLOWED_ONLY_IF_FORCED;
+          return fedLocalCaps(sig, reason);
+        }
+
+        boolean allowFout = leftStrictRow && !partOut && (forceFed || !forceLocal);
+        if (allowFout) {
+          Guard.Result guard = Guard.eval(sig);
+          return guardAwareFout(sig, FType.ROW, ReasonCode.OK, guard);
+        }
+
+        ReasonCode reason = partOut
+            ? ReasonCode.FOUT_DISALLOWED_FOR_PART_OUT
+            : ReasonCode.FOUT_ALLOWED_ONLY_IF_FORCED;
+        return fedLocalCaps(sig, reason);
+      }
+
+      if (left == FType.COL && rightIsRow) {
+        ReasonCode reason = alignColT ? ReasonCode.OK : ReasonCode.UNSUPPORTED_ALIGNMENT;
+        return fedLocalCaps(sig, reason);
+      }
+
+      if (rightIsRow)
+        return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
+
+      return fedLocalCaps(sig, ReasonCode.OK);
+    }
+
+    private static boolean hasFederated(List<FType> types) {
+      if (types == null)
+        return false;
+      for (FType t : types) {
+        if (t == FType.ROW || t == FType.COL || t == FType.PART)
+          return true;
+      }
+      return false;
+    }
+
+    private static boolean matchAttr(OpSig sig, String key, String expected) {
+      if (sig == null || expected == null)
+        return false;
+      String val = attr(sig, key);
+      return val != null && val.equalsIgnoreCase(expected);
+    }
+
+    private static FType normalize(FType t) {
+      return (t == null) ? FType.NF : t;
+    }
+
+    private static boolean eligible(FType left, FType right) {
+      if (isRowPartition(left) && isTrueFederated(left))
+        return true;
+      if (left == FType.COL && isTrueFederated(left))
+        return true;
+      return isRowPartition(right) && isTrueFederated(right);
+    }
+
+    private static boolean isRowPartition(FType t) {
+      return t == FType.ROW || t == FType.PART;
+    }
+
+    private static boolean attrBoolean(OpSig sig, String key) {
+      String raw = attr(sig, key);
+      return raw != null && Boolean.parseBoolean(raw);
+    }
+
+    private static boolean isAlignColT(OpSig sig) {
+      String align = attr(sig, ATTR_ALIGN);
+      return align != null && ALIGN_COL_T.equalsIgnoreCase(align);
+    }
+
+    private static String attr(OpSig sig, String key) {
+      if (sig == null || key == null)
+        return null;
+      if (sig.attrs() == null || sig.attrs().isEmpty())
+        return null;
+      return sig.attrs().get(key);
+    }
+  }
+
+  /** MMChain FED compile-only rule (XtXv / XtwXv / XtXvy). */
+  public static final class MMChainRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("mmchain", "mapmultchain");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null || sig.category() != category())
+        return false;
+      final String op = normalizedOpcode(sig);
+      return OPCODES.contains(op);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      // MMChain result is always locally aggregated (GET + aggAdd).
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      // 0) opcode guard (defensive)
+      if (sig == null || !OPCODES.contains(normalizedOpcode(sig)))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      // 1) arity guard: 2 (XtXv) or 3 (XtwXv|XtXvy)
+      final int n = (inFTypes == null) ? 0 : inFTypes.size();
+      if (n != 2 && n != 3) {
+        return OpCaps.newBuilder()
+            .category(sig != null ? sig.category() : OpCategory.OTHER)
+            .opcode(sig != null ? sig.opcode() : "")
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.ARITY_MISMATCH)
+            .detail("expected 2 or 3 inputs, got=" + n)
+            .build();
+      }
+
+      // 2) main input X must be ROW-federated (runtime parser enforces this)
+      final FType X = typeAt(inFTypes, 0);
+      if (X == null || X == FType.NF || X == FType.LOCAL)
+        return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
+      if (X != FType.ROW)
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
+
+      // 3) valid FED pathway, but final output is local (LOUT) in all cases
+      final OpCaps.Builder b = OpCaps.newBuilder()
+          .category(sig != null ? sig.category() : OpCategory.OTHER)
+          .opcode(sig != null ? sig.opcode() : "")
+          .exec(Exec.FED)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(ReasonCode.OK);
+
+      // v is always broadcast
+      b.note(ReasonCode.INFO, "v broadcast");
+
+      // weighted?
+      final boolean weighted = isWeighted(sig, n);
+      if (weighted) {
+        final Boolean alignedHint = parseBoolean(attr(sig, "alignedW"));
+        final FType wType = (n > 2) ? typeAt(inFTypes, 2) : null;
+        if (Boolean.TRUE.equals(alignedHint) || wType == FType.ROW)
+          b.note(ReasonCode.ALIGNED_HINT, "w aligned to ROW");
+        else
+          b.note(ReasonCode.INFO, "w broadcast-sliced");
+      }
+      return b.build();
+    }
+
+    // --- tiny helpers (match existing patterns in Rulesets) ---
+    private static String attr(OpSig sig, String key) {
+      if (sig == null || key == null)
+        return null;
+      Map<String,String> a = sig.attrs();
+      return (a == null) ? null : a.get(key);
+    }
+
+    private static Boolean parseBoolean(String v) {
+      return (v == null) ? null : Boolean.parseBoolean(v);
+    }
+
+    private static boolean isWeighted(OpSig sig, int arity) {
+      String w = attr(sig, "mmchain.weighted");
+      if (w != null)
+        return Boolean.parseBoolean(w);
+      String typ = attr(sig, "mmchain.type"); // XtXv, XtwXv, XtXvy
+      if (typ != null)
+        return !"xtxv".equalsIgnoreCase(typ);
+      return arity == 3; // fallback if no hints
+    }
+  }
+
+  /** Element-wise binary ops (matrix-matrix / matrix-scalar). */
+  public static final class BinaryElemwiseRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(
+        "plus","minus","mult","div","modulus","intdiv",
+        "less","lessequal","greater","greaterequal","equal","notequal",
+        "min","max","pow","and","or","xor",
+        "bitwand","bitwor","bitwxor","bitwshiftl","bitwshiftr");
+
+    @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> left = candidates(inFTypeCandidates, 0);
+      List<FType> right = candidates(inFTypeCandidates, 1);
+      Set<FType> outs = new LinkedHashSet<>();
+      if (aligned(left, right, FType.ROW, hint))
+        outs.add(FType.ROW);
+      if (aligned(left, right, FType.COL, hint))
+        outs.add(FType.COL);
+      if (matrixScalarPair(left, right, FType.ROW))
+        outs.add(FType.ROW);
+      if (matrixScalarPair(left, right, FType.COL))
+        outs.add(FType.COL);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      FType left = typeAt(inFTypes, 0);
+      FType right = typeAt(inFTypes, 1);
+      boolean hasFedInput = isFederatedLike(left) || isFederatedLike(right);
+      boolean outerLike = isOuterLike(left, right, hint);
+
+      FType axis = null;
+      if (!outerLike) {
+        if (aligned(left, right, FType.ROW, hint))
+          axis = FType.ROW;
+        else if (aligned(left, right, FType.COL, hint))
+          axis = FType.COL;
+        else if (matrixScalarPair(left, right, FType.ROW))
+          axis = FType.ROW;
+        else if (matrixScalarPair(left, right, FType.COL))
+          axis = FType.COL;
+      }
+
+      if (axis != null && hasFedInput) {
+        Guard.Result guard = Guard.eval(sig);
+        return guardAwareFout(sig, axis, ReasonCode.OK, guard);
+      }
+
+      FType softAxis = null;
+      if (!outerLike && hasFedInput) {
+        if (matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW))
+          softAxis = FType.ROW;
+        else if (matchesAxis(left, FType.COL) && matchesAxis(right, FType.COL))
+          softAxis = FType.COL;
+      }
+
+      if (softAxis != null && !axisKnown(softAxis, hint)) {
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, softAxis)
+            .reason(ReasonCode.OK)
+            .note(
+                softAxis == FType.ROW
+                    ? ReasonCode.BROADCAST_OR_ALIGNED_ROW
+                    : ReasonCode.BROADCAST_OR_ALIGNED_COL,
+                ALIGNMENT_NOT_PROVABLE_NOTE);
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+
+      ReasonCode reason;
+      if (!hasFedInput)
+        reason = ReasonCode.NO_FED_INPUT;
+      else if (outerLike)
+        reason = ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY;
+      else
+        reason = ReasonCode.UNSUPPORTED_ALIGNMENT;
+      return cpCaps(sig, reason);
+    }
+  }
+
+  /** Append (append opcode + cbind attribute). */
+  public static final class AppendRule extends BaseRule {
+    private static final String APPEND = "append";
+    private static final String ATTR_CBIND = "cbind";
+
+    @Override public OpCategory category() { return OpCategory.APPEND; }
+    @Override public Set<String> opcodes() { return Set.of(APPEND); }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null || sig.category() != OpCategory.APPEND)
+        return false;
+      if (!APPEND.equals(normalizedOpcode(sig)))
+        return false;
+      String attr = attr(sig, ATTR_CBIND);
+      return attr != null && (isTrue(attr) || isFalse(attr));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      boolean cbind = parseCbind(sig);
+      List<FType> left = candidates(inFTypeCandidates, 0);
+      List<FType> right = candidates(inFTypeCandidates, 1);
+      boolean anyRow = hasAxis(left, FType.ROW) || hasAxis(right, FType.ROW);
+      boolean anyCol = hasAxis(left, FType.COL) || hasAxis(right, FType.COL);
+      List<FType> outs = new ArrayList<>();
+
+      if (cbind) {
+        if (anyCol) outs.add(FType.COL);
+        if (anyRow) outs.add(FType.ROW);
+      }
+      else {
+        if (anyRow) outs.add(FType.ROW);
+        if (anyCol) outs.add(FType.COL);
+      }
+
+      if ((left != null && left.contains(FType.FULL))
+          || (right != null && right.contains(FType.FULL))) {
+        outs.add(FType.FULL);
+      }
+
+      if (outs.isEmpty())
+        outs.add(FType.LOCAL);
+      return FTypeProfile.outs(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!supports(sig)) {
+        return baseCaps(sig)
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.NOT_IMPLEMENTED)
+            .build();
+      }
+      boolean cbind = parseCbind(sig);
+      List<NoteEntry> pendingNotes = new ArrayList<>();
+
+      if (containsType(inFTypes, FType.FULL)) {
+        boolean singleRange = hint != null && hint.fullSinglePartition().orElse(false);
+        if (!singleRange) {
+          OpCaps.Builder builder = baseCaps(sig)
+              .fout(false)
+              .reason(ReasonCode.NOT_IMPLEMENTED)
+              .detail(APPEND_FULL_SINGLE_RANGE_DETAIL);
+          applyNotes(builder, pendingNotes);
+          return builder.build();
+        }
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail()) {
+          OpCaps.Builder builder = guardFallbackBuilder(sig, guard);
+          applyNotes(builder, pendingNotes);
+          return builder.build();
+        }
+        OpCaps.Builder builder = baseCaps(sig)
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, FType.FULL)
+            .reason(ReasonCode.OK);
+        applyNotes(builder, pendingNotes);
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+
+      if (cbind) {
+        if (rowsKnown(hint) && hint.rowsA() != hint.rowsB()) {
+          return baseCaps(sig)
+              .fout(false)
+              .reason(ReasonCode.DIM_MISMATCH_ROWS)
+              .detail("cbind requires matching row counts")
+              .build();
+        }
+        if (!rowsKnown(hint))
+          pendingNotes.add(NoteEntry.ok("rows unknown — deferring cbind check"));
+      }
+      else {
+        if (colsKnown(hint) && hint.colsA() != hint.colsB()) {
+          return baseCaps(sig)
+              .fout(false)
+              .reason(ReasonCode.DIM_MISMATCH_COLS)
+              .detail("rbind requires matching column counts")
+              .build();
+        }
+        if (!colsKnown(hint))
+          pendingNotes.add(NoteEntry.ok("cols unknown — deferring rbind check"));
+      }
+
+      FType left = typeAt(inFTypes, 0);
+      FType right = typeAt(inFTypes, 1);
+      boolean hasRow = matchesAxis(left, FType.ROW) || matchesAxis(right, FType.ROW);
+      boolean hasCol = matchesAxis(left, FType.COL) || matchesAxis(right, FType.COL);
+
+      if (!hasRow && !hasCol) {
+        OpCaps.Builder builder = baseCaps(sig)
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.NO_FED_INPUT);
+        applyNotes(builder, pendingNotes);
+        return builder.build();
+      }
+
+      FType outType = resolveOutType(cbind, hasRow, hasCol);
+      ReasonCode cause = reasonFor(cbind, hasRow, hasCol);
+      Guard.Result guard = Guard.eval(sig);
+      if (guard != null && guard.isFail()) {
+        OpCaps.Builder builder = guardFallbackBuilder(sig, guard);
+        applyNotes(builder, pendingNotes);
+        return builder.build();
+      }
+
+      OpCaps.Builder builder = baseCaps(sig)
+          .exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, outType)
+          .reason(cause);
+      applyNotes(builder, pendingNotes);
+      if (guard == null || guard.isUnknown())
+        builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+      else
+        appendGuardPassNote(builder, guard);
+      return builder.build();
+    }
+
+    private static boolean parseCbind(OpSig sig) {
+      return Boolean.parseBoolean(attr(sig, ATTR_CBIND));
+    }
+
+    private static String attr(OpSig sig, String key) {
+      if (sig == null || key == null)
+        return null;
+      Map<String,String> attrs = sig.attrs();
+      if (attrs == null)
+        return null;
+      return attrs.get(key);
+    }
+
+    private static boolean isTrue(String v) { return "true".equalsIgnoreCase(v); }
+    private static boolean isFalse(String v) { return "false".equalsIgnoreCase(v); }
+
+    private static boolean rowsKnown(ShapeHint hint) {
+      return hint != null && hint.rowsKnown();
+    }
+
+    private static boolean colsKnown(ShapeHint hint) {
+      return hint != null && hint.colsKnown();
+    }
+
+    private static boolean containsType(List<FType> types, FType target) {
+      if (types == null || target == null)
+        return false;
+      int limit = Math.min(2, types.size());
+      for (int i = 0; i < limit; i++) {
+        FType t = types.get(i);
+        if (t == target)
+          return true;
+      }
+      return false;
+    }
+
+    private static FType resolveOutType(boolean cbind, boolean hasRow, boolean hasCol) {
+      if (cbind) {
+        if (hasCol) return FType.COL;
+        if (hasRow) return FType.ROW;
+      }
+      else {
+        if (hasRow) return FType.ROW;
+        if (hasCol) return FType.COL;
+      }
+      return FType.LOCAL;
+    }
+
+    private static ReasonCode reasonFor(boolean cbind, boolean hasRow, boolean hasCol) {
+      if (cbind)
+        return hasCol ? ReasonCode.PREFER_BIND_COL : ReasonCode.BROADCAST_OR_ALIGNED_ROW;
+      return hasRow ? ReasonCode.PREFER_BIND_ROW : ReasonCode.BROADCAST_OR_ALIGNED_COL;
+    }
+
+    private static OpCaps.Builder baseCaps(OpSig sig) {
+      return OpCaps.builder()
+          .category(sig != null ? sig.category() : OpCategory.APPEND)
+          .opcode(sig != null ? sig.opcode() : APPEND);
+    }
+
+    private static void applyNotes(OpCaps.Builder builder, List<NoteEntry> notes) {
+      if (notes == null || notes.isEmpty())
+          return;
+      for (NoteEntry note : notes) {
+        builder.note(note.code, note.message);
+      }
+    }
+
+    private static final class NoteEntry {
+      private final ReasonCode code;
+      private final String message;
+
+      private NoteEntry(ReasonCode code, String message) {
+        this.code = code;
+        this.message = message;
+      }
+
+      static NoteEntry ok(String msg) {
+        return new NoteEntry(ReasonCode.INFO, msg);
+      }
+    }
+  }
+
+  /** Quantile sort (qsort) compile-time rule preserving FED pipelines for qpick. */
+  public static final class QuantileSortRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("qsort");
+
+    @Override public OpCategory category() { return OpCategory.QUANTILE_SORT; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> in = candidates(inFTypeCandidates, 0);
+      if (in.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (in.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (in.contains(FType.COL))
+        outs.add(FType.COL);
+      if (in.contains(FType.FULL))
+        outs.add(FType.FULL);
+
+      return outs.isEmpty()
+          ? FTypeProfile.empty()
+          : FTypeProfile.ofOutput(new ArrayList<>(outs));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      int n = (inFTypes == null) ? 0 : inFTypes.size();
+      if (n < 1)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (in == FType.NF || in == FType.LOCAL || in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.PART)
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+
+      boolean columnPath = (in == FType.COL || in == FType.FULL);
+      FType outAxis = columnPath ? in : FType.ROW;
+
+      OpCaps.Builder builder = OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, outAxis)
+          .reason(ReasonCode.OK);
+
+      OpSig.InputKind weightKind = sig.inputKind(1);
+      boolean hasWeights = weightKind == OpSig.InputKind.MATRIX || n > 1;
+      if (hasWeights) {
+        if (columnPath) {
+          builder.note(ReasonCode.INFO, "weights driver-collected for qsort UDF (performance caution)");
+        }
+        else {
+          builder.note(ReasonCode.BROADCAST_OR_ALIGNED_ROW,
+              "weights broadcast-sliced to partitions; row-path result columns=(value,weight)");
+        }
+      }
+
+      if (hint != null && hint.cols() > 1) {
+        builder.note(ReasonCode.OP_SHAPE_INCOMPATIBLE,
+            "qsort expects 1-column vectors (runtime validation handles enforcement)");
+      }
+
+      return builder.build();
+    }
+  }
+
+  /** Quantile pick (qpick) compile-only rule (local result). */
+  public static final class QuantilePickRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("qpick");
+
+    @Override public OpCategory category() { return OpCategory.QUANTILE_PICK; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null || sig.category() != category())
+        return false;
+      String op = normalizedOpcode(sig);
+      return OPCODES.contains(op);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty(); // result collected locally
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      final int n = (inFTypes == null) ? 0 : inFTypes.size();
+      if (n < 1 || n > 2)
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      final FType in1 = typeAt(inFTypes, 0);
+      if (in1 == null)
+        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+
+      if (n >= 2) {
+        final FType in2 = typeAt(inFTypes, 1);
+        if (in2 == FType.ROW || in2 == FType.COL || in2 == FType.PART
+            || in2 == FType.FULL || in2 == FType.BROADCAST) {
+          return cpLocal(sig)
+              .reason(ReasonCode.BROADCAST_CONSTRAINT)
+              .detail("quantile parameter must be local/small")
+              .build();
+        }
+      }
+
+      switch (in1) {
+        case ROW:
+        case PART:
+          return fedLocalCaps(sig, ReasonCode.OK);
+
+        case COL:
+        case FULL:
+          if (hint != null && hint.fullSinglePartition().isPresent()
+              && !hint.fullSinglePartition().get()) {
+            return cpLocal(sig)
+                .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
+                .detail("qpick column-path assumes single federated range")
+                .build();
+          }
+          return fedLocalCaps(sig, ReasonCode.OK);
+
+        case BROADCAST:
+          return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+
+        case LOCAL:
+        case NF:
+        default:
+          return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
+      }
+    }
+
+    private static OpCaps.Builder cpLocal(OpSig sig) {
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(Exec.CP)
+          .placement(Placement.LOUT)
+          .fout(false);
+    }
+  }
+
+  /** CTABLE planner rule mirroring CtableFEDInstruction. */
+  public static final class CtableRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("ctable");
+    private static final String ATTR_DISJOINT = "ctable_disjoint_bins";
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+
+      List<FType> aCands = candidates(inFTypeCandidates, 0);
+      List<FType> bCands = candidates(inFTypeCandidates, 1);
+
+      boolean disjoint = parseBoolAttr(sig, ATTR_DISJOINT, false);
+      if (!disjoint)
+        return FTypeProfile.empty();
+
+      boolean aRow = hasAxis(aCands, FType.ROW);
+      boolean bRow = hasAxis(bCands, FType.ROW);
+      FType axis = (!aRow && bRow) ? FType.ROW : FType.COL;
+      return FTypeProfile.ofOutput(List.of(axis));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      int n = (inFTypes == null) ? 0 : inFTypes.size();
+      OpCategory category = (sig != null) ? sig.category() : OpCategory.OTHER;
+      String opcode = (sig != null && sig.opcode() != null) ? sig.opcode() : "ctable";
+
+      if (n != 2 && n != 3) {
+        return OpCaps.newBuilder()
+            .category(category)
+            .opcode(opcode)
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.ARITY_MISMATCH)
+            .detail("expected=2 or 3, got=" + n)
+            .build();
+      }
+
+      FType a = typeAt(inFTypes, 0);
+      FType b = typeAt(inFTypes, 1);
+      FType w = (n == 3) ? typeAt(inFTypes, 2) : null;
+
+      boolean hasRowFed = (a == FType.ROW) || (b == FType.ROW) || (w == FType.ROW);
+      if (!hasRowFed) {
+        return OpCaps.newBuilder()
+            .category(category)
+            .opcode(opcode)
+            .exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.NO_FED_INPUT)
+            .detail("no ROW input")
+            .build();
+      }
+
+      boolean disjoint = parseBoolAttr(sig, ATTR_DISJOINT, false);
+      boolean reversed = (a != FType.ROW) && (b == FType.ROW);
+      FType outAxis = reversed ? FType.ROW : FType.COL;
+
+      if (disjoint) {
+        if (sig == null) {
+          return OpCaps.newBuilder()
+              .category(category)
+              .opcode(opcode)
+              .exec(Exec.FED)
+              .placement(Placement.FOUT)
+              .fout(true, outAxis)
+              .reason(ReasonCode.OK)
+              .build();
+        }
+        return fedFoutCaps(sig, outAxis, ReasonCode.OK);
+      }
+
+      return OpCaps.newBuilder()
+          .category(category)
+          .opcode(opcode)
+          .exec(Exec.FED)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
+          .detail("ctable_disjoint_bins=false (default)")
+          .build();
+    }
+
+    private static boolean parseBoolAttr(OpSig sig, String key, boolean defVal) {
+      if (sig == null || key == null)
+        return defVal;
+      Map<String,String> attrs = sig.attrs();
+      if (attrs == null)
+        return defVal;
+      String v = attrs.get(key);
+      return (v != null) ? Boolean.parseBoolean(v) : defVal;
+    }
+  }
+
+  /** Explicit deny for quantile/interquantile (no federated instruction available). */
+  public static final class QuantileInterquantileCtableDenyRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("quantile", "interquantile");
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      return cpCaps(sig, ReasonCode.MISSING_FED_INSTRUCTION);
+    }
+  }
+
+  /** Cumulative offset ops (bcumoff*). */
+  public static final class CumulativeOffsetRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(
+        "bcumoffk+",
+        "bcumoff*",
+        "bcumoff+*",
+        "bcumoffmin",
+        "bcumoffmax");
+    private static final String OPCODE_ROW_ONLY = "bcumoff+*";
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && sig.arity() == 2
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+
+      final String opcode = normalizedOpcode(sig);
+      final List<FType> left = candidates(inFTypeCandidates, 0);
+      final Set<FType> outs = new LinkedHashSet<>();
+
+      if (hasAxis(left, FType.ROW))
+        outs.add(FType.ROW);
+      if (!OPCODE_ROW_ONLY.equals(opcode) && hasAxis(left, FType.COL))
+        outs.add(FType.COL);
+      if (left.contains(FType.FULL))
+        outs.add(FType.FULL);
+
+      return outs.isEmpty()
+          ? FTypeProfile.empty()
+          : FTypeProfile.ofOutput(new ArrayList<>(outs));
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      final OpCaps.Builder b = OpCaps.builder()
+          .category(sig != null ? sig.category() : OpCategory.OTHER)
+          .opcode(sig != null ? sig.opcode() : "");
+
+      if (inFTypes == null || inFTypes.size() < 2) {
+        return b.exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.ARITY_MISMATCH)
+            .build();
+      }
+
+      final String opcode = normalizedOpcode(sig);
+      final FType in = typeAt(inFTypes, 0);
+
+      if (in == null || in == FType.NF || in == FType.LOCAL
+          || in == FType.BROADCAST) {
+        return b.exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.NO_FED_INPUT)
+            .build();
+      }
+
+      if (in == FType.FULL) {
+        boolean single = (hint == null) ? true : hint.fullSinglePartition().orElse(true);
+        if (!single) {
+          return b.exec(Exec.CP)
+              .placement(Placement.LOUT)
+              .fout(false)
+              .reason(ReasonCode.NO_FED_INPUT)
+              .detail(CUMOFF_FULL_SINGLE_RANGE_DETAIL)
+              .build();
+        }
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig != null ? sig.category() : OpCategory.OTHER)
+            .opcode(sig != null ? sig.opcode() : "")
+            .exec(Exec.FED)
+            .placement(Placement.FOUT)
+            .fout(true, FType.FULL)
+            .reason(ReasonCode.OK);
+        if (OPCODE_ROW_ONLY.equals(opcode)) {
+          builder.detail("Result is n×1 for bcumoff+* (runtime adjusts federated ranges).");
+        }
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+
+      if (OPCODE_ROW_ONLY.equals(opcode) && in != FType.ROW) {
+        return b.exec(Exec.CP)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
+            .detail("bcumoff+* requires ROW-partitioned input")
+            .build();
+      }
+
+      if (in == FType.PART) {
+        return b.exec(Exec.FED)
+            .placement(Placement.LOUT)
+            .fout(false)
+            .reason(ReasonCode.FOUT_DISALLOWED_FOR_PART_OUT)
+            .build();
+      }
+
+      final FType axis = (in == FType.COL) ? FType.COL : FType.ROW;
+      if (OPCODE_ROW_ONLY.equals(opcode)) {
+        b.detail("Result is n×1 for bcumoff+* (runtime adjusts federated ranges).");
+      }
+      return b.exec(Exec.FED)
+          .placement(Placement.FOUT)
+          .fout(true, axis)
+          .reason(ReasonCode.OK)
+          .build();
+    }
+  }
+
+  /**
+   * Covariance는 항상 스칼라를 산출하므로 FOUT 불가; 최종 LOUT만 허용.
+   * 두 입력이 모두 연합이면 같은 축(ROW/ROW, COL/COL)로 해석될 때만 FED 허용; 그 외(축 불일치/PART 개입)는 CP 폴백.
+   * 가중치는 로컬/브로드캐스트/연합 어떤 형태든 허용(결정에는 영향 없음); 필요 시 표준화된 note 문자열 부여.
+   */
+  public static final class CovarianceRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("cov", "covariance");
+    private static final String ATTR_ALIGN_HINT = "align_hint";
+
+    @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null
+          && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      try {
+        if (sig == null)
+          return cpLocal(null, ReasonCode.OPCODE_UNSUPPORTED).build();
+        if (sig.category() != category())
+          return cpLocal(sig, ReasonCode.OPCODE_UNSUPPORTED).build();
+        if (!OPCODES.contains(normalizedOpcode(sig)))
+          return cpLocal(sig, ReasonCode.OPCODE_UNSUPPORTED).build();
+        if (inFTypes == null || inFTypes.size() < 2)
+          return cpLocal(sig, ReasonCode.ARITY_MISMATCH).build();
+
+        FType left = typeAt(inFTypes, 0);
+        FType right = typeAt(inFTypes, 1);
+        if (left == null || right == null)
+          return cpLocal(sig, ReasonCode.MISSING_IN_FTYPE).build();
+
+        FType weights = (inFTypes.size() >= 3) ? typeAt(inFTypes, 2) : null;
+        boolean leftFed = isFederatedLike(left);
+        boolean rightFed = isFederatedLike(right);
+
+        if (!leftFed && !rightFed)
+          return addWeightNote(cpLocal(sig, ReasonCode.NO_FED_INPUT), weights).build();
+
+        if (leftFed && rightFed) {
+          boolean sameRow = matchesAxis(left, FType.ROW) && matchesAxis(right, FType.ROW);
+          boolean sameCol = matchesAxis(left, FType.COL) && matchesAxis(right, FType.COL);
+          boolean hasPart = left == FType.PART || right == FType.PART;
+          FType hintAxis = parseAlignHint(sig);
+          boolean hintAligned = hasPart && hintAxis != null;
+
+          if (sameRow || sameCol || hintAligned) {
+            OpCaps.Builder ok = fedLocal(sig, ReasonCode.OK);
+            if (hintAligned)
+              ok.note(ReasonCode.ALIGNED_HINT, alignNote(hintAxis));
+            return addWeightNote(ok, weights).build();
+          }
+
+          return addWeightNote(
+              cpLocal(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY),
+              weights).build();
+        }
+
+        return addWeightNote(fedLocal(sig, ReasonCode.OK), weights).build();
+      } catch (Exception ex) {
+        return cpLocal(sig, ReasonCode.RULE_ERROR).build();
+      }
+    }
+
+    private static OpCaps.Builder cpLocal(OpSig sig, ReasonCode reason) {
+      return localCaps(sig, Exec.CP, reason);
+    }
+
+    private static OpCaps.Builder fedLocal(OpSig sig, ReasonCode reason) {
+      return localCaps(sig, Exec.FED, reason);
+    }
+
+    private static OpCaps.Builder localCaps(OpSig sig, Exec exec, ReasonCode reason) {
+      return OpCaps.builder()
+          .category(sig != null ? sig.category() : OpCategory.BINARY_EWISE)
+          .opcode(sig != null ? sig.opcode() : "")
+          .exec(exec)
+          .placement(Placement.LOUT)
+          .fout(false)
+          .reason(reason);
+    }
+
+    private static OpCaps.Builder addWeightNote(OpCaps.Builder builder, FType weights) {
+      if (builder == null || weights == null)
+        return builder;
+      if (isFederatedLike(weights))
+        return builder.note(ReasonCode.INFO, "weights=broadcast-sliced");
+      return builder.note(ReasonCode.INFO, "weights=local");
+    }
+
+    private static FType parseAlignHint(OpSig sig) {
+      if (sig == null)
+        return null;
+      Map<String,String> attrs = sig.attrs();
+      if (attrs == null)
+        return null;
+      String raw = attrs.get(ATTR_ALIGN_HINT);
+      if (raw == null)
+        return null;
+      if ("row".equalsIgnoreCase(raw))
+        return FType.ROW;
+      if ("col".equalsIgnoreCase(raw))
+        return FType.COL;
+      return null;
+    }
+
+    private static String alignNote(FType axis) {
+      return (axis == FType.COL) ? "align=hint:COL" : "align=hint:ROW";
+    }
+  }
+
+  /** Solve op (explicit CP fallback). */
+  public static final class SolveRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of("solve");
+
+    @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+  public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED);
+    }
+  }
+
+  public static final class SpoofCellwiseRule extends BaseRule {
+    @Override public OpCategory category() { return OpCategory.SPOOF; }
+
+    @Override public boolean supports(OpSig sig) {
+      return matchesSpoofTemplate(sig, SpoofTemplate.CELLWISE);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      AttrValue<SpoofCellType> cellType = parseCellTypeAttr(sig);
+      if (!cellType.hasValue())
+        return FTypeProfile.empty();
+
+      switch (cellType.value) {
+        case NO_AGG:
+          return primaryLikeProfile(inFTypeCandidates);
+        case ROW_AGG: {
+          Set<FType> outs = new LinkedHashSet<>();
+          if (hasAxis(candidates(inFTypeCandidates, 0), FType.ROW))
+            outs.add(FType.ROW);
+          return profileOf(outs);
+        }
+        case COL_AGG: {
+          Set<FType> outs = new LinkedHashSet<>();
+          if (hasAxis(candidates(inFTypeCandidates, 0), FType.COL))
+            outs.add(FType.COL);
+          return profileOf(outs);
+        }
+        default:
+          return FTypeProfile.empty();
+      }
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      TemplateInfo template = resolveTemplate(sig);
+      if (template.invalid)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (template.template != SpoofTemplate.CELLWISE)
+        return cpCaps(sig, ReasonCode.NO_RULE);
+
+      AttrValue<SpoofCellType> cellType = parseCellTypeAttr(sig);
+      if (!cellType.hasValue())
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      FedInfo fed = summarizeFedInputs(inFTypes);
+      OpCaps fail = fedPreconditionFailure(sig, fed);
+      if (fail != null)
+        return fail;
+      FType x = fed.primary;
+
+      switch (cellType.value) {
+        case NO_AGG:
+          return guardAwareFout(sig, preserveOrAxis(x), ReasonCode.OK, Guard.eval(sig));
+        case ROW_AGG:
+          if (matchesAxis(x, FType.ROW))
+            return guardAwareFout(sig, FType.ROW, ReasonCode.OK, Guard.eval(sig));
+          return fedLocalCaps(sig, ReasonCode.OK);
+        case COL_AGG:
+          if (matchesAxis(x, FType.COL))
+            return guardAwareFout(sig, FType.COL, ReasonCode.OK, Guard.eval(sig));
+          return fedLocalCaps(sig, ReasonCode.OK);
+        case FULL_AGG:
+          return fedLocalWithDetail(sig, ReasonCode.OK, SCALAR_LOUT_DETAIL);
+        default:
+          return fedLocalCaps(sig, ReasonCode.OK);
+      }
+    }
+  }
+
+  public static final class SpoofRowwiseRule extends BaseRule {
+    @Override public OpCategory category() { return OpCategory.SPOOF; }
+
+    @Override public boolean supports(OpSig sig) {
+      return matchesSpoofTemplate(sig, SpoofTemplate.ROWWISE);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      AttrValue<SpoofRowType> rowType = parseRowTypeAttr(sig);
+      if (!rowType.hasValue())
+        return FTypeProfile.empty();
+
+      if (rowType.value == SpoofRowType.NO_AGG
+          || rowType.value == SpoofRowType.NO_AGG_B1
+          || rowType.value == SpoofRowType.NO_AGG_CONST) {
+        Set<FType> outs = new LinkedHashSet<>();
+        if (hasAxis(candidates(inFTypeCandidates, 0), FType.ROW))
+          outs.add(FType.ROW);
+        return profileOf(outs);
+      }
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      TemplateInfo template = resolveTemplate(sig);
+      if (template.invalid)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (template.template != SpoofTemplate.ROWWISE)
+        return cpCaps(sig, ReasonCode.NO_RULE);
+
+      AttrValue<SpoofRowType> rowType = parseRowTypeAttr(sig);
+      if (!rowType.hasValue())
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      FedInfo fed = summarizeFedInputs(inFTypes);
+      OpCaps fail = fedPreconditionFailure(sig, fed);
+      if (fail != null)
+        return fail;
+
+      FType x = fed.primary;
+      if (!matchesAxis(x, FType.ROW))
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+
+      if (rowType.value == SpoofRowType.NO_AGG
+          || rowType.value == SpoofRowType.NO_AGG_B1
+          || rowType.value == SpoofRowType.NO_AGG_CONST) {
+        return guardAwareFout(sig, FType.ROW, ReasonCode.OK, Guard.eval(sig));
+      }
+      return fedLocalCaps(sig, ReasonCode.OK);
+    }
+  }
+
+  public static final class SpoofMultiAggregateRule extends BaseRule {
+    @Override public OpCategory category() { return OpCategory.SPOOF; }
+
+    @Override public boolean supports(OpSig sig) {
+      return matchesSpoofTemplate(sig, SpoofTemplate.MULTIAGG);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return FTypeProfile.empty();
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      TemplateInfo template = resolveTemplate(sig);
+      if (template.invalid)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (template.template != SpoofTemplate.MULTIAGG)
+        return cpCaps(sig, ReasonCode.NO_RULE);
+
+      FedInfo fed = summarizeFedInputs(inFTypes);
+      OpCaps fail = fedPreconditionFailure(sig, fed);
+      if (fail != null)
+        return fail;
+
+      FType x = fed.primary;
+      if (!matchesAxis(x, FType.ROW) && !matchesAxis(x, FType.COL))
+        return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
+      return fedLocalCaps(sig, ReasonCode.OK);
+    }
+  }
+
+  public static final class SpoofOuterProductRule extends BaseRule {
+    @Override public OpCategory category() { return OpCategory.SPOOF; }
+
+    @Override public boolean supports(OpSig sig) {
+      return matchesSpoofTemplate(sig, SpoofTemplate.OUTER);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      AttrValue<SpoofOuterType> outerType = parseOuterTypeAttr(sig);
+      if (!outerType.hasValue())
+        return FTypeProfile.empty();
+
+      List<FType> primary = candidates(inFTypeCandidates, 0);
+      switch (outerType.value) {
+        case CELLWISE_OUTER_PRODUCT:
+          return primaryLikeProfile(inFTypeCandidates);
+        case LEFT_OUTER_PRODUCT: {
+          Set<FType> outs = new LinkedHashSet<>();
+          if (hasAxis(primary, FType.COL))
+            outs.add(FType.COL);
+          return profileOf(outs);
+        }
+        case RIGHT_OUTER_PRODUCT: {
+          Set<FType> outs = new LinkedHashSet<>();
+          if (hasAxis(primary, FType.ROW))
+            outs.add(FType.ROW);
+          return profileOf(outs);
+        }
+        default:
+          return FTypeProfile.empty();
+      }
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      TemplateInfo template = resolveTemplate(sig);
+      if (template.invalid)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (template.template != SpoofTemplate.OUTER)
+        return cpCaps(sig, ReasonCode.NO_RULE);
+
+      AttrValue<SpoofOuterType> outerType = parseOuterTypeAttr(sig);
+      if (!outerType.hasValue())
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      FedInfo fed = summarizeFedInputs(inFTypes);
+      OpCaps fail = fedPreconditionFailure(sig, fed);
+      if (fail != null)
+        return fail;
+
+      FType x = fed.primary;
+      switch (outerType.value) {
+        case CELLWISE_OUTER_PRODUCT:
+          return guardAwareFout(sig, preserveOrAxis(x), ReasonCode.OK, Guard.eval(sig));
+        case LEFT_OUTER_PRODUCT:
+          if (matchesAxis(x, FType.COL))
+            return guardAwareFout(sig, FType.COL, ReasonCode.OK, Guard.eval(sig));
+          return fedLocalCaps(sig, ReasonCode.OK);
+        case RIGHT_OUTER_PRODUCT:
+          if (matchesAxis(x, FType.ROW))
+            return guardAwareFout(sig, FType.ROW, ReasonCode.OK, Guard.eval(sig));
+          return fedLocalCaps(sig, ReasonCode.OK);
+        case AGG_OUTER_PRODUCT:
+          return fedLocalWithDetail(sig, ReasonCode.OK, SCALAR_LOUT_DETAIL);
+        default:
+          return fedLocalCaps(sig, ReasonCode.OK);
+      }
+    }
+  }
+}
