@@ -14,7 +14,7 @@ import org.apache.sysds.parser.Statement;
 import org.junit.Before;
 import org.junit.Test;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.FederatedTypePropagator;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 
 import org.apache.sysds.hops.*;
 import org.apache.sysds.common.Types.*;

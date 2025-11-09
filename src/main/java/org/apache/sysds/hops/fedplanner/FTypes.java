@@ -19,6 +19,11 @@
 
 package org.apache.sysds.hops.fedplanner;
 
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTPlanner.FederatedPlanMinSTCut;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
+
 public class FTypes
 {
 	public enum FederatedPlanner {
