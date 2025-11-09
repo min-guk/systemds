@@ -224,6 +224,10 @@ public abstract class Hop implements ParseInfo {
 
 	public void setForcedExecType(ExecType etype)
 	{
+		if (etype == null) {
+			System.out.println("[DEBUG] setForcedExecType(null) called!");
+			Thread.dumpStack();
+		}
 		logForcedETCall(etype);
 		_etypeForced = etype;
 	}

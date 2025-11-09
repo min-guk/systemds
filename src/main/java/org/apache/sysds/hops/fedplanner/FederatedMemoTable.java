@@ -203,6 +203,7 @@ public class FederatedMemoTable {
 			double forwardingWeight = this.networkWeight;
 			
 			for (int i = 0; i < loopContext.size(); i++) {
+				// Todo: 이상함. 공통 루프만 제거해야하는 것 아닌가?
 				if (i >= childLoopContext.size() || loopContext.get(i).getLeft() != childLoopContext.get(i).getLeft()) {
 					forwardingWeight /=loopContext.get(i).getRight();
 				}

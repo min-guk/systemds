@@ -508,12 +508,28 @@ public class FederatedStatistics {
 		workerEvents.add(event);
 	}
 
-	public static void addWorkerRequest(RequestModel request) {
+	/**
+	 * Adds a worker request to the statistics.
+	 *
+	 * Race condition bug fix:
+	 * - Multiple threads can call this method concurrently
+	 * - Between the containsKey check (line 512) and the put operation (line 513),
+	 *   another thread might insert a different request object with the same type
+	 * - This causes get(request.type) to return a different object whose count field might be null
+	 * - Solution: Use synchronized to ensure atomicity of check-put-increment operations
+	 */
+	public synchronized static void addWorkerRequest(RequestModel request) {
 		if (!workerFederatedRequests.containsKey(request.type)) {
 			workerFederatedRequests.put(request.type, request);
+			// No need to increment count here - the new request already has its initial count value
+			return;
 		}
 
-		workerFederatedRequests.get(request.type).count++;
+		// Safely increment the count of the existing request
+		RequestModel existingRequest = workerFederatedRequests.get(request.type);
+		if (existingRequest != null && existingRequest.count != null) {
+			existingRequest.count++;
+		}
 	}
 
 	public static void addDataObject(DataObjectModel dataObject) {

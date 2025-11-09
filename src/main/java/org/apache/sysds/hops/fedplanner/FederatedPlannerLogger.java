@@ -27,6 +27,11 @@ import org.apache.sysds.hops.fedplanner.FederatedMemoTable.FedPlan;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Types.ExecType;
+import org.jgrapht.Graph;
+import org.jgrapht.graph.DefaultWeightedEdge;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.List;
@@ -784,4 +789,172 @@ public class FederatedPlannerLogger {
             System.out.println("  Parent Hop - RequiredFedOutType:" + parentFedOutType + " (Parent hop details not available)");
         }
     }
+
+	/**
+	 * Converts Privacy enum names to 6-character abbreviations.
+	 *
+	 * @param privacyName The full Privacy enum name
+	 * @return 6-character abbreviation
+	 */
+	private static String getPrivacyAbbreviation(String privacyName) {
+		switch (privacyName) {
+			case "PUBLIC":
+				return "PUBLIC";
+			case "PRIVATE":
+				return "PRIVTE";
+			case "PRIVATE_AGGREGATE":
+				return "PRIVAGG";
+			case "PRIVATE_AGGREGATE_TO_PUBLIC":
+				return "PRVAGP";
+			default:
+				return privacyName.length() > 6 ? privacyName.substring(0, 6) : privacyName;
+		}
+	}
+
+	/**
+	 * Logs the optimal plan determined by the FederatedPlanMinSTGraph.
+	 * This includes Hop ID, ExecType, FedOutputType, Privacy, FType, OpCost, and Network Costs.
+	 *
+	 * @param planGraph The FederatedPlanMinSTGraph after getOptimalPlan has been executed.
+	 */
+	public static void logOptimalPlan(FederatedPlanMinSTGraph planGraph) {
+		logOptimalPlan(planGraph, false);
+	}
+
+	/**
+	 * Logs the optimal plan with optional debug information.
+	 *
+	 * @param planGraph The FederatedPlanMinSTGraph after getOptimalPlan has been executed.
+	 * @param debug If true, prints additional debug information including all graph edges.
+	 */
+	public static void logOptimalPlan(FederatedPlanMinSTGraph planGraph, boolean debug) {
+		System.out.println("\n[Optimal Federated Plan]");
+		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+		System.out.printf("%-7s | %-12s | %-20s | %-10s | %-13s | %-8s | %-9s | %-15s | %-15s | %-10s | %s%n",
+			"Hop ID", "Type", "OpCode", "ExecType", "FedOutputType", "Privacy", "FType", "ChildIDs", "ParentIDs", "OpCost", "Network Costs (Child -> Cost)");
+		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+
+		Graph<Long, DefaultWeightedEdge> graph = planGraph.getGraph();
+		Map<Long, FederatedPlanMinSTGraph.Vertex> memoTable = planGraph.getMemoTable();
+		long sourceId = -1L; // planGraph.leafedSource
+		long sinkId = -2L;   // planGraph.rootLocalSink
+
+		// Sort hop IDs for consistent output
+		List<Long> hopIds = new ArrayList<>(memoTable.keySet());
+		Collections.sort(hopIds);
+
+		for (Long hopID : hopIds) {
+			FederatedPlanMinSTGraph.Vertex vertex = memoTable.get(hopID);
+			if (vertex == null) continue;
+
+			Hop hop = vertex.getHopRef();
+			String hopType = hop.getClass().getSimpleName();
+			// Remove "Op" suffix from type
+			if (hopType.endsWith("Op")) {
+				hopType = hopType.substring(0, hopType.length() - 2);
+			}
+			if (hopType.length() > 12) {
+				hopType = hopType.substring(0, 12);
+			}
+
+			String opCode = hop.getOpString();
+			// Remove type name prefix from opCode if it exists
+			String typePrefix = hopType.toLowerCase();
+			if (opCode.toLowerCase().startsWith(typePrefix)) {
+				opCode = opCode.substring(typePrefix.length()).trim();
+			}
+			if (opCode.length() > 20) {
+				opCode = opCode.substring(0, 20);
+			}
+
+			// Get child IDs
+			StringBuilder childIDs = new StringBuilder();
+			if (hop.getInput() != null && !hop.getInput().isEmpty()) {
+				for (int i = 0; i < hop.getInput().size(); i++) {
+					if (i > 0) childIDs.append(",");
+					childIDs.append(hop.getInput().get(i).getHopID());
+				}
+			}
+			String childIDsStr = childIDs.length() > 0 ? childIDs.toString() : "-";
+			if (childIDsStr.length() > 15) {
+				childIDsStr = childIDsStr.substring(0, 15);
+			}
+
+			// Get parent IDs
+			StringBuilder parentIDs = new StringBuilder();
+			if (hop.getParent() != null && !hop.getParent().isEmpty()) {
+				for (int i = 0; i < hop.getParent().size(); i++) {
+					if (i > 0) parentIDs.append(",");
+					long parentID = hop.getParent().get(i).getHopID();
+					parentIDs.append(parentID);
+					// TODO: VERIFY - Debug missing parent hops
+					if (!memoTable.containsKey(parentID)) {
+						System.err.println("[WARN] Hop " + hopID + " has parent " + parentID + " which is NOT in memoTable!");
+					}
+				}
+			}
+			String parentIDsStr = parentIDs.length() > 0 ? parentIDs.toString() : "-";
+			if (parentIDsStr.length() > 15) {
+				parentIDsStr = parentIDsStr.substring(0, 15);
+			}
+
+			String execType = hop.getForcedExecType() != null ? hop.getForcedExecType().name() : "N/A";
+			String fedOut = hop.getFederatedOutput() != null ? hop.getFederatedOutput().name() : "N/A";
+			String privacy = vertex.getPrivacy() != null ? getPrivacyAbbreviation(vertex.getPrivacy().name()) : "N/A";
+			String fType = vertex.getDataType() != null ? vertex.getDataType().name() : "N/A";
+
+			// Determine OpCost based on ExecType
+			double opCost = 0;
+			if (hop.getForcedExecType() == ExecType.FED) {
+				DefaultWeightedEdge edge = graph.getEdge(hopID, sinkId);
+				if (edge != null) {
+					opCost = graph.getEdgeWeight(edge);
+				}
+			} else if (hop.getForcedExecType() == ExecType.CP) {
+				DefaultWeightedEdge edge = graph.getEdge(sourceId, hopID);
+				if (edge != null) {
+					opCost = graph.getEdgeWeight(edge);
+				}
+			}
+
+			// Get Network Costs with child hops
+			// Network cost occurs when there's an execution type mismatch between child and parent
+			StringBuilder networkCostsStr = new StringBuilder();
+			if (hop.getInput() != null && !hop.getInput().isEmpty()) {
+				for (Hop child : hop.getInput()) {
+					long childID = child.getHopID();
+					if (!memoTable.containsKey(childID)) continue;
+
+					ExecType childExecType = child.getForcedExecType();
+					ExecType parentExecType = hop.getForcedExecType();
+
+					double networkCost = 0;
+
+					// Network cost only occurs when there's a mismatch
+					// Case 1: Child=FED, Parent=CP -> edge from child to parent (child -> parent)
+					// Case 2: Child=CP, Parent=FED -> edge from parent to child (parent -> child)
+					if (childExecType == ExecType.FED && parentExecType == ExecType.CP) {
+						DefaultWeightedEdge edge = graph.getEdge(childID, hopID);
+						if (edge != null) {
+							networkCost = graph.getEdgeWeight(edge);
+						}
+					} else if (childExecType == ExecType.CP && parentExecType == ExecType.FED) {
+						DefaultWeightedEdge edge = graph.getEdge(hopID, childID);
+						if (edge != null) {
+							networkCost = graph.getEdgeWeight(edge);
+						}
+					}
+
+					if (networkCost > 0) {
+						if (networkCostsStr.length() > 0) networkCostsStr.append(", ");
+						networkCostsStr.append(String.format("%d -> %.1f", childID, networkCost));
+					}
+				}
+			}
+
+			System.out.printf("%-7d | %-12s | %-20s | %-10s | %-13s | %-8s | %-9s | %-15s | %-15s | %-10.1f | %s%n",
+				hopID, hopType, opCode, execType, fedOut, privacy, fType, childIDsStr, parentIDsStr, opCost, networkCostsStr.toString());
+		}
+		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+	}
 }
