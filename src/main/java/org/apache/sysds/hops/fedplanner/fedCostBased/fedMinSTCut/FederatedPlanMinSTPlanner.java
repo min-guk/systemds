@@ -377,6 +377,7 @@ public final class FederatedPlanMinSTPlanner {
 		 * @return Time cost for memory access (in seconds)
 		 */
 		private static double computeHopMemoryAccessCost(double memSize) {
+			if (memSize <= 0) return 0.0;
 			return memSize / (1024 * 1024) / DEFAULT_MBS_MEMORY_BANDWIDTH;
 		}
 	
@@ -575,7 +576,16 @@ public final class FederatedPlanMinSTPlanner {
 				// 3. Assign to the side with higher total forwarding cost
 				double fedParentForwardingCostSum = 0.0;
 				double localParentForwardingCostSum = 0.0;
-	
+				
+				// TODO [FOUT/LOUT decision model]
+				// - 현재 구현은 fedSum/localSum을 단순 합으로 비교 → 방향은 맞지만 의미상 "부모 수(가중치) 비교" 근사임.
+				// - 실제 네트워크 비용은 동일측 부모 여러 개여도 1회(수집·브로드캐스트)만 발생 → 과대추정 가능.
+				// - 개선 아이디어:
+				//     (a) sum 대신 max 또는 1+log(#parents) 감쇠 적용,
+				//     (b) FED(source) 노드만 비교하고 LOCAL(sink) 노드는 LOUT 고정,
+				//     (c) 변수·주석을 "가중 부모 수 비교"로 명시하거나 명시적 costIfFOUT/costIfLOUT 계산으로 변경.
+
+
 				for (Hop parent : parents) {
 					Vertex parentVertex = memoTable.get(parent.getHopID());
 					if (parentVertex == null) continue;
@@ -819,6 +829,8 @@ public final class FederatedPlanMinSTPlanner {
 	            Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 	            elseFormerTransTable.putAll(innerTransTable);
 	            computeWeight *= DEFAULT_IF_ELSE_WEIGHT;
+				// Todo: network weight을 0.5로 안하는 이유가 있나? 잘 모르겠음. 고민해봐야함.
+				// networkWeight *= DEFAULT_IF_ELSE_WEIGHT;
 	
 	            for (StatementBlock innerIsb : istmt.getIfBody())
 	                newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
