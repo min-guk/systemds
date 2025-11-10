@@ -26,6 +26,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
  * Rules API (compile-only scaffolding).
@@ -40,8 +42,10 @@ public final class RulesApi {
 
   // --- Execution & placement primitives --------------------------------------------------------
 
+  @Deprecated
   public enum Exec { CP, FED }
 
+  @Deprecated
   public enum Placement {
     LOUT,
     FOUT
@@ -271,9 +275,8 @@ public final class RulesApi {
   public static final class OpCaps {
     private final OpCategory category;
     private final String opcode;
-    private final Exec exec;
-    private final Placement placement;
-    private final boolean fout;
+    private final ExecType exec;
+    private final FederatedOutput placement;
     private final FType foutFType;
     private final ReasonCode reason;
     private final String detail;
@@ -284,7 +287,6 @@ public final class RulesApi {
       this.opcode = b.opcode;
       this.exec = b.exec;
       this.placement = b.placement;
-      this.fout = b.fout;
       this.foutFType = b.foutFType;
       this.reason = b.reason;
       this.detail = b.detail;
@@ -293,11 +295,13 @@ public final class RulesApi {
 
     public OpCategory category() { return category; }
     public String opcode() { return opcode; }
-    public Exec exec() { return exec; }
-    public Placement placement() { return placement; }
-    public boolean foutEnabled() { return fout; }
+    public ExecType exec() { return exec; }
+    public FederatedOutput placement() { return placement; }
+    public boolean foutEnabled() {
+      return placement == FederatedOutput.FOUT;
+    }
     public Optional<FType> foutFType() {
-      return fout ? Optional.ofNullable(foutFType) : Optional.<FType>empty();
+      return foutEnabled() ? Optional.ofNullable(foutFType) : Optional.<FType>empty();
     }
     public ReasonCode reason() { return reason; }
     public Optional<String> detail() {
@@ -308,8 +312,17 @@ public final class RulesApi {
     public static Builder builder() { return new Builder(); }
     public static Builder newBuilder() { return builder(); }
 
-    public static Builder allow(Exec exec, Placement placement) {
+    public static Builder allow(ExecType exec, FederatedOutput placement) {
       return builder().exec(exec).placement(placement);
+    }
+
+    @Deprecated
+    public static Builder allow(Exec exec, Placement placement) {
+      ExecType e = (exec == null || exec == Exec.CP) ? ExecType.CP : ExecType.FED;
+      FederatedOutput p = (placement == Placement.FOUT)
+          ? FederatedOutput.FOUT
+          : FederatedOutput.LOUT;
+      return allow(e, p);
     }
 
     public static Builder reject(ReasonCode reason) {
@@ -323,9 +336,8 @@ public final class RulesApi {
     public static final class Builder {
       private OpCategory category = OpCategory.OTHER;
       private String opcode = "";
-      private Exec exec = Exec.CP;
-      private Placement placement = Placement.LOUT;
-      private boolean fout = false;
+      private ExecType exec = ExecType.CP;
+      private FederatedOutput placement = FederatedOutput.LOUT;
       private FType foutFType = null;
       private ReasonCode reason = ReasonCode.NOT_IMPLEMENTED;
       private String detail = "";
@@ -333,24 +345,25 @@ public final class RulesApi {
 
       public Builder category(OpCategory v) { this.category = Objects.requireNonNull(v, "category"); return this; }
       public Builder opcode(String v) { this.opcode = (v == null) ? "" : v; return this; }
-      public Builder exec(Exec v) { this.exec = Objects.requireNonNull(v, "exec"); return this; }
-      public Builder placement(Placement v) { this.placement = Objects.requireNonNull(v, "placement"); return this; }
+      public Builder exec(ExecType v) { this.exec = Objects.requireNonNull(v, "exec"); return this; }
+      public Builder placement(FederatedOutput v) { this.placement = Objects.requireNonNull(v, "placement"); return this; }
       public Builder fout(boolean enabled) {
-        if (!enabled) {
-          this.fout = false;
+        if (enabled) {
+          this.placement = FederatedOutput.FOUT;
+        }
+        else {
+          this.placement = FederatedOutput.LOUT;
           this.foutFType = null;
-        } else {
-          this.fout = true;
         }
         return this;
       }
 
       public Builder fout(boolean enabled, FType type) {
         if (enabled) {
-          this.fout = true;
+          this.placement = FederatedOutput.FOUT;
           this.foutFType = Objects.requireNonNull(type, "foutFType");
         } else {
-          this.fout = false;
+          this.placement = FederatedOutput.LOUT;
           this.foutFType = null;
         }
         return this;
@@ -363,6 +376,20 @@ public final class RulesApi {
       }
 
       public OpCaps build() { return new OpCaps(this); }
+
+      @Deprecated
+      public Builder exec(Exec v) {
+        ExecType resolved = (v == null) ? ExecType.CP
+            : (v == Exec.FED ? ExecType.FED : ExecType.CP);
+        return exec(resolved);
+      }
+
+      @Deprecated
+      public Builder placement(Placement v) {
+        FederatedOutput resolved = (v == null) ? FederatedOutput.LOUT
+            : (v == Placement.FOUT ? FederatedOutput.FOUT : FederatedOutput.LOUT);
+        return placement(resolved);
+      }
     }
 
     public static final class DecisionNote {

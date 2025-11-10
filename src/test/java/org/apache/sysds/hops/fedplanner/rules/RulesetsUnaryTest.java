@@ -19,18 +19,19 @@ package org.apache.sysds.hops.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.ReOrgOp;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
@@ -48,8 +49,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.ROW,
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -64,8 +65,8 @@ public class RulesetsUnaryTest {
                 "rc.cachingActive", "false"),
             FType.COL,
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.COL,
             ReasonCode.OK,
@@ -78,8 +79,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.FULL,
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.FULL,
             ReasonCode.OK,
@@ -92,8 +93,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.BROADCAST,
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.BROADCAST_CONSTRAINT,
@@ -106,8 +107,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.PART,
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
@@ -120,8 +121,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.COL,
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME,
@@ -134,8 +135,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.ROW,
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -148,8 +149,8 @@ public class RulesetsUnaryTest {
             Map.of(),
             FType.COL,
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME,
@@ -162,8 +163,8 @@ public class RulesetsUnaryTest {
             Map.of("rc.guardOverride", "false"),
             FType.ROW,
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.REPR_CHANGE_GUARD_FAIL,
@@ -171,13 +172,13 @@ public class RulesetsUnaryTest {
             null),
         Scenario.of("transpose-row",
             new Rulesets.ReorgUnaryRule(),
-            "transpose",
+            ReOrgOp.TRANS.toString(),
             OpCategory.REORG,
             Map.of(),
             FType.ROW,
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.COL,
             ReasonCode.OK,
@@ -185,17 +186,17 @@ public class RulesetsUnaryTest {
             ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
         Scenario.of("diag-part",
             new Rulesets.ReorgUnaryRule(),
-            "diag",
+            ReOrgOp.DIAG.toString(),
             OpCategory.REORG,
             Map.of(),
             FType.PART,
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
-            ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
-            null,
+            ReasonCode.PARTITION_FORBIDDEN,
+            "ReorgFEDInstruction supports only ROW or COL partitioned input",
             null));
 
     for (Scenario sc : scenarios) {
@@ -240,8 +241,8 @@ public class RulesetsUnaryTest {
     final Map<String,String> attrs;
     final FType inFType;
     final ShapeHint shape;
-    final Exec expectedExec;
-    final Placement expectedPlacement;
+    final ExecType expectedExec;
+    final FederatedOutput expectedPlacement;
     final boolean expectedFout;
     final FType expectedFoutType;
     final ReasonCode expectedReason;
@@ -249,7 +250,7 @@ public class RulesetsUnaryTest {
     final ReasonCode expectedNoteCode;
 
     private Scenario(String name, Rule rule, String opcode, OpCategory category, Map<String,String> attrs,
-        FType inFType, ShapeHint shape, Exec expectedExec, Placement expectedPlacement, boolean expectedFout,
+        FType inFType, ShapeHint shape, ExecType expectedExec, FederatedOutput expectedPlacement, boolean expectedFout,
         FType expectedFoutType, ReasonCode expectedReason, String expectedDetail, ReasonCode expectedNoteCode) {
       this.name = name;
       this.rule = rule;
@@ -268,14 +269,14 @@ public class RulesetsUnaryTest {
     }
 
     static Scenario of(String name, Rule rule, String opcode, OpCategory cat, Map<String,String> attrs,
-        FType in, ShapeHint shape, Exec exec, Placement placement, boolean fout, FType foutType,
+        FType in, ShapeHint shape, ExecType exec, FederatedOutput placement, boolean fout, FType foutType,
         ReasonCode reason, String detail, ReasonCode noteCode) {
       return new Scenario(name, rule, opcode, cat, attrs, in, shape, exec, placement, fout, foutType, reason,
           detail, noteCode);
     }
 
     OpSig sig() {
-      return new OpSig(opcode, category, attrs, InputKind.MATRIX);
+      return OpSig.of(opcode, category, attrs, InputKind.MATRIX);
     }
   }
 }

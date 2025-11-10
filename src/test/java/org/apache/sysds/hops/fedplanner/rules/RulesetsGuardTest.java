@@ -24,15 +24,17 @@ import static org.junit.Assert.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class RulesetsGuardTest {
@@ -42,13 +44,13 @@ public class RulesetsGuardTest {
   @Test
   public void ewiseSingleNodeNoCachingKeepsFout() {
     Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
-    OpSig sig = sig("plus", OpCategory.BINARY_EWISE, Map.of(
+    OpSig sig = sig(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(
         "rc.execMode", "SINGLE_NODE",
         "rc.cachingActive", "false"));
 
     OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW), KNOWN_SHAPE);
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.FOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
     assertEquals(ReasonCode.OK, caps.reason());
     Optional<DecisionNote> guardNote = guardPassNote(caps);
@@ -64,11 +66,11 @@ public class RulesetsGuardTest {
         "rc.memIn1EstBytes", Long.toString(33_554_432L),
         "rc.memIn2EstBytes", Long.toString(33_554_432L),
         "rc.cachingActive", "true");
-    OpSig sig = sig("mmult", OpCategory.BINARY_MM, attrs);
+    OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, attrs);
 
     OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW), KNOWN_SHAPE);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.REPR_CHANGE_GUARD_FAIL, caps.reason());
     assertTrue(caps.detail().isPresent());
@@ -78,27 +80,28 @@ public class RulesetsGuardTest {
   @Test
   public void appendWithoutHintsDefaultsToGuardUnknown() {
     Rulesets.AppendRule rule = new Rulesets.AppendRule();
-    OpSig sig = sig("append", OpCategory.APPEND, Map.of("cbind", "false"));
+    OpSig sig = sig(Opcodes.APPEND.toString(), OpCategory.APPEND, Map.of("cbind", "false"));
 
     OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW), KNOWN_SHAPE);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
-    assertFalse(caps.foutEnabled());
-    assertEquals(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, caps.reason());
-    assertTrue(caps.detail().isPresent());
-    assertTrue(caps.detail().get().toLowerCase().contains("insufficient"));
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
+    assertTrue(caps.foutEnabled());
+    assertEquals(ReasonCode.PREFER_BIND_ROW, caps.reason());
+    assertTrue("guard unknown note missing",
+        caps.notes().stream()
+            .anyMatch(n -> n.code() == ReasonCode.REPR_CHANGE_GUARD_UNKNOWN));
   }
 
   @Test
   public void guardOverrideAllowsFout() {
     Rulesets.AppendRule rule = new Rulesets.AppendRule();
-    OpSig sig = sig("append", OpCategory.APPEND, Map.of(
+    OpSig sig = sig(Opcodes.APPEND.toString(), OpCategory.APPEND, Map.of(
         "cbind", "true",
         "rc.guardOverride", "true"));
 
     OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW), KNOWN_SHAPE);
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.FOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
     Optional<DecisionNote> guardNote = guardPassNote(caps);
     assertTrue(guardNote.isPresent());
@@ -106,7 +109,7 @@ public class RulesetsGuardTest {
   }
 
   private static OpSig sig(String opcode, OpCategory category, Map<String,String> attrs) {
-    return new OpSig(opcode, category, attrs);
+    return OpSig.of(opcode, category, attrs);
   }
 
   private static Optional<DecisionNote> guardPassNote(OpCaps caps) {

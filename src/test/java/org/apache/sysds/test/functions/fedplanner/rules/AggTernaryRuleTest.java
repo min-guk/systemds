@@ -21,7 +21,9 @@ import static org.junit.Assert.assertEquals;
 
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
@@ -34,11 +36,11 @@ import org.junit.Test;
 public class AggTernaryRuleTest {
 
   private static final OpSig TAKPM =
-      new OpSig("tak+*", OpCategory.AGG_TERNARY, Map.of());
+      OpSig.of(Opcodes.TAKPM.toString(), OpCategory.AGG_TERNARY, Map.of());
   private static final OpSig TACKPM =
-      new OpSig("tack+*", OpCategory.AGG_TERNARY, Map.of());
+      OpSig.of(Opcodes.TACKPM.toString(), OpCategory.AGG_TERNARY, Map.of());
   private static final OpSig QUANTILE_SIG =
-      new OpSig("quantile", OpCategory.QUANTILE_PICK, Map.of());
+      OpSig.of(OpOp3.QUANTILE.toString(), OpCategory.QUANTILE_PICK, Map.of());
 
   private final Rulesets.AggTernaryRule aggRule = new Rulesets.AggTernaryRule();
   private final Rulesets.QuantileInterquantileCtableDenyRule denyRule =
@@ -50,7 +52,7 @@ public class AggTernaryRuleTest {
         TAKPM,
         List.of(FType.ROW, FType.ROW, FType.ROW),
         unknownShape());
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
   }
 
@@ -60,7 +62,7 @@ public class AggTernaryRuleTest {
         TACKPM,
         List.of(FType.COL, FType.COL, FType.NF),
         scalarShape());
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
   }
 
@@ -70,7 +72,7 @@ public class AggTernaryRuleTest {
         TAKPM,
         List.of(FType.COL, FType.COL, FType.FULL),
         unknownShape());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.NOT_IMPLEMENTED_FED_MATRIX_OUT, caps.reason());
   }
 
@@ -80,7 +82,7 @@ public class AggTernaryRuleTest {
         TAKPM,
         List.of(FType.ROW, FType.NF, FType.FULL),
         scalarShape());
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
   }
 
@@ -90,14 +92,14 @@ public class AggTernaryRuleTest {
         TAKPM,
         List.of(FType.NF, FType.ROW, FType.ROW),
         scalarShape());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNALIGNED_OR_INSUFFICIENT_FED_INPUTS, caps.reason());
   }
 
   @Test
   public void quantileExplicitlyDenied() {
     OpCaps caps = denyRule.caps(QUANTILE_SIG, List.of(), unknownShape());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.MISSING_FED_INSTRUCTION, caps.reason());
   }
 

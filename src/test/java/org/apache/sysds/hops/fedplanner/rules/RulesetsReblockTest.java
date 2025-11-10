@@ -20,11 +20,13 @@ package org.apache.sysds.hops.fedplanner.rules;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -32,7 +34,6 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.junit.Test;
@@ -71,8 +72,8 @@ public class RulesetsReblockTest {
   @Test
   public void reblock_broadcast_constraint() {
     OpCaps caps = decide(FType.BROADCAST);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.BROADCAST_CONSTRAINT, caps.reason());
   }
@@ -80,8 +81,8 @@ public class RulesetsReblockTest {
   @Test
   public void reblock_local_no_fed_input() {
     OpCaps caps = decide(FType.LOCAL);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
   }
@@ -89,8 +90,8 @@ public class RulesetsReblockTest {
   @Test
   public void reblock_nf_no_fed_input() {
     OpCaps caps = decide(FType.NF);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
   }
@@ -108,12 +109,12 @@ public class RulesetsReblockTest {
   }
 
   private static OpSig sig() {
-    return OpSig.of("rblk", OpCategory.REORG, Map.of(), InputKind.MATRIX);
+    return OpSig.of(Opcodes.RBLK.toString(), OpCategory.REORG, Map.of(), InputKind.MATRIX);
   }
 
   private static void assertFedFout(OpCaps caps, FType expectedAxis) {
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.FOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
     assertEquals(expectedAxis, caps.foutFType().orElse(null));
     assertEquals(ReasonCode.OK, caps.reason());
@@ -126,4 +127,3 @@ public class RulesetsReblockTest {
     assertTrue("Expected note " + code + " containing '" + contains + "'", note.isPresent());
   }
 }
-

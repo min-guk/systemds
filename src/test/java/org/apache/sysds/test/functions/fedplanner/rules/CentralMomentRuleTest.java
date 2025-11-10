@@ -19,15 +19,15 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
@@ -35,8 +35,8 @@ import org.junit.Test;
 
 public class CentralMomentRuleTest {
 
-  private static final OpSig CM_SIG = new OpSig("cm", OpCategory.AGG_UNARY, Map.of());
-  private static final OpSig CM_HINTED_SIG = new OpSig(
+  private static final OpSig CM_SIG = OpSig.of("cm", OpCategory.AGG_UNARY, Map.of());
+  private static final OpSig CM_HINTED_SIG = OpSig.of(
       "aggregateunary", OpCategory.AGG_UNARY, Map.of("aggOp", "CM"));
 
   private final Rulesets.CentralMomentRule rule = new Rulesets.CentralMomentRule();
@@ -44,8 +44,8 @@ public class CentralMomentRuleTest {
   @Test
   public void federatedInputWithoutWeights() {
     OpCaps caps = rule.caps(CM_SIG, List.of(FType.ROW), unknownShape());
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.OK, caps.reason());
   }
@@ -53,8 +53,8 @@ public class CentralMomentRuleTest {
   @Test
   public void federatedInputWithLocalWeights() {
     OpCaps caps = rule.caps(CM_SIG, List.of(FType.COL, FType.LOCAL), unknownShape());
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.OK, caps.reason());
   }
@@ -62,21 +62,21 @@ public class CentralMomentRuleTest {
   @Test
   public void federatedWeightsRejected() {
     OpCaps caps = rule.caps(CM_SIG, List.of(FType.PART, FType.ROW), unknownShape());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.BROADCAST_CONSTRAINT, caps.reason());
   }
 
   @Test
   public void nonFederatedInputFallsBack() {
     OpCaps caps = rule.caps(CM_SIG, List.of(FType.LOCAL), unknownShape());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
   }
 
   @Test
   public void hintedOpcodeSupported() {
     OpCaps caps = rule.caps(CM_HINTED_SIG, List.of(FType.ROW, FType.LOCAL), unknownShape());
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
   }
 

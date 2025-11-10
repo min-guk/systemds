@@ -25,16 +25,17 @@ import static org.junit.Assert.assertTrue;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class TsmmRuleTest {
@@ -49,8 +50,8 @@ public class TsmmRuleTest {
   @Test
   public void rowLeftDefaultsToFedLocal() {
     OpCaps caps = rule.caps(sig(Map.of()), List.of(FType.ROW), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.OK, caps.reason());
     assertTrue(hasNote(caps, ReasonCode.INFO, AGG_NOTE));
@@ -60,8 +61,8 @@ public class TsmmRuleTest {
   public void rightColForceFoutBroadcast() {
     OpSig sig = sig(Map.of("tsmm.type", "RIGHT", "force_fout", "true"));
     OpCaps caps = rule.caps(sig, List.of(FType.COL), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.FOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
     assertEquals(FType.BROADCAST, caps.foutFType().orElse(null));
     assertTrue(hasNote(caps, ReasonCode.INFO, FORCED_NOTE));
@@ -72,8 +73,8 @@ public class TsmmRuleTest {
   public void fedOutAttrForcesBroadcastGuardPassNote() {
     OpSig sig = sig(Map.of("tsmm.type", "RIGHT", "tsmm.fedOut", "FORCED", "rc.guardOverride", "true"));
     OpCaps caps = rule.caps(sig, List.of(FType.COL), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.FOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(hasNote(caps, ReasonCode.INFO, FORCED_NOTE));
     assertTrue(hasNoteCode(caps, ReasonCode.REPR_CHANGE_GUARD_PASS));
   }
@@ -82,8 +83,8 @@ public class TsmmRuleTest {
   public void guardFailureFallsBackToCp() {
     OpSig sig = sig(Map.of("tsmm.type", "LEFT", "force_fout", "true", "rc.guardOverride", "false"));
     OpCaps caps = rule.caps(sig, List.of(FType.ROW), UNKNOWN);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertEquals(ReasonCode.REPR_CHANGE_GUARD_FAIL, caps.reason());
     assertTrue(caps.detail().orElse("").contains("override=false"));
   }
@@ -92,7 +93,7 @@ public class TsmmRuleTest {
   public void axisMismatchRejected() {
     OpSig sig = sig(Map.of("tsmm.type", "RIGHT"));
     OpCaps caps = rule.caps(sig, List.of(FType.ROW), UNKNOWN);
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, caps.reason());
     assertTrue(caps.detail().orElse("").contains(AXIS_DETAIL));
   }
@@ -108,21 +109,21 @@ public class TsmmRuleTest {
   public void broadcastInputRejected() {
     OpCaps caps = rule.caps(sig(Map.of()), List.of(FType.BROADCAST), UNKNOWN);
     assertEquals(ReasonCode.BROADCAST_CONSTRAINT, caps.reason());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
   }
 
   @Test
   public void nonFederatedInputRejected() {
     OpCaps caps = rule.caps(sig(Map.of()), List.of(FType.NF), UNKNOWN);
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
   }
 
   @Test
   public void arityMismatch() {
     OpCaps caps = rule.caps(sig(Map.of()), List.of(), UNKNOWN);
     assertEquals(ReasonCode.ARITY_MISMATCH, caps.reason());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
   }
 
   @Test
@@ -130,17 +131,18 @@ public class TsmmRuleTest {
     OpSig sig = sig(Map.of("tsmm.type", "DIAGONAL"));
     OpCaps caps = rule.caps(sig, List.of(FType.ROW), UNKNOWN);
     assertEquals(ReasonCode.OPCODE_UNSUPPORTED, caps.reason());
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
   }
 
   @Test
   public void defaultRegistryContainsTsmmRule() {
     RulesCore.RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
-    assertTrue("tsmm opcode should resolve via registry", registry.byOpcode("tsmm").isPresent());
+    assertTrue("tsmm opcode should resolve via registry",
+        registry.byOpcode(Opcodes.TSMM.toString()).isPresent());
   }
 
   private static OpSig sig(Map<String,String> attrs) {
-    return new OpSig("tsmm", OpCategory.TSMM, attrs);
+    return OpSig.of(Opcodes.TSMM.toString(), OpCategory.TSMM, attrs);
   }
 
   private static boolean hasNote(OpCaps caps, ReasonCode code, String message) {

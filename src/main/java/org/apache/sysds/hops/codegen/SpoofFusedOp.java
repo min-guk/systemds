@@ -177,6 +177,10 @@ public class SpoofFusedOp extends MultiThreadedHop
 			return _class.getName();
 		else
 			return "spoof" + getName();	}
+
+	public Class<?> getGeneratorClass() {
+		return _class;
+	}
 	
 	@Override
 	protected DataCharacteristics inferOutputCharacteristics( MemoTable memo )

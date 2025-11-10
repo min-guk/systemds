@@ -22,16 +22,17 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class RulesetsReorgTest {
@@ -42,24 +43,24 @@ public class RulesetsReorgTest {
   @Test
   public void reorgScenarioTable() {
     List<Scenario> scenarios = List.of(
-        Scenario.of("transpose-row", "transpose", Map.of(), List.of(FType.ROW),
-            Exec.FED, Placement.FOUT, true, FType.COL, ReasonCode.OK, null, true),
-        Scenario.of("transpose-col", "transpose", Map.of(), List.of(FType.COL),
-            Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, null, true),
-        Scenario.of("rev-part", "rev", Map.of(), List.of(FType.PART),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
-        Scenario.of("roll-full", "roll", Map.of(), List.of(FType.FULL),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
-        Scenario.of("diag-broadcast", "diag", Map.of(), List.of(FType.BROADCAST),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
-        Scenario.of("rev-guard-fail", "rev", Map.of("rc.guardOverride", "false"), List.of(FType.ROW),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", false));
+        Scenario.of("transpose-row", ReOrgOp.TRANS.toString(), Map.of(), List.of(FType.ROW),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.COL, ReasonCode.OK, null, true),
+        Scenario.of("transpose-col", ReOrgOp.TRANS.toString(), Map.of(), List.of(FType.COL),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, true),
+        Scenario.of("rev-part", ReOrgOp.REV.toString(), Map.of(), List.of(FType.PART),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
+        Scenario.of("roll-full", ReOrgOp.ROLL.toString(), Map.of(), List.of(FType.FULL),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
+        Scenario.of("diag-broadcast", ReOrgOp.DIAG.toString(), Map.of(), List.of(FType.BROADCAST),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
+        Scenario.of("rev-guard-fail", ReOrgOp.REV.toString(), Map.of("rc.guardOverride", "false"), List.of(FType.ROW),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", false));
     runScenarios(scenarios);
   }
 
   @Test
   public void profileTransposeSwapsAxes() {
-    OpSig sig = new OpSig("transpose", rule.category(), Map.of(), InputKind.MATRIX);
+    OpSig sig = OpSig.of(ReOrgOp.TRANS.toString(), rule.category(), Map.of(), InputKind.MATRIX);
     List<List<FType>> candidates = List.of(List.of(FType.ROW, FType.COL));
     List<FType> outs = rule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
     assertEquals(List.of(FType.ROW, FType.COL), outs);
@@ -67,7 +68,7 @@ public class RulesetsReorgTest {
 
   @Test
   public void profileDiagPreservesAxis() {
-    OpSig sig = new OpSig("diag", rule.category(), Map.of(), InputKind.MATRIX);
+    OpSig sig = OpSig.of(ReOrgOp.DIAG.toString(), rule.category(), Map.of(), InputKind.MATRIX);
     List<List<FType>> candidates = List.of(List.of(FType.COL, FType.ROW));
     List<FType> outs = rule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
     assertEquals(List.of(FType.COL, FType.ROW), outs);
@@ -75,7 +76,7 @@ public class RulesetsReorgTest {
 
   private void runScenarios(List<Scenario> scenarios) {
     for (Scenario scenario : scenarios) {
-      OpSig sig = new OpSig(
+      OpSig sig = OpSig.of(
           scenario.opcode,
           rule.category(),
           scenario.attrs,
@@ -112,8 +113,8 @@ public class RulesetsReorgTest {
     final String opcode;
     final Map<String,String> attrs;
     final List<FType> inFTypes;
-    final Exec expectedExec;
-    final Placement expectedPlacement;
+    final ExecType expectedExec;
+    final FederatedOutput expectedPlacement;
     final boolean expectFout;
     final FType expectedFoutFType;
     final ReasonCode reason;
@@ -121,7 +122,7 @@ public class RulesetsReorgTest {
     final boolean expectGuardNote;
 
     private Scenario(String name, String opcode, Map<String,String> attrs, List<FType> inFTypes,
-        Exec expectedExec, Placement expectedPlacement, boolean expectFout, FType expectedFoutFType,
+        ExecType expectedExec, FederatedOutput expectedPlacement, boolean expectFout, FType expectedFoutFType,
         ReasonCode reason, String detail, boolean expectGuardNote) {
       this.name = name;
       this.opcode = opcode;
@@ -137,7 +138,7 @@ public class RulesetsReorgTest {
     }
 
     static Scenario of(String name, String opcode, Map<String,String> attrs, List<FType> inFTypes,
-        Exec expectedExec, Placement expectedPlacement, boolean expectFout, FType expectedFoutFType,
+        ExecType expectedExec, FederatedOutput expectedPlacement, boolean expectFout, FType expectedFoutFType,
         ReasonCode reason, String detail, boolean expectGuardNote) {
       return new Scenario(name, opcode, attrs, inFTypes,
           expectedExec, expectedPlacement, expectFout, expectedFoutFType, reason, detail, expectGuardNote);

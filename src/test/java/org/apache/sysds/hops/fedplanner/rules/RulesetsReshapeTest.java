@@ -24,7 +24,8 @@ import static org.junit.Assert.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -32,9 +33,9 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class RulesetsReshapeTest {
@@ -84,8 +85,8 @@ public class RulesetsReshapeTest {
   @Test
   public void reshape_broadcast_constraint() {
     OpCaps caps = decide(true, FType.BROADCAST);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.BROADCAST_CONSTRAINT, caps.reason());
   }
@@ -93,8 +94,8 @@ public class RulesetsReshapeTest {
   @Test
   public void reshape_local_no_fed_input() {
     OpCaps caps = decide(true, FType.LOCAL);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
   }
@@ -102,8 +103,8 @@ public class RulesetsReshapeTest {
   @Test
   public void reshape_nf_no_fed_input() {
     OpCaps caps = decide(true, FType.NF);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
   }
@@ -111,8 +112,8 @@ public class RulesetsReshapeTest {
   @Test
   public void reshape_missing_byrow_attr_detail() {
     OpCaps caps = rule().caps(sig(null), List.of(FType.ROW), UNKNOWN_SHAPE);
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
     assertEquals(ReasonCode.INFO, caps.reason());
     assertTrue(caps.detail().orElse("").contains("byrow not provided"));
@@ -144,12 +145,12 @@ public class RulesetsReshapeTest {
     Map<String,String> attrs = (byRow == null)
         ? Map.of()
         : Map.of("reshape.byrow", Boolean.toString(byRow));
-    return OpSig.of("rshape", OpCategory.RESHAPE, attrs, InputKind.MATRIX);
+    return OpSig.of(ReOrgOp.RESHAPE.toString(), OpCategory.RESHAPE, attrs, InputKind.MATRIX);
   }
 
   private static void assertFedFout(OpCaps caps, FType expectedAxis) {
-    assertEquals(Exec.FED, caps.exec());
-    assertEquals(Placement.FOUT, caps.placement());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
     assertEquals(expectedAxis, caps.foutFType().orElse(null));
     assertEquals(ReasonCode.OK, caps.reason());
@@ -165,4 +166,3 @@ public class RulesetsReshapeTest {
     }
   }
 }
-

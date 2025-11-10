@@ -20,15 +20,15 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
@@ -38,16 +38,16 @@ public class CovarianceRuleTest {
 
   private static final ShapeHint UNKNOWN = new ShapeHint(-1, -1, 0);
   private static final OpSig COV_SIG =
-      new OpSig("cov", OpCategory.BINARY_EWISE, Map.of());
+      OpSig.of("cov", OpCategory.BINARY_EWISE, Map.of());
   private static final OpSig COV_SIG_ALIGN_ROW =
-      new OpSig("covariance", OpCategory.BINARY_EWISE, Map.of("align_hint", "ROW"));
+      OpSig.of("covariance", OpCategory.BINARY_EWISE, Map.of("align_hint", "ROW"));
 
   private final Rulesets.CovarianceRule rule = new Rulesets.CovarianceRule();
 
   @Test
   public void rowRowFederatedAllowed() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.ROW), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertLocalScalar(caps);
   }
@@ -55,7 +55,7 @@ public class CovarianceRuleTest {
   @Test
   public void colColFederatedAllowed() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.COL, FType.COL), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertLocalScalar(caps);
   }
@@ -63,7 +63,7 @@ public class CovarianceRuleTest {
   @Test
   public void rowColRejected() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.COL), UNKNOWN);
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, caps.reason());
     assertLocalScalar(caps);
   }
@@ -71,7 +71,7 @@ public class CovarianceRuleTest {
   @Test
   public void rowAndNonFederatedFallsBackToFed() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.NF), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertLocalScalar(caps);
   }
@@ -79,7 +79,7 @@ public class CovarianceRuleTest {
   @Test
   public void nonFederatedAndColFallsBackToFed() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.NF, FType.COL), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertLocalScalar(caps);
   }
@@ -87,7 +87,7 @@ public class CovarianceRuleTest {
   @Test
   public void noFederatedInputsArityOk() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.NF, FType.NF), UNKNOWN);
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
     assertLocalScalar(caps);
   }
@@ -96,7 +96,7 @@ public class CovarianceRuleTest {
   public void weightsLocalNoted() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.ROW, FType.NF), UNKNOWN);
     assertTrue(hasNote(caps, "weights=local"));
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertLocalScalar(caps);
   }
 
@@ -104,14 +104,14 @@ public class CovarianceRuleTest {
   public void weightsFederatedNoted() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.ROW, FType.ROW), UNKNOWN);
     assertTrue(hasNote(caps, "weights=broadcast-sliced"));
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertLocalScalar(caps);
   }
 
   @Test
   public void partWithRowRejectedWithoutHint() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.PART, FType.ROW), UNKNOWN);
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, caps.reason());
     assertLocalScalar(caps);
   }
@@ -119,7 +119,7 @@ public class CovarianceRuleTest {
   @Test
   public void partPairAlignedViaHint() {
     OpCaps caps = rule.caps(COV_SIG_ALIGN_ROW, List.of(FType.PART, FType.PART), UNKNOWN);
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertTrue(hasNote(caps, "align=hint:ROW"));
     assertLocalScalar(caps);
@@ -128,13 +128,13 @@ public class CovarianceRuleTest {
   @Test
   public void arityMismatchFallsBackToCp() {
     OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW), UNKNOWN);
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.ARITY_MISMATCH, caps.reason());
     assertLocalScalar(caps);
   }
 
   private static void assertLocalScalar(OpCaps caps) {
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse("FOUT must never be enabled", caps.foutEnabled());
   }
 

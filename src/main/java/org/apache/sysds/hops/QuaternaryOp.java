@@ -159,6 +159,10 @@ public class QuaternaryOp extends MultiThreadedHop
 		return _op;
 	}
 
+	public int getBaseType() {
+		return _baseType;
+	}
+
 	@Override
 	public boolean isGPUEnabled() {
 		return false;

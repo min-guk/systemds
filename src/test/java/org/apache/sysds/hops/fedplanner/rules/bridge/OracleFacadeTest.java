@@ -1,0 +1,169 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.sysds.hops.fedplanner.rules.bridge;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.AggOp;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.common.Types.FileFormat;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LeftIndexingOp;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore.OracleEngine;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.hops.fedplanner.FTypes;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
+import org.junit.Test;
+
+public class OracleFacadeTest {
+
+  private final OracleFacade facade =
+      new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+
+  @Test
+  public void canonicalizesMatrixMultiply() {
+    Hop left = matrix("left", 10, 5);
+    Hop right = matrix("right", 5, 4);
+    AggBinaryOp mm = new AggBinaryOp("mm", DataType.MATRIX, ValueType.FP64,
+        OpOp2.MULT, AggOp.SUM, left, right);
+
+    OpSig sig = facade.describe(mm);
+    assertEquals(Opcodes.MMULT.toString(), sig.opcode());
+  }
+
+  @Test
+  public void canonicalizesMapLeftIndexing() {
+    Hop target = matrix("target", 10, 10);
+    Hop rhs = new LiteralOp(42.0);
+    Hop rowL = lit(1);
+    Hop rowU = lit(1);
+    Hop colL = lit(1);
+    Hop colU = lit(1);
+    LeftIndexingOp lix = new LeftIndexingOp(
+        "lix", DataType.MATRIX, ValueType.FP64,
+        target, rhs, rowL, rowU, colL, colU, false, false);
+
+    OpSig sig = facade.describe(lix);
+    assertEquals(Opcodes.MAPLEFTINDEX.toString(), sig.opcode());
+  }
+
+  @Test
+  public void capturesReshapeByRowAttribute() {
+    Hop data = matrix("reshape", 4, 4);
+    List<Hop> inputs = new ArrayList<>();
+    inputs.add(data);
+    inputs.add(lit(2));
+    inputs.add(lit(8));
+    inputs.add(lit(-1));
+    inputs.add(new LiteralOp(true));
+    ReorgOp reshape = new ReorgOp(
+        "reshape", DataType.MATRIX, ValueType.FP64, ReOrgOp.RESHAPE, inputs);
+
+    OpSig sig = facade.describe(reshape);
+    assertEquals("true", sig.attrs().get("reshape.byrow"));
+  }
+
+  @Test
+  public void capturesFrameMapMargin() {
+    Hop frame = matrix("frame", 6, 3);
+    TernaryOp map = new TernaryOp(
+        "map", DataType.FRAME, ValueType.FP64, OpOp3.MAP,
+        frame, new LiteralOp("fun"), lit(2));
+
+    OpSig sig = facade.describe(map);
+    assertEquals("2", sig.attrs().get("map.margin"));
+  }
+
+  @Test
+  public void detectsFederatedWriteTargets() {
+    Hop in = matrix("input", 10, 10);
+    DataOp write = new DataOp("write", DataType.MATRIX, ValueType.FP64,
+        in, OpOpData.PERSISTENTWRITE, "out");
+    write.setFileFormat(FileFormat.FEDERATED);
+
+    OpSig sig = facade.describe(write);
+    assertEquals("true", sig.attrs().get("var.write.federated"));
+  }
+
+  @Test
+  public void facadeMatchesManualRuleDecision() {
+    Hop left = matrix("X", 5, 5);
+    Hop right = matrix("Y", 5, 5);
+    BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+
+    List<FTypes.FType> runtimeTypes = List.of(FTypes.FType.ROW, FTypes.FType.ROW);
+    OpCaps viaFacade = facade.decide(plus, runtimeTypes);
+
+    Map<String,String> attrs = Map.of("rc.guardDefaultIfUnknown", "allow");
+    OpSig manualSig = OpSig.of(
+        OpOp2.PLUS.toString(),
+        OpCategory.BINARY_EWISE,
+        attrs,
+        InputKind.MATRIX,
+        InputKind.MATRIX);
+    ShapeHint hint = new ShapeHint(plus.getDim1(), plus.getDim2(), plus.getBlocksize());
+    OracleEngine legacy = new RulesCore.OracleEngine(RulesCore.RulesModule.createDefaultRegistry());
+    OpCaps viaManual = legacy.decide(manualSig, List.of(FType.ROW, FType.ROW), hint);
+
+    assertCapsEquivalent(viaFacade, viaManual);
+  }
+
+  private static void assertCapsEquivalent(OpCaps actual, OpCaps expected) {
+    assertEquals(expected.exec(), actual.exec());
+    assertEquals(expected.placement(), actual.placement());
+    assertEquals(expected.reason(), actual.reason());
+    assertEquals(expected.foutEnabled(), actual.foutEnabled());
+    assertEquals(expected.foutFType(), actual.foutFType());
+    assertEquals(expected.detail(), actual.detail());
+    assertEquals(expected.notes().size(), actual.notes().size());
+    for (int i = 0; i < actual.notes().size(); i++) {
+      assertEquals(expected.notes().get(i).code(), actual.notes().get(i).code());
+    }
+  }
+
+  private static DataOp matrix(String name, long rows, long cols) {
+    return new DataOp(name, DataType.MATRIX, ValueType.FP64,
+        OpOpData.TRANSIENTREAD, name, rows, cols, rows * cols, 1000);
+  }
+
+  private static LiteralOp lit(long v) {
+    return new LiteralOp(v);
+  }
+}

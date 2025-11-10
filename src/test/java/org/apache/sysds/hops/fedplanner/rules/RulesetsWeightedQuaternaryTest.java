@@ -25,17 +25,18 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class RulesetsWeightedQuaternaryTest {
@@ -49,12 +50,12 @@ public class RulesetsWeightedQuaternaryTest {
     List<Scenario> scenarios = List.of(
         Scenario.of("wsLoss-row-fed",
             new Rulesets.WeightedSquaredLossRule(),
-            "wsloss",
+            Opcodes.WSLOSS.toString(),
             Map.of("q.type", "WSLOSS"),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.FED,
-            Placement.LOUT,
+            ExecType.FED,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.OK,
@@ -62,12 +63,12 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wcemm-col-fed",
             new Rulesets.WeightedCrossEntropyRule(),
-            "wcemm",
+            Opcodes.WCEMM.toString(),
             Map.of("q.type", "WCEMM"),
             List.of(FType.COL, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.FED,
-            Placement.LOUT,
+            ExecType.FED,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.OK,
@@ -75,12 +76,12 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wsSigmoid-row-guard-unknown",
             new Rulesets.WeightedSigmoidRule(),
-            "wsigmoid",
+            Opcodes.WSIGMOID.toString(),
             Map.of("q.type", "WSIGMOID"),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -88,12 +89,12 @@ public class RulesetsWeightedQuaternaryTest {
             ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
         Scenario.of("wumm-col",
             new Rulesets.WeightedUnaryMMRule(),
-            "wumm",
+            Opcodes.WUMM.toString(),
             Map.of("q.type", "WUMM"),
             List.of(FType.COL, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.COL,
             ReasonCode.OK,
@@ -101,14 +102,14 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wdivmm-basic-row",
             new Rulesets.WeightedDivMMRule(),
-            "wdivmm",
+            Opcodes.WDIVMM.toString(),
             Map.ofEntries(
                 Map.entry("q.type", "WDIVMM"),
                 Map.entry("wdivmm.baseType", "0")),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -116,14 +117,14 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wdivmm-left-misaligned",
             new Rulesets.WeightedDivMMRule(),
-            "wdivmm",
+            Opcodes.WDIVMM.toString(),
             Map.ofEntries(
                 Map.entry("q.type", "WDIVMM"),
                 Map.entry("wdivmm.baseType", "1")),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             wdivRowMismatch,
-            Exec.FED,
-            Placement.LOUT,
+            ExecType.FED,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
@@ -131,14 +132,14 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wdivmm-right-misaligned",
             new Rulesets.WeightedDivMMRule(),
-            "wdivmm",
+            Opcodes.WDIVMM.toString(),
             Map.ofEntries(
                 Map.entry("q.type", "WDIVMM"),
                 Map.entry("wdivmm.baseType", "2")),
             List.of(FType.COL, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             wdivColMismatch,
-            Exec.FED,
-            Placement.LOUT,
+            ExecType.FED,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
@@ -146,12 +147,12 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wdivmm-basetype-missing",
             new Rulesets.WeightedDivMMRule(),
-            "wdivmm",
+            Opcodes.WDIVMM.toString(),
             Map.of("q.type", "WDIVMM"),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.OPCODE_UNSUPPORTED,
@@ -159,12 +160,12 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wsSigmoid-broadcast",
             new Rulesets.WeightedSigmoidRule(),
-            "wsigmoid",
+            Opcodes.WSIGMOID.toString(),
             Map.of("q.type", "WSIGMOID"),
             List.of(FType.BROADCAST, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.BROADCAST_CONSTRAINT,
@@ -172,14 +173,14 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wumm-guard-fail",
             new Rulesets.WeightedUnaryMMRule(),
-            "wumm",
+            Opcodes.WUMM.toString(),
             Map.ofEntries(
                 Map.entry("q.type", "WUMM"),
                 Map.entry("rc.guardOverride", "false")),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.REPR_CHANGE_GUARD_FAIL,
@@ -187,12 +188,12 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wcemm-local",
             new Rulesets.WeightedCrossEntropyRule(),
-            "wcemm",
+            Opcodes.WCEMM.toString(),
             Map.of("q.type", "WCEMM"),
             List.of(FType.LOCAL, FType.LOCAL, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.NO_FED_INPUT,
@@ -200,14 +201,14 @@ public class RulesetsWeightedQuaternaryTest {
             null),
         Scenario.of("wumm-guard-pass",
             new Rulesets.WeightedUnaryMMRule(),
-            "wumm",
+            Opcodes.WUMM.toString(),
             Map.ofEntries(
                 Map.entry("q.type", "WUMM"),
                 Map.entry("rc.guardOverride", "true")),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
             null,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -262,8 +263,8 @@ public class RulesetsWeightedQuaternaryTest {
     final Map<String,String> attrs;
     final List<FType> inFTypes;
     final ShapeHint hint;
-    final Exec exec;
-    final Placement placement;
+    final ExecType exec;
+    final FederatedOutput placement;
     final boolean fout;
     final FType foutType;
     final ReasonCode reason;
@@ -271,7 +272,7 @@ public class RulesetsWeightedQuaternaryTest {
     final ReasonCode expectedNote;
 
     private Scenario(String name, Rule rule, String opcode, Map<String,String> attrs,
-        List<FType> inFTypes, ShapeHint hint, Exec exec, Placement placement,
+        List<FType> inFTypes, ShapeHint hint, ExecType exec, FederatedOutput placement,
         boolean fout, FType foutType, ReasonCode reason, String detail,
         ReasonCode expectedNote) {
       this.name = name;
@@ -290,7 +291,7 @@ public class RulesetsWeightedQuaternaryTest {
     }
 
     static Scenario of(String name, Rule rule, String opcode, Map<String,String> attrs,
-        List<FType> inFTypes, ShapeHint hint, Exec exec, Placement placement,
+        List<FType> inFTypes, ShapeHint hint, ExecType exec, FederatedOutput placement,
         boolean fout, FType foutType, ReasonCode reason, String detail,
         ReasonCode expectedNote) {
       return new Scenario(name, rule, opcode, attrs, inFTypes, hint,

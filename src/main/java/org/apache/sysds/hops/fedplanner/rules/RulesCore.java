@@ -27,16 +27,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
  * Rules CORE (single file)
@@ -54,9 +54,8 @@ public final class RulesCore {
     return OpCaps.newBuilder()
         .category(category)
         .opcode(opcode)
-        .exec(Exec.CP)
-        .placement(Placement.LOUT)
-        .fout(false)
+        .exec(ExecType.CP)
+        .placement(FederatedOutput.LOUT)
         .reason(reason)
         .build();
   }
@@ -225,7 +224,10 @@ public final class RulesCore {
         if (key.isEmpty())
           continue;
         if (byOpcode.containsKey(key)) {
-          throw new IllegalArgumentException("Duplicate opcode registration: " + op + " for " + rule.getClass().getName());
+          Rule existing = byOpcode.get(key);
+          throw new IllegalArgumentException("Duplicate opcode registration: " + op
+              + " (normalized=" + key + ") for " + rule.getClass().getName()
+              + " already registered by " + (existing == null ? "unknown" : existing.getClass().getName()));
         }
         byOpcode.put(key, rule);
       }
@@ -251,7 +253,24 @@ public final class RulesCore {
     }
 
     private static String norm(String s) {
-      return (s == null) ? "" : s.toLowerCase(Locale.ROOT);
+      if (s == null)
+        return "";
+      String lower = s.toLowerCase(Locale.ROOT);
+      StringBuilder sb = new StringBuilder(lower.length());
+      for (int i = 0; i < lower.length(); i++) {
+        char ch = lower.charAt(i);
+        if (ch == '_')
+          continue;
+        if (ch == '-') {
+          boolean leftAlphaNum = (i > 0) && Character.isLetterOrDigit(lower.charAt(i - 1));
+          boolean rightAlphaNum = (i + 1 < lower.length())
+              && Character.isLetterOrDigit(lower.charAt(i + 1));
+          if (leftAlphaNum || rightAlphaNum)
+            continue;
+        }
+        sb.append(ch);
+      }
+      return sb.toString();
     }
   }
 

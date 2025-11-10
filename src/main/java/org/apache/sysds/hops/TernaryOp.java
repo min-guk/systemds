@@ -114,6 +114,10 @@ public class TernaryOp extends MultiThreadedHop
 	public void setDisjointInputs(boolean flag){
 		_disjointInputs = flag;
 	}
+
+	public boolean isDisjointInputs() {
+		return _disjointInputs;
+	}
 	
 	@Override
 	public boolean isGPUEnabled() {

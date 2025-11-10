@@ -25,17 +25,25 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.BaseRule;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.Guard;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
  * Concrete rule implementations (compile-only).
@@ -212,15 +220,14 @@ public final class Rulesets {
     return matchesQType(sig, qType);
   }
 
-  private static OpCaps scalarCaps(OpSig sig, Exec exec, ReasonCode reason) {
+  private static OpCaps scalarCaps(OpSig sig, ExecType exec, ReasonCode reason) {
     OpCategory category = (sig != null) ? sig.category() : OpCategory.OTHER;
     String opcode = (sig != null && sig.opcode() != null) ? sig.opcode() : "";
     return OpCaps.newBuilder()
         .category(category)
         .opcode(opcode)
         .exec(exec)
-        .placement(Placement.LOUT)
-        .fout(false)
+        .placement(FederatedOutput.LOUT)
         .reason(reason)
         .detail(SCALAR_LOUT_DETAIL)
         .build();
@@ -232,9 +239,8 @@ public final class Rulesets {
     return OpCaps.newBuilder()
         .category(category)
         .opcode(opcode)
-        .exec(Exec.FED)
-        .placement(Placement.LOUT)
-        .fout(false)
+        .exec(ExecType.FED)
+        .placement(FederatedOutput.LOUT)
         .reason(reason)
         .detail(detail)
         .build();
@@ -288,9 +294,8 @@ public final class Rulesets {
     return OpCaps.newBuilder()
         .category(sig.category())
         .opcode(sig.opcode())
-        .exec(Exec.CP)
-        .placement(Placement.LOUT)
-        .fout(false)
+        .exec(ExecType.CP)
+        .placement(FederatedOutput.LOUT)
         .reason(reason)
         .build();
   }
@@ -300,8 +305,8 @@ public final class Rulesets {
     return OpCaps.newBuilder()
         .category(sig.category())
         .opcode(sig.opcode())
-        .exec(Exec.FED)
-        .placement(Placement.FOUT)
+        .exec(ExecType.FED)
+        .placement(FederatedOutput.FOUT)
         .fout(true, axis)
         .reason(reason)
         .build();
@@ -312,9 +317,8 @@ public final class Rulesets {
     return OpCaps.newBuilder()
         .category(sig.category())
         .opcode(sig.opcode())
-        .exec(Exec.FED)
-        .placement(Placement.LOUT)
-        .fout(false)
+        .exec(ExecType.FED)
+        .placement(FederatedOutput.LOUT)
         .reason(reason)
         .build();
   }
@@ -331,8 +335,8 @@ public final class Rulesets {
     OpCaps.Builder builder = OpCaps.newBuilder()
         .category(sig != null ? sig.category() : OpCategory.OTHER)
         .opcode(sig != null ? sig.opcode() : "")
-        .exec(Exec.FED)
-        .placement(Placement.FOUT)
+        .exec(ExecType.FED)
+        .placement(FederatedOutput.FOUT)
         .fout(true, axis)
         .reason(reason);
     if (detail != null && !detail.isBlank())
@@ -351,9 +355,9 @@ public final class Rulesets {
     return OpCaps.newBuilder()
         .category(sig != null ? sig.category() : OpCategory.OTHER)
         .opcode(sig != null ? sig.opcode() : "")
-        .exec(Exec.CP)
-        .placement(Placement.LOUT)
-        .fout(false)
+        .exec(ExecType.CP)
+        .placement(FederatedOutput.LOUT)
+        
         .reason(code)
         .detail(guardDetail(guard));
   }
@@ -387,8 +391,8 @@ public final class Rulesets {
     OpCaps.Builder builder = OpCaps.newBuilder()
         .category(sig != null ? sig.category() : OpCategory.OTHER)
         .opcode(sig != null ? sig.opcode() : "")
-        .exec(Exec.FED)
-        .placement(Placement.FOUT)
+        .exec(ExecType.FED)
+        .placement(FederatedOutput.FOUT)
         .fout(true, axis)
         .reason(reason)
         .detail(note);
@@ -660,7 +664,8 @@ public final class Rulesets {
 
   // Weighted quaternary policies inspect only X; broadcast auxiliaries (U/V/W/eps) are allowed inputs.
   public static final class WeightedSquaredLossRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("wsloss", "wslosscp");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.WSLOSS.toString());
     private static final int EXPECTED_ARITY = 4;
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
@@ -678,21 +683,22 @@ public final class Rulesets {
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
-        return scalarCaps(sig, Exec.CP, ReasonCode.ARITY_MISMATCH);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.ARITY_MISMATCH);
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return scalarCaps(sig, Exec.CP, ReasonCode.MISSING_IN_FTYPE);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.MISSING_IN_FTYPE);
       if (x == FType.BROADCAST)
-        return scalarCaps(sig, Exec.CP, ReasonCode.BROADCAST_CONSTRAINT);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.BROADCAST_CONSTRAINT);
       if (!isFederatedLike(x))
-        return scalarCaps(sig, Exec.CP, ReasonCode.NO_FED_INPUT);
-      return scalarCaps(sig, Exec.FED, ReasonCode.OK);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.NO_FED_INPUT);
+      return scalarCaps(sig, ExecType.FED, ReasonCode.OK);
     }
   }
 
   public static final class WeightedCrossEntropyRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("wcemm", "wcemmcp");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.WCEMM.toString());
     private static final int EXPECTED_ARITY = 4;
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
@@ -710,21 +716,22 @@ public final class Rulesets {
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       if (!hasExpectedArity(inFTypes, EXPECTED_ARITY))
-        return scalarCaps(sig, Exec.CP, ReasonCode.ARITY_MISMATCH);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.ARITY_MISMATCH);
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return scalarCaps(sig, Exec.CP, ReasonCode.MISSING_IN_FTYPE);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.MISSING_IN_FTYPE);
       if (x == FType.BROADCAST)
-        return scalarCaps(sig, Exec.CP, ReasonCode.BROADCAST_CONSTRAINT);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.BROADCAST_CONSTRAINT);
       if (!isFederatedLike(x))
-        return scalarCaps(sig, Exec.CP, ReasonCode.NO_FED_INPUT);
-      return scalarCaps(sig, Exec.FED, ReasonCode.OK);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.NO_FED_INPUT);
+      return scalarCaps(sig, ExecType.FED, ReasonCode.OK);
     }
   }
 
   public static final class WeightedSigmoidRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("wsigmoid", "wsigmoidcp");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.WSIGMOID.toString());
     private static final int EXPECTED_ARITY = 3;
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
@@ -759,7 +766,8 @@ public final class Rulesets {
   }
 
   public static final class WeightedUnaryMMRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("wumm", "wummcp");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.WUMM.toString());
     private static final int EXPECTED_ARITY = 3;
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
@@ -799,9 +807,9 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.PARTITION_FORBIDDEN)
             .detail(WUMM_X_AXIS_ONLY_DETAIL)
             .build();
@@ -815,8 +823,8 @@ public final class Rulesets {
       OpCaps.Builder b = OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.FED)
-          .placement(Placement.FOUT)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, axis)
           .reason(ReasonCode.OK);
 
@@ -849,7 +857,8 @@ public final class Rulesets {
   }
 
   public static final class WeightedDivMMRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("wdivmm", "wdivmmcp");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.WDIVMM.toString());
     private static final int EXPECTED_ARITY = 4;
 
     @Override public OpCategory category() { return OpCategory.QUATERNARY; }
@@ -904,10 +913,30 @@ public final class Rulesets {
    */
   public static final class UnaryElemwiseRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(
-        "exp", "log", "log_nz", "sqrt", "abs", "round", "floor", "ceil",
-        "sin", "cos", "tan", "asin", "acos", "atan",
-        "sinh", "cosh", "tanh",
-        "sign", "sigmoid", "sprop", "plogp", "isna", "isnan", "isinf");
+        OpOp1.EXP.toString(),
+        OpOp1.LOG.toString(),
+        OpOp1.LOG_NZ.toString(),
+        OpOp1.SQRT.toString(),
+        OpOp1.ABS.toString(),
+        OpOp1.ROUND.toString(),
+        OpOp1.FLOOR.toString(),
+        OpOp1.CEIL.toString(),
+        OpOp1.SIN.toString(),
+        OpOp1.COS.toString(),
+        OpOp1.TAN.toString(),
+        OpOp1.ASIN.toString(),
+        OpOp1.ACOS.toString(),
+        OpOp1.ATAN.toString(),
+        OpOp1.SINH.toString(),
+        OpOp1.COSH.toString(),
+        OpOp1.TANH.toString(),
+        OpOp1.SIGN.toString(),
+        OpOp1.SIGMOID.toString(),
+        OpOp1.SPROP.toString(),
+        Opcodes.PLOGP.toString(),
+        OpOp1.ISNA.toString(),
+        OpOp1.ISNAN.toString(),
+        OpOp1.ISINF.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -962,7 +991,12 @@ public final class Rulesets {
    * is not a contradiction.
    */
   public static final class UnaryCumulativeRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("ucumk+", "ucum*", "ucumk+*", "ucummin", "ucummax");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.UCUMKP.toString(),
+        Opcodes.UCUMM.toString(),
+        Opcodes.UCUMKPM.toString(),
+        Opcodes.UCUMMIN.toString(),
+        Opcodes.UCUMMAX.toString());
     private static final String UCUMKPP_STAR_DETAIL = "ucumk+* → n×1 result; fed ranges updated";
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
@@ -1008,7 +1042,7 @@ public final class Rulesets {
 
       String opcode = normalizedOpcode(sig);
       Guard.Result guard = Guard.eval(sig);
-      if ("ucumk+*".equals(opcode))
+      if (Opcodes.UCUMKPM.toString().equals(opcode))
         return rowGuardAwareFout(sig, guard, UCUMKPP_STAR_DETAIL);
       return rowGuardAwareFout(sig, guard, null);
     }
@@ -1020,8 +1054,8 @@ public final class Rulesets {
       OpCaps.Builder builder = OpCaps.newBuilder()
           .category(sig != null ? sig.category() : OpCategory.OTHER)
           .opcode(sig != null ? sig.opcode() : "")
-          .exec(Exec.FED)
-          .placement(Placement.FOUT)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, FType.ROW)
           .reason(ReasonCode.OK);
       if (detail != null && !detail.isBlank())
@@ -1039,8 +1073,11 @@ public final class Rulesets {
    * ReorgFEDInstruction.java:197-282 (ROW/COL only; PART/FULL rejected).
    */
   public static final class ReorgUnaryRule extends BaseRule {
-    private static final Set<String> OPCODES =
-        Set.of("transpose", "diag", "rdiag", "rev", "roll");
+    private static final Set<String> OPCODES = Set.of(
+        ReOrgOp.TRANS.toString(),
+        ReOrgOp.DIAG.toString(),
+        ReOrgOp.REV.toString(),
+        ReOrgOp.ROLL.toString());
     private static final String REORG_AXIS_ONLY_DETAIL =
         "ReorgFEDInstruction supports only ROW or COL partitioned input";
 
@@ -1063,24 +1100,21 @@ public final class Rulesets {
 
       String opcode = normalizedOpcode(sig);
       Set<FType> outs = new LinkedHashSet<>();
-      switch (opcode) {
-        case "transpose":
-          if (inputs.contains(FType.ROW))
-            outs.add(FType.COL);
-          if (inputs.contains(FType.COL))
-            outs.add(FType.ROW);
-          break;
-        case "rev":
-        case "roll":
-        case "diag":
-        case "rdiag":
-          if (inputs.contains(FType.ROW))
-            outs.add(FType.ROW);
-          if (inputs.contains(FType.COL))
-            outs.add(FType.COL);
-          break;
-        default:
-          break;
+      boolean isTrans = ReOrgOp.TRANS.toString().equals(opcode);
+      boolean isRev = ReOrgOp.REV.toString().equals(opcode);
+      boolean isRoll = ReOrgOp.ROLL.toString().equals(opcode);
+      boolean isDiag = ReOrgOp.DIAG.toString().equals(opcode);
+      if (isTrans) {
+        if (inputs.contains(FType.ROW))
+          outs.add(FType.COL);
+        if (inputs.contains(FType.COL))
+          outs.add(FType.ROW);
+      }
+      else if (isRev || isRoll || isDiag) {
+        if (inputs.contains(FType.ROW))
+          outs.add(FType.ROW);
+        if (inputs.contains(FType.COL))
+          outs.add(FType.COL);
       }
       return profileOf(outs);
     }
@@ -1092,7 +1126,10 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
 
       String opcode = normalizedOpcode(sig);
-      boolean isRoll = "roll".equals(opcode);
+      boolean isTrans = ReOrgOp.TRANS.toString().equals(opcode);
+      boolean isRev = ReOrgOp.REV.toString().equals(opcode);
+      boolean isRoll = ReOrgOp.ROLL.toString().equals(opcode);
+      boolean isDiag = ReOrgOp.DIAG.toString().equals(opcode);
       int inCount = (inFTypes == null) ? 0 : inFTypes.size();
       if (inCount == 0)
         return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
@@ -1118,18 +1155,14 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
       FType outAxis;
-      switch (opcode) {
-        case "transpose":
-          outAxis = (in == FType.ROW) ? FType.COL : FType.ROW;
-          break;
-        case "rev":
-        case "roll":
-        case "diag":
-        case "rdiag":
-          outAxis = in;
-          break;
-        default:
-          return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (isTrans) {
+        outAxis = (in == FType.ROW) ? FType.COL : FType.ROW;
+      }
+      else if (isRev || isRoll || isDiag) {
+        outAxis = in;
+      }
+      else {
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
       }
       Guard.Result guard = Guard.eval(sig);
       if (guard != null && guard.isFail())
@@ -1138,8 +1171,8 @@ public final class Rulesets {
       OpCaps.Builder builder = OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.FED)
-          .placement(Placement.FOUT)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, outAxis)
           .reason(ReasonCode.OK);
 
@@ -1159,33 +1192,29 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.CP)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .exec(ExecType.CP)
+          .placement(FederatedOutput.LOUT)
+          
           .reason(ReasonCode.PARTITION_FORBIDDEN)
           .detail(REORG_AXIS_ONLY_DETAIL)
           .build();
     }
 
     private static String infoNoteFor(String opcode, FType inAxis) {
-      switch (opcode) {
-        case "transpose":
-          return "axis flipped ROW↔COL";
-        case "rev":
-          return (inAxis == FType.ROW) ? "ROW mapping reversed on workers" : null;
-        case "roll":
-          return "roll shift applied";
-        case "diag":
-        case "rdiag":
-          return "diag V2M/M2V shape handled at runtime";
-        default:
-          return null;
-      }
+      if (ReOrgOp.TRANS.toString().equals(opcode))
+        return "axis flipped ROW↔COL";
+      if (ReOrgOp.REV.toString().equals(opcode))
+        return (inAxis == FType.ROW) ? "ROW mapping reversed on workers" : null;
+      if (ReOrgOp.ROLL.toString().equals(opcode))
+        return "roll shift applied";
+      if (ReOrgOp.DIAG.toString().equals(opcode))
+        return "diag V2M/M2V shape handled at runtime";
+      return null;
     }
   }
 
   public static final class ReshapeRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("rshape");
+    private static final Set<String> OPCODES = Set.of(ReOrgOp.RESHAPE.toString());
     private static final String ATTR_BYROW = "reshape.byrow";
     private static final String NOTE_GLOBAL_CELLS =
         "global cells must match (inRows*inCols == rows*cols)";
@@ -1238,8 +1267,8 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, FType.ROW)
             .reason(ReasonCode.OK)
             .note(ReasonCode.BROADCAST_OR_ALIGNED_ROW, NOTE_DIVISIBLE_COLS)
@@ -1250,8 +1279,8 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, FType.COL)
             .reason(ReasonCode.OK)
             .note(ReasonCode.BROADCAST_OR_ALIGNED_COL, NOTE_DIVISIBLE_ROWS)
@@ -1262,9 +1291,9 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.FED)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.LOUT)
+          
           .reason(ReasonCode.INFO)
           .detail(AXIS_UNKNOWN_DETAIL)
           .build();
@@ -1272,7 +1301,7 @@ public final class Rulesets {
   }
 
   public static final class ReblockRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("rblk");
+    private static final Set<String> OPCODES = Set.of(Opcodes.RBLK.toString());
     private static final String NOTE_METADATA = "requires input metadata (format) at runtime";
     private static final String NOTE_BLOCKSIZE = "blocksize is updated to target blen";
 
@@ -1321,8 +1350,8 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.FED)
-          .placement(Placement.FOUT)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, in)
           .reason(ReasonCode.OK)
           .note(ReasonCode.INFO, NOTE_METADATA)
@@ -1332,7 +1361,8 @@ public final class Rulesets {
   }
 
   public static final class RightIndexRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("rix", "right_index", "rightindex");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.RIGHT_INDEX.toString());
 
     @Override public OpCategory category() { return OpCategory.INDEXING; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1381,7 +1411,9 @@ public final class Rulesets {
   }
 
   public static final class LeftIndexRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("lix", "left_index", "leftindex", "mapleftindex");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.LEFT_INDEX.toString(),
+        Opcodes.MAPLEFTINDEX.toString());
 
     @Override public OpCategory category() { return OpCategory.INDEXING; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1451,7 +1483,9 @@ public final class Rulesets {
 
   /** Variable cast (matrix <-> frame). */
   public static final class CastRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("castasframe", "castasmatrix");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.CAST_AS_FRAME_VAR.toString(),
+        Opcodes.CAST_AS_MATRIX.toString());
 
     @Override public OpCategory category() { return OpCategory.VARIABLE_CAST; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1493,18 +1527,18 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
       // Smoke scenarios:
-      // in=ROW -> Exec.FED + Placement.FOUT(ROW) + OK
-      // in=BROADCAST -> Exec.CP + Placement.LOUT + BROADCAST_CONSTRAINT
-      // in=FULL -> Exec.FED + Placement.FOUT(FULL) + OK
-      // in=LOCAL -> Exec.CP + Placement.LOUT + NO_FED_INPUT
+      // in=ROW -> ExecType.FED + FederatedOutput.FOUT(ROW) + OK
+      // in=BROADCAST -> ExecType.CP + FederatedOutput.LOUT + BROADCAST_CONSTRAINT
+      // in=FULL -> ExecType.FED + FederatedOutput.FOUT(FULL) + OK
+      // in=LOCAL -> ExecType.CP + FederatedOutput.LOUT + NO_FED_INPUT
 
       if (in == FType.BROADCAST) {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.BROADCAST_CONSTRAINT)
             .detail("broadcast input not supported by CastFEDInstruction")
             .build();
@@ -1527,7 +1561,7 @@ public final class Rulesets {
 
   /** Variable write rule modeling federated side effects. */
   public static final class VariableWriteRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("write");
+    private static final Set<String> OPCODES = Set.of(Opcodes.WRITE.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1569,7 +1603,7 @@ public final class Rulesets {
 
   /** Transform Encode (frame -> matrix + meta). Primary output is matrix; meta is always local (LOUT). */
   public static final class TransformEncodeRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("transformencode");
+    private static final Set<String> OPCODES = Set.of(Opcodes.TRANSFORMENCODE.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1612,9 +1646,9 @@ public final class Rulesets {
           return OpCaps.newBuilder()
               .category(sig.category())
               .opcode(sig.opcode())
-              .exec(Exec.CP)
-              .placement(Placement.LOUT)
-              .fout(false)
+              .exec(ExecType.CP)
+              .placement(FederatedOutput.LOUT)
+              
               .reason(ReasonCode.BROADCAST_CONSTRAINT)
               .detail("broadcast input not supported by transformencode")
               .build();
@@ -1630,8 +1664,8 @@ public final class Rulesets {
         OpCaps.Builder builder = OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, in)
             .reason(ReasonCode.OK)
             .detail("second output (meta) is LOUT");
@@ -1649,7 +1683,9 @@ public final class Rulesets {
 
   /** Aggregate ternary federated instructions (tak+*, tack+*). */
   public static final class AggTernaryRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("tak+*", "tack+*");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.TAKPM.toString(),
+        Opcodes.TACKPM.toString());
 
     @Override public OpCategory category() { return OpCategory.AGG_TERNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1711,7 +1747,7 @@ public final class Rulesets {
 
   /** Frame map ops (frame with scalar expression plus margin hint). */
   public static final class FrameMapRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("_map");
+    private static final Set<String> OPCODES = Set.of(OpOp3.MAP.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1807,9 +1843,9 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.CP)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .exec(ExecType.CP)
+          .placement(FederatedOutput.LOUT)
+          
           .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
           .detail("margin mismatch or non-federated frame")
           .build();
@@ -1818,7 +1854,10 @@ public final class Rulesets {
 
   /** Element-wise ternary ops (ifelse, +*, -*). */
   public static final class TernaryElemwiseRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("ifelse", "+*", "-*");
+    private static final Set<String> OPCODES = Set.of(
+        OpOp3.IFELSE.toString(),
+        OpOp3.PLUS_MULT.toString(),
+        OpOp3.MINUS_MULT.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -1994,7 +2033,8 @@ public final class Rulesets {
 
   // --- Central Moment (AGG_UNARY -> local scalar) -----------------------------------------------
   public static final class CentralMomentRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("cm", "centralmoment");
+    private static final Set<String> OPCODES = Set.of(
+        OpOp3.MOMENT.toString());
 
     @Override public OpCategory category() { return OpCategory.AGG_UNARY; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -2050,7 +2090,7 @@ public final class Rulesets {
 
   // --- Transpose-self matrix multiply (TSMM) ---------------------------------------------------
   public static final class TsmmRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("tsmm");
+    private static final Set<String> OPCODES = Set.of(Opcodes.TSMM.toString());
 
     private static final String TSMM_AXIS_ONLY_DETAIL =
         "TSMM supports only LEFT with ROW or RIGHT with COL partitioned X (per TsmmFEDInstruction)";
@@ -2068,7 +2108,7 @@ public final class Rulesets {
       if (sig == null || sig.category() != category())
         return false;
       String op = normalizedOpcode(sig);
-      if ("tsmm".equals(op))
+      if (Opcodes.TSMM.toString().equals(op))
         return true;
       String typ = attrValue(sig, "tsmm.type");
       return typ != null && (typ.equalsIgnoreCase("LEFT") || typ.equalsIgnoreCase("RIGHT"));
@@ -2097,9 +2137,9 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.PARTITION_FORBIDDEN)
             .detail(TSMM_AXIS_ONLY_DETAIL)
             .build();
@@ -2118,9 +2158,9 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.UNSUPPORTED_ALIGNMENT)
             .detail(TSMM_AXIS_ONLY_DETAIL)
             .build();
@@ -2142,8 +2182,8 @@ public final class Rulesets {
         OpCaps.Builder builder = OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, FType.BROADCAST)
             .reason(ReasonCode.OK)
             .note(ReasonCode.INFO, TSMM_FORCED_BC_NOTE);
@@ -2157,9 +2197,9 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.FED)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.LOUT)
+          
           .reason(ReasonCode.OK)
           .note(ReasonCode.INFO, TSMM_AGG_NOTE)
           .build();
@@ -2175,7 +2215,11 @@ public final class Rulesets {
    * E) Other layouts fall back to CP/LOUT.
    */
   public static final class MMFedRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("mapmm","cpmm","rmm","pmmj");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.MAPMM.toString(),
+        Opcodes.CPMM.toString(),
+        Opcodes.RMM.toString(),
+        Opcodes.PMM.toString());
     private static final String ATTR_ALIGN = "align";
     private static final String ATTR_FORCE_LOCAL = "force_local";
     private static final String ATTR_FORCE_FOUT = "force_fout";
@@ -2320,8 +2364,8 @@ public final class Rulesets {
 
   /** Binary matrix multiply (mmult). */
   public static final class BinaryMMRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("mmult");
-    private static final String OPCODE_MM = "mmult";
+    private static final Set<String> OPCODES = Set.of(Opcodes.MMULT.toString());
+    private static final String OPCODE_MM = Opcodes.MMULT.toString();
     private static final String ATTR_INNER = "inner";
     private static final String ATTR_OUTER = "outer";
     private static final String ATTR_ALIGN = "align";
@@ -2472,7 +2516,9 @@ public final class Rulesets {
 
   /** MMChain FED compile-only rule (XtXv / XtwXv / XtXvy). */
   public static final class MMChainRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("mmchain", "mapmultchain");
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.MMCHAIN.toString(),
+        Opcodes.MAPMMCHAIN.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -2503,9 +2549,9 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(sig != null ? sig.category() : OpCategory.OTHER)
             .opcode(sig != null ? sig.opcode() : "")
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.ARITY_MISMATCH)
             .detail("expected 2 or 3 inputs, got=" + n)
             .build();
@@ -2522,9 +2568,9 @@ public final class Rulesets {
       final OpCaps.Builder b = OpCaps.newBuilder()
           .category(sig != null ? sig.category() : OpCategory.OTHER)
           .opcode(sig != null ? sig.opcode() : "")
-          .exec(Exec.FED)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.LOUT)
+          
           .reason(ReasonCode.OK);
 
       // v is always broadcast
@@ -2569,10 +2615,29 @@ public final class Rulesets {
   /** Element-wise binary ops (matrix-matrix / matrix-scalar). */
   public static final class BinaryElemwiseRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(
-        "plus","minus","mult","div","modulus","intdiv",
-        "less","lessequal","greater","greaterequal","equal","notequal",
-        "min","max","pow","and","or","xor",
-        "bitwand","bitwor","bitwxor","bitwshiftl","bitwshiftr");
+        OpOp2.PLUS.toString(),
+        OpOp2.MINUS.toString(),
+        OpOp2.MULT.toString(),
+        OpOp2.DIV.toString(),
+        OpOp2.MODULUS.toString(),
+        OpOp2.INTDIV.toString(),
+        OpOp2.LESS.toString(),
+        OpOp2.LESSEQUAL.toString(),
+        OpOp2.GREATER.toString(),
+        OpOp2.GREATEREQUAL.toString(),
+        OpOp2.EQUAL.toString(),
+        OpOp2.NOTEQUAL.toString(),
+        OpOp2.MIN.toString(),
+        OpOp2.MAX.toString(),
+        OpOp2.POW.toString(),
+        OpOp2.AND.toString(),
+        OpOp2.OR.toString(),
+        OpOp2.XOR.toString(),
+        OpOp2.BITWAND.toString(),
+        OpOp2.BITWOR.toString(),
+        OpOp2.BITWXOR.toString(),
+        OpOp2.BITWSHIFTL.toString(),
+        OpOp2.BITWSHIFTR.toString());
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -2632,8 +2697,8 @@ public final class Rulesets {
         OpCaps.Builder builder = OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, softAxis)
             .reason(ReasonCode.OK)
             .note(
@@ -2661,7 +2726,7 @@ public final class Rulesets {
 
   /** Append (append opcode + cbind attribute). */
   public static final class AppendRule extends BaseRule {
-    private static final String APPEND = "append";
+    private static final String APPEND = Opcodes.APPEND.toString();
     private static final String ATTR_CBIND = "cbind";
 
     @Override public OpCategory category() { return OpCategory.APPEND; }
@@ -2711,9 +2776,9 @@ public final class Rulesets {
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       if (!supports(sig)) {
         return baseCaps(sig)
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.NOT_IMPLEMENTED)
             .build();
       }
@@ -2724,7 +2789,7 @@ public final class Rulesets {
         boolean singleRange = hint != null && hint.fullSinglePartition().orElse(false);
         if (!singleRange) {
           OpCaps.Builder builder = baseCaps(sig)
-              .fout(false)
+              
               .reason(ReasonCode.NOT_IMPLEMENTED)
               .detail(APPEND_FULL_SINGLE_RANGE_DETAIL);
           applyNotes(builder, pendingNotes);
@@ -2737,8 +2802,8 @@ public final class Rulesets {
           return builder.build();
         }
         OpCaps.Builder builder = baseCaps(sig)
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, FType.FULL)
             .reason(ReasonCode.OK);
         applyNotes(builder, pendingNotes);
@@ -2752,7 +2817,7 @@ public final class Rulesets {
       if (cbind) {
         if (rowsKnown(hint) && hint.rowsA() != hint.rowsB()) {
           return baseCaps(sig)
-              .fout(false)
+              
               .reason(ReasonCode.DIM_MISMATCH_ROWS)
               .detail("cbind requires matching row counts")
               .build();
@@ -2763,7 +2828,7 @@ public final class Rulesets {
       else {
         if (colsKnown(hint) && hint.colsA() != hint.colsB()) {
           return baseCaps(sig)
-              .fout(false)
+              
               .reason(ReasonCode.DIM_MISMATCH_COLS)
               .detail("rbind requires matching column counts")
               .build();
@@ -2779,9 +2844,9 @@ public final class Rulesets {
 
       if (!hasRow && !hasCol) {
         OpCaps.Builder builder = baseCaps(sig)
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.NO_FED_INPUT);
         applyNotes(builder, pendingNotes);
         return builder.build();
@@ -2797,8 +2862,8 @@ public final class Rulesets {
       }
 
       OpCaps.Builder builder = baseCaps(sig)
-          .exec(Exec.FED)
-          .placement(Placement.FOUT)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, outType)
           .reason(cause);
       applyNotes(builder, pendingNotes);
@@ -2894,7 +2959,7 @@ public final class Rulesets {
 
   /** Quantile sort (qsort) compile-time rule preserving FED pipelines for qpick. */
   public static final class QuantileSortRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("qsort");
+    private static final Set<String> OPCODES = Set.of(Opcodes.QSORT.toString());
 
     @Override public OpCategory category() { return OpCategory.QUANTILE_SORT; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -2949,8 +3014,8 @@ public final class Rulesets {
       OpCaps.Builder builder = OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.FED)
-          .placement(Placement.FOUT)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, outAxis)
           .reason(ReasonCode.OK);
 
@@ -2977,7 +3042,7 @@ public final class Rulesets {
 
   /** Quantile pick (qpick) compile-only rule (local result). */
   public static final class QuantilePickRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("qpick");
+    private static final Set<String> OPCODES = Set.of(Opcodes.QPICK.toString());
 
     @Override public OpCategory category() { return OpCategory.QUANTILE_PICK; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -3050,15 +3115,15 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
-          .exec(Exec.CP)
-          .placement(Placement.LOUT)
-          .fout(false);
+          .exec(ExecType.CP)
+          .placement(FederatedOutput.LOUT)
+          ;
     }
   }
 
   /** CTABLE planner rule mirroring CtableFEDInstruction. */
   public static final class CtableRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("ctable");
+    private static final Set<String> OPCODES = Set.of(Opcodes.CTABLE.toString());
     private static final String ATTR_DISJOINT = "ctable_disjoint_bins";
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
@@ -3091,15 +3156,17 @@ public final class Rulesets {
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       int n = (inFTypes == null) ? 0 : inFTypes.size();
       OpCategory category = (sig != null) ? sig.category() : OpCategory.OTHER;
-      String opcode = (sig != null && sig.opcode() != null) ? sig.opcode() : "ctable";
+      String opcode = (sig != null && sig.opcode() != null)
+          ? sig.opcode()
+          : Opcodes.CTABLE.toString();
 
       if (n != 2 && n != 3) {
         return OpCaps.newBuilder()
             .category(category)
             .opcode(opcode)
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.ARITY_MISMATCH)
             .detail("expected=2 or 3, got=" + n)
             .build();
@@ -3114,9 +3181,9 @@ public final class Rulesets {
         return OpCaps.newBuilder()
             .category(category)
             .opcode(opcode)
-            .exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.NO_FED_INPUT)
             .detail("no ROW input")
             .build();
@@ -3131,8 +3198,8 @@ public final class Rulesets {
           return OpCaps.newBuilder()
               .category(category)
               .opcode(opcode)
-              .exec(Exec.FED)
-              .placement(Placement.FOUT)
+              .exec(ExecType.FED)
+              .placement(FederatedOutput.FOUT)
               .fout(true, outAxis)
               .reason(ReasonCode.OK)
               .build();
@@ -3143,9 +3210,9 @@ public final class Rulesets {
       return OpCaps.newBuilder()
           .category(category)
           .opcode(opcode)
-          .exec(Exec.FED)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .exec(ExecType.FED)
+          .placement(FederatedOutput.LOUT)
+          
           .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
           .detail("ctable_disjoint_bins=false (default)")
           .build();
@@ -3164,7 +3231,9 @@ public final class Rulesets {
 
   /** Explicit deny for quantile/interquantile (no federated instruction available). */
   public static final class QuantileInterquantileCtableDenyRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("quantile", "interquantile");
+    private static final Set<String> OPCODES = Set.of(
+        OpOp3.QUANTILE.toString(),
+        OpOp3.INTERQUANTILE.toString());
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -3189,12 +3258,12 @@ public final class Rulesets {
   /** Cumulative offset ops (bcumoff*). */
   public static final class CumulativeOffsetRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(
-        "bcumoffk+",
-        "bcumoff*",
-        "bcumoff+*",
-        "bcumoffmin",
-        "bcumoffmax");
-    private static final String OPCODE_ROW_ONLY = "bcumoff+*";
+        Opcodes.BCUMOFFKP.toString(),
+        Opcodes.BCUMOFFM.toString(),
+        Opcodes.BCUMOFFPM.toString(),
+        Opcodes.BCUMOFFMIN.toString(),
+        Opcodes.BCUMOFFMAX.toString());
+    private static final String OPCODE_ROW_ONLY = Opcodes.BCUMOFFPM.toString();
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -3234,9 +3303,9 @@ public final class Rulesets {
           .opcode(sig != null ? sig.opcode() : "");
 
       if (inFTypes == null || inFTypes.size() < 2) {
-        return b.exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+        return b.exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.ARITY_MISMATCH)
             .build();
       }
@@ -3246,9 +3315,9 @@ public final class Rulesets {
 
       if (in == null || in == FType.NF || in == FType.LOCAL
           || in == FType.BROADCAST) {
-        return b.exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+        return b.exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.NO_FED_INPUT)
             .build();
       }
@@ -3256,9 +3325,9 @@ public final class Rulesets {
       if (in == FType.FULL) {
         boolean single = (hint == null) ? true : hint.fullSinglePartition().orElse(true);
         if (!single) {
-          return b.exec(Exec.CP)
-              .placement(Placement.LOUT)
-              .fout(false)
+          return b.exec(ExecType.CP)
+              .placement(FederatedOutput.LOUT)
+              
               .reason(ReasonCode.NO_FED_INPUT)
               .detail(CUMOFF_FULL_SINGLE_RANGE_DETAIL)
               .build();
@@ -3269,8 +3338,8 @@ public final class Rulesets {
         OpCaps.Builder builder = OpCaps.newBuilder()
             .category(sig != null ? sig.category() : OpCategory.OTHER)
             .opcode(sig != null ? sig.opcode() : "")
-            .exec(Exec.FED)
-            .placement(Placement.FOUT)
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
             .fout(true, FType.FULL)
             .reason(ReasonCode.OK);
         if (OPCODE_ROW_ONLY.equals(opcode)) {
@@ -3284,18 +3353,18 @@ public final class Rulesets {
       }
 
       if (OPCODE_ROW_ONLY.equals(opcode) && in != FType.ROW) {
-        return b.exec(Exec.CP)
-            .placement(Placement.LOUT)
-            .fout(false)
+        return b.exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY)
             .detail("bcumoff+* requires ROW-partitioned input")
             .build();
       }
 
       if (in == FType.PART) {
-        return b.exec(Exec.FED)
-            .placement(Placement.LOUT)
-            .fout(false)
+        return b.exec(ExecType.FED)
+            .placement(FederatedOutput.LOUT)
+            
             .reason(ReasonCode.FOUT_DISALLOWED_FOR_PART_OUT)
             .build();
       }
@@ -3304,8 +3373,8 @@ public final class Rulesets {
       if (OPCODE_ROW_ONLY.equals(opcode)) {
         b.detail("Result is n×1 for bcumoff+* (runtime adjusts federated ranges).");
       }
-      return b.exec(Exec.FED)
-          .placement(Placement.FOUT)
+      return b.exec(ExecType.FED)
+          .placement(FederatedOutput.FOUT)
           .fout(true, axis)
           .reason(ReasonCode.OK)
           .build();
@@ -3318,7 +3387,7 @@ public final class Rulesets {
    * 가중치는 로컬/브로드캐스트/연합 어떤 형태든 허용(결정에는 영향 없음); 필요 시 표준화된 note 문자열 부여.
    */
   public static final class CovarianceRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("cov", "covariance");
+    private static final Set<String> OPCODES = Set.of(OpOp3.COV.toString());
     private static final String ATTR_ALIGN_HINT = "align_hint";
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
@@ -3386,20 +3455,19 @@ public final class Rulesets {
     }
 
     private static OpCaps.Builder cpLocal(OpSig sig, ReasonCode reason) {
-      return localCaps(sig, Exec.CP, reason);
+      return localCaps(sig, ExecType.CP, reason);
     }
 
     private static OpCaps.Builder fedLocal(OpSig sig, ReasonCode reason) {
-      return localCaps(sig, Exec.FED, reason);
+      return localCaps(sig, ExecType.FED, reason);
     }
 
-    private static OpCaps.Builder localCaps(OpSig sig, Exec exec, ReasonCode reason) {
+    private static OpCaps.Builder localCaps(OpSig sig, ExecType exec, ReasonCode reason) {
       return OpCaps.builder()
           .category(sig != null ? sig.category() : OpCategory.BINARY_EWISE)
           .opcode(sig != null ? sig.opcode() : "")
           .exec(exec)
-          .placement(Placement.LOUT)
-          .fout(false)
+          .placement(FederatedOutput.LOUT)
           .reason(reason);
     }
 
@@ -3434,7 +3502,7 @@ public final class Rulesets {
 
   /** Solve op (explicit CP fallback). */
   public static final class SolveRule extends BaseRule {
-    private static final Set<String> OPCODES = Set.of("solve");
+    private static final Set<String> OPCODES = Set.of(Opcodes.SOLVE.toString());
 
     @Override public OpCategory category() { return OpCategory.BINARY_EWISE; }
     @Override public Set<String> opcodes() { return OPCODES; }

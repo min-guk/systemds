@@ -66,6 +66,7 @@ import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.parser.IfStatement;
 import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.VariableSet;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;

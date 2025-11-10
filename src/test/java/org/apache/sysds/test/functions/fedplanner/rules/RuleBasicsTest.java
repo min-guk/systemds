@@ -24,7 +24,9 @@ import static org.junit.Assert.assertTrue;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
@@ -67,31 +69,31 @@ public class RuleBasicsTest {
   @Test
   public void appendRuleSupportsUppercaseOpcode() {
     Rulesets.AppendRule rule = new Rulesets.AppendRule();
-    OpSig sig = new OpSig("APPEND", OpCategory.APPEND, Map.of("cbind", "true"));
+    OpSig sig = OpSig.of(Opcodes.APPEND.toString(), OpCategory.APPEND, Map.of("cbind", "true"));
 
     assertTrue(rule.supports(sig));
     OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.ROW), UNKNOWN_SHAPE);
-    assertEquals(Exec.FED, caps.exec());
+    assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.BROADCAST_OR_ALIGNED_ROW, caps.reason());
   }
 
   @Test
   public void quantilePickIncludesQpick() {
     Rulesets.QuantilePickRule rule = new Rulesets.QuantilePickRule();
-    OpSig sig = new OpSig("qpick", OpCategory.QUANTILE_PICK, Map.of());
-    assertTrue(rule.opcodes().contains("qpick"));
+    OpSig sig = OpSig.of(Opcodes.QPICK.toString(), OpCategory.QUANTILE_PICK, Map.of());
+    assertTrue(rule.opcodes().contains(Opcodes.QPICK.toString()));
 
     OpCaps caps = rule.caps(sig, List.of(FType.NF), UNKNOWN_SHAPE);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(ReasonCode.NOT_FEDERATED_INPUTS, caps.reason());
   }
 
   @Test
   public void fullInputNotTreatedAsScalarLike() {
     Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
-    OpSig sig = new OpSig("plus", OpCategory.BINARY_EWISE, Map.of());
+    OpSig sig = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of());
     OpCaps caps = rule.caps(sig, List.of(FType.ROW, FType.FULL), UNKNOWN_SHAPE);
-    assertEquals(Exec.CP, caps.exec());
+    assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, caps.reason());
   }
 }

@@ -19,17 +19,17 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
@@ -48,41 +48,41 @@ public class SpoofRulesTest {
   public void spoofRulesSmokeMatrix() {
     List<Case> cases = List.of(
         new Case("cell-noagg-row", CELL_RULE, cellSig("spoofCellNoAgg", "NO_AGG"),
-            List.of(FType.ROW), Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
         new Case("cell-noagg-full", CELL_RULE, cellSig("spoofCellFull", "NO_AGG"),
-            List.of(FType.FULL), Exec.FED, Placement.FOUT, true, FType.FULL, ReasonCode.OK, null, null),
+            List.of(FType.FULL), ExecType.FED, FederatedOutput.FOUT, true, FType.FULL, ReasonCode.OK, null, null),
         new Case("cell-noagg-part", CELL_RULE, cellSig("spoofCellPart", "NO_AGG"),
-            List.of(FType.PART), Exec.FED, Placement.FOUT, true, FType.PART, ReasonCode.OK, null, null),
+            List.of(FType.PART), ExecType.FED, FederatedOutput.FOUT, true, FType.PART, ReasonCode.OK, null, null),
         new Case("cell-rowagg-row", CELL_RULE, cellSig("spoofCellRowAgg", "ROW_AGG"),
-            List.of(FType.ROW), Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
         new Case("cell-colagg-row", CELL_RULE, cellSig("spoofCellColAgg", "COL_AGG"),
-            List.of(FType.ROW), Exec.FED, Placement.LOUT, false, null, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.LOUT, false, null, ReasonCode.OK, null, null),
         new Case("cell-fullagg-col", CELL_RULE, cellSig("spoofCellFullAgg", "FULL_AGG"),
-            List.of(FType.COL), Exec.FED, Placement.LOUT, false, null, ReasonCode.OK, "scalar output → LOUT", null),
+            List.of(FType.COL), ExecType.FED, FederatedOutput.LOUT, false, null, ReasonCode.OK, "scalar output → LOUT", null),
         new Case("cell-broadcast-only", CELL_RULE, cellSig("spoofCellBroadcast", "NO_AGG"),
-            List.of(FType.BROADCAST), Exec.CP, Placement.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, null),
+            List.of(FType.BROADCAST), ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, null),
         new Case("row-noagg-row", ROW_RULE, rowSig("spoofRowNoAgg", "NO_AGG"),
-            List.of(FType.ROW), Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
         new Case("row-fullagg-row", ROW_RULE, rowSig("spoofRowFullAgg", "FULL_AGG"),
-            List.of(FType.ROW), Exec.FED, Placement.LOUT, false, null, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.LOUT, false, null, ReasonCode.OK, null, null),
         new Case("row-noagg-col", ROW_RULE, rowSig("spoofRowMisalign", "NO_AGG"),
-            List.of(FType.COL), Exec.CP, Placement.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, null),
+            List.of(FType.COL), ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, null),
         new Case("multi-row", MULTI_RULE, multiSig("spoofMultiRow"),
-            List.of(FType.ROW), Exec.FED, Placement.LOUT, false, null, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.LOUT, false, null, ReasonCode.OK, null, null),
         new Case("multi-full", MULTI_RULE, multiSig("spoofMultiFull"),
-            List.of(FType.FULL), Exec.CP, Placement.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, null),
+            List.of(FType.FULL), ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, null),
         new Case("outer-cellwise-col", OUTER_RULE, outerSig("spoofOuterCellCol", "CELLWISE_OUTER_PRODUCT"),
-            List.of(FType.COL), Exec.FED, Placement.FOUT, true, FType.COL, ReasonCode.OK, null, null),
+            List.of(FType.COL), ExecType.FED, FederatedOutput.FOUT, true, FType.COL, ReasonCode.OK, null, null),
         new Case("outer-cellwise-full", OUTER_RULE, outerSig("spoofOuterCellFull", "CELLWISE_OUTER_PRODUCT"),
-            List.of(FType.FULL), Exec.FED, Placement.FOUT, true, FType.FULL, ReasonCode.OK, null, null),
+            List.of(FType.FULL), ExecType.FED, FederatedOutput.FOUT, true, FType.FULL, ReasonCode.OK, null, null),
         new Case("outer-left-col", OUTER_RULE, outerSig("spoofOuterLeftCol", "LEFT_OUTER_PRODUCT"),
-            List.of(FType.COL), Exec.FED, Placement.FOUT, true, FType.COL, ReasonCode.OK, null, null),
+            List.of(FType.COL), ExecType.FED, FederatedOutput.FOUT, true, FType.COL, ReasonCode.OK, null, null),
         new Case("outer-right-row", OUTER_RULE, outerSig("spoofOuterRightRow", "RIGHT_OUTER_PRODUCT"),
-            List.of(FType.ROW), Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, null),
         new Case("outer-agg-row", OUTER_RULE, outerSig("spoofOuterAgg", "AGG_OUTER_PRODUCT"),
-            List.of(FType.ROW), Exec.FED, Placement.LOUT, false, null, ReasonCode.OK, "scalar output → LOUT", null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.LOUT, false, null, ReasonCode.OK, "scalar output → LOUT", null),
         new Case("outer-left-row-mismatch", OUTER_RULE, outerSig("spoofOuterLeftRow", "LEFT_OUTER_PRODUCT"),
-            List.of(FType.ROW), Exec.FED, Placement.LOUT, false, null, ReasonCode.OK, null, null),
+            List.of(FType.ROW), ExecType.FED, FederatedOutput.LOUT, false, null, ReasonCode.OK, null, null),
         guardFailCase(),
         guardUnknownCase());
 
@@ -106,14 +106,14 @@ public class SpoofRulesTest {
     Map<String,String> attrs = cellAttrs("NO_AGG");
     attrs.put("rc.guardOverride", "false");
     return new Case("guard-fail", CELL_RULE, spoofSig("spoofCellGuardFail", attrs),
-        List.of(FType.ROW), Exec.CP, Placement.LOUT, false, null,
+        List.of(FType.ROW), ExecType.CP, FederatedOutput.LOUT, false, null,
         ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", null);
   }
 
   private static Case guardUnknownCase() {
     Map<String,String> attrs = cellAttrs("NO_AGG");
     return new Case("guard-unknown", CELL_RULE, spoofSig("spoofCellGuardUnknown", attrs),
-        List.of(FType.ROW), Exec.FED, Placement.FOUT, true, FType.ROW,
+        List.of(FType.ROW), ExecType.FED, FederatedOutput.FOUT, true, FType.ROW,
         ReasonCode.OK, null, ReasonCode.REPR_CHANGE_GUARD_UNKNOWN);
   }
 
@@ -150,7 +150,7 @@ public class SpoofRulesTest {
   }
 
   private static OpSig spoofSig(String opcode, Map<String,String> attrs) {
-    return new OpSig(opcode, OpCategory.SPOOF, attrs);
+    return OpSig.of(opcode, OpCategory.SPOOF, attrs);
   }
 
   private static final class Case {
@@ -158,8 +158,8 @@ public class SpoofRulesTest {
     final Rule rule;
     final OpSig sig;
     final List<FType> inFTypes;
-    final Exec exec;
-    final Placement placement;
+    final ExecType exec;
+    final FederatedOutput placement;
     final boolean fout;
     final FType foutType;
     final ReasonCode reason;
@@ -167,7 +167,7 @@ public class SpoofRulesTest {
     final ReasonCode expectedNote;
 
     Case(String name, Rule rule, OpSig sig, List<FType> inFTypes,
-        Exec exec, Placement placement, boolean fout, FType foutType,
+        ExecType exec, FederatedOutput placement, boolean fout, FType foutType,
         ReasonCode reason, String detail, ReasonCode expectedNote) {
       this.name = name;
       this.rule = rule;

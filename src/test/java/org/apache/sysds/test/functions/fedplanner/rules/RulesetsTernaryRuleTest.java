@@ -20,17 +20,18 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
@@ -52,8 +53,8 @@ public class RulesetsTernaryRuleTest {
             mapSig(true, Map.of("map.margin", "1")),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
             UNKNOWN_SHAPE,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -64,8 +65,8 @@ public class RulesetsTernaryRuleTest {
             mapSig(false, Map.of("map.margin", "2")),
             List.of(FType.LOCAL, FType.COL, FType.LOCAL),
             UNKNOWN_SHAPE,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.COL,
             ReasonCode.OK,
@@ -76,8 +77,8 @@ public class RulesetsTernaryRuleTest {
             mapSig(true, Map.of("map.margin", "2")),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
             UNKNOWN_SHAPE,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
@@ -92,11 +93,11 @@ public class RulesetsTernaryRuleTest {
     List<TestVector> cases = List.of(
         new TestVector(
             "plus-mult-row-dominant",
-            ewiseSig("+*", Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR),
+            ewiseSig(OpOp3.PLUS_MULT.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR),
             List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
             UNKNOWN_SHAPE,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.ROW,
             ReasonCode.OK,
@@ -104,11 +105,11 @@ public class RulesetsTernaryRuleTest {
             ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
         new TestVector(
             "minus-mult-second-fed",
-            ewiseSig("-*", Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
+            ewiseSig(OpOp3.MINUS_MULT.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
             List.of(FType.LOCAL, FType.COL, FType.BROADCAST),
             UNKNOWN_SHAPE,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.COL,
             ReasonCode.OK,
@@ -116,11 +117,11 @@ public class RulesetsTernaryRuleTest {
             ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
         new TestVector(
             "ifelse-part-leading",
-            ewiseSig("ifelse", Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
+            ewiseSig(OpOp3.IFELSE.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
             List.of(FType.PART, FType.LOCAL, FType.LOCAL),
             UNKNOWN_SHAPE,
-            Exec.FED,
-            Placement.FOUT,
+            ExecType.FED,
+            FederatedOutput.FOUT,
             true,
             FType.PART,
             ReasonCode.OK,
@@ -128,11 +129,11 @@ public class RulesetsTernaryRuleTest {
             ReasonCode.REPR_CHANGE_GUARD_UNKNOWN),
         new TestVector(
             "ifelse-no-fed-input",
-            ewiseSig("ifelse", Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
+            ewiseSig(OpOp3.IFELSE.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
             List.of(FType.LOCAL, FType.BROADCAST, FType.NF),
             UNKNOWN_SHAPE,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.NO_FED_INPUT,
@@ -140,11 +141,11 @@ public class RulesetsTernaryRuleTest {
             null),
         new TestVector(
             "ifelse-outer-like",
-            ewiseSig("ifelse", Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR),
+            ewiseSig(OpOp3.IFELSE.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR),
             List.of(FType.ROW, FType.COL, FType.LOCAL),
             UNKNOWN_SHAPE,
-            Exec.CP,
-            Placement.LOUT,
+            ExecType.CP,
+            FederatedOutput.LOUT,
             false,
             null,
             ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
@@ -157,7 +158,7 @@ public class RulesetsTernaryRuleTest {
   @Test
   public void ternaryElemwiseRuleFallsBackOnGuardFailure() {
     OpSig sig = ewiseSig(
-        "+*", Map.of(
+        OpOp3.PLUS_MULT.toString(), Map.of(
             "rc.memReqEstBytes", "10000000",
             "rc.memIn1EstBytes", "1",
             "rc.memIn2EstBytes", "1"),
@@ -165,8 +166,8 @@ public class RulesetsTernaryRuleTest {
     List<FType> fTypes = List.of(FType.ROW, FType.LOCAL, FType.LOCAL);
 
     OpCaps caps = elemRule.caps(sig, fTypes, UNKNOWN_SHAPE);
-    assertEquals(Exec.CP, caps.exec());
-    assertEquals(Placement.LOUT, caps.placement());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertEquals(ReasonCode.REPR_CHANGE_GUARD_FAIL, caps.reason());
     assertFalse("guard fallback should not allow FOUT", caps.foutEnabled());
     assertTrue("guard detail should propagate memReq info",
@@ -215,11 +216,11 @@ public class RulesetsTernaryRuleTest {
   private static OpSig mapSig(boolean frameIsFirst, Map<String,String> attrs) {
     InputKind first = frameIsFirst ? InputKind.FRAME : InputKind.SCALAR;
     InputKind second = frameIsFirst ? InputKind.SCALAR : InputKind.FRAME;
-    return new OpSig("_map", OpCategory.OTHER, attrs, first, second, InputKind.SCALAR);
+    return OpSig.of(OpOp3.MAP.toString(), OpCategory.OTHER, attrs, first, second, InputKind.SCALAR);
   }
 
   private static OpSig ewiseSig(String opcode, Map<String,String> attrs, InputKind... kinds) {
-    return new OpSig(opcode, OpCategory.OTHER, attrs, kinds);
+    return OpSig.of(opcode, OpCategory.OTHER, attrs, kinds);
   }
 
   private static final class TestVector {
@@ -227,8 +228,8 @@ public class RulesetsTernaryRuleTest {
     final OpSig sig;
     final List<FType> inTypes;
     final ShapeHint hint;
-    final Exec exec;
-    final Placement placement;
+    final ExecType exec;
+    final FederatedOutput placement;
     final boolean fout;
     final FType foutType;
     final ReasonCode reason;
@@ -236,7 +237,7 @@ public class RulesetsTernaryRuleTest {
     final ReasonCode note;
 
     TestVector(String name, OpSig sig, List<FType> inTypes, ShapeHint hint,
-        Exec exec, Placement placement, boolean fout, FType foutType,
+        ExecType exec, FederatedOutput placement, boolean fout, FType foutType,
         ReasonCode reason, String detail, ReasonCode note) {
       this.name = name;
       this.sig = sig;

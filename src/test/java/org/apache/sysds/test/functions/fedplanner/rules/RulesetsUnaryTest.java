@@ -19,17 +19,17 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import java.util.List;
 import java.util.Map;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Exec;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps.DecisionNote;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.Placement;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
@@ -48,21 +48,21 @@ public class RulesetsUnaryTest {
   public void unaryElemwiseScenarioTable() {
     List<Scenario> scenarios = List.of(
         Scenario.of("exp-full", elemRule, "exp", Map.of(), List.of(FType.FULL),
-            Exec.FED, Placement.FOUT, true, FType.FULL, ReasonCode.OK, null, true),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.FULL, ReasonCode.OK, null, true),
         Scenario.of("plogp-row", elemRule, "plogp", Map.of(), List.of(FType.ROW),
-            Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, null, true),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, true),
         Scenario.of("isna-guard-fail", elemRule, "isna", Map.of("rc.guardOverride", "false"), List.of(FType.COL),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", false),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", false),
         Scenario.of("broadcast", elemRule, "log", Map.of(), List.of(FType.BROADCAST),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
         Scenario.of("local", elemRule, "sqrt", Map.of(), List.of(FType.LOCAL),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.NO_FED_INPUT, null, false));
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.NO_FED_INPUT, null, false));
     runScenarios(scenarios);
   }
 
   @Test
   public void unaryElemwiseProfilePreservesFedTypes() {
-    OpSig sig = new OpSig("exp", elemRule.category(), Map.of(), InputKind.MATRIX);
+    OpSig sig = OpSig.of("exp", elemRule.category(), Map.of(), InputKind.MATRIX);
     List<List<FType>> candidates = List.of(
         List.of(FType.ROW, FType.PART, FType.BROADCAST, FType.FULL, FType.COL));
     List<FType> outs = elemRule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
@@ -73,21 +73,21 @@ public class RulesetsUnaryTest {
   public void ucumScenarioTable() {
     List<Scenario> scenarios = List.of(
         Scenario.of("ucumkpp-row", ucumRule, "ucumk+*", Map.of(), List.of(FType.ROW),
-            Exec.FED, Placement.FOUT, true, FType.ROW, ReasonCode.OK, UCUM_DETAIL, true),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, UCUM_DETAIL, true),
         Scenario.of("ucumkpp-col", ucumRule, "ucumk+*", Map.of(), List.of(FType.COL),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME, null, false),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME, null, false),
         Scenario.of("ucummin-full", ucumRule, "ucummin", Map.of(), List.of(FType.FULL),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
         Scenario.of("ucumk+-broadcast", ucumRule, "ucumk+", Map.of(), List.of(FType.BROADCAST),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
         Scenario.of("ucummax-local", ucumRule, "ucummax", Map.of(), List.of(FType.LOCAL),
-            Exec.CP, Placement.LOUT, false, null, ReasonCode.NO_FED_INPUT, null, false));
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.NO_FED_INPUT, null, false));
     runScenarios(scenarios);
   }
 
   @Test
   public void ucumProfileOnlyRow() {
-    OpSig sig = new OpSig("ucummin", ucumRule.category(), Map.of(), InputKind.MATRIX);
+    OpSig sig = OpSig.of("ucummin", ucumRule.category(), Map.of(), InputKind.MATRIX);
     List<List<FType>> candidates = List.of(List.of(FType.ROW, FType.COL, FType.PART));
     List<FType> outs = ucumRule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
     assertEquals(List.of(FType.ROW), outs);
@@ -95,7 +95,7 @@ public class RulesetsUnaryTest {
 
   private void runScenarios(List<Scenario> scenarios) {
     for (Scenario scenario : scenarios) {
-      OpSig sig = new OpSig(
+      OpSig sig = OpSig.of(
           scenario.opcode,
           scenario.rule.category(),
           scenario.attrs,
@@ -137,8 +137,8 @@ public class RulesetsUnaryTest {
     final String opcode;
     final Map<String,String> attrs;
     final List<FType> inFTypes;
-    final Exec expectedExec;
-    final Placement expectedPlacement;
+    final ExecType expectedExec;
+    final FederatedOutput expectedPlacement;
     final boolean expectFout;
     final FType expectedFoutFType;
     final ReasonCode reason;
@@ -146,7 +146,7 @@ public class RulesetsUnaryTest {
     final boolean expectGuardNote;
 
     private Scenario(String name, Rule rule, String opcode, Map<String,String> attrs, List<FType> inFTypes,
-        Exec expectedExec, Placement expectedPlacement, boolean expectFout, FType expectedFoutFType,
+        ExecType expectedExec, FederatedOutput expectedPlacement, boolean expectFout, FType expectedFoutFType,
         ReasonCode reason, String detail, boolean expectGuardNote) {
       this.name = name;
       this.rule = rule;
@@ -163,7 +163,7 @@ public class RulesetsUnaryTest {
     }
 
     static Scenario of(String name, Rule rule, String opcode, Map<String,String> attrs, List<FType> inFTypes,
-        Exec expectedExec, Placement expectedPlacement, boolean expectFout, FType expectedFoutFType,
+        ExecType expectedExec, FederatedOutput expectedPlacement, boolean expectFout, FType expectedFoutFType,
         ReasonCode reason, String detail, boolean expectGuardNote) {
       return new Scenario(name, rule, opcode, attrs, inFTypes,
           expectedExec, expectedPlacement, expectFout, expectedFoutFType, reason, detail, expectGuardNote);

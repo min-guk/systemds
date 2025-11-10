@@ -123,6 +123,14 @@ public class AggBinaryOp extends MultiThreadedHop {
 		return _method;
 	}
 
+	public OpOp2 getInnerOp() {
+		return innerOp;
+	}
+
+	public AggOp getOuterOp() {
+		return outerOp;
+	}
+
 	@Override
 	public boolean isGPUEnabled() {
 		if (!DMLScript.USE_ACCELERATOR)

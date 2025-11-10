@@ -1,0 +1,592 @@
+package org.apache.sysds.hops.fedplanner.rules.bridge;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.Direction;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.FileFormat;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
+import org.apache.sysds.common.Types.ReOrgOp;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LeftIndexingOp;
+import org.apache.sysds.hops.NaryOp;
+import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
+import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.codegen.SpoofFusedOp;
+import org.apache.sysds.hops.fedplanner.FTypes;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
+import org.apache.sysds.lops.MapMultChain.ChainType;
+import org.apache.sysds.lops.MMTSJ.MMTSJType;
+import org.apache.sysds.runtime.codegen.CodegenUtils;
+import org.apache.sysds.runtime.codegen.SpoofCellwise;
+import org.apache.sysds.runtime.codegen.SpoofMultiAggregate;
+import org.apache.sysds.runtime.codegen.SpoofOperator;
+import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
+import org.apache.sysds.runtime.codegen.SpoofRowwise;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+
+/**
+ * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
+ */
+public final class OracleFacade {
+  private static final String ATTR_DIRECTION = "direction";
+  private static final String ATTR_AGG_OP = "aggOp";
+  private static final String ATTR_Q_TYPE = "q.type";
+  private static final String ATTR_WDIVMM_BASE_TYPE = "wdivmm.baseType";
+  private static final String ATTR_MAP_MARGIN = "map.margin";
+  private static final String ATTR_BYROW = "reshape.byrow";
+  private static final String ATTR_VAR_WRITE_FED = "var.write.federated";
+  private static final String ATTR_INNER = "inner";
+  private static final String ATTR_OUTER = "outer";
+  private static final String ATTR_ALIGN = "align";
+  private static final String ATTR_FORCE_FED = "force_federated";
+  private static final String ATTR_FORCE_LOCAL = "force_local";
+  private static final String ATTR_FORCE_FOUT = "force_fout";
+  private static final String ATTR_R_IS_VECTOR = "r_is_vector";
+  private static final String ATTR_MMCHAIN_TYPE = "mmchain.type";
+  private static final String ATTR_MMCHAIN_WEIGHTED = "mmchain.weighted";
+  private static final String ATTR_ALIGNED_W = "alignedW";
+  private static final String ATTR_TSMM_TYPE = "tsmm.type";
+  private static final String ATTR_TSMM_FED_OUT = "tsmm.fedOut";
+  private static final String ATTR_CTABLE_DISJOINT = "ctable_disjoint_bins";
+  private static final String ATTR_CBIND = "cbind";
+  private static final String ATTR_SPOOF_TEMPLATE = "spoof.template";
+  private static final String ATTR_SPOOF_CELL_TYPE = "spoof.cellType";
+  private static final String ATTR_SPOOF_ROW_TYPE = "spoof.rowType";
+  private static final String ATTR_SPOOF_OUTER_TYPE = "spoof.outer.type";
+  private static final String ATTR_GUARD_DEFAULT = "rc.guardDefaultIfUnknown";
+  private static final String ALIGN_COL_T = "COL_T";
+
+  private final RuleRegistry registry;
+  private final RulesCore.OracleEngine oracle;
+
+  public OracleFacade(RuleRegistry registry) {
+    this.registry = Objects.requireNonNull(registry, "registry");
+    this.oracle = new RulesCore.OracleEngine(registry);
+  }
+
+  public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes) {
+    return decide(hop, inFTypes, buildShapeHint(hop));
+  }
+
+  public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
+    Objects.requireNonNull(hop, "hop");
+    OpSig sig = buildSignature(hop);
+    List<FType> mapped = mapFederatedTypes(hop, inFTypes);
+    ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop);
+    return oracle.decide(sig, mapped, effectiveHint);
+  }
+
+  public List<RulesApi.OpCaps> exploreAll(
+      Hop hop, List<Set<FTypes.FType>> candidates, ShapeHint hint) {
+    Objects.requireNonNull(hop, "hop");
+    List<List<FTypes.FType>> combos = enumerateCandidates(candidates);
+    List<RulesApi.OpCaps> results = new ArrayList<>(combos.size());
+    for (List<FTypes.FType> combo : combos) {
+      results.add(decide(hop, combo, hint));
+    }
+    return results;
+  }
+
+  OpSig describe(Hop hop) {
+    Objects.requireNonNull(hop, "hop");
+    return buildSignature(hop);
+  }
+
+  private OpSig buildSignature(Hop hop) {
+    String opcode = CanonicalOpcode.from(hop);
+    OpCategory category = resolveCategory(hop, opcode);
+    Map<String,String> attrs = new LinkedHashMap<>();
+    attrs.put(ATTR_GUARD_DEFAULT, "allow");
+    enrichAttributes(hop, attrs);
+    List<InputKind> kinds = inputKinds(hop);
+    return new OpSig(opcode, category, attrs, kinds);
+  }
+
+  private OpCategory resolveCategory(Hop hop, String opcode) {
+    Optional<Rule> direct = registry.byOpcode(opcode);
+    if (direct.isPresent())
+      return direct.get().category();
+
+    if (hop instanceof AggUnaryOp)
+      return OpCategory.AGG_UNARY;
+    if (hop instanceof QuaternaryOp)
+      return OpCategory.QUATERNARY;
+    if (hop instanceof SpoofFusedOp)
+      return OpCategory.SPOOF;
+    if (hop instanceof ReorgOp)
+      return OpCategory.REORG;
+    if (hop instanceof AggBinaryOp && ((AggBinaryOp) hop).isMatrixMultiply())
+      return OpCategory.BINARY_MM;
+    if (hop instanceof AggBinaryOp)
+      return OpCategory.BINARY_EWISE;
+    if (hop instanceof BinaryOp || hop instanceof NaryOp)
+      return OpCategory.BINARY_EWISE;
+    if (hop instanceof TernaryOp)
+      return OpCategory.OTHER;
+    if (hop instanceof UnaryOp)
+      return OpCategory.OTHER;
+    return OpCategory.OTHER;
+  }
+
+  private void enrichAttributes(Hop hop, Map<String,String> attrs) {
+    if (hop instanceof AggUnaryOp)
+      addAggUnaryAttrs((AggUnaryOp) hop, attrs);
+    if (hop instanceof AggBinaryOp)
+      addAggBinaryAttrs((AggBinaryOp) hop, attrs);
+    if (hop instanceof QuaternaryOp)
+      addQuaternaryAttrs((QuaternaryOp) hop, attrs);
+    if (hop instanceof TernaryOp)
+      addTernaryAttrs((TernaryOp) hop, attrs);
+    if (hop instanceof ReorgOp)
+      addReorgAttrs((ReorgOp) hop, attrs);
+    if (hop instanceof DataOp)
+      addDataOpAttrs((DataOp) hop, attrs);
+    if (hop instanceof SpoofFusedOp)
+      addSpoofAttrs((SpoofFusedOp) hop, attrs);
+    if (isAppend(hop))
+      attrs.put(ATTR_CBIND, Boolean.toString(isCbind(hop)));
+  }
+
+  private void addAggUnaryAttrs(AggUnaryOp hop, Map<String,String> attrs) {
+    Direction dir = hop.getDirection();
+    String dirToken;
+    switch (dir) {
+      case Row:
+        dirToken = "ROW";
+        break;
+      case Col:
+        dirToken = "COL";
+        break;
+      case RowCol:
+      default:
+        dirToken = "ROWCOL";
+        break;
+    }
+    attrs.put(ATTR_DIRECTION, dirToken);
+    attrs.put(ATTR_AGG_OP, hop.getOp().name());
+  }
+
+  private void addAggBinaryAttrs(AggBinaryOp hop, Map<String,String> attrs) {
+    if (hop.getInnerOp() != null)
+      attrs.put(ATTR_INNER, hop.getInnerOp().name());
+    if (hop.getOuterOp() != null)
+      attrs.put(ATTR_OUTER, hop.getOuterOp().name());
+
+    ExecType forced = hop.getForcedExecType();
+    if (forced == ExecType.FED)
+      attrs.put(ATTR_FORCE_FED, Boolean.TRUE.toString());
+    else if (forced == ExecType.CP)
+      attrs.put(ATTR_FORCE_LOCAL, Boolean.TRUE.toString());
+
+    FederatedOutput fedOut = hop.getFederatedOutput();
+    if (fedOut == FederatedOutput.FOUT)
+      attrs.put(ATTR_FORCE_FOUT, Boolean.TRUE.toString());
+
+    Boolean rightVector = vectorFlag(hop.getInput(), 1);
+    if (rightVector != null)
+      attrs.put(ATTR_R_IS_VECTOR, rightVector.toString());
+
+    ChainType chain = hop.checkMapMultChain();
+    if (chain != null && chain != ChainType.NONE) {
+      attrs.put(ATTR_MMCHAIN_TYPE, chain.name());
+      attrs.put(ATTR_MMCHAIN_WEIGHTED, Boolean.toString(chain != ChainType.XtXv));
+    }
+
+    MMTSJType tsmm = hop.checkTransposeSelf();
+    if (tsmm != null && tsmm != MMTSJType.NONE) {
+      attrs.put(ATTR_TSMM_TYPE, tsmm.name());
+      attrs.put(ATTR_ALIGN, ALIGN_COL_T);
+    }
+  }
+
+  private void addQuaternaryAttrs(QuaternaryOp hop, Map<String,String> attrs) {
+    attrs.put(ATTR_Q_TYPE, hop.getOp().name());
+    if (hop.getOp() == org.apache.sysds.common.Types.OpOp4.WDIVMM)
+      attrs.put(ATTR_WDIVMM_BASE_TYPE, Integer.toString(hop.getBaseType()));
+  }
+
+  private void addTernaryAttrs(TernaryOp hop, Map<String,String> attrs) {
+    if (hop.getOp() == OpOp3.MAP) {
+      Hop marginHop = hop.getInput().size() > 2 ? hop.getInput().get(2) : null;
+      Long margin = literalLong(marginHop);
+      if (margin != null)
+        attrs.put(ATTR_MAP_MARGIN, Long.toString(margin));
+    }
+    if (hop.getOp() == OpOp3.CTABLE) {
+      attrs.put(ATTR_CTABLE_DISJOINT, Boolean.toString(hop.isDisjointInputs()));
+    }
+  }
+
+  private void addReorgAttrs(ReorgOp hop, Map<String,String> attrs) {
+    if (hop.getOp() != ReOrgOp.RESHAPE)
+      return;
+    Hop byRow = hop.getInput().size() > 4 ? hop.getInput().get(4) : null;
+    Boolean flag = literalBoolean(byRow);
+    if (flag != null)
+      attrs.put(ATTR_BYROW, flag.toString());
+  }
+
+  private void addDataOpAttrs(DataOp hop, Map<String,String> attrs) {
+    if (!hop.isWrite())
+      return;
+    boolean federatedTarget = hop.getFileFormat() == FileFormat.FEDERATED
+        || hop.isFederatedDataOp();
+    attrs.put(ATTR_VAR_WRITE_FED, Boolean.toString(federatedTarget));
+  }
+
+  private void addSpoofAttrs(SpoofFusedOp hop, Map<String,String> attrs) {
+    Class<?> generator = hop.getGeneratorClass();
+    if (generator == null)
+      return;
+    try {
+      SpoofOperator op = CodegenUtils.createInstance(generator);
+      if (op instanceof SpoofCellwise) {
+        attrs.put(ATTR_SPOOF_TEMPLATE, "cellwise");
+        attrs.put(ATTR_SPOOF_CELL_TYPE,
+            cellTypeToken(((SpoofCellwise) op).getCellType()));
+      }
+      else if (op instanceof SpoofRowwise) {
+        attrs.put(ATTR_SPOOF_TEMPLATE, "rowwise");
+        attrs.put(ATTR_SPOOF_ROW_TYPE,
+            rowTypeToken(((SpoofRowwise) op).getRowType()));
+      }
+      else if (op instanceof SpoofMultiAggregate) {
+        attrs.put(ATTR_SPOOF_TEMPLATE, "multiagg");
+      }
+      else if (op instanceof SpoofOuterProduct) {
+        attrs.put(ATTR_SPOOF_TEMPLATE, "outer");
+        attrs.put(ATTR_SPOOF_OUTER_TYPE,
+            outerTypeToken(((SpoofOuterProduct) op).getOuterProdType()));
+      }
+    } catch (Exception ex) {
+      // Ignore instantiation issues; attributes remain unset.
+    }
+  }
+
+  private static String cellTypeToken(SpoofCellwise.CellType type) {
+    if (type == null)
+      return null;
+    switch (type) {
+      case FULL_AGG:
+        return "fullagg";
+      case ROW_AGG:
+        return "rowagg";
+      case COL_AGG:
+        return "colagg";
+      case NO_AGG:
+      default:
+        return "noagg";
+    }
+  }
+
+  private static String rowTypeToken(SpoofRowwise.RowType type) {
+    if (type == null)
+      return null;
+    switch (type) {
+      case FULL_AGG:
+        return "fullagg";
+      case ROW_AGG:
+        return "rowagg";
+      case NO_AGG_B1:
+        return "noaggb1";
+      case NO_AGG_CONST:
+        return "noaggconst";
+      case NO_AGG:
+        return "noagg";
+      default:
+        return type.name().toLowerCase(Locale.ROOT);
+    }
+  }
+
+  private static String outerTypeToken(SpoofOuterProduct.OutProdType type) {
+    if (type == null)
+      return null;
+    switch (type) {
+      case LEFT_OUTER_PRODUCT:
+        return "leftouterproduct";
+      case RIGHT_OUTER_PRODUCT:
+        return "rightouterproduct";
+      case AGG_OUTER_PRODUCT:
+        return "aggouterproduct";
+      case CELLWISE_OUTER_PRODUCT:
+      default:
+        return "cellwiseouterproduct";
+    }
+  }
+
+  private boolean isAppend(Hop hop) {
+    if (hop instanceof BinaryOp) {
+      OpOp2 op = ((BinaryOp) hop).getOp();
+      return op == OpOp2.CBIND || op == OpOp2.RBIND;
+    }
+    if (hop instanceof NaryOp) {
+      org.apache.sysds.common.Types.OpOpN op = ((NaryOp) hop).getOp();
+      return op == org.apache.sysds.common.Types.OpOpN.CBIND
+          || op == org.apache.sysds.common.Types.OpOpN.RBIND;
+    }
+    return false;
+  }
+
+  private boolean isCbind(Hop hop) {
+    if (hop instanceof BinaryOp)
+      return ((BinaryOp) hop).getOp() == OpOp2.CBIND;
+    if (hop instanceof NaryOp)
+      return ((NaryOp) hop).getOp() == org.apache.sysds.common.Types.OpOpN.CBIND;
+    return false;
+  }
+
+  private static Boolean vectorFlag(List<Hop> inputs, int idx) {
+    if (inputs == null || idx < 0 || idx >= inputs.size())
+      return null;
+    return vectorFlag(inputs.get(idx));
+  }
+
+  private static Boolean vectorFlag(Hop hop) {
+    if (hop == null)
+      return null;
+    if (hop.rowsKnown() && hop.colsKnown()) {
+      long rows = hop.getDim1();
+      long cols = hop.getDim2();
+      return (rows == 1 && cols >= 0) || (cols == 1 && rows >= 0);
+    }
+    return null;
+  }
+
+  private static Long literalLong(Hop hop) {
+    if (!(hop instanceof LiteralOp))
+      return null;
+    LiteralOp lit = (LiteralOp) hop;
+    switch (lit.getValueType()) {
+      case INT64:
+      case UINT8:
+      case FP64:
+      case FP32:
+      case INT32:
+        return lit.getLongValue();
+      default:
+        return null;
+    }
+  }
+
+  private static Boolean literalBoolean(Hop hop) {
+    if (!(hop instanceof LiteralOp))
+      return null;
+    LiteralOp lit = (LiteralOp) hop;
+    switch (lit.getValueType()) {
+      case BOOLEAN:
+        return lit.getBooleanValue();
+      case FP64:
+      case FP32:
+      case INT64:
+      case INT32:
+      case UINT8:
+        return lit.getDoubleValue() != 0d;
+      default:
+        return null;
+    }
+  }
+
+  private List<InputKind> inputKinds(Hop hop) {
+    List<InputKind> kinds = new ArrayList<>();
+    if (hop.getInput() == null || hop.getInput().isEmpty())
+      return kinds;
+    for (Hop in : hop.getInput()) {
+      if (in == null) {
+        kinds.add(InputKind.UNKNOWN);
+        continue;
+      }
+      DataType dt = in.getDataType();
+      if (dt == DataType.MATRIX)
+        kinds.add(InputKind.MATRIX);
+      else if (dt == DataType.FRAME)
+        kinds.add(InputKind.FRAME);
+      else if (dt == DataType.SCALAR)
+        kinds.add(InputKind.SCALAR);
+      else
+        kinds.add(InputKind.UNKNOWN);
+    }
+    return kinds;
+  }
+
+  private List<FType> mapFederatedTypes(Hop hop, List<FTypes.FType> runtimeTypes) {
+    List<FType> mapped = new ArrayList<>();
+    int inputSize = hop.getInput() == null ? 0 : hop.getInput().size();
+    for (int i = 0; i < inputSize; i++) {
+      FTypes.FType rt = (runtimeTypes == null || i >= runtimeTypes.size()) ? null : runtimeTypes.get(i);
+      mapped.add(mapFederatedType(rt, hop.getInput().get(i)));
+    }
+    return mapped;
+  }
+
+  private FType mapFederatedType(FTypes.FType runtimeType, Hop input) {
+    if (input != null && input.getDataType() != DataType.MATRIX)
+      return FType.LOCAL;
+    if (runtimeType == null)
+      return FType.NF;
+    switch (runtimeType) {
+      case ROW:
+        return FType.ROW;
+      case COL:
+        return FType.COL;
+      case FULL:
+        return FType.FULL;
+      case PART:
+        return FType.PART;
+      case BROADCAST:
+        return FType.BROADCAST;
+      default:
+        return FType.NF;
+    }
+  }
+
+  private ShapeHint buildShapeHint(Hop hop) {
+    long rows = hop.getDim1();
+    long cols = hop.getDim2();
+    int blockSize = hop.getBlocksize();
+    Hop a = hop.getInput() != null && hop.getInput().size() > 0 ? hop.getInput().get(0) : null;
+    Hop b = hop.getInput() != null && hop.getInput().size() > 1 ? hop.getInput().get(1) : null;
+    long rowsA = (a != null) ? a.getDim1() : -1;
+    long colsA = (a != null) ? a.getDim2() : -1;
+    long rowsB = (b != null) ? b.getDim1() : -1;
+    long colsB = (b != null) ? b.getDim2() : -1;
+    return new ShapeHint(rows, cols, blockSize, Optional.empty(), rowsA, colsA, rowsB, colsB);
+  }
+
+  private List<List<FTypes.FType>> enumerateCandidates(List<Set<FTypes.FType>> candidates) {
+    List<List<FTypes.FType>> combos = new ArrayList<>();
+    if (candidates == null || candidates.isEmpty()) {
+      combos.add(List.of());
+      return combos;
+    }
+    backtrackCandidates(candidates, 0, new LinkedList<>(), combos);
+    return combos;
+  }
+
+  private void backtrackCandidates(
+      List<Set<FTypes.FType>> candidates,
+      int idx,
+      LinkedList<FTypes.FType> current,
+      List<List<FTypes.FType>> result) {
+    if (idx == candidates.size()) {
+      result.add(new ArrayList<>(current));
+      return;
+    }
+    Set<FTypes.FType> options = candidates.get(idx);
+    if (options == null || options.isEmpty()) {
+      current.add(null);
+      backtrackCandidates(candidates, idx + 1, current, result);
+      current.removeLast();
+      return;
+    }
+    for (FTypes.FType option : options) {
+      current.add(option);
+      backtrackCandidates(candidates, idx + 1, current, result);
+      current.removeLast();
+    }
+  }
+
+  private static boolean isMapLeftIndex(LeftIndexingOp hop) {
+    if (hop == null || hop.getInput() == null || hop.getInput().size() < 2)
+      return false;
+    Hop lhs = hop.getInput().get(0);
+    Hop rhs = hop.getInput().get(1);
+    if (rhs == null)
+      return false;
+    if (rhs.getDataType() == DataType.SCALAR)
+      return true;
+
+    long m1Rows = (lhs != null) ? lhs.getDim1() : -1;
+    long m1Cols = (lhs != null) ? lhs.getDim2() : -1;
+    long m1Blen = (lhs != null) ? lhs.getBlocksize() : -1;
+    long m2Rows = rhs.getDim1();
+    long m2Cols = rhs.getDim2();
+    long m2Nnz = rhs.getNnz();
+    if (m1Rows <= 0 || m1Cols <= 0 || m2Rows <= 0 || m2Cols <= 0 || m1Blen <= 0)
+      return false;
+
+    boolean broadcastRhs = OptimizerUtils.checkSparkBroadcastMemoryBudget(
+        m2Rows, m2Cols, (int) m1Blen, m2Nnz);
+    if (broadcastRhs)
+      return true;
+
+    boolean aligned = rhs.getDataType() == DataType.MATRIX
+        && ((m1Rows == m2Rows && m1Cols <= m1Blen)
+        || (m1Cols == m2Cols && m1Rows <= m1Blen));
+    return aligned;
+  }
+
+  private static final class CanonicalOpcode {
+    private CanonicalOpcode() {}
+
+    static String from(Hop hop) {
+      if (hop == null)
+        return "";
+
+      if (hop instanceof AggBinaryOp && ((AggBinaryOp) hop).isMatrixMultiply())
+        return Opcodes.MMULT.toString();
+      if (hop instanceof LeftIndexingOp)
+        return isMapLeftIndex((LeftIndexingOp) hop)
+            ? Opcodes.MAPLEFTINDEX.toString()
+            : Opcodes.LEFT_INDEX.toString();
+      if (hop instanceof IndexingOp)
+        return Opcodes.RIGHT_INDEX.toString();
+      if (hop instanceof ReorgOp)
+        return ((ReorgOp) hop).getOp().toString();
+      if (hop instanceof AggUnaryOp)
+        return hop.getOpString().toLowerCase(Locale.ROOT);
+      if (hop instanceof UnaryOp)
+        return ((UnaryOp) hop).getOp().toString();
+      if (hop instanceof BinaryOp)
+        return ((BinaryOp) hop).getOp().toString();
+      if (hop instanceof NaryOp)
+        return ((NaryOp) hop).getOp().toString();
+      if (hop instanceof TernaryOp)
+        return ((TernaryOp) hop).getOp().toString();
+      if (hop instanceof QuaternaryOp)
+        return ((QuaternaryOp) hop).getOp().toString();
+      if (hop instanceof ParameterizedBuiltinOp) {
+        ParamBuiltinOp op = ((ParameterizedBuiltinOp) hop).getOp();
+        return (op != null) ? op.toString() : fallback(hop);
+      }
+      if (hop instanceof DataOp) {
+        return ((DataOp) hop).getOp().toString();
+      }
+      return fallback(hop);
+    }
+
+    private static String fallback(Hop hop) {
+      String raw = hop.getOpString();
+      return raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+    }
+  }
+}
