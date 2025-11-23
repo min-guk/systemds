@@ -84,22 +84,31 @@ import org.jgrapht.graph.DefaultDirectedWeightedGraph;
 import org.jgrapht.graph.DefaultWeightedEdge;
 
 public final class FederatedPlanMinSTPlanner {
+	private static int countDistinctWorkers(List<Pair<FederatedRange, FederatedData>> fedMap) {
+		Set<InetSocketAddress> workerAddrs = new HashSet<>();
+		for (Pair<FederatedRange, FederatedData> p : fedMap) {
+			FederatedData data = p.getRight();
+			if (data != null && data.getAddress() != null)
+				workerAddrs.add(data.getAddress());
+		}
+		return workerAddrs.size();
+	}
 
 	public static class FederatedPlanMinSTCostEstimator {
 		// Default value is used as a reasonable estimate since we only need
 		// to compare relative costs between different federated plans
 		// Memory bandwidth for local computations (25 GB/s)
 		private static final double DEFAULT_MBS_MEMORY_BANDWIDTH = 25000.0;
-		// Network bandwidth for data transfers between federated sites (1 Gbps)
-		private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
-		private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
-	
-		/**
-		 * Enumerates the entire DML program to generate federated execution plans.
-		 * It processes each statement block, computes the optimal federated plan,
-		 * detects and resolves conflicts, and optionally prints the plan tree.
-		 *
-		 * @param prog    The DML program to enumerate.
+	// Network bandwidth for data transfers between federated sites (1 Gbps)
+	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
+	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
+
+	/**
+	 * Enumerates the entire DML program to generate federated execution plans.
+	 * It processes each statement block, computes the optimal federated plan,
+	 * detects and resolves conflicts, and optionally prints the plan tree.
+	 *
+	 * @param prog    The DML program to enumerate.
 		 * @param isPrint A boolean indicating whether to print the federated plan tree.
 		 */
 		public static void estimateProgram(DMLProgram prog, FederatedPlanMinSTGraph graph, 
@@ -127,8 +136,10 @@ public final class FederatedPlanMinSTPlanner {
 	
 			Set<String> fnStack = new HashSet<>();
 			Set<Long> visitedHops = new HashSet<>();
+			int numOfWorkers = countDistinctWorkers(fedMap);
+			graph.setNumOfWorkers(numOfWorkers);
 			estimateStatementBlock(function, null, graph, rewireTable, 
-					unRefTwriteSet, fnStack, fedMap.size(), visitedHops);
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops);
 		}
 	
 		/**
@@ -424,9 +435,10 @@ public final class FederatedPlanMinSTPlanner {
 				progRootHopSet.add(graph.getHopRef(hopID));
 			}
 	
-			graph.setNumOfWorkers(fedMap.size());
+			int numOfWorkers = countDistinctWorkers(fedMap);
+			graph.setNumOfWorkers(numOfWorkers);
 			FederatedPlanMinSTCostEstimator.estimateProgram(prog, graph, rewireTable, 
-					unRefTwriteSet, fedMap.size(), true);
+					unRefTwriteSet, numOfWorkers, true);
 	
 			graph.getOptimalPlan();
 			FederatedPlannerLogger.logOptimalPlan(graph, true);
@@ -487,7 +499,7 @@ public final class FederatedPlanMinSTPlanner {
 		public void addEdgeWithNetCost(Vertex childVertex, long childHopID,
 									Vertex parentVertex, long parentHopID) {
 			// 1) 불일치 비용 w 계산 (자식 분할 기준)
-			double forwardingWeight = parentVertex.getChildForwardingWeight(childVertex.getLoopContext());
+			double forwardingWeight = parentVertex.computeForwardingWeightOfChild(childVertex.getLoopContext());
 			double netCostWithoutWeight = childVertex.getNetCostWithoutWeight();
 			double netCost = forwardingWeight * netCostWithoutWeight;
 			FType dt = childVertex.getDataType();
@@ -572,7 +584,7 @@ public final class FederatedPlanMinSTPlanner {
 	
 				// If the hop has parents, compare sum forwarding cost
 				// 1. Check parents' Exec Type
-				// 2. Calculate forwarding cost considering weight (getChildForwardingWeight)
+				// 2. Calculate forwarding cost considering weight (computeForwardingWeightOfChild)
 				// 3. Assign to the side with higher total forwarding cost
 				double fedParentForwardingCostSum = 0.0;
 				double localParentForwardingCostSum = 0.0;
@@ -591,7 +603,7 @@ public final class FederatedPlanMinSTPlanner {
 					if (parentVertex == null) continue;
 	
 					// Get child forwarding weight considering loop context
-					double weight = parentVertex.getChildForwardingWeight(vertex.getLoopContext());
+					double weight = parentVertex.computeForwardingWeightOfChild(vertex.getLoopContext());
 					double forwardingCost = weight * vertex.getNetCostWithoutWeight();
 	
 					if (sourceSide.contains(parent.getHopID())) {
@@ -627,7 +639,7 @@ public final class FederatedPlanMinSTPlanner {
 	
 				// If the hop has parents, compare sum forwarding cost
 				// 1. Check parents' Exec Type
-				// 2. Calculate forwarding cost considering weight (getChildForwardingWeight)
+				// 2. Calculate forwarding cost considering weight (computeForwardingWeightOfChild)
 				// 3. Assign to the side with higher total forwarding cost
 				double fedParentForwardingCostSum = 0.0;
 				double localParentForwardingCostSum = 0.0;
@@ -637,7 +649,7 @@ public final class FederatedPlanMinSTPlanner {
 					if (parentVertex == null) continue;
 	
 					// Get child forwarding weight considering loop context
-					double weight = parentVertex.getChildForwardingWeight(vertex.getLoopContext());
+					double weight = parentVertex.computeForwardingWeightOfChild(vertex.getLoopContext());
 					double forwardingCost = weight * vertex.getNetCostWithoutWeight();
 	
 					if (sourceSide.contains(parent.getHopID())) {
@@ -707,7 +719,18 @@ public final class FederatedPlanMinSTPlanner {
 				this.netCostWithoutWeight_ = netCostWithoutWeight;
 			}
 	
-			public double getChildForwardingWeight(List<Pair<Long, Double>> childLoopContext) {
+			/**
+			 * Estimates how often this parent's output is forwarded to the given child hop.
+			 * We start from the parent's networkWeight and amortize by loop iterations that
+			 * exist only in the child's loopContext beyond the longest common prefix,
+			 * assuming the forwarded result is reused across those inner iterations.
+			 *
+			 * Example:
+			 *  parent loopContext = [(for1, 100), (while2, 10)]
+			 *  childLoopContext  = [(for1, 100), (while2, 10), (for3, 5)]
+			 *  => forwardingWeight = networkWeight / 5 (reused across the inner for3 loop)
+			 */
+			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
 				final double base = (networkWeight != 0.0) ? networkWeight : 1.0;
 	
 				final List<Pair<Long, Double>> parent =
@@ -1256,7 +1279,10 @@ public final class FederatedPlanMinSTPlanner {
 	        }
 	        Privacy privacyConstraint = null;
 	
-	        // Request Privacy Constraints
+	        // Request Privacy Constraints.
+	        // NOTE: This assumes all federated workers return the same privacy constraint; differing
+	        // responses throw and stop planning instead of propagating the strongest privacy level.
+	        boolean hadFailure = false;
 	        for (Pair<FederatedRange, FederatedData> fed : fedMap) {
 	            FederatedData data = fed.getRight();
 	            if (!data.isInitialized())
@@ -1268,45 +1294,59 @@ public final class FederatedPlanMinSTPlanner {
 	
 	                if (response.isSuccessful()) {
 	                    Object[] responseData = response.getData();
-	                    String privacyConstraints = (String) responseData[0]; // Cast privacy constraint as string
-	                    Privacy tempPrivacy = null;
-	
-	                    if (privacyConstraints != null) {
-	                        String pcLower = privacyConstraints.trim().toLowerCase();
-	
-	                        // Map to appropriate PrivacyConstraint value based on input string
-	                        if (pcLower.equals("private")
-	                                || pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
-	                            tempPrivacy = Privacy.PRIVATE;
-	                        } else if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate") ||
-	                                pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
-	                            tempPrivacy = Privacy.PRIVATE_AGGREGATE;
-	                        } else if (pcLower.equals("public")
-	                                || pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
-	                            tempPrivacy = Privacy.PUBLIC;
-	                        } else {
-	                            throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints +
-	                                    ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PUBLIC'.");
-	                        }
+	                    if (responseData == null || responseData.length == 0) {
+	                        System.err.println("Failed to request privacy constraints: empty response.");
+	                        hadFailure = true;
+	                        continue;
 	                    }
-	
+
+	                    String privacyConstraints = (String) responseData[0]; // Cast privacy constraint as string
+	                    if (privacyConstraints == null) {
+	                        System.err.println("Failed to request privacy constraints: missing privacy value.");
+	                        hadFailure = true;
+	                        continue;
+	                    }
+	                    Privacy tempPrivacy = null;
+	                    String pcLower = privacyConstraints.trim().toLowerCase();
+
+	                    // Map to appropriate PrivacyConstraint value based on input string
+	                    if (pcLower.equals("private")
+	                            || pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
+	                        tempPrivacy = Privacy.PRIVATE;
+	                    } else if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate") ||
+	                            pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
+	                        tempPrivacy = Privacy.PRIVATE_AGGREGATE;
+	                    } else if (pcLower.equals("public")
+	                            || pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
+	                        tempPrivacy = Privacy.PUBLIC;
+	                    } else {
+	                        throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints +
+	                                ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PUBLIC'.");
+	                    }
+
 	                    if (privacyConstraint == null) {
 	                        privacyConstraint = tempPrivacy;
-	                    } else {
-	                        if (privacyConstraint != tempPrivacy) {
-	                            throw new DMLRuntimeException("Privacy constraints do not match.");
-	                        }
+	                    } else if (privacyConstraint != tempPrivacy) {
+	                        throw new DMLRuntimeException("Privacy constraints do not match.");
 	                    }
 	                } else {
 	                    // Error handling
 	                    String errorMsg = response.getErrorMessage();
 	                    System.err.println("Failed to request privacy constraints: " + errorMsg);
+	                    hadFailure = true;
 	                }
 	            } catch (Exception e) {
 	                // Exception handling
 	                e.printStackTrace();
+	                hadFailure = true;
 	            }
 	        }
+	        if (privacyConstraint == null)
+	            throw new DMLRuntimeException("Unable to retrieve privacy constraints from federated workers.");
+
+	        if (hadFailure)
+	            throw new DMLRuntimeException("Unable to plan: partial failure retrieving privacy constraints from federated workers.");
+
 	        return privacyConstraint;
 	    }
 	

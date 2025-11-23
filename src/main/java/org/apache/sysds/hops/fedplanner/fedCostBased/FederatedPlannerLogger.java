@@ -19,6 +19,8 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
@@ -46,6 +48,34 @@ import java.util.Set;
  * This class integrates the functionality of the former FederatedMemoTablePrinter.
  */
 public class FederatedPlannerLogger {
+
+    // ===================================================================================
+    // Generic Logging Helpers
+    // ===================================================================================
+
+    public static void logInfoMessage(String message) {
+        System.out.println("[INFO] " + message);
+    }
+
+    public static void logWarnMessage(String message) {
+        System.err.println("[WARN] " + message);
+    }
+
+    public static void logErrorMessage(String message) {
+        System.err.println("[ERROR] " + message);
+    }
+
+    public static void logException(String message, Exception ex) {
+        logErrorMessage(message);
+        if (ex == null) {
+            return;
+        }
+        System.err.println("[ERROR] Exception: " + ex.getClass().getSimpleName()
+            + (ex.getMessage() != null ? " - " + ex.getMessage() : ""));
+        StringWriter sw = new StringWriter();
+        ex.printStackTrace(new PrintWriter(sw));
+        System.err.println(sw.toString());
+    }
     
     /**
      * Logs hop information including name, hop ID, child hop IDs, privacy constraint, and ftype
@@ -647,12 +677,12 @@ public class FederatedPlannerLogger {
         //                 totalForwarding = 0.0;
         //             } else {
         //                 isForwardingCostOccured = "O";
-        //                 totalForwarding = plan.getChildForwardingWeight(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
+        //                 totalForwarding = plan.computeForwardingWeightOfChild(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
         //             }
         //             sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
         //                         childPair.getLeft(), isForwardingCostOccured, 
         //                         childPlan.getCumulativeCostPerParents(), 
-        //                         plan.getChildForwardingWeight(childPlan.getLoopContext()),
+        //                         plan.computeForwardingWeightOfChild(childPlan.getLoopContext()),
         //                         totalForwarding));
         //         }
         //     }
@@ -757,6 +787,26 @@ public class FederatedPlannerLogger {
                ", Score: " + score +
                ", Compatible: " + isCompatible +
                ", Reason: " + reason + ")";
+    }
+
+    /**
+     * Logs exec type conflicts when placement is identical but execution modes differ.
+     * @param currentHop The hop that has the conflict
+     * @param previousExecType The previously selected ExecType
+     * @param incomingExecType The newly observed ExecType
+     * @param resolvedExecType The ExecType chosen to resolve the conflict
+     * @param logPrefix Prefix string to identify the log source
+     */
+    public static void logExecTypeConflict(Hop currentHop, ExecType previousExecType,
+                                          ExecType incomingExecType, ExecType resolvedExecType,
+                                          String logPrefix) {
+        System.out.println("[" + logPrefix + "] EXEC TYPE CONFLICT DETECTED:");
+        System.out.println("  Hop - ID:" + currentHop.getHopID() +
+                          " Name:" + (currentHop.getName() != null ? currentHop.getName() : "null") +
+                          " Type:" + currentHop.getClass().getSimpleName() +
+                          " OpCode:" + currentHop.getOpString());
+        System.out.println("  ExecType (prev -> incoming -> resolved): "
+            + previousExecType + " -> " + incomingExecType + " -> " + resolvedExecType);
     }
 
     /**

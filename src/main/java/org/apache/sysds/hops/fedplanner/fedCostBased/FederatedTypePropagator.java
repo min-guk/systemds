@@ -77,8 +77,23 @@ public class FederatedTypePropagator {
 
     public static Privacy getPrivacyConstraint(Hop hop, List<Hop> inputHops, Map<Long, Privacy> privacyMap) {
         Privacy[] pc = new Privacy[inputHops.size()];
-        for (int i = 0; i < inputHops.size(); i++)
-            pc[i] = privacyMap.get(inputHops.get(i).getHopID());
+        StringBuilder missingPrivacy = new StringBuilder();
+        for (int i = 0; i < inputHops.size(); i++) {
+            Hop inputHop = inputHops.get(i);
+            Privacy p = privacyMap.get(inputHop.getHopID());
+            if (p == null) {
+                if (missingPrivacy.length() > 0)
+                    missingPrivacy.append(", ");
+                missingPrivacy.append(inputHop.getHopID()).append(" (").append(inputHop.getOpString()).append(")");
+            }
+            pc[i] = p;
+        }
+
+        if (missingPrivacy.length() > 0) {
+            FederatedPlannerLogger.logWarnMessage(
+                "Missing privacy entry for input hop(s): " + missingPrivacy +
+                " while evaluating hop " + hop.getHopID() + " (" + hop.getOpString() + "); treating as PUBLIC.");
+        }
 
         boolean hasPrivateAggreate = false;
 

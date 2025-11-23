@@ -77,7 +77,7 @@ public class FederatedPlanCostEstimator {
 
 			childCumulativeCost[currentIndex][0] = childLOutFedPlan.getCumulativeCostPerParents();
 			childCumulativeCost[currentIndex][1] = childFOutFedPlan.getCumulativeCostPerParents();
-			childForwardingCost[currentIndex] = hopCommon.getChildForwardingWeight(childLOutFedPlan.getLoopContext())
+			childForwardingCost[currentIndex] = hopCommon.computeForwardingWeightOfChild(childLOutFedPlan.getLoopContext())
 					* childLOutFedPlan.getForwardingCostPerParents();
 			currentIndex++;
 		}
@@ -92,7 +92,7 @@ public class FederatedPlanCostEstimator {
 				throw new RuntimeException("childLOutFedPlan is null for hopID: " + childHopID + " (see details above)");
 			}
 			lOUTOnlychildCumulativeCost.add(childLOutFedPlan.getCumulativeCostPerParents());
-			lOUTOnlychildForwardingCost.add(hopCommon.getChildForwardingWeight(childLOutFedPlan.getLoopContext())
+			lOUTOnlychildForwardingCost.add(hopCommon.computeForwardingWeightOfChild(childLOutFedPlan.getLoopContext())
 					* childLOutFedPlan.getForwardingCostPerParents());
 		}
 
@@ -106,7 +106,7 @@ public class FederatedPlanCostEstimator {
 				throw new RuntimeException("childFOutFedPlan is null for hopID: " + childHopID + " (see details above)");
 			}
 			fOUTOnlychildCumulativeCost.add(childFOutFedPlan.getCumulativeCostPerParents());
-			fOUTOnlychildForwardingCost.add(hopCommon.getChildForwardingWeight(childFOutFedPlan.getLoopContext())
+			fOUTOnlychildForwardingCost.add(hopCommon.computeForwardingWeightOfChild(childFOutFedPlan.getLoopContext())
 					* childFOutFedPlan.getForwardingCostPerParents());
 		}
 	}
@@ -301,10 +301,10 @@ public class FederatedPlanCostEstimator {
 					} else {
 						isFOutForwarding = true;
 						lOutAdditionalCost -= conflictParentFedPlan
-								.getChildForwardingWeight(confilctLOutFedPlan.getLoopContext())
+								.computeForwardingWeightOfChild(confilctLOutFedPlan.getLoopContext())
 								* confilctLOutFedPlan.getForwardingCostPerParents();
 						fOutAdditionalCost -= conflictParentFedPlan
-								.getChildForwardingWeight(confilctLOutFedPlan.getLoopContext())
+								.computeForwardingWeightOfChild(confilctLOutFedPlan.getLoopContext())
 								* confilctLOutFedPlan.getForwardingCostPerParents();
 					}
 				}
