@@ -28,7 +28,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;

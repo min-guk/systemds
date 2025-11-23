@@ -27,6 +27,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
@@ -39,17 +40,6 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 public final class RulesApi {
 
   private RulesApi() {}
-
-  // --- Execution & placement primitives --------------------------------------------------------
-
-  @Deprecated
-  public enum Exec { CP, FED }
-
-  @Deprecated
-  public enum Placement {
-    LOUT,
-    FOUT
-  }
 
   // Why a decision was taken / or not taken
   public enum ReasonCode {
@@ -112,17 +102,6 @@ public final class RulesApi {
     QUANTILE_SORT,
     VARIABLE_CAST,
     OTHER
-  }
-
-  // Local FType abstraction used by the rules layer only
-  public enum FType {
-    NF,
-    ROW,
-    COL,
-    FULL,
-    PART,
-    BROADCAST,
-    LOCAL
   }
 
   /**
@@ -316,15 +295,6 @@ public final class RulesApi {
       return builder().exec(exec).placement(placement);
     }
 
-    @Deprecated
-    public static Builder allow(Exec exec, Placement placement) {
-      ExecType e = (exec == null || exec == Exec.CP) ? ExecType.CP : ExecType.FED;
-      FederatedOutput p = (placement == Placement.FOUT)
-          ? FederatedOutput.FOUT
-          : FederatedOutput.LOUT;
-      return allow(e, p);
-    }
-
     public static Builder reject(ReasonCode reason) {
       return builder().reason(reason);
     }
@@ -376,20 +346,6 @@ public final class RulesApi {
       }
 
       public OpCaps build() { return new OpCaps(this); }
-
-      @Deprecated
-      public Builder exec(Exec v) {
-        ExecType resolved = (v == null) ? ExecType.CP
-            : (v == Exec.FED ? ExecType.FED : ExecType.CP);
-        return exec(resolved);
-      }
-
-      @Deprecated
-      public Builder placement(Placement v) {
-        FederatedOutput resolved = (v == null) ? FederatedOutput.LOUT
-            : (v == Placement.FOUT ? FederatedOutput.FOUT : FederatedOutput.LOUT);
-        return placement(resolved);
-      }
     }
 
     public static final class DecisionNote {
