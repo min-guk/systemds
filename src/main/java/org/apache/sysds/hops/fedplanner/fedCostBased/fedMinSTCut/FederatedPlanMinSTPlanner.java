@@ -19,9 +19,7 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.util.*;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,10 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Future;
-import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
@@ -53,6 +48,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCo
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedPlanCostEnumerator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTPlanner.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
@@ -72,11 +68,8 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
-import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
-import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.util.UtilFunctions;
 import org.jgrapht.Graph;
 import org.jgrapht.alg.flow.PushRelabelMFImpl;
@@ -731,28 +724,8 @@ public final class FederatedPlanMinSTPlanner {
 			 *  => forwardingWeight = networkWeight / 5 (reused across the inner for3 loop)
 			 */
 			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
-				final double base = (networkWeight != 0.0) ? networkWeight : 1.0;
-	
-				final List<Pair<Long, Double>> parent =
-					(loopContext != null) ? loopContext : Collections.emptyList();
-				final List<Pair<Long, Double>> child =
-					(childLoopContext != null) ? childLoopContext : Collections.emptyList();
-	
-				// 1) 부모/자식 루프 ID의 최장 공통 접두(Longest Common Prefix) 길이
-				int lcp = 0;
-				while (lcp < parent.size() && lcp < child.size()
-					   && Objects.equals(parent.get(lcp).getLeft(), child.get(lcp).getLeft())) {
-					lcp++;
-				}
-	
-				// 2) 자식의 LCP 이후(=자식만 추가로 갖는 내부 루프) 반복수로만 상쇄
-				double amort = 1.0;
-				for (int i = lcp; i < child.size(); i++) {
-					double iters = child.get(i).getRight();
-					if (iters > 0.0) amort *= iters;
-				}
-	
-				return base / amort;  // 부모 루프 반복수로는 나누지 않음!
+				return FederatedPlannerUtils.computeForwardingWeightOfChild(
+					networkWeight, loopContext, childLoopContext);
 			}
 	
 			@Override public boolean equals(Object o) {
@@ -1091,9 +1064,9 @@ public final class FederatedPlanMinSTPlanner {
 	            Map<Long, FType> fTypeMap, List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet) {
 	        Privacy privacy = null;
 	        FType fType = null;
-	
+
 	        if (!(hop instanceof DataOp)) {
-	            privacy = FederatedTypePropagator.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+	            privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
 	            fType = FederatedTypePropagator.getFederatedType(hop, fTypeMap);
 	            privacyConstraintMap.put(hop.getHopID(), privacy);
 	            fTypeMap.put(hop.getHopID(), fType);
@@ -1103,9 +1076,9 @@ public final class FederatedPlanMinSTPlanner {
 	        DataOp dataOp = (DataOp) hop;
 	        Types.OpOpData opType = dataOp.getOp();
 	        String hopName = dataOp.getName();
-	
+
 	        if (opType == Types.OpOpData.FEDERATED) {
-	            privacy = getFedWorkerMetaData(fedMap, dataOp);
+	            privacy = FederatedPlannerUtils.getFedWorkerMetaData(fedMap, dataOp);
 	            fType = FederatedTypePropagator.deriveFType((DataOp)hop);
 	            // Debug logging for FEDERATED operation
 	            FederatedPlannerLogger.logDataOpFTypeDebug(hop, fType, "FEDERATED", "Derived from partition ranges");
@@ -1114,7 +1087,7 @@ public final class FederatedPlanMinSTPlanner {
 	            innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
 	            unRefTwriteSet.add(hop.getHopID());
 	            // Propagate Privacy Constraint
-	            privacy = FederatedTypePropagator.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+	            privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
 	            fType = fTypeMap.get(hop.getInput(0).getHopID());
 	            // Propagate FType (TransWrite has only one input)
 	            // Debug logging for TRANSIENTWRITE operation
@@ -1190,12 +1163,12 @@ public final class FederatedPlanMinSTPlanner {
 	                }
 	            }
 	            // Propagate Privacy Constraint
-	            privacy = FederatedTypePropagator.getPrivacyConstraint(hop, filteredChildHops, privacyConstraintMap);
+	            privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, filteredChildHops, privacyConstraintMap);
 	            // Debug logging for TRANSIENTREAD operation
 	            FederatedPlannerLogger.logDataOpFTypeDebug(hop, fType, "TRANSIENTREAD", 
 	                "Propagated from " + filteredChildHops.size() + " child(s): " + debugInfo.toString());
 	        } else {
-	            privacy = FederatedTypePropagator.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+	            privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
 	            fType = FederatedTypePropagator.getFederatedType(hop, fTypeMap);
 	        }
 	
@@ -1231,125 +1204,6 @@ public final class FederatedPlanMinSTPlanner {
 	        return childHops;
 	    }
 	
-	    private static Privacy getFedWorkerMetaData(List<Pair<FederatedRange, FederatedData>> fedMap, DataOp initFedOp) {
-	        // Address
-	        Hop addressListHop = initFedOp.getInput(initFedOp.getParameterIndex("addresses"));
-	        List<String> addressList = new ArrayList<>();
-	        for (Hop addressHop : addressListHop.getInput()) {
-	            addressList.add(addressHop.getName());
-	        }
-	
-	        // Range
-	        Hop rangeListHop = initFedOp.getInput(initFedOp.getParameterIndex("ranges"));
-	        List<long[]> rangeList = new ArrayList<>();
-	        for (Hop rangeHop : rangeListHop.getInput()) {
-	            long beginRange = (long) Double.parseDouble(rangeHop.getInput(0).getName());
-	            long endRange = (long) Double.parseDouble(rangeHop.getInput(1).getName());
-	            rangeList.add(new long[] { beginRange, endRange });
-	        }
-	
-	        // Type
-	        String type = initFedOp.getInput(initFedOp.getParameterIndex("type")).getName();
-	        DataType fedDataType;
-	
-	        if (type.equalsIgnoreCase(FED_MATRIX_IDENTIFIER))
-	            fedDataType = DataType.MATRIX;
-	        else
-	            fedDataType = DataType.FRAME;
-	
-	        // Init Fed Data
-	        for (int i = 0; i < addressList.size(); i++) {
-	            String address = addressList.get(i);
-	            // We split address into url/ip, the port and file path of file to read
-	            String[] parsedValues = InitFEDInstruction.parseURL(address);
-	            String host = parsedValues[0];
-	            int port = Integer.parseInt(parsedValues[1]);
-	            String filePath = parsedValues[2];
-	
-	            long[] beginRange = rangeList.get(2 * i);
-	            long[] endRange = rangeList.get(2 * i + 1);
-	
-	            try {
-	                FederatedData federatedData = new FederatedData(fedDataType,
-	                        new InetSocketAddress(InetAddress.getByName(host), port), filePath);
-	                fedMap.add(new ImmutablePair<>(new FederatedRange(beginRange, endRange), federatedData));
-	            } catch (UnknownHostException e) {
-	                throw new RuntimeException("federated host was unknown: " + host, e);
-	            }
-	        }
-	        Privacy privacyConstraint = null;
-	
-	        // Request Privacy Constraints.
-	        // NOTE: This assumes all federated workers return the same privacy constraint; differing
-	        // responses throw and stop planning instead of propagating the strongest privacy level.
-	        boolean hadFailure = false;
-	        for (Pair<FederatedRange, FederatedData> fed : fedMap) {
-	            FederatedData data = fed.getRight();
-	            if (!data.isInitialized())
-	                data.initFederatedData(FederationUtils.getNextFedDataID());
-	
-	            Future<FederatedResponse> future = data.requestPrivacyConstraints();
-	            try {
-	                FederatedResponse response = future.get(); // Get actual response from Future
-	
-	                if (response.isSuccessful()) {
-	                    Object[] responseData = response.getData();
-	                    if (responseData == null || responseData.length == 0) {
-	                        System.err.println("Failed to request privacy constraints: empty response.");
-	                        hadFailure = true;
-	                        continue;
-	                    }
-
-	                    String privacyConstraints = (String) responseData[0]; // Cast privacy constraint as string
-	                    if (privacyConstraints == null) {
-	                        System.err.println("Failed to request privacy constraints: missing privacy value.");
-	                        hadFailure = true;
-	                        continue;
-	                    }
-	                    Privacy tempPrivacy = null;
-	                    String pcLower = privacyConstraints.trim().toLowerCase();
-
-	                    // Map to appropriate PrivacyConstraint value based on input string
-	                    if (pcLower.equals("private")
-	                            || pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PRIVATE;
-	                    } else if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate") ||
-	                            pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PRIVATE_AGGREGATE;
-	                    } else if (pcLower.equals("public")
-	                            || pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PUBLIC;
-	                    } else {
-	                        throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints +
-	                                ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PUBLIC'.");
-	                    }
-
-	                    if (privacyConstraint == null) {
-	                        privacyConstraint = tempPrivacy;
-	                    } else if (privacyConstraint != tempPrivacy) {
-	                        throw new DMLRuntimeException("Privacy constraints do not match.");
-	                    }
-	                } else {
-	                    // Error handling
-	                    String errorMsg = response.getErrorMessage();
-	                    System.err.println("Failed to request privacy constraints: " + errorMsg);
-	                    hadFailure = true;
-	                }
-	            } catch (Exception e) {
-	                // Exception handling
-	                e.printStackTrace();
-	                hadFailure = true;
-	            }
-	        }
-	        if (privacyConstraint == null)
-	            throw new DMLRuntimeException("Unable to retrieve privacy constraints from federated workers.");
-
-	        if (hadFailure)
-	            throw new DMLRuntimeException("Unable to plan: partial failure retrieving privacy constraints from federated workers.");
-
-	        return privacyConstraint;
-	    }
-	
 	    private static void wireUnRefTwriteToLiveOut(StatementBlock sb, Set<Long> unRefTwriteSet,
 	            FederatedPlanMinSTGraph graph, Map<String, List<Hop>> newFormerTransTable, 
 	            Map<Long, FType> fTypeMap) {
@@ -1361,7 +1215,7 @@ public final class FederatedPlanMinSTPlanner {
 	        VariableSet liveOutHops = sb.liveOut();
 	
 	//        FederatedPlannerLogger.logWireUnRefTwriteStart(unRefTwriteSet.size());
-	
+
 	        Iterator<Long> unRefTwriteIterator = unRefTwriteSet.iterator();
 	        while (unRefTwriteIterator.hasNext()) {
 	            Long unRefTwriteHopID = unRefTwriteIterator.next();
@@ -1378,7 +1232,8 @@ public final class FederatedPlanMinSTPlanner {
 	
 	                String bestLiveOutHopName = null;
 	                int bestPriority = Integer.MAX_VALUE;
-	                List<String> candidateInfo = new ArrayList<>();
+	                int bestScore = Integer.MAX_VALUE;
+	                int bestNameScore = Integer.MAX_VALUE;
 	
 	                Iterator<String> liveOutHopsIterator = liveOutHops.getVariableNames().iterator();
 	                while (liveOutHopsIterator.hasNext()) {
@@ -1388,128 +1243,73 @@ public final class FederatedPlanMinSTPlanner {
 	                    if (liveOutHopsList != null && !liveOutHopsList.isEmpty()) {
 	                        Hop representativeLiveOutHop = liveOutHopsList.get(0);
 	
-	                        // 새로운 호환성 우선순위 점수 계산
-	                        CompatibilityResult compatResult = calculateCompatibilityScore(unRefTwriteHop, representativeLiveOutHop, fTypeMap, graph);
+	                        CompatibilityResult compatResult = calculateCompatibilityScore(
+	                            unRefTwriteHop, representativeLiveOutHop, graph);
 	
-	                        FType unRefTwriteFType = getHopFType(unRefTwriteHop, fTypeMap);
-	                        FType liveOutFType = getHopFType(representativeLiveOutHop, fTypeMap);
-	
-	                        String candidateMsg = FederatedPlannerLogger.createCandidateInfo(liveOutHopName, 
-	                                                                                      representativeLiveOutHop, liveOutFType,
-	                                                                                      compatResult.priority, compatResult.score,
-	                                                                                      compatResult.isCompatible, compatResult.reason);
-	                        candidateInfo.add(candidateMsg);
-	
-	                        if (compatResult.isCompatible && compatResult.score < bestPriority) {
-	                            bestPriority = compatResult.score;
+	                        if (compatResult.priority < bestPriority
+	                                || (compatResult.priority == bestPriority && compatResult.score < bestScore)
+	                                || (compatResult.priority == bestPriority && compatResult.score == bestScore
+	                                    && compatResult.nameScore < bestNameScore)) {
+	                            bestPriority = compatResult.priority;
+	                            bestScore = compatResult.score;
+	                            bestNameScore = compatResult.nameScore;
 	                            bestLiveOutHopName = liveOutHopName;
 	                        }
 	                    }
 	                }
 	
-	                // 후보 정보 출력
-	                FederatedPlannerLogger.logCandidateInfo(candidateInfo);
-	
-	                // 연결 결과 출력
-	                if (bestLiveOutHopName != null) {
-	                    FederatedPlannerLogger.logSuccessfulConnection(bestLiveOutHopName, bestPriority);
-	                    List<Hop> bestLiveOutHopsList = newFormerTransTable.get(bestLiveOutHopName);
-	                    List<Hop> copyLiveOutHopsList = new ArrayList<>(bestLiveOutHopsList);
-	                    copyLiveOutHopsList.add(unRefTwriteHop);
-	                    newFormerTransTable.put(bestLiveOutHopName, copyLiveOutHopsList);
-	                    unRefTwriteIterator.remove();
-	                } else {
-	                    FederatedPlannerLogger.logNoCompatibleConnection();
-	
-	                    // 원본 알고리즘 실행 (타입 체크 없이)
-	                    boolean isRewired = false;
-	                    Iterator<String> fallbackIterator = liveOutHops.getVariableNames().iterator();
-	                    while (fallbackIterator.hasNext()) {
-	                        String liveOutHopName = fallbackIterator.next();
-	                        List<Hop> liveOutHopsList = newFormerTransTable.get(liveOutHopName);
-	
-	                        if (liveOutHopsList != null && !liveOutHopsList.isEmpty()) {
-	                            FederatedPlannerLogger.logFallbackConnection(liveOutHopName);
-	                            List<Hop> copyLiveOutHopsList = new ArrayList<>(liveOutHopsList);
-	                            copyLiveOutHopsList.add(unRefTwriteHop);
-	                            newFormerTransTable.put(liveOutHopName, copyLiveOutHopsList);
-	                            unRefTwriteIterator.remove();
-	                            isRewired = true;
-	                            break;
-	                        }
-	                    }
-	                    if (!isRewired) {
-	                        throw new RuntimeException("No liveOutHops found for " + unRefTwriteHopName);
-	                    }
+	                if (bestLiveOutHopName == null) {
+	                    throw new DMLRuntimeException("No liveOutHops found for " + unRefTwriteHopName + " (hopID="
+	                        + unRefTwriteHop.getHopID() + ", opcode=" + unRefTwriteHop.getOpString() + ")");
 	                }
+
+	                List<Hop> bestLiveOutHopsList = newFormerTransTable.get(bestLiveOutHopName);
+	                List<Hop> copyLiveOutHopsList = new ArrayList<>(bestLiveOutHopsList);
+	                copyLiveOutHopsList.add(unRefTwriteHop);
+	                newFormerTransTable.put(bestLiveOutHopName, copyLiveOutHopsList);
+	                unRefTwriteIterator.remove();
 	            }
 	        }
 	    }
-	
+
 	    // 호환성 결과를 담는 클래스
 	    private static class CompatibilityResult {
-	        boolean isCompatible;
-	        int priority;
-	        int score;
-	        String reason;
-	
-	        CompatibilityResult(boolean isCompatible, int priority, int score, String reason) {
-	            this.isCompatible = isCompatible;
+	        final int priority;
+	        final int score;
+	        final int nameScore;
+
+	        CompatibilityResult(int priority, int score, int nameScore) {
 	            this.priority = priority;
 	            this.score = score;
-	            this.reason = reason;
+	            this.nameScore = nameScore;
 	        }
 	    }
-	
+
+	    // NOTE: keep in sync with DP planner:
+	    // FederatedPlannerFedCostBased.FederatedPlanRewireTransTable.calculateCompatibilityScore
 	    private static CompatibilityResult calculateCompatibilityScore(Hop unRefTwriteHop, Hop liveOutHop, 
-	                                                                  Map<Long, FType> fTypeMap, FederatedPlanMinSTGraph graph) {
-	        FType unRefTwriteFType = getHopFType(unRefTwriteHop, fTypeMap);
-	        FType liveOutFType = getHopFType(liveOutHop, fTypeMap);
-	
+	                                                                  FederatedPlanMinSTGraph graph) {
+	        int nameScore = getMatchingPriority(unRefTwriteHop.getName(), liveOutHop.getName());
 	        boolean sameDataType = unRefTwriteHop.getDataType() == liveOutHop.getDataType() && 
 	                              unRefTwriteHop.getValueType() == liveOutHop.getValueType();
-	        boolean sameFType = (unRefTwriteFType == liveOutFType);
-	        boolean sameDimensions = unRefTwriteHop.getDim1() == liveOutHop.getDim1() && 
-	                                unRefTwriteHop.getDim2() == liveOutHop.getDim2();
-	
-	        // 1순위: 데이터 타입 동일 & FType 동일
-	        if (sameDataType && sameFType) {
-	            return new CompatibilityResult(true, 1, 100, "Perfect match: same data type and FType");
-	        }
-	
-	        // 2순위: 데이터 타입 동일 & FType 다름
+
 	        if (sameDataType) {
-	            // null이 아니게 동일하면 좋고, null이랑 나머지는 안돼
-	            if (unRefTwriteFType != null && liveOutFType != null) {
-	                if (areCompatibleFederationTypes(unRefTwriteFType, liveOutFType)) {
-	                    return new CompatibilityResult(true, 2, 200, "Same data type, compatible FTypes");
-	                } else {
-	                    return new CompatibilityResult(false, 2, Integer.MAX_VALUE, "Same data type, incompatible FTypes");
-	                }
-	            } else if (unRefTwriteFType == null || liveOutFType == null) {
-	                return new CompatibilityResult(false, 2, Integer.MAX_VALUE, "FType mismatch: null vs non-null");
-	            }
+	            return new CompatibilityResult(1, 0, nameScore);
 	        }
-	
-	        // 3순위: 차원 유사성
-	        if (sameDataType || sameDimensions) {
-	            double dimSimilarity = calculateDimensionSimilarity(unRefTwriteHop, liveOutHop);
-	            int dimScore = 1000 - (int)(dimSimilarity * 100);
-	            return new CompatibilityResult(true, 3, dimScore, "Dimension similarity: " + dimSimilarity);
+
+	        double dimSimilarity = calculateDimensionSimilarity(unRefTwriteHop, liveOutHop);
+	        if (dimSimilarity > 0) {
+	            int dimScore = (int)Math.round((1 - dimSimilarity) * 100);
+	            return new CompatibilityResult(2, dimScore, nameScore);
 	        }
-	
-	        // 4순위: 공통 Child 메모리 추정치
+
 	        double commonChildMemEstimate = findCommonChildrenMemEstimate(unRefTwriteHop, liveOutHop, graph);
 	        if (commonChildMemEstimate > 0) {
-	            int childScore = 10000 - (int)Math.min(commonChildMemEstimate, 9999);
-	            return new CompatibilityResult(true, 4, childScore, "Common child memory estimate: " + commonChildMemEstimate);
+	            int childScore = (int)Math.max(0, 10000 - Math.min(commonChildMemEstimate, 10000));
+	            return new CompatibilityResult(3, childScore, nameScore);
 	        }
-	
-	        // 5순위: 변수명 매칭 (에러 메시지 출력)
-	        FederatedPlannerLogger.logNameMatchingFallbackWarning(unRefTwriteHop.getName(), liveOutHop.getName());
-	
-	        int nameScore = getMatchingPriority(unRefTwriteHop.getName(), liveOutHop.getName());
-	        return new CompatibilityResult(true, 5, 100000 + nameScore, "Name matching fallback");
+
+	        return new CompatibilityResult(4, 0, nameScore);
 	    }
 	
 	    private static int getMatchingPriority(String unRefTwriteHopName, String liveOutHopName) {
@@ -1528,31 +1328,6 @@ public final class FederatedPlanMinSTPlanner {
 	        }
 	
 	        return 4; // 매칭 없음
-	    }
-	
-	    private static FType getHopFType(Hop hop, Map<Long, FType> fTypeMap) {
-	        return fTypeMap.get(hop.getHopID());
-	    }
-	
-	    private static boolean areCompatibleFederationTypes(FType fType1, FType fType2) {
-	        // ROW와 FULL은 호환 가능
-	        if ((fType1 == FType.ROW && fType2 == FType.FULL) || 
-	            (fType1 == FType.FULL && fType2 == FType.ROW)) {
-	            return true;
-	        }
-	
-	        // COL과 FULL은 호환 가능
-	        if ((fType1 == FType.COL && fType2 == FType.FULL) || 
-	            (fType1 == FType.FULL && fType2 == FType.COL)) {
-	            return true;
-	        }
-	
-	        // BROADCAST는 대부분과 호환 가능
-	        if (fType1 == FType.BROADCAST || fType2 == FType.BROADCAST) {
-	            return true;
-	        }
-	
-	        return false;
 	    }
 	
 	    // 차원 유사성 계산 (0.0 ~ 1.0, 1.0이 가장 유사)

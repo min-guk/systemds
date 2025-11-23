@@ -19,9 +19,6 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDP;
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -34,7 +31,6 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.Future;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types;
@@ -56,6 +52,7 @@ import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
@@ -78,9 +75,6 @@ import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
-import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
-import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.util.UtilFunctions;
@@ -150,8 +144,11 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 		if (prev != null) {
 			if (prev.getLeft() == thisOutType) {
 				if (prev.getRight() != execType) {
-					FederatedPlannerLogger.logExecTypeConflict(optimalPlan.getHopRef(),
-						prev.getRight(), execType, pickExecType(prev.getRight(), execType), "REWRITE_HOP");
+					FederatedPlannerLogger.logWarnMessage(
+						"[FederatedPlannerFedCostBased] ExecType conflict in rewriteHop for hop "
+							+ hopID + " (" + optimalPlan.getHopRef().getOpString() + "): existing="
+							+ prev.getRight() + ", incoming=" + execType + ", chosen="
+							+ pickExecType(prev.getRight(), execType));
 				}
 				resolvedExecType = pickExecType(prev.getRight(), execType);
 				optimalPlan.setForcedExecType(resolvedExecType);
@@ -1480,39 +1477,8 @@ public static class FederatedMemoTable {
 		 *  => forwardingWeight = networkWeight / 10 (child result reused across while2 iterations)
 		 */
 		public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
-			// If this hop has no loop context, just use its networkWeight as-is.
-			if (loopContext.isEmpty()) {
-				return networkWeight;
-			}
-
-			// Build a map of the child's loop context keyed by loop ID (SBID).
-			// This makes the computation robust to ordering differences between
-			// parent and child loop stacks.
-			Map<Long, Double> childLoopMap = new HashMap<>();
-			if (childLoopContext != null) {
-				for (Pair<Long, Double> p : childLoopContext) {
-					childLoopMap.put(p.getLeft(), p.getRight());
-				}
-			}
-
-			double forwardingWeight = networkWeight;
-
-			// Divide out only those parent loops that the child does NOT belong to.
-			// Interpretation:
-			// - For loops present in both parent and child, we assume forwarding
-			//   happens once per iteration (keep the loop weight).
-			// - For loops present only in the parent, we assume the child result
-			//   is reused across iterations, so we divide out that loop weight.
-			for (Pair<Long, Double> p : loopContext) {
-				long loopId = p.getLeft();
-				double w = p.getRight();
-				// Avoid dividing by zero/negative weights from degenerate loops
-				if (!childLoopMap.containsKey(loopId) && w > 0) {
-					forwardingWeight /= w;
-				}
-			}
-
-			return forwardingWeight;
+			return FederatedPlannerUtils.computeForwardingWeightOfChild(
+				networkWeight, loopContext, childLoopContext);
 		}
 	}
 }
@@ -1520,23 +1486,6 @@ public static class FederatedMemoTable {
 	    
 	    private static final double DEFAULT_LOOP_WEIGHT = 10.0;
 	    private static final double DEFAULT_IF_ELSE_WEIGHT = 0.5;
-
-	    public static final String FED_MATRIX_IDENTIFIER = "matrix";
-	    public static final String FED_FRAME_IDENTIFIER = "frame";
-
-	    private static class FedWorkerContext {
-	        final String host;
-	        final int port;
-	        final String filePath;
-	        final FederatedData data;
-
-	        FedWorkerContext(String host, int port, String filePath, FederatedData data) {
-	            this.host = host;
-	            this.port = port;
-	            this.filePath = filePath;
-	            this.data = data;
-	        }
-	    }
 
 	    public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 	            Map<Long, FederatedMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
@@ -1816,8 +1765,8 @@ public static class FederatedMemoTable {
 	        // Propagate Privacy Constraint
 	        if (!(hop instanceof DataOp) || hop.getName().equals("__pred")
 	                || (((DataOp) hop).getOp() == Types.OpOpData.PERSISTENTWRITE)) {
-	            privacyConstraintMap.put(hop.getHopID(),
-	                    getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap));
+	            privacyConstraintMap.put(hop.getHopID(), FederatedPlannerUtils.getPrivacyConstraint(
+	                    hop, hop.getInput(), privacyConstraintMap));
 	            return;
 	        }
 
@@ -1834,14 +1783,15 @@ public static class FederatedMemoTable {
 	        String hopName = dataOp.getName();
 
 	        if (opType == Types.OpOpData.FEDERATED) {
-	            Privacy privacy = getFedWorkerMetaData(fedMap, dataOp);
+	            Privacy privacy = FederatedPlannerUtils.getFedWorkerMetaData(fedMap, dataOp);
 	            privacyConstraintMap.put(hop.getHopID(), privacy);
 	        } else if (opType == Types.OpOpData.TRANSIENTWRITE) {
 	            // Rewire TransWrite
 	            innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
 	            unRefTwriteSet.add(hop.getHopID());
 	            // Propagate Privacy Constraint
-	            privacyConstraintMap.put(hop.getHopID(), getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap));
+	            privacyConstraintMap.put(hop.getHopID(), FederatedPlannerUtils.getPrivacyConstraint(
+	                    hop, hop.getInput(), privacyConstraintMap));
 	        } else if (opType == Types.OpOpData.TRANSIENTREAD) {
 	            // Rewire TransRead
 	            List<Hop> childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
@@ -1878,11 +1828,11 @@ public static class FederatedMemoTable {
 	                unRefTwriteSet.remove(filteredChildHopID);
 	            }
 	            // Propagate Privacy Constraint
-	            privacyConstraintMap.put(hop.getHopID(),
-	                    getPrivacyConstraint(hop, filteredChildHops, privacyConstraintMap));
+	            privacyConstraintMap.put(hop.getHopID(), FederatedPlannerUtils.getPrivacyConstraint(
+	                    hop, filteredChildHops, privacyConstraintMap));
 	        } else {
-	            privacyConstraintMap.put(hop.getHopID(),
-	                    getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap));
+	            privacyConstraintMap.put(hop.getHopID(), FederatedPlannerUtils.getPrivacyConstraint(
+	                    hop, hop.getInput(), privacyConstraintMap));
 	        }
 	    }
 
@@ -1911,217 +1861,6 @@ public static class FederatedMemoTable {
 
 	        return childHops;
 	    }
-
-	    // NOTE:
-	    //  - fedMap is a global list of all (FederatedRange, FederatedData) pairs seen in the program.
-	    //  - It is used as a rough approximation of the total number of federated workers (numOfWorkers).
-	    //  - Privacy for each FEDERATED DataOp is computed locally from only the workers of that DataOp
-	    //    (localWorkers), and is no longer required to match across different FEDERATED variables.
-	    private static Privacy getFedWorkerMetaData(List<Pair<FederatedRange, FederatedData>> fedMap, DataOp initFedOp) {
-	        // Address
-	        Hop addressListHop = initFedOp.getInput(initFedOp.getParameterIndex("addresses"));
-	        List<String> addressList = new ArrayList<>();
-	        for (Hop addressHop : addressListHop.getInput()) {
-	            addressList.add(addressHop.getName());
-	        }
-
-	        // Range
-	        Hop rangeListHop = initFedOp.getInput(initFedOp.getParameterIndex("ranges"));
-	        List<long[]> rangeList = new ArrayList<>();
-	        for (Hop rangeHop : rangeListHop.getInput()) {
-	            long beginRange = (long) Double.parseDouble(rangeHop.getInput(0).getName());
-	            long endRange = (long) Double.parseDouble(rangeHop.getInput(1).getName());
-	            rangeList.add(new long[] { beginRange, endRange });
-	        }
-
-	        // Type
-	        String type = initFedOp.getInput(initFedOp.getParameterIndex("type")).getName();
-	        Types.DataType fedDataType;
-
-	        if (type.equalsIgnoreCase(FED_MATRIX_IDENTIFIER))
-	            fedDataType = Types.DataType.MATRIX;
-	        else
-	            fedDataType = Types.DataType.FRAME;
-
-	        // Local list for privacy calculation of this DataOp only
-	        List<FedWorkerContext> localWorkers = new ArrayList<>();
-
-	        // Init Fed Data
-	        for (int i = 0; i < addressList.size(); i++) {
-	            String address = addressList.get(i);
-	            // We split address into url/ip, the port and file path of file to read
-	            String[] parsedValues = InitFEDInstruction.parseURL(address);
-	            String host = parsedValues[0];
-	            int port = Integer.parseInt(parsedValues[1]);
-	            String filePath = parsedValues[2];
-
-	            long[] beginRange = rangeList.get(2 * i);
-	            long[] endRange = rangeList.get(2 * i + 1);
-
-	            try {
-	                FederatedData federatedData = new FederatedData(fedDataType,
-	                        new InetSocketAddress(InetAddress.getByName(host), port), filePath);
-	                FederatedRange range = new FederatedRange(beginRange, endRange);
-	                Pair<FederatedRange, FederatedData> pair = new ImmutablePair<>(range, federatedData);
-
-	                fedMap.add(pair);      // Global worker count approximation
-	                localWorkers.add(new FedWorkerContext(host, port, filePath, federatedData));
-	            } catch (UnknownHostException e) {
-	                throw new DMLRuntimeException("federated host was unknown: " + host, e);
-	            }
-	        }
-	        Privacy privacyConstraint = null;
-	        boolean hadPrivacyFailure = false;
-
-	        // Request Privacy Constraints.
-	        // Privacy is derived only from this DataOp's workers (localWorkers).
-	        for (FedWorkerContext wctx : localWorkers) {
-	            FederatedData data = wctx.data;
-	            if (!data.isInitialized())
-	                data.initFederatedData(FederationUtils.getNextFedDataID());
-
-	            Future<FederatedResponse> future = data.requestPrivacyConstraints();
-	            try {
-	                FederatedResponse response = future.get(); // Get actual response from Future
-
-	                if (response.isSuccessful()) {
-	                    Object[] responseData = response.getData();
-	                    String privacyConstraints = (String) responseData[0]; // Cast privacy constraint as string
-
-	                    if (privacyConstraints == null) {
-	                        String msg = "Worker " + wctx.host + ":" + wctx.port + " (" + wctx.filePath
-	                            + ") returned null privacy constraints for FEDERATED data op '" + initFedOp.getName()
-	                            + "' (hopID=" + initFedOp.getHopID() + ")";
-	                        FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + msg);
-	                        hadPrivacyFailure = true;
-	                        continue;
-	                    }
-
-	                    Privacy tempPrivacy = null;
-	                    String pcLower = privacyConstraints.trim().toLowerCase();
-
-	                    // Map to appropriate PrivacyConstraint value based on input string
-	                    if (pcLower.equals("private")
-	                            || pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PRIVATE;
-	                    } else if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate")
-	                            || pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PRIVATE_AGGREGATE;
-	                    } else if (pcLower.equals("private-aggregate-to-public")
-	                            || pcLower.equals("private_aggregate_to_public")
-	                            || pcLower.equals(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-	                    } else if (pcLower.equals("public")
-	                            || pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
-	                        tempPrivacy = Privacy.PUBLIC;
-	                    } else {
-	                        throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints
-	                                + ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PRIVATE_AGGREGATE_TO_PUBLIC', 'PUBLIC'.");
-	                    }
-
-	                    if (privacyConstraint == null) {
-	                        privacyConstraint = tempPrivacy;
-	                    } else {
-	                        privacyConstraint = joinPrivacy(privacyConstraint, tempPrivacy);
-	                    }
-	                } else {
-	                    // Error handling: treat any unsuccessful response as fatal for planning
-	                    String errorMsg = response.getErrorMessage();
-	                    FederatedPlannerLogger.logErrorMessage(
-	                        "Failed to request privacy constraints from " + wctx.host + ":" + wctx.port + " (" + wctx.filePath
-	                            + ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID=" + initFedOp.getHopID()
-	                            + "): " + errorMsg);
-	                    hadPrivacyFailure = true;
-	                }
-	            } catch (Exception e) {
-	                // Exception handling: also treated as fatal for planning
-	                String errorContext = "Failed to request privacy constraints from " + wctx.host + ":" + wctx.port + " ("
-	                    + wctx.filePath + ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
-	                    + initFedOp.getHopID() + ")";
-	                FederatedPlannerLogger.logException(errorContext, e);
-	                hadPrivacyFailure = true;
-	            }
-	        }
-			if (privacyConstraint == null || hadPrivacyFailure) {
-				String errorMsg = "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op '"
-					+ initFedOp.getName() + "' (hopID=" + initFedOp.getHopID()
-					+ "); cannot safely plan federated execution.";
-				FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + errorMsg + " Aborting planning.");
-				throw new DMLRuntimeException(errorMsg);
-			}
-			return privacyConstraint;
-	    }
-
-	    private static Privacy joinPrivacy(Privacy a, Privacy b) {
-	        if (a == null) return b;
-	        if (b == null) return a;
-	        if (a == b)    return a;
-
-	        // Strongest privacy wins: PRIVATE > PRIVATE_AGGREGATE > PRIVATE_AGGREGATE_TO_PUBLIC > PUBLIC
-	        if (a == Privacy.PRIVATE || b == Privacy.PRIVATE)
-	            return Privacy.PRIVATE;
-	        if (a == Privacy.PRIVATE_AGGREGATE || b == Privacy.PRIVATE_AGGREGATE)
-	            return Privacy.PRIVATE_AGGREGATE;
-	        if (a == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC || b == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
-	            return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-	        return Privacy.PUBLIC;
-	    }
-
-	    private static Privacy getPrivacyConstraint(Hop hop, List<Hop> inputHops, Map<Long, Privacy> privacyMap) {
-	        Privacy[] pc = new Privacy[inputHops.size()];
-	        StringBuilder missingPrivacy = new StringBuilder();
-	        for (int i = 0; i < inputHops.size(); i++) {
-	            Hop inputHop = inputHops.get(i);
-	            Privacy p = privacyMap.get(inputHop.getHopID());
-	            if (p == null) {
-	                if (missingPrivacy.length() > 0)
-	                    missingPrivacy.append(", ");
-	                missingPrivacy.append(inputHop.getHopID()).append(" (").append(inputHop.getOpString()).append(")");
-	            }
-	            pc[i] = p;
-	        }
-
-	        if (missingPrivacy.length() > 0) {
-	            FederatedPlannerLogger.logWarnMessage(
-	                "Missing privacy entry for input hop(s): " + missingPrivacy +
-	                " while evaluating hop " + hop.getHopID() + " (" + hop.getOpString() + "); treating as PUBLIC.");
-	        }
-
-	        boolean hasPrivateAggreate = false;
-
-	        for (Privacy p : pc) {
-	            if (p == Privacy.PRIVATE) {
-	                return Privacy.PRIVATE;
-	            } else if (p == Privacy.PRIVATE_AGGREGATE) {
-	                hasPrivateAggreate = true;
-	            }
-	        }
-
-	        if (hasPrivateAggreate) {
-	            if (hop instanceof AggUnaryOp || hop instanceof AggBinaryOp || hop instanceof QuaternaryOp) {
-	                return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-	            } else if (hop instanceof TernaryOp) {
-	                switch (((TernaryOp) hop).getOp()) {
-	                    case MOMENT:
-	                    case COV:
-	                    case CTABLE:
-	                    case INTERQUANTILE:
-	                    case QUANTILE:
-	                        return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-	                    default:
-	                        return Privacy.PRIVATE_AGGREGATE;
-	                }
-	            } else if (hop instanceof ParameterizedBuiltinOp
-	                    && ((ParameterizedBuiltinOp) hop).getOp() == ParamBuiltinOp.GROUPEDAGG) {
-	                return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-	            } else {
-	                return Privacy.PRIVATE_AGGREGATE;
-	            }
-	        }
-
-	        return Privacy.PUBLIC;
-	    }
-	    
 	    private static void wireUnRefTwriteToLiveOut(StatementBlock sb, Set<Long> unRefTwriteSet,
 	            Map<Long, FederatedMemoTable.HopCommon> hopCommonTable, Map<String, List<Hop>> newFormerTransTable) {
 	        if (unRefTwriteSet.isEmpty())
@@ -2197,6 +1936,8 @@ public static class FederatedMemoTable {
 		}
 	}
 
+	// NOTE: keep in sync with MinST planner:
+	// FederatedPlanMinSTPlanner.calculateCompatibilityScore
 	private static CompatibilityResult calculateCompatibilityScore(Hop unRefTwriteHop, Hop liveOutHop, 
 	                                                              Map<Long, FederatedMemoTable.HopCommon> hopCommonTable) {
 		int nameScore = getMatchingPriority(unRefTwriteHop.getName(), liveOutHop.getName());
