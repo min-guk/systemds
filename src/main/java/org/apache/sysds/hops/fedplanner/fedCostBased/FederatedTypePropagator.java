@@ -5,8 +5,6 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.ftype.handlers.*;
 import org.apache.sysds.hops.fedplanner.fedCostBased.ftype.handlers.HandlerResult;
-import org.apache.sysds.hops.rewrite.HopRewriteUtils;
-import org.apache.sysds.parser.DataExpression;
 
 import java.util.Map;
 /**
@@ -79,22 +77,7 @@ public class FederatedTypePropagator {
     }
 
     public static FType deriveFType(DataOp fedInit) {
-        Hop ranges = fedInit.getInput(fedInit.getParameterIndex(DataExpression.FED_RANGES));
-        boolean rowPartitioned = true;
-        boolean colPartitioned = true;
-        for( int i=0; i<ranges.getInput().size()/2; i++ ) { // workers
-            Hop beg = ranges.getInput(2*i);
-            Hop end = ranges.getInput(2*i+1);
-            long rl = HopRewriteUtils.getIntValueSafe(beg.getInput(0));
-            long ru = HopRewriteUtils.getIntValueSafe(end.getInput(0));
-            long cl = HopRewriteUtils.getIntValueSafe(beg.getInput(1));
-            long cu = HopRewriteUtils.getIntValueSafe(end.getInput(1));
-            rowPartitioned &= (cu-cl == fedInit.getDim2());
-            colPartitioned &= (ru-rl == fedInit.getDim1());
-        }
-        return rowPartitioned && colPartitioned ?
-                FType.FULL : rowPartitioned ? FType.ROW :
-                colPartitioned ? FType.COL : FType.OTHER;
+        return FederatedPlannerUtils.deriveFedInitFType(fedInit);
     }
 
     /**

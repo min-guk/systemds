@@ -1114,11 +1114,13 @@ public final class FederatedPlanMinSTPlanner {
 	            List<Hop> filteredChildHops = new ArrayList<>();
 	            for (Hop childHop : childHops) {
 	                String hopVarName = hop.getName();
-	
+
 	                if (hopVarName.equals(childHop.getName())) {
 	                    filteredChildHops.add(childHop);
 	                }
 	            }
+
+	            FederatedPlannerLogger.logRewireHierarchy(hop, childHops, filteredChildHops, "RewireTransHop");
 	
 	            // Todo: Handle exception when TRead has no Filtered Child (check why it's missing)
 	            if (filteredChildHops.isEmpty()) {

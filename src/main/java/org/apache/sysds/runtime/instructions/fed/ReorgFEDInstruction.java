@@ -139,33 +139,33 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		}
 	}
 
-	@Override
-	public void processInstruction(ExecutionContext ec) {
-		// Additional debugging: Check all variables in ExecutionContext
-		System.out.println("=== ReorgFEDInstruction Debug ===");
-		System.out.println("All variables in ExecutionContext:");
-		for (String varName : ec.getVariables().keySet()) {
-			try {
-				Object obj = ec.getVariable(varName);
-				if (obj instanceof MatrixObject) {
-					MatrixObject mo = (MatrixObject) obj;
-					System.out.printf("  %s: %s, federated=%s, dims=%s, fedMapping=%s\n",
-						varName,
-						mo.getClass().getSimpleName(),
-						mo.isFederated(),
-						mo.getDataCharacteristics(),
-						mo.getFedMapping()
-					);
-				} else {
-					System.out.printf("  %s: %s\n", varName, obj.getClass().getSimpleName());
-				}
-			} catch (Exception e) {
-				System.out.printf("  %s: Error accessing - %s\n", varName, e.getMessage());
-			}
-		}
-		System.out.println("=== End Debug ===");
+		@Override
+		public void processInstruction(ExecutionContext ec) {
+			// Debug block disabled; kept for reference.
+			// System.out.println("=== ReorgFEDInstruction Debug ===");
+			// System.out.println("All variables in ExecutionContext:");
+			// for (String varName : ec.getVariables().keySet()) {
+			// 	try {
+			// 		Object obj = ec.getVariable(varName);
+			// 		if (obj instanceof MatrixObject) {
+			// 			MatrixObject mo = (MatrixObject) obj;
+			// 			System.out.printf("  %s: %s, federated=%s, dims=%s, fedMapping=%s\n",
+			// 				varName,
+			// 				mo.getClass().getSimpleName(),
+			// 				mo.isFederated(),
+			// 				mo.getDataCharacteristics(),
+			// 				mo.getFedMapping()
+			// 			);
+			// 		} else {
+			// 			System.out.printf("  %s: %s\n", varName, obj.getClass().getSimpleName());
+			// 		}
+			// 	} catch (Exception e) {
+			// 		System.out.printf("  %s: Error accessing - %s\n", varName, e.getMessage());
+			// 	}
+			// }
+			// System.out.println("=== End Debug ===");
 
-		MatrixObject mo1 = ec.getMatrixObject(input1);
+			MatrixObject mo1 = ec.getMatrixObject(input1);
 		ReorgOperator r_op = (ReorgOperator) _optr;
 		boolean isSpark = instString.startsWith("SPARK");
 

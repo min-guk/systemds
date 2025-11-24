@@ -376,6 +376,10 @@ public final class RulesCore {
       rr.register(new Rulesets.SpoofMultiAggregateRule());
       rr.register(new Rulesets.SpoofOuterProductRule());
       rr.register(new Rulesets.TsmmRule());
+      rr.register(new Rulesets.TransientWriteRule());
+      rr.register(new Rulesets.TransientReadRule());
+      rr.register(new Rulesets.FunctionCallRule());
+      rr.register(new Rulesets.BuiltinMKMeansRule());
 
       return rr;
     }

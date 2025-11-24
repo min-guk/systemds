@@ -21,25 +21,32 @@ package org.apache.sysds.hops.fedplanner.fedCostBased;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.OptimizerUtils;
-import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable.FedPlan;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTPlanner.FederatedPlanMinSTGraph;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.apache.commons.lang3.tuple.Pair;
-import org.apache.sysds.common.Types.ExecType;
-import org.jgrapht.Graph;
-import org.jgrapht.graph.DefaultWeightedEdge;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.Map;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTPlanner.FederatedPlanMinSTGraph;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.jgrapht.Graph;
+import org.jgrapht.graph.DefaultWeightedEdge;
 
 /**
  * Unified utility class for logging federated planner information.
@@ -48,21 +55,24 @@ import java.util.Set;
  * This class integrates the functionality of the former FederatedMemoTablePrinter.
  */
 public class FederatedPlannerLogger {
+    private static final boolean ENABLE_REWIRE_HIERARCHY_LOG = false;
+    private static final Log LOG = LogFactory.getLog(FederatedPlannerLogger.class.getName());
 
     // ===================================================================================
     // Generic Logging Helpers
     // ===================================================================================
 
     public static void logInfoMessage(String message) {
-        System.out.println("[INFO] " + message);
+        if (LOG.isDebugEnabled())
+            LOG.debug(message);
     }
 
     public static void logWarnMessage(String message) {
-        System.err.println("[WARN] " + message);
+        LOG.warn(message);
     }
 
     public static void logErrorMessage(String message) {
-        System.err.println("[ERROR] " + message);
+        LOG.error(message);
     }
 
     public static void logException(String message, Exception ex) {
@@ -70,11 +80,11 @@ public class FederatedPlannerLogger {
         if (ex == null) {
             return;
         }
-        System.err.println("[ERROR] Exception: " + ex.getClass().getSimpleName()
+        LOG.error("Exception: " + ex.getClass().getSimpleName()
             + (ex.getMessage() != null ? " - " + ex.getMessage() : ""));
         StringWriter sw = new StringWriter();
         ex.printStackTrace(new PrintWriter(sw));
-        System.err.println(sw.toString());
+        LOG.error(sw.toString());
     }
     
     /**
@@ -103,11 +113,12 @@ public class FederatedPlannerLogger {
         String hopType = hop.getClass().getSimpleName();
         String opCode = hop.getOpString();
         
-        System.out.println("[" + logPrefix + "] (ID:" + hop.getHopID() + " Name:" + hop.getName() + 
-                          ") Type:" + hopType + " OpCode:" + opCode + 
-                          " ChildIDs:(" + childIds.toString() + ") Privacy:" + 
-                          (privacyConstraint != null ? privacyConstraint : "null") + 
-                          " FType:" + (ftype != null ? ftype : "null"));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("[" + logPrefix + "] (ID:" + hop.getHopID() + " Name:" + hop.getName()
+                + ") Type:" + hopType + " OpCode:" + opCode + " ChildIDs:(" + childIds.toString()
+                + ") Privacy:" + (privacyConstraint != null ? privacyConstraint : "null")
+                + " FType:" + (ftype != null ? ftype : "null"));
+        }
     }
     
     /**
@@ -129,9 +140,10 @@ public class FederatedPlannerLogger {
         String hopType = hop.getClass().getSimpleName();
         String opCode = hop.getOpString();
         
-        System.out.println("[" + logPrefix + "] (ID:" + hop.getHopID() + " Name:" + hop.getName() + 
-                          ") Type:" + hopType + " OpCode:" + opCode + 
-                          " ChildIDs:(" + childIds.toString() + ")");
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("[" + logPrefix + "] (ID:" + hop.getHopID() + " Name:" + hop.getName()
+                + ") Type:" + hopType + " OpCode:" + opCode + " ChildIDs:(" + childIds.toString() + ")");
+        }
     }
     
     /**
@@ -161,11 +173,78 @@ public class FederatedPlannerLogger {
         String dataType = hop.getDataType().toString();
         String dimensions = "[" + hop.getDim1() + "x" + hop.getDim2() + "]";
         
-        System.out.println("[" + logPrefix + "] (ID:" + hop.getHopID() + " Name:" + hop.getName() + 
-                          ") Type:" + hopType + " OpCode:" + opCode + " DataType:" + dataType + 
-                          " Dims:" + dimensions + " ChildIDs:(" + childIds.toString() + ") Privacy:" + 
-                          (privacyConstraint != null ? privacyConstraint : "null") + 
-                          " FType:" + (ftype != null ? ftype : "null"));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("[" + logPrefix + "] (ID:" + hop.getHopID() + " Name:" + hop.getName()
+                + ") Type:" + hopType + " OpCode:" + opCode + " DataType:" + dataType + " Dims:" + dimensions
+                + " ChildIDs:(" + childIds.toString() + ") Privacy:"
+                + (privacyConstraint != null ? privacyConstraint : "null") + " FType:"
+                + (ftype != null ? ftype : "null"));
+        }
+    }
+
+    /**
+     * Logs a summary of the Oracle's decision for a hop, including privacy, exec mode, placement and notes.
+     * Additionally prints the hop's parents/children (including rewire relationships when applicable).
+     * @param hop the hop that was evaluated
+     * @param privacyConstraint privacy constraint applied to the hop
+     * @param inputFTypes oracle input FTypes
+     * @param caps result produced by the oracle
+     * @param rewireTable table describing rewire relationships between hops
+     */
+    public static void logOracleDecision(Hop hop, Privacy privacyConstraint,
+            List<FType> inputFTypes, OpCaps caps, Map<Long, List<Hop>> rewireTable) {
+        if (hop == null || caps == null)
+            return;
+
+        List<Hop> rewireChildren = getRewireConnections(hop, rewireTable, true);
+        List<Hop> rewireParents = getRewireConnections(hop, rewireTable, false);
+        List<Hop> allChildren = mergeHopLists(hop.getInput(), rewireChildren);
+        List<Hop> allParents = mergeHopLists(hop.getParent(), rewireParents);
+
+        String hopInfo = hop.getHopID() + " (" + hop.getOpString() + ")";
+        String privacyInfo = (privacyConstraint == null) ? "null" : privacyConstraint.toString();
+        String inputs = (inputFTypes == null || inputFTypes.isEmpty())
+            ? "[]"
+            : inputFTypes.toString();
+        String foutType = caps.foutFType().map(Enum::name).orElse("none");
+        String detail = caps.detail().orElse("");
+        String childInfo = formatHopIdList(allChildren);
+        String parentInfo = formatHopIdList(allParents);
+        String rewireChildInfo = formatHopIdList(rewireChildren);
+        String rewireParentInfo = formatHopIdList(rewireParents);
+
+        StringBuilder notesBuilder = new StringBuilder();
+        List<OpCaps.DecisionNote> notes = caps.notes();
+        if (notes == null || notes.isEmpty()) {
+            notesBuilder.append("[]");
+        }
+        else {
+            notesBuilder.append("[");
+            for (int i = 0; i < notes.size(); i++) {
+                OpCaps.DecisionNote note = notes.get(i);
+                if (i > 0)
+                    notesBuilder.append("; ");
+                notesBuilder.append(note.code());
+                if (note.message() != null && !note.message().isEmpty()) {
+                    notesBuilder.append(": ").append(note.message());
+                }
+            }
+            notesBuilder.append("]");
+        }
+
+        System.out.println("[Oracle] hop=" + hopInfo
+            + ", exec=" + caps.exec()
+            + ", placement=" + caps.placement()
+            + ", foutType=" + foutType
+            + ", reason=" + caps.reason()
+            + (detail.isEmpty() ? "" : ", detail=" + detail)
+            + ", childIDs=" + childInfo
+            + ", parentIDs=" + parentInfo
+            + ", rewireChildIDs=" + rewireChildInfo
+            + ", rewireParentIDs=" + rewireParentInfo
+            + ", privacy=" + privacyInfo
+            + ", inputs=" + inputs
+            + ", notes=" + notesBuilder);
     }
     
     /**
@@ -365,6 +444,104 @@ public class FederatedPlannerLogger {
         if (isEmptyFilteredChildHops) {
             System.err.println("[" + logPrefix + "] (hopName: " + hopName + ", hopID: " + hopID + ") filtered child hops is empty");
         }
+        else {
+            System.out.println("[" + logPrefix + "] (hopName: " + hopName + ", hopID: " + hopID
+                + ") filtered child hops: " + summarizeHopList(filteredChildHops));
+        }
+    }
+    
+    /**
+     * Logs both parent and child hop relationships for a rewired TransRead hop, including filtered mappings.
+     * @param transReadHop The TransRead hop being rewired
+     * @param candidateChildHops All candidate child hops before filtering
+     * @param filteredChildHops Child hops that matched the filtered criteria
+     * @param logPrefix Prefix string to identify the log source
+     */
+    public static void logRewireHierarchy(Hop transReadHop, List<Hop> candidateChildHops,
+            List<Hop> filteredChildHops, String logPrefix) {
+        if (transReadHop == null || !ENABLE_REWIRE_HIERARCHY_LOG)
+            return;
+
+        String parentSummary = summarizeHopList(transReadHop.getParent());
+        String candidateSummary = summarizeHopList(candidateChildHops);
+        String filteredSummary = summarizeHopList(filteredChildHops);
+
+        System.out.println("[" + logPrefix + "] Rewire graph for "
+            + summarizeHop(transReadHop) + " Parents=(" + parentSummary + ")"
+            + " Candidates=(" + candidateSummary + ")"
+            + " Filtered=(" + filteredSummary + ")");
+
+        if (filteredChildHops != null && !filteredChildHops.isEmpty()) {
+            for (Hop child : filteredChildHops) {
+                String childParents = summarizeHopList(child.getParent());
+                System.out.println("[" + logPrefix + "]   FilteredChild "
+                    + summarizeHop(child) + " Parents=(" + childParents + ")");
+            }
+        }
+    }
+
+    private static String summarizeHop(Hop hop) {
+        if (hop == null)
+            return "null";
+        String name = hop.getName() != null ? hop.getName() : "null";
+        String opcode = hop.getOpString() != null ? hop.getOpString() : "null";
+        return name + "(ID:" + hop.getHopID() + ",Op:" + opcode + ")";
+    }
+
+    private static String summarizeHopList(List<Hop> hops) {
+        if (hops == null || hops.isEmpty())
+            return "none";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < hops.size(); i++) {
+            if (i > 0)
+                sb.append("; ");
+            sb.append(summarizeHop(hops.get(i)));
+        }
+        return sb.toString();
+    }
+
+    private static List<Hop> mergeHopLists(List<Hop> direct, List<Hop> additional) {
+        List<Hop> merged = new ArrayList<>();
+        if (direct != null && !direct.isEmpty())
+            merged.addAll(direct);
+        if (additional != null && !additional.isEmpty())
+            merged.addAll(additional);
+        return merged;
+    }
+
+    private static List<Hop> getRewireConnections(Hop hop, Map<Long, List<Hop>> rewireTable, boolean childConnections) {
+        if (!(hop instanceof DataOp) || rewireTable == null)
+            return Collections.emptyList();
+        List<Hop> rewired = rewireTable.get(hop.getHopID());
+        if (rewired == null || rewired.isEmpty())
+            return Collections.emptyList();
+        Types.OpOpData opType = ((DataOp) hop).getOp();
+        if (childConnections && opType == Types.OpOpData.TRANSIENTREAD)
+            return rewired;
+        if (!childConnections && opType == Types.OpOpData.TRANSIENTWRITE)
+            return rewired;
+        return Collections.emptyList();
+    }
+
+    private static String formatHopIdList(List<Hop> hops) {
+        if (hops == null || hops.isEmpty())
+            return "[]";
+        LinkedHashSet<Long> hopIds = new LinkedHashSet<>();
+        for (Hop hop : hops) {
+            if (hop != null)
+                hopIds.add(hop.getHopID());
+        }
+        if (hopIds.isEmpty())
+            return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        Iterator<Long> idIter = hopIds.iterator();
+        while (idIter.hasNext()) {
+            sb.append(idIter.next());
+            if (idIter.hasNext())
+                sb.append(", ");
+        }
+        sb.append("]");
+        return sb.toString();
     }
     
     /**
@@ -545,14 +722,20 @@ public class FederatedPlannerLogger {
         Hop hop = null;
 
         if (depth == 0){
-            sb.append("[HopID]: ROOT, [Name]: ROOT, [FOutType]: Root");
+            sb.append("[HopID]: ROOT, [Name]: ROOT, [OutputType]: Root");
         } else {
             hop = plan.getHopRef();
             // Add FedPlan information with explicit labels
             sb.append("[HopID]: ").append(hop.getHopID())
-                    .append(", [Name]: ").append(hop.getOpString())
-                    .append(", [FOutType]: ");
+                    .append(", [Name]: ").append(hop.getOpString());
 
+            ExecType execType = plan.getExecType();
+            if (execType == null) {
+                execType = hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
+            }
+            sb.append(", [ExecType]: ").append(execType != null ? execType : "null");
+
+            sb.append(", [OutputType]: ");
             if (isNotReferenced) {
                 if (depth == 1) {
                     sb.append("NRef(TOP)");
@@ -562,6 +745,9 @@ public class FederatedPlannerLogger {
             } else{
                 sb.append(plan.getFedOutType());
             }
+
+            FType fType = plan.getFType();
+            sb.append(", [FType]: ").append(fType != null ? fType : "null");
         }
 
         // Add child hop IDs with explicit label

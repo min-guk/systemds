@@ -21,6 +21,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -83,7 +84,7 @@ public class RuleBasicsTest {
     OpSig sig = OpSig.of(Opcodes.QPICK.toString(), OpCategory.QUANTILE_PICK, Map.of());
     assertTrue(rule.opcodes().contains(Opcodes.QPICK.toString()));
 
-    OpCaps caps = rule.caps(sig, List.of(FType.NF), UNKNOWN_SHAPE);
+    OpCaps caps = rule.caps(sig, Arrays.asList((FType) null), UNKNOWN_SHAPE);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.NOT_FEDERATED_INPUTS, caps.reason());
   }

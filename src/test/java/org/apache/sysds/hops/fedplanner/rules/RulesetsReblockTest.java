@@ -20,6 +20,7 @@ package org.apache.sysds.hops.fedplanner.rules;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import java.util.Arrays;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -80,7 +81,7 @@ public class RulesetsReblockTest {
 
   @Test
   public void reblock_local_no_fed_input() {
-    OpCaps caps = decide(FType.LOCAL);
+    OpCaps caps = decide(null);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -89,7 +90,7 @@ public class RulesetsReblockTest {
 
   @Test
   public void reblock_nf_no_fed_input() {
-    OpCaps caps = decide(FType.NF);
+    OpCaps caps = decide(null);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -99,13 +100,13 @@ public class RulesetsReblockTest {
   @Test
   public void reblock_profile_mirrors_fed_inputs() {
     List<List<FType>> inputs = List.of(List.of(FType.ROW, FType.COL, FType.PART, FType.FULL,
-        FType.BROADCAST, FType.LOCAL));
+        FType.BROADCAST));
     FTypeProfile profile = rule().profile(sig(), inputs, UNKNOWN_SHAPE);
     assertEquals(List.of(FType.ROW, FType.COL, FType.PART, FType.FULL), profile.outputs());
   }
 
   private static OpCaps decide(FType in) {
-    return rule().caps(sig(), List.of(in), UNKNOWN_SHAPE);
+    return rule().caps(sig(), Arrays.asList(in), UNKNOWN_SHAPE);
   }
 
   private static OpSig sig() {

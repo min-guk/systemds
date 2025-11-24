@@ -20,6 +20,7 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import java.util.Arrays;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -70,7 +71,7 @@ public class CovarianceRuleTest {
 
   @Test
   public void rowAndNonFederatedFallsBackToFed() {
-    OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.NF), UNKNOWN);
+    OpCaps caps = rule.caps(COV_SIG, Arrays.asList(FType.ROW, null), UNKNOWN);
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertLocalScalar(caps);
@@ -78,7 +79,7 @@ public class CovarianceRuleTest {
 
   @Test
   public void nonFederatedAndColFallsBackToFed() {
-    OpCaps caps = rule.caps(COV_SIG, List.of(FType.NF, FType.COL), UNKNOWN);
+    OpCaps caps = rule.caps(COV_SIG, Arrays.asList(null, FType.COL), UNKNOWN);
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
     assertLocalScalar(caps);
@@ -86,7 +87,7 @@ public class CovarianceRuleTest {
 
   @Test
   public void noFederatedInputsArityOk() {
-    OpCaps caps = rule.caps(COV_SIG, List.of(FType.NF, FType.NF), UNKNOWN);
+    OpCaps caps = rule.caps(COV_SIG, Arrays.asList(null, null), UNKNOWN);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
     assertLocalScalar(caps);
@@ -94,7 +95,7 @@ public class CovarianceRuleTest {
 
   @Test
   public void weightsLocalNoted() {
-    OpCaps caps = rule.caps(COV_SIG, List.of(FType.ROW, FType.ROW, FType.NF), UNKNOWN);
+    OpCaps caps = rule.caps(COV_SIG, Arrays.asList(FType.ROW, FType.ROW, null), UNKNOWN);
     assertTrue(hasNote(caps, "weights=local"));
     assertEquals(ExecType.FED, caps.exec());
     assertLocalScalar(caps);

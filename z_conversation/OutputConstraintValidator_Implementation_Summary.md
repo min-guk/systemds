@@ -131,7 +131,7 @@ if (validator != null) {
     if (!result.isFoutAllowed()) {
         // FOUT 불가 → LOUT 강제
         LOG.warn("FOUT blocked: " + result.getConstraintMessage());
-        return FType.LOCAL;
+        return null;
     } else if (result.getConstraintMessage().startsWith("CONDITIONAL")) {
         // 조건부 허용 → 경고
         LOG.info("FOUT conditional: " + result.getConstraintMessage());

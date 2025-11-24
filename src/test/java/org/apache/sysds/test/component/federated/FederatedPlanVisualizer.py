@@ -173,7 +173,8 @@ def parse_federated_plan_line(line: str, debug: bool = False):
     
     # Check if this is the new format (starts with [HopID]:)
     if line.startswith("[HopID]:"):
-        # Parse new format directly: [HopID]: X, [Name]: Y, [FOutType]: Z, [ChildHopIDs]: (id1, id2), [ParentHopIDs]: (parent1, parent2)
+        # Parse new format directly: [HopID]: X, [Name]: Y, [OutputType/FOutType]: Z, [ChildHopIDs]: (id1, id2), [ParentHopIDs]: (parent1, parent2)
+        number_pattern = r'[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?'
         
         # Extract HopID (node_id)
         match_hop_id = re.search(r'\[HopID\]:\s*([^,]+)', line)
@@ -193,13 +194,35 @@ def parse_federated_plan_line(line: str, debug: bool = False):
             if debug:
                 print(f"  > Name/operation: {operation}")
 
+        # Extract ExecType (if available)
+        exec_type = ""
+        match_exec_type = re.search(r'\[ExecType\]:\s*([^,]+)', line)
+        if match_exec_type:
+            exec_type = match_exec_type.group(1).strip()
+            if debug:
+                print(f"  > ExecType: {exec_type}")
+
         # Extract FOutType (kind)
         kind = ""
+        output_type = ""
+        match_output_type = re.search(r'\[OutputType\]:\s*([^,]+)', line)
         match_fout = re.search(r'\[FOutType\]:\s*([^,]+)', line)
-        if match_fout:
+        if match_output_type:
+            kind = match_output_type.group(1).strip()
+            output_type = kind
+        elif match_fout:
             kind = match_fout.group(1).strip()
+            output_type = kind
+        if debug:
+            print(f"  > FOutType/kind: {kind}")
+
+        # Extract FType (if available)
+        ftype = ""
+        match_ftype = re.search(r'\[FType\]:\s*([^,]+)', line)
+        if match_ftype:
+            ftype = match_ftype.group(1).strip()
             if debug:
-                print(f"  > FOutType/kind: {kind}")
+                print(f"  > FType: {ftype}")
 
         # Extract ChildHopIDs
         child_ids = []
@@ -211,24 +234,38 @@ def parse_federated_plan_line(line: str, debug: bool = False):
             if debug:
                 print(f"  > ChildHopIDs: {child_ids}")
 
+        # Extract ParentHopIDs (not used for graph building but kept for reference)
+        parent_ids = []
+        match_parent_ids = re.search(r'\[ParentHopIDs\]:\s*\(([^)]*)\)', line)
+        if match_parent_ids:
+            parents_str = match_parent_ids.group(1)
+            if parents_str.strip():
+                parent_ids = [p.strip() for p in parents_str.split(',') if p.strip()]
+            if debug:
+                print(f"  > ParentHopIDs: {parent_ids}")
+
         # Extract cost information from CostInfo (if present)
         total = ""
         self_cost = ""
         weight = ""
+        network_cost = ""
         match_cost_info = re.search(r'\[CostInfo\]:\s*\{([^}]+)\}', line)
         if match_cost_info:
             cost_content = match_cost_info.group(1)
-            m_total = re.search(r'TotalCost:\s*([\d\.]+)', cost_content)
-            m_self = re.search(r'SelfCost:\s*([\d\.]+)', cost_content)
-            m_weight = re.search(r'ComputeWeight:\s*([\d\.]+)', cost_content)
+            m_total = re.search(rf'TotalCost:\s*({number_pattern})', cost_content)
+            m_self = re.search(rf'SelfCost:\s*({number_pattern})', cost_content)
+            m_network = re.search(rf'NetworkCost:\s*({number_pattern})', cost_content)
+            m_weight = re.search(rf'ComputeWeight:\s*({number_pattern})', cost_content)
             if m_total:
                 total = m_total.group(1)
             if m_self:
                 self_cost = m_self.group(1)
+            if m_network:
+                network_cost = m_network.group(1)
             if m_weight:
                 weight = m_weight.group(1)
             if debug:
-                print(f"  > CostInfo - Total: {total}, Self: {self_cost}, Weight: {weight}")
+                print(f"  > CostInfo - Total: {total}, Self: {self_cost}, Network: {network_cost}, Weight: {weight}")
 
         # Extract edge details from EdgeInfo (if present)
         edge_details = {}
@@ -277,10 +314,15 @@ def parse_federated_plan_line(line: str, debug: bool = False):
             'node_id': node_id,
             'operation': operation,
             'kind': kind,
+            'output_type': output_type,
+            'exec_type': exec_type,
+            'ftype': ftype,
             'total': total,
             'self_cost': self_cost,
+            'network_cost': network_cost,
             'weight': weight,
             'child_ids': child_ids,
+            'parent_ids': parent_ids,
             'edge_details': edge_details
         }
     
@@ -435,16 +477,31 @@ def build_dag_from_file(filename: str, debug: bool = False):
             parsed_count += 1
             node_id = info['node_id']
             operation = info.get('operation', '')
-            kind = info.get('kind', '')
+            kind = info.get('kind', '') or info.get('output_type', '')
             total = info.get('total', '')
             self_cost = info.get('self_cost', '')
             weight = info.get('weight', '')
+            network_cost = info.get('network_cost', '')
+            exec_type = info.get('exec_type', '')
+            ftype = info.get('ftype', '')
+            parent_ids = info.get('parent_ids', [])
             child_ids = info.get('child_ids', [])
             edge_details = info.get('edge_details', {})
 
             if debug:
                 print(f"Adding node: {node_id}, label: {operation}, kind: {kind}")
-            G.add_node(node_id, label=operation, kind=kind, total=total, self_cost=self_cost, weight=weight)
+            G.add_node(
+                node_id,
+                label=operation,
+                kind=kind,
+                total=total,
+                self_cost=self_cost,
+                weight=weight,
+                network_cost=network_cost,
+                exec_type=exec_type,
+                ftype=ftype,
+                parent_ids=parent_ids
+            )
 
             # 1. First create basic edges with child IDs in ()
             for child_id in child_ids:
@@ -463,6 +520,23 @@ def build_dag_from_file(filename: str, debug: bool = False):
                           forward_cost="0.0",  # Default cost for basic edges
                           forward_weight="1.0",  # Default weight for basic edges
                           is_discovered=True)  # Mark as discovered for new format
+
+            # 1b. Add edges using parent IDs when present (new format sometimes only lists parents)
+            for parent_id in parent_ids:
+                if parent_id not in G:
+                    if debug:
+                        print(f"  > Creating missing parent node: {parent_id}")
+                    G.add_node(parent_id, label=parent_id, kind="", total="", self_cost="", weight="")
+
+                # Avoid duplicate edges if already added via child_ids
+                if not G.has_edge(node_id, parent_id):
+                    if debug:
+                        print(f"  > Adding parent edge: {node_id} -> {parent_id} (from ParentHopIDs)")
+                    G.add_edge(node_id, parent_id,
+                               is_forwarding=False,
+                               forward_cost="0.0",
+                               forward_weight="1.0",
+                               is_discovered=True)
             
             # 2. Update edge attributes with [Edges] info
             for source_id, edge_data in edge_details.items():
@@ -1385,11 +1459,31 @@ def visualize_plan(filename: str, output_dir: str = "visualization_output",
 
     # Collect all Fed parent nodes
     fed_parent_nodes = collect_fed_parents(G)
+
+    # Collect nodes participating in LOUT<->FOUT transitions for coloring
+    transition_fout_to_lout_nodes = set()
+    transition_lout_to_fout_nodes = set()
+    for u, v, d in G.edges(data=True):
+        if v == 'ROOT' or u == 'ROOT':
+            continue
+        if 'is_discovered' in d and d['is_discovered']:
+            u_kind = G.nodes[u].get('kind', '').upper()
+            v_kind = G.nodes[v].get('kind', '').upper()
+            if u_kind == 'FOUT' and v_kind == 'LOUT':
+                transition_fout_to_lout_nodes.update([u, v])
+            elif u_kind == 'LOUT' and v_kind == 'FOUT':
+                transition_lout_to_fout_nodes.update([u, v])
     
     # Determine color for each node (based on kind and operation)
     def get_color(n):
         label = G.nodes[n].get('label', '').lower()
         k = G.nodes[n].get('kind', '').lower()
+
+        # Highlight nodes involved in transitions first
+        if n in transition_lout_to_fout_nodes:
+            return 'red'
+        if n in transition_fout_to_lout_nodes:
+            return 'blue'
         
         # Check if operation starts with "fed" (e.g., "Fed X")
         if label.startswith('fed '):
@@ -1411,19 +1505,18 @@ def visualize_plan(filename: str, output_dir: str = "visualization_output",
             # Not a Fed node and not a parent of Fed node -> gray
             return 'gray'
 
-    # Determine node shape (check if node's label contains specific strings):
-    # If contains 'twrite' -> triangle (marker '^')
-    # If contains 'tread' -> square (marker 's')
-    # Otherwise -> circle (marker 'o')
-    triangle_nodes = [n for n in G.nodes() if 'twrite' in G.nodes[n].get('label', '').lower()]
-    square_nodes = [n for n in G.nodes() if 'tread' in G.nodes[n].get('label', '').lower()]
-    other_nodes = [n for n in G.nodes() 
-                   if 'twrite' not in G.nodes[n].get('label', '').lower() and
-                      'tread' not in G.nodes[n].get('label', '').lower()]
+    # Determine node shape by execution type: FED exec -> square, local/others -> circle
+    square_nodes = []
+    circle_nodes = []
+    for n in G.nodes():
+        exec_type = str(G.nodes[n].get('exec_type', '')).lower()
+        if exec_type == 'fed':
+            square_nodes.append(n)
+        else:
+            circle_nodes.append(n)
 
-    triangle_colors = [get_color(n) for n in triangle_nodes]
     square_colors = [get_color(n) for n in square_nodes]
-    other_colors = [get_color(n) for n in other_nodes]
+    circle_colors = [get_color(n) for n in circle_nodes]
 
     # Calculate node sizes based on proportional_sizing option (using self cost)
     if proportional_sizing:
@@ -1451,17 +1544,6 @@ def visualize_plan(filename: str, output_dir: str = "visualization_output",
             max_percentage = 1.0
         
         # Calculate sizes for each node group based on self cost
-        triangle_sizes = []
-        for node in triangle_nodes:
-            percentage = self_cost_percentages.get(node, 0.0)
-            # Scale percentage to size range
-            if percentage > 0:
-                normalized_percentage = percentage / max_percentage
-                size = min_size + normalized_percentage * (max_size - min_size)
-            else:
-                size = min_size
-            triangle_sizes.append(size)
-        
         square_sizes = []
         for node in square_nodes:
             percentage = self_cost_percentages.get(node, 0.0)
@@ -1472,34 +1554,30 @@ def visualize_plan(filename: str, output_dir: str = "visualization_output",
                 size = min_size
             square_sizes.append(size)
         
-        other_sizes = []
-        for node in other_nodes:
+        circle_sizes = []
+        for node in circle_nodes:
             percentage = self_cost_percentages.get(node, 0.0)
             if percentage > 0:
                 normalized_percentage = percentage / max_percentage
                 size = min_size + normalized_percentage * (max_size - min_size)
             else:
                 size = min_size
-            other_sizes.append(size)
+            circle_sizes.append(size)
     else:
         # Fixed node size (original behavior)
         node_size = 1200
-        triangle_sizes = [node_size] * len(triangle_nodes)
         square_sizes = [node_size] * len(square_nodes)
-        other_sizes = [node_size] * len(other_nodes)
+        circle_sizes = [node_size] * len(circle_nodes)
 
     # Draw each node group separately
-    node_collection_triangle = nx.draw_networkx_nodes(G, pos, nodelist=triangle_nodes, node_size=triangle_sizes, 
-                                                      node_color=triangle_colors, node_shape='^', ax=ax)
     node_collection_square = nx.draw_networkx_nodes(G, pos, nodelist=square_nodes, node_size=square_sizes, 
                                                     node_color=square_colors, node_shape='s', ax=ax)
-    node_collection_other = nx.draw_networkx_nodes(G, pos, nodelist=other_nodes, node_size=other_sizes, 
-                                                   node_color=other_colors, node_shape='o', ax=ax)
+    node_collection_circle = nx.draw_networkx_nodes(G, pos, nodelist=circle_nodes, node_size=circle_sizes, 
+                                                    node_color=circle_colors, node_shape='o', ax=ax)
 
     # Adjust zorder (nodes:1, edges:2, labels:3)
-    node_collection_triangle.set_zorder(1)
     node_collection_square.set_zorder(1)
-    node_collection_other.set_zorder(1)
+    node_collection_circle.set_zorder(1)
 
     # Draw edges with different colors based on FOUT to LOUT transition and ROOT node connection
     

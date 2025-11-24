@@ -19,6 +19,7 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import java.util.Arrays;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -55,7 +56,7 @@ public class RulesetsUnaryTest {
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", false),
         Scenario.of("broadcast", elemRule, "log", Map.of(), List.of(FType.BROADCAST),
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
-        Scenario.of("local", elemRule, "sqrt", Map.of(), List.of(FType.LOCAL),
+        Scenario.of("local", elemRule, "sqrt", Map.of(), Arrays.asList((FType) null),
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.NO_FED_INPUT, null, false));
     runScenarios(scenarios);
   }
@@ -80,7 +81,7 @@ public class RulesetsUnaryTest {
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
         Scenario.of("ucumk+-broadcast", ucumRule, "ucumk+", Map.of(), List.of(FType.BROADCAST),
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
-        Scenario.of("ucummax-local", ucumRule, "ucummax", Map.of(), List.of(FType.LOCAL),
+        Scenario.of("ucummax-local", ucumRule, "ucummax", Map.of(), Arrays.asList((FType) null),
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.NO_FED_INPUT, null, false));
     runScenarios(scenarios);
   }

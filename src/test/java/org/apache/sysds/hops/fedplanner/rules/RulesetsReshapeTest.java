@@ -21,6 +21,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -93,7 +94,7 @@ public class RulesetsReshapeTest {
 
   @Test
   public void reshape_local_no_fed_input() {
-    OpCaps caps = decide(true, FType.LOCAL);
+    OpCaps caps = decide(true, null);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -102,7 +103,7 @@ public class RulesetsReshapeTest {
 
   @Test
   public void reshape_nf_no_fed_input() {
-    OpCaps caps = decide(true, FType.NF);
+    OpCaps caps = decide(true, null);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -138,7 +139,7 @@ public class RulesetsReshapeTest {
   }
 
   private static OpCaps decide(Boolean byRow, FType in) {
-    return rule().caps(sig(byRow), List.of(in), UNKNOWN_SHAPE);
+    return rule().caps(sig(byRow), Arrays.asList(in), UNKNOWN_SHAPE);
   }
 
   private static OpSig sig(Boolean byRow) {

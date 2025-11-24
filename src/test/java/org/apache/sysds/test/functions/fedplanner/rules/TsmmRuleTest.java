@@ -23,6 +23,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.apache.sysds.common.Opcodes;
@@ -114,7 +115,7 @@ public class TsmmRuleTest {
 
   @Test
   public void nonFederatedInputRejected() {
-    OpCaps caps = rule.caps(sig(Map.of()), List.of(FType.NF), UNKNOWN);
+    OpCaps caps = rule.caps(sig(Map.of()), Arrays.asList((FType) null), UNKNOWN);
     assertEquals(ReasonCode.NO_FED_INPUT, caps.reason());
     assertEquals(ExecType.CP, caps.exec());
   }

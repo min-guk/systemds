@@ -72,8 +72,6 @@ public class FTypes
 	}
 
 	public enum FType {
-		NF(FPartitioning.NONE, FReplication.NONE),    // non-federated input (rule-layer hint)
-		LOCAL(FPartitioning.NONE, FReplication.NONE), // local/scalar input (rule-layer hint)
 		ROW(FPartitioning.ROW, FReplication.NONE),
 		COL(FPartitioning.COL, FReplication.NONE),
 		FULL(FPartitioning.NONE, FReplication.NONE),
@@ -90,16 +88,12 @@ public class FTypes
 		}
 
 		public boolean isRowPartitioned() {
-			if (this == NF || this == LOCAL)
-				return false;
 			return _partType == FPartitioning.ROW
 				|| (_partType == FPartitioning.NONE
 				&& !(_repType == FReplication.OVERLAP));
 		}
 
 		public boolean isColPartitioned() {
-			if (this == NF || this == LOCAL)
-				return false;
 			return _partType == FPartitioning.COL
 				|| (_partType == FPartitioning.NONE
 				&& !(_repType == FReplication.OVERLAP));

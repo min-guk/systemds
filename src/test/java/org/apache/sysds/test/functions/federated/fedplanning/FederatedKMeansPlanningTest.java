@@ -60,13 +60,6 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
-	@Ignore
-	@Test
-	public void runKMeansCostBasedTestPrivate() {
-		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
-	}
-
-	@Ignore
 	@Test
 	public void runKMeansCostBasedTestPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");

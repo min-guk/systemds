@@ -73,9 +73,10 @@
 		<maven.test.skip>false</maven.test.skip>
 		<test>org.apache.sysds.test.usertest.**</test>
 		<test-parallel>classes</test-parallel>
-		<test-threadCount>2</test-threadCount>
+		<test-threadCount>1</test-threadCount>
+		<test-perCoreThreadCount>true</test-perCoreThreadCount>
 		<test-forkCount>1C</test-forkCount>
-		<rerun.failing.tests.count>2</rerun.failing.tests.count>
+		<rerun.failing.tests.count>0</rerun.failing.tests.count>
 		<jacoco.skip>false</jacoco.skip>
 		<doc.skip>false</doc.skip>
 		<jacoco.include>**</jacoco.include>
@@ -374,6 +375,7 @@
 					<skipTests>${maven.test.skip}</skipTests>
 					<parallel>${test-parallel}</parallel>
 					<threadCount>${test-threadCount}</threadCount>
+					<perCoreThreadCount>${test-perCoreThreadCount}</perCoreThreadCount>
 					<!-- 1C means the number of threads times 1 possible maximum forks for testing-->
 					<forkCount>${test-forkCount}</forkCount>
 					<reuseForks>false</reuseForks>

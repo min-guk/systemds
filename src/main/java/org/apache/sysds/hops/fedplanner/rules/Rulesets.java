@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types;
@@ -63,6 +64,12 @@ public final class Rulesets {
   private static final String ATTR_SPOOF_CELL_TYPE = "spoof.cellType";
   private static final String ATTR_SPOOF_ROW_TYPE = "spoof.rowType";
   private static final String ATTR_SPOOF_OUTER_TYPE = "spoof.outer.type";
+  private static final String ATTR_VAR_WRITE_FED = "var.write.federated";
+  private static final String ATTR_VAR_READ_FED = "var.read.federated";
+  private static final String ATTR_VAR_READ_FTYPE = "var.read.ftype";
+  private static final String ATTR_FCALL_NAMESPACE = "fcall.namespace";
+  private static final String ATTR_FCALL_NAME = "fcall.name";
+  private static final String ATTR_FCALL_TYPE = "fcall.type";
   private static final String WUMM_X_AXIS_ONLY_DETAIL =
       "WUMM supports only ROW or COL partitioned X (per QuaternaryWUMMFEDInstruction)";
   private static final String APPEND_FULL_SINGLE_RANGE_DETAIL =
@@ -104,7 +111,7 @@ public final class Rulesets {
   }
 
   private static boolean isScalarLike(FType t) {
-    return t == null || t == FType.NF || t == FType.LOCAL;
+    return t == null;
   }
 
   private static boolean isBroadcastOrScalar(FType t) {
@@ -209,6 +216,27 @@ public final class Rulesets {
       return false;
     String raw = attrValue(sig, ATTR_Q_TYPE);
     return raw != null && raw.equalsIgnoreCase(expected);
+  }
+
+  private static boolean attrBoolean(OpSig sig, String key) {
+    if (sig == null || key == null)
+      return false;
+    String raw = attrValue(sig, key);
+    return raw != null && Boolean.parseBoolean(raw);
+  }
+
+  private static FType attrFType(OpSig sig, String key) {
+    if (sig == null || key == null)
+      return null;
+    String raw = attrValue(sig, key);
+    if (raw == null || raw.isBlank())
+      return null;
+    try {
+      return FType.valueOf(raw.trim());
+    }
+    catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 
   private static boolean matchesWeightedQuaternary(OpSig sig, Set<String> opcodes, String qType) {
@@ -410,7 +438,7 @@ public final class Rulesets {
   }
 
   private static FType defaultType(FType t) {
-    return t == null ? FType.NF : t;
+    return t;
   }
 
   private static FType axisOf(FType t) {
@@ -626,7 +654,7 @@ public final class Rulesets {
     FType primary = null;
     if (inFTypes != null) {
       for (FType t : inFTypes) {
-        if (t == null || t == FType.NF || t == FType.LOCAL)
+        if (t == null)
           continue;
         if (t == FType.BROADCAST) {
           hasBroadcast = true;
@@ -687,7 +715,7 @@ public final class Rulesets {
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return scalarCaps(sig, ExecType.CP, ReasonCode.MISSING_IN_FTYPE);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.NO_FED_INPUT);
       if (x == FType.BROADCAST)
         return scalarCaps(sig, ExecType.CP, ReasonCode.BROADCAST_CONSTRAINT);
       if (!isFederatedLike(x))
@@ -720,7 +748,7 @@ public final class Rulesets {
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return scalarCaps(sig, ExecType.CP, ReasonCode.MISSING_IN_FTYPE);
+        return scalarCaps(sig, ExecType.CP, ReasonCode.NO_FED_INPUT);
       if (x == FType.BROADCAST)
         return scalarCaps(sig, ExecType.CP, ReasonCode.BROADCAST_CONSTRAINT);
       if (!isFederatedLike(x))
@@ -754,7 +782,7 @@ public final class Rulesets {
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (x == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
       if (!isFederatedLike(x))
@@ -798,11 +826,9 @@ public final class Rulesets {
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (x == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-      if (x == FType.LOCAL || x == FType.NF)
-        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (x == FType.FULL || x == FType.PART)
         return OpCaps.newBuilder()
             .category(sig.category())
@@ -971,7 +997,7 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
       FType in = typeAt(inFTypes, 0);
-      if (in == null || in == FType.NF || in == FType.LOCAL)
+      if (in == null)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
@@ -1031,7 +1057,7 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
       FType in = typeAt(inFTypes, 0);
-      if (in == null || in == FType.NF || in == FType.LOCAL)
+      if (in == null)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
@@ -1144,11 +1170,9 @@ public final class Rulesets {
 
       FType in = typeAt(inFTypes, 0);
       if (in == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-      if (in == FType.NF || in == FType.LOCAL)
-        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.PART || in == FType.FULL)
         return axisOnlyCp(sig);
       if (!isAxis(in))
@@ -1254,8 +1278,6 @@ public final class Rulesets {
 
       FType in = typeAt(inFTypes, 0);
       if (in == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
-      if (in == FType.LOCAL || in == FType.NF)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
@@ -1339,8 +1361,6 @@ public final class Rulesets {
 
       FType in = typeAt(inFTypes, 0);
       if (in == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
-      if (in == FType.LOCAL || in == FType.NF)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
@@ -1452,7 +1472,7 @@ public final class Rulesets {
       FType rhs = typeAt(inFTypes, 1);
 
       if (lhs == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (!isFederatedLike(lhs))
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
@@ -1466,7 +1486,7 @@ public final class Rulesets {
       if (rhsIsScalar)
         return fedFoutCaps(sig, lhs, ReasonCode.OK);
 
-      if (rhs == null || rhs == FType.NF || rhs == FType.LOCAL || rhs == FType.BROADCAST)
+      if (rhs == null || rhs == FType.BROADCAST)
         return fedFoutCaps(sig, lhs, ReasonCode.OK);
 
       if (isFederatedLike(rhs)) {
@@ -1523,7 +1543,7 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
       FType in = typeAt(inFTypes, 0);
-      if (in == null || in == FType.NF || in == FType.LOCAL)
+      if (in == null)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
       // Smoke scenarios:
@@ -1591,7 +1611,7 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED);
 
       FType in = typeAt(inFTypes, 0);
-      if (in == null || in == FType.NF || in == FType.LOCAL)
+      if (in == null)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
@@ -1639,7 +1659,7 @@ public final class Rulesets {
           return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
 
         FType in = typeAt(inFTypes, 0);
-        if (in == null || in == FType.NF || in == FType.LOCAL)
+        if (in == null)
           return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
         if (in == FType.BROADCAST) {
@@ -1972,8 +1992,8 @@ public final class Rulesets {
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       FType in = typeAt(inFTypes, 0);
-      if (in == null || in == FType.NF)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
       Dir dir = dirOf(sig);
       String agg = aggOf(sig);
@@ -2128,8 +2148,6 @@ public final class Rulesets {
 
       FType x = typeAt(inFTypes, 0);
       if (x == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
-      if (x == FType.NF || x == FType.LOCAL)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (x == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
@@ -2479,9 +2497,9 @@ public final class Rulesets {
       return val != null && val.equalsIgnoreCase(expected);
     }
 
-    private static FType normalize(FType t) {
-      return (t == null) ? FType.NF : t;
-    }
+  private static FType normalize(FType t) {
+    return t;
+  }
 
     private static boolean eligible(FType left, FType right) {
       if (isRowPartition(left) && isTrueFederated(left))
@@ -2559,7 +2577,7 @@ public final class Rulesets {
 
       // 2) main input X must be ROW-federated (runtime parser enforces this)
       final FType X = typeAt(inFTypes, 0);
-      if (X == null || X == FType.NF || X == FType.LOCAL)
+      if (X == null)
         return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
       if (X != FType.ROW)
         return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
@@ -2768,7 +2786,7 @@ public final class Rulesets {
       }
 
       if (outs.isEmpty())
-        outs.add(FType.LOCAL);
+        return FTypeProfile.empty();
       return FTypeProfile.outs(outs);
     }
 
@@ -2919,7 +2937,7 @@ public final class Rulesets {
         if (hasRow) return FType.ROW;
         if (hasCol) return FType.COL;
       }
-      return FType.LOCAL;
+      return null;
     }
 
     private static ReasonCode reasonFor(boolean cbind, boolean hasRow, boolean hasCol) {
@@ -3002,9 +3020,9 @@ public final class Rulesets {
 
       FType in = typeAt(inFTypes, 0);
       if (in == null)
-        return cpCaps(sig, ReasonCode.MISSING_IN_FTYPE);
-      if (in == FType.NF || in == FType.LOCAL || in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
       if (in == FType.PART)
         return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY);
 
@@ -3104,8 +3122,6 @@ public final class Rulesets {
         case BROADCAST:
           return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
 
-        case LOCAL:
-        case NF:
         default:
           return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
       }
@@ -3313,8 +3329,7 @@ public final class Rulesets {
       final String opcode = normalizedOpcode(sig);
       final FType in = typeAt(inFTypes, 0);
 
-      if (in == null || in == FType.NF || in == FType.LOCAL
-          || in == FType.BROADCAST) {
+      if (in == null || in == FType.BROADCAST) {
         return b.exec(ExecType.CP)
             .placement(FederatedOutput.LOUT)
             
@@ -3742,6 +3757,214 @@ public final class Rulesets {
         default:
           return fedLocalCaps(sig, ReasonCode.OK);
       }
+    }
+  }
+
+  /** Transient write acts as a pass-through for federated values. */
+  public static final class TransientWriteRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(OpOpData.TRANSIENTWRITE.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      FType in = typeAt(inFTypes, 0);
+      if (isFederatedLike(in))
+        return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
+      if (in == FType.FULL || in == FType.PART)
+        return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
+
+      if (attrBoolean(sig, ATTR_VAR_WRITE_FED))
+        return fedLocalWithDetail(sig, ReasonCode.OK, FED_WRITE_DETAIL);
+
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+  }
+
+  /** Transient read forwards the underlying value's federated layout. */
+  public static final class TransientReadRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(OpOpData.TRANSIENTREAD.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      FType attrType = attrFType(sig, ATTR_VAR_READ_FTYPE);
+      if (attrType != null)
+        return fedFoutCaps(sig, preserveOrAxis(attrType), ReasonCode.OK);
+      FType in = typeAt(inFTypes, 0);
+      if (isFederatedLike(in) || in == FType.FULL || in == FType.PART)
+        return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
+      if (attrBoolean(sig, ATTR_VAR_READ_FED))
+        return fedFoutCaps(sig, FType.BROADCAST, ReasonCode.OK);
+
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+  }
+
+  /**
+   * Function call hops act purely as placeholders for their callee DAGs and never execute
+   * directly; allow them to keep FED/FOUT placement when any input is federated.
+   */
+  public static final class FunctionCallRule extends BaseRule {
+    private static final String OPCODE_PREFIX = "fcall";
+    private static final String PLACEHOLDER_NOTE =
+        "function call hop treated as federated placeholder; execution occurs inside callee";
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return null; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null)
+        return false;
+      String opcode = normalizedOpcode(sig);
+      return opcode.startsWith(OPCODE_PREFIX);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      Optional<FType> passthroughType = firstMeaningfulInputType(inFTypes);
+      if (!passthroughType.isPresent())
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      OpCaps.Builder builder = OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(ExecType.FED)
+          .fout(true, passthroughType.get())
+          .reason(ReasonCode.OK)
+          .detail(describeFunction(sig));
+      builder.note(ReasonCode.INFO, PLACEHOLDER_NOTE);
+      return builder.build();
+    }
+
+    private Optional<FType> firstMeaningfulInputType(List<FType> inFTypes) {
+      if (inFTypes == null || inFTypes.isEmpty())
+        return Optional.empty();
+      FType fallback = null;
+      for (FType t : inFTypes) {
+        if (isFederatedLike(t))
+          return Optional.of(t);
+        if (fallback == null && isMeaningfulFType(t))
+          fallback = t;
+      }
+      return Optional.ofNullable(fallback);
+    }
+
+    private boolean isMeaningfulFType(FType t) {
+      return t != null;
+    }
+
+    private String describeFunction(OpSig sig) {
+      String ns = attrValue(sig, ATTR_FCALL_NAMESPACE);
+      String name = attrValue(sig, ATTR_FCALL_NAME);
+      String type = attrValue(sig, ATTR_FCALL_TYPE);
+      List<String> parts = new ArrayList<>();
+      if (name != null && !name.isBlank())
+        parts.add("function=" + name);
+      if (ns != null && !ns.isBlank())
+        parts.add("namespace=" + ns);
+      if (type != null && !type.isBlank())
+        parts.add("type=" + type);
+      if (parts.isEmpty())
+        return "function call hop";
+      return String.join(", ", parts);
+    }
+  }
+
+  /**
+   * Specialized rule for .builtinNS::m_kmeans so it can keep a FED placement when any input
+   * (the matrix argument) is federated. The body still runs in CP, but this lets the planner
+   * consider privacy-compliant federated orchestrations.
+   */
+  public static final class BuiltinMKMeansRule extends BaseRule {
+    private static final String OPCODE_PREFIX = "fcall";
+    private static final String NS = ".builtinNS";
+    private static final String FUNC = "m_kmeans";
+    private static final String DETAIL = "builtin m_kmeans placeholder";
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return null; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      if (sig == null)
+        return false;
+      String opcode = normalizedOpcode(sig);
+      if (!opcode.startsWith(OPCODE_PREFIX))
+        return false;
+      String ns = attrValue(sig, ATTR_FCALL_NAMESPACE);
+      String name = attrValue(sig, ATTR_FCALL_NAME);
+      return ns != null && ns.equalsIgnoreCase(NS)
+          && name != null && name.equalsIgnoreCase(FUNC);
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (!supports(sig))
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      Optional<FType> passthrough = firstMeaningfulInputType(inFTypes);
+      if (!passthrough.isPresent())
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      return OpCaps.newBuilder()
+          .category(sig.category())
+          .opcode(sig.opcode())
+          .exec(ExecType.FED)
+          .fout(true, passthrough.get())
+          .reason(ReasonCode.OK)
+          .detail(DETAIL)
+          .build();
+    }
+
+    private Optional<FType> firstMeaningfulInputType(List<FType> inFTypes) {
+      if (inFTypes == null || inFTypes.isEmpty())
+        return Optional.empty();
+      FType fallback = null;
+      for (FType t : inFTypes) {
+        if (isFederatedLike(t))
+          return Optional.of(t);
+        if (fallback == null && t != null)
+          fallback = t;
+      }
+      return Optional.ofNullable(fallback);
     }
   }
 }

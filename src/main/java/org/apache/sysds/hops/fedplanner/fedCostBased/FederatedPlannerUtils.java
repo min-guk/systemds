@@ -30,6 +30,7 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -41,7 +42,9 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.parser.DataExpression;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -49,12 +52,15 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.concurrent.Future;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Utility class for federated planners.
  */
 public class FederatedPlannerUtils {
 	private static final String FED_MATRIX_IDENTIFIER = "matrix";
+	private static final java.util.Set<String> FED_INIT_VARS = ConcurrentHashMap.newKeySet();
+	private static final Map<String, FType> FED_INIT_FTYPES = new ConcurrentHashMap<>();
 
 	/**
 	 * Get transient inputs from either paramMap or transientWrites.
@@ -252,7 +258,54 @@ public class FederatedPlannerUtils {
 			FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + errorMsg + " Aborting planning.");
 			throw new DMLRuntimeException(errorMsg);
 		}
+		FType fedInitFType = deriveFedInitFType(initFedOp);
+		registerFedInitVar(initFedOp.getName(), fedInitFType);
 		return privacyConstraint;
+	}
+
+	public static void registerFedInitVar(String varName) {
+		registerFedInitVar(varName, null);
+	}
+
+	public static void registerFedInitVar(String varName, FType fedInitFType) {
+		if (varName != null && !varName.isEmpty()) {
+			FED_INIT_VARS.add(varName);
+			if (fedInitFType != null)
+				FED_INIT_FTYPES.put(varName, fedInitFType);
+		}
+	}
+
+	public static boolean isFedInitVar(String varName) {
+		return varName != null && FED_INIT_VARS.contains(varName);
+	}
+
+	public static FType getFedInitFType(String varName) {
+		return (varName == null) ? null : FED_INIT_FTYPES.get(varName);
+	}
+
+	public static FType deriveFedInitFType(DataOp fedInit) {
+		if (fedInit == null)
+			return null;
+		Hop ranges = fedInit.getInput(fedInit.getParameterIndex(DataExpression.FED_RANGES));
+		boolean rowPartitioned = true;
+		boolean colPartitioned = true;
+		for (int i = 0; i < ranges.getInput().size() / 2; i++) {
+			Hop beg = ranges.getInput(2 * i);
+			Hop end = ranges.getInput(2 * i + 1);
+			long rl = HopRewriteUtils.getIntValueSafe(beg.getInput(0));
+			long ru = HopRewriteUtils.getIntValueSafe(end.getInput(0));
+			long cl = HopRewriteUtils.getIntValueSafe(beg.getInput(1));
+			long cu = HopRewriteUtils.getIntValueSafe(end.getInput(1));
+			rowPartitioned &= (cu - cl == fedInit.getDim2());
+			colPartitioned &= (ru - rl == fedInit.getDim1());
+		}
+		if (rowPartitioned && colPartitioned)
+			return FType.FULL;
+		if (rowPartitioned)
+			return FType.ROW;
+		if (colPartitioned)
+			return FType.COL;
+		return FType.OTHER;
 	}
 
 	public static Privacy getPrivacyConstraint(Hop hop, List<Hop> inputHops, Map<Long, Privacy> privacyMap) {
@@ -286,7 +339,12 @@ public class FederatedPlannerUtils {
 		}
 
 		if (hasPrivateAggreate) {
-			if (hop instanceof AggUnaryOp || hop instanceof AggBinaryOp || hop instanceof QuaternaryOp) {
+			if (hop instanceof AggUnaryOp) {
+				AggUnaryOp au = (AggUnaryOp) hop;
+				if (isFullSumSqAggregate(au))
+					return Privacy.PUBLIC;
+				return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+			} else if (hop instanceof AggBinaryOp || hop instanceof QuaternaryOp) {
 				return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 			} else if (hop instanceof TernaryOp) {
 				switch (((TernaryOp) hop).getOp()) {
@@ -323,6 +381,10 @@ public class FederatedPlannerUtils {
 		if (a == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC || b == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
 			return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 		return Privacy.PUBLIC;
+	}
+
+	private static boolean isFullSumSqAggregate(AggUnaryOp hop) {
+		return hop.getOp() == Types.AggOp.SUM_SQ && hop.getDirection() == Types.Direction.RowCol;
 	}
 
 	private static class FedWorkerContext {

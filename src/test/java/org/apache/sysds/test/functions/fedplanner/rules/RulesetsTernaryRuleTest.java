@@ -20,6 +20,7 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import java.util.Arrays;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -51,7 +52,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "frame-row-margin-1",
             mapSig(true, Map.of("map.margin", "1")),
-            List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
+            Arrays.asList(FType.ROW, null, null),
             UNKNOWN_SHAPE,
             ExecType.FED,
             FederatedOutput.FOUT,
@@ -63,7 +64,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "frame-col-margin-2",
             mapSig(false, Map.of("map.margin", "2")),
-            List.of(FType.LOCAL, FType.COL, FType.LOCAL),
+            Arrays.asList(null, FType.COL, null),
             UNKNOWN_SHAPE,
             ExecType.FED,
             FederatedOutput.FOUT,
@@ -75,7 +76,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "margin-mismatch",
             mapSig(true, Map.of("map.margin", "2")),
-            List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
+            Arrays.asList(FType.ROW, null, null),
             UNKNOWN_SHAPE,
             ExecType.CP,
             FederatedOutput.LOUT,
@@ -94,7 +95,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "plus-mult-row-dominant",
             ewiseSig(OpOp3.PLUS_MULT.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR),
-            List.of(FType.ROW, FType.LOCAL, FType.LOCAL),
+            Arrays.asList(FType.ROW, null, null),
             UNKNOWN_SHAPE,
             ExecType.FED,
             FederatedOutput.FOUT,
@@ -106,7 +107,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "minus-mult-second-fed",
             ewiseSig(OpOp3.MINUS_MULT.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
-            List.of(FType.LOCAL, FType.COL, FType.BROADCAST),
+            Arrays.asList(null, FType.COL, FType.BROADCAST),
             UNKNOWN_SHAPE,
             ExecType.FED,
             FederatedOutput.FOUT,
@@ -118,7 +119,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "ifelse-part-leading",
             ewiseSig(OpOp3.IFELSE.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
-            List.of(FType.PART, FType.LOCAL, FType.LOCAL),
+            Arrays.asList(FType.PART, null, null),
             UNKNOWN_SHAPE,
             ExecType.FED,
             FederatedOutput.FOUT,
@@ -130,7 +131,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "ifelse-no-fed-input",
             ewiseSig(OpOp3.IFELSE.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX),
-            List.of(FType.LOCAL, FType.BROADCAST, FType.NF),
+            Arrays.asList(null, FType.BROADCAST, null),
             UNKNOWN_SHAPE,
             ExecType.CP,
             FederatedOutput.LOUT,
@@ -142,7 +143,7 @@ public class RulesetsTernaryRuleTest {
         new TestVector(
             "ifelse-outer-like",
             ewiseSig(OpOp3.IFELSE.toString(), Map.of(), InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR),
-            List.of(FType.ROW, FType.COL, FType.LOCAL),
+            Arrays.asList(FType.ROW, FType.COL, null),
             UNKNOWN_SHAPE,
             ExecType.CP,
             FederatedOutput.LOUT,
@@ -163,7 +164,7 @@ public class RulesetsTernaryRuleTest {
             "rc.memIn1EstBytes", "1",
             "rc.memIn2EstBytes", "1"),
         InputKind.MATRIX, InputKind.MATRIX, InputKind.SCALAR);
-    List<FType> fTypes = List.of(FType.ROW, FType.LOCAL, FType.LOCAL);
+    List<FType> fTypes = Arrays.asList(FType.ROW, null, null);
 
     OpCaps caps = elemRule.caps(sig, fTypes, UNKNOWN_SHAPE);
     assertEquals(ExecType.CP, caps.exec());

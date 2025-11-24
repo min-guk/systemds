@@ -25,6 +25,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -54,7 +55,7 @@ public class RulesetsWummTest {
   // 1) (ROW, ROW, LOCAL): FED/FOUT(ROW) + OK + U aligned, V broadcast
   @Test
   public void wumm_row_row_local() {
-    OpCaps caps = decide(defaultSig(), List.of(FType.ROW, FType.ROW, FType.LOCAL));
+    OpCaps caps = decide(defaultSig(), Arrays.asList(FType.ROW, FType.ROW, null));
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
@@ -67,7 +68,7 @@ public class RulesetsWummTest {
   // 2) (ROW, LOCAL, LOCAL): FED/FOUT(ROW) + OK + U broadcast-sliced, V broadcast
   @Test
   public void wumm_row_local_local() {
-    OpCaps caps = decide(defaultSig(), List.of(FType.ROW, FType.LOCAL, FType.LOCAL));
+    OpCaps caps = decide(defaultSig(), Arrays.asList(FType.ROW, null, null));
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
@@ -80,7 +81,7 @@ public class RulesetsWummTest {
   // 3) (COL, LOCAL, COL): FED/FOUT(COL) + OK + U broadcast, V aligned
   @Test
   public void wumm_col_local_col() {
-    OpCaps caps = decide(defaultSig(), List.of(FType.COL, FType.LOCAL, FType.COL));
+    OpCaps caps = decide(defaultSig(), Arrays.asList(FType.COL, null, FType.COL));
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
@@ -93,7 +94,7 @@ public class RulesetsWummTest {
   // 4) (COL, LOCAL, LOCAL): FED/FOUT(COL) + OK + U broadcast, V broadcast-sliced
   @Test
   public void wumm_col_local_local() {
-    OpCaps caps = decide(defaultSig(), List.of(FType.COL, FType.LOCAL, FType.LOCAL));
+    OpCaps caps = decide(defaultSig(), Arrays.asList(FType.COL, null, null));
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());
@@ -138,7 +139,7 @@ public class RulesetsWummTest {
   // 8) (LOCAL, ROW, COL): CP/LOUT + NO_FED_INPUT
   @Test
   public void wumm_local_no_fed() {
-    OpCaps caps = decide(defaultSig(), List.of(FType.LOCAL, FType.ROW, FType.COL));
+    OpCaps caps = decide(defaultSig(), Arrays.asList(null, FType.ROW, FType.COL));
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -151,7 +152,7 @@ public class RulesetsWummTest {
     OpSig sig = OpSig.of(Opcodes.WUMM.toString(), OpCategory.QUATERNARY,
         Map.of("q.type", OpOp4.WUMM.name(), "rc.guardOverride", "false"),
         InputKind.MATRIX, InputKind.MATRIX, InputKind.MATRIX);
-    OpCaps caps = decide(sig, List.of(FType.ROW, FType.ROW, FType.LOCAL));
+    OpCaps caps = decide(sig, Arrays.asList(FType.ROW, FType.ROW, null));
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -161,7 +162,7 @@ public class RulesetsWummTest {
   // 10) Guard unknown: FED/FOUT + unknown guard note
   @Test
   public void wumm_guard_unknown_note() {
-    OpCaps caps = decide(defaultSig(), List.of(FType.ROW, FType.ROW, FType.LOCAL));
+    OpCaps caps = decide(defaultSig(), Arrays.asList(FType.ROW, FType.ROW, null));
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.FOUT, caps.placement());
     assertTrue(caps.foutEnabled());

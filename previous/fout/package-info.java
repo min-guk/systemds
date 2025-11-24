@@ -53,7 +53,7 @@
  *     if (!result.isFoutAllowed()) {
  *         // FOUT blocked → force LOUT
  *         LOG.warn("FOUT blocked for " + hop.getOpString() + ": " + result.getConstraintMessage());
- *         return FType.LOCAL;
+ *         return null;
  *     } else if (result.getConstraintMessage().startsWith("CONDITIONAL")) {
  *         // FOUT allowed with constraints → log warning
  *         LOG.info("FOUT conditional: " + result.getConstraintMessage());

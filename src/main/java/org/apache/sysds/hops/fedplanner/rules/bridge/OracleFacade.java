@@ -17,6 +17,7 @@ import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
+import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
@@ -28,6 +29,7 @@ import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
@@ -38,6 +40,7 @@ import org.apache.sysds.hops.fedplanner.FTypes;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
@@ -53,6 +56,7 @@ import org.apache.sysds.runtime.codegen.SpoofOperator;
 import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
 import org.apache.sysds.runtime.codegen.SpoofRowwise;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 
 /**
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
@@ -65,6 +69,8 @@ public final class OracleFacade {
   private static final String ATTR_MAP_MARGIN = "map.margin";
   private static final String ATTR_BYROW = "reshape.byrow";
   private static final String ATTR_VAR_WRITE_FED = "var.write.federated";
+  private static final String ATTR_VAR_READ_FED = "var.read.federated";
+  private static final String ATTR_VAR_READ_FTYPE = "var.read.ftype";
   private static final String ATTR_INNER = "inner";
   private static final String ATTR_OUTER = "outer";
   private static final String ATTR_ALIGN = "align";
@@ -84,6 +90,9 @@ public final class OracleFacade {
   private static final String ATTR_SPOOF_ROW_TYPE = "spoof.rowType";
   private static final String ATTR_SPOOF_OUTER_TYPE = "spoof.outer.type";
   private static final String ATTR_GUARD_DEFAULT = "rc.guardDefaultIfUnknown";
+  private static final String ATTR_FCALL_NAMESPACE = "fcall.namespace";
+  private static final String ATTR_FCALL_NAME = "fcall.name";
+  private static final String ATTR_FCALL_TYPE = "fcall.type";
   private static final String ALIGN_COL_T = "COL_T";
 
   private final RuleRegistry registry;
@@ -103,7 +112,10 @@ public final class OracleFacade {
     OpSig sig = buildSignature(hop);
     List<FType> mapped = mapFederatedTypes(hop, inFTypes);
     ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop);
-    return oracle.decide(sig, mapped, effectiveHint);
+    logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
+    RulesApi.OpCaps caps = oracle.decide(sig, mapped, effectiveHint);
+    logOracleResult(hop, caps);
+    return caps;
   }
 
   public List<RulesApi.OpCaps> exploreAll(
@@ -163,6 +175,8 @@ public final class OracleFacade {
       addAggUnaryAttrs((AggUnaryOp) hop, attrs);
     if (hop instanceof AggBinaryOp)
       addAggBinaryAttrs((AggBinaryOp) hop, attrs);
+    if (hop instanceof FunctionOp)
+      addFunctionAttrs((FunctionOp) hop, attrs);
     if (hop instanceof QuaternaryOp)
       addQuaternaryAttrs((QuaternaryOp) hop, attrs);
     if (hop instanceof TernaryOp)
@@ -194,6 +208,18 @@ public final class OracleFacade {
     }
     attrs.put(ATTR_DIRECTION, dirToken);
     attrs.put(ATTR_AGG_OP, hop.getOp().name());
+  }
+
+  private void addFunctionAttrs(FunctionOp hop, Map<String,String> attrs) {
+    if (hop == null)
+      return;
+    if (hop.getFunctionNamespace() != null)
+      attrs.put(ATTR_FCALL_NAMESPACE, hop.getFunctionNamespace());
+    if (hop.getFunctionName() != null)
+      attrs.put(ATTR_FCALL_NAME, hop.getFunctionName());
+    FunctionOp.FunctionType type = hop.getFunctionType();
+    if (type != null)
+      attrs.put(ATTR_FCALL_TYPE, type.name());
   }
 
   private void addAggBinaryAttrs(AggBinaryOp hop, Map<String,String> attrs) {
@@ -257,11 +283,21 @@ public final class OracleFacade {
   }
 
   private void addDataOpAttrs(DataOp hop, Map<String,String> attrs) {
-    if (!hop.isWrite())
-      return;
-    boolean federatedTarget = hop.getFileFormat() == FileFormat.FEDERATED
-        || hop.isFederatedDataOp();
-    attrs.put(ATTR_VAR_WRITE_FED, Boolean.toString(federatedTarget));
+    if (hop.isWrite()) {
+      boolean federatedTarget = hop.getFileFormat() == FileFormat.FEDERATED
+          || hop.isFederatedDataOp();
+      attrs.put(ATTR_VAR_WRITE_FED, Boolean.toString(federatedTarget));
+    }
+    else if (hop.getOp() == OpOpData.TRANSIENTREAD) {
+      // Hint only if this variable was initialized via federated init (privacy fetched from workers)
+      boolean fedInit = FederatedPlannerUtils.isFedInitVar(hop.getName());
+      attrs.put(ATTR_VAR_READ_FED, Boolean.toString(fedInit));
+      if (fedInit) {
+        FType initType = FederatedPlannerUtils.getFedInitFType(hop.getName());
+        if (initType != null)
+          attrs.put(ATTR_VAR_READ_FTYPE, initType.name());
+      }
+    }
   }
 
   private void addSpoofAttrs(SpoofFusedOp hop, Map<String,String> attrs) {
@@ -440,19 +476,22 @@ public final class OracleFacade {
 
   private List<FType> mapFederatedTypes(Hop hop, List<FTypes.FType> runtimeTypes) {
     List<FType> mapped = new ArrayList<>();
-    int inputSize = hop.getInput() == null ? 0 : hop.getInput().size();
-    for (int i = 0; i < inputSize; i++) {
-      FTypes.FType rt = (runtimeTypes == null || i >= runtimeTypes.size()) ? null : runtimeTypes.get(i);
-      mapped.add(mapFederatedType(rt, hop.getInput().get(i)));
+    int hopInputSize = hop.getInput() == null ? 0 : hop.getInput().size();
+    int runtimeSize = runtimeTypes == null ? 0 : runtimeTypes.size();
+    int limit = Math.max(hopInputSize, runtimeSize);
+    for (int i = 0; i < limit; i++) {
+      FTypes.FType rt = (runtimeTypes == null || i >= runtimeSize) ? null : runtimeTypes.get(i);
+      Hop hopInput = (hop.getInput() == null || i >= hopInputSize) ? null : hop.getInput().get(i);
+      mapped.add(mapFederatedType(rt, hopInput));
     }
     return mapped;
   }
 
   private FType mapFederatedType(FTypes.FType runtimeType, Hop input) {
     if (input != null && input.getDataType() != DataType.MATRIX)
-      return FType.LOCAL;
+      return null;
     if (runtimeType == null)
-      return FType.NF;
+      return null;
     switch (runtimeType) {
       case ROW:
         return FType.ROW;
@@ -465,7 +504,7 @@ public final class OracleFacade {
       case BROADCAST:
         return FType.BROADCAST;
       default:
-        return FType.NF;
+        return null;
     }
   }
 
@@ -513,6 +552,46 @@ public final class OracleFacade {
       backtrackCandidates(candidates, idx + 1, current, result);
       current.removeLast();
     }
+  }
+
+  private void logOracleInvocation(Hop hop, OpSig sig, List<FType> inFTypes,
+      ShapeHint hint, String phase) {
+    if (hop == null || sig == null)
+      return;
+    String message = String.format(Locale.ROOT,
+        "[Oracle::%s] hop=%d (%s) opcode=%s ns=%s name=%s inFTypes=%s hint=[r=%d,c=%d,b=%d]",
+        phase, hop.getHopID(), hop.getOpString(), sig.opcode(),
+        attrValue(sig, ATTR_FCALL_NAMESPACE), attrValue(sig, ATTR_FCALL_NAME),
+        formatFTypes(inFTypes), hint == null ? -1 : hint.rows(),
+        hint == null ? -1 : hint.cols(), hint == null ? -1 : hint.blockSize());
+    FederatedPlannerLogger.logInfoMessage(message);
+  }
+
+  private void logOracleResult(Hop hop, RulesApi.OpCaps caps) {
+    if (hop == null || caps == null)
+      return;
+    String message = String.format(Locale.ROOT,
+        "[Oracle::end] hop=%d exec=%s placement=%s reason=%s detail=%s",
+        hop.getHopID(), caps.exec(), caps.placement(), caps.reason(),
+        caps.detail().orElse(""));
+    FederatedPlannerLogger.logInfoMessage(message);
+  }
+
+  private String formatFTypes(List<FType> types) {
+    if (types == null || types.isEmpty())
+      return "[]";
+    List<String> parts = new ArrayList<>(types.size());
+    for (FType t : types) {
+      parts.add(t == null ? "null" : t.name());
+    }
+    return parts.toString();
+  }
+
+  private static String attrValue(OpSig sig, String key) {
+    if (sig == null || key == null)
+      return null;
+    Map<String,String> attrs = sig.attrs();
+    return (attrs == null) ? null : attrs.get(key);
   }
 
   private static boolean isMapLeftIndex(LeftIndexingOp hop) {
@@ -574,6 +653,8 @@ public final class OracleFacade {
         return ((TernaryOp) hop).getOp().toString();
       if (hop instanceof QuaternaryOp)
         return ((QuaternaryOp) hop).getOp().toString();
+      if (hop instanceof FunctionOp)
+        return FunctionOp.OPCODE;
       if (hop instanceof ParameterizedBuiltinOp) {
         ParamBuiltinOp op = ((ParameterizedBuiltinOp) hop).getOp();
         return (op != null) ? op.toString() : fallback(hop);

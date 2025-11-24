@@ -19,6 +19,7 @@ package org.apache.sysds.test.functions.fedplanner.rules;
 
 import static org.junit.Assert.assertEquals;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.apache.sysds.common.Opcodes;
@@ -60,7 +61,7 @@ public class AggTernaryRuleTest {
   public void caseBScalarOutputAllowed() {
     OpCaps caps = aggRule.caps(
         TACKPM,
-        List.of(FType.COL, FType.COL, FType.NF),
+        Arrays.asList(FType.COL, FType.COL, null),
         scalarShape());
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
@@ -80,7 +81,7 @@ public class AggTernaryRuleTest {
   public void caseCBroadcastInputs() {
     OpCaps caps = aggRule.caps(
         TAKPM,
-        List.of(FType.ROW, FType.NF, FType.FULL),
+        Arrays.asList(FType.ROW, null, FType.FULL),
         scalarShape());
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(ReasonCode.OK, caps.reason());
@@ -90,7 +91,7 @@ public class AggTernaryRuleTest {
   public void insufficientFederatedInputs() {
     OpCaps caps = aggRule.caps(
         TAKPM,
-        List.of(FType.NF, FType.ROW, FType.ROW),
+        Arrays.asList(null, FType.ROW, FType.ROW),
         scalarShape());
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.UNALIGNED_OR_INSUFFICIENT_FED_INPUTS, caps.reason());
