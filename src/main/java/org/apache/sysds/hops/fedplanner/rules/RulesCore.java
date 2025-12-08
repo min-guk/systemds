@@ -358,6 +358,7 @@ public final class RulesCore {
       rr.register(new Rulesets.MMFedRule());
       rr.register(new Rulesets.BinaryMMRule());
       rr.register(new Rulesets.CastRule());
+      rr.register(new Rulesets.UnaryCastToFrameRule());
       rr.register(new Rulesets.VariableWriteRule());
       rr.register(new Rulesets.CentralMomentRule());
       rr.register(new Rulesets.CovarianceRule());

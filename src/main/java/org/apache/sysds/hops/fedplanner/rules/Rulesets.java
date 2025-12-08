@@ -1579,6 +1579,66 @@ public final class Rulesets {
     }
   }
 
+  /** Unary cast to frame (castdtf). Mirrors CastFEDInstruction axis handling. */
+  public static final class UnaryCastToFrameRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(OpOp1.CAST_AS_FRAME.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && sig.category() == category()
+          && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+
+      Set<FType> outs = new LinkedHashSet<>();
+      if (inputs.contains(FType.ROW))
+        outs.add(FType.ROW);
+      if (inputs.contains(FType.COL))
+        outs.add(FType.COL);
+      if (inputs.contains(FType.PART))
+        outs.add(FType.PART);
+      if (inputs.contains(FType.FULL))
+        outs.add(FType.FULL);
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      Objects.requireNonNull(sig, "sig");
+      if (!hasExpectedArity(inFTypes, 1))
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      // Broadcast is rejected by CastFEDInstruction, so force CP/LOUT.
+      if (in == FType.BROADCAST) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            .reason(ReasonCode.BROADCAST_CONSTRAINT)
+            .detail("broadcast input not supported by CastFEDInstruction")
+            .build();
+      }
+
+      if (!isFederatedLike(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      return fedFoutCaps(sig, in, ReasonCode.OK);
+    }
+  }
+
   /** Variable write rule modeling federated side effects. */
   public static final class VariableWriteRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(Opcodes.WRITE.toString());

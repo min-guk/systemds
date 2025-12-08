@@ -65,6 +65,11 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
+	@Test
+	public void runKMeansCostBasedTestMinSTCutPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	}
+
 	@Ignore
 	@Test
 	public void runKMeansCostBasedTestPublic() {

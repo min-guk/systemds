@@ -28,6 +28,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.logging.Log;
@@ -1074,6 +1075,19 @@ public class FederatedPlannerLogger {
 
 		Graph<Long, DefaultWeightedEdge> graph = planGraph.getGraph();
 		Map<Long, FederatedPlanMinSTGraph.Vertex> memoTable = planGraph.getMemoTable();
+		for (FederatedPlanMinSTGraph.Vertex v : memoTable.values()) {
+			Hop hop = v.getHopRef();
+			ExecType exec = hop.getForcedExecType();
+			FederatedOutput out = hop.getFederatedOutput();
+			Privacy privacy = v.getPrivacy();
+			FType ftype = v.getDataType();
+			FederatedPlanMinSTGraph.ExecPlacementCaps caps = v.getCaps();
+
+			logInfoMessage(String.format(Locale.ROOT,
+				"[MinST Optimal] hop=%d (%s) exec=%s placement=%s privacy=%s ftype=%s caps=[CP_LOUT=%s, CP_FOUT=%s, FED_LOUT=%s, FED_FOUT=%s]",
+				hop.getHopID(), hop.getOpString(), exec, out, privacy, ftype,
+				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT));
+		}
 		long sourceId = -1L; // planGraph.leafedSource
 		long sinkId = -2L;   // planGraph.rootLocalSink
 

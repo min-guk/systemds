@@ -194,7 +194,7 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 			programArgs = new String[] { "-stats", "-nvargs",
 				"X1=" + TestUtils.federatedAddress(port1, input("X1")),
 				"X2=" + TestUtils.federatedAddress(port2, input("X2")),
-				"Y_addr=" + TestUtils.federatedAddress(port1, input("Y")), "r=" + rows, "c=" + cols, "Z=" + output("Z")};
+				"Y=" + input("Y"), "r=" + rows, "c=" + cols, "Z=" + output("Z")};
 			runTest(true, false, null, -1);
 
 

@@ -19,6 +19,9 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDP;
 
+import static org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.isAllowedByPrivacy;
+
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -29,8 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
@@ -44,6 +47,7 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.TernaryOp;
@@ -96,6 +100,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 	{
 		FederatedMemoTable memoTable = new FederatedMemoTable();
 		FederatedMemoTable.FedPlan optimalPlan = FederatedPlanCostEnumerator.enumerateProgram(prog, memoTable, true);
+
+
 		Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>();
 
 		List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = optimalPlan.getChildFedPlans();
@@ -267,12 +273,8 @@ public static class FederatedPlanCostEnumerator {
 		// Todo : Fix & Update Conflict Resolve Plan
 		// Detect conflicts in the federated plans where different FedPlans have
 		// different FederatedOutput types
-		// double additionalTotalCost = detectAndResolveConflictFedPlan(optimalPlan, memoTable);
+		double additionalTotalCost = detectAndResolveConflictFedPlan(memoTable, optimalPlan);
 		
-		
-		double additionalTotalCost = 0.0;
-		FederatedPlannerLogger.logInfoMessage("[Todo]detectAndResolveConflictFedPlan call has been commented out.");
-
 		unRefSet.addAll(unRefTwriteSet);
 		// Print the federated plan tree if requested
 		if (isPrint) {
@@ -293,7 +295,8 @@ public static class FederatedPlanCostEnumerator {
 		Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
 		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
 
-		FederatedPlanRewireTransTable.rewireFunctionDynamic(function, rewireTable, hopCommonTable, privacyConstraintMap,
+		DMLProgram prog = function.getDMLProg();
+		FederatedPlanRewireTransTable.rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable, privacyConstraintMap,
 				fedMap, unRefTwriteSet, unRefSet, progRootHopSet);
 
 		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
@@ -301,7 +304,7 @@ public static class FederatedPlanCostEnumerator {
 
 		Set<String> fnStack = new HashSet<>();
 		Set<Long> visitedHops = new HashSet<>();
-		enumerateStatementBlock(function, null, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+		enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 				unRefTwriteSet, fnStack, fedMap.size(), visitedHops, oracleFacade);
 
 		FederatedMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
@@ -309,10 +312,7 @@ public static class FederatedPlanCostEnumerator {
 		// Detect conflicts in the federated plans where different FedPlans have
 		// different FederatedOutput types
 		// Todo : Fix & Update Conflict Resolve Plan
-		// double additionalTotalCost = detectAndResolveConflictFedPlan(optimalPlan, memoTable);
-
-		double additionalTotalCost = 0.0;
-		FederatedPlannerLogger.logInfoMessage("[Todo]detectAndResolveConflictFedPlan call has been commented out.");
+		double additionalTotalCost = detectAndResolveConflictFedPlan(memoTable, optimalPlan);
 		
 		// Print the federated plan tree if requested
 		if (isPrint) {
@@ -429,19 +429,34 @@ public static class FederatedPlanCostEnumerator {
 		if (hop instanceof FunctionOp) {
 			// maintain counters and investigate functions if not seen so far
 			FunctionOp fop = (FunctionOp) hop;
-			if (fop.getFunctionType() == FunctionType.DML) {
-				String fkey = fop.getFunctionKey();
+				if (fop.getFunctionType() == FunctionType.DML) {
+					String fkey = fop.getFunctionKey();
 
-				if (!fnStack.contains(fkey)) {
-					fnStack.add(fkey);
-					FunctionStatementBlock fsb = prog.getFunctionStatementBlock(fop.getFunctionNamespace(),
-							fop.getFunctionName());
+					if (!fnStack.contains(fkey)) {
+						fnStack.add(fkey);
+						if (prog == null) {
+							FederatedPlannerLogger.logWarnMessage(
+								"[FederatedCost] Skipping nested function " + fkey
+									+ " because DMLProgram is unavailable in dynamic planning");
+						}
+						else {
+							FunctionStatementBlock fsb = prog.getFunctionStatementBlock(fop.getFunctionNamespace(),
+								fop.getFunctionName());
 
-					enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-							unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+							if (fsb == null) {
+								FederatedPlannerLogger.logWarnMessage(
+									"[FederatedCost] Function " + fkey
+										+ " not found in DMLProgram; skipping nested planning");
+							}
+							else {
+								enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable,
+									privacyConstraintMap, unRefTwriteSet, fnStack, numOfWorkers,
+									visitedHops, oracleFacade);
+							}
+						}
+					}
 				}
 			}
-		}
 
 		// Enumerate the federated plan for the current Hop
 		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap, 
@@ -770,39 +785,31 @@ public static class FederatedPlanCostEnumerator {
 		if (hop == null) {
 			return collectedFTypes;
 		}
-		int numInputs = hop.getInput() == null ? 0 : hop.getInput().size();
+		List<Hop> parentInputs = hop.getInput();
+		int numInputs = parentInputs == null ? 0 : parentInputs.size();
 		List<FType> aligned = new ArrayList<>(Collections.nCopies(numInputs, null));
-		boolean[] filled = new boolean[numInputs];
+		if (numInputs == 0) {
+			return aligned;
+		}
 
 		for (int i = 0; i < collectedHops.size(); i++) {
 			Hop child = collectedHops.get(i);
 			FType ftype = collectedFTypes.get(i);
-			int pos = (child == null) ? -1 : hop.getInput().indexOf(child);
+			if (child == null) {
+				FederatedPlannerLogger.logInfoMessage("[alignInputFTypes] Skipping null child for hop "
+					+ hop.getHopID());
+				continue;
+			}
+			int pos = parentInputs.indexOf(child);
 			if (pos >= 0 && pos < numInputs) {
 				aligned.set(pos, ftype);
-				filled[pos] = true;
 			}
 			else {
-				aligned.add(ftype);
+				FederatedPlannerLogger.logInfoMessage("[alignInputFTypes] Skipping unmatched child "
+					+ (child != null ? child.getHopID() : "null") + " for hop " + hop.getHopID());
 			}
 		}
 		return aligned;
-	}
-
-	private static boolean isAllowedByPrivacy(Privacy p, ExecType exec, FederatedOutput out) {
-		switch (p) {
-			case PUBLIC:
-				return (exec == ExecType.CP || exec == ExecType.FED)
-					&& (out == FederatedOutput.LOUT || out == FederatedOutput.FOUT);
-			case PRIVATE:
-			case PRIVATE_AGGREGATE:
-				return exec == ExecType.FED && out == FederatedOutput.FOUT;
-			case PRIVATE_AGGREGATE_TO_PUBLIC:
-				return exec == ExecType.FED
-					&& (out == FederatedOutput.FOUT || out == FederatedOutput.LOUT);
-			default:
-				return false;
-		}
 	}
 
 	private static boolean allowsCPOverride(Privacy privacyConstraint, OpCaps caps) {
@@ -882,109 +889,283 @@ public static class FederatedPlanCostEnumerator {
 	}
 
 	/**
-	 * Detects and resolves conflicts in federated plans starting from the root
-	 * plan.
-	 * This function performs a breadth-first search (BFS) to traverse the federated
-	 * plan tree.
-	 * It identifies conflicts where the same plan ID has different federated output
-	 * types.
-	 * For each conflict, it records the plan ID and its conflicting parent plans.
-	 * The function ensures that each plan ID is associated with a consistent
-	 * federated output type
-	 * by resolving these conflicts iteratively.
-	 *
-	 * The process involves:
-	 * - Using a map to track conflicts, associating each plan ID with its federated
-	 * output type
-	 * and a list of parent plans.
-	 * - Storing detected conflicts in a linked map, each entry containing a plan ID
-	 * and its
-	 * conflicting parent plans.
-	 * - Performing BFS traversal starting from the root plan, checking each child
-	 * plan for conflicts.
-	 * - If a conflict is detected (i.e., a plan ID has different output types), the
-	 * conflicting plan
-	 * is removed from the BFS queue and added to the conflict map to prevent
-	 * duplicate calculations.
-	 * - Resolving conflicts by ensuring a consistent federated output type across
-	 * the plan.
-	 * - Re-running BFS with resolved conflicts to ensure all inconsistencies are
-	 * addressed.
+	 * Detects and resolves federated placement conflicts in a single BFS + single resolve pass.
 	 */
-	private static double detectAndResolveConflictFedPlan(FederatedMemoTable.FedPlan rootPlan, FederatedMemoTable memoTable) {
-		// Map to track conflicts: maps a plan ID to its federated output type and list
-		// of parent plans
-		Map<Long, Pair<FederatedOutput, List<FederatedMemoTable.FedPlan>>> conflictCheckMap = new HashMap<>();
+	public static double detectAndResolveConflictFedPlan(
+		FederatedMemoTable memoTable, FederatedMemoTable.FedPlan rootPlan) {
 
-		// LinkedMap to store detected conflicts, each with a plan ID and its
-		// conflicting parent plans
-		LinkedHashMap<Long, List<FederatedMemoTable.FedPlan>> conflictLinkedMap = new LinkedHashMap<>();
+		if (rootPlan == null)
+			return 0.0;
 
-		// LinkedMap for BFS traversal starting from the root plan (Do not use value
-		// (boolean))
-		LinkedHashMap<FederatedMemoTable.FedPlan, Boolean> bfsLinkedMap = new LinkedHashMap<>();
-		bfsLinkedMap.put(rootPlan, true);
+		Map<Long, ConflictEntry> conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan);
+		Map<Long, ConflictEntry> conflictMap = filterTrueConflicts(memoTable, conflictCheckMap);
+		double additionalTotalCost = resolveAllConflictsSinglePass(memoTable, conflictMap);
+		return additionalTotalCost;
+	}
 
-		// Array to store cumulative additional cost for resolving conflicts
-		double[] cumulativeAdditionalCost = new double[] { 0.0 };
+	/**
+	 * Collect all parent usages of each hop via a single BFS traversal starting at the dummy root's children.
+	 * Visitation is based on FedPlan object identity; we assume one FedPlan instance per (hopID, FederatedOutput).
+	 */
+	private static Map<Long, ConflictEntry> collectConflictsSingleBFS(
+		FederatedMemoTable memoTable, FederatedMemoTable.FedPlan rootPlan) {
 
-		while (!bfsLinkedMap.isEmpty()) {
-			// Perform BFS to detect conflicts in federated plans
-			while (!bfsLinkedMap.isEmpty()) {
-				FederatedMemoTable.FedPlan currentPlan = bfsLinkedMap.keySet().iterator().next();
-				bfsLinkedMap.remove(currentPlan);
+		Map<Long, ConflictEntry> conflictCheckMap = new HashMap<>();
+		Queue<FederatedMemoTable.FedPlan> queue = new ArrayDeque<>();
+		Set<FederatedMemoTable.FedPlan> visited = new HashSet<>();
 
-				// Iterate over each child plan of the current plan
-				for (Pair<Long, FederatedOutput> childPlanPair : currentPlan.getChildFedPlans()) {
-					FederatedMemoTable.FedPlan childFedPlan = memoTable.getFedPlanAfterPrune(childPlanPair);
-
-					if (childFedPlan == null) {
-						// Todo: Handle Error
-						FederatedPlannerLogger.logNullFedPlanError(childPlanPair.getLeft(), "Resolve Conflict");
-					}
-
-					// Check if the child plan ID is already visited
-					if (conflictCheckMap.containsKey(childPlanPair.getLeft())) {
-						// Retrieve the existing conflict pair for the child plan
-						Pair<FederatedOutput, List<FederatedMemoTable.FedPlan>> conflictChildPlanPair = conflictCheckMap
-								.get(childPlanPair.getLeft());
-						// Add the current plan to the list of parent plans
-						conflictChildPlanPair.getRight().add(currentPlan);
-
-						// If the federated output type differs, a conflict is detected
-						if (conflictChildPlanPair.getLeft() != childPlanPair.getRight()) {
-							// If this is the first detection, remove conflictChildFedPlan from the BFS
-							// queue and add it to the conflict linked map (queue)
-							// If the existing FedPlan is not removed from the bfsqueue or both actions are
-							// performed, duplicate calculations for the same FedPlan and its children occur
-							if (!conflictLinkedMap.containsKey(childPlanPair.getLeft())) {
-								conflictLinkedMap.put(childPlanPair.getLeft(), conflictChildPlanPair.getRight());
-								bfsLinkedMap.remove(childFedPlan);
-							}
-						}
-					} else {
-						// If no conflict exists, create a new entry in the conflict check map
-						List<FederatedMemoTable.FedPlan> parentFedPlanList = new ArrayList<>();
-						parentFedPlanList.add(currentPlan);
-
-						// Map the child plan ID to its output type and list of parent plans
-						conflictCheckMap.put(childPlanPair.getLeft(),
-								new ImmutablePair<>(childPlanPair.getRight(), parentFedPlanList));
-						// Add the child plan to the BFS queue
-						bfsLinkedMap.put(childFedPlan, true);
-					}
-				}
+		for (Pair<Long, FederatedOutput> rootChild : rootPlan.getChildFedPlans()) {
+			FederatedMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(rootChild);
+			if (childPlan == null) {
+				String msg = "NULL FedPlan for root child hop " + rootChild.getKey();
+				if (OptimizerUtils.isStrictFederatedConflictCheck())
+					throw new DMLRuntimeException(msg);
+				else
+					FederatedPlannerLogger.logNullFedPlanError(rootChild.getKey(), msg);
+				continue;
 			}
-			// Resolve these conflicts to ensure a consistent federated output type across
-			// the plan
-			// Re-run BFS with resolved conflicts
-			bfsLinkedMap = FederatedPlanCostEstimator.resolveConflictFedPlan(memoTable, conflictLinkedMap,
-					cumulativeAdditionalCost);
-			conflictLinkedMap.clear();
+			queue.add(childPlan);
 		}
 
-		// Return the cumulative additional cost for resolving conflicts
-		return cumulativeAdditionalCost[0];
+		while (!queue.isEmpty()) {
+			FederatedMemoTable.FedPlan current = queue.poll();
+			if (!visited.add(current))
+				continue;
+
+			Hop currentHop = current.getHopRef();
+
+			for (Pair<Long, FederatedOutput> childEdge : current.getChildFedPlans()) {
+				long childHopID = childEdge.getKey();
+				FederatedOutput childOut = childEdge.getValue();
+
+				FederatedMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childEdge);
+				if (childPlan == null) {
+					String msg = "NULL FedPlan for hop " + childHopID
+						+ " as child of hop " + (currentHop != null ? currentHop.getHopID() : -1)
+						+ " (" + (currentHop != null ? currentHop.getOpString() : "null") + ")";
+					if (OptimizerUtils.isStrictFederatedConflictCheck())
+						throw new DMLRuntimeException(msg);
+					else
+						FederatedPlannerLogger.logNullFedPlanError(childHopID, msg);
+					continue;
+				}
+
+				ConflictEntry entry = conflictCheckMap.get(childHopID);
+				if (entry == null) {
+					conflictCheckMap.put(childHopID, new ConflictEntry(childOut, current));
+				}
+				else {
+					entry.addUsage(childOut, current);
+				}
+
+				queue.add(childPlan);
+			}
+		}
+
+		return conflictCheckMap;
+	}
+
+	private static Map<Long, ConflictEntry> filterTrueConflicts(
+		FederatedMemoTable memoTable, Map<Long, ConflictEntry> conflictCheckMap) {
+
+		Map<Long, ConflictEntry> conflictMap = new LinkedHashMap<>();
+
+		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+			long hopID = e.getKey();
+			ConflictEntry entry = e.getValue();
+
+			if (!entry.isTrulyConflicting())
+				continue;
+
+			FederatedMemoTable.FedPlan lOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
+			FederatedMemoTable.FedPlan fOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
+
+			boolean hasLOUT = (lOutPlan != null);
+			boolean hasFOUT = (fOutPlan != null);
+
+			if (!hasLOUT || !hasFOUT) {
+				String msg = "Federated placement conflict on hop " + hopID
+					+ " but only one of LOUT/FOUT exists (hasLOUT=" + hasLOUT + ", hasFOUT=" + hasFOUT + ")";
+				if (OptimizerUtils.isStrictFederatedConflictCheck())
+					throw new DMLRuntimeException(msg);
+				else
+					FederatedPlannerLogger.logWarnMessage("[Planner] " + msg);
+				continue;
+			}
+
+			conflictMap.put(hopID, entry);
+		}
+
+		return conflictMap;
+	}
+
+	/**
+	 * Resolves placement conflicts independently per hopID without recomputing FedPlan costs.
+	 * Assumes per-hop LOUT/FOUT costs are independent across conflicts and across the DAG.
+	 * Only childFedPlans edges are mutated; the returned cost is an estimate aggregated over conflicts.
+	 */
+	private static double resolveAllConflictsSinglePass(
+		FederatedMemoTable memoTable, Map<Long, ConflictEntry> conflictMap) {
+
+		double totalAdditionalCost = 0.0;
+
+		if (!conflictMap.isEmpty()) {
+			FederatedPlannerLogger.logInfoMessage("[Planner] Resolving "
+				+ conflictMap.size() + " federated placement conflicts");
+		}
+
+		for (Map.Entry<Long, ConflictEntry> e : conflictMap.entrySet()) {
+			long hopID = e.getKey();
+			ConflictEntry entry = e.getValue();
+			totalAdditionalCost += resolveOneHopConflict(memoTable, hopID, entry);
+		}
+
+		return totalAdditionalCost;
+	}
+
+	private static double resolveOneHopConflict(
+		FederatedMemoTable memoTable, long hopID, ConflictEntry entry) {
+
+		FederatedMemoTable.FedPlan lOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
+		FederatedMemoTable.FedPlan fOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
+
+		if (lOutPlan == null || fOutPlan == null) {
+			throw new DMLRuntimeException("Expected both LOUT and FOUT plans for hop " + hopID);
+		}
+
+		double lOutAdditionalCost = 0.0;
+		double fOutAdditionalCost = 0.0;
+		boolean lOutNeedsForwarding = false;
+		boolean fOutNeedsForwarding = false;
+
+		for (FederatedMemoTable.FedPlan parentPlan : entry.parents) {
+			List<Pair<Integer, Pair<Long, FederatedOutput>>> childEdges = findChildEdges(parentPlan, hopID);
+			if (childEdges.isEmpty()) {
+				String msg = "Parent plan for hop " + hopID + " lost its child edge.";
+				if (OptimizerUtils.isStrictFederatedConflictCheck())
+					throw new DMLRuntimeException(msg);
+				else {
+					Hop parentHop = parentPlan.getHopRef();
+					FederatedPlannerLogger.logWarnMessage("[Planner] " + msg
+						+ " parentHop=" + (parentHop != null ? parentHop.getHopID() : -1));
+				}
+				continue;
+			}
+
+			for (Pair<Integer, Pair<Long, FederatedOutput>> edgeEntry : childEdges) {
+				FederatedOutput originalOut = edgeEntry.getValue().getValue();
+				FederatedOutput parentOut = parentPlan.getFedOutType();
+
+				if (originalOut == FederatedOutput.LOUT) {
+					fOutAdditionalCost += fOutPlan.getCumulativeCostPerParents()
+						- lOutPlan.getCumulativeCostPerParents();
+
+					if (parentOut == FederatedOutput.LOUT) {
+						fOutNeedsForwarding = true;
+					}
+					else if (parentOut == FederatedOutput.FOUT) {
+						lOutNeedsForwarding = true;
+						lOutAdditionalCost -= lOutPlan.getForwardingCostPerParents();
+						fOutAdditionalCost -= lOutPlan.getForwardingCostPerParents();
+					}
+				}
+				else if (originalOut == FederatedOutput.FOUT) {
+					lOutAdditionalCost += lOutPlan.getCumulativeCostPerParents()
+						- fOutPlan.getCumulativeCostPerParents();
+
+					if (parentOut == FederatedOutput.FOUT) {
+						lOutNeedsForwarding = true;
+					}
+					else if (parentOut == FederatedOutput.LOUT) {
+						fOutNeedsForwarding = true;
+						double weightedForwarding = parentPlan
+							.computeForwardingWeightOfChild(lOutPlan.getLoopContext())
+							* lOutPlan.getForwardingCostPerParents();
+						lOutAdditionalCost -= weightedForwarding;
+						fOutAdditionalCost -= weightedForwarding;
+					}
+				}
+				else {
+					Hop parentHop = parentPlan.getHopRef();
+					FederatedPlannerLogger.logWarnMessage("[Planner] Unexpected child placement " + originalOut
+						+ " for hop " + hopID + " under parent "
+						+ (parentHop != null ? parentHop.getHopID() : -1));
+				}
+			}
+		}
+
+		if (lOutNeedsForwarding)
+			lOutAdditionalCost += lOutPlan.getForwardingCost();
+		if (fOutNeedsForwarding)
+			fOutAdditionalCost += fOutPlan.getForwardingCost();
+
+		FederatedOutput chosen;
+		double chosenCost;
+		if (lOutAdditionalCost <= fOutAdditionalCost) {
+			chosen = FederatedOutput.LOUT;
+			chosenCost = lOutAdditionalCost;
+		}
+		else {
+			chosen = FederatedOutput.FOUT;
+			chosenCost = fOutAdditionalCost;
+		}
+
+		for (FederatedMemoTable.FedPlan parentPlan : entry.parents) {
+			List<Pair<Long, FederatedOutput>> childs = parentPlan.getChildFedPlans();
+			for (int i = 0; i < childs.size(); i++) {
+				Pair<Long, FederatedOutput> edge = childs.get(i);
+				if (edge.getKey() == hopID && edge.getValue() != chosen) {
+					childs.set(i, Pair.of(edge.getKey(), chosen));
+				}
+			}
+		}
+
+		return chosenCost;
+	}
+
+	// Parent-child edge uniqueness: duplicates of the same hopID in a parent's childFedPlans
+	// are not expected, but we return all matches so duplicates are processed uniformly.
+	private static List<Pair<Integer, Pair<Long, FederatedOutput>>> findChildEdges(
+		FederatedMemoTable.FedPlan parentPlan, long hopID) {
+
+		List<Pair<Integer, Pair<Long, FederatedOutput>>> matches = new ArrayList<>();
+		List<Pair<Long, FederatedOutput>> childs = parentPlan.getChildFedPlans();
+		for (int i = 0; i < childs.size(); i++) {
+			Pair<Long, FederatedOutput> edge = childs.get(i);
+			if (edge.getKey() == hopID) {
+				matches.add(Pair.of(i, edge));
+			}
+		}
+		return matches;
+	}
+
+	private static final class ConflictEntry {
+		// firstSeenOut is kept for debugging/tracing only.
+		final FederatedOutput firstSeenOut;
+		// LinkedHashSet keeps insertion order for debugging while avoiding duplicate parents.
+		final java.util.LinkedHashSet<FederatedMemoTable.FedPlan> parents;
+		boolean seenLOUT;
+		boolean seenFOUT;
+
+		ConflictEntry(FederatedOutput out, FederatedMemoTable.FedPlan parent) {
+			this.firstSeenOut = out;
+			this.parents = new java.util.LinkedHashSet<>();
+			this.parents.add(parent);
+			this.seenLOUT = (out == FederatedOutput.LOUT);
+			this.seenFOUT = (out == FederatedOutput.FOUT);
+		}
+
+		void addUsage(FederatedOutput out, FederatedMemoTable.FedPlan parent) {
+			this.parents.add(parent);
+			if (out == FederatedOutput.LOUT)
+				this.seenLOUT = true;
+			else if (out == FederatedOutput.FOUT)
+				this.seenFOUT = true;
+		}
+
+		boolean isTrulyConflicting() {
+			return seenLOUT && seenFOUT;
+		}
 	}
 }
 
@@ -1150,165 +1331,6 @@ public static class FederatedPlanCostEstimator {
 		return DEFAULT_MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / DEFAULT_MBS_NETWORK_BANDWIDTH);
 	}
 
-	/**
-	 * Resolves conflicts in federated plans where different plans have different
-	 * FederatedOutput types.
-	 * This function traverses the list of conflicting plans in reverse order to
-	 * ensure that conflicts
-	 * are resolved from the bottom-up, allowing for consistent federated output
-	 * types across the plan.
-	 * It calculates additional costs for each potential resolution and updates the
-	 * cumulative additional cost.
-	 *
-	 * @param memoTable                The FederatedMemoTable containing all
-	 *                                 federated plan variants.
-	 * @param conflictFedPlanLinkedMap A map of plan IDs to lists of parent plans
-	 *                                 with conflicting federated outputs.
-	 * @param cumulativeAdditionalCost An array to store the cumulative additional
-	 *                                 cost incurred by resolving conflicts.
-	 * @return A LinkedHashMap of resolved federated plans, marked with a boolean
-	 *         indicating resolution status.
-	 */
-	public static LinkedHashMap<FederatedMemoTable.FedPlan, Boolean> resolveConflictFedPlan(FederatedMemoTable memoTable,
-			LinkedHashMap<Long, List<FederatedMemoTable.FedPlan>> conflictFedPlanLinkedMap, double[] cumulativeAdditionalCost) {
-		// LinkedHashMap to store resolved federated plans for BFS traversal.
-		LinkedHashMap<FederatedMemoTable.FedPlan, Boolean> resolvedFedPlanLinkedMap = new LinkedHashMap<>();
-
-		// Traverse the conflictFedPlanList in reverse order after BFS to resolve
-		// conflicts
-		for (Map.Entry<Long, List<FederatedMemoTable.FedPlan>> conflictFedPlanPair : conflictFedPlanLinkedMap.entrySet()) {
-			long conflictHopID = conflictFedPlanPair.getKey();
-			List<FederatedMemoTable.FedPlan> conflictParentFedPlans = conflictFedPlanPair.getValue();
-
-			// Retrieve the conflicting federated plans for LOUT and FOUT types
-			FederatedMemoTable.FedPlan confilctLOutFedPlan = memoTable.getFedPlanAfterPrune(conflictHopID, FederatedOutput.LOUT);
-			FederatedMemoTable.FedPlan confilctFOutFedPlan = memoTable.getFedPlanAfterPrune(conflictHopID, FederatedOutput.FOUT);
-
-			if (confilctLOutFedPlan == null || confilctFOutFedPlan == null) {
-				// Todo: Handle Error
-				FederatedPlannerLogger.logConflictResolutionError(conflictHopID, confilctLOutFedPlan, "Resolve Conflict");
-				continue;
-			}
-
-			// Variables to store additional costs for LOUT and FOUT types
-			double lOutAdditionalCost = 0;
-			double fOutAdditionalCost = 0;
-
-			// Flags to check if the plan involves network transfer
-			// Network transfer cost is calculated only once, even if it occurs multiple
-			// times
-			boolean isLOutForwarding = false;
-			boolean isFOutForwarding = false;
-
-			// Determine the optimal federated output type based on the calculated costs
-			FederatedOutput optimalFedOutType;
-
-			// Iterate over each parent federated plan in the current conflict pair
-			for (FederatedMemoTable.FedPlan conflictParentFedPlan : conflictParentFedPlans) {
-				// Find the calculated FedOutType of the child plan
-				Pair<Long, FederatedOutput> cacluatedConflictPlanPair = conflictParentFedPlan.getChildFedPlans()
-						.stream()
-						.filter(pair -> pair.getLeft().equals(conflictHopID))
-						.findFirst()
-						.orElseThrow(
-								() -> new NoSuchElementException("No matching pair found for ID: " + conflictHopID));
-
-				// CASE 1. Calculated LOUT / Parent LOUT / Current LOUT: Total cost remains
-				// unchanged.
-				// CASE 2. Calculated LOUT / Parent FOUT / Current LOUT: Total cost remains
-				// unchanged, subtract net cost, add net cost later.
-				// CASE 3. Calculated FOUT / Parent LOUT / Current LOUT: Change total cost,
-				// subtract net cost.
-				// CASE 4. Calculated FOUT / Parent FOUT / Current LOUT: Change total cost, add
-				// net cost later.
-				// CASE 5. Calculated LOUT / Parent LOUT / Current FOUT: Change total cost, add
-				// net cost later.
-				// CASE 6. Calculated LOUT / Parent FOUT / Current FOUT: Change total cost,
-				// subtract net cost.
-				// CASE 7. Calculated FOUT / Parent LOUT / Current FOUT: Total cost remains
-				// unchanged, subtract net cost, add net cost later.
-				// CASE 8. Calculated FOUT / Parent FOUT / Current FOUT: Total cost remains
-				// unchanged.
-
-				// Adjust LOUT, FOUT costs based on the calculated plan's output type
-				if (cacluatedConflictPlanPair.getRight() == FederatedOutput.LOUT) {
-					// When changing from calculated LOUT to current FOUT, subtract the existing
-					// LOUT total cost and add the FOUT total cost
-					// When maintaining calculated LOUT to current LOUT, the total cost remains
-					// unchanged.
-					fOutAdditionalCost += confilctFOutFedPlan.getCumulativeCostPerParents()
-							- confilctLOutFedPlan.getCumulativeCostPerParents();
-
-					if (conflictParentFedPlan.getFedOutType() == FederatedOutput.LOUT) {
-						// (CASE 1) Previously, calculated was LOUT and parent was LOUT, so no network
-						// transfer cost occurred
-						// (CASE 5) If changing from calculated LOUT to current FOUT, network transfer
-						// cost occurs, but calculated later
-						isFOutForwarding = true;
-					} else {
-						// Previously, calculated was LOUT and parent was FOUT, so network transfer cost
-						// occurred
-						// (CASE 2) If maintaining calculated LOUT to current LOUT, subtract existing
-						// network transfer cost and calculate later
-						isLOutForwarding = true;
-						lOutAdditionalCost -= confilctLOutFedPlan.getForwardingCostPerParents();
-
-						// (CASE 6) If changing from calculated LOUT to current FOUT, no network
-						// transfer cost occurs, so subtract it
-						fOutAdditionalCost -= confilctLOutFedPlan.getForwardingCostPerParents();
-					}
-				} else {
-					lOutAdditionalCost += confilctLOutFedPlan.getCumulativeCostPerParents()
-							- confilctFOutFedPlan.getCumulativeCostPerParents();
-
-					if (conflictParentFedPlan.getFedOutType() == FederatedOutput.FOUT) {
-						isLOutForwarding = true;
-					} else {
-						isFOutForwarding = true;
-						lOutAdditionalCost -= conflictParentFedPlan
-								.computeForwardingWeightOfChild(confilctLOutFedPlan.getLoopContext())
-								* confilctLOutFedPlan.getForwardingCostPerParents();
-						fOutAdditionalCost -= conflictParentFedPlan
-								.computeForwardingWeightOfChild(confilctLOutFedPlan.getLoopContext())
-								* confilctLOutFedPlan.getForwardingCostPerParents();
-					}
-				}
-			}
-
-			// Add network transfer costs if applicable
-			if (isLOutForwarding) {
-				lOutAdditionalCost += confilctLOutFedPlan.getForwardingCost();
-			}
-			if (isFOutForwarding) {
-				fOutAdditionalCost += confilctFOutFedPlan.getForwardingCost();
-			}
-
-			// Determine the optimal federated output type based on the calculated costs
-			if (lOutAdditionalCost <= fOutAdditionalCost) {
-				optimalFedOutType = FederatedOutput.LOUT;
-				cumulativeAdditionalCost[0] += lOutAdditionalCost;
-				resolvedFedPlanLinkedMap.put(confilctLOutFedPlan, true);
-			} else {
-				optimalFedOutType = FederatedOutput.FOUT;
-				cumulativeAdditionalCost[0] += fOutAdditionalCost;
-				resolvedFedPlanLinkedMap.put(confilctFOutFedPlan, true);
-			}
-
-			// Update only the optimal federated output type, not the cost itself or
-			// recursively
-			for (FederatedMemoTable.FedPlan conflictParentFedPlan : conflictParentFedPlans) {
-				for (Pair<Long, FederatedOutput> childPlanPair : conflictParentFedPlan.getChildFedPlans()) {
-					if (childPlanPair.getLeft() == conflictHopID && childPlanPair.getRight() != optimalFedOutType) {
-						int index = conflictParentFedPlan.getChildFedPlans().indexOf(childPlanPair);
-						conflictParentFedPlan.getChildFedPlans().set(index,
-								Pair.of(childPlanPair.getLeft(), optimalFedOutType));
-						break;
-					}
-				}
-			}
-		}
-		return resolvedFedPlanLinkedMap;
-	}
 }
 
 public static class FederatedMemoTable {
@@ -1525,7 +1547,7 @@ public static class FederatedMemoTable {
 	        }
 	    }
 
-	    public static void rewireFunctionDynamic(FunctionStatementBlock function, Map<Long, List<Hop>> rewireTable,
+	    public static void rewireFunctionDynamic(FunctionStatementBlock function, DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 	            Map<Long, FederatedMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 	            List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 	            Set<Hop> progRootHopSet) {
@@ -1536,7 +1558,7 @@ public static class FederatedMemoTable {
 	        Map<String, List<Hop>> outerTransTable = new HashMap<>();
 	        outerTransTableList.add(outerTransTable);
 	        // Todo (Future): not tested & not used
-	        rewireStatementBlock(function, null, visitedHops, rewireTable, hopCommonTable, outerTransTableList, null,
+	        rewireStatementBlock(function, prog, visitedHops, rewireTable, hopCommonTable, outerTransTableList, null,
 	                privacyConstraintMap,
 	                fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, 1, 1, loopStack);
 	    }
@@ -1708,17 +1730,16 @@ public static class FederatedMemoTable {
 	            List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 	            Set<Hop> progRootHopSet,
 	            Set<String> fnStack, double computeWeight, double networkWeight, List<Pair<Long, Double>> loopStack) {
+	        if (!visitedHops.add(hop.getHopID())) {
+	            return;
+	        }
 
 	        if (hop.getInput() != null) {
 	            for (Hop inputHop : hop.getInput()) {
-	                long inputHopID = inputHop.getHopID();
-	                if (!visitedHops.contains(inputHopID)) {
-	                    visitedHops.add(inputHopID);
-	                    rewireHopDAG(inputHop, prog, visitedHops, rewireTable, hopCommonTable, outerTransTableList,
-	                            formerTransTable, innerTransTable,
-	                            privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-	                            computeWeight, networkWeight, loopStack);
-	                }
+	                rewireHopDAG(inputHop, prog, visitedHops, rewireTable, hopCommonTable, outerTransTableList,
+	                        formerTransTable, innerTransTable,
+	                        privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+	                        computeWeight, networkWeight, loopStack);
 	            }
 	        }
 

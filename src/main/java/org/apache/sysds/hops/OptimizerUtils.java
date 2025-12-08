@@ -250,6 +250,10 @@ public class OptimizerUtils
 	 */
 	public static boolean FEDERATED_COMPILATION = false;
 	public static Map<Integer, FEDInstruction.FederatedOutput> FEDERATED_SPECS = new HashMap<>();
+	/**
+	 * Controls whether federated conflict detection throws or just logs.
+	 */
+	private static boolean STRICT_FEDERATED_CONFLICT_CHECK = false;
 	
 	/**
 	 * Specifies a multiplier computing the degree of parallelism of parallel
@@ -395,6 +399,14 @@ public class OptimizerUtils
 	public static boolean isOptLevel( OptimizationLevel level ){
 		return (getOptLevel() == level);
 	}
+
+	public static boolean isStrictFederatedConflictCheck() {
+		return STRICT_FEDERATED_CONFLICT_CHECK;
+	}
+
+	public static void setStrictFederatedConflictCheck(boolean flag) {
+		STRICT_FEDERATED_CONFLICT_CHECK = flag;
+	}
 	
 	public static CompilerConfig constructCompilerConfig( DMLConfig dmlconf ) {
 		return constructCompilerConfig(new CompilerConfig(), dmlconf);
@@ -508,6 +520,7 @@ public class OptimizerUtils
 		ALLOW_SUM_PRODUCT_REWRITES = true;
 		ALLOW_WORSTCASE_SIZE_EXPRESSION_EVALUATION = true;
 		IPA_NUM_REPETITIONS = 3;
+		STRICT_FEDERATED_CONFLICT_CHECK = false;
 	}
 
 	public static long getDefaultSize() {

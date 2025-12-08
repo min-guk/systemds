@@ -32,6 +32,7 @@ import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
@@ -42,6 +43,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DataExpression;
@@ -126,6 +128,23 @@ public class FederatedPlannerUtils {
 		}
 
 		return weight;
+	}
+
+	// NOTE: keep privacy semantics in sync across DP and MinST planners.
+	public static boolean isAllowedByPrivacy(Privacy p, ExecType exec, FederatedOutput out) {
+		switch (p) {
+			case PUBLIC:
+				return (exec == ExecType.CP || exec == ExecType.FED)
+					&& (out == FederatedOutput.LOUT || out == FederatedOutput.FOUT);
+			case PRIVATE:
+			case PRIVATE_AGGREGATE:
+				return exec == ExecType.FED && out == FederatedOutput.FOUT;
+			case PRIVATE_AGGREGATE_TO_PUBLIC:
+				return exec == ExecType.FED
+					&& (out == FederatedOutput.FOUT || out == FederatedOutput.LOUT);
+			default:
+				return false;
+		}
 	}
 
 	// NOTE: keep privacy semantics in sync with DP planner.
@@ -341,7 +360,7 @@ public class FederatedPlannerUtils {
 		if (hasPrivateAggreate) {
 			if (hop instanceof AggUnaryOp) {
 				AggUnaryOp au = (AggUnaryOp) hop;
-				if (isFullSumSqAggregate(au))
+				if (isPublicSafeFullAggregate(au))
 					return Privacy.PUBLIC;
 				return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 			} else if (hop instanceof AggBinaryOp || hop instanceof QuaternaryOp) {
@@ -383,8 +402,35 @@ public class FederatedPlannerUtils {
 		return Privacy.PUBLIC;
 	}
 
-	private static boolean isFullSumSqAggregate(AggUnaryOp hop) {
-		return hop.getOp() == Types.AggOp.SUM_SQ && hop.getDirection() == Types.Direction.RowCol;
+	private static boolean isPublicSafeFullAggregate(AggUnaryOp hop) {
+		// Full aggregates here are considered safe to downgrade to PUBLIC
+		// when inputs are PRIVATE_AGGREGATE, e.g., for min/max style scans.
+		Types.Direction dir = hop.getDirection();
+
+		if (dir == Types.Direction.RowCol) {
+			switch (hop.getOp()) {
+				case SUM:
+				case SUM_SQ:
+				case MIN:
+				case MAX:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		// Axis aggregates that are considered safe to downgrade when inputs are PRIVATE_AGGREGATE.
+		if (dir == Types.Direction.Row || dir == Types.Direction.Col) {
+			switch (hop.getOp()) {
+				case MEAN:
+				case SUM_SQ:
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		return false;
 	}
 
 	private static class FedWorkerContext {
