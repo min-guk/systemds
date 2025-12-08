@@ -22,6 +22,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
+import java.util.Iterator;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
@@ -47,14 +48,19 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DataExpression;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.VariableSet;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Set;
 import java.util.Map;
 import java.util.List;
 import java.util.concurrent.Future;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /**
  * Utility class for federated planners.
@@ -128,6 +134,99 @@ public class FederatedPlannerUtils {
 		}
 
 		return weight;
+	}
+
+	public static final class CompatibilityScore {
+		public final int priority;
+		public final int score;
+		public final int nameScore;
+
+		public CompatibilityScore(int priority, int score, int nameScore) {
+			this.priority = priority;
+			this.score = score;
+			this.nameScore = nameScore;
+		}
+
+		public boolean isBetterThan(CompatibilityScore other) {
+			if (other == null)
+				return true;
+			if (priority != other.priority)
+				return priority < other.priority;
+			if (score != other.score)
+				return score < other.score;
+			return nameScore < other.nameScore;
+		}
+	}
+
+	public static void wireUnRefTwriteToLiveOutCommon(
+		StatementBlock sb, Set<Long> unRefTwriteSet,
+		Function<Long, Hop> hopLookup, Map<String, List<Hop>> newFormerTransTable,
+		BiFunction<Hop, Hop, CompatibilityScore> compatibilityFn, String logPrefix) {
+
+		if (unRefTwriteSet.isEmpty())
+			return;
+
+		VariableSet genHops = sb.getGen();
+		VariableSet updatedHops = sb.variablesUpdated();
+		VariableSet liveOutHops = sb.liveOut();
+
+		Iterator<Long> unRefTwriteIterator = unRefTwriteSet.iterator();
+		while (unRefTwriteIterator.hasNext()) {
+			Long unRefTwriteHopID = unRefTwriteIterator.next();
+			Hop unRefTwriteHop = hopLookup.apply(unRefTwriteHopID);
+			if (unRefTwriteHop == null) {
+				FederatedPlannerLogger.logWarnMessage(logPrefix + " Skipping unRefTwrite hop "
+					+ unRefTwriteHopID + " because hop reference is missing");
+				unRefTwriteIterator.remove();
+				continue;
+			}
+
+			String unRefTwriteHopName = unRefTwriteHop.getName();
+
+			if (liveOutHops.containsVariable(unRefTwriteHopName)) {
+				continue;
+			}
+
+			if (unRefTwriteHop instanceof FunctionOp || genHops.containsVariable(unRefTwriteHopName)
+				|| updatedHops.containsVariable(unRefTwriteHopName)) {
+
+				String bestLiveOutHopName = null;
+				CompatibilityScore bestScore = null;
+
+				Iterator<String> liveOutHopsIterator = liveOutHops.getVariableNames().iterator();
+				while (liveOutHopsIterator.hasNext()) {
+					String liveOutHopName = liveOutHopsIterator.next();
+					List<Hop> liveOutHopsList = newFormerTransTable.get(liveOutHopName);
+
+					if (liveOutHopsList == null || liveOutHopsList.isEmpty()) {
+						continue;
+					}
+
+					Hop representativeLiveOutHop = liveOutHopsList.get(0);
+					if (representativeLiveOutHop == null) {
+						continue;
+					}
+
+					CompatibilityScore compatScore = compatibilityFn.apply(unRefTwriteHop, representativeLiveOutHop);
+
+					if (compatScore != null && compatScore.isBetterThan(bestScore)) {
+						bestScore = compatScore;
+						bestLiveOutHopName = liveOutHopName;
+					}
+				}
+
+				if (bestLiveOutHopName == null) {
+					throw new DMLRuntimeException("No liveOutHops found for " + unRefTwriteHopName + " (hopID="
+						+ unRefTwriteHop.getHopID() + ", opcode=" + unRefTwriteHop.getOpString() + ")");
+				}
+
+				List<Hop> bestLiveOutHopsList = newFormerTransTable.get(bestLiveOutHopName);
+				List<Hop> copyLiveOutHopsList = new ArrayList<>(bestLiveOutHopsList);
+				copyLiveOutHopsList.add(unRefTwriteHop);
+				newFormerTransTable.put(bestLiveOutHopName, copyLiveOutHopsList);
+				unRefTwriteIterator.remove();
+			}
+		}
 	}
 
 	// NOTE: keep privacy semantics in sync across DP and MinST planners.

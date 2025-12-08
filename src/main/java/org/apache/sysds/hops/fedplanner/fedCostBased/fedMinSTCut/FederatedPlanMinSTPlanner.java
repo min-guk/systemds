@@ -1344,113 +1344,55 @@ public final class FederatedPlanMinSTPlanner {
 	
 	        return childHops;
 	    }
-	
+
 	    private static void wireUnRefTwriteToLiveOut(StatementBlock sb, Set<Long> unRefTwriteSet,
-	            FederatedPlanMinSTGraph graph, Map<String, List<Hop>> newFormerTransTable, 
+	            FederatedPlanMinSTGraph graph,
+	            Map<String, List<Hop>> newFormerTransTable,
 	            Map<Long, FType> fTypeMap) {
-	        if (unRefTwriteSet.isEmpty())
-	            return;
-	
-	        VariableSet genHops = sb.getGen();
-	        VariableSet updatedHops = sb.variablesUpdated();
-	        VariableSet liveOutHops = sb.liveOut();
-	
-	//        FederatedPlannerLogger.logWireUnRefTwriteStart(unRefTwriteSet.size());
 
-	        Iterator<Long> unRefTwriteIterator = unRefTwriteSet.iterator();
-	        while (unRefTwriteIterator.hasNext()) {
-	            Long unRefTwriteHopID = unRefTwriteIterator.next();
-	            Hop unRefTwriteHop = graph.getHopRef(unRefTwriteHopID);
-	            String unRefTwriteHopName = unRefTwriteHop.getName();
-	
-	            if (liveOutHops.containsVariable(unRefTwriteHopName)) {
-	                continue;
-	            }
-	
-	            if (unRefTwriteHop instanceof FunctionOp || genHops.containsVariable(unRefTwriteHopName) || updatedHops.containsVariable(unRefTwriteHopName)) {
-	//                FederatedPlannerLogger.logProcessingUnRefTwriteHop(unRefTwriteHopName, unRefTwriteHopID,
-	//                                                                 unRefTwriteHop, getHopFType(unRefTwriteHop, fTypeMap));
-	
-	                String bestLiveOutHopName = null;
-	                int bestPriority = Integer.MAX_VALUE;
-	                int bestScore = Integer.MAX_VALUE;
-	                int bestNameScore = Integer.MAX_VALUE;
-	
-	                Iterator<String> liveOutHopsIterator = liveOutHops.getVariableNames().iterator();
-	                while (liveOutHopsIterator.hasNext()) {
-	                    String liveOutHopName = liveOutHopsIterator.next();
-	                    List<Hop> liveOutHopsList = newFormerTransTable.get(liveOutHopName);
-	
-	                    if (liveOutHopsList != null && !liveOutHopsList.isEmpty()) {
-	                        Hop representativeLiveOutHop = liveOutHopsList.get(0);
-	
-	                        CompatibilityResult compatResult = calculateCompatibilityScore(
-	                            unRefTwriteHop, representativeLiveOutHop, graph);
-	
-	                        if (compatResult.priority < bestPriority
-	                                || (compatResult.priority == bestPriority && compatResult.score < bestScore)
-	                                || (compatResult.priority == bestPriority && compatResult.score == bestScore
-	                                    && compatResult.nameScore < bestNameScore)) {
-	                            bestPriority = compatResult.priority;
-	                            bestScore = compatResult.score;
-	                            bestNameScore = compatResult.nameScore;
-	                            bestLiveOutHopName = liveOutHopName;
-	                        }
-	                    }
-	                }
-	
-	                if (bestLiveOutHopName == null) {
-	                    throw new DMLRuntimeException("No liveOutHops found for " + unRefTwriteHopName + " (hopID="
-	                        + unRefTwriteHop.getHopID() + ", opcode=" + unRefTwriteHop.getOpString() + ")");
-	                }
-
-	                List<Hop> bestLiveOutHopsList = newFormerTransTable.get(bestLiveOutHopName);
-	                List<Hop> copyLiveOutHopsList = new ArrayList<>(bestLiveOutHopsList);
-	                copyLiveOutHopsList.add(unRefTwriteHop);
-	                newFormerTransTable.put(bestLiveOutHopName, copyLiveOutHopsList);
-	                unRefTwriteIterator.remove();
-	            }
-	        }
-	    }
-
-	    // 호환성 결과를 담는 클래스
-	    private static class CompatibilityResult {
-	        final int priority;
-	        final int score;
-	        final int nameScore;
-
-	        CompatibilityResult(int priority, int score, int nameScore) {
-	            this.priority = priority;
-	            this.score = score;
-	            this.nameScore = nameScore;
-	        }
+	        FederatedPlannerUtils.wireUnRefTwriteToLiveOutCommon(
+	            sb,
+	            unRefTwriteSet,
+	            // hopLookup: hopID -> Hop (Vertex가 없으면 null)
+	            id -> {
+	                FederatedPlanMinSTGraph.Vertex v = graph.getVertex(id);
+	                return (v != null) ? v.getHopRef() : null;
+	            },
+	            newFormerTransTable,
+	            // compatFn: unRefTwriteHop vs 대표 liveOutHop
+	            (unRefTwriteHop, liveOutHop) ->
+	                calculateCompatibilityScore(unRefTwriteHop, liveOutHop, graph),
+	            "[MinST]");
 	    }
 
 	    // NOTE: keep in sync with DP planner:
 	    // FederatedPlannerFedCostBased.FederatedPlanRewireTransTable.calculateCompatibilityScore
-	    private static CompatibilityResult calculateCompatibilityScore(Hop unRefTwriteHop, Hop liveOutHop, 
-	                                                                  FederatedPlanMinSTGraph graph) {
+	    private static FederatedPlannerUtils.CompatibilityScore calculateCompatibilityScore(
+	        Hop unRefTwriteHop, Hop liveOutHop,
+	        FederatedPlanMinSTGraph graph) {
+
 	        int nameScore = getMatchingPriority(unRefTwriteHop.getName(), liveOutHop.getName());
-	        boolean sameDataType = unRefTwriteHop.getDataType() == liveOutHop.getDataType() && 
-	                              unRefTwriteHop.getValueType() == liveOutHop.getValueType();
+	        boolean sameDataType = unRefTwriteHop.getDataType() == liveOutHop.getDataType()
+	            && unRefTwriteHop.getValueType() == liveOutHop.getValueType();
 
 	        if (sameDataType) {
-	            return new CompatibilityResult(1, 0, nameScore);
+	            return new FederatedPlannerUtils.CompatibilityScore(1, 0, nameScore);
 	        }
 
 	        double dimSimilarity = calculateDimensionSimilarity(unRefTwriteHop, liveOutHop);
 	        if (dimSimilarity > 0) {
-	            int dimScore = (int)Math.round((1 - dimSimilarity) * 100);
-	            return new CompatibilityResult(2, dimScore, nameScore);
+	            int dimScore = (int) Math.round((1 - dimSimilarity) * 100);
+	            return new FederatedPlannerUtils.CompatibilityScore(2, dimScore, nameScore);
 	        }
 
-	        double commonChildMemEstimate = findCommonChildrenMemEstimate(unRefTwriteHop, liveOutHop, graph);
+	        double commonChildMemEstimate = findCommonChildrenMemEstimate(
+	            unRefTwriteHop, liveOutHop, graph);
 	        if (commonChildMemEstimate > 0) {
-	            int childScore = (int)Math.max(0, 10000 - Math.min(commonChildMemEstimate, 10000));
-	            return new CompatibilityResult(3, childScore, nameScore);
+	            int childScore = (int) Math.max(0, 10000 - Math.min(commonChildMemEstimate, 10000));
+	            return new FederatedPlannerUtils.CompatibilityScore(3, childScore, nameScore);
 	        }
 
-	        return new CompatibilityResult(4, 0, nameScore);
+	        return new FederatedPlannerUtils.CompatibilityScore(4, 0, nameScore);
 	    }
 	
 	    private static int getMatchingPriority(String unRefTwriteHopName, String liveOutHopName) {
