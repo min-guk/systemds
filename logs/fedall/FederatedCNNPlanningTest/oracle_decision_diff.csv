@@ -1,0 +1,31 @@
+hop,file,op,line,exec,placement,foutType,reason,childIDs,parentIDs,rewireChildIDs,rewireParentIDs,privacy,inputs,notes,guardDefaultIfUnknown
+58,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+58,test_fedall.log,Fed X,73,FED,FOUT,ROW,OK,"[4, 56, 57]",[60],[],[],null,"[null, null, null]",[],<missing>
+58,test_heuristic.log,Fed X,73,FED,FOUT,ROW,OK,"[4, 56, 57]",[60],[],[],null,"[null, null, null]",[],<missing>
+130,test_cost.log,PRead Y,83,CP,LOUT,none,NO_RULE,"[122, 123, 57, 125, 126, 127, 128, 129]",[141],[],[],PUBLIC,"[null, null, null, null, null, null, null, null]",[],<missing>
+130,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+130,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+138,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+138,test_fedall.log,ua(+RC),76,FED,LOUT,none,OK,[60],[142],[],[],null,[ROW],[],<missing>
+138,test_heuristic.log,ua(+RC),76,FED,LOUT,none,OK,[60],[142],[],[],null,[ROW],[],<missing>
+139,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+139,test_fedall.log,ua(+RC),84,CP,LOUT,none,NO_RULE,[129],[141],[],[],null,[null],[],<missing>
+139,test_heuristic.log,ua(+RC),84,CP,LOUT,none,NO_RULE,[129],[141],[],[],null,[null],[],<missing>
+146,test_cost.log,LiteralOp false,89,CP,LOUT,none,NO_RULE,[],[151],[],[],PUBLIC,[],[],<missing>
+146,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+146,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+147,test_cost.log,LiteralOp :,90,CP,LOUT,none,NO_RULE,[],[151],[],[],PUBLIC,[],[],<missing>
+147,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+147,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+148,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+148,test_fedall.log,"LiteralOp ,",91,CP,LOUT,none,NO_RULE,[],[149],[],[],null,[],[],<missing>
+148,test_heuristic.log,"LiteralOp ,",91,CP,LOUT,none,NO_RULE,[],[149],[],[],null,[],[],<missing>
+149,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+149,test_fedall.log,PWrite loss,92,CP,LOUT,none,NO_RULE,"[142, 143, 144, 145, 125, 148]",[],[],[],null,"[null, null, null, null, null, null, null]",[],<missing>
+149,test_heuristic.log,PWrite loss,92,CP,LOUT,none,NO_RULE,"[142, 143, 144, 145, 125, 148]",[],[],[],null,"[null, null, null, null, null, null, null]",[],<missing>
+150,test_cost.log,"LiteralOp ,",91,CP,LOUT,none,NO_RULE,[],[151],[],[],PUBLIC,[],[],<missing>
+150,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+150,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+153,test_cost.log,LiteralOp 100.0,65,CP,LOUT,none,NO_RULE,[],"[41, 50]",[],[],PUBLIC,[],[],<missing>
+153,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+153,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>

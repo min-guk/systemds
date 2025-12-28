@@ -53,7 +53,6 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		addTestConfiguration(TEST_NAME_2, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME_2, new String[] {"Z"}));
 	}
 
-	@Ignore
 	@Test
 	public void runLMFOUTTest(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
@@ -70,7 +69,6 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
 	public void runLMCostBasedTestPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");

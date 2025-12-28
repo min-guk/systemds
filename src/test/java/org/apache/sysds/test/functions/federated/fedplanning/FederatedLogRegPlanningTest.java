@@ -54,7 +54,6 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] {"B"}));
 	}
 
-	@Ignore
 	@Test
 	public void runLogRegFOUTTest(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
@@ -71,7 +70,6 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
 	public void runLogRegCostBasedTestPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");

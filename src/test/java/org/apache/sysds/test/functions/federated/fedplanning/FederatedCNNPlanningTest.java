@@ -52,7 +52,6 @@ public class FederatedCNNPlanningTest extends AutomatedTestBase {
 		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] {"Z"}));
 	}
 
-	@Ignore
 	@Test
 	public void runCNNFOUTTest(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
@@ -69,7 +68,6 @@ public class FederatedCNNPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
 	public void runCNNCostBasedTestPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");

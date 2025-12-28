@@ -19,7 +19,10 @@
 
 package org.apache.sysds.hops.fedplanner.fedAll;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -29,7 +32,10 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -137,6 +143,9 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		for( Hop c : hop.getInput() )
 			rRewriteHop(c, memo, fedVars, program);
 		
+		FType outFType = null;
+		boolean logDecision = true;
+
 		//handle specific operators (except transient writes)
 		if(hop instanceof FunctionOp) {
 			String funcName = ((FunctionOp) hop).getFunctionName();
@@ -147,21 +156,60 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			Map<String, FType> funcFedVars = createFunctionFedVarTable((FunctionOp) hop, memo);
 			rRewriteStatementBlock(sbFuncBlock, funcFedVars);
 			mapFunctionOutputs((FunctionOp) hop, funcStatement, funcFedVars, fedVars);
+			logDecision = false;
 		}
-		else if( HopRewriteUtils.isData(hop, OpOpData.FEDERATED) )
-			memo.put(hop.getHopID(), deriveFType((DataOp)hop));
-		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTREAD) )
-			memo.put(hop.getHopID(), fedVars.get(hop.getName()));
-		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE) )
+		else if( HopRewriteUtils.isData(hop, OpOpData.FEDERATED) ) {
+			outFType = deriveFType((DataOp)hop);
+			memo.put(hop.getHopID(), outFType);
+		}
+		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTREAD) ) {
+			outFType = fedVars.get(hop.getName());
+			memo.put(hop.getHopID(), outFType);
+		}
+		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE) ) {
 			fedVars.put(hop.getName(), memo.get(hop.getHopID()));
+			outFType = getFederatedOut(hop, memo);
+		}
 		else if( allowsFederated(hop, memo) ) {
 			hop.setForcedExecType(ExecType.FED);
-			memo.put(hop.getHopID(), getFederatedOut(hop, memo));
-			if( memo.get(hop.getHopID()) != null )
+			outFType = getFederatedOut(hop, memo);
+			memo.put(hop.getHopID(), outFType);
+			if( outFType != null )
 				hop.setFederatedOutput(FederatedOutput.FOUT);
 		}
 		else // memoization as processed, but not federated
 			memo.put(hop.getHopID(), null);
+
+		if( logDecision )
+			logPlannerDecision(hop, memo, outFType);
+	}
+
+	private void logPlannerDecision(Hop hop, Map<Long, FType> memo, FType outFType) {
+		List<FType> inputFTypes = collectInputFTypes(hop, memo);
+		ExecType execType = resolveExecType(hop, outFType);
+		ReasonCode reason = execType == ExecType.FED ? ReasonCode.OK : ReasonCode.NO_RULE;
+		OpCaps.Builder builder = OpCaps.builder().exec(execType).reason(reason);
+		if( outFType != null )
+			builder.fout(true, outFType);
+		else
+			builder.fout(false);
+		FederatedPlannerLogger.logOracleDecision(hop, null, inputFTypes, builder.build(), null);
+	}
+
+	private static List<FType> collectInputFTypes(Hop hop, Map<Long, FType> memo) {
+		if( hop.getInput() == null || hop.getInput().isEmpty() )
+			return Collections.emptyList();
+		List<FType> types = new ArrayList<>(hop.getInput().size());
+		for( Hop input : hop.getInput() )
+			types.add(memo.get(input.getHopID()));
+		return types;
+	}
+
+	private static ExecType resolveExecType(Hop hop, FType outFType) {
+		ExecType forced = hop.getForcedExecType();
+		if( forced != null )
+			return forced;
+		return outFType != null ? ExecType.FED : ExecType.CP;
 	}
 	
 	static private Map<String, FType> createFunctionFedVarTable(FunctionOp hop, Map<Long, FType> memo) {

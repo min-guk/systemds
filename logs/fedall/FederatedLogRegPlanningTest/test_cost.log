@@ -1,0 +1,329 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] --------------------< org.apache.systemds:systemds >--------------------
+[INFO] Building Apache SystemDS 3.4.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-maven-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-java-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-output-timestamp-property) @ systemds ---
+[INFO] 
+[INFO] --- jacoco:0.8.12:prepare-agent (default-prepare-agent) @ systemds ---
+[INFO] argLine set to -javaagent:/home/mchoi/.m2/repository/org/jacoco/org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar=destfile=/home/mchoi/systemds/target/jacoco.exec,includes=**,output=file -Xms3000m -Xmx3000m -Xmn300m
+[INFO] 
+[INFO] --- remote-resources:1.7.0:process (process-resource-bundles) @ systemds ---
+[INFO] Preparing remote bundle org.apache:apache-jar-resource-bundle:1.4
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- properties:1.1.0:write-project-properties (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 331 resources to scripts
+[INFO] Copying 2 resources to cuda/kernels
+[INFO] Copying 7 resources to lib
+[INFO] Copying 3 resources to cuda/spoof
+[INFO] Copying 9 resources to cuda/headers
+[INFO] Copying 0 resource to java/spoof
+[INFO] Copying 15 resources to ../lib/hadoop/bin
+[INFO] Copying 3 resources to META-INF/
+[INFO] Copying 1 resource to ./
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ systemds ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- dependency:3.5.0:copy-dependencies (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:testResources (default-testResources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 6 resources
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ systemds ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- surefire:3.0.0:test (default-test) @ systemds ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitcore.JUnitCoreProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+WARNING: Using incubator modules: jdk.incubator.vector
+
+Exception: java.lang.AssertionError thrown from the UncaughtExceptionHandler in thread "TestRunner_main"
+[INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest
+25/12/28 11:05:02 INFO fedplanning.FederatedLogRegPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-cost-based.xml
+[Oracle] hop=2 (LiteralOp localhost:40417/target/testTemp/functions/privacy/fedplanning/FederatedLogRegPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[4], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=3 (LiteralOp localhost:38695/target/testTemp/functions/privacy/fedplanning/FederatedLogRegPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[4], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=4 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[2, 3], parentIDs=[58], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=30 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[32, 50], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=32 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[30], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=278 (LiteralOp 500.0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[41, 50], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=40 (LiteralOp 100), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[41, 55], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=41 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[278, 40], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=50 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[278, 30], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=37 (LiteralOp 1000), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[39, 55], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=55 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[37, 40], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=56 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[32, 41, 50, 55], parentIDs=[58], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null], notes=[]
+[Oracle] hop=57 (LiteralOp matrix), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[58, 68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=59 (TWrite X), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[58], parentIDs=[211], rewireChildIDs=[], rewireParentIDs=[211], privacy=PRIVATE_AGGREGATE, inputs=[ROW], notes=[]
+[Oracle] hop=60 (LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLogRegPlanningTest/in/Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=61 (LiteralOp double), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=63 (LiteralOp text), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=64 (LiteralOp private-aggregate), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=65 (LiteralOp 1000), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=67 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[68], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=68 (PRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[60, 61, 57, 63, 64, 65, 67], parentIDs=[69, 81], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=69 (TWrite Y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[68], parentIDs=[83, 89], rewireChildIDs=[], rewireParentIDs=[83, 89], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=81 (ua(maxRC)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[68], parentIDs=[82], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=82 (TWrite max_y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[81], parentIDs=[88], rewireChildIDs=[], rewireParentIDs=[88], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=83 (TRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[69], parentIDs=[84], rewireChildIDs=[69], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=84 (ua(minRC)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[83], parentIDs=[86], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=85 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[86], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=86 (b(<=)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[84, 85], parentIDs=[87], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=87 (TWrite __pred), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[86], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=89 (TRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[69], parentIDs=[91, 94], rewireChildIDs=[69], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=90 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[91], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=91 (b(<=)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[89, 90], parentIDs=[94], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=88 (TRead max_y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[82], parentIDs=[93], rewireChildIDs=[82], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=92 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[93], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=93 (b(+)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[88, 92], parentIDs=[94, 98], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=94 (t(ifelse)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[91, 93, 89], parentIDs=[95], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null], notes=[]
+[Oracle] hop=95 (TWrite Y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[94], parentIDs=[100], rewireChildIDs=[], rewireParentIDs=[100], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=98 (TWrite max_y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[93], parentIDs=[99], rewireChildIDs=[], rewireParentIDs=[99], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=100 (TRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[95], parentIDs=[290], rewireChildIDs=[95], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=99 (TRead max_y), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[98], parentIDs=[290], rewireChildIDs=[98], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=287 (LiteralOp cols), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[290], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=288 (LiteralOp false), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[290], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=289 (LiteralOp true), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[290], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=290 (REXPAND), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[100, 99, 287, 288, 289], parentIDs=[108, 109], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null], notes=[]
+[Oracle] hop=108 (TWrite Y_indicator), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[290], parentIDs=[213], rewireChildIDs=[], rewireParentIDs=[213], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=109 (u(ncol)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[290], parentIDs=[111], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=103 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[104, 111, 139, 165], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=111 (b(-)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[109, 103], parentIDs=[165, 185, 194, 197, 200, 283], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=283 (TWrite K), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[111], parentIDs=[212], rewireChildIDs=[], rewireParentIDs=[212], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=105 (LiteralOp 1.0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[139, 165, 185], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=134 (LiteralOp uniform), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[139, 165, 185], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=135 (LiteralOp -1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[139, 165, 185], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=285 (LiteralOp 100), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[139, 185], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=139 (dg(rand)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[105, 103, 134, 135, 285], parentIDs=[166], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=165 (dg(rand)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[105, 103, 134, 135, 111], parentIDs=[166], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=166 (ba(+*)), exec=CP, placement=LOUT, foutType=none, reason=NOT_FEDERATED_INPUTS, childIDs=[139, 165], parentIDs=[168, 169], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=169 (TWrite lambda), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[166], parentIDs=[209], rewireChildIDs=[], rewireParentIDs=[209], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=180 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[185], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=185 (dg(rand)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[105, 180, 134, 135, 285, 111], parentIDs=[186], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=186 (TWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[185], parentIDs=[210], rewireChildIDs=[], rewireParentIDs=[210], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=203 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[204], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=204 (TWrite __pred), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[203], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=205 (LiteralOp 10), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[206], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=206 (TWrite __pred), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[205], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=207 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[208], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=208 (TWrite __pred), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[207], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=210 (TRead B), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[186], parentIDs=[215, 263, 267], rewireChildIDs=[186], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=265 (LiteralOp 0.01), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[266], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=211 (TRead X), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[59], parentIDs=[215, 252], rewireChildIDs=[59], rewireParentIDs=[], privacy=PRIVATE_AGGREGATE, inputs=[], notes=[]
+[Oracle] hop=252 (r(r')), exec=FED, placement=FOUT, foutType=COL, reason=OK, childIDs=[211], parentIDs=[262], rewireChildIDs=[], rewireParentIDs=[], privacy=PRIVATE_AGGREGATE, inputs=[ROW], notes=[INFO: axis flipped ROW↔COL; REPR_CHANGE_GUARD_PASS: guardDefaultIfUnknown=allow]
+[Oracle] hop=215 (ba(+*)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[211, 210], parentIDs=[224], rewireChildIDs=[], rewireParentIDs=[], privacy=PRIVATE_AGGREGATE_TO_PUBLIC, inputs=[ROW, null], notes=[REPR_CHANGE_GUARD_PASS: guardDefaultIfUnknown=allow]
+[Oracle] hop=216 (LiteralOp 1.0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[223, 235], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=217 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[223], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=218 (LiteralOp uniform), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[223, 235], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=219 (LiteralOp -1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[223, 235], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=286 (LiteralOp 1000), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[223, 256, 260], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=222 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[223, 235, 234, 256, 260], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=223 (dg(rand)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[216, 217, 218, 219, 286, 222], parentIDs=[224], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=224 (b(cbind)), exec=FED, placement=FOUT, foutType=ROW, reason=BROADCAST_OR_ALIGNED_ROW, childIDs=[215, 223], parentIDs=[225, 237], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW, null], notes=[REPR_CHANGE_GUARD_PASS: guardDefaultIfUnknown=allow]
+[Oracle] hop=225 (ua(maxR)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[224], parentIDs=[237], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW], notes=[]
+[Oracle] hop=237 (b(-)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[224, 225], parentIDs=[238], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW, ROW], notes=[REPR_CHANGE_GUARD_PASS: guardDefaultIfUnknown=allow]
+[Oracle] hop=238 (u(exp)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[237], parentIDs=[239, 251], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW], notes=[REPR_CHANGE_GUARD_PASS: guardDefaultIfUnknown=allow]
+[Oracle] hop=239 (ua(+R)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[238], parentIDs=[251], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW], notes=[]
+[Oracle] hop=251 (b(/)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[238, 239], parentIDs=[256], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW, ROW], notes=[REPR_CHANGE_GUARD_PASS: guardDefaultIfUnknown=allow]
+[Oracle] hop=212 (TRead K), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[283], parentIDs=[234, 256, 260], rewireChildIDs=[283], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=256 (rix), exec=CP, placement=LOUT, foutType=none, reason=ARITY_MISMATCH, childIDs=[251, 222, 286, 212], parentIDs=[261], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[ROW, null, null, null, null], notes=[]
+[Oracle] hop=213 (TRead Y_indicator), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[108], parentIDs=[260], rewireChildIDs=[108], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=260 (rix), exec=CP, placement=LOUT, foutType=none, reason=ARITY_MISMATCH, childIDs=[213, 222, 286, 212], parentIDs=[261], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null], notes=[]
+[Oracle] hop=261 (b(-)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[256, 260], parentIDs=[262], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=262 (ba(+*)), exec=FED, placement=LOUT, foutType=none, reason=OK, childIDs=[252, 261], parentIDs=[264], rewireChildIDs=[], rewireParentIDs=[], privacy=PRIVATE_AGGREGATE_TO_PUBLIC, inputs=[COL, null], notes=[]
+[Oracle] hop=209 (TRead lambda), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[169], parentIDs=[263], rewireChildIDs=[169], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=263 (b(*)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[209, 210], parentIDs=[264], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=264 (b(+)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[262, 263], parentIDs=[266], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=266 (b(*)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[265, 264], parentIDs=[267], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=267 (b(-)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[210, 266], parentIDs=[268], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=268 (TWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[267], parentIDs=[269], rewireChildIDs=[], rewireParentIDs=[269], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=269 (TRead B), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[268], parentIDs=[276], rewireChildIDs=[268], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=270 (LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLogRegPlanningTest/out/B), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[276], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=271 (LiteralOp false), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[276], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=272 (LiteralOp :), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[276], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=273 (LiteralOp text), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[276], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=275 (LiteralOp ,), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[276], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=276 (PWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[269, 270, 271, 272, 273, 275], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null], notes=[]
+Additional Cost: 6.66661580407208E-4
+[HopID]: ROOT, [Name]: ROOT, [OutputType]: Root, [ChildHopIDs]: (276, 204, 208, 87, 206), [CostInfo]: {TotalCost: 2783593.3}
+[HopID]: 276, [Name]: PWrite B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (269, 270, 271, 272, 273, 271, 275), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 2782309.6, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 269, [Name]: TRead B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (268), [ParentHopIDs]: (276), [CostInfo]: {TotalCost: 2782204.6, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 268, [Name]: TWrite B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (267), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 2782204.6, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 267, [Name]: b(-), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (210, 266), [ParentHopIDs]: (268), [CostInfo]: {TotalCost: 2782204.6, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 210, [Name]: TRead B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (186), [ParentHopIDs]: (215, 263, 267), [CostInfo]: {TotalCost: 457.8, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 186, [Name]: TWrite B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (185), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 457.8, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 185, [Name]: dg(rand), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (105, 180, 134, 135, 180, 105, 285, 111), [ParentHopIDs]: (186), [CostInfo]: {TotalCost: 457.8, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 105, [Name]: LiteralOp 1.0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (139, 139, 165, 165, 185, 185), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 180, [Name]: LiteralOp 0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (185, 185), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 134, [Name]: LiteralOp uniform, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (139, 165, 185), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 135, [Name]: LiteralOp -1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (139, 165, 185), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 285, [Name]: LiteralOp 100, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (139, 185), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 111, [Name]: b(-), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (109, 103), [ParentHopIDs]: (165, 185, 194, 197, 200, 283), [CostInfo]: {TotalCost: 2131.8, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 109, [Name]: u(ncol), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (290), [ParentHopIDs]: (111), [CostInfo]: {TotalCost: 2130.7, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 290, [Name]: REXPAND, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (100, 99, 287, 288, 289), [ParentHopIDs]: (108, 109), [CostInfo]: {TotalCost: 4259.4, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 100, [Name]: TRead Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (95), [ParentHopIDs]: (290), [CostInfo]: {TotalCost: 2504.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 95, [Name]: TWrite Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (94), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 2504.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 94, [Name]: t(ifelse), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (91, 93, 89), [ParentHopIDs]: (95), [CostInfo]: {TotalCost: 2504.3, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 91, [Name]: b(<=), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (89, 90), [ParentHopIDs]: (94), [CostInfo]: {TotalCost: 626.3, SelfCost: 500.0, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 89, [Name]: TRead Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (69), [ParentHopIDs]: (91, 94), [CostInfo]: {TotalCost: 251.6, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 69, [Name]: TWrite Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (68), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 503.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 68, [Name]: PRead Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (60, 61, 57, 63, 64, 65, 65, 67), [ParentHopIDs]: (69, 81), [CostInfo]: {TotalCost: 1006.5, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 60, [Name]: LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLogRegPlanningTest/in/Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 61, [Name]: LiteralOp double, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 57, [Name]: LiteralOp matrix, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (58, 68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 63, [Name]: LiteralOp text, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 64, [Name]: LiteralOp private-aggregate, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 65, [Name]: LiteralOp 1000, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (68, 68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 67, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (68), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 90, [Name]: LiteralOp 0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (91), [CostInfo]: {TotalCost: 0.5, SelfCost: 0.5, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 93, [Name]: b(+), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (88, 92), [ParentHopIDs]: (94, 98), [CostInfo]: {TotalCost: 1504.3, SelfCost: 0.5, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 88, [Name]: TRead max_y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (82), [ParentHopIDs]: (93), [CostInfo]: {TotalCost: 1503.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 82, [Name]: TWrite max_y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (81), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 1503.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 81, [Name]: ua(maxRC), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (68), [ParentHopIDs]: (82), [CostInfo]: {TotalCost: 1503.3, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 92, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (93), [CostInfo]: {TotalCost: 0.5, SelfCost: 0.5, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 99, [Name]: TRead max_y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (98), [ParentHopIDs]: (290), [CostInfo]: {TotalCost: 752.1, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 98, [Name]: TWrite max_y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (93), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 752.1, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 0.5}
+[HopID]: 287, [Name]: LiteralOp cols, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (290), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 288, [Name]: LiteralOp false, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (290), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 289, [Name]: LiteralOp true, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (290), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 103, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (104, 104, 111, 139, 139, 139, 165, 165, 165), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 266, [Name]: b(*), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (265, 264), [ParentHopIDs]: (267), [CostInfo]: {TotalCost: 2781052.0, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 265, [Name]: LiteralOp 0.01, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (266), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 264, [Name]: b(+), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (263, 262), [ParentHopIDs]: (266), [CostInfo]: {TotalCost: 2780042.0, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 263, [Name]: b(*), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (209, 210), [ParentHopIDs]: (264), [CostInfo]: {TotalCost: 1482.3, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 209, [Name]: TRead lambda, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (169), [ParentHopIDs]: (263), [CostInfo]: {TotalCost: 329.7, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 169, [Name]: TWrite lambda, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (166), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 329.7, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 166, [Name]: ba(+*), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (139, 165), [ParentHopIDs]: (168, 169), [CostInfo]: {TotalCost: 659.5, SelfCost: 200.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 139, [Name]: dg(rand), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (105, 103, 134, 135, 103, 105, 285, 103), [ParentHopIDs]: (166), [CostInfo]: {TotalCost: 101.8, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 165, [Name]: dg(rand), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (105, 103, 134, 135, 103, 105, 103, 111), [ParentHopIDs]: (166), [CostInfo]: {TotalCost: 357.6, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 262, [Name]: ba(+*), [ExecType]: FED, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (261, 252), [ParentHopIDs]: (264), [CostInfo]: {TotalCost: 2777559.7, SelfCost: 2000000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 261, [Name]: b(-), [ExecType]: CP, [OutputType]: FOUT, [FType]: null, [ChildHopIDs]: (256, 260), [ParentHopIDs]: (262), [CostInfo]: {TotalCost: 1277559.7, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 256, [Name]: rix, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (251, 222, 286, 222, 212), [ParentHopIDs]: (261), [CostInfo]: {TotalCost: 1255306.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 251, [Name]: b(/), [ExecType]: FED, [OutputType]: LOUT, [FType]: ROW, [ChildHopIDs]: (238, 239), [ParentHopIDs]: (256), [CostInfo]: {TotalCost: 1245182.0, SelfCost: 220000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 238, [Name]: u(exp), [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (237), [ParentHopIDs]: (239, 251), [CostInfo]: {TotalCost: 1115182.0, SelfCost: 180000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 237, [Name]: b(-), [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (224, 225), [ParentHopIDs]: (238), [CostInfo]: {TotalCost: 1025182.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 224, [Name]: b(cbind), [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (215, 223), [ParentHopIDs]: (225, 237), [CostInfo]: {TotalCost: 1015182.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 215, [Name]: ba(+*), [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (210, 211), [ParentHopIDs]: (224), [CostInfo]: {TotalCost: 1000152.6, SelfCost: 2000000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 211, [Name]: TRead X, [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (59), [ParentHopIDs]: (215, 252), [CostInfo]: {TotalCost: 0.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 59, [Name]: TWrite X, [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (58), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 0.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 58, [Name]: Fed X, [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (), [ParentHopIDs]: (59), [CostInfo]: {TotalCost: 0.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 223, [Name]: dg(rand), [ExecType]: CP, [OutputType]: FOUT, [FType]: null, [ChildHopIDs]: (216, 217, 218, 219, 217, 216, 286, 222), [ParentHopIDs]: (224), [CostInfo]: {TotalCost: 10029.4, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 216, [Name]: LiteralOp 1.0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (223, 223, 235, 235), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 217, [Name]: LiteralOp 0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (223, 223), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 218, [Name]: LiteralOp uniform, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (223, 235), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 219, [Name]: LiteralOp -1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (223, 235), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 286, [Name]: LiteralOp 1000, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (223, 256, 260), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 222, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (223, 235, 235, 235, 234, 256, 256, 260, 260), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 225, [Name]: ua(maxR), [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (224), [ParentHopIDs]: (237), [CostInfo]: {TotalCost: 512591.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 239, [Name]: ua(+R), [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (238), [ParentHopIDs]: (251), [CostInfo]: {TotalCost: 577591.0, SelfCost: 40000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 212, [Name]: TRead K, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (283), [ParentHopIDs]: (234, 256, 260), [CostInfo]: {TotalCost: 355.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 283, [Name]: TWrite K, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (111), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 355.3, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 260, [Name]: rix, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (213, 222, 286, 222, 212), [ParentHopIDs]: (261), [CostInfo]: {TotalCost: 12253.7, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 213, [Name]: TRead Y_indicator, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (108), [ParentHopIDs]: (260), [CostInfo]: {TotalCost: 2129.7, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 108, [Name]: TWrite Y_indicator, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (290), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 2129.7, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 252, [Name]: r(r'), [ExecType]: FED, [OutputType]: FOUT, [FType]: COL, [ChildHopIDs]: (211), [ParentHopIDs]: (262), [CostInfo]: {TotalCost: 500000.0, SelfCost: 1000000.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 270, [Name]: LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLogRegPlanningTest/out/B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (276), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 271, [Name]: LiteralOp false, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (276, 276), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 272, [Name]: LiteralOp :, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (276), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 273, [Name]: LiteralOp text, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (276), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 275, [Name]: LiteralOp ,, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (276), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 204, [Name]: TWrite __pred, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (203), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 10.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 203, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (204), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 208, [Name]: TWrite __pred, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (207), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 10.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 207, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (208), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 87, [Name]: TWrite __pred, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (86), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 1253.6, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 86, [Name]: b(<=), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (84, 85), [ParentHopIDs]: (87), [CostInfo]: {TotalCost: 1253.6, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 84, [Name]: ua(minRC), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (83), [ParentHopIDs]: (86), [CostInfo]: {TotalCost: 1251.6, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 83, [Name]: TRead Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (69), [ParentHopIDs]: (84), [CostInfo]: {TotalCost: 251.6, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 85, [Name]: LiteralOp 0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (86), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 206, [Name]: TWrite __pred, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (205), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 10.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+[HopID]: 205, [Name]: LiteralOp 10, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (206), [CostInfo]: {TotalCost: 10.0, SelfCost: 10.0, NetworkCost: 0.0, ComputeWeight: 10.0}
+org.apache.sysds.lops.LopsException: ERROR: line 69, column 2 -- Problem generating simple inst - FED°exp°_mVar29·MATRIX·FP64°_mVar30·MATRIX·FP64°48°false°FOUT
+	at org.apache.sysds.lops.compile.Dag.generateControlProgramJobs(Dag.java:645)
+	at org.apache.sysds.lops.compile.Dag.doPlainInstructionGen(Dag.java:242)
+	at org.apache.sysds.lops.compile.Dag.getJobs(Dag.java:184)
+	at org.apache.sysds.parser.DMLTranslator.createRuntimeProgramBlock(DMLTranslator.java:689)
+	at org.apache.sysds.parser.DMLTranslator.createRuntimeProgramBlock(DMLTranslator.java:627)
+	at org.apache.sysds.parser.DMLTranslator.getRuntimeProgram(DMLTranslator.java:468)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:473)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:329)
+	at org.apache.sysds.test.AutomatedTestBase.main(AutomatedTestBase.java:1547)
+	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
+	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: Invalid FEDERATED Instruction Type: Unary
+	at org.apache.sysds.runtime.instructions.FEDInstructionParser.parseSingleInstruction(FEDInstructionParser.java:89)
+	at org.apache.sysds.runtime.instructions.InstructionParser.parseSingleInstruction(InstructionParser.java:55)
+	at org.apache.sysds.lops.compile.Dag.generateControlProgramJobs(Dag.java:632)
+	... 11 more
+25/12/28 11:05:06 ERROR test.AutomatedTestBase: 
+failed to run script: ./src/test/scripts/functions/privacy/fedplanning/FederatedLogRegPlanningTest.dml
+Standard Out:
+org.apache.sysds.lops.LopsException: ERROR: line 69, column 2 -- Problem generating simple inst - FED°exp°_mVar29·MATRIX·FP64°_mVar30·MATRIX·FP64°48°false°FOUT
+	at org.apache.sysds.lops.compile.Dag.generateControlProgramJobs(Dag.java:645)
+	at org.apache.sysds.lops.compile.Dag.doPlainInstructionGen(Dag.java:242)
+	at org.apache.sysds.lops.compile.Dag.getJobs(Dag.java:184)
+	at org.apache.sysds.parser.DMLTranslator.createRuntimeProgramBlock(DMLTranslator.java:689)
+	at org.apache.sysds.parser.DMLTranslator.createRuntimeProgramBlock(DMLTranslator.java:627)
+	at org.apache.sysds.parser.DMLTranslator.getRuntimeProgram(DMLTranslator.java:468)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:473)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:329)
+	at org.apache.sysds.test.AutomatedTestBase.main(AutomatedTestBase.java:1547)
+	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
+	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: Invalid FEDERATED Instruction Type: Unary
+	at org.apache.sysds.runtime.instructions.FEDInstructionParser.parseSingleInstruction(FEDInstructionParser.java:89)
+	at org.apache.sysds.runtime.instructions.InstructionParser.parseSingleInstruction(InstructionParser.java:55)
+	at org.apache.sysds.lops.compile.Dag.generateControlProgramJobs(Dag.java:632)
+	... 11 more
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.638 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest
+[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest.runLogRegCostBasedTestPrivateAggregate  Time elapsed: 5.638 s  <<< FAILURE!
+java.lang.AssertionError: test failed
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest.loadAndRunTest(FederatedLogRegPlanningTest.java:159)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest.runTestWithConfig(FederatedLogRegPlanningTest.java:93)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest.runLogRegCostBasedTestPrivateAggregate(FederatedLogRegPlanningTest.java:75)
+
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   FederatedLogRegPlanningTest.runLogRegCostBasedTestPrivateAggregate:75->runTestWithConfig:93->loadAndRunTest:159->AutomatedTestBase.runTest:1372->AutomatedTestBase.runTest:1427 test failed
+[INFO] 
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  12.038 s
+[INFO] Finished at: 2025-12-28T11:05:07+01:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
+[ERROR] 
+[ERROR] Please refer to /home/mchoi/systemds/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

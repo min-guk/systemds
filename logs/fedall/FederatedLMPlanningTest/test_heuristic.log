@@ -1,0 +1,139 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] --------------------< org.apache.systemds:systemds >--------------------
+[INFO] Building Apache SystemDS 3.4.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-maven-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-java-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-output-timestamp-property) @ systemds ---
+[INFO] 
+[INFO] --- jacoco:0.8.12:prepare-agent (default-prepare-agent) @ systemds ---
+[INFO] argLine set to -javaagent:/home/mchoi/.m2/repository/org/jacoco/org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar=destfile=/home/mchoi/systemds/target/jacoco.exec,includes=**,output=file -Xms3000m -Xmx3000m -Xmn300m
+[INFO] 
+[INFO] --- remote-resources:1.7.0:process (process-resource-bundles) @ systemds ---
+[INFO] Preparing remote bundle org.apache:apache-jar-resource-bundle:1.4
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- properties:1.1.0:write-project-properties (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 331 resources to scripts
+[INFO] Copying 2 resources to cuda/kernels
+[INFO] Copying 7 resources to lib
+[INFO] Copying 3 resources to cuda/spoof
+[INFO] Copying 9 resources to cuda/headers
+[INFO] Copying 0 resource to java/spoof
+[INFO] Copying 15 resources to ../lib/hadoop/bin
+[INFO] Copying 3 resources to META-INF/
+[INFO] Copying 1 resource to ./
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ systemds ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- dependency:3.5.0:copy-dependencies (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:testResources (default-testResources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 6 resources
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ systemds ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- surefire:3.0.0:test (default-test) @ systemds ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitcore.JUnitCoreProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+WARNING: Using incubator modules: jdk.incubator.vector
+[INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
+25/12/28 11:04:04 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-heuristic.xml
+[Oracle] hop=546 (LiteralOp localhost:38381/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=547 (LiteralOp localhost:38839/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=548 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[546, 547], parentIDs=[602], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=574 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[576, 594, 611], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=576 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[574], parentIDs=[600], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=626 (LiteralOp 500.0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[585, 594], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=584 (LiteralOp 100), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[585, 599, 723, 734], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=585 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[626, 584], parentIDs=[600], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=594 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[626, 574], parentIDs=[600], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=581 (LiteralOp 1000), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[583, 599], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=599 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[581, 584], parentIDs=[600], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=600 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[576, 585, 594, 599], parentIDs=[602], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null], notes=[]
+[Oracle] hop=537 (LiteralOp matrix), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[542, 602], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=602 (Fed X), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[548, 600, 537], parentIDs=[611, 719, 718], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null], notes=[]
+[Oracle] hop=719 (r(r')), exec=FED, placement=FOUT, foutType=COL, reason=OK, childIDs=[602], parentIDs=[718, 730], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[ROW], notes=[]
+[Oracle] hop=718 (ba(+*)), exec=FED, placement=LOUT, foutType=none, reason=OK, childIDs=[719, 602], parentIDs=[717], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[COL, ROW], notes=[]
+[Oracle] hop=724 (LiteralOp 1.0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[723, 734], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=732 (LiteralOp 1.0E-7), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[734], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=726 (LiteralOp uniform), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[723, 734], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=727 (LiteralOp -1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[723, 734], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=725 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[723, 734], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=734 (dg(rand)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[724, 732, 726, 727, 584, 725], parentIDs=[721], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=721 (r(rdiag)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[734], parentIDs=[717], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null], notes=[]
+[Oracle] hop=717 (b(+)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[718, 721], parentIDs=[716], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=535 (LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[542], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=536 (LiteralOp double), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[542], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=538 (LiteralOp text), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[542, 619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=539 (LiteralOp 1000), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[542], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=541 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[542], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=542 (PRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[535, 536, 537, 538, 539, 541], parentIDs=[611, 730], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
+[Oracle] hop=730 (ba(+*)), exec=FED, placement=LOUT, foutType=none, reason=OK, childIDs=[719, 542], parentIDs=[716], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[COL, null], notes=[]
+[Oracle] hop=716 (b(solve)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[717, 730], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
+[Oracle] hop=613 (LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/out/Z), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=614 (LiteralOp false), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=615 (LiteralOp :), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=618 (LiteralOp ,), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=619 (PWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[716, 613, 614, 615, 538, 618], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
+SystemDS Statistics:
+Total elapsed time:		1.884 sec.
+Total compilation time:		0.909 sec.
+Total execution time:		0.974 sec.
+Cache hits (Mem/Li/WB/FS/HDFS):	15/0/0/0/3.
+Cache writes (Li/WB/FS/HDFS):	0/6/0/1.
+Cache times (ACQr/m, RLS, EXP):	0.845/0.000/0.003/0.014 sec.
+HOP DAGs recompiled (PRED, SB):	0/0.
+HOP DAGs recompile time:	0.000 sec.
+Federated I/O (Read, Put, Get):	2/2/2.
+Federated Execute (Inst, UDF):	5/0.
+Fed Put Count (Sc/Li/Ma/Fr/MC):	0/0/8/0/0.
+Fed Put Bytes (Mat/Frame):	178816/0 Bytes.
+Federated prefetch count:	0.
+Fed LookupTable (Get, Entries):	18/2.
+Total JIT compile time:		7.748 sec.
+Total JVM GC count:		4.
+Total JVM GC time:		0.032 sec.
+Heavy hitter instructions:
+  #  Instruction  Time(s)  Count
+  1  tsmm           1.196      2
+  2  fed_tsmm       0.642      1
+  3  fed_fedinit    0.194      1
+  4  solve          0.044      1
+  5  fed_ba+*       0.028      1
+  6  r'             0.021      2
+  7  +              0.018      1
+  8  write          0.014      1
+  9  /              0.008      1
+ 10  ba+*           0.006      2
+
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.224 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
+[INFO] 
+[INFO] Results:
+[INFO] 
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  11.529 s
+[INFO] Finished at: 2025-12-28T11:04:10+01:00
+[INFO] ------------------------------------------------------------------------

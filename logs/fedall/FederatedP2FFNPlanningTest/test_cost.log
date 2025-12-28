@@ -1,0 +1,174 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] --------------------< org.apache.systemds:systemds >--------------------
+[INFO] Building Apache SystemDS 3.4.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-maven-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-java-version) @ systemds ---
+[INFO] 
+[INFO] --- enforcer:1.4.1:enforce (enforce-output-timestamp-property) @ systemds ---
+[INFO] 
+[INFO] --- jacoco:0.8.12:prepare-agent (default-prepare-agent) @ systemds ---
+[INFO] argLine set to -javaagent:/home/mchoi/.m2/repository/org/jacoco/org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar=destfile=/home/mchoi/systemds/target/jacoco.exec,includes=**,output=file -Xms3000m -Xmx3000m -Xmn300m
+[INFO] 
+[INFO] --- remote-resources:1.7.0:process (process-resource-bundles) @ systemds ---
+[INFO] Preparing remote bundle org.apache:apache-jar-resource-bundle:1.4
+[INFO] Copying 3 resources from 1 bundle.
+[INFO] 
+[INFO] --- properties:1.1.0:write-project-properties (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 331 resources to scripts
+[INFO] Copying 2 resources to cuda/kernels
+[INFO] Copying 7 resources to lib
+[INFO] Copying 3 resources to cuda/spoof
+[INFO] Copying 9 resources to cuda/headers
+[INFO] Copying 0 resource to java/spoof
+[INFO] Copying 15 resources to ../lib/hadoop/bin
+[INFO] Copying 3 resources to META-INF/
+[INFO] Copying 1 resource to ./
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ systemds ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- dependency:3.5.0:copy-dependencies (default) @ systemds ---
+[INFO] 
+[INFO] --- resources:3.2.0:testResources (default-testResources) @ systemds ---
+[INFO] Using 'UTF-8' encoding to copy filtered resources.
+[INFO] Using 'UTF-8' encoding to copy filtered properties files.
+[INFO] Copying 6 resources
+[INFO] Copying 3 resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ systemds ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- surefire:3.0.0:test (default-test) @ systemds ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitcore.JUnitCoreProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+WARNING: Using incubator modules: jdk.incubator.vector
+
+Exception: java.lang.AssertionError thrown from the UncaughtExceptionHandler in thread "TestRunner_main"
+[INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest
+25/12/28 11:05:40 INFO fedplanning.FederatedP2FFNPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-cost-based.xml
+[RewireTransHop] (hopName: X0, hopID: 120) child hops is empty
+[RewireTransHop] (hopName: center, hopID: 20) filtered child hops is empty
+[RewireTransHop] (hopName: scale, hopID: 30) filtered child hops is empty
+[RewireTransHop] (hopName: X, hopID: 205) filtered child hops is empty
+[RewireTransHop] (hopName: Xtest0, hopID: 276) child hops is empty
+[RewireTransHop] (hopName: Xtest, hopID: 300) child hops is empty
+[Oracle] hop=54 (LiteralOp localhost:46161/target/testTemp/functions/privacy/fedplanning/FederatedP2FFNPlanningTest/in/features1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=55 (LiteralOp localhost:38687/target/testTemp/functions/privacy/fedplanning/FederatedP2FFNPlanningTest/in/features2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=56 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[54, 55], parentIDs=[110], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=82 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[84, 102], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=84 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[82], parentIDs=[108], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=451 (LiteralOp 250.0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[93, 102], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=92 (LiteralOp 20), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[93, 107], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=93 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[451, 92], parentIDs=[108], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=102 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[451, 82], parentIDs=[108], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=89 (LiteralOp 500), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[91, 107], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=107 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[89, 92], parentIDs=[108], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=108 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[84, 93, 102, 107], parentIDs=[110], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null], notes=[]
+[Oracle] hop=109 (LiteralOp matrix), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[110], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=111 (u(castdtf)), exec=FED, placement=FOUT, foutType=ROW, reason=OK, childIDs=[110], parentIDs=[117, 118, 119], rewireChildIDs=[], rewireParentIDs=[], privacy=PRIVATE_AGGREGATE, inputs=[ROW], notes=[]
+[Oracle] hop=113 (LiteralOp { ids:true, dummycode:[1] }), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[119], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=119 (fcall _internal TRANSFORMENCODE), exec=FED, placement=FOUT, foutType=ROW, reason=OK, detail=function=TRANSFORMENCODE, namespace=_internal, type=MULTIRETURN_BUILTIN, childIDs=[111, 113], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PRIVATE_AGGREGATE, inputs=[ROW, null], notes=[INFO: function call hop treated as federated placeholder; execution occurs inside callee]
+[Oracle] hop=120 (TRead X0), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[], parentIDs=[181, 184, 192, 193, 195, 196], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=181 (ua(varC)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[120], parentIDs=[182], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=182 (u(sqrt)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[181], parentIDs=[183, 187], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=183 (TWrite colSD), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[182], parentIDs=[296], rewireChildIDs=[], rewireParentIDs=[296], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=184 (ua(meanC)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[120], parentIDs=[185, 188, 191, 198], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=185 (TWrite colMean), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[184], parentIDs=[295], rewireChildIDs=[], rewireParentIDs=[295], privacy=PUBLIC, inputs=[null], notes=[]
+[Oracle] hop=189 (LiteralOp 1.5), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[187], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=187 (b(*)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[189, 182], parentIDs=[188, 191], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=191 (b(-)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[184, 187], parentIDs=[192], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=192 (b(<)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[120, 191], parentIDs=[194], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=188 (b(+)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[184, 187], parentIDs=[193], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=193 (b(>)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[120, 188], parentIDs=[194], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=194 (b(||)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[192, 193], parentIDs=[195, 198], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=195 (b(*)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[194, 120], parentIDs=[196], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=196 (b(-)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[120, 195], parentIDs=[199], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=198 (b(*)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[194, 184], parentIDs=[199], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=199 (b(+)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[196, 198], parentIDs=[200], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
+[Oracle] hop=200 (TWrite X), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[199], parentIDs=[201], rewireChildIDs=[], rewireParentIDs=[201], privacy=PUBLIC, inputs=[null], notes=[]
+org.apache.sysds.runtime.DMLRuntimeException: Missing LOUT federated plan for child hop 201 (TRead X) while processing parent 22 (TRead X)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEstimator.getChildCosts(FederatedPlannerFedCostBased.java:1233)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHop(FederatedPlannerFedCostBased.java:529)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:462)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateStatementBlock(FederatedPlannerFedCostBased.java:390)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateProgram(FederatedPlannerFedCostBased.java:267)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.rewriteProgram(FederatedPlannerFedCostBased.java:102)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:73)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:63)
+	at org.apache.sysds.hops.ipa.InterProceduralAnalysis.analyzeProgram(InterProceduralAnalysis.java:240)
+	at org.apache.sysds.parser.DMLTranslator.rewriteHopsDAG(DMLTranslator.java:291)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:464)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:329)
+	at org.apache.sysds.test.AutomatedTestBase.main(AutomatedTestBase.java:1547)
+	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
+	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+25/12/28 11:05:44 ERROR test.AutomatedTestBase: 
+failed to run script: ./src/test/scripts/functions/privacy/fedplanning/P2_FFN.dml
+Standard Out:
+org.apache.sysds.runtime.DMLRuntimeException: Missing LOUT federated plan for child hop 201 (TRead X) while processing parent 22 (TRead X)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEstimator.getChildCosts(FederatedPlannerFedCostBased.java:1233)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHop(FederatedPlannerFedCostBased.java:529)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:462)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateStatementBlock(FederatedPlannerFedCostBased.java:390)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateProgram(FederatedPlannerFedCostBased.java:267)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.rewriteProgram(FederatedPlannerFedCostBased.java:102)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:73)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:63)
+	at org.apache.sysds.hops.ipa.InterProceduralAnalysis.analyzeProgram(InterProceduralAnalysis.java:240)
+	at org.apache.sysds.parser.DMLTranslator.rewriteHopsDAG(DMLTranslator.java:291)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:464)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:329)
+	at org.apache.sysds.test.AutomatedTestBase.main(AutomatedTestBase.java:1547)
+	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
+	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.657 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest
+[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.runP2FFNCostBasedTestPrivateAggregate  Time elapsed: 5.657 s  <<< FAILURE!
+java.lang.AssertionError: test failed
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.loadAndRunTest(FederatedP2FFNPlanningTest.java:200)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.runTestWithConfig(FederatedP2FFNPlanningTest.java:95)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.runP2FFNCostBasedTestPrivateAggregate(FederatedP2FFNPlanningTest.java:78)
+
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   FederatedP2FFNPlanningTest.runP2FFNCostBasedTestPrivateAggregate:78->runTestWithConfig:95->loadAndRunTest:200->AutomatedTestBase.runTest:1372->AutomatedTestBase.runTest:1427 test failed
+[INFO] 
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  11.349 s
+[INFO] Finished at: 2025-12-28T11:05:45+01:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
+[ERROR] 
+[ERROR] Please refer to /home/mchoi/systemds/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

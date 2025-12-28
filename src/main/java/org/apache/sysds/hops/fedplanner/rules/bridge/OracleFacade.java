@@ -488,8 +488,11 @@ public final class OracleFacade {
   }
 
   private FType mapFederatedType(FTypes.FType runtimeType, Hop input) {
-    if (input != null && input.getDataType() != DataType.MATRIX)
-      return null;
+    if (input != null) {
+      DataType dt = input.getDataType();
+      if (dt != DataType.MATRIX && dt != DataType.FRAME)
+        return null;
+    }
     if (runtimeType == null)
       return null;
     switch (runtimeType) {

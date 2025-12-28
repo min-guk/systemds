@@ -1,0 +1,3 @@
+Start hop 60 (b(/)) line 74 foutType=ROW exec=FED placement=FOUT
+  `-- [DROP] 60 (b(/)) FED/FOUT/ROW (idx=0) -> 140 (ua(+RC)) CP/LOUT/none (reason=FULL_AGG_REQUIRES_CONSOLIDATION)
+

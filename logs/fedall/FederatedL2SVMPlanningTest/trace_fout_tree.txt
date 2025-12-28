@@ -1,0 +1,11 @@
+Start hop 170 (TRead X) line 135 foutType=ROW exec=FED placement=FOUT
+  `-- 170 (TRead X) FED/FOUT/ROW (idx=0) -> 207 (r(r')) FED/FOUT/COL (reason=OK)
+      `-- [DROP] 207 (r(r')) FED/FOUT/COL (idx=0) -> 208 (ba(+*)) FED/LOUT/none (reason=OK)
+
+Start hop 234 (TRead X) line 155 foutType=ROW exec=FED placement=FOUT
+  `-- [DROP] 234 (TRead X) FED/FOUT/ROW (idx=0) -> 237 (ba(+*)) FED/LOUT/none (reason=FOUT_ALLOWED_ONLY_IF_FORCED)
+
+Start hop 297 (TRead X) line 249 foutType=ROW exec=FED placement=FOUT
+  `-- 297 (TRead X) FED/FOUT/ROW (idx=0) -> 324 (r(r')) FED/FOUT/COL (reason=OK)
+      `-- [DROP] 324 (r(r')) FED/FOUT/COL (idx=0) -> 326 (ba(+*)) FED/LOUT/none (reason=OK)
+

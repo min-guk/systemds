@@ -54,7 +54,6 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] {"Z"}));
 	}
 
-	@Ignore
 	@Test
 	public void runPCAFOUTTest(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
@@ -71,7 +70,6 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
 	public void runPCACostBasedTestPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");

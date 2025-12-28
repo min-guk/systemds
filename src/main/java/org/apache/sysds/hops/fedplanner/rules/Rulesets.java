@@ -1042,9 +1042,13 @@ public final class Rulesets {
       if (inputs.isEmpty())
         return FTypeProfile.empty();
 
+      String opcode = normalizedOpcode(sig);
+      boolean allowCol = !Opcodes.UCUMKPM.toString().equals(opcode);
       Set<FType> outs = new LinkedHashSet<>();
       if (inputs.contains(FType.ROW))
         outs.add(FType.ROW);
+      if (allowCol && inputs.contains(FType.COL))
+        outs.add(FType.COL);
       return profileOf(outs);
     }
 
@@ -1061,13 +1065,16 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-      if (in == FType.COL)
-        return cpCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
-      if (in != FType.ROW)
-        return cpCaps(sig, reasonForNonAxis(in));
 
       String opcode = normalizedOpcode(sig);
       Guard.Result guard = Guard.eval(sig);
+      if (in == FType.COL) {
+        if (Opcodes.UCUMKPM.toString().equals(opcode))
+          return cpCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
+        return guardAwareFout(sig, in, ReasonCode.OK, guard);
+      }
+      if (in != FType.ROW)
+        return cpCaps(sig, reasonForNonAxis(in));
       if (Opcodes.UCUMKPM.toString().equals(opcode))
         return rowGuardAwareFout(sig, guard, UCUMKPP_STAR_DETAIL);
       return rowGuardAwareFout(sig, guard, null);
@@ -2495,7 +2502,6 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
 
       boolean rIsVector = attrBoolean(sig, ATTR_R_IS_VECTOR);
-      boolean alignColT = isAlignColT(sig);
       boolean forceFed = attrBoolean(sig, ATTR_FORCE_FED);
       boolean forceLocal = attrBoolean(sig, ATTR_FORCE_LOCAL);
       boolean forceFout = attrBoolean(sig, ATTR_FORCE_FOUT);
@@ -2530,8 +2536,7 @@ public final class Rulesets {
       }
 
       if (left == FType.COL && rightIsRow) {
-        ReasonCode reason = alignColT ? ReasonCode.OK : ReasonCode.UNSUPPORTED_ALIGNMENT;
-        return fedLocalCaps(sig, reason);
+        return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
       }
 
       if (rightIsRow)
@@ -2805,19 +2810,24 @@ public final class Rulesets {
   /** Append (append opcode + cbind attribute). */
   public static final class AppendRule extends BaseRule {
     private static final String APPEND = Opcodes.APPEND.toString();
+    private static final String CBIND = Opcodes.CBIND.toString();
+    private static final String RBIND = Opcodes.RBIND.toString();
     private static final String ATTR_CBIND = "cbind";
 
     @Override public OpCategory category() { return OpCategory.APPEND; }
-    @Override public Set<String> opcodes() { return Set.of(APPEND); }
+    @Override public Set<String> opcodes() { return Set.of(APPEND, CBIND, RBIND); }
 
     @Override
     public boolean supports(OpSig sig) {
       if (sig == null || sig.category() != OpCategory.APPEND)
         return false;
-      if (!APPEND.equals(normalizedOpcode(sig)))
+      String opcode = normalizedOpcode(sig);
+      if (!APPEND.equals(opcode) && !CBIND.equals(opcode) && !RBIND.equals(opcode))
         return false;
       String attr = attr(sig, ATTR_CBIND);
-      return attr != null && (isTrue(attr) || isFalse(attr));
+      if (attr != null)
+        return isTrue(attr) || isFalse(attr);
+      return CBIND.equals(opcode) || RBIND.equals(opcode);
     }
 
     @Override
@@ -2953,7 +2963,15 @@ public final class Rulesets {
     }
 
     private static boolean parseCbind(OpSig sig) {
-      return Boolean.parseBoolean(attr(sig, ATTR_CBIND));
+      String attr = attr(sig, ATTR_CBIND);
+      if (attr != null)
+        return Boolean.parseBoolean(attr);
+      String opcode = normalizedOpcode(sig);
+      if (CBIND.equals(opcode))
+        return true;
+      if (RBIND.equals(opcode))
+        return false;
+      return false;
     }
 
     private static String attr(OpSig sig, String key) {

@@ -57,7 +57,6 @@ public class FederatedP2FFNPlanningTest extends AutomatedTestBase {
 		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] {"Z"}));
 	}
 
-	@Ignore
 	@Test
 	public void runP2FFNFOUTTest(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
@@ -74,7 +73,6 @@ public class FederatedP2FFNPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
 	public void runP2FFNCostBasedTestPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
