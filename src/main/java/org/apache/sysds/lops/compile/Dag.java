@@ -323,7 +323,30 @@ public class Dag<N extends Lop>
 			FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
 			Lop local = hopToLop.get(hopId);
 			Lop anchor = hopToLop.get(spec.getAnchorHopId());
+			if (anchor == null && spec.getAnchorLabel() != null) {
+				Lop anchorByLabel = findAnchorByLabel(lops, spec.getAnchorLabel());
+				if (anchorByLabel != null) {
+					anchor = anchorByLabel;
+					System.out.printf("CP->FOUT anchor fallback: hop=%d anchorHop=%d anchorLabel=%s resolvedHop=%d%n",
+						hopId, spec.getAnchorHopId(), spec.getAnchorLabel(), anchorByLabel.getHopID());
+				}
+			}
 			if (local == null || anchor == null) {
+				System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
+					hopId, spec.getAnchorHopId(), local == null, anchor == null, sbId);
+				if (anchor == null) {
+					List<Long> hopIds = new ArrayList<>(hopToLop.keySet());
+					Collections.sort(hopIds);
+					int limit = 200;
+					StringBuilder buf = new StringBuilder();
+					for (int i = 0; i < hopIds.size() && i < limit; i++) {
+						if (i > 0)
+							buf.append(',');
+						buf.append(hopIds.get(i));
+					}
+					System.out.printf("CP->FOUT insert context: sbId=%d hopToLopSize=%d hopIds=%s%s%n",
+						sbId, hopIds.size(), buf.toString(), hopIds.size() > limit ? ",..." : "");
+				}
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
 						+ spec.getAnchorHopId() + " due to missing lops in current DAG");
@@ -333,14 +356,29 @@ public class Dag<N extends Lop>
 
 			boolean alreadyInserted = local.getOutputs().stream()
 				.anyMatch(out -> out instanceof FederatedRefed || out instanceof FederatedFoutMaterialize);
-			if (alreadyInserted)
+			if (alreadyInserted) {
+				String localLabel = (local.getOutputParameters() != null)
+					? local.getOutputParameters().getLabel()
+					: "null";
+				System.out.printf("CP->FOUT insert skip: hop=%d local=%s alreadyInserted=true%n",
+					hopId, localLabel);
 				continue;
+			}
 
 			FederatedFoutMaterialize fout = new FederatedFoutMaterialize(local, anchor, spec.getFTypeHint());
 			fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
 			copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
 			fout.setFederatedOutput(FederatedOutput.FOUT);
 			addNode(fout);
+			String localLabel = (local.getOutputParameters() != null)
+				? local.getOutputParameters().getLabel()
+				: "null";
+			String anchorLabel = (anchor.getOutputParameters() != null)
+				? anchor.getOutputParameters().getLabel()
+				: "null";
+			System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
+				hopId, localLabel, spec.getAnchorHopId(), anchorLabel, fout.getOutputParameters().getLabel(),
+				spec.getFTypeHint());
 			inserted = true;
 
 			List<Lop> outputs = new ArrayList<>(local.getOutputs());
@@ -369,6 +407,24 @@ public class Dag<N extends Lop>
 		target.setDimensions(source.getNumRows(), source.getNumCols(), source.getBlocksize(),
 			source.getNnz(), source.getUpdateType(), source.getCompressedSize());
 		target.setFormat(source.getFormat());
+	}
+
+	private static Lop findAnchorByLabel(List<Lop> lops, String label) {
+		if (label == null)
+			return null;
+		for (Lop lop : lops) {
+			OutputParameters out = lop.getOutputParameters();
+			if (out == null)
+				continue;
+			if (!label.equals(out.getLabel()))
+				continue;
+			if (lop instanceof Data) {
+				OpOpData op = ((Data) lop).getOperationType();
+				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					return lop;
+			}
+		}
+		return null;
 	}
 	
 	private ArrayList<Instruction> doPlainInstructionGen(StatementBlock sb, List<Lop> nodes)

@@ -35,8 +35,12 @@ public final class FederatedFoutMaterializeRegistry {
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId, String fTypeHint) {
+		register(sbId, hopId, anchorHopId, fTypeHint, null);
+	}
+
+	public static void register(long sbId, long hopId, long anchorHopId, String fTypeHint, String anchorLabel) {
 		MATERIALIZE_ANCHORS.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
-			.put(hopId, new MaterializeSpec(anchorHopId, fTypeHint));
+			.put(hopId, new MaterializeSpec(anchorHopId, fTypeHint, anchorLabel));
 	}
 
 	public static boolean isEmpty() {
@@ -53,10 +57,12 @@ public final class FederatedFoutMaterializeRegistry {
 	public static final class MaterializeSpec {
 		private final long _anchorHopId;
 		private final String _fTypeHint;
+		private final String _anchorLabel;
 
-		public MaterializeSpec(long anchorHopId, String fTypeHint) {
+		public MaterializeSpec(long anchorHopId, String fTypeHint, String anchorLabel) {
 			_anchorHopId = anchorHopId;
 			_fTypeHint = fTypeHint;
+			_anchorLabel = anchorLabel;
 		}
 
 		public long getAnchorHopId() {
@@ -65,6 +71,10 @@ public final class FederatedFoutMaterializeRegistry {
 
 		public String getFTypeHint() {
 			return _fTypeHint;
+		}
+
+		public String getAnchorLabel() {
+			return _anchorLabel;
 		}
 	}
 }

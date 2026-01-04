@@ -81,10 +81,16 @@ public class FEDFoutInstruction extends FEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
+		MatrixObject anchor = ec.getMatrixObject(_anchor);
+		String anchorTypeStr = anchor.isFederated() && anchor.getFedMapping() != null
+			? anchor.getFedMapping().getType().toString()
+			: "null";
+		System.out.printf("FED fout exec: in=%s anchor=%s out=%s fTypeHint=%s inFed=%s anchorFed=%s anchorType=%s%n",
+			_input.getName(), _anchor.getName(), _output.getName(), _fTypeHint, in.isFederated(),
+			anchor.isFederated(), anchorTypeStr);
 		if (in.isFederated())
 			throw new DMLRuntimeException("fed_fout expects a local input but found federated input: " + _input.getName());
 
-		MatrixObject anchor = ec.getMatrixObject(_anchor);
 		if (!anchor.isFederated())
 			throw new DMLRuntimeException("fed_fout requires a federated anchor: " + _anchor.getName());
 

@@ -31,6 +31,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
@@ -290,12 +291,13 @@ public final class FederatedRefedPolicy {
 			String anchorDimStr = (anchorDims != null)
 				? "(" + anchorDims[0] + "," + anchorDims[1] + ")"
 				: "(unknown)";
-			System.out.printf("CP->FOUT decision: MATERIALIZE (dim_mismatch) hopID=%d op=%s local=(%d,%d) anchor=%d anchorDims=%s fTypeHint=%s%n",
+			String anchorLabel = findAnchorLabel(selection.anchorHop);
+			System.out.printf("CP->FOUT decision: MATERIALIZE (dim_mismatch) hopID=%d op=%s local=(%d,%d) anchor=%d anchorDims=%s fTypeHint=%s anchorLabel=%s%n",
 				hop.getHopID(), hop.getOpString(),
 				hop.getDim1(), hop.getDim2(),
-				selection.anchorHop.getHopID(), anchorDimStr, fTypeHint);
+				selection.anchorHop.getHopID(), anchorDimStr, fTypeHint, anchorLabel);
 			FederatedFoutMaterializeRegistry.register(scopeId, hop.getHopID(),
-				selection.anchorHop.getHopID(), fTypeHint);
+				selection.anchorHop.getHopID(), fTypeHint, anchorLabel);
 			return;
 		}
 		long scopeId = (sbId >= 0) ? sbId : DEFAULT_SBID;
@@ -927,6 +929,29 @@ public final class FederatedRefedPolicy {
 		}
 		if (anchorHop.dimsKnown())
 			return new long[] { anchorHop.getDim1(), anchorHop.getDim2() };
+		return null;
+	}
+
+	private static String findAnchorLabel(Hop anchorHop) {
+		if (anchorHop == null)
+			return null;
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		queue.add(anchorHop);
+		while (!queue.isEmpty()) {
+			Hop cur = queue.poll();
+			if (!visited.add(cur))
+				continue;
+			if (cur instanceof DataOp) {
+				DataOp dataOp = (DataOp) cur;
+				OpOpData op = dataOp.getOp();
+				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					return dataOp.getName();
+			}
+			for (Hop in : cur.getInput())
+				if (in != null)
+					queue.add(in);
+		}
 		return null;
 	}
 

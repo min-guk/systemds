@@ -167,6 +167,9 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		// System.out.println("=== End Debug ===");
 
 		MatrixObject mo1 = ec.getMatrixObject(input1);
+		System.out.printf("FED reorg input check: op=%s in=%s out=%s fedOut=%s federated=%s dims=%s fedMap=%s inst=%s%n",
+			instOpcode, input1.getName(), output.getName(), _fedOut, mo1.isFederated(),
+			mo1.getDataCharacteristics(), mo1.getFedMapping(), instString);
 		ReorgOperator r_op = (ReorgOperator) _optr;
 		boolean isSpark = instString.startsWith("SPARK");
 
