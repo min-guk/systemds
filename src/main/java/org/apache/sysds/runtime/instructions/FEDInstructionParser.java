@@ -29,6 +29,8 @@ import org.apache.sysds.runtime.instructions.fed.BinaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CentralMomentFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CovarianceFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
 import org.apache.sysds.runtime.instructions.fed.IndexingFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantilePickFEDInstruction;
@@ -36,6 +38,7 @@ import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ReorgFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TernaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.UnaryMatrixFEDInstruction;
 
 public class FEDInstructionParser extends InstructionParser
 {
@@ -85,6 +88,12 @@ public class FEDInstructionParser extends InstructionParser
 				return QuantilePickFEDInstruction.parseInstruction(str);
 			case MatrixIndexing:
 				return IndexingFEDInstruction.parseInstruction(str);
+			case Unary:
+				return UnaryMatrixFEDInstruction.parseInstruction(str);
+			case Refed:
+				return FEDRefedInstruction.parseInstruction(str);
+			case Fout:
+				return FEDFoutInstruction.parseInstruction(str);
 			default:
 				throw new DMLRuntimeException("Invalid FEDERATED Instruction Type: " + fedtype );
 		}

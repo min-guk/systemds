@@ -318,6 +318,22 @@ public class FederatedData {
 			ctx.close();
 		}
 
+		@Override
+		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+			if (_prom != null && !_prom.isDone())
+				_prom.setFailure(cause);
+			LOG.error("Federated request channel error", cause);
+			ctx.close();
+		}
+
+		@Override
+		public void channelInactive(ChannelHandlerContext ctx) {
+			if (_prom != null && !_prom.isDone()) {
+				_prom.setFailure(new DMLRuntimeException("Federated response channel closed without a reply"));
+				LOG.error("Federated request channel closed before response");
+			}
+		}
+
 		public Promise<FederatedResponse> getProm() {
 			return _prom;
 		}

@@ -23,6 +23,7 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 
 /**
@@ -65,6 +66,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 	}
 
 	private void generatePlan(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes, String splanner){
+		FederatedRefedRegistry.clear();
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
 			FederatedPlanner.valueOf(splanner.toUpperCase()) :
 			FederatedPlanner.COMPILE_FED_HEURISTIC;

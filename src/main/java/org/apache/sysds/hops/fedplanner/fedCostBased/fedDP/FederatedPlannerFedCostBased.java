@@ -19,8 +19,6 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDP;
 
-import static org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.isAllowedByPrivacy;
-
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -54,6 +52,7 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
@@ -102,6 +101,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 		FederatedMemoTable.FedPlan optimalPlan = FederatedPlanCostEnumerator.enumerateProgram(prog, memoTable, true);
 
 		Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>();
+		Map<Long, FType> fTypeMap = new HashMap<>();
 
 		List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = optimalPlan.getChildFedPlans();
 		for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : childFedPlanPairs) {
@@ -110,8 +110,9 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, optimalPlan, memoTable);
 				continue;
 			}
-			rewriteHop(childPlan, memoTable, visited);
+			rewriteHop(childPlan, memoTable, visited, fTypeMap);
 		}
+		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 	}
 
 	@Override
@@ -121,6 +122,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				memoTable, true);
 		Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>(); // hop ID, selected
 																								// placement/exec
+		Map<Long, FType> fTypeMap = new HashMap<>();
 
 		for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
 			FederatedMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
@@ -129,16 +131,19 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				continue;
 			}
 			// Propagate the actual selected output type of the child plan (LOUT/FOUT)
-			rewriteHop(childPlan, memoTable, visited);
+			rewriteHop(childPlan, memoTable, visited, fTypeMap);
 		}
+		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 	}
 
 	private void rewriteHop(FederatedMemoTable.FedPlan optimalPlan, FederatedMemoTable memoTable,
-			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited) {
+			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited, Map<Long, FType> fTypeMap) {
 		long hopID = optimalPlan.getHopRef().getHopID();
 		boolean hasPlacementConflict = false;
 		ExecType execType = optimalPlan.getExecType();
 		FEDInstruction.FederatedOutput thisOutType = optimalPlan.getFedOutType();
+		if (optimalPlan.getFType() != null && thisOutType == FederatedOutput.FOUT)
+			fTypeMap.put(hopID, optimalPlan.getFType());
 
 		if (execType == null) {
 			throw new DMLRuntimeException("ExecType is null in FedPlan for hop " + hopID + " / "
@@ -183,7 +188,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				continue;
 			}
 
-			rewriteHop(childPlan, memoTable, visited);
+			rewriteHop(childPlan, memoTable, visited, fTypeMap);
 		}
 
 		optimalPlan.setForcedExecType(resolvedExecType);
@@ -526,6 +531,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			// so only the first numInputs entries remain valid afterwards.
 			double[][] childCumulativeCost = new double[initialNumInputs][2]; // # of child, LOUT/FOUT of child
 			double[] childForwardingCost = new double[initialNumInputs]; // # of child
+			List<Hop> lOutfOutChildHops = new ArrayList<>(childHops);
 
 			List<Hop> lOUTOnlyinputHops = new ArrayList<>();
 			List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
@@ -534,7 +540,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			List<Hop> fOUTOnlyinputHops = new ArrayList<>();
 			List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
 			List<Double> fOUTOnlychildForwardingCost = new ArrayList<>();
-			List<Hop> lOutfOutChildHops = new ArrayList<>(childHops);
+
 			// The self cost follows its own weight, while the forwarding cost follows the
 			// parent's weight.
 			FederatedPlanCostEstimator.getChildCosts(hopCommon, memoTable, lOutfOutChildHops, childCumulativeCost,
@@ -545,29 +551,19 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			// initialNumInputs;
 			// only indices [0, numInputs) are populated after getChildCosts mutates
 			// childHops.
-			int numInputs = lOutfOutChildHops.size();
+			int numBothOutInputs = lOutfOutChildHops.size();
 			int numLoutOnlyInputs = lOUTOnlyinputHops.size();
 			int numFoutOnlyInputs = fOUTOnlyinputHops.size();
 			List<Hop> inputHopsForPrivacy = new ArrayList<>(childHops);
 			inputHopsForPrivacy.addAll(lOUTOnlyinputHops);
 			inputHopsForPrivacy.addAll(fOUTOnlyinputHops);
 			final Privacy privacyConstraint = privacyConstraintMap.getOrDefault(hopID, Privacy.PUBLIC);
-			String inputPrivacy = summarizeInputPrivacy(inputHopsForPrivacy, privacyConstraintMap);
 
 			double cpSelfCost = baseSelfCost;
 			double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers);
 			double resultNetCost = FederatedPlanCostEstimator.computeHopForwardingCost(hop.getOutputMemEstimate());
 
-			if (numInputs >= Integer.SIZE - 1) {
-				throw new DMLRuntimeException("Too many inputs (" + numInputs + ") for federated plan enumeration; "
-						+ "cannot enumerate 2^n combinations safely.");
-			}
-			if (numInputs > MAX_ENUM_INPUTS) {
-				throw new DMLRuntimeException(
-						"Too many inputs (" + numInputs + ") for exhaustive federated plan enumeration; "
-								+ "limit is " + MAX_ENUM_INPUTS + " until a heuristic fallback is implemented.");
-			}
-			final int enumerationLimit = 1 << numInputs;
+			final int enumerationLimit = 1 << numBothOutInputs;
 
 			FederatedMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedMemoTable.FedPlanVariants(hopCommon,
 					FederatedOutput.LOUT);
@@ -582,9 +578,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				// Costs from children, split by the parent's ExecType semantics.
 				double childCostCPExec = 0; // Parent executes in CP; forwarding only from FOUT children.
 				double childCostFEDExec = 0; // Parent executes in FED; forwarding only from LOUT children.
-				boolean isValid = true;
 
-				for (int j = 0; j < numInputs; j++) {
+				for (int j = 0; j < numBothOutInputs; j++) {
 					Hop inputHop = lOutfOutChildHops.get(j);
 					final int bit = (i & (1 << j)) != 0 ? 1 : 0;
 					final FederatedOutput childType = (bit == 1) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
@@ -648,125 +643,72 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 					childCostFEDExec += fOUTOnlychildCumulativeCost.get(j);
 				}
 
-				List<FType> alignedFTypes = alignInputFTypes(hop, collectedHops, collectedFTypes);
-				List<FType> oracleKey = Collections.unmodifiableList(new ArrayList<>(alignedFTypes));
-				OpCaps caps = oracleCache.computeIfAbsent(oracleKey, k -> {
+				List<FType> alignedInputFTypes = alignInputFTypes(hop, collectedHops, collectedFTypes);
+				OpCaps caps = oracleCache.computeIfAbsent(alignedInputFTypes, k -> {
 					OpCaps decision = oracleFacade.decide(hop, k);
 					FederatedPlannerLogger.logOracleDecision(hop, privacyConstraint, k, decision, rewireTable);
 					return decision;
 				});
 
 				ExecType oracleExec = caps.exec();
-				FederatedOutput placement = caps.placement();
-				if (oracleExec != ExecType.CP && oracleExec != ExecType.FED) {
-					throw new DMLRuntimeException("Unsupported exec type " + oracleExec + " for hop " + hopID
-							+ " (" + hop.getOpString() + "), privacy=" + privacyConstraint + ", placement=" + placement
-							+ ", inputs=" + alignedFTypes);
-				}
+				FederatedOutput oraclePlacement = caps.placement();
+				FType oracleLogicalFType = deriveLogicalFType(hop, caps);
 
-				FType logicalFType = deriveLogicalFType(hop, caps);
-
-				boolean oracleAllowsCPOnProtectedData = allowsCPOverride(privacyConstraint, caps);
 				if (privacyConstraint != Privacy.PUBLIC && oracleExec == ExecType.CP
-						&& !oracleAllowsCPOnProtectedData) {
+						&& !allowsCPOverride(privacyConstraint, caps)) {
 					FederatedPlannerLogger.logWarnMessage(
 							"[Planner] Skipping CP-only plan for hop " + hopID + " (" + hop.getOpString()
 									+ ") due to privacy " + privacyConstraint + " and oracle caps reason "
 									+ caps.reason()
-									+ " (inputs=" + inputPrivacy + ")");
+									+ " (inputs=" + alignedInputFTypes + ")");
 					continue;
 				}
 
 				/*
-				 * Privacy × placement quick matrix (keep in sync with the branches below and
-				 * isAllowedByPrivacy):
-				 * PUBLIC: CP/LOUT, CP/FOUT, FED/FOUT (if oracle permits), FED/LOUT (run FED,
-				 * then gather to local).
+				 * Privacy × placement quick matrix (keep in sync with the branches below):
+				 * PUBLIC: CP/LOUT, CP/FOUT, FED/FOUT, FED/LOUT
 				 * PRIVATE & PRIVATE_AGGREGATE: FED/FOUT only.
-				 * PRIVATE_AGGREGATE_TO_PUBLIC: FED/FOUT (intermediate) plus FED/LOUT after
-				 * aggregation to public.
+				 * PRIVATE_AGGREGATE_TO_PUBLIC: FED/FOUT, FED/LOUT
 				 */
-				boolean privacyAllowsLOUT = isAllowedByPrivacy(privacyConstraint, oracleExec, FederatedOutput.LOUT);
-				boolean privacyAllowsFOUT = isAllowedByPrivacy(privacyConstraint, oracleExec, FederatedOutput.FOUT);
-				if ((placement == FederatedOutput.LOUT && !privacyAllowsLOUT)
-						|| (placement == FederatedOutput.FOUT && !privacyAllowsFOUT)) {
-					FederatedPlannerLogger.logWarnMessage(
-							"[Planner] Skipping plan for hop " + hopID + " (" + hop.getOpString()
-									+ ") because placement "
-									+ placement + " (exec=" + oracleExec + ") violates privacy " + privacyConstraint);
-					continue;
+
+				// 1. FED Exec, FOUT placement
+				if (oracleExec == ExecType.FED && oraclePlacement == FederatedOutput.FOUT) {
+					FederatedMemoTable.FedPlan fedFOutPlan = new FederatedMemoTable.FedPlan(
+							fedSelfCost + childCostFEDExec,
+							fOutFedPlanVariants, planChilds);
+					fedFOutPlan.setExecType(ExecType.FED);
+					fedFOutPlan.setFType(oracleLogicalFType);
+					fOutFedPlanVariants.addFedPlan(fedFOutPlan);
 				}
 
-				if (privacyConstraint == Privacy.PUBLIC) {
-					FederatedMemoTable.FedPlan cpLOutPlan = new FederatedMemoTable.FedPlan(cpSelfCost + childCostCPExec,
-							lOutFedPlanVariants, planChilds);
-					cpLOutPlan.setExecType(ExecType.CP);
-					cpLOutPlan.setFType(logicalFType);
-					if (isAllowedByPrivacy(privacyConstraint, cpLOutPlan.getExecType(),
-							lOutFedPlanVariants.getFedOutType())) {
-						lOutFedPlanVariants.addFedPlan(cpLOutPlan);
-					}
-
-					if (oracleExec == ExecType.CP) {
-						FederatedMemoTable.FedPlan cpFOutPlan = new FederatedMemoTable.FedPlan(
-								cpSelfCost + childCostCPExec + resultNetCost,
-								fOutFedPlanVariants, planChilds);
-						cpFOutPlan.setExecType(ExecType.CP);
-						cpFOutPlan.setFType(logicalFType);
-						if (isAllowedByPrivacy(privacyConstraint, cpFOutPlan.getExecType(),
-								fOutFedPlanVariants.getFedOutType())) {
-							fOutFedPlanVariants.addFedPlan(cpFOutPlan);
-						}
-					}
-
+				// 2. FED Exec, LOUT placement
+				if (privacyConstraint == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC || privacyConstraint == Privacy.PUBLIC) {
 					if (oracleExec == ExecType.FED) {
-						if (placement == FederatedOutput.FOUT) {
-							FederatedMemoTable.FedPlan fedFOutPlan = new FederatedMemoTable.FedPlan(
-									fedSelfCost + childCostFEDExec,
-									fOutFedPlanVariants, planChilds);
-							fedFOutPlan.setExecType(ExecType.FED);
-							fedFOutPlan.setFType(logicalFType);
-							if (isAllowedByPrivacy(privacyConstraint, fedFOutPlan.getExecType(),
-									fOutFedPlanVariants.getFedOutType())) {
-								fOutFedPlanVariants.addFedPlan(fedFOutPlan);
-							}
-						}
-
 						FederatedMemoTable.FedPlan fedLOutPlan = new FederatedMemoTable.FedPlan(
 								fedSelfCost + childCostFEDExec + resultNetCost,
 								lOutFedPlanVariants, planChilds);
 						fedLOutPlan.setExecType(ExecType.FED);
-						fedLOutPlan.setFType(logicalFType);
-						if (isAllowedByPrivacy(privacyConstraint, fedLOutPlan.getExecType(),
-								lOutFedPlanVariants.getFedOutType())) {
-							lOutFedPlanVariants.addFedPlan(fedLOutPlan);
-						}
+						fedLOutPlan.setFType(oracleLogicalFType);
+						lOutFedPlanVariants.addFedPlan(fedLOutPlan);
 					}
-				} else {
-					if (oracleExec == ExecType.FED) {
-						if (placement == FederatedOutput.FOUT) {
-							FederatedMemoTable.FedPlan fedFOutPlan = new FederatedMemoTable.FedPlan(
-									fedSelfCost + childCostFEDExec,
-									fOutFedPlanVariants, planChilds);
-							fedFOutPlan.setExecType(ExecType.FED);
-							fedFOutPlan.setFType(logicalFType);
-							if (isAllowedByPrivacy(privacyConstraint, fedFOutPlan.getExecType(),
-									fOutFedPlanVariants.getFedOutType())) {
-								fOutFedPlanVariants.addFedPlan(fedFOutPlan);
-							}
-						}
+				}
 
-						if (privacyConstraint == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC) {
-							FederatedMemoTable.FedPlan fedLOutPlan = new FederatedMemoTable.FedPlan(
-									fedSelfCost + childCostFEDExec + resultNetCost,
-									lOutFedPlanVariants, planChilds);
-							fedLOutPlan.setExecType(ExecType.FED);
-							fedLOutPlan.setFType(logicalFType);
-							if (isAllowedByPrivacy(privacyConstraint, fedLOutPlan.getExecType(),
-									lOutFedPlanVariants.getFedOutType())) {
-								lOutFedPlanVariants.addFedPlan(fedLOutPlan);
-							}
-						}
+				// 3. CP Exec, LOUT/FOUT placement
+				if (privacyConstraint == Privacy.PUBLIC) {
+					FederatedMemoTable.FedPlan cpLOutPlan = new FederatedMemoTable.FedPlan(
+							cpSelfCost + childCostCPExec,
+							lOutFedPlanVariants, planChilds);
+					cpLOutPlan.setExecType(ExecType.CP);
+					cpLOutPlan.setFType(oracleLogicalFType);
+					lOutFedPlanVariants.addFedPlan(cpLOutPlan);
+
+					if (hop.getDataType().isMatrix()) {
+						FederatedMemoTable.FedPlan cpFOutPlan = new FederatedMemoTable.FedPlan(
+								cpSelfCost + childCostCPExec + resultNetCost,
+								fOutFedPlanVariants, planChilds);
+						cpFOutPlan.setExecType(ExecType.CP);
+						cpFOutPlan.setFType(oracleLogicalFType);
+						fOutFedPlanVariants.addFedPlan(cpFOutPlan);
 					}
 				}
 			}
@@ -858,36 +800,6 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				return false;
 			}
 			return false;
-		}
-
-		private static String summarizeInputPrivacy(List<Hop> inputs, Map<Long, Privacy> privacyMap) {
-			if (inputs == null || inputs.isEmpty()) {
-				return "[]";
-			}
-
-			List<String> parts = new ArrayList<>();
-			for (Hop input : inputs) {
-				Privacy p = privacyMap.get(input.getHopID());
-				if (p == null) {
-					FederatedPlannerLogger.logWarnMessage("Missing privacy entry for input hop "
-							+ input.getHopID() + " (" + input.getOpString()
-							+ "); treating as PUBLIC in summarizeInputPrivacy.");
-					p = Privacy.PUBLIC;
-				}
-				if (p == Privacy.PUBLIC) {
-					continue;
-				}
-				String opString = input.getOpString();
-				if (opString == null) {
-					opString = "";
-				}
-				parts.add(input.getHopID() + ":" + p + (opString.isEmpty() ? "" : "(" + opString + ")"));
-			}
-
-			if (parts.isEmpty()) {
-				return "[all inputs PUBLIC]";
-			}
-			return "[" + String.join(", ", parts) + "]";
 		}
 
 		// Creates a dummy root node (fedplan) and selects the FedPlan with the minimum
@@ -1386,6 +1298,17 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 		 */
 		private static double computeHopForwardingCost(double memSize) {
 			return DEFAULT_MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / DEFAULT_MBS_NETWORK_BANDWIDTH);
+		}
+
+		public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
+			if (memSize <= 0)
+				return 0.0;
+			if (fType == null)
+				return computeHopForwardingCost(memSize);
+			double multiplier = (fType == FType.FULL || fType == FType.BROADCAST)
+					? Math.max(1, numWorkers)
+					: 1.0;
+			return computeHopForwardingCost(memSize * multiplier);
 		}
 
 	}

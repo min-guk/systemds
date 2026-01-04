@@ -49,35 +49,34 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 	@Override
 	public void setUp() {
 		TestUtils.clearAssertionInformation();
-		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] {"Z"}));
+		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] { "Z" }));
 	}
 
 	@Ignore
 	@Test
-	public void runP2LMFOUTTest(){
+	public void runP2LMFOUTTest() {
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runP2LMHeuristicTest(){
+	public void runP2LMHeuristicTest() {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
 	@Ignore
 	@Test
-	public void runP2LMCostBasedTestPrivate(){
+	public void runP2LMCostBasedTestPrivate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
-	public void runP2LMCostBasedTestPrivateAggregate(){
+	public void runP2LMCostBasedTestPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
 	@Ignore
 	@Test
-	public void runP2LMCostBasedTestPublic(){
+	public void runP2LMCostBasedTestPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
@@ -92,11 +91,11 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 		loadAndRunTest(new String[] {}, TEST_NAME, privacyConstraints);
 	}
 
-	private void writeInputMatrices(String privacyConstraints){
+	private void writeInputMatrices(String privacyConstraints) {
 		// Generate tabular data similar to P2_LM.dml expectations
 		double[][] features = generateTabularFeatures();
 		double[][] labels = generateRegressionLabels();
-		
+
 		// Write full matrices instead of federated splits (like P2_FFN test)
 		writeStandardMatrix("features", features, privacyConstraints);
 		writeStandardMatrix("labels", labels, privacyConstraints);
@@ -105,7 +104,7 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 	private double[][] generateTabularFeatures() {
 		double[][] features = getRandomMatrix(rows, cols, -5, 5, 0.7, 789);
 		// Make first column categorical (0 or 1) for the dummycode transformation
-		for(int i = 0; i < rows; i++) {
+		for (int i = 0; i < rows; i++) {
 			features[i][0] = (features[i][0] > 0) ? 1.0 : 0.0;
 		}
 		return features;
@@ -116,9 +115,9 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 		return getRandomMatrix(rows, 1, -10, 10, 1, 987);
 	}
 
-	private void writeStandardMatrix(String matrixName, double[][] matrix, String privacyConstraints){
-		MatrixCharacteristics mc = new MatrixCharacteristics(matrix.length, matrix[0].length, blocksize, 
-			(long) matrix.length * matrix[0].length);
+	private void writeStandardMatrix(String matrixName, double[][] matrix, String privacyConstraints) {
+		MatrixCharacteristics mc = new MatrixCharacteristics(matrix.length, matrix[0].length, blocksize,
+				(long) matrix.length * matrix[0].length);
 		if (privacyConstraints == null) {
 			writeInputMatrixWithMTD(matrixName, matrix, false, mc);
 		} else {
@@ -126,8 +125,7 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 		}
 	}
 
-
-	private void loadAndRunTest(String[] expectedHeavyHitters, String testName, String privacyConstraints){
+	private void loadAndRunTest(String[] expectedHeavyHitters, String testName, String privacyConstraints) {
 
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
 		Types.ExecMode platformOld = rtplatform;
@@ -149,13 +147,12 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 			// Run actual dml script with regular file paths (like P2_FFN test)
 			fullDMLScriptName = HOME + testName + ".dml";
 			programArgs = new String[] { "-stats", "-nvargs",
-				"1=" + input("features"),
-				"2=" + input("labels"), 
-				"3=" + (verbose ? "TRUE" : "FALSE"),
-				"4=" + output("Z")};
+					"1=" + input("features"),
+					"2=" + input("labels"),
+					"3=" + (verbose ? "TRUE" : "FALSE"),
+					"4=" + output("Z") };
 			runTest(true, false, null, -1);
-		}
-		finally {
+		} finally {
 			TestUtils.shutdownThreads(t1, t2);
 			rtplatform = platformOld;
 			DMLScript.USE_LOCAL_SPARK_CONFIG = sparkConfigOld;
@@ -168,7 +165,8 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 	 */
 	@Override
 	protected File getConfigTemplateFile() {
-		// Instrumentation in this test's output log to show custom configuration file used for template.
+		// Instrumentation in this test's output log to show custom configuration file
+		// used for template.
 		LOG.info("This test case overrides default configuration with " + TEST_CONF_FILE.getPath());
 		return TEST_CONF_FILE;
 	}

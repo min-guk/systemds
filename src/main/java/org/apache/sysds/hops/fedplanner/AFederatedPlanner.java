@@ -41,7 +41,6 @@ import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
 public abstract class AFederatedPlanner {
-	
 	/**
 	 * Selects a federated execution plan for the given program
 	 * by setting the forced execution type.

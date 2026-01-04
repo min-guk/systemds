@@ -89,4 +89,6 @@ public enum InstructionType {
 	MatrixReshape,
 	Write,
 	Init,
+	Refed,
+	Fout,
 }

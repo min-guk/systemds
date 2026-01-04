@@ -43,6 +43,7 @@ import org.apache.sysds.runtime.data.TensorBlock;
 import org.apache.sysds.runtime.frame.data.FrameBlock;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
+import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
@@ -76,6 +77,8 @@ import java.util.Queue;
 
 public class ExecutionContext {
 	protected static final Log LOG = LogFactory.getLog(ExecutionContext.class.getName());
+	private static final String TRACE_VAR_NAME =
+		System.getProperty("sysds.trace.var", "_mVar77");
 
 	//program reference (e.g., function repository)
 	protected Program _prog = null;
@@ -84,6 +87,7 @@ public class ExecutionContext {
 	protected LocalVariableMap _variables;
 	protected long _tid = -1;
 	protected boolean _autoCreateVars;
+	private Instruction _currentInstruction;
 
 	//lineage map, cache, prepared dedup blocks
 	protected Lineage _lineage;
@@ -226,6 +230,7 @@ public class ExecutionContext {
 	
 	public void setVariable(String name, Data val) {
 		_variables.put(name, val);
+		traceVarUpdate(name, val, "setVariable");
 	}
 	
 	public boolean containsVariable(CPOperand operand) {
@@ -619,9 +624,12 @@ public class ExecutionContext {
 		if( isAutoCreateVars() && !containsVariable(varName) )
 			setVariable(varName, createMatrixObject(outputData));
 		MatrixObject mo = getMatrixObject(varName);
+		// local output invalidates any prior federated metadata
+		mo.setFedMapping(null);
 		mo.acquireModify(outputData);
 		mo.setCacheLineage(li);
 		mo.release();
+		traceVarUpdate(varName, mo, "setMatrixOutput");
 	}
 
 	public void setMatrixOutputAndLineage(String varName, Future<MatrixBlock> fmb, LineageItem li) {
@@ -926,6 +934,61 @@ public class ExecutionContext {
 		//Passed lineage trace should be equivalent to the live lineage trace
 		//corresponding to varname. Replacing reduces memory and probing overheads.
 		_lineage.set(varname, li);
+	}
+
+	public void setCurrentInstruction(Instruction inst) {
+		_currentInstruction = inst;
+	}
+
+	public Instruction getCurrentInstruction() {
+		return _currentInstruction;
+	}
+
+	private static boolean shouldTraceVar(String name) {
+		return TRACE_VAR_NAME != null && !TRACE_VAR_NAME.isEmpty()
+			&& TRACE_VAR_NAME.equals(name);
+	}
+
+	private void traceVarUpdate(String name, Data val, String event) {
+		if (!shouldTraceVar(name))
+			return;
+		String type = (val == null) ? "null" : val.getClass().getSimpleName();
+		String federated = "n/a";
+		String dims = "n/a";
+		String fedMap = "n/a";
+		if (val instanceof MatrixObject) {
+			MatrixObject mo = (MatrixObject) val;
+			federated = Boolean.toString(mo.isFederated());
+			dims = String.valueOf(mo.getDataCharacteristics());
+			fedMap = String.valueOf(mo.getFedMapping());
+		}
+		Instruction inst = _currentInstruction;
+		String instInfo = "none";
+		String caller = "none";
+		if (inst != null) {
+			String instStr = inst.getInstructionString();
+			instInfo = inst.getExtendedOpcode() + " | " + (instStr == null ? "null" : instStr);
+			caller = "currentInstruction";
+		} else {
+			caller = findInstructionCaller();
+		}
+		System.out.printf("TRACE var=%s event=%s type=%s federated=%s dims=%s fedMap=%s inst=%s caller=%s%n",
+			name, event, type, federated, dims, fedMap, instInfo, caller);
+	}
+
+	private static String findInstructionCaller() {
+		StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+		for (StackTraceElement e : stack) {
+			String cn = e.getClassName();
+			if (cn.contains(".runtime.instructions."))
+				return cn + "#" + e.getMethodName() + ":" + e.getLineNumber();
+		}
+		for (StackTraceElement e : stack) {
+			String cn = e.getClassName();
+			if (cn.contains(".runtime.controlprogram."))
+				return cn + "#" + e.getMethodName() + ":" + e.getLineNumber();
+		}
+		return "unknown";
 	}
 	
 	private static String getNonExistingVarError(String varname) {

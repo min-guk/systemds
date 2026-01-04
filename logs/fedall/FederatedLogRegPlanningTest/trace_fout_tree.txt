@@ -1,4 +1,4 @@
-Start hop 211 (TRead X) line 130 foutType=ROW exec=FED placement=FOUT
+Start hop 211 (TRead X) line 69 foutType=ROW exec=FED placement=FOUT
   |-- 211 (TRead X) FED/FOUT/ROW (idx=0) -> 215 (ba(+*)) FED/FOUT/ROW (reason=OK)
   |   `-- 215 (ba(+*)) FED/FOUT/ROW (idx=0) -> 224 (b(cbind)) FED/FOUT/ROW (reason=BROADCAST_OR_ALIGNED_ROW)
   |       |-- 224 (b(cbind)) FED/FOUT/ROW (idx=0) -> 225 (ua(maxR)) FED/FOUT/ROW (reason=OK)

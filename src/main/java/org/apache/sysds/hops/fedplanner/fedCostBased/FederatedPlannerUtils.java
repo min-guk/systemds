@@ -19,6 +19,8 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
@@ -50,6 +52,10 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.VariableSet;
+import org.apache.sysds.runtime.meta.MetaDataAll;
+import org.apache.sysds.runtime.io.IOUtilFunctions;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -73,47 +79,49 @@ public class FederatedPlannerUtils {
 	/**
 	 * Get transient inputs from either paramMap or transientWrites.
 	 * Inputs from paramMap has higher priority than inputs from transientWrites.
-	 * @param currentHop hop for which inputs are read from maps
-	 * @param paramMap of local parameters
-	 * @param transientWrites map of transient writes
+	 * 
+	 * @param currentHop       hop for which inputs are read from maps
+	 * @param paramMap         of local parameters
+	 * @param transientWrites  map of transient writes
 	 * @param localVariableMap map of local variables
 	 * @return inputs of currentHop
 	 */
 	public static ArrayList<Hop> getTransientInputs(Hop currentHop, Map<String, Hop> paramMap,
-		Map<String,Hop> transientWrites, LocalVariableMap localVariableMap){
+			Map<String, Hop> transientWrites, LocalVariableMap localVariableMap) {
 		Hop tWriteHop = null;
-		if ( paramMap != null)
+		if (paramMap != null)
 			tWriteHop = paramMap.get(currentHop.getName());
-		if ( tWriteHop == null )
+		if (tWriteHop == null)
 			tWriteHop = transientWrites.get(currentHop.getName());
-		if ( tWriteHop == null ) {
-			if(localVariableMap.get(currentHop.getName()) != null)
+		if (tWriteHop == null) {
+			if (localVariableMap.get(currentHop.getName()) != null)
 				return null;
 			else
 				throw new DMLRuntimeException("Transient write not found for " + currentHop);
-		}
-		else
+		} else
 			return new ArrayList<>(Collections.singletonList(tWriteHop));
 	}
 
 	/**
 	 * Return parameter map containing the mapping from parameter name to input hop
 	 * for all parameters of the function hop.
-	 * @param funcOp hop for which the mapping of parameter names to input hops are made
+	 * 
+	 * @param funcOp hop for which the mapping of parameter names to input hops are
+	 *               made
 	 * @return parameter map or empty map if function has no parameters
 	 */
-	public static Map<String,Hop> getParamMap(FunctionOp funcOp){
+	public static Map<String, Hop> getParamMap(FunctionOp funcOp) {
 		String[] inputNames = funcOp.getInputVariableNames();
-		Map<String,Hop> paramMap = new HashMap<>();
-		if ( inputNames != null ){
-			for ( int i = 0; i < funcOp.getInput().size(); i++ )
-				paramMap.put(inputNames[i],funcOp.getInput(i));
+		Map<String, Hop> paramMap = new HashMap<>();
+		if (inputNames != null) {
+			for (int i = 0; i < funcOp.getInput().size(); i++)
+				paramMap.put(inputNames[i], funcOp.getInput(i));
 		}
 		return paramMap;
 	}
 
 	public static double computeForwardingWeightOfChild(double networkWeight,
-		List<Pair<Long, Double>> parentLoopContext, List<Pair<Long, Double>> childLoopContext) {
+			List<Pair<Long, Double>> parentLoopContext, List<Pair<Long, Double>> childLoopContext) {
 		double base = (networkWeight != 0.0) ? networkWeight : 1.0;
 
 		if (parentLoopContext == null || parentLoopContext.isEmpty())
@@ -159,9 +167,9 @@ public class FederatedPlannerUtils {
 	}
 
 	public static void wireUnRefTwriteToLiveOutCommon(
-		StatementBlock sb, Set<Long> unRefTwriteSet,
-		Function<Long, Hop> hopLookup, Map<String, List<Hop>> newFormerTransTable,
-		BiFunction<Hop, Hop, CompatibilityScore> compatibilityFn, String logPrefix) {
+			StatementBlock sb, Set<Long> unRefTwriteSet,
+			Function<Long, Hop> hopLookup, Map<String, List<Hop>> newFormerTransTable,
+			BiFunction<Hop, Hop, CompatibilityScore> compatibilityFn, String logPrefix) {
 
 		if (unRefTwriteSet.isEmpty())
 			return;
@@ -176,7 +184,7 @@ public class FederatedPlannerUtils {
 			Hop unRefTwriteHop = hopLookup.apply(unRefTwriteHopID);
 			if (unRefTwriteHop == null) {
 				FederatedPlannerLogger.logWarnMessage(logPrefix + " Skipping unRefTwrite hop "
-					+ unRefTwriteHopID + " because hop reference is missing");
+						+ unRefTwriteHopID + " because hop reference is missing");
 				unRefTwriteIterator.remove();
 				continue;
 			}
@@ -188,7 +196,7 @@ public class FederatedPlannerUtils {
 			}
 
 			if (unRefTwriteHop instanceof FunctionOp || genHops.containsVariable(unRefTwriteHopName)
-				|| updatedHops.containsVariable(unRefTwriteHopName)) {
+					|| updatedHops.containsVariable(unRefTwriteHopName)) {
 
 				String bestLiveOutHopName = null;
 				CompatibilityScore bestScore = null;
@@ -217,7 +225,7 @@ public class FederatedPlannerUtils {
 
 				if (bestLiveOutHopName == null) {
 					throw new DMLRuntimeException("No liveOutHops found for " + unRefTwriteHopName + " (hopID="
-						+ unRefTwriteHop.getHopID() + ", opcode=" + unRefTwriteHop.getOpString() + ")");
+							+ unRefTwriteHop.getHopID() + ", opcode=" + unRefTwriteHop.getOpString() + ")");
 				}
 
 				List<Hop> bestLiveOutHopsList = newFormerTransTable.get(bestLiveOutHopName);
@@ -229,26 +237,9 @@ public class FederatedPlannerUtils {
 		}
 	}
 
-	// NOTE: keep privacy semantics in sync across DP and MinST planners.
-	public static boolean isAllowedByPrivacy(Privacy p, ExecType exec, FederatedOutput out) {
-		switch (p) {
-			case PUBLIC:
-				return (exec == ExecType.CP || exec == ExecType.FED)
-					&& (out == FederatedOutput.LOUT || out == FederatedOutput.FOUT);
-			case PRIVATE:
-			case PRIVATE_AGGREGATE:
-				return exec == ExecType.FED && out == FederatedOutput.FOUT;
-			case PRIVATE_AGGREGATE_TO_PUBLIC:
-				return exec == ExecType.FED
-					&& (out == FederatedOutput.FOUT || out == FederatedOutput.LOUT);
-			default:
-				return false;
-		}
-	}
-
 	// NOTE: keep privacy semantics in sync with DP planner.
 	public static Privacy getFedWorkerMetaData(
-		List<Pair<FederatedRange, FederatedData>> fedMap, DataOp initFedOp) {
+			List<Pair<FederatedRange, FederatedData>> fedMap, DataOp initFedOp) {
 		// Address
 		Hop addressListHop = initFedOp.getInput(initFedOp.getParameterIndex("addresses"));
 		List<String> addressList = new ArrayList<>();
@@ -268,7 +259,8 @@ public class FederatedPlannerUtils {
 		// Type
 		String type = initFedOp.getInput(initFedOp.getParameterIndex("type")).getName();
 		Types.DataType fedDataType = type.equalsIgnoreCase(FED_MATRIX_IDENTIFIER)
-			? Types.DataType.MATRIX : Types.DataType.FRAME;
+				? Types.DataType.MATRIX
+				: Types.DataType.FRAME;
 
 		// Local list for privacy calculation of this DataOp only
 		List<FedWorkerContext> localWorkers = new ArrayList<>();
@@ -287,11 +279,11 @@ public class FederatedPlannerUtils {
 
 			try {
 				FederatedData federatedData = new FederatedData(fedDataType,
-					new InetSocketAddress(InetAddress.getByName(host), port), filePath);
+						new InetSocketAddress(InetAddress.getByName(host), port), filePath);
 				FederatedRange range = new FederatedRange(beginRange, endRange);
 				Pair<FederatedRange, FederatedData> pair = new ImmutablePair<>(range, federatedData);
 
-				fedMap.add(pair);      // Global worker count approximation
+				fedMap.add(pair); // Global worker count approximation
 				localWorkers.add(new FedWorkerContext(host, port, filePath, federatedData));
 			} catch (UnknownHostException e) {
 				throw new DMLRuntimeException("federated host was unknown: " + host, e);
@@ -316,63 +308,64 @@ public class FederatedPlannerUtils {
 					String privacyConstraints = (String) responseData[0]; // Cast privacy constraint as string
 
 					if (privacyConstraints == null) {
+						String fallback = tryLocalPrivacyFallback(wctx);
+						if (fallback != null) {
+							FederatedPlannerLogger.logWarnMessage(
+									"[FederatedPlanner] Falling back to local metadata privacy constraints for "
+											+ wctx.host + ":" + wctx.port + " (" + wctx.filePath + ")");
+							privacyConstraint = mergePrivacyConstraint(privacyConstraint, fallback);
+							continue;
+						}
 						String msg = "Worker " + wctx.host + ":" + wctx.port + " (" + wctx.filePath
-							+ ") returned null privacy constraints for FEDERATED data op '" + initFedOp.getName()
-							+ "' (hopID=" + initFedOp.getHopID() + ")";
+								+ ") returned null privacy constraints for FEDERATED data op '" + initFedOp.getName()
+								+ "' (hopID=" + initFedOp.getHopID() + ")";
 						FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + msg);
 						hadPrivacyFailure = true;
 						continue;
 					}
 
-					Privacy tempPrivacy = null;
-					String pcLower = privacyConstraints.trim().toLowerCase();
-
-					// Map to appropriate PrivacyConstraint value based on input string
-					if (pcLower.equals("private")
-							|| pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
-						tempPrivacy = Privacy.PRIVATE;
-					} else if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate")
-							|| pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
-						tempPrivacy = Privacy.PRIVATE_AGGREGATE;
-					} else if (pcLower.equals("private-aggregate-to-public")
-							|| pcLower.equals("private_aggregate_to_public")
-							|| pcLower.equals(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC.toString().toLowerCase())) {
-						tempPrivacy = Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-					} else if (pcLower.equals("public")
-							|| pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
-						tempPrivacy = Privacy.PUBLIC;
-					} else {
-						throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints
-								+ ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PRIVATE_AGGREGATE_TO_PUBLIC', 'PUBLIC'.");
-					}
-
-					if (privacyConstraint == null) {
-						privacyConstraint = tempPrivacy;
-					} else {
-						privacyConstraint = joinPrivacy(privacyConstraint, tempPrivacy);
-					}
+					privacyConstraint = mergePrivacyConstraint(privacyConstraint, privacyConstraints);
 				} else {
 					// Error handling: treat any unsuccessful response as fatal for planning
 					String errorMsg = response.getErrorMessage();
 					FederatedPlannerLogger.logErrorMessage(
-						"Failed to request privacy constraints from " + wctx.host + ":" + wctx.port + " (" + wctx.filePath
-							+ ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID=" + initFedOp.getHopID()
-							+ "): " + errorMsg);
-					hadPrivacyFailure = true;
+							"Failed to request privacy constraints from " + wctx.host + ":" + wctx.port + " ("
+									+ wctx.filePath
+									+ ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
+									+ initFedOp.getHopID()
+									+ "): " + errorMsg);
+					String fallback = tryLocalPrivacyFallback(wctx);
+					if (fallback != null) {
+						FederatedPlannerLogger.logWarnMessage(
+								"[FederatedPlanner] Falling back to local metadata privacy constraints for "
+										+ wctx.host + ":" + wctx.port + " (" + wctx.filePath + ")");
+						privacyConstraint = mergePrivacyConstraint(privacyConstraint, fallback);
+					} else {
+						hadPrivacyFailure = true;
+					}
 				}
 			} catch (Exception e) {
-				// Exception handling: also treated as fatal for planning
-				String errorContext = "Failed to request privacy constraints from " + wctx.host + ":" + wctx.port + " ("
-					+ wctx.filePath + ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
-					+ initFedOp.getHopID() + ")";
-				FederatedPlannerLogger.logException(errorContext, e);
-				hadPrivacyFailure = true;
+				String fallback = tryLocalPrivacyFallback(wctx);
+				if (fallback != null) {
+					FederatedPlannerLogger.logWarnMessage(
+							"[FederatedPlanner] Falling back to local metadata privacy constraints for "
+									+ wctx.host + ":" + wctx.port + " (" + wctx.filePath + ") after request failure");
+					privacyConstraint = mergePrivacyConstraint(privacyConstraint, fallback);
+				} else {
+					// Exception handling: also treated as fatal for planning
+					String errorContext = "Failed to request privacy constraints from " + wctx.host + ":" + wctx.port
+							+ " ("
+							+ wctx.filePath + ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
+							+ initFedOp.getHopID() + ")";
+					FederatedPlannerLogger.logException(errorContext, e);
+					hadPrivacyFailure = true;
+				}
 			}
 		}
 		if (privacyConstraint == null || hadPrivacyFailure) {
 			String errorMsg = "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op '"
-				+ initFedOp.getName() + "' (hopID=" + initFedOp.getHopID()
-				+ "); cannot safely plan federated execution.";
+					+ initFedOp.getName() + "' (hopID=" + initFedOp.getHopID()
+					+ "); cannot safely plan federated execution.";
 			FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + errorMsg + " Aborting planning.");
 			throw new DMLRuntimeException(errorMsg);
 		}
@@ -442,8 +435,9 @@ public class FederatedPlannerUtils {
 
 		if (missingPrivacy.length() > 0) {
 			FederatedPlannerLogger.logWarnMessage(
-				"Missing privacy entry for input hop(s): " + missingPrivacy +
-				" while evaluating hop " + hop.getHopID() + " (" + hop.getOpString() + "); treating as PUBLIC.");
+					"Missing privacy entry for input hop(s): " + missingPrivacy +
+							" while evaluating hop " + hop.getHopID() + " (" + hop.getOpString()
+							+ "); treating as PUBLIC.");
 		}
 
 		boolean hasPrivateAggreate = false;
@@ -487,11 +481,15 @@ public class FederatedPlannerUtils {
 	}
 
 	private static Privacy joinPrivacy(Privacy a, Privacy b) {
-		if (a == null) return b;
-		if (b == null) return a;
-		if (a == b)    return a;
+		if (a == null)
+			return b;
+		if (b == null)
+			return a;
+		if (a == b)
+			return a;
 
-		// Strongest privacy wins: PRIVATE > PRIVATE_AGGREGATE > PRIVATE_AGGREGATE_TO_PUBLIC > PUBLIC
+		// Strongest privacy wins: PRIVATE > PRIVATE_AGGREGATE >
+		// PRIVATE_AGGREGATE_TO_PUBLIC > PUBLIC
 		if (a == Privacy.PRIVATE || b == Privacy.PRIVATE)
 			return Privacy.PRIVATE;
 		if (a == Privacy.PRIVATE_AGGREGATE || b == Privacy.PRIVATE_AGGREGATE)
@@ -499,6 +497,77 @@ public class FederatedPlannerUtils {
 		if (a == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC || b == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
 			return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 		return Privacy.PUBLIC;
+	}
+
+	private static Privacy mergePrivacyConstraint(Privacy current, String privacyConstraints) {
+		Privacy parsed = parsePrivacyConstraint(privacyConstraints);
+		return current == null ? parsed : joinPrivacy(current, parsed);
+	}
+
+	private static Privacy parsePrivacyConstraint(String privacyConstraints) {
+		if (privacyConstraints == null)
+			return null;
+		String pcLower = privacyConstraints.trim().toLowerCase();
+		if (pcLower.isEmpty())
+			return null;
+		if (pcLower.equals("private")
+				|| pcLower.equals(Privacy.PRIVATE.toString().toLowerCase())) {
+			return Privacy.PRIVATE;
+		}
+		if (pcLower.equals("private-aggregate") || pcLower.equals("private_aggregate")
+				|| pcLower.equals(Privacy.PRIVATE_AGGREGATE.toString().toLowerCase())) {
+			return Privacy.PRIVATE_AGGREGATE;
+		}
+		if (pcLower.equals("private-aggregate-to-public")
+				|| pcLower.equals("private_aggregate_to_public")
+				|| pcLower.equals(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC.toString().toLowerCase())) {
+			return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+		}
+		if (pcLower.equals("public")
+				|| pcLower.equals(Privacy.PUBLIC.toString().toLowerCase())) {
+			return Privacy.PUBLIC;
+		}
+		throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints
+				+ ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PRIVATE_AGGREGATE_TO_PUBLIC', 'PUBLIC'.");
+	}
+
+	private static String tryLocalPrivacyFallback(FedWorkerContext wctx) {
+		if (wctx == null || wctx.filePath == null || !isLocalHost(wctx.host))
+			return null;
+		return readPrivacyConstraintsFromLocalMTD(wctx.filePath);
+	}
+
+	private static boolean isLocalHost(String host) {
+		if (host == null)
+			return false;
+		if ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host))
+			return true;
+		try {
+			return InetAddress.getByName(host).isLoopbackAddress();
+		} catch (Exception ex) {
+			return false;
+		}
+	}
+
+	private static String readPrivacyConstraintsFromLocalMTD(String filePath) {
+		String mtdName = DataExpression.getMTDFileName(filePath);
+		FileSystem fs = null;
+		try {
+			fs = IOUtilFunctions.getFileSystem(mtdName);
+			Path path = new Path(mtdName);
+			if (!fs.exists(path))
+				return null;
+			try (BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(path)))) {
+				MetaDataAll mtd = new MetaDataAll(br);
+				if (!mtd.mtdExists())
+					return null;
+				return mtd.getPrivacyConstraints();
+			}
+		} catch (Exception ex) {
+			return null;
+		} finally {
+			IOUtilFunctions.closeSilently(fs);
+		}
 	}
 
 	private static boolean isPublicSafeFullAggregate(AggUnaryOp hop) {
@@ -518,7 +587,8 @@ public class FederatedPlannerUtils {
 			}
 		}
 
-		// Axis aggregates that are considered safe to downgrade when inputs are PRIVATE_AGGREGATE.
+		// Axis aggregates that are considered safe to downgrade when inputs are
+		// PRIVATE_AGGREGATE.
 		if (dir == Types.Direction.Row || dir == Types.Direction.Col) {
 			switch (hop.getOp()) {
 				case MEAN:

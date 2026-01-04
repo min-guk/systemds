@@ -394,7 +394,9 @@ public enum Opcodes {
 	CASTDTF("castdtf", InstructionType.Variable, InstructionType.Cast),
 
 	//FED Opcodes
-	FEDINIT("fedinit", InstructionType.Init);
+	FEDINIT("fedinit", InstructionType.Init),
+	FEDREFED("fed_refed", InstructionType.Refed),
+	FEDFOUT("fed_fout", InstructionType.Fout);
 
 	// Constructors
 	Opcodes(String name, InstructionType type) {

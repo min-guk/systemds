@@ -59,6 +59,7 @@ import org.apache.sysds.hops.MultiThreadedHop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.lops.Lop;
@@ -401,6 +402,8 @@ public class Recompiler {
 		// incl rewrites does not lose these hop-lop constraints
 		Hop.resetVisitStatus(hops);
 		rSetMaxParallelism(hops, maxK);
+
+		FederatedRefedPolicy.registerFromHops(hops, true, null, sb != null ? sb.getSBID() : -1);
 		
 		// construct lops
 		ArrayList<Lop> lops = new ArrayList<>(hops.size());

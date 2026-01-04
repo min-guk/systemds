@@ -110,7 +110,10 @@ public class FederationUtils {
 	//TODO remove rmFedOutFlag, once all federated instructions have this flag, then unconditionally remove
 	public static FederatedRequest callInstruction(String inst, CPOperand varOldOut, CPOperand[] varOldIn, long[] varNewIn, boolean rmFedOutFlag){
 		long id = getNextFedDataID();
-		String linst = InstructionUtils.instructionStringFEDPrepare(inst, varOldOut, id, varOldIn, varNewIn, rmFedOutFlag);
+		boolean isFedInstr = inst != null
+			&& inst.startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
+		String linst = InstructionUtils.instructionStringFEDPrepare(
+			inst, varOldOut, id, varOldIn, varNewIn, rmFedOutFlag || isFedInstr);
 		return new FederatedRequest(RequestType.EXEC_INST, id, linst);
 	}
 
@@ -144,8 +147,8 @@ public class FederationUtils {
 		String[] linst = inst;
 		FederatedRequest[] fr = new FederatedRequest[inst.length];
 		for(int j=0; j<inst.length; j++) {
-			linst[j] = InstructionUtils.replaceOperand(linst[j], 0, type == null ?
-				InstructionUtils.getExecType(linst[j]).name() : type.name());
+			ExecType targetExec = type == null ? InstructionUtils.getExecType(linst[j]) : type;
+			linst[j] = InstructionUtils.replaceOperand(linst[j], 0, targetExec.name());
 			// replace inputs before before outputs in order to prevent conflicts
 			// on outputId matching input literals (due to a mix of input instructions,
 			// have to apply this replacement even for literal inputs)
@@ -163,6 +166,9 @@ public class FederationUtils {
 					Lop.OPERAND_DELIMITOR + varOldOut.getName() + Lop.DATATYPE_PREFIX,
 					Lop.OPERAND_DELIMITOR + String.valueOf(outputId) + Lop.DATATYPE_PREFIX);
 			}
+			boolean isFedInstr = linst[j].startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
+			if(isFedInstr && targetExec != ExecType.FED)
+				linst[j] = InstructionUtils.removeFEDOutputFlag(linst[j]);
 
 			fr[j] = new FederatedRequest(RequestType.EXEC_INST, outputId, (Object) linst[j]);
 		}
@@ -180,7 +186,7 @@ public class FederationUtils {
 					Lop.OPERAND_DELIMITOR+(varNewIn[i])+Lop.DATATYPE_PREFIX);
 				linst = linst.replace("="+varOldIn[i].getName(), "="+(varNewIn[i])); //parameterized
 			}
-		if(rmFedOutputFlag && isFedInstr)
+		if(isFedInstr && (rmFedOutputFlag || type != ExecType.FED))
 			linst = InstructionUtils.removeFEDOutputFlag(linst);
 		return new FederatedRequest(RequestType.EXEC_INST, outputId, linst);
 	}

@@ -63,7 +63,9 @@ public abstract class Lop
 		PlusMult, MinusMult,                                //CP
 		SpoofFused,                                         //CP/SP generated fused operator
 		Sql,                                                //CP sql read
-		Federated                                           //FED federated read
+		Federated,                                          //FED federated read
+		FederatedRefed,                                     //FED refederate
+		FederatedFoutMaterialize                            //FED materialize FOUT
 	}
 	
 
@@ -126,6 +128,11 @@ public abstract class Lop
 	 * If it is LOUT, the output should be retrieved by the coordinator.
 	 */
 	protected FederatedOutput _fedOutput = null;
+
+	/**
+	 * Optional hop id associated with this lop (set when constructed from a Hop).
+	 */
+	protected long _hopID = -1;
 	
 	/**
 	 * refers to #lops whose input is equal to the output produced by this lop.
@@ -386,6 +393,14 @@ public abstract class Lop
 
 	public FederatedOutput getFederatedOutput(){
 		return _fedOutput;
+	}
+
+	public void setHopID(long hopID) {
+		_hopID = hopID;
+	}
+
+	public long getHopID() {
+		return _hopID;
 	}
 	
 	public void setConsumerCount(int cc) {

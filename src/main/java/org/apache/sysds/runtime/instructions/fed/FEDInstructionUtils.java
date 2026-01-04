@@ -21,7 +21,9 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.Instruction;
+import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.AggregateBinaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.AggregateTernaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.BinaryCPInstruction;
@@ -95,6 +97,10 @@ public class FEDInstructionUtils {
 
 		// set thread id for federated context management
 		if(fedinst != null) {
+			if (hasForcedFederatedOutput(inst)) {
+				throw new DMLRuntimeException("CP->FOUT runtime conversion is not supported; refed insertion required: "
+					+ inst.getInstructionString());
+			}
 			fedinst.setTID(ec.getTID());
 			return fedinst;
 		}
@@ -140,10 +146,23 @@ public class FEDInstructionUtils {
 
 		// set thread id for federated context management
 		if(fedinst != null) {
+			if (hasForcedFederatedOutput(inst)) {
+				throw new DMLRuntimeException("SP->FOUT runtime conversion is not supported; refed insertion required: "
+					+ inst.getInstructionString());
+			}
 			fedinst.setTID(ec.getTID());
 			return fedinst;
 		}
 
 		return inst;
+	}
+
+	private static boolean hasForcedFederatedOutput(Instruction inst) {
+		if (inst == null)
+			return false;
+		String[] parts = InstructionUtils.getInstructionPartsWithValueType(inst.getInstructionString());
+		if (parts.length == 0)
+			return false;
+		return FEDInstruction.FederatedOutput.FOUT.name().equals(parts[parts.length - 1]);
 	}
 }

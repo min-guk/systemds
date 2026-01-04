@@ -806,15 +806,15 @@ public class FederatedPlannerLogger {
                 .append(", NetworkCost: ").append(String.format("%.1f", plan.getForwardingCost()))
                 .append(", ComputeWeight: ").append(String.format("%.1f", plan.getComputeWeight())).append("}");
 
-        // // Add matrix characteristics with explicit labels
-        // sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
-        //         .append("), Blocksize: ").append(hop.getBlocksize())
-        //         .append(", NNZ: ").append(hop.getNnz());
+        // Add matrix characteristics with explicit labels
+        sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
+                .append("), Blocksize: ").append(hop.getBlocksize())
+                .append(", NNZ: ").append(hop.getNnz());
 
-        // if (hop.getUpdateType().isInPlace()) {
-        //     sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
-        // }
-        // sb.append("}");
+        if (hop.getUpdateType().isInPlace()) {
+            sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
+        }
+        sb.append("}");
 
         // // Add memory estimates with explicit labels
         // sb.append(", [MemoryInfo]: {InputMem: ").append(OptimizerUtils.toMB(hop.getInputMemEstimate())).append("MB")

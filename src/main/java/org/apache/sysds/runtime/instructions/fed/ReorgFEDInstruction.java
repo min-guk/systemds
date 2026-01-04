@@ -63,7 +63,8 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 	// roll-specific attributes
 	private CPOperand _shift = null;
 
-	public ReorgFEDInstruction(Operator op, CPOperand in1, CPOperand out, String opcode, String istr, FederatedOutput fedOut) {
+	public ReorgFEDInstruction(Operator op, CPOperand in1, CPOperand out, String opcode, String istr,
+			FederatedOutput fedOut) {
 		super(FEDType.Reorg, op, in1, out, opcode, istr, fedOut);
 	}
 
@@ -71,16 +72,18 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		super(FEDType.Reorg, op, in1, out, opcode, istr);
 	}
 
-	private ReorgFEDInstruction(Operator op, CPOperand in, CPOperand shift, CPOperand out,  String opcode, String istr, FederatedOutput fedOut) {
+	private ReorgFEDInstruction(Operator op, CPOperand in, CPOperand shift, CPOperand out, String opcode, String istr,
+			FederatedOutput fedOut) {
 		super(FEDType.Reorg, op, in, shift, out, opcode, istr, fedOut);
 		_shift = shift;
 	}
 
 	public static ReorgFEDInstruction parseInstruction(ReorgCPInstruction rinst) {
 		if (rinst.input2 != null) {
-			return new ReorgFEDInstruction(rinst.getOperator(), rinst.input1, rinst.input2, rinst.output, rinst.getOpcode(),
+			return new ReorgFEDInstruction(rinst.getOperator(), rinst.input1, rinst.input2, rinst.output,
+					rinst.getOpcode(),
 					rinst.getInstructionString(), FederatedOutput.NONE);
-		} else{
+		} else {
 			return new ReorgFEDInstruction(rinst.getOperator(), rinst.input1, rinst.output, rinst.getOpcode(),
 					rinst.getInstructionString(), FederatedOutput.NONE);
 		}
@@ -88,9 +91,10 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 
 	public static ReorgFEDInstruction parseInstruction(ReorgSPInstruction rinst) {
 		if (rinst.input2 != null) {
-			return new ReorgFEDInstruction(rinst.getOperator(), rinst.input1, rinst.input2, rinst.output, rinst.getOpcode(),
+			return new ReorgFEDInstruction(rinst.getOperator(), rinst.input1, rinst.input2, rinst.output,
+					rinst.getOpcode(),
 					rinst.getInstructionString(), FederatedOutput.NONE);
-		} else{
+		} else {
 			return new ReorgFEDInstruction(rinst.getOperator(), rinst.input1, rinst.output, rinst.getOpcode(),
 					rinst.getInstructionString(), FederatedOutput.NONE);
 		}
@@ -103,29 +107,27 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 		FederatedOutput fedOut;
-		if(opcode.equalsIgnoreCase(Opcodes.TRANSPOSE.toString())) {
+		if (opcode.equalsIgnoreCase(Opcodes.TRANSPOSE.toString())) {
 			InstructionUtils.checkNumFields(str, 2, 3, 4);
 			in.split(parts[1]);
 			out.split(parts[2]);
 			int k = str.startsWith(Types.ExecMode.SPARK.name()) ? 0 : Integer.parseInt(parts[3]);
-			fedOut = str.startsWith(Types.ExecMode.SPARK.name()) ? FederatedOutput.valueOf(parts[3]) : FederatedOutput
-				.valueOf(parts[4]);
+			fedOut = str.startsWith(Types.ExecMode.SPARK.name()) ? FederatedOutput.valueOf(parts[3])
+					: FederatedOutput
+							.valueOf(parts[4]);
 			return new ReorgFEDInstruction(new ReorgOperator(SwapIndex.getSwapIndexFnObject(), k), in, out, opcode, str,
-				fedOut);
-		}
-		else if(opcode.equalsIgnoreCase(Opcodes.DIAG.toString())) {
+					fedOut);
+		} else if (opcode.equalsIgnoreCase(Opcodes.DIAG.toString())) {
 			parseUnaryInstruction(str, in, out); // max 2 operands
 			fedOut = parseFedOutFlag(str, 3);
 			return new ReorgFEDInstruction(new ReorgOperator(DiagIndex.getDiagIndexFnObject()), in, out, opcode, str,
-				fedOut);
-		}
-		else if(opcode.equalsIgnoreCase(Opcodes.REV.toString())) {
+					fedOut);
+		} else if (opcode.equalsIgnoreCase(Opcodes.REV.toString())) {
 			parseUnaryInstruction(str, in, out); // max 2 operands
 			fedOut = parseFedOutFlag(str, 3);
 			return new ReorgFEDInstruction(new ReorgOperator(RevIndex.getRevIndexFnObject()), in, out, opcode, str,
-				fedOut);
-		}
-		else if (opcode.equalsIgnoreCase(Opcodes.ROLL.toString())) {
+					fedOut);
+		} else if (opcode.equalsIgnoreCase(Opcodes.ROLL.toString())) {
 			InstructionUtils.checkNumFields(str, 3);
 			in.split(parts[1]);
 			out.split(parts[3]);
@@ -133,113 +135,114 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			fedOut = parseFedOutFlag(str, 3);
 			return new ReorgFEDInstruction(new ReorgOperator(new RollIndex(0)),
 					in, out, shift, opcode, str, fedOut);
-		}
-		else {
+		} else {
 			throw new DMLRuntimeException("ReorgFEDInstruction: unsupported opcode: " + opcode);
 		}
 	}
 
-		@Override
-		public void processInstruction(ExecutionContext ec) {
-			// Debug block disabled; kept for reference.
-			// System.out.println("=== ReorgFEDInstruction Debug ===");
-			// System.out.println("All variables in ExecutionContext:");
-			// for (String varName : ec.getVariables().keySet()) {
-			// 	try {
-			// 		Object obj = ec.getVariable(varName);
-			// 		if (obj instanceof MatrixObject) {
-			// 			MatrixObject mo = (MatrixObject) obj;
-			// 			System.out.printf("  %s: %s, federated=%s, dims=%s, fedMapping=%s\n",
-			// 				varName,
-			// 				mo.getClass().getSimpleName(),
-			// 				mo.isFederated(),
-			// 				mo.getDataCharacteristics(),
-			// 				mo.getFedMapping()
-			// 			);
-			// 		} else {
-			// 			System.out.printf("  %s: %s\n", varName, obj.getClass().getSimpleName());
-			// 		}
-			// 	} catch (Exception e) {
-			// 		System.out.printf("  %s: Error accessing - %s\n", varName, e.getMessage());
-			// 	}
-			// }
-			// System.out.println("=== End Debug ===");
+	@Override
+	public void processInstruction(ExecutionContext ec) {
+		// Debug block disabled; kept for reference.
+		// System.out.println("=== ReorgFEDInstruction Debug ===");
+		// System.out.println("All variables in ExecutionContext:");
+		// for (String varName : ec.getVariables().keySet()) {
+		// try {
+		// Object obj = ec.getVariable(varName);
+		// if (obj instanceof MatrixObject) {
+		// MatrixObject mo = (MatrixObject) obj;
+		// System.out.printf(" %s: %s, federated=%s, dims=%s, fedMapping=%s\n",
+		// varName,
+		// mo.getClass().getSimpleName(),
+		// mo.isFederated(),
+		// mo.getDataCharacteristics(),
+		// mo.getFedMapping()
+		// );
+		// } else {
+		// System.out.printf(" %s: %s\n", varName, obj.getClass().getSimpleName());
+		// }
+		// } catch (Exception e) {
+		// System.out.printf(" %s: Error accessing - %s\n", varName, e.getMessage());
+		// }
+		// }
+		// System.out.println("=== End Debug ===");
 
-			MatrixObject mo1 = ec.getMatrixObject(input1);
+		MatrixObject mo1 = ec.getMatrixObject(input1);
 		ReorgOperator r_op = (ReorgOperator) _optr;
 		boolean isSpark = instString.startsWith("SPARK");
 
-		if( !mo1.isFederated() ) {
+		if (!mo1.isFederated()) {
 			String debugInfo = String.format(
-				"Federated Reorg Debug Info:\n" +
-				"- Input variable: %s\n" +
-				"- MatrixObject isFederated: %s\n" +
-				"- MatrixObject class: %s\n" +
-				"- Data characteristics: %s\n" +
-				"- Federation mapping: %s\n" +
-				"- Has federation mapping: %s\n" +
-				"- Instruction opcode: %s\n" +
-				"- Instruction string: %s\n" +
-				"- FederatedOutput: %s",
-				input1.getName(),
-				mo1.isFederated(),
-				mo1.getClass().getSimpleName(),
-				mo1.getDataCharacteristics(),
-				mo1.getFedMapping(),
-				mo1.getFedMapping() != null,
-				instOpcode,
-				instString,
-				_fedOut
-			);
+					"Federated Reorg Debug Info:\n" +
+							"- Input variable: %s\n" +
+							"- MatrixObject isFederated: %s\n" +
+							"- MatrixObject class: %s\n" +
+							"- Data characteristics: %s\n" +
+							"- Federation mapping: %s\n" +
+							"- Has federation mapping: %s\n" +
+							"- Instruction opcode: %s\n" +
+							"- Instruction string: %s\n" +
+							"- FederatedOutput: %s",
+					input1.getName(),
+					mo1.isFederated(),
+					mo1.getClass().getSimpleName(),
+					mo1.getDataCharacteristics(),
+					mo1.getFedMapping(),
+					mo1.getFedMapping() != null,
+					instOpcode,
+					instString,
+					_fedOut);
 			throw new DMLRuntimeException("Federated Reorg: "
-				+ "Federated input expected, but invoked w/ "+mo1.isFederated() + "\n" + debugInfo);
+					+ "Federated input expected, but invoked w/ " + mo1.isFederated() + "\n" + debugInfo);
 		}
-		if ( !( mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW) ) )
+		if (!(mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW)))
 			throw new DMLRuntimeException("Federation type " + mo1.getFedMapping().getType()
-				+ " is not supported for Reorg processing");
+					+ " is not supported for Reorg processing");
 
-		if(instOpcode.equals(Opcodes.TRANSPOSE.toString())) {
-			//execute transpose at federated site
+		if (instOpcode.equals(Opcodes.TRANSPOSE.toString())) {
+			// execute transpose at federated site
 			long id = FederationUtils.getNextFedDataID();
-			FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, new MatrixCharacteristics(-1, -1), mo1.getDataType());
+			FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
+					new MatrixCharacteristics(-1, -1), mo1.getDataType());
 
-			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] {input1},
-				new long[] {mo1.getFedMapping().getID()}, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP, true);
+			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] { input1 },
+					new long[] { mo1.getFedMapping().getID() }, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP,
+					true);
 			Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
 
-			if (_fedOut != null && !_fedOut.isForcedLocal()){
-				//drive output federated mapping
+			if (_fedOut != null && !_fedOut.isForcedLocal()) {
+				// drive output federated mapping
 				MatrixObject out = ec.getMatrixObject(output);
 				long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
 				out.getDataCharacteristics().setDimension(mo1.getNumColumns(), mo1.getNumRows())
-					.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
+						.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
 				out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()).transpose());
 			} else {
 				FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
 				Future<FederatedResponse>[] execResponse = mo1.getFedMapping().execute(getTID(), true, fr1, getRequest);
 				ec.setMatrixOutput(output.getName(),
-					FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
+						FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
 			}
-		} else if ( mo1.isFederated(FType.PART) ){
+		} else if (mo1.isFederated(FType.PART)) {
 			throw new DMLRuntimeException("Operation with opcode " + instOpcode + " is not supported with PART input");
-		}
-		else if(instOpcode.equalsIgnoreCase(Opcodes.REV.toString())) {
+		} else if (instOpcode.equalsIgnoreCase(Opcodes.REV.toString())) {
 			long id = FederationUtils.getNextFedDataID();
-			FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, new MatrixCharacteristics(-1, -1), mo1.getDataType());
+			FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
+					new MatrixCharacteristics(-1, -1), mo1.getDataType());
 
-			//execute transpose at federated site
-			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] {input1},
-				new long[] {mo1.getFedMapping().getID()}, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP, true);
+			// execute transpose at federated site
+			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] { input1 },
+					new long[] { mo1.getFedMapping().getID() }, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP,
+					true);
 			Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
 
-			if(mo1.isFederated(FType.ROW))
+			if (mo1.isFederated(FType.ROW))
 				mo1.getFedMapping().reverseFedMap();
 
-			//derive output federated mapping
+			// derive output federated mapping
 			MatrixObject out = ec.getMatrixObject(output);
 			long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
 			out.getDataCharacteristics().setDimension(mo1.getNumRows(), mo1.getNumColumns())
-				.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
+					.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
 			out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()));
 
 			optionalForceLocal(out);
@@ -254,7 +257,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 
 			List<Pair<FederatedRange, FederatedData>> inMap = mo1.getFedMapping().getMap();
 			Pair<FederationMap, Long> rollResult = rollFedMap(
-				inMap, inID, outEndID, outStartID, shift, rlen, mo1.getFedMapping().getType());
+					inMap, inID, outEndID, outStartID, shift, rlen, mo1.getFedMapping().getType());
 			long length = rollResult.getValue();
 			FederationMap outFedMap = rollResult.getKey();
 
@@ -264,17 +267,16 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 					new ReorgFEDInstruction.SliceMatrix(inID, outStartID, length, false));
 			Future<FederatedResponse>[] ffr = outFedMap.executeRoll(getTID(), true, frEnd, frStart, rlen);
 
-			//derive output federated mapping
+			// derive output federated mapping
 			MatrixObject out = ec.getMatrixObject(output);
 			long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
 			out.getDataCharacteristics()
-				.setDimension(mo1.getNumRows(), mo1.getNumColumns())
-				.setBlocksize(mo1.getBlocksize())
-				.setNonZeros(nnz);
+					.setDimension(mo1.getNumRows(), mo1.getNumColumns())
+					.setBlocksize(mo1.getBlocksize())
+					.setNonZeros(nnz);
 			out.setFedMapping(outFedMap);
 			optionalForceLocal(out);
-		}
-		else if (instOpcode.equals(Opcodes.DIAG.toString())) {
+		} else if (instOpcode.equals(Opcodes.DIAG.toString())) {
 			RdiagResult result;
 			// diag(diag(X))
 			if (mo1.getNumColumns() == 1 && mo1.getNumRows() != 1) {
@@ -285,23 +287,23 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 
 			FederationMap diagFedMap = updateFedRanges(result);
 
-			//update output mapping and data characteristics
+			// update output mapping and data characteristics
 			MatrixObject rdiag = ec.getMatrixObject(output);
 			rdiag.getDataCharacteristics()
-				.set(diagFedMap.getMaxIndexInRange(0), diagFedMap.getMaxIndexInRange(1), mo1.getBlocksize());
+					.set(diagFedMap.getMaxIndexInRange(0), diagFedMap.getMaxIndexInRange(1), mo1.getBlocksize());
 			rdiag.setFedMapping(diagFedMap);
 			optionalForceLocal(rdiag);
 		}
 	}
 
-
 	public Pair<FederationMap, Long> rollFedMap(List<Pair<FederatedRange, FederatedData>> oldMap, long inID,
-												long outEndID, long outStartID, long shift, long rlen, FType type) {
+			long outEndID, long outStartID, long shift, long rlen, FType type) {
 		List<Pair<FederatedRange, FederatedData>> map = new ArrayList<>();
 		long length = 0;
 
-		for(Map.Entry<FederatedRange, FederatedData> e : oldMap) {
-			if(e.getKey().getSize() == 0) continue;
+		for (Map.Entry<FederatedRange, FederatedData> e : oldMap) {
+			if (e.getKey().getSize() == 0)
+				continue;
 			FederatedRange fedRange = new FederatedRange(e.getKey());
 			long beginRow = fedRange.getBeginDims()[0] + shift;
 			long endRow = fedRange.getEndDims()[0] + shift;
@@ -330,36 +332,40 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 
 	/**
 	 * Update the federated ranges of result and return the updated federation map.
+	 * 
 	 * @param result RdiagResult for which the fedmap is updated
 	 * @return updated federation map
 	 */
-	private FederationMap updateFedRanges(RdiagResult result){
+	private FederationMap updateFedRanges(RdiagResult result) {
 		FederationMap diagFedMap = result.getFedMap();
 		Map<FederatedRange, int[]> dcs = result.getDcs();
 
-		for(int i = 0; i < diagFedMap.getFederatedRanges().length; i++) {
+		for (int i = 0; i < diagFedMap.getFederatedRanges().length; i++) {
 			int[] newRange = dcs.get(diagFedMap.getFederatedRanges()[i]);
 
 			diagFedMap.getFederatedRanges()[i].setBeginDim(0,
-				(diagFedMap.getFederatedRanges()[i].getBeginDims()[0] == 0 ||
-					i == 0) ? 0 : diagFedMap.getFederatedRanges()[i - 1].getEndDims()[0]);
+					(diagFedMap.getFederatedRanges()[i].getBeginDims()[0] == 0 ||
+							i == 0) ? 0 : diagFedMap.getFederatedRanges()[i - 1].getEndDims()[0]);
 			diagFedMap.getFederatedRanges()[i].setEndDim(0,
-				diagFedMap.getFederatedRanges()[i].getBeginDims()[0] + newRange[0]);
+					diagFedMap.getFederatedRanges()[i].getBeginDims()[0] + newRange[0]);
 			diagFedMap.getFederatedRanges()[i].setBeginDim(1,
-				(diagFedMap.getFederatedRanges()[i].getBeginDims()[1] == 0 ||
-					i == 0) ? 0 : diagFedMap.getFederatedRanges()[i - 1].getEndDims()[1]);
+					(diagFedMap.getFederatedRanges()[i].getBeginDims()[1] == 0 ||
+							i == 0) ? 0 : diagFedMap.getFederatedRanges()[i - 1].getEndDims()[1]);
 			diagFedMap.getFederatedRanges()[i].setEndDim(1,
-				diagFedMap.getFederatedRanges()[i].getBeginDims()[1] + newRange[1]);
+					diagFedMap.getFederatedRanges()[i].getBeginDims()[1] + newRange[1]);
 		}
 		return diagFedMap;
 	}
 
 	/**
-	 * If federated output is forced local, the output will be retrieved and removed from federated workers.
-	 * @param outputMatrixObject which will be retrieved and removed from federated workers
+	 * If federated output is forced local, the output will be retrieved and removed
+	 * from federated workers.
+	 * 
+	 * @param outputMatrixObject which will be retrieved and removed from federated
+	 *                           workers
 	 */
-	private void optionalForceLocal(MatrixObject outputMatrixObject){
-		if ( _fedOut != null && _fedOut.isForcedLocal() ){
+	private void optionalForceLocal(MatrixObject outputMatrixObject) {
+		if (_fedOut != null && _fedOut.isForcedLocal()) {
 			outputMatrixObject.acquireReadAndRelease();
 			outputMatrixObject.getFedMapping().cleanup(getTID(), outputMatrixObject.getFedMapping().getID());
 		}
@@ -383,7 +389,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		}
 	}
 
-	private RdiagResult rdiagV2M (MatrixObject mo1, ReorgOperator r_op) {
+	private RdiagResult rdiagV2M(MatrixObject mo1, ReorgOperator r_op) {
 		FederationMap fedMap = mo1.getFedMapping();
 		boolean rowFed = mo1.isFederated(FType.ROW);
 
@@ -394,28 +400,28 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		diagFedMap = fedMap.mapParallel(varID, (range, data) -> {
 			try {
 				FederatedResponse response = data.executeFederatedOperation(new FederatedRequest(
-					FederatedRequest.RequestType.EXEC_UDF, -1,
-					new ReorgFEDInstruction.DiagMatrix(data.getVarID(),
-						varID, r_op,
-						rowFed ? (new int[] {range.getBeginDimsInt()[0], range.getEndDimsInt()[0]}) :
-							new int[] {range.getBeginDimsInt()[1], range.getEndDimsInt()[1]},
-						rowFed, (int) mo1.getNumRows()))).get();
-				if(!response.isSuccessful())
+						FederatedRequest.RequestType.EXEC_UDF, -1,
+						new ReorgFEDInstruction.DiagMatrix(data.getVarID(),
+								varID, r_op,
+								rowFed ? (new int[] { range.getBeginDimsInt()[0], range.getEndDimsInt()[0] })
+										: new int[] { range.getBeginDimsInt()[1], range.getEndDimsInt()[1] },
+								rowFed, (int) mo1.getNumRows())))
+						.get();
+				if (!response.isSuccessful())
 					response.throwExceptionFromResponse();
 				int[] subRangeCharacteristics = (int[]) response.getData()[0];
-				synchronized(dcs) {
+				synchronized (dcs) {
 					dcs.put(range, subRangeCharacteristics);
 				}
 				return null;
-			}
-			catch(Exception e) {
+			} catch (Exception e) {
 				throw new DMLRuntimeException(e);
 			}
 		});
 		return new RdiagResult(diagFedMap, dcs);
 	}
 
-	private RdiagResult rdiagM2V (MatrixObject mo1, ReorgOperator r_op) {
+	private RdiagResult rdiagM2V(MatrixObject mo1, ReorgOperator r_op) {
 		FederationMap fedMap = mo1.getFedMapping();
 		boolean rowFed = mo1.isFederated(FType.ROW);
 
@@ -426,20 +432,20 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		diagFedMap = fedMap.mapParallel(varID, (range, data) -> {
 			try {
 				FederatedResponse response = data.executeFederatedOperation(new FederatedRequest(
-					FederatedRequest.RequestType.EXEC_UDF, -1,
-					new ReorgFEDInstruction.Rdiag(data.getVarID(), varID, r_op,
-						rowFed ? (new int[] {range.getBeginDimsInt()[0], range.getEndDimsInt()[0]}) :
-							new int[] {range.getBeginDimsInt()[1], range.getEndDimsInt()[1]},
-						rowFed))).get();
-				if(!response.isSuccessful())
+						FederatedRequest.RequestType.EXEC_UDF, -1,
+						new ReorgFEDInstruction.Rdiag(data.getVarID(), varID, r_op,
+								rowFed ? (new int[] { range.getBeginDimsInt()[0], range.getEndDimsInt()[0] })
+										: new int[] { range.getBeginDimsInt()[1], range.getEndDimsInt()[1] },
+								rowFed)))
+						.get();
+				if (!response.isSuccessful())
 					response.throwExceptionFromResponse();
 				int[] subRangeCharacteristics = (int[]) response.getData()[0];
-				synchronized(dcs) {
+				synchronized (dcs) {
 					dcs.put(range, subRangeCharacteristics);
 				}
 				return null;
-			}
-			catch(Exception e) {
+			} catch (Exception e) {
 				throw new DMLRuntimeException(e);
 			}
 		});
@@ -453,7 +459,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		private final boolean _isRight;
 
 		private SliceMatrix(long input, long outputID, long sliceRow, boolean isRight) {
-			super(new long[] {input});
+			super(new long[] { input });
 			_outputID = outputID;
 			_sliceRow = (int) sliceRow;
 			_isRight = isRight;
@@ -464,15 +470,15 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			MatrixBlock oriBlock = ((MatrixObject) data[0]).acquireReadAndRelease();
 			MatrixBlock resBlock;
 
-			if (_sliceRow != 0){
-				if (_isRight){
-					resBlock = oriBlock.slice(0, _sliceRow-1, 0,
-							oriBlock.getNumColumns()-1, new MatrixBlock());
-				} else{
-					resBlock = oriBlock.slice(_sliceRow, oriBlock.getNumRows()-1,
-							0, oriBlock.getNumColumns()-1, new MatrixBlock());
+			if (_sliceRow != 0) {
+				if (_isRight) {
+					resBlock = oriBlock.slice(0, _sliceRow - 1, 0,
+							oriBlock.getNumColumns() - 1, new MatrixBlock());
+				} else {
+					resBlock = oriBlock.slice(_sliceRow, oriBlock.getNumRows() - 1,
+							0, oriBlock.getNumColumns() - 1, new MatrixBlock());
 				}
-			} else{
+			} else {
 				resBlock = oriBlock;
 			}
 			ec.setMatrixOutput(String.valueOf(_outputID), resBlock);
@@ -500,7 +506,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		private final boolean _rowFed;
 
 		private Rdiag(long input, long outputID, ReorgOperator r_op, int[] slice, boolean rowFed) {
-			super(new long[] {input});
+			super(new long[] { input });
 			_outputID = outputID;
 			_r_op = r_op;
 			_slice = slice;
@@ -513,16 +519,16 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			MatrixBlock soresBlock;
 			MatrixBlock res;
 
-			soresBlock = _rowFed ?
-				mb.slice(0, mb.getNumRows() - 1, _slice[0], _slice[1] - 1, new MatrixBlock()) :
-				mb.slice(_slice[0], _slice[1] - 1);
+			soresBlock = _rowFed ? mb.slice(0, mb.getNumRows() - 1, _slice[0], _slice[1] - 1, new MatrixBlock())
+					: mb.slice(_slice[0], _slice[1] - 1);
 			res = soresBlock.reorgOperations(_r_op, new MatrixBlock(), 0, 0, 0);
 
 			MatrixObject mout = ExecutionContext.createMatrixObject(res);
 			mout.setDiag(true);
 			ec.setVariable(String.valueOf(_outputID), mout);
 
-			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, new int[]{res.getNumRows(), res.getNumColumns()});
+			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS,
+					new int[] { res.getNumRows(), res.getNumColumns() });
 		}
 
 		@Override
@@ -534,13 +540,14 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		public Pair<String, LineageItem> getLineageItem(ExecutionContext ec) {
 			LineageItem[] liUdfInputs = Arrays.stream(getInputIDs())
 					.mapToObj(id -> ec.getLineage().get(String.valueOf(id))).toArray(LineageItem[]::new);
-			CPOperand r_op = new CPOperand(_r_op.fn.getClass().getSimpleName(), ValueType.STRING, DataType.SCALAR, true);
+			CPOperand r_op = new CPOperand(_r_op.fn.getClass().getSimpleName(), ValueType.STRING, DataType.SCALAR,
+					true);
 			CPOperand slice = new CPOperand(Arrays.toString(_slice), ValueType.STRING, DataType.SCALAR, true);
 			CPOperand rowFed = new CPOperand(String.valueOf(_rowFed), ValueType.BOOLEAN, DataType.SCALAR, true);
 			LineageItem[] otherInputs = LineageItemUtils.getLineage(ec, r_op, slice, rowFed);
 			LineageItem[] liInputs = Stream.concat(Arrays.stream(liUdfInputs), Arrays.stream(otherInputs))
 					.toArray(LineageItem[]::new);
-			return Pair.of(String.valueOf(_outputID), 
+			return Pair.of(String.valueOf(_outputID),
 					new LineageItem(getClass().getSimpleName(), liInputs));
 		}
 	}
@@ -555,7 +562,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		private final boolean _rowFed;
 
 		private DiagMatrix(long input, long outputID, ReorgOperator r_op, int[] slice, boolean rowFed, int len) {
-			super(new long[] {input});
+			super(new long[] { input });
 			_outputID = outputID;
 			_r_op = r_op;
 			_len = len;
@@ -569,18 +576,19 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			MatrixBlock res;
 
 			MatrixBlock tmp = mb.reorgOperations(_r_op, new MatrixBlock(), 0, 0, 0);
-			if(_rowFed) {
+			if (_rowFed) {
 				res = new MatrixBlock(mb.getNumRows(), _len, 0.0);
-				res.copy(0, res.getNumRows()-1, _slice[0], _slice[1]-1, tmp, false);
+				res.copy(0, res.getNumRows() - 1, _slice[0], _slice[1] - 1, tmp, false);
 			} else {
 				res = new MatrixBlock(_len, _slice[1], 0.0);
-				res.copy(_slice[0], _slice[1]-1, 0, mb.getNumColumns() - 1, tmp, false);
+				res.copy(_slice[0], _slice[1] - 1, 0, mb.getNumColumns() - 1, tmp, false);
 			}
 			MatrixObject mout = ExecutionContext.createMatrixObject(res);
 			mout.setDiag(true);
 			ec.setVariable(String.valueOf(_outputID), mout);
 
-			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS, new int[]{res.getNumRows(), res.getNumColumns()});
+			return new FederatedResponse(FederatedResponse.ResponseType.SUCCESS,
+					new int[] { res.getNumRows(), res.getNumColumns() });
 		}
 
 		@Override
@@ -592,14 +600,15 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		public Pair<String, LineageItem> getLineageItem(ExecutionContext ec) {
 			LineageItem[] liUdfInputs = Arrays.stream(getInputIDs())
 					.mapToObj(id -> ec.getLineage().get(String.valueOf(id))).toArray(LineageItem[]::new);
-			CPOperand r_op = new CPOperand(_r_op.fn.getClass().getSimpleName(), ValueType.STRING, DataType.SCALAR, true);
+			CPOperand r_op = new CPOperand(_r_op.fn.getClass().getSimpleName(), ValueType.STRING, DataType.SCALAR,
+					true);
 			CPOperand len = new CPOperand(String.valueOf(_len), ValueType.INT32, DataType.SCALAR, true);
 			CPOperand slice = new CPOperand(Arrays.toString(_slice), ValueType.STRING, DataType.SCALAR, true);
 			CPOperand rowFed = new CPOperand(String.valueOf(_rowFed), ValueType.BOOLEAN, DataType.SCALAR, true);
 			LineageItem[] otherInputs = LineageItemUtils.getLineage(ec, r_op, len, slice, rowFed);
 			LineageItem[] liInputs = Stream.concat(Arrays.stream(liUdfInputs), Arrays.stream(otherInputs))
 					.toArray(LineageItem[]::new);
-			return Pair.of(String.valueOf(_outputID), 
+			return Pair.of(String.valueOf(_outputID),
 					new LineageItem(getClass().getSimpleName(), liInputs));
 		}
 	}

@@ -91,6 +91,7 @@ public class FederatedWorker {
 		LineageCacheConfig.setConfig(DMLScript.LINEAGE_REUSE);
 		LineageCacheConfig.setCachePolicy(DMLScript.LINEAGE_POLICY);
 		LineageCacheConfig.setEstimator(DMLScript.LINEAGE_ESTIMATE);
+		// Federated workers are stateful and should avoid cache eviction to missing local files.
 
 		run();
 	}

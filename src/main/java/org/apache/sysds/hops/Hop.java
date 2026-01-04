@@ -1214,6 +1214,8 @@ public abstract class Hop implements ParseInfo {
 
 	public void setLops(Lop lops) {
 		_lops = lops;
+		if (_lops != null)
+			_lops.setHopID(getHopID());
 	}
 
 	public boolean isVisited() {

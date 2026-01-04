@@ -51,7 +51,6 @@ import org.apache.sysds.runtime.instructions.cp.IndexingCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysds.runtime.instructions.spark.IndexingSPInstruction;
-import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.util.IndexRange;
 
 public final class IndexingFEDInstruction extends UnaryFEDInstruction {
@@ -196,14 +195,11 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 		}
 
 		long id = FederationUtils.getNextFedDataID();
-		FederatedRequest tmp = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, in.getMetaData().getDataCharacteristics(), in.getDataType());
-
 		Types.ExecType execType = InstructionUtils.getExecType(instString);
 		if (execType == Types.ExecType.FED)
 			execType = Types.ExecType.CP;
 		FederatedRequest[] fr1 = FederationUtils.callInstruction(instStrings, output, id,
 			new CPOperand[] {input1}, new long[] {fedMap.getID()}, execType);
-		fedMap.execute(getTID(), true, tmp);
 		Future<FederatedResponse>[] ret = fedMap.execute(getTID(), true, fr1, new FederatedRequest[0]);
 		
 		//set output characteristics for frames and matrices
@@ -318,10 +314,6 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 		sliceIxs = Arrays.stream(sliceIxs).filter(Objects::nonNull).toArray(int[][] :: new);
 
 		long id = FederationUtils.getNextFedDataID();
-		//TODO remove explicit put (unnecessary in CP, only spark which is about to be cleaned up)
-		FederatedRequest tmp = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, new MatrixCharacteristics(-1, -1), in1.getDataType());
-		fedMap.execute(getTID(), true, tmp);
-
 		if(in2 != null) { // matrix, frame
 			FederatedRequest[] fr1 = fedMap.broadcastSliced(in2,
 				DMLScript.LINEAGE ? ec.getLineageItem(input2) : null, input2.isFrame(), sliceIxs);

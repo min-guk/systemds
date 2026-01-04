@@ -135,8 +135,16 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	
 	@Override
 	public void channelRead(ChannelHandlerContext ctx, Object msg) {
+		if(LOG.isInfoEnabled())
+			LOG.info("Federated worker received request: " + msg.getClass().getName());
 		ctx.writeAndFlush(createResponse(msg, ctx.channel().remoteAddress()))
 			.addListener(new CloseListener());
+	}
+
+	@Override
+	public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+		LOG.error("Federated worker channel error", cause);
+		ctx.close();
 	}
 
 	protected FederatedResponse createResponse(Object msg) {
@@ -492,6 +500,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			var block = ExecutionContext.createCacheableData((CacheBlock<?>) v);
 			size = block.getDataSize();
 			data = block;
+			((CacheableData<?>) data).requireLocalWrite();
 		}
 		else if(v instanceof ScalarObject) {
 			data = (ScalarObject) v;
@@ -581,7 +590,14 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		final long tid = request.getTID();
 		final ExecutionContext ec = getContextForInstruction(tid, ins, ecm);
 		setThreads(ins);
-		exec(ec, ins);
+		try {
+			exec(ec, ins);
+		}
+		catch (Exception ex) {
+			logExecutionContextState(ec, ins);
+			throw new FederatedWorkerHandlerException(
+				"Failed to execute federated instruction: " + ins.toString(), ex);
+		}
 		adaptToWorkload(ec, _fan, tid, ins);
 		return new FederatedResponse(
 			ResponseType.SUCCESS_EMPTY, getOutputNnz(ec, ins));
@@ -638,7 +654,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			});
 		}
 	}
-	
+
 	private static long getOutputNnz(ExecutionContext ec, Instruction ins) {
 		if( ins instanceof ComputationCPInstruction ) {
 			Data dat = ec.getVariable(((ComputationCPInstruction)ins).getOutput());
@@ -646,6 +662,30 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 				return ((MatrixObject)dat).getNnz();
 		}
 		return -1L;
+	}
+
+	private static void logExecutionContextState(ExecutionContext ec, Instruction ins) {
+		if(ec == null || !LOG.isErrorEnabled())
+			return;
+		StringBuilder sb = new StringBuilder();
+		sb.append("Federated worker execution context snapshot for ").append(ins.getExtendedOpcode()).append(": ");
+		ec.getVariables().entrySet().forEach(entry -> {
+			Data data = entry.getValue();
+			if(data instanceof CacheableData) {
+				CacheableData<?> cd = (CacheableData<?>) data;
+				sb.append(entry.getKey())
+					.append("->")
+					.append(cd.getClass().getSimpleName())
+					.append("[file=")
+					.append(cd.getFileName())
+					.append(",hdfs=")
+					.append(cd.isHDFSFileExists())
+					.append(",cached=")
+					.append(cd.isCached(true))
+					.append("]; ");
+			}
+		});
+		LOG.error(sb.toString());
 	}
 
 	private FederatedResponse execUDF(FederatedRequest request, ExecutionContextMap ecm, EventStageModel eventStage) {
@@ -719,12 +759,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			return;
 		throw new DMLRuntimeException("FederatedWorkerHandler: Received wrong amount of params:" + " expected="
 			+ Arrays.toString(expected) + ", actual=" + actual);
-	}
-
-	@Override
-	public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-		cause.printStackTrace();
-		ctx.close();
 	}
 
 	private boolean shouldTryAsyncCompress(){

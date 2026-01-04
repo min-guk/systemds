@@ -33,6 +33,7 @@ import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.functionobjects.Builtin;
 import org.apache.sysds.runtime.functionobjects.ValueFunction;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
@@ -65,10 +66,21 @@ public class UnaryMatrixFEDInstruction extends UnaryFEDInstruction {
 	}
 
 	public static UnaryMatrixFEDInstruction parseInstruction(String str) {
+		FederatedOutput fedOut = null;
+		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
+		if (parts.length > 1) {
+			String last = parts[parts.length - 1];
+			try {
+				fedOut = FederatedOutput.valueOf(last);
+				str = InstructionUtils.removeFEDOutputFlag(str);
+				parts = InstructionUtils.getInstructionPartsWithValueType(str);
+			} catch (IllegalArgumentException ignored) {
+				// No FED output flag present.
+			}
+		}
 		CPOperand in = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 		CPOperand out = new CPOperand("", ValueType.UNKNOWN, DataType.UNKNOWN);
 
-		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
 		String opcode = parts[0];
 
 		if(parts.length == 5 &&
@@ -79,13 +91,25 @@ public class UnaryMatrixFEDInstruction extends UnaryFEDInstruction {
 			if(Arrays.asList(new String[] {"ucumk+", "ucum*", "ucumk+*", "ucummin", "ucummax", "exp", "log", "sigmoid"})
 				.contains(opcode)) {
 				UnaryOperator op = new UnaryOperator(func, Integer.parseInt(parts[3]), Boolean.parseBoolean(parts[4]));
-				return new UnaryMatrixFEDInstruction(op, in, out, opcode, str);
+				UnaryMatrixFEDInstruction inst = new UnaryMatrixFEDInstruction(op, in, out, opcode, str);
+				if (fedOut != null)
+					inst._fedOut = fedOut;
+				return inst;
 			}
 			else
-				return new UnaryMatrixFEDInstruction(null, in, out, opcode, str);
+				{
+					UnaryMatrixFEDInstruction inst = new UnaryMatrixFEDInstruction(null, in, out, opcode, str);
+					if (fedOut != null)
+						inst._fedOut = fedOut;
+					return inst;
+				}
 		}
 		opcode = parseUnaryInstruction(str, in, out);
-		return new UnaryMatrixFEDInstruction(InstructionUtils.parseUnaryOperator(opcode), in, out, opcode, str);
+		UnaryMatrixFEDInstruction inst = new UnaryMatrixFEDInstruction(InstructionUtils.parseUnaryOperator(opcode), in,
+			out, opcode, str);
+		if (fedOut != null)
+			inst._fedOut = fedOut;
+		return inst;
 	}
 
 	@Override

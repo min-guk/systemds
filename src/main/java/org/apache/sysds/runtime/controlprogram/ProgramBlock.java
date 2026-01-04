@@ -44,6 +44,7 @@ import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObjectFactory;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.spark.utils.SparkUtils;
 import org.apache.sysds.runtime.lineage.LineageCache;
 import org.apache.sysds.runtime.lineage.LineageCacheConfig.ReuseCacheType;
@@ -224,6 +225,8 @@ public abstract class ProgramBlock implements ParseInfo {
 
 			// pre-process instruction (inst patching, listeners, lineage)
 			Instruction tmp = currInst.preprocessInstruction(ec);
+			if (tmp instanceof FEDInstruction)
+				((FEDInstruction) tmp).setTID(ec.getTID());
 
 			// try to reuse instruction result from lineage cache
 			if(!LineageCache.reuse(tmp, ec)) {
@@ -255,13 +258,17 @@ public abstract class ProgramBlock implements ParseInfo {
 				// }
 
 				// process actual instruction
-				tmp.processInstruction(ec);
-
-				// cache result
-				LineageCache.putValue(tmp, ec, et0);
-
-				// post-process instruction (debug)
-				tmp.postprocessInstruction(ec);
+				ec.setCurrentInstruction(tmp);
+				try {
+					tmp.processInstruction(ec);
+					// cache result
+					LineageCache.putValue(tmp, ec, et0);
+					// post-process instruction (debug)
+					tmp.postprocessInstruction(ec);
+				}
+				finally {
+					ec.setCurrentInstruction(null);
+				}
 
 				// maintain aggregate statistics
 				if(DMLScript.STATISTICS) {

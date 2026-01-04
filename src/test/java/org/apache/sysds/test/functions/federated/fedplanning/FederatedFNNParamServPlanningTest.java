@@ -39,7 +39,8 @@ public class FederatedFNNParamServPlanningTest extends AutomatedTestBase {
 
 	private final static String TEST_DIR = "functions/federated/fedplanning/";
 	private final static String TEST_NAME = "FNN_network";
-	private final static String TEST_CLASS_DIR = TEST_DIR + FederatedFNNParamServPlanningTest.class.getSimpleName() + "/";
+	private final static String TEST_CLASS_DIR = TEST_DIR + FederatedFNNParamServPlanningTest.class.getSimpleName()
+			+ "/";
 	private static File TEST_CONF_FILE;
 
 	private final static int blocksize = 1024;
@@ -56,35 +57,34 @@ public class FederatedFNNParamServPlanningTest extends AutomatedTestBase {
 	@Override
 	public void setUp() {
 		TestUtils.clearAssertionInformation();
-		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] {"Z"}));
+		addTestConfiguration(TEST_NAME, new TestConfiguration(TEST_CLASS_DIR, TEST_NAME, new String[] { "Z" }));
 	}
 
 	@Ignore
 	@Test
-	public void runFNNParamServFOUTTest(){
+	public void runFNNParamServFOUTTest() {
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runFNNParamServHeuristicTest(){
+	public void runFNNParamServHeuristicTest() {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
 	@Ignore
 	@Test
-	public void runFNNParamServCostBasedTestPrivate(){
+	public void runFNNParamServCostBasedTestPrivate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
-	@Ignore
 	@Test
-	public void runFNNParamServCostBasedTestPrivateAggregate(){
+	public void runFNNParamServCostBasedTestPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
 	@Ignore
 	@Test
-	public void runFNNParamServCostBasedTestPublic(){
+	public void runFNNParamServCostBasedTestPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
@@ -99,18 +99,18 @@ public class FederatedFNNParamServPlanningTest extends AutomatedTestBase {
 		loadAndRunTest(new String[] {}, TEST_NAME, privacyConstraints);
 	}
 
-	private void writeInputMatrices(String privacyConstraints){
+	private void writeInputMatrices(String privacyConstraints) {
 		double[][] features = ParamServTestUtils.generateFeatures("TwoNN", rows, 1, 28, 28);
 		double[][] labels = ParamServTestUtils.generateLabels("TwoNN", rows, 10, cols, features);
-		
-		writeStandardRowFedMatrix("X1", features, 0, rows/2, privacyConstraints);
-		writeStandardRowFedMatrix("X2", features, rows/2, rows, privacyConstraints);
+
+		writeStandardRowFedMatrix("X1", features, 0, rows / 2, privacyConstraints);
+		writeStandardRowFedMatrix("X2", features, rows / 2, rows, privacyConstraints);
 		writeStandardMatrix("Y", labels, privacyConstraints);
 	}
 
-	private void writeStandardMatrix(String matrixName, double[][] matrix, String privacyConstraints){
-		MatrixCharacteristics mc = new MatrixCharacteristics(matrix.length, matrix[0].length, blocksize, 
-			(long) matrix.length * matrix[0].length);
+	private void writeStandardMatrix(String matrixName, double[][] matrix, String privacyConstraints) {
+		MatrixCharacteristics mc = new MatrixCharacteristics(matrix.length, matrix[0].length, blocksize,
+				(long) matrix.length * matrix[0].length);
 		if (privacyConstraints == null) {
 			writeInputMatrixWithMTD(matrixName, matrix, false, mc);
 		} else {
@@ -118,16 +118,17 @@ public class FederatedFNNParamServPlanningTest extends AutomatedTestBase {
 		}
 	}
 
-	private void writeStandardRowFedMatrix(String matrixName, double[][] fullMatrix, int startRow, int endRow, String privacyConstraints){
+	private void writeStandardRowFedMatrix(String matrixName, double[][] fullMatrix, int startRow, int endRow,
+			String privacyConstraints) {
 		int numRows = endRow - startRow;
 		double[][] matrix = new double[numRows][fullMatrix[0].length];
-		for(int i = 0; i < numRows; i++) {
+		for (int i = 0; i < numRows; i++) {
 			System.arraycopy(fullMatrix[startRow + i], 0, matrix[i], 0, fullMatrix[0].length);
 		}
 		writeStandardMatrix(matrixName, matrix, privacyConstraints);
 	}
 
-	private void loadAndRunTest(String[] expectedHeavyHitters, String testName, String privacyConstraints){
+	private void loadAndRunTest(String[] expectedHeavyHitters, String testName, String privacyConstraints) {
 
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
 		Types.ExecMode platformOld = rtplatform;
@@ -149,15 +150,14 @@ public class FederatedFNNParamServPlanningTest extends AutomatedTestBase {
 			// Run actual dml script with federated matrix
 			fullDMLScriptName = HOME + testName + ".dml";
 			programArgs = new String[] { "-stats", "-nvargs",
-				"X1=" + TestUtils.federatedAddress(port1, input("X1")),
-				"X2=" + TestUtils.federatedAddress(port2, input("X2")),
-				"Y=" + input("Y"), 
-				"epochs=" + epochs, "batch_size=" + batch_size, "eta=" + eta,
-				"workers=" + workers, "utype=" + utype, "freq=" + freq, "mode=" + mode,
-				"Z=" + output("Z")};
+					"X1=" + TestUtils.federatedAddress(port1, input("X1")),
+					"X2=" + TestUtils.federatedAddress(port2, input("X2")),
+					"Y=" + input("Y"),
+					"epochs=" + epochs, "batch_size=" + batch_size, "eta=" + eta,
+					"workers=" + workers, "utype=" + utype, "freq=" + freq, "mode=" + mode,
+					"Z=" + output("Z") };
 			runTest(true, false, null, -1);
-		}
-		finally {
+		} finally {
 			TestUtils.shutdownThreads(t1, t2);
 			rtplatform = platformOld;
 			DMLScript.USE_LOCAL_SPARK_CONFIG = sparkConfigOld;
@@ -170,7 +170,8 @@ public class FederatedFNNParamServPlanningTest extends AutomatedTestBase {
 	 */
 	@Override
 	protected File getConfigTemplateFile() {
-		// Instrumentation in this test's output log to show custom configuration file used for template.
+		// Instrumentation in this test's output log to show custom configuration file
+		// used for template.
 		LOG.info("This test case overrides default configuration with " + TEST_CONF_FILE.getPath());
 		return TEST_CONF_FILE;
 	}

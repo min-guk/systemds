@@ -2066,13 +2066,13 @@ public final class Rulesets {
       String agg = aggOf(sig);
 
       if ("VAR".equals(agg))
-        return cpCaps(sig, ReasonCode.VAR_REQUIRES_CONSOLIDATION);
+        return fedLocalCaps(sig, ReasonCode.VAR_REQUIRES_CONSOLIDATION);
 
       if (dir == Dir.ROWCOL)
-        return cpCaps(sig, ReasonCode.FULL_AGG_REQUIRES_CONSOLIDATION);
+        return fedLocalCaps(sig, ReasonCode.FULL_AGG_REQUIRES_CONSOLIDATION);
 
       if (isScalarOutput(dir, hint))
-        return cpCaps(sig, ReasonCode.SCALAR_CANNOT_BE_FEDERATED);
+        return fedLocalCaps(sig, ReasonCode.SCALAR_CANNOT_BE_FEDERATED);
 
       if (!isAxis(in))
         return cpCaps(sig, ReasonCode.NON_ALIGNED_INPUT_FTYPE);
@@ -2081,7 +2081,7 @@ public final class Rulesets {
         return fedFoutCaps(sig, in, ReasonCode.OK);
 
       // NOTE: Parameter swapping in uarimax/uarimin for column partitions is handled by runtime instructions.
-      return cpCaps(sig, ReasonCode.PARTITION_MISMATCH_PART_NOT_SUPPORTED);
+      return fedLocalCaps(sig, ReasonCode.PARTITION_MISMATCH_PART_NOT_SUPPORTED);
     }
 
     private static Dir dirOf(OpSig sig) {

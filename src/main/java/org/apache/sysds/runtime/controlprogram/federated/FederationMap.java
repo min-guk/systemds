@@ -53,6 +53,7 @@ import org.apache.sysds.runtime.util.IndexRange;
 public class FederationMap {
 
 	private long _ID = -1;
+	private long _tid = 0;
 	private final List<Pair<FederatedRange, FederatedData>> _fedMap;
 	private FType _type;
 
@@ -125,17 +126,9 @@ public class FederationMap {
 	}
 
 	private FederatedRequest broadcast(CacheableData<?> data, LineageItem lineageItem) {
-		// reuse existing broadcast variable
-		if( data.isFederated(FType.BROADCAST) )
-			return new FederatedRequest(RequestType.NOOP, data.getFedMapping().getID());
 		// prepare single request for all federated data
 		long id = FederationUtils.getNextFedDataID();
 		CacheBlock<?> cb = data.acquireReadAndRelease();
-
-		// create new fed mapping for broadcast (a potential overwrite
-		// is fine, because with broadcast all data on all workers)
-		data.setFedMapping(copyWithNewIDAndRange(
-			cb.getNumRows(), cb.getNumColumns(), id, FType.BROADCAST));
 		return new FederatedRequest(RequestType.PUT_VAR, lineageItem, id, cb);
 	}
 
@@ -187,21 +180,9 @@ public class FederationMap {
 				new int[] {rl, ru, cl, cu} : new int[] {cl, cu, rl, ru};
 		}
 		
-		// created federated range
-		FederationMap bmap = copyWithNewIDAndRange(ix, id,
-			(_type == FType.ROW || (_type == FType.COL & transposed)) ? FType.ROW : FType.COL);
-		
-		// check for existing broadcast
 		FederatedRequest[] ret = new FederatedRequest[ix.length];
-		if( data.isFederated(bmap.getType()) && data.getFedMapping().isAligned(bmap, false) ) {
-			Arrays.setAll(ret, i -> new FederatedRequest(RequestType.NOOP, data.getFedMapping().getID()));
-			data.setFedMapping(bmap); // reuse
-		}
 		// multi-threaded block slicing and federation request creation
-		else {
-			Arrays.parallelSetAll(ret,
-				i -> sliceBroadcastBlock(ix[i], id, cb, lineageItem, false));
-		}
+		Arrays.parallelSetAll(ret, i -> sliceBroadcastBlock(ix[i], id, cb, lineageItem, false));
 		return ret;
 	}
 
@@ -337,6 +318,7 @@ public class FederationMap {
 		FederatedRequest... fr) {
 		// executes step1[] - step 2 - ... step4 (only first step federated-data-specific)
 		setThreadID(tid, frSlices, fr);
+		_tid = tid;
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 		int pos = 0;
 		for(Pair<FederatedRange, FederatedData> e : _fedMap)
@@ -359,6 +341,7 @@ public class FederationMap {
 		// executes step1[] - step 2 - ... step4 (only first step federated-data-specific)
 		setThreadID(tid, frSlices1, fr);
 		setThreadID(tid, frSlices2, fr);
+		_tid = tid;
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 		int pos = 0;
 		for(Pair<FederatedRange, FederatedData> e : _fedMap) {
@@ -389,6 +372,7 @@ public class FederationMap {
 		// executes step1[] - ... - stepM[] - stepM+1 - ... stepN (only first step federated-data-specific)
 		FederatedRequest[] allSlices = Arrays.stream(frSlices).flatMap(Stream::of).toArray(FederatedRequest[]::new);
 		setThreadID(tid, allSlices, fr);
+		_tid = tid;
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 		int pos = 0;
 		for(Pair<FederatedRange, FederatedData> e : _fedMap) {
@@ -412,6 +396,7 @@ public class FederationMap {
 	{
 		// executes step1[] - step 2 - ... step4 (only first step federated-data-specific)
 		setThreadID(tid, new FederatedRequest[]{frStart, frEnd});
+		_tid = tid;
 		List<Future<FederatedResponse>> ret = new ArrayList<>();
 
 		for(Pair<FederatedRange, FederatedData> e : _fedMap) {
@@ -437,6 +422,7 @@ public class FederationMap {
 
 		for(Pair<FederatedRange, FederatedData> e : _fedMap){
 			FederatedRequest request = new FederatedRequest(RequestType.GET_VAR, e.getValue().getVarID());
+			request.setTID(_tid);
 			readResponses.add(Pair.of(e.getKey(), e.getValue().executeFederatedOperation(request)));
 		}
 
@@ -522,7 +508,9 @@ public class FederationMap {
 			if(e.getKey().getSize() != 0)
 				map.add(Pair.of(new FederatedRange(e.getKey()), e.getValue().copyWithNewID(id)));
 		}
-		return new FederationMap(id, map, _type);
+		FederationMap copy = new FederationMap(id, map, _type);
+		copy._tid = _tid;
+		return copy;
 	}
 
 	/**
@@ -538,7 +526,9 @@ public class FederationMap {
 		// TODO handling of file path, but no danger as never written
 		for(Pair<FederatedRange, FederatedData> e : _fedMap)
 			map.add(Pair.of(new FederatedRange(e.getKey(), clen), e.getValue().copyWithNewID(id)));
-		return new FederationMap(id, map, _type);
+		FederationMap copy = new FederationMap(id, map, _type);
+		copy._tid = _tid;
+		return copy;
 	}
 
 	/**
@@ -563,7 +553,9 @@ public class FederationMap {
 					new FederatedRange(new long[]{0,0}, new long[]{rowRangeEnd, colRangeEnd}),
 					e.getValue().copyWithNewID(outputID)));
 		}
-		return new FederationMap(outputID, outputMap, type);
+		FederationMap copy = new FederationMap(outputID, outputMap, type);
+		copy._tid = _tid;
+		return copy;
 	}
 	
 	public FederationMap copyWithNewIDAndRange(int[][] ix, long outputID, FType type){
@@ -575,7 +567,9 @@ public class FederationMap {
 				e.getValue().copyWithNewID(outputID)));
 			pos++;
 		}
-		return new FederationMap(outputID, outputMap, type);
+		FederationMap copy = new FederationMap(outputID, outputMap, type);
+		copy._tid = _tid;
+		return copy;
 	}
 
 	public FederationMap bind(long rOffset, long cOffset, FederationMap that) {

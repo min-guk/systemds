@@ -421,6 +421,14 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	public boolean isFederatedExcept(FType type) {
 		return isFederated() && !isFederated(type);
 	}
+
+	/**
+	 * Ensure a local spill file is written on eviction even if the object is only read.
+	 * This is required for data objects created purely from in-memory blocks.
+	 */
+	public void requireLocalWrite() {
+		_requiresLocalWrite = true;
+	}
 	
 	/**
 	 * Gets the mapping of indices ranges to federated objects.

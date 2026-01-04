@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
@@ -37,6 +38,8 @@ import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.lops.Data;
+import org.apache.sysds.lops.FederatedFoutMaterialize;
+import org.apache.sysds.lops.FederatedRefed;
 import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.Lop.Type;
@@ -45,6 +48,7 @@ import org.apache.sysds.lops.OutputParameters;
 import org.apache.sysds.lops.UnaryCP;
 import org.apache.sysds.lops.compile.linearization.IDagLinearizer;
 import org.apache.sysds.lops.compile.linearization.IDagLinearizerFactory;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.DMLRuntimeException;
@@ -57,6 +61,7 @@ import org.apache.sysds.runtime.instructions.SPInstructionParser;
 import org.apache.sysds.runtime.instructions.cp.CPInstruction;
 import org.apache.sysds.runtime.instructions.cp.CPInstruction.CPType;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
 /**
@@ -179,6 +184,8 @@ public class Dag<N extends Lop>
 		IDagLinearizer dl = IDagLinearizerFactory.createDagLinearizer();
 		List<Lop> node_v = dl.linearize(nodes);
 		prefetchFederated(node_v);
+		insertRefedLops(node_v, sb);
+		insertFoutMaterializeLops(node_v, sb);
 
 		// do greedy grouping of operations
 		ArrayList<Instruction> inst = doPlainInstructionGen(sb, node_v);
@@ -221,6 +228,147 @@ public class Dag<N extends Lop>
 					addFedPrefetchLop(input, lop);
 			}
 		}
+	}
+
+	private boolean insertRefedLops(List<Lop> lops, StatementBlock sb) {
+		if (FederatedRefedRegistry.isEmpty())
+			return false;
+
+		long sbId = (sb != null) ? sb.getSBID() : -1;
+		Map<Long, Long> refedEntries = FederatedRefedRegistry.snapshot(sbId);
+		if (refedEntries.isEmpty())
+			return false;
+
+		Map<Long, Lop> hopToLop = new HashMap<>();
+		for (Lop lop : lops) {
+			long hopId = lop.getHopID();
+			if (hopId < 0)
+				continue;
+			Lop existing = hopToLop.get(hopId);
+			if (existing == null || lop.getLevel() > existing.getLevel())
+				hopToLop.put(hopId, lop);
+		}
+
+		boolean inserted = false;
+		for (Map.Entry<Long, Long> e : refedEntries.entrySet()) {
+			long hopId = e.getKey();
+			long anchorHopId = e.getValue();
+			Lop local = hopToLop.get(hopId);
+			Lop anchor = hopToLop.get(anchorHopId);
+			if (local == null || anchor == null) {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
+						+ " due to missing lops in current DAG");
+				}
+				continue;
+			}
+
+			boolean alreadyInserted = local.getOutputs().stream()
+				.anyMatch(out -> out instanceof FederatedRefed);
+			if (alreadyInserted)
+				continue;
+
+			FederatedRefed refed = new FederatedRefed(local, anchor, local.getDataType(), local.getValueType());
+			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
+			copyOutputParams(refed.getOutputParameters(), local.getOutputParameters());
+			refed.setFederatedOutput(FederatedOutput.FOUT);
+			addNode(refed);
+			inserted = true;
+
+			List<Lop> outputs = new ArrayList<>(local.getOutputs());
+			int insertPos = -1;
+			for (Lop out : outputs) {
+				if (out == refed)
+					continue;
+				if (out.getExecType() == ExecType.FED) {
+					out.replaceInput(local, refed);
+					local.removeOutput(out);
+					refed.addOutput(out);
+					int idx = lops.indexOf(out);
+					if (idx >= 0 && (insertPos < 0 || idx < insertPos))
+						insertPos = idx;
+				}
+			}
+			if (insertPos >= 0 && !lops.contains(refed))
+				lops.add(insertPos, refed);
+			else if (!lops.contains(refed))
+				lops.add(refed);
+		}
+		return inserted;
+	}
+
+	private boolean insertFoutMaterializeLops(List<Lop> lops, StatementBlock sb) {
+		if (FederatedFoutMaterializeRegistry.isEmpty())
+			return false;
+
+		long sbId = (sb != null) ? sb.getSBID() : -1;
+		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> entries =
+			FederatedFoutMaterializeRegistry.snapshot(sbId);
+		if (entries.isEmpty())
+			return false;
+
+		Map<Long, Lop> hopToLop = new HashMap<>();
+		for (Lop lop : lops) {
+			long hopId = lop.getHopID();
+			if (hopId < 0)
+				continue;
+			Lop existing = hopToLop.get(hopId);
+			if (existing == null || lop.getLevel() > existing.getLevel())
+				hopToLop.put(hopId, lop);
+		}
+
+		boolean inserted = false;
+		for (Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> e : entries.entrySet()) {
+			long hopId = e.getKey();
+			FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
+			Lop local = hopToLop.get(hopId);
+			Lop anchor = hopToLop.get(spec.getAnchorHopId());
+			if (local == null || anchor == null) {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
+						+ spec.getAnchorHopId() + " due to missing lops in current DAG");
+				}
+				continue;
+			}
+
+			boolean alreadyInserted = local.getOutputs().stream()
+				.anyMatch(out -> out instanceof FederatedRefed || out instanceof FederatedFoutMaterialize);
+			if (alreadyInserted)
+				continue;
+
+			FederatedFoutMaterialize fout = new FederatedFoutMaterialize(local, anchor, spec.getFTypeHint());
+			fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
+			copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
+			fout.setFederatedOutput(FederatedOutput.FOUT);
+			addNode(fout);
+			inserted = true;
+
+			List<Lop> outputs = new ArrayList<>(local.getOutputs());
+			int insertPos = -1;
+			for (Lop out : outputs) {
+				if (out == fout)
+					continue;
+				if (out.getExecType() == ExecType.FED) {
+					out.replaceInput(local, fout);
+					local.removeOutput(out);
+					fout.addOutput(out);
+					int idx = lops.indexOf(out);
+					if (idx >= 0 && (insertPos < 0 || idx < insertPos))
+						insertPos = idx;
+				}
+			}
+			if (insertPos >= 0 && !lops.contains(fout))
+				lops.add(insertPos, fout);
+			else if (!lops.contains(fout))
+				lops.add(fout);
+		}
+		return inserted;
+	}
+
+	private static void copyOutputParams(OutputParameters target, OutputParameters source) {
+		target.setDimensions(source.getNumRows(), source.getNumCols(), source.getBlocksize(),
+			source.getNnz(), source.getUpdateType(), source.getCompressedSize());
+		target.setFormat(source.getFormat());
 	}
 	
 	private ArrayList<Instruction> doPlainInstructionGen(StatementBlock sb, List<Lop> nodes)
@@ -784,7 +932,8 @@ public class Dag<N extends Lop>
 		if( !node.isDataExecLocation() ) 
 		{
 			if (node.getDataType() == DataType.SCALAR || node.getDataType() == DataType.LIST) {
-				oparams.setLabel(Lop.SCALAR_VAR_NAME_PREFIX + var_index.getNextID());
+				if (oparams.getLabel() == null)
+					oparams.setLabel(Lop.SCALAR_VAR_NAME_PREFIX + var_index.getNextID());
 				Instruction currInstr = VariableCPInstruction.prepareRemoveInstruction(oparams.getLabel());
 				
 				currInstr.setLocation(node);
@@ -794,8 +943,10 @@ public class Dag<N extends Lop>
 			{
 				// generate temporary filename and a variable name to hold the
 				// output produced by "rootNode"
-				oparams.setFile_name(getNextUniqueFilename());
-				oparams.setLabel(getNextUniqueVarname(node.getDataType()));
+				if (oparams.getFile_name() == null)
+					oparams.setFile_name(getNextUniqueFilename());
+				if (oparams.getLabel() == null)
+					oparams.setLabel(getNextUniqueVarname(node.getDataType()));
 
 				// generate an instruction that creates a symbol table entry for the new variable
 				//String createInst = prepareVariableInstruction("createvar", node);
