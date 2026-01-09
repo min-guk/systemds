@@ -33,12 +33,14 @@ import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
 import org.apache.sysds.runtime.instructions.fed.IndexingFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.MultiReturnParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantilePickFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ReorgFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TernaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.UnaryMatrixFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.VariableFEDInstruction;
 
 public class FEDInstructionParser extends InstructionParser
 {
@@ -94,6 +96,10 @@ public class FEDInstructionParser extends InstructionParser
 				return FEDRefedInstruction.parseInstruction(str);
 			case Fout:
 				return FEDFoutInstruction.parseInstruction(str);
+			case MultiReturnParameterizedBuiltin:
+				return MultiReturnParameterizedBuiltinFEDInstruction.parseInstruction(str);
+			case Variable:
+				return VariableFEDInstruction.parseInstruction(str);
 			default:
 				throw new DMLRuntimeException("Invalid FEDERATED Instruction Type: " + fedtype );
 		}

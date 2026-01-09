@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -58,9 +58,9 @@ WARNING: Using incubator modules: jdk.incubator.vector
 
 Exception: java.lang.AssertionError thrown from the UncaughtExceptionHandler in thread "TestRunner_main"
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest
-25/12/28 11:05:53 INFO fedplanning.FederatedPCAPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-fout.xml
-[Oracle] hop=145 (LiteralOp localhost:34007/target/testTemp/functions/privacy/fedplanning/FederatedPCAPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[147], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
-[Oracle] hop=146 (LiteralOp localhost:37089/target/testTemp/functions/privacy/fedplanning/FederatedPCAPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[147], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+26/01/05 10:30:08 INFO fedplanning.FederatedPCAPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-fout.xml
+[Oracle] hop=145 (LiteralOp localhost:46713/target/testTemp/functions/privacy/fedplanning/FederatedPCAPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[147], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=146 (LiteralOp localhost:35329/target/testTemp/functions/privacy/fedplanning/FederatedPCAPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[147], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=147 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[145, 146], parentIDs=[201], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
 [Oracle] hop=173 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[175, 193], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=175 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[173], parentIDs=[199], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
@@ -122,8 +122,8 @@ java.lang.NullPointerException: Cannot invoke "org.apache.sysds.parser.FunctionD
 	at org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.rRewriteHop(FederatedPlannerFedAll.java:157)
 	at org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.rRewriteStatementBlock(FederatedPlannerFedAll.java:128)
 	at org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.rewriteProgram(FederatedPlannerFedAll.java:71)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:73)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:63)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:75)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:64)
 	at org.apache.sysds.hops.ipa.InterProceduralAnalysis.analyzeProgram(InterProceduralAnalysis.java:240)
 	at org.apache.sysds.parser.DMLTranslator.rewriteHopsDAG(DMLTranslator.java:291)
 	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:464)
@@ -132,7 +132,7 @@ java.lang.NullPointerException: Cannot invoke "org.apache.sysds.parser.FunctionD
 	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
 	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
 	at java.base/java.lang.Thread.run(Thread.java:840)
-25/12/28 11:05:57 ERROR test.AutomatedTestBase: 
+26/01/05 10:30:12 ERROR test.AutomatedTestBase: 
 failed to run script: ./src/test/scripts/functions/privacy/fedplanning/FederatedPCAPlanningTest.dml
 Standard Out:
 java.lang.NullPointerException: Cannot invoke "org.apache.sysds.parser.FunctionDictionary.getFunction(String)" because the return value of "org.apache.sysds.parser.DMLProgram.getFunctionDictionary(String)" is null
@@ -142,8 +142,8 @@ java.lang.NullPointerException: Cannot invoke "org.apache.sysds.parser.FunctionD
 	at org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.rRewriteHop(FederatedPlannerFedAll.java:157)
 	at org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.rRewriteStatementBlock(FederatedPlannerFedAll.java:128)
 	at org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.rewriteProgram(FederatedPlannerFedAll.java:71)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:73)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:63)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:75)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:64)
 	at org.apache.sysds.hops.ipa.InterProceduralAnalysis.analyzeProgram(InterProceduralAnalysis.java:240)
 	at org.apache.sysds.parser.DMLTranslator.rewriteHopsDAG(DMLTranslator.java:291)
 	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:464)
@@ -152,8 +152,8 @@ java.lang.NullPointerException: Cannot invoke "org.apache.sysds.parser.FunctionD
 	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
 	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
 	at java.base/java.lang.Thread.run(Thread.java:840)
-[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.195 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest
-[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest.runPCAFOUTTest  Time elapsed: 5.195 s  <<< FAILURE!
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.091 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest
+[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest.runPCAFOUTTest  Time elapsed: 5.091 s  <<< FAILURE!
 java.lang.AssertionError: test failed
 	at org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest.loadAndRunTest(FederatedPCAPlanningTest.java:140)
 	at org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest.runTestWithConfig(FederatedPCAPlanningTest.java:92)
@@ -170,8 +170,8 @@ java.lang.AssertionError: test failed
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD FAILURE
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  10.656 s
-[INFO] Finished at: 2025-12-28T11:05:58+01:00
+[INFO] Total time:  10.850 s
+[INFO] Finished at: 2026-01-05T10:30:12+01:00
 [INFO] ------------------------------------------------------------------------
 [ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
 [ERROR] 

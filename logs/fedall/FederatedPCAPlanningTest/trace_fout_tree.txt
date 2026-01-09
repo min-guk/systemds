@@ -1,9 +1,9 @@
 Start hop 18 (TRead X) line 92 foutType=ROW exec=FED placement=FOUT
-  |-- [DROP] 18 (TRead X) FED/FOUT/ROW (idx=0) -> 246 (ua(meanC)) CP/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
+  |-- [DROP] 18 (TRead X) FED/FOUT/ROW (idx=0) -> 246 (ua(meanC)) FED/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
   `-- 18 (TRead X) FED/FOUT/ROW (idx=0) -> 256 (b(-)) FED/FOUT/ROW (reason=OK)
-      |-- [DROP] 256 (b(-)) FED/FOUT/ROW (idx=0) -> 255 (ua(sq+C)) CP/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
+      |-- [DROP] 256 (b(-)) FED/FOUT/ROW (idx=0) -> 255 (ua(sq+C)) FED/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
       `-- 256 (b(-)) FED/FOUT/ROW (idx=0) -> 260 (b(/)) FED/FOUT/ROW (reason=OK)
-          |-- [DROP] 260 (b(/)) FED/FOUT/ROW (idx=0) -> 23 (ua(meanC)) CP/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
+          |-- [DROP] 260 (b(/)) FED/FOUT/ROW (idx=0) -> 23 (ua(meanC)) FED/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
           |-- 260 (b(/)) FED/FOUT/ROW (idx=0) -> 25 (r(r')) FED/FOUT/COL (reason=OK)
           |   `-- [DROP] 25 (r(r')) FED/FOUT/COL (idx=0) -> 26 (ba(+*)) FED/LOUT/none (reason=FOUT_NOT_SUPPORTED_BY_RUNTIME)
           |-- [DROP] 260 (b(/)) FED/FOUT/ROW (idx=1) -> 26 (ba(+*)) FED/LOUT/none (reason=FOUT_NOT_SUPPORTED_BY_RUNTIME)
@@ -21,11 +21,11 @@ Start hop 74 (TRead X) line 133 foutType=ROW exec=FED placement=FOUT
       `-- [DROP] 75 (ba(+*)) FED/FOUT/ROW (idx=0) -> 80 (CONTAINS) CP/LOUT/none (reason=NO_RULE)
 
 Start hop 308 (TRead X) line 297 foutType=ROW exec=FED placement=FOUT
-  |-- [DROP] 308 (TRead X) FED/FOUT/ROW (idx=0) -> 494 (ua(meanC)) CP/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
+  |-- [DROP] 308 (TRead X) FED/FOUT/ROW (idx=0) -> 494 (ua(meanC)) FED/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
   `-- 308 (TRead X) FED/FOUT/ROW (idx=0) -> 504 (b(-)) FED/FOUT/ROW (reason=OK)
-      |-- [DROP] 504 (b(-)) FED/FOUT/ROW (idx=0) -> 503 (ua(sq+C)) CP/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
+      |-- [DROP] 504 (b(-)) FED/FOUT/ROW (idx=0) -> 503 (ua(sq+C)) FED/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
       `-- 504 (b(-)) FED/FOUT/ROW (idx=0) -> 508 (b(/)) FED/FOUT/ROW (reason=OK)
-          |-- [DROP] 508 (b(/)) FED/FOUT/ROW (idx=0) -> 313 (ua(meanC)) CP/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
+          |-- [DROP] 508 (b(/)) FED/FOUT/ROW (idx=0) -> 313 (ua(meanC)) FED/LOUT/none (reason=PARTITION_MISMATCH_PART_NOT_SUPPORTED)
           |-- 508 (b(/)) FED/FOUT/ROW (idx=0) -> 315 (r(r')) FED/FOUT/COL (reason=OK)
           |   `-- [DROP] 315 (r(r')) FED/FOUT/COL (idx=0) -> 316 (ba(+*)) FED/LOUT/none (reason=FOUT_NOT_SUPPORTED_BY_RUNTIME)
           |-- [DROP] 508 (b(/)) FED/FOUT/ROW (idx=1) -> 316 (ba(+*)) FED/LOUT/none (reason=FOUT_NOT_SUPPORTED_BY_RUNTIME)

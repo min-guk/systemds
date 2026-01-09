@@ -6,6 +6,7 @@ LOG_ROOT="${LOG_ROOT:-${ROOT_DIR}/logs/fedall}"
 TEST_PKG="org.apache.sysds.test.functions.federated.fedplanning"
 MVN_CMD="${MVN_CMD:-mvn}"
 MVN_ARGS="${MVN_ARGS:-}"
+COMPARE_LOG_FORMATS="${COMPARE_LOG_FORMATS:-hopid,oracle,oracle}"
 
 TEST_MATRIX=(
   "FederatedCNNPlanningTest runCNNFOUTTest runCNNHeuristicTest runCNNCostBasedTestPrivateAggregate"
@@ -66,6 +67,7 @@ run_compare() {
     "$cost_log" \
     "$fedall_log" \
     "$heuristic_log" \
+    --log-formats "$COMPARE_LOG_FORMATS" \
     --format csv \
     --output "$output_path"
 }

@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -56,9 +56,9 @@
 [INFO] -------------------------------------------------------
 WARNING: Using incubator modules: jdk.incubator.vector
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
-25/12/28 11:04:18 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-cost-based.xml
-[Oracle] hop=547 (LiteralOp localhost:37927/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[549], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
-[Oracle] hop=548 (LiteralOp localhost:43251/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[549], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+26/01/05 10:28:31 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-cost-based.xml
+[Oracle] hop=547 (LiteralOp localhost:44265/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[549], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=548 (LiteralOp localhost:35263/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[549], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
 [Oracle] hop=549 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[547, 548], parentIDs=[603], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
 [Oracle] hop=575 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[577, 595, 612], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
 [Oracle] hop=577 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[575], parentIDs=[601], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
@@ -96,40 +96,40 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=620 (PWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[717, 614, 615, 616, 538, 619], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null, null, null, null, null, null], notes=[]
 Additional Cost: 0.0
 [HopID]: ROOT, [Name]: ROOT, [OutputType]: Root, [ChildHopIDs]: (620), [CostInfo]: {TotalCost: 10170810.5}
-[HopID]: 620, [Name]: PWrite B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (717, 614, 615, 616, 538, 615, 619), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 10170810.5, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 717, [Name]: b(solve), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (718, 731), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 10170706.0, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 718, [Name]: b(+), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (722, 719), [ParentHopIDs]: (717), [CostInfo]: {TotalCost: 10045103.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 722, [Name]: r(rdiag), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (735), [ParentHopIDs]: (718), [CostInfo]: {TotalCost: 10103.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 735, [Name]: dg(rand), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (725, 733, 727, 728, 733, 725, 585, 726), [ParentHopIDs]: (722), [CostInfo]: {TotalCost: 103.0, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 725, [Name]: LiteralOp 1.0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 724, 735, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 733, [Name]: LiteralOp 1.0E-7, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (735, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 727, [Name]: LiteralOp uniform, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 728, [Name]: LiteralOp -1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 585, [Name]: LiteralOp 100, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (586, 600, 724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 726, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 724, 724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 719, [Name]: ba(+*), [ExecType]: FED, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (720, 603), [ParentHopIDs]: (718), [CostInfo]: {TotalCost: 10025000.0, SelfCost: 20000000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 720, [Name]: r(r'), [ExecType]: FED, [OutputType]: FOUT, [FType]: COL, [ChildHopIDs]: (603), [ParentHopIDs]: (719, 731), [CostInfo]: {TotalCost: 50000.0, SelfCost: 100000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 603, [Name]: Fed X, [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (), [ParentHopIDs]: (612, 720, 719), [CostInfo]: {TotalCost: 0.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 731, [Name]: ba(+*), [ExecType]: FED, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (543, 720), [ParentHopIDs]: (717), [CostInfo]: {TotalCost: 125503.0, SelfCost: 200000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 543, [Name]: PRead Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (535, 536, 537, 538, 539, 540, 540, 542), [ParentHopIDs]: (612, 731), [CostInfo]: {TotalCost: 1006.0, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 535, [Name]: LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 536, [Name]: LiteralOp double, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 537, [Name]: LiteralOp matrix, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543, 603), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 538, [Name]: LiteralOp text, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543, 620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 539, [Name]: LiteralOp private-aggregate, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 540, [Name]: LiteralOp 1000, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543, 543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 542, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 614, [Name]: LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/out/Z, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 615, [Name]: LiteralOp false, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620, 620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 616, [Name]: LiteralOp :, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
-[HopID]: 619, [Name]: LiteralOp ,, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}
+[HopID]: 620, [Name]: PWrite B, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (717, 614, 615, 616, 538, 615, 619), [ParentHopIDs]: (), [CostInfo]: {TotalCost: 10170810.5, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x1), Blocksize: -1, NNZ: -1}
+[HopID]: 717, [Name]: b(solve), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (718, 731), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 10170706.0, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x1), Blocksize: 1000, NNZ: -1}
+[HopID]: 718, [Name]: b(+), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (722, 719), [ParentHopIDs]: (717), [CostInfo]: {TotalCost: 10045103.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x100), Blocksize: 1000, NNZ: -1}
+[HopID]: 722, [Name]: r(rdiag), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (735), [ParentHopIDs]: (718), [CostInfo]: {TotalCost: 10103.0, SelfCost: 10000.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x100), Blocksize: 1000, NNZ: 100}
+[HopID]: 735, [Name]: dg(rand), [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (725, 733, 727, 728, 733, 725, 585, 726), [ParentHopIDs]: (722), [CostInfo]: {TotalCost: 103.0, SelfCost: 100.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x1), Blocksize: 1000, NNZ: 100}
+[HopID]: 725, [Name]: LiteralOp 1.0, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 724, 735, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 733, [Name]: LiteralOp 1.0E-7, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (735, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (-1x-1), Blocksize: -1, NNZ: -1}
+[HopID]: 727, [Name]: LiteralOp uniform, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 728, [Name]: LiteralOp -1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 585, [Name]: LiteralOp 100, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (586, 600, 724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 726, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (724, 724, 724, 735), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 719, [Name]: ba(+*), [ExecType]: FED, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (720, 603), [ParentHopIDs]: (718), [CostInfo]: {TotalCost: 10025000.0, SelfCost: 20000000.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x100), Blocksize: 1000, NNZ: -1}
+[HopID]: 720, [Name]: r(r'), [ExecType]: FED, [OutputType]: FOUT, [FType]: COL, [ChildHopIDs]: (603), [ParentHopIDs]: (719, 731), [CostInfo]: {TotalCost: 50000.0, SelfCost: 100000.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x1000), Blocksize: 1000, NNZ: -1}
+[HopID]: 603, [Name]: Fed X, [ExecType]: FED, [OutputType]: FOUT, [FType]: ROW, [ChildHopIDs]: (), [ParentHopIDs]: (612, 720, 719), [CostInfo]: {TotalCost: 0.0, SelfCost: 0.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (1000x100), Blocksize: 1000, NNZ: -1}
+[HopID]: 731, [Name]: ba(+*), [ExecType]: FED, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (543, 720), [ParentHopIDs]: (717), [CostInfo]: {TotalCost: 125503.0, SelfCost: 200000.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (100x1), Blocksize: 1000, NNZ: -1}
+[HopID]: 543, [Name]: PRead Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (535, 536, 537, 538, 539, 540, 540, 542), [ParentHopIDs]: (612, 731), [CostInfo]: {TotalCost: 1006.0, SelfCost: 1000.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (1000x1), Blocksize: 1000, NNZ: 1000}
+[HopID]: 535, [Name]: LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/Y, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 536, [Name]: LiteralOp double, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 537, [Name]: LiteralOp matrix, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543, 603), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 538, [Name]: LiteralOp text, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543, 620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 539, [Name]: LiteralOp private-aggregate, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 540, [Name]: LiteralOp 1000, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543, 543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 542, [Name]: LiteralOp 1, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (543), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 614, [Name]: LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/out/Z, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 615, [Name]: LiteralOp false, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620, 620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 616, [Name]: LiteralOp :, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
+[HopID]: 619, [Name]: LiteralOp ,, [ExecType]: CP, [OutputType]: LOUT, [FType]: null, [ChildHopIDs]: (), [ParentHopIDs]: (620), [CostInfo]: {TotalCost: 1.0, SelfCost: 1.0, NetworkCost: 0.0, ComputeWeight: 1.0}, [MatrixInfo]: {Dimensions: (0x0), Blocksize: -1, NNZ: -1}
 SystemDS Statistics:
-Total elapsed time:		2.221 sec.
-Total compilation time:		1.302 sec.
-Total execution time:		0.919 sec.
+Total elapsed time:		2.206 sec.
+Total compilation time:		1.354 sec.
+Total execution time:		0.852 sec.
 Cache hits (Mem/Li/WB/FS/HDFS):	15/0/0/0/3.
 Cache writes (Li/WB/FS/HDFS):	0/6/0/1.
-Cache times (ACQr/m, RLS, EXP):	1.002/0.000/0.003/0.017 sec.
+Cache times (ACQr/m, RLS, EXP):	0.859/0.000/0.003/0.014 sec.
 HOP DAGs recompiled (PRED, SB):	0/0.
 HOP DAGs recompile time:	0.000 sec.
 Federated I/O (Read, Put, Get):	4/2/2.
@@ -139,23 +139,23 @@ Fed Put Bytes (Mat/Frame):	178816/0 Bytes.
 Federated prefetch count:	0.
 Fed LookupTable (Get, Entries):	22/2.
 Fed ReuseRead (Hits, Bytes):	2/0.
-Total JIT compile time:		10.209 sec.
+Total JIT compile time:		7.997 sec.
 Total JVM GC count:		4.
-Total JVM GC time:		0.03 sec.
+Total JVM GC time:		0.034 sec.
 Heavy hitter instructions:
   #  Instruction  Time(s)  Count
-  1  tsmm           1.331      2
-  2  fed_tsmm       0.701      1
-  3  solve          0.052      1
-  4  r'             0.052      2
-  5  ba+*           0.045      2
-  6  fed_ba+*       0.043      1
-  7  fed_fedinit    0.022      1
-  8  +              0.020      1
-  9  write          0.017      1
+  1  tsmm           1.281      2
+  2  fed_tsmm       0.680      1
+  3  solve          0.047      1
+  4  fed_ba+*       0.041      1
+  5  ba+*           0.039      2
+  6  r'             0.022      2
+  7  fed_fedinit    0.020      1
+  8  +              0.017      1
+  9  write          0.014      1
  10  /              0.008      1
 
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.87 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.665 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
 [INFO] 
 [INFO] Results:
 [INFO] 
@@ -164,6 +164,6 @@ Heavy hitter instructions:
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  12.706 s
-[INFO] Finished at: 2025-12-28T11:04:24+01:00
+[INFO] Total time:  12.863 s
+[INFO] Finished at: 2026-01-05T10:28:37+01:00
 [INFO] ------------------------------------------------------------------------

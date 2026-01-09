@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -56,7 +56,7 @@
 [INFO] -------------------------------------------------------
 WARNING: Using incubator modules: jdk.incubator.vector
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedL2SVMPlanningTest
-25/12/28 11:03:06 INFO fedplanning.FederatedL2SVMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-fout.xml
+26/01/05 10:27:16 INFO fedplanning.FederatedL2SVMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-fout.xml
 [Oracle] hop=6 (LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=7 (LiteralOp double), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=8 (LiteralOp matrix), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13, 73], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
@@ -65,8 +65,8 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=12 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=13 (PRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[6, 7, 8, 9, 10, 12], parentIDs=[116, 118, 120, 123, 484], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
 [Oracle] hop=484 (TWrite Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[13], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null], notes=[]
-[Oracle] hop=17 (LiteralOp localhost:40043/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
-[Oracle] hop=18 (LiteralOp localhost:36271/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=17 (LiteralOp localhost:35015/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=18 (LiteralOp localhost:32909/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=19 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[17, 18], parentIDs=[73], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
 [Oracle] hop=45 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[47, 65], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=47 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[45], parentIDs=[71], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
@@ -270,40 +270,86 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=394 (LiteralOp text), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[397], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=396 (LiteralOp ,), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[397], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=397 (PWrite model), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[390, 391, 392, 393, 394, 396], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=1000 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:26
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=999 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:55
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:84
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=998 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:113
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:142
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:165
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:188
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:211
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:234
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:257
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:280
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:303
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:326
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:349
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:372
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:395
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:418
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:441
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:464
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:487
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:510
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:533
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
+FED reorg input check: op=r' in=_mVar217 out=_mVar218 fedOut=NONE federated=true dims=[1000 x 1, nnz=997 (false), blocks (1000 x 1000)] fedMap=Fed Map: ROW	 ID:556
+[([0, 0] - [500, 1],FederatedData MATRIX localhost/127.0.0.1:35015:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), ([500, 0] - [1000, 1],FederatedData MATRIX localhost/127.0.0.1:32909:target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2)] inst=FED°r'°_mVar217·MATRIX·FP64°_mVar218·MATRIX·FP64°48°NONE
 SystemDS Statistics:
-Total elapsed time:		3.598 sec.
-Total compilation time:		0.890 sec.
-Total execution time:		2.707 sec.
+Total elapsed time:		3.608 sec.
+Total compilation time:		0.886 sec.
+Total execution time:		2.721 sec.
 Cache hits (Mem/Li/WB/FS/HDFS):	2545/0/0/0/3.
 Cache writes (Li/WB/FS/HDFS):	0/0/0/1.
-Cache times (ACQr/m, RLS, EXP):	0.930/0.006/0.012/0.017 sec.
+Cache times (ACQr/m, RLS, EXP):	1.001/0.006/0.011/0.018 sec.
 HOP DAGs recompiled (PRED, SB):	0/0.
-HOP DAGs recompile time:	0.005 sec.
+HOP DAGs recompile time:	0.004 sec.
 Functions recompiled:		1.
-Functions recompile time:	0.020 sec.
+Functions recompile time:	0.030 sec.
 Federated I/O (Read, Put, Get):	2/319/243.
-Federated Execute (Inst, UDF):	894/0.
+Federated Execute (Inst, UDF):	871/0.
 Fed Put Count (Sc/Li/Ma/Fr/MC):	100/0/709/0/288.
 Fed Put Bytes (Mat/Frame):	2336584/0 Bytes.
 Federated prefetch count:	0.
-Fed LookupTable (Get, Entries):	2568/2.
-Total JIT compile time:		21.19 sec.
+Fed LookupTable (Get, Entries):	2522/2.
+Total JIT compile time:		19.415 sec.
 Total JVM GC count:		4.
 Total JVM GC time:		0.034 sec.
 Heavy hitter instructions:
   #  Instruction  Time(s)  Count
-  1  ba+*           0.885    140
-  2  fed_ba+*       0.610     47
-  3  rmvar          0.311   2389
-  4  fed_+*         0.234     73
-  5  fed_1-*        0.232     73
-  6  tak+*          0.209    150
-  7  fed_fedinit    0.187      1
-  8  uamin          0.186      1
-  9  fed_max        0.186     73
- 10  fed_tak+*      0.155     50
+  1  ba+*           1.029    140
+  2  fed_ba+*       0.679     47
+  3  rmvar          0.274   2343
+  4  fed_1-*        0.239     73
+  5  fed_+*         0.236     73
+  6  tak+*          0.207    150
+  7  fed_max        0.188     73
+  8  uamin          0.185      1
+  9  fed_fedinit    0.169      1
+ 10  fed_tak+*      0.142     50
 
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.926 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedL2SVMPlanningTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.961 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedL2SVMPlanningTest
 [INFO] 
 [INFO] Results:
 [INFO] 
@@ -312,6 +358,6 @@ Heavy hitter instructions:
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  14.919 s
-[INFO] Finished at: 2025-12-28T11:03:13+01:00
+[INFO] Total time:  13.416 s
+[INFO] Finished at: 2026-01-05T10:27:24+01:00
 [INFO] ------------------------------------------------------------------------

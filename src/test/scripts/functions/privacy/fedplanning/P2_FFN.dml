@@ -68,7 +68,7 @@ outFilter_test = (Xtest_raw < lowerBound_test) | (Xtest_raw > upperBound_test);
 Xtest_clipped = Xtest_raw - outFilter_test*Xtest_raw + outFilter_test*colMeans(Xtest_raw);
 
 # Apply same scaling to test data (using training data statistics)
-Xtest = scale(X=Xtest_clipped, center=colMean, scale=colSD);
+Xtest = scaleApply(X=Xtest_clipped, Centering=colMean, ScaleFactor=colSD);
 
 ytest = federated(addresses=list($y_test1, $y_test2),
     ranges=list(list(0, 0), list($r / 2, 1), list($r / 2, 0), list($r, 1)));

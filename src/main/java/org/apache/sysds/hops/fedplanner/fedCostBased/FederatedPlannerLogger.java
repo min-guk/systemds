@@ -662,8 +662,12 @@ public class FederatedPlannerLogger {
         for (int i = 0; i < childFedPlanPairs.size(); i++) {
             Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair = childFedPlanPairs.get(i);
             FederatedMemoTable.FedPlanVariants childVariants = memoTable.getFedPlanVariants(childFedPlanPair);
-            if (childVariants == null || childVariants.isEmpty())
+            if (childVariants == null || childVariants.isEmpty()) {
+                System.err.println("[WARN] Missing child FedPlan variants for hop "
+                    + childFedPlanPair.getLeft()
+                    + " (output=" + childFedPlanPair.getRight() + ")");
                 continue;
+            }
 
             for (FederatedMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
                 printNotReferencedFedPlanRecursive(childPlan, memoTable, visited, depth + 1, onlyEdge);
@@ -701,8 +705,12 @@ public class FederatedPlannerLogger {
         for (int i = 0; i < childFedPlanPairs.size(); i++) {
             Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair = childFedPlanPairs.get(i);
             FederatedMemoTable.FedPlanVariants childVariants = memoTable.getFedPlanVariants(childFedPlanPair);
-            if (childVariants == null || childVariants.isEmpty())
+            if (childVariants == null || childVariants.isEmpty()) {
+                System.err.println("[WARN] Missing child FedPlan variants for hop "
+                    + childFedPlanPair.getLeft()
+                    + " (output=" + childFedPlanPair.getRight() + ")");
                 continue;
+            }
 
             for (FederatedMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
                 printFedPlanTreeRecursive(childPlan, memoTable, visited, depth + 1, onlyEdge);

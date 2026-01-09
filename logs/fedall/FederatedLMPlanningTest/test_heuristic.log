@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -56,9 +56,9 @@
 [INFO] -------------------------------------------------------
 WARNING: Using incubator modules: jdk.incubator.vector
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
-25/12/28 11:04:04 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-heuristic.xml
-[Oracle] hop=546 (LiteralOp localhost:38381/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
-[Oracle] hop=547 (LiteralOp localhost:38839/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+26/01/05 10:28:17 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-heuristic.xml
+[Oracle] hop=546 (LiteralOp localhost:44305/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=547 (LiteralOp localhost:34221/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=548 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[546, 547], parentIDs=[602], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
 [Oracle] hop=574 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[576, 594, 611], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=576 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[574], parentIDs=[600], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
@@ -95,12 +95,12 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=618 (LiteralOp ,), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=619 (PWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[716, 613, 614, 615, 538, 618], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
 SystemDS Statistics:
-Total elapsed time:		1.884 sec.
-Total compilation time:		0.909 sec.
-Total execution time:		0.974 sec.
+Total elapsed time:		1.898 sec.
+Total compilation time:		0.937 sec.
+Total execution time:		0.961 sec.
 Cache hits (Mem/Li/WB/FS/HDFS):	15/0/0/0/3.
 Cache writes (Li/WB/FS/HDFS):	0/6/0/1.
-Cache times (ACQr/m, RLS, EXP):	0.845/0.000/0.003/0.014 sec.
+Cache times (ACQr/m, RLS, EXP):	0.757/0.000/0.003/0.013 sec.
 HOP DAGs recompiled (PRED, SB):	0/0.
 HOP DAGs recompile time:	0.000 sec.
 Federated I/O (Read, Put, Get):	2/2/2.
@@ -109,23 +109,23 @@ Fed Put Count (Sc/Li/Ma/Fr/MC):	0/0/8/0/0.
 Fed Put Bytes (Mat/Frame):	178816/0 Bytes.
 Federated prefetch count:	0.
 Fed LookupTable (Get, Entries):	18/2.
-Total JIT compile time:		7.748 sec.
+Total JIT compile time:		8.034 sec.
 Total JVM GC count:		4.
-Total JVM GC time:		0.032 sec.
+Total JVM GC time:		0.033 sec.
 Heavy hitter instructions:
   #  Instruction  Time(s)  Count
-  1  tsmm           1.196      2
+  1  tsmm           1.187      2
   2  fed_tsmm       0.642      1
-  3  fed_fedinit    0.194      1
-  4  solve          0.044      1
-  5  fed_ba+*       0.028      1
-  6  r'             0.021      2
-  7  +              0.018      1
-  8  write          0.014      1
+  3  fed_fedinit    0.178      1
+  4  solve          0.041      1
+  5  r'             0.035      2
+  6  fed_ba+*       0.025      1
+  7  +              0.017      1
+  8  write          0.013      1
   9  /              0.008      1
- 10  ba+*           0.006      2
+ 10  ba+*           0.007      2
 
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.224 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.279 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
 [INFO] 
 [INFO] Results:
 [INFO] 
@@ -134,6 +134,6 @@ Heavy hitter instructions:
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  11.529 s
-[INFO] Finished at: 2025-12-28T11:04:10+01:00
+[INFO] Total time:  11.884 s
+[INFO] Finished at: 2026-01-05T10:28:22+01:00
 [INFO] ------------------------------------------------------------------------

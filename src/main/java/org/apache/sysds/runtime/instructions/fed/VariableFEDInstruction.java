@@ -39,6 +39,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
+import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction.VariableOperationCode;
@@ -73,6 +74,12 @@ public class VariableFEDInstruction extends FEDInstruction implements LineageTra
 	}
 
 	private static VariableFEDInstruction parseInstruction(VariableCPInstruction cpInstruction) {
+		return new VariableFEDInstruction(cpInstruction);
+	}
+
+	public static VariableFEDInstruction parseInstruction(String str) {
+		String cleaned = InstructionUtils.removeFEDOutputFlag(str);
+		VariableCPInstruction cpInstruction = VariableCPInstruction.parseInstruction(cleaned);
 		return new VariableFEDInstruction(cpInstruction);
 	}
 

@@ -27,6 +27,7 @@ PREFERRED_OUTPUT_FIELDS = [
 ]
 ORACLE_RE = re.compile(r"\[Oracle\]\s+hop=(\d+)\s+\((.*?)\),\s*(.*)$")
 KEY_RE = re.compile(r"\b([A-Za-z_]+)=")
+BRACKET_KEY_RE = re.compile(r"\[(?P<key>[A-Za-z0-9_]+)\]:")
 
 
 @dataclass
@@ -51,6 +52,31 @@ def parse_kv(kv_str: str) -> Dict[str, str]:
     return values
 
 
+def parse_bracket_kv(line: str) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    matches = list(BRACKET_KEY_RE.finditer(line))
+    for idx, match in enumerate(matches):
+        key = match.group("key")
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(line)
+        value = line[start:end].strip()
+        if value.endswith(","):
+            value = value[:-1].rstrip()
+        values[key] = value
+    return values
+
+
+def normalize_hop_id_list(value: str) -> str:
+    text = value.strip()
+    if not (text.startswith("(") and text.endswith(")")):
+        return text
+    inner = text[1:-1].strip()
+    if not inner:
+        return "[]"
+    items = [item.strip() for item in inner.split(",") if item.strip()]
+    return "[" + ", ".join(items) + "]"
+
+
 def parse_oracle_lines(path: Path) -> Dict[int, List[OracleEntry]]:
     by_hop: Dict[int, List[OracleEntry]] = {}
     with path.open("r", errors="replace") as handle:
@@ -69,8 +95,52 @@ def parse_oracle_lines(path: Path) -> Dict[int, List[OracleEntry]]:
     return by_hop
 
 
+def parse_hopid_lines(path: Path) -> Dict[int, List[OracleEntry]]:
+    by_hop: Dict[int, List[OracleEntry]] = {}
+    with path.open("r", errors="replace") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            if "[HopID]:" not in line:
+                continue
+            raw_fields = parse_bracket_kv(line.rstrip())
+            hop_id_raw = raw_fields.get("HopID")
+            if not hop_id_raw:
+                continue
+            try:
+                hop_id = int(hop_id_raw)
+            except ValueError:
+                continue
+            op = raw_fields.get("Name", "").strip()
+            fields: Dict[str, str] = {}
+            exec_type = raw_fields.get("ExecType")
+            if exec_type:
+                fields["exec"] = exec_type
+            placement = raw_fields.get("OutputType") or raw_fields.get("FOutType")
+            if placement:
+                fields["placement"] = placement
+            fout_type = raw_fields.get("FType")
+            if fout_type:
+                fields["foutType"] = fout_type
+            child_ids = raw_fields.get("ChildHopIDs")
+            if child_ids is not None:
+                fields["childIDs"] = normalize_hop_id_list(child_ids)
+            parent_ids = raw_fields.get("ParentHopIDs")
+            if parent_ids is not None:
+                fields["parentIDs"] = normalize_hop_id_list(parent_ids)
+            entry = OracleEntry(hop_id=hop_id, op=op, fields=fields, line_no=line_no)
+            by_hop.setdefault(hop_id, []).append(entry)
+    return by_hop
+
+
 def decision_signature(entry: OracleEntry, fields: Sequence[str]) -> Tuple[str, ...]:
-    return tuple(entry.fields.get(field, "<missing>") for field in fields)
+    return tuple(normalize_field_value(entry.fields.get(field, "<missing>")) for field in fields)
+
+
+def normalize_field_value(value: str) -> str:
+    text = value.strip()
+    lowered = text.lower()
+    if lowered in ("null", "none"):
+        return "null"
+    return text
 
 
 def unique_entries(
@@ -136,8 +206,8 @@ def choose_display_names(paths: Sequence[Path]) -> List[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare Oracle decisions across logs and show hops with different "
-            "decisions."
+            "Compare federated plan decisions across logs and show hops with "
+            "different decisions."
         )
     )
     parser.add_argument(
@@ -149,6 +219,19 @@ def parse_args() -> argparse.Namespace:
         "--fields",
         default=",".join(DEFAULT_FIELDS),
         help="Comma-separated decision fields to compare.",
+    )
+    parser.add_argument(
+        "--log-format",
+        choices=("oracle", "hopid"),
+        default="oracle",
+        help="Log format to parse for all logs (default: oracle).",
+    )
+    parser.add_argument(
+        "--log-formats",
+        help=(
+            "Comma-separated log formats per log file, e.g. 'hopid,oracle,oracle'. "
+            "Overrides --log-format."
+        ),
     )
     parser.add_argument(
         "--compare-op",
@@ -208,9 +291,19 @@ def main() -> int:
 
     fields = [field.strip() for field in args.fields.split(",") if field.strip()]
     display_names = choose_display_names(log_paths)
+    if args.log_formats:
+        log_formats = [item.strip() for item in args.log_formats.split(",") if item.strip()]
+        if len(log_formats) != len(log_paths):
+            raise SystemExit(
+                "Expected log format count to match logs "
+                f"({len(log_paths)}), got {len(log_formats)}."
+            )
+    else:
+        log_formats = [args.log_format] * len(log_paths)
     per_file: Dict[str, Dict[int, List[OracleEntry]]] = {}
-    for path, name in zip(log_paths, display_names):
-        per_file[name] = parse_oracle_lines(path)
+    for path, name, log_format in zip(log_paths, display_names, log_formats):
+        parser = parse_oracle_lines if log_format == "oracle" else parse_hopid_lines
+        per_file[name] = parser(path)
 
     all_keys = {
         key

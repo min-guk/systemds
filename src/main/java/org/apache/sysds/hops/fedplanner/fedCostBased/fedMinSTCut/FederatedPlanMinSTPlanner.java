@@ -288,10 +288,8 @@ public final class FederatedPlanMinSTPlanner {
 						}
 						graph.addTransReadWriteConsistencyEdges(twVertex, twId, childVertex, childHop.getHopID());
 					}
-					graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
-				} else {
-					graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
 				}
+				graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
 			}
 		}
 
@@ -318,6 +316,7 @@ public final class FederatedPlanMinSTPlanner {
 
 			double opCost = computeOpCost(hop);
 			opCostWithWeight = vertex.getOpWeight() * opCost;
+			// Todo: FType에 따라서 netCostWithoutWeight 계산 방식 다르게 하는 것이 맞는 지 확인해야함
 			netCostWithoutWeight = computeRefedNetworkCost(
 					hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
 
@@ -807,6 +806,15 @@ public final class FederatedPlanMinSTPlanner {
 			return caps;
 		}
 
+		if (hopIsPrintOrPWrite(hop)) {
+			caps.allowCP_LOUT = true;
+			caps.allowCP_FOUT = false;
+			caps.allowFED_LOUT = false;
+			caps.allowFED_FOUT = false;
+
+			return caps;
+		}
+
 		// 1) Oracle 힌트 해석 (DP enumerateHop와 동일한 제약)
 		ExecType oracleExec;
 		FederatedOutput placement;
@@ -822,27 +830,14 @@ public final class FederatedPlanMinSTPlanner {
 
 		// 2) Oracle × Privacy 매트릭스를 DP enumerateHop에서 그대로 옮김
 		switch (privacy) {
-			case PUBLIC:
-				// CP/LOUT: 항상 허용 (DP에서 무조건 플랜 생성)
-				caps.allowCP_LOUT = true;
-				caps.allowCP_FOUT = true;
-
-				if (oracleExec == ExecType.FED) {
-					// FED/FOUT: placement == FOUT 일 때만
-					// Todo:
-					if (placement == FederatedOutput.FOUT) {
-						caps.allowFED_FOUT = true;
-					}
-					// FED/LOUT: placement와 무관하게 허용 (FED 실행 후 gather)
-					caps.allowFED_LOUT = true;
-				}
-				break;
-
 			case PRIVATE:
 			case PRIVATE_AGGREGATE:
 				// FED/FOUT only (oracleExec == FED && placement == FOUT)
 				if (oracleExec == ExecType.FED && placement == FederatedOutput.FOUT) {
 					caps.allowFED_FOUT = true;
+				} else {
+					throw new DMLRuntimeException("Unsupported privacy level " + privacy
+							+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
 				}
 				break;
 
@@ -854,40 +849,42 @@ public final class FederatedPlanMinSTPlanner {
 					}
 					// aggregation 이후 FED/LOUT 허용
 					caps.allowFED_LOUT = true;
+				} else {
+					throw new DMLRuntimeException("Unsupported privacy level " + privacy
+							+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
 				}
 				break;
+			case PUBLIC:
+				if (oracleExec == ExecType.FED) {
+					// FED/FOUT: placement == FOUT 일 때만
+					if (placement == FederatedOutput.FOUT) {
+						caps.allowFED_FOUT = true;
+					}
+					// FED/LOUT: placement와 무관하게 허용 (FED 실행 후 gather)
+					caps.allowFED_LOUT = true;
+				}
 
+				if (hop.getDataType().isMatrix() && fType != null
+						&& fType != FType.PART && fType != FType.OTHER) {
+					caps.allowCP_FOUT = true;
+				}
+
+				// CP/LOUT: 항상 허용 (DP에서 무조건 플랜 생성)
+				caps.allowCP_LOUT = true;
+				break;
 			default:
 				throw new DMLRuntimeException("Unsupported privacy level " + privacy
 						+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
-		}
-
-		// // 4) FType 정보가 없으면 FED는 사용 불가 (MinST 고유 제약)
-		// if (fType == null) {
-		// caps.allowFED_LOUT = false;
-		// caps.allowFED_FOUT = false;
-		// }
-
-		// 5) scalar / PRINT / PWRITE override
-		// - PUBLIC 에서만 CP/LOUT로 강제
-		// - PRIVATE 계열은 DP 매트릭스 + privacy 필터 결과를 그대로 사용 (override X)
-		if (hopIsPrintOrPWrite(hop)) {
-			caps.allowCP_LOUT = true;
-			caps.allowCP_FOUT = false;
-			caps.allowFED_LOUT = false;
-			caps.allowFED_FOUT = false;
 		}
 
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 		}
-
 		return caps;
 	}
 
 	public static class FederatedPlanMinSTRewire {
-
 		private static final double DEFAULT_LOOP_WEIGHT = 10.0;
 		private static final double DEFAULT_IF_ELSE_WEIGHT = 0.5;
 
@@ -1239,15 +1236,10 @@ public final class FederatedPlanMinSTPlanner {
 				OracleFacade oracleFacade) {
 
 			Privacy privacy;
-			FType fType = null; // ★ 기본은 null, Oracle이 채우도록
-
+			FType fType = null;
 			ExecPlacementCaps caps;
 
-			if (!(hop instanceof DataOp)) {
-				// 1) 비-DataOp: privacy만 전파, FType은 Oracle 결과로만 결정
-				privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
-				// fType은 여기서 추론하지 않는다 (getFederatedType 제거)
-			} else {
+			if (hop instanceof DataOp) {
 				DataOp dataOp = (DataOp) hop;
 				Types.OpOpData opType = dataOp.getOp();
 				String hopName = dataOp.getName();
@@ -1322,8 +1314,9 @@ public final class FederatedPlanMinSTPlanner {
 				} else {
 					// 5) 기타 DataOp (PREAD, PWRITE 등): privacy만, FType은 Oracle에 맡김
 					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
-					// fType = null 유지 (getFederatedType 제거)
 				}
+			} else {
+				privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
 			}
 
 			// ==== 여기서부터는 모든 Hop(비 DataOp + DataOp 공통) 처리 ====
@@ -1359,9 +1352,6 @@ public final class FederatedPlanMinSTPlanner {
 
 			// Exec/Placement capability 결정
 			caps = buildExecPlacementCaps(hop, privacy, fType, opCaps);
-			if (!hop.getDataType().isMatrix() || fType == null || fType == FType.PART || fType == FType.OTHER) {
-				caps.allowCP_FOUT = false;
-			}
 
 			// 최종 privacy/FType 저장
 			privacyConstraintMap.put(hop.getHopID(), privacy);

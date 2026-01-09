@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -58,15 +58,15 @@ WARNING: Using incubator modules: jdk.incubator.vector
 
 Exception: java.lang.AssertionError thrown from the UncaughtExceptionHandler in thread "TestRunner_main"
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest
-25/12/28 11:05:40 INFO fedplanning.FederatedP2FFNPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-cost-based.xml
+26/01/05 10:29:55 INFO fedplanning.FederatedP2FFNPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-cost-based.xml
 [RewireTransHop] (hopName: X0, hopID: 120) child hops is empty
 [RewireTransHop] (hopName: center, hopID: 20) filtered child hops is empty
 [RewireTransHop] (hopName: scale, hopID: 30) filtered child hops is empty
 [RewireTransHop] (hopName: X, hopID: 205) filtered child hops is empty
 [RewireTransHop] (hopName: Xtest0, hopID: 276) child hops is empty
 [RewireTransHop] (hopName: Xtest, hopID: 300) child hops is empty
-[Oracle] hop=54 (LiteralOp localhost:46161/target/testTemp/functions/privacy/fedplanning/FederatedP2FFNPlanningTest/in/features1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
-[Oracle] hop=55 (LiteralOp localhost:38687/target/testTemp/functions/privacy/fedplanning/FederatedP2FFNPlanningTest/in/features2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=54 (LiteralOp localhost:37037/target/testTemp/functions/privacy/fedplanning/FederatedP2FFNPlanningTest/in/features1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
+[Oracle] hop=55 (LiteralOp localhost:40203/target/testTemp/functions/privacy/fedplanning/FederatedP2FFNPlanningTest/in/features2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[56], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
 [Oracle] hop=56 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[54, 55], parentIDs=[110], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
 [Oracle] hop=82 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[84, 102], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[], notes=[]
 [Oracle] hop=84 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[82], parentIDs=[108], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
@@ -100,16 +100,16 @@ Exception: java.lang.AssertionError thrown from the UncaughtExceptionHandler in 
 [Oracle] hop=199 (b(+)), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[196, 198], parentIDs=[200], rewireChildIDs=[], rewireParentIDs=[], privacy=PUBLIC, inputs=[null, null], notes=[]
 [Oracle] hop=200 (TWrite X), exec=CP, placement=LOUT, foutType=none, reason=NO_FED_INPUT, childIDs=[199], parentIDs=[201], rewireChildIDs=[], rewireParentIDs=[201], privacy=PUBLIC, inputs=[null], notes=[]
 org.apache.sysds.runtime.DMLRuntimeException: Missing LOUT federated plan for child hop 201 (TRead X) while processing parent 22 (TRead X)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEstimator.getChildCosts(FederatedPlannerFedCostBased.java:1233)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHop(FederatedPlannerFedCostBased.java:529)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:462)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateStatementBlock(FederatedPlannerFedCostBased.java:390)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateProgram(FederatedPlannerFedCostBased.java:267)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.rewriteProgram(FederatedPlannerFedCostBased.java:102)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:73)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:63)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEstimator.getChildCosts(FederatedPlannerFedCostBased.java:1198)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHop(FederatedPlannerFedCostBased.java:546)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:476)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:439)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:439)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateStatementBlock(FederatedPlannerFedCostBased.java:406)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateProgram(FederatedPlannerFedCostBased.java:274)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.rewriteProgram(FederatedPlannerFedCostBased.java:101)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:75)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:64)
 	at org.apache.sysds.hops.ipa.InterProceduralAnalysis.analyzeProgram(InterProceduralAnalysis.java:240)
 	at org.apache.sysds.parser.DMLTranslator.rewriteHopsDAG(DMLTranslator.java:291)
 	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:464)
@@ -118,20 +118,20 @@ org.apache.sysds.runtime.DMLRuntimeException: Missing LOUT federated plan for ch
 	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
 	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
 	at java.base/java.lang.Thread.run(Thread.java:840)
-25/12/28 11:05:44 ERROR test.AutomatedTestBase: 
+26/01/05 10:29:59 ERROR test.AutomatedTestBase: 
 failed to run script: ./src/test/scripts/functions/privacy/fedplanning/P2_FFN.dml
 Standard Out:
 org.apache.sysds.runtime.DMLRuntimeException: Missing LOUT federated plan for child hop 201 (TRead X) while processing parent 22 (TRead X)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEstimator.getChildCosts(FederatedPlannerFedCostBased.java:1233)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHop(FederatedPlannerFedCostBased.java:529)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:462)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:423)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateStatementBlock(FederatedPlannerFedCostBased.java:390)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateProgram(FederatedPlannerFedCostBased.java:267)
-	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.rewriteProgram(FederatedPlannerFedCostBased.java:102)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:73)
-	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:63)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEstimator.getChildCosts(FederatedPlannerFedCostBased.java:1198)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHop(FederatedPlannerFedCostBased.java:546)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:476)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:439)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateHopDAG(FederatedPlannerFedCostBased.java:439)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateStatementBlock(FederatedPlannerFedCostBased.java:406)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased$FederatedPlanCostEnumerator.enumerateProgram(FederatedPlannerFedCostBased.java:274)
+	at org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.rewriteProgram(FederatedPlannerFedCostBased.java:101)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.generatePlan(IPAPassRewriteFederatedPlan.java:75)
+	at org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan.rewriteProgram(IPAPassRewriteFederatedPlan.java:64)
 	at org.apache.sysds.hops.ipa.InterProceduralAnalysis.analyzeProgram(InterProceduralAnalysis.java:240)
 	at org.apache.sysds.parser.DMLTranslator.rewriteHopsDAG(DMLTranslator.java:291)
 	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:464)
@@ -140,8 +140,8 @@ org.apache.sysds.runtime.DMLRuntimeException: Missing LOUT federated plan for ch
 	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
 	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
 	at java.base/java.lang.Thread.run(Thread.java:840)
-[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.657 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest
-[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.runP2FFNCostBasedTestPrivateAggregate  Time elapsed: 5.657 s  <<< FAILURE!
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 5.433 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest
+[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.runP2FFNCostBasedTestPrivateAggregate  Time elapsed: 5.433 s  <<< FAILURE!
 java.lang.AssertionError: test failed
 	at org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.loadAndRunTest(FederatedP2FFNPlanningTest.java:200)
 	at org.apache.sysds.test.functions.federated.fedplanning.FederatedP2FFNPlanningTest.runTestWithConfig(FederatedP2FFNPlanningTest.java:95)
@@ -158,8 +158,8 @@ java.lang.AssertionError: test failed
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD FAILURE
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  11.349 s
-[INFO] Finished at: 2025-12-28T11:05:45+01:00
+[INFO] Total time:  11.526 s
+[INFO] Finished at: 2026-01-05T10:30:00+01:00
 [INFO] ------------------------------------------------------------------------
 [ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
 [ERROR] 

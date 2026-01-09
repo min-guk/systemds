@@ -3870,6 +3870,38 @@ public final class Rulesets {
     }
   }
 
+  /** Function output acts as a pass-through for federated values. */
+  public static final class FunctionOutputRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(OpOpData.FUNCTIONOUTPUT.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      return primaryLikeProfile(inFTypeCandidates);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      FType in = typeAt(inFTypes, 0);
+      if (isFederatedLike(in))
+        return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
+      if (in == FType.FULL || in == FType.PART)
+        return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
+
+      if (attrBoolean(sig, ATTR_VAR_WRITE_FED))
+        return fedLocalWithDetail(sig, ReasonCode.OK, FED_WRITE_DETAIL);
+
+      return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+    }
+  }
+
   /** Transient read forwards the underlying value's federated layout. */
   public static final class TransientReadRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(OpOpData.TRANSIENTREAD.toString());

@@ -32,6 +32,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.compress.SingletonLookupHashMap;
 import org.apache.sysds.runtime.controlprogram.Program;
 import org.apache.sysds.runtime.controlprogram.parfor.opt.CostEstimatorHops;
@@ -398,6 +399,18 @@ public class FunctionOp extends MultiThreadedHop
 		checkAndSetForcedPlatform();
 		
 		if ( getFunctionType() == FunctionType.MULTIRETURN_BUILTIN ) {
+			if (getOutputs() != null) {
+				for (Hop output : getOutputs()) {
+					if (output != null && output.getFederatedOutput() == FederatedOutput.FOUT) {
+						_etype = ExecType.FED;
+						return _etype;
+					}
+				}
+			}
+			if (_etypeForced != null) {
+				_etype = _etypeForced;
+				return _etype;
+			}
 			boolean isBuiltinFunction = isBuiltinFunction();
 			// check if there is sufficient memory to execute this function
 			double mem = getMemEstimate(); // obtain memory estimates for all (e.g., used in parfor)

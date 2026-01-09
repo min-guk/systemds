@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -56,7 +56,7 @@
 [INFO] -------------------------------------------------------
 WARNING: Using incubator modules: jdk.incubator.vector
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedL2SVMPlanningTest
-25/12/28 11:03:21 INFO fedplanning.FederatedL2SVMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-heuristic.xml
+26/01/05 10:27:33 INFO fedplanning.FederatedL2SVMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-heuristic.xml
 [Oracle] hop=6 (LiteralOp target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=7 (LiteralOp double), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=8 (LiteralOp matrix), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13, 73], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
@@ -65,8 +65,8 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=12 (LiteralOp 1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[13], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=13 (PRead Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[6, 7, 8, 9, 10, 12], parentIDs=[116, 118, 120, 123, 484], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
 [Oracle] hop=484 (TWrite Y), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[13], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null], notes=[]
-[Oracle] hop=17 (LiteralOp localhost:46035/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
-[Oracle] hop=18 (LiteralOp localhost:34659/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=17 (LiteralOp localhost:41985/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=18 (LiteralOp localhost:37749/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[19], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=19 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[17, 18], parentIDs=[73], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
 [Oracle] hop=45 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[47, 65], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=47 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[45], parentIDs=[71], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
@@ -271,39 +271,39 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=396 (LiteralOp ,), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[397], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=397 (PWrite model), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[390, 391, 392, 393, 394, 396], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
 SystemDS Statistics:
-Total elapsed time:		2.318 sec.
-Total compilation time:		0.876 sec.
-Total execution time:		1.443 sec.
+Total elapsed time:		2.404 sec.
+Total compilation time:		0.884 sec.
+Total execution time:		1.520 sec.
 Cache hits (Mem/Li/WB/FS/HDFS):	1739/0/0/0/3.
 Cache writes (Li/WB/FS/HDFS):	0/0/0/1.
-Cache times (ACQr/m, RLS, EXP):	0.691/0.003/0.006/0.019 sec.
+Cache times (ACQr/m, RLS, EXP):	0.632/0.004/0.007/0.016 sec.
 HOP DAGs recompiled (PRED, SB):	0/0.
 HOP DAGs recompile time:	0.001 sec.
 Functions recompiled:		1.
-Functions recompile time:	0.022 sec.
+Functions recompile time:	0.030 sec.
 Federated I/O (Read, Put, Get):	2/71/47.
-Federated Execute (Inst, UDF):	118/0.
+Federated Execute (Inst, UDF):	95/0.
 Fed Put Count (Sc/Li/Ma/Fr/MC):	0/0/259/0/0.
 Fed Put Bytes (Mat/Frame):	700968/0 Bytes.
 Federated prefetch count:	0.
-Fed LookupTable (Get, Entries):	426/2.
-Total JIT compile time:		8.269 sec.
+Fed LookupTable (Get, Entries):	380/2.
+Total JIT compile time:		8.439 sec.
 Total JVM GC count:		4.
-Total JVM GC time:		0.034 sec.
+Total JVM GC time:		0.035 sec.
 Heavy hitter instructions:
   #  Instruction  Time(s)  Count
-  1  fed_ba+*       0.834     47
-  2  ba+*           0.774    140
-  3  uamin          0.202      1
-  4  fed_fedinit    0.190      1
-  5  rmvar          0.045   1613
-  6  write          0.019      1
-  7  +*             0.018    119
-  8  1-*            0.014     73
-  9  r'             0.013     94
- 10  tak+*          0.013    100
+  1  fed_ba+*       0.947     47
+  2  ba+*           0.872    140
+  3  uamin          0.201      1
+  4  fed_fedinit    0.171      1
+  5  +*             0.020    119
+  6  write          0.016      1
+  7  1-*            0.015     73
+  8  tak+*          0.015    100
+  9  r'             0.014     94
+ 10  createvar      0.010    692
 
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.782 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedL2SVMPlanningTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.734 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedL2SVMPlanningTest
 [INFO] 
 [INFO] Results:
 [INFO] 
@@ -312,6 +312,6 @@ Heavy hitter instructions:
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  12.371 s
-[INFO] Finished at: 2025-12-28T11:03:27+01:00
+[INFO] Total time:  13.957 s
+[INFO] Finished at: 2026-01-05T10:27:39+01:00
 [INFO] ------------------------------------------------------------------------

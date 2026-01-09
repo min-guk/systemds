@@ -1,418 +1,403 @@
-hop,file,op,line,exec,placement,foutType,reason,childIDs,parentIDs,rewireChildIDs,rewireParentIDs,privacy,inputs,notes,guardDefaultIfUnknown
-11,test_cost.log,LiteralOp 1000,67,CP,LOUT,none,NO_RULE,[],[14],[],[],PUBLIC,[],[],<missing>
-11,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-11,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-12,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-12,test_fedall.log,LiteralOp 1,65,CP,LOUT,none,NO_RULE,[],[13],[],[],null,[],[],<missing>
-12,test_heuristic.log,LiteralOp 1,65,CP,LOUT,none,NO_RULE,[],[13],[],[],null,[],[],<missing>
-14,test_cost.log,PRead Y,69,CP,LOUT,none,NO_RULE,"[6, 7, 8, 9, 10, 11, 13]","[117, 119, 121, 124, 485]",[],[],PUBLIC,"[null, null, null, null, null, null, null, null]",[],<missing>
-14,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-14,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-17,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-17,test_fedall.log,LiteralOp localhost:40043/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1,68,CP,LOUT,none,NO_RULE,[],[19],[],[],null,[],[],<missing>
-17,test_heuristic.log,LiteralOp localhost:46035/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1,68,CP,LOUT,none,NO_RULE,[],[19],[],[],null,[],[],<missing>
-20,test_cost.log,m(list),73,CP,LOUT,none,NO_RULE,"[18, 19]",[74],[],[],PUBLIC,"[null, null]",[],<missing>
-20,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-20,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-45,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-45,test_fedall.log,LiteralOp 0,71,CP,LOUT,none,NO_RULE,[],"[47, 65]",[],[],null,[],[],<missing>
-45,test_heuristic.log,LiteralOp 0,71,CP,LOUT,none,NO_RULE,[],"[47, 65]",[],[],null,[],[],<missing>
-46,test_cost.log,LiteralOp 0,74,CP,LOUT,none,NO_RULE,[],"[48, 66]",[],[],PUBLIC,[],[],<missing>
-46,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-46,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-47,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-47,test_fedall.log,m(list),72,CP,LOUT,none,NO_RULE,[45],[71],[],[],null,"[null, null]",[],<missing>
-47,test_heuristic.log,m(list),72,CP,LOUT,none,NO_RULE,[45],[71],[],[],null,"[null, null]",[],<missing>
-48,test_cost.log,m(list),75,CP,LOUT,none,NO_RULE,[46],[72],[],[],PUBLIC,"[null, null]",[],<missing>
-48,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-48,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-52,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-52,test_fedall.log,LiteralOp 1000,77,CP,LOUT,none,NO_RULE,[],"[54, 70]",[],[],null,[],[],<missing>
-52,test_heuristic.log,LiteralOp 1000,77,CP,LOUT,none,NO_RULE,[],"[54, 70]",[],[],null,[],[],<missing>
-53,test_cost.log,LiteralOp 1000,80,CP,LOUT,none,NO_RULE,[],"[55, 71]",[],[],PUBLIC,[],[],<missing>
-53,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-53,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-55,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-55,test_fedall.log,LiteralOp 100,74,CP,LOUT,none,NO_RULE,[],"[56, 70]",[],[],null,[],[],<missing>
-55,test_heuristic.log,LiteralOp 100,74,CP,LOUT,none,NO_RULE,[],"[56, 70]",[],[],null,[],[],<missing>
-57,test_cost.log,m(list),78,CP,LOUT,none,NO_RULE,"[400, 56]",[72],[],[],PUBLIC,"[null, null]",[],<missing>
-57,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-57,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-65,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-65,test_fedall.log,m(list),76,CP,LOUT,none,NO_RULE,"[399, 45]",[71],[],[],null,"[null, null]",[],<missing>
-65,test_heuristic.log,m(list),76,CP,LOUT,none,NO_RULE,"[399, 45]",[71],[],[],null,"[null, null]",[],<missing>
-66,test_cost.log,m(list),79,CP,LOUT,none,NO_RULE,"[400, 46]",[72],[],[],PUBLIC,"[null, null]",[],<missing>
-66,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-66,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-70,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-70,test_fedall.log,m(list),78,CP,LOUT,none,NO_RULE,"[52, 55]",[71],[],[],null,"[null, null]",[],<missing>
-70,test_heuristic.log,m(list),78,CP,LOUT,none,NO_RULE,"[52, 55]",[71],[],[],null,"[null, null]",[],<missing>
-72,test_cost.log,m(list),82,CP,LOUT,none,NO_RULE,"[48, 57, 66, 71]",[74],[],[],PUBLIC,"[null, null, null, null]",[],<missing>
-72,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-72,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-73,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-73,test_fedall.log,Fed X,80,FED,FOUT,ROW,OK,"[19, 71, 8]",[74],[],[],null,"[null, null, null]",[],<missing>
-73,test_heuristic.log,Fed X,80,FED,FOUT,ROW,OK,"[19, 71, 8]",[74],[],[],null,"[null, null, null]",[],<missing>
-74,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-74,test_fedall.log,TWrite X,81,FED,FOUT,ROW,OK,[73],[],[],[],null,[ROW],[],<missing>
-74,test_heuristic.log,TWrite X,81,FED,FOUT,ROW,OK,[73],[],[],[],null,[ROW],[],<missing>
-75,test_cost.log,TWrite X,83,FED,FOUT,ROW,OK,[74],"[170, 234, 297]",[],"[170, 234, 297]",PRIVATE_AGGREGATE,[ROW],[],<missing>
-75,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-75,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-116,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-116,test_fedall.log,ua(minRC),82,CP,LOUT,none,NO_RULE,[13],"[117, 120]",[],[],null,[null],[],<missing>
-116,test_heuristic.log,ua(minRC),82,CP,LOUT,none,NO_RULE,[13],"[117, 120]",[],[],null,[null],[],<missing>
-127,test_cost.log,TRead num_min,94,CP,LOUT,none,NO_FED_INPUT,[123],[130],[123],[],PUBLIC,[],[],<missing>
-127,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-127,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-128,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-128,test_fedall.log,TRead num_max,93,CP,LOUT,none,NO_RULE,[],[129],[],[],null,[],[],<missing>
-128,test_heuristic.log,TRead num_max,93,CP,LOUT,none,NO_RULE,[],[129],[],[],null,[],[],<missing>
-157,test_cost.log,b(+),123,CP,LOUT,none,NO_FED_INPUT,"[152, 151]",[159],[],[],PUBLIC,"[null, null]",[],<missing>
-157,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-157,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-158,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-158,test_fedall.log,b(/),122,CP,LOUT,none,NO_RULE,"[156, 153]",[159],[],[],null,"[null, null]",[],<missing>
-158,test_heuristic.log,b(/),122,CP,LOUT,none,NO_RULE,"[156, 153]",[159],[],[],null,"[null, null]",[],<missing>
-161,test_cost.log,TWrite Y,126,CP,LOUT,none,NO_FED_INPUT,[160],"[197, 263, 299]",[],"[197, 263, 299]",PUBLIC,[null],[],<missing>
-161,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-161,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-169,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-169,test_fedall.log,TRead X,133,FED,FOUT,ROW,OK,[],"[171, 206]",[],[],null,[],[],<missing>
-169,test_heuristic.log,TRead X,133,FED,FOUT,ROW,OK,[],"[171, 206]",[],[],null,[],[],<missing>
-170,test_cost.log,TRead X,135,FED,FOUT,ROW,OK,[75],"[172, 207]",[75],[],PRIVATE_AGGREGATE,[],[],<missing>
-170,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-170,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-196,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-196,test_fedall.log,TRead Y,135,CP,LOUT,none,NO_RULE,[],[207],[],[],null,[],[],<missing>
-196,test_heuristic.log,TRead Y,135,CP,LOUT,none,NO_RULE,[],[207],[],[],null,[],[],<missing>
-201,test_cost.log,LiteralOp -1,130,CP,LOUT,none,NO_RULE,[],"[205, 219]",[],[],PUBLIC,[],[],<missing>
-201,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-201,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-203,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-203,test_fedall.log,LiteralOp 1,130,CP,LOUT,none,NO_RULE,[],"[204, 218]",[],[],null,[],[],<missing>
-203,test_heuristic.log,LiteralOp 1,130,CP,LOUT,none,NO_RULE,[],"[204, 218]",[],[],null,[],[],<missing>
-206,test_cost.log,TWrite w,134,CP,LOUT,none,NO_FED_INPUT,[205],"[233, 296]",[],"[233, 296]",PUBLIC,[null],[],<missing>
-206,test_fedall.log,r(r'),134,FED,FOUT,COL,OK,[169],[207],[],[],null,[ROW],[],<missing>
-206,test_heuristic.log,r(r'),134,FED,FOUT,COL,OK,[169],[207],[],[],null,[ROW],[],<missing>
-207,test_cost.log,r(r'),136,FED,FOUT,COL,OK,[170],[208],[],[],PRIVATE_AGGREGATE,[ROW],[INFO: axis flipped ROW↔COL; REPR_CHANGE_GUARD_PASS:,allow]
-207,test_fedall.log,ba(+*),136,FED,LOUT,none,OK,"[206, 196]","[208, 209]",[],[],null,"[COL, null]",[],<missing>
-207,test_heuristic.log,ba(+*),136,FED,LOUT,none,OK,"[206, 196]","[208, 209]",[],[],null,"[COL, null]",[],<missing>
-208,test_cost.log,ba(+*),138,FED,LOUT,none,OK,"[207, 197]","[209, 210]",[],[],PRIVATE_AGGREGATE_TO_PUBLIC,"[COL, null]",[],<missing>
-208,test_fedall.log,TWrite g_old,137,CP,LOUT,none,NO_RULE,[207],[],[],[],null,[null],[],<missing>
-208,test_heuristic.log,TWrite g_old,137,CP,LOUT,none,NO_RULE,[207],[],[],[],null,[null],[],<missing>
-210,test_cost.log,TWrite s,140,CP,LOUT,none,NO_FED_INPUT,[208],"[232, 295]",[],"[232, 295]",PUBLIC,[null],[],<missing>
-210,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-210,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-218,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-218,test_fedall.log,dg(rand),140,CP,LOUT,none,NO_RULE,"[197, 198, 199, 200, 435, 203]",[219],[],[],null,"[null, null, null, null, null, null, null, null]",[],<missing>
-218,test_heuristic.log,dg(rand),140,CP,LOUT,none,NO_RULE,"[197, 198, 199, 200, 435, 203]",[219],[],[],null,"[null, null, null, null, null, null, null, null]",[],<missing>
-220,test_cost.log,TWrite Xw,143,CP,LOUT,none,NO_FED_INPUT,[219],"[264, 300]",[],"[264, 300]",PUBLIC,[null],[],<missing>
-220,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-220,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-221,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-221,test_fedall.log,TWrite iter,142,CP,LOUT,none,NO_RULE,[198],[],[],[],null,[null],[],<missing>
-221,test_heuristic.log,TWrite iter,142,CP,LOUT,none,NO_RULE,[198],[],[],[],null,[null],[],<missing>
-230,test_cost.log,TWrite __pred,152,CP,LOUT,none,NO_FED_INPUT,[229],[],[],[],PUBLIC,[null],[],<missing>
-230,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-230,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-231,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-231,test_fedall.log,TRead s,154,CP,LOUT,none,NO_RULE,[],"[236, 437, 439, 440]",[],[],null,[],[],<missing>
-231,test_heuristic.log,TRead s,154,CP,LOUT,none,NO_RULE,[],"[236, 437, 439, 440]",[],[],null,[],[],<missing>
-233,test_cost.log,TRead w,160,CP,LOUT,none,NO_FED_INPUT,[206],[437],[206],[],PUBLIC,[],[],<missing>
-233,test_fedall.log,TRead X,153,FED,FOUT,ROW,OK,[],[236],[],[],null,[],[],<missing>
-233,test_heuristic.log,TRead X,153,FED,FOUT,ROW,OK,[],[236],[],[],null,[],[],<missing>
-234,test_cost.log,TRead X,155,FED,FOUT,ROW,OK,[75],[237],[75],[],PRIVATE_AGGREGATE,[],[],<missing>
-234,test_fedall.log,LiteralOp 0,151,CP,LOUT,none,NO_RULE,[],"[235, 249]",[],[],null,[],[],<missing>
-234,test_heuristic.log,LiteralOp 0,151,CP,LOUT,none,NO_RULE,[],"[235, 249]",[],[],null,[],[],<missing>
-236,test_cost.log,TWrite step_sz,154,CP,LOUT,none,NO_FED_INPUT,[235],[261],[],[261],PUBLIC,[null],[],<missing>
-236,test_fedall.log,ba(+*),155,FED,FOUT,ROW,OK,"[233, 231]",[237],[],[],null,"[ROW, null]",[],<missing>
-236,test_heuristic.log,ba(+*),155,FED,LOUT,none,OK,"[233, 231]",[237],[],[],null,"[ROW, null]",[],<missing>
-237,test_cost.log,ba(+*),157,FED,LOUT,none,FOUT_ALLOWED_ONLY_IF_FORCED,"[234, 232]",[238],[],[],PRIVATE_AGGREGATE_TO_PUBLIC,"[ROW, null]",[],<missing>
-237,test_fedall.log,TWrite Xd,156,FED,FOUT,ROW,OK,[236],[],[],[],null,[ROW],[],<missing>
-237,test_heuristic.log,TWrite Xd,156,CP,LOUT,none,NO_RULE,[236],[],[],[],null,[null],[],<missing>
-238,test_cost.log,TWrite Xd,158,CP,LOUT,none,NO_FED_INPUT,[237],"[258, 293]",[],"[258, 293]",PUBLIC,[null],[],<missing>
-238,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-238,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-240,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-240,test_fedall.log,b(*),162,CP,LOUT,none,NO_RULE,"[421, 438]",[241],[],[],null,"[null, null]",[],<missing>
-240,test_heuristic.log,b(*),162,CP,LOUT,none,NO_RULE,"[421, 438]",[241],[],[],null,"[null, null]",[],<missing>
-242,test_cost.log,TWrite wd,165,CP,LOUT,none,NO_FED_INPUT,[241],[259],[],[259],PUBLIC,[null],[],<missing>
-242,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-242,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-244,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-244,test_fedall.log,b(*),167,CP,LOUT,none,NO_RULE,"[421, 441]",[245],[],[],null,"[null, null]",[],<missing>
-244,test_heuristic.log,b(*),167,CP,LOUT,none,NO_RULE,"[421, 441]",[245],[],[],null,"[null, null]",[],<missing>
-248,test_cost.log,TWrite continue1,172,CP,LOUT,none,NO_FED_INPUT,[247],[253],[],[253],PUBLIC,[null],[],<missing>
-248,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-248,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-249,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-249,test_fedall.log,TWrite iiter,171,CP,LOUT,none,NO_RULE,[234],[],[],[],null,[null],[],<missing>
-249,test_heuristic.log,TWrite iiter,171,CP,LOUT,none,NO_RULE,[234],[],[],[],null,[null],[],<missing>
-251,test_cost.log,TRead iiter,175,CP,LOUT,none,NO_FED_INPUT,[250],[254],[250],[],PUBLIC,[],[],<missing>
-251,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-251,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-252,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-252,test_fedall.log,TRead continue1,172,CP,LOUT,none,NO_RULE,[],[254],[],[],null,[],[],<missing>
-252,test_heuristic.log,TRead continue1,172,CP,LOUT,none,NO_RULE,[],[254],[],[],null,[],[],<missing>
-257,test_cost.log,TRead dd,182,CP,LOUT,none,NO_FED_INPUT,[246],"[273, 282]",[246],[],PUBLIC,[],[],<missing>
-257,test_fedall.log,TRead Xd,185,FED,FOUT,ROW,OK,[],"[264, 445, 447, 448]",[],[],null,[],[],<missing>
-257,test_heuristic.log,TRead Xd,185,CP,LOUT,none,NO_RULE,[],"[264, 445, 447, 448]",[],[],null,[],[],<missing>
-259,test_cost.log,TRead wd,181,CP,LOUT,none,NO_FED_INPUT,[242],[274],[242],[],PUBLIC,[],[],<missing>
-259,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-259,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-260,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-260,test_fedall.log,TRead step_sz,178,CP,LOUT,none,NO_RULE,[],"[264, 272, 283, 448]",[],[],null,[],[],<missing>
-260,test_heuristic.log,TRead step_sz,178,CP,LOUT,none,NO_RULE,[],"[264, 272, 283, 448]",[],[],null,[],[],<missing>
-264,test_cost.log,TRead Xw,186,CP,LOUT,none,NO_FED_INPUT,[220],"[266, 449]",[220],[],PUBLIC,[],[],<missing>
-264,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-264,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-266,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-266,test_fedall.log,LiteralOp 1,208,CP,LOUT,none,NO_RULE,[],[290],[],[],null,[],[],<missing>
-266,test_heuristic.log,LiteralOp 1,208,CP,LOUT,none,NO_RULE,[],[290],[],[],null,[],[],<missing>
-267,test_cost.log,LiteralOp 1,210,CP,LOUT,none,NO_RULE,[],[291],[],[],PUBLIC,[],[],<missing>
-267,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-267,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-268,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-268,test_fedall.log,b(1-*),187,FED,FOUT,ROW,OK,"[262, 448]","[270, 412]",[],[],null,"[null, ROW]",[],<missing>
-268,test_heuristic.log,b(1-*),187,CP,LOUT,none,NO_RULE,"[262, 448]","[270, 412]",[],[],null,"[null, null]",[],<missing>
-269,test_cost.log,b(1-*),189,CP,LOUT,none,NO_RULE,"[263, 449]","[271, 413]",[],[],PUBLIC,"[null, null]",[],<missing>
-269,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-269,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-270,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-270,test_fedall.log,b(>),195,FED,FOUT,ROW,OK,"[268, 411]",[446],[],[],null,"[ROW, null]",[],<missing>
-270,test_heuristic.log,b(>),195,CP,LOUT,none,NO_RULE,"[268, 411]",[446],[],[],null,"[null, null]",[],<missing>
-271,test_cost.log,b(>),197,CP,LOUT,none,NO_FED_INPUT,"[269, 412]",[447],[],[],PUBLIC,"[null, null]",[],<missing>
-271,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-271,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-272,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-272,test_fedall.log,b(*),181,CP,LOUT,none,NO_RULE,"[260, 256]",[273],[],[],null,"[null, null]",[],<missing>
-272,test_heuristic.log,b(*),181,CP,LOUT,none,NO_RULE,"[260, 256]",[273],[],[],null,"[null, null]",[],<missing>
-274,test_cost.log,b(+),184,CP,LOUT,none,NO_FED_INPUT,"[259, 273]",[278],[],[],PUBLIC,"[null, null]",[],<missing>
-274,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-274,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-276,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-276,test_fedall.log,ua(+RC),191,CP,LOUT,none,NO_RULE,[447],[277],[],[],null,[null],[],<missing>
-276,test_heuristic.log,ua(+RC),191,CP,LOUT,none,NO_RULE,[447],[277],[],[],null,[null],[],<missing>
-278,test_cost.log,b(-),194,CP,LOUT,none,NO_FED_INPUT,"[274, 277]","[283, 286]",[],[],PUBLIC,"[null, null]",[],<missing>
-278,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-278,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-280,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-280,test_fedall.log,ua(+RC),197,FED,LOUT,none,OK,[446],[281],[],[],null,[ROW],[],<missing>
-280,test_heuristic.log,ua(+RC),197,CP,LOUT,none,NO_RULE,[446],[281],[],[],null,[null],[],<missing>
-289,test_cost.log,TWrite continue1,208,CP,LOUT,none,NO_FED_INPUT,[288],[],[],[],PUBLIC,[null],[],<missing>
-289,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-289,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-290,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-290,test_fedall.log,b(+),209,CP,LOUT,none,NO_RULE,"[261, 266]",[291],[],[],null,"[null, null]",[],<missing>
-290,test_heuristic.log,b(+),209,CP,LOUT,none,NO_RULE,"[261, 266]",[291],[],[],null,"[null, null]",[],<missing>
-292,test_cost.log,TWrite iiter,212,CP,LOUT,none,NO_FED_INPUT,[291],[],[],[],PUBLIC,[null],[],<missing>
-292,test_fedall.log,TRead Xd,217,FED,FOUT,ROW,OK,[],"[303, 452]",[],[],null,[],[],<missing>
-292,test_heuristic.log,TRead Xd,217,CP,LOUT,none,NO_RULE,[],"[303, 452]",[],[],null,[],[],<missing>
-293,test_cost.log,TRead Xd,219,CP,LOUT,none,NO_FED_INPUT,[238],"[304, 453]",[238],[],PUBLIC,[],[],<missing>
-293,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-293,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-294,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-294,test_fedall.log,TRead s,213,CP,LOUT,none,NO_RULE,[],"[300, 451, 471, 475, 477]",[],[],null,[],[],<missing>
-294,test_heuristic.log,TRead s,213,CP,LOUT,none,NO_RULE,[],"[300, 451, 471, 475, 477]",[],[],null,[],[],<missing>
-296,test_cost.log,TRead w,213,CP,LOUT,none,NO_FED_INPUT,[206],"[302, 452]",[206],[],PUBLIC,[],[],<missing>
-296,test_fedall.log,TRead X,247,FED,FOUT,ROW,OK,[],[323],[],[],null,[],[],<missing>
-296,test_heuristic.log,TRead X,247,FED,FOUT,ROW,OK,[],[323],[],[],null,[],[],<missing>
-297,test_cost.log,TRead X,249,FED,FOUT,ROW,OK,[75],[324],[75],[],PRIVATE_AGGREGATE,[],[],<missing>
-297,test_fedall.log,TRead step_sz,212,CP,LOUT,none,NO_RULE,[],"[300, 303, 451, 452, 368]",[],[],null,[],[],<missing>
-297,test_heuristic.log,TRead step_sz,212,CP,LOUT,none,NO_RULE,[],"[300, 303, 451, 452, 368]",[],[],null,[],[],<missing>
-300,test_cost.log,TRead Xw,218,CP,LOUT,none,NO_FED_INPUT,[220],"[305, 453]",[220],[],PUBLIC,[],[],<missing>
-300,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-300,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-302,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-302,test_fedall.log,TWrite w,215,CP,LOUT,none,NO_RULE,[451],[],[],[],null,[null],[],<missing>
-302,test_heuristic.log,TWrite w,215,CP,LOUT,none,NO_RULE,[451],[],[],[],null,[null],[],<missing>
-303,test_cost.log,TWrite w,217,CP,LOUT,none,NO_FED_INPUT,[452],[391],[],[391],PUBLIC,[null],[],<missing>
-303,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-303,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-305,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-305,test_fedall.log,TWrite Xw,219,FED,FOUT,ROW,OK,[452],[],[],[],null,[ROW],[],<missing>
-305,test_heuristic.log,TWrite Xw,219,CP,LOUT,none,NO_RULE,[452],[],[],[],null,[null],[],<missing>
-306,test_cost.log,TWrite Xw,221,CP,LOUT,none,NO_FED_INPUT,[453],[],[],[],PUBLIC,[null],[],<missing>
-306,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-306,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-308,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-308,test_fedall.log,b(1-*),228,FED,FOUT,ROW,OK,"[298, 452]",[415],[],[],null,"[null, ROW]",[],<missing>
-308,test_heuristic.log,b(1-*),228,CP,LOUT,none,NO_RULE,"[298, 452]",[415],[],[],null,"[null, null]",[],<missing>
-309,test_cost.log,b(1-*),230,CP,LOUT,none,NO_RULE,"[299, 453]",[416],[],[],PUBLIC,"[null, null]",[],<missing>
-309,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-309,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-312,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-312,test_fedall.log,LiteralOp 0.5,226,CP,LOUT,none,NO_RULE,[],"[315, 320]",[],[],null,[],[],<missing>
-312,test_heuristic.log,LiteralOp 0.5,226,CP,LOUT,none,NO_RULE,[],"[315, 320]",[],[],null,[],[],<missing>
-313,test_cost.log,LiteralOp 0.5,228,CP,LOUT,none,NO_RULE,[],"[316, 321]",[],[],PUBLIC,[],[],<missing>
-313,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-313,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-315,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-315,test_fedall.log,b(*),234,CP,LOUT,none,NO_RULE,"[312, 455]",[321],[],[],null,"[null, null]",[],<missing>
-315,test_heuristic.log,b(*),234,CP,LOUT,none,NO_RULE,"[312, 455]",[321],[],[],null,"[null, null]",[],<missing>
-316,test_cost.log,b(*),236,CP,LOUT,none,NO_FED_INPUT,"[313, 456]",[322],[],[],PUBLIC,"[null, null]",[],<missing>
-316,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-316,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-320,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-320,test_fedall.log,b(*),238,CP,LOUT,none,NO_RULE,"[312, 459]",[321],[],[],null,"[null, null]",[],<missing>
-320,test_heuristic.log,b(*),238,CP,LOUT,none,NO_RULE,"[312, 459]",[321],[],[],null,"[null, null]",[],<missing>
-322,test_cost.log,b(+),241,CP,LOUT,none,NO_FED_INPUT,"[316, 321]",[370],[],[],PUBLIC,"[null, null]",[],<missing>
-322,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-322,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-323,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-323,test_fedall.log,r(r'),248,FED,FOUT,COL,OK,[296],[325],[],[],null,[ROW],[],<missing>
-323,test_heuristic.log,r(r'),248,FED,FOUT,COL,OK,[296],[325],[],[],null,[ROW],[],<missing>
-324,test_cost.log,r(r'),250,FED,FOUT,COL,OK,[297],[326],[],[],PRIVATE_AGGREGATE,[ROW],[INFO: axis flipped ROW↔COL; REPR_CHANGE_GUARD_PASS:,allow]
-324,test_fedall.log,b(*),249,FED,FOUT,ROW,OK,"[415, 298]",[325],[],[],null,"[ROW, null]",[],<missing>
-324,test_heuristic.log,b(*),249,CP,LOUT,none,NO_RULE,"[415, 298]",[325],[],[],null,"[null, null]",[],<missing>
-325,test_cost.log,b(*),251,CP,LOUT,none,NO_FED_INPUT,"[416, 299]",[326],[],[],PUBLIC,"[null, null]",[],<missing>
-325,test_fedall.log,ba(+*),250,FED,LOUT,none,OK,"[323, 324]",[327],[],[],null,"[COL, ROW]",[],<missing>
-325,test_heuristic.log,ba(+*),250,FED,LOUT,none,OK,"[323, 324]",[327],[],[],null,"[COL, null]",[],<missing>
-326,test_cost.log,ba(+*),252,FED,LOUT,none,OK,"[324, 325]",[328],[],[],PRIVATE_AGGREGATE_TO_PUBLIC,"[COL, null]",[],<missing>
-326,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-326,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-327,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-327,test_fedall.log,b(-),251,CP,LOUT,none,NO_RULE,"[325, 451]","[384, 386, 477, 478, 479]",[],[],null,"[null, null]",[],<missing>
-327,test_heuristic.log,b(-),251,CP,LOUT,none,NO_RULE,"[325, 451]","[384, 386, 477, 478, 479]",[],[],null,"[null, null]",[],<missing>
-328,test_cost.log,b(-),253,CP,LOUT,none,NO_FED_INPUT,"[326, 452]","[385, 387, 478, 479, 480]",[],[],PUBLIC,"[null, null]",[],<missing>
-328,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-328,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-359,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-359,test_fedall.log,TRead iter,262,CP,LOUT,none,NO_RULE,[],[388],[],[],null,[],[],<missing>
-359,test_heuristic.log,TRead iter,262,CP,LOUT,none,NO_RULE,[],[388],[],[],null,[],[],<missing>
-360,test_cost.log,TRead iter,264,CP,LOUT,none,NO_FED_INPUT,[222],[389],[222],[],PUBLIC,[],[],<missing>
-360,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-360,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-364,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-364,test_fedall.log,TRead g_old,221,CP,LOUT,none,NO_RULE,[],"[472, 481, 482]",[],[],null,[],[],<missing>
-364,test_heuristic.log,TRead g_old,221,CP,LOUT,none,NO_RULE,[],"[472, 481, 482]",[],[],null,[],[],<missing>
-365,test_cost.log,TRead g_old,223,CP,LOUT,none,NO_FED_INPUT,[209],"[473, 482, 483]",[209],[],PUBLIC,[],[],<missing>
-365,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-365,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-368,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-368,test_fedall.log,b(*),224,CP,LOUT,none,NO_RULE,"[297, 473]",[370],[],[],null,"[null, null]",[],<missing>
-368,test_heuristic.log,b(*),224,CP,LOUT,none,NO_RULE,"[297, 473]",[370],[],[],null,"[null, null]",[],<missing>
-371,test_cost.log,b(>=),243,CP,LOUT,none,NO_FED_INPUT,"[369, 370]",[377],[],[],PUBLIC,"[null, null]",[],<missing>
-371,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-371,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-375,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-375,test_fedall.log,b(!=),244,CP,LOUT,none,NO_RULE,"[476, 414]",[376],[],[],null,"[null, null]",[],<missing>
-375,test_heuristic.log,b(!=),244,CP,LOUT,none,NO_RULE,"[476, 414]",[376],[],[],null,"[null, null]",[],<missing>
-378,test_cost.log,TWrite continue,248,CP,LOUT,none,NO_FED_INPUT,[377],[],[],[],PUBLIC,[null],[],<missing>
-378,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-378,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-382,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-382,test_fedall.log,b(/),258,CP,LOUT,none,NO_RULE,"[480, 483]","[383, 477]",[],[],null,"[null, null]",[],<missing>
-382,test_heuristic.log,b(/),258,CP,LOUT,none,NO_RULE,"[480, 483]","[383, 477]",[],[],null,"[null, null]",[],<missing>
-383,test_cost.log,b(/),260,CP,LOUT,none,NO_FED_INPUT,"[481, 484]","[384, 478]",[],[],PUBLIC,"[null, null]",[],<missing>
-383,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-383,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-385,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-385,test_fedall.log,TWrite s,260,CP,LOUT,none,NO_RULE,[477],[],[],[],null,[null],[],<missing>
-385,test_heuristic.log,TWrite s,260,CP,LOUT,none,NO_RULE,[477],[],[],[],null,[null],[],<missing>
-395,test_cost.log,LiteralOp text,272,CP,LOUT,none,NO_RULE,[],[398],[],[],PUBLIC,[],[],<missing>
-395,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-395,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-396,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-396,test_fedall.log,"LiteralOp ,",271,CP,LOUT,none,NO_RULE,[],[397],[],[],null,[],[],<missing>
-396,test_heuristic.log,"LiteralOp ,",271,CP,LOUT,none,NO_RULE,[],[397],[],[],null,[],[],<missing>
-398,test_cost.log,PWrite model,274,CP,LOUT,none,NO_RULE,"[391, 392, 393, 394, 395, 397]",[],[],[],PUBLIC,"[null, null, null, null, null, null, null]",[],<missing>
-398,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-398,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-399,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-399,test_fedall.log,LiteralOp 500.0,73,CP,LOUT,none,NO_RULE,[],"[56, 65]",[],[],null,[],[],<missing>
-399,test_heuristic.log,LiteralOp 500.0,73,CP,LOUT,none,NO_RULE,[],"[56, 65]",[],[],null,[],[],<missing>
-400,test_cost.log,LiteralOp 500.0,76,CP,LOUT,none,NO_RULE,[],"[57, 66]",[],[],PUBLIC,[],[],<missing>
-400,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-400,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-411,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-411,test_fedall.log,LiteralOp 0,188,CP,LOUT,none,NO_RULE,[],"[412, 270]",[],[],null,[],[],<missing>
-411,test_heuristic.log,LiteralOp 0,188,CP,LOUT,none,NO_RULE,[],"[412, 270]",[],[],null,[],[],<missing>
-412,test_cost.log,LiteralOp 0,190,CP,LOUT,none,NO_RULE,[],"[413, 271]",[],[],PUBLIC,[],[],<missing>
-412,test_fedall.log,b(max),189,FED,FOUT,ROW,OK,"[268, 411]",[447],[],[],null,"[ROW, null]",[],<missing>
-412,test_heuristic.log,b(max),189,CP,LOUT,none,NO_RULE,"[268, 411]",[447],[],[],null,"[null, null]",[],<missing>
-413,test_cost.log,b(max),191,CP,LOUT,none,NO_FED_INPUT,"[269, 412]",[448],[],[],PUBLIC,"[null, null]",[],<missing>
-413,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-413,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-414,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-414,test_fedall.log,LiteralOp 0,229,CP,LOUT,none,NO_RULE,[],"[415, 375]",[],[],null,[],[],<missing>
-414,test_heuristic.log,LiteralOp 0,229,CP,LOUT,none,NO_RULE,[],"[415, 375]",[],[],null,[],[],<missing>
-415,test_cost.log,LiteralOp 0,231,CP,LOUT,none,NO_RULE,[],"[416, 376]",[],[],PUBLIC,[],[],<missing>
-415,test_fedall.log,b(max),230,FED,FOUT,ROW,OK,"[308, 414]","[324, 453, 454]",[],[],null,"[ROW, null]",[],<missing>
-415,test_heuristic.log,b(max),230,CP,LOUT,none,NO_RULE,"[308, 414]","[324, 453, 454]",[],[],null,"[null, null]",[],<missing>
-416,test_cost.log,b(max),232,CP,LOUT,none,NO_FED_INPUT,"[309, 415]","[325, 454, 455]",[],[],PUBLIC,"[null, null]",[],<missing>
-416,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-416,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-421,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-421,test_fedall.log,LiteralOp 1,157,CP,LOUT,none,NO_RULE,[],"[240, 244]",[],[],null,[],[],<missing>
-421,test_heuristic.log,LiteralOp 1,157,CP,LOUT,none,NO_RULE,[],"[240, 244]",[],[],null,[],[],<missing>
-423,test_cost.log,LiteralOp 1.0E-12,206,CP,LOUT,none,NO_RULE,[],[288],[],[],PUBLIC,[],[],<missing>
-423,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-423,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-425,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-425,test_fedall.log,LiteralOp 1.0E-12,225,CP,LOUT,none,NO_RULE,[],[369],[],[],null,[],[],<missing>
-425,test_heuristic.log,LiteralOp 1.0E-12,225,CP,LOUT,none,NO_RULE,[],[369],[],[],null,[],[],<missing>
-426,test_cost.log,LiteralOp 1.0E-12,227,CP,LOUT,none,NO_RULE,[],[370],[],[],PUBLIC,[],[],<missing>
-426,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-426,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-427,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-427,test_fedall.log,LiteralOp 20,174,CP,LOUT,none,NO_RULE,[],[253],[],[],null,[],[],<missing>
-427,test_heuristic.log,LiteralOp 20,174,CP,LOUT,none,NO_RULE,[],[253],[],[],null,[],[],<missing>
-428,test_cost.log,LiteralOp 20,176,CP,LOUT,none,NO_RULE,[],[254],[],[],PUBLIC,[],[],<missing>
-428,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-428,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-434,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-434,test_fedall.log,LiteralOp 100,129,CP,LOUT,none,NO_RULE,[],[204],[],[],null,[],[],<missing>
-434,test_heuristic.log,LiteralOp 100,129,CP,LOUT,none,NO_RULE,[],[204],[],[],null,[],[],<missing>
-442,test_cost.log,u(castdts),168,CP,LOUT,none,NO_RULE,[441],[245],[],[],PUBLIC,[null],[],<missing>
-442,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-442,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-444,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-444,test_fedall.log,LiteralOp 2,193,CP,LOUT,none,NO_RULE,[],[445],[],[],null,[],[],<missing>
-444,test_heuristic.log,LiteralOp 2,193,CP,LOUT,none,NO_RULE,[],[445],[],[],null,[],[],<missing>
-445,test_cost.log,LiteralOp 2,195,CP,LOUT,none,NO_RULE,[],[446],[],[],PUBLIC,[],[],<missing>
-445,test_fedall.log,b(^),194,FED,FOUT,ROW,OK,"[257, 444]",[446],[],[],null,"[ROW, null]",[],<missing>
-445,test_heuristic.log,b(^),194,CP,LOUT,none,NO_RULE,"[257, 444]",[446],[],[],null,"[null, null]",[],<missing>
-446,test_cost.log,b(^),196,CP,LOUT,none,NO_FED_INPUT,"[258, 445]",[447],[],[],PUBLIC,"[null, null]",[],<missing>
-446,test_fedall.log,b(*),196,FED,FOUT,ROW,OK,"[445, 270]",[280],[],[],null,"[ROW, ROW]",[],<missing>
-446,test_heuristic.log,b(*),196,CP,LOUT,none,NO_RULE,"[445, 270]",[280],[],[],null,"[null, null]",[],<missing>
-448,test_cost.log,m(mult),192,CP,LOUT,none,NO_RULE,"[413, 263, 258]",[277],[],[],PUBLIC,"[null, null, null]",[],<missing>
-448,test_fedall.log,t(+*),186,FED,FOUT,ROW,OK,"[263, 260, 257]",[268],[],[],null,"[null, null, ROW]",[],<missing>
-448,test_heuristic.log,t(+*),186,CP,LOUT,none,NO_RULE,"[263, 260, 257]",[268],[],[],null,"[null, null, null]",[],<missing>
-449,test_cost.log,t(+*),188,CP,LOUT,none,NO_FED_INPUT,"[264, 261, 258]",[269],[],[],PUBLIC,"[null, null, null]",[],<missing>
-449,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-449,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-451,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-451,test_fedall.log,t(+*),214,CP,LOUT,none,NO_RULE,"[295, 297, 294]","[302, 457, 458, 327]",[],[],null,"[null, null, null]",[],<missing>
-451,test_heuristic.log,t(+*),214,CP,LOUT,none,NO_RULE,"[295, 297, 294]","[302, 457, 458, 327]",[],[],null,"[null, null, null]",[],<missing>
-452,test_cost.log,t(+*),216,CP,LOUT,none,NO_FED_INPUT,"[296, 298, 295]","[303, 458, 459, 328]",[],[],PUBLIC,"[null, null, null]",[],<missing>
-452,test_fedall.log,t(+*),218,FED,FOUT,ROW,OK,"[299, 297, 292]","[305, 308]",[],[],null,"[null, null, ROW]",[],<missing>
-452,test_heuristic.log,t(+*),218,CP,LOUT,none,NO_RULE,"[299, 297, 292]","[305, 308]",[],[],null,"[null, null, null]",[],<missing>
-453,test_cost.log,t(+*),220,CP,LOUT,none,NO_FED_INPUT,"[300, 298, 293]","[306, 309]",[],[],PUBLIC,"[null, null, null]",[],<missing>
-453,test_fedall.log,r(r'),231,FED,FOUT,COL,OK,[415],[454],[],[],null,[ROW],[],<missing>
-453,test_heuristic.log,r(r'),231,CP,LOUT,none,NO_RULE,[415],[454],[],[],null,[null],[],<missing>
-454,test_cost.log,r(r'),233,CP,LOUT,none,NO_FED_INPUT,[416],[455],[],[],PUBLIC,[null],[],<missing>
-454,test_fedall.log,ba(+*),232,FED,LOUT,none,OK,"[453, 415]",[455],[],[],null,"[COL, ROW]",[],<missing>
-454,test_heuristic.log,ba(+*),232,CP,LOUT,none,NO_RULE,"[453, 415]",[455],[],[],null,"[null, null]",[],<missing>
-456,test_cost.log,u(castdts),235,CP,LOUT,none,NO_RULE,[455],[316],[],[],PUBLIC,[null],[],<missing>
-456,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-456,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-457,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-457,test_fedall.log,r(r'),235,CP,LOUT,none,NO_RULE,[451],[458],[],[],null,[null],[],<missing>
-457,test_heuristic.log,r(r'),235,CP,LOUT,none,NO_RULE,[451],[458],[],[],null,[null],[],<missing>
-460,test_cost.log,u(castdts),239,CP,LOUT,none,NO_RULE,[459],[321],[],[],PUBLIC,[null],[],<missing>
-460,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-460,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-471,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-471,test_fedall.log,r(r'),220,CP,LOUT,none,NO_RULE,[294],"[472, 475]",[],[],null,[null],[],<missing>
-471,test_heuristic.log,r(r'),220,CP,LOUT,none,NO_RULE,[294],"[472, 475]",[],[],null,[null],[],<missing>
-474,test_cost.log,u(castdts),225,CP,LOUT,none,NO_RULE,[473],[369],[],[],PUBLIC,[null],[],<missing>
-474,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-474,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-475,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-475,test_fedall.log,ba(+*),242,CP,LOUT,none,NO_RULE,"[471, 294]",[476],[],[],null,"[null, null]",[],<missing>
-475,test_heuristic.log,ba(+*),242,CP,LOUT,none,NO_RULE,"[471, 294]",[476],[],[],null,"[null, null]",[],<missing>
-485,test_cost.log,TWrite Y,70,CP,LOUT,none,NO_FED_INPUT,[14],[150],[],[150],PUBLIC,[null],[],<missing>
-485,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
-485,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+hop,file,op,line,exec,placement,foutType,reason,childIDs,parentIDs,rewireChildIDs,rewireParentIDs,privacy,inputs,notes
+11,test_cost.log,LiteralOp 1000,307,CP,LOUT,null,<missing>,[],"[14, 14]",<missing>,<missing>,<missing>,<missing>,<missing>
+11,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+11,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+12,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+12,test_fedall.log,LiteralOp 1,65,CP,LOUT,none,NO_RULE,[],[13],[],[],null,[],[]
+12,test_heuristic.log,LiteralOp 1,65,CP,LOUT,none,NO_RULE,[],[13],[],[],null,[],[]
+14,test_cost.log,PRead Y,301,CP,LOUT,null,<missing>,"[6, 7, 8, 9, 10, 11, 11, 13]","[117, 119, 121, 124, 485]",<missing>,<missing>,<missing>,<missing>,<missing>
+14,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+14,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+17,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+17,test_fedall.log,LiteralOp localhost:35015/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1,68,CP,LOUT,none,NO_RULE,[],[19],[],[],null,[],[]
+17,test_heuristic.log,LiteralOp localhost:41985/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X1,68,CP,LOUT,none,NO_RULE,[],[19],[],[],null,[],[]
+18,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+18,test_fedall.log,LiteralOp localhost:32909/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2,69,CP,LOUT,none,NO_RULE,[],[19],[],[],null,[],[]
+18,test_heuristic.log,LiteralOp localhost:37749/target/testTemp/functions/privacy/fedplanning/FederatedL2SVMPlanningTest/in/X2,69,CP,LOUT,none,NO_RULE,[],[19],[],[],null,[],[]
+19,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+19,test_fedall.log,m(list),70,CP,LOUT,none,NO_RULE,"[17, 18]",[73],[],[],null,"[null, null]",[]
+19,test_heuristic.log,m(list),70,CP,LOUT,none,NO_RULE,"[17, 18]",[73],[],[],null,"[null, null]",[]
+45,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+45,test_fedall.log,LiteralOp 0,71,CP,LOUT,none,NO_RULE,[],"[47, 65]",[],[],null,[],[]
+45,test_heuristic.log,LiteralOp 0,71,CP,LOUT,none,NO_RULE,[],"[47, 65]",[],[],null,[],[]
+47,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+47,test_fedall.log,m(list),72,CP,LOUT,none,NO_RULE,[45],[71],[],[],null,"[null, null]",[]
+47,test_heuristic.log,m(list),72,CP,LOUT,none,NO_RULE,[45],[71],[],[],null,"[null, null]",[]
+52,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+52,test_fedall.log,LiteralOp 1000,77,CP,LOUT,none,NO_RULE,[],"[54, 70]",[],[],null,[],[]
+52,test_heuristic.log,LiteralOp 1000,77,CP,LOUT,none,NO_RULE,[],"[54, 70]",[],[],null,[],[]
+55,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+55,test_fedall.log,LiteralOp 100,74,CP,LOUT,none,NO_RULE,[],"[56, 70]",[],[],null,[],[]
+55,test_heuristic.log,LiteralOp 100,74,CP,LOUT,none,NO_RULE,[],"[56, 70]",[],[],null,[],[]
+56,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+56,test_fedall.log,m(list),75,CP,LOUT,none,NO_RULE,"[399, 55]",[71],[],[],null,"[null, null]",[]
+56,test_heuristic.log,m(list),75,CP,LOUT,none,NO_RULE,"[399, 55]",[71],[],[],null,"[null, null]",[]
+65,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+65,test_fedall.log,m(list),76,CP,LOUT,none,NO_RULE,"[399, 45]",[71],[],[],null,"[null, null]",[]
+65,test_heuristic.log,m(list),76,CP,LOUT,none,NO_RULE,"[399, 45]",[71],[],[],null,"[null, null]",[]
+70,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+70,test_fedall.log,m(list),78,CP,LOUT,none,NO_RULE,"[52, 55]",[71],[],[],null,"[null, null]",[]
+70,test_heuristic.log,m(list),78,CP,LOUT,none,NO_RULE,"[52, 55]",[71],[],[],null,"[null, null]",[]
+71,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+71,test_fedall.log,m(list),79,CP,LOUT,none,NO_RULE,"[47, 56, 65, 70]",[73],[],[],null,"[null, null, null, null]",[]
+71,test_heuristic.log,m(list),79,CP,LOUT,none,NO_RULE,"[47, 56, 65, 70]",[73],[],[],null,"[null, null, null, null]",[]
+73,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+73,test_fedall.log,Fed X,80,FED,FOUT,ROW,OK,"[19, 71, 8]",[74],[],[],null,"[null, null, null]",[]
+73,test_heuristic.log,Fed X,80,FED,FOUT,ROW,OK,"[19, 71, 8]",[74],[],[],null,"[null, null, null]",[]
+75,test_cost.log,TWrite X,359,FED,FOUT,ROW,<missing>,[74],[],<missing>,<missing>,<missing>,<missing>,<missing>
+75,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+75,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+116,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+116,test_fedall.log,ua(minRC),82,CP,LOUT,none,NO_RULE,[13],"[117, 120]",[],[],null,[null],[]
+116,test_heuristic.log,ua(minRC),82,CP,LOUT,none,NO_RULE,[13],"[117, 120]",[],[],null,[null],[]
+127,test_cost.log,TRead num_min,474,CP,LOUT,null,<missing>,[123],[130],<missing>,<missing>,<missing>,<missing>,<missing>
+127,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+127,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+128,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+128,test_fedall.log,TRead num_max,93,CP,LOUT,none,NO_RULE,[],[129],[],[],null,[],[]
+128,test_heuristic.log,TRead num_max,93,CP,LOUT,none,NO_RULE,[],[129],[],[],null,[],[]
+157,test_cost.log,b(+),356,CP,LOUT,null,<missing>,"[152, 151]",[159],<missing>,<missing>,<missing>,<missing>,<missing>
+157,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+157,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+158,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+158,test_fedall.log,b(/),122,CP,LOUT,none,NO_RULE,"[156, 153]",[159],[],[],null,"[null, null]",[]
+158,test_heuristic.log,b(/),122,CP,LOUT,none,NO_RULE,"[156, 153]",[159],[],[],null,"[null, null]",[]
+161,test_cost.log,TWrite Y,345,CP,LOUT,null,<missing>,[160],[],<missing>,<missing>,<missing>,<missing>,<missing>
+161,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+161,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+169,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+169,test_fedall.log,TRead X,133,FED,FOUT,ROW,OK,[],"[171, 206]",[],[],null,[],[]
+169,test_heuristic.log,TRead X,133,FED,FOUT,ROW,OK,[],"[171, 206]",[],[],null,[],[]
+170,test_cost.log,TRead X,358,FED,FOUT,ROW,<missing>,[75],"[172, 207]",<missing>,<missing>,<missing>,<missing>,<missing>
+170,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+170,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+196,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+196,test_fedall.log,TRead Y,135,CP,LOUT,none,NO_RULE,[],[207],[],[],null,[],[]
+196,test_heuristic.log,TRead Y,135,CP,LOUT,none,NO_RULE,[],[207],[],[],null,[],[]
+201,test_cost.log,LiteralOp -1,338,CP,LOUT,null,<missing>,[],"[205, 219]",<missing>,<missing>,<missing>,<missing>,<missing>
+201,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+201,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+203,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+203,test_fedall.log,LiteralOp 1,130,CP,LOUT,none,NO_RULE,[],"[204, 218]",[],[],null,[],[]
+203,test_heuristic.log,LiteralOp 1,130,CP,LOUT,none,NO_RULE,[],"[204, 218]",[],[],null,[],[]
+206,test_cost.log,TWrite w,334,CP,LOUT,null,<missing>,[205],[],<missing>,<missing>,<missing>,<missing>,<missing>
+206,test_fedall.log,r(r'),134,FED,FOUT,COL,OK,[169],[207],[],[],null,[ROW],[]
+206,test_heuristic.log,r(r'),134,FED,FOUT,COL,OK,[169],[207],[],[],null,[ROW],[]
+207,test_cost.log,r(r'),357,FED,FOUT,COL,<missing>,[170],[208],<missing>,<missing>,<missing>,<missing>,<missing>
+207,test_fedall.log,ba(+*),136,FED,LOUT,none,OK,"[206, 196]","[208, 209]",[],[],null,"[COL, null]",[]
+207,test_heuristic.log,ba(+*),136,FED,LOUT,none,OK,"[206, 196]","[208, 209]",[],[],null,"[COL, null]",[]
+208,test_cost.log,ba(+*),343,FED,LOUT,null,<missing>,"[197, 207]","[209, 210]",<missing>,<missing>,<missing>,<missing>,<missing>
+208,test_fedall.log,TWrite g_old,137,CP,LOUT,none,NO_RULE,[207],[],[],[],null,[null],[]
+208,test_heuristic.log,TWrite g_old,137,CP,LOUT,none,NO_RULE,[207],[],[],[],null,[null],[]
+210,test_cost.log,TWrite s,342,CP,LOUT,null,<missing>,[208],[],<missing>,<missing>,<missing>,<missing>,<missing>
+210,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+210,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+218,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+218,test_fedall.log,dg(rand),140,CP,LOUT,none,NO_RULE,"[197, 198, 199, 200, 435, 203]",[219],[],[],null,"[null, null, null, null, null, null, null, null]",[]
+218,test_heuristic.log,dg(rand),140,CP,LOUT,none,NO_RULE,"[197, 198, 199, 200, 435, 203]",[219],[],[],null,"[null, null, null, null, null, null, null, null]",[]
+220,test_cost.log,TWrite Xw,392,CP,LOUT,null,<missing>,[219],[],<missing>,<missing>,<missing>,<missing>,<missing>
+220,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+220,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+221,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+221,test_fedall.log,TWrite iter,142,CP,LOUT,none,NO_RULE,[198],[],[],[],null,[null],[]
+221,test_heuristic.log,TWrite iter,142,CP,LOUT,none,NO_RULE,[198],[],[],[],null,[null],[]
+230,test_cost.log,TWrite __pred,275,CP,LOUT,null,<missing>,[229],[],<missing>,<missing>,<missing>,<missing>,<missing>
+230,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+230,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+231,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+231,test_fedall.log,TRead s,154,CP,LOUT,none,NO_RULE,[],"[236, 437, 439, 440]",[],[],null,[],[]
+231,test_heuristic.log,TRead s,154,CP,LOUT,none,NO_RULE,[],"[236, 437, 439, 440]",[],[],null,[],[]
+233,test_cost.log,TRead w,376,CP,LOUT,null,<missing>,[206],[437],<missing>,<missing>,<missing>,<missing>,<missing>
+233,test_fedall.log,TRead X,153,FED,FOUT,ROW,OK,[],[236],[],[],null,[],[]
+233,test_heuristic.log,TRead X,153,FED,FOUT,ROW,OK,[],[236],[],[],null,[],[]
+234,test_cost.log,TRead X,398,FED,FOUT,ROW,<missing>,[75],[237],<missing>,<missing>,<missing>,<missing>,<missing>
+234,test_fedall.log,LiteralOp 0,151,CP,LOUT,none,NO_RULE,[],"[235, 249]",[],[],null,[],[]
+234,test_heuristic.log,LiteralOp 0,151,CP,LOUT,none,NO_RULE,[],"[235, 249]",[],[],null,[],[]
+236,test_cost.log,TWrite step_sz,365,CP,LOUT,null,<missing>,[235],[],<missing>,<missing>,<missing>,<missing>,<missing>
+236,test_fedall.log,ba(+*),155,FED,FOUT,ROW,OK,"[233, 231]",[237],[],[],null,"[ROW, null]",[]
+236,test_heuristic.log,ba(+*),155,FED,LOUT,none,OK,"[233, 231]",[237],[],[],null,"[ROW, null]",[]
+237,test_cost.log,ba(+*),397,FED,LOUT,null,<missing>,"[232, 234]",[238],<missing>,<missing>,<missing>,<missing>,<missing>
+237,test_fedall.log,TWrite Xd,156,FED,FOUT,ROW,OK,[236],[],[],[],null,[ROW],[]
+237,test_heuristic.log,TWrite Xd,156,CP,LOUT,none,NO_RULE,[236],[],[],[],null,[null],[]
+238,test_cost.log,TWrite Xd,396,CP,LOUT,null,<missing>,[237],[],<missing>,<missing>,<missing>,<missing>,<missing>
+238,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+238,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+240,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+240,test_fedall.log,b(*),162,CP,LOUT,none,NO_RULE,"[421, 438]",[241],[],[],null,"[null, null]",[]
+240,test_heuristic.log,b(*),162,CP,LOUT,none,NO_RULE,"[421, 438]",[241],[],[],null,"[null, null]",[]
+242,test_cost.log,TWrite wd,370,CP,LOUT,null,<missing>,[241],[],<missing>,<missing>,<missing>,<missing>,<missing>
+242,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+242,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+244,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+244,test_fedall.log,b(*),167,CP,LOUT,none,NO_RULE,"[421, 441]",[245],[],[],null,"[null, null]",[]
+244,test_heuristic.log,b(*),167,CP,LOUT,none,NO_RULE,"[421, 441]",[245],[],[],null,"[null, null]",[]
+248,test_cost.log,TWrite continue1,288,CP,LOUT,null,<missing>,[247],[],<missing>,<missing>,<missing>,<missing>,<missing>
+248,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+248,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+249,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+249,test_fedall.log,TWrite iiter,171,CP,LOUT,none,NO_RULE,[234],[],[],[],null,[null],[]
+249,test_heuristic.log,TWrite iiter,171,CP,LOUT,none,NO_RULE,[234],[],[],[],null,[null],[]
+251,test_cost.log,TRead iiter,291,CP,LOUT,null,<missing>,[250],[254],<missing>,<missing>,<missing>,<missing>,<missing>
+251,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+251,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+252,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+252,test_fedall.log,TRead continue1,172,CP,LOUT,none,NO_RULE,[],[254],[],[],null,[],[]
+252,test_heuristic.log,TRead continue1,172,CP,LOUT,none,NO_RULE,[],[254],[],[],null,[],[]
+257,test_cost.log,TRead dd,379,CP,LOUT,null,<missing>,[246],"[273, 282]",<missing>,<missing>,<missing>,<missing>,<missing>
+257,test_fedall.log,TRead Xd,185,FED,FOUT,ROW,OK,[],"[264, 445, 447, 448]",[],[],null,[],[]
+257,test_heuristic.log,TRead Xd,185,CP,LOUT,none,NO_RULE,[],"[264, 445, 447, 448]",[],[],null,[],[]
+259,test_cost.log,TRead wd,369,CP,LOUT,null,<missing>,[242],[274],<missing>,<missing>,<missing>,<missing>,<missing>
+259,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+259,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+260,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+260,test_fedall.log,TRead step_sz,178,CP,LOUT,none,NO_RULE,[],"[264, 272, 283, 448]",[],[],null,[],[]
+260,test_heuristic.log,TRead step_sz,178,CP,LOUT,none,NO_RULE,[],"[264, 272, 283, 448]",[],[],null,[],[]
+264,test_cost.log,TRead Xw,391,CP,LOUT,null,<missing>,[220],"[266, 449]",<missing>,<missing>,<missing>,<missing>,<missing>
+264,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+264,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+266,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+266,test_fedall.log,LiteralOp 1,208,CP,LOUT,none,NO_RULE,[],[290],[],[],null,[],[]
+266,test_heuristic.log,LiteralOp 1,208,CP,LOUT,none,NO_RULE,[],[290],[],[],null,[],[]
+267,test_cost.log,LiteralOp 1,439,CP,LOUT,null,<missing>,[],[291],<missing>,<missing>,<missing>,<missing>,<missing>
+267,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+267,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+268,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+268,test_fedall.log,b(1-*),187,FED,FOUT,ROW,OK,"[262, 448]","[270, 412]",[],[],null,"[null, ROW]",[]
+268,test_heuristic.log,b(1-*),187,CP,LOUT,none,NO_RULE,"[262, 448]","[270, 412]",[],[],null,"[null, null]",[]
+269,test_cost.log,b(1-*),388,CP,LOUT,null,<missing>,"[263, 449]","[271, 413]",<missing>,<missing>,<missing>,<missing>,<missing>
+269,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+269,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+270,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+270,test_fedall.log,b(>),195,FED,FOUT,ROW,OK,"[268, 411]",[446],[],[],null,"[ROW, null]",[]
+270,test_heuristic.log,b(>),195,CP,LOUT,none,NO_RULE,"[268, 411]",[446],[],[],null,"[null, null]",[]
+271,test_cost.log,b(>),405,CP,LOUT,null,<missing>,"[269, 412]",[447],<missing>,<missing>,<missing>,<missing>,<missing>
+271,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+271,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+272,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+272,test_fedall.log,b(*),181,CP,LOUT,none,NO_RULE,"[260, 256]",[273],[],[],null,"[null, null]",[]
+272,test_heuristic.log,b(*),181,CP,LOUT,none,NO_RULE,"[260, 256]",[273],[],[],null,"[null, null]",[]
+274,test_cost.log,b(+),368,CP,LOUT,null,<missing>,"[259, 273]",[278],<missing>,<missing>,<missing>,<missing>,<missing>
+274,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+274,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+276,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+276,test_fedall.log,ua(+RC),191,CP,LOUT,none,NO_RULE,[447],[277],[],[],null,[null],[]
+276,test_heuristic.log,ua(+RC),191,CP,LOUT,none,NO_RULE,[447],[277],[],[],null,[null],[]
+278,test_cost.log,b(-),367,CP,LOUT,null,<missing>,"[274, 277]","[283, 286, 286]",<missing>,<missing>,<missing>,<missing>,<missing>
+278,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+278,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+280,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+280,test_fedall.log,ua(+RC),197,FED,LOUT,none,OK,[446],[281],[],[],null,[ROW],[]
+280,test_heuristic.log,ua(+RC),197,CP,LOUT,none,NO_RULE,[446],[281],[],[],null,[null],[]
+289,test_cost.log,TWrite continue1,431,CP,LOUT,null,<missing>,[288],[],<missing>,<missing>,<missing>,<missing>,<missing>
+289,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+289,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+290,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+290,test_fedall.log,b(+),209,CP,LOUT,none,NO_RULE,"[261, 266]",[291],[],[],null,"[null, null]",[]
+290,test_heuristic.log,b(+),209,CP,LOUT,none,NO_RULE,"[261, 266]",[291],[],[],null,"[null, null]",[]
+292,test_cost.log,TWrite iiter,436,CP,LOUT,null,<missing>,[291],[],<missing>,<missing>,<missing>,<missing>,<missing>
+292,test_fedall.log,TRead Xd,217,FED,FOUT,ROW,OK,[],"[303, 452]",[],[],null,[],[]
+292,test_heuristic.log,TRead Xd,217,CP,LOUT,none,NO_RULE,[],"[303, 452]",[],[],null,[],[]
+293,test_cost.log,TRead Xd,409,CP,LOUT,null,<missing>,[238],"[304, 453]",<missing>,<missing>,<missing>,<missing>,<missing>
+293,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+293,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+294,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+294,test_fedall.log,TRead s,213,CP,LOUT,none,NO_RULE,[],"[300, 451, 471, 475, 477]",[],[],null,[],[]
+294,test_heuristic.log,TRead s,213,CP,LOUT,none,NO_RULE,[],"[300, 451, 471, 475, 477]",[],[],null,[],[]
+296,test_cost.log,TRead w,333,CP,LOUT,null,<missing>,[206],"[302, 452]",<missing>,<missing>,<missing>,<missing>,<missing>
+296,test_fedall.log,TRead X,247,FED,FOUT,ROW,OK,[],[323],[],[],null,[],[]
+296,test_heuristic.log,TRead X,247,FED,FOUT,ROW,OK,[],[323],[],[],null,[],[]
+297,test_cost.log,TRead X,420,FED,FOUT,ROW,<missing>,[75],[324],<missing>,<missing>,<missing>,<missing>,<missing>
+297,test_fedall.log,TRead step_sz,212,CP,LOUT,none,NO_RULE,[],"[300, 303, 451, 452, 368]",[],[],null,[],[]
+297,test_heuristic.log,TRead step_sz,212,CP,LOUT,none,NO_RULE,[],"[300, 303, 451, 452, 368]",[],[],null,[],[]
+300,test_cost.log,TRead Xw,408,CP,LOUT,null,<missing>,[220],"[305, 453]",<missing>,<missing>,<missing>,<missing>,<missing>
+300,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+300,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+302,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+302,test_fedall.log,TWrite w,215,CP,LOUT,none,NO_RULE,[451],[],[],[],null,[null],[]
+302,test_heuristic.log,TWrite w,215,CP,LOUT,none,NO_RULE,[451],[],[],[],null,[null],[]
+303,test_cost.log,TWrite w,331,CP,LOUT,null,<missing>,[452],[],<missing>,<missing>,<missing>,<missing>,<missing>
+303,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+303,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+305,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+305,test_fedall.log,TWrite Xw,219,FED,FOUT,ROW,OK,[452],[],[],[],null,[ROW],[]
+305,test_heuristic.log,TWrite Xw,219,CP,LOUT,none,NO_RULE,[452],[],[],[],null,[null],[]
+306,test_cost.log,TWrite Xw,406,CP,LOUT,null,<missing>,[453],[],<missing>,<missing>,<missing>,<missing>,<missing>
+306,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+306,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+308,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+308,test_fedall.log,b(1-*),228,FED,FOUT,ROW,OK,"[298, 452]",[415],[],[],null,"[null, ROW]",[]
+308,test_heuristic.log,b(1-*),228,CP,LOUT,none,NO_RULE,"[298, 452]",[415],[],[],null,"[null, null]",[]
+309,test_cost.log,b(1-*),416,CP,LOUT,null,<missing>,"[299, 453]",[416],<missing>,<missing>,<missing>,<missing>,<missing>
+309,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+309,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+312,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+312,test_fedall.log,LiteralOp 0.5,226,CP,LOUT,none,NO_RULE,[],"[315, 320]",[],[],null,[],[]
+312,test_heuristic.log,LiteralOp 0.5,226,CP,LOUT,none,NO_RULE,[],"[315, 320]",[],[],null,[],[]
+313,test_cost.log,LiteralOp 0.5,455,CP,LOUT,null,<missing>,[],"[316, 321]",<missing>,<missing>,<missing>,<missing>,<missing>
+313,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+313,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+315,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+315,test_fedall.log,b(*),234,CP,LOUT,none,NO_RULE,"[312, 455]",[321],[],[],null,"[null, null]",[]
+315,test_heuristic.log,b(*),234,CP,LOUT,none,NO_RULE,"[312, 455]",[321],[],[],null,"[null, null]",[]
+316,test_cost.log,b(*),454,CP,LOUT,null,<missing>,"[313, 456]",[322],<missing>,<missing>,<missing>,<missing>,<missing>
+316,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+316,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+320,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+320,test_fedall.log,b(*),238,CP,LOUT,none,NO_RULE,"[312, 459]",[321],[],[],null,"[null, null]",[]
+320,test_heuristic.log,b(*),238,CP,LOUT,none,NO_RULE,"[312, 459]",[321],[],[],null,"[null, null]",[]
+322,test_cost.log,b(+),453,CP,LOUT,null,<missing>,"[316, 321]",[370],<missing>,<missing>,<missing>,<missing>,<missing>
+322,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+322,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+323,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+323,test_fedall.log,r(r'),248,FED,FOUT,COL,OK,[296],[325],[],[],null,[ROW],[]
+323,test_heuristic.log,r(r'),248,FED,FOUT,COL,OK,[296],[325],[],[],null,[ROW],[]
+324,test_cost.log,r(r'),419,FED,FOUT,COL,<missing>,[297],[326],<missing>,<missing>,<missing>,<missing>,<missing>
+324,test_fedall.log,b(*),249,FED,FOUT,ROW,OK,"[415, 298]",[325],[],[],null,"[ROW, null]",[]
+324,test_heuristic.log,b(*),249,CP,LOUT,none,NO_RULE,"[415, 298]",[325],[],[],null,"[null, null]",[]
+325,test_cost.log,b(*),414,CP,FOUT,null,<missing>,"[416, 299]",[326],<missing>,<missing>,<missing>,<missing>,<missing>
+325,test_fedall.log,ba(+*),250,FED,LOUT,none,OK,"[323, 324]",[327],[],[],null,"[COL, ROW]",[]
+325,test_heuristic.log,ba(+*),250,FED,LOUT,none,OK,"[323, 324]",[327],[],[],null,"[COL, null]",[]
+326,test_cost.log,ba(+*),413,FED,LOUT,null,<missing>,"[325, 324]",[328],<missing>,<missing>,<missing>,<missing>,<missing>
+326,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+326,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+327,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+327,test_fedall.log,b(-),251,CP,LOUT,none,NO_RULE,"[325, 451]","[384, 386, 477, 478, 479]",[],[],null,"[null, null]",[]
+327,test_heuristic.log,b(-),251,CP,LOUT,none,NO_RULE,"[325, 451]","[384, 386, 477, 478, 479]",[],[],null,"[null, null]",[]
+328,test_cost.log,b(-),412,CP,LOUT,null,<missing>,"[452, 326]","[385, 387, 478, 479, 480]",<missing>,<missing>,<missing>,<missing>,<missing>
+328,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+328,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+359,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+359,test_fedall.log,TRead iter,262,CP,LOUT,none,NO_RULE,[],[388],[],[],null,[],[]
+359,test_heuristic.log,TRead iter,262,CP,LOUT,none,NO_RULE,[],[388],[],[],null,[],[]
+360,test_cost.log,TRead iter,442,CP,LOUT,null,<missing>,[222],[389],<missing>,<missing>,<missing>,<missing>,<missing>
+360,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+360,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+364,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+364,test_fedall.log,TRead g_old,221,CP,LOUT,none,NO_RULE,[],"[472, 481, 482]",[],[],null,[],[]
+364,test_heuristic.log,TRead g_old,221,CP,LOUT,none,NO_RULE,[],"[472, 481, 482]",[],[],null,[],[]
+365,test_cost.log,TRead g_old,428,CP,LOUT,null,<missing>,[209],"[473, 482, 483]",<missing>,<missing>,<missing>,<missing>,<missing>
+365,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+365,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+368,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+368,test_fedall.log,b(*),224,CP,LOUT,none,NO_RULE,"[297, 473]",[370],[],[],null,"[null, null]",[]
+368,test_heuristic.log,b(*),224,CP,LOUT,none,NO_RULE,"[297, 473]",[370],[],[],null,"[null, null]",[]
+371,test_cost.log,b(>=),446,CP,LOUT,null,<missing>,"[369, 370]",[377],<missing>,<missing>,<missing>,<missing>,<missing>
+371,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+371,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+375,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+375,test_fedall.log,b(!=),244,CP,LOUT,none,NO_RULE,"[476, 414]",[376],[],[],null,"[null, null]",[]
+375,test_heuristic.log,b(!=),244,CP,LOUT,none,NO_RULE,"[476, 414]",[376],[],[],null,"[null, null]",[]
+378,test_cost.log,TWrite continue,444,CP,LOUT,null,<missing>,[377],[],<missing>,<missing>,<missing>,<missing>,<missing>
+378,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+378,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+382,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+382,test_fedall.log,b(/),258,CP,LOUT,none,NO_RULE,"[480, 483]","[383, 477]",[],[],null,"[null, null]",[]
+382,test_heuristic.log,b(/),258,CP,LOUT,none,NO_RULE,"[480, 483]","[383, 477]",[],[],null,"[null, null]",[]
+383,test_cost.log,b(/),421,CP,LOUT,null,<missing>,"[481, 484]","[384, 478]",<missing>,<missing>,<missing>,<missing>,<missing>
+383,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+383,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+385,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+385,test_fedall.log,TWrite s,260,CP,LOUT,none,NO_RULE,[477],[],[],[],null,[null],[]
+385,test_heuristic.log,TWrite s,260,CP,LOUT,none,NO_RULE,[477],[],[],[],null,[null],[]
+395,test_cost.log,LiteralOp text,469,CP,LOUT,null,<missing>,[],[398],<missing>,<missing>,<missing>,<missing>,<missing>
+395,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+395,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+396,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+396,test_fedall.log,"LiteralOp ,",271,CP,LOUT,none,NO_RULE,[],[397],[],[],null,[],[]
+396,test_heuristic.log,"LiteralOp ,",271,CP,LOUT,none,NO_RULE,[],[397],[],[],null,[],[]
+398,test_cost.log,PWrite model,329,CP,LOUT,null,<missing>,"[391, 392, 393, 394, 395, 393, 397]",[],<missing>,<missing>,<missing>,<missing>,<missing>
+398,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+398,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+399,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+399,test_fedall.log,LiteralOp 500.0,73,CP,LOUT,none,NO_RULE,[],"[56, 65]",[],[],null,[],[]
+399,test_heuristic.log,LiteralOp 500.0,73,CP,LOUT,none,NO_RULE,[],"[56, 65]",[],[],null,[],[]
+411,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+411,test_fedall.log,LiteralOp 0,188,CP,LOUT,none,NO_RULE,[],"[412, 270]",[],[],null,[],[]
+411,test_heuristic.log,LiteralOp 0,188,CP,LOUT,none,NO_RULE,[],"[412, 270]",[],[],null,[],[]
+412,test_cost.log,LiteralOp 0,399,CP,LOUT,null,<missing>,[],"[413, 271]",<missing>,<missing>,<missing>,<missing>,<missing>
+412,test_fedall.log,b(max),189,FED,FOUT,ROW,OK,"[268, 411]",[447],[],[],null,"[ROW, null]",[]
+412,test_heuristic.log,b(max),189,CP,LOUT,none,NO_RULE,"[268, 411]",[447],[],[],null,"[null, null]",[]
+413,test_cost.log,b(max),387,CP,LOUT,null,<missing>,"[269, 412]",[448],<missing>,<missing>,<missing>,<missing>,<missing>
+413,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+413,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+414,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+414,test_fedall.log,LiteralOp 0,229,CP,LOUT,none,NO_RULE,[],"[415, 375]",[],[],null,[],[]
+414,test_heuristic.log,LiteralOp 0,229,CP,LOUT,none,NO_RULE,[],"[415, 375]",[],[],null,[],[]
+415,test_cost.log,LiteralOp 0,418,CP,LOUT,null,<missing>,[],"[416, 376]",<missing>,<missing>,<missing>,<missing>,<missing>
+415,test_fedall.log,b(max),230,FED,FOUT,ROW,OK,"[308, 414]","[324, 453, 454]",[],[],null,"[ROW, null]",[]
+415,test_heuristic.log,b(max),230,CP,LOUT,none,NO_RULE,"[308, 414]","[324, 453, 454]",[],[],null,"[null, null]",[]
+416,test_cost.log,b(max),415,CP,LOUT,null,<missing>,"[309, 415]","[325, 454, 455]",<missing>,<missing>,<missing>,<missing>,<missing>
+416,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+416,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+421,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+421,test_fedall.log,LiteralOp 1,157,CP,LOUT,none,NO_RULE,[],"[240, 244]",[],[],null,[],[]
+421,test_heuristic.log,LiteralOp 1,157,CP,LOUT,none,NO_RULE,[],"[240, 244]",[],[],null,[],[]
+423,test_cost.log,LiteralOp 1.0E-12,435,CP,LOUT,null,<missing>,[],[288],<missing>,<missing>,<missing>,<missing>,<missing>
+423,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+423,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+425,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+425,test_fedall.log,LiteralOp 1.0E-12,225,CP,LOUT,none,NO_RULE,[],[369],[],[],null,[],[]
+425,test_heuristic.log,LiteralOp 1.0E-12,225,CP,LOUT,none,NO_RULE,[],[369],[],[],null,[],[]
+426,test_cost.log,LiteralOp 1.0E-12,452,CP,LOUT,null,<missing>,[],[370],<missing>,<missing>,<missing>,<missing>,<missing>
+426,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+426,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+427,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+427,test_fedall.log,LiteralOp 20,174,CP,LOUT,none,NO_RULE,[],[253],[],[],null,[],[]
+427,test_heuristic.log,LiteralOp 20,174,CP,LOUT,none,NO_RULE,[],[253],[],[],null,[],[]
+428,test_cost.log,LiteralOp 20,294,CP,LOUT,null,<missing>,[],[254],<missing>,<missing>,<missing>,<missing>,<missing>
+428,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+428,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+434,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+434,test_fedall.log,LiteralOp 100,129,CP,LOUT,none,NO_RULE,[],[204],[],[],null,[],[]
+434,test_heuristic.log,LiteralOp 100,129,CP,LOUT,none,NO_RULE,[],[204],[],[],null,[],[]
+442,test_cost.log,u(castdts),382,CP,LOUT,null,<missing>,[441],[245],<missing>,<missing>,<missing>,<missing>,<missing>
+442,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+442,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+444,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+444,test_fedall.log,LiteralOp 2,193,CP,LOUT,none,NO_RULE,[],[445],[],[],null,[],[]
+444,test_heuristic.log,LiteralOp 2,193,CP,LOUT,none,NO_RULE,[],[445],[],[],null,[],[]
+445,test_cost.log,LiteralOp 2,404,CP,LOUT,null,<missing>,[],[446],<missing>,<missing>,<missing>,<missing>,<missing>
+445,test_fedall.log,b(^),194,FED,FOUT,ROW,OK,"[257, 444]",[446],[],[],null,"[ROW, null]",[]
+445,test_heuristic.log,b(^),194,CP,LOUT,none,NO_RULE,"[257, 444]",[446],[],[],null,"[null, null]",[]
+446,test_cost.log,b(^),403,CP,LOUT,null,<missing>,"[258, 445]",[447],<missing>,<missing>,<missing>,<missing>,<missing>
+446,test_fedall.log,b(*),196,FED,FOUT,ROW,OK,"[445, 270]",[280],[],[],null,"[ROW, ROW]",[]
+446,test_heuristic.log,b(*),196,CP,LOUT,none,NO_RULE,"[445, 270]",[280],[],[],null,"[null, null]",[]
+448,test_cost.log,m(mult),386,CP,LOUT,null,<missing>,"[413, 263, 258]",[277],<missing>,<missing>,<missing>,<missing>,<missing>
+448,test_fedall.log,t(+*),186,FED,FOUT,ROW,OK,"[263, 260, 257]",[268],[],[],null,"[null, null, ROW]",[]
+448,test_heuristic.log,t(+*),186,CP,LOUT,none,NO_RULE,"[263, 260, 257]",[268],[],[],null,"[null, null, null]",[]
+449,test_cost.log,t(+*),390,CP,LOUT,null,<missing>,"[264, 258, 261]",[269],<missing>,<missing>,<missing>,<missing>,<missing>
+449,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+449,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+451,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+451,test_fedall.log,t(+*),214,CP,LOUT,none,NO_RULE,"[295, 297, 294]","[302, 457, 458, 327]",[],[],null,"[null, null, null]",[]
+451,test_heuristic.log,t(+*),214,CP,LOUT,none,NO_RULE,"[295, 297, 294]","[302, 457, 458, 327]",[],[],null,"[null, null, null]",[]
+452,test_cost.log,t(+*),332,CP,LOUT,null,<missing>,"[296, 295, 298]","[303, 458, 459, 328]",<missing>,<missing>,<missing>,<missing>,<missing>
+452,test_fedall.log,t(+*),218,FED,FOUT,ROW,OK,"[299, 297, 292]","[305, 308]",[],[],null,"[null, null, ROW]",[]
+452,test_heuristic.log,t(+*),218,CP,LOUT,none,NO_RULE,"[299, 297, 292]","[305, 308]",[],[],null,"[null, null, null]",[]
+453,test_cost.log,t(+*),407,CP,LOUT,null,<missing>,"[300, 293, 298]","[306, 309]",<missing>,<missing>,<missing>,<missing>,<missing>
+453,test_fedall.log,r(r'),231,FED,FOUT,COL,OK,[415],[454],[],[],null,[ROW],[]
+453,test_heuristic.log,r(r'),231,CP,LOUT,none,NO_RULE,[415],[454],[],[],null,[null],[]
+454,test_cost.log,r(r'),458,CP,LOUT,null,<missing>,[416],[455],<missing>,<missing>,<missing>,<missing>,<missing>
+454,test_fedall.log,ba(+*),232,FED,LOUT,none,OK,"[453, 415]",[455],[],[],null,"[COL, ROW]",[]
+454,test_heuristic.log,ba(+*),232,CP,LOUT,none,NO_RULE,"[453, 415]",[455],[],[],null,"[null, null]",[]
+456,test_cost.log,u(castdts),456,CP,LOUT,null,<missing>,[455],[316],<missing>,<missing>,<missing>,<missing>,<missing>
+456,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+456,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+457,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+457,test_fedall.log,r(r'),235,CP,LOUT,none,NO_RULE,[451],[458],[],[],null,[null],[]
+457,test_heuristic.log,r(r'),235,CP,LOUT,none,NO_RULE,[451],[458],[],[],null,[null],[]
+460,test_cost.log,u(castdts),460,CP,LOUT,null,<missing>,[459],[321],<missing>,<missing>,<missing>,<missing>,<missing>
+460,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+460,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+471,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+471,test_fedall.log,r(r'),220,CP,LOUT,none,NO_RULE,[294],"[472, 475]",[],[],null,[null],[]
+471,test_heuristic.log,r(r'),220,CP,LOUT,none,NO_RULE,[294],"[472, 475]",[],[],null,[null],[]
+474,test_cost.log,u(castdts),448,CP,LOUT,null,<missing>,[473],[369],<missing>,<missing>,<missing>,<missing>,<missing>
+474,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+474,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+475,test_cost.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+475,test_fedall.log,ba(+*),242,CP,LOUT,none,NO_RULE,"[471, 294]",[476],[],[],null,"[null, null]",[]
+475,test_heuristic.log,ba(+*),242,CP,LOUT,none,NO_RULE,"[471, 294]",[476],[],[],null,"[null, null]",[]
+485,test_cost.log,TWrite Y,349,CP,LOUT,null,<missing>,[14],[],<missing>,<missing>,<missing>,<missing>,<missing>
+485,test_fedall.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>
+485,test_heuristic.log,<missing>,,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>,<missing>

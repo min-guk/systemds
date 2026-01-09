@@ -23,7 +23,7 @@
 [INFO] --- resources:3.2.0:resources (default-resources) @ systemds ---
 [INFO] Using 'UTF-8' encoding to copy filtered resources.
 [INFO] Using 'UTF-8' encoding to copy filtered properties files.
-[INFO] Copying 331 resources to scripts
+[INFO] Copying 332 resources to scripts
 [INFO] Copying 2 resources to cuda/kernels
 [INFO] Copying 7 resources to lib
 [INFO] Copying 3 resources to cuda/spoof
@@ -55,10 +55,12 @@
 [INFO]  T E S T S
 [INFO] -------------------------------------------------------
 WARNING: Using incubator modules: jdk.incubator.vector
+
+Exception: java.lang.AssertionError thrown from the UncaughtExceptionHandler in thread "TestRunner_main"
 [INFO] Running org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
-25/12/28 11:03:50 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-fout.xml
-[Oracle] hop=546 (LiteralOp localhost:45823/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
-[Oracle] hop=547 (LiteralOp localhost:44965/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+26/01/05 10:28:04 INFO fedplanning.FederatedLMPlanningTest: This test case overrides default configuration with ./src/test/scripts/functions/privacy/fedplanning/SystemDS-config-fout.xml
+[Oracle] hop=546 (LiteralOp localhost:42023/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X1), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
+[Oracle] hop=547 (LiteralOp localhost:35783/target/testTemp/functions/privacy/fedplanning/FederatedLMPlanningTest/in/X2), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[548], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=548 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[546, 547], parentIDs=[602], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
 [Oracle] hop=574 (LiteralOp 0), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[576, 594, 611], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=576 (m(list)), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[574], parentIDs=[600], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null], notes=[]
@@ -94,46 +96,254 @@ WARNING: Using incubator modules: jdk.incubator.vector
 [Oracle] hop=615 (LiteralOp :), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=618 (LiteralOp ,), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[], parentIDs=[619], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[], notes=[]
 [Oracle] hop=619 (PWrite B), exec=CP, placement=LOUT, foutType=none, reason=NO_RULE, childIDs=[716, 613, 614, 615, 538, 618], parentIDs=[], rewireChildIDs=[], rewireParentIDs=[], privacy=null, inputs=[null, null, null, null, null, null, null], notes=[]
+26/01/05 10:28:09 ERROR federated.FederatedWorkerHandler: Exception thrown while processing requests:
+[FederatedRequest[EXEC_INST;2185123;1;t-1;[String]], FederatedRequest[GET_VAR;2185123;1;t-1], FederatedRequest[EXEC_INST;2185123;-1;t-1;[String]]]
+java.lang.ArrayIndexOutOfBoundsException: Index 1 out of bounds for length 0
+	at java.base/java.util.ArrayList.add(ArrayList.java:455)
+	at java.base/java.util.ArrayList.add(ArrayList.java:467)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedStatistics.incFedTransfer(FederatedStatistics.java:188)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:272)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:192)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:179)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.channelRead(FederatedWorkerHandler.java:140)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:324)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.codec.ByteToMessageDecoder.fireChannelRead(ByteToMessageDecoder.java:346)
+	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:318)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.ChannelInboundHandlerAdapter.channelRead(ChannelInboundHandlerAdapter.java:93)
+	at org.apache.sysds.runtime.controlprogram.federated.compression.CompressionDecoderEndStatisticsHandler.channelRead(CompressionDecoderEndStatisticsHandler.java:40)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.ChannelInboundHandlerAdapter.channelRead(ChannelInboundHandlerAdapter.java:93)
+	at org.apache.sysds.runtime.controlprogram.federated.compression.CompressionDecoderStartStatisticsHandler.channelRead(CompressionDecoderStartStatisticsHandler.java:35)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.traffic.AbstractTrafficShapingHandler.channelRead(AbstractTrafficShapingHandler.java:506)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:442)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1410)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:919)
+	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:788)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:724)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:650)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	at java.base/java.lang.Thread.run(Thread.java:840)
 SystemDS Statistics:
-Total elapsed time:		2.181 sec.
-Total compilation time:		1.143 sec.
-Total execution time:		1.038 sec.
-Cache hits (Mem/Li/WB/FS/HDFS):	15/0/0/0/3.
-Cache writes (Li/WB/FS/HDFS):	0/6/0/1.
-Cache times (ACQr/m, RLS, EXP):	0.883/0.000/0.003/0.016 sec.
+Total elapsed time:		1.789 sec.
+Total compilation time:		0.920 sec.
+Total execution time:		0.869 sec.
+Cache hits (Mem/Li/WB/FS/HDFS):	2/0/0/0/2.
+Cache writes (Li/WB/FS/HDFS):	0/4/0/0.
+Cache times (ACQr/m, RLS, EXP):	0.912/0.000/0.002/0.000 sec.
 HOP DAGs recompiled (PRED, SB):	0/0.
 HOP DAGs recompile time:	0.000 sec.
-Federated I/O (Read, Put, Get):	2/2/2.
-Federated Execute (Inst, UDF):	5/0.
-Fed Put Count (Sc/Li/Ma/Fr/MC):	0/0/8/0/0.
-Fed Put Bytes (Mat/Frame):	178816/0 Bytes.
+Federated I/O (Read, Put, Get):	2/0/1.
+Federated Execute (Inst, UDF):	2/0.
+Fed Put Count (Sc/Li/Ma/Fr/MC):	0/0/2/0/0.
+Fed Put Bytes (Mat/Frame):	160304/0 Bytes.
 Federated prefetch count:	0.
-Fed LookupTable (Get, Entries):	18/2.
-Total JIT compile time:		6.879 sec.
+Fed LookupTable (Get, Entries):	7/2.
+Total JIT compile time:		8.035 sec.
 Total JVM GC count:		4.
-Total JVM GC time:		0.03 sec.
+Total JVM GC time:		0.033 sec.
 Heavy hitter instructions:
   #  Instruction  Time(s)  Count
-  1  tsmm           1.267      2
-  2  fed_tsmm       0.680      1
-  3  fed_fedinit    0.192      1
-  4  solve          0.047      1
-  5  r'             0.046      2
-  6  fed_ba+*       0.024      1
-  7  +              0.020      1
-  8  write          0.016      1
-  9  /              0.010      1
- 10  ba+*           0.007      2
+  1  tsmm           1.280      2
+  2  fed_fedinit    0.188      1
+  3  /              0.008      1
+  4  list           0.002      6
+  5  createvar      0.000      3
+  6  mvvar          0.000     11
+  7  rmvar          0.000      3
+  8  ==             0.000      5
+  9  -              0.000      2
+ 10  ^              0.000      1
 
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.543 s - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
+org.apache.sysds.runtime.DMLRuntimeException: org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 22 and 27 -- Error evaluating instruction: FED°tsmm°_mVar17·MATRIX·FP64°_mVar18·MATRIX·FP64°LEFT°48°NONE
+	at org.apache.sysds.runtime.controlprogram.Program.execute(Program.java:163)
+	at org.apache.sysds.api.ScriptExecutorUtils.executeRuntimeProgram(ScriptExecutorUtils.java:89)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:493)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:329)
+	at org.apache.sysds.test.AutomatedTestBase.main(AutomatedTestBase.java:1547)
+	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
+	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 22 and 27 -- Error evaluating instruction: FED°tsmm°_mVar17·MATRIX·FP64°_mVar18·MATRIX·FP64°LEFT°48°NONE
+	at org.apache.sysds.runtime.controlprogram.ProgramBlock.executeSingleInstruction(ProgramBlock.java:300)
+	at org.apache.sysds.runtime.controlprogram.ProgramBlock.executeInstructions(ProgramBlock.java:197)
+	at org.apache.sysds.runtime.controlprogram.BasicProgramBlock.execute(BasicProgramBlock.java:127)
+	at org.apache.sysds.runtime.controlprogram.Program.execute(Program.java:157)
+	... 7 more
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Exception thrown while processing requests:
+[FederatedRequest[EXEC_INST;2185123;1;t-1;[String]], FederatedRequest[GET_VAR;2185123;1;t-1], FederatedRequest[EXEC_INST;2185123;-1;t-1;[String]]]
+	at org.apache.sysds.runtime.controlprogram.federated.FederationUtils.aggAdd(FederationUtils.java:203)
+	at org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction.processRowCol(TsmmFEDInstruction.java:118)
+	at org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction.processInstruction(TsmmFEDInstruction.java:87)
+	at org.apache.sysds.runtime.controlprogram.ProgramBlock.executeSingleInstruction(ProgramBlock.java:263)
+	... 10 more
+Caused by: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Exception thrown while processing requests:
+[FederatedRequest[EXEC_INST;2185123;1;t-1;[String]], FederatedRequest[GET_VAR;2185123;1;t-1], FederatedRequest[EXEC_INST;2185123;-1;t-1;[String]]]
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:204)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:179)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.channelRead(FederatedWorkerHandler.java:140)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:324)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.codec.ByteToMessageDecoder.fireChannelRead(ByteToMessageDecoder.java:346)
+	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:318)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.ChannelInboundHandlerAdapter.channelRead(ChannelInboundHandlerAdapter.java:93)
+	at org.apache.sysds.runtime.controlprogram.federated.compression.CompressionDecoderEndStatisticsHandler.channelRead(CompressionDecoderEndStatisticsHandler.java:40)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.ChannelInboundHandlerAdapter.channelRead(ChannelInboundHandlerAdapter.java:93)
+	at org.apache.sysds.runtime.controlprogram.federated.compression.CompressionDecoderStartStatisticsHandler.channelRead(CompressionDecoderStartStatisticsHandler.java:35)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.traffic.AbstractTrafficShapingHandler.channelRead(AbstractTrafficShapingHandler.java:506)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:442)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1410)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:919)
+	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:788)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:724)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:650)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	... 1 more
+26/01/05 10:28:09 ERROR test.AutomatedTestBase: 
+failed to run script: ./src/test/scripts/functions/privacy/fedplanning/FederatedLMPlanningTest.dml
+Standard Out:
+org.apache.sysds.runtime.DMLRuntimeException: org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 22 and 27 -- Error evaluating instruction: FED°tsmm°_mVar17·MATRIX·FP64°_mVar18·MATRIX·FP64°LEFT°48°NONE
+	at org.apache.sysds.runtime.controlprogram.Program.execute(Program.java:163)
+	at org.apache.sysds.api.ScriptExecutorUtils.executeRuntimeProgram(ScriptExecutorUtils.java:89)
+	at org.apache.sysds.api.DMLScript.execute(DMLScript.java:493)
+	at org.apache.sysds.api.DMLScript.executeScript(DMLScript.java:329)
+	at org.apache.sysds.test.AutomatedTestBase.main(AutomatedTestBase.java:1547)
+	at org.apache.sysds.test.AutomatedTestBase.runTestWithTimeout(AutomatedTestBase.java:1502)
+	at org.apache.sysds.test.AutomatedTestBase.lambda$0(AutomatedTestBase.java:1412)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: ERROR: Runtime error in program block generated from statement block between lines 22 and 27 -- Error evaluating instruction: FED°tsmm°_mVar17·MATRIX·FP64°_mVar18·MATRIX·FP64°LEFT°48°NONE
+	at org.apache.sysds.runtime.controlprogram.ProgramBlock.executeSingleInstruction(ProgramBlock.java:300)
+	at org.apache.sysds.runtime.controlprogram.ProgramBlock.executeInstructions(ProgramBlock.java:197)
+	at org.apache.sysds.runtime.controlprogram.BasicProgramBlock.execute(BasicProgramBlock.java:127)
+	at org.apache.sysds.runtime.controlprogram.Program.execute(Program.java:157)
+	... 7 more
+Caused by: org.apache.sysds.runtime.DMLRuntimeException: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Exception thrown while processing requests:
+[FederatedRequest[EXEC_INST;2185123;1;t-1;[String]], FederatedRequest[GET_VAR;2185123;1;t-1], FederatedRequest[EXEC_INST;2185123;-1;t-1;[String]]]
+	at org.apache.sysds.runtime.controlprogram.federated.FederationUtils.aggAdd(FederationUtils.java:203)
+	at org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction.processRowCol(TsmmFEDInstruction.java:118)
+	at org.apache.sysds.runtime.instructions.fed.TsmmFEDInstruction.processInstruction(TsmmFEDInstruction.java:87)
+	at org.apache.sysds.runtime.controlprogram.ProgramBlock.executeSingleInstruction(ProgramBlock.java:263)
+	... 10 more
+Caused by: org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandlerException: Exception thrown while processing requests:
+[FederatedRequest[EXEC_INST;2185123;1;t-1;[String]], FederatedRequest[GET_VAR;2185123;1;t-1], FederatedRequest[EXEC_INST;2185123;-1;t-1;[String]]]
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:204)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.createResponse(FederatedWorkerHandler.java:179)
+	at org.apache.sysds.runtime.controlprogram.federated.FederatedWorkerHandler.channelRead(FederatedWorkerHandler.java:140)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:324)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.codec.ByteToMessageDecoder.fireChannelRead(ByteToMessageDecoder.java:346)
+	at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:318)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.ChannelInboundHandlerAdapter.channelRead(ChannelInboundHandlerAdapter.java:93)
+	at org.apache.sysds.runtime.controlprogram.federated.compression.CompressionDecoderEndStatisticsHandler.channelRead(CompressionDecoderEndStatisticsHandler.java:40)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.ChannelInboundHandlerAdapter.channelRead(ChannelInboundHandlerAdapter.java:93)
+	at org.apache.sysds.runtime.controlprogram.federated.compression.CompressionDecoderStartStatisticsHandler.channelRead(CompressionDecoderStartStatisticsHandler.java:35)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.handler.traffic.AbstractTrafficShapingHandler.channelRead(AbstractTrafficShapingHandler.java:506)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:442)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1410)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
+	at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:919)
+	at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:788)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:724)
+	at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:650)
+	at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
+	... 1 more
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 6.134 s <<< FAILURE! - in org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest
+[ERROR] org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest.runLMFOUTTest  Time elapsed: 6.134 s  <<< FAILURE!
+java.lang.AssertionError: test failed
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest.loadAndRunTest(FederatedLMPlanningTest.java:187)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest.runTestWithConfig(FederatedLMPlanningTest.java:123)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest.runTestWithConfig(FederatedLMPlanningTest.java:118)
+	at org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest.runLMFOUTTest(FederatedLMPlanningTest.java:58)
+
 [INFO] 
 [INFO] Results:
 [INFO] 
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[ERROR] Failures: 
+[ERROR]   FederatedLMPlanningTest.runLMFOUTTest:58->runTestWithConfig:118->runTestWithConfig:123->loadAndRunTest:187->AutomatedTestBase.runTest:1372->AutomatedTestBase.runTest:1427 test failed
+[INFO] 
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
 [INFO] 
 [INFO] ------------------------------------------------------------------------
-[INFO] BUILD SUCCESS
+[INFO] BUILD FAILURE
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  12.659 s
-[INFO] Finished at: 2025-12-28T11:03:56+01:00
+[INFO] Total time:  13.514 s
+[INFO] Finished at: 2026-01-05T10:28:09+01:00
 [INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.0.0:test (default-test) on project systemds: There are test failures.
+[ERROR] 
+[ERROR] Please refer to /home/mchoi/systemds/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
