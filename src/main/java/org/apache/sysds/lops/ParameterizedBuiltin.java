@@ -216,7 +216,7 @@ public class ParameterizedBuiltin extends Lop
 			sb.append(OPERAND_DELIMITOR);
 		}
 		
-		if( getExecType()==ExecType.CP 
+		if( (getExecType()==ExecType.CP || getExecType()==ExecType.FED)
 			&& (_operation==ParamBuiltinOp.REXPAND || _operation==ParamBuiltinOp.CONTAINS ) ) {
 			sb.append( "k" );
 			sb.append( Lop.NAME_VALUE_SEPARATOR );

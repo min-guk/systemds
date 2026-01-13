@@ -24,7 +24,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -36,12 +39,14 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.api.jmlc.JMLCUtils;
+import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.CompilerConfig.ConfigType;
@@ -50,19 +55,28 @@ import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.HopsException;
 import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LeftIndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.MemoTable;
 import org.apache.sysds.hops.MultiThreadedHop;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.lops.Lop;
+import org.apache.sysds.lops.MMTSJ.MMTSJType;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.rewrite.LopRewriter;
 import org.apache.sysds.parser.DMLProgram;
@@ -100,6 +114,7 @@ import org.apache.sysds.runtime.instructions.cp.FunctionCallCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.IntObject;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.io.IOUtilFunctions;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -126,6 +141,7 @@ import org.apache.sysds.utils.Explain.ExplainType;
  */
 public class Recompiler {
 	protected static final Log LOG =  LogFactory.getLog(Recompiler.class.getName());
+	private static final boolean LOG_RECOMPILE_NEW_HOPS = true;
 
 	//Max threshold for in-memory reblock of text input [in bytes]
 	//reason: single-threaded text read at 20MB/s, 1GB input -> 50s (should exploit parallelism)
@@ -326,6 +342,7 @@ public class Recompiler {
 			&& !(forceEt && et == null ) //not on reset
 			&& SpoofCompiler.RECOMPILE_CODEGEN;
 		boolean rewrittenHops = false;
+		Map<Long, HopState> baseHopStates = null;
 		
 		// prepare hops dag for recompile
 		if( !inplace ){ 
@@ -338,6 +355,8 @@ public class Recompiler {
 			for( Hop hopRoot : hops )
 				rClearLops( hopRoot );
 		}
+		if (LOG_RECOMPILE_NEW_HOPS)
+			baseHopStates = snapshotHopStates(hops);
 		
 		// get max parallelism constraint, see below
 		Hop.resetVisitStatus(hops);
@@ -403,7 +422,16 @@ public class Recompiler {
 		Hop.resetVisitStatus(hops);
 		rSetMaxParallelism(hops, maxK);
 
-		FederatedRefedPolicy.registerFromHops(hops, true, null, sb != null ? sb.getSBID() : -1);
+		if (LOG_RECOMPILE_NEW_HOPS)
+			logRecompileNewHops(hops, baseHopStates, sb, pred, tid);
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		Map<String, String> runtimeSignatures = buildRuntimeFedSignatures(ec, runtimeTypes);
+		Map<Long, FType> fTypeMap = buildFederatedTypeMap(hops, runtimeTypes);
+		Set<Hop> fTypeRefreshDone = new HashSet<>();
+		for (Hop hopRoot : hops)
+			inferFTypeIfNeeded(hopRoot, fTypeMap, fTypeRefreshDone, new HashSet<>());
+		FederatedRefedPolicy.registerFromHops(hops, true, fTypeMap, sb != null ? sb.getSBID() : -1,
+			runtimeSignatures, runtimeTypes);
 		
 		// construct lops
 		ArrayList<Lop> lops = new ArrayList<>(hops.size());
@@ -440,6 +468,247 @@ public class Recompiler {
 	{
 		return recompile(sb, hops, new ExecutionContext(vars), status, inplace, replaceLit,
 				updateStats, forceEt, pred, et, tid);
+	}
+
+	private static Map<Long, FType> buildFederatedTypeMap(List<Hop> roots, Map<String, FType> runtimeTypes) {
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		if (roots == null || roots.isEmpty())
+			return fTypeMap;
+
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		for (Hop root : roots)
+			if (root != null)
+				queue.add(root);
+
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop))
+				continue;
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null) {
+				for (Hop in : inputs)
+					if (in != null)
+						queue.add(in);
+			}
+			if (hop instanceof DataOp) {
+				DataOp dataOp = (DataOp) hop;
+				if (dataOp.getOp() == OpOpData.FEDERATED) {
+					FType fType = FederatedPlannerUtils.getFedInitFType(dataOp.getName());
+					if (fType == null)
+						fType = FederatedPlannerUtils.deriveFedInitFType(dataOp);
+					if (fType != null)
+						fTypeMap.put(hop.getHopID(), fType);
+				} else if (dataOp.getOp() == OpOpData.TRANSIENTREAD
+						&& FederatedPlannerUtils.isFedInitVar(dataOp.getName())) {
+					FType fType = FederatedPlannerUtils.getFedInitFType(dataOp.getName());
+					if (fType != null)
+						fTypeMap.put(hop.getHopID(), fType);
+				} else if (dataOp.getOp() == OpOpData.TRANSIENTREAD && runtimeTypes != null) {
+					FType fType = runtimeTypes.get(dataOp.getName());
+					if (fType != null)
+						fTypeMap.put(hop.getHopID(), fType);
+				}
+			}
+		}
+
+		Set<Hop> done = new HashSet<>();
+		for (Hop hop : visited)
+			inferFTypeIfNeeded(hop, fTypeMap, done, new HashSet<>());
+		return fTypeMap;
+	}
+
+	private static Map<String, String> buildRuntimeFedSignatures(ExecutionContext ec, Map<String, FType> runtimeTypes) {
+		Map<String, String> signatures = new HashMap<>();
+		if (ec == null)
+			return signatures;
+		LocalVariableMap vars = ec.getVariables();
+		if (vars == null)
+			return signatures;
+		for (Entry<String, Data> entry : vars.entrySet()) {
+			Data data = entry.getValue();
+			if (!(data instanceof MatrixObject))
+				continue;
+			MatrixObject mo = (MatrixObject) data;
+			if (!mo.isFederated())
+				continue;
+			org.apache.sysds.runtime.controlprogram.federated.FederationMap fmap = mo.getFedMapping();
+			if (fmap == null)
+				continue;
+			String sig = FederatedPlannerUtils.deriveFedMappingSignature(fmap);
+			if (sig == null)
+				continue;
+			signatures.put(entry.getKey(), sig);
+			if (runtimeTypes != null)
+				runtimeTypes.put(entry.getKey(), fmap.getType());
+		}
+		return signatures;
+	}
+
+	private static Map<Long, HopState> snapshotHopStates(List<Hop> roots) {
+		Map<Long, HopState> states = new HashMap<>();
+		if (roots == null || roots.isEmpty())
+			return states;
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		for (Hop root : roots)
+			if (root != null)
+				queue.add(root);
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop))
+				continue;
+			states.put(hop.getHopID(),
+				new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput()));
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null)
+				for (Hop in : inputs)
+					if (in != null)
+						queue.add(in);
+		}
+		return states;
+	}
+
+	private static void logRecompileNewHops(List<Hop> roots, Map<Long, HopState> baseStates,
+		StatementBlock sb, boolean pred, long tid) {
+		if (baseStates == null || baseStates.isEmpty() || roots == null || roots.isEmpty())
+			return;
+		Set<Long> baseIds = baseStates.keySet();
+		List<Hop> newHops = new ArrayList<>();
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		for (Hop root : roots)
+			if (root != null)
+				queue.add(root);
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop))
+				continue;
+			if (!baseIds.contains(hop.getHopID()))
+				newHops.add(hop);
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null)
+				for (Hop in : inputs)
+					if (in != null)
+						queue.add(in);
+		}
+		if (newHops.isEmpty())
+			return;
+		String sbId = sb != null ? String.valueOf(sb.getSBID()) : "null";
+		System.out.println("[RecompileNewHop] count=" + newHops.size()
+			+ " sbId=" + sbId + " pred=" + pred + " tid=" + tid);
+		for (Hop hop : newHops) {
+			System.out.println("[RecompileNewHop] hopID=" + hop.getHopID()
+				+ " name=" + String.valueOf(hop.getName())
+				+ " op=" + hop.getOpString()
+				+ " type=" + hop.getClass().getSimpleName()
+				+ " exec=" + hop.getExecType()
+				+ " forced=" + hop.getForcedExecType()
+				+ " fedOut=" + hop.getFederatedOutput()
+				+ " dataType=" + hop.getDataType()
+				+ " valueType=" + hop.getValueType()
+				+ " dims=" + hop.getDim1() + "x" + hop.getDim2());
+		}
+	}
+
+	private static class HopState {
+		private final ExecType execType;
+		private final ExecType forcedExecType;
+		private final FederatedOutput fedOut;
+
+		private HopState(ExecType execType, ExecType forcedExecType, FederatedOutput fedOut) {
+			this.execType = execType;
+			this.forcedExecType = forcedExecType;
+			this.fedOut = fedOut;
+		}
+	}
+
+	private static void inferFTypeIfNeeded(Hop hop, Map<Long, FType> fTypeMap, Set<Hop> done, Set<Hop> stack) {
+		if (hop == null || done.contains(hop))
+			return;
+		ExecType exec = hop.getForcedExecType();
+		if (exec == null)
+			exec = hop.getExecType();
+		if (!hop.hasFederatedOutput() && !(hop instanceof DataOp) && exec != ExecType.FED) {
+			done.add(hop);
+			return;
+		}
+		if (!stack.add(hop))
+			return;
+		for (Hop in : hop.getInput())
+			inferFTypeIfNeeded(in, fTypeMap, done, stack);
+		stack.remove(hop);
+
+		if (!fTypeMap.containsKey(hop.getHopID()) && (hop.hasFederatedOutput() || exec == ExecType.FED)) {
+			FType fType = inferFTypeFromInputs(hop, fTypeMap);
+			if (fType != null)
+				fTypeMap.put(hop.getHopID(), fType);
+		}
+		done.add(hop);
+	}
+
+	private static FType inferFTypeFromInputs(Hop hop, Map<Long, FType> fTypeMap) {
+		if (hop == null || hop.isScalar())
+			return null;
+		FType[] ft = new FType[hop.getInput().size()];
+		for (int i = 0; i < hop.getInput().size(); i++) {
+			Hop in = hop.getInput(i);
+			ft[i] = (in == null) ? null : fTypeMap.get(in.getHopID());
+		}
+		if (hop instanceof AggBinaryOp) {
+			MMTSJType mmtsj = ((AggBinaryOp) hop).checkTransposeSelf();
+			if (mmtsj != MMTSJType.NONE
+					&& ((mmtsj.isLeft() && ft[0] == FType.ROW) || (mmtsj.isRight() && ft[0] == FType.COL)))
+				return FType.BROADCAST;
+			if (ft.length > 0 && ft[0] != null)
+				return ft[0] == FType.ROW ? FType.ROW : null;
+			if (ft.length > 1 && ft[1] != null)
+				return ft[1] == FType.ROW ? FType.ROW : null;
+		} else if (hop instanceof BinaryOp) {
+			return ft.length > 0 && ft[0] != null ? ft[0] : (ft.length > 1 ? ft[1] : null);
+		} else if (hop instanceof IndexingOp || hop instanceof LeftIndexingOp) {
+			if (ft.length > 0 && ft[0] != null)
+				return ft[0];
+		} else if (hop instanceof ParameterizedBuiltinOp) {
+			ParameterizedBuiltinOp pb = (ParameterizedBuiltinOp) hop;
+			if (pb.getOp() == ParamBuiltinOp.REXPAND || pb.getOp() == ParamBuiltinOp.REPLACE) {
+				Hop target = pb.getTargetHop();
+				if (target != null) {
+					FType targetType = fTypeMap.get(target.getHopID());
+					if (targetType != null)
+						return targetType;
+				}
+				if (ft.length > 0 && ft[0] != null)
+					return ft[0];
+			}
+		} else if (hop instanceof TernaryOp) {
+			if (ft.length > 0 && ft[0] != null)
+				return ft[0];
+			if (ft.length > 1 && ft[1] != null)
+				return ft[1];
+			return ft.length > 2 ? ft[2] : null;
+		} else if (HopRewriteUtils.isReorg(hop, ReOrgOp.TRANS)) {
+			if (ft.length > 0 && ft[0] == FType.ROW)
+				return FType.COL;
+			if (ft.length > 0 && ft[0] == FType.COL)
+				return FType.ROW;
+		} else if (hop instanceof AggUnaryOp) {
+			boolean isColAgg = ((AggUnaryOp) hop).getDirection().isCol();
+			if ((ft.length > 0 && ft[0] == FType.ROW && isColAgg)
+					|| (ft.length > 0 && ft[0] == FType.COL && !isColAgg))
+				return null;
+			if (ft.length > 0 && (ft[0] == FType.ROW || ft[0] == FType.COL))
+				return ft[0];
+		} else if (HopRewriteUtils.isData(hop, OpOpData.FEDERATED)) {
+			return FederatedPlannerUtils.deriveFedInitFType((DataOp) hop);
+		} else if (HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE)
+				|| HopRewriteUtils.isData(hop, OpOpData.TRANSIENTREAD)) {
+			return ft.length > 0 ? ft[0] : null;
+		} else if (HopRewriteUtils.isAggUnaryOp(hop, AggOp.SUM, AggOp.MIN, AggOp.MAX)) {
+			if (ft.length > 0 && (ft[0] == FType.ROW || ft[0] == FType.COL))
+				return ft[0];
+		}
+		return null;
 	}
 	
 	private static void logExplainDAG(StatementBlock sb, ArrayList<Hop> hops, ArrayList<Instruction> inst) {

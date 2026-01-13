@@ -21,6 +21,7 @@ package org.apache.sysds.api;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -82,6 +83,7 @@ import org.apache.sysds.utils.Explain;
 import org.apache.sysds.utils.Explain.ExplainCounts;
 import org.apache.sysds.utils.Explain.ExplainType;
 import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
+import org.apache.sysds.utils.stats.InstructionStatistics;
 import org.apache.sysds.utils.NativeHelper;
 import org.apache.sysds.utils.SettingsChecker;
 import org.apache.sysds.utils.Statistics;
@@ -96,6 +98,10 @@ public class DMLScript
 	public static boolean     STATISTICS                 = DMLOptions.defaultOptions.stats;
 	// Enable/disable to print statistics n-grams
 	public static boolean     STATISTICS_NGRAMS          = DMLOptions.defaultOptions.statsNGrams;
+	// Enable/disable per-instruction statistics
+	public static boolean     INST_STATS                 = DMLOptions.defaultOptions.instStats;
+	// Output path for per-instruction statistics
+	public static String      INST_STATS_PATH            = DMLOptions.defaultOptions.instStatsPath;
 	// Enable/disable to gather memory use stats in JMLC
 	public static boolean     JMLC_MEM_STATISTICS        = false;
 	// Set maximum heavy hitter count
@@ -265,6 +271,8 @@ public class DMLScript
 			STATISTICS_TOP_K_NGRAMS = dmlOptions.statsTopKNGrams;
 			FED_STATISTICS        = dmlOptions.fedStats;
 			FED_STATISTICS_COUNT  = dmlOptions.fedStatsCount;
+			INST_STATS            = dmlOptions.instStats;
+			INST_STATS_PATH       = dmlOptions.instStatsPath;
 			JMLC_MEM_STATISTICS   = dmlOptions.memStats;
 			USE_ACCELERATOR       = dmlOptions.gpu;
 			FORCE_ACCELERATOR     = dmlOptions.forceGPU;
@@ -297,6 +305,12 @@ public class DMLScript
 			if (dmlOptions.clean) {
 				cleanSystemDSWorkspace();
 				return true;
+			}
+
+			if (INST_STATS) {
+				String resolvedPath = resolveInstStatsPath(INST_STATS_PATH, fileOrScript, isFile, dmlOptions.fedWorker);
+				INST_STATS_PATH = resolvedPath;
+				InstructionStatistics.initialize(resolvedPath);
 			}
 			
 			if(dmlOptions.fedWorker) {
@@ -705,6 +719,20 @@ public class DMLScript
 		}
 		sb.append("\n" + ANSI_RESET);
 		System.out.println(sb.toString());
+	}
+
+	private static String resolveInstStatsPath(String requestedPath, String fileOrScript, boolean isFile, boolean isWorker) {
+		if (requestedPath != null && !requestedPath.trim().isEmpty())
+			return requestedPath;
+		String base = "inline";
+		if (fileOrScript != null && isFile) {
+			base = new File(fileOrScript).getName();
+			if (base.isEmpty())
+				base = "script";
+		}
+		base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+		String role = isWorker ? "worker" : "driver";
+		return "inst_stats_" + base + "_" + role + "_" + _uuid + ".csv";
 	}
 
 	private static void configureCodeGen() {

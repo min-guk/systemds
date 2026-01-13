@@ -29,6 +29,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -147,16 +148,20 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		boolean logDecision = true;
 
 		//handle specific operators (except transient writes)
-		if(hop instanceof FunctionOp) {
-			String funcName = ((FunctionOp) hop).getFunctionName();
-			String funcNamespace = ((FunctionOp) hop).getFunctionNamespace();
-			FunctionStatementBlock sbFuncBlock = program.getFunctionDictionary(funcNamespace).getFunction(funcName);
-			FunctionStatement funcStatement = (FunctionStatement) sbFuncBlock.getStatement(0);
-
-			Map<String, FType> funcFedVars = createFunctionFedVarTable((FunctionOp) hop, memo);
-			rRewriteStatementBlock(sbFuncBlock, funcFedVars);
-			mapFunctionOutputs((FunctionOp) hop, funcStatement, funcFedVars, fedVars);
-			logDecision = false;
+		if(hop instanceof FunctionOp && ((FunctionOp) hop).getFunctionType() == FunctionType.DML) {
+			FunctionOp fop = (FunctionOp) hop;
+			FunctionStatementBlock sbFuncBlock = program != null ?
+				program.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName()) : null;
+			if( sbFuncBlock != null ) {
+				FunctionStatement funcStatement = (FunctionStatement) sbFuncBlock.getStatement(0);
+				Map<String, FType> funcFedVars = createFunctionFedVarTable(fop, memo);
+				rRewriteStatementBlock(sbFuncBlock, funcFedVars);
+				mapFunctionOutputs(fop, funcStatement, funcFedVars, fedVars);
+				logDecision = false;
+			}
+			else {
+				memo.put(hop.getHopID(), null);
+			}
 		}
 		else if( HopRewriteUtils.isData(hop, OpOpData.FEDERATED) ) {
 			outFType = deriveFType((DataOp)hop);

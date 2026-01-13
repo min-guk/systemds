@@ -148,6 +148,8 @@ public class FederationUtils {
 		FederatedRequest[] fr = new FederatedRequest[inst.length];
 		for(int j=0; j<inst.length; j++) {
 			ExecType targetExec = type == null ? InstructionUtils.getExecType(linst[j]) : type;
+			if(targetExec == ExecType.SPARK)
+				targetExec = ExecType.CP;
 			linst[j] = InstructionUtils.replaceOperand(linst[j], 0, targetExec.name());
 			// replace inputs before before outputs in order to prevent conflicts
 			// on outputId matching input literals (due to a mix of input instructions,
@@ -177,7 +179,10 @@ public class FederationUtils {
 
 	public static FederatedRequest callInstruction(String inst, CPOperand varOldOut, long outputId, CPOperand[] varOldIn, long[] varNewIn, ExecType type, boolean rmFedOutputFlag) {
 		boolean isFedInstr = inst.startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
-		String linst = InstructionUtils.replaceOperand(inst, 0, type.name());
+		ExecType targetExec = type == null ? InstructionUtils.getExecType(inst) : type;
+		if(targetExec == ExecType.SPARK)
+			targetExec = ExecType.CP;
+		String linst = InstructionUtils.replaceOperand(inst, 0, targetExec.name());
 		linst = linst.replace(Lop.OPERAND_DELIMITOR+varOldOut.getName()+Lop.DATATYPE_PREFIX, Lop.OPERAND_DELIMITOR+outputId+Lop.DATATYPE_PREFIX);
 		for(int i=0; i<varOldIn.length; i++)
 			if( varOldIn[i] != null ) {

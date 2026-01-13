@@ -354,6 +354,7 @@ public final class RulesCore {
       rr.register(new Rulesets.AppendRule());
       rr.register(new Rulesets.FrameMapRule());
       rr.register(new Rulesets.TernaryElemwiseRule());
+      rr.register(new Rulesets.NaryElemwiseRule());
       rr.register(new Rulesets.BinaryElemwiseRule());
       rr.register(new Rulesets.MMFedRule());
       rr.register(new Rulesets.BinaryMMRule());
@@ -364,6 +365,9 @@ public final class RulesCore {
       rr.register(new Rulesets.CovarianceRule());
       rr.register(new Rulesets.CtableRule());
       rr.register(new Rulesets.CumulativeOffsetRule());
+      rr.register(new Rulesets.ContainsRule());
+      rr.register(new Rulesets.ReplaceRule());
+      rr.register(new Rulesets.RexpandRule());
       rr.register(new Rulesets.LeftIndexRule());
       rr.register(new Rulesets.MMChainRule());
       rr.register(new Rulesets.QuantileInterquantileCtableDenyRule());

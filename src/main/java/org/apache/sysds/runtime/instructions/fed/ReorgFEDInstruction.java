@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Future;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.tuple.Pair;
@@ -60,6 +62,9 @@ import org.apache.sysds.runtime.matrix.operators.ReorgOperator;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
 public class ReorgFEDInstruction extends UnaryFEDInstruction {
+	private static final Pattern MISSING_VAR_PATTERN = Pattern.compile("Variable '?(\\d+)'? does not exist");
+	private static final boolean ENABLE_MISSING_VAR_REINIT = false;
+
 	// roll-specific attributes
 	private CPOperand _shift = null;
 
@@ -167,9 +172,6 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		// System.out.println("=== End Debug ===");
 
 		MatrixObject mo1 = ec.getMatrixObject(input1);
-		System.out.printf("FED reorg input check: op=%s in=%s out=%s fedOut=%s federated=%s dims=%s fedMap=%s inst=%s%n",
-			instOpcode, input1.getName(), output.getName(), _fedOut, mo1.isFederated(),
-			mo1.getDataCharacteristics(), mo1.getFedMapping(), instString);
 		ReorgOperator r_op = (ReorgOperator) _optr;
 		boolean isSpark = instString.startsWith("SPARK");
 
@@ -202,28 +204,41 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 					+ " is not supported for Reorg processing");
 
 		if (instOpcode.equals(Opcodes.TRANSPOSE.toString())) {
-			// execute transpose at federated site
-			long id = FederationUtils.getNextFedDataID();
-			FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
-					new MatrixCharacteristics(-1, -1), mo1.getDataType());
+			boolean retried = false;
+			while (true) {
+				try {
+					// execute transpose at federated site
+					long id = FederationUtils.getNextFedDataID();
+					FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
+							new MatrixCharacteristics(-1, -1), mo1.getDataType());
 
-			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] { input1 },
-					new long[] { mo1.getFedMapping().getID() }, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP,
-					true);
-			Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
+					FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] { input1 },
+							new long[] { mo1.getFedMapping().getID() }, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP,
+							true);
+					Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
 
-			if (_fedOut != null && !_fedOut.isForcedLocal()) {
-				// drive output federated mapping
-				MatrixObject out = ec.getMatrixObject(output);
-				long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
-				out.getDataCharacteristics().setDimension(mo1.getNumColumns(), mo1.getNumRows())
-						.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
-				out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()).transpose());
-			} else {
-				FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
-				Future<FederatedResponse>[] execResponse = mo1.getFedMapping().execute(getTID(), true, fr1, getRequest);
-				ec.setMatrixOutput(output.getName(),
-						FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
+					if (_fedOut != null && !_fedOut.isForcedLocal()) {
+						// drive output federated mapping
+						MatrixObject out = ec.getMatrixObject(output);
+						long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
+						out.getDataCharacteristics().setDimension(mo1.getNumColumns(), mo1.getNumRows())
+								.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
+						out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()).transpose());
+					} else {
+						FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
+						Future<FederatedResponse>[] execResponse = mo1.getFedMapping().execute(getTID(), true, fr1, getRequest);
+						ec.setMatrixOutput(output.getName(),
+								FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
+					}
+					break;
+				}
+				catch (DMLRuntimeException ex) {
+					if (!retried && tryReinitMissingInput(mo1, ex)) {
+						retried = true;
+						continue;
+					}
+					throw ex;
+				}
 			}
 		} else if (mo1.isFederated(FType.PART)) {
 			throw new DMLRuntimeException("Operation with opcode " + instOpcode + " is not supported with PART input");
@@ -297,6 +312,66 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			rdiag.setFedMapping(diagFedMap);
 			optionalForceLocal(rdiag);
 		}
+	}
+
+	private boolean tryReinitMissingInput(MatrixObject mo, Throwable ex) {
+		if (!ENABLE_MISSING_VAR_REINIT)
+			return false;
+		Long missingId = extractMissingVarId(ex);
+		if (missingId == null)
+			return false;
+		FederationMap fedMap = mo.getFedMapping();
+		if (fedMap == null)
+			return false;
+		boolean matches = (missingId == fedMap.getID());
+		if (!matches) {
+			for (Pair<FederatedRange, FederatedData> entry : fedMap.getMap()) {
+				if (entry.getValue().getVarID() == missingId) {
+					matches = true;
+					break;
+				}
+			}
+		}
+		if (!matches)
+			return false;
+
+		List<Future<FederatedResponse>> reads = new ArrayList<>();
+		for (Pair<FederatedRange, FederatedData> entry : fedMap.getMap()) {
+			FederatedData data = entry.getValue();
+			String path = data.getFilepath();
+			if (path == null || path.isEmpty()) {
+				LOG.warn("Cannot reinitialize federated input id=" + missingId + " due to missing filepath.");
+				return false;
+			}
+			FederatedRequest req = new FederatedRequest(FederatedRequest.RequestType.READ_VAR, data.getVarID());
+			req.appendParam(path);
+			req.appendParam(data.getDataType().name());
+			req.setTID(getTID());
+			reads.add(data.executeFederatedOperation(req));
+		}
+		FederationUtils.waitFor(reads);
+		LOG.warn("Reinitialized missing federated input id=" + missingId + " for reorg retry.");
+		return true;
+	}
+
+	private static Long extractMissingVarId(Throwable ex) {
+		Throwable cur = ex;
+		while (cur != null) {
+			String msg = cur.getMessage();
+			if (msg != null) {
+				Matcher matcher = MISSING_VAR_PATTERN.matcher(msg);
+				if (matcher.find()) {
+					try {
+						return Long.parseLong(matcher.group(1));
+					}
+					catch (NumberFormatException ignore) {
+						// ignore and continue with other causes
+					}
+				}
+			}
+			cur = cur.getCause();
+		}
+		return null;
 	}
 
 	public Pair<FederationMap, Long> rollFedMap(List<Pair<FederatedRange, FederatedData>> oldMap, long inID,

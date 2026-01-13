@@ -12,7 +12,6 @@ import java.util.Set;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
-import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.FileFormat;
@@ -55,7 +54,6 @@ import org.apache.sysds.runtime.codegen.SpoofMultiAggregate;
 import org.apache.sysds.runtime.codegen.SpoofOperator;
 import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
 import org.apache.sysds.runtime.codegen.SpoofRowwise;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 
 /**
@@ -74,9 +72,6 @@ public final class OracleFacade {
   private static final String ATTR_INNER = "inner";
   private static final String ATTR_OUTER = "outer";
   private static final String ATTR_ALIGN = "align";
-  private static final String ATTR_FORCE_FED = "force_federated";
-  private static final String ATTR_FORCE_LOCAL = "force_local";
-  private static final String ATTR_FORCE_FOUT = "force_fout";
   private static final String ATTR_R_IS_VECTOR = "r_is_vector";
   private static final String ATTR_MMCHAIN_TYPE = "mmchain.type";
   private static final String ATTR_MMCHAIN_WEIGHTED = "mmchain.weighted";
@@ -185,10 +180,26 @@ public final class OracleFacade {
       addReorgAttrs((ReorgOp) hop, attrs);
     if (hop instanceof DataOp)
       addDataOpAttrs((DataOp) hop, attrs);
+    if (hop instanceof ParameterizedBuiltinOp)
+      addParamBuiltinAttrs((ParameterizedBuiltinOp) hop, attrs);
     if (hop instanceof SpoofFusedOp)
       addSpoofAttrs((SpoofFusedOp) hop, attrs);
     if (isAppend(hop))
       attrs.put(ATTR_CBIND, Boolean.toString(isCbind(hop)));
+  }
+
+  private void addParamBuiltinAttrs(ParameterizedBuiltinOp hop, Map<String,String> attrs) {
+    if (hop == null || attrs == null)
+      return;
+    if (hop.getOp() != ParamBuiltinOp.REXPAND)
+      return;
+
+    Hop dirHop = hop.getParameterHop("dir");
+    if (dirHop instanceof LiteralOp) {
+      String dir = ((LiteralOp) dirHop).getStringValue();
+      if (dir != null && !dir.isBlank())
+        attrs.put("rexpand.dir", dir);
+    }
   }
 
   private void addAggUnaryAttrs(AggUnaryOp hop, Map<String,String> attrs) {
@@ -227,16 +238,6 @@ public final class OracleFacade {
       attrs.put(ATTR_INNER, hop.getInnerOp().name());
     if (hop.getOuterOp() != null)
       attrs.put(ATTR_OUTER, hop.getOuterOp().name());
-
-    ExecType forced = hop.getForcedExecType();
-    if (forced == ExecType.FED)
-      attrs.put(ATTR_FORCE_FED, Boolean.TRUE.toString());
-    else if (forced == ExecType.CP)
-      attrs.put(ATTR_FORCE_LOCAL, Boolean.TRUE.toString());
-
-    FederatedOutput fedOut = hop.getFederatedOutput();
-    if (fedOut == FederatedOutput.FOUT)
-      attrs.put(ATTR_FORCE_FOUT, Boolean.TRUE.toString());
 
     Boolean rightVector = vectorFlag(hop.getInput(), 1);
     if (rightVector != null)

@@ -2432,6 +2432,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			Hop left = bop.getInput(0);
 			Hop right = bop.getInput(1);
 			Hop ternop = null;
+			Hop sMult = null;
 			
 			//pattern (a) X + s*Y -> X +* sY
 			if( bop.getOp() == OpOp2.PLUS && left.getDataType()==DataType.MATRIX 
@@ -2443,6 +2444,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				Hop mright = right.getInput().get( (right.getInput(0).getDataType()==DataType.SCALAR) ? 1 : 0);
 				ternop = (smid instanceof LiteralOp && HopRewriteUtils.getDoubleValueSafe((LiteralOp)smid)==0) ? 
 						left : HopRewriteUtils.createTernary(left, smid, mright, OpOp3.PLUS_MULT);
+				sMult = right;
 				LOG.debug("Applied fuseAxpyBinaryOperationChain1. (line " +hi.getBeginLine()+")");
 			}
 			//pattern (b) s*Y + X -> X +* sY
@@ -2455,6 +2457,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				Hop mright = left.getInput().get( (left.getInput(0).getDataType()==DataType.SCALAR) ? 1 : 0);
 				ternop = (smid instanceof LiteralOp && HopRewriteUtils.getDoubleValueSafe((LiteralOp)smid)==0) ? 
 						right : HopRewriteUtils.createTernary(right, smid, mright, OpOp3.PLUS_MULT);
+				sMult = left;
 				LOG.debug("Applied fuseAxpyBinaryOperationChain2. (line " +hi.getBeginLine()+")");
 			}
 			//pattern (c) X - s*Y -> X -* sY
@@ -2467,6 +2470,7 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 				Hop mright = right.getInput().get( (right.getInput(0).getDataType()==DataType.SCALAR) ? 1 : 0);
 				ternop = (smid instanceof LiteralOp && HopRewriteUtils.getDoubleValueSafe((LiteralOp)smid)==0) ? 
 						left : HopRewriteUtils.createTernary(left, smid, mright, OpOp3.MINUS_MULT);
+				sMult = right;
 				LOG.debug("Applied fuseAxpyBinaryOperationChain3. (line " +hi.getBeginLine()+")");
 			}
 			
@@ -2474,7 +2478,12 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 			if( ternop != null ) {
 				if (right.getForcedExecType() == Types.ExecType.FED)
 					ternop.setForcedExecType(Types.ExecType.FED);
-				HopRewriteUtils.replaceChildReference(parent, hi, ternop, pos);
+				Hop old = hi;
+				HopRewriteUtils.rewireAllParentChildReferences(old, ternop);
+				if( sMult != null )
+					HopRewriteUtils.cleanupUnreferenced(old, sMult);
+				else
+					HopRewriteUtils.cleanupUnreferenced(old);
 				hi = ternop;
 			}
 		}

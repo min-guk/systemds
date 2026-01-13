@@ -19,7 +19,11 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.runtime.instructions.cp.CPInstruction;
+import org.apache.sysds.runtime.instructions.FEDInstructionParser;
 import org.apache.sysds.runtime.instructions.Instruction;
+import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 
 public abstract class FEDInstruction extends Instruction {
@@ -30,6 +34,7 @@ public abstract class FEDInstruction extends Instruction {
 		AggregateTernary,
 		Append,
 		Binary,
+		BuiltinNary,
 		Cast,
 		CentralMoment,
 		Checkpoint,
@@ -108,5 +113,17 @@ public abstract class FEDInstruction extends Instruction {
 
 	public void setTID(long tid) {
 		_tid = tid;
+	}
+
+	@Override
+	public Instruction preprocessInstruction(ExecutionContext ec) {
+		Instruction tmp = super.preprocessInstruction(ec);
+		if (tmp.requiresLabelUpdate()) {
+			String updInst = CPInstruction.updateLabels(tmp.toString(), ec.getVariables());
+			tmp = FEDInstructionParser.parseSingleInstruction(updInst);
+			if (DMLScript.LINEAGE)
+				ec.traceLineage(tmp);
+		}
+		return tmp;
 	}
 }

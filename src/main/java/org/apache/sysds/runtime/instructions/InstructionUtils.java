@@ -1225,8 +1225,9 @@ public class InstructionUtils {
 	}
 
 	private static String replaceExecTypeWithCP(String inst){
-		// Replace FED with CP instruction when it is send over to federated site.
-		return inst.replace(Types.ExecType.FED.name(), Types.ExecType.CP.name());
+		// Replace FED/SPARK with CP instruction when it is sent over to a federated site.
+		return inst.replace(Types.ExecType.FED.name(), Types.ExecType.CP.name())
+			.replace(Types.ExecType.SPARK.name(), Types.ExecType.CP.name());
 	}
 
 	private static String replaceOutputOperand(String linst, CPOperand varOldOut, long id){

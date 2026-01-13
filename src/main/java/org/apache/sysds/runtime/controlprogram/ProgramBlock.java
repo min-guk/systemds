@@ -53,6 +53,7 @@ import org.apache.sysds.runtime.meta.MetaData;
 import org.apache.sysds.runtime.meta.MetaDataFormat;
 import org.apache.sysds.utils.stats.RecompileStatistics;
 import org.apache.sysds.utils.Statistics;
+import org.apache.sysds.utils.stats.InstructionStatistics;
 
 public abstract class ProgramBlock implements ParseInfo {
 	public static final String PRED_VAR = "__pred";
@@ -218,15 +219,21 @@ public abstract class ProgramBlock implements ParseInfo {
 	}
 
 	private void executeSingleInstruction(Instruction currInst, ExecutionContext ec) {
+		Instruction tmp = null;
+		long t0 = 0;
+		long execTime = -1;
+		boolean instStats = DMLScript.INST_STATS;
 		try {
 			// start time measurement for statistics
-			long t0 = (DMLScript.STATISTICS || DMLScript.STATISTICS_NGRAMS || LOG.isTraceEnabled())
+			t0 = (DMLScript.STATISTICS || DMLScript.STATISTICS_NGRAMS || instStats || LOG.isTraceEnabled())
 				? System.nanoTime() : 0;
 
 			// pre-process instruction (inst patching, listeners, lineage)
-			Instruction tmp = currInst.preprocessInstruction(ec);
+			tmp = currInst.preprocessInstruction(ec);
 			if (tmp instanceof FEDInstruction)
 				((FEDInstruction) tmp).setTID(ec.getTID());
+			if (instStats)
+				InstructionStatistics.startInstruction(tmp);
 
 			// try to reuse instruction result from lineage cache
 			if(!LineageCache.reuse(tmp, ec)) {
@@ -279,6 +286,9 @@ public abstract class ProgramBlock implements ParseInfo {
 					Statistics.maintainNGramsFromLineage(tmp, ec, t0);
 			}
 
+			if (instStats && t0 != 0)
+				execTime = System.nanoTime() - t0;
+
 			// optional trace information (instruction and runtime)
 			if(LOG.isTraceEnabled()) {
 				long t1 = System.nanoTime();
@@ -299,6 +309,12 @@ public abstract class ProgramBlock implements ParseInfo {
 		catch(Exception e) {
 			throw new DMLRuntimeException(
 				printBlockErrorLocation() + "Error evaluating instruction: " + currInst.toString(), e);
+		}
+		finally {
+			if (instStats && tmp != null) {
+				long execTimeNs = (execTime >= 0) ? execTime : ((t0 != 0) ? System.nanoTime() - t0 : 0);
+				InstructionStatistics.endInstruction(tmp, execTimeNs);
+			}
 		}
 	}
 

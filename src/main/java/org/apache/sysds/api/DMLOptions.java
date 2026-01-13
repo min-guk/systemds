@@ -61,6 +61,8 @@ public class DMLOptions {
 	public boolean              fedStats      = false;            // Whether to record and print the federated statistics
 	public int                  fedStatsCount = 10;               // Default federated statistics count
 	public boolean              memStats      = false;            // max memory statistics
+	public boolean              instStats     = false;            // Whether to record per-instruction statistics
+	public String               instStatsPath = null;             // Output path for per-instruction statistics CSV
 	public Explain.ExplainType  explainType   = Explain.ExplainType.NONE;  // Whether to print the "Explain" and if so, what type
 	public ExecMode             execMode      = OptimizerUtils.getDefaultExecutionMode();  // Execution mode standalone, MR, Spark or a hybrid
 	public boolean              gpu           = false;            // Whether to use the GPU
@@ -106,6 +108,8 @@ public class DMLOptions {
 			", fedMonitoring=" + fedMonitoring +
 			", fedMonitoringAddress" + fedMonitoringAddress +
 			", memStats=" + memStats +
+			", instStats=" + instStats +
+			", instStatsPath=" + instStatsPath +
 			", explainType=" + explainType +
 			", execMode=" + execMode +
 			", gpu=" + gpu +
@@ -259,6 +263,13 @@ public class DMLOptions {
 
 		dmlOptions.memStats = line.hasOption("mem");
 
+		dmlOptions.instStats = line.hasOption("instStats");
+		if (dmlOptions.instStats) {
+			String instStatsPath = line.getOptionValue("instStats");
+			if (instStatsPath != null && !instStatsPath.trim().isEmpty())
+				dmlOptions.instStatsPath = instStatsPath;
+		}
+
 		dmlOptions.clean = line.hasOption("clean");
 		
 		if (line.hasOption("config")){
@@ -382,6 +393,9 @@ public class DMLOptions {
 			.hasOptionalArg().create("fedStats");
 		Option memOpt = OptionBuilder.withDescription("monitors and reports max memory consumption in CP; default off")
 			.create("mem");
+		Option instStatsOpt = OptionBuilder.withArgName("path")
+			.withDescription("writes per-instruction statistics to CSV; optional path (default: inst_stats_<script>_<uuid>.csv)")
+			.hasOptionalArg().create("instStats");
 		Option explainOpt = OptionBuilder.withArgName("level")
 			.withDescription("explains plan levels; can be 'hops' / 'runtime'[default] / 'recompile_hops' / 'recompile_runtime' / 'codegen' / 'codegen_recompile'")
 			.hasOptionalArg().create("explain");
@@ -443,6 +457,7 @@ public class DMLOptions {
 		options.addOption(ngramsOpt);
 		options.addOption(fedStatsOpt);
 		options.addOption(memOpt);
+		options.addOption(instStatsOpt);
 		options.addOption(explainOpt);
 		options.addOption(execOpt);
 		options.addOption(gpuOpt);

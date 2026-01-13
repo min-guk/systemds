@@ -111,7 +111,7 @@ public class CumulativeOffsetFEDInstruction extends BinaryFEDInstruction
 			FederatedRequest fr3 = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, mcOut, mo1.getDataType());
 			FederatedRequest fr4 = mo1.getFedMapping().broadcast(mo2);
 			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id,
-				new CPOperand[] {input1, input2}, new long[] {mo1.getFedMapping().getID(), fr4.getID()}, Types.ExecType.SPARK, false);
+				new CPOperand[] {input1, input2}, new long[] {mo1.getFedMapping().getID(), fr4.getID()}, Types.ExecType.CP, false);
 			FederatedRequest fr2 = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
 			Future<FederatedResponse>[] tmp = mo1.getFedMapping().execute(getTID(), true, fr3, fr4, fr1, fr2);
 			out = setOutputFedMapping(ec, mo1, fr1.getID());
@@ -146,7 +146,7 @@ public class CumulativeOffsetFEDInstruction extends BinaryFEDInstruction
 		long id = FederationUtils.getNextFedDataID();
 		FederatedRequest fr3 = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, new MatrixCharacteristics(-1, -1), mo1.getDataType());
 		FederatedRequest fr1 = FederationUtils.callInstruction(modifiedInstString, output, id,
-			new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, Types.ExecType.SPARK, false);
+			new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, Types.ExecType.CP, false);
 		FederatedRequest fr2 = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
 		return mo1.getFedMapping().execute(getTID(), true, fr3, fr1, fr2);
 	}
@@ -156,7 +156,7 @@ public class CumulativeOffsetFEDInstruction extends BinaryFEDInstruction
 
 		FederatedRequest fr3 = out.getFedMapping().broadcast(mo2);
 		FederatedRequest fr4 = FederationUtils.callInstruction(modifiedInstString, output, out.getFedMapping().getID(),
-			new CPOperand[] {output, input2}, new long[] {out.getFedMapping().getID(), fr3.getID()}, Types.ExecType.SPARK, false);
+			new CPOperand[] {output, input2}, new long[] {out.getFedMapping().getID(), fr3.getID()}, Types.ExecType.CP, false);
 		out.getFedMapping().execute(getTID(), true, fr3, fr4);
 		out.setFedMapping(out.getFedMapping().copyWithNewID(fr4.getID()));
 

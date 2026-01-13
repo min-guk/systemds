@@ -88,6 +88,16 @@ public class AggTernaryRuleTest {
   }
 
   @Test
+  public void caseDSecondInputFederated() {
+    OpCaps caps = aggRule.caps(
+        TAKPM,
+        Arrays.asList(null, FType.ROW, null),
+        scalarShape());
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(ReasonCode.OK, caps.reason());
+  }
+
+  @Test
   public void insufficientFederatedInputs() {
     OpCaps caps = aggRule.caps(
         TAKPM,

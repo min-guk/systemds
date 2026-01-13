@@ -27,6 +27,7 @@ import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.AggregateBinaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.AggregateTernaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.BinaryCPInstruction;
+import org.apache.sysds.runtime.instructions.cp.BuiltinNaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.CtableCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.MMChainCPInstruction;
@@ -86,6 +87,8 @@ public class FEDInstructionUtils {
 			fedinst = TernaryFEDInstruction.parseInstruction((TernaryCPInstruction) inst, ec);
 		else if(inst instanceof VariableCPInstruction)
 			fedinst = VariableFEDInstruction.parseInstruction((VariableCPInstruction) inst, ec);
+		else if(inst instanceof BuiltinNaryCPInstruction)
+			fedinst = BuiltinNaryFEDInstruction.parseInstruction((BuiltinNaryCPInstruction) inst, ec);
 		else if(inst instanceof AggregateTernaryCPInstruction)
 			fedinst = AggregateTernaryFEDInstruction.parseInstruction((AggregateTernaryCPInstruction) inst, ec);
 		else if(inst instanceof QuaternaryCPInstruction)

@@ -26,6 +26,7 @@ import org.apache.sysds.runtime.instructions.fed.AggregateTernaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.AggregateUnaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.AppendFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.BinaryFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.BuiltinNaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CentralMomentFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CovarianceFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
@@ -34,6 +35,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
 import org.apache.sysds.runtime.instructions.fed.IndexingFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.MultiReturnParameterizedBuiltinFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.ParameterizedBuiltinFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantilePickFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.QuantileSortFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.ReorgFEDInstruction;
@@ -72,6 +74,10 @@ public class FEDInstructionParser extends InstructionParser
 				return TsmmFEDInstruction.parseInstruction(str);
 			case Binary:
 				return BinaryFEDInstruction.parseInstruction(str);
+			case Builtin:
+				return UnaryMatrixFEDInstruction.parseInstruction(str);
+			case BuiltinNary:
+				return BuiltinNaryFEDInstruction.parseInstruction(str);
 			case Ternary:
 				return TernaryFEDInstruction.parseInstruction(str);
 			case Reorg:
@@ -98,6 +104,8 @@ public class FEDInstructionParser extends InstructionParser
 				return FEDFoutInstruction.parseInstruction(str);
 			case MultiReturnParameterizedBuiltin:
 				return MultiReturnParameterizedBuiltinFEDInstruction.parseInstruction(str);
+			case ParameterizedBuiltin:
+				return ParameterizedBuiltinFEDInstruction.parseInstruction(str);
 			case Variable:
 				return VariableFEDInstruction.parseInstruction(str);
 			default:

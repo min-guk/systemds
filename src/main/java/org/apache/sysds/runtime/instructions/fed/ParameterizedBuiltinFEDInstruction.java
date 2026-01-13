@@ -88,7 +88,7 @@ public class ParameterizedBuiltinFEDInstruction extends ComputationFEDInstructio
 	protected final HashMap<String, String> params;
 
 	private static final String[] PARAM_BUILTINS = new String[]{
-		"contains", "replace", "rmempty", "lowertri", "uppertri",
+		"contains", "replace", "rexpand", "rmempty", "lowertri", "uppertri",
 		"transformdecode", "transformapply", "tokenize"};
 
 	protected ParameterizedBuiltinFEDInstruction(Operator op, HashMap<String, String> paramsMap, CPOperand out,
@@ -114,7 +114,8 @@ public class ParameterizedBuiltinFEDInstruction extends ComputationFEDInstructio
 			return new ParameterizedBuiltinFEDInstruction(new SimpleOperator(func), paramsMap, out, opcode, str);
 		}
 		else if(opcode.equals("transformapply") || opcode.equals("transformdecode")
-			|| opcode.equals("tokenize") || opcode.equals("contains") ) {
+			|| opcode.equals("tokenize") || opcode.equals("contains")
+			|| opcode.equals("rexpand")) {
 			return new ParameterizedBuiltinFEDInstruction(null, paramsMap, out, opcode, str);
 		}
 		else {
@@ -199,6 +200,44 @@ public class ParameterizedBuiltinFEDInstruction extends ComputationFEDInstructio
 				.set(mo.getDataCharacteristics())
 				.setNonZeros(FederationUtils.sumNonZeros(ret));
 			out.setFedMapping(mo.getFedMapping().copyWithNewID(fr1.getID()));
+		}
+		else if(opcode.equalsIgnoreCase("rexpand")) {
+			CacheableData<?> mo = getTarget(ec);
+			FederationMap fedMap = mo.getFedMapping();
+
+			FederatedRequest fr1 = FederationUtils.callInstruction(
+				instString, output, new CPOperand[] {getTargetOperand()},
+				new long[] {fedMap.getID()});
+			fedMap.execute(getTID(), true, fr1);
+
+			String maxValName = params.get("max");
+			long maxVal = maxValName.startsWith(Lop.SCALAR_VAR_NAME_PREFIX) ?
+				ec.getScalarInput(maxValName, ValueType.FP64, false).getLongValue() :
+				UtilFunctions.toLong(Double.parseDouble(maxValName));
+			boolean dirRows = params.get("dir").equals("rows");
+
+			long inRows = mo.getDataCharacteristics().getRows();
+			long outRows = dirRows ? maxVal : inRows;
+			long outCols = dirRows ? inRows : maxVal;
+
+			MatrixObject out = ec.getMatrixObject(output);
+			out.getDataCharacteristics()
+				.set(outRows, outCols, mo.getDataCharacteristics().getBlocksize(), -1)
+				.setNonZerosBound(inRows);
+
+			if(!mo.isFederated(FType.ROW))
+				throw new DMLRuntimeException("REXPAND federated support expects ROW-partitioned input.");
+
+			FederationMap outMap;
+			if(dirRows) {
+				outMap = fedMap.copyWithNewID(fr1.getID());
+				outMap.transpose();
+				outMap.modifyFedRanges(outRows, 0);
+			}
+			else {
+				outMap = fedMap.copyWithNewID(fr1.getID(), outCols);
+			}
+			out.setFedMapping(outMap);
 		}
 		else if(opcode.equals("rmempty"))
 			if (getTarget(ec) instanceof FrameObject)

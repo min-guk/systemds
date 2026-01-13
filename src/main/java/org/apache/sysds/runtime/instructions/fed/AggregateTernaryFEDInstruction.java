@@ -19,6 +19,8 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Future;
 
 import org.apache.sysds.common.Opcodes;
@@ -51,8 +53,10 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 
 	public static AggregateTernaryFEDInstruction parseInstruction(AggregateTernaryCPInstruction inst,
 		ExecutionContext ec) {
-		if(inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederatedExcept(FType.BROADCAST) &&
-			inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederatedExcept(FType.BROADCAST)) {
+		boolean fed1 = inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederatedExcept(FType.BROADCAST);
+		boolean fed2 = inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederatedExcept(FType.BROADCAST);
+		boolean fed3 = inst.input3.isMatrix() && ec.getCacheableData(inst.input3).isFederatedExcept(FType.BROADCAST);
+		if(fed1 || fed2 || fed3) {
 			return parseInstruction(inst);
 		}
 		return null;
@@ -60,8 +64,10 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 
 	public static AggregateTernaryFEDInstruction parseInstruction(AggregateTernarySPInstruction inst,
 		ExecutionContext ec) {
-		if(inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederatedExcept(FType.BROADCAST) &&
-			inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederatedExcept(FType.BROADCAST)) {
+		boolean fed1 = inst.input1.isMatrix() && ec.getCacheableData(inst.input1).isFederatedExcept(FType.BROADCAST);
+		boolean fed2 = inst.input2.isMatrix() && ec.getCacheableData(inst.input2).isFederatedExcept(FType.BROADCAST);
+		boolean fed3 = inst.input3.isMatrix() && ec.getCacheableData(inst.input3).isFederatedExcept(FType.BROADCAST);
+		if(fed1 || fed2 || fed3) {
 			return parseInstruction(inst);
 		}
 		return null;
@@ -104,6 +110,10 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
 		MatrixLineagePair mo3 = input3.isLiteral() ? null : ec.getMatrixLineagePair(input3);
+		boolean fed1 = mo1.isFederatedExcept(FType.BROADCAST);
+		boolean fed2 = mo2.isFederatedExcept(FType.BROADCAST);
+		boolean fed3 = mo3 != null && mo3.isFederatedExcept(FType.BROADCAST);
+		int fedCount = (fed1 ? 1 : 0) + (fed2 ? 1 : 0) + (fed3 ? 1 : 0);
 		if(mo3 != null && mo1.isFederated() && mo2.isFederated() && mo3.isFederated()
 				&& mo1.getFedMapping().isAligned(mo2.getFedMapping(), mo1.isFederated(FType.ROW) ? AlignType.ROW : AlignType.COL)
 				&& mo2.getFedMapping().isAligned(mo3.getFedMapping(), mo1.isFederated(FType.ROW) ? AlignType.ROW : AlignType.COL)) {
@@ -180,6 +190,95 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 			}
 			else {
 				throw new DMLRuntimeException("Not Implemented Federated Ternary Variation");
+			}
+		} else if(fedCount == 1) {
+			MatrixLineagePair base = fed1 ? mo1 : (fed2 ? mo2 : mo3);
+			List<FederatedRequest[]> sliceRequests = new ArrayList<>();
+			List<FederatedRequest> preRequests = new ArrayList<>();
+			List<Long> cleanupIds = new ArrayList<>();
+			long[] inIds = new long[3];
+
+			// If input1 and input2 refer to the same non-federated matrix (common pattern),
+			// avoid broadcasting/slicing it twice.
+			boolean shareIn12 = !fed1 && !fed2 && input1.getName().equals(input2.getName());
+			if(shareIn12) {
+				FederatedRequest[] fr = base.getFedMapping().broadcastSliced(mo1, false);
+				sliceRequests.add(fr);
+				cleanupIds.add(fr[0].getID());
+				inIds[0] = fr[0].getID();
+				inIds[1] = fr[0].getID();
+			}
+			else {
+				if(fed1) {
+					inIds[0] = base.getFedMapping().getID();
+				}
+				else {
+					FederatedRequest[] fr = base.getFedMapping().broadcastSliced(mo1, false);
+					sliceRequests.add(fr);
+					cleanupIds.add(fr[0].getID());
+					inIds[0] = fr[0].getID();
+				}
+
+				if(fed2) {
+					inIds[1] = base.getFedMapping().getID();
+				}
+				else {
+					FederatedRequest[] fr = base.getFedMapping().broadcastSliced(mo2, false);
+					sliceRequests.add(fr);
+					cleanupIds.add(fr[0].getID());
+					inIds[1] = fr[0].getID();
+				}
+			}
+
+			if(input3.isLiteral()) {
+				FederatedRequest fr = base.getFedMapping().broadcast(ec.getScalarInput(input3));
+				preRequests.add(fr);
+				cleanupIds.add(fr.getID());
+				inIds[2] = fr.getID();
+			}
+			else if(fed3) {
+				inIds[2] = base.getFedMapping().getID();
+			}
+			else {
+				FederatedRequest[] fr = base.getFedMapping().broadcastSliced(mo3, false);
+				sliceRequests.add(fr);
+				cleanupIds.add(fr[0].getID());
+				inIds[2] = fr[0].getID();
+			}
+
+			FederatedRequest frCall = FederationUtils.callInstruction(getInstructionString(), output,
+				new CPOperand[] {input1, input2, input3}, inIds, true);
+			FederatedRequest frGet = new FederatedRequest(RequestType.GET_VAR, frCall.getID());
+			cleanupIds.add(frCall.getID());
+			FederatedRequest frCleanup = base.getFedMapping().cleanup(getTID(),
+				cleanupIds.stream().mapToLong(Long::longValue).toArray());
+
+			List<FederatedRequest> process = new ArrayList<>(preRequests);
+			process.add(frCall);
+			process.add(frGet);
+			process.add(frCleanup);
+			FederatedRequest[] processArr = process.toArray(new FederatedRequest[0]);
+
+			Future<FederatedResponse>[] response = sliceRequests.isEmpty()
+				? base.getFedMapping().execute(getTID(), processArr)
+				: base.getFedMapping().executeMultipleSlices(getTID(), true,
+					sliceRequests.toArray(new FederatedRequest[0][]), processArr);
+
+			if(output.getDataType().isScalar()) {
+				double sum = 0;
+				for(Future<FederatedResponse> fr : response)
+					try {
+						sum += ((ScalarObject) fr.get().getData()[0]).getDoubleValue();
+					}
+					catch(Exception e) {
+						throw new DMLRuntimeException("Federated Get data failed with exception on TernaryFedInstruction", e);
+					}
+				ec.setScalarOutput(output.getName(), new DoubleObject(sum));
+			}
+			else {
+				AggregateUnaryOperator aop = InstructionUtils.parseBasicAggregateUnaryOperator(
+					getOpcode().equals("fed_tak+*") ? Opcodes.UAKP.toString() : Opcodes.UACKP.toString());
+				ec.setMatrixOutput(output.getName(), FederationUtils.aggMatrix(aop, response, base.getFedMapping()));
 			}
 		}
 		else {

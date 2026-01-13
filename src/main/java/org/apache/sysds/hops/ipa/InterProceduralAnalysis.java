@@ -233,8 +233,9 @@ public class InterProceduralAnalysis {
 		List<IPAPass> fpasses = Arrays.asList(
 			new IPAPassRemoveUnusedFunctions(),
 			new IPAPassCompressionWorkloadAnalysis(), // workload-aware compression
-			new IPAPassApplyStaticAndDynamicHopRewrites(),  //split after compress
-			new IPAPassRewriteFederatedPlan());
+			new IPAPassApplyStaticAndDynamicHopRewrites()); // split after compress
+		// NOTE: federated planning is intentionally deferred to after rewriteHopsDAG
+		// so it can observe refreshed memory estimates (see DMLTranslator).
 		for(IPAPass pass : fpasses)
 			if( pass.isApplicable(graph2) )
 				pass.rewriteProgram(_prog, graph2, null);

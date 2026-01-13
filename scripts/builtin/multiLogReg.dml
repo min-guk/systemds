@@ -34,8 +34,9 @@
 # tol      tolerance ("epsilon")
 # reg      regularization parameter (lambda = 1/C); intercept is not regularized
 # maxi     max. number of outer (Newton) iterations
-# maxii    max. number of inner (conjugate gradient) iterations, 0 = no max
-# verbose  flag specifying if logging information should be printed
+# maxii       max. number of inner (conjugate gradient) iterations, 0 = no max
+# verbose     flag specifying if logging information should be printed
+# numclasses  optional total number of classes (K). If >0, skip max(Y) scan
 # ---------------------------------------------------------------------------------------
 #
 # OUTPUT:
@@ -44,7 +45,8 @@
 # --------------------------------------------------------------------------------------
 
 m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2, 
-  Double tol=1e-6, Double reg=1.0, Int maxi=100, Int maxii=20, Boolean verbose=TRUE)
+  Double tol=1e-6, Double reg=1.0, Int maxi=100, Int maxii=20, Boolean verbose=TRUE,
+  Int numclasses = -1)
   return(Matrix[Double] betas)
 {
   eta0 = 0.0001;
@@ -106,11 +108,17 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   # tssX_A = diag (scale_X) %*% A + shift_X %*% A [D, ];
 
   # Convert "Y" into indicator matrix:
-  max_y = max (Y);
+  if (numclasses > 0) {
+    max_y = numclasses;
+  }
   if (min (Y) <= 0) {
     # Category labels "0", "-1" etc. are converted into the largest label
-    Y = ifelse(Y <= 0, max_y + 1, Y);
-    max_y = max_y + 1;
+    if (numclasses > 0)
+      Y = ifelse(Y <= 0, max_y, Y);
+    else {
+      Y = ifelse(Y <= 0, max_y + 1, Y);
+      max_y = max_y + 1;
+    }
   }
   Y = table (seq (1, N, 1), Y, N, max_y);
   K = ncol (Y) - 1;   # The number of  non-baseline categories

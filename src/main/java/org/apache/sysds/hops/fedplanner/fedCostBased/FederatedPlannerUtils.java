@@ -29,12 +29,15 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -62,6 +65,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.List;
 import java.util.concurrent.Future;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,6 +79,7 @@ public class FederatedPlannerUtils {
 	private static final String FED_MATRIX_IDENTIFIER = "matrix";
 	private static final java.util.Set<String> FED_INIT_VARS = ConcurrentHashMap.newKeySet();
 	private static final Map<String, FType> FED_INIT_FTYPES = new ConcurrentHashMap<>();
+	private static final Map<String, String> FED_INIT_SIGNATURES = new ConcurrentHashMap<>();
 
 	/**
 	 * Get transient inputs from either paramMap or transientWrites.
@@ -370,7 +375,8 @@ public class FederatedPlannerUtils {
 			throw new DMLRuntimeException(errorMsg);
 		}
 		FType fedInitFType = deriveFedInitFType(initFedOp);
-		registerFedInitVar(initFedOp.getName(), fedInitFType);
+		String fedInitSignature = deriveFedInitSignature(initFedOp);
+		registerFedInitVar(initFedOp.getName(), fedInitFType, fedInitSignature);
 		return privacyConstraint;
 	}
 
@@ -379,10 +385,16 @@ public class FederatedPlannerUtils {
 	}
 
 	public static void registerFedInitVar(String varName, FType fedInitFType) {
+		registerFedInitVar(varName, fedInitFType, null);
+	}
+
+	public static void registerFedInitVar(String varName, FType fedInitFType, String signature) {
 		if (varName != null && !varName.isEmpty()) {
 			FED_INIT_VARS.add(varName);
 			if (fedInitFType != null)
 				FED_INIT_FTYPES.put(varName, fedInitFType);
+			if (signature != null)
+				FED_INIT_SIGNATURES.put(varName, signature);
 		}
 	}
 
@@ -392,6 +404,30 @@ public class FederatedPlannerUtils {
 
 	public static FType getFedInitFType(String varName) {
 		return (varName == null) ? null : FED_INIT_FTYPES.get(varName);
+	}
+
+	public static String getFedInitSignature(String varName) {
+		return (varName == null) ? null : FED_INIT_SIGNATURES.get(varName);
+	}
+
+	public static String getUniqueFedInitVarName() {
+		if (FED_INIT_SIGNATURES.isEmpty())
+			return null;
+		String signature = null;
+		String varName = null;
+		for (Entry<String, String> entry : FED_INIT_SIGNATURES.entrySet()) {
+			String sig = entry.getValue();
+			if (sig == null)
+				continue;
+			if (signature == null) {
+				signature = sig;
+				varName = entry.getKey();
+			}
+			else if (!signature.equals(sig)) {
+				return null;
+			}
+		}
+		return varName;
 	}
 
 	public static FType deriveFedInitFType(DataOp fedInit) {
@@ -417,6 +453,99 @@ public class FederatedPlannerUtils {
 		if (colPartitioned)
 			return FType.COL;
 		return FType.OTHER;
+	}
+
+	public static String deriveFedInitSignature(DataOp fedInit) {
+		if (fedInit == null || fedInit.getOp() != org.apache.sysds.common.Types.OpOpData.FEDERATED)
+			return null;
+		int addrIx = fedInit.getParameterIndex(DataExpression.FED_ADDRESSES);
+		int rangeIx = fedInit.getParameterIndex(DataExpression.FED_RANGES);
+		if (addrIx < 0 || rangeIx < 0)
+			return null;
+		Hop addrHop = fedInit.getInput(addrIx);
+		Hop rangeHop = fedInit.getInput(rangeIx);
+		if (addrHop == null || rangeHop == null)
+			return null;
+
+		FType fType = deriveFedInitFType(fedInit);
+		StringBuilder sb = new StringBuilder();
+		if (addrHop.getInput().isEmpty())
+			return null;
+		for (Hop addr : addrHop.getInput()) {
+			if (!(addr instanceof LiteralOp))
+				return null;
+			sb.append(((LiteralOp) addr).getStringValue()).append(';');
+		}
+		sb.append('|');
+
+		List<Hop> ranges = rangeHop.getInput();
+		if (fType != FType.FULL) {
+			if (ranges == null || ranges.isEmpty() || ranges.size() % 2 != 0)
+				return null;
+			for (int i = 0; i < ranges.size(); i += 2) {
+				Hop beg = ranges.get(i);
+				Hop end = ranges.get(i + 1);
+				Long rl = getLiteralLong(beg, 0);
+				Long cl = getLiteralLong(beg, 1);
+				Long ru = getLiteralLong(end, 0);
+				Long cu = getLiteralLong(end, 1);
+				if (rl == null || cl == null || ru == null || cu == null)
+					return null;
+				if (fType == FType.ROW)
+					sb.append(rl).append(',').append(ru).append(';');
+				else if (fType == FType.COL)
+					sb.append(cl).append(',').append(cu).append(';');
+				else
+					sb.append(rl).append(',').append(cl).append(',')
+						.append(ru).append(',').append(cu).append(';');
+			}
+		}
+		return sb.toString();
+	}
+
+	public static String deriveFedMappingSignature(org.apache.sysds.runtime.controlprogram.federated.FederationMap fmap) {
+		if (fmap == null)
+			return null;
+		List<Pair<FederatedRange, FederatedData>> entries = fmap.getMap();
+		if (entries == null || entries.isEmpty())
+			return null;
+
+		FType fType = fmap.getType();
+		StringBuilder sb = new StringBuilder();
+		for (Pair<FederatedRange, FederatedData> entry : entries) {
+			FederatedData data = entry.getValue();
+			if (data == null || data.getAddress() == null)
+				return null;
+			sb.append(data.getAddress().toString()).append(';');
+		}
+		sb.append('|');
+		if (fType != FType.FULL) {
+			for (Pair<FederatedRange, FederatedData> entry : entries) {
+				FederatedRange range = entry.getKey();
+				if (range == null || range.getBeginDims().length < 2 || range.getEndDims().length < 2)
+					return null;
+				long[] beg = range.getBeginDims();
+				long[] end = range.getEndDims();
+				if (fType == FType.ROW)
+					sb.append(beg[0]).append(',').append(end[0]).append(';');
+				else if (fType == FType.COL)
+					sb.append(beg[1]).append(',').append(end[1]).append(';');
+				else
+					sb.append(beg[0]).append(',').append(beg[1]).append(',')
+						.append(end[0]).append(',').append(end[1]).append(';');
+			}
+		}
+		return sb.toString();
+	}
+
+	private static Long getLiteralLong(Hop listHop, int index) {
+		if (listHop == null || listHop.getInput().size() <= index)
+			return null;
+		Hop h = listHop.getInput(index);
+		if (!(h instanceof LiteralOp))
+			return null;
+		long v = HopRewriteUtils.getIntValueSafe((LiteralOp) h);
+		return (v == Long.MAX_VALUE) ? null : v;
 	}
 
 	public static Privacy getPrivacyConstraint(Hop hop, List<Hop> inputHops, Map<Long, Privacy> privacyMap) {
@@ -458,6 +587,11 @@ public class FederatedPlannerUtils {
 				return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
 			} else if (hop instanceof AggBinaryOp || hop instanceof QuaternaryOp) {
 				return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+			} else if (hop instanceof UnaryOp) {
+				OpOp1 op = ((UnaryOp) hop).getOp();
+				if (op == OpOp1.NROW || op == OpOp1.NCOL || op == OpOp1.LENGTH)
+					return Privacy.PUBLIC;
+				return Privacy.PRIVATE_AGGREGATE;
 			} else if (hop instanceof TernaryOp) {
 				switch (((TernaryOp) hop).getOp()) {
 					case MOMENT:
@@ -469,9 +603,11 @@ public class FederatedPlannerUtils {
 					default:
 						return Privacy.PRIVATE_AGGREGATE;
 				}
-			} else if (hop instanceof ParameterizedBuiltinOp
-					&& ((ParameterizedBuiltinOp) hop).getOp() == ParamBuiltinOp.GROUPEDAGG) {
-				return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+			} else if (hop instanceof ParameterizedBuiltinOp) {
+				ParamBuiltinOp op = ((ParameterizedBuiltinOp) hop).getOp();
+				if (op == ParamBuiltinOp.GROUPEDAGG || op == ParamBuiltinOp.CONTAINS)
+					return Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+				return Privacy.PRIVATE_AGGREGATE;
 			} else {
 				return Privacy.PRIVATE_AGGREGATE;
 			}

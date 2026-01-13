@@ -34,10 +34,25 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LeftIndexingOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable;
@@ -203,6 +218,8 @@ public class FederatedPlannerLogger {
         List<Hop> allParents = mergeHopLists(hop.getParent(), rewireParents);
 
         String hopInfo = hop.getHopID() + " (" + hop.getOpString() + ")";
+        String opcode = canonicalOpcode(hop);
+        String hopType = hop.getClass().getSimpleName();
         String privacyInfo = (privacyConstraint == null) ? "null" : privacyConstraint.toString();
         String inputs = (inputFTypes == null || inputFTypes.isEmpty())
             ? "[]"
@@ -234,6 +251,8 @@ public class FederatedPlannerLogger {
         }
 
         System.out.println("[Oracle] hop=" + hopInfo
+            + ", opcode=" + opcode
+            + ", hopType=" + hopType
             + ", exec=" + caps.exec()
             + ", placement=" + caps.placement()
             + ", foutType=" + foutType
@@ -246,6 +265,77 @@ public class FederatedPlannerLogger {
             + ", privacy=" + privacyInfo
             + ", inputs=" + inputs
             + ", notes=" + notesBuilder);
+    }
+
+    private static String canonicalOpcode(Hop hop) {
+        if (hop == null)
+            return "";
+        if (hop instanceof AggBinaryOp && ((AggBinaryOp) hop).isMatrixMultiply())
+            return Opcodes.MMULT.toString();
+        if (hop instanceof LeftIndexingOp)
+            return isMapLeftIndex((LeftIndexingOp) hop)
+                ? Opcodes.MAPLEFTINDEX.toString()
+                : Opcodes.LEFT_INDEX.toString();
+        if (hop instanceof IndexingOp)
+            return Opcodes.RIGHT_INDEX.toString();
+        if (hop instanceof ReorgOp)
+            return ((ReorgOp) hop).getOp().toString();
+        if (hop instanceof AggUnaryOp)
+            return hop.getOpString().toLowerCase(Locale.ROOT);
+        if (hop instanceof UnaryOp)
+            return ((UnaryOp) hop).getOp().toString();
+        if (hop instanceof BinaryOp)
+            return ((BinaryOp) hop).getOp().toString();
+        if (hop instanceof NaryOp)
+            return ((NaryOp) hop).getOp().toString();
+        if (hop instanceof TernaryOp)
+            return ((TernaryOp) hop).getOp().toString();
+        if (hop instanceof QuaternaryOp)
+            return ((QuaternaryOp) hop).getOp().toString();
+        if (hop instanceof FunctionOp)
+            return FunctionOp.OPCODE;
+        if (hop instanceof ParameterizedBuiltinOp) {
+            ParamBuiltinOp op = ((ParameterizedBuiltinOp) hop).getOp();
+            return (op != null) ? op.toString() : fallbackOpcode(hop);
+        }
+        if (hop instanceof DataOp)
+            return ((DataOp) hop).getOp().toString();
+        return fallbackOpcode(hop);
+    }
+
+    private static boolean isMapLeftIndex(LeftIndexingOp hop) {
+        if (hop == null || hop.getInput() == null || hop.getInput().size() < 2)
+            return false;
+        Hop lhs = hop.getInput().get(0);
+        Hop rhs = hop.getInput().get(1);
+        if (rhs == null)
+            return false;
+        if (rhs.getDataType() == DataType.SCALAR)
+            return true;
+
+        long m1Rows = (lhs != null) ? lhs.getDim1() : -1;
+        long m1Cols = (lhs != null) ? lhs.getDim2() : -1;
+        long m1Blen = (lhs != null) ? lhs.getBlocksize() : -1;
+        long m2Rows = rhs.getDim1();
+        long m2Cols = rhs.getDim2();
+        long m2Nnz = rhs.getNnz();
+        if (m1Rows <= 0 || m1Cols <= 0 || m2Rows <= 0 || m2Cols <= 0 || m1Blen <= 0)
+            return false;
+
+        boolean broadcastRhs = OptimizerUtils.checkSparkBroadcastMemoryBudget(
+            m2Rows, m2Cols, (int) m1Blen, m2Nnz);
+        if (broadcastRhs)
+            return true;
+
+        boolean aligned = rhs.getDataType() == DataType.MATRIX
+            && ((m1Rows == m2Rows && m1Cols <= m1Blen)
+            || (m1Cols == m2Cols && m1Rows <= m1Blen));
+        return aligned;
+    }
+
+    private static String fallbackOpcode(Hop hop) {
+        String raw = hop.getOpString();
+        return raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
     }
     
     /**
@@ -736,7 +826,8 @@ public class FederatedPlannerLogger {
             hop = plan.getHopRef();
             // Add FedPlan information with explicit labels
             sb.append("[HopID]: ").append(hop.getHopID())
-                    .append(", [Name]: ").append(hop.getOpString());
+                    .append(", [Name]: ").append(hop.getOpString())
+                    .append(", [DataType]: ").append(hop.getDataType());
 
             ExecType execType = plan.getExecType();
             if (execType == null) {
@@ -817,7 +908,8 @@ public class FederatedPlannerLogger {
         // Add matrix characteristics with explicit labels
         sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
                 .append("), Blocksize: ").append(hop.getBlocksize())
-                .append(", NNZ: ").append(hop.getNnz());
+                .append(", NNZ: ").append(hop.getNnz())
+                .append(", OutputMem: ").append(hop.getOutputMemEstimate());
 
         if (hop.getUpdateType().isInPlace()) {
             sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
@@ -852,37 +944,37 @@ public class FederatedPlannerLogger {
         // execInfo.append("}");
         // sb.append(execInfo.toString());
         
-        // if (childAdded){
-        //     sb.append(", [EdgeInfo]: {");
-        //     boolean firstEdge = true;
-        //     for (Pair<Long, FederatedOutput> childPair : plan.getChildFedPlans()){
-        //         if (!firstEdge) sb.append(", ");
-        //         firstEdge = false;
-                
-        //         // Add forwarding weight for each edge
-        //         FedPlan childPlan = memoTable.getFedPlanAfterPrune(childPair.getLeft(), childPair.getRight());
-                
-        //         if (childPlan == null) {
-        //             sb.append(String.format("Edge(ID:%d, NULL)", childPair.getLeft()));
-        //         } else {
-        //             String isForwardingCostOccured = "";
-        //             double totalForwarding = 0.0;
-        //             if (childPair.getRight() == plan.getFedOutType()){
-        //                 isForwardingCostOccured = "X";
-        //                 totalForwarding = 0.0;
-        //             } else {
-        //                 isForwardingCostOccured = "O";
-        //                 totalForwarding = plan.computeForwardingWeightOfChild(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
-        //             }
-        //             sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
-        //                         childPair.getLeft(), isForwardingCostOccured, 
-        //                         childPlan.getCumulativeCostPerParents(), 
-        //                         plan.computeForwardingWeightOfChild(childPlan.getLoopContext()),
-        //                         totalForwarding));
-        //         }
-        //     }
-        //     sb.append("}");
-        // }
+        if (childAdded){
+            sb.append(", [EdgeInfo]: {");
+            boolean firstEdge = true;
+            for (Pair<Long, FederatedOutput> childPair : plan.getChildFedPlans()){
+                if (!firstEdge) sb.append(", ");
+                firstEdge = false;
+
+                // Add forwarding weight for each edge
+                FedPlan childPlan = memoTable.getFedPlanAfterPrune(childPair.getLeft(), childPair.getRight());
+
+                if (childPlan == null) {
+                    sb.append(String.format("Edge(ID:%d, NULL)", childPair.getLeft()));
+                } else {
+                    String isForwardingCostOccured = "";
+                    double totalForwarding = 0.0;
+                    if (childPair.getRight() == plan.getFedOutType()){
+                        isForwardingCostOccured = "X";
+                        totalForwarding = 0.0;
+                    } else {
+                        isForwardingCostOccured = "O";
+                        totalForwarding = plan.computeForwardingWeightOfChild(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
+                    }
+                    sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
+                                childPair.getLeft(), isForwardingCostOccured, 
+                                childPlan.getCumulativeCostPerParents(), 
+                                plan.computeForwardingWeightOfChild(childPlan.getLoopContext()),
+                                totalForwarding));
+                }
+            }
+            sb.append("}");
+        }
 
         System.out.println(sb);
     }

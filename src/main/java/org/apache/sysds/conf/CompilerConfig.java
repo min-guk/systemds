@@ -84,7 +84,7 @@ public class CompilerConfig
 	}
 	
 	//default flags (exposed for testing purposes only)
-	public static boolean FLAG_DYN_RECOMPILE = true;
+public static boolean FLAG_DYN_RECOMPILE = false;
 	public static boolean FLAG_PARREADWRITE_TEXT = true;
 	public static boolean FLAG_PARREADWRITE_BINARY = true;
 	

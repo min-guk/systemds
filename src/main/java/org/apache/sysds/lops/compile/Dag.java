@@ -78,6 +78,7 @@ public class Dag<N extends Lop>
 
 	private static IDSequence job_id = null;
 	private static IDSequence var_index = null;
+	private static final boolean LOG_LOP_MAPPING = true;
 	
 	private String scratch = "";
 	private String scratchFilePath = null;
@@ -831,6 +832,28 @@ public class Dag<N extends Lop>
 				}
 				
 				try {
+					if (LOG_LOP_MAPPING) {
+						String instTrimmed = inst_string.trim();
+						String outLabel = node.getOutputParameters() != null
+							? node.getOutputParameters().getLabel()
+							: "null";
+						StringBuilder inputInfo = new StringBuilder();
+						for (int j = 0; j < node.getInputs().size(); j++) {
+							Lop in = node.getInputs().get(j);
+							if (j > 0)
+								inputInfo.append(", ");
+							String inLabel = in.getOutputParameters() != null
+								? in.getOutputParameters().getLabel()
+								: "null";
+							inputInfo.append(inLabel).append("(hop=").append(in.getHopID()).append(")");
+						}
+						System.out.println("[LOP] hop=" + node.getHopID()
+							+ " type=" + node.getType()
+							+ " out=" + outLabel
+							+ " inputs=[" + inputInfo + "]"
+							+ " fed=" + instTrimmed.startsWith("FED")
+							+ " inst=" + instTrimmed);
+					}
 					if( LOG.isTraceEnabled() )
 						LOG.trace("Generating instruction - "+ inst_string);
 					Instruction currInstr = InstructionParser.parseSingleInstruction(inst_string);

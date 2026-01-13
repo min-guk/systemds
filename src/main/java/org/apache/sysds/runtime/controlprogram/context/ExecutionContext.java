@@ -78,7 +78,7 @@ import java.util.Queue;
 public class ExecutionContext {
 	protected static final Log LOG = LogFactory.getLog(ExecutionContext.class.getName());
 	private static final String TRACE_VAR_NAME =
-		System.getProperty("sysds.trace.var", "_mVar77");
+		System.getProperty("sysds.trace.var");
 
 	//program reference (e.g., function repository)
 	protected Program _prog = null;

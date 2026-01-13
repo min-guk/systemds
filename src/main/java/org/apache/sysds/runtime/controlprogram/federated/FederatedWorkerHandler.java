@@ -25,6 +25,10 @@ import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.logging.Log;
@@ -91,6 +95,19 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
  */
 public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private static final Log LOG = LogFactory.getLog(FederatedWorkerHandler.class.getName());
+	private static final Pattern MISSING_VAR_PATTERN = Pattern.compile("Variable '?(\\d+)'? does not exist");
+	private static final Map<Long, FedReadInfo> FED_READ_REGISTRY = new ConcurrentHashMap<>();
+	private static final boolean ENABLE_MISSING_VAR_RECOVERY = false;
+
+	private static final class FedReadInfo {
+		private final String filename;
+		private final DataType dataType;
+
+		private FedReadInfo(String filename, DataType dataType) {
+			this.filename = filename;
+			this.dataType = dataType;
+		}
+	}
 
 	/** The Federated Lookup Table of the current Federated Worker. */
 	private final FederatedLookupTable _flt;
@@ -406,6 +423,8 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			// create a literal type lineage item with the file name
 			ec.getLineage().set(sId, linItem);
 
+		FED_READ_REGISTRY.put(id, new FedReadInfo(filename, dataType));
+
 		if(dataType == Types.DataType.FRAME) { // frame read
 			FrameObject frameObject = (FrameObject) cd;
 			if(frameObject == null)
@@ -594,9 +613,28 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			exec(ec, ins);
 		}
 		catch (Exception ex) {
-			logExecutionContextState(ec, ins);
-			throw new FederatedWorkerHandlerException(
-				"Failed to execute federated instruction: " + ins.toString(), ex);
+			if (ENABLE_MISSING_VAR_RECOVERY) {
+				Long missingVarId = extractMissingVarId(ex);
+				FedReadInfo readInfo = (missingVarId != null) ? FED_READ_REGISTRY.get(missingVarId) : null;
+				if (readInfo != null) {
+					if (LOG.isWarnEnabled()) {
+						LOG.warn("Recovering missing federated variable id=" + missingVarId
+							+ " by re-reading from " + readInfo.filename);
+					}
+					readData(readInfo.filename, readInfo.dataType, missingVarId, tid, ecm, null);
+					exec(ec, ins);
+				}
+				else {
+					logExecutionContextState(ec, ins);
+					throw new FederatedWorkerHandlerException(
+						"Failed to execute federated instruction: " + ins.toString(), ex);
+				}
+			}
+			else {
+				logExecutionContextState(ec, ins);
+				throw new FederatedWorkerHandlerException(
+					"Failed to execute federated instruction: " + ins.toString(), ex);
+			}
 		}
 		adaptToWorkload(ec, _fan, tid, ins);
 		return new FederatedResponse(
@@ -644,6 +682,26 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			ec.getVariables().releaseAcquiredData();
 			throw ex;
 		}
+	}
+
+	private static Long extractMissingVarId(Throwable ex) {
+		Throwable cur = ex;
+		while (cur != null) {
+			String msg = cur.getMessage();
+			if (msg != null) {
+				Matcher matcher = MISSING_VAR_PATTERN.matcher(msg);
+				if (matcher.find()) {
+					try {
+						return Long.parseLong(matcher.group(1));
+					}
+					catch (NumberFormatException ignore) {
+						// ignore and continue with other causes
+					}
+				}
+			}
+			cur = cur.getCause();
+		}
+		return null;
 	}
 
 	private static void adaptToWorkload(ExecutionContext ec, FederatedWorkloadAnalyzer fan,  long tid, Instruction ins){

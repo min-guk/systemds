@@ -68,6 +68,8 @@ public abstract class Instruction
 	protected int endLine = -1;  
 	protected int beginCol = -1; 
 	protected int endCol = -1;
+	protected long hopID = -1;
+	protected long lopID = -1;
 	
 	public String getFilename() {
 		return filename;
@@ -88,6 +90,14 @@ public abstract class Instruction
 	public int getEndColumn() {
 		return endCol;
 	}
+
+	public long getHopID() {
+		return hopID;
+	}
+
+	public long getLopID() {
+		return lopID;
+	}
 	
 	public abstract IType getType();
 	
@@ -97,6 +107,8 @@ public abstract class Instruction
 		this.endLine = endLine;
 		this.beginCol = beginCol;
 		this.endCol = endCol;
+		this.hopID = -1;
+		this.lopID = -1;
 	}
 	
 	public void setLocation(Lop lop) {
@@ -106,6 +118,8 @@ public abstract class Instruction
 			this.endLine = lop._endLine;
 			this.beginCol = lop._beginColumn;
 			this.endCol = lop._endColumn;
+			this.hopID = lop.getHopID();
+			this.lopID = lop.getID();
 		}
 	}
 	
@@ -116,6 +130,8 @@ public abstract class Instruction
 			this.endLine = id.getEndLine();
 			this.beginCol = id.getBeginColumn();
 			this.endCol = id.getEndColumn();
+			this.hopID = -1;
+			this.lopID = -1;
 		}
 	}
 	
@@ -126,6 +142,8 @@ public abstract class Instruction
 			this.endLine = oldInst.endLine;
 			this.beginCol = oldInst.beginCol;
 			this.endCol = oldInst.endCol;
+			this.hopID = oldInst.hopID;
+			this.lopID = oldInst.lopID;
 		}
 	}
 

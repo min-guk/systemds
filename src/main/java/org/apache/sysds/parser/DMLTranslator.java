@@ -313,6 +313,27 @@ public class DMLTranslator
 			if( SpoofCompiler.INTEGRATION==IntegrationType.HOPS )
 				codgenHopsDAG(dmlp);
 		}
+
+		// Run federated planning after rewrites/mem estimates (and HOPS codegen)
+		// so cost estimation can use refreshed output memory sizes.
+		runFederatedPlannerAfterRewrite(dmlp);
+	}
+
+	private static void runFederatedPlannerAfterRewrite(DMLProgram dmlp) {
+		String planner = ConfigurationManager.getDMLConfig()
+			.getTextValue(DMLConfig.FEDERATED_PLANNER);
+		if( !(OptimizerUtils.FEDERATED_COMPILATION
+			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
+			return;
+
+		org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+		org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
+			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
+				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
+				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
+		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
+		// fcallSizes are not recomputed here; planner uses null when unavailable.
+		fedPlanner.getPlanner().rewriteProgram(dmlp, fgraph, null);
 	}
 
 	public void rewriteLopDAG(DMLProgram dmlp) {

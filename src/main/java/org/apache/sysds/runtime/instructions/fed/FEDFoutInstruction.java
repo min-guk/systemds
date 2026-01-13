@@ -21,6 +21,7 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.net.SocketException;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -167,8 +168,23 @@ public class FEDFoutInstruction extends FEDInstruction {
 		long outId;
 		List<Pair<FederatedRange, FederatedData>> outMap = new ArrayList<>();
 		if (outType == FType.FULL) {
-			FederatedRequest fr = anchorMap.broadcast(in);
-			anchorMap.execute(getTID(), true, fr);
+			FederatedRequest fr = null;
+			int attempts = 0;
+			while (true) {
+				try {
+					fr = anchorMap.broadcast(in);
+					anchorMap.execute(getTID(), true, fr);
+					break;
+				}
+				catch (DMLRuntimeException ex) {
+					if (attempts == 0 && isConnectionReset(ex)) {
+						LOG.warn("fed_fout retrying broadcast after connection reset");
+						attempts++;
+						continue;
+					}
+					throw ex;
+				}
+			}
 			outId = fr.getID();
 			for (Pair<FederatedRange, FederatedData> entry : anchorMap.getMap()) {
 				FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {rlen, clen});
@@ -192,11 +208,26 @@ public class FEDFoutInstruction extends FEDInstruction {
 			FederationMap sliceMap = anchorMap;
 			if (anchorMap.getType() == FType.FULL)
 				sliceMap = new FederationMap(anchorMap.getID(), anchorMap.getMap(), outType);
-			FederatedRequest[] frSlices = sliceMap.broadcastSliced(in, false, ix);
-			if (frSlices.length != numWorkers)
-				throw new DMLRuntimeException("fed_fout slice request count mismatch: expected=" + numWorkers
-					+ " actual=" + frSlices.length);
-			anchorMap.execute(getTID(), true, frSlices, new FederatedRequest[0]);
+			FederatedRequest[] frSlices = null;
+			int attempts = 0;
+			while (true) {
+				try {
+					frSlices = sliceMap.broadcastSliced(in, false, ix);
+					if (frSlices.length != numWorkers)
+						throw new DMLRuntimeException("fed_fout slice request count mismatch: expected=" + numWorkers
+							+ " actual=" + frSlices.length);
+					anchorMap.execute(getTID(), true, frSlices, new FederatedRequest[0]);
+					break;
+				}
+				catch (DMLRuntimeException ex) {
+					if (attempts == 0 && isConnectionReset(ex)) {
+						LOG.warn("fed_fout retrying sliced broadcast after connection reset");
+						attempts++;
+						continue;
+					}
+					throw ex;
+				}
+			}
 			outId = frSlices[0].getID();
 
 			outMap.clear();
@@ -211,5 +242,18 @@ public class FEDFoutInstruction extends FEDInstruction {
 		MatrixObject out = ec.getMatrixObject(_output);
 		out.setFedMapping(new FederationMap(outId, outMap, outType));
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+	}
+
+	private static boolean isConnectionReset(Throwable ex) {
+		Throwable cur = ex;
+		while (cur != null) {
+			if (cur instanceof SocketException)
+				return true;
+			String msg = cur.getMessage();
+			if (msg != null && msg.contains("Connection reset"))
+				return true;
+			cur = cur.getCause();
+		}
+		return false;
 	}
 }

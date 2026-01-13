@@ -44,7 +44,7 @@ public class Nary extends Lop {
 			inputLop.addOutput(this);
 		}
 		
-		if( et == ExecType.CP || et == ExecType.SPARK ) {
+		if( et == ExecType.CP || et == ExecType.SPARK || et == ExecType.FED ) {
 			lps.setProperties(inputs, et);
 		}
 		else {

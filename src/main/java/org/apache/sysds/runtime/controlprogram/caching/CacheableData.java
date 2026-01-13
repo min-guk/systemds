@@ -61,6 +61,7 @@ import org.apache.sysds.runtime.meta.MetaData;
 import org.apache.sysds.runtime.meta.MetaDataFormat;
 import org.apache.sysds.runtime.util.HDFSTool;
 import org.apache.sysds.runtime.util.LocalFileUtils;
+import org.apache.sysds.utils.stats.InstructionStatistics;
 import org.apache.sysds.utils.Statistics;
 import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 
@@ -537,7 +538,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	 * @return cacheable data
 	 */
 	public T acquireRead() {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = (DMLScript.STATISTICS || DMLScript.INST_STATS) ? System.nanoTime() : 0;
 		
 		//core internal acquire (synchronized per object)
 		T ret = acquireReadIntern();
@@ -547,9 +548,12 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		if( !isBelowCachingThreshold() )
 			updateStatusPinned(true);
 		
-		if( DMLScript.STATISTICS ){
+		if( DMLScript.STATISTICS || DMLScript.INST_STATS ){
 			long t1 = System.nanoTime();
-			CacheStatistics.incrementAcquireRTime(t1-t0);
+			if( DMLScript.STATISTICS )
+				CacheStatistics.incrementAcquireRTime(t1-t0);
+			if( DMLScript.INST_STATS )
+				InstructionStatistics.addAcquireReadTime(t1 - t0);
 		}
 		
 		return ret;
@@ -655,7 +659,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	 * @return cacheable data
 	 */
 	public T acquireModify(T newData) {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = (DMLScript.STATISTICS || DMLScript.INST_STATS) ? System.nanoTime() : 0;
 		
 		//core internal acquire (synchronized per object)
 		T ret = acquireModifyIntern(newData);
@@ -665,11 +669,15 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		if( !isBelowCachingThreshold() )
 			updateStatusPinned(true);
 		
-		if( DMLScript.STATISTICS ){
+		if( DMLScript.STATISTICS || DMLScript.INST_STATS ){
 			long t1 = System.nanoTime();
-			CacheStatistics.incrementAcquireMTime(t1-t0);
-			if (DMLScript.JMLC_MEM_STATISTICS)
-				Statistics.addCPMemObject(System.identityHashCode(this), getDataSize());
+			if( DMLScript.STATISTICS ) {
+				CacheStatistics.incrementAcquireMTime(t1-t0);
+				if (DMLScript.JMLC_MEM_STATISTICS)
+					Statistics.addCPMemObject(System.identityHashCode(this), getDataSize());
+			}
+			if( DMLScript.INST_STATS )
+				InstructionStatistics.addAcquireModifyTime(t1 - t0);
 		}
 		
 		if(newData instanceof CompressedMatrixBlock) {
@@ -710,7 +718,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	 * 
 	 */
 	public void release() {
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = (DMLScript.STATISTICS || DMLScript.INST_STATS) ? System.nanoTime() : 0;
 		
 		//update thread-local status (before unpin but outside
 		//the critical section of accessing a shared object)
@@ -720,9 +728,12 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		//core internal release (synchronized per object)
 		releaseIntern();
 		
-		if( DMLScript.STATISTICS ){
+		if( DMLScript.STATISTICS || DMLScript.INST_STATS ){
 			long t1 = System.nanoTime();
-			CacheStatistics.incrementReleaseTime(t1-t0);
+			if( DMLScript.STATISTICS )
+				CacheStatistics.incrementReleaseTime(t1-t0);
+			if( DMLScript.INST_STATS )
+				InstructionStatistics.addReleaseTime(t1 - t0);
 		}
 	}
 	
@@ -821,9 +832,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 				}
 		}
 		
-		//clear federated matrix
-		if( _fedMapping != null )
-			_fedMapping.execCleanup(tid, _fedMapping.getID());
+		// Skip federated cleanup here to avoid premature worker-side deletes for reused fed variables.
 		
 		// change object state EMPTY
 		setDirty(false);
@@ -873,7 +882,7 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	public synchronized void exportData (String fName, String outputFormat, int replication, FileFormatProperties formatProperties) {
 		if( LOG.isTraceEnabled() )
 			LOG.trace("Export data "+hashCode()+" "+fName);
-		long t0 = DMLScript.STATISTICS ? System.nanoTime() : 0;
+		long t0 = (DMLScript.STATISTICS || DMLScript.INST_STATS) ? System.nanoTime() : 0;
 		//prevent concurrent modifications
 		if ( !isAvailableToRead() )
 			throw new DMLRuntimeException("MatrixObject not available to read.");
@@ -1000,9 +1009,12 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		}
 		
 		_hdfsFileExists = true;
-		if( DMLScript.STATISTICS ){
+		if( DMLScript.STATISTICS || DMLScript.INST_STATS ){
 			long t1 = System.nanoTime();
-			CacheStatistics.incrementExportTime(t1-t0);
+			if( DMLScript.STATISTICS )
+				CacheStatistics.incrementExportTime(t1-t0);
+			if( DMLScript.INST_STATS )
+				InstructionStatistics.addExportTime(t1 - t0);
 		}
 	}
 	

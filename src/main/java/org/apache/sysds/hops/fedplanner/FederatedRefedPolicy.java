@@ -32,6 +32,9 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
@@ -39,8 +42,10 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -114,6 +119,13 @@ public final class FederatedRefedPolicy {
 
 	public static void registerFromHops(List<Hop> roots, boolean clearRegistry,
 			java.util.Map<Long, FType> fTypeMap, long sbId) {
+		registerFromHops(roots, clearRegistry, fTypeMap, sbId, null, null);
+	}
+
+	public static void registerFromHops(List<Hop> roots, boolean clearRegistry,
+			java.util.Map<Long, FType> fTypeMap, long sbId,
+			java.util.Map<String, String> runtimeSignatures,
+			java.util.Map<String, FType> runtimeTypes) {
 		if (clearRegistry)
 			FederatedRefedRegistry.clear();
 		if (clearRegistry)
@@ -137,13 +149,22 @@ public final class FederatedRefedPolicy {
 				queue.add(in);
 		}
 
+		AnchorSelection blockAnchor = buildBlockAnchorSelection(all, fTypeMap, runtimeSignatures);
+		if (blockAnchor == null) {
+			AnchorSelection synthetic = buildSyntheticAnchorSelection(all, fTypeMap, runtimeSignatures, runtimeTypes);
+			if (synthetic != null) {
+				all.add(synthetic.anchorHop);
+				roots.add(synthetic.anchorHop);
+				blockAnchor = synthetic;
+			}
+		}
 		for (Hop hop : all) {
 			ExecType exec = getPlannedExecType(hop);
 			if (exec == null)
 				exec = ExecType.CP;
 			if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
 				try {
-					validateAndRegister(hop, fTypeMap, sbId);
+					validateAndRegister(hop, fTypeMap, sbId, blockAnchor);
 				}
 				catch (RuntimeException ex) {
 					LOG.error("CP->FOUT refed candidate failed: hopID=" + (hop != null ? hop.getHopID() : -1)
@@ -257,7 +278,7 @@ public final class FederatedRefedPolicy {
 	public static boolean canGenerateCpfoutCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
 			return false;
-		AnchorSelection selection = selectAnchor(hop, fTypeMap, false, false);
+		AnchorSelection selection = selectAnchor(hop, fTypeMap, false, false, null);
 		if (selection == null)
 			return false;
 		try {
@@ -268,7 +289,8 @@ public final class FederatedRefedPolicy {
 		return true;
 	}
 
-	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
+	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
+			AnchorSelection blockAnchor) {
 		if (!hop.getDataType().isMatrix())
 			throw new DMLRuntimeException("CP->FOUT refed supports only matrix outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
@@ -276,9 +298,9 @@ public final class FederatedRefedPolicy {
 			throw new DMLRuntimeException("CP->FOUT refed does not support frame outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 
-		AnchorSelection selection = selectAnchor(hop, fTypeMap, true, true);
+		AnchorSelection selection = selectAnchor(hop, fTypeMap, true, true, blockAnchor);
 		if (selection == null) {
-			System.out.printf("CP->FOUT decision: LOUT (optional-only) hopID=%d op=%s%n",
+			System.out.printf("CP->FOUT decision: LOUT (no_single_anchor) hopID=%d op=%s%n",
 				hop.getHopID(), hop.getOpString());
 			hop.setFederatedOutput(FederatedOutput.LOUT);
 			return;
@@ -307,7 +329,7 @@ public final class FederatedRefedPolicy {
 	}
 
 	private static AnchorSelection selectAnchor(Hop hop, java.util.Map<Long, FType> fTypeMap,
-				boolean onlyFedParents, boolean throwOnFailure) {
+				boolean onlyFedParents, boolean throwOnFailure, AnchorSelection blockAnchor) {
 		AnchorKey selectedKey = null;
 		Hop selectedAnchor = null;
 		boolean sawAnchorParent = false;
@@ -320,7 +342,7 @@ public final class FederatedRefedPolicy {
 				continue;
 			ExecType exec = getPlannedExecType(parent);
 			if (onlyFedParents) {
-				if (exec != ExecType.FED) {
+				if (exec != ExecType.FED && exec != null) {
 					if (debug != null)
 						debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString()
 							+ "): onlyFedParents=true but plannedExec=" + exec
@@ -339,6 +361,13 @@ public final class FederatedRefedPolicy {
 					if (targetReq == InputRequirement.AMBIGUOUS) {
 						if (shouldRelaxAmbiguousTargetRequirement(parent, hop, targetIndex, fTypeMap)) {
 							targetReq = InputRequirement.REQUIRED;
+						}
+						else if (blockAnchor != null && !hasFederatedInput(parent, hop, fTypeMap)) {
+							if (debug != null)
+								debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString()
+									+ "): targetReq=AMBIGUOUS at inputIndex=" + targetIndex
+									+ " using blockAnchor=" + blockAnchor.anchorHop.getHopID());
+							targetReq = InputRequirement.OPTIONAL;
 						}
 						else {
 							if (throwOnFailure) {
@@ -403,16 +432,13 @@ public final class FederatedRefedPolicy {
 						+ "): anchorHop=" + (selectedAnchor != null ? selectedAnchor.getHopID() : -1)
 						+ " anchorKey=" + selectedKey);
 			} else if (!selectedKey.equals(parentAnchor.key)) {
-				if (throwOnFailure) {
-					if (debug != null) {
-						debug.add("fail parent=" + parent.getHopID() + " (" + parent.getOpString()
-							+ "): anchorKey mismatch selected=" + selectedKey + " vs parent=" + parentAnchor.key
-							+ " parentAnchorHop=" + (parentAnchor.anchorHop != null ? parentAnchor.anchorHop.getHopID() : -1));
-						LOG.error("CP->FOUT refed anchor mismatch for hop " + hop.getHopID()
-							+ " (" + hop.getOpString() + "): " + String.join(" | ", debug));
-					}
-					throw new DMLRuntimeException("CP->FOUT refed anchor mismatch for hop "
-								+ hop.getHopID() + " across FED parents");
+				if (debug != null) {
+					debug.add("fail parent=" + parent.getHopID() + " (" + parent.getOpString()
+						+ "): anchorKey mismatch selected=" + selectedKey + " vs parent=" + parentAnchor.key
+						+ " parentAnchorHop=" + (parentAnchor.anchorHop != null ? parentAnchor.anchorHop.getHopID() : -1));
+					LOG.warn("CP->FOUT refed anchor mismatch for hop " + hop.getHopID()
+						+ " (" + hop.getOpString() + "): " + String.join(" | ", debug)
+						+ " | fallback=LOUT");
 				}
 				return null;
 			}
@@ -421,6 +447,12 @@ public final class FederatedRefedPolicy {
 		if (!sawAnchorParent) {
 			if (sawOptionalParent && !sawRequiredParent)
 				return null;
+			if (blockAnchor != null) {
+				if (debug != null)
+					debug.add("fallback blockAnchor=" + blockAnchor.anchorHop.getHopID()
+						+ " anchorKey=" + blockAnchor.key);
+				return blockAnchor;
+			}
 			if (throwOnFailure) {
 				if (debug != null)
 					LOG.error("CP->FOUT refed missing FED anchor-parent for hop " + hop.getHopID()
@@ -444,9 +476,163 @@ public final class FederatedRefedPolicy {
 		return new AnchorSelection(selectedKey, selectedAnchor);
 	}
 
+	private static AnchorSelection buildBlockAnchorSelection(List<Hop> hops, java.util.Map<Long, FType> fTypeMap,
+			java.util.Map<String, String> runtimeSignatures) {
+		if (hops == null || hops.isEmpty())
+			return null;
+		AnchorKey selectedKey = null;
+		Hop selectedAnchor = null;
+		for (Hop hop : hops) {
+			String runtimeSig = getRuntimeSignature(hop, runtimeSignatures);
+			if (runtimeSig == null) {
+				if (!isBlockAnchorCandidate(hop))
+					continue;
+				if (findFedInitSignature(hop) == null)
+					continue;
+			}
+			FType fType = getKnownFType(hop, fTypeMap);
+			AnchorKey key = (runtimeSig != null)
+				? buildAnchorKeyFromSignature(runtimeSig, fType)
+				: buildAnchorKey(hop, fTypeMap);
+			if (key == null)
+				continue;
+			if (selectedKey == null) {
+				selectedKey = key;
+				selectedAnchor = hop;
+			} else if (!selectedKey.equals(key)) {
+				return null;
+			}
+		}
+		if (selectedKey == null || selectedAnchor == null)
+			return null;
+		return new AnchorSelection(selectedKey, selectedAnchor);
+	}
+
+	private static boolean isBlockAnchorCandidate(Hop hop) {
+		if (hop == null)
+			return false;
+		ExecType exec = getPlannedExecType(hop);
+		if (exec == ExecType.FED)
+			return true;
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.FEDERATED)
+				return true;
+			if (dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD
+					&& FederatedPlannerUtils.isFedInitVar(dataOp.getName()))
+				return true;
+		}
+		return false;
+	}
+
+	private static AnchorKey buildAnchorKeyFromSignature(String signature, FType fType) {
+		if (signature == null)
+			return null;
+		String sig = signature;
+		if (fType != null)
+			sig = sig + "|" + fType.name();
+		return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
+	}
+
+	private static AnchorSelection buildSyntheticAnchorSelection(List<Hop> all, java.util.Map<Long, FType> fTypeMap,
+			java.util.Map<String, String> runtimeSignatures,
+			java.util.Map<String, FType> runtimeTypes) {
+		if (runtimeSignatures == null || runtimeSignatures.isEmpty())
+			return null;
+		FType preferredType = FType.ROW;
+		String signature = selectUniqueSignature(runtimeSignatures, runtimeTypes, preferredType);
+		if (signature == null) {
+			preferredType = FType.COL;
+			signature = selectUniqueSignature(runtimeSignatures, runtimeTypes, preferredType);
+		}
+		if (signature == null) {
+			preferredType = FType.FULL;
+			signature = selectUniqueSignature(runtimeSignatures, runtimeTypes, preferredType);
+		}
+		if (signature == null)
+			return null;
+		String anchorVar = selectVarForSignature(runtimeSignatures, runtimeTypes, preferredType, signature);
+		if (signature == null || anchorVar == null || anchorVar.isEmpty())
+			return null;
+
+		Hop anchorHop = findHopByName(all, anchorVar);
+		if (anchorHop == null) {
+			int blen = ConfigurationManager.getBlocksize();
+			anchorHop = new DataOp(anchorVar, DataType.MATRIX, ValueType.FP64,
+				OpOpData.TRANSIENTREAD, anchorVar, -1, -1, -1, blen);
+		}
+		FType fType = (runtimeTypes != null) ? runtimeTypes.get(anchorVar) : preferredType;
+		if (fType != null && fTypeMap != null)
+			fTypeMap.put(anchorHop.getHopID(), fType);
+		AnchorKey key = buildAnchorKeyFromSignature(signature, fType);
+		return new AnchorSelection(key, anchorHop);
+	}
+
+	private static String selectUniqueSignature(java.util.Map<String, String> runtimeSignatures,
+			java.util.Map<String, FType> runtimeTypes, FType desiredType) {
+		if (runtimeSignatures == null || runtimeSignatures.isEmpty())
+			return null;
+		String signature = null;
+		for (java.util.Map.Entry<String, String> entry : runtimeSignatures.entrySet()) {
+			String sig = entry.getValue();
+			if (sig == null)
+				continue;
+			if (runtimeTypes != null && desiredType != null) {
+				FType fType = runtimeTypes.get(entry.getKey());
+				if (fType != desiredType)
+					continue;
+			}
+			if (signature == null)
+				signature = sig;
+			else if (!signature.equals(sig))
+				return null;
+		}
+		return signature;
+	}
+
+	private static String selectVarForSignature(java.util.Map<String, String> runtimeSignatures,
+			java.util.Map<String, FType> runtimeTypes, FType desiredType, String signature) {
+		if (runtimeSignatures == null || runtimeSignatures.isEmpty() || signature == null)
+			return null;
+		for (java.util.Map.Entry<String, String> entry : runtimeSignatures.entrySet()) {
+			if (!signature.equals(entry.getValue()))
+				continue;
+			if (runtimeTypes != null && desiredType != null) {
+				FType fType = runtimeTypes.get(entry.getKey());
+				if (fType != desiredType)
+					continue;
+			}
+			return entry.getKey();
+		}
+		return null;
+	}
+
+	private static Hop findHopByName(List<Hop> hops, String name) {
+		if (hops == null || name == null)
+			return null;
+		for (Hop hop : hops) {
+			if (hop instanceof DataOp && name.equals(((DataOp) hop).getName()))
+				return hop;
+		}
+		return null;
+	}
+
+	private static String getRuntimeSignature(Hop hop, java.util.Map<String, String> runtimeSignatures) {
+		if (hop == null || runtimeSignatures == null || runtimeSignatures.isEmpty())
+			return null;
+		if (!(hop instanceof DataOp))
+			return null;
+		DataOp dataOp = (DataOp) hop;
+		if (dataOp.getOp() != org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD)
+			return null;
+		return runtimeSignatures.get(dataOp.getName());
+	}
+
 	private static InputRequirement classifyTargetRequirement(Hop parent, Hop target, int targetIndex,
 			java.util.Map<Long, FType> fTypeMap) {
 		InputRequirement base = classifyRequiredInput(parent, target, targetIndex);
+		if (base == InputRequirement.AMBIGUOUS)
+			base = resolveVectorVectorRequirement(parent, target, targetIndex, fTypeMap);
 		if (base != InputRequirement.REQUIRED)
 			return base;
 		if (target != null && target.getDataType().isMatrix()) {
@@ -550,6 +736,8 @@ public final class FederatedRefedPolicy {
 			return InputRequirement.OPTIONAL;
 		InputRequirement baseReq = classifyRequiredInput(parent, input, index);
 		if (baseReq == InputRequirement.AMBIGUOUS)
+			baseReq = resolveVectorVectorRequirement(parent, input, index, fTypeMap);
+		if (baseReq == InputRequirement.AMBIGUOUS)
 			return InputRequirement.AMBIGUOUS;
 		if (baseReq == InputRequirement.OPTIONAL)
 			return InputRequirement.OPTIONAL;
@@ -587,7 +775,9 @@ public final class FederatedRefedPolicy {
 			return classifyBinaryLikeInput(parent, input, index);
 		if (parent instanceof AggBinaryOp)
 			return classifyBinaryLikeInput(parent, input, index);
-		if (HopRewriteUtils.isReorg(parent))
+		if (parent instanceof NaryOp)
+			return classifyNaryLikeInput(parent, input, index);
+		if (parent instanceof ReorgOp)
 			return InputRequirement.REQUIRED;
 		return InputRequirement.AMBIGUOUS;
 	}
@@ -615,6 +805,83 @@ public final class FederatedRefedPolicy {
 		return InputRequirement.AMBIGUOUS;
 	}
 
+	private static InputRequirement classifyNaryLikeInput(Hop parent, Hop input, int index) {
+		if (!(parent instanceof NaryOp))
+			return InputRequirement.AMBIGUOUS;
+		NaryOp nary = (NaryOp) parent;
+		if (!nary.getOp().isCellOp())
+			return InputRequirement.AMBIGUOUS;
+		if (input == null || !input.getDataType().isMatrix())
+			return InputRequirement.OPTIONAL;
+		ShapeClass thisShape = getShapeClass(input);
+		if (thisShape == ShapeClass.UNKNOWN)
+			return InputRequirement.AMBIGUOUS;
+		List<Hop> inputs = parent.getInput();
+		if (inputs == null || inputs.size() < 2)
+			return InputRequirement.AMBIGUOUS;
+		boolean anyMatrix = false;
+		boolean anyVector = false;
+		for (int i = 0; i < inputs.size(); i++) {
+			if (i == index)
+				continue;
+			Hop other = inputs.get(i);
+			if (other == null || !other.getDataType().isMatrix())
+				continue;
+			ShapeClass otherShape = getShapeClass(other);
+			if (otherShape == ShapeClass.UNKNOWN)
+				return InputRequirement.AMBIGUOUS;
+			if (otherShape == ShapeClass.MATRIX)
+				anyMatrix = true;
+			else if (otherShape == ShapeClass.VECTOR)
+				anyVector = true;
+		}
+		if (thisShape == ShapeClass.MATRIX)
+			return InputRequirement.REQUIRED;
+		if (anyMatrix)
+			return InputRequirement.OPTIONAL;
+		if (anyVector)
+			return InputRequirement.AMBIGUOUS;
+		return InputRequirement.REQUIRED;
+	}
+
+	private static InputRequirement resolveVectorVectorRequirement(Hop parent, Hop input, int index,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (!(parent instanceof BinaryOp || parent instanceof AggBinaryOp || parent instanceof NaryOp))
+			return InputRequirement.AMBIGUOUS;
+		if (parent instanceof NaryOp && !((NaryOp) parent).getOp().isCellOp())
+			return InputRequirement.AMBIGUOUS;
+		if (input == null || !input.getDataType().isMatrix())
+			return InputRequirement.AMBIGUOUS;
+		List<Hop> inputs = parent.getInput();
+		if (inputs == null || inputs.size() < 2)
+			return InputRequirement.AMBIGUOUS;
+		ShapeClass thisShape = getShapeClass(input);
+		if (thisShape != ShapeClass.VECTOR)
+			return InputRequirement.AMBIGUOUS;
+		boolean anyFed = isFederatedInput(input, fTypeMap);
+		boolean sawVector = false;
+		for (int i = 0; i < inputs.size(); i++) {
+			if (i == index)
+				continue;
+			Hop other = inputs.get(i);
+			if (other == null || !other.getDataType().isMatrix())
+				continue;
+			ShapeClass otherShape = getShapeClass(other);
+			if (otherShape == ShapeClass.MATRIX)
+				return InputRequirement.AMBIGUOUS;
+			if (otherShape != ShapeClass.VECTOR)
+				return InputRequirement.AMBIGUOUS;
+			if (!vectorDimsMatch(input, other))
+				return InputRequirement.AMBIGUOUS;
+			sawVector = true;
+			if (isFederatedInput(other, fTypeMap))
+				anyFed = true;
+		}
+		if (!sawVector)
+			return InputRequirement.AMBIGUOUS;
+		return anyFed ? InputRequirement.REQUIRED : InputRequirement.OPTIONAL;
+	}
+
 	private static ShapeClass getShapeClass(Hop hop) {
 		if (hop == null || !hop.getDataType().isMatrix())
 			return ShapeClass.UNKNOWN;
@@ -625,6 +892,18 @@ public final class FederatedRefedPolicy {
 		if (rlen > 1 && clen > 1)
 			return ShapeClass.MATRIX;
 		return ShapeClass.UNKNOWN;
+	}
+
+	private static boolean vectorDimsMatch(Hop left, Hop right) {
+		if (left == null || right == null)
+			return false;
+		long lRows = left.getDim1();
+		long lCols = left.getDim2();
+		long rRows = right.getDim1();
+		long rCols = right.getDim2();
+		if (lRows < 0 || lCols < 0 || rRows < 0 || rCols < 0)
+			return false;
+		return lRows == rRows && lCols == rCols;
 	}
 
 	private static boolean shouldRelaxAmbiguousTargetRequirement(Hop parent, Hop target, int targetIndex,
@@ -806,15 +1085,55 @@ public final class FederatedRefedPolicy {
 			return null;
 		if (!isFederatedInput(hop, fTypeMap))
 			return null;
-		if (hop instanceof DataOp) {
-			DataOp dataOp = (DataOp) hop;
-			if (dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.FEDERATED) {
-				String sig = getFedInitSignature(dataOp);
-				if (sig != null)
-					return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
-			}
+		String sig = findFedInitSignature(hop);
+		if (sig != null) {
+			FType fType = getKnownFType(hop, fTypeMap);
+			if (fType != null)
+				sig = sig + "|" + fType.name();
+			return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
 		}
 		return new AnchorKey(AnchorKeyType.HOP_ID, hop.getHopID());
+	}
+
+	private static String findFedInitSignature(Hop hop) {
+		if (hop == null)
+			return null;
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		queue.add(hop);
+		String signature = null;
+		while (!queue.isEmpty()) {
+			Hop cur = queue.poll();
+			if (cur == null || !visited.add(cur))
+				continue;
+			if (cur instanceof DataOp) {
+				DataOp dataOp = (DataOp) cur;
+				if (dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.FEDERATED) {
+					String sig = FederatedPlannerUtils.deriveFedInitSignature(dataOp);
+					if (sig == null)
+						return null;
+					if (signature == null)
+						signature = sig;
+					else if (!signature.equals(sig))
+						return null;
+				} else if (dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD
+						&& FederatedPlannerUtils.isFedInitVar(dataOp.getName())) {
+					String sig = FederatedPlannerUtils.getFedInitSignature(dataOp.getName());
+					if (sig == null)
+						return null;
+					if (signature == null)
+						signature = sig;
+					else if (!signature.equals(sig))
+						return null;
+				}
+			}
+			List<Hop> inputs = cur.getInput();
+			if (inputs == null)
+				continue;
+			for (Hop in : inputs)
+				queue.add(in);
+		}
+		return signature;
 	}
 
 	private static FType getKnownFType(Hop hop, java.util.Map<Long, FType> fTypeMap) {
@@ -847,43 +1166,7 @@ public final class FederatedRefedPolicy {
 	}
 
 	private static String getFedInitSignature(DataOp fedInit) {
-		if (fedInit == null || fedInit.getOp() != org.apache.sysds.common.Types.OpOpData.FEDERATED)
-			return null;
-		int addrIx = fedInit.getParameterIndex(DataExpression.FED_ADDRESSES);
-		int rangeIx = fedInit.getParameterIndex(DataExpression.FED_RANGES);
-		if (addrIx < 0 || rangeIx < 0)
-			return null;
-		Hop addrHop = fedInit.getInput(addrIx);
-		Hop rangeHop = fedInit.getInput(rangeIx);
-		if (addrHop == null || rangeHop == null)
-			return null;
-
-		StringBuilder sb = new StringBuilder();
-		if (addrHop.getInput().isEmpty())
-			return null;
-		for (Hop addr : addrHop.getInput()) {
-			if (!(addr instanceof LiteralOp))
-				return null;
-			sb.append(((LiteralOp) addr).getStringValue()).append(';');
-		}
-		sb.append('|');
-
-		List<Hop> ranges = rangeHop.getInput();
-		if (ranges == null || ranges.isEmpty() || ranges.size() % 2 != 0)
-			return null;
-		for (int i = 0; i < ranges.size(); i += 2) {
-			Hop beg = ranges.get(i);
-			Hop end = ranges.get(i + 1);
-			Long rl = getLiteralLong(beg, 0);
-			Long cl = getLiteralLong(beg, 1);
-			Long ru = getLiteralLong(end, 0);
-			Long cu = getLiteralLong(end, 1);
-			if (rl == null || cl == null || ru == null || cu == null)
-				return null;
-			sb.append(rl).append(',').append(cl).append(',')
-					.append(ru).append(',').append(cu).append(';');
-		}
-		return sb.toString();
+		return FederatedPlannerUtils.deriveFedInitSignature(fedInit);
 	}
 
 	private static long[] getFedInitDimsIfKnown(DataOp fedInit) {
