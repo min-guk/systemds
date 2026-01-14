@@ -26,17 +26,20 @@
 #
 # INPUT:
 # ---------------------------------------------------------------------------------------
-# X        Location to read the matrix of feature vectors
-# Y        Location to read the matrix with category labels
-# icpt     Intercept presence, shifting and rescaling X columns: 0 = no intercept,
-#          no shifting, no rescaling; 1 = add intercept, but neither shift nor
-#          rescale X; 2 = add intercept, shift & rescale X columns to mean = 0, variance = 1
-# tol      tolerance ("epsilon")
-# reg      regularization parameter (lambda = 1/C); intercept is not regularized
-# maxi     max. number of outer (Newton) iterations
-# maxii       max. number of inner (conjugate gradient) iterations, 0 = no max
-# verbose     flag specifying if logging information should be printed
-# numclasses  optional total number of classes (K). If >0, skip max(Y) scan
+# X          Location to read the matrix of feature vectors
+# Y          Location to read the matrix with category labels (Nx1)
+# icpt       Intercept presence, shifting and rescaling X columns:
+#            0 = no intercept, no shifting, no rescaling
+#            1 = add intercept, but neither shift nor rescale X
+#            2 = add intercept, shift & rescale X columns to mean = 0, variance = 1
+# tol        tolerance ("epsilon")
+# reg        regularization parameter (lambda = 1/C); intercept is not regularized
+# maxi       max. number of outer (Newton) iterations
+# maxii      max. number of inner (conjugate gradient) iterations, 0 = no max
+# verbose    flag specifying if logging information should be printed
+# numclasses optional total number of classes (C). If >0, skip max(Y) scan and fix K=C-1
+# numrows    optional number of rows (N). If >0, stamp X/Y dims early to avoid runtime recompile
+# numcols    optional number of feature columns (D, before intercept). If >0, stamp X dims early
 # ---------------------------------------------------------------------------------------
 #
 # OUTPUT:
@@ -44,9 +47,9 @@
 # betas  regression betas as output for prediction
 # --------------------------------------------------------------------------------------
 
-m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2, 
+m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   Double tol=1e-6, Double reg=1.0, Int maxi=100, Int maxii=20, Boolean verbose=TRUE,
-  Int numclasses = -1)
+  Int numclasses = -1, Int numrows = -1, Int numcols = -1)
   return(Matrix[Double] betas)
 {
   eta0 = 0.0001;
@@ -57,12 +60,28 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   sigma3 = 4.0;
   psi = 0.1;
 
-  N = nrow (X);
-  D = ncol (X);
+  # ------------------------------------------------------------
+  # Force/stamp sizes early (to avoid runtime recompilation and
+  # execution-type mismatches in federated settings).
+  # ------------------------------------------------------------
+  if (numrows > 0) N = numrows;
+  else N = nrow(X);
+
+  if (numcols > 0) D = numcols;
+  else D = ncol(X);
+
+  stamp_X = (numrows > 0 & numcols > 0);
+
+  # Stamp X and Y (compiler can propagate sizes from slices)
+  if (stamp_X)
+    X = X[1:N, 1:D];
+
+  if (numrows > 0)
+    Y = Y[1:N, 1:1];
 
   # Robustness for datasets with missing values (causing NaN gradients)
   hasNaNs = contains(target=X, pattern=NaN);
-  if( hasNaNs > 0 ) {
+  if (hasNaNs > 0) {
     if(verbose)
       print("multiLogReg: matrix X contains "+sum(isNaN(X))+" missing values, replacing with 0.")
     X = replace(target=X, pattern=NaN, replacement=0);
@@ -70,10 +89,11 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
 
   # Introduce the intercept, shift and rescale the columns of X if needed
   if (icpt == 1 | icpt == 2) { # add the intercept column
-    if(N == nrow(X))
-      N = nrow(X)
-    X = cbind (X, matrix (1, N, 1));
-    D = ncol (X);
+    ones_N1 = matrix(1, N, 1);
+    X = cbind(X, ones_N1);
+    D = D + 1;
+    if (stamp_X)
+      X = X[1:N, 1:D];
   }
 
   scale_lambda = matrix (1, D, 1);
@@ -107,41 +127,62 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   # tssX_A = t(SHIFT/SCALE TRANSFORM) %*% A   --- is rewritten as:
   # tssX_A = diag (scale_X) %*% A + shift_X %*% A [D, ];
 
-  # Convert "Y" into indicator matrix:
+  # ------------------------------------------------------------
+  # Convert "Y" into indicator matrix, while making sizes explicit
+  # ------------------------------------------------------------
   if (numclasses > 0) {
     max_y = numclasses;
   }
-  if (min (Y) <= 0) {
-    # Category labels "0", "-1" etc. are converted into the largest label
-    if (numclasses > 0)
+  else {
+    max_y = as.integer(as.scalar(max(Y)));
+  }
+
+  # If label -1/0 etc. is present, it is the baseline label; convert it to max_y (or new max_y+1)
+  if (min(Y) <= 0) {
+    if (numclasses > 0) {
       Y = ifelse(Y <= 0, max_y, Y);
+    }
     else {
       Y = ifelse(Y <= 0, max_y + 1, Y);
       max_y = max_y + 1;
     }
   }
-  Y = table (seq (1, N, 1), Y, N, max_y);
-  K = ncol (Y) - 1;   # The number of  non-baseline categories
 
-  lambda = (scale_lambda %*% matrix (1, 1, K)) * reg;
+  # Build indicator matrix (N x max_y)
+  Y = table (seq (1, N, 1), Y, N, max_y);
+
+  # Dimension stamping (helps size propagation during initial compilation)
+  Y = Y[, 1:max_y];
+
+  K = max_y - 1;   # The number of non-baseline categories
+
+  # ------------------------------------------------------------
+  # Pre-allocate constant matrices used repeatedly (avoid creating
+  # new Hops/matrix literals inside loops)
+  # ------------------------------------------------------------
+  zeros_N1 = matrix(0, N, 1);
+  ones_1K  = matrix(1, 1, K);
+  ones_1K1 = matrix(1, 1, K+1);
+
+  lambda = (scale_lambda %*% ones_1K) * reg;
   delta = 0.5 * sqrt (D) / max (sqrt (rowSums_X_sq));
 
   B = matrix (0, D, K);   ### LT = X %*% (SHIFT/SCALE TRANSFORM) %*% B;
-                          ### LT = cbind (LT, matrix (0, rows = N, cols = 1));
-                          ### LT = LT - rowMaxs (LT) %*% matrix (1, rows = 1, cols = K+1);
+                          ### LT = cbind (LT, zeros_N1);
+                          ### LT = LT - rowMaxs (LT) %*% ones_1K1;
   P = matrix (1, N, K+1); ### exp_LT = exp (LT);
-  P = P / (K + 1);        ### P =  exp_LT / (rowSums (exp_LT) %*% matrix (1, rows = 1, cols = K+1));
+  P = P / (K + 1);        ### P = exp_LT / (rowSums (exp_LT) %*% ones_1K1);
   obj = N * log (K + 1);  ### obj = - sum (Y * LT) + sum (log (rowSums (exp_LT))) + 0.5 * sum (lambda * (B_new ^ 2));
 
   Grad = t(X) %*% (P [, 1:K] - Y [, 1:K]);
   if (icpt == 2)
     Grad = diag (scale_X) %*% Grad + shift_X %*% Grad [D, ];
-  
+
   Grad = Grad + lambda * B;
   norm_Grad = sqrt (sum (Grad ^ 2));
   norm_Grad_initial = norm_Grad;
 
-  if (maxii == 0) 
+  if (maxii == 0)
     maxii = D * K;
 
   iter = 1;
@@ -163,18 +204,18 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
     innerconverge = (sqrt (norm_R2) <= psi * norm_Grad);
     is_trust_boundary_reached = 0;
 
-    P_1K = P [, 1:K]
+    P_1K = P [, 1:K];
     while (! innerconverge)
     {
       if (icpt == 2) {
         ssX_V = diag (scale_X) %*% V;
         ssX_V [D, ] = ssX_V [D, ] + t(shift_X) %*% V;
-      } 
-      else 
+      }
+      else
         ssX_V = V;
 
       Q = P_1K * (X %*% ssX_V);
-      HV = t(X) %*% (Q - P_1K * (rowSums (Q) %*% matrix (1, 1, K)));
+      HV = t(X) %*% (Q - P_1K * (rowSums (Q) %*% ones_1K));
 
       if (icpt == 2)
         HV = diag (scale_X) %*% HV + shift_X %*% HV [D, ];
@@ -186,11 +227,11 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
       if (norm_Snew2 <= delta2) {
         S = Snew;
         R = R - alpha * HV;
-        old_norm_R2 = norm_R2 
+        old_norm_R2 = norm_R2;
         norm_R2 = sum (R ^ 2);
         V = R + (norm_R2 / old_norm_R2) * V;
         innerconverge = (sqrt (norm_R2) <= psi * norm_Grad);
-      } 
+      }
       else {
         is_trust_boundary_reached = 1;
         sv = sum (S * V);
@@ -199,7 +240,7 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
         rad = sqrt (sv ^ 2 + v2 * (delta2 - s2));
         if (sv >= 0)
           alpha = (delta2 - s2) / (sv + rad);
-        else 
+        else
           alpha = (rad - sv) / v2;
         S = S + alpha * V;
         R = R - alpha * HV;
@@ -209,6 +250,7 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
       innerconverge = innerconverge | (inneriter > maxii);
     }
     # END TRUST REGION SUB-PROBLEM
+
     # compute rho, update B, obtain delta
     gs = sum (S * Grad);
     qk = - 0.5 * (gs - sum (S * R));
@@ -216,14 +258,14 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
     if (icpt == 2) {
       ssX_B_new = diag (scale_X) %*% B_new;
       ssX_B_new [D, ] = ssX_B_new [D, ] + t(shift_X) %*% B_new;
-    } 
+    }
     else
       ssX_B_new = B_new;
 
-    LT = cbind ((X %*% ssX_B_new), matrix (0, N, 1));
-    LT = LT - rowMaxs (LT) %*% matrix (1, 1, K+1);
+    LT = cbind ((X %*% ssX_B_new), zeros_N1);
+    LT = LT - rowMaxs (LT) %*% ones_1K1;
     exp_LT = exp (LT);
-    P_new  = exp_LT / (rowSums (exp_LT) %*% matrix (1, 1, K+1));
+    P_new  = exp_LT / (rowSums (exp_LT) %*% ones_1K1);
     obj_new = - sum (Y * LT) + sum (log (rowSums (exp_LT))) + 0.5 * sum (lambda * (B_new ^ 2));
 
     # Consider updating LT in the inner loop
@@ -255,7 +297,7 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
             + (inneriter - 1) + " CG iterations, trust bound REACHED");
       else
         print ("-- Outer Iteration " + iter + ": Had " + (inneriter - 1) + " CG iterations");
-      print ("   -- Obj.Reduction:  Actual = " + actred + ",  Predicted = " + qk + 
+      print ("   -- Obj.Reduction:  Actual = " + actred + ",  Predicted = " + qk +
              "  (A/P: " + (round (1e4 * rho) / 1e4) + "),  Trust Delta = " + delta);
     }
 
@@ -269,15 +311,16 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
       Grad = Grad + lambda * B;
       norm_Grad = sqrt (sum (Grad ^ 2));
       obj = obj_new;
-      
+
       if(verbose)
         print("   -- New Objective = " + obj + ",  Beta Change Norm = "
             + snorm + ",  Gradient Norm = " + norm_Grad);
     }
+
     iter = iter + 1;
     converge = ((norm_Grad < (tol * norm_Grad_initial)) | (iter > maxi) |
       ((is_trust_boundary_reached == 0) & (abs (actred) < (abs (obj) + abs (obj_new)) * 1e-14)));
-    if (verbose & converge) 
+    if (verbose & converge)
       print ("Termination / Convergence condition satisfied.");
   }
 
