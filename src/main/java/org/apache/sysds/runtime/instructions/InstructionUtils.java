@@ -1215,11 +1215,10 @@ public class InstructionUtils {
 	 * @return instruction string prepared for federated request
 	 */
 	public static String instructionStringFEDPrepare(String inst, CPOperand varOldOut, long id, CPOperand[] varOldIn, long[] varNewIn, boolean rmFederatedOutput){
-		boolean isFedInstr = inst.startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
 		String linst = replaceExecTypeWithCP(inst);
 		linst = replaceOutputOperand(linst, varOldOut, id);
 		linst = replaceInputOperand(linst, varOldIn, varNewIn);
-		if(rmFederatedOutput && isFedInstr)
+		if(rmFederatedOutput)
 			linst = removeFEDOutputFlag(linst);
 		return linst;
 	}
