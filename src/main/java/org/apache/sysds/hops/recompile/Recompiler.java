@@ -115,6 +115,7 @@ import org.apache.sysds.runtime.instructions.cp.IntObject;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.instructions.fed.FEDInstructionUtils;
 import org.apache.sysds.runtime.io.IOUtilFunctions;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -450,6 +451,8 @@ public class Recompiler {
 		// generate runtime instructions (incl piggybacking)
 		ArrayList<Instruction> newInst = dag
 			.getJobs(sb, ConfigurationManager.getDMLConfig());
+		if (!runtimeTypes.isEmpty() && ec != null && !ConfigurationManager.isFederatedRuntimePlanner())
+			newInst = applyFederatedRuntimeConversion(newInst, ec);
 		
 		// explain recompiled (and potentially deep copied) DAG, but
 		// defer the explain of instructions after additional modifications
@@ -461,6 +464,30 @@ public class Recompiler {
 		}
 		
 		return newInst;
+	}
+
+	private static ArrayList<Instruction> applyFederatedRuntimeConversion(ArrayList<Instruction> inst, ExecutionContext ec) {
+		if (inst == null || inst.isEmpty() || ec == null)
+			return inst;
+		for (int i = 0; i < inst.size(); i++) {
+			Instruction in = inst.get(i);
+			if (in == null)
+				continue;
+			Instruction out = in;
+			switch (in.getType()) {
+				case CONTROL_PROGRAM:
+					out = FEDInstructionUtils.checkAndReplaceCP(in, ec);
+					break;
+				case SPARK:
+					out = FEDInstructionUtils.checkAndReplaceSP(in, ec);
+					break;
+				default:
+					break;
+			}
+			if (out != in)
+				inst.set(i, out);
+		}
+		return inst;
 	}
 
 	private static ArrayList<Instruction> recompile(StatementBlock sb, ArrayList<Hop> hops, LocalVariableMap vars, RecompileStatus status,
