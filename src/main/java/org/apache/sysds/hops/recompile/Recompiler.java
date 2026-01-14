@@ -72,6 +72,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
@@ -430,6 +431,8 @@ public class Recompiler {
 		Set<Hop> fTypeRefreshDone = new HashSet<>();
 		for (Hop hopRoot : hops)
 			inferFTypeIfNeeded(hopRoot, fTypeMap, fTypeRefreshDone, new HashSet<>());
+		if (!runtimeTypes.isEmpty())
+			applyFederatedRewrite(hops, fTypeMap);
 		FederatedRefedPolicy.registerFromHops(hops, true, fTypeMap, sb != null ? sb.getSBID() : -1,
 			runtimeSignatures, runtimeTypes);
 		
@@ -567,6 +570,72 @@ public class Recompiler {
 						queue.add(in);
 		}
 		return states;
+	}
+
+	private static void applyFederatedRewrite(List<Hop> roots, Map<Long, FType> fTypeMap) {
+		if (roots == null || roots.isEmpty() || fTypeMap == null || fTypeMap.isEmpty())
+			return;
+		new RuntimeFederatedPlanner().rewriteHops(roots, fTypeMap);
+	}
+
+	private static final class RuntimeFederatedPlanner extends AFederatedPlanner {
+		@Override
+		public void rewriteProgram(DMLProgram prog, org.apache.sysds.hops.ipa.FunctionCallGraph fgraph,
+				org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes) {
+			throw new UnsupportedOperationException("Runtime-only federated rewrite");
+		}
+
+		@Override
+		public void rewriteFunctionDynamic(org.apache.sysds.parser.FunctionStatementBlock function, LocalVariableMap funcArgs) {
+			throw new UnsupportedOperationException("Runtime-only federated rewrite");
+		}
+
+		public void rewriteHops(List<Hop> roots, Map<Long, FType> fTypeMap) {
+			Map<Long, FType> memo = new HashMap<>();
+			for (Hop root : roots)
+				rewriteHop(root, memo, fTypeMap);
+		}
+
+		private void rewriteHop(Hop hop, Map<Long, FType> memo, Map<Long, FType> fTypeMap) {
+			if (hop == null || memo.containsKey(hop.getHopID()))
+				return;
+			for (Hop in : hop.getInput())
+				rewriteHop(in, memo, fTypeMap);
+
+			FType outFType = fTypeMap.get(hop.getHopID());
+			if (HopRewriteUtils.isData(hop, OpOpData.FEDERATED)) {
+				memo.put(hop.getHopID(), outFType);
+				return;
+			}
+			if (HopRewriteUtils.isData(hop, OpOpData.TRANSIENTREAD)) {
+				memo.put(hop.getHopID(), outFType);
+				return;
+			}
+			if (HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE)) {
+				FType inType = memo.get(hop.getInput(0).getHopID());
+				memo.put(hop.getHopID(), inType);
+				if (inType != null)
+					fTypeMap.put(hop.getHopID(), inType);
+				return;
+			}
+			if (hop instanceof FunctionOp && ((FunctionOp) hop).getFunctionType() == FunctionType.DML) {
+				memo.put(hop.getHopID(), null);
+				return;
+			}
+
+			if (allowsFederated(hop, memo)) {
+				hop.setForcedExecType(ExecType.FED);
+				outFType = getFederatedOut(hop, memo);
+				memo.put(hop.getHopID(), outFType);
+				if (outFType != null) {
+					hop.setFederatedOutput(FederatedOutput.FOUT);
+					fTypeMap.put(hop.getHopID(), outFType);
+				}
+			}
+			else {
+				memo.put(hop.getHopID(), null);
+			}
+		}
 	}
 
 	private static void logRecompileNewHops(List<Hop> roots, Map<Long, HopState> baseStates,
