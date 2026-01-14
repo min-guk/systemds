@@ -103,6 +103,7 @@ public static boolean FLAG_DYN_RECOMPILE = true;
 		_bmap.put(ConfigType.ALLOW_PARALLEL_DYN_RECOMPILATION, FLAG_DYN_RECOMPILE);
 		_bmap.put(ConfigType.ALLOW_INDIVIDUAL_SB_SPECIFIC_OPS, FLAG_DYN_RECOMPILE);
 		_bmap.put(ConfigType.ALLOW_CSE_PERSISTENT_READS, true);
+		_bmap.put(ConfigType.FEDERATED_RUNTIME, FLAG_DYN_RECOMPILE);
 		_bmap.put(ConfigType.IGNORE_UNSPECIFIED_ARGS, false);
 		_bmap.put(ConfigType.IGNORE_READ_WRITE_METADATA, false);
 		_bmap.put(ConfigType.IGNORE_TEMPORARY_FILENAMES, false);
