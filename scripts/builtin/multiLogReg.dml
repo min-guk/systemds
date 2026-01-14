@@ -134,7 +134,7 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
     max_y = numclasses;
   }
   else {
-    max_y = as.integer(as.scalar(max(Y)));
+    max_y = as.integer(max(Y));
   }
 
   # If label -1/0 etc. is present, it is the baseline label; convert it to max_y (or new max_y+1)
