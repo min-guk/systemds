@@ -900,10 +900,11 @@ public class FederatedPlannerLogger {
         }
 
         // Add cost information with explicit labels
+        double effectiveComputeWeight = plan.getComputeWeight() * plan.getMultiplicity();
         sb.append(", [CostInfo]: {TotalCost: ").append(String.format("%.1f", plan.getCumulativeCost()))
                 .append(", SelfCost: ").append(String.format("%.1f", plan.getSelfCost()))
                 .append(", NetworkCost: ").append(String.format("%.1f", plan.getForwardingCost()))
-                .append(", ComputeWeight: ").append(String.format("%.1f", plan.getComputeWeight())).append("}");
+                .append(", ComputeWeight: ").append(String.format("%.1f", effectiveComputeWeight)).append("}");
 
         // Add matrix characteristics with explicit labels
         sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
@@ -959,20 +960,22 @@ public class FederatedPlannerLogger {
                 } else {
                     String isForwardingCostOccured = "";
                     double totalForwarding = 0.0;
+                    double effectiveForwardingWeight = plan.computeForwardingWeightOfChild(
+                            childPlan.getLoopContext(), plan.getMultiplicity());
                     if (childPair.getRight() == plan.getFedOutType()){
                         isForwardingCostOccured = "X";
                         totalForwarding = 0.0;
-                    } else {
-                        isForwardingCostOccured = "O";
-                        totalForwarding = plan.computeForwardingWeightOfChild(childPlan.getLoopContext()) * childPlan.getForwardingCostPerParents();
-                    }
-                    sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
-                                childPair.getLeft(), isForwardingCostOccured, 
-                                childPlan.getCumulativeCostPerParents(), 
-                                plan.computeForwardingWeightOfChild(childPlan.getLoopContext()),
-                                totalForwarding));
-                }
-            }
+	                    } else {
+	                        isForwardingCostOccured = "O";
+	                        totalForwarding = effectiveForwardingWeight * childPlan.getForwardingCostPerParents();
+	                    }
+	                    sb.append(String.format("Edge(ID:%d, ForwardingCost:%s, CumulativeCost:%.1f, ForwardingWeight:%.1f, TotalForwarding:%.1f)", 
+	                                childPair.getLeft(), isForwardingCostOccured, 
+	                                childPlan.getCumulativeCostPerParents(), 
+	                                effectiveForwardingWeight,
+	                                totalForwarding));
+	                }
+	            }
             sb.append("}");
         }
 

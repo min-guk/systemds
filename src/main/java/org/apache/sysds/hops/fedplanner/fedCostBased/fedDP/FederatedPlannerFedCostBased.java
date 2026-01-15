@@ -46,6 +46,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.HopsException;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
@@ -102,8 +103,10 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 		FederatedMemoTable memoTable = new FederatedMemoTable();
 		FederatedMemoTable.FedPlan optimalPlan = FederatedPlanCostEnumerator.enumerateProgram(prog, memoTable, true);
 
-		Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>();
-		Map<Long, FType> fTypeMap = new HashMap<>();
+			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>();
+			Map<Long, Boolean> visitedFromClone = new HashMap<>();
+			Set<Long> visitedPlanHops = new HashSet<>();
+			Map<Long, FType> fTypeMap = new HashMap<>();
 
 		List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = optimalPlan.getChildFedPlans();
 		for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : childFedPlanPairs) {
@@ -112,9 +115,9 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, optimalPlan, memoTable);
 				continue;
 			}
-			rewriteHop(childPlan, memoTable, visited, fTypeMap);
-		}
-		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
+				rewriteHop(childPlan, memoTable, visited, visitedFromClone, visitedPlanHops, fTypeMap);
+			}
+			FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 	}
 
 	@Override
@@ -122,9 +125,11 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 		FederatedMemoTable memoTable = new FederatedMemoTable();
 		FederatedMemoTable.FedPlan optimalPlan = FederatedPlanCostEnumerator.enumerateFunctionDynamic(function,
 				memoTable, true);
-		Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>(); // hop ID, selected
-																								// placement/exec
-		Map<Long, FType> fTypeMap = new HashMap<>();
+			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>(); // hop ID, selected
+																									// placement/exec
+			Map<Long, Boolean> visitedFromClone = new HashMap<>();
+			Set<Long> visitedPlanHops = new HashSet<>();
+			Map<Long, FType> fTypeMap = new HashMap<>();
 
 		for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
 			FederatedMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
@@ -133,52 +138,63 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				continue;
 			}
 			// Propagate the actual selected output type of the child plan (LOUT/FOUT)
-			rewriteHop(childPlan, memoTable, visited, fTypeMap);
-		}
-		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
-	}
-
-	private void rewriteHop(FederatedMemoTable.FedPlan optimalPlan, FederatedMemoTable memoTable,
-			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited, Map<Long, FType> fTypeMap) {
-		long hopID = optimalPlan.getHopRef().getHopID();
-		boolean hasPlacementConflict = false;
-		ExecType execType = optimalPlan.getExecType();
-		FEDInstruction.FederatedOutput thisOutType = optimalPlan.getFedOutType();
-		if (optimalPlan.getFType() != null && thisOutType == FederatedOutput.FOUT)
-			fTypeMap.put(hopID, optimalPlan.getFType());
-
-		if (execType == null) {
-			throw new DMLRuntimeException("ExecType is null in FedPlan for hop " + hopID + " / "
-					+ optimalPlan.getHopRef().getOpString());
-		}
-
-		Pair<FEDInstruction.FederatedOutput, ExecType> prev = visited.get(hopID);
-		ExecType resolvedExecType = execType;
-		FEDInstruction.FederatedOutput resolvedOutType = thisOutType;
-
-		if (prev != null) {
-			if (prev.getLeft() == thisOutType) {
-				if (prev.getRight() != execType) {
-					FederatedPlannerLogger.logWarnMessage(
-							"[FederatedPlannerFedCostBased] ExecType conflict in rewriteHop for hop "
-									+ hopID + " (" + optimalPlan.getHopRef().getOpString() + "): existing="
-									+ prev.getRight() + ", incoming=" + execType + ", chosen="
-									+ pickExecType(prev.getRight(), execType));
-				}
-				resolvedExecType = pickExecType(prev.getRight(), execType);
-				optimalPlan.setForcedExecType(resolvedExecType);
-				optimalPlan.setFederatedOutput(resolvedOutType);
-				visited.put(hopID, Pair.of(resolvedOutType, resolvedExecType));
-				return;
-			} else {
-				hasPlacementConflict = true;
-				resolvedExecType = pickExecType(prev.getRight(), execType);
-				FederatedPlannerLogger.logPlacementConflict(optimalPlan.getHopRef(), null,
-						prev.getLeft(), thisOutType, "REWRITE_HOP");
+				rewriteHop(childPlan, memoTable, visited, visitedFromClone, visitedPlanHops, fTypeMap);
 			}
-		} else {
-			visited.put(hopID, Pair.of(thisOutType, execType));
+			FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 		}
+
+		private void rewriteHop(FederatedMemoTable.FedPlan optimalPlan, FederatedMemoTable memoTable,
+				Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited, Map<Long, Boolean> visitedFromClone,
+				Set<Long> visitedPlanHops,
+				Map<Long, FType> fTypeMap) {
+			long planHopId = optimalPlan.getHopRef().getHopID();
+			if (visitedPlanHops != null && !visitedPlanHops.add(planHopId))
+				return;
+			long hopID = memoTable.resolveOriginalHopId(planHopId);
+			boolean fromClone = (hopID != planHopId);
+			Hop targetHop = memoTable.resolveOriginalHop(planHopId);
+			if (targetHop == null)
+				targetHop = optimalPlan.getHopRef();
+			boolean hasPlacementConflict = false;
+			ExecType execType = optimalPlan.getExecType();
+			FEDInstruction.FederatedOutput thisOutType = optimalPlan.getFedOutType();
+
+			if (execType == null) {
+				throw new DMLRuntimeException("ExecType is null in FedPlan for hop " + hopID + " / "
+						+ optimalPlan.getHopRef().getOpString());
+			}
+
+			Pair<FEDInstruction.FederatedOutput, ExecType> prev = visited.get(hopID);
+			boolean prevFromClone = visitedFromClone != null && Boolean.TRUE.equals(visitedFromClone.get(hopID));
+			ExecType resolvedExecType = execType;
+			FEDInstruction.FederatedOutput resolvedOutType = thisOutType;
+
+			if (prev != null) {
+				if (prevFromClone && !fromClone) {
+					resolvedExecType = prev.getRight();
+					resolvedOutType = prev.getLeft();
+				} else if (!prevFromClone && fromClone) {
+					// Prefer clone decisions (Iter1) over originals (Iter0)
+					resolvedExecType = execType;
+					resolvedOutType = thisOutType;
+				} else if (prev.getLeft() == thisOutType) {
+					if (prev.getRight() != execType) {
+						FederatedPlannerLogger.logWarnMessage(
+								"[FederatedPlannerFedCostBased] ExecType conflict in rewriteHop for hop "
+										+ hopID + " (" + optimalPlan.getHopRef().getOpString() + "): existing="
+										+ prev.getRight() + ", incoming=" + execType + ", chosen="
+										+ pickExecType(prev.getRight(), execType));
+					}
+					resolvedExecType = pickExecType(prev.getRight(), execType);
+				} else {
+					hasPlacementConflict = true;
+					resolvedExecType = pickExecType(prev.getRight(), execType);
+					FederatedPlannerLogger.logPlacementConflict(optimalPlan.getHopRef(), null,
+							prev.getLeft(), thisOutType, "REWRITE_HOP");
+				}
+			} else {
+				visited.put(hopID, Pair.of(thisOutType, execType));
+			}
 
 		for (Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
 			FederatedMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
@@ -190,18 +206,33 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				continue;
 			}
 
-			rewriteHop(childPlan, memoTable, visited, fTypeMap);
-		}
+				rewriteHop(childPlan, memoTable, visited, visitedFromClone, visitedPlanHops, fTypeMap);
+			}
 
-		optimalPlan.setForcedExecType(resolvedExecType);
+			optimalPlan.setForcedExecType(resolvedExecType);
+			if (targetHop != optimalPlan.getHopRef())
+				targetHop.setForcedExecType(resolvedExecType);
 
 		if (hasPlacementConflict) {
 			resolvedOutType = FEDInstruction.FederatedOutput.FOUT;
 		}
-		optimalPlan.setFederatedOutput(resolvedOutType);
-		visited.put(hopID, Pair.of(resolvedOutType, resolvedExecType));
+			optimalPlan.setFederatedOutput(resolvedOutType);
+			if (targetHop != optimalPlan.getHopRef())
+				targetHop.setFederatedOutput(resolvedOutType);
+			visited.put(hopID, Pair.of(resolvedOutType, resolvedExecType));
+			if (visitedFromClone != null) {
+				visitedFromClone.put(hopID, prevFromClone || fromClone);
+			}
+			if (resolvedOutType == FederatedOutput.FOUT) {
+				FType fType = optimalPlan.getFType();
+				if (fType != null) {
+					fTypeMap.put(hopID, fType);
+				}
+			} else {
+				fTypeMap.remove(hopID);
+			}
 
-	}
+		}
 
 	private static ExecType pickExecType(ExecType existing, ExecType incoming) {
 		if (existing == null) {
@@ -255,12 +286,15 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			Set<Long> unRefTwriteSet = new HashSet<>();
 			Set<Long> unRefSet = new HashSet<>();
 			Map<Long, FederatedMemoTable.HopCommon> hopCommonTable = new HashMap<>();
+			FederatedPlanRewireTransTable.UnrollContext unrollCtx = new FederatedPlanRewireTransTable.UnrollContext();
 
 			Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
 			List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
 
 			FederatedPlanRewireTransTable.rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
-					unRefTwriteSet, unRefSet, progRootHopSet);
+					unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
+			memoTable.registerHopRefs(hopCommonTable);
+			memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 
 			RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
 			OracleFacade oracleFacade = new OracleFacade(registry);
@@ -274,6 +308,12 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 
 			for (StatementBlock sb : prog.getStatementBlocks()) {
 				enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+						unRefTwriteSet, fnStack, fedMap.size(), visitedHops, oracleFacade);
+			}
+			for (Hop iter1Root : unrollCtx.getIter1Roots()) {
+				if (iter1Root == null)
+					continue;
+				enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 						unRefTwriteSet, fnStack, fedMap.size(), visitedHops, oracleFacade);
 			}
 
@@ -313,6 +353,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			Set<Long> unRefTwriteSet = new HashSet<>();
 			Set<Long> unRefSet = new HashSet<>();
 			Map<Long, FederatedMemoTable.HopCommon> hopCommonTable = new HashMap<>();
+			FederatedPlanRewireTransTable.UnrollContext unrollCtx = new FederatedPlanRewireTransTable.UnrollContext();
 
 			Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
 			List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
@@ -320,7 +361,9 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			DMLProgram prog = function.getDMLProg();
 			FederatedPlanRewireTransTable.rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable,
 					privacyConstraintMap,
-					fedMap, unRefTwriteSet, unRefSet, progRootHopSet);
+					fedMap, unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
+			memoTable.registerHopRefs(hopCommonTable);
+			memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 
 			RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
 			OracleFacade oracleFacade = new OracleFacade(registry);
@@ -329,6 +372,12 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			Set<Long> visitedHops = new HashSet<>();
 			enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 					unRefTwriteSet, fnStack, fedMap.size(), visitedHops, oracleFacade);
+			for (Hop iter1Root : unrollCtx.getIter1Roots()) {
+				if (iter1Root == null)
+					continue;
+				enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+						unRefTwriteSet, fnStack, fedMap.size(), visitedHops, oracleFacade);
+			}
 
 			FederatedMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
 
@@ -1075,12 +1124,13 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 							lOutNeedsForwarding = true;
 						} else if (parentOut == FederatedOutput.LOUT) {
 							fOutNeedsForwarding = true;
-							double weightedForwarding = parentPlan
-									.computeForwardingWeightOfChild(lOutPlan.getLoopContext())
-									* fOutDownloadCostPerParents;
-							lOutAdditionalCost -= weightedForwarding;
-							fOutAdditionalCost -= weightedForwarding;
-						}
+								double weightedForwarding = parentPlan
+										.computeForwardingWeightOfChild(lOutPlan.getLoopContext(),
+												parentPlan.getMultiplicity())
+										* fOutDownloadCostPerParents;
+								lOutAdditionalCost -= weightedForwarding;
+								fOutAdditionalCost -= weightedForwarding;
+							}
 					} else {
 						Hop parentHop = parentPlan.getHopRef();
 						FederatedPlannerLogger.logWarnMessage("[Planner] Unexpected child placement " + originalOut
@@ -1231,12 +1281,12 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				double uploadCost = computeUploadNetworkCost(outputMem, childLOutFedPlan.getFType(), numOfWorkers);
 				double downloadCostPerParents = computeForwardingCostPerParents(downloadCost, childFOutFedPlan);
 				double uploadCostPerParents = computeForwardingCostPerParents(uploadCost, childLOutFedPlan);
-				double forwardingWeight = hopCommon
-						.computeForwardingWeightOfChild(childLOutFedPlan.getLoopContext());
-				childForwardingCostToCP[currentIndex] = forwardingWeight * downloadCostPerParents;
-				childForwardingCostToFED[currentIndex] = forwardingWeight * uploadCostPerParents;
-				currentIndex++;
-			}
+					double forwardingWeight = hopCommon.computeForwardingWeightOfChild(
+							childLOutFedPlan.getLoopContext(), hopCommon.getMultiplicity());
+					childForwardingCostToCP[currentIndex] = forwardingWeight * downloadCostPerParents;
+					childForwardingCostToFED[currentIndex] = forwardingWeight * uploadCostPerParents;
+					currentIndex++;
+				}
 
 			for (int i = 0; i < lOUTOnlyinputHops.size(); i++) {
 				Hop childHop = lOUTOnlyinputHops.get(i);
@@ -1254,10 +1304,10 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				double outputMem = childHop.getOutputMemEstimate();
 				double uploadCost = computeUploadNetworkCost(outputMem, childLOutFedPlan.getFType(), numOfWorkers);
 				double uploadCostPerParents = computeForwardingCostPerParents(uploadCost, childLOutFedPlan);
-				double forwardingWeight = hopCommon
-						.computeForwardingWeightOfChild(childLOutFedPlan.getLoopContext());
-				lOUTOnlychildForwardingCostToFED.add(forwardingWeight * uploadCostPerParents);
-			}
+					double forwardingWeight = hopCommon.computeForwardingWeightOfChild(
+							childLOutFedPlan.getLoopContext(), hopCommon.getMultiplicity());
+					lOUTOnlychildForwardingCostToFED.add(forwardingWeight * uploadCostPerParents);
+				}
 
 			for (int i = 0; i < fOUTOnlyinputHops.size(); i++) {
 				Hop childHop = fOUTOnlyinputHops.get(i);
@@ -1275,11 +1325,11 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				double outputMem = childHop.getOutputMemEstimate();
 				double downloadCost = computeDownloadNetworkCost(outputMem);
 				double downloadCostPerParents = computeForwardingCostPerParents(downloadCost, childFOutFedPlan);
-				double forwardingWeight = hopCommon
-						.computeForwardingWeightOfChild(childFOutFedPlan.getLoopContext());
-				fOUTOnlychildForwardingCostToCP.add(forwardingWeight * downloadCostPerParents);
+					double forwardingWeight = hopCommon.computeForwardingWeightOfChild(
+							childFOutFedPlan.getLoopContext(), hopCommon.getMultiplicity());
+					fOUTOnlychildForwardingCostToCP.add(forwardingWeight * downloadCostPerParents);
+				}
 			}
-		}
 
 		/**
 		 * Computes the cost associated with a given Hop node.
@@ -1307,7 +1357,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				}
 			}
 
-			double selfCost = hopCommon.getComputeWeight() * computeSelfCost(hopCommon.hopRef);
+			double selfCost = hopCommon.getComputeWeight() * hopCommon.getMultiplicity()
+					* computeSelfCost(hopCommon.hopRef);
 			double forwardingCost = computeDownloadNetworkCost(hopCommon.hopRef.getOutputMemEstimate());
 
 			hopCommon.setSelfCost(selfCost);
@@ -1391,6 +1442,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 	public static class FederatedMemoTable {
 		// Maps Hop ID and fedOutType pairs to their plan variants
 		private final Map<Pair<Long, FederatedOutput>, FedPlanVariants> hopMemoTable = new HashMap<>();
+		private final Map<Long, Hop> hopRefMap = new HashMap<>();
+		private final Map<Long, Long> cloneToOrig = new HashMap<>();
 
 		public void addFedPlanVariants(long hopID, FederatedOutput fedOutType, FedPlanVariants fedPlanVariants) {
 			hopMemoTable.put(new ImmutablePair<>(hopID, fedOutType), fedPlanVariants);
@@ -1418,6 +1471,35 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 
 		public boolean contains(long hopID, FederatedOutput fedOutType) {
 			return hopMemoTable.containsKey(new ImmutablePair<>(hopID, fedOutType));
+		}
+
+		public void registerHopRefs(Map<Long, HopCommon> hopCommonTable) {
+			if (hopCommonTable == null)
+				return;
+			for (Map.Entry<Long, HopCommon> entry : hopCommonTable.entrySet()) {
+				HopCommon hc = entry.getValue();
+				if (hc != null && hc.getHopRef() != null)
+					hopRefMap.put(entry.getKey(), hc.getHopRef());
+			}
+		}
+
+		public void registerCloneMapping(Map<Long, Long> cloneToOrigMap) {
+			if (cloneToOrigMap == null || cloneToOrigMap.isEmpty())
+				return;
+			cloneToOrig.putAll(cloneToOrigMap);
+		}
+
+		public long resolveOriginalHopId(long hopId) {
+			Long orig = cloneToOrig.get(hopId);
+			return orig != null ? orig : hopId;
+		}
+
+		public Hop resolveOriginalHop(long hopId) {
+			long origId = resolveOriginalHopId(hopId);
+			Hop hop = hopRefMap.get(origId);
+			if (hop != null)
+				return hop;
+			return hopRefMap.get(hopId);
 		}
 
 		/**
@@ -1497,8 +1579,17 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				return fedPlanVariants.hopCommon.getNetworkWeight();
 			}
 
+			public double getMultiplicity() {
+				return fedPlanVariants.hopCommon.getMultiplicity();
+			}
+
 			public int getNumOfParents() {
 				return fedPlanVariants.hopCommon.getNumOfParents();
+			}
+
+			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext,
+					double childMultiplicity) {
+				return fedPlanVariants.hopCommon.computeForwardingWeightOfChild(childLoopContext, childMultiplicity);
 			}
 
 			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
@@ -1606,9 +1697,10 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			protected int numOfParents;
 			protected double computeWeight; // Weight used to calculate cost based on hop execution frequency
 			protected double networkWeight; // Weight used to calculate cost based on hop execution frequency
+			protected double multiplicity; // Execution multiplicity for unrolled loops
 			protected List<Pair<Long, Double>> loopContext; // Loop context in which this hop exists
 
-			public HopCommon(Hop hopRef, double computeWeight, double networkWeight, int numOfParents,
+			public HopCommon(Hop hopRef, double computeWeight, double networkWeight, double multiplicity, int numOfParents,
 					List<Pair<Long, Double>> loopContext) {
 				this.hopRef = hopRef;
 				this.selfCost = 0;
@@ -1616,6 +1708,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				this.numOfParents = numOfParents;
 				this.computeWeight = computeWeight;
 				this.networkWeight = networkWeight;
+				this.multiplicity = multiplicity;
 				this.loopContext = loopContext != null ? new ArrayList<>(loopContext) : new ArrayList<>();
 			}
 
@@ -1637,6 +1730,10 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 
 			public double getNetworkWeight() {
 				return networkWeight;
+			}
+
+			public double getMultiplicity() {
+				return multiplicity;
 			}
 
 			public int getNumOfParents() {
@@ -1669,9 +1766,14 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			 * => forwardingWeight = networkWeight / 10 (child result reused across while2
 			 * iterations)
 			 */
-			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
+			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext,
+					double childMultiplicity) {
 				return FederatedPlannerUtils.computeForwardingWeightOfChild(
-						networkWeight, loopContext, childLoopContext);
+						networkWeight, loopContext, childLoopContext, childMultiplicity);
+			}
+
+			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
+				return computeForwardingWeightOfChild(childLoopContext, 1.0);
 			}
 		}
 	}
@@ -1680,11 +1782,91 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 
 		private static final double DEFAULT_LOOP_WEIGHT = 10.0;
 		private static final double DEFAULT_IF_ELSE_WEIGHT = 0.5;
+		private static final int MAX_UNROLL_DEPTH = 1;
+
+		public static class UnrollContext {
+			private final Map<Long, Long> cloneToOrig = new HashMap<>();
+			private final List<Hop> iter1Roots = new ArrayList<>();
+
+			public Map<Long, Long> getCloneToOrig() {
+				return cloneToOrig;
+			}
+
+			public List<Hop> getIter1Roots() {
+				return iter1Roots;
+			}
+
+			private void addIter1Roots(List<Hop> roots) {
+				if (roots == null || roots.isEmpty())
+					return;
+				iter1Roots.addAll(roots);
+			}
+		}
+
+		private static class LoopAnalysisContext {
+			private final Map<String, Boolean> readFromOutside = new HashMap<>();
+			private final Map<String, List<Hop>> headerReads = new HashMap<>();
+			private final Set<String> writtenVars = new HashSet<>();
+			private final boolean trackReadFromOutside;
+			private final boolean trackHeaderReads;
+
+			private LoopAnalysisContext(boolean trackReadFromOutside, boolean trackHeaderReads) {
+				this.trackReadFromOutside = trackReadFromOutside;
+				this.trackHeaderReads = trackHeaderReads;
+			}
+
+			private void markReadFromOutside(String var) {
+				if (!trackReadFromOutside || var == null)
+					return;
+				readFromOutside.put(var, true);
+			}
+
+			private void markWritten(String var) {
+				if (var == null)
+					return;
+				writtenVars.add(var);
+			}
+
+			private boolean hasWritten(String var) {
+				return var != null && writtenVars.contains(var);
+			}
+
+			private Set<String> snapshotWritten() {
+				return new HashSet<>(writtenVars);
+			}
+
+			private void restoreWritten(Set<String> snapshot) {
+				writtenVars.clear();
+				if (snapshot != null && !snapshot.isEmpty())
+					writtenVars.addAll(snapshot);
+			}
+
+			private void retainWritten(Set<String> other) {
+				if (other == null)
+					writtenVars.clear();
+				else
+					writtenVars.retainAll(other);
+			}
+
+			private void recordHeaderRead(String var, Hop treadHop) {
+				if (!trackHeaderReads || var == null || treadHop == null)
+					return;
+				headerReads.computeIfAbsent(var, k -> new ArrayList<>()).add(treadHop);
+			}
+
+			private Map<String, Boolean> getReadFromOutside() {
+				return readFromOutside;
+			}
+
+			private Map<String, List<Hop>> getHeaderReads() {
+				return headerReads;
+			}
+		}
 
 		public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 				Map<Long, FederatedMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 				List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
-				Set<Hop> progRootHopSet) {
+				Set<Hop> progRootHopSet, UnrollContext unrollCtx) {
 			// Maps Hop ID and fedOutType pairs to their plan variants
 			Set<Long> visitedHops = new HashSet<>();
 			Set<String> fnStack = new HashSet<>();
@@ -1700,7 +1882,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				Map<String, List<Hop>> innerTransTable = rewireStatementBlock(sb, prog, visitedHops, rewireTable,
 						hopCommonTable, outerTransTableList, null, privacyConstraintMap,
 						fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-						functionTransTableCache, 1, 1, loopStack);
+						functionTransTableCache, 1, 1, 1, loopStack, 0, null, null, unrollCtx);
 				outerTransTableList.get(0).putAll(innerTransTable);
 			}
 		}
@@ -1709,7 +1891,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				Map<Long, List<Hop>> rewireTable,
 				Map<Long, FederatedMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 				List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
-				Set<Hop> progRootHopSet) {
+				Set<Hop> progRootHopSet, UnrollContext unrollCtx) {
 			Set<Long> visitedHops = new HashSet<>();
 			Set<String> fnStack = new HashSet<>();
 			Set<Long> injectedIds = new HashSet<>();
@@ -1722,7 +1904,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			rewireStatementBlock(function, prog, visitedHops, rewireTable, hopCommonTable, outerTransTableList, null,
 					privacyConstraintMap,
 					fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-					functionTransTableCache, 1, 1, loopStack);
+					functionTransTableCache, 1, 1, 1, loopStack, 0, null, null, unrollCtx);
 		}
 
 		public static Map<String, List<Hop>> rewireStatementBlock(StatementBlock sb, DMLProgram prog,
@@ -1733,7 +1915,9 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 				Set<Hop> progRootHopSet, Set<String> fnStack, Set<Long> injectedIds,
 				Map<String, Map<String, List<Hop>>> functionTransTableCache,
-				double computeWeight, double networkWeight, List<Pair<Long, Double>> parentLoopStack) {
+				double computeWeight, double networkWeight, double multiplicity, List<Pair<Long, Double>> parentLoopStack,
+				int unrollDepth, Map<Long, Hop> hopCloneMap, LoopAnalysisContext loopCtx,
+				UnrollContext unrollCtx) {
 			List<Map<String, List<Hop>>> newOuterTransTableList = new ArrayList<>();
 			if (outerTransTableList != null) {
 				for (Map<String, List<Hop>> outerTable : outerTransTableList) {
@@ -1753,11 +1937,18 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				IfStatementBlock isb = (IfStatementBlock) sb;
 				IfStatement istmt = (IfStatement) isb.getStatement(0);
 
-				rewireHopDAG(isb.getPredicateHops(), prog, visitedHops, rewireTable, hopCommonTable,
+				Set<String> writtenBeforeIf = null;
+				if (loopCtx != null) {
+					writtenBeforeIf = loopCtx.snapshotWritten();
+				}
+
+				rewireHopDAG(selectHop(isb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
+						hopCommonTable,
 						newOuterTransTableList,
 						null, innerTransTable,
 						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-						functionTransTableCache, computeWeight, networkWeight, parentLoopStack);
+						functionTransTableCache, computeWeight, networkWeight, multiplicity, parentLoopStack,
+						unrollDepth, loopCtx, unrollCtx);
 
 				newFormerTransTable.putAll(innerTransTable);
 				Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
@@ -1771,14 +1962,31 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 							hopCommonTable, newOuterTransTableList, newFormerTransTable,
 							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, parentLoopStack));
+							networkWeight, multiplicity, parentLoopStack, unrollDepth, hopCloneMap, loopCtx,
+							unrollCtx));
+
+				Set<String> writtenAfterIf = null;
+				if (loopCtx != null) {
+					writtenAfterIf = loopCtx.snapshotWritten();
+					loopCtx.restoreWritten(writtenBeforeIf);
+				}
 
 				for (StatementBlock innerIsb : istmt.getElseBody())
 					elseFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
 							hopCommonTable, newOuterTransTableList, elseFormerTransTable,
 							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, parentLoopStack));
+							networkWeight, multiplicity, parentLoopStack, unrollDepth, hopCloneMap, loopCtx,
+							unrollCtx));
+
+				if (loopCtx != null) {
+					Set<String> writtenAfterElse = loopCtx.snapshotWritten();
+					loopCtx.restoreWritten(writtenBeforeIf);
+					if (writtenAfterIf == null)
+						writtenAfterIf = writtenBeforeIf;
+					loopCtx.restoreWritten(writtenAfterIf);
+					loopCtx.retainWritten(writtenAfterElse);
+				}
 
 				// If there are common keys: merge elseValue list into ifValue list
 				elseFormerTransTable.forEach((key, elseValue) -> {
@@ -1808,71 +2016,335 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 						dincr = -1;
 					loopWeight = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
 				}
-				computeWeight *= loopWeight;
-				networkWeight *= loopWeight;
+				double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
+				boolean allowUnroll = unrollCtx != null && loopCtx == null
+						&& unrollDepth < MAX_UNROLL_DEPTH && iter1Factor > 0.0;
+				Set<String> loopCarriedVars = Collections.emptySet();
 
-				// Create current loop context (copy parent context)
-				List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
-				currentLoopStack.add(Pair.of(sb.getSBID(), loopWeight));
+				if (allowUnroll) {
+					LoopAnalysisContext probeCtx = new LoopAnalysisContext(true, false);
+					Set<Long> probeVisited = new HashSet<>();
+					Map<Long, List<Hop>> probeRewireTable = new HashMap<>();
+					Map<Long, FederatedMemoTable.HopCommon> probeHopCommon = new HashMap<>();
+					Map<Long, Privacy> probePrivacy = new HashMap<>();
+					Set<Long> probeUnRefTwriteSet = new HashSet<>();
+					Set<Long> probeUnRefSet = new HashSet<>();
+					Set<Hop> probeRootSet = new HashSet<>();
+					Set<Long> probeInjectedIds = new HashSet<>();
+					Map<String, Map<String, List<Hop>>> probeFnCache = new HashMap<>();
+					Set<String> probeFnStack = new HashSet<>(fnStack);
+					List<Pair<FederatedRange, FederatedData>> probeFedMap = new ArrayList<>(fedMap);
 
-				rewireHopDAG(fsb.getFromHops(), prog, visitedHops, rewireTable, hopCommonTable, newOuterTransTableList,
-						null, innerTransTable,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-						functionTransTableCache, computeWeight, networkWeight, currentLoopStack);
-				rewireHopDAG(fsb.getToHops(), prog, visitedHops, rewireTable, hopCommonTable, newOuterTransTableList,
-						null,
-						innerTransTable,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-						functionTransTableCache, computeWeight, networkWeight, currentLoopStack);
-
-				if (fsb.getIncrementHops() != null) {
-					rewireHopDAG(fsb.getIncrementHops(), prog, visitedHops, rewireTable, hopCommonTable,
-							newOuterTransTableList, null, innerTransTable,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, currentLoopStack);
+					Map<String, List<Hop>> probeInner = new HashMap<>();
+					rewireHopDAG(selectHop(fsb.getFromHops(), hopCloneMap), prog, probeVisited, probeRewireTable,
+							probeHopCommon, newOuterTransTableList, null, probeInner,
+							probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet, probeFnStack,
+							probeInjectedIds, probeFnCache, computeWeight, networkWeight, multiplicity,
+							parentLoopStack, unrollDepth, probeCtx, null);
+					rewireHopDAG(selectHop(fsb.getToHops(), hopCloneMap), prog, probeVisited, probeRewireTable,
+							probeHopCommon, newOuterTransTableList, null, probeInner,
+							probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet, probeFnStack,
+							probeInjectedIds, probeFnCache, computeWeight, networkWeight, multiplicity,
+							parentLoopStack, unrollDepth, probeCtx, null);
+					if (fsb.getIncrementHops() != null) {
+						rewireHopDAG(selectHop(fsb.getIncrementHops(), hopCloneMap), prog, probeVisited,
+								probeRewireTable, probeHopCommon, newOuterTransTableList, null, probeInner,
+								probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet,
+								probeFnStack,
+								probeInjectedIds, probeFnCache, computeWeight, networkWeight, multiplicity,
+								parentLoopStack, unrollDepth, probeCtx, null);
+					}
+					Map<String, List<Hop>> probeFormer = new HashMap<>();
+					probeFormer.putAll(probeInner);
+					for (StatementBlock innerFsb : fstmt.getBody())
+						probeFormer.putAll(rewireStatementBlock(innerFsb, prog, probeVisited, probeRewireTable,
+								probeHopCommon, newOuterTransTableList, probeFormer,
+								probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet,
+								probeFnStack,
+								probeInjectedIds, probeFnCache, computeWeight,
+								networkWeight, multiplicity, parentLoopStack, MAX_UNROLL_DEPTH, hopCloneMap,
+								probeCtx, null));
+					loopCarriedVars = computeLoopCarriedVars(probeCtx, probeFormer);
+					if (loopCarriedVars.isEmpty())
+						allowUnroll = false;
 				}
-				newFormerTransTable.putAll(innerTransTable);
 
-				for (StatementBlock innerFsb : fstmt.getBody())
-					newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
-							hopCommonTable, newOuterTransTableList, newFormerTransTable,
+				if (!allowUnroll) {
+					computeWeight *= loopWeight;
+					networkWeight *= loopWeight;
+
+					// Create current loop context (copy parent context)
+					List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
+					currentLoopStack.add(Pair.of(sb.getSBID(), loopWeight));
+
+					rewireHopDAG(selectHop(fsb.getFromHops(), hopCloneMap), prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList,
+							null, innerTransTable,
 							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, currentLoopStack));
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							currentLoopStack, unrollDepth, loopCtx, unrollCtx);
+					rewireHopDAG(selectHop(fsb.getToHops(), hopCloneMap), prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList,
+							null,
+							innerTransTable,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							currentLoopStack, unrollDepth, loopCtx, unrollCtx);
 
-				// Wire UnRefTwrite to liveOutHops
-				wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, hopCommonTable, newFormerTransTable,
-						injectedIds);
+					if (fsb.getIncrementHops() != null) {
+						rewireHopDAG(selectHop(fsb.getIncrementHops(), hopCloneMap), prog, visitedHops, rewireTable,
+								hopCommonTable,
+								newOuterTransTableList, null, innerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, multiplicity, currentLoopStack, unrollDepth, loopCtx, unrollCtx);
+					}
+					newFormerTransTable.putAll(innerTransTable);
+
+					for (StatementBlock innerFsb : fstmt.getBody())
+						newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
+								hopCommonTable, newOuterTransTableList, newFormerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, multiplicity, currentLoopStack, unrollDepth, hopCloneMap, loopCtx,
+								unrollCtx));
+
+					// Wire UnRefTwrite to liveOutHops
+					wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, hopCommonTable, newFormerTransTable,
+							injectedIds);
+					return newFormerTransTable;
+				}
+
+					List<Pair<Long, Double>> iter0LoopStack = new ArrayList<>();
+					if (parentLoopStack != null)
+						iter0LoopStack.addAll(parentLoopStack);
+					iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
+
+					LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false);
+					rewireHopDAG(selectHop(fsb.getFromHops(), hopCloneMap), prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList,
+							null, innerTransTable,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							iter0LoopStack, unrollDepth, iter0Analysis, unrollCtx);
+					rewireHopDAG(selectHop(fsb.getToHops(), hopCloneMap), prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList,
+							null,
+							innerTransTable,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							iter0LoopStack, unrollDepth, iter0Analysis, unrollCtx);
+					if (fsb.getIncrementHops() != null) {
+						rewireHopDAG(selectHop(fsb.getIncrementHops(), hopCloneMap), prog, visitedHops, rewireTable,
+								hopCommonTable,
+								newOuterTransTableList, null, innerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, multiplicity, iter0LoopStack, unrollDepth, iter0Analysis, unrollCtx);
+					}
+					newFormerTransTable.putAll(innerTransTable);
+					for (StatementBlock innerFsb : fstmt.getBody())
+						newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
+								hopCommonTable, newOuterTransTableList, newFormerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, multiplicity, iter0LoopStack, unrollDepth + 1, hopCloneMap,
+								iter0Analysis, unrollCtx));
+
+				Map<String, List<Hop>> iter0End = newFormerTransTable;
+				loopCarriedVars = computeLoopCarriedVars(iter0Analysis, iter0End);
+				double iter1Multiplicity = multiplicity * iter1Factor;
+				if (loopCarriedVars.isEmpty() || iter1Multiplicity <= 0.0) {
+					wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, hopCommonTable, iter0End, injectedIds);
+					return iter0End;
+				}
+
+					List<Pair<Long, Double>> iter1LoopStack = new ArrayList<>();
+					if (parentLoopStack != null)
+						iter1LoopStack.addAll(parentLoopStack);
+					iter1LoopStack.add(Pair.of(sb.getSBID(), iter1Factor));
+
+					Map<Long, Hop> iter1HopMap = cloneStatementBlockHops(fsb, hopCloneMap, unrollCtx);
+					unrollCtx.addIter1Roots(collectStatementBlockRoots(fsb, iter1HopMap));
+
+				LoopAnalysisContext iter1Analysis = new LoopAnalysisContext(false, true);
+				Map<String, List<Hop>> iter1Inner = new HashMap<>();
+				Map<String, List<Hop>> iter1Former = new HashMap<>();
+
+					rewireHopDAG(selectHop(fsb.getFromHops(), iter1HopMap), prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList,
+							null, iter1Inner,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+							iter1LoopStack, unrollDepth, iter1Analysis, unrollCtx);
+					rewireHopDAG(selectHop(fsb.getToHops(), iter1HopMap), prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList,
+							null,
+							iter1Inner,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+							iter1LoopStack, unrollDepth, iter1Analysis, unrollCtx);
+					if (fsb.getIncrementHops() != null) {
+						rewireHopDAG(selectHop(fsb.getIncrementHops(), iter1HopMap), prog, visitedHops, rewireTable,
+								hopCommonTable,
+								newOuterTransTableList, null, iter1Inner,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth, iter1Analysis, unrollCtx);
+					}
+				iter1Former.putAll(iter1Inner);
+					for (StatementBlock innerFsb : fstmt.getBody())
+						iter1Former.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
+								hopCommonTable, newOuterTransTableList, iter1Former,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth + 1, iter1HopMap,
+								iter1Analysis, unrollCtx));
+
+				addCrossIterEdges(loopCarriedVars, iter0End, iter1Analysis, rewireTable, unRefTwriteSet);
+				mergeIter0EndIntoIter1Former(iter1Former, iter0End);
+				wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, hopCommonTable, iter1Former, injectedIds);
+				return iter1Former;
 			} else if (sb instanceof WhileStatementBlock) {
 				WhileStatementBlock wsb = (WhileStatementBlock) sb;
 				WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
 				double loopWeight = estimateWhileLoopWeight(wsb);
-				computeWeight *= loopWeight;
-				networkWeight *= loopWeight;
+				double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
+				boolean allowUnroll = unrollCtx != null && loopCtx == null
+						&& unrollDepth < MAX_UNROLL_DEPTH && iter1Factor > 0.0;
+				Set<String> loopCarriedVars = Collections.emptySet();
 
-				// Create current loop context (copy parent context)
-				List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
-				currentLoopStack.add(Pair.of(sb.getSBID(), loopWeight));
+				if (allowUnroll) {
+					LoopAnalysisContext probeCtx = new LoopAnalysisContext(true, false);
+					Set<Long> probeVisited = new HashSet<>();
+					Map<Long, List<Hop>> probeRewireTable = new HashMap<>();
+					Map<Long, FederatedMemoTable.HopCommon> probeHopCommon = new HashMap<>();
+					Map<Long, Privacy> probePrivacy = new HashMap<>();
+					Set<Long> probeUnRefTwriteSet = new HashSet<>();
+					Set<Long> probeUnRefSet = new HashSet<>();
+					Set<Hop> probeRootSet = new HashSet<>();
+					Set<Long> probeInjectedIds = new HashSet<>();
+					Map<String, Map<String, List<Hop>>> probeFnCache = new HashMap<>();
+					Set<String> probeFnStack = new HashSet<>(fnStack);
+					List<Pair<FederatedRange, FederatedData>> probeFedMap = new ArrayList<>(fedMap);
 
-				rewireHopDAG(wsb.getPredicateHops(), prog, visitedHops, rewireTable, hopCommonTable,
-						newOuterTransTableList,
-						null, innerTransTable,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-						functionTransTableCache, computeWeight, networkWeight, currentLoopStack);
-				newFormerTransTable.putAll(innerTransTable);
+					Map<String, List<Hop>> probeInner = new HashMap<>();
+					rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, probeVisited, probeRewireTable,
+							probeHopCommon, newOuterTransTableList, null, probeInner,
+							probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet, probeFnStack,
+							probeInjectedIds, probeFnCache, computeWeight, networkWeight, multiplicity,
+							parentLoopStack, unrollDepth, probeCtx, null);
+					Map<String, List<Hop>> probeFormer = new HashMap<>();
+					probeFormer.putAll(probeInner);
+					for (StatementBlock innerWsb : wstmt.getBody())
+						probeFormer.putAll(rewireStatementBlock(innerWsb, prog, probeVisited, probeRewireTable,
+								probeHopCommon, newOuterTransTableList, probeFormer,
+								probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet,
+								probeFnStack,
+								probeInjectedIds, probeFnCache, computeWeight,
+								networkWeight, multiplicity, parentLoopStack, MAX_UNROLL_DEPTH, hopCloneMap,
+								probeCtx, null));
+					loopCarriedVars = computeLoopCarriedVars(probeCtx, probeFormer);
+					if (loopCarriedVars.isEmpty())
+						allowUnroll = false;
+				}
 
-				for (StatementBlock innerWsb : wstmt.getBody())
-					newFormerTransTable.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
-							hopCommonTable, newOuterTransTableList, newFormerTransTable,
+				if (!allowUnroll) {
+					computeWeight *= loopWeight;
+					networkWeight *= loopWeight;
+
+					// Create current loop context (copy parent context)
+					List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
+					currentLoopStack.add(Pair.of(sb.getSBID(), loopWeight));
+
+					rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
+							hopCommonTable,
+							newOuterTransTableList,
+							null, innerTransTable,
 							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, currentLoopStack));
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							currentLoopStack, unrollDepth, loopCtx, unrollCtx);
+					newFormerTransTable.putAll(innerTransTable);
 
-				// Wire UnRefTwrite to liveOutHops
-				wireUnRefTwriteToLiveOutWithTracking(wsb, unRefTwriteSet, hopCommonTable, newFormerTransTable,
-						injectedIds);
+					for (StatementBlock innerWsb : wstmt.getBody())
+						newFormerTransTable.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
+								hopCommonTable, newOuterTransTableList, newFormerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, multiplicity, currentLoopStack, unrollDepth, hopCloneMap, loopCtx,
+								unrollCtx));
+
+					// Wire UnRefTwrite to liveOutHops
+					wireUnRefTwriteToLiveOutWithTracking(wsb, unRefTwriteSet, hopCommonTable, newFormerTransTable,
+							injectedIds);
+					return newFormerTransTable;
+				}
+
+					List<Pair<Long, Double>> iter0LoopStack = new ArrayList<>();
+					if (parentLoopStack != null)
+						iter0LoopStack.addAll(parentLoopStack);
+					iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
+
+					LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false);
+					rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
+							hopCommonTable,
+							newOuterTransTableList,
+							null, innerTransTable,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							iter0LoopStack, unrollDepth, iter0Analysis, unrollCtx);
+					newFormerTransTable.putAll(innerTransTable);
+
+					for (StatementBlock innerWsb : wstmt.getBody())
+						newFormerTransTable.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
+								hopCommonTable, newOuterTransTableList, newFormerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, multiplicity, iter0LoopStack, unrollDepth + 1, hopCloneMap,
+								iter0Analysis, unrollCtx));
+
+				Map<String, List<Hop>> iter0End = newFormerTransTable;
+				loopCarriedVars = computeLoopCarriedVars(iter0Analysis, iter0End);
+				double iter1Multiplicity = multiplicity * iter1Factor;
+				if (loopCarriedVars.isEmpty() || iter1Multiplicity <= 0.0) {
+					wireUnRefTwriteToLiveOutWithTracking(wsb, unRefTwriteSet, hopCommonTable, iter0End, injectedIds);
+					return iter0End;
+				}
+
+					List<Pair<Long, Double>> iter1LoopStack = new ArrayList<>();
+					if (parentLoopStack != null)
+						iter1LoopStack.addAll(parentLoopStack);
+					iter1LoopStack.add(Pair.of(sb.getSBID(), iter1Factor));
+
+					Map<Long, Hop> iter1HopMap = cloneStatementBlockHops(wsb, hopCloneMap, unrollCtx);
+					unrollCtx.addIter1Roots(collectStatementBlockRoots(wsb, iter1HopMap));
+
+				LoopAnalysisContext iter1Analysis = new LoopAnalysisContext(false, true);
+				Map<String, List<Hop>> iter1Inner = new HashMap<>();
+				Map<String, List<Hop>> iter1Former = new HashMap<>();
+
+					rewireHopDAG(selectHop(wsb.getPredicateHops(), iter1HopMap), prog, visitedHops, rewireTable,
+							hopCommonTable,
+							newOuterTransTableList,
+							null, iter1Inner,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+							iter1LoopStack, unrollDepth, iter1Analysis, unrollCtx);
+					iter1Former.putAll(iter1Inner);
+
+					for (StatementBlock innerWsb : wstmt.getBody())
+						iter1Former.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
+								hopCommonTable, newOuterTransTableList, iter1Former,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache, computeWeight,
+								networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth + 1, iter1HopMap,
+								iter1Analysis, unrollCtx));
+
+				addCrossIterEdges(loopCarriedVars, iter0End, iter1Analysis, rewireTable, unRefTwriteSet);
+				mergeIter0EndIntoIter1Former(iter1Former, iter0End);
+				wireUnRefTwriteToLiveOutWithTracking(wsb, unRefTwriteSet, hopCommonTable, iter1Former, injectedIds);
+				return iter1Former;
 			} else if (sb instanceof FunctionStatementBlock) {
 				FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
 				FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
@@ -1882,7 +2354,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 							hopCommonTable, newOuterTransTableList, newFormerTransTable,
 							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, parentLoopStack));
+							networkWeight, multiplicity, parentLoopStack, unrollDepth, hopCloneMap, loopCtx,
+							unrollCtx));
 
 				// Wire fcall operation to liveOutHops
 				wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, hopCommonTable, newFormerTransTable,
@@ -1890,11 +2363,13 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			} else { // generic (last-level)
 				if (sb.getHops() != null) {
 					for (Hop c : sb.getHops())
-						rewireHopDAG(c, prog, visitedHops, rewireTable, hopCommonTable, newOuterTransTableList, null,
+						rewireHopDAG(selectHop(c, hopCloneMap), prog, visitedHops, rewireTable, hopCommonTable,
+								newOuterTransTableList, formerTransTable,
 								innerTransTable,
 								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 								injectedIds, functionTransTableCache,
-								computeWeight, networkWeight, parentLoopStack);
+								computeWeight, networkWeight, multiplicity, parentLoopStack, unrollDepth, loopCtx,
+								unrollCtx);
 				}
 
 				return innerTransTable;
@@ -1939,6 +2414,205 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			return maxLiteralBound > 0 ? maxLiteralBound : DEFAULT_LOOP_WEIGHT;
 		}
 
+		private static Hop selectHop(Hop hop, Map<Long, Hop> hopCloneMap) {
+			if (hop == null || hopCloneMap == null)
+				return hop;
+			Hop clone = hopCloneMap.get(hop.getHopID());
+			return clone != null ? clone : hop;
+		}
+
+		private static List<Hop> collectStatementBlockRoots(StatementBlock sb, Map<Long, Hop> hopCloneMap) {
+			List<Hop> roots = new ArrayList<>();
+			collectStatementBlockRoots(sb, hopCloneMap, roots);
+			return roots;
+		}
+
+		private static void collectStatementBlockRoots(StatementBlock sb, Map<Long, Hop> hopCloneMap,
+				List<Hop> roots) {
+			if (sb instanceof IfStatementBlock) {
+				IfStatementBlock isb = (IfStatementBlock) sb;
+				IfStatement istmt = (IfStatement) isb.getStatement(0);
+				roots.add(selectHop(isb.getPredicateHops(), hopCloneMap));
+				for (StatementBlock inner : istmt.getIfBody())
+					collectStatementBlockRoots(inner, hopCloneMap, roots);
+				for (StatementBlock inner : istmt.getElseBody())
+					collectStatementBlockRoots(inner, hopCloneMap, roots);
+			} else if (sb instanceof ForStatementBlock) {
+				ForStatementBlock fsb = (ForStatementBlock) sb;
+				ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+				roots.add(selectHop(fsb.getFromHops(), hopCloneMap));
+				roots.add(selectHop(fsb.getToHops(), hopCloneMap));
+				if (fsb.getIncrementHops() != null)
+					roots.add(selectHop(fsb.getIncrementHops(), hopCloneMap));
+				for (StatementBlock inner : fstmt.getBody())
+					collectStatementBlockRoots(inner, hopCloneMap, roots);
+			} else if (sb instanceof WhileStatementBlock) {
+				WhileStatementBlock wsb = (WhileStatementBlock) sb;
+				WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+				roots.add(selectHop(wsb.getPredicateHops(), hopCloneMap));
+				for (StatementBlock inner : wstmt.getBody())
+					collectStatementBlockRoots(inner, hopCloneMap, roots);
+			} else if (sb instanceof FunctionStatementBlock) {
+				FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+				FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+				for (StatementBlock inner : fstmt.getBody())
+					collectStatementBlockRoots(inner, hopCloneMap, roots);
+			} else {
+				if (sb.getHops() != null) {
+					for (Hop hop : sb.getHops())
+						roots.add(selectHop(hop, hopCloneMap));
+				}
+			}
+		}
+
+		private static Hop deepCopyHop(Hop hop, Map<Long, Hop> memo) {
+			Hop cached = memo.get(hop.getHopID());
+			if (cached != null)
+				return cached;
+
+			try {
+				Hop copy = (Hop) hop.clone();
+				copy.getInput().clear();
+				copy.getParent().clear();
+				memo.put(hop.getHopID(), copy);
+				if (hop.getInput() != null) {
+					for (Hop in : hop.getInput()) {
+						Hop inCopy = deepCopyHop(in, memo);
+						copy.getInput().add(inCopy);
+						inCopy.getParent().add(copy);
+					}
+				}
+				return copy;
+			} catch (CloneNotSupportedException ex) {
+				throw new HopsException(ex);
+			}
+		}
+
+		private static Map<Long, Hop> cloneStatementBlockHops(StatementBlock sb, Map<Long, Hop> baseHopMap,
+				UnrollContext unrollCtx) {
+			Map<Long, Hop> memo = new HashMap<>();
+			cloneStatementBlockHops(sb, baseHopMap, memo);
+			if (unrollCtx != null) {
+				for (Map.Entry<Long, Hop> entry : memo.entrySet()) {
+					long baseId = entry.getKey();
+					Hop clone = entry.getValue();
+					long origId = resolveOriginalHopId(baseId, unrollCtx.cloneToOrig);
+					unrollCtx.cloneToOrig.put(clone.getHopID(), origId);
+				}
+			}
+			return memo;
+		}
+
+		private static void cloneStatementBlockHops(StatementBlock sb, Map<Long, Hop> baseHopMap,
+				Map<Long, Hop> memo) {
+			if (sb instanceof IfStatementBlock) {
+				IfStatementBlock isb = (IfStatementBlock) sb;
+				IfStatement istmt = (IfStatement) isb.getStatement(0);
+				deepCopyHop(selectHop(isb.getPredicateHops(), baseHopMap), memo);
+				for (StatementBlock inner : istmt.getIfBody())
+					cloneStatementBlockHops(inner, baseHopMap, memo);
+				for (StatementBlock inner : istmt.getElseBody())
+					cloneStatementBlockHops(inner, baseHopMap, memo);
+			} else if (sb instanceof ForStatementBlock) {
+				ForStatementBlock fsb = (ForStatementBlock) sb;
+				ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+				deepCopyHop(selectHop(fsb.getFromHops(), baseHopMap), memo);
+				deepCopyHop(selectHop(fsb.getToHops(), baseHopMap), memo);
+				if (fsb.getIncrementHops() != null)
+					deepCopyHop(selectHop(fsb.getIncrementHops(), baseHopMap), memo);
+				for (StatementBlock inner : fstmt.getBody())
+					cloneStatementBlockHops(inner, baseHopMap, memo);
+			} else if (sb instanceof WhileStatementBlock) {
+				WhileStatementBlock wsb = (WhileStatementBlock) sb;
+				WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+				deepCopyHop(selectHop(wsb.getPredicateHops(), baseHopMap), memo);
+				for (StatementBlock inner : wstmt.getBody())
+					cloneStatementBlockHops(inner, baseHopMap, memo);
+			} else if (sb instanceof FunctionStatementBlock) {
+				FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+				FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+				for (StatementBlock inner : fstmt.getBody())
+					cloneStatementBlockHops(inner, baseHopMap, memo);
+			} else {
+				if (sb.getHops() != null) {
+					for (Hop hop : sb.getHops())
+						deepCopyHop(selectHop(hop, baseHopMap), memo);
+				}
+			}
+		}
+
+		private static long resolveOriginalHopId(long baseHopId, Map<Long, Long> cloneToOrig) {
+			Long origId = cloneToOrig.get(baseHopId);
+			return origId != null ? origId : baseHopId;
+		}
+
+		private static Set<String> computeLoopCarriedVars(LoopAnalysisContext ctx,
+				Map<String, List<Hop>> endTransTable) {
+			Set<String> loopCarried = new HashSet<>();
+			if (ctx == null || endTransTable == null || endTransTable.isEmpty())
+				return loopCarried;
+			for (Map.Entry<String, Boolean> entry : ctx.getReadFromOutside().entrySet()) {
+				if (!Boolean.TRUE.equals(entry.getValue()))
+					continue;
+				List<Hop> writes = endTransTable.get(entry.getKey());
+				if (writes != null && !writes.isEmpty())
+					loopCarried.add(entry.getKey());
+			}
+			return loopCarried;
+		}
+
+		private static void addCrossIterEdges(Set<String> loopCarriedVars, Map<String, List<Hop>> iter0End,
+				LoopAnalysisContext iter1Ctx, Map<Long, List<Hop>> rewireTable, Set<Long> unRefTwriteSet) {
+			if (loopCarriedVars == null || loopCarriedVars.isEmpty() || iter1Ctx == null || iter0End == null)
+				return;
+			Map<String, List<Hop>> iter1Reads = iter1Ctx.getHeaderReads();
+			for (String var : loopCarriedVars) {
+				List<Hop> writes = iter0End.get(var);
+				List<Hop> reads = iter1Reads.get(var);
+				if (writes == null || writes.isEmpty() || reads == null || reads.isEmpty())
+					continue;
+				List<Hop> uniqueWrites = new ArrayList<>();
+				for (Hop writeHop : writes) {
+					if (writeHop != null && !uniqueWrites.contains(writeHop))
+						uniqueWrites.add(writeHop);
+				}
+				if (uniqueWrites.isEmpty())
+					continue;
+				for (Hop readHop : reads) {
+					if (readHop == null)
+						continue;
+					List<Hop> prevParents = rewireTable.get(readHop.getHopID());
+					if (prevParents != null && !prevParents.isEmpty()) {
+						for (Hop prevParent : prevParents) {
+							if (prevParent == null)
+								continue;
+							List<Hop> siblings = rewireTable.get(prevParent.getHopID());
+							if (siblings != null)
+								siblings.removeIf(hop -> hop == readHop);
+						}
+					}
+					rewireTable.put(readHop.getHopID(), new ArrayList<>(uniqueWrites));
+					for (Hop writeHop : uniqueWrites) {
+						List<Hop> children = rewireTable.computeIfAbsent(writeHop.getHopID(), k -> new ArrayList<>());
+						if (!children.contains(readHop))
+							children.add(readHop);
+						unRefTwriteSet.remove(writeHop.getHopID());
+					}
+				}
+			}
+		}
+
+		private static void mergeIter0EndIntoIter1Former(Map<String, List<Hop>> iter1Former,
+				Map<String, List<Hop>> iter0End) {
+			if (iter1Former == null || iter0End == null || iter0End.isEmpty())
+				return;
+			for (Map.Entry<String, List<Hop>> entry : iter0End.entrySet()) {
+				List<Hop> existing = iter1Former.get(entry.getKey());
+				if (existing == null || existing.isEmpty())
+					iter1Former.put(entry.getKey(), entry.getValue());
+			}
+		}
+
 		private static void rewireHopDAG(Hop hop, DMLProgram prog, Set<Long> visitedHops,
 				Map<Long, List<Hop>> rewireTable,
 				Map<Long, FederatedMemoTable.HopCommon> hopCommonTable,
@@ -1949,7 +2623,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				Set<Hop> progRootHopSet,
 				Set<String> fnStack, Set<Long> injectedIds,
 				Map<String, Map<String, List<Hop>>> functionTransTableCache,
-				double computeWeight, double networkWeight, List<Pair<Long, Double>> loopStack) {
+				double computeWeight, double networkWeight, double multiplicity, List<Pair<Long, Double>> loopStack,
+				int unrollDepth, LoopAnalysisContext loopCtx, UnrollContext unrollCtx) {
 			if (!visitedHops.add(hop.getHopID())) {
 				return;
 			}
@@ -1959,12 +2634,13 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 					rewireHopDAG(inputHop, prog, visitedHops, rewireTable, hopCommonTable, outerTransTableList,
 							formerTransTable, innerTransTable,
 							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight, networkWeight, loopStack);
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity, loopStack,
+							unrollDepth, loopCtx, unrollCtx);
 				}
 			}
 
 			hopCommonTable.put(hop.getHopID(),
-					new FederatedMemoTable.HopCommon(hop, computeWeight, networkWeight, 0, loopStack));
+					new FederatedMemoTable.HopCommon(hop, computeWeight, networkWeight, multiplicity, 0, loopStack));
 			FederatedPlannerLogger.logBasicHopInfo(hop, "RewireHopDAG:addCommon");
 
 			// Identify hops to connect to the root dummy node
@@ -2051,7 +2727,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 										rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
 										privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet,
 										fnStack, injectedIds, functionTransTableCache, computeWeight, networkWeight,
-										loopStack);
+										multiplicity, loopStack, unrollDepth, null, loopCtx, unrollCtx);
 								if (functionTransTable != null) {
 									functionTransTableCache.put(fkey, functionTransTable);
 								}
@@ -2074,7 +2750,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 								if (!hopCommonTable.containsKey(outputHop.getHopID())) {
 									hopCommonTable.put(outputHop.getHopID(),
 											new FederatedMemoTable.HopCommon(outputHop, computeWeight, networkWeight,
-													0, loopStack));
+													multiplicity, 0, loopStack));
 								}
 								unRefTwriteSet.add(outputHop.getHopID());
 							}
@@ -2092,7 +2768,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 							if (!hopCommonTable.containsKey(outputHop.getHopID())) {
 								hopCommonTable.put(outputHop.getHopID(),
 										new FederatedMemoTable.HopCommon(outputHop, computeWeight, networkWeight,
-												0, loopStack));
+												multiplicity, 0, loopStack));
 							}
 							innerTransTable.computeIfAbsent(outputNames[i], k -> new ArrayList<>()).add(outputHop);
 							unRefTwriteSet.add(outputHop.getHopID());
@@ -2111,13 +2787,14 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 
 			rewireTransHop(hop, rewireTable, outerTransTableList, formerTransTable, innerTransTable,
 					privacyConstraintMap,
-					fedMap, unRefTwriteSet, injectedIds);
+					fedMap, unRefTwriteSet, injectedIds, loopCtx);
 		}
 
 		private static void rewireTransHop(Hop hop, Map<Long, List<Hop>> rewireTable,
 				List<Map<String, List<Hop>>> outerTransTableList, Map<String, List<Hop>> formerTransTable,
 				Map<String, List<Hop>> innerTransTable, Map<Long, Privacy> privacyConstraintMap,
-				List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> injectedIds) {
+				List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> injectedIds,
+				LoopAnalysisContext loopCtx) {
 			DataOp dataOp = (DataOp) hop;
 			Types.OpOpData opType = dataOp.getOp();
 			String hopName = dataOp.getName();
@@ -2131,12 +2808,29 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 				// Rewire TransWrite
 				innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
 				unRefTwriteSet.add(hop.getHopID());
+				if (loopCtx != null)
+					loopCtx.markWritten(hopName);
 				// Propagate Privacy Constraint
 				privacyConstraintMap.put(hop.getHopID(), FederatedPlannerUtils.getPrivacyConstraint(
 						hop, hop.getInput(), privacyConstraintMap));
 			} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 				// Rewire TransRead
 				List<Hop> childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
+				boolean hasInner = false;
+				if (innerTransTable != null) {
+					List<Hop> innerHops = innerTransTable.get(hopName);
+					hasInner = innerHops != null && !innerHops.isEmpty();
+				}
+				boolean hasFormer = false;
+				if (formerTransTable != null) {
+					List<Hop> formerHops = formerTransTable.get(hopName);
+					hasFormer = formerHops != null && !formerHops.isEmpty();
+				}
+				boolean fromOutside = !hasInner && !hasFormer && childHops != null && !childHops.isEmpty();
+				if (fromOutside && loopCtx != null && !loopCtx.hasWritten(hopName)) {
+					loopCtx.markReadFromOutside(hopName);
+					loopCtx.recordHeaderRead(hopName, hop);
+				}
 
 				// Todo: Handle exception when TRead has no Child (check why it's missing)
 				if (childHops == null || childHops.isEmpty()) {

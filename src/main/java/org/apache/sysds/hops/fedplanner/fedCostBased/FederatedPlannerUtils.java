@@ -127,10 +127,16 @@ public class FederatedPlannerUtils {
 
 	public static double computeForwardingWeightOfChild(double networkWeight,
 			List<Pair<Long, Double>> parentLoopContext, List<Pair<Long, Double>> childLoopContext) {
+		return computeForwardingWeightOfChild(networkWeight, parentLoopContext, childLoopContext, 1.0);
+	}
+
+	public static double computeForwardingWeightOfChild(double networkWeight,
+			List<Pair<Long, Double>> parentLoopContext, List<Pair<Long, Double>> childLoopContext,
+			double consumerMultiplicity) {
 		double base = (networkWeight != 0.0) ? networkWeight : 1.0;
 
 		if (parentLoopContext == null || parentLoopContext.isEmpty())
-			return base;
+			return base * Math.max(consumerMultiplicity, 0.0);
 
 		Map<Long, Double> childMap = new HashMap<>();
 		if (childLoopContext != null) {
@@ -146,7 +152,7 @@ public class FederatedPlannerUtils {
 				weight /= iters;
 		}
 
-		return weight;
+		return weight * Math.max(consumerMultiplicity, 0.0);
 	}
 
 	public static final class CompatibilityScore {

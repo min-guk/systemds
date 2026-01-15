@@ -117,6 +117,12 @@ Gemfile.lock
 # Python
 **/__pycache__
 *.pyc
+.venv/
+venv/
+
+# Local artifacts
+.graphviz-lib/
+test.txt.png
 
 # Spark
 **/metastore_db
