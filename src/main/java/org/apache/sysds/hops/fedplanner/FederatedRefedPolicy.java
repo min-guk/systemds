@@ -802,6 +802,18 @@ public final class FederatedRefedPolicy {
 			return InputRequirement.REQUIRED;
 		if (thisShape == ShapeClass.MATRIX && otherShape == ShapeClass.MATRIX)
 			return InputRequirement.REQUIRED;
+		if (thisShape == ShapeClass.VECTOR && otherShape == ShapeClass.VECTOR && parent instanceof AggBinaryOp) {
+			long thisRows = input.getDim1();
+			long thisCols = input.getDim2();
+			long otherRows = other.getDim1();
+			long otherCols = other.getDim2();
+			if (thisRows > 0 && thisCols > 0 && otherRows > 0 && otherCols > 0) {
+				if (thisRows == 1 && otherCols == 1 && otherRows > 1)
+					return InputRequirement.OPTIONAL;
+				if (thisCols == 1 && otherRows == 1 && thisRows > 1)
+					return InputRequirement.REQUIRED;
+			}
+		}
 		return InputRequirement.AMBIGUOUS;
 	}
 

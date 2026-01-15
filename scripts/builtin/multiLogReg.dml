@@ -37,9 +37,9 @@
 # maxi       max. number of outer (Newton) iterations
 # maxii      max. number of inner (conjugate gradient) iterations, 0 = no max
 # verbose    flag specifying if logging information should be printed
-# numclasses optional total number of classes (C). If >0, skip max(Y) scan and fix K=C-1
-# numrows    optional number of rows (N). If >0, stamp X/Y dims early to avoid runtime recompile
-# numcols    optional number of feature columns (D, before intercept). If >0, stamp X dims early
+# numclasses total number of classes (C) to fix K=C-1
+# numrows    number of rows (N) to stamp X/Y dims early
+# numcols    number of feature columns (D, before intercept) to stamp X dims early
 # ---------------------------------------------------------------------------------------
 #
 # OUTPUT:
@@ -64,20 +64,12 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   # Force/stamp sizes early (to avoid runtime recompilation and
   # execution-type mismatches in federated settings).
   # ------------------------------------------------------------
-  if (numrows > 0) N = numrows;
-  else N = nrow(X);
-
-  if (numcols > 0) D = numcols;
-  else D = ncol(X);
-
-  stamp_X = (numrows > 0 & numcols > 0);
+  N = numrows;
+  D = numcols;
 
   # Stamp X and Y (compiler can propagate sizes from slices)
-  if (stamp_X)
-    X = X[1:N, 1:D];
-
-  if (numrows > 0)
-    Y = Y[1:N, 1:1];
+  X = X[1:N, 1:D];
+  Y = Y[1:N, 1:1];
 
   # Robustness for datasets with missing values (causing NaN gradients)
   hasNaNs = contains(target=X, pattern=NaN);
@@ -92,8 +84,7 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
     ones_N1 = matrix(1, N, 1);
     X = cbind(X, ones_N1);
     D = D + 1;
-    if (stamp_X)
-      X = X[1:N, 1:D];
+    X = X[1:N, 1:D];
   }
 
   scale_lambda = matrix (1, D, 1);
@@ -130,23 +121,11 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   # ------------------------------------------------------------
   # Convert "Y" into indicator matrix, while making sizes explicit
   # ------------------------------------------------------------
-  if (numclasses > 0) {
-    max_y = numclasses;
-  }
-  else {
-    max_y = as.integer(max(Y));
-  }
+  max_y = numclasses;
 
   # If label -1/0 etc. is present, it is the baseline label; convert it to max_y (or new max_y+1)
-  if (min(Y) <= 0) {
-    if (numclasses > 0) {
-      Y = ifelse(Y <= 0, max_y, Y);
-    }
-    else {
-      Y = ifelse(Y <= 0, max_y + 1, Y);
-      max_y = max_y + 1;
-    }
-  }
+  if (min(Y) <= 0)
+    Y = ifelse(Y <= 0, max_y, Y);
 
   # Build indicator matrix (N x max_y)
   Y = table (seq (1, N, 1), Y, N, max_y);
@@ -160,7 +139,8 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   # Pre-allocate constant matrices used repeatedly (avoid creating
   # new Hops/matrix literals inside loops)
   # ------------------------------------------------------------
-  zeros_N1 = matrix(0, N, 1);
+  # Use Y-derived constants to preserve federated mappings.
+  zeros_N1 = Y[, 1:1] * 0;
   ones_1K  = matrix(1, 1, K);
   ones_1K1 = matrix(1, 1, K+1);
 
@@ -170,7 +150,7 @@ m_multiLogReg = function(Matrix[Double] X, Matrix[Double] Y, Int icpt = 2,
   B = matrix (0, D, K);   ### LT = X %*% (SHIFT/SCALE TRANSFORM) %*% B;
                           ### LT = cbind (LT, zeros_N1);
                           ### LT = LT - rowMaxs (LT) %*% ones_1K1;
-  P = matrix (1, N, K+1); ### exp_LT = exp (LT);
+  P = Y * 0 + 1;          ### exp_LT = exp (LT);
   P = P / (K + 1);        ### P = exp_LT / (rowSums (exp_LT) %*% ones_1K1);
   obj = N * log (K + 1);  ### obj = - sum (Y * LT) + sum (log (rowSums (exp_LT))) + 0.5 * sum (lambda * (B_new ^ 2));
 
