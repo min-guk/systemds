@@ -124,8 +124,6 @@ public abstract class FEDInstruction extends Instruction {
 			if (DMLScript.LINEAGE)
 				ec.traceLineage(tmp);
 		}
-		if (tmp instanceof FEDInstruction)
-			((FEDInstruction) tmp).setTID(ec.getTID());
 		return tmp;
 	}
 }
