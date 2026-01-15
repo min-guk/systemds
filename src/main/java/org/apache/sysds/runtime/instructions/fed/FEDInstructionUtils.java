@@ -67,40 +67,36 @@ public class FEDInstructionUtils {
 			return inst;
 
 		FEDInstruction fedinst = null;
-		try {
-			if(inst instanceof AggregateBinaryCPInstruction)
-				fedinst = AggregateBinaryFEDInstruction.parseInstruction((AggregateBinaryCPInstruction) inst, ec);
-			else if(inst instanceof MMChainCPInstruction)
-				fedinst = MMChainFEDInstruction.parseInstruction((MMChainCPInstruction) inst, ec);
-			else if(inst instanceof MMTSJCPInstruction)
-				fedinst = TsmmFEDInstruction.parseInstruction((MMTSJCPInstruction) inst, ec);
-			else if(inst instanceof UnaryCPInstruction)
-				fedinst = UnaryFEDInstruction.parseInstruction((UnaryCPInstruction) inst, ec);
-			else if(inst instanceof BinaryCPInstruction)
-				fedinst = BinaryFEDInstruction.parseInstruction((BinaryCPInstruction) inst, ec);
-			else if(inst instanceof ParameterizedBuiltinCPInstruction)
-				fedinst = ParameterizedBuiltinFEDInstruction.parseInstruction((ParameterizedBuiltinCPInstruction) inst, ec);
-			else if(inst instanceof MultiReturnParameterizedBuiltinCPInstruction)
-				fedinst = MultiReturnParameterizedBuiltinFEDInstruction
-					.parseInstruction((MultiReturnParameterizedBuiltinCPInstruction) inst, ec);
-			else if(inst instanceof TernaryCPInstruction)
-				fedinst = TernaryFEDInstruction.parseInstruction((TernaryCPInstruction) inst, ec);
-			else if(inst instanceof VariableCPInstruction)
-				fedinst = VariableFEDInstruction.parseInstruction((VariableCPInstruction) inst, ec);
-			else if(inst instanceof BuiltinNaryCPInstruction)
-				fedinst = BuiltinNaryFEDInstruction.parseInstruction((BuiltinNaryCPInstruction) inst, ec);
-			else if(inst instanceof AggregateTernaryCPInstruction)
-				fedinst = AggregateTernaryFEDInstruction.parseInstruction((AggregateTernaryCPInstruction) inst, ec);
-			else if(inst instanceof QuaternaryCPInstruction)
-				fedinst = QuaternaryFEDInstruction.parseInstruction((QuaternaryCPInstruction) inst, ec);
-			else if(inst instanceof SpoofCPInstruction)
-				fedinst = SpoofFEDInstruction.parseInstruction((SpoofCPInstruction) inst, ec);
-			else if(inst instanceof CtableCPInstruction)
-				fedinst = CtableFEDInstruction.parseInstruction((CtableCPInstruction) inst, ec);
-		}
-		catch (DMLRuntimeException ex) {
-			return inst;
-		}
+
+		if(inst instanceof AggregateBinaryCPInstruction)
+			fedinst = AggregateBinaryFEDInstruction.parseInstruction((AggregateBinaryCPInstruction) inst, ec);
+		else if(inst instanceof MMChainCPInstruction)
+			fedinst = MMChainFEDInstruction.parseInstruction((MMChainCPInstruction) inst, ec);
+		else if(inst instanceof MMTSJCPInstruction)
+			fedinst = TsmmFEDInstruction.parseInstruction((MMTSJCPInstruction) inst, ec);
+		else if(inst instanceof UnaryCPInstruction)
+			fedinst = UnaryFEDInstruction.parseInstruction((UnaryCPInstruction) inst, ec);
+		else if(inst instanceof BinaryCPInstruction)
+			fedinst = BinaryFEDInstruction.parseInstruction((BinaryCPInstruction) inst, ec);
+		else if(inst instanceof ParameterizedBuiltinCPInstruction)
+			fedinst = ParameterizedBuiltinFEDInstruction.parseInstruction((ParameterizedBuiltinCPInstruction) inst, ec);
+		else if(inst instanceof MultiReturnParameterizedBuiltinCPInstruction)
+			fedinst = MultiReturnParameterizedBuiltinFEDInstruction
+				.parseInstruction((MultiReturnParameterizedBuiltinCPInstruction) inst, ec);
+		else if(inst instanceof TernaryCPInstruction)
+			fedinst = TernaryFEDInstruction.parseInstruction((TernaryCPInstruction) inst, ec);
+		else if(inst instanceof VariableCPInstruction)
+			fedinst = VariableFEDInstruction.parseInstruction((VariableCPInstruction) inst, ec);
+		else if(inst instanceof BuiltinNaryCPInstruction)
+			fedinst = BuiltinNaryFEDInstruction.parseInstruction((BuiltinNaryCPInstruction) inst, ec);
+		else if(inst instanceof AggregateTernaryCPInstruction)
+			fedinst = AggregateTernaryFEDInstruction.parseInstruction((AggregateTernaryCPInstruction) inst, ec);
+		else if(inst instanceof QuaternaryCPInstruction)
+			fedinst = QuaternaryFEDInstruction.parseInstruction((QuaternaryCPInstruction) inst, ec);
+		else if(inst instanceof SpoofCPInstruction)
+			fedinst = SpoofFEDInstruction.parseInstruction((SpoofCPInstruction) inst, ec);
+		else if(inst instanceof CtableCPInstruction)
+			fedinst = CtableFEDInstruction.parseInstruction((CtableCPInstruction) inst, ec);
 
 		// set thread id for federated context management
 		if(fedinst != null) {
@@ -120,41 +116,36 @@ public class FEDInstructionUtils {
 		if(noFedRuntimeConversion)
 			return inst;
 		FEDInstruction fedinst = null;
-		try {
-			if(inst instanceof CastSPInstruction)
-				fedinst = CastFEDInstruction.parseInstruction((CastSPInstruction) inst, ec);
-			else if(inst instanceof WriteSPInstruction) {
-				WriteSPInstruction instruction = (WriteSPInstruction) inst;
-				Data data = ec.getVariable(instruction.input1);
-				if(data instanceof CacheableData && ((CacheableData<?>) data).isFederated()) {
-					// Write spark instruction can not be executed for federated matrix objects (tries to get rdds which do
-					// not exist), therefore we replace the instruction with the VariableCPInstruction.
-					return VariableCPInstruction.parseInstruction(instruction.getInstructionString());
-				}
+		if(inst instanceof CastSPInstruction)
+			fedinst = CastFEDInstruction.parseInstruction((CastSPInstruction) inst, ec);
+		else if(inst instanceof WriteSPInstruction) {
+			WriteSPInstruction instruction = (WriteSPInstruction) inst;
+			Data data = ec.getVariable(instruction.input1);
+			if(data instanceof CacheableData && ((CacheableData<?>) data).isFederated()) {
+				// Write spark instruction can not be executed for federated matrix objects (tries to get rdds which do
+				// not exist), therefore we replace the instruction with the VariableCPInstruction.
+				return VariableCPInstruction.parseInstruction(instruction.getInstructionString());
 			}
-			else if(inst instanceof QuaternarySPInstruction)
-				fedinst = QuaternaryFEDInstruction.parseInstruction((QuaternarySPInstruction) inst, ec);
-			else if(inst instanceof SpoofSPInstruction)
-				fedinst = SpoofFEDInstruction.parseInstruction((SpoofSPInstruction) inst, ec);
-			else if(inst instanceof UnarySPInstruction)
-				fedinst = UnaryFEDInstruction.parseInstruction((UnarySPInstruction) inst, ec);
-			else if(inst instanceof BinarySPInstruction)
-				fedinst = BinaryFEDInstruction.parseInstruction((BinarySPInstruction) inst, ec);
-			else if(inst instanceof ParameterizedBuiltinSPInstruction)
-				fedinst = ParameterizedBuiltinFEDInstruction.parseInstruction((ParameterizedBuiltinSPInstruction) inst, ec);
-			else if(inst instanceof MultiReturnParameterizedBuiltinSPInstruction)
-				fedinst = MultiReturnParameterizedBuiltinFEDInstruction
-					.parseInstruction((MultiReturnParameterizedBuiltinSPInstruction) inst, ec);
-			else if(inst instanceof TernarySPInstruction)
-				fedinst = TernaryFEDInstruction.parseInstruction((TernarySPInstruction) inst, ec);
-			else if(inst instanceof AggregateTernarySPInstruction)
-				fedinst = AggregateTernaryFEDInstruction.parseInstruction((AggregateTernarySPInstruction) inst, ec);
-			else if(inst instanceof CtableSPInstruction)
-				fedinst = CtableFEDInstruction.parseInstruction((CtableSPInstruction) inst, ec);
 		}
-		catch (DMLRuntimeException ex) {
-			return inst;
-		}
+		else if(inst instanceof QuaternarySPInstruction)
+			fedinst = QuaternaryFEDInstruction.parseInstruction((QuaternarySPInstruction) inst, ec);
+		else if(inst instanceof SpoofSPInstruction)
+			fedinst = SpoofFEDInstruction.parseInstruction((SpoofSPInstruction) inst, ec);
+		else if(inst instanceof UnarySPInstruction)
+			fedinst = UnaryFEDInstruction.parseInstruction((UnarySPInstruction) inst, ec);
+		else if(inst instanceof BinarySPInstruction)
+			fedinst = BinaryFEDInstruction.parseInstruction((BinarySPInstruction) inst, ec);
+		else if(inst instanceof ParameterizedBuiltinSPInstruction)
+			fedinst = ParameterizedBuiltinFEDInstruction.parseInstruction((ParameterizedBuiltinSPInstruction) inst, ec);
+		else if(inst instanceof MultiReturnParameterizedBuiltinSPInstruction)
+			fedinst = MultiReturnParameterizedBuiltinFEDInstruction
+				.parseInstruction((MultiReturnParameterizedBuiltinSPInstruction) inst, ec);
+		else if(inst instanceof TernarySPInstruction)
+			fedinst = TernaryFEDInstruction.parseInstruction((TernarySPInstruction) inst, ec);
+		else if(inst instanceof AggregateTernarySPInstruction)
+			fedinst = AggregateTernaryFEDInstruction.parseInstruction((AggregateTernarySPInstruction) inst, ec);
+		else if(inst instanceof CtableSPInstruction)
+			fedinst = CtableFEDInstruction.parseInstruction((CtableSPInstruction) inst, ec);
 
 		// set thread id for federated context management
 		if(fedinst != null) {
