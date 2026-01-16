@@ -155,7 +155,6 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			Hop targetHop = memoTable.resolveOriginalHop(planHopId);
 			if (targetHop == null)
 				targetHop = optimalPlan.getHopRef();
-			boolean hasPlacementConflict = false;
 			ExecType execType = optimalPlan.getExecType();
 			FEDInstruction.FederatedOutput thisOutType = optimalPlan.getFedOutType();
 
@@ -187,7 +186,6 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 					}
 					resolvedExecType = pickExecType(prev.getRight(), execType);
 				} else {
-					hasPlacementConflict = true;
 					resolvedExecType = pickExecType(prev.getRight(), execType);
 					FederatedPlannerLogger.logPlacementConflict(optimalPlan.getHopRef(), null,
 							prev.getLeft(), thisOutType, "REWRITE_HOP");
@@ -213,9 +211,7 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			if (targetHop != optimalPlan.getHopRef())
 				targetHop.setForcedExecType(resolvedExecType);
 
-		if (hasPlacementConflict) {
-			resolvedOutType = FEDInstruction.FederatedOutput.FOUT;
-		}
+			// Keep resolvedOutType as-is; Iter1 preference already applied when clones exist.
 			optimalPlan.setFederatedOutput(resolvedOutType);
 			if (targetHop != optimalPlan.getHopRef())
 				targetHop.setFederatedOutput(resolvedOutType);
