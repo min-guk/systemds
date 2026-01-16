@@ -19,7 +19,9 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
+import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
@@ -47,6 +49,16 @@ public final class ExecPlacementPolicy {
 		FederatedOutput placement = (caps != null) ? caps.placement() : FederatedOutput.LOUT;
 
 		Decision decision = new Decision();
+
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
+			decision.allowFED_FOUT = true;
+			return decision;
+		}
+
+		if (HopUtils.isPrintOrPWrite(hop)) {
+			decision.allowCP_LOUT = true;
+			return decision;
+		}
 
 		switch (privacy) {
 			case PRIVATE:

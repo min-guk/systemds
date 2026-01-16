@@ -1,0 +1,996 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
+import java.util.function.Function;
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
+import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.HopsException;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.TernaryOp;
+import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.cost.ComputeCost;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.hops.ipa.FunctionCallGraph;
+import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.ForStatement;
+import org.apache.sysds.parser.ForStatementBlock;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.IfStatement;
+import org.apache.sysds.parser.IfStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.VariableSet;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
+import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.util.UtilFunctions;
+import org.apache.sysds.runtime.DMLRuntimeException;
+
+public class FederatedPlannerDpCostEnumerator {
+	// Global privacy policy: never allow CP overrides for protected data unless
+	// this flag flips.
+	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
+	/**
+	 * Enumerates the entire DML program to generate federated execution plans.
+	 * It processes each statement block, computes the optimal federated plan,
+	 * detects and resolves conflicts, and optionally prints the plan tree.
+	 *
+	 * @param prog    The DML program to enumerate.
+	 * @param isPrint A boolean indicating whether to print the federated plan tree.
+	 */
+	public static FederatedPlannerDpMemoTable.FedPlan enumerateProgram(DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
+			boolean isPrint) {
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		Set<Hop> progRootHopSet = new HashSet<>();
+		Set<Long> unRefTwriteSet = new HashSet<>();
+		Set<Long> unRefSet = new HashSet<>();
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable = new HashMap<>();
+		FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx = new FederatedPlannerDpRewireTransTable.UnrollContext();
+
+		Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
+		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
+
+		FederatedPlannerDpRewireTransTable.rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
+				unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
+
+		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
+		OracleFacade oracleFacade = new OracleFacade(registry);
+		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+
+		for (long hopID : unRefTwriteSet) {
+			// Todo (Future): Need to check unRefTwriteSet connecting to progRoot.
+			progRootHopSet.add(hopCommonTable.get(hopID).getHopRef());
+		}
+		Set<String> fnStack = new HashSet<>();
+		Set<Long> visitedHops = new HashSet<>();
+
+		for (StatementBlock sb : prog.getStatementBlocks()) {
+			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		}
+		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
+			if (iter1Root == null)
+				continue;
+			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		}
+
+		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
+
+		// Todo : Fix & Update Conflict Resolve Plan
+		// Detect conflicts in the federated plans where different FedPlans have
+		// different FederatedOutput types
+		double additionalTotalCost = detectAndResolveConflictFedPlan(memoTable, optimalPlan, numOfWorkers);
+
+		unRefSet.addAll(unRefTwriteSet);
+		// Print the federated plan tree if requested
+		if (isPrint) {
+			Set<Long> printableUnRefSet = new HashSet<>();
+			for (long hopId : unRefSet) {
+				if (memoTable.getFedPlanAfterPrune(hopId, FederatedOutput.LOUT) != null
+						|| memoTable.getFedPlanAfterPrune(hopId, FederatedOutput.FOUT) != null) {
+					printableUnRefSet.add(hopId);
+				} else {
+					FederatedPlannerLogger.logWarnMessage(
+							"[Planner] Skipping unreferenced hop " + hopId
+									+ " because no federated plan variants are available");
+				}
+			}
+			FederatedPlannerLogger.printFedPlanTree(optimalPlan, printableUnRefSet, memoTable,
+					additionalTotalCost);
+		}
+
+		return optimalPlan;
+	}
+
+	public static FederatedPlannerDpMemoTable.FedPlan enumerateFunctionDynamic(FunctionStatementBlock function,
+			FederatedPlannerDpMemoTable memoTable,
+			boolean isPrint) {
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		Set<Hop> progRootHopSet = new HashSet<>();
+		Set<Long> unRefTwriteSet = new HashSet<>();
+		Set<Long> unRefSet = new HashSet<>();
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable = new HashMap<>();
+		FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx = new FederatedPlannerDpRewireTransTable.UnrollContext();
+
+		Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
+		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
+
+		DMLProgram prog = function.getDMLProg();
+		FederatedPlannerDpRewireTransTable.rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable,
+				privacyConstraintMap,
+				fedMap, unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
+
+		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
+		OracleFacade oracleFacade = new OracleFacade(registry);
+		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+
+		Set<String> fnStack = new HashSet<>();
+		Set<Long> visitedHops = new HashSet<>();
+		enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+				unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
+			if (iter1Root == null)
+				continue;
+			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		}
+
+		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
+
+		// Detect conflicts in the federated plans where different FedPlans have
+		// different FederatedOutput types
+		// Todo : Fix & Update Conflict Resolve Plan
+		double additionalTotalCost = detectAndResolveConflictFedPlan(memoTable, optimalPlan, numOfWorkers);
+
+		// Print the federated plan tree if requested
+		if (isPrint) {
+			FederatedPlannerLogger.printFedPlanTree(optimalPlan, unRefTwriteSet, memoTable, additionalTotalCost);
+		}
+
+		return optimalPlan;
+	}
+
+	/**
+	 * Enumerates the statement block and updates the transient and memoization
+	 * tables.
+	 * This method processes different types of statement blocks such as If, For,
+	 * While, and Function blocks.
+	 * It recursively enumerates the Hop DAGs within these blocks and updates the
+	 * corresponding tables.
+	 * The method also calculates weights recursively for if-else/loops and handles
+	 * inner and outer block distinctions.
+	 */
+	public static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
+			Map<Long, Privacy> privacyConstraintMap, Set<Long> unRefTwriteSet, Set<String> fnStack,
+			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
+		if (sb instanceof IfStatementBlock) {
+			IfStatementBlock isb = (IfStatementBlock) sb;
+			IfStatement istmt = (IfStatement) isb.getStatement(0);
+
+			enumerateHopDAG(isb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
+					privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+
+			for (StatementBlock innerIsb : istmt.getIfBody())
+				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
+						privacyConstraintMap,
+						unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+
+			for (StatementBlock innerIsb : istmt.getElseBody())
+				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
+						privacyConstraintMap,
+						unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		} else if (sb instanceof ForStatementBlock) { // incl parfor
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+
+			enumerateHopDAG(fsb.getFromHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+			enumerateHopDAG(fsb.getToHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+			if (fsb.getIncrementHops() != null) {
+				enumerateHopDAG(fsb.getIncrementHops(), prog, memoTable, hopCommonTable, rewireTable,
+						privacyConstraintMap,
+						unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+			}
+
+			for (StatementBlock innerFsb : fstmt.getBody())
+				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
+						privacyConstraintMap,
+						unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		} else if (sb instanceof WhileStatementBlock) {
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+
+			enumerateHopDAG(wsb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
+					privacyConstraintMap,
+					unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+
+			for (StatementBlock innerWsb : wstmt.getBody())
+				enumerateStatementBlock(innerWsb, prog, memoTable, hopCommonTable, rewireTable,
+						privacyConstraintMap,
+						unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		} else if (sb instanceof FunctionStatementBlock) {
+			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+
+			for (StatementBlock innerFsb : fstmt.getBody())
+				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
+						privacyConstraintMap,
+						unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+		} else { // generic (last-level)
+			if (sb.getHops() != null) {
+				for (Hop c : sb.getHops())
+					enumerateHopDAG(c, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+							unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+			}
+		}
+	}
+
+	/**
+	 * Rewires and enumerates federated execution plans for a given Hop.
+	 * This method processes all input nodes, rewires TWrite and TRead operations,
+	 * and generates federated plan variants for both inner and outer code blocks.
+	 */
+	private static void enumerateHopDAG(Hop hop, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
+			Map<Long, Privacy> privacyConstraintMap, Set<Long> unRefTwriteSet,
+			Set<String> fnStack, int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
+		// Process all input nodes first if not already in memo table
+
+		List<Hop> childHops = new ArrayList<>(hop.getInput());
+
+		// Todo: Check if is right
+		if ((hop instanceof DataOp) && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			List<Hop> transChildHops = rewireTable.get(hop.getHopID());
+			if (transChildHops != null) {
+				childHops.addAll(transChildHops);
+			}
+		}
+
+		for (Hop inputHop : childHops) {
+			long inputHopID = inputHop.getHopID();
+			if (!memoTable.contains(inputHopID, FederatedOutput.FOUT)
+					&& !memoTable.contains(inputHopID, FederatedOutput.LOUT)) {
+				if (!visitedHops.contains(inputHopID)) {
+					visitedHops.add(inputHopID);
+					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+							unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+				}
+			}
+		}
+
+		if (hop instanceof FunctionOp) {
+			// maintain counters and investigate functions if not seen so far
+			FunctionOp fop = (FunctionOp) hop;
+			if (fop.getFunctionType() == FunctionType.DML) {
+				String fkey = fop.getFunctionKey();
+
+				if (!fnStack.contains(fkey)) {
+					fnStack.add(fkey);
+					if (prog == null) {
+						FederatedPlannerLogger.logWarnMessage(
+								"[FederatedCost] Skipping nested function " + fkey
+										+ " because DMLProgram is unavailable in dynamic planning");
+					} else {
+						FunctionStatementBlock fsb = prog.getFunctionStatementBlock(fop.getFunctionNamespace(),
+								fop.getFunctionName());
+
+						if (fsb == null) {
+							FederatedPlannerLogger.logWarnMessage(
+									"[FederatedCost] Function " + fkey
+											+ " not found in DMLProgram; skipping nested planning");
+						} else {
+							enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable,
+									privacyConstraintMap, unRefTwriteSet, fnStack, numOfWorkers,
+									visitedHops, oracleFacade);
+						}
+					}
+				}
+			}
+		}
+
+		// Enumerate the federated plan for the current Hop
+		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+				unRefTwriteSet, numOfWorkers, oracleFacade);
+
+		// FederatedPlannerDpRewireTransTable.logHopInfo(hop, privacyConstraintMap,
+		// "enumerateHopDAG");
+
+	}
+
+	/**
+	 * Enumerates federated execution plans for a given Hop.
+	 * This method calculates the self cost and child costs for the Hop,
+	 * generates federated plan variants for both LOUT and FOUT output types,
+	 * and prunes redundant plans before adding them to the memo table.
+	 */
+	private static void enumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			Map<Long, List<Hop>> rewireTable, Map<Long, Privacy> privacyConstraintMap,
+			Set<Long> unRefTwriteSet, int numOfWorkers, OracleFacade oracleFacade) {
+		long hopID = hop.getHopID();
+		List<Hop> childHops = new ArrayList<>(hop.getInput());
+		int numParentHops = hop.getParent().size();
+
+		if (hop instanceof DataOp) {
+			Types.OpOpData opType = ((DataOp) hop).getOp();
+			if (opType == Types.OpOpData.TRANSIENTWRITE && !hop.getName().equals("__pred")) {
+				List<Hop> transParentHops = rewireTable.get(hop.getHopID());
+				if (transParentHops != null) {
+					numParentHops += transParentHops.size();
+				}
+			} else if (opType == Types.OpOpData.TRANSIENTREAD) {
+				List<Hop> transChildHops = rewireTable.get(hop.getHopID());
+				if (transChildHops != null) {
+					for (Hop transChildHop : transChildHops) {
+						if (transChildHop instanceof DataOp
+								&& ((DataOp) transChildHop).getOp() == Types.OpOpData.TRANSIENTREAD
+								&& hop.getName().equals(transChildHop.getName())) {
+							continue;
+						}
+						childHops.add(transChildHop);
+					}
+				}
+			}
+		} else {
+			for (Hop parentHop : hop.getParent()) {
+				if (parentHop instanceof DataOp
+						&& unRefTwriteSet.contains(parentHop.getHopID())) {
+					numParentHops--;
+				}
+			}
+		}
+
+		FederatedPlannerDpMemoTable.HopCommon hopCommon = hopCommonTable.get(hopID);
+		hopCommon.setNumOfParentHops(numParentHops);
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
+			enumerateFederatedDataOp((DataOp) hop, memoTable, hopCommon);
+			return;
+		}
+
+		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
+
+		int initialNumInputs = childHops.size();
+		// Preallocate for the original child count; getChildCosts may shrink childHops,
+		// so only the first numInputs entries remain valid afterwards.
+		double[][] childCumulativeCost = new double[initialNumInputs][2]; // # of child, LOUT/FOUT of child
+		double[] childForwardingCostToCP = new double[initialNumInputs]; // # of child (FOUT -> CP)
+		double[] childForwardingCostToFED = new double[initialNumInputs]; // # of child (LOUT -> FED)
+		List<Hop> lOutfOutChildHops = new ArrayList<>(childHops);
+
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>();
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+
+		// The self cost follows its own weight, while the forwarding cost follows the
+		// parent's weight.
+		FederatedPlannerDpCostEstimator.getChildCosts(hopCommon, memoTable, lOutfOutChildHops, childCumulativeCost,
+				childForwardingCostToCP, childForwardingCostToFED, lOUTOnlyinputHops,
+				lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops,
+				fOUTOnlychildCumulativeCost, fOUTOnlychildForwardingCostToCP, numOfWorkers);
+
+		// childCumulativeCost/childForwardingCost arrays are treated as buffers sized
+		// by
+		// initialNumInputs;
+		// only indices [0, numInputs) are populated after getChildCosts mutates
+		// childHops.
+		int numBothOutInputs = lOutfOutChildHops.size();
+		int numLoutOnlyInputs = lOUTOnlyinputHops.size();
+		int numFoutOnlyInputs = fOUTOnlyinputHops.size();
+		List<Hop> inputHopsForPrivacy = new ArrayList<>(childHops);
+		inputHopsForPrivacy.addAll(lOUTOnlyinputHops);
+		inputHopsForPrivacy.addAll(fOUTOnlyinputHops);
+		final Privacy privacyConstraint = privacyConstraintMap.getOrDefault(hopID, Privacy.PUBLIC);
+
+		double cpSelfCost = baseSelfCost;
+		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers);
+		double hopNetworkWeight = hopCommon.getNetworkWeight();
+		double resultDownloadCost = hopNetworkWeight
+				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(hop.getOutputMemEstimate());
+
+		final int enumerationLimit = 1 << numBothOutInputs;
+
+		FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
+				FederatedOutput.LOUT);
+		FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
+				FederatedOutput.FOUT);
+		Map<List<FType>, OpCaps> oracleCache = new HashMap<>();
+
+		for (int i = 0; i < enumerationLimit; i++) {
+			List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
+			List<FType> collectedFTypes = new ArrayList<>();
+			List<Hop> collectedHops = new ArrayList<>();
+			// Costs from children, split by the parent's ExecType semantics.
+			double childCostCPExec = 0; // Parent executes in CP; forwarding only from FOUT children.
+			double childCostFEDExec = 0; // Parent executes in FED; forwarding only from LOUT children.
+
+			for (int j = 0; j < numBothOutInputs; j++) {
+				Hop inputHop = lOutfOutChildHops.get(j);
+				final int bit = (i & (1 << j)) != 0 ? 1 : 0;
+				final FederatedOutput childType = (bit == 1) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
+				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(inputHop.getHopID(),
+						childType);
+
+				if (childPlan == null) {
+					throw new DMLRuntimeException("Missing LOUT federated plan for child hop " + inputHop.getHopID()
+							+ " (" + inputHop.getOpString() + ") while enumerating parent " + hopID + " ("
+							+ hop.getOpString() + "), privacy=" + privacyConstraint);
+				}
+
+				planChilds.add(Pair.of(inputHop.getHopID(), childType));
+				collectedFTypes.add(childPlan.getFType());
+				collectedHops.add(inputHop);
+				FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
+						"[Planner] parent=%d (%s) child=%d (%s) type=%s exec=%s fType=%s",
+						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
+						childType, childPlan.getExecType(), childPlan.getFType()));
+				childCostCPExec += childCumulativeCost[j][bit] + childForwardingCostToCP[j] * bit;
+				childCostFEDExec += childCumulativeCost[j][bit] + childForwardingCostToFED[j] * (1 - bit);
+			}
+
+			for (int j = 0; j < numLoutOnlyInputs; j++) {
+				Hop inputHop = lOUTOnlyinputHops.get(j);
+				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(inputHop.getHopID(),
+						FederatedOutput.LOUT);
+				if (childPlan == null) {
+					throw new DMLRuntimeException("Missing LOUT federated plan for child hop " + inputHop.getHopID()
+							+ " (" + inputHop.getOpString() + ") while enumerating parent " + hopID + " ("
+							+ hop.getOpString() + "), privacy=" + privacyConstraint);
+				}
+				planChilds.add(Pair.of(inputHop.getHopID(), FederatedOutput.LOUT));
+				collectedFTypes.add(childPlan.getFType());
+				collectedHops.add(inputHop);
+				FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
+						"[Planner] parent=%d (%s) child=%d (%s) type=LOUT exec=%s fType=%s",
+						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
+						childPlan.getExecType(), childPlan.getFType()));
+				childCostCPExec += lOUTOnlychildCumulativeCost.get(j);
+				childCostFEDExec += lOUTOnlychildCumulativeCost.get(j) + lOUTOnlychildForwardingCostToFED.get(j);
+			}
+
+			for (int j = 0; j < numFoutOnlyInputs; j++) {
+				Hop inputHop = fOUTOnlyinputHops.get(j);
+				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(inputHop.getHopID(),
+						FederatedOutput.FOUT);
+				if (childPlan == null) {
+					throw new DMLRuntimeException("Missing FOUT federated plan for child hop " + inputHop.getHopID()
+							+ " (" + inputHop.getOpString() + ") while enumerating parent " + hopID + " ("
+							+ hop.getOpString() + "), privacy=" + privacyConstraint);
+				}
+				planChilds.add(Pair.of(inputHop.getHopID(), FederatedOutput.FOUT));
+				collectedFTypes.add(childPlan.getFType());
+				collectedHops.add(inputHop);
+				FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
+						"[Planner] parent=%d (%s) child=%d (%s) type=FOUT exec=%s fType=%s",
+						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
+						childPlan.getExecType(), childPlan.getFType()));
+				childCostCPExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToCP.get(j);
+				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j);
+			}
+
+			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
+					hop, privacyConstraint, collectedHops, collectedFTypes,
+					oracleFacade, oracleCache, rewireTable);
+			List<FType> alignedInputFTypes = oracleDecision.alignedInputFTypes();
+			OpCaps caps = oracleDecision.caps();
+
+			ExecType oracleExec = caps.exec();
+			FType oracleLogicalFType = oracleDecision.logicalFType();
+			double resultUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+					hop.getOutputMemEstimate(), oracleLogicalFType, numOfWorkers);
+
+			if (privacyConstraint != Privacy.PUBLIC && oracleExec == ExecType.CP
+					&& !allowsCPOverride(privacyConstraint, caps)) {
+				FederatedPlannerLogger.logWarnMessage(
+						"[Planner] Skipping CP-only plan for hop " + hopID + " (" + hop.getOpString()
+								+ ") due to privacy " + privacyConstraint + " and oracle caps reason "
+								+ caps.reason()
+								+ " (inputs=" + alignedInputFTypes + ")");
+				continue;
+			}
+
+			ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
+					hop, privacyConstraint, oracleLogicalFType, caps);
+
+			// FED Exec, FOUT placement
+			if (placementDecision.allowFED_FOUT) {
+				FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+						fedSelfCost + childCostFEDExec,
+						fOutFedPlanVariants, planChilds);
+				fedFOutPlan.setExecType(ExecType.FED);
+				fedFOutPlan.setFType(oracleLogicalFType);
+				fOutFedPlanVariants.addFedPlan(fedFOutPlan);
+			}
+
+			// FED Exec, LOUT placement
+			if (placementDecision.allowFED_LOUT) {
+				FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+						fedSelfCost + childCostFEDExec + resultDownloadCost,
+						lOutFedPlanVariants, planChilds);
+				fedLOutPlan.setExecType(ExecType.FED);
+				fedLOutPlan.setFType(oracleLogicalFType);
+				lOutFedPlanVariants.addFedPlan(fedLOutPlan);
+			}
+
+			// CP Exec, LOUT/FOUT placement
+			if (placementDecision.allowCP_LOUT) {
+				FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+						cpSelfCost + childCostCPExec,
+						lOutFedPlanVariants, planChilds);
+				cpLOutPlan.setExecType(ExecType.CP);
+				cpLOutPlan.setFType(oracleLogicalFType);
+				lOutFedPlanVariants.addFedPlan(cpLOutPlan);
+			}
+			if (placementDecision.allowCP_FOUT) {
+				FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+						cpSelfCost + childCostCPExec + resultUploadCost,
+						fOutFedPlanVariants, planChilds);
+				cpFOutPlan.setExecType(ExecType.CP);
+				cpFOutPlan.setFType(oracleLogicalFType);
+				fOutFedPlanVariants.addFedPlan(cpFOutPlan);
+			}
+		}
+
+		boolean hasLOutPlan = !lOutFedPlanVariants.isEmpty();
+		boolean hasFOutPlan = !fOutFedPlanVariants.isEmpty();
+
+		if (hasLOutPlan) {
+			lOutFedPlanVariants.pruneFedPlans();
+			memoTable.addFedPlanVariants(hopID, FederatedOutput.LOUT, lOutFedPlanVariants);
+		}
+		if (hasFOutPlan) {
+			fOutFedPlanVariants.pruneFedPlans();
+			memoTable.addFedPlanVariants(hopID, FederatedOutput.FOUT, fOutFedPlanVariants);
+		}
+
+		if (!hasLOutPlan && !hasFOutPlan) {
+			throw new DMLRuntimeException("No valid federated plan for hop " + hopID + " (" + hop.getOpString()
+					+ ") under privacy " + privacyConstraint + " (LOUT candidates=" + hasLOutPlan
+					+ ", FOUT candidates=" + hasFOutPlan + ")");
+		}
+	}
+
+	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.HopCommon hopCommon) {
+		FType baseFType = FederatedTypePropagator.deriveFType(dataOp);
+
+		FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
+				FederatedOutput.FOUT);
+		FederatedPlannerDpMemoTable.FedPlan fedPlan = new FederatedPlannerDpMemoTable.FedPlan(0.0, fOutFedPlanVariants,
+				Collections.emptyList());
+		fedPlan.setExecType(ExecType.FED);
+		fedPlan.setFType(baseFType);
+		fOutFedPlanVariants.addFedPlan(fedPlan);
+		memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
+	}
+
+	private static boolean allowsCPOverride(Privacy privacyConstraint, OpCaps caps) {
+		// Policy gate: CP override is globally disabled for protected data. Flip
+		// ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA only when the oracle can prove privacy
+		// guarantees.
+		if (!ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA) {
+			return false;
+		}
+		if (caps == null || privacyConstraint == null) {
+			return false;
+		}
+		return false;
+	}
+
+	// Creates a dummy root node (fedplan) and selects the FedPlan with the minimum
+	// cost to return.
+	// The dummy root node does not have LOUT or FOUT.
+	private static FederatedPlannerDpMemoTable.FedPlan getMinCostRootFedPlan(Set<Hop> progRootHopSet,
+			FederatedPlannerDpMemoTable memoTable) {
+		double cumulativeCost = 0;
+		List<Pair<Long, FederatedOutput>> rootFedPlanChilds = new ArrayList<>();
+
+		// Iterate over each Hop in the progRootHopSet
+		for (Hop endHop : progRootHopSet) {
+			// Retrieve the pruned FedPlan for LOUT and FOUT from the memo table
+			FederatedPlannerDpMemoTable.FedPlan lOutFedPlan = memoTable.getFedPlanAfterPrune(endHop.getHopID(),
+					FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan fOutFedPlan = memoTable.getFedPlanAfterPrune(endHop.getHopID(),
+					FederatedOutput.FOUT);
+
+			if (lOutFedPlan == null && fOutFedPlan == null) {
+				FederatedPlannerLogger.logWarnMessage(
+						"[Planner] Skipping root hop " + endHop.getHopID() + " (" + endHop.getOpString()
+								+ ") because no federated plan variants are available");
+				continue;
+			}
+
+			if (fOutFedPlan == null) {
+				cumulativeCost += lOutFedPlan.getCumulativeCost();
+				rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.LOUT));
+			} else if (lOutFedPlan == null) {
+				cumulativeCost += fOutFedPlan.getCumulativeCost();
+				rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.FOUT));
+			} else {
+				// Compare the cumulative costs of LOUT and FOUT FedPlans
+				if (lOutFedPlan.getCumulativeCost() <= fOutFedPlan.getCumulativeCost()) {
+					cumulativeCost += lOutFedPlan.getCumulativeCost();
+					rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.LOUT));
+				} else {
+					cumulativeCost += fOutFedPlan.getCumulativeCost();
+					rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.FOUT));
+				}
+			}
+		}
+
+		return new FederatedPlannerDpMemoTable.FedPlan(cumulativeCost, null, rootFedPlanChilds);
+	}
+
+	/**
+	 * Detects and resolves federated placement conflicts in a single BFS + single
+	 * resolve pass.
+	 */
+	public static double detectAndResolveConflictFedPlan(
+			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.FedPlan rootPlan, int numOfWorkers) {
+
+		if (rootPlan == null)
+			return 0.0;
+
+		Map<Long, ConflictEntry> conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan);
+		Map<Long, ConflictEntry> conflictMap = filterTrueConflicts(memoTable, conflictCheckMap);
+		double additionalTotalCost = resolveAllConflictsSinglePass(memoTable, conflictMap, numOfWorkers);
+		return additionalTotalCost;
+	}
+
+	/**
+	 * Collect all parent usages of each hop via a single BFS traversal starting at
+	 * the dummy root's children.
+	 * Visitation is based on FedPlan object identity; we assume one FedPlan
+	 * instance per (hopID, FederatedOutput).
+	 */
+	private static Map<Long, ConflictEntry> collectConflictsSingleBFS(
+			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+
+		Map<Long, ConflictEntry> conflictCheckMap = new HashMap<>();
+		Queue<FederatedPlannerDpMemoTable.FedPlan> queue = new ArrayDeque<>();
+		Set<FederatedPlannerDpMemoTable.FedPlan> visited = new HashSet<>();
+
+		for (Pair<Long, FederatedOutput> rootChild : rootPlan.getChildFedPlans()) {
+			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(rootChild);
+			if (childPlan == null) {
+				String msg = "NULL FedPlan for root child hop " + rootChild.getKey();
+				if (OptimizerUtils.isStrictFederatedConflictCheck())
+					throw new DMLRuntimeException(msg);
+				else
+					FederatedPlannerLogger.logNullFedPlanError(rootChild.getKey(), msg);
+				continue;
+			}
+			queue.add(childPlan);
+		}
+
+		while (!queue.isEmpty()) {
+			FederatedPlannerDpMemoTable.FedPlan current = queue.poll();
+			if (!visited.add(current))
+				continue;
+
+			Hop currentHop = current.getHopRef();
+
+			for (Pair<Long, FederatedOutput> childEdge : current.getChildFedPlans()) {
+				long childHopID = childEdge.getKey();
+				FederatedOutput childOut = childEdge.getValue();
+
+				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childEdge);
+				if (childPlan == null) {
+					String msg = "NULL FedPlan for hop " + childHopID
+							+ " as child of hop " + (currentHop != null ? currentHop.getHopID() : -1)
+							+ " (" + (currentHop != null ? currentHop.getOpString() : "null") + ")";
+					if (OptimizerUtils.isStrictFederatedConflictCheck())
+						throw new DMLRuntimeException(msg);
+					else
+						FederatedPlannerLogger.logNullFedPlanError(childHopID, msg);
+					continue;
+				}
+
+				ConflictEntry entry = conflictCheckMap.get(childHopID);
+				if (entry == null) {
+					conflictCheckMap.put(childHopID, new ConflictEntry(childOut, current));
+				} else {
+					entry.addUsage(childOut, current);
+				}
+
+				queue.add(childPlan);
+			}
+		}
+
+		return conflictCheckMap;
+	}
+
+	private static Map<Long, ConflictEntry> filterTrueConflicts(
+			FederatedPlannerDpMemoTable memoTable, Map<Long, ConflictEntry> conflictCheckMap) {
+
+		Map<Long, ConflictEntry> conflictMap = new LinkedHashMap<>();
+
+		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+			long hopID = e.getKey();
+			ConflictEntry entry = e.getValue();
+
+			if (!entry.isTrulyConflicting())
+				continue;
+
+			FederatedPlannerDpMemoTable.FedPlan lOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan fOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
+
+			boolean hasLOUT = (lOutPlan != null);
+			boolean hasFOUT = (fOutPlan != null);
+
+			if (!hasLOUT || !hasFOUT) {
+				String msg = "Federated placement conflict on hop " + hopID
+						+ " but only one of LOUT/FOUT exists (hasLOUT=" + hasLOUT + ", hasFOUT=" + hasFOUT + ")";
+				if (OptimizerUtils.isStrictFederatedConflictCheck())
+					throw new DMLRuntimeException(msg);
+				else
+					FederatedPlannerLogger.logWarnMessage("[Planner] " + msg);
+				continue;
+			}
+
+			conflictMap.put(hopID, entry);
+		}
+
+		return conflictMap;
+	}
+
+	/**
+	 * Resolves placement conflicts independently per hopID without recomputing
+	 * FedPlan costs.
+	 * Assumes per-hop LOUT/FOUT costs are independent across conflicts and across
+	 * the DAG.
+	 * Only childFedPlans edges are mutated; the returned cost is an estimate
+	 * aggregated over conflicts.
+	 */
+	private static double resolveAllConflictsSinglePass(
+			FederatedPlannerDpMemoTable memoTable, Map<Long, ConflictEntry> conflictMap, int numOfWorkers) {
+
+		double totalAdditionalCost = 0.0;
+
+		if (!conflictMap.isEmpty()) {
+			FederatedPlannerLogger.logInfoMessage("[Planner] Resolving "
+					+ conflictMap.size() + " federated placement conflicts");
+		}
+
+		for (Map.Entry<Long, ConflictEntry> e : conflictMap.entrySet()) {
+			long hopID = e.getKey();
+			ConflictEntry entry = e.getValue();
+			totalAdditionalCost += resolveOneHopConflict(memoTable, hopID, entry, numOfWorkers);
+		}
+
+		return totalAdditionalCost;
+	}
+
+	private static double resolveOneHopConflict(
+			FederatedPlannerDpMemoTable memoTable, long hopID, ConflictEntry entry, int numOfWorkers) {
+
+		FederatedPlannerDpMemoTable.FedPlan lOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
+		FederatedPlannerDpMemoTable.FedPlan fOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
+
+		if (lOutPlan == null || fOutPlan == null) {
+			throw new DMLRuntimeException("Expected both LOUT and FOUT plans for hop " + hopID);
+		}
+
+		double outputMem = lOutPlan.getHopRef().getOutputMemEstimate();
+		double lOutUploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+				outputMem, lOutPlan.getFType(), numOfWorkers);
+		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMem);
+		double lOutUploadCostPerParents = FederatedPlannerDpCostEstimator.computeForwardingCostPerParents(
+				lOutUploadCost, lOutPlan);
+		double fOutDownloadCostPerParents = FederatedPlannerDpCostEstimator.computeForwardingCostPerParents(
+				fOutDownloadCost, fOutPlan);
+
+		double lOutAdditionalCost = 0.0;
+		double fOutAdditionalCost = 0.0;
+		boolean lOutNeedsForwarding = false;
+		boolean fOutNeedsForwarding = false;
+
+		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
+			List<Pair<Integer, Pair<Long, FederatedOutput>>> childEdges = findChildEdges(parentPlan, hopID);
+			if (childEdges.isEmpty()) {
+				String msg = "Parent plan for hop " + hopID + " lost its child edge.";
+				if (OptimizerUtils.isStrictFederatedConflictCheck())
+					throw new DMLRuntimeException(msg);
+				else {
+					Hop parentHop = parentPlan.getHopRef();
+					FederatedPlannerLogger.logWarnMessage("[Planner] " + msg
+							+ " parentHop=" + (parentHop != null ? parentHop.getHopID() : -1));
+				}
+				continue;
+			}
+
+			for (Pair<Integer, Pair<Long, FederatedOutput>> edgeEntry : childEdges) {
+				FederatedOutput originalOut = edgeEntry.getValue().getValue();
+				FederatedOutput parentOut = parentPlan.getFedOutType();
+
+				if (originalOut == FederatedOutput.LOUT) {
+					fOutAdditionalCost += fOutPlan.getCumulativeCostPerParents()
+							- lOutPlan.getCumulativeCostPerParents();
+
+					if (parentOut == FederatedOutput.LOUT) {
+						fOutNeedsForwarding = true;
+					} else if (parentOut == FederatedOutput.FOUT) {
+						lOutNeedsForwarding = true;
+						lOutAdditionalCost -= lOutUploadCostPerParents;
+						fOutAdditionalCost -= lOutUploadCostPerParents;
+					}
+				} else if (originalOut == FederatedOutput.FOUT) {
+					lOutAdditionalCost += lOutPlan.getCumulativeCostPerParents()
+							- fOutPlan.getCumulativeCostPerParents();
+
+					if (parentOut == FederatedOutput.FOUT) {
+						lOutNeedsForwarding = true;
+					} else if (parentOut == FederatedOutput.LOUT) {
+						fOutNeedsForwarding = true;
+							double weightedForwarding = parentPlan
+									.computeForwardingWeightOfChild(lOutPlan.getLoopContext(),
+											parentPlan.getMultiplicity())
+									* fOutDownloadCostPerParents;
+							lOutAdditionalCost -= weightedForwarding;
+							fOutAdditionalCost -= weightedForwarding;
+						}
+				} else {
+					Hop parentHop = parentPlan.getHopRef();
+					FederatedPlannerLogger.logWarnMessage("[Planner] Unexpected child placement " + originalOut
+							+ " for hop " + hopID + " under parent "
+							+ (parentHop != null ? parentHop.getHopID() : -1));
+				}
+			}
+		}
+
+		if (lOutNeedsForwarding)
+			lOutAdditionalCost += lOutUploadCost;
+		if (fOutNeedsForwarding)
+			fOutAdditionalCost += fOutDownloadCost;
+
+		FederatedOutput chosen;
+		double chosenCost;
+		if (lOutAdditionalCost <= fOutAdditionalCost) {
+			chosen = FederatedOutput.LOUT;
+			chosenCost = lOutAdditionalCost;
+		} else {
+			chosen = FederatedOutput.FOUT;
+			chosenCost = fOutAdditionalCost;
+		}
+
+		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
+			List<Pair<Long, FederatedOutput>> childs = parentPlan.getChildFedPlans();
+			for (int i = 0; i < childs.size(); i++) {
+				Pair<Long, FederatedOutput> edge = childs.get(i);
+				if (edge.getKey() == hopID && edge.getValue() != chosen) {
+					childs.set(i, Pair.of(edge.getKey(), chosen));
+				}
+			}
+		}
+
+		return chosenCost;
+	}
+
+	// Parent-child edge uniqueness: duplicates of the same hopID in a parent's
+	// childFedPlans
+	// are not expected, but we return all matches so duplicates are processed
+	// uniformly.
+	private static List<Pair<Integer, Pair<Long, FederatedOutput>>> findChildEdges(
+			FederatedPlannerDpMemoTable.FedPlan parentPlan, long hopID) {
+
+		List<Pair<Integer, Pair<Long, FederatedOutput>>> matches = new ArrayList<>();
+		List<Pair<Long, FederatedOutput>> childs = parentPlan.getChildFedPlans();
+		for (int i = 0; i < childs.size(); i++) {
+			Pair<Long, FederatedOutput> edge = childs.get(i);
+			if (edge.getKey() == hopID) {
+				matches.add(Pair.of(i, edge));
+			}
+		}
+		return matches;
+	}
+
+	private static final class ConflictEntry {
+		// firstSeenOut is kept for debugging/tracing only.
+		final FederatedOutput firstSeenOut;
+		// LinkedHashSet keeps insertion order for debugging while avoiding duplicate
+		// parents.
+		final java.util.LinkedHashSet<FederatedPlannerDpMemoTable.FedPlan> parents;
+		boolean seenLOUT;
+		boolean seenFOUT;
+
+		ConflictEntry(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent) {
+			this.firstSeenOut = out;
+			this.parents = new java.util.LinkedHashSet<>();
+			this.parents.add(parent);
+			this.seenLOUT = (out == FederatedOutput.LOUT);
+			this.seenFOUT = (out == FederatedOutput.FOUT);
+		}
+
+		void addUsage(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent) {
+			this.parents.add(parent);
+			if (out == FederatedOutput.LOUT)
+				this.seenLOUT = true;
+			else if (out == FederatedOutput.FOUT)
+				this.seenFOUT = true;
+		}
+
+		boolean isTrulyConflicting() {
+			return seenLOUT && seenFOUT;
+		}
+	}
+}

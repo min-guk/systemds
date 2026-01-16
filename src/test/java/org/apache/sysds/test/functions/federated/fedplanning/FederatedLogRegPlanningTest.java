@@ -55,34 +55,43 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runLogRegFOUTTest() {
+	public void runLogRegPlannerFOUTPrivacyNone() {
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runLogRegHeuristicTest() {
+	public void runLogRegPlannerHeuristicPrivacyNone() {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
 	@Ignore
 	@Test
-	public void runLogRegCostBasedTestPrivate() {
+	public void runLogRegPlannerDPPrivacyPrivate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
 	@Test
-	public void runLogRegCostBasedTestPrivateAggregate() {
+	public void runLogRegPlannerDPPrivacyPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
-	@Ignore
 	@Test
-	public void runLogRegCostBasedTestPublic() {
+	public void runLogRegPlannerMinSTPrivacyPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	}
+
+	@Test
+	public void runLogRegPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
-	public void runRuntimeTest() {
+	public void runLogRegPlannerMinSTPrivacyPublic() {
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
+	}
+
+	@Test
+	public void runLogRegPlannerDefaultPrivacyNone() {
 		TEST_CONF_FILE = new File("src/test/config/SystemDS-config.xml");
 		loadAndRunTest(new String[] {}, TEST_NAME, null);
 	}
@@ -95,14 +104,15 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 	private void writeInputMatrices(String privacyConstraints) {
 		writeStandardRowFedMatrix("X1", 65, privacyConstraints);
 		writeStandardRowFedMatrix("X2", 75, privacyConstraints);
-		writeMultiClassVector("Y", 44, privacyConstraints);
+		writeMultiClassVectorPartition("Y1", rows / 2, 44, privacyConstraints);
+		writeMultiClassVectorPartition("Y2", rows / 2, 45, privacyConstraints);
 	}
 
-	private void writeMultiClassVector(String matrixName, long seed, String privacyConstraints) {
-		double[][] matrix = getRandomMatrix(rows, 1, 1, 5, 1, seed);
-		for (int i = 0; i < rows; i++)
+	private void writeMultiClassVectorPartition(String matrixName, int numRows, long seed, String privacyConstraints) {
+		double[][] matrix = getRandomMatrix(numRows, 1, 1, 5, 1, seed);
+		for (int i = 0; i < numRows; i++)
 			matrix[i][0] = Math.max(1, Math.round(matrix[i][0]));
-		MatrixCharacteristics mc = new MatrixCharacteristics(rows, 1, blocksize, rows);
+		MatrixCharacteristics mc = new MatrixCharacteristics(numRows, 1, blocksize, numRows);
 		if (privacyConstraints == null) {
 			writeInputMatrixWithMTD(matrixName, matrix, false, mc);
 		} else {
@@ -153,7 +163,9 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 			programArgs = new String[] { "-stats", "-nvargs",
 					"X1=" + TestUtils.federatedAddress(port1, input("X1")),
 					"X2=" + TestUtils.federatedAddress(port2, input("X2")),
-					"Y=" + input("Y"), "r=" + rows, "c=" + cols, "B=" + output("B") };
+					"Y1=" + TestUtils.federatedAddress(port1, input("Y1")),
+					"Y2=" + TestUtils.federatedAddress(port2, input("Y2")),
+					"r=" + rows, "c=" + cols, "B=" + output("B") };
 			runTest(true, false, null, -1);
 
 			// // Run reference dml script with normal matrix

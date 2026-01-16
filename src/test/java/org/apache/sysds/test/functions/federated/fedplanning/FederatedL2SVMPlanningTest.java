@@ -57,67 +57,76 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runL2SVMFOUTTest(){
+	public void runL2SVMPlannerFOUTPrivacyNone(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runL2SVMHeuristicTest(){
+	public void runL2SVMPlannerHeuristicPrivacyNone(){
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
+	@Ignore
 	@Test
-	public void runL2SVMCostBasedTestPrivate(){
+	public void runL2SVMPlannerDPPrivacyPrivate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
 	@Test
-	public void runL2SVMCostBasedTestPrivateAggregate(){
+	public void runL2SVMPlannerDPPrivacyPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
 	@Test
-	public void runL2SVMCostBasedTestMinSTCutPrivateAggregate(){
+	public void runL2SVMPlannerMinSTPrivacyPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
-	@Ignore
 	@Test
-	public void runL2SVMCostBasedTestPublic(){
+	public void runL2SVMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
+	}
+
+	@Test
+	public void runL2SVMPlannerMinSTPrivacyPublic(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}
 
 	@Ignore
 	@Test
-	public void runL2SVMFunctionFOUTTest(){
+	public void runL2SVMFunctionPlannerFOUTPrivacyNone(){
 		runTestWithConfig("SystemDS-config-fout.xml", null, TEST_NAME_2);
 	}
 
 	@Test
-	public void runL2SVMFunctionHeuristicTest(){
+	public void runL2SVMFunctionPlannerHeuristicPrivacyNone(){
 		runTestWithConfig("SystemDS-config-heuristic.xml", null, TEST_NAME_2);
 	}
 
 	@Ignore
 	@Test
-	public void runL2SVMFunctionCostBasedTestPrivate(){
+	public void runL2SVMFunctionPlannerDPPrivacyPrivate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private", TEST_NAME_2);
 	}
 
 	@Ignore
 	@Test
-	public void runL2SVMFunctionCostBasedTestPrivateAggregate(){
+	public void runL2SVMFunctionPlannerDPPrivacyPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate", TEST_NAME_2);
 	}
 
-	@Ignore
 	@Test
-	public void runL2SVMFunctionCostBasedTestPublic(){
+	public void runL2SVMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
 	@Test
-	public void runRuntimeTest() {
+	public void runL2SVMFunctionPlannerMinSTPrivacyPublic(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public", TEST_NAME_2);
+	}
+
+	@Test
+	public void runL2SVMPlannerDefaultPrivacyNone() {
 		TEST_CONF_FILE = new File("src/test/config/SystemDS-config.xml");
 		loadAndRunTest(new String[] {}, TEST_NAME, null);
 	}
@@ -133,14 +142,15 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 	private void writeInputMatrices(String privacyConstraints){
 		writeStandardRowFedMatrix("X1", 65, privacyConstraints);
 		writeStandardRowFedMatrix("X2", 75, privacyConstraints);
-		writeBinaryVector("Y", 44, privacyConstraints);
+		writeBinaryVectorPartition("Y1", rows / 2, 44, privacyConstraints);
+		writeBinaryVectorPartition("Y2", rows / 2, 45, privacyConstraints);
 	}
 
-	private void writeBinaryVector(String matrixName, long seed, String privacyConstraints){
-		double[][] matrix = getRandomMatrix(rows, 1, -1, 1, 1, seed);
-		for(int i = 0; i < rows; i++)
+	private void writeBinaryVectorPartition(String matrixName, int numRows, long seed, String privacyConstraints){
+		double[][] matrix = getRandomMatrix(numRows, 1, -1, 1, 1, seed);
+		for(int i = 0; i < numRows; i++)
 			matrix[i][0] = (matrix[i][0] > 0) ? 1 : -1;
-		MatrixCharacteristics mc = new MatrixCharacteristics(rows, 1, blocksize, rows);
+		MatrixCharacteristics mc = new MatrixCharacteristics(numRows, 1, blocksize, numRows);
 		if (privacyConstraints == null) {
 			writeInputMatrixWithMTD(matrixName, matrix, false, mc);
 		} else {
@@ -192,7 +202,9 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 			programArgs = new String[] { "-stats", "-nvargs",
 				"X1=" + TestUtils.federatedAddress(port1, input("X1")),
 				"X2=" + TestUtils.federatedAddress(port2, input("X2")),
-				"Y=" + input("Y"), "r=" + rows, "c=" + cols, "Z=" + output("Z")};
+				"Y1=" + TestUtils.federatedAddress(port1, input("Y1")),
+				"Y2=" + TestUtils.federatedAddress(port2, input("Y2")),
+				"r=" + rows, "c=" + cols, "Z=" + output("Z")};
 			runTest(true, false, null, -1);
 
 

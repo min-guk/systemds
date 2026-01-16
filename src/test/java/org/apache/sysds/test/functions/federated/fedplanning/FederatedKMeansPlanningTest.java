@@ -51,33 +51,37 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runKMeansFOUTTest() {
+	public void runKMeansPlannerFOUTPrivacyNone() {
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runKMeansHeuristicTest() {
+	public void runKMeansPlannerHeuristicPrivacyNone() {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
 	@Test
-	public void runKMeansCostBasedTestPrivateAggregate() {
+	public void runKMeansPlannerDPPrivacyPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
 	@Test
-	public void runKMeansCostBasedTestMinSTCutPrivateAggregate() {
+	public void runKMeansPlannerMinSTPrivacyPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
-	@Ignore
 	@Test
-	public void runKMeansCostBasedTestPublic() {
+	public void runKMeansPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
-	public void runRuntimeTest() {
+	public void runKMeansPlannerMinSTPrivacyPublic() {
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
+	}
+
+	@Test
+	public void runKMeansPlannerDefaultPrivacyNone() {
 		TEST_CONF_FILE = new File("src/test/config/SystemDS-config.xml");
 		loadAndRunTest(new String[] {}, TEST_NAME, null);
 	}

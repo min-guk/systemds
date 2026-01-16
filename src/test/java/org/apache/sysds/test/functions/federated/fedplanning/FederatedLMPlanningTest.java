@@ -54,63 +54,76 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runLMFOUTTest(){
+	public void runLMPlannerFOUTPrivacyNone(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runLMHeuristicTest(){
+	public void runLMPlannerHeuristicPrivacyNone(){
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
 	@Ignore
 	@Test
-	public void runLMCostBasedTestPrivate(){
+	public void runLMPlannerDPPrivacyPrivate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
 	@Test
-	public void runLMCostBasedTestPrivateAggregate(){
+	public void runLMPlannerDPPrivacyPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
-	@Ignore
 	@Test
-	public void runLMCostBasedTestPublic(){
+	public void runLMPlannerMinSTPrivacyPrivateAggregate(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	}
+
+	@Test
+	public void runLMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
+	}
+
+	@Test
+	public void runLMPlannerMinSTPrivacyPublic(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}
 
 	@Ignore
 	@Test
-	public void runLMFunctionFOUTTest(){
+	public void runLMFunctionPlannerFOUTPrivacyNone(){
 		runTestWithConfig("SystemDS-config-fout.xml", null, TEST_NAME_2);
 	}
 
 	@Test
-	public void runLMFunctionHeuristicTest(){
+	public void runLMFunctionPlannerHeuristicPrivacyNone(){
 		runTestWithConfig("SystemDS-config-heuristic.xml", null, TEST_NAME_2);
 	}
 
 	@Ignore
 	@Test
-	public void runLMFunctionCostBasedTestPrivate(){
+	public void runLMFunctionPlannerDPPrivacyPrivate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private", TEST_NAME_2);
 	}
 
 	@Ignore
 	@Test
-	public void runLMFunctionCostBasedTestPrivateAggregate(){
+	public void runLMFunctionPlannerDPPrivacyPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate", TEST_NAME_2);
 	}
 
-	@Ignore
 	@Test
-	public void runLMFunctionCostBasedTestPublic(){
+	public void runLMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
 	@Test
-	public void runRuntimeTest() {
+	public void runLMFunctionPlannerMinSTPrivacyPublic(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public", TEST_NAME_2);
+	}
+
+	@Test
+	public void runLMPlannerDefaultPrivacyNone() {
 		TEST_CONF_FILE = new File("src/test/config/SystemDS-config.xml");
 		loadAndRunTest(new String[] {}, TEST_NAME, null);
 	}
@@ -126,12 +139,13 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 	private void writeInputMatrices(String privacyConstraints){
 		writeStandardRowFedMatrix("X1", 65, privacyConstraints);
 		writeStandardRowFedMatrix("X2", 75, privacyConstraints);
-		writeResponseVector("Y", 44, privacyConstraints);
+		writeResponseVectorPartition("Y1", rows / 2, 44, privacyConstraints);
+		writeResponseVectorPartition("Y2", rows / 2, 45, privacyConstraints);
 	}
 
-	private void writeResponseVector(String matrixName, long seed, String privacyConstraints){
-		double[][] matrix = getRandomMatrix(rows, 1, 0, 1, 1, seed);
-		MatrixCharacteristics mc = new MatrixCharacteristics(rows, 1, blocksize, rows);
+	private void writeResponseVectorPartition(String matrixName, int numRows, long seed, String privacyConstraints){
+		double[][] matrix = getRandomMatrix(numRows, 1, 0, 1, 1, seed);
+		MatrixCharacteristics mc = new MatrixCharacteristics(numRows, 1, blocksize, numRows);
 		if (privacyConstraints == null) {
 			writeInputMatrixWithMTD(matrixName, matrix, false, mc);
 		} else {
@@ -183,7 +197,9 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 			programArgs = new String[] { "-stats", "-nvargs",
 				"X1=" + TestUtils.federatedAddress(port1, input("X1")),
 				"X2=" + TestUtils.federatedAddress(port2, input("X2")),
-				"Y=" + input("Y"), "r=" + rows, "c=" + cols, "Z=" + output("Z")};
+				"Y1=" + TestUtils.federatedAddress(port1, input("Y1")),
+				"Y2=" + TestUtils.federatedAddress(port2, input("Y2")),
+				"r=" + rows, "c=" + cols, "Z=" + output("Z")};
 			runTest(true, false, null, -1);
 
 

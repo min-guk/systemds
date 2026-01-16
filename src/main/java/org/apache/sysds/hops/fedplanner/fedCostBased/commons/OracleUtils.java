@@ -19,8 +19,11 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.sysds.hops.Hop;
@@ -96,10 +99,29 @@ public final class OracleUtils {
 		int numInputs = parentInputs == null ? 0 : parentInputs.size();
 		List<FType> aligned = new ArrayList<>(Collections.nCopies(numInputs, null));
 		if (numInputs == 0) {
+			if (collectedFTypes == null) {
+				return aligned;
+			}
 			return collectedFTypes.isEmpty() ? aligned : new ArrayList<>(collectedFTypes);
 		}
 
-		for (int i = 0; i < collectedHops.size(); i++) {
+		if (collectedHops == null || collectedFTypes == null) {
+			return aligned;
+		}
+
+		Map<Long, Deque<Integer>> slotsByHopId = new HashMap<>();
+		for (int j = 0; j < numInputs; j++) {
+			Hop parent = parentInputs.get(j);
+			if (parent == null) {
+				continue;
+			}
+			slotsByHopId.computeIfAbsent(parent.getHopID(), k -> new ArrayDeque<>()).add(j);
+		}
+
+		int limit = Math.min(collectedHops.size(), collectedFTypes.size());
+		Map<Long, FType> assignedByHopId = new HashMap<>();
+
+		for (int i = 0; i < limit; i++) {
 			Hop child = collectedHops.get(i);
 			FType ftype = collectedFTypes.get(i);
 			if (child == null) {
@@ -107,23 +129,28 @@ public final class OracleUtils {
 						+ hop.getHopID());
 				continue;
 			}
-			int pos = -1;
-			for (int j = 0; j < numInputs; j++) {
-				Hop parent = parentInputs.get(j);
-				if (parent == null)
-					continue;
-				if (parent == child || parent.equals(child)) {
-					if (aligned.get(j) == null) {
-						pos = j;
-						break;
-					}
-				}
-			}
-			if (pos >= 0) {
-				aligned.set(pos, ftype);
-			} else {
+			Deque<Integer> slots = slotsByHopId.get(child.getHopID());
+			if (slots == null || slots.isEmpty()) {
 				FederatedPlannerLogger.logInfoMessage("[alignInputFTypes] Skipping unmatched child "
 						+ child.getHopID() + " for hop " + hop.getHopID());
+				continue;
+			}
+			int pos = slots.removeFirst();
+			aligned.set(pos, ftype);
+			assignedByHopId.putIfAbsent(child.getHopID(), ftype);
+		}
+
+		for (int j = 0; j < numInputs; j++) {
+			if (aligned.get(j) != null) {
+				continue;
+			}
+			Hop parent = parentInputs.get(j);
+			if (parent == null) {
+				continue;
+			}
+			FType fallback = assignedByHopId.get(parent.getHopID());
+			if (fallback != null) {
+				aligned.set(j, fallback);
 			}
 		}
 		return aligned;

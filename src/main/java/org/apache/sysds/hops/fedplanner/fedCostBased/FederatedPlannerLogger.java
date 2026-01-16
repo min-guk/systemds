@@ -55,9 +55,9 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased.FederatedMemoTable.FedPlan;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTPlanner.FederatedPlanMinSTGraph;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -67,7 +67,7 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 /**
  * Unified utility class for logging federated planner information.
  * Provides methods to log hop details including privacy constraints and FType information,
- * as well as methods to print detailed FederatedMemoTable tree structures and cost analysis.
+ * as well as methods to print detailed FederatedPlannerDpMemoTable tree structures and cost analysis.
  * This class integrates the functionality of the former FederatedMemoTablePrinter.
  */
 public class FederatedPlannerLogger {
@@ -422,7 +422,7 @@ public class FederatedPlannerLogger {
      */
     public static void logNullChildPlanDebug(Pair<Long, FederatedOutput> childFedPlanPair, 
                                            FedPlan optimalPlan, 
-                                           FederatedMemoTable memoTable) {
+                                           FederatedPlannerDpMemoTable memoTable) {
         FederatedOutput alternativeFedType = (childFedPlanPair.getRight() == FederatedOutput.LOUT) ? 
                                            FederatedOutput.FOUT : FederatedOutput.LOUT;
         FedPlan alternativeChildPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair.getLeft(), alternativeFedType);
@@ -696,7 +696,7 @@ public class FederatedPlannerLogger {
                           " | Reason: " + reason);
     }
     
-    // ========== FederatedMemoTable Printing Methods ==========
+    // ========== FederatedPlannerDpMemoTable Printing Methods ==========
     
     /**
      * Recursively prints a tree representation of the DAG starting from the given root FedPlan.
@@ -708,13 +708,13 @@ public class FederatedPlannerLogger {
      * @param memoTable The memoization table containing FedPlan variants
      * @param additionalTotalCost The additional cost to be printed once
      */
-    public static void printFedPlanTree(FederatedMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
-                                        FederatedMemoTable memoTable, double additionalTotalCost) {
+    public static void printFedPlanTree(FederatedPlannerDpMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
+                                        FederatedPlannerDpMemoTable memoTable, double additionalTotalCost) {
         printFedPlanTree(rootFedPlan, rootHopStatSet, memoTable, additionalTotalCost, false);
     }
 
-    public static void printFedPlanTree(FederatedMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
-                                        FederatedMemoTable memoTable, double additionalTotalCost, boolean onlyEdge) {
+    public static void printFedPlanTree(FederatedPlannerDpMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
+                                        FederatedPlannerDpMemoTable memoTable, double additionalTotalCost, boolean onlyEdge) {
         System.out.println("Additional Cost: " + additionalTotalCost);
         Set<Long> visited = new HashSet<>();
         printFedPlanTreeRecursive(rootFedPlan, memoTable, visited, 0, onlyEdge);
@@ -736,7 +736,7 @@ public class FederatedPlannerLogger {
      * @param visited Set to keep track of visited FedPlans (prevents cycles)
      * @param depth   The current depth level for indentation
      */
-    private static void printNotReferencedFedPlanRecursive(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable,
+    private static void printNotReferencedFedPlanRecursive(FederatedPlannerDpMemoTable.FedPlan plan, FederatedPlannerDpMemoTable memoTable,
                                            Set<Long> visited, int depth, boolean onlyEdge) {
         long hopID = plan.getHopRef().getHopID();
 
@@ -751,7 +751,7 @@ public class FederatedPlannerLogger {
         List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = plan.getChildFedPlans();
         for (int i = 0; i < childFedPlanPairs.size(); i++) {
             Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair = childFedPlanPairs.get(i);
-            FederatedMemoTable.FedPlanVariants childVariants = memoTable.getFedPlanVariants(childFedPlanPair);
+            FederatedPlannerDpMemoTable.FedPlanVariants childVariants = memoTable.getFedPlanVariants(childFedPlanPair);
             if (childVariants == null || childVariants.isEmpty()) {
                 System.err.println("[WARN] Missing child FedPlan variants for hop "
                     + childFedPlanPair.getLeft()
@@ -759,7 +759,7 @@ public class FederatedPlannerLogger {
                 continue;
             }
 
-            for (FederatedMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
+            for (FederatedPlannerDpMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
                 printNotReferencedFedPlanRecursive(childPlan, memoTable, visited, depth + 1, onlyEdge);
             }
         }
@@ -773,7 +773,7 @@ public class FederatedPlannerLogger {
      * @param visited Set to keep track of visited FedPlans (prevents cycles)
      * @param depth   The current depth level for indentation
      */
-    private static void printFedPlanTreeRecursive(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable,
+    private static void printFedPlanTreeRecursive(FederatedPlannerDpMemoTable.FedPlan plan, FederatedPlannerDpMemoTable memoTable,
                                            Set<Long> visited, int depth, boolean onlyEdge) {
         long hopID = 0;
 
@@ -794,7 +794,7 @@ public class FederatedPlannerLogger {
         List<Pair<Long, FEDInstruction.FederatedOutput>> childFedPlanPairs = plan.getChildFedPlans();
         for (int i = 0; i < childFedPlanPairs.size(); i++) {
             Pair<Long, FEDInstruction.FederatedOutput> childFedPlanPair = childFedPlanPairs.get(i);
-            FederatedMemoTable.FedPlanVariants childVariants = memoTable.getFedPlanVariants(childFedPlanPair);
+            FederatedPlannerDpMemoTable.FedPlanVariants childVariants = memoTable.getFedPlanVariants(childFedPlanPair);
             if (childVariants == null || childVariants.isEmpty()) {
                 System.err.println("[WARN] Missing child FedPlan variants for hop "
                     + childFedPlanPair.getLeft()
@@ -802,7 +802,7 @@ public class FederatedPlannerLogger {
                 continue;
             }
 
-            for (FederatedMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
+            for (FederatedPlannerDpMemoTable.FedPlan childPlan : childVariants.getFedPlanVariants()) {
                 printFedPlanTreeRecursive(childPlan, memoTable, visited, depth + 1, onlyEdge);
             }
         }
@@ -816,7 +816,7 @@ public class FederatedPlannerLogger {
      * @param depth The current depth level for indentation
      * @param isNotReferenced Whether this plan is not referenced
      */
-    private static void printFedPlan(FederatedMemoTable.FedPlan plan, FederatedMemoTable memoTable, int depth, boolean isNotReferenced, boolean onlyEdge) {
+    private static void printFedPlan(FederatedPlannerDpMemoTable.FedPlan plan, FederatedPlannerDpMemoTable memoTable, int depth, boolean isNotReferenced, boolean onlyEdge) {
         StringBuilder sb = new StringBuilder();
         Hop hop = null;
 

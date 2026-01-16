@@ -20,8 +20,8 @@
 package org.apache.sysds.hops.fedplanner;
 
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDP.FederatedPlannerFedCostBased;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTPlanner.FederatedPlanMinSTCut;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
 
 public class FTypes
@@ -40,7 +40,7 @@ public class FTypes
 				case COMPILE_FED_HEURISTIC:
 					return new FederatedPlannerFedHeuristic();
 				case COMPILE_COST_BASED:
-					return new FederatedPlannerFedCostBased();
+					return new FederatedPlannerDpFedCostBased();
 				case COMPILE_MIN_ST_CUT:
 					return new FederatedPlanMinSTCut();
 				case NONE:

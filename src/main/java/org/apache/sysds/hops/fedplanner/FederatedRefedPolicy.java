@@ -297,6 +297,11 @@ public final class FederatedRefedPolicy {
 		if (hop.getDataType().isFrame())
 			throw new DMLRuntimeException("CP->FOUT refed does not support frame outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
+		if (isFederatedInitDataOp(hop)) {
+			System.out.printf("CP->FOUT decision: SKIP (already_federated) hopID=%d op=%s%n",
+				hop.getHopID(), hop.getOpString());
+			return;
+		}
 
 		AnchorSelection selection = selectAnchor(hop, fTypeMap, true, true, blockAnchor);
 		if (selection == null) {
@@ -455,11 +460,10 @@ public final class FederatedRefedPolicy {
 			}
 			if (throwOnFailure) {
 				if (debug != null)
-					LOG.error("CP->FOUT refed missing FED anchor-parent for hop " + hop.getHopID()
-						+ " (" + hop.getOpString() + "): " + String.join(" | ", debug));
-				throw new DMLRuntimeException("CP->FOUT refed requires at least one FED parent/worker pool for hop "
-							+ hop.getHopID() + " (" + hop.getOpString() + ")"
-							+ " [no federated parent/worker pool]");
+					LOG.warn("CP->FOUT refed missing FED anchor-parent for hop " + hop.getHopID()
+						+ " (" + hop.getOpString() + "): " + String.join(" | ", debug)
+						+ " | fallback=LOUT");
+				return null;
 			}
 			return null;
 		}
@@ -647,7 +651,7 @@ public final class FederatedRefedPolicy {
 		if ((parent instanceof TernaryOp || parent instanceof QuaternaryOp
 				|| parent instanceof ParameterizedBuiltinOp)
 				&& hasFederatedInput(parent, target, fTypeMap)) {
-			return InputRequirement.AMBIGUOUS;
+			return InputRequirement.OPTIONAL;
 		}
 		return base;
 	}
@@ -1011,6 +1015,16 @@ public final class FederatedRefedPolicy {
 		if (hop == null || fTypeMap == null)
 			return false;
 		return fTypeMap.get(hop.getHopID()) != null;
+	}
+
+	private static boolean isFederatedInitDataOp(Hop hop) {
+		if (!(hop instanceof DataOp))
+			return false;
+		DataOp dataOp = (DataOp) hop;
+		if (dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.FEDERATED)
+			return true;
+		return dataOp.getOp() == org.apache.sysds.common.Types.OpOpData.TRANSIENTREAD
+			&& FederatedPlannerUtils.isFedInitVar(dataOp.getName());
 	}
 
 	private static ExecType getPlannedExecType(Hop hop) {

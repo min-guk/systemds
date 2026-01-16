@@ -55,34 +55,43 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
-	public void runPCAFOUTTest(){
+	public void runPCAPlannerFOUTPrivacyNone(){
 		runTestWithConfig("SystemDS-config-fout.xml", null);
 	}
 
 	@Test
-	public void runPCAHeuristicTest(){
+	public void runPCAPlannerHeuristicPrivacyNone(){
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
 	@Ignore
 	@Test
-	public void runPCACostBasedTestPrivate(){
+	public void runPCAPlannerDPPrivacyPrivate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private");
 	}
 
 	@Test
-	public void runPCACostBasedTestPrivateAggregate(){
+	public void runPCAPlannerDPPrivacyPrivateAggregate(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
 
-	@Ignore
 	@Test
-	public void runPCACostBasedTestPublic(){
+	public void runPCAPlannerMinSTPrivacyPrivateAggregate(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
+	}
+
+	@Test
+	public void runPCAPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
-	public void runRuntimeTest() {
+	public void runPCAPlannerMinSTPrivacyPublic(){
+		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
+	}
+
+	@Test
+	public void runPCAPlannerDefaultPrivacyNone() {
 		TEST_CONF_FILE = new File("src/test/config/SystemDS-config.xml");
 		loadAndRunTest(new String[] {}, TEST_NAME, null);
 	}

@@ -24,11 +24,15 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.CompatibilityScore;
+import org.apache.sysds.parser.FunctionStatementBlock;
 
 public final class TransTableRewireUtils {
 	private static final int COMMON_CHILD_SEARCH_DEPTH = 5;
@@ -91,6 +95,180 @@ public final class TransTableRewireUtils {
 			return null;
 		}
 		return childHops;
+	}
+
+	public static void mapFunctionInputsToFormerTransTable(String[] inputArgs, List<Hop> inputHops,
+			Map<Long, List<Hop>> rewireTable, Map<String, List<Hop>> newFormerTransTable) {
+		if (newFormerTransTable == null || inputArgs == null || inputHops == null) {
+			return;
+		}
+
+		int limit = Math.min(inputArgs.length, inputHops.size());
+		for (int i = 0; i < limit; i++) {
+			Hop inputHop = inputHops.get(i);
+			List<Hop> mappedHops = new ArrayList<>();
+
+			if (inputHop instanceof DataOp && ((DataOp) inputHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+				List<Hop> transChildHops = (rewireTable != null) ? rewireTable.get(inputHop.getHopID()) : null;
+				if (transChildHops != null && !transChildHops.isEmpty()) {
+					for (Hop childHop : transChildHops) {
+						if (childHop instanceof DataOp
+								&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+							continue;
+						}
+						mappedHops.add(childHop);
+					}
+					if (mappedHops.isEmpty()) {
+						mappedHops.addAll(transChildHops);
+					}
+				}
+			}
+
+			if (mappedHops.isEmpty()) {
+				mappedHops.add(inputHop);
+			}
+
+			for (Hop mappedHop : mappedHops) {
+				newFormerTransTable.computeIfAbsent(inputArgs[i], k -> new ArrayList<>()).add(mappedHop);
+			}
+		}
+	}
+
+	public static void mapFunctionOutputs(FunctionOp fop, FunctionStatementBlock fsb,
+			Map<String, List<Hop>> functionTransTable, Map<String, List<Hop>> innerTransTable,
+			Consumer<Hop> outputHandler) {
+		if (fop == null || innerTransTable == null) {
+			return;
+		}
+
+		if (fop.getFunctionType() == FunctionType.DML) {
+			if (fsb == null || functionTransTable == null) {
+				return;
+			}
+			String[] outputNames = fop.getOutputVariableNames();
+			if (outputNames == null) {
+				return;
+			}
+			int limit = Math.min(outputNames.length, fsb.getOutputsofSB().size());
+			for (int i = 0; i < limit; i++) {
+				String tWriteName = outputNames[i];
+				List<Hop> outputHops = functionTransTable.get(fsb.getOutputsofSB().get(i).getName());
+				if (outputHops == null || outputHops.isEmpty()) {
+					continue;
+				}
+				innerTransTable.computeIfAbsent(tWriteName, k -> new ArrayList<>()).addAll(outputHops);
+				if (outputHandler != null) {
+					for (Hop outputHop : outputHops) {
+						if (outputHop != null) {
+							outputHandler.accept(outputHop);
+						}
+					}
+				}
+			}
+			return;
+		}
+
+		if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
+			String[] outputNames = fop.getOutputVariableNames();
+			ArrayList<Hop> outputHops = fop.getOutputs();
+			if (outputNames == null || outputHops == null) {
+				return;
+			}
+			int limit = Math.min(outputNames.length, outputHops.size());
+			for (int i = 0; i < limit; i++) {
+				Hop outputHop = outputHops.get(i);
+				if (outputHop == null) {
+					continue;
+				}
+				innerTransTable.computeIfAbsent(outputNames[i], k -> new ArrayList<>()).add(outputHop);
+				if (outputHandler != null) {
+					outputHandler.accept(outputHop);
+				}
+			}
+		}
+	}
+
+	public static List<Hop> filterTransReadChildren(String hopName, List<Hop> childHops,
+			Set<Long> injectedIds, boolean fallbackToOriginal, boolean requireTransientWrite) {
+		List<Hop> filtered = filterByName(childHops, hopName, fallbackToOriginal);
+		filtered = filterInjectedChildren(filtered, injectedIds, true);
+		if (requireTransientWrite) {
+			List<Hop> twOnly = new ArrayList<>();
+			if (filtered != null) {
+				for (Hop childHop : filtered) {
+					if (childHop instanceof DataOp
+							&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTWRITE) {
+						twOnly.add(childHop);
+					}
+				}
+			}
+			filtered = twOnly;
+		}
+		return preferNonTransientReadChildren(filtered);
+	}
+
+	public static Hop resolvePassThroughSourceHop(Hop hop, Map<Long, List<Hop>> rewireTable) {
+		if (!isPassThroughTWrite(hop)) {
+			return hop;
+		}
+		Hop current = hop;
+		Set<Long> visited = new HashSet<>();
+		while (true) {
+			if (!visited.add(current.getHopID())) {
+				break;
+			}
+			List<Hop> inputs = current.getInput();
+			if (inputs == null || inputs.isEmpty()) {
+				break;
+			}
+			Hop treadHop = inputs.get(0);
+			if (!(treadHop instanceof DataOp)
+					|| ((DataOp) treadHop).getOp() != Types.OpOpData.TRANSIENTREAD) {
+				break;
+			}
+			List<Hop> mapped = (rewireTable != null) ? rewireTable.get(treadHop.getHopID()) : null;
+			if (mapped == null || mapped.isEmpty()) {
+				break;
+			}
+			Hop next = null;
+			for (Hop candidate : mapped) {
+				if (isTWriteWithName(candidate, current.getName())) {
+					next = candidate;
+					break;
+				}
+			}
+			if (next == null) {
+				next = mapped.get(0);
+			}
+			if (next == null || next == current) {
+				break;
+			}
+			current = next;
+			if (!isPassThroughTWrite(current)) {
+				break;
+			}
+		}
+		return current;
+	}
+
+	public static boolean isPassThroughTWrite(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTWRITE) {
+			return false;
+		}
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty()) {
+			return false;
+		}
+		Hop inputHop = inputs.get(0);
+		return inputHop instanceof DataOp
+				&& ((DataOp) inputHop).getOp() == Types.OpOpData.TRANSIENTREAD
+				&& hop.getName().equals(inputHop.getName());
+	}
+
+	private static boolean isTWriteWithName(Hop hop, String name) {
+		return hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE
+				&& hop.getName().equals(name);
 	}
 
 	public static List<Hop> filterByName(List<Hop> childHops, String hopName, boolean fallbackToOriginal) {
@@ -174,6 +352,9 @@ public final class TransTableRewireUtils {
 		}
 
 		for (Hop childHop : childHops) {
+			if (!(childHop instanceof DataOp) || ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTWRITE) {
+				continue;
+			}
 			long childHopId = childHop.getHopID();
 			rewireTable.computeIfAbsent(childHopId, k -> new ArrayList<>()).add(transReadHop);
 			if (unRefTwriteSet != null) {
