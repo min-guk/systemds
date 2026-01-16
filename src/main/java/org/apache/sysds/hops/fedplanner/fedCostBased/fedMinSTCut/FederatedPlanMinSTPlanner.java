@@ -19,7 +19,6 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -29,16 +28,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.hops.*;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -48,6 +46,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMi
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
@@ -78,15 +83,6 @@ import org.jgrapht.graph.DefaultDirectedWeightedGraph;
 import org.jgrapht.graph.DefaultWeightedEdge;
 
 public final class FederatedPlanMinSTPlanner {
-	private static int countDistinctWorkers(List<Pair<FederatedRange, FederatedData>> fedMap) {
-		Set<InetSocketAddress> workerAddrs = new HashSet<>();
-		for (Pair<FederatedRange, FederatedData> p : fedMap) {
-			FederatedData data = p.getRight();
-			if (data != null && data.getAddress() != null)
-				workerAddrs.add(data.getAddress());
-		}
-		return workerAddrs.size();
-	}
 
 	private static long computeId(long hopId) {
 		return hopId << 1;
@@ -97,14 +93,6 @@ public final class FederatedPlanMinSTPlanner {
 	}
 
 	public static class FederatedPlanMinSTCostEstimator {
-		// Default value is used as a reasonable estimate since we only need
-		// to compare relative costs between different federated plans
-		// Memory bandwidth for local computations (25 GB/s)
-		private static final double DEFAULT_MBS_MEMORY_BANDWIDTH = 25000.0;
-		// Network bandwidth for data transfers between federated sites (1 Gbps)
-		private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
-		private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
-
 		public static void estimateProgram(DMLProgram prog, FederatedPlanMinSTGraph graph,
 				Map<Long, List<Hop>> rewireTable, boolean isPrint) {
 			Set<String> fnStack = new HashSet<>();
@@ -131,7 +119,7 @@ public final class FederatedPlanMinSTPlanner {
 
 			Set<String> fnStack = new HashSet<>();
 			Set<Long> visitedHops = new HashSet<>();
-			int numOfWorkers = countDistinctWorkers(fedMap);
+			int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 			graph.setNumOfWorkers(numOfWorkers);
 			estimateStatementBlock(function, prog, graph, rewireTable, fnStack, visitedHops);
 		}
@@ -302,53 +290,25 @@ public final class FederatedPlanMinSTPlanner {
 					opCostWithWeight = netCostWithoutWeight = 0;
 				} else if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 					opCostWithWeight = 0;
-					netCostWithoutWeight = computeRefedNetworkCost(
+					netCostWithoutWeight = FederatedCostModel.computeRefedNetworkCost(
 							hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
 				} else {
-					double opCost = computeOpCost(hop);
+					double opCost = FederatedCostModel.computeOpCost(hop);
 					opCostWithWeight = vertex.getOpWeight() * opCost;
-					netCostWithoutWeight = computeRefedNetworkCost(
+					netCostWithoutWeight = FederatedCostModel.computeRefedNetworkCost(
 							hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
 				}
 				vertex.setCost(opCostWithWeight, netCostWithoutWeight);
 				return;
 			}
 
-			double opCost = computeOpCost(hop);
+			double opCost = FederatedCostModel.computeOpCost(hop);
 			opCostWithWeight = vertex.getOpWeight() * opCost;
 			// Todo: FType에 따라서 netCostWithoutWeight 계산 방식 다르게 하는 것이 맞는 지 확인해야함
-			netCostWithoutWeight = computeRefedNetworkCost(
+			netCostWithoutWeight = FederatedCostModel.computeRefedNetworkCost(
 					hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
 
 			vertex.setCost(opCostWithWeight, netCostWithoutWeight);
-		}
-
-		private static double computeOpCost(Hop currentHop) {
-			double computeCost = ComputeCost.getHOPComputeCost(currentHop);
-			double inputAccessCost = computeHopMemoryAccessCost(currentHop.getInputMemEstimate());
-			double ouputAccessCost = computeHopMemoryAccessCost(currentHop.getOutputMemEstimate());
-
-			return Math.max(computeCost, inputAccessCost) + ouputAccessCost;
-		}
-
-		private static double computeHopMemoryAccessCost(double memSize) {
-			if (memSize <= 0)
-				return 0.0;
-			return memSize / (1024 * 1024) / DEFAULT_MBS_MEMORY_BANDWIDTH;
-		}
-
-		private static double computeHopForwardingCost(double memSize) {
-			return DEFAULT_MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / DEFAULT_MBS_NETWORK_BANDWIDTH);
-		}
-
-		private static double computeRefedNetworkCost(double memSize, FType fType, int numOfWorkers) {
-			if (memSize <= 0)
-				return 0.0;
-			if (fType == FType.FULL || fType == FType.BROADCAST)
-				return computeHopForwardingCost(memSize * Math.max(1, numOfWorkers));
-			if (fType == FType.ROW || fType == FType.COL)
-				return computeHopForwardingCost(memSize);
-			return computeHopForwardingCost(memSize);
 		}
 	}
 
@@ -371,7 +331,7 @@ public final class FederatedPlanMinSTPlanner {
 				progRootHopSet.add(graph.getHopRef(hopID));
 			}
 
-			int numOfWorkers = countDistinctWorkers(fedMap);
+			int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 			graph.setNumOfWorkers(numOfWorkers);
 			FederatedPlanMinSTCostEstimator.estimateProgram(prog, graph, rewireTable, true);
 
@@ -483,7 +443,7 @@ public final class FederatedPlanMinSTPlanner {
 
 		public void addExecPlacementResultEdge(Vertex vertex) {
 			Hop hop = vertex.getHopRef();
-			if (hopIsPrintOrPWrite(hop))
+			if (HopUtils.isPrintOrPWrite(hop))
 				return;
 			if (hop instanceof DataOp &&
 					((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD)
@@ -748,40 +708,6 @@ public final class FederatedPlanMinSTPlanner {
 		}
 	}
 
-	private static boolean hopIsPrintOrPWrite(Hop hop) {
-		if (hop instanceof UnaryOp && ((UnaryOp) hop).getOp() == OpOp1.PRINT)
-			return true;
-		return hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.PERSISTENTWRITE;
-	}
-
-	private static List<FType> alignInputFTypes(Hop hop, List<Hop> collectedHops, List<FType> collectedFTypes) {
-		if (hop == null) {
-			return collectedFTypes;
-		}
-		int numInputs = hop.getInput() == null ? 0 : hop.getInput().size();
-		List<FType> aligned = new ArrayList<>(Collections.nCopies(numInputs, null));
-		if (numInputs == 0) {
-			return aligned;
-		}
-		for (int i = 0; i < collectedHops.size(); i++) {
-			Hop child = collectedHops.get(i);
-			FType ftype = collectedFTypes.get(i);
-			if (child == null) {
-				FederatedPlannerLogger.logInfoMessage("[alignInputFTypes] Skipping unmatched child null for hop "
-						+ hop.getHopID());
-				continue;
-			}
-			int pos = hop.getInput().indexOf(child);
-			if (pos >= 0 && pos < numInputs) {
-				aligned.set(pos, ftype);
-			} else {
-				FederatedPlannerLogger.logInfoMessage("[alignInputFTypes] Skipping unmatched child "
-						+ child.getHopID() + " for hop " + hop.getHopID());
-			}
-		}
-		return aligned;
-	}
-
 	private static FederatedPlanMinSTGraph.ExecPlacementCaps buildExecPlacementCaps(
 			Hop hop, Privacy privacy, FType fType, OpCaps capsOracle) {
 
@@ -806,7 +732,7 @@ public final class FederatedPlanMinSTPlanner {
 			return caps;
 		}
 
-		if (hopIsPrintOrPWrite(hop)) {
+		if (HopUtils.isPrintOrPWrite(hop)) {
 			caps.allowCP_LOUT = true;
 			caps.allowCP_FOUT = false;
 			caps.allowFED_LOUT = false;
@@ -815,67 +741,17 @@ public final class FederatedPlanMinSTPlanner {
 			return caps;
 		}
 
-		// 1) Oracle 힌트 해석 (DP enumerateHop와 동일한 제약)
-		ExecType oracleExec;
-		FederatedOutput placement;
-
-		if (capsOracle != null) {
-			oracleExec = capsOracle.exec();
-			placement = capsOracle.placement();
-		} else {
-			// Oracle 정보가 없으면 보수적으로 CP/LOUT로 가정
-			oracleExec = ExecType.CP;
-			placement = FederatedOutput.LOUT;
+		ExecPlacementPolicy.Decision policyDecision = ExecPlacementPolicy.decide(
+				hop, privacy, fType, capsOracle);
+		if (!policyDecision.hasAny()) {
+			throw new DMLRuntimeException("Unsupported privacy level " + privacy
+					+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
 		}
 
-		// 2) Oracle × Privacy 매트릭스를 DP enumerateHop에서 그대로 옮김
-		switch (privacy) {
-			case PRIVATE:
-			case PRIVATE_AGGREGATE:
-				// FED/FOUT only (oracleExec == FED && placement == FOUT)
-				if (oracleExec == ExecType.FED && placement == FederatedOutput.FOUT) {
-					caps.allowFED_FOUT = true;
-				} else {
-					throw new DMLRuntimeException("Unsupported privacy level " + privacy
-							+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
-				}
-				break;
-
-			case PRIVATE_AGGREGATE_TO_PUBLIC:
-				if (oracleExec == ExecType.FED) {
-					// FED/FOUT: placement == FOUT 일 때만
-					if (placement == FederatedOutput.FOUT) {
-						caps.allowFED_FOUT = true;
-					}
-					// aggregation 이후 FED/LOUT 허용
-					caps.allowFED_LOUT = true;
-				} else {
-					throw new DMLRuntimeException("Unsupported privacy level " + privacy
-							+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
-				}
-				break;
-			case PUBLIC:
-				if (oracleExec == ExecType.FED) {
-					// FED/FOUT: placement == FOUT 일 때만
-					if (placement == FederatedOutput.FOUT) {
-						caps.allowFED_FOUT = true;
-					}
-					// FED/LOUT: placement와 무관하게 허용 (FED 실행 후 gather)
-					caps.allowFED_LOUT = true;
-				}
-
-				if (hop.getDataType().isMatrix() && fType != null
-						&& fType != FType.PART && fType != FType.OTHER) {
-					caps.allowCP_FOUT = true;
-				}
-
-				// CP/LOUT: 항상 허용 (DP에서 무조건 플랜 생성)
-				caps.allowCP_LOUT = true;
-				break;
-			default:
-				throw new DMLRuntimeException("Unsupported privacy level " + privacy
-						+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
-		}
+		caps.allowCP_LOUT = policyDecision.allowCP_LOUT;
+		caps.allowCP_FOUT = policyDecision.allowCP_FOUT;
+		caps.allowFED_LOUT = policyDecision.allowFED_LOUT;
+		caps.allowFED_FOUT = policyDecision.allowFED_FOUT;
 
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
@@ -885,9 +761,6 @@ public final class FederatedPlanMinSTPlanner {
 	}
 
 	public static class FederatedPlanMinSTRewire {
-		private static final double DEFAULT_LOOP_WEIGHT = 10.0;
-		private static final double DEFAULT_IF_ELSE_WEIGHT = 0.5;
-
 		public static final String FED_MATRIX_IDENTIFIER = "matrix";
 		public static final String FED_FRAME_IDENTIFIER = "frame";
 
@@ -969,9 +842,9 @@ public final class FederatedPlanMinSTPlanner {
 				newFormerTransTable.putAll(innerTransTable);
 				Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 				elseFormerTransTable.putAll(innerTransTable);
-				computeWeight *= DEFAULT_IF_ELSE_WEIGHT;
+				computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
 				// Todo: network weight을 0.5로 안하는 이유가 있나? 잘 모르겠음. 고민해봐야함.
-				// networkWeight *= DEFAULT_IF_ELSE_WEIGHT;
+				// networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
 
 				for (StatementBlock innerIsb : istmt.getIfBody())
 					newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
@@ -999,7 +872,7 @@ public final class FederatedPlanMinSTPlanner {
 				ForStatement fstmt = (ForStatement) fsb.getStatement(0);
 
 				// Calculate for-loop iteration count if possible
-				double loopWeight = DEFAULT_LOOP_WEIGHT;
+				double loopWeight = RewireConstants.DEFAULT_LOOP_WEIGHT;
 				Hop from = fsb.getFromHops().getInput().get(0);
 				Hop to = fsb.getToHops().getInput().get(0);
 				Hop incr = (fsb.getIncrementHops() != null) ? fsb.getIncrementHops().getInput().get(0)
@@ -1055,12 +928,12 @@ public final class FederatedPlanMinSTPlanner {
 				WhileStatementBlock wsb = (WhileStatementBlock) sb;
 				WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
-				computeWeight *= DEFAULT_LOOP_WEIGHT;
-				networkWeight *= DEFAULT_LOOP_WEIGHT;
+					computeWeight *= RewireConstants.DEFAULT_LOOP_WEIGHT;
+					networkWeight *= RewireConstants.DEFAULT_LOOP_WEIGHT;
 
 				// Create current loop context (copy parent context)
 				List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
-				currentLoopStack.add(Pair.of(sb.getSBID(), DEFAULT_LOOP_WEIGHT));
+					currentLoopStack.add(Pair.of(sb.getSBID(), RewireConstants.DEFAULT_LOOP_WEIGHT));
 
 				rewireHopDAG(wsb.getPredicateHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList,
 						null, innerTransTable,
@@ -1132,8 +1005,8 @@ public final class FederatedPlanMinSTPlanner {
 			// which is called AFTER child visiting, but we need it DURING child visiting
 			if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				String hopName = hop.getName();
-				List<Hop> transChildHops = rewireTransRead(hopName, innerTransTable, formerTransTable,
-						outerTransTableList);
+				List<Hop> transChildHops = TransTableRewireUtils.rewireTransRead(
+						hopName, innerTransTable, formerTransTable, outerTransTableList);
 				if (transChildHops != null && !transChildHops.isEmpty()) {
 					rewireTable.put(hop.getHopID(), transChildHops);
 					childHops.addAll(transChildHops);
@@ -1150,9 +1023,7 @@ public final class FederatedPlanMinSTPlanner {
 
 			// Identify hops to connect to the root dummy node
 			// Connect TWrite pred and u(print) to the root dummy node
-			if ((hop instanceof DataOp && (hop.getName().equals("__pred"))) // TWrite "__pred"
-					|| (hop instanceof UnaryOp && ((UnaryOp) hop).getOp() == OpOp1.PRINT) // u(print)
-					|| (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.PERSISTENTWRITE)) { // PWrite
+			if (HopUtils.isPredTWrite(hop) || HopUtils.isPrintOrPWrite(hop)) {
 				progRootHopSet.add(hop);
 			} else if (!(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
 					&& hop.getParent().size() == 0) {
@@ -1262,9 +1133,12 @@ public final class FederatedPlanMinSTPlanner {
 				} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 					// 4) TRead: TWrite로부터 privacy/FType/caps 복사 (Oracle 사용 X)
 					List<Hop> childHops = rewireTable.get(hop.getHopID());
-					if (childHops == null) {
-						childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
-						rewireTable.put(hop.getHopID(), childHops);
+					if (childHops == null || childHops.isEmpty()) {
+						childHops = TransTableRewireUtils.rewireTransRead(
+								hopName, innerTransTable, formerTransTable, outerTransTableList);
+						if (childHops != null && !childHops.isEmpty()) {
+							rewireTable.put(hop.getHopID(), childHops);
+						}
 					}
 
 					if (childHops == null || childHops.isEmpty()) {
@@ -1329,7 +1203,7 @@ public final class FederatedPlanMinSTPlanner {
 				collectedHopList.add(input);
 				collectedFTypes.add(fTypeMap.get(input.getHopID()));
 			}
-			List<FType> alignedFTypes = alignInputFTypes(hop, collectedHopList, collectedFTypes);
+			List<FType> alignedFTypes = OracleUtils.alignInputFTypes(hop, collectedHopList, collectedFTypes);
 
 			// Oracle 호출: exec/placement + foutFType
 			OpCaps opCaps = oracleFacade != null ? oracleFacade.decide(hop, alignedFTypes) : null;
@@ -1360,169 +1234,25 @@ public final class FederatedPlanMinSTPlanner {
 			return new Vertex(hop, privacy, fType, caps);
 		}
 
-		private static List<Hop> rewireTransRead(String hopName, Map<String, List<Hop>> innerTransTable,
-				Map<String, List<Hop>> formerTransTable, List<Map<String, List<Hop>>> outerTransTableList) {
-			List<Hop> childHops = new ArrayList<>();
-
-			// Read according to priority: inner -> former -> outer
-			if (!innerTransTable.isEmpty()) {
-				childHops = innerTransTable.get(hopName);
-			}
-
-			if ((childHops == null || childHops.isEmpty()) && formerTransTable != null) {
-				childHops = formerTransTable.get(hopName);
-			}
-
-			if (childHops == null || childHops.isEmpty()) {
-				// Traverse in reverse order from the last inserted outerTransTable
-				for (int i = outerTransTableList.size() - 1; i >= 0; i--) {
-					Map<String, List<Hop>> outerTransTable = outerTransTableList.get(i);
-					childHops = outerTransTable.get(hopName);
-					if (childHops != null && !childHops.isEmpty())
-						break;
-				}
-			}
-
-			return childHops;
-		}
-
 		private static void wireUnRefTwriteToLiveOut(StatementBlock sb, Set<Long> unRefTwriteSet,
 				FederatedPlanMinSTGraph graph,
 				Map<String, List<Hop>> newFormerTransTable,
 				Map<Long, FType> fTypeMap) {
 
+			Function<Long, Hop> hopLookup = id -> {
+				FederatedPlanMinSTGraph.Vertex v = graph.getVertex(id);
+				return (v != null) ? v.getHopRef() : null;
+			};
+
 			FederatedPlannerUtils.wireUnRefTwriteToLiveOutCommon(
 					sb,
 					unRefTwriteSet,
-					// hopLookup: hopID -> Hop (Vertex가 없으면 null)
-					id -> {
-						FederatedPlanMinSTGraph.Vertex v = graph.getVertex(id);
-						return (v != null) ? v.getHopRef() : null;
-					},
+					hopLookup,
 					newFormerTransTable,
 					// compatFn: unRefTwriteHop vs 대표 liveOutHop
-					(unRefTwriteHop, liveOutHop) -> calculateCompatibilityScore(unRefTwriteHop, liveOutHop, graph),
+					(unRefTwriteHop, liveOutHop) -> TransTableRewireUtils.calculateCompatibilityScore(
+							unRefTwriteHop, liveOutHop, hopLookup),
 					"[MinST]");
-		}
-
-		// NOTE: keep in sync with DP planner:
-		// FederatedPlannerFedCostBased.FederatedPlanRewireTransTable.calculateCompatibilityScore
-		private static FederatedPlannerUtils.CompatibilityScore calculateCompatibilityScore(
-				Hop unRefTwriteHop, Hop liveOutHop,
-				FederatedPlanMinSTGraph graph) {
-
-			int nameScore = getMatchingPriority(unRefTwriteHop.getName(), liveOutHop.getName());
-			boolean sameDataType = unRefTwriteHop.getDataType() == liveOutHop.getDataType()
-					&& unRefTwriteHop.getValueType() == liveOutHop.getValueType();
-
-			if (sameDataType) {
-				return new FederatedPlannerUtils.CompatibilityScore(1, 0, nameScore);
-			}
-
-			double dimSimilarity = calculateDimensionSimilarity(unRefTwriteHop, liveOutHop);
-			if (dimSimilarity > 0) {
-				int dimScore = (int) Math.round((1 - dimSimilarity) * 100);
-				return new FederatedPlannerUtils.CompatibilityScore(2, dimScore, nameScore);
-			}
-
-			double commonChildMemEstimate = findCommonChildrenMemEstimate(
-					unRefTwriteHop, liveOutHop, graph);
-			if (commonChildMemEstimate > 0) {
-				int childScore = (int) Math.max(0, 10000 - Math.min(commonChildMemEstimate, 10000));
-				return new FederatedPlannerUtils.CompatibilityScore(3, childScore, nameScore);
-			}
-
-			return new FederatedPlannerUtils.CompatibilityScore(4, 0, nameScore);
-		}
-
-		private static int getMatchingPriority(String unRefTwriteHopName, String liveOutHopName) {
-			if (unRefTwriteHopName.equals(liveOutHopName)) {
-				return 1; // 정확한 이름 매칭 (최우선)
-			}
-
-			if (unRefTwriteHopName.startsWith(liveOutHopName) ||
-					liveOutHopName.startsWith(unRefTwriteHopName)) {
-				return 2; // 접두사 매칭
-			}
-
-			if (unRefTwriteHopName.contains(liveOutHopName) ||
-					liveOutHopName.contains(unRefTwriteHopName)) {
-				return 3; // 부분 문자열 매칭
-			}
-
-			return 4; // 매칭 없음
-		}
-
-		// 차원 유사성 계산 (0.0 ~ 1.0, 1.0이 가장 유사)
-		private static double calculateDimensionSimilarity(Hop hop1, Hop hop2) {
-			long dim1_1 = hop1.getDim1();
-			long dim1_2 = hop1.getDim2();
-			long dim2_1 = hop2.getDim1();
-			long dim2_2 = hop2.getDim2();
-
-			// 완전히 같은 차원
-			if (dim1_1 == dim2_1 && dim1_2 == dim2_2) {
-				return 1.0;
-			}
-
-			// 한 차원이라도 -1이면 유사성 낮음
-			if (dim1_1 == -1 || dim1_2 == -1 || dim2_1 == -1 || dim2_2 == -1) {
-				return 0.1;
-			}
-
-			// 차원 비율 계산
-			double ratio1 = (dim1_1 == 0 || dim2_1 == 0) ? 0
-					: Math.min(dim1_1, dim2_1) / (double) Math.max(dim1_1, dim2_1);
-			double ratio2 = (dim1_2 == 0 || dim2_2 == 0) ? 0
-					: Math.min(dim1_2, dim2_2) / (double) Math.max(dim1_2, dim2_2);
-
-			// 평균 유사성
-			return (ratio1 + ratio2) / 2.0;
-		}
-
-		// 공통 child들의 메모리 추정치 계산 (재귀적 탐색, depth 5 제한)
-		private static double findCommonChildrenMemEstimate(Hop hop1, Hop hop2, FederatedPlanMinSTGraph graph) {
-			Set<Long> children1 = getAllChildren(hop1, new HashSet<>(), 5);
-			Set<Long> children2 = getAllChildren(hop2, new HashSet<>(), 5);
-
-			// 교집합 찾기
-			Set<Long> commonChildren = new HashSet<>(children1);
-			commonChildren.retainAll(children2);
-
-			// 공통 child들의 총 메모리 추정치 계산 (HopRef 기반)
-			double totalMemEstimate = 0.0;
-			for (Long childId : commonChildren) {
-				Vertex v = graph.getVertex(childId);
-				if (v != null) {
-					Hop childHop = v.getHopRef();
-					if (childHop != null) {
-						// HopRef의 output memory estimate 사용
-						totalMemEstimate += childHop.getOutputMemEstimate();
-					}
-				}
-			}
-
-			return totalMemEstimate;
-		}
-
-		// 모든 자식 hop들을 재귀적으로 수집 (depth 제한)
-		private static Set<Long> getAllChildren(Hop hop, Set<Long> visited, int maxDepth) {
-			Set<Long> children = new HashSet<>();
-
-			if (maxDepth <= 0 || visited.contains(hop.getHopID())) {
-				return children; // depth 제한 또는 순환 방지
-			}
-
-			visited.add(hop.getHopID());
-
-			if (hop.getInput() != null) {
-				for (Hop child : hop.getInput()) {
-					children.add(child.getHopID());
-					children.addAll(getAllChildren(child, visited, maxDepth - 1));
-				}
-			}
-
-			return children;
 		}
 	}
 
