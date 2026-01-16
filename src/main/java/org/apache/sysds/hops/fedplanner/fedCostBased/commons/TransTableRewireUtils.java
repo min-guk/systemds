@@ -19,11 +19,14 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.CompatibilityScore;
 
@@ -69,6 +72,114 @@ public final class TransTableRewireUtils {
 			return null;
 		}
 		return childHops;
+	}
+
+	public static List<Hop> resolveTransReadChildren(long hopId, String hopName, Map<Long, List<Hop>> rewireTable,
+			Map<String, List<Hop>> innerTransTable, Map<String, List<Hop>> formerTransTable,
+			List<Map<String, List<Hop>>> outerTransTableList) {
+		List<Hop> childHops = (rewireTable != null) ? rewireTable.get(hopId) : null;
+		if (childHops == null || childHops.isEmpty()) {
+			childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
+			if (rewireTable != null && childHops != null && !childHops.isEmpty()) {
+				List<Hop> snapshot = new ArrayList<>(childHops);
+				rewireTable.put(hopId, snapshot);
+				childHops = snapshot;
+			}
+		}
+
+		if (childHops == null || childHops.isEmpty()) {
+			return null;
+		}
+		return childHops;
+	}
+
+	public static List<Hop> filterByName(List<Hop> childHops, String hopName, boolean fallbackToOriginal) {
+		if (childHops == null || childHops.isEmpty()) {
+			return childHops;
+		}
+
+		List<Hop> filtered = new ArrayList<>();
+		for (Hop childHop : childHops) {
+			if (hopName != null && hopName.equals(childHop.getName())) {
+				filtered.add(childHop);
+			}
+		}
+
+		if (filtered.isEmpty() && fallbackToOriginal) {
+			return childHops;
+		}
+		return filtered;
+	}
+
+	public static List<Hop> filterInjectedChildren(List<Hop> childHops, Set<Long> injectedIds,
+			boolean fallbackToOriginal) {
+		if (childHops == null || childHops.isEmpty() || injectedIds == null || injectedIds.isEmpty()) {
+			return childHops;
+		}
+
+		List<Hop> filtered = new ArrayList<>();
+		for (Hop childHop : childHops) {
+			if (!injectedIds.contains(childHop.getHopID())) {
+				filtered.add(childHop);
+			}
+		}
+
+		if (filtered.isEmpty() && fallbackToOriginal) {
+			return childHops;
+		}
+		return filtered;
+	}
+
+	public static List<Hop> preferNonTransientReadChildren(List<Hop> childHops) {
+		if (childHops == null || childHops.isEmpty()) {
+			return childHops;
+		}
+
+		boolean hasNonTransientRead = false;
+		for (Hop childHop : childHops) {
+			if (!(childHop instanceof DataOp)
+					|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTREAD) {
+				hasNonTransientRead = true;
+				break;
+			}
+		}
+
+		if (!hasNonTransientRead) {
+			return childHops;
+		}
+
+		List<Hop> filtered = new ArrayList<>();
+		for (Hop childHop : childHops) {
+			if (childHop instanceof DataOp
+					&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+				continue;
+			}
+			filtered.add(childHop);
+		}
+		return filtered;
+	}
+
+	public static void registerTransReadMapping(long hopId, List<Hop> childHops,
+			Map<Long, List<Hop>> rewireTable) {
+		if (rewireTable == null || childHops == null || childHops.isEmpty()) {
+			return;
+		}
+		rewireTable.put(hopId, new ArrayList<>(childHops));
+	}
+
+	public static void registerTransWriteLinks(Hop transReadHop, List<Hop> childHops,
+			Map<Long, List<Hop>> rewireTable, Set<Long> unRefTwriteSet) {
+		if (rewireTable == null || transReadHop == null || childHops == null || childHops.isEmpty()) {
+			return;
+		}
+
+		for (Hop childHop : childHops) {
+			long childHopId = childHop.getHopID();
+			rewireTable.computeIfAbsent(childHopId, k -> new ArrayList<>()).add(transReadHop);
+			if (unRefTwriteSet != null) {
+				unRefTwriteSet.remove(childHopId);
+			}
+		}
 	}
 
 	public static CompatibilityScore calculateCompatibilityScore(Hop unRefTwriteHop, Hop liveOutHop,

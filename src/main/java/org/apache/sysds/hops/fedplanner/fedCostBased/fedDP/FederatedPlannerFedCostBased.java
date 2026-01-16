@@ -31,7 +31,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
@@ -724,15 +723,14 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 					childCostFEDExec += fOUTOnlychildCumulativeCost.get(j);
 				}
 
-				List<FType> alignedInputFTypes = OracleUtils.alignInputFTypes(hop, collectedHops, collectedFTypes);
-				OpCaps caps = oracleCache.computeIfAbsent(alignedInputFTypes, k -> {
-					OpCaps decision = oracleFacade.decide(hop, k);
-					FederatedPlannerLogger.logOracleDecision(hop, privacyConstraint, k, decision, rewireTable);
-					return decision;
-				});
+				OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
+						hop, privacyConstraint, collectedHops, collectedFTypes,
+						oracleFacade, oracleCache, rewireTable);
+				List<FType> alignedInputFTypes = oracleDecision.alignedInputFTypes();
+				OpCaps caps = oracleDecision.caps();
 
 				ExecType oracleExec = caps.exec();
-				FType oracleLogicalFType = deriveLogicalFType(hop, caps);
+				FType oracleLogicalFType = oracleDecision.logicalFType();
 				double resultUploadCost = hopNetworkWeight * FederatedPlanCostEstimator.computeUploadNetworkCost(
 						hop.getOutputMemEstimate(), oracleLogicalFType, numOfWorkers);
 
@@ -819,19 +817,6 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 			fedPlan.setFType(baseFType);
 			fOutFedPlanVariants.addFedPlan(fedPlan);
 			memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
-		}
-
-		// Logical FType follows the oracle hint whenever available. This keeps
-		// the planner aligned with the oracle's view of the result layout.
-		private static FType deriveLogicalFType(Hop hop, OpCaps caps) {
-			Optional<FType> foutTypeOpt = caps != null ? caps.foutFType() : Optional.empty();
-
-			if (foutTypeOpt.isPresent()) {
-				return foutTypeOpt.get();
-			}
-
-			return null;
-
 		}
 
 		private static boolean allowsCPOverride(Privacy privacyConstraint, OpCaps caps) {
@@ -2720,8 +2705,9 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 						hop, hop.getInput(), privacyConstraintMap));
 			} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 				// Rewire TransRead
-				List<Hop> childHops = TransTableRewireUtils.rewireTransRead(
-						hopName, innerTransTable, formerTransTable, outerTransTableList);
+				List<Hop> childHops = TransTableRewireUtils.resolveTransReadChildren(
+						hop.getHopID(), hopName, rewireTable,
+						innerTransTable, formerTransTable, outerTransTableList);
 				boolean hasInner = false;
 				if (innerTransTable != null) {
 					List<Hop> innerHops = innerTransTable.get(hopName);
@@ -2746,35 +2732,9 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 					return;
 				}
 
-				List<Hop> filteredChildHops = new ArrayList<>();
-				for (Hop childHop : childHops) {
-					if (injectedIds != null && injectedIds.contains(childHop.getHopID()))
-						continue;
-					filteredChildHops.add(childHop);
-				}
-				if (filteredChildHops.isEmpty()) {
-					filteredChildHops.addAll(childHops);
-				}
-
-				boolean hasNonTRead = false;
-				for (Hop childHop : filteredChildHops) {
-					if (!(childHop instanceof DataOp)
-							|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTREAD) {
-						hasNonTRead = true;
-						break;
-					}
-				}
-				if (hasNonTRead) {
-					List<Hop> nonTReadChildHops = new ArrayList<>();
-					for (Hop childHop : filteredChildHops) {
-						if (childHop instanceof DataOp
-								&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-							continue;
-						}
-						nonTReadChildHops.add(childHop);
-					}
-					filteredChildHops = nonTReadChildHops;
-				}
+				List<Hop> filteredChildHops = TransTableRewireUtils.filterInjectedChildren(
+						childHops, injectedIds, true);
+				filteredChildHops = TransTableRewireUtils.preferNonTransientReadChildren(filteredChildHops);
 
 				FederatedPlannerLogger.logRewireHierarchy(hop, childHops, filteredChildHops, "RewireTransHop");
 
@@ -2787,16 +2747,8 @@ public class FederatedPlannerFedCostBased extends AFederatedPlanner {
 					return;
 				}
 
-				// Handle rewire table (TransRead -> TransWrite)
-				rewireTable.put(hop.getHopID(), filteredChildHops);
-
-				for (Hop filteredChildHop : filteredChildHops) {
-					long filteredChildHopID = filteredChildHop.getHopID();
-					// Rewire (TransWrite -> TransRead)
-					rewireTable.computeIfAbsent(filteredChildHopID, k -> new ArrayList<>()).add(hop);
-					// Remove refTWrite from unRefTwriteSet
-					unRefTwriteSet.remove(filteredChildHopID);
-				}
+				TransTableRewireUtils.registerTransReadMapping(hop.getHopID(), filteredChildHops, rewireTable);
+				TransTableRewireUtils.registerTransWriteLinks(hop, filteredChildHops, rewireTable, unRefTwriteSet);
 				// Propagate Privacy Constraint
 				privacyConstraintMap.put(hop.getHopID(), FederatedPlannerUtils.getPrivacyConstraint(
 						hop, filteredChildHops, privacyConstraintMap));

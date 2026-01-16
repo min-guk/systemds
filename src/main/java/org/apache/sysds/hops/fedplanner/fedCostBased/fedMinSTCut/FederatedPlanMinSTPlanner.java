@@ -1005,10 +1005,10 @@ public final class FederatedPlanMinSTPlanner {
 			// which is called AFTER child visiting, but we need it DURING child visiting
 			if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				String hopName = hop.getName();
-				List<Hop> transChildHops = TransTableRewireUtils.rewireTransRead(
-						hopName, innerTransTable, formerTransTable, outerTransTableList);
+				List<Hop> transChildHops = TransTableRewireUtils.resolveTransReadChildren(
+						hop.getHopID(), hopName, rewireTable,
+						innerTransTable, formerTransTable, outerTransTableList);
 				if (transChildHops != null && !transChildHops.isEmpty()) {
-					rewireTable.put(hop.getHopID(), transChildHops);
 					childHops.addAll(transChildHops);
 				}
 			}
@@ -1132,14 +1132,9 @@ public final class FederatedPlanMinSTPlanner {
 							"Propagated from single input (HopID: " + hop.getInput(0).getHopID() + ")");
 				} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 					// 4) TRead: TWrite로부터 privacy/FType/caps 복사 (Oracle 사용 X)
-					List<Hop> childHops = rewireTable.get(hop.getHopID());
-					if (childHops == null || childHops.isEmpty()) {
-						childHops = TransTableRewireUtils.rewireTransRead(
-								hopName, innerTransTable, formerTransTable, outerTransTableList);
-						if (childHops != null && !childHops.isEmpty()) {
-							rewireTable.put(hop.getHopID(), childHops);
-						}
-					}
+					List<Hop> childHops = TransTableRewireUtils.resolveTransReadChildren(
+							hop.getHopID(), hopName, rewireTable,
+							innerTransTable, formerTransTable, outerTransTableList);
 
 					if (childHops == null || childHops.isEmpty()) {
 						FederatedPlannerLogger.logTransReadRewireDebug(
@@ -1147,11 +1142,8 @@ public final class FederatedPlanMinSTPlanner {
 						return null;
 					}
 
-					List<Hop> filteredChildHops = new ArrayList<>();
-					for (Hop childHop : childHops) {
-						if (hopName.equals(childHop.getName()))
-							filteredChildHops.add(childHop);
-					}
+					List<Hop> filteredChildHops = TransTableRewireUtils.filterByName(
+							childHops, hopName, false);
 
 					FederatedPlannerLogger.logRewireHierarchy(
 							hop, childHops, filteredChildHops, "RewireTransHop");
@@ -1162,11 +1154,10 @@ public final class FederatedPlanMinSTPlanner {
 						return null;
 					}
 
+					TransTableRewireUtils.registerTransReadMapping(hop.getHopID(), filteredChildHops, rewireTable);
 					Hop twHop = filteredChildHops.get(0);
-					for (Hop filteredChildHop : filteredChildHops) {
-						rewireTable.computeIfAbsent(filteredChildHop.getHopID(), k -> new ArrayList<>()).add(hop);
-						unRefTwriteSet.remove(filteredChildHop.getHopID());
-					}
+					TransTableRewireUtils.registerTransWriteLinks(
+							hop, filteredChildHops, rewireTable, unRefTwriteSet);
 
 					// TWrite에서 privacy/FType 가져오기
 					fType = fTypeMap.get(twHop.getHopID());
@@ -1203,20 +1194,17 @@ public final class FederatedPlanMinSTPlanner {
 				collectedHopList.add(input);
 				collectedFTypes.add(fTypeMap.get(input.getHopID()));
 			}
-			List<FType> alignedFTypes = OracleUtils.alignInputFTypes(hop, collectedHopList, collectedFTypes);
 
-			// Oracle 호출: exec/placement + foutFType
-			OpCaps opCaps = oracleFacade != null ? oracleFacade.decide(hop, alignedFTypes) : null;
-			if (opCaps != null) {
-				FederatedPlannerLogger.logOracleDecision(
-						hop, privacy, alignedFTypes, opCaps, rewireTable);
-			}
+			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
+					hop, privacy, collectedHopList, collectedFTypes,
+					oracleFacade, null, rewireTable);
+			OpCaps opCaps = oracleDecision.caps();
 
 			// Oracle foutFType을 FType으로 반영 (getFederatedType 대체)
-			if (opCaps != null && opCaps.foutFType().isPresent()) {
-				FType oracleFType = opCaps.foutFType().get();
+			FType oracleFType = oracleDecision.logicalFType();
+			if (oracleFType != null) {
 				// FEDERATED DataOp는 partition 기반 FType과 충돌할 수 있으니, 필요하면 로깅
-				if (fType != null && oracleFType != null && !fType.equals(oracleFType)) {
+				if (fType != null && !fType.equals(oracleFType)) {
 					FederatedPlannerLogger.logInfoMessage(
 							"[MinST] Oracle foutFType " + oracleFType + " overrides existing FType "
 									+ fType + " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");

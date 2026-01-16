@@ -22,13 +22,70 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 
 public final class OracleUtils {
+	public static final class OracleDecision {
+		private final List<FType> alignedInputFTypes;
+		private final OpCaps caps;
+		private final FType logicalFType;
+
+		private OracleDecision(List<FType> alignedInputFTypes, OpCaps caps, FType logicalFType) {
+			this.alignedInputFTypes = alignedInputFTypes;
+			this.caps = caps;
+			this.logicalFType = logicalFType;
+		}
+
+		public List<FType> alignedInputFTypes() {
+			return alignedInputFTypes;
+		}
+
+		public OpCaps caps() {
+			return caps;
+		}
+
+		public FType logicalFType() {
+			return logicalFType;
+		}
+	}
+
 	private OracleUtils() {
 		// utility class
+	}
+
+	public static OracleDecision decideWithOracle(Hop hop, Privacy privacy, List<Hop> collectedHops,
+			List<FType> collectedFTypes, OracleFacade oracleFacade, Map<List<FType>, OpCaps> oracleCache,
+			Map<Long, List<Hop>> rewireTable) {
+		List<FType> alignedInputFTypes = alignInputFTypes(hop, collectedHops, collectedFTypes);
+		OpCaps caps = null;
+
+		if (oracleFacade != null) {
+			if (oracleCache != null) {
+				caps = oracleCache.computeIfAbsent(alignedInputFTypes, k -> {
+					OpCaps decision = oracleFacade.decide(hop, k);
+					FederatedPlannerLogger.logOracleDecision(hop, privacy, k, decision, rewireTable);
+					return decision;
+				});
+			} else {
+				caps = oracleFacade.decide(hop, alignedInputFTypes);
+				if (caps != null) {
+					FederatedPlannerLogger.logOracleDecision(hop, privacy, alignedInputFTypes, caps, rewireTable);
+				}
+			}
+		}
+
+		FType logicalFType = null;
+		if (caps != null && caps.foutFType().isPresent()) {
+			logicalFType = caps.foutFType().get();
+		}
+
+		return new OracleDecision(alignedInputFTypes, caps, logicalFType);
 	}
 
 	public static List<FType> alignInputFTypes(Hop hop, List<Hop> collectedHops, List<FType> collectedFTypes) {
