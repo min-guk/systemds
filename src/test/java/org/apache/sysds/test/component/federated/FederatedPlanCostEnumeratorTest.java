@@ -39,7 +39,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.DMLProgram;
@@ -163,7 +163,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 			DMLProgram prog = parseAndRewrite(scriptFilename);
 
 			Map<Long, List<Hop>> rewireTable = new HashMap<>();
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable = new HashMap<>();
+			Map<Long, HopCommon> hopCommonTable = new HashMap<>();
 			Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
 			List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
 			Set<Long> unRefTwriteSet = new HashSet<>();
@@ -191,7 +191,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 					assertInnerIfElseWeights(prog, hopCommonTable);
 				boolean hasIter1Multiplicity = false;
 				for (Long cloneId : unrollCtx.getCloneToOrig().keySet()) {
-					FederatedPlannerDpMemoTable.HopCommon hc = hopCommonTable.get(cloneId);
+					HopCommon hc = hopCommonTable.get(cloneId);
 					if (hc != null && hc.getMultiplicity() > 1.0) {
 						hasIter1Multiplicity = true;
 						break;
@@ -248,7 +248,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 	}
 
 	private void assertForwardingWeightScaled(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			Map<Long, HopCommon> hopCommonTable,
 			FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx,
 			boolean requireAmortization) {
 		List<Hop> roots = new ArrayList<>();
@@ -275,8 +275,8 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 				if (child == null)
 					continue;
 				stack.push(child);
-				FederatedPlannerDpMemoTable.HopCommon parentCommon = hopCommonTable.get(hopId);
-				FederatedPlannerDpMemoTable.HopCommon childCommon =
+				HopCommon parentCommon = hopCommonTable.get(hopId);
+				HopCommon childCommon =
 					hopCommonTable.get(child.getHopID());
 				if (parentCommon == null || childCommon == null)
 					continue;
@@ -330,7 +330,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 	}
 
 	private void assertNestedLoopWeights(DMLProgram prog,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			Map<Long, HopCommon> hopCommonTable,
 			Map<Long, List<Hop>> rewireTable,
 			FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx) {
 		Pair<ForStatementBlock, ForStatementBlock> loops = findNestedForLoops(prog);
@@ -343,7 +343,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		Assert.assertTrue("Expected outer loop to have iter1 multiplicity", outerIter1 > 0.0);
 		long innerLoopId = inner.getSBID();
 
-		FederatedPlannerDpMemoTable.HopCommon innerPlus =
+		HopCommon innerPlus =
 			findBinaryPlusHop(hopCommonTable, "W", "X", innerLoopId, outerIter1, innerWeight);
 		Assert.assertNotNull("Expected inner W+X hop for nested loop", innerPlus);
 		Assert.assertEquals("Inner plus computeWeight mismatch", innerWeight, innerPlus.getComputeWeight(), 1e-9);
@@ -361,19 +361,19 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 			: (isTRead(innerPlusRight, "X") ? innerPlusRight : null);
 		Assert.assertNotNull("Expected TRead X input on inner plus hop", treadXHop);
 
-		FederatedPlannerDpMemoTable.HopCommon sumHop =
+		HopCommon sumHop =
 			findSumHopOutsideInner(hopCommonTable, "W", innerLoopId, outerIter1);
 		Assert.assertNotNull("Expected sum(W) hop outside inner loop", sumHop);
 		Assert.assertEquals("Sum hop computeWeight mismatch", 1.0, sumHop.getComputeWeight(), 1e-9);
 		Assert.assertEquals("Sum hop multiplicity mismatch", outerIter1, sumHop.getMultiplicity(), 1e-9);
 		Assert.assertEquals("Sum hop networkWeight mismatch", 1.0, sumHop.getNetworkWeight(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon treadXInside =
+		HopCommon treadXInside =
 			hopCommonTable.get(treadXHop.getHopID());
 		Assert.assertNotNull("Expected TRead X inside inner loop", treadXInside);
 		Assert.assertEquals("TRead X networkWeight mismatch", innerWeight, treadXInside.getNetworkWeight(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon twriteXOutside =
+		HopCommon twriteXOutside =
 			findConnectedTWrite(treadXInside, hopCommonTable, rewireTable, "X", innerLoopId, false, 1.0);
 		Assert.assertNotNull("Expected TWrite X outside inner loop via rewire edge", twriteXOutside);
 		Assert.assertEquals("TWrite X multiplicity mismatch", 1.0, twriteXOutside.getMultiplicity(), 1e-9);
@@ -387,12 +387,12 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 
 		Hop sumHopInput = sumHop.getHopRef().getInput().get(0);
 		Assert.assertTrue("Expected TRead W input on sum(W) hop", isTRead(sumHopInput, "W"));
-		FederatedPlannerDpMemoTable.HopCommon treadWOutside =
+		HopCommon treadWOutside =
 			hopCommonTable.get(sumHopInput.getHopID());
 		Assert.assertNotNull("Expected TRead W outside inner loop", treadWOutside);
 		Assert.assertEquals("TRead W multiplicity mismatch", outerIter1, treadWOutside.getMultiplicity(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon twriteWInside =
+		HopCommon twriteWInside =
 			findConnectedTWrite(treadWOutside, hopCommonTable, rewireTable, "W", innerLoopId, true, outerIter1);
 		Assert.assertNotNull("Expected TWrite W inside inner loop via rewire edge", twriteWInside);
 		Assert.assertEquals("TWrite W multiplicity mismatch", outerIter1, twriteWInside.getMultiplicity(), 1e-9);
@@ -407,7 +407,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 	}
 
 	private void assertNestedLoopWeightsWithOuterXUpdate(DMLProgram prog,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			Map<Long, HopCommon> hopCommonTable,
 			Map<Long, List<Hop>> rewireTable,
 			FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx) {
 		Pair<ForStatementBlock, ForStatementBlock> loops = findNestedForLoops(prog);
@@ -421,7 +421,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		long outerLoopId = outer.getSBID();
 		long innerLoopId = inner.getSBID();
 
-		FederatedPlannerDpMemoTable.HopCommon innerPlus =
+		HopCommon innerPlus =
 			findBinaryPlusHop(hopCommonTable, "W", "X", innerLoopId, outerIter1, innerWeight);
 		Assert.assertNotNull("Expected inner W+X hop for nested loop", innerPlus);
 		Assert.assertEquals("Inner plus computeWeight mismatch", innerWeight, innerPlus.getComputeWeight(), 1e-9);
@@ -432,7 +432,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		Assert.assertEquals("Nested loop total compute weight mismatch", outerWeight * innerWeight,
 			totalInnerWeight, 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon outerPlus =
+		HopCommon outerPlus =
 			findBinaryPlusHop(hopCommonTable, "W", "X", outerLoopId, outerIter1, 1.0);
 		Assert.assertNotNull("Expected outer X=W+X hop", outerPlus);
 		Assert.assertFalse("Expected outer X=W+X hop outside inner loop",
@@ -448,19 +448,19 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 			: (isTRead(innerPlusRight, "X") ? innerPlusRight : null);
 		Assert.assertNotNull("Expected TRead X input on inner plus hop", treadXHop);
 
-		FederatedPlannerDpMemoTable.HopCommon sumHop =
+		HopCommon sumHop =
 			findSumHopOutsideInner(hopCommonTable, "W", innerLoopId, outerIter1);
 		Assert.assertNotNull("Expected sum(W) hop outside inner loop", sumHop);
 		Assert.assertEquals("Sum hop computeWeight mismatch", 1.0, sumHop.getComputeWeight(), 1e-9);
 		Assert.assertEquals("Sum hop multiplicity mismatch", outerIter1, sumHop.getMultiplicity(), 1e-9);
 		Assert.assertEquals("Sum hop networkWeight mismatch", 1.0, sumHop.getNetworkWeight(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon treadXInside =
+		HopCommon treadXInside =
 			hopCommonTable.get(treadXHop.getHopID());
 		Assert.assertNotNull("Expected TRead X inside inner loop", treadXInside);
 		Assert.assertEquals("TRead X networkWeight mismatch", innerWeight, treadXInside.getNetworkWeight(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon twriteXOuter =
+		HopCommon twriteXOuter =
 			findConnectedTWriteWithLoopContext(treadXInside, hopCommonTable, rewireTable, "X", outerLoopId,
 				innerLoopId);
 		Assert.assertNotNull("Expected TWrite X in outer loop via rewire edge", twriteXOuter);
@@ -475,7 +475,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 	}
 
 	private void assertInnerIfElseWeights(DMLProgram prog,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable) {
+			Map<Long, HopCommon> hopCommonTable) {
 		Pair<ForStatementBlock, ForStatementBlock> loops = findNestedForLoops(prog);
 		Assert.assertNotNull("Expected nested for loops in program", loops);
 		ForStatementBlock outer = loops.getLeft();
@@ -486,19 +486,19 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		long innerLoopId = inner.getSBID();
 		double halfWeight = innerWeight * 0.5;
 
-		FederatedPlannerDpMemoTable.HopCommon innerMult =
+		HopCommon innerMult =
 			findBinaryOpHop(hopCommonTable, Types.OpOp2.MULT, "W", "X", innerLoopId, outerIter1, halfWeight);
 		Assert.assertNotNull("Expected inner W*X hop inside if-else", innerMult);
 		Assert.assertEquals("Inner mult computeWeight mismatch", halfWeight, innerMult.getComputeWeight(), 1e-9);
 		Assert.assertEquals("Inner mult multiplicity mismatch", outerIter1, innerMult.getMultiplicity(), 1e-9);
 		Assert.assertEquals("Inner mult networkWeight mismatch", innerWeight, innerMult.getNetworkWeight(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon innerPlusHalf =
+		HopCommon innerPlusHalf =
 			findBinaryOpHop(hopCommonTable, Types.OpOp2.PLUS, "W", "X", innerLoopId, outerIter1, halfWeight);
 		Assert.assertNotNull("Expected inner W+X hop inside if-else", innerPlusHalf);
 		Assert.assertEquals("Inner plus(if) computeWeight mismatch", halfWeight, innerPlusHalf.getComputeWeight(), 1e-9);
 
-		FederatedPlannerDpMemoTable.HopCommon innerPlusFull =
+		HopCommon innerPlusFull =
 			findBinaryOpHop(hopCommonTable, Types.OpOp2.PLUS, "W", "X", innerLoopId, outerIter1, innerWeight);
 		Assert.assertNotNull("Expected inner W+X hop after if-else", innerPlusFull);
 		Assert.assertEquals("Inner plus(full) computeWeight mismatch", innerWeight,
@@ -581,24 +581,24 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		return loopWeight;
 	}
 
-	private FederatedPlannerDpMemoTable.HopCommon findBinaryPlusHop(
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+	private HopCommon findBinaryPlusHop(
+			Map<Long, HopCommon> hopCommonTable,
 			String left, String right, long loopId, double multiplicity) {
 		return findBinaryPlusHop(hopCommonTable, left, right, loopId, multiplicity, Double.NaN);
 	}
 
-	private FederatedPlannerDpMemoTable.HopCommon findBinaryPlusHop(
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+	private HopCommon findBinaryPlusHop(
+			Map<Long, HopCommon> hopCommonTable,
 			String left, String right, long loopId, double multiplicity, double expectedComputeWeight) {
 		return findBinaryOpHop(hopCommonTable, Types.OpOp2.PLUS, left, right, loopId,
 			multiplicity, expectedComputeWeight);
 	}
 
-	private FederatedPlannerDpMemoTable.HopCommon findBinaryOpHop(
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+	private HopCommon findBinaryOpHop(
+			Map<Long, HopCommon> hopCommonTable,
 			Types.OpOp2 op, String left, String right, long loopId, double multiplicity,
 			double expectedComputeWeight) {
-		for (FederatedPlannerDpMemoTable.HopCommon hc : hopCommonTable.values()) {
+		for (HopCommon hc : hopCommonTable.values()) {
 			Hop hop = hc.getHopRef();
 			if (!(hop instanceof org.apache.sysds.hops.BinaryOp))
 				continue;
@@ -619,10 +619,10 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		return null;
 	}
 
-	private FederatedPlannerDpMemoTable.HopCommon findSumHopOutsideInner(
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+	private HopCommon findSumHopOutsideInner(
+			Map<Long, HopCommon> hopCommonTable,
 			String varName, long innerLoopId, double multiplicity) {
-		for (FederatedPlannerDpMemoTable.HopCommon hc : hopCommonTable.values()) {
+		for (HopCommon hc : hopCommonTable.values()) {
 			Hop hop = hc.getHopRef();
 			if (!(hop instanceof org.apache.sysds.hops.AggUnaryOp))
 				continue;
@@ -640,9 +640,9 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		return null;
 	}
 
-	private FederatedPlannerDpMemoTable.HopCommon findConnectedTWrite(
-			FederatedPlannerDpMemoTable.HopCommon parentRead,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+	private HopCommon findConnectedTWrite(
+			HopCommon parentRead,
+			Map<Long, HopCommon> hopCommonTable,
 			Map<Long, List<Hop>> rewireTable, String varName, long loopId, boolean insideLoop,
 			double expectedMultiplicity) {
 		if (parentRead == null)
@@ -650,11 +650,11 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		List<Hop> children = rewireTable.get(parentRead.getHopRef().getHopID());
 		if (children == null || children.isEmpty())
 			return null;
-		FederatedPlannerDpMemoTable.HopCommon fallback = null;
+		HopCommon fallback = null;
 		for (Hop child : children) {
 			if (child == null)
 				continue;
-			FederatedPlannerDpMemoTable.HopCommon hc = hopCommonTable.get(child.getHopID());
+			HopCommon hc = hopCommonTable.get(child.getHopID());
 			if (hc == null)
 				continue;
 			Hop hop = hc.getHopRef();
@@ -675,9 +675,9 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		return fallback;
 	}
 
-	private FederatedPlannerDpMemoTable.HopCommon findConnectedTWriteWithLoopContext(
-			FederatedPlannerDpMemoTable.HopCommon parentRead,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+	private HopCommon findConnectedTWriteWithLoopContext(
+			HopCommon parentRead,
+			Map<Long, HopCommon> hopCommonTable,
 			Map<Long, List<Hop>> rewireTable, String varName, long requiredLoopId, long forbiddenLoopId) {
 		if (parentRead == null)
 			return null;
@@ -687,7 +687,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		for (Hop child : children) {
 			if (child == null)
 				continue;
-			FederatedPlannerDpMemoTable.HopCommon hc = hopCommonTable.get(child.getHopID());
+			HopCommon hc = hopCommonTable.get(child.getHopID());
 			if (hc == null)
 				continue;
 			Hop hop = hc.getHopRef();
@@ -709,7 +709,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 
 	private double computeTotalEffectiveWeight(
 			FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			Map<Long, HopCommon> hopCommonTable,
 			long hopId) {
 		if (hopCommonTable == null || hopCommonTable.isEmpty())
 			return 0.0;
@@ -718,14 +718,14 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 			? cloneToOrig.get(hopId)
 			: hopId;
 		double sum = 0.0;
-		for (Map.Entry<Long, FederatedPlannerDpMemoTable.HopCommon> entry
+		for (Map.Entry<Long, HopCommon> entry
 				: hopCommonTable.entrySet()) {
 			long candidateId = entry.getKey();
 			long candidateOrig = (cloneToOrig != null && cloneToOrig.containsKey(candidateId))
 				? cloneToOrig.get(candidateId)
 				: candidateId;
 			if (candidateOrig == targetOrig) {
-				FederatedPlannerDpMemoTable.HopCommon hc = entry.getValue();
+				HopCommon hc = entry.getValue();
 				sum += hc.getComputeWeight() * hc.getMultiplicity();
 			}
 		}

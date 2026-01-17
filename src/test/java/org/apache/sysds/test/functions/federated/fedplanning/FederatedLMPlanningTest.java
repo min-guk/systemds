@@ -55,12 +55,12 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 
 	@Test
 	public void runLMPlannerFOUTPrivacyNone(){
-		runTestWithConfig("SystemDS-config-fout.xml", null);
+		runTestWithConfig("SystemDS-config-fout.xml", "private-aggregate");
 	}
 
 	@Test
 	public void runLMPlannerHeuristicPrivacyNone(){
-		runTestWithConfig("SystemDS-config-heuristic.xml", null);
+		runTestWithConfig("SystemDS-config-heuristic.xml", "private-aggregate");
 	}
 
 	@Ignore

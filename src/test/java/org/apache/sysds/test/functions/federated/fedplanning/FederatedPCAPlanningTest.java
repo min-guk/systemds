@@ -56,12 +56,12 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 
 	@Test
 	public void runPCAPlannerFOUTPrivacyNone(){
-		runTestWithConfig("SystemDS-config-fout.xml", null);
+		runTestWithConfig("SystemDS-config-fout.xml", "private-aggregate");
 	}
 
 	@Test
 	public void runPCAPlannerHeuristicPrivacyNone(){
-		runTestWithConfig("SystemDS-config-heuristic.xml", null);
+		runTestWithConfig("SystemDS-config-heuristic.xml", "private-aggregate");
 	}
 
 	@Ignore

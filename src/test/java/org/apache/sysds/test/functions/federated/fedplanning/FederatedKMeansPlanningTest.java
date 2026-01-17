@@ -52,12 +52,12 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 
 	@Test
 	public void runKMeansPlannerFOUTPrivacyNone() {
-		runTestWithConfig("SystemDS-config-fout.xml", null);
+		runTestWithConfig("SystemDS-config-fout.xml", "private-aggregate");
 	}
 
 	@Test
 	public void runKMeansPlannerHeuristicPrivacyNone() {
-		runTestWithConfig("SystemDS-config-heuristic.xml", null);
+		runTestWithConfig("SystemDS-config-heuristic.xml", "private-aggregate");
 	}
 
 	@Test

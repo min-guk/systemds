@@ -26,5 +26,5 @@ Y = federated(addresses=list($Y1, $Y2),
 X = federated(addresses=list($X1, $X2),
     ranges=list(list(0, 0), list($r / 2, $c), list($r / 2, 0), list($r, $c)))
 
-B = lm::lm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=0, verbose=FALSE)
+B = lm::m_lm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=0, verbose=FALSE)
 write(B, $Z);
