@@ -246,8 +246,7 @@ public class FederatedPlanMinSTRewire {
 			Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 			elseFormerTransTable.putAll(innerTransTable);
 			computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
-			// Todo: network weight을 0.5로 안하는 이유가 있나? 잘 모르겠음. 고민해봐야함.
-			// networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
+			networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 					newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
