@@ -24,6 +24,10 @@ import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 
 public final class FederatedCostModel {
+	private static final String ENV_MBS_MEMORY_BANDWIDTH = "SYSDS_FED_COST_MEM_BW";
+	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
+	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
+
 	// Default values are used as reasonable estimates since we only need to compare
 	// relative costs between different federated plans.
 	// Memory bandwidth for local computations (25 GB/s).
@@ -32,6 +36,12 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
 	// Network latency between federated sites (1 ms).
 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
+	private static final double MBS_MEMORY_BANDWIDTH = getConfiguredDouble(ENV_MBS_MEMORY_BANDWIDTH,
+			DEFAULT_MBS_MEMORY_BANDWIDTH);
+	private static final double MBS_NETWORK_BANDWIDTH = getConfiguredDouble(ENV_MBS_NETWORK_BANDWIDTH,
+			DEFAULT_MBS_NETWORK_BANDWIDTH);
+	private static final double MBS_NETWORK_LATENCY = getConfiguredDouble(ENV_MBS_NETWORK_LATENCY,
+			DEFAULT_MBS_NETWORK_LATENCY);
 
 	private FederatedCostModel() {
 		// utility class
@@ -51,11 +61,11 @@ public final class FederatedCostModel {
 	public static double computeMemoryAccessCost(double memSize) {
 		if (memSize <= 0)
 			return 0.0;
-		return memSize / (1024 * 1024) / DEFAULT_MBS_MEMORY_BANDWIDTH;
+		return memSize / (1024 * 1024) / MBS_MEMORY_BANDWIDTH;
 	}
 
 	public static double computeNetworkCost(double memSize) {
-		return DEFAULT_MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / DEFAULT_MBS_NETWORK_BANDWIDTH);
+		return MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / MBS_NETWORK_BANDWIDTH);
 	}
 
 	public static double computeDownloadNetworkCost(double memSize) {
@@ -76,5 +86,18 @@ public final class FederatedCostModel {
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return computeUploadNetworkCost(memSize, fType, numWorkers);
 	}
-}
 
+	private static double getConfiguredDouble(String key, double fallback) {
+		String value = System.getProperty(key);
+		if (value == null || value.isEmpty())
+			value = System.getenv(key);
+		if (value == null || value.isEmpty())
+			return fallback;
+		try {
+			return Double.parseDouble(value);
+		} catch (NumberFormatException ex) {
+			return fallback;
+		}
+	}
+}
+ 
