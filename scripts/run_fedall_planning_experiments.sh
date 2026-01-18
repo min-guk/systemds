@@ -6,16 +6,16 @@ LOG_ROOT="${LOG_ROOT:-${ROOT_DIR}/logs/fedall}"
 TEST_PKG="org.apache.sysds.test.functions.federated.fedplanning"
 MVN_CMD="${MVN_CMD:-mvn}"
 MVN_ARGS="${MVN_ARGS:-}"
-COMPARE_LOG_FORMATS="${COMPARE_LOG_FORMATS:-hopid,oracle,oracle}"
+COMPARE_LOG_FORMATS="${COMPARE_LOG_FORMATS:-oracle,oracle,oracle}"
 
 TEST_MATRIX=(
   "FederatedCNNPlanningTest runCNNFOUTTest runCNNHeuristicTest runCNNCostBasedTestPrivateAggregate"
-  "FederatedKMeansPlanningTest runKMeansFOUTTest runKMeansHeuristicTest runKMeansCostBasedTestPrivateAggregate"
-  "FederatedL2SVMPlanningTest runL2SVMFOUTTest runL2SVMHeuristicTest runL2SVMCostBasedTestPrivateAggregate"
-  "FederatedLMPlanningTest runLMFOUTTest runLMHeuristicTest runLMCostBasedTestPrivateAggregate"
-  "FederatedLogRegPlanningTest runLogRegFOUTTest runLogRegHeuristicTest runLogRegCostBasedTestPrivateAggregate"
+  "FederatedKMeansPlanningTest runKMeansPlannerFOUTPrivacyNone runKMeansPlannerHeuristicPrivacyNone runKMeansPlannerDPPrivacyPrivateAggregate"
+  "FederatedL2SVMPlanningTest runL2SVMPlannerFOUTPrivacyNone runL2SVMPlannerHeuristicPrivacyNone runL2SVMPlannerDPPrivacyPrivateAggregate"
+  "FederatedLMPlanningTest runLMPlannerFOUTPrivacyNone runLMPlannerHeuristicPrivacyNone runLMPlannerDPPrivacyPrivateAggregate"
+  "FederatedLogRegPlanningTest runLogRegPlannerFOUTPrivacyNone runLogRegPlannerHeuristicPrivacyNone runLogRegPlannerDPPrivacyPrivateAggregate"
   "FederatedP2FFNPlanningTest runP2FFNFOUTTest runP2FFNHeuristicTest runP2FFNCostBasedTestPrivateAggregate"
-  "FederatedPCAPlanningTest runPCAFOUTTest runPCAHeuristicTest runPCACostBasedTestPrivateAggregate"
+  "FederatedPCAPlanningTest runPCAPlannerFOUTPrivacyNone runPCAPlannerHeuristicPrivacyNone runPCAPlannerDPPrivacyPrivateAggregate"
 )
 
 FAILED_TESTS=()

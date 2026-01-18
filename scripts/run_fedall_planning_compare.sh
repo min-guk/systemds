@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_ROOT="${LOG_ROOT:-${ROOT_DIR}/logs/fedall}"
-COMPARE_LOG_FORMATS="${COMPARE_LOG_FORMATS:-hopid,oracle,oracle}"
+COMPARE_LOG_FORMATS="${COMPARE_LOG_FORMATS:-oracle,oracle,oracle}"
 COMPARE_OUTPUT_NAME="${COMPARE_OUTPUT_NAME:-oracle_decision_diff.csv}"
 
 usage() {
@@ -17,7 +17,7 @@ Args:
 
 Env:
   LOG_ROOT              Root log directory (default: logs/fedall)
-  COMPARE_LOG_FORMATS   Comma-separated formats for cost/fedall/heuristic (default: hopid,oracle,oracle)
+  COMPARE_LOG_FORMATS   Comma-separated formats for cost/fedall/heuristic (default: oracle,oracle,oracle)
   COMPARE_OUTPUT_NAME   Output file name (default: oracle_decision_diff.csv)
 EOF
 }
