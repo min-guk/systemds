@@ -37,6 +37,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -61,11 +64,20 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  * forced federated operations.
  */
 public class FederatedPlannerFedAll extends AFederatedPlanner {
+
+	private final OracleFacade _oracle;
+	private final Map<Long, Map<List<FType>, OpCaps>> _oracleCache = new HashMap<>();
+
+	public FederatedPlannerFedAll() {
+		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
+		_oracle = new OracleFacade(registry);
+	}
 	
 	@Override
 	public void rewriteProgram( DMLProgram prog,
 		FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes )
 	{
+		_oracleCache.clear();
 		// handle main program
 		Map<String, FType> fedVars = new HashMap<>();
 		for(StatementBlock sb : prog.getStatementBlocks())
@@ -74,6 +86,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		_oracleCache.clear();
 		Map<String, FType> fedVars = new HashMap<>();
 		for(Map.Entry<String, Data> varName : funcArgs.entrySet()) {
 			Data data = varName.getValue();
@@ -172,15 +185,20 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			memo.put(hop.getHopID(), outFType);
 		}
 		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE) ) {
-			fedVars.put(hop.getName(), memo.get(hop.getHopID()));
-			outFType = getFederatedOut(hop, memo);
+			outFType = memo.get(hop.getInput(0).getHopID());
+			memo.put(hop.getHopID(), outFType);
+			fedVars.put(hop.getName(), outFType);
 		}
 		else if( allowsFederated(hop, memo) ) {
 			hop.setForcedExecType(ExecType.FED);
 			outFType = getFederatedOut(hop, memo);
 			memo.put(hop.getHopID(), outFType);
-			if( outFType != null )
+			if( outFType != null ) {
 				hop.setFederatedOutput(FederatedOutput.FOUT);
+			}
+			else {
+				hop.setFederatedOutput(FederatedOutput.LOUT);
+			}
 		}
 		else // memoization as processed, but not federated
 			memo.put(hop.getHopID(), null);
@@ -189,16 +207,48 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			logPlannerDecision(hop, memo, outFType);
 	}
 
+	@Override
+	protected boolean allowsFederated(Hop hop, Map<Long, FType> fedHops) {
+		OpCaps caps = getOracleCaps(hop, fedHops);
+		return caps != null && caps.exec() == ExecType.FED;
+	}
+
+	@Override
+	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops) {
+		OpCaps caps = getOracleCaps(hop, fedHops);
+		return caps != null ? caps.foutFType().orElse(null) : null;
+	}
+
 	private void logPlannerDecision(Hop hop, Map<Long, FType> memo, FType outFType) {
 		List<FType> inputFTypes = collectInputFTypes(hop, memo);
 		ExecType execType = resolveExecType(hop, outFType);
-		ReasonCode reason = execType == ExecType.FED ? ReasonCode.OK : ReasonCode.NO_RULE;
+		OpCaps caps = getOracleCaps(hop, inputFTypes);
+		ReasonCode reason = caps != null ? caps.reason()
+			: execType == ExecType.FED ? ReasonCode.OK : ReasonCode.NO_RULE;
 		OpCaps.Builder builder = OpCaps.builder().exec(execType).reason(reason);
 		if( outFType != null )
 			builder.fout(true, outFType);
 		else
 			builder.fout(false);
 		FederatedPlannerLogger.logOracleDecision(hop, null, inputFTypes, builder.build(), null);
+	}
+
+	private OpCaps getOracleCaps(Hop hop, Map<Long, FType> fedHops) {
+		return getOracleCaps(hop, collectInputFTypes(hop, fedHops));
+	}
+
+	private OpCaps getOracleCaps(Hop hop, List<FType> inputFTypes) {
+		if( hop == null )
+			return null;
+		List<FType> key = inputFTypes == null ? Collections.emptyList() : new ArrayList<>(inputFTypes);
+		Map<List<FType>, OpCaps> byInputs =
+			_oracleCache.computeIfAbsent(hop.getHopID(), k -> new HashMap<>());
+		OpCaps cached = byInputs.get(key);
+		if( cached != null )
+			return cached;
+		OpCaps caps = _oracle.decide(hop, key);
+		byInputs.put(key, caps);
+		return caps;
 	}
 
 	private static List<FType> collectInputFTypes(Hop hop, Map<Long, FType> memo) {

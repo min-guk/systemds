@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
@@ -104,10 +106,10 @@ public class FederatedStatistics {
 	private static final LongAdder fedPutLineageItems = new LongAdder();
 	private static final LongAdder fedSerializationReuseCount = new LongAdder();
 	private static final LongAdder fedSerializationReuseBytes = new LongAdder();
-	private static final List<TrafficModel> coordinatorsTrafficBytes = new ArrayList<>();
-	private static final List<EventModel> workerEvents = new ArrayList<>();
-	private static final Map<String, DataObjectModel> workerDataObjects = new HashMap<>();
-	private static final Map<String, RequestModel> workerFederatedRequests = new HashMap<>();
+	private static final ConcurrentLinkedQueue<TrafficModel> coordinatorsTrafficBytes = new ConcurrentLinkedQueue<>();
+	private static final ConcurrentLinkedQueue<EventModel> workerEvents = new ConcurrentLinkedQueue<>();
+	private static final Map<String, DataObjectModel> workerDataObjects = new ConcurrentHashMap<>();
+	private static final Map<String, RequestModel> workerFederatedRequests = new ConcurrentHashMap<>();
 
 	public static void logServerTraffic(long read, long written) {
 		bytesReceived.add(read);
@@ -485,14 +487,20 @@ public class FederatedStatistics {
 	}
 
 	public static List<TrafficModel> getCoordinatorsTrafficBytes() {
-		var result = new ArrayList<>(coordinatorsTrafficBytes);
-		coordinatorsTrafficBytes.clear();
+		ArrayList<TrafficModel> result = new ArrayList<>();
+		TrafficModel entry;
+		while((entry = coordinatorsTrafficBytes.poll()) != null) {
+			result.add(entry);
+		}
 		return result;
 	}
 
 	public static List<EventModel> getWorkerEvents() {
-		var result = new ArrayList<>(workerEvents);
-		workerEvents.clear();
+		ArrayList<EventModel> result = new ArrayList<>();
+		EventModel entry;
+		while((entry = workerEvents.poll()) != null) {
+			result.add(entry);
+		}
 		return result;
 	}
 	public static List<RequestModel> getWorkerRequests() {

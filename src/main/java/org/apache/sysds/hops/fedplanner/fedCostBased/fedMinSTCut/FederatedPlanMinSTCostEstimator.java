@@ -320,6 +320,8 @@ public class FederatedPlanMinSTCostEstimator {
 
 			graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
 		}
+
+		addLoopCarryEdgesForHop(hop, vertex, graph);
 	}
 
 	public static void computeVertexCost(Vertex vertex, int numOfWorkers) {
@@ -410,4 +412,29 @@ public class FederatedPlanMinSTCostEstimator {
 		return matches;
 	}
 
+	private static void addLoopCarryEdgesForHop(Hop hop, Vertex vertex, FederatedPlanMinSTGraph graph) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
+			return;
+		}
+		List<FederatedPlanMinSTGraph.LoopCarryEdge> loopEdges = graph.getLoopCarryEdges();
+		if (loopEdges.isEmpty()) {
+			return;
+		}
+		long hopId = hop.getHopID();
+		for (FederatedPlanMinSTGraph.LoopCarryEdge edge : loopEdges) {
+			if (edge.getFrontReaderHopId() != hopId) {
+				continue;
+			}
+			if (graph.getVertex(edge.getEndWriterHopId()) == null) {
+				continue;
+			}
+			double weight = edge.getWeight();
+			if (weight <= 0.0) {
+				continue;
+			}
+			double uploadWeighted = weight * vertex.getUploadCostWithoutWeight();
+			double downloadWeighted = weight * vertex.getDownloadCostWithoutWeight();
+			graph.addLoopCarryNetEdge(hopId, edge.getEndWriterHopId(), uploadWeighted, downloadWeighted);
+		}
+	}
 }
