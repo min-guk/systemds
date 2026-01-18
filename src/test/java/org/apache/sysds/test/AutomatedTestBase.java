@@ -39,6 +39,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.io.FileUtils;
@@ -1586,12 +1587,18 @@ public abstract class AutomatedTestBase {
 	}
 
 	/**
-	 * Find a random available port, if none is found, retry up to 10 times. Note that there is a race condition to find
-	 * a port if many processes are looking for ports.
+	 * Find a random available port, if none is found, retry up to 100 times. Note that there is a race condition to find
+	 * a port if many processes are looking for ports. To constrain the selection, set the system property
+	 * {@code sysds.test.portRange} or environment variable {@code SYSDS_TEST_PORT_RANGE} to "min-max".
 	 * 
 	 * @return A random port that hopefully is available when you actually use it.
 	 */
 	public static int getRandomAvailablePort() {
+		int[] range = parsePortRange(System.getProperty("sysds.test.portRange"));
+		if(range == null)
+			range = parsePortRange(System.getenv("SYSDS_TEST_PORT_RANGE"));
+		if(range != null)
+			return getRandomAvailablePortInRange(range[0], range[1], 1);
 		try(ServerSocket availableSocket = new ServerSocket(0)) {
 			return availableSocket.getLocalPort();
 		}
@@ -1605,10 +1612,44 @@ public abstract class AutomatedTestBase {
 			return availableSocket.getLocalPort();
 		}
 		catch(IOException e) {
-			if(retry == 10)
+			if(retry == 100)
 				throw new RuntimeException("Failed to find free port");
 			else
-				return getRandomAvailablePortRetry(retry++);
+				return getRandomAvailablePortRetry(retry + 1);
+		}
+	}
+
+	private static int getRandomAvailablePortInRange(int minPort, int maxPort, int retry) {
+		int port = minPort + ThreadLocalRandom.current().nextInt(maxPort - minPort + 1);
+		try(ServerSocket availableSocket = new ServerSocket(port)) {
+			return availableSocket.getLocalPort();
+		}
+		catch(IOException e) {
+			if(retry == 100)
+				throw new RuntimeException("Failed to find free port");
+			else
+				return getRandomAvailablePortInRange(minPort, maxPort, retry + 1);
+		}
+	}
+
+	private static int[] parsePortRange(String raw) {
+		if(raw == null)
+			return null;
+		String trimmed = raw.trim();
+		if(trimmed.isEmpty())
+			return null;
+		String[] parts = trimmed.split("-", 2);
+		if(parts.length != 2)
+			return null;
+		try {
+			int min = Integer.parseInt(parts[0].trim());
+			int max = Integer.parseInt(parts[1].trim());
+			if(min < 1 || max > 65535 || min > max)
+				return null;
+			return new int[] {min, max};
+		}
+		catch(NumberFormatException nfe) {
+			return null;
 		}
 	}
 
