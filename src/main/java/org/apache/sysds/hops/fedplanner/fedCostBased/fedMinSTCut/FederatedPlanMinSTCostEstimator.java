@@ -72,7 +72,6 @@ import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
-import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
@@ -92,6 +91,14 @@ public class FederatedPlanMinSTCostEstimator {
 
 		for (StatementBlock sb : prog.getStatementBlocks()) {
 			estimateStatementBlock(sb, prog, graph, rewireTable, fnStack, functionEstimateCache, visitedHops);
+		}
+		// Ensure we also estimate vertices that are not reachable from statement block roots
+		// (e.g., FunctionOp output hops such as MULTIRETURN_BUILTIN FUNCTIONOUTPUT nodes).
+		for (Vertex vertex : graph.getMemoTable().values()) {
+			if (vertex == null || vertex.getHopRef() == null)
+				continue;
+			estimateHopDAG(vertex.getHopRef(), prog, graph, rewireTable, fnStack, functionEstimateCache,
+					visitedHops);
 		}
 	}
 
@@ -115,6 +122,13 @@ public class FederatedPlanMinSTCostEstimator {
 		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 		graph.setNumOfWorkers(numOfWorkers);
 		estimateStatementBlock(function, prog, graph, rewireTable, fnStack, functionEstimateCache, visitedHops);
+		// Ensure we also estimate vertices that are not reachable from statement block roots.
+		for (Vertex vertex : graph.getMemoTable().values()) {
+			if (vertex == null || vertex.getHopRef() == null)
+				continue;
+			estimateHopDAG(vertex.getHopRef(), prog, graph, rewireTable, fnStack, functionEstimateCache,
+					visitedHops);
+		}
 	}
 
 	public static void estimateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlanMinSTGraph graph,
@@ -283,6 +297,18 @@ public class FederatedPlanMinSTCostEstimator {
 		}
 
 		graph.addExecPlacementResultEdge(vertex);
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			Set<Long> twHopIds = collectTransientWriteChildIds(hop, rewireTable);
+			for (Long twHopId : twHopIds) {
+				Vertex twVertex = graph.getVertex(twHopId);
+				if (twVertex == null) {
+					FederatedPlannerLogger.logWarnMessage(
+							"[FederatedMinST] Missing TWrite vertex for TRead hop " + hopID);
+					continue;
+				}
+				graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
+			}
+		}
 
 		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
 		for (Hop childHop : childHops) {
@@ -292,17 +318,6 @@ public class FederatedPlanMinSTCostEstimator {
 				continue;
 			}
 
-			if (childHop instanceof DataOp
-					&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-				Long twId = childVertex.getTransientWriteHopId();
-				if (twId != null) {
-					Vertex twVertex = graph.getVertex(twId);
-					if (twVertex == null) {
-						throw new DMLRuntimeException("Missing TWrite vertex for TRead hop " + childHop.getHopID());
-					}
-					graph.addTransReadWriteConsistencyEdges(twVertex, twId, childVertex, childHop.getHopID());
-				}
-			}
 			graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
 		}
 	}
@@ -364,4 +379,35 @@ public class FederatedPlanMinSTCostEstimator {
 
 		return Math.max(1, numParents);
 	}
+
+	private static Set<Long> collectTransientWriteChildIds(Hop hop, Map<Long, List<Hop>> rewireTable) {
+		Set<Long> matches = new HashSet<>();
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
+			return matches;
+		}
+		if (rewireTable == null) {
+			return matches;
+		}
+		List<Hop> candidates = rewireTable.get(hop.getHopID());
+		if (candidates == null || candidates.isEmpty()) {
+			return matches;
+		}
+		String hopName = hop.getName();
+		Set<Long> fallback = new HashSet<>();
+		for (Hop candidate : candidates) {
+			if (!(candidate instanceof DataOp)
+					|| ((DataOp) candidate).getOp() != Types.OpOpData.TRANSIENTWRITE) {
+				continue;
+			}
+			fallback.add(candidate.getHopID());
+			if (hopName != null && hopName.equals(candidate.getName())) {
+				matches.add(candidate.getHopID());
+			}
+		}
+		if (matches.isEmpty()) {
+			matches.addAll(fallback);
+		}
+		return matches;
+	}
+
 }

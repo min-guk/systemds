@@ -68,7 +68,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -417,6 +416,9 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 		}
 
+		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, childHops);
+		final boolean enforceTReadConsistency = !tWriteChildIds.isEmpty();
+
 		FederatedPlannerDpMemoTable.HopCommon hopCommon = hopCommonTable.get(hopID);
 		hopCommon.setNumOfParentHops(numParentHops);
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
@@ -480,6 +482,10 @@ public class FederatedPlannerDpCostEnumerator {
 			List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
 			List<FType> collectedFTypes = new ArrayList<>();
 			List<Hop> collectedHops = new ArrayList<>();
+			ExecType tWriteExec = null;
+			FederatedOutput tWriteOut = null;
+			boolean tWriteConflict = false;
+			boolean tWriteSeen = false;
 			// Costs from children, split by the parent's ExecType semantics.
 			double childCostCPExec = 0; // Parent executes in CP; forwarding only from FOUT children.
 			double childCostFEDExec = 0; // Parent executes in FED; forwarding only from LOUT children.
@@ -504,6 +510,15 @@ public class FederatedPlannerDpCostEnumerator {
 						"[Planner] parent=%d (%s) child=%d (%s) type=%s exec=%s fType=%s",
 						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
 						childType, childPlan.getExecType(), childPlan.getFType()));
+				if (enforceTReadConsistency && tWriteChildIds.contains(inputHop.getHopID())) {
+					tWriteSeen = true;
+					if (tWriteExec == null) {
+						tWriteExec = childPlan.getExecType();
+						tWriteOut = childType;
+					} else if (tWriteExec != childPlan.getExecType() || tWriteOut != childType) {
+						tWriteConflict = true;
+					}
+				}
 				childCostCPExec += childCumulativeCost[j][bit] + childForwardingCostToCP[j] * bit;
 				childCostFEDExec += childCumulativeCost[j][bit] + childForwardingCostToFED[j] * (1 - bit);
 			}
@@ -524,6 +539,15 @@ public class FederatedPlannerDpCostEnumerator {
 						"[Planner] parent=%d (%s) child=%d (%s) type=LOUT exec=%s fType=%s",
 						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
 						childPlan.getExecType(), childPlan.getFType()));
+				if (enforceTReadConsistency && tWriteChildIds.contains(inputHop.getHopID())) {
+					tWriteSeen = true;
+					if (tWriteExec == null) {
+						tWriteExec = childPlan.getExecType();
+						tWriteOut = FederatedOutput.LOUT;
+					} else if (tWriteExec != childPlan.getExecType() || tWriteOut != FederatedOutput.LOUT) {
+						tWriteConflict = true;
+					}
+				}
 				childCostCPExec += lOUTOnlychildCumulativeCost.get(j);
 				childCostFEDExec += lOUTOnlychildCumulativeCost.get(j) + lOUTOnlychildForwardingCostToFED.get(j);
 			}
@@ -544,9 +568,28 @@ public class FederatedPlannerDpCostEnumerator {
 						"[Planner] parent=%d (%s) child=%d (%s) type=FOUT exec=%s fType=%s",
 						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
 						childPlan.getExecType(), childPlan.getFType()));
+				if (enforceTReadConsistency && tWriteChildIds.contains(inputHop.getHopID())) {
+					tWriteSeen = true;
+					if (tWriteExec == null) {
+						tWriteExec = childPlan.getExecType();
+						tWriteOut = FederatedOutput.FOUT;
+					} else if (tWriteExec != childPlan.getExecType() || tWriteOut != FederatedOutput.FOUT) {
+						tWriteConflict = true;
+					}
+				}
 				childCostCPExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToCP.get(j);
 				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j);
 			}
+
+			if (enforceTReadConsistency) {
+				if (!tWriteSeen) {
+					continue;
+				}
+				if (tWriteConflict) {
+					continue;
+				}
+			}
+			final boolean hasTWriteRequirement = enforceTReadConsistency;
 
 			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
 					hop, privacyConstraint, collectedHops, collectedFTypes,
@@ -573,7 +616,9 @@ public class FederatedPlannerDpCostEnumerator {
 					hop, privacyConstraint, oracleLogicalFType, caps);
 
 			// FED Exec, FOUT placement
-			if (placementDecision.allowFED_FOUT) {
+			if (placementDecision.allowFED_FOUT
+					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+							ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
 				FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						fedSelfCost + childCostFEDExec,
 						fOutFedPlanVariants, planChilds);
@@ -583,7 +628,9 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 
 			// FED Exec, LOUT placement
-			if (placementDecision.allowFED_LOUT) {
+			if (placementDecision.allowFED_LOUT
+					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+							ExecType.FED, FederatedOutput.LOUT, tWriteExec, tWriteOut))) {
 				FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						fedSelfCost + childCostFEDExec + resultDownloadCost,
 						lOutFedPlanVariants, planChilds);
@@ -593,7 +640,9 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 
 			// CP Exec, LOUT/FOUT placement
-			if (placementDecision.allowCP_LOUT) {
+			if (placementDecision.allowCP_LOUT
+					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+							ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut))) {
 				FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						cpSelfCost + childCostCPExec,
 						lOutFedPlanVariants, planChilds);
@@ -601,7 +650,9 @@ public class FederatedPlannerDpCostEnumerator {
 				cpLOutPlan.setFType(oracleLogicalFType);
 				lOutFedPlanVariants.addFedPlan(cpLOutPlan);
 			}
-			if (placementDecision.allowCP_FOUT) {
+			if (placementDecision.allowCP_FOUT
+					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+							ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
 				FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						cpSelfCost + childCostCPExec + resultUploadCost,
 						fOutFedPlanVariants, planChilds);
@@ -642,6 +693,40 @@ public class FederatedPlannerDpCostEnumerator {
 		fedPlan.setFType(baseFType);
 		fOutFedPlanVariants.addFedPlan(fedPlan);
 		memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
+	}
+
+	private static Set<Long> collectTransientWriteChildIds(Hop hop, List<Hop> childHops) {
+		Set<Long> matches = new LinkedHashSet<>();
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
+			return matches;
+		}
+		if (childHops == null || childHops.isEmpty()) {
+			return matches;
+		}
+		String hopName = hop.getName();
+		Set<Long> fallback = new LinkedHashSet<>();
+		for (Hop childHop : childHops) {
+			if (!(childHop instanceof DataOp)
+					|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTWRITE) {
+				continue;
+			}
+			fallback.add(childHop.getHopID());
+			if (hopName != null && hopName.equals(childHop.getName())) {
+				matches.add(childHop.getHopID());
+			}
+		}
+		if (matches.isEmpty()) {
+			matches.addAll(fallback);
+		}
+		return matches;
+	}
+
+	private static boolean isTReadConsistentWithTWrite(ExecType execType, FederatedOutput fedOutType,
+			ExecType tWriteExec, FederatedOutput tWriteOut) {
+		if (tWriteExec == null || tWriteOut == null) {
+			return false;
+		}
+		return execType == tWriteExec && fedOutType == tWriteOut;
 	}
 
 	private static boolean allowsCPOverride(Privacy privacyConstraint, OpCaps caps) {

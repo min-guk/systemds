@@ -96,7 +96,8 @@ public class FederatedPlanMinSTGraph {
 	private final Map<Long, Vertex> memoTable = new HashMap<>();
 	private final Graph<Long, DefaultWeightedEdge> graph = new DefaultDirectedWeightedGraph<>(
 			DefaultWeightedEdge.class);
-	private final Set<Long> trConsistencyAdded = new HashSet<>();
+	// Currently unused; TR/TW hard-constraint edges are disabled (cost-based only).
+	private final Set<Pair<Long, Long>> trConsistencyAdded = new HashSet<>();
 	private int numOfWorkers = 0;
 
 	{
@@ -193,7 +194,8 @@ public class FederatedPlanMinSTGraph {
 	}
 
 	public void addTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
-		if (!trConsistencyAdded.add(trId))
+		// TR/TW hard-constraint helper for enforcing exec/placement consistency.
+		if (!trConsistencyAdded.add(Pair.of(twId, trId)))
 			return;
 		long twC = FederatedPlanMinSTPlanner.computeId(twId), trC = FederatedPlanMinSTPlanner.computeId(trId);
 		long twP = FederatedPlanMinSTPlanner.placementId(twId), trP = FederatedPlanMinSTPlanner.placementId(trId);
@@ -323,6 +325,7 @@ public class FederatedPlanMinSTGraph {
 		private double opWeight; // Weight used to calculate cost based on hop execution frequency
 		private double networkWeight; // Weight used to calculate cost based on hop execution frequency
 		private List<Pair<Long, Double>> loopContext; // Loop context in which this hop exists
+		// Currently unused; retained for potential TR/TW hard-constraint handling.
 		private Long transientWriteHopId;
 		private int numParents = 1;
 
@@ -410,19 +413,19 @@ public class FederatedPlanMinSTGraph {
 			this.numParents = Math.max(1, numParents);
 		}
 
-			/**
-			 * Estimates how many times this parent's output is forwarded to a child by
-			 * amortizing the parent's networkWeight over loops the child does not execute.
-			 *
-			 * Example:
-			 * parent loopContext = [(for1, 100), (while2, 10)]
-			 * childLoopContext = [(for1, 100)]
-			 * => forwardingWeight = networkWeight / 10 (child result reused across while2 iterations)
-			 */
-			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
-				return FederatedPlannerUtils.computeForwardingWeightOfChild(
-						networkWeight, loopContext, childLoopContext);
-			}
+		/**
+		 * Estimates how many times this parent's output is forwarded to a child by
+		 * amortizing the parent's networkWeight over loops the child does not execute.
+		 *
+		 * Example:
+		 * parent loopContext = [(for1, 100), (while2, 10)]
+		 * childLoopContext = [(for1, 100)]
+		 * => forwardingWeight = networkWeight / 10 (child result reused across while2 iterations)
+		 */
+		public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
+			return FederatedPlannerUtils.computeForwardingWeightOfChild(
+					networkWeight, loopContext, childLoopContext);
+		}
 
 		@Override
 		public boolean equals(Object o) {

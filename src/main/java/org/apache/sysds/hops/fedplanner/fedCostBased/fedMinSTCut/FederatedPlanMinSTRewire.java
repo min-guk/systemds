@@ -393,15 +393,43 @@ public class FederatedPlanMinSTRewire {
 							}
 						}
 
-						TransTableRewireUtils.mapFunctionOutputs(
-								fop, fsb, functionTransTable, innerTransTable,
-								outputHop -> unRefTwriteSet.add(outputHop.getHopID()));
-					} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
-						TransTableRewireUtils.mapFunctionOutputs(
-								fop, null, null, innerTransTable,
-								outputHop -> unRefTwriteSet.add(outputHop.getHopID()));
+							TransTableRewireUtils.mapFunctionOutputs(
+									fop, fsb, functionTransTable, innerTransTable,
+									outputHop -> {
+										if (outputHop == null)
+											return;
+										unRefTwriteSet.add(outputHop.getHopID());
+										if (!graph.contains(outputHop.getHopID())) {
+											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
+													formerTransTable, innerTransTable, privacyConstraintMap, graph,
+													fTypeMap, fedMap, unRefTwriteSet, injectedIds, oracleFacade);
+											if (outputVertex != null) {
+												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
+												graph.addVertex(outputVertex);
+												visitedHops.add(outputHop.getHopID());
+											}
+										}
+									});
+						} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
+							TransTableRewireUtils.mapFunctionOutputs(
+									fop, null, null, innerTransTable,
+									outputHop -> {
+										if (outputHop == null)
+											return;
+										unRefTwriteSet.add(outputHop.getHopID());
+										if (!graph.contains(outputHop.getHopID())) {
+											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
+													formerTransTable, innerTransTable, privacyConstraintMap, graph,
+													fTypeMap, fedMap, unRefTwriteSet, injectedIds, oracleFacade);
+											if (outputVertex != null) {
+												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
+												graph.addVertex(outputVertex);
+												visitedHops.add(outputHop.getHopID());
+											}
+										}
+									});
+						}
 					}
-				}
 
 				double hopComputeWeight = computeWeight;
 				double hopNetworkWeight = networkWeight;
@@ -458,14 +486,19 @@ public class FederatedPlanMinSTRewire {
 				FederatedPlannerLogger.logDataOpFTypeDebug(
 						hop, fType, "FEDERATED", "Derived from partition ranges");
 			} else if (opType == Types.OpOpData.TRANSIENTWRITE) {
-				// 3) TWrite: 입력 Hop의 FType을 그대로 복사
-				innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
-				unRefTwriteSet.add(hop.getHopID());
-				privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
-				fType = fTypeMap.get(hop.getInput(0).getHopID());
-				FederatedPlannerLogger.logDataOpFTypeDebug(
-						hop, fType, "TRANSIENTWRITE",
-						"Propagated from single input (HopID: " + hop.getInput(0).getHopID() + ")");
+				if ("__pred".equals(hopName)) {
+					// Align with DP: skip transient rewire for __pred.
+					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+				} else {
+					// 3) TWrite: 입력 Hop의 FType을 그대로 복사
+					innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
+					unRefTwriteSet.add(hop.getHopID());
+					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+					fType = fTypeMap.get(hop.getInput(0).getHopID());
+					FederatedPlannerLogger.logDataOpFTypeDebug(
+							hop, fType, "TRANSIENTWRITE",
+							"Propagated from single input (HopID: " + hop.getInput(0).getHopID() + ")");
+				}
 				} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 					// 4) TRead: mapped source hops로부터 privacy/FType/caps 전파
 					List<Hop> childHops = TransTableRewireUtils.resolveTransReadChildren(
