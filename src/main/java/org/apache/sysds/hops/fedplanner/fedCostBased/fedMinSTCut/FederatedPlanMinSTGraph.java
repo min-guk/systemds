@@ -97,6 +97,7 @@ public class FederatedPlanMinSTGraph {
 	private final Graph<Long, DefaultWeightedEdge> graph = new DefaultDirectedWeightedGraph<>(
 			DefaultWeightedEdge.class);
 	private final Set<Long> trConsistencyAdded = new HashSet<>();
+	private final List<LoopCarryEdge> loopCarryEdges = new ArrayList<>();
 	private int numOfWorkers = 0;
 
 	{
@@ -190,6 +191,24 @@ public class FederatedPlanMinSTGraph {
 
 		addCap(parentC, childP, uploadWeighted);
 		addCap(childP, parentC, downloadWeighted);
+	}
+
+	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
+		if (weight <= 0.0 || endWriterHopId <= 0 || frontReaderHopId <= 0)
+			return;
+		loopCarryEdges.add(new LoopCarryEdge(endWriterHopId, frontReaderHopId, weight));
+	}
+
+	public List<LoopCarryEdge> getLoopCarryEdges() {
+		return Collections.unmodifiableList(loopCarryEdges);
+	}
+
+	public void addLoopCarryNetEdge(long frontReaderHopId, long endWriterHopId,
+			double uploadWeighted, double downloadWeighted) {
+		long readerC = FederatedPlanMinSTPlanner.computeId(frontReaderHopId);
+		long writerP = FederatedPlanMinSTPlanner.placementId(endWriterHopId);
+		addCap(readerC, writerP, uploadWeighted);
+		addCap(writerP, readerC, downloadWeighted);
 	}
 
 	public void addTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
@@ -302,6 +321,30 @@ public class FederatedPlanMinSTGraph {
 
 		public boolean hasAny() {
 			return allowCP_LOUT || allowCP_FOUT || allowFED_LOUT || allowFED_FOUT;
+		}
+	}
+
+	public static class LoopCarryEdge {
+		private final long endWriterHopId;
+		private final long frontReaderHopId;
+		private final double weight;
+
+		public LoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
+			this.endWriterHopId = endWriterHopId;
+			this.frontReaderHopId = frontReaderHopId;
+			this.weight = weight;
+		}
+
+		public long getEndWriterHopId() {
+			return endWriterHopId;
+		}
+
+		public long getFrontReaderHopId() {
+			return frontReaderHopId;
+		}
+
+		public double getWeight() {
+			return weight;
 		}
 	}
 

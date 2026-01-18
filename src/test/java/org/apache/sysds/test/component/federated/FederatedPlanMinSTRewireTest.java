@@ -99,6 +99,54 @@ public class FederatedPlanMinSTRewireTest extends AutomatedTestBase {
 		}
 	}
 
+	@Test
+	public void testMinSTRewireLoopCarryEdges() {
+		try {
+			String dml = String.join("\n",
+					"x = matrix(1, rows=10, cols=10);",
+					"for(i in 1:5) {",
+					"  x = x + 1;",
+					"}",
+					"print(sum(x));",
+					"");
+			DMLProgram prog = parseAndRewriteScript("MinSTRewireLoopCarryEdges", dml);
+
+			Map<Long, List<Hop>> rewireTable = new HashMap<>();
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
+			Set<Long> unRefTwriteSet = new HashSet<>();
+			Set<Long> unRefSet = new HashSet<>();
+			Set<Hop> progRootHopSet = new HashSet<>();
+			RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
+			OracleFacade oracleFacade = new OracleFacade(registry);
+
+			FederatedPlanMinSTRewire.rewireProgram(
+					prog, rewireTable, graph, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, oracleFacade);
+
+			List<FederatedPlanMinSTGraph.LoopCarryEdge> loopEdges = graph.getLoopCarryEdges();
+			Assert.assertFalse("Expected at least one loop-carry edge", loopEdges.isEmpty());
+
+			boolean foundX = false;
+			for (FederatedPlanMinSTGraph.LoopCarryEdge edge : loopEdges) {
+				Hop end = graph.getHopRef(edge.getEndWriterHopId());
+				Hop front = graph.getHopRef(edge.getFrontReaderHopId());
+				if (end instanceof DataOp && ((DataOp) end).getOp() == Types.OpOpData.TRANSIENTWRITE
+						&& "x".equals(end.getName())
+						&& front instanceof DataOp && ((DataOp) front).getOp() == Types.OpOpData.TRANSIENTREAD
+						&& "x".equals(front.getName())) {
+					foundX = true;
+					Assert.assertEquals("Unexpected loop-carry weight for x", 4.0, edge.getWeight(), 1e-9);
+					break;
+				}
+			}
+			Assert.assertTrue("Missing loop-carry edge for x", foundX);
+		}
+		catch (Exception e) {
+			e.printStackTrace();
+			Assert.fail("MinST loop-carry test failed: " + e.getMessage());
+		}
+	}
+
 	private void runRewireChecks(String scriptFilename) {
 		try {
 			DMLProgram prog = parseAndRewrite(scriptFilename);
@@ -139,6 +187,26 @@ public class FederatedPlanMinSTRewireTest extends AutomatedTestBase {
 			DMLConfig.FEDERATED_PLANNER, "compile_min_st_cut");
 
 		String dmlScriptString = DMLScript.readDMLScript(true, HOME + scriptFilename);
+
+		ParserWrapper parser = ParserFactory.createParser();
+		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, dmlScriptString, new HashMap<>());
+		DMLTranslator dmlt = new DMLTranslator(prog);
+		dmlt.liveVariableAnalysis(prog);
+		dmlt.validateParseTree(prog);
+		dmlt.constructHops(prog);
+		dmlt.rewriteHopsDAG(prog);
+		return prog;
+	}
+
+	private DMLProgram parseAndRewriteScript(String testName, String dmlScriptString) throws Exception {
+		TestConfiguration testConfig = new TestConfiguration(TEST_CLASS_DIR, testName, new String[] {});
+		addTestConfiguration(testName, testConfig);
+		loadTestConfiguration(testConfig);
+
+		DMLConfig conf = new DMLConfig(getCurConfigFile().getPath());
+		ConfigurationManager.setLocalConfig(conf);
+		ConfigurationManager.getDMLConfig().setTextValue(
+				DMLConfig.FEDERATED_PLANNER, "compile_min_st_cut");
 
 		ParserWrapper parser = ParserFactory.createParser();
 		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, dmlScriptString, new HashMap<>());
