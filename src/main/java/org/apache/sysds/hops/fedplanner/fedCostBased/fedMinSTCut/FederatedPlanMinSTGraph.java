@@ -92,13 +92,16 @@ public class FederatedPlanMinSTGraph {
 	private static final double HARD_CONSTRAINT = 1e15;
 	private static final long leafedSource = -1L;
 	private static final long rootLocalSink = -2L;
+	private static final long auxNodeBase = -3L;
 
 	private final Map<Long, Vertex> memoTable = new HashMap<>();
 	private final Graph<Long, DefaultWeightedEdge> graph = new DefaultDirectedWeightedGraph<>(
 			DefaultWeightedEdge.class);
 	private final Set<Long> trConsistencyAdded = new HashSet<>();
 	private final List<LoopCarryEdge> loopCarryEdges = new ArrayList<>();
+	private final Map<HyperEdgeKey, HyperEdgeGroup> parentChildHyperEdges = new HashMap<>();
 	private int numOfWorkers = 0;
+	private long nextAuxNodeId = auxNodeBase;
 
 	{
 		graph.addVertex(leafedSource);
@@ -181,16 +184,15 @@ public class FederatedPlanMinSTGraph {
 		long childP = FederatedPlanMinSTPlanner.placementId(childHopID);
 
 		double forwardingWeight = parentVertex.computeForwardingWeightOfChild(childVertex.getLoopContext());
-		int numParents = childVertex.getNumParents();
 		double uploadCost = childVertex.getUploadCostWithoutWeight();
 		double downloadCost = childVertex.getDownloadCostWithoutWeight();
-		double uploadCostPerParent = (numParents >= 2) ? uploadCost / numParents : uploadCost;
-		double downloadCostPerParent = (numParents >= 2) ? downloadCost / numParents : downloadCost;
-		double uploadWeighted = forwardingWeight * uploadCostPerParent;
-		double downloadWeighted = forwardingWeight * downloadCostPerParent;
+		double uploadWeighted = forwardingWeight * uploadCost;
+		double downloadWeighted = forwardingWeight * downloadCost;
+		// Use child FType as a proxy conversion key since per-input conversion detail is not available here.
+		FType conversionType = childVertex.getDataType();
 
-		addCap(parentC, childP, uploadWeighted);
-		addCap(childP, parentC, downloadWeighted);
+		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, conversionType, uploadWeighted);
+		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.DOWNLOAD, conversionType, downloadWeighted);
 	}
 
 	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
@@ -246,6 +248,110 @@ public class FederatedPlanMinSTGraph {
 			graph.setEdgeWeight(e, cap);
 		} else {
 			graph.setEdgeWeight(e, graph.getEdgeWeight(e) + cap);
+		}
+	}
+
+	private void addParentChildHyperEdge(long parentC, long childP, HyperEdgeDirection direction,
+			FType conversionType, double cost) {
+		if (Double.isNaN(cost) || cost < 0) {
+			return;
+		}
+
+		HyperEdgeKey key = new HyperEdgeKey(childP, direction, conversionType);
+		HyperEdgeGroup group = parentChildHyperEdges.get(key);
+		if (group == null) {
+			long auxNodeId = nextAuxNodeId--;
+			graph.addVertex(auxNodeId);
+			group = new HyperEdgeGroup(auxNodeId, cost);
+			parentChildHyperEdges.put(key, group);
+			addParentChildGroupCostEdge(group, childP, direction, cost);
+		}
+		else if (cost > group.cost) {
+			// Use max to remain conservative when costs differ across parents.
+			double delta = cost - group.cost;
+			addParentChildGroupCostEdge(group, childP, direction, delta);
+			logParentChildCostMismatch(group, direction, childP, conversionType);
+			group.cost = cost;
+		}
+		else if (cost != group.cost) {
+			logParentChildCostMismatch(group, direction, childP, conversionType);
+		}
+
+		if (group.parents.add(parentC)) {
+			if (direction == HyperEdgeDirection.UPLOAD) {
+				// Use HARD_CONSTRAINT to keep OR semantics intact even when total finite costs are large.
+				addCap(parentC, group.auxNodeId, HARD_CONSTRAINT);
+			}
+			else {
+				addCap(group.auxNodeId, parentC, HARD_CONSTRAINT);
+			}
+		}
+	}
+
+	private void addParentChildGroupCostEdge(HyperEdgeGroup group, long childP,
+			HyperEdgeDirection direction, double cost) {
+		if (direction == HyperEdgeDirection.UPLOAD) {
+			addCap(group.auxNodeId, childP, cost);
+		}
+		else {
+			addCap(childP, group.auxNodeId, cost);
+		}
+	}
+
+	private void logParentChildCostMismatch(HyperEdgeGroup group, HyperEdgeDirection direction,
+			long childP, FType conversionType) {
+		if (group.mismatchLogged) {
+			return;
+		}
+		FederatedPlannerLogger.logInfoMessage(String.format(
+				"[MinST] Parent-child %s costs differ for childP=%d type=%s; using max.",
+				direction.name(), childP, conversionType));
+		group.mismatchLogged = true;
+	}
+
+	private enum HyperEdgeDirection {
+		UPLOAD,
+		DOWNLOAD
+	}
+
+	private static final class HyperEdgeKey {
+		private final long childPlacementId;
+		private final HyperEdgeDirection direction;
+		private final FType conversionType;
+
+		private HyperEdgeKey(long childPlacementId, HyperEdgeDirection direction, FType conversionType) {
+			this.childPlacementId = childPlacementId;
+			this.direction = direction;
+			this.conversionType = conversionType;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof HyperEdgeKey))
+				return false;
+			HyperEdgeKey other = (HyperEdgeKey) obj;
+			return childPlacementId == other.childPlacementId
+					&& direction == other.direction
+					&& conversionType == other.conversionType;
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(childPlacementId, direction, conversionType);
+		}
+	}
+
+	private static final class HyperEdgeGroup {
+		private final long auxNodeId;
+		private final Set<Long> parents = new HashSet<>();
+		private double cost;
+		private boolean mismatchLogged = false;
+
+		private HyperEdgeGroup(long auxNodeId, double cost) {
+			this.auxNodeId = auxNodeId;
+			this.cost = cost;
 		}
 	}
 
