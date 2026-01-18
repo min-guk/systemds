@@ -637,7 +637,7 @@ public class FederatedPlanMinSTRewire {
 										if (!graph.contains(outputHop.getHopID())) {
 											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
 													formerTransTable, innerTransTable, privacyConstraintMap, graph,
-													fTypeMap, fedMap, unRefTwriteSet, injectedIds, oracleFacade);
+													fTypeMap, fedMap, unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
 											if (outputVertex != null) {
 												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
 												graph.addVertex(outputVertex);
@@ -655,7 +655,7 @@ public class FederatedPlanMinSTRewire {
 										if (!graph.contains(outputHop.getHopID())) {
 											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
 													formerTransTable, innerTransTable, privacyConstraintMap, graph,
-													fTypeMap, fedMap, unRefTwriteSet, injectedIds, oracleFacade);
+													fTypeMap, fedMap, unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
 											if (outputVertex != null) {
 												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
 												graph.addVertex(outputVertex);
