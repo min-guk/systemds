@@ -211,3 +211,20 @@
 - **잔여 이슈**: 없음
 - **잠재 회귀 위험**: 일부 TWrite가 CP/LOUT으로 내려갈 수 있음 → TR/TW 계획/실행 로그 확인으로 감지
 - **의사결정 근거**: 런타임 제약(TWrite는 `<CP,LOUT>` 또는 `<FED,FOUT>`만 허용)
+
+## 단일 패스 플래너: CP/LOUT fType 힌트 소실로 업그레이드 불가
+- **상태**: 해결
+- **환경/조건**: 단일‑패스 Max‑FED/FOUT 플래너, fedinit 포함 DAG에서 CP 입력 업그레이드 필요 (예: `experiments/results/fed2/mkl-single-pass`)
+- **재현 절차**: `run_LAN_docker.sh`로 mkl-single-pass 실행 후 로그에서 FED op/`fed_fout` 없음 확인
+- **관측 증상**: fedinit는 인식되지만 대부분 CP로만 실행, `fed_fout` materialize 및 FED op 거의 없음
+- **원인 분석**: CP/LOUT 계획 시 fType을 null로 버리고 `_fTypeMap`만 사용해 type propagation → `canUpgradeInput`이 plan.fType==null로 실패, CP→FOUT 업그레이드 체인이 끊김
+- **해결 요약**:
+  - 단일‑패스 플래너에 fType 힌트 맵 추가 (`_fTypeHints`)
+  - CP/LOUT 계획에서도 가능한 경우 fType 힌트를 보존
+  - `inferFType`는 힌트 맵을 사용해 연쇄 propagation 가능
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java`
+- **검증**: 미실행 (mkl-single-pass / kmeans 재실행 필요)
+- **잔여 이슈**: 계획 시점에 부모 ExecType이 기본 CP로 잡혀 CP→FOUT anchor 판정이 보수적으로 실패할 가능성 추가 점검 필요
+- **잠재 회귀 위험**: 힌트가 과도하게 전파되면 불필요한 업그레이드 시도가 늘 수 있음 → FED 계획/`fed_fout` 로그 비교로 감지
+- **의사결정 근거**: 플래너 규칙 수정(업그레이드 가능성 보존), 런타임 제약 준수(논리 FOUT 맵은 분리 유지)

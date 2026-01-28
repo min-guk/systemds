@@ -114,6 +114,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 
 	private Map<Long, HopPlan> _planMap;
 	private Map<Long, FType> _fTypeMap;
+	private Map<Long, FType> _fTypeHints;
 	private Map<Long, List<Hop>> _rewireTable;
 	private Map<Long, MaterializeRequest> _materializeRequests;
 	private Map<Long, Long> _hopSbIds;
@@ -166,6 +167,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		_oracleCache.clear();
 		_planMap = new HashMap<>();
 		_fTypeMap = new HashMap<>();
+		_fTypeHints = new HashMap<>();
 		_rewireTable = new HashMap<>();
 		_materializeRequests = new HashMap<>();
 		_hopSbIds = new HashMap<>();
@@ -303,6 +305,12 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		_planMap.put(hop.getHopID(), plan);
 		_hopSbIds.putIfAbsent(hop.getHopID(), sbId);
 		applyPlanToHop(hop, plan);
+		if (plan != null && plan.fType != null) {
+			_fTypeHints.put(hop.getHopID(), plan.fType);
+		}
+		else {
+			_fTypeHints.remove(hop.getHopID());
+		}
 		if (plan != null && plan.isLogicalFout() && plan.fType != null) {
 			_fTypeMap.put(hop.getHopID(), plan.fType);
 		}
@@ -521,7 +529,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		if (adjusted != null && canMaterializeFout(hop)) {
 			return new HopPlan(ExecType.CP, FederatedOutput.FOUT, FederatedOutput.FOUT, adjusted);
 		}
-		return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, null);
+		return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, adjusted);
 	}
 
 	private HopPlan enforceFoutConstraints(Hop hop, HopPlan plan, long sbId) {
@@ -640,7 +648,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		if (caps != null && caps.foutFType().isPresent()) {
 			return caps.foutFType().get();
 		}
-		return _typePropagator.getFederatedTypeDebug(hop, _fTypeMap);
+		return _typePropagator.getFederatedTypeDebug(hop, _fTypeHints);
 	}
 
 	private boolean canMaterializeFout(Hop hop) {
