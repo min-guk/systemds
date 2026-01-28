@@ -335,14 +335,22 @@ public final class FederatedRefedPolicy {
 					validateAndRegister(hop, fTypeMap, sbId, blockAnchor);
 				}
 				catch (RuntimeException ex) {
-					LOG.error("CP->FOUT refed candidate failed: hopID=" + (hop != null ? hop.getHopID() : -1)
+					boolean isFout = (hop != null && hop.getFederatedOutput() == FederatedOutput.FOUT);
+					boolean derivedFedFout = (hop != null && hop.isFederatedOutputDerived());
+					String mode = (exec == ExecType.FED && isFout && derivedFedFout)
+						? "FED/FOUT(derived via refed)"
+						: (exec == ExecType.CP && isFout) ? "CP->FOUT" : "CPFOUT";
+					LOG.error("Refed candidate failed (" + mode + "): hopID=" + (hop != null ? hop.getHopID() : -1)
 						+ " ident=" + (hop != null ? System.identityHashCode(hop) : -1)
 						+ " name=" + (hop != null ? hop.getName() : "null")
 						+ " op=" + (hop != null ? hop.getOpString() : "null")
 						+ " dataType=" + (hop != null ? hop.getDataType() : null)
+						+ " plannedExecType=" + exec
 						+ " forcedExecType=" + (hop != null ? hop.getForcedExecType() : null)
 						+ " execType=" + (hop != null ? hop.getExecType() : null)
 						+ " federatedOutput=" + (hop != null ? hop.getFederatedOutput() : null)
+						+ " federatedOutputDerived=" + derivedFedFout
+						+ " hasLocalOutput=" + (hop != null && hop.hasLocalOutput())
 						+ " sbId=" + sbId, ex);
 					throw ex;
 				}
