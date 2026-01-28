@@ -120,3 +120,45 @@
 - **잔여 이슈**: 로그 오류의 근본 원인 분석 필요
 - **잠재 회귀 위험**: 실제 런타임 실패로 확대될 가능성 → 동일 로그 빈도/실패 전환 여부 모니터링
 - **의사결정 근거**: 런타임 관찰(수정 없음)
+
+## 단일 패스 플래너: FED 입력 가능성 게이트 누락
+- **상태**: 해결
+- **환경/조건**: 단일‑패스 Max‑FED/FOUT 플래너, oracle가 FED 가능 반환, 입력 federated 가능성(앵커/재배치) 미검증
+- **재현 절차**: 단일‑패스 플래너가 oracle 결과만으로 FED 선택 (코드 리뷰)
+- **관측 증상**: 입력이 federated로 만족 불가해도 FED 계획을 생성 → 런타임에서 FED 입력 부재 오류 가능
+- **원인 분석**: `planGenericOp`이 `canSatisfyFederatedInputs*` 검증 없이 oracle 결과만으로 FED 허용
+- **해결 요약**: FED 선택 전에 `FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(...)` 게이트 추가, 업그레이드 후에도 재검증
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java`
+- **검증**: 미실행 (로컬 테스트 필요)
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: FED 계획이 이전보다 보수적으로 될 수 있음 → federated planning 테스트 로그/계획 비교로 감지
+- **의사결정 근거**: 플래너 규칙(입력 federated 가능성 사전 검증, 런타임 fallback 금지)
+
+## 단일 패스 플래너: CP→FOUT 축 불일치 보정 누락
+- **상태**: 해결
+- **환경/조건**: CP→FOUT 승격 시 소비자 축 불일치(ROW/COL/벡터) 가능
+- **재현 절차**: CP→FOUT 후보에서 축 불일치 상황 (코드 리뷰)
+- **관측 증상**: 런타임에서 BROADCAST로 강제 변환될 수 있어 후속 FED 가정 불일치 가능
+- **원인 분석**: CP→FOUT FType 결정 시 `adjustCpFoutFTypeForConsumerAxisMismatch` 호출 없음
+- **해결 요약**: CP→FOUT 계획 시 축 불일치 보정 적용, 워커 수를 고려하도록 FED init 워커 수 추적 추가
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java`
+- **검증**: 미실행 (로컬 테스트 필요)
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: 일부 CP→FOUT이 BROADCAST로 변경될 수 있음 → FType/계획 로그 비교로 감지
+- **의사결정 근거**: 플래너‑런타임 정합성(축 불일치 시 runtime 브로드캐스트 경로 반영)
+
+## 단일 패스 플래너: TWrite FED 승격 과대 적용
+- **상태**: 해결
+- **환경/조건**: TWrite 입력이 논리적 FOUT이지만 런타임은 LOUT (FED→LOUT 등)
+- **재현 절차**: TWrite가 입력 논리 FOUT만 보고 FED/FOUT 설정 (코드 리뷰)
+- **관측 증상**: 실제 런타임 FED/FOUT이 아닌 입력에서도 TWrite가 FED로 계획될 위험
+- **원인 분석**: TWrite가 입력의 런타임 FED/FOUT 여부를 확인하지 않고 logical FOUT만 확인
+- **해결 요약**: 입력 ExecType/FederatedOutput 기준으로 런타임 FED일 때만 TWrite를 FED/FOUT으로 승격
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java`
+- **검증**: 미실행 (로컬 테스트 필요)
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: 일부 TWrite가 CP/LOUT으로 내려갈 수 있음 → TR/TW 계획/실행 로그 확인으로 감지
+- **의사결정 근거**: 런타임 제약(TWrite는 `<CP,LOUT>` 또는 `<FED,FOUT>`만 허용)

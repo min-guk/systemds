@@ -41,6 +41,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -117,6 +118,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 	private Map<Long, MaterializeRequest> _materializeRequests;
 	private Map<Long, Long> _hopSbIds;
 	private Map<String, FType> _fedInitVars;
+	private int _numWorkers;
 	private DMLProgram _program;
 
 	public FederatedPlannerFedAllMaxFedFoutSinglePass() {
@@ -168,6 +170,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		_materializeRequests = new HashMap<>();
 		_hopSbIds = new HashMap<>();
 		_fedInitVars = new HashMap<>();
+		_numWorkers = 0;
 	}
 
 	private void buildRewireTable(DMLProgram prog) {
@@ -368,6 +371,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 			FType fType = FederatedPlannerUtils.deriveFedInitFType(hop);
 			if (hop.getName() != null)
 				_fedInitVars.put(hop.getName(), fType);
+			_numWorkers = Math.max(_numWorkers, countFedInitWorkers(hop));
 			HopPlan plan = new HopPlan(ExecType.FED, FederatedOutput.FOUT, FederatedOutput.FOUT, fType);
 			return enforceFoutConstraints(hop, plan, sbId);
 		}
@@ -385,7 +389,12 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 	private HopPlan planTransientWrite(DataOp hop) {
 		Hop input = hop.getInput().isEmpty() ? null : hop.getInput(0);
 		HopPlan inputPlan = (input != null) ? _planMap.get(input.getHopID()) : null;
-		if (inputPlan != null && inputPlan.isLogicalFout() && inputPlan.fType != null && isFoutSupported(hop)) {
+		ExecType inputExec = null;
+		if (input != null)
+			inputExec = input.getForcedExecType() != null ? input.getForcedExecType() : input.getExecType();
+		boolean inputRuntimeFed = input != null && inputExec == ExecType.FED && !input.hasLocalOutput();
+		if (inputRuntimeFed && inputPlan != null && inputPlan.isLogicalFout()
+				&& inputPlan.fType != null && isFoutSupported(hop)) {
 			return new HopPlan(ExecType.FED, FederatedOutput.FOUT, FederatedOutput.FOUT, inputPlan.fType);
 		}
 		return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, null);
@@ -459,7 +468,8 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		List<FType> inputFTypes = collectInputFTypes(hop, false, allowCpFout);
 		OpCaps caps = getOracleCaps(hop, inputFTypes);
 
-		boolean fedAllowed = caps != null && caps.exec() == ExecType.FED;
+		boolean fedAllowed = caps != null && caps.exec() == ExecType.FED
+			&& FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, _fTypeMap);
 		List<Hop> upgradeTargets = Collections.emptyList();
 		if (!fedAllowed) {
 			List<FType> candidateFTypes = collectInputFTypes(hop, true, allowCpFout);
@@ -467,8 +477,10 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 			if (candidateCaps != null && candidateCaps.exec() == ExecType.FED) {
 				upgradeTargets = findUpgradableInputs(hop, allowCpFout, sbId);
 				performUpgrades(upgradeTargets, allowCpFout, sbId);
-				caps = candidateCaps;
-				fedAllowed = true;
+				if (FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, _fTypeMap)) {
+					caps = candidateCaps;
+					fedAllowed = true;
+				}
 			}
 		}
 
@@ -505,8 +517,9 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 			return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, null);
 		}
 		FType fType = inferFType(hop, null);
-		if (fType != null && canMaterializeFout(hop)) {
-			return new HopPlan(ExecType.CP, FederatedOutput.FOUT, FederatedOutput.FOUT, fType);
+		FType adjusted = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(hop, fType, _rewireTable, _numWorkers);
+		if (adjusted != null && canMaterializeFout(hop)) {
+			return new HopPlan(ExecType.CP, FederatedOutput.FOUT, FederatedOutput.FOUT, adjusted);
 		}
 		return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, null);
 	}
@@ -632,6 +645,18 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 
 	private boolean canMaterializeFout(Hop hop) {
 		return hop != null && FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, _fTypeMap);
+	}
+
+	private static int countFedInitWorkers(DataOp fedInit) {
+		if (fedInit == null || fedInit.getOp() != OpOpData.FEDERATED)
+			return 0;
+		int addrIx = fedInit.getParameterIndex(org.apache.sysds.parser.DataExpression.FED_ADDRESSES);
+		if (addrIx < 0)
+			return 0;
+		Hop addrHop = fedInit.getInput(addrIx);
+		if (addrHop == null || addrHop.getInput() == null)
+			return 0;
+		return addrHop.getInput().size();
 	}
 
 	private OpCaps getOracleCaps(Hop hop, List<FType> inputFTypes) {
