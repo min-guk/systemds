@@ -389,7 +389,12 @@ public abstract class Hop implements ParseInfo {
 	
 	public void constructAndSetLopsDataFlowProperties() {
 		//propagate federated output configuration to lops
-		if( isFederated() || getLops().getExecType() == ExecType.FED )
+		// NOTE: DataOps (e.g., transient reads) can execute in CP while still representing
+		// an already-federated object in the symbol table. In such cases we must propagate
+		// the forced federated output marker to the lop as well, otherwise downstream FED
+		// ops might incorrectly try to "refed" an input that is already federated at runtime.
+		if( (_federatedOutput != null && _federatedOutput.isForced())
+			|| isFederated() || getLops().getExecType() == ExecType.FED )
 			getLops().setFederatedOutput(_federatedOutput);
 		if ( prefetchActivated() )
 			getLops().activatePrefetch();

@@ -21,13 +21,17 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Future;
+import java.net.InetSocketAddress;
+import java.util.HashSet;
 
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.hops.fedplanner.FTypes.AlignType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
+import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
@@ -39,6 +43,7 @@ import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.DoubleObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.spark.AggregateTernarySPInstruction;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.AggregateTernaryOperator;
 import org.apache.sysds.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysds.runtime.matrix.operators.Operator;
@@ -110,6 +115,55 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
 		MatrixLineagePair mo3 = input3.isLiteral() ? null : ec.getMatrixLineagePair(input3);
+
+		// Special case: if the two main inputs are replicated (BROADCAST) and the output is forced local,
+		// every federated site will compute the same result. Execute once (on all sites, but take one)
+		// to avoid unsupported combinations / duplicate aggregation.
+		if (_fedOut != null && _fedOut.isForcedLocal()
+			&& mo1.isFederated(FType.BROADCAST) && mo2.isFederated(FType.BROADCAST)
+			&& mo1.getFedMapping() != null && mo2.getFedMapping() != null
+			&& isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping())
+			&& (mo3 == null || !mo3.isFederated()
+				|| (mo3.isFederated(FType.BROADCAST) && isSameWorkerPool(mo1.getFedMapping(), mo3.getFedMapping())))) {
+			long in3Id;
+			FederatedRequest frIn3 = null;
+			if (input3.isLiteral()) {
+				frIn3 = mo1.getFedMapping().broadcast(ec.getScalarInput(input3));
+				in3Id = frIn3.getID();
+			}
+			else if (mo3 != null && mo3.isFederated(FType.BROADCAST) && mo3.getFedMapping() != null) {
+				in3Id = mo3.getFedMapping().getID();
+			}
+			else {
+				frIn3 = mo1.getFedMapping().broadcast(mo3);
+				in3Id = frIn3.getID();
+			}
+
+			FederatedRequest frCall = FederationUtils.callInstruction(getInstructionString(), output,
+				new CPOperand[] {input1, input2, input3},
+				new long[] {mo1.getFedMapping().getID(), mo2.getFedMapping().getID(), in3Id}, true);
+			FederatedRequest frGet = new FederatedRequest(RequestType.GET_VAR, frCall.getID());
+			FederatedRequest frCleanup = (frIn3 != null)
+				? mo1.getFedMapping().cleanup(getTID(), frIn3.getID(), frCall.getID())
+				: mo1.getFedMapping().cleanup(getTID(), frCall.getID());
+
+			Future<FederatedResponse>[] resp = (frIn3 != null)
+				? mo1.getFedMapping().execute(getTID(), frIn3, frCall, frGet, frCleanup)
+				: mo1.getFedMapping().execute(getTID(), frCall, frGet, frCleanup);
+
+			try {
+				Object outObj = resp[0].get().getData()[0];
+				if(output.getDataType().isScalar())
+					ec.setScalarOutput(output.getName(), (ScalarObject) outObj);
+				else
+					ec.setMatrixOutput(output.getName(), (MatrixBlock) outObj);
+				return;
+			}
+			catch(Exception ex) {
+				throw new DMLRuntimeException("Federated Get data failed with exception on AggregateTernary", ex);
+			}
+		}
+
 		boolean fed1 = mo1.isFederatedExcept(FType.BROADCAST);
 		boolean fed2 = mo2.isFederatedExcept(FType.BROADCAST);
 		boolean fed3 = mo3 != null && mo3.isFederatedExcept(FType.BROADCAST);
@@ -290,5 +344,18 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 				+ "following federated objects: " + mo1.isFederated() + ":" + mo1.getFedMapping() + " "
 				+ mo2.isFederated() + ":" + mo2.getFedMapping() + mo3.isFederated() + ":" + mo3.getFedMapping());
 		}
+	}
+
+	private static boolean isSameWorkerPool(FederationMap a, FederationMap b) {
+		if (a == null || b == null)
+			return false;
+		if (a.getSize() != b.getSize())
+			return false;
+
+		Set<InetSocketAddress> as = new HashSet<>();
+		a.getMap().forEach(e -> as.add(e.getValue().getAddress()));
+		Set<InetSocketAddress> bs = new HashSet<>();
+		b.getMap().forEach(e -> bs.add(e.getValue().getAddress()));
+		return as.equals(bs);
 	}
 }

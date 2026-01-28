@@ -50,6 +50,7 @@ import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.ForStatement;
 import org.apache.sysds.parser.ForStatementBlock;
@@ -71,9 +72,11 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  * forced federated operations.
  */
 public class FederatedPlannerFedAll extends AFederatedPlanner {
+	private static final int MAX_LOOP_REWRITE_PASSES = 4;
 
 	private final OracleFacade _oracle;
 	private final Map<Long, Map<List<FType>, OpCaps>> _oracleCache = new HashMap<>();
+	private int _numWorkers = 0;
 
 	public FederatedPlannerFedAll() {
 		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
@@ -84,18 +87,23 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	public void rewriteProgram( DMLProgram prog,
 		FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes )
 	{
+		FederatedPlannerUtils.clearFedInitVars();
 		_oracleCache.clear();
+		_numWorkers = 0;
 		// handle main program
 		Map<String, FType> fedVars = new HashMap<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
+		Map<Long, List<Hop>> globalRewireTable = buildGlobalTransientRewireTable(prog);
 		for(StatementBlock sb : prog.getStatementBlocks())
-			rRewriteStatementBlock(sb, fedVars, fTypeMap);
+			rRewriteStatementBlock(sb, fedVars, fTypeMap, globalRewireTable);
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 	}
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		FederatedPlannerUtils.clearFedInitVars();
 		_oracleCache.clear();
+		_numWorkers = 0;
 		Map<String, FType> fedVars = new HashMap<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		for(Map.Entry<String, Data> varName : funcArgs.entrySet()) {
@@ -103,89 +111,120 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			FType fType = null;
 			if(data instanceof CacheableData<?> && ((CacheableData<?>) data).isFederated()) {
 				fType = ((CacheableData<?>) data).getFedMapping().getType();
+				_numWorkers = Math.max(_numWorkers, ((CacheableData<?>) data).getFedMapping().getSize());
 			}
 			fedVars.put(varName.getKey(), fType);
 		}
-		rRewriteStatementBlock(function, fedVars, fTypeMap);
+		Map<Long, List<Hop>> globalRewireTable = buildGlobalTransientRewireTable(function);
+		rRewriteStatementBlock(function, fedVars, fTypeMap, globalRewireTable);
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 	}
 
 	private void rRewriteStatementBlock(StatementBlock sb, Map<String, FType> fedVars,
-		Map<Long, FType> fTypeMap) {
-		//TODO currently this rewrite assumes consistent decisions in conditional control flow
+		Map<Long, FType> fTypeMap, Map<Long, List<Hop>> globalRewireTable) {
 		
 		if (sb instanceof FunctionStatementBlock) {
 			FunctionStatementBlock fsb = (FunctionStatementBlock)sb;
 			FunctionStatement fstmt = (FunctionStatement)fsb.getStatement(0);
 			for (StatementBlock csb : fstmt.getBody())
-				rRewriteStatementBlock(csb, fedVars, fTypeMap);
+				rRewriteStatementBlock(csb, fedVars, fTypeMap, globalRewireTable);
 		}
 		else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement)wsb.getStatement(0);
-			Map<Long, List<Hop>> rewireTable =
-				buildTransientRewireTable(Collections.singletonList(wsb.getPredicateHops()));
+			Map<Long, List<Hop>> rewireTable = mergeRewireTables(
+				buildTransientRewireTable(Collections.singletonList(wsb.getPredicateHops())),
+				globalRewireTable);
 			rRewriteHop(wsb.getPredicateHops(), new HashMap<>(), new HashMap<>(),
-				fTypeMap, rewireTable, sb.getDMLProg());
-			for (StatementBlock csb : wstmt.getBody())
-				rRewriteStatementBlock(csb, fedVars, fTypeMap);
+				fTypeMap, rewireTable, globalRewireTable, sb.getDMLProg());
+			rewriteLoopBody(wstmt.getBody(), fedVars, fTypeMap, globalRewireTable);
 		}
 		else if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement)isb.getStatement(0);
-			Map<Long, List<Hop>> rewireTable =
-				buildTransientRewireTable(Collections.singletonList(isb.getPredicateHops()));
+			Map<Long, List<Hop>> rewireTable = mergeRewireTables(
+				buildTransientRewireTable(Collections.singletonList(isb.getPredicateHops())),
+				globalRewireTable);
 			rRewriteHop(isb.getPredicateHops(), new HashMap<>(), new HashMap<>(),
-				fTypeMap, rewireTable, sb.getDMLProg());
-			for (StatementBlock csb : istmt.getIfBody())
-				rRewriteStatementBlock(csb, fedVars, fTypeMap);
-			for (StatementBlock csb : istmt.getElseBody())
-				rRewriteStatementBlock(csb, fedVars, fTypeMap);
+				fTypeMap, rewireTable, globalRewireTable, sb.getDMLProg());
+			Hop pred = isb.getPredicateHops();
+			if (pred != null && HopRewriteUtils.isLiteralOfValue(pred, true)) {
+				for (StatementBlock csb : istmt.getIfBody())
+					rRewriteStatementBlock(csb, fedVars, fTypeMap, globalRewireTable);
+			}
+			else if (pred != null && HopRewriteUtils.isLiteralOfValue(pred, false)) {
+				for (StatementBlock csb : istmt.getElseBody())
+					rRewriteStatementBlock(csb, fedVars, fTypeMap, globalRewireTable);
+			}
+			else {
+				Map<String, FType> baseFedVars = new HashMap<>(fedVars);
+				Map<String, FType> ifFedVars = new HashMap<>(baseFedVars);
+				for (StatementBlock csb : istmt.getIfBody())
+					rRewriteStatementBlock(csb, ifFedVars, fTypeMap, globalRewireTable);
+				Map<String, FType> elseFedVars = new HashMap<>(baseFedVars);
+				for (StatementBlock csb : istmt.getElseBody())
+					rRewriteStatementBlock(csb, elseFedVars, fTypeMap, globalRewireTable);
+				Map<String, FType> merged = mergeConditionalFedVars(ifFedVars, elseFedVars);
+				fedVars.clear();
+				fedVars.putAll(merged);
+			}
 		}
 		else if (sb instanceof ForStatementBlock) { //incl parfor
 			ForStatementBlock fsb = (ForStatementBlock) sb;
 			ForStatement fstmt = (ForStatement)fsb.getStatement(0);
-			Map<Long, List<Hop>> rewireFrom =
-				buildTransientRewireTable(Collections.singletonList(fsb.getFromHops()));
-			Map<Long, List<Hop>> rewireTo =
-				buildTransientRewireTable(Collections.singletonList(fsb.getToHops()));
-			Map<Long, List<Hop>> rewireIncr =
-				buildTransientRewireTable(Collections.singletonList(fsb.getIncrementHops()));
+			Map<Long, List<Hop>> rewireFrom = mergeRewireTables(
+				buildTransientRewireTable(Collections.singletonList(fsb.getFromHops())),
+				globalRewireTable);
+			Map<Long, List<Hop>> rewireTo = mergeRewireTables(
+				buildTransientRewireTable(Collections.singletonList(fsb.getToHops())),
+				globalRewireTable);
+			Map<Long, List<Hop>> rewireIncr = mergeRewireTables(
+				buildTransientRewireTable(Collections.singletonList(fsb.getIncrementHops())),
+				globalRewireTable);
 			rRewriteHop(fsb.getFromHops(), new HashMap<>(), new HashMap<>(),
-				fTypeMap, rewireFrom, sb.getDMLProg());
+				fTypeMap, rewireFrom, globalRewireTable, sb.getDMLProg());
 			rRewriteHop(fsb.getToHops(), new HashMap<>(), new HashMap<>(),
-				fTypeMap, rewireTo, sb.getDMLProg());
+				fTypeMap, rewireTo, globalRewireTable, sb.getDMLProg());
 			rRewriteHop(fsb.getIncrementHops(), new HashMap<>(), new HashMap<>(),
-				fTypeMap, rewireIncr, sb.getDMLProg());
-			for (StatementBlock csb : fstmt.getBody())
-				rRewriteStatementBlock(csb, fedVars, fTypeMap);
+				fTypeMap, rewireIncr, globalRewireTable, sb.getDMLProg());
+			rewriteLoopBody(fstmt.getBody(), fedVars, fTypeMap, globalRewireTable);
 		}
-		else //generic (last-level)
-		{
-			//process entire hop DAGs with memoization
-			Map<Long, FType> fedHops = new HashMap<>();
-			List<Hop> roots = sb.getHops();
-			Map<Long, List<Hop>> rewireTable = buildTransientRewireTable(roots);
+			else //generic (last-level)
+			{
+				//process entire hop DAGs with memoization
+				Map<Long, FType> fedHops = new HashMap<>();
+				List<Hop> roots = sb.getHops();
+			Map<Long, List<Hop>> rewireTable = mergeRewireTables(
+				buildTransientRewireTable(roots), globalRewireTable);
 			if( roots != null )
 				for( Hop c : roots )
-					rRewriteHop(c, fedHops, fedVars, fTypeMap, rewireTable, sb.getDMLProg());
-			
-			//propagate federated outputs across DAGs
-			if( sb.getHops() != null )
-				for( Hop c : sb.getHops() )
-					if( HopRewriteUtils.isData(c, OpOpData.TRANSIENTWRITE) )
-						fedVars.put(c.getName(), fedHops.get(c.getInput(0).getHopID()));
+					rRewriteHop(c, fedHops, fedVars, fTypeMap, rewireTable, globalRewireTable, sb.getDMLProg());
+				
+				//propagate federated outputs across DAGs
+				if( sb.getHops() != null )
+					for( Hop c : sb.getHops() )
+						if( HopRewriteUtils.isData(c, OpOpData.TRANSIENTWRITE) ) {
+							FType twType = fedHops.get(c.getHopID());
+							if( twType == null ) {
+								boolean twFed = (c.getFederatedOutput() == FederatedOutput.FOUT)
+									&& (c.getForcedExecType() == ExecType.FED || c.getExecType() == ExecType.FED);
+								if( twFed && c.getInput() != null && !c.getInput().isEmpty() )
+									twType = fedHops.get(c.getInput(0).getHopID());
+							}
+							fedVars.put(c.getName(), twType);
+						}
+			}
 		}
-	}
 	
 	private void rRewriteHop(Hop hop, Map<Long, FType> memo, Map<String, FType> fedVars,
-		Map<Long, FType> fTypeMap, Map<Long, List<Hop>> rewireTable, DMLProgram program) {
+		Map<Long, FType> fTypeMap, Map<Long, List<Hop>> rewireTable,
+		Map<Long, List<Hop>> globalRewireTable, DMLProgram program) {
 		if( hop == null || memo.containsKey(hop.getHopID()) )
 			return; //already processed
 		
 		//process children first
 		for( Hop c : hop.getInput() )
-			rRewriteHop(c, memo, fedVars, fTypeMap, rewireTable, program);
+			rRewriteHop(c, memo, fedVars, fTypeMap, rewireTable, globalRewireTable, program);
 		
 		FType outFType = null;
 		boolean logDecision = true;
@@ -198,7 +237,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			if( sbFuncBlock != null ) {
 				FunctionStatement funcStatement = (FunctionStatement) sbFuncBlock.getStatement(0);
 				Map<String, FType> funcFedVars = createFunctionFedVarTable(fop, memo);
-				rRewriteStatementBlock(sbFuncBlock, funcFedVars, fTypeMap);
+				rRewriteStatementBlock(sbFuncBlock, funcFedVars, fTypeMap, globalRewireTable);
 				mapFunctionOutputs(fop, funcStatement, funcFedVars, fedVars);
 				logDecision = false;
 			}
@@ -209,23 +248,39 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		}
 		else if( HopRewriteUtils.isData(hop, OpOpData.FEDERATED) ) {
 			outFType = deriveFType((DataOp)hop);
+			FederatedPlannerUtils.registerFedInitVar(hop.getName(), outFType,
+				FederatedPlannerUtils.deriveFedInitSignature((DataOp) hop));
+			_numWorkers = Math.max(_numWorkers, countFedInitWorkers((DataOp) hop));
+			hop.setForcedExecType(ExecType.FED);
+			hop.setFederatedOutput(FederatedOutput.FOUT);
 			memo.put(hop.getHopID(), outFType);
 			updateFTypeMap(fTypeMap, hop.getHopID(), outFType);
 		}
 		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTREAD) ) {
 			outFType = fedVars.get(hop.getName());
+			hop.setForcedExecType(outFType != null ? ExecType.FED : ExecType.CP);
+			hop.setFederatedOutput(outFType != null ? FederatedOutput.FOUT : FederatedOutput.LOUT);
 			memo.put(hop.getHopID(), outFType);
 			updateFTypeMap(fTypeMap, hop.getHopID(), outFType);
 		}
-		else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE) ) {
-			outFType = memo.get(hop.getInput(0).getHopID());
-			memo.put(hop.getHopID(), outFType);
-			fedVars.put(hop.getName(), outFType);
-			updateFTypeMap(fTypeMap, hop.getHopID(), outFType);
-		}
-		else if( allowsFederated(hop, memo) ) {
-			hop.setForcedExecType(ExecType.FED);
-			outFType = getFederatedOut(hop, memo, rewireTable);
+			else if( HopRewriteUtils.isData(hop, OpOpData.TRANSIENTWRITE) ) {
+				Hop input = hop.getInput(0);
+				FType inputFType = input != null ? memo.get(input.getHopID()) : null;
+				ExecType inputExec = null;
+				if (input != null)
+					inputExec = input.getForcedExecType() != null ? input.getForcedExecType() : input.getExecType();
+				// Only treat the write as federated if the input is truly FED/FOUT at runtime.
+				boolean inputRuntimeFed = input != null && inputExec == ExecType.FED && !input.hasLocalOutput();
+				outFType = inputRuntimeFed ? inputFType : null;
+				hop.setForcedExecType(outFType != null ? ExecType.FED : ExecType.CP);
+				hop.setFederatedOutput(outFType != null ? FederatedOutput.FOUT : FederatedOutput.LOUT);
+				memo.put(hop.getHopID(), outFType);
+				fedVars.put(hop.getName(), outFType);
+				updateFTypeMap(fTypeMap, hop.getHopID(), outFType);
+			}
+			else if( allowsFederated(hop, memo) ) {
+				hop.setForcedExecType(ExecType.FED);
+				outFType = getFederatedOut(hop, memo, rewireTable);
 			FType propagated = getPropagatedFType(hop, outFType);
 			memo.put(hop.getHopID(), propagated);
 			updateFTypeMap(fTypeMap, hop.getHopID(), propagated);
@@ -237,6 +292,11 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			}
 		}
 		else { // memoization as processed, but not federated
+			// Clear any stale FED markings from previous rewrite passes.
+			if (hop.getForcedExecType() == ExecType.FED)
+				hop.setForcedExecType(ExecType.CP);
+			if (hop.getFederatedOutput() != FederatedOutput.LOUT)
+				hop.setFederatedOutput(FederatedOutput.LOUT);
 			if( shouldGenerateCpfoutCandidate(hop, memo) ) {
 				outFType = inferCpfoutFType(hop, memo, rewireTable);
 				if( outFType != null ) {
@@ -256,12 +316,139 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			}
 		}
 
-		if( logDecision )
-			logPlannerDecision(hop, memo, outFType);
+			if( logDecision )
+				logPlannerDecision(hop, memo, outFType);
+		}
+
+	private static Map<Long, List<Hop>> buildGlobalTransientRewireTable(DMLProgram prog) {
+		if (prog == null)
+			return null;
+		Map<Long, List<Hop>> global = null;
+		List<Hop> roots = new ArrayList<>();
+		for (StatementBlock sb : prog.getStatementBlocks())
+			collectRootsFromStatementBlock(sb, roots);
+		global = buildTransientRewireTable(roots);
+		for (FunctionStatementBlock fsb : prog.getFunctionStatementBlocks()) {
+			Map<Long, List<Hop>> funcGlobal = buildGlobalTransientRewireTable(fsb);
+			global = mergeRewireTables(global, funcGlobal);
+		}
+		return global;
+	}
+
+	private static Map<Long, List<Hop>> buildGlobalTransientRewireTable(FunctionStatementBlock function) {
+		if (function == null)
+			return null;
+		List<Hop> roots = new ArrayList<>();
+		collectRootsFromStatementBlock(function, roots);
+		return buildTransientRewireTable(roots);
+	}
+
+	private static void collectRootsFromStatementBlock(StatementBlock sb, List<Hop> roots) {
+		if (sb == null || roots == null)
+			return;
+		if (sb instanceof FunctionStatementBlock) {
+			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+			if (fstmt == null)
+				return;
+			for (StatementBlock inner : fstmt.getBody())
+				collectRootsFromStatementBlock(inner, roots);
+		}
+		else if (sb instanceof WhileStatementBlock) {
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			addRoots(wsb.getPredicateHops(), roots);
+			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+			if (wstmt != null) {
+				for (StatementBlock inner : wstmt.getBody())
+					collectRootsFromStatementBlock(inner, roots);
+			}
+		}
+		else if (sb instanceof IfStatementBlock) {
+			IfStatementBlock isb = (IfStatementBlock) sb;
+			addRoots(isb.getPredicateHops(), roots);
+			IfStatement istmt = (IfStatement) isb.getStatement(0);
+			if (istmt != null) {
+				for (StatementBlock inner : istmt.getIfBody())
+					collectRootsFromStatementBlock(inner, roots);
+				for (StatementBlock inner : istmt.getElseBody())
+					collectRootsFromStatementBlock(inner, roots);
+			}
+		}
+		else if (sb instanceof ForStatementBlock) { // incl parfor
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			addRoots(fsb.getFromHops(), roots);
+			addRoots(fsb.getToHops(), roots);
+			if (fsb.getIncrementHops() != null)
+				addRoots(fsb.getIncrementHops(), roots);
+			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+			if (fstmt != null) {
+				for (StatementBlock inner : fstmt.getBody())
+					collectRootsFromStatementBlock(inner, roots);
+			}
+		}
+		else {
+			addRoots(sb.getHops(), roots);
+		}
+	}
+
+	private static void addRoots(List<Hop> source, List<Hop> roots) {
+		if (source == null || roots == null)
+			return;
+		for (Hop hop : source) {
+			if (hop != null)
+				roots.add(hop);
+		}
+	}
+
+	private static void addRoots(Hop source, List<Hop> roots) {
+		if (source == null || roots == null)
+			return;
+		roots.add(source);
+	}
+
+	private static Map<Long, List<Hop>> mergeRewireTables(Map<Long, List<Hop>> local,
+		Map<Long, List<Hop>> global) {
+		if (global == null || global.isEmpty())
+			return local;
+		if (local == null || local.isEmpty())
+			return global;
+		for (Map.Entry<Long, List<Hop>> entry : global.entrySet()) {
+			List<Hop> globalList = entry.getValue();
+			if (globalList == null || globalList.isEmpty())
+				continue;
+			List<Hop> localList = local.get(entry.getKey());
+			if (localList == null) {
+				local.put(entry.getKey(), new ArrayList<>(globalList));
+				continue;
+			}
+			addMissingHops(localList, globalList);
+		}
+		return local;
+	}
+
+	private static void addMissingHops(List<Hop> target, List<Hop> additions) {
+		if (target == null || additions == null || additions.isEmpty())
+			return;
+		Set<Long> seen = new HashSet<>(target.size());
+		for (Hop hop : target) {
+			if (hop != null)
+				seen.add(hop.getHopID());
+		}
+		for (Hop hop : additions) {
+			if (hop == null)
+				continue;
+			long hopId = hop.getHopID();
+			if (!seen.contains(hopId)) {
+				target.add(hop);
+				seen.add(hopId);
+			}
+		}
 	}
 
 	@Override
 	protected boolean allowsFederated(Hop hop, Map<Long, FType> fedHops) {
+		if (!FederatedRefedPolicy.canSatisfyFederatedInputs(hop, fedHops))
+			return false;
 		OpCaps caps = getOracleCaps(hop, fedHops);
 		return caps != null && caps.exec() == ExecType.FED;
 	}
@@ -350,25 +537,126 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	private boolean shouldGenerateCpfoutCandidate(Hop hop, Map<Long, FType> memo) {
 		if( hop == null || !hop.getDataType().isMatrix() )
 			return false;
-		if( !hasFederatedInput(hop, memo) )
+		if( isRecompileRegion(hop) )
 			return false;
+		if( hop instanceof DataOp ) {
+			OpOpData op = ((DataOp) hop).getOp();
+			if( op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE )
+				return false;
+		}
 		return FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, memo);
 	}
 
-	private static boolean hasFederatedInput(Hop hop, Map<Long, FType> memo) {
-		if( hop == null || memo == null )
+	private static boolean isRecompileRegion(Hop hop) {
+		if( hop == null )
 			return false;
-		for( Hop input : hop.getInput() ) {
-			if( input != null && memo.get(input.getHopID()) != null )
+		if( hop.requiresRecompile() )
+			return true;
+		List<Hop> inputs = hop.getInput();
+		if( inputs == null )
+			return false;
+		for( Hop in : inputs ) {
+			if( in != null && in.requiresRecompile() )
 				return true;
 		}
 		return false;
 	}
 
+	private static boolean hasFederatedInput(Hop hop, Map<Long, FType> memo) {
+		if (hop == null || memo == null || hop.getInput() == null)
+			return false;
+		for (Hop input : hop.getInput()) {
+			if (input != null && memo.get(input.getHopID()) != null)
+				return true;
+		}
+		return false;
+	}
+
+	private void rewriteLoopBody(List<StatementBlock> body, Map<String, FType> fedVars,
+		Map<Long, FType> fTypeMap, Map<Long, List<Hop>> globalRewireTable) {
+		if (body == null || body.isEmpty())
+			return;
+		Map<String, FType> loopFedVars = new HashMap<>(fedVars);
+		boolean changed;
+		int passes = 0;
+		do {
+			Map<String, FType> snapshot = new HashMap<>(loopFedVars);
+			for (StatementBlock csb : body)
+				rRewriteStatementBlock(csb, loopFedVars, fTypeMap, globalRewireTable);
+			changed = reconcileFedVars(loopFedVars, snapshot);
+			passes++;
+		} while (changed && passes < MAX_LOOP_REWRITE_PASSES);
+		fedVars.clear();
+		fedVars.putAll(loopFedVars);
+	}
+
+	private static boolean reconcileFedVars(Map<String, FType> current, Map<String, FType> previous) {
+		boolean changed = false;
+		for (Map.Entry<String, FType> entry : previous.entrySet()) {
+			FType prev = entry.getValue();
+			if (prev == null)
+				continue;
+			String name = entry.getKey();
+			if (!current.containsKey(name)) {
+				current.put(name, prev);
+				changed = true;
+				continue;
+			}
+			FType cur = current.get(name);
+			if (cur == null) {
+				// Explicit local assignment in the current pass; do not revive a prior federated state.
+				if (prev != null)
+					changed = true;
+			}
+			else if (!cur.equals(prev)) {
+				changed = true;
+			}
+		}
+		return changed;
+	}
+
+	private static Map<String, FType> mergeConditionalFedVars(Map<String, FType> ifFedVars,
+		Map<String, FType> elseFedVars) {
+		Map<String, FType> merged = new HashMap<>();
+		Set<String> keys = new HashSet<>();
+		if (ifFedVars != null)
+			keys.addAll(ifFedVars.keySet());
+		if (elseFedVars != null)
+			keys.addAll(elseFedVars.keySet());
+		for (String key : keys) {
+			FType ifVal = ifFedVars != null ? ifFedVars.get(key) : null;
+			FType elseVal = elseFedVars != null ? elseFedVars.get(key) : null;
+			if (ifVal != null && ifVal.equals(elseVal)) {
+				merged.put(key, ifVal);
+			}
+			else if (ifVal == null && elseVal == null) {
+				merged.put(key, null);
+			}
+			else {
+				// Divergent assignments across branches; treat as local/unknown after the if.
+				merged.put(key, null);
+			}
+		}
+		return merged;
+	}
+
 	private FType inferCpfoutFType(Hop hop, Map<Long, FType> memo, Map<Long, List<Hop>> rewireTable) {
 		List<FType> inputFTypes = collectInputFTypes(hop, memo);
 		FType inferred = OracleUtils.inferFallbackFType(hop, inputFTypes, _oracle, rewireTable);
-		return inferred != null ? inferred : FederatedTypePropagator.getFederatedType(hop, memo);
+		FType logical = inferred != null ? inferred : FederatedTypePropagator.getFederatedType(hop, memo);
+		return OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(hop, logical, rewireTable, _numWorkers);
+	}
+
+	private static int countFedInitWorkers(DataOp fedInit) {
+		if (fedInit == null || fedInit.getOp() != OpOpData.FEDERATED)
+			return 0;
+		int addrIx = fedInit.getParameterIndex(DataExpression.FED_ADDRESSES);
+		if (addrIx < 0)
+			return 0;
+		Hop addrHop = fedInit.getInput(addrIx);
+		if (addrHop == null || addrHop.getInput() == null)
+			return 0;
+		return addrHop.getInput().size();
 	}
 
 	private static Map<Long, List<Hop>> buildTransientRewireTable(List<Hop> roots) {

@@ -26,6 +26,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
@@ -38,6 +40,7 @@ import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.lops.Data;
+import org.apache.sysds.lops.Federated;
 import org.apache.sysds.lops.FederatedFoutMaterialize;
 import org.apache.sysds.lops.FederatedRefed;
 import org.apache.sysds.lops.FunctionCallCP;
@@ -51,6 +54,7 @@ import org.apache.sysds.lops.compile.linearization.IDagLinearizerFactory;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.parfor.util.IDSequence;
 import org.apache.sysds.runtime.instructions.CPInstructionParser;
@@ -184,15 +188,213 @@ public class Dag<N extends Lop>
 
 		IDagLinearizer dl = IDagLinearizerFactory.createDagLinearizer();
 		List<Lop> node_v = dl.linearize(nodes);
-		prefetchFederated(node_v);
-		insertRefedLops(node_v, sb);
-		insertFoutMaterializeLops(node_v, sb);
+		boolean modified = prefetchFederated(node_v);
+		modified |= insertRefedLops(node_v, sb);
+		modified |= insertFoutMaterializeLops(node_v, sb);
+
+		// The default linearizer for CP/Spark relies on lop IDs (creation order) to satisfy dependencies.
+		// Lops inserted in these post-processing passes are created after their consumers, so we must
+		// (re-)linearize using true DAG dependencies before generating instructions (otherwise we can
+		// emit instructions with "null" operands due to missing labels on not-yet-processed inputs).
+		node_v = linearizeTopological(modified ? dl.linearize(nodes) : node_v);
+
+		modified |= insertImplicitRefedForFedOps(node_v);
+		if (modified)
+			node_v = linearizeTopological(dl.linearize(nodes));
 
 		// do greedy grouping of operations
 		ArrayList<Instruction> inst = doPlainInstructionGen(sb, node_v);
 
 		// cleanup instruction (e.g., create packed rmvar instructions)
 		return cleanupInstructions(inst);
+	}
+
+	/**
+	 * Safety net: FED lops require federated matrix inputs with a federation map. If the planner leaves
+	 * any matrix inputs as local, execution will either fail (no anchor) or implicitly rely on runtime
+	 * fallbacks for local matrix inputs (which can break alignment assumptions). We fix this by inserting
+	 * {@link FederatedRefed} lops that upload local matrix inputs to the federated sites, anchored on a
+	 * stable federated variable when possible.
+	 */
+	private boolean insertImplicitRefedForFedOps(List<Lop> lops) {
+		if (lops == null || lops.isEmpty())
+			return false;
+
+		boolean inserted = false;
+		for (int i = 0; i < lops.size(); i++) {
+			Lop lop = lops.get(i);
+			if (lop == null || lop.getExecType() != ExecType.FED)
+				continue;
+			// FED init/materialize/refed ops are self-contained or already provide a mapping.
+			if (lop instanceof Federated || lop instanceof FederatedRefed || lop instanceof FederatedFoutMaterialize)
+				continue;
+
+			// Prefer an existing federated input of this lop as anchor; otherwise fall back to a prior
+			// federated matrix in the DAG (legacy behavior for missing-anchor situations).
+			Lop anchor = findFederatedAnchorInInputs(lop, null);
+			if (anchor == null) {
+				Lop localMatrixInput = findLocalMatrixInput(lop);
+				if (localMatrixInput == null)
+					continue;
+				anchor = findFederatedAnchorBefore(lops, i, localMatrixInput);
+				if (anchor == null)
+					continue;
+
+				FederatedRefed refed = new FederatedRefed(localMatrixInput, anchor,
+					localMatrixInput.getDataType(), localMatrixInput.getValueType());
+				refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
+				copyOutputParams(refed.getOutputParameters(), localMatrixInput.getOutputParameters());
+				refed.setFederatedOutput(FederatedOutput.FOUT);
+				addNode(refed);
+
+				lop.replaceInput(localMatrixInput, refed);
+				localMatrixInput.removeOutput(lop);
+				refed.addOutput(lop);
+
+				if (!lops.contains(refed))
+					lops.add(i, refed);
+				inserted = true;
+				i++; // skip newly inserted refed
+				continue;
+			}
+
+			// Anchor exists: upload any remaining local matrix inputs (except scalar-like 1x1 matrices)
+			// so FED execution does not depend on runtime fallbacks for local matrices.
+			List<Lop> inputs = new ArrayList<>(lop.getInputs());
+			for (Lop input : inputs) {
+				if (input == null || input == anchor)
+					continue;
+				if (input.getDataType() == null || !input.getDataType().isMatrix())
+					continue;
+				if (isFederatedMatrixLop(input))
+					continue;
+				if (isScalarLikeMatrixLop(input))
+					continue;
+
+				FederatedRefed refed = new FederatedRefed(input, anchor, input.getDataType(), input.getValueType());
+				refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
+				copyOutputParams(refed.getOutputParameters(), input.getOutputParameters());
+				refed.setFederatedOutput(FederatedOutput.FOUT);
+				addNode(refed);
+
+				lop.replaceInput(input, refed);
+				input.removeOutput(lop);
+				refed.addOutput(lop);
+
+				if (!lops.contains(refed))
+					lops.add(i, refed);
+				inserted = true;
+				i++; // skip newly inserted refed
+			}
+		}
+
+		return inserted;
+	}
+
+	private static boolean hasFederatedMatrixInput(Lop lop) {
+		if (lop == null)
+			return false;
+		List<Lop> inputs = lop.getInputs();
+		if (inputs == null)
+			return false;
+		for (Lop input : inputs) {
+			if (isFederatedMatrixLop(input))
+				return true;
+		}
+		return false;
+	}
+
+	private static Lop findLocalMatrixInput(Lop lop) {
+		List<Lop> inputs = (lop != null) ? lop.getInputs() : null;
+		if (inputs == null)
+			return null;
+		for (Lop input : inputs) {
+			if (input == null || !input.getDataType().isMatrix())
+				continue;
+			if (!isFederatedMatrixLop(input))
+				return input;
+		}
+		return null;
+	}
+
+	private static Lop findFederatedAnchorBefore(List<Lop> lops, int endExclusive, Lop exclude) {
+		Lop fallback = null;
+		for (int j = endExclusive - 1; j >= 0; j--) {
+			Lop cand = lops.get(j);
+			if (cand == null || cand == exclude)
+				continue;
+			if (!isFederatedMatrixLop(cand))
+				continue;
+			// Prefer stable anchors that represent actual federated variables (fed-init/TR/FEDERATED Data lops)
+			// over intermediate broadcast/materialize outputs which can lead to unintended BROADCAST anchoring.
+			if (cand instanceof Data) {
+				OpOpData op = ((Data) cand).getOperationType();
+				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					return cand;
+			}
+			if (fallback == null)
+				fallback = cand;
+		}
+		return fallback;
+	}
+
+	private static Lop findFederatedAnchorInInputs(Lop lop, Lop exclude) {
+		if (lop == null)
+			return null;
+		List<Lop> inputs = lop.getInputs();
+		if (inputs == null || inputs.isEmpty())
+			return null;
+
+		Lop fallback = null;
+		for (Lop in : inputs) {
+			if (in == null || in == exclude)
+				continue;
+			if (!isFederatedMatrixLop(in))
+				continue;
+			if (in instanceof Data) {
+				OpOpData op = ((Data) in).getOperationType();
+				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					return in;
+			}
+			if (fallback == null)
+				fallback = in;
+		}
+		return fallback;
+	}
+
+	private static boolean isScalarLikeMatrixLop(Lop lop) {
+		if (lop == null || lop.getDataType() == null || !lop.getDataType().isMatrix())
+			return false;
+		OutputParameters out = lop.getOutputParameters();
+		if (out == null)
+			return false;
+		return out.getNumRows() == 1 && out.getNumCols() == 1;
+	}
+
+	private static boolean isFederatedMatrixLop(Lop lop) {
+		if (lop == null || lop.getDataType() == null || !lop.getDataType().isMatrix())
+			return false;
+		// explicit federated lops always provide a federation map
+		if (lop instanceof Federated || lop instanceof FederatedRefed || lop instanceof FederatedFoutMaterialize)
+			return true;
+		FederatedOutput fedOut = lop.getFederatedOutput();
+		if (lop.getExecType() == ExecType.FED)
+			return fedOut == null || !fedOut.isForcedLocal();
+		// data lops may represent already-federated variables; honor explicit FED exec
+		// even if federatedOutput is not forced yet.
+		if (lop instanceof Data) {
+			if (lop.getExecType() == ExecType.FED)
+				return fedOut == null || !fedOut.isForcedLocal();
+			OpOpData op = ((Data) lop).getOperationType();
+			if (op == OpOpData.TRANSIENTREAD) {
+				OutputParameters out = lop.getOutputParameters();
+				String name = (out != null) ? out.getLabel() : null;
+				if (name != null && FederatedPlannerUtils.getFedAnchorKey(name) != null)
+					return true;
+			}
+			return fedOut != null && fedOut.isForcedFederated();
+		}
+		return false;
 	}
 
 	/**
@@ -216,19 +418,74 @@ public class Dag<N extends Lop>
 		prefetch.addOutput(lop);
 		lop.replaceInput(input, prefetch);
 		input.removeOutput(lop);
+		addNode(prefetch);
 	}
 
 	/**
 	 * Add prefetch lops where needed.
 	 * @param lops for which prefetch lops could be added.
 	 */
-	private void prefetchFederated(List<Lop> lops){
+	private boolean prefetchFederated(List<Lop> lops){
+		boolean inserted = false;
 		for ( Lop lop : lops ){
 			for ( Lop input : lop.getInputs() ){
-				if ( inputNeedsPrefetch(input, lop) )
+				if ( inputNeedsPrefetch(input, lop) ) {
 					addFedPrefetchLop(input, lop);
+					inserted = true;
+				}
 			}
 		}
+		return inserted;
+	}
+
+	private static List<Lop> linearizeTopological(List<Lop> lops) {
+		if (lops == null || lops.size() <= 1)
+			return lops;
+
+		// Use the current linearization as a stable tie-breaker to keep scheduling changes minimal.
+		final HashMap<Lop, Integer> order = new HashMap<>(lops.size());
+		for (int i = 0; i < lops.size(); i++)
+			order.put(lops.get(i), i);
+
+		final HashMap<Lop, Integer> indegree = new HashMap<>(lops.size());
+		final HashMap<Lop, ArrayList<Lop>> adj = new HashMap<>(lops.size());
+		for (Lop lop : lops) {
+			indegree.put(lop, 0);
+			adj.put(lop, new ArrayList<>());
+		}
+		for (Lop lop : lops) {
+			for (Lop in : lop.getInputs()) {
+				if (in == null || !indegree.containsKey(in))
+					continue;
+				adj.get(in).add(lop);
+				indegree.put(lop, indegree.get(lop) + 1);
+			}
+		}
+
+		PriorityQueue<Lop> q = new PriorityQueue<>((a, b) -> Integer.compare(order.get(a), order.get(b)));
+		for (Map.Entry<Lop, Integer> e : indegree.entrySet()) {
+			if (e.getValue() == 0)
+				q.add(e.getKey());
+		}
+
+		ArrayList<Lop> out = new ArrayList<>(lops.size());
+		while (!q.isEmpty()) {
+			Lop cur = q.poll();
+			out.add(cur);
+			for (Lop succ : adj.get(cur)) {
+				int deg = indegree.get(succ) - 1;
+				indegree.put(succ, deg);
+				if (deg == 0)
+					q.add(succ);
+			}
+		}
+
+		if (out.size() != lops.size()) {
+			// Preserve legacy behavior if we detect cycles or missing nodes due to inconsistent edges.
+			LOG.warn("Failed to topologically linearize lop DAG (cycle or inconsistent edges); falling back to original order.");
+			return lops;
+		}
+		return out;
 	}
 
 	private boolean insertRefedLops(List<Lop> lops, StatementBlock sb) {
@@ -239,6 +496,8 @@ public class Dag<N extends Lop>
 		Map<Long, Long> refedEntries = FederatedRefedRegistry.snapshot(sbId);
 		if (refedEntries.isEmpty())
 			return false;
+		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeEntries =
+			FederatedFoutMaterializeRegistry.snapshot(sbId);
 
 		Map<Long, Lop> hopToLop = new HashMap<>();
 		for (Lop lop : lops) {
@@ -253,6 +512,13 @@ public class Dag<N extends Lop>
 		boolean inserted = false;
 		for (Map.Entry<Long, Long> e : refedEntries.entrySet()) {
 			long hopId = e.getKey();
+			if (materializeEntries.containsKey(hopId)) {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Skipping refed insertion for hop=" + hopId
+						+ " because a fed_fout materialize is already registered");
+				}
+				continue;
+			}
 			long anchorHopId = e.getValue();
 			Lop local = hopToLop.get(hopId);
 			Lop anchor = hopToLop.get(anchorHopId);
@@ -260,6 +526,16 @@ public class Dag<N extends Lop>
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
 						+ " due to missing lops in current DAG");
+				}
+				continue;
+			}
+
+			// If the "local" lop is already a federated object (e.g., transient read of a federated var),
+			// inserting a refed would fail at runtime because fed_refed expects a local input.
+			if (isFederatedMatrixLop(local)) {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
+						+ " because input is already federated");
 				}
 				continue;
 			}
@@ -298,9 +574,9 @@ public class Dag<N extends Lop>
 		return inserted;
 	}
 
-	private boolean insertFoutMaterializeLops(List<Lop> lops, StatementBlock sb) {
-		if (FederatedFoutMaterializeRegistry.isEmpty())
-			return false;
+		private boolean insertFoutMaterializeLops(List<Lop> lops, StatementBlock sb) {
+			if (FederatedFoutMaterializeRegistry.isEmpty())
+				return false;
 
 		long sbId = (sb != null) ? sb.getSBID() : -1;
 		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> entries =
@@ -318,23 +594,34 @@ public class Dag<N extends Lop>
 				hopToLop.put(hopId, lop);
 		}
 
-		boolean inserted = false;
-		for (Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> e : entries.entrySet()) {
-			long hopId = e.getKey();
-			FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
-			Lop local = hopToLop.get(hopId);
-			Lop anchor = hopToLop.get(spec.getAnchorHopId());
+			boolean inserted = false;
+			for (Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> e : entries.entrySet()) {
+				long hopId = e.getKey();
+				FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
+				Lop local = hopToLop.get(hopId);
+				long anchorHopId = spec.getAnchorHopId();
+				Lop anchor = hopToLop.get(anchorHopId);
+				// hopToLop is level-based; for anchors we require a lop with a stable output label
+				// (prefer TR/FEDERATED Data lops) to avoid emitting "null" anchor operands.
+				if (anchor != null) {
+					OutputParameters out = anchor.getOutputParameters();
+					if (out == null || out.getLabel() == null) {
+						Lop resolved = findAnchorByHopId(lops, anchorHopId);
+						if (resolved != null)
+							anchor = resolved;
+					}
+				}
 			if (anchor == null && spec.getAnchorLabel() != null) {
 				Lop anchorByLabel = findAnchorByLabel(lops, spec.getAnchorLabel());
 				if (anchorByLabel != null) {
 					anchor = anchorByLabel;
 					System.out.printf("CP->FOUT anchor fallback: hop=%d anchorHop=%d anchorLabel=%s resolvedHop=%d%n",
-						hopId, spec.getAnchorHopId(), spec.getAnchorLabel(), anchorByLabel.getHopID());
+						hopId, anchorHopId, spec.getAnchorLabel(), anchorByLabel.getHopID());
 				}
 			}
 			if (local == null || anchor == null) {
 				System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
-					hopId, spec.getAnchorHopId(), local == null, anchor == null, sbId);
+					hopId, anchorHopId, local == null, anchor == null, sbId);
 				if (anchor == null) {
 					List<Long> hopIds = new ArrayList<>(hopToLop.keySet());
 					Collections.sort(hopIds);
@@ -352,25 +639,51 @@ public class Dag<N extends Lop>
 					LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
 						+ spec.getAnchorHopId() + " due to missing lops in current DAG");
 				}
-				continue;
-			}
+					continue;
+				}
 
-			boolean alreadyInserted = local.getOutputs().stream()
-				.anyMatch(out -> out instanceof FederatedRefed || out instanceof FederatedFoutMaterialize);
-			if (alreadyInserted) {
-				String localLabel = (local.getOutputParameters() != null)
-					? local.getOutputParameters().getLabel()
-					: "null";
+				// Special handling for transient writes: the variable doesn't exist yet at the time of materialization.
+				// We therefore materialize the computed value (twrite input) and wire the fout result into the twrite.
+				final boolean isTransientWrite = (local instanceof Data) && ((Data) local).isTransientWrite();
+				Lop materializeInput = local;
+				if (isTransientWrite) {
+					List<Lop> inputs = local.getInputs();
+					if (inputs == null || inputs.isEmpty() || inputs.get(0) == null) {
+						System.out.printf("CP->FOUT insert skip: hop=%d transientWrite=true missingInput=true sbId=%d%n",
+							hopId, sbId);
+						continue;
+					}
+					materializeInput = inputs.get(0);
+				}
+
+				// If the input is already federated (e.g., produced by a FED op and written via TWrite),
+				// a fed_fout materialize would fail at runtime because it expects a local input.
+				if (isFederatedMatrixLop(materializeInput)) {
+					if (LOG.isDebugEnabled()) {
+						LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
+							+ spec.getAnchorHopId() + " because input is already federated");
+					}
+					continue;
+				}
+
+				boolean alreadyInserted = isTransientWrite
+					? (materializeInput instanceof FederatedRefed || materializeInput instanceof FederatedFoutMaterialize)
+					: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
+						|| out instanceof FederatedFoutMaterialize);
+				if (alreadyInserted) {
+					String localLabel = (local.getOutputParameters() != null)
+						? local.getOutputParameters().getLabel()
+						: "null";
 				System.out.printf("CP->FOUT insert skip: hop=%d local=%s alreadyInserted=true%n",
 					hopId, localLabel);
-				continue;
-			}
+					continue;
+				}
 
-			FederatedFoutMaterialize fout = new FederatedFoutMaterialize(local, anchor, spec.getFTypeHint());
-			fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
-			copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
-			fout.setFederatedOutput(FederatedOutput.FOUT);
-			addNode(fout);
+				FederatedFoutMaterialize fout = new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint());
+				fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
+				copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
+				fout.setFederatedOutput(FederatedOutput.FOUT);
+				addNode(fout);
 			String localLabel = (local.getOutputParameters() != null)
 				? local.getOutputParameters().getLabel()
 				: "null";
@@ -378,28 +691,112 @@ public class Dag<N extends Lop>
 				? anchor.getOutputParameters().getLabel()
 				: "null";
 			System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
-				hopId, localLabel, spec.getAnchorHopId(), anchorLabel, fout.getOutputParameters().getLabel(),
-				spec.getFTypeHint());
-			inserted = true;
+					hopId, localLabel, anchorHopId, anchorLabel, fout.getOutputParameters().getLabel(),
+					spec.getFTypeHint());
+				inserted = true;
 
-			List<Lop> outputs = new ArrayList<>(local.getOutputs());
-			int insertPos = -1;
-			for (Lop out : outputs) {
-				if (out == fout)
-					continue;
-				if (out.getExecType() == ExecType.FED) {
-					out.replaceInput(local, fout);
-					local.removeOutput(out);
-					fout.addOutput(out);
-					int idx = lops.indexOf(out);
-					if (idx >= 0 && (insertPos < 0 || idx < insertPos))
-						insertPos = idx;
+				if (isTransientWrite) {
+					local.replaceInput(materializeInput, fout);
+					materializeInput.removeOutput(local);
+					fout.addOutput(local);
 				}
-			}
-			if (insertPos >= 0 && !lops.contains(fout))
+
+				// Rewire all FED consumers of the materialized input to consume the federated value.
+				//
+				// NOTE: We cannot rely solely on local.getOutputs() because certain lops (e.g., indexing /
+				// in-place updates) may introduce intermediate lops with the same hop id, which breaks
+				// strict object-identity based replacement. Scan the full lop list and match by hop id
+				// as a fallback to ensure the planned CP->FOUT is actually used by FED consumers.
+				final long materializeHopId = materializeInput.getHopID();
+				final String materializeLabel = (materializeInput.getOutputParameters() != null)
+					? materializeInput.getOutputParameters().getLabel()
+					: null;
+				List<Lop> fedOutputs = new ArrayList<>();
+				List<Lop> refedToRemove = new ArrayList<>();
+				for (Lop out : lops) {
+					if (out == null || out == fout)
+						continue;
+					boolean isFedExec = out.getExecType() == ExecType.FED;
+					boolean isFoutTWrite = (out instanceof Data) && ((Data) out).isTransientWrite()
+						&& out.getFederatedOutput() == FederatedOutput.FOUT;
+					if (!isFedExec && !isFoutTWrite)
+						continue;
+					List<Lop> outInputs = out.getInputs();
+					if (outInputs == null || outInputs.isEmpty())
+						continue;
+					boolean replacedAny = false;
+					for (Lop in : new ArrayList<>(outInputs)) {
+						if (in == null)
+							continue;
+						if (in == materializeInput) {
+							out.replaceInput(in, fout);
+							in.removeOutput(out);
+							fout.addOutput(out);
+							replacedAny = true;
+							continue;
+						}
+						String inLabel = (in.getOutputParameters() != null)
+							? in.getOutputParameters().getLabel()
+							: null;
+						boolean sameLabel = (materializeLabel != null && materializeLabel.equals(inLabel));
+						boolean sameHopIdWithoutLabel = (materializeLabel == null && inLabel == null
+							&& materializeHopId >= 0 && in.getHopID() == materializeHopId);
+						if (sameLabel || sameHopIdWithoutLabel) {
+							out.replaceInput(in, fout);
+							in.removeOutput(out);
+							fout.addOutput(out);
+							replacedAny = true;
+						}
+					}
+						if (replacedAny && out instanceof FederatedRefed) {
+							List<Lop> refedOutputs = new ArrayList<>(out.getOutputs());
+							for (Lop refOut : refedOutputs) {
+								if (refOut == null)
+									continue;
+								refOut.replaceInput(out, fout);
+								out.removeOutput(refOut);
+								fout.addOutput(refOut);
+							}
+							refedToRemove.add(out);
+							continue;
+						}
+						if (replacedAny && isFedExec)
+							fedOutputs.add(out);
+					}
+
+				if (!refedToRemove.isEmpty()) {
+					for (Lop refed : refedToRemove) {
+						List<Lop> refedInputs = new ArrayList<>(refed.getInputs());
+						for (Lop in : refedInputs) {
+							if (in != null)
+								in.removeOutput(refed);
+						}
+						lops.remove(refed);
+						nodes.remove(refed);
+					}
+				}
+
+			int inputIdx = (materializeInput != null) ? lops.indexOf(materializeInput) : -1;
+			if (inputIdx < 0)
+				inputIdx = lops.indexOf(local);
+			int anchorIdx = lops.indexOf(anchor);
+			int insertPos = Math.max(inputIdx, anchorIdx);
+			if (insertPos < 0)
+				insertPos = lops.size();
+			else
+				insertPos++;
+
+			if (!lops.contains(fout))
 				lops.add(insertPos, fout);
-			else if (!lops.contains(fout))
-				lops.add(fout);
+
+			if (!fedOutputs.isEmpty()) {
+				fedOutputs.sort((a, b) -> Integer.compare(lops.indexOf(a), lops.indexOf(b)));
+				for (Lop out : fedOutputs)
+					lops.remove(out);
+				int pos = lops.indexOf(fout) + 1;
+				for (Lop out : fedOutputs)
+					lops.add(pos++, out);
+			}
 		}
 		return inserted;
 	}
@@ -427,13 +824,34 @@ public class Dag<N extends Lop>
 		}
 		return null;
 	}
+
+	private static Lop findAnchorByHopId(List<Lop> lops, long hopId) {
+		if (hopId < 0)
+			return null;
+		Lop fallback = null;
+		for (Lop lop : lops) {
+			if (lop.getHopID() != hopId)
+				continue;
+			OutputParameters out = lop.getOutputParameters();
+			if (out == null || out.getLabel() == null)
+				continue;
+			if (lop instanceof Data) {
+				OpOpData op = ((Data) lop).getOperationType();
+				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					return lop;
+			}
+			if (fallback == null)
+				fallback = lop;
+		}
+		return fallback;
+	}
 	
 	private ArrayList<Instruction> doPlainInstructionGen(StatementBlock sb, List<Lop> nodes)
 	{
 		//prepare basic instruction sets
 		List<Instruction> deleteInst = new ArrayList<>();
 		List<Instruction> writeInst = deleteUpdatedTransientReadVariables(sb, nodes);
-		List<Instruction> endOfBlockInst = generateRemoveInstructions(sb);
+		List<Instruction> endOfBlockInst = generateRemoveInstructions(sb, nodes);
 		ArrayList<Instruction> inst = generateInstructionsForInputVariables(nodes);
 		
 		// filter out non-executable nodes
@@ -464,9 +882,18 @@ public class Dag<N extends Lop>
 		List<Instruction> insts = new ArrayList<>();
 		if ( sb == null ) //return modifiable list
 			return insts;
-		
+
 		if( LOG.isTraceEnabled() )
 			LOG.trace("In delete updated variables");
+
+		Set<String> fedInitLabels = new HashSet<>();
+		for (Lop node : nodeV) {
+			if (node instanceof Federated) {
+				OutputParameters out = node.getOutputParameters();
+				if (out != null && out.getLabel() != null)
+					fedInitLabels.add(out.getLabel());
+			}
+		}
 
 		// CANDIDATE list of variables which could have been updated in this statement block 
 		HashMap<String, Lop> labelNodeMapping = new HashMap<>(nodeV.size());
@@ -513,8 +940,16 @@ public class Dag<N extends Lop>
 			}
 		}
 		
+		Set<String> protectedLabels = collectFedInputLabels(nodeV);
+		protectedLabels.addAll(fedInitLabels);
+
 		// generate RM instructions
 		for ( String label : updatedLabels ) {
+			if (label != null && protectedLabels.contains(label))
+				continue;
+			if ("Y".equals(label) || "X".equals(label)) {
+				System.out.println("[DEBUG] rmvar " + label + " from deleteUpdatedTransientReadVariables");
+			}
 			Instruction rm_inst = VariableCPInstruction.prepareRemoveInstruction(label);
 			rm_inst.setLocation(updatedLabelsLineNum.get(label));
 			if( LOG.isTraceEnabled() )
@@ -524,18 +959,36 @@ public class Dag<N extends Lop>
 		return insts;
 	}
 	
-	private static List<Instruction> generateRemoveInstructions(StatementBlock sb) {
+	private static List<Instruction> generateRemoveInstructions(StatementBlock sb, List<Lop> nodeV) {
 		if ( sb == null ) 
 			return Collections.emptyList();
 		ArrayList<Instruction> insts = new ArrayList<>();
-		
+
 		if( LOG.isTraceEnabled() )
 			LOG.trace("In generateRemoveInstructions()");
+
+		Set<String> fedInitLabels = new HashSet<>();
+		if (nodeV != null) {
+			for (Lop node : nodeV) {
+				if (node instanceof Federated) {
+					OutputParameters out = node.getOutputParameters();
+					if (out != null && out.getLabel() != null)
+						fedInitLabels.add(out.getLabel());
+				}
+			}
+		}
+		Set<String> protectedLabels = collectFedInputLabels(nodeV);
+		protectedLabels.addAll(fedInitLabels);
 		
 		// RULE 1: if in IN and not in OUT, then there should be an rmvar or rmfilevar inst
 		// (currently required for specific cases of external functions)
 		for (String varName : sb.liveIn().getVariableNames()) {
 			if (!sb.liveOut().containsVariable(varName)) {
+				if (protectedLabels.contains(varName))
+					continue;
+				if ("Y".equals(varName) || "X".equals(varName)) {
+					System.out.println("[DEBUG] rmvar " + varName + " from generateRemoveInstructions");
+				}
 				Instruction inst = VariableCPInstruction.prepareRemoveInstruction(varName);
 				inst.setLocation(sb.getFilename(), sb.getEndLine(), sb.getEndLine(), -1, -1);
 				insts.add(inst);
@@ -610,7 +1063,8 @@ public class Dag<N extends Lop>
 	 * @param inst list of instructions
 	 * @param delteInst list of instructions
 	 */
-	private static void processConsumersForInputs(Lop node, List<Instruction> inst, List<Instruction> delteInst) {
+	private static void processConsumersForInputs(Lop node, List<Instruction> inst, List<Instruction> delteInst,
+			Set<String> protectedLabels) {
 		// The asynchronous instructions execute lazily. The inputs to an asynchronous instruction
 		// must live till the outputs of the async. instruction are consumed (i.e. future.get is called)
 		if (node.isAsynchronousOp())
@@ -619,10 +1073,11 @@ public class Dag<N extends Lop>
 		// reduce the consumer count for all input lops
 		// if the count becomes zero, then variable associated w/ input can be removed
 		for(Lop in : node.getInputs() )
-			processConsumers(in, inst, delteInst, null);
+			processConsumers(in, inst, delteInst, null, protectedLabels);
 	}
 	
-	private static void processConsumers(Lop node, List<Instruction> inst, List<Instruction> deleteInst, Lop locationInfo) {
+	private static void processConsumers(Lop node, List<Instruction> inst, List<Instruction> deleteInst,
+			Lop locationInfo, Set<String> protectedLabels) {
 		// reduce the consumer count for all input lops
 		// if the count becomes zero, then variable associated w/ input can be removed
 
@@ -630,13 +1085,23 @@ public class Dag<N extends Lop>
 			// The inputs to the asynchronous input can be safely removed at this point as
 			// the outputs of the asynchronous instruction are consumed.
 			if (node.isAsynchronousOp())
-				processConsumerIfAsync(node, inst, deleteInst);
+				processConsumerIfAsync(node, inst, deleteInst, protectedLabels);
+
+			// Federated init variables are anchored to remote data; avoid removing them
+			// inside a statement block via consumer-count rmvar.
+			if (node instanceof Federated)
+				return;
 
 			if ( node.isDataExecLocation() && ((Data)node).isLiteral() ) {
 				return;
 			}
 			
 			String label = node.getOutputParameters().getLabel();
+			if (protectedLabels != null && label != null && protectedLabels.contains(label))
+				return;
+			if ("Y".equals(label) || "X".equals(label)) {
+				System.out.println("[DEBUG] rmvar " + label + " from processConsumers");
+			}
 			Instruction currInstr = VariableCPInstruction.prepareRemoveInstruction(label);
 			if (locationInfo != null)
 				currInstr.setLocation(locationInfo);
@@ -649,14 +1114,38 @@ public class Dag<N extends Lop>
 	}
 
 	// Generate rmvar instructions for the inputs of an asynchronous instruction.
-	private static void processConsumerIfAsync(Lop node, List<Instruction> inst, List<Instruction> deleteInst) {
+	private static void processConsumerIfAsync(Lop node, List<Instruction> inst, List<Instruction> deleteInst,
+			Set<String> protectedLabels) {
 		if (!node.isAsynchronousOp())
 			return;
 
 		// Temporarily disable the _asynchronous flag to generate rmvars for the inputs
 		node.setAsynchronous(false);
-		processConsumersForInputs(node, inst, deleteInst);
+		processConsumersForInputs(node, inst, deleteInst, protectedLabels);
 		node.setAsynchronous(true);
+	}
+
+	private static Set<String> collectFedInputLabels(List<Lop> execNodes) {
+		Set<String> labels = new HashSet<>();
+		if (execNodes == null || execNodes.isEmpty())
+			return labels;
+		for (Lop node : execNodes) {
+			if (node == null || node.getExecType() != ExecType.FED)
+				continue;
+			List<Lop> inputs = node.getInputs();
+			if (inputs == null || inputs.isEmpty())
+				continue;
+			for (Lop in : inputs) {
+				if (in == null)
+					continue;
+				if (!(in.isDataExecLocation() || in instanceof Federated))
+					continue;
+				OutputParameters out = in.getOutputParameters();
+				if (out != null && out.getLabel() != null)
+					labels.add(out.getLabel());
+			}
+		}
+		return labels;
 	}
 	
 	/**
@@ -681,6 +1170,7 @@ public class Dag<N extends Lop>
 		
 		boolean doRmVar = false;
 
+		Set<String> protectedLabels = collectFedInputLabels(execNodes);
 		for (int i = 0; i < execNodes.size(); i++) {
 			Lop node = execNodes.get(i);
 			doRmVar = false;
@@ -724,8 +1214,16 @@ public class Dag<N extends Lop>
 						deleteInst.addAll(out.getLastInstructions());
 					} 
 					else {
-						var_deletions.add(node.getOutputParameters().getLabel());
-						var_deletionsLineNum.put(node.getOutputParameters().getLabel(), node);
+						// Federated init outputs represent actual variables; do not treat them as temp labels.
+						if (!(node instanceof Federated)) {
+							String label = node.getOutputParameters().getLabel();
+							if ("X".equals(label) || "Y".equals(label)) {
+								System.out.println("[DEBUG] var_deletions add " + label + " from node " + node.getClass().getSimpleName()
+									+ " type=" + node.getType() + " exec=" + node.getExecType());
+							}
+							var_deletions.add(label);
+							var_deletionsLineNum.put(label, node);
+						}
 					}
 				}
 
@@ -931,11 +1429,13 @@ public class Dag<N extends Lop>
 			
 			// see if rmvar instructions can be generated for node's inputs
 			if(doRmVar)
-				processConsumersForInputs(node, inst, deleteInst);
+				processConsumersForInputs(node, inst, deleteInst, protectedLabels);
 			doRmVar = false;
 		}
 		
 		for ( String var : var_deletions ) {
+			if (protectedLabels.contains(var))
+				continue;
 			Instruction rmInst = VariableCPInstruction.prepareRemoveInstruction(var);
 			if( LOG.isTraceEnabled() )
 				LOG.trace("  Adding var_deletions: " + rmInst.toString());
@@ -1000,10 +1500,10 @@ public class Dag<N extends Lop>
 		NodeOutput out = new NodeOutput();
 		
 		node.setConsumerCount(node.getOutputs().size());
-		
+
 		// Compute the output format for this node
 		out.setOutInfo(getOutputFileFormat(node, cellModeOverride));
-		
+
 		// If node is NOT of type Data then we must generate
 		// a variable to hold the value produced by this node
 		// note: functioncallcp requires no createvar, rmvar since
@@ -1041,10 +1541,11 @@ public class Dag<N extends Lop>
 				out.addPreInstruction(createvarInst);
 
 				// temp file as well as the variable has to be deleted at the end
-				Instruction currInstr = VariableCPInstruction.prepareRemoveInstruction(oparams.getLabel());
-				
-				currInstr.setLocation(node);
-				out.addLastInstruction(currInstr);
+				if (!(node instanceof Federated)) {
+					Instruction currInstr = VariableCPInstruction.prepareRemoveInstruction(oparams.getLabel());
+					currInstr.setLocation(node);
+					out.addLastInstruction(currInstr);
+				}
 			}
 			else {
 				// If the function call is set with output lops (e.g., multi return builtin),
@@ -1292,6 +1793,9 @@ public class Dag<N extends Lop>
 			else {
 				//construct packed rmvar instruction
 				if( !currRmVar.isEmpty() ) {
+					if (currRmVar.contains("Y") || currRmVar.contains("X")) {
+						System.out.println("[DEBUG] packed rmvar contains Y/X: " + currRmVar);
+					}
 					ret.add(VariableCPInstruction.prepareRemoveInstruction(
 						currRmVar.toArray(new String[0])));
 					currRmVar.clear();
@@ -1302,6 +1806,9 @@ public class Dag<N extends Lop>
 		}
 		//construct last packed rmvar instruction
 		if( !currRmVar.isEmpty() ) {
+			if (currRmVar.contains("Y") || currRmVar.contains("X")) {
+				System.out.println("[DEBUG] packed rmvar contains Y/X: " + currRmVar);
+			}
 			ret.add(VariableCPInstruction.prepareRemoveInstruction(
 				currRmVar.toArray(new String[0])));
 		}

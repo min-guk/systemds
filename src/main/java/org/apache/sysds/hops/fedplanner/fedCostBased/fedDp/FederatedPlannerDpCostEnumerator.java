@@ -98,6 +98,8 @@ public class FederatedPlannerDpCostEnumerator {
 	// Global privacy policy: never allow CP overrides for protected data unless
 	// this flag flips.
 	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
+	// Planner option: disallow CP->FOUT in recompile regions (function/while).
+	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
 	/**
 	 * Enumerates the entire DML program to generate federated execution plans.
 	 * It processes each statement block, computes the optimal federated plan,
@@ -416,15 +418,20 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 		}
 
-		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, childHops);
-		final boolean enforceTReadConsistency = !tWriteChildIds.isEmpty();
-
 		FederatedPlannerDpMemoTable.HopCommon hopCommon = hopCommonTable.get(hopID);
 		hopCommon.setNumOfParentHops(numParentHops);
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
 			enumerateFederatedDataOp((DataOp) hop, memoTable, hopCommon);
 			return;
 		}
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			if (enumerateTransientReadDataOp((DataOp) hop, childHops, memoTable, hopCommon)) {
+				return;
+			}
+		}
+
+		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, childHops);
+		final boolean enforceTReadConsistency = !tWriteChildIds.isEmpty();
 
 		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
 
@@ -472,16 +479,24 @@ public class FederatedPlannerDpCostEnumerator {
 
 		final int enumerationLimit = 1 << numBothOutInputs;
 
-		FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
-				FederatedOutput.LOUT);
-		FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
-				FederatedOutput.FOUT);
-		Map<List<FType>, OpCaps> oracleCache = new HashMap<>();
+			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
+					FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
+					FederatedOutput.FOUT);
+			Map<List<FType>, OpCaps> oracleCache = new HashMap<>();
 
-		for (int i = 0; i < enumerationLimit; i++) {
-			List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
-			List<FType> collectedFTypes = new ArrayList<>();
-			List<Hop> collectedHops = new ArrayList<>();
+			boolean sawOracleFedFout = false;
+			boolean sawAllowFedFout = false;
+			boolean sawCanSatisfyFedInputs = false;
+			boolean sawAllowCpLout = false;
+			boolean sawAllowCpFout = false;
+			boolean sawAllowFedLout = false;
+
+			for (int i = 0; i < enumerationLimit; i++) {
+				List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
+				List<FType> collectedFTypes = new ArrayList<>();
+				List<Hop> collectedHops = new ArrayList<>();
+				Map<Long, FType> fedInputTypeMap = new HashMap<>();
 			ExecType tWriteExec = null;
 			FederatedOutput tWriteOut = null;
 			boolean tWriteConflict = false;
@@ -503,12 +518,14 @@ public class FederatedPlannerDpCostEnumerator {
 							+ hop.getOpString() + "), privacy=" + privacyConstraint);
 				}
 
-				planChilds.add(Pair.of(inputHop.getHopID(), childType));
-				collectedFTypes.add(childPlan.getFType());
-				collectedHops.add(inputHop);
-				FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
-						"[Planner] parent=%d (%s) child=%d (%s) type=%s exec=%s fType=%s",
-						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
+					planChilds.add(Pair.of(inputHop.getHopID(), childType));
+					collectedFTypes.add(childType == FederatedOutput.LOUT ? null : childPlan.getFType());
+					collectedHops.add(inputHop);
+					if (childType == FederatedOutput.FOUT && childPlan.getFType() != null)
+						fedInputTypeMap.put(inputHop.getHopID(), childPlan.getFType());
+					FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
+							"[Planner] parent=%d (%s) child=%d (%s) type=%s exec=%s fType=%s",
+							hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
 						childType, childPlan.getExecType(), childPlan.getFType()));
 				if (enforceTReadConsistency && tWriteChildIds.contains(inputHop.getHopID())) {
 					tWriteSeen = true;
@@ -531,13 +548,13 @@ public class FederatedPlannerDpCostEnumerator {
 					throw new DMLRuntimeException("Missing LOUT federated plan for child hop " + inputHop.getHopID()
 							+ " (" + inputHop.getOpString() + ") while enumerating parent " + hopID + " ("
 							+ hop.getOpString() + "), privacy=" + privacyConstraint);
-				}
-				planChilds.add(Pair.of(inputHop.getHopID(), FederatedOutput.LOUT));
-				collectedFTypes.add(childPlan.getFType());
-				collectedHops.add(inputHop);
-				FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
-						"[Planner] parent=%d (%s) child=%d (%s) type=LOUT exec=%s fType=%s",
-						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
+					}
+					planChilds.add(Pair.of(inputHop.getHopID(), FederatedOutput.LOUT));
+					collectedFTypes.add(null);
+					collectedHops.add(inputHop);
+					FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
+							"[Planner] parent=%d (%s) child=%d (%s) type=LOUT exec=%s fType=%s",
+							hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
 						childPlan.getExecType(), childPlan.getFType()));
 				if (enforceTReadConsistency && tWriteChildIds.contains(inputHop.getHopID())) {
 					tWriteSeen = true;
@@ -564,6 +581,8 @@ public class FederatedPlannerDpCostEnumerator {
 				planChilds.add(Pair.of(inputHop.getHopID(), FederatedOutput.FOUT));
 				collectedFTypes.add(childPlan.getFType());
 				collectedHops.add(inputHop);
+				if (childPlan.getFType() != null)
+					fedInputTypeMap.put(inputHop.getHopID(), childPlan.getFType());
 				FederatedPlannerLogger.logInfoMessage(String.format(Locale.ROOT,
 						"[Planner] parent=%d (%s) child=%d (%s) type=FOUT exec=%s fType=%s",
 						hopID, hop.getOpString(), inputHop.getHopID(), inputHop.getOpString(),
@@ -594,31 +613,41 @@ public class FederatedPlannerDpCostEnumerator {
 			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
 					hop, privacyConstraint, collectedHops, collectedFTypes,
 					oracleFacade, oracleCache, rewireTable);
-			List<FType> alignedInputFTypes = oracleDecision.alignedInputFTypes();
-			OpCaps caps = oracleDecision.caps();
+					List<FType> alignedInputFTypes = oracleDecision.alignedInputFTypes();
+					OpCaps caps = oracleDecision.caps();
+					boolean canSatisfyFedInputs = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(
+						hop, fedInputTypeMap);
+					if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
+						boolean hasPlannedFedInput = fedInputTypeMap != null && !fedInputTypeMap.isEmpty();
+						if (!hasPlannedFedInput)
+							canSatisfyFedInputs = false;
+					}
 
-			ExecType oracleExec = caps.exec();
-			FType oracleLogicalFType = oracleDecision.logicalFType();
-			double resultUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-					hop.getOutputMemEstimate(), oracleLogicalFType, numOfWorkers);
+					ExecType oracleExec = caps.exec();
+					FType oracleLogicalFType = oracleDecision.logicalFType();
+				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+						hop, oracleLogicalFType, rewireTable, numOfWorkers);
+			double cpUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+					hop.getOutputMemEstimate(), cpLogicalFType, numOfWorkers);
 
-			if (privacyConstraint != Privacy.PUBLIC && oracleExec == ExecType.CP
-					&& !allowsCPOverride(privacyConstraint, caps)) {
-				FederatedPlannerLogger.logWarnMessage(
-						"[Planner] Skipping CP-only plan for hop " + hopID + " (" + hop.getOpString()
-								+ ") due to privacy " + privacyConstraint + " and oracle caps reason "
-								+ caps.reason()
-								+ " (inputs=" + alignedInputFTypes + ")");
-				continue;
-			}
+				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
+						hop, privacyConstraint, oracleLogicalFType, caps);
+				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
+					placementDecision.allowCP_FOUT = false;
+				}
+				if (caps != null && caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT) {
+					sawOracleFedFout = true;
+				}
+				sawAllowCpLout |= placementDecision.allowCP_LOUT;
+				sawAllowCpFout |= placementDecision.allowCP_FOUT;
+				sawAllowFedLout |= placementDecision.allowFED_LOUT;
+				sawAllowFedFout |= placementDecision.allowFED_FOUT;
+				sawCanSatisfyFedInputs |= canSatisfyFedInputs;
 
-			ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
-					hop, privacyConstraint, oracleLogicalFType, caps);
-
-			// FED Exec, FOUT placement
-			if (placementDecision.allowFED_FOUT
-					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
-							ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
+				// FED Exec, FOUT placement
+				if (canSatisfyFedInputs && placementDecision.allowFED_FOUT
+						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+								ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
 				FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						fedSelfCost + childCostFEDExec,
 						fOutFedPlanVariants, planChilds);
@@ -628,36 +657,36 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 
 			// FED Exec, LOUT placement
-			if (placementDecision.allowFED_LOUT
+			if (canSatisfyFedInputs && placementDecision.allowFED_LOUT
 					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 							ExecType.FED, FederatedOutput.LOUT, tWriteExec, tWriteOut))) {
-				FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+					FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						fedSelfCost + childCostFEDExec + resultDownloadCost,
 						lOutFedPlanVariants, planChilds);
-				fedLOutPlan.setExecType(ExecType.FED);
-				fedLOutPlan.setFType(oracleLogicalFType);
-				lOutFedPlanVariants.addFedPlan(fedLOutPlan);
-			}
+					fedLOutPlan.setExecType(ExecType.FED);
+					fedLOutPlan.setFType(cpLogicalFType);
+					lOutFedPlanVariants.addFedPlan(fedLOutPlan);
+				}
 
 			// CP Exec, LOUT/FOUT placement
 			if (placementDecision.allowCP_LOUT
 					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 							ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut))) {
-				FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+					FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						cpSelfCost + childCostCPExec,
 						lOutFedPlanVariants, planChilds);
-				cpLOutPlan.setExecType(ExecType.CP);
-				cpLOutPlan.setFType(oracleLogicalFType);
-				lOutFedPlanVariants.addFedPlan(cpLOutPlan);
-			}
-			if (placementDecision.allowCP_FOUT
-					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
-							ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
-				FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-						cpSelfCost + childCostCPExec + resultUploadCost,
-						fOutFedPlanVariants, planChilds);
+					cpLOutPlan.setExecType(ExecType.CP);
+					cpLOutPlan.setFType(cpLogicalFType);
+					lOutFedPlanVariants.addFedPlan(cpLOutPlan);
+				}
+				if (placementDecision.allowCP_FOUT
+						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
+					FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+							cpSelfCost + childCostCPExec + cpUploadCost,
+							fOutFedPlanVariants, planChilds);
 				cpFOutPlan.setExecType(ExecType.CP);
-				cpFOutPlan.setFType(oracleLogicalFType);
+				cpFOutPlan.setFType(cpLogicalFType);
 				fOutFedPlanVariants.addFedPlan(cpFOutPlan);
 			}
 		}
@@ -673,17 +702,25 @@ public class FederatedPlannerDpCostEnumerator {
 			fOutFedPlanVariants.pruneFedPlans();
 			memoTable.addFedPlanVariants(hopID, FederatedOutput.FOUT, fOutFedPlanVariants);
 		}
-
-		if (!hasLOutPlan && !hasFOutPlan) {
-			throw new DMLRuntimeException("No valid federated plan for hop " + hopID + " (" + hop.getOpString()
-					+ ") under privacy " + privacyConstraint + " (LOUT candidates=" + hasLOutPlan
-					+ ", FOUT candidates=" + hasFOutPlan + ")");
+	
+			if (!hasLOutPlan && !hasFOutPlan) {
+				throw new DMLRuntimeException("No valid federated plan for hop " + hopID + " (" + hop.getOpString()
+						+ ") under privacy " + privacyConstraint + " (LOUT candidates=" + hasLOutPlan
+						+ ", FOUT candidates=" + hasFOutPlan
+						+ ", allowCpLout=" + sawAllowCpLout
+						+ ", allowCpFout=" + sawAllowCpFout
+						+ ", allowFedLout=" + sawAllowFedLout
+						+ ", oracleFedFout=" + sawOracleFedFout
+						+ ", allowFedFout=" + sawAllowFedFout
+						+ ", canSatisfyFedInputs=" + sawCanSatisfyFedInputs + ")");
+			}
 		}
-	}
 
 	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
 			FederatedPlannerDpMemoTable.HopCommon hopCommon) {
 		FType baseFType = FederatedTypePropagator.deriveFType(dataOp);
+		FederatedPlannerUtils.registerFedInitVar(dataOp.getName(), baseFType,
+			FederatedPlannerUtils.deriveFedInitSignature(dataOp));
 
 		FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
 				FederatedOutput.FOUT);
@@ -693,6 +730,94 @@ public class FederatedPlannerDpCostEnumerator {
 		fedPlan.setFType(baseFType);
 		fOutFedPlanVariants.addFedPlan(fedPlan);
 		memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
+	}
+
+	private static boolean enumerateTransientReadDataOp(DataOp dataOp, List<Hop> childHops,
+			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.HopCommon hopCommon) {
+		if (dataOp == null || dataOp.getOp() != Types.OpOpData.TRANSIENTREAD) {
+			return false;
+		}
+
+		Set<Long> tWriteChildIds = collectTransientWriteChildIds(dataOp, childHops);
+		if (tWriteChildIds.isEmpty()) {
+			return false;
+		}
+
+		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
+
+		boolean allowLOUT = true;
+		boolean allowFOUT = true;
+		FType loutFType = null;
+		FType foutFType = null;
+		double loutCost = baseSelfCost;
+		double foutCost = baseSelfCost;
+		List<Pair<Long, FederatedOutput>> loutChilds = new ArrayList<>();
+		List<Pair<Long, FederatedOutput>> foutChilds = new ArrayList<>();
+
+		for (Long childId : tWriteChildIds) {
+			FederatedPlannerDpMemoTable.FedPlan loutPlan = memoTable.getFedPlanAfterPrune(childId,
+					FederatedOutput.LOUT);
+			if (loutPlan == null) {
+				allowLOUT = false;
+			} else {
+				FType childFType = loutPlan.getFType();
+				if (childFType != null) {
+					if (loutFType == null) {
+						loutFType = childFType;
+					} else if (loutFType != childFType) {
+						allowLOUT = false;
+					}
+				}
+				loutCost += loutPlan.getCumulativeCostPerParents();
+				loutChilds.add(Pair.of(childId, FederatedOutput.LOUT));
+			}
+
+			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(childId,
+					FederatedOutput.FOUT);
+			if (foutPlan == null || foutPlan.getFType() == null) {
+				allowFOUT = false;
+			} else {
+				FType childFType = foutPlan.getFType();
+				if (foutFType == null) {
+					foutFType = childFType;
+				} else if (foutFType != childFType) {
+					allowFOUT = false;
+				}
+				foutCost += foutPlan.getCumulativeCostPerParents();
+				foutChilds.add(Pair.of(childId, FederatedOutput.FOUT));
+			}
+		}
+
+		if (!allowLOUT && !allowFOUT) {
+			throw new DMLRuntimeException("No valid federated plan for hop " + dataOp.getHopID()
+					+ " (" + dataOp.getOpString() + ") based on transient write placements");
+		}
+
+		if (allowLOUT) {
+			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants =
+					new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan loutPlan =
+					new FederatedPlannerDpMemoTable.FedPlan(loutCost, lOutFedPlanVariants, loutChilds);
+			loutPlan.setExecType(ExecType.CP);
+			loutPlan.setFType(loutFType);
+			lOutFedPlanVariants.addFedPlan(loutPlan);
+			lOutFedPlanVariants.pruneFedPlans();
+			memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.LOUT, lOutFedPlanVariants);
+		}
+
+		if (allowFOUT) {
+			FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants =
+					new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.FOUT);
+			FederatedPlannerDpMemoTable.FedPlan foutPlan =
+					new FederatedPlannerDpMemoTable.FedPlan(foutCost, fOutFedPlanVariants, foutChilds);
+			foutPlan.setExecType(ExecType.FED);
+			foutPlan.setFType(foutFType);
+			fOutFedPlanVariants.addFedPlan(foutPlan);
+			fOutFedPlanVariants.pruneFedPlans();
+			memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
+		}
+
+		return true;
 	}
 
 	private static Set<Long> collectTransientWriteChildIds(Hop hop, List<Hop> childHops) {
@@ -721,12 +846,33 @@ public class FederatedPlannerDpCostEnumerator {
 		return matches;
 	}
 
+	private static boolean isRecompileRegion(Hop hop) {
+		if (hop == null)
+			return false;
+		if (hop.requiresRecompile())
+			return true;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null)
+			return false;
+		for (Hop in : inputs) {
+			if (in != null && in.requiresRecompile())
+				return true;
+		}
+		return false;
+	}
+
 	private static boolean isTReadConsistentWithTWrite(ExecType execType, FederatedOutput fedOutType,
 			ExecType tWriteExec, FederatedOutput tWriteOut) {
 		if (tWriteExec == null || tWriteOut == null) {
 			return false;
 		}
-		return execType == tWriteExec && fedOutType == tWriteOut;
+		if (tWriteOut == FederatedOutput.LOUT) {
+			return execType == ExecType.CP && fedOutType == FederatedOutput.LOUT;
+		}
+		if (tWriteOut == FederatedOutput.FOUT) {
+			return execType == ExecType.FED && fedOutType == FederatedOutput.FOUT;
+		}
+		return false;
 	}
 
 	private static boolean allowsCPOverride(Privacy privacyConstraint, OpCaps caps) {

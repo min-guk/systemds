@@ -31,15 +31,19 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.FederatedRefed;
@@ -48,12 +52,20 @@ import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.Instruction;
+import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDRefedInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.junit.Before;
 import org.junit.Test;
 
 public class FederatedRefedPolicyTest {
 	private static final int BLOCKSIZE = 1000;
+
+	@Before
+	public void clearFedInitState() {
+		// Tests mutate global planner state (fed-init vars / anchor keys). Reset for isolation.
+		FederatedPlannerUtils.clearFedInitVars();
+	}
 
 	@Test
 	public void testSingleFedParentAnchorRegistration() {
@@ -79,7 +91,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testAnchorMismatchThrows() {
+	public void testAnchorMismatchFallsBackToLout() {
 		DataOp localLhs = createLocalMatrix("L", 10, 10);
 		DataOp localRhs = createLocalMatrix("R", 10, 10);
 		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
@@ -99,8 +111,13 @@ public class FederatedRefedPolicyTest {
 		fTypeMap.put(anchor1.getHopID(), FType.ROW);
 		fTypeMap.put(anchor2.getHopID(), FType.ROW);
 
-		assertThrows(DMLRuntimeException.class,
-			() -> FederatedRefedPolicy.registerFromHops(Arrays.asList(parent1, parent2), true, fTypeMap, -1));
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent1, parent2), true, fTypeMap, -1);
+		Map<Long, Long> snapshot = FederatedRefedRegistry.snapshot(-1);
+		assertTrue("Expected refed registry entry for target hop", snapshot.containsKey(target.getHopID()));
+		assertEquals("Anchor hop mismatch when multiple FED parents exist", anchor1.getHopID(),
+			snapshot.get(target.getHopID()).longValue());
+		assertEquals("Expected first parent to remain FED", ExecType.FED, parent1.getForcedExecType());
+		assertEquals("Expected second parent to remain FED", ExecType.FED, parent2.getForcedExecType());
 	}
 
 	@Test
@@ -229,6 +246,101 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testVectorAxisMismatchBroadcastMaterialize() {
+		DataOp localLhs = createLocalMatrix("L", 10, 1);
+		DataOp localRhs = createLocalMatrix("R", 10, 1);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(1);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+
+		String anchorName = "FED_INIT_VEC_ANCHOR";
+		FederatedPlannerUtils.registerFedInitVar(anchorName, FType.COL, "sig_vec_mismatch");
+		DataOp anchor = createFederatedInput(anchorName, 1, 10);
+		AggBinaryOp parent = HopRewriteUtils.createMatrixMultiply(target, anchor);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.COL);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
+
+		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> snapshot =
+			FederatedFoutMaterializeRegistry.snapshot(-1);
+		assertTrue("Expected materialize registry entry for target hop", snapshot.containsKey(target.getHopID()));
+		FederatedFoutMaterializeRegistry.MaterializeSpec spec = snapshot.get(target.getHopID());
+		assertEquals("Anchor hop mismatch for broadcast materialize", anchor.getHopID(), spec.getAnchorHopId());
+		assertEquals("FType hint mismatch for broadcast materialize", "BROADCAST", spec.getFTypeHint());
+		assertTrue("Expected refed registry to be empty for target hop",
+			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
+
+		Lop parentLop = parent.constructLops();
+		Dag<Lop> dag = new Dag<>();
+		parentLop.addToDag(dag);
+		boolean hasBroadcastFout = false;
+		for (Instruction inst : dag.getJobs(null, ConfigurationManager.getDMLConfig())) {
+			String istr = inst.getInstructionString();
+			if (istr.contains("fed_fout")) {
+				FEDFoutInstruction.parseInstruction(istr);
+				if (istr.contains("BROADCAST"))
+					hasBroadcastFout = true;
+			}
+		}
+		assertTrue("Expected BROADCAST fed_fout instruction for vector axis mismatch", hasBroadcastFout);
+	}
+
+	@Test
+	public void testScalarLikeMatrixBroadcastMaterializeUnderTernaryOp() {
+		DataOp localLhs = createLocalMatrix("L", 1, 1);
+		DataOp localRhs = createLocalMatrix("R", 1, 1);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(1);
+		target.setDim2(1);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+		assertTrue("Expected scalar-like target dims to be known", target.dimsKnown());
+		assertEquals("Expected scalar-like target to be forced CP", ExecType.CP, target.getForcedExecType());
+		assertEquals("Expected scalar-like target to have FOUT output before refed policy", FederatedOutput.FOUT,
+			target.getFederatedOutput());
+
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		TernaryOp parent = HopRewriteUtils.createTernary(anchor, target, anchor, OpOp3.PLUS_MULT);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
+		assertEquals("Expected scalar-like target to remain FOUT after refed policy", FederatedOutput.FOUT,
+			target.getFederatedOutput());
+
+		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> snapshot =
+			FederatedFoutMaterializeRegistry.snapshot(-1);
+		assertTrue("Expected materialize registry entry for scalar-like target hop, snapshotKeys=" + snapshot.keySet(),
+			snapshot.containsKey(target.getHopID()));
+		FederatedFoutMaterializeRegistry.MaterializeSpec spec = snapshot.get(target.getHopID());
+		assertEquals("Anchor hop mismatch for scalar-like broadcast materialize", anchor.getHopID(), spec.getAnchorHopId());
+		assertEquals("FType hint mismatch for scalar-like broadcast materialize", "BROADCAST", spec.getFTypeHint());
+		assertTrue("Expected refed registry to be empty for scalar-like target hop",
+			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
+
+		Lop parentLop = parent.constructLops();
+		Dag<Lop> dag = new Dag<>();
+		parentLop.addToDag(dag);
+		boolean hasBroadcastFout = false;
+		for (Instruction inst : dag.getJobs(null, ConfigurationManager.getDMLConfig())) {
+			String istr = inst.getInstructionString();
+			if (istr.contains("fed_fout")) {
+				FEDFoutInstruction.parseInstruction(istr);
+				if (istr.contains("BROADCAST"))
+					hasBroadcastFout = true;
+			}
+		}
+		assertTrue("Expected BROADCAST fed_fout instruction for scalar-like target", hasBroadcastFout);
+	}
+
+	@Test
 	public void testMixedParentRewire() {
 		DataOp localLhs = createLocalMatrix("L", 10, 10);
 		DataOp localRhs = createLocalMatrix("R", 10, 10);
@@ -270,6 +382,8 @@ public class FederatedRefedPolicyTest {
 	}
 
 	private static DataOp createFederatedInput(String name, long rows, long cols) {
+		// Model a runtime-federated variable via the fed-init registry so isRuntimeFederatedInput() is stable.
+		FederatedPlannerUtils.registerFedInitVar(name);
 		DataOp op = new DataOp(name, DataType.MATRIX, ValueType.FP64, OpOpData.TRANSIENTREAD,
 			null, rows, cols, -1, BLOCKSIZE);
 		op.setFederatedOutput(FederatedOutput.FOUT);

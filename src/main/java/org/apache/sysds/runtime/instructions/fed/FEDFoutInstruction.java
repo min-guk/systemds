@@ -33,6 +33,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -42,6 +43,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 	private final CPOperand _anchor;
 	private final CPOperand _output;
 	private final FType _fTypeHint;
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 
 	private FEDFoutInstruction(CPOperand input, CPOperand anchor, CPOperand output, FType fTypeHint, String opcode,
 		String istr) {
@@ -74,8 +76,10 @@ public class FEDFoutInstruction extends FEDInstruction {
 				return FType.COL;
 			case "FULL":
 				return FType.FULL;
+			case "BROADCAST":
+				return FType.BROADCAST;
 			default:
-				throw new DMLRuntimeException("fed_fout expects ftype literal ROW|COL|FULL but found " + fTypeLiteral);
+				throw new DMLRuntimeException("fed_fout expects ftype literal ROW|COL|FULL|BROADCAST but found " + fTypeLiteral);
 		}
 	}
 
@@ -83,19 +87,23 @@ public class FEDFoutInstruction extends FEDInstruction {
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
 		MatrixObject anchor = ec.getMatrixObject(_anchor);
-		String anchorTypeStr = anchor.isFederated() && anchor.getFedMapping() != null
-			? anchor.getFedMapping().getType().toString()
-			: "null";
-		System.out.printf("FED fout exec: in=%s anchor=%s out=%s fTypeHint=%s inFed=%s anchorFed=%s anchorType=%s%n",
-			_input.getName(), _anchor.getName(), _output.getName(), _fTypeHint, in.isFederated(),
-			anchor.isFederated(), anchorTypeStr);
-		if (in.isFederated())
-			throw new DMLRuntimeException("fed_fout expects a local input but found federated input: " + _input.getName());
-
-		if (!anchor.isFederated())
-			throw new DMLRuntimeException("fed_fout requires a federated anchor: " + _anchor.getName());
-
 		FederationMap anchorMap = anchor.getFedMapping();
+		if (!anchor.isFederated() || anchorMap == null) {
+			FederationMap fallback = FederationUtils.getAnchorMap(_anchor.getName());
+			if (fallback != null)
+				anchorMap = fallback;
+			else {
+				FederationMap derived = FederationUtils.buildAnchorMapFromKey(
+					FederationUtils.getAnchorKey(_anchor.getName()));
+				if (derived != null) {
+					anchorMap = derived;
+					FederationUtils.registerAnchorMap(_anchor.getName(), anchorMap);
+				}
+				else {
+					throw new DMLRuntimeException("fed_fout requires a federated anchor: " + _anchor.getName());
+				}
+			}
+		}
 		int numWorkers = anchorMap.getSize();
 		if (numWorkers <= 0)
 			throw new DMLRuntimeException("fed_fout cannot materialize: no federated parent/worker pool (empty anchor map)");
@@ -105,6 +113,70 @@ public class FEDFoutInstruction extends FEDInstruction {
 
 		long rlen = in.getNumRows();
 		long clen = in.getNumColumns();
+		if (in.isFederated()) {
+			FType outTypeHint = _fTypeHint != null ? _fTypeHint : FType.FULL;
+			if (outTypeHint == FType.PART || outTypeHint == FType.OTHER)
+				throw new DMLRuntimeException("fed_fout does not support ftype " + outTypeHint);
+
+			FederationMap inMap = in.getFedMapping();
+			if (inMap == null || inMap.getSize() == 0)
+				throw new DMLRuntimeException("fed_fout expects a non-empty federated input map: " + _input.getName());
+
+			// Ensure the input is hosted on the same worker pool as the anchor.
+			java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
+			for (Pair<FederatedRange, FederatedData> e : inMap.getMap())
+				inWorkers.add(e.getValue().getAddress());
+			java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
+			for (Pair<FederatedRange, FederatedData> e : anchorMap.getMap())
+				anchorWorkers.add(e.getValue().getAddress());
+			if (!inWorkers.equals(anchorWorkers))
+				throw new DMLRuntimeException("fed_fout cannot reuse federated input " + _input.getName()
+					+ " because its worker pool differs from anchor " + _anchor.getName());
+
+			// Determine output dimensions if not already known.
+			if (rlen < 0 || clen < 0) {
+				long maxR = 0, maxC = 0;
+				for (Pair<FederatedRange, FederatedData> e : inMap.getMap()) {
+					FederatedRange range = e.getKey();
+					if (range == null)
+						continue;
+					long[] end = range.getEndDims();
+					if (end != null && end.length >= 2) {
+						maxR = Math.max(maxR, end[0]);
+						maxC = Math.max(maxC, end[1]);
+					}
+				}
+				rlen = maxR;
+				clen = maxC;
+			}
+			if (rlen < 0 || clen < 0)
+				throw new DMLRuntimeException("fed_fout requires known output dimensions: rlen=" + rlen + " clen=" + clen);
+
+				// If the input is already federated, treat fed_fout as a no-op provided the types are compatible.
+				FType inType = inMap.getType();
+				FType mapType = (outTypeHint == FType.BROADCAST) ? FType.BROADCAST : outTypeHint;
+				boolean compatible = (inType == mapType)
+					|| (mapType == FType.BROADCAST && (inType == FType.FULL || inType == FType.BROADCAST));
+				// BROADCAST is a special case of FULL replication; allow cheap metadata conversion.
+				compatible |= (mapType == FType.FULL && inType == FType.BROADCAST);
+				if (!compatible)
+					throw new DMLRuntimeException("fed_fout cannot convert federated input " + _input.getName()
+						+ " of type " + inType + " to " + mapType + " without materialization");
+
+			MatrixObject out = ec.getMatrixObject(_output);
+			FederationMap outMap = (inType == mapType) ? inMap : new FederationMap(inMap.getID(), inMap.getMap(), mapType);
+			out.setFedMapping(outMap);
+			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
+					+ " out=" + _output.getName()
+					+ " dims=" + rlen + "x" + clen
+					+ " hint=" + outTypeHint
+					+ " mapType=" + outMap.getType()
+					+ " reuseFed=true");
+			}
+			return;
+		}
 		if (rlen < 0 || clen < 0) {
 			MatrixBlock block = in.acquireRead();
 			rlen = block.getNumRows();
@@ -114,77 +186,94 @@ public class FEDFoutInstruction extends FEDInstruction {
 		if (rlen < 0 || clen < 0)
 			throw new DMLRuntimeException("fed_fout requires known output dimensions: rlen=" + rlen + " clen=" + clen);
 
-		FType outType = _fTypeHint != null ? _fTypeHint : FType.FULL;
-		if (outType == FType.PART || outType == FType.OTHER)
-			throw new DMLRuntimeException("fed_fout does not support ftype " + outType);
+		FType outTypeHint = _fTypeHint != null ? _fTypeHint : FType.FULL;
+		if (outTypeHint == FType.PART || outTypeHint == FType.OTHER)
+			throw new DMLRuntimeException("fed_fout does not support ftype " + outTypeHint);
 
-		long[] rowBeg = null;
-		long[] rowEnd = null;
-		long[] colBeg = null;
-		long[] colEnd = null;
-		if (outType == FType.ROW) {
-			rowBeg = new long[numWorkers];
-			rowEnd = new long[numWorkers];
-			colBeg = new long[numWorkers];
+		final boolean broadcastOut = (outTypeHint == FType.BROADCAST);
+		FType mapType = broadcastOut ? FType.BROADCAST : outTypeHint;
+		FType materializeType = broadcastOut ? FType.FULL : outTypeHint;
+
+			long[] rowBeg = null;
+			long[] rowEnd = null;
+			long[] colBeg = null;
+			long[] colEnd = null;
+			if (materializeType == FType.ROW) {
+				if (rlen < numWorkers) {
+					// cannot produce non-empty row slices for all workers
+					materializeType = FType.FULL;
+					// We materialize by broadcasting the full object, which is replication.
+					// Keep the resulting map type as BROADCAST so downstream FED ops can
+					// correctly avoid duplicate binding / unsupported FULL handling.
+					mapType = FType.BROADCAST;
+				}
+				else {
+				rowBeg = new long[numWorkers];
+				rowEnd = new long[numWorkers];
+				colBeg = new long[numWorkers];
 			colEnd = new long[numWorkers];
 			long base = rlen / numWorkers;
 			long rem = rlen % numWorkers;
 			long pos = 0;
 			for (int i = 0; i < numWorkers; i++) {
 				long size = base + (i < rem ? 1 : 0);
-				if (size <= 0) {
-					outType = FType.FULL;
-					break;
-				}
 				rowBeg[i] = pos;
 				rowEnd[i] = pos + size;
 				colBeg[i] = 0;
 				colEnd[i] = clen;
 				pos += size;
 			}
-		}
-		else if (outType == FType.COL) {
-			rowBeg = new long[numWorkers];
-			rowEnd = new long[numWorkers];
-			colBeg = new long[numWorkers];
+			}
+			}
+			else if (materializeType == FType.COL) {
+				if (clen < numWorkers) {
+					// cannot produce non-empty col slices for all workers
+					materializeType = FType.FULL;
+					// See ROW case above.
+					mapType = FType.BROADCAST;
+				}
+				else {
+				rowBeg = new long[numWorkers];
+				rowEnd = new long[numWorkers];
+				colBeg = new long[numWorkers];
 			colEnd = new long[numWorkers];
 			long base = clen / numWorkers;
 			long rem = clen % numWorkers;
 			long pos = 0;
 			for (int i = 0; i < numWorkers; i++) {
 				long size = base + (i < rem ? 1 : 0);
-				if (size <= 0) {
-					outType = FType.FULL;
-					break;
-				}
 				rowBeg[i] = 0;
 				rowEnd[i] = rlen;
 				colBeg[i] = pos;
 				colEnd[i] = pos + size;
 				pos += size;
 			}
+			}
 		}
 
-		long outId;
-		List<Pair<FederatedRange, FederatedData>> outMap = new ArrayList<>();
-		if (outType == FType.FULL) {
-			FederatedRequest fr = null;
-			int attempts = 0;
-			while (true) {
-				try {
-					fr = anchorMap.broadcast(in);
-					anchorMap.execute(getTID(), true, fr);
-					break;
-				}
-				catch (DMLRuntimeException ex) {
-					if (attempts == 0 && isConnectionReset(ex)) {
-						LOG.warn("fed_fout retrying broadcast after connection reset");
-						attempts++;
-						continue;
+			long outId;
+			List<Pair<FederatedRange, FederatedData>> outMap = new ArrayList<>();
+			if (materializeType == FType.FULL) {
+				// Broadcasting the full object to a worker pool is replication; reflect this via BROADCAST maps.
+				if (mapType == FType.FULL && anchorMap.getSize() > 1)
+					mapType = FType.BROADCAST;
+				FederatedRequest fr = null;
+				int attempts = 0;
+				while (true) {
+					try {
+						fr = anchorMap.broadcast(in);
+						anchorMap.execute(getTID(), true, fr);
+						break;
 					}
-					throw ex;
+					catch (DMLRuntimeException ex) {
+						if (attempts == 0 && (isConnectionReset(ex) || isChannelClosed(ex))) {
+							LOG.warn("fed_fout retrying broadcast after channel closure");
+							attempts++;
+							continue;
+						}
+						throw ex;
+					}
 				}
-			}
 			outId = fr.getID();
 			for (Pair<FederatedRange, FederatedData> entry : anchorMap.getMap()) {
 				FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {rlen, clen});
@@ -207,7 +296,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 
 			FederationMap sliceMap = anchorMap;
 			if (anchorMap.getType() == FType.FULL)
-				sliceMap = new FederationMap(anchorMap.getID(), anchorMap.getMap(), outType);
+				sliceMap = new FederationMap(anchorMap.getID(), anchorMap.getMap(), materializeType);
 			FederatedRequest[] frSlices = null;
 			int attempts = 0;
 			while (true) {
@@ -220,8 +309,8 @@ public class FEDFoutInstruction extends FEDInstruction {
 					break;
 				}
 				catch (DMLRuntimeException ex) {
-					if (attempts == 0 && isConnectionReset(ex)) {
-						LOG.warn("fed_fout retrying sliced broadcast after connection reset");
+					if (attempts == 0 && (isConnectionReset(ex) || isChannelClosed(ex))) {
+						LOG.warn("fed_fout retrying sliced broadcast after channel closure");
 						attempts++;
 						continue;
 					}
@@ -240,8 +329,16 @@ public class FEDFoutInstruction extends FEDInstruction {
 		}
 
 		MatrixObject out = ec.getMatrixObject(_output);
-		out.setFedMapping(new FederationMap(outId, outMap, outType));
+		out.setFedMapping(new FederationMap(outId, outMap, mapType));
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
+				+ " out=" + _output.getName()
+				+ " dims=" + rlen + "x" + clen
+				+ " hint=" + outTypeHint
+				+ " mapType=" + mapType
+				+ " reuseFed=false");
+		}
 	}
 
 	private static boolean isConnectionReset(Throwable ex) {
@@ -251,6 +348,17 @@ public class FEDFoutInstruction extends FEDInstruction {
 				return true;
 			String msg = cur.getMessage();
 			if (msg != null && msg.contains("Connection reset"))
+				return true;
+			cur = cur.getCause();
+		}
+		return false;
+	}
+
+	private static boolean isChannelClosed(Throwable ex) {
+		Throwable cur = ex;
+		while (cur != null) {
+			String msg = cur.getMessage();
+			if (msg != null && msg.toLowerCase().contains("channel closed"))
 				return true;
 			cur = cur.getCause();
 		}

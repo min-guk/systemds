@@ -39,6 +39,15 @@ public final class FederatedRefedRegistry {
 			.put(hopId, anchorHopId);
 	}
 
+	public static void remove(long sbId, long hopId) {
+		Map<Long, Long> anchors = REFED_ANCHORS.get(sbId);
+		if (anchors == null)
+			return;
+		anchors.remove(hopId);
+		if (anchors.isEmpty())
+			REFED_ANCHORS.remove(sbId);
+	}
+
 	public static Long getAnchorHopId(long hopId) {
 		for (Map<Long, Long> anchors : REFED_ANCHORS.values()) {
 			Long anchor = anchors.get(hopId);

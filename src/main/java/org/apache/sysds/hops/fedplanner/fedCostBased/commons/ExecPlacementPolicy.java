@@ -62,11 +62,23 @@ public final class ExecPlacementPolicy {
 
 		switch (privacy) {
 			case PRIVATE:
-			case PRIVATE_AGGREGATE:
 				// FED/FOUT only (oracleExec == FED && placement == FOUT)
 				if (oracleExec == ExecType.FED && placement == FederatedOutput.FOUT) {
 					decision.allowFED_FOUT = true;
 				}
+				break;
+			case PRIVATE_AGGREGATE:
+				if (oracleExec == ExecType.FED) {
+					if (placement == FederatedOutput.FOUT)
+						decision.allowFED_FOUT = true;
+					else
+						decision.allowFED_LOUT = true;
+				}
+				else if (oracleExec == ExecType.CP) {
+					decision.allowCP_LOUT = true;
+				}
+				if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
+					decision.allowCP_LOUT = true;
 				break;
 			case PRIVATE_AGGREGATE_TO_PUBLIC:
 				if (oracleExec == ExecType.FED) {
@@ -74,6 +86,12 @@ public final class ExecPlacementPolicy {
 						decision.allowFED_FOUT = true;
 					}
 					decision.allowFED_LOUT = true;
+				}
+				else if (oracleExec == ExecType.CP) {
+					decision.allowCP_LOUT = true;
+				}
+				if (allowCpFout(hop, fType)) {
+					decision.allowCP_FOUT = true;
 				}
 				break;
 			case PUBLIC:
@@ -94,7 +112,20 @@ public final class ExecPlacementPolicy {
 				break;
 		}
 
+		if (isTransientDataOp(hop)) {
+			decision.allowCP_FOUT = false;
+			decision.allowFED_LOUT = false;
+		}
+
 		return decision;
+	}
+
+	private static boolean isTransientDataOp(Hop hop) {
+		if (!(hop instanceof DataOp)) {
+			return false;
+		}
+		Types.OpOpData op = ((DataOp) hop).getOp();
+		return op == Types.OpOpData.TRANSIENTREAD || op == Types.OpOpData.TRANSIENTWRITE;
 	}
 
 	private static boolean allowCpFout(Hop hop, FType fType) {

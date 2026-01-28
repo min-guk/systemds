@@ -43,6 +43,15 @@ public final class FederatedFoutMaterializeRegistry {
 			.put(hopId, new MaterializeSpec(anchorHopId, fTypeHint, anchorLabel));
 	}
 
+	public static void remove(long sbId, long hopId) {
+		Map<Long, MaterializeSpec> entries = MATERIALIZE_ANCHORS.get(sbId);
+		if (entries == null)
+			return;
+		entries.remove(hopId);
+		if (entries.isEmpty())
+			MATERIALIZE_ANCHORS.remove(sbId);
+	}
+
 	public static boolean isEmpty() {
 		return MATERIALIZE_ANCHORS.isEmpty();
 	}

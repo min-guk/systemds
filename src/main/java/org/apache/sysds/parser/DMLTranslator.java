@@ -20,11 +20,13 @@
 package org.apache.sysds.parser;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Deque;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -47,6 +49,7 @@ import org.apache.sysds.common.Types.OpOpN;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.common.Types;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.AggBinaryOp;
@@ -76,6 +79,7 @@ import org.apache.sysds.hops.ipa.InterProceduralAnalysis;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.compile.Dag;
@@ -334,9 +338,192 @@ public class DMLTranslator
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 		// fcallSizes are not recomputed here; planner uses null when unavailable.
 		fedPlanner.getPlanner().rewriteProgram(dmlp, fgraph, null);
+		registerFedInitVarsFromProgram(dmlp);
+		FederatedPlannerUtils.clearFedRmvarProtectedVars();
+		registerFedRmvarProtectedVarsFromProgram(dmlp);
+	}
+
+	private static void registerFedInitVarsFromProgram(DMLProgram dmlp) {
+		if (dmlp == null)
+			return;
+		Set<Long> visited = new HashSet<>();
+		for (StatementBlock sb : dmlp.getStatementBlocks())
+			registerFedInitVarsFromStatementBlock(sb, visited);
+		for (String namespaceKey : dmlp.getNamespaces().keySet()) {
+			for (String fname : dmlp.getFunctionStatementBlocks(namespaceKey).keySet()) {
+				FunctionStatementBlock fsb = dmlp.getFunctionStatementBlock(namespaceKey, fname);
+				registerFedInitVarsFromStatementBlock(fsb, visited);
+			}
+		}
+	}
+
+	private static void registerFedRmvarProtectedVarsFromProgram(DMLProgram dmlp) {
+		if (dmlp == null)
+			return;
+		Set<Long> visited = new HashSet<>();
+		for (StatementBlock sb : dmlp.getStatementBlocks())
+			registerFedRmvarProtectedVarsFromStatementBlock(sb, visited);
+		for (String namespaceKey : dmlp.getNamespaces().keySet()) {
+			for (String fname : dmlp.getFunctionStatementBlocks(namespaceKey).keySet()) {
+				FunctionStatementBlock fsb = dmlp.getFunctionStatementBlock(namespaceKey, fname);
+				registerFedRmvarProtectedVarsFromStatementBlock(fsb, visited);
+			}
+		}
+	}
+
+	private static void registerFedRmvarProtectedVarsFromStatementBlock(StatementBlock sb, Set<Long> visited) {
+		if (sb == null)
+			return;
+		if (sb instanceof IfStatementBlock) {
+			IfStatementBlock isb = (IfStatementBlock) sb;
+			IfStatement istmt = (IfStatement) isb.getStatement(0);
+			if (isb.getPredicateHops() != null)
+				registerFedRmvarProtectedVarsFromHop(isb.getPredicateHops(), visited);
+			for (StatementBlock inner : istmt.getIfBody())
+				registerFedRmvarProtectedVarsFromStatementBlock(inner, visited);
+			for (StatementBlock inner : istmt.getElseBody())
+				registerFedRmvarProtectedVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb instanceof ForStatementBlock) {
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+			if (fsb.getFromHops() != null)
+				registerFedRmvarProtectedVarsFromHop(fsb.getFromHops(), visited);
+			if (fsb.getToHops() != null)
+				registerFedRmvarProtectedVarsFromHop(fsb.getToHops(), visited);
+			if (fsb.getIncrementHops() != null)
+				registerFedRmvarProtectedVarsFromHop(fsb.getIncrementHops(), visited);
+			for (StatementBlock inner : fstmt.getBody())
+				registerFedRmvarProtectedVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb instanceof WhileStatementBlock) {
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+			if (wsb.getPredicateHops() != null)
+				registerFedRmvarProtectedVarsFromHop(wsb.getPredicateHops(), visited);
+			for (StatementBlock inner : wstmt.getBody())
+				registerFedRmvarProtectedVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb instanceof FunctionStatementBlock) {
+			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+			for (StatementBlock inner : fstmt.getBody())
+				registerFedRmvarProtectedVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb.getHops() != null) {
+			for (Hop root : sb.getHops())
+				registerFedRmvarProtectedVarsFromHop(root, visited);
+		}
+	}
+
+	private static void registerFedRmvarProtectedVarsFromHop(Hop root, Set<Long> visited) {
+		if (root == null)
+			return;
+		Deque<Hop> queue = new ArrayDeque<>();
+		queue.add(root);
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop.getHopID()))
+				continue;
+			if (hop.getExecType() == Types.ExecType.FED || hop.getForcedExecType() == Types.ExecType.FED) {
+				List<Hop> inputs = hop.getInput();
+				if (inputs != null) {
+					for (Hop input : inputs) {
+						if (input instanceof DataOp) {
+							DataOp dop = (DataOp) input;
+							if (dop.getDataType() != null && dop.getDataType().isMatrix()) {
+								FederatedPlannerUtils.registerFedRmvarProtectedVar(dop.getName());
+							}
+						}
+					}
+				}
+			}
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null)
+				queue.addAll(inputs);
+		}
+	}
+
+	private static void registerFedInitVarsFromStatementBlock(StatementBlock sb, Set<Long> visited) {
+		if (sb == null)
+			return;
+		if (sb instanceof IfStatementBlock) {
+			IfStatementBlock isb = (IfStatementBlock) sb;
+			IfStatement istmt = (IfStatement) isb.getStatement(0);
+			if (isb.getPredicateHops() != null)
+				registerFedInitVarsFromHop(isb.getPredicateHops(), visited);
+			for (StatementBlock inner : istmt.getIfBody())
+				registerFedInitVarsFromStatementBlock(inner, visited);
+			for (StatementBlock inner : istmt.getElseBody())
+				registerFedInitVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb instanceof ForStatementBlock) {
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+			if (fsb.getFromHops() != null)
+				registerFedInitVarsFromHop(fsb.getFromHops(), visited);
+			if (fsb.getToHops() != null)
+				registerFedInitVarsFromHop(fsb.getToHops(), visited);
+			if (fsb.getIncrementHops() != null)
+				registerFedInitVarsFromHop(fsb.getIncrementHops(), visited);
+			for (StatementBlock inner : fstmt.getBody())
+				registerFedInitVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb instanceof WhileStatementBlock) {
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+			if (wsb.getPredicateHops() != null)
+				registerFedInitVarsFromHop(wsb.getPredicateHops(), visited);
+			for (StatementBlock inner : wstmt.getBody())
+				registerFedInitVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb instanceof FunctionStatementBlock) {
+			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+			for (StatementBlock inner : fstmt.getBody())
+				registerFedInitVarsFromStatementBlock(inner, visited);
+			return;
+		}
+		if (sb.getHops() != null) {
+			for (Hop root : sb.getHops())
+				registerFedInitVarsFromHop(root, visited);
+		}
+	}
+
+	private static void registerFedInitVarsFromHop(Hop root, Set<Long> visited) {
+		if (root == null)
+			return;
+		Deque<Hop> queue = new ArrayDeque<>();
+		queue.add(root);
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop.getHopID()))
+				continue;
+			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED) {
+				DataOp fedInit = (DataOp) hop;
+				FederatedPlannerUtils.registerFedInitVar(
+					fedInit.getName(),
+					FederatedPlannerUtils.deriveFedInitFType(fedInit),
+					FederatedPlannerUtils.deriveFedInitSignature(fedInit));
+			}
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null)
+				queue.addAll(inputs);
+		}
 	}
 
 	public void rewriteLopDAG(DMLProgram dmlp) {
+		FederatedPlannerUtils.clearFedInitVars();
+		FederatedPlannerUtils.clearFedRmvarProtectedVars();
+		registerFedInitVarsFromProgram(dmlp);
+		registerFedRmvarProtectedVarsFromProgram(dmlp);
 		LopRewriter rewriter = new LopRewriter();
 		rewriter.rewriteProgramLopDAGs(dmlp);
 	}
@@ -747,6 +934,13 @@ public class DMLTranslator
 		Set<String> rmVars = VariableSet.union(
 			VariableSet.minus(sb.liveIn(), sb.liveOut()),
 			VariableSet.minus(sb.getKill(), sb.liveOut())).getVariableNames();
+		// Keep federated init variables across statement blocks to avoid premature cleanup.
+		rmVars.removeIf(FederatedPlannerUtils::isFedInitVar);
+		rmVars.removeIf(FederatedPlannerUtils::isFedRmvarProtectedVar);
+		if (rmVars.contains("Y")) {
+			System.out.println("[DEBUG] deriveExitInstruction rmVars contains Y; protected="
+				+ FederatedPlannerUtils.isFedRmvarProtectedVar("Y"));
+		}
 		return rmVars.isEmpty() ? null :
 			VariableCPInstruction.prepareRemoveInstruction(rmVars.toArray(new String[0]));
 	}

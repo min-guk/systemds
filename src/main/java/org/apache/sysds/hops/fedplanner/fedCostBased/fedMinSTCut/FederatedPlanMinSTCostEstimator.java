@@ -297,6 +297,13 @@ public class FederatedPlanMinSTCostEstimator {
 		}
 
 		graph.addExecPlacementResultEdge(vertex);
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE
+				&& !"__pred".equals(hop.getName())) {
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null && !inputs.isEmpty() && inputs.get(0) != null) {
+				graph.addTransWriteInputPlacementConsistencyEdge(hopID, inputs.get(0).getHopID());
+			}
+		}
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 			Set<Long> twHopIds = collectTransientWriteChildIds(hop, rewireTable);
 			for (Long twHopId : twHopIds) {
@@ -311,14 +318,38 @@ public class FederatedPlanMinSTCostEstimator {
 		}
 
 		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
-		for (Hop childHop : childHops) {
-			Vertex childVertex = graph.getVertex(childHop.getHopID());
-
-			if (childVertex == null) {
-				continue;
+		Map<Long, FType> inputFTypeMap = null;
+		if (!childHops.isEmpty()) {
+			inputFTypeMap = new HashMap<>();
+			for (Hop inputHop : childHops) {
+				if (inputHop == null)
+					continue;
+				Vertex inputVertex = graph.getVertex(inputHop.getHopID());
+				FType inputFType = (inputVertex != null) ? inputVertex.getDataType() : null;
+				if (inputFType != null)
+					inputFTypeMap.put(inputHop.getHopID(), inputFType);
 			}
+		}
+		for (int i = 0; i < childHops.size(); i++) {
+			Hop childHop = childHops.get(i);
+			if (childHop == null)
+				continue;
+			Vertex childVertex = graph.getVertex(childHop.getHopID());
+			if (childVertex == null)
+				continue;
 
 			graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
+
+			// Enforce: if the parent executes in FED, required matrix inputs must be federated (FOUT).
+			// This prevents FED ops from consuming local-only inputs at runtime.
+			if (childHop.getDataType() != null && childHop.getDataType().isMatrix()) {
+				FederatedRefedPolicy.InputRequirement req =
+						FederatedRefedPolicy.getInputRequirementForFedExec(hop, childHop, i, inputFTypeMap);
+				if (req == FederatedRefedPolicy.InputRequirement.REQUIRED
+						|| req == FederatedRefedPolicy.InputRequirement.AMBIGUOUS) {
+					graph.addRequiredFedInputEdge(hopID, childHop.getHopID());
+				}
+			}
 		}
 
 		addLoopCarryEdgesForHop(hop, vertex, graph);
@@ -328,17 +359,25 @@ public class FederatedPlanMinSTCostEstimator {
 		Hop hop = vertex.getHopRef();
 		double opCostWithWeight = 0;
 		double uploadCostWithoutWeight = 0;
+		double cpUploadCostWithoutWeight = 0;
 		double downloadCostWithoutWeight = 0;
+		FType cpFoutType = vertex.getCpFoutDataType();
+		if (cpFoutType == null) {
+			cpFoutType = vertex.getDataType();
+		}
 
 		if (hop instanceof DataOp) {
 			if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE) {
 				opCostWithWeight = 0;
 				uploadCostWithoutWeight = 0;
+				cpUploadCostWithoutWeight = 0;
 				downloadCostWithoutWeight = 0;
 			} else if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				opCostWithWeight = 0;
 				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
 						hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
+				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+						hop.getOutputMemEstimate(), cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
 						hop.getOutputMemEstimate());
 			} else {
@@ -346,10 +385,13 @@ public class FederatedPlanMinSTCostEstimator {
 				opCostWithWeight = vertex.getOpWeight() * opCost;
 				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
 						hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
+				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+						hop.getOutputMemEstimate(), cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
 						hop.getOutputMemEstimate());
 			}
 			vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
+			vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
 			return;
 		}
 
@@ -357,10 +399,13 @@ public class FederatedPlanMinSTCostEstimator {
 		opCostWithWeight = vertex.getOpWeight() * opCost;
 		uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
 				hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
+		cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+				hop.getOutputMemEstimate(), cpFoutType, numOfWorkers);
 		downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
 				hop.getOutputMemEstimate());
 
 		vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
+		vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
 	}
 
 	private static int estimateNumParents(Hop hop, Map<Long, List<Hop>> rewireTable) {
@@ -432,7 +477,16 @@ public class FederatedPlanMinSTCostEstimator {
 			if (weight <= 0.0) {
 				continue;
 			}
-			double uploadWeighted = weight * vertex.getUploadCostWithoutWeight();
+			// Enforce TW/TR consistency across loop iterations as a hard constraint (planner must
+			// not rely on runtime fallbacks for loop-carried transient variables).
+			Vertex writerVertex = graph.getVertex(edge.getEndWriterHopId());
+			if (writerVertex != null) {
+				graph.addTransReadWriteConsistencyEdges(writerVertex, edge.getEndWriterHopId(), vertex, hopId);
+			}
+			// Use CP->FOUT upload cost here as well: loop-carry edges model data movement
+			// between local/federated contexts, and the CP upload FType (e.g., BROADCAST)
+			// must be reflected in the cost when applicable.
+			double uploadWeighted = weight * vertex.getCpUploadCostWithoutWeight();
 			double downloadWeighted = weight * vertex.getDownloadCostWithoutWeight();
 			graph.addLoopCarryNetEdge(hopId, edge.getEndWriterHopId(), uploadWeighted, downloadWeighted);
 		}

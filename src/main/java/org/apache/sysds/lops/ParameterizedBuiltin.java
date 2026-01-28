@@ -88,6 +88,17 @@ public class ParameterizedBuiltin extends Lop
 	public Lop getNamedInput(String name) {
 		return _inputParams.get(name);
 	}
+
+	@Override
+	public void replaceInput(Lop oldInp, Lop newInp) {
+		super.replaceInput(oldInp, newInp);
+		if (_inputParams == null || _inputParams.isEmpty())
+			return;
+		for (Entry<String, Lop> e : _inputParams.entrySet()) {
+			if (e.getValue() == oldInp)
+				e.setValue(newInp);
+		}
+	}
 	
 	@Override
 	public String getInstructions(String output)

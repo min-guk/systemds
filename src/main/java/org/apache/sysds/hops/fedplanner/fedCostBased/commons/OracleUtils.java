@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
@@ -100,15 +101,79 @@ public final class OracleUtils {
 		if (logicalFType == null) {
 			logicalFType = inferFallbackFType(hop, alignedInputFTypes, oracleFacade, rewireTable);
 		}
+		if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+			logicalFType = FType.BROADCAST;
+		}
+		if (FederatedPlannerUtils.isVectorShape(hop)
+				&& !hasFederatedInput(alignedInputFTypes)) {
+			// Local vectors uploaded for FED consumption should default to BROADCAST to avoid
+			// invalid ROW/COL slicing against unrelated anchors.
+			logicalFType = FType.BROADCAST;
+		}
+		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
+				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
+			logicalFType = FType.BROADCAST;
+		}
 
 		return new OracleDecision(alignedInputFTypes, caps, logicalFType);
 	}
 
+	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,
+			Map<Long, List<Hop>> rewireTable) {
+		return adjustCpFoutFTypeForConsumerAxisMismatch(hop, logicalFType, rewireTable, 0);
+	}
+
+	/**
+	 * Compute a CP-&gt;FOUT (or local-&gt;FED forwarding) FType that is safe w.r.t. runtime behavior.
+	 *
+	 * <p>This method intentionally differs from {@code logicalFType} in cases where the runtime would
+	 * inevitably fall back to a full broadcast (e.g., ROW/COL slicing when the sliced dimension is
+	 * smaller than the worker count, or vector axis mismatch). By selecting {@code BROADCAST} in the
+	 * planner already, we avoid runtime map-type flips that would invalidate downstream assumptions
+	 * and also allow the cost model to correctly account for replicated uploads.</p>
+	 */
+	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,
+			Map<Long, List<Hop>> rewireTable, int numWorkers) {
+		if (logicalFType == null)
+			return null;
+		if (FederatedPlannerUtils.isScalarLikeMatrix(hop))
+			return FType.BROADCAST;
+		if (logicalFType == FType.BROADCAST)
+			return logicalFType;
+		FType vectorAxis = FederatedPlannerUtils.getVectorAxis(hop);
+		if (vectorAxis != null && hasConsumerAxisMismatch(hop, vectorAxis, rewireTable))
+			return FType.BROADCAST;
+		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
+				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
+			return FType.BROADCAST;
+		}
+
+		if (numWorkers > 1 && hop != null && hop.dimsKnown()) {
+			long rows = hop.getDim1();
+			long cols = hop.getDim2();
+			if (logicalFType == FType.ROW && rows > 0 && rows < numWorkers)
+				return FType.BROADCAST;
+			if (logicalFType == FType.COL && cols > 0 && cols < numWorkers)
+				return FType.BROADCAST;
+		}
+		return logicalFType;
+	}
+
 	public static FType inferFallbackFType(Hop hop, List<FType> alignedInputFTypes,
 			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable) {
+		if (hop instanceof FunctionOp) {
+			FunctionOp.FunctionType type = ((FunctionOp) hop).getFunctionType();
+			if (type == FunctionOp.FunctionType.MULTIRETURN_BUILTIN) {
+				return null;
+			}
+		}
 		if (!isMatrixHop(hop)) {
 			return null;
 		}
+
+		boolean preferBroadcast = FederatedPlannerUtils.isVectorShape(hop)
+				&& hasFederatedInput(alignedInputFTypes)
+				&& inferFedInitType(hop) == null;
 
 		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
 		Set<FType> producerCandidates = inferFromProducer(hop, alignedInputFTypes, oracleFacade);
@@ -118,6 +183,8 @@ public final class OracleUtils {
 				consumerConstraints.constrained);
 
 		if (!merged.isEmpty()) {
+			if (preferBroadcast && merged.contains(FType.BROADCAST))
+				return FType.BROADCAST;
 			return pickPreferredAxis(merged, hop);
 		}
 
@@ -135,6 +202,8 @@ public final class OracleUtils {
 		}
 
 		Set<FType> inputCandidates = collectInputCandidates(alignedInputFTypes);
+		if (preferBroadcast && inputCandidates.contains(FType.BROADCAST))
+			return FType.BROADCAST;
 		return pickPreferredAxis(inputCandidates, hop);
 	}
 
@@ -236,6 +305,99 @@ public final class OracleUtils {
 			return (consumer == null) ? Collections.emptySet() : new LinkedHashSet<>(consumer);
 		}
 		return new LinkedHashSet<>(producer);
+	}
+
+	private static boolean hasConsumerAxisMismatch(Hop hop, FType vectorAxis, Map<Long, List<Hop>> rewireTable) {
+		if (hop == null || vectorAxis == null)
+			return false;
+		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
+		if (consumerRefs == null || consumerRefs.isEmpty())
+			return false;
+		long targetId = hop.getHopID();
+		for (ConsumerRef ref : consumerRefs) {
+			if (ref == null || ref.consumer == null)
+				continue;
+			List<Hop> inputs = ref.consumer.getInput();
+			if (inputs == null || inputs.isEmpty())
+				continue;
+			long proxyId = ref.inputHop != null ? ref.inputHop.getHopID() : -1;
+			for (Hop input : inputs) {
+				if (input == null)
+					continue;
+				long inputId = input.getHopID();
+				if (inputId == targetId || (proxyId >= 0 && inputId == proxyId))
+					continue;
+				FType axis = inferFedInitType(input);
+				if (axis == null && input instanceof DataOp
+						&& ((DataOp) input).getOp() == Types.OpOpData.FEDERATED) {
+					axis = FederatedPlannerUtils.deriveFedInitFType((DataOp) input);
+				}
+				if (axis == FType.ROW || axis == FType.COL) {
+					if (axis != vectorAxis)
+						return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasConsumerAxisLengthMismatch(Hop hop, FType axisType,
+			Map<Long, List<Hop>> rewireTable) {
+		if (hop == null || axisType == null || rewireTable == null)
+			return false;
+		if (!(axisType == FType.ROW || axisType == FType.COL))
+			return false;
+		long hopAxisLen = (axisType == FType.ROW) ? hop.getDim1() : hop.getDim2();
+		if (hopAxisLen <= 0)
+			return false;
+
+		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
+		if (consumerRefs == null || consumerRefs.isEmpty())
+			return false;
+
+		long targetId = hop.getHopID();
+		for (ConsumerRef ref : consumerRefs) {
+			if (ref == null || ref.consumer == null)
+				continue;
+			List<Hop> inputs = ref.consumer.getInput();
+			if (inputs == null || inputs.isEmpty())
+				continue;
+			long proxyId = ref.inputHop != null ? ref.inputHop.getHopID() : -1;
+			for (Hop input : inputs) {
+				if (input == null)
+					continue;
+				long inputId = input.getHopID();
+				if (inputId == targetId || (proxyId >= 0 && inputId == proxyId))
+					continue;
+
+				FType axis = inferFedInitType(input);
+				if (axis == null && input instanceof DataOp
+						&& ((DataOp) input).getOp() == Types.OpOpData.FEDERATED) {
+					axis = FederatedPlannerUtils.deriveFedInitFType((DataOp) input);
+				}
+				if (axis != FType.ROW && axis != FType.COL)
+					continue;
+				long anchorLen = (axis == FType.ROW) ? input.getDim1() : input.getDim2();
+				if (anchorLen <= 0)
+					continue;
+				if (anchorLen != hopAxisLen)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasFederatedInput(List<FType> alignedInputFTypes) {
+		if (alignedInputFTypes == null || alignedInputFTypes.isEmpty())
+			return false;
+		for (FType fType : alignedInputFTypes) {
+			if (fType == null)
+				continue;
+			if (fType == FType.ROW || fType == FType.COL || fType == FType.PART
+					|| fType == FType.FULL || fType == FType.BROADCAST)
+				return true;
+		}
+		return false;
 	}
 
 	private static Set<FType> collectInputCandidates(List<FType> alignedInputFTypes) {

@@ -55,6 +55,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -717,6 +718,8 @@ public class FederatedPlanMinSTRewire {
 				// 2) FEDERATED DataOp: privacy + partition metadata 기반 FType
 				privacy = FederatedPlannerUtils.getFedWorkerMetaData(fedMap, dataOp);
 				fType = FederatedTypePropagator.deriveFType(dataOp);
+				FederatedPlannerUtils.registerFedInitVar(hopName, fType,
+					FederatedPlannerUtils.deriveFedInitSignature(dataOp));
 				FederatedPlannerLogger.logDataOpFTypeDebug(
 						hop, fType, "FEDERATED", "Derived from partition ranges");
 			} else if (opType == Types.OpOpData.TRANSIENTWRITE) {
@@ -787,28 +790,62 @@ public class FederatedPlanMinSTRewire {
 					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, filteredChildHops, privacyConstraintMap);
 
 					FType resolvedFType = null;
+					boolean fTypeMismatch = false;
 					ExecPlacementCaps resolvedCaps = null;
 					Long transientWriteHopId = null;
 					for (Hop childHop : filteredChildHops) {
 						if (childHop == null) {
 							continue;
 						}
-						if (resolvedFType == null) {
-							resolvedFType = fTypeMap.get(childHop.getHopID());
-						}
-						if (resolvedCaps == null) {
-							Vertex childVertex = graph.getVertex(childHop.getHopID());
-							if (childVertex != null && childVertex.getCaps() != null) {
-								resolvedCaps = new ExecPlacementCaps(childVertex.getCaps());
+						// Propagate FType/caps from all mapped sources (not only TW).
+						// This is critical for function arguments where the mapped source can be a FEDERATED
+						// init DataOp (or another FED output) without an intermediate TransientWrite.
+						FType childFType = fTypeMap.get(childHop.getHopID());
+						if (childFType != null) {
+							if (resolvedFType == null && !fTypeMismatch) {
+								resolvedFType = childFType;
+							} else if (resolvedFType != childFType) {
+								resolvedFType = null;
+								fTypeMismatch = true;
 							}
 						}
-						if (transientWriteHopId == null && childHop instanceof DataOp
+						Vertex childVertex = graph.getVertex(childHop.getHopID());
+						if (childVertex != null && childVertex.getCaps() != null) {
+							if (resolvedCaps == null) {
+								resolvedCaps = new ExecPlacementCaps(childVertex.getCaps());
+							} else {
+								ExecPlacementCaps childCaps = childVertex.getCaps();
+								resolvedCaps.allowCP_LOUT &= childCaps.allowCP_LOUT;
+								resolvedCaps.allowCP_FOUT &= childCaps.allowCP_FOUT;
+								resolvedCaps.allowFED_LOUT &= childCaps.allowFED_LOUT;
+								resolvedCaps.allowFED_FOUT &= childCaps.allowFED_FOUT;
+							}
+						}
+						if (transientWriteHopId == null
+								&& childHop instanceof DataOp
 								&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTWRITE) {
 							transientWriteHopId = childHop.getHopID();
 						}
-						if (resolvedFType != null && resolvedCaps != null && transientWriteHopId != null) {
-							break;
+					}
+					resolvedCaps = applyTransientPlacementRestrictions(hop, resolvedCaps);
+					if (resolvedCaps != null && !resolvedCaps.hasAny()) {
+						// If sources disagree on legal combinations, fall back to policy caps.
+						resolvedCaps = null;
+					}
+					// If we could not resolve a consistent FType from multiple TW sources,
+					// infer a CP->FOUT (or local->FED forwarding) type from consumers to avoid
+					// passing null into the Oracle (which can lead to "NOT_FEDERATED_INPUTS"
+					// and illegal privacy/exec combinations).
+					if (resolvedFType == null && hop.getDataType() != null && hop.getDataType().isMatrix()) {
+						FType inferred = OracleUtils.inferFallbackFType(hop, Collections.emptyList(), oracleFacade, rewireTable);
+						if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+							inferred = FType.BROADCAST;
 						}
+						if (inferred == null) {
+							FType axis = FederatedPlannerUtils.getVectorAxis(hop);
+							inferred = (axis != null) ? axis : FType.ROW;
+						}
+						resolvedFType = inferred;
 					}
 					fType = resolvedFType;
 					if (resolvedCaps != null) {
@@ -834,14 +871,28 @@ public class FederatedPlanMinSTRewire {
 
 		// ==== 여기서부터는 모든 Hop(비 DataOp + DataOp 공통) 처리 ====
 
-		// 자식 FType들에서 alignedFTypes 구성
-		List<Hop> collectedHops = hop.getInput() == null ? Collections.emptyList() : hop.getInput();
-		List<FType> collectedFTypes = new ArrayList<>();
-		List<Hop> collectedHopList = new ArrayList<>();
-		for (Hop input : collectedHops) {
-			collectedHopList.add(input);
-			collectedFTypes.add(fTypeMap.get(input.getHopID()));
-		}
+			// 자식 FType들에서 alignedFTypes 구성
+			List<Hop> collectedHops = hop.getInput() == null ? Collections.emptyList() : hop.getInput();
+			List<FType> collectedFTypes = new ArrayList<>();
+			List<Hop> collectedHopList = new ArrayList<>();
+			for (Hop input : collectedHops) {
+				if (input == null)
+					continue;
+				collectedHopList.add(input);
+				// Align with DP: the Oracle should not treat a potentially-local input as already-federated,
+				// otherwise it can incorrectly allow FED/FOUT for ops that require BROADCAST/materialization.
+				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we conservatively pass null
+				// for inputs that are allowed to be local in the cut graph.
+				FType inputFType = fTypeMap.get(input.getHopID());
+				Vertex inputVertex = graph.getVertex(input.getHopID());
+				if (inputVertex != null) {
+					ExecPlacementCaps inputCaps = inputVertex.getCaps();
+					boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+					if (inputMayBeLocal)
+						inputFType = null;
+				}
+				collectedFTypes.add(inputFType);
+			}
 
 		OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
 				hop, privacy, collectedHopList, collectedFTypes,
@@ -860,14 +911,26 @@ public class FederatedPlanMinSTRewire {
 			fType = oracleFType;
 		}
 
+		int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+		FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+				hop, fType, rewireTable, numWorkersEstimate);
+
 		// Exec/Placement capability 결정
 		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps);
+			if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap)) {
+				caps.allowFED_LOUT = false;
+				caps.allowFED_FOUT = false;
+				if (!caps.hasAny()) {
+					throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
+							+ hop.getHopID() + " (" + hop.getOpString() + ")");
+			}
+		}
 
 		// 최종 privacy/FType 저장
 		privacyConstraintMap.put(hop.getHopID(), privacy);
 		fTypeMap.put(hop.getHopID(), fType);
 
-		return new Vertex(hop, privacy, fType, caps);
+		return new Vertex(hop, privacy, fType, cpFoutType, caps);
 	}
 
 	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle) {
@@ -891,11 +954,59 @@ public class FederatedPlanMinSTRewire {
 		caps.allowFED_LOUT = policyDecision.allowFED_LOUT;
 		caps.allowFED_FOUT = policyDecision.allowFED_FOUT;
 
+		// If the oracle reports that FOUT is not supported by the runtime for this op, avoid
+		// producing a federated output altogether. MinST's 2-node encoding cannot reliably
+		// express "CP->FOUT allowed but FED->FOUT forbidden" without risking illegal FED/FOUT
+		// selections, so we force LOUT at the placement level.
+		if (capsOracle != null && capsOracle.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
+			caps.allowCP_FOUT = false;
+			caps.allowFED_FOUT = false;
+		}
+		// MinST's 2-node encoding cannot safely encode cases where CP->FOUT is allowed but FED->FOUT is not.
+		// If we keep CP->FOUT enabled, the min-cut can still choose (FED,FOUT) because placement/execution are
+		// represented by independent nodes. Force LOUT by disabling CP->FOUT as well.
+		if (caps.allowCP_FOUT && !caps.allowFED_FOUT) {
+			caps.allowCP_FOUT = false;
+		}
+
+		if (isRecompileRegion(hop)) {
+			caps.allowCP_FOUT = false;
+		}
+
+		caps = applyTransientPlacementRestrictions(hop, caps);
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 		}
 		return caps;
+	}
+
+	private static ExecPlacementCaps applyTransientPlacementRestrictions(Hop hop, ExecPlacementCaps caps) {
+		if (caps == null || !(hop instanceof DataOp)) {
+			return caps;
+		}
+		Types.OpOpData op = ((DataOp) hop).getOp();
+		if (op != Types.OpOpData.TRANSIENTREAD && op != Types.OpOpData.TRANSIENTWRITE) {
+			return caps;
+		}
+		caps.allowCP_FOUT = false;
+		caps.allowFED_LOUT = false;
+		return caps;
+	}
+
+	private static boolean isRecompileRegion(Hop hop) {
+		if (hop == null)
+			return false;
+		if (hop.requiresRecompile())
+			return true;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null)
+			return false;
+		for (Hop in : inputs) {
+			if (in != null && in.requiresRecompile())
+				return true;
+		}
+		return false;
 	}
 
 	private static void wireUnRefTwriteToLiveOutWithTracking(StatementBlock sb, Set<Long> unRefTwriteSet,

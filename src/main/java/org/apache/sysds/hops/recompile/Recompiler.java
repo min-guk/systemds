@@ -345,6 +345,7 @@ public class Recompiler {
 		Map<Long, HopState> baseHopStates = null;
 		
 		// prepare hops dag for recompile
+		baseHopStates = snapshotHopStates(hops);
 		if( !inplace ){ 
 			// deep copy hop dag (for non-reversable rewrites)
 			hops = deepCopyHopsDag(hops);
@@ -356,7 +357,7 @@ public class Recompiler {
 				rClearLops( hopRoot );
 		}
 		if (LOG_RECOMPILE_NEW_HOPS)
-			baseHopStates = snapshotHopStates(hops);
+			baseHopStates = baseHopStates != null ? baseHopStates : snapshotHopStates(hops);
 		
 		// get max parallelism constraint, see below
 		Hop.resetVisitStatus(hops);
@@ -422,6 +423,8 @@ public class Recompiler {
 		Hop.resetVisitStatus(hops);
 		rSetMaxParallelism(hops, maxK);
 
+		if (baseHopStates != null && !baseHopStates.isEmpty())
+			restoreHopStates(hops, baseHopStates);
 		if (LOG_RECOMPILE_NEW_HOPS)
 			logRecompileNewHops(hops, baseHopStates, sb, pred, tid);
 		Map<String, FType> runtimeTypes = new HashMap<>();
@@ -569,6 +572,36 @@ public class Recompiler {
 		return states;
 	}
 
+	private static void restoreHopStates(List<Hop> roots, Map<Long, HopState> baseStates) {
+		if (roots == null || roots.isEmpty() || baseStates == null || baseStates.isEmpty())
+			return;
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		for (Hop root : roots)
+			if (root != null)
+				queue.add(root);
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop))
+				continue;
+			HopState state = baseStates.get(hop.getHopID());
+			if (state != null) {
+				if (state.execType != null && hop.getForcedExecType() == null)
+					hop.setExecType(state.execType);
+				if (state.forcedExecType != null)
+					hop.setForcedExecType(state.forcedExecType);
+				if (state.fedOut != null)
+					hop.setFederatedOutput(state.fedOut);
+			}
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null) {
+				for (Hop in : inputs)
+					if (in != null)
+						queue.add(in);
+			}
+		}
+	}
+
 	private static void logRecompileNewHops(List<Hop> roots, Map<Long, HopState> baseStates,
 		StatementBlock sb, boolean pred, long tid) {
 		if (baseStates == null || baseStates.isEmpty() || roots == null || roots.isEmpty())
@@ -629,7 +662,16 @@ public class Recompiler {
 		ExecType exec = hop.getForcedExecType();
 		if (exec == null)
 			exec = hop.getExecType();
-		if (!hop.hasFederatedOutput() && !(hop instanceof DataOp) && exec != ExecType.FED) {
+		boolean hasFedInput = false;
+		if (hop.getInput() != null) {
+			for (Hop in : hop.getInput()) {
+				if (in != null && fTypeMap.containsKey(in.getHopID())) {
+					hasFedInput = true;
+					break;
+				}
+			}
+		}
+		if (!hop.hasFederatedOutput() && !(hop instanceof DataOp) && exec != ExecType.FED && !hasFedInput) {
 			done.add(hop);
 			return;
 		}
@@ -639,7 +681,8 @@ public class Recompiler {
 			inferFTypeIfNeeded(in, fTypeMap, done, stack);
 		stack.remove(hop);
 
-		if (!fTypeMap.containsKey(hop.getHopID()) && (hop.hasFederatedOutput() || exec == ExecType.FED)) {
+		boolean producesFederated = hop.hasFederatedOutput() || exec == ExecType.FED;
+		if (!fTypeMap.containsKey(hop.getHopID()) && producesFederated) {
 			FType fType = inferFTypeFromInputs(hop, fTypeMap);
 			if (fType != null)
 				fTypeMap.put(hop.getHopID(), fType);

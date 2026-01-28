@@ -70,6 +70,7 @@ import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 
 public class ParameterizedBuiltinCPInstruction extends ComputationCPInstruction {
 	private static final Log LOG = LogFactory.getLog(ParameterizedBuiltinCPInstruction.class.getName());
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 	private static final int TOSTRING_MAXROWS = 100;
 	private static final int TOSTRING_MAXCOLS = 100;
 	private static final int TOSTRING_DECIMAL = 3;
@@ -309,6 +310,11 @@ public class ParameterizedBuiltinCPInstruction extends ComputationCPInstruction 
 
 			// release locks
 			ec.setMatrixOutput(output.getName(), ret);
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] rexpand out=" + output.getName()
+					+ " dims=" + ret.getNumRows() + "x" + ret.getNumColumns()
+					+ " nnz=" + ret.getNonZeros());
+			}
 			ec.releaseMatrixInput(params.get("target"));
 		}
 		else if(opcode.equalsIgnoreCase(Opcodes.TOKENIZE.toString())) {

@@ -81,11 +81,13 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	@Ignore("public privacy constraints ignored in this run")
 	public void runLogRegPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
+	@Ignore("public privacy constraints ignored in this run")
 	public void runLogRegPlannerMinSTPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}

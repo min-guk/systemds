@@ -37,6 +37,7 @@ import org.apache.sysds.runtime.controlprogram.caching.FrameObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.controlprogram.caching.TensorObject;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.controlprogram.federated.MatrixLineagePair;
 import org.apache.sysds.runtime.controlprogram.paramserv.homomorphicEncryption.SEALClient;
 import org.apache.sysds.runtime.data.TensorBlock;
@@ -77,6 +78,12 @@ import java.util.Queue;
 
 public class ExecutionContext {
 	protected static final Log LOG = LogFactory.getLog(ExecutionContext.class.getName());
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
+
+	private static boolean isDebugKMeansVar(String varName) {
+		return "P_denom".equals(varName) || "minD".equals(varName) || "P".equals(varName)
+			|| "C_new".equals(varName) || "C".equals(varName);
+	}
 	private static final String TRACE_VAR_NAME =
 		System.getProperty("sysds.trace.var");
 
@@ -138,6 +145,13 @@ public class ExecutionContext {
 	
 	public void setVariables(LocalVariableMap vars) {
 		_variables = vars;
+		if (vars == null)
+			return;
+		for (String name : vars.keySet()) {
+			Data val = vars.get(name);
+			if (val instanceof CacheableData && ((CacheableData<?>) val).isFederated())
+				FederationUtils.registerAnchorMap(name, ((CacheableData<?>) val).getFedMapping());
+		}
 	}
 
 	public Lineage getLineage() {
@@ -230,6 +244,8 @@ public class ExecutionContext {
 	
 	public void setVariable(String name, Data val) {
 		_variables.put(name, val);
+		if (val instanceof CacheableData && ((CacheableData<?>) val).isFederated())
+			FederationUtils.registerAnchorMap(name, ((CacheableData<?>) val).getFedMapping());
 		traceVarUpdate(name, val, "setVariable");
 	}
 	
@@ -242,6 +258,7 @@ public class ExecutionContext {
 	}
 
 	public Data removeVariable(String name) {
+		FederationUtils.removeAnchorMap(name);
 		return _variables.remove(name);
 	}
 
@@ -573,6 +590,9 @@ public class ExecutionContext {
 	}
 
 	public void setScalarOutput(String varName, ScalarObject so) {
+		if (DEBUG_KMEANS && "term_code".equals(varName)) {
+			System.out.println("[DBG-KMEANS] term_code=" + so.getStringValue());
+		}
 		setVariable(varName, so);
 	}
 
@@ -629,6 +649,11 @@ public class ExecutionContext {
 		mo.acquireModify(outputData);
 		mo.setCacheLineage(li);
 		mo.release();
+		if (DEBUG_KMEANS && isDebugKMeansVar(varName) && outputData != null) {
+			System.out.println("[DBG-KMEANS] " + varName + " dims=" + outputData.getNumRows() + "x"
+				+ outputData.getNumColumns() + " nnz=" + outputData.getNonZeros()
+				+ " min=" + outputData.min() + " max=" + outputData.max());
+		}
 		traceVarUpdate(varName, mo, "setMatrixOutput");
 	}
 

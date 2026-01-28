@@ -22,6 +22,7 @@ package org.apache.sysds.lops;
 import org.apache.sysds.hops.AggBinaryOp.SparkAggType;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
@@ -121,6 +122,12 @@ public class RightIndex extends Lop
 		if( getExecType() == ExecType.SPARK ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _aggtype );
+		}
+		else if( getExecType() == ExecType.FED ) {
+			// Propagate forced federated/local output decisions to the runtime instruction.
+			FederatedOutput fedOut = getFederatedOutput();
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( fedOut != null ? fedOut : FederatedOutput.NONE );
 		}
 		
 		return sb.toString();

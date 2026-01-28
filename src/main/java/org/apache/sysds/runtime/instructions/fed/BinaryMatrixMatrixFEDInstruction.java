@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import java.util.Arrays;
 import java.util.concurrent.Future;
 
 import org.apache.sysds.hops.fedplanner.FTypes.AlignType;
@@ -40,6 +41,7 @@ import org.apache.sysds.runtime.matrix.operators.Operator;
 
 public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 {
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 	protected BinaryMatrixMatrixFEDInstruction(Operator op,
 		CPOperand in1, CPOperand in2, CPOperand out, String opcode, String istr, FederatedOutput fedOut) {
 		super(FEDType.Binary, op, in1, in2, out, opcode, istr, fedOut);
@@ -61,6 +63,21 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 	public void processInstruction(ExecutionContext ec) {
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
+
+		// Robustness: infer concrete federation types for OTHER if the ranges clearly
+		// represent ROW/COL partitioning or BROADCAST replication.
+		normalizeFederatedTypeIfPossible(mo1);
+		normalizeFederatedTypeIfPossible(mo2);
+
+		// Robustness: the planner might emit FED binary MM ops even if both inputs are local at runtime.
+		if (!mo1.isFederated() && !mo2.isFederated()) {
+			throw new DMLRuntimeException("FED binary op requires at least one federated input but both are local. "
+				+ "op=" + instOpcode + " in1=" + input1.getName()
+				+ " dims1=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " in2=" + input2.getName()
+				+ " dims2=" + mo2.getNumRows() + "x" + mo2.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
+		}
 		
 		//canonicalization for federated lhs
 		if( !mo1.isFederated() && mo2.isFederated()
@@ -95,10 +112,44 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 		else if ( mo2.isFederated(FType.BROADCAST) && !mo1.isFederated() ){
 			FederatedRequest fr1 = mo2.getFedMapping().broadcast(mo1);
 			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
-				new long[]{mo2.getFedMapping().getID(), fr1.getID()}, true);
+				new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
 			ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2);
 			fedMo = mo2.getMO();
 		}
+		else if ( mo1.isFederatedExcept(FType.BROADCAST) && mo2.isFederated(FType.BROADCAST) ){
+			if (!isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()))
+				throw new DMLRuntimeException("FED binary op requires aligned worker pools for federated broadcast "
+					+ "input. op=" + instOpcode + " in1=" + input1.getName() + " in2=" + input2.getName());
+			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, true);
+			ffr = mo1.getFedMapping().execute(getTID(), true, fr2);
+			fedMo = mo1.getMO();
+		}
+		else if ( mo1.isFederated(FType.BROADCAST) && mo2.isFederatedExcept(FType.BROADCAST) ){
+			if (!isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()))
+				throw new DMLRuntimeException("FED binary op requires aligned worker pools for federated broadcast "
+					+ "input. op=" + instOpcode + " in1=" + input1.getName() + " in2=" + input2.getName());
+			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, true);
+			ffr = mo2.getFedMapping().execute(getTID(), true, fr2);
+			fedMo = mo2.getMO();
+		}
+		else if ( mo1.isFederated(FType.BROADCAST) && !mo2.isFederated() ){
+			// replicated lhs + local rhs -> broadcast rhs and execute on lhs workers
+			FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
+			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
+			ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+			fedMo = mo1.getMO();
+		}
+			else if ( mo1.isFederated(FType.BROADCAST) && mo2.isFederated(FType.BROADCAST)
+				&& isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()) ){
+				// replicated inputs -> execute on all (same result on each worker)
+				fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+					new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, true);
+				ffr = mo1.getFedMapping().execute(getTID(), true, fr2);
+				fedMo = mo1.getMO();
+			}
 		else { // matrix-matrix binary operations -> lhs fed input -> fed output
 			if(mo1.isFederated(FType.FULL) ) {
 				// full federated (row and col)
@@ -136,12 +187,46 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
 			}
 			else {
-				throw new DMLRuntimeException("Matrix-matrix binary operations are only supported with a row partitioned or column partitioned federated input yet.");
+				throw new DMLRuntimeException("Matrix-matrix binary operations are only supported with a row partitioned "
+					+ "or column partitioned federated input yet. Input1=" + mo1.isFederated() + ":" + mo1.getFedMapping()
+					+ " Input2=" + mo2.isFederated() + ":" + mo2.getFedMapping());
 			}
 			fedMo = mo1.getMO(); // for setting the output federated mapping afterwards
 		}
 
 		long nnz = FederationUtils.sumNonZeros(ffr);
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] bin " + instOpcode + " out=" + output.getName()
+				+ " dims=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " nnz=" + nnz);
+		}
+
+		// Respect forced local output: retrieve partial results and bind them into a local MatrixBlock.
+		// Without this, FED binary ops may always leave a federated output, which breaks planner
+		// expectations and can lead to invalid CP->FOUT refed sequences at runtime.
+		if (_fedOut != null && _fedOut.isForcedLocal()) {
+			FederationMap outMap = fedMo != null ? fedMo.getFedMapping() : null;
+			if (outMap == null || outMap.getSize() == 0)
+				throw new DMLRuntimeException("FED binary op cannot produce local output without a federated mapping");
+
+			long outId = fr2.getID();
+			FederatedRequest frG = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, outId);
+			FederatedRequest frC = outMap.cleanup(getTID(), outId);
+			Future<FederatedResponse>[] ffrGet = outMap.execute(getTID(), frG, frC);
+
+			org.apache.sysds.runtime.matrix.data.MatrixBlock ret;
+			// If the output is replicated, all workers produce identical results; take one.
+			if (outMap.getType() == FType.BROADCAST) {
+				ret = FederationUtils.getResults(ffrGet)[0];
+			}
+			else {
+				boolean cbind = outMap.getType() == FType.COL;
+				ret = FederationUtils.bind(ffrGet, cbind);
+			}
+			ec.setMatrixOutput(output.getName(), ret);
+			return;
+		}
+
 		if ( mo1.isFederated(FType.PART) && !mo2.isFederated() )
 			setOutputFedMappingPart(mo1.getMO(), mo2.getMO(), nnz, fr2.getID(), ec);
 		else if ( fedMo.isFederated() )
@@ -173,16 +258,75 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 	 * @param outputFedmappingID ID for the fed mapping of output
 	 * @param ec execution context
 	 */
-	private void setOutputFedMapping(MatrixObject moFederated, long rowNum, long colNum,
-		long nnz, long outputFedmappingID, ExecutionContext ec){
-		MatrixObject out = ec.getMatrixObject(output);
-		FederationMap fedMap = moFederated.getFedMapping().copyWithNewID(outputFedmappingID);
-		if(moFederated.getNumRows() != rowNum || moFederated.getNumColumns() != colNum) {
-			int dim = moFederated.isFederated(FType.COL) ? 0 : 1;
-			fedMap.modifyFedRanges((dim == 0) ? rowNum : colNum, dim);
+		private void setOutputFedMapping(MatrixObject moFederated, long rowNum, long colNum,
+			long nnz, long outputFedmappingID, ExecutionContext ec){
+			MatrixObject out = ec.getMatrixObject(output);
+			FederationMap fedMap = moFederated.getFedMapping().copyWithNewID(outputFedmappingID);
+			if(moFederated.getNumRows() != rowNum || moFederated.getNumColumns() != colNum) {
+				// IMPORTANT: use the exact federation type (not isType/isFederated), because
+				// BROADCAST/FULL are considered both row/col partitioned via FType#isType,
+				// which would otherwise lead to modifying the wrong dimension and stale ranges.
+				FType fType = moFederated.getFedMapping().getType();
+				if(fType == FType.COL) {
+					fedMap.modifyFedRanges(rowNum, 0);
+				}
+				else if(fType == FType.ROW) {
+					fedMap.modifyFedRanges(colNum, 1);
+				}
+				else {
+					// FULL/BROADCAST/OTHER: non-partitioned or replicated. Ensure both dims match.
+					fedMap.modifyFedRanges(rowNum, 0);
+					fedMap.modifyFedRanges(colNum, 1);
+				}
+			}
+			out.getDataCharacteristics().set(moFederated.getDataCharacteristics())
+				.setDimension(rowNum, colNum).setNonZeros(nnz);
+			out.setFedMapping(fedMap);
 		}
-		out.getDataCharacteristics().set(moFederated.getDataCharacteristics())
-			.setDimension(rowNum, colNum).setNonZeros(nnz);
-		out.setFedMapping(fedMap);
+
+	private static void normalizeFederatedTypeIfPossible(MatrixLineagePair mo) {
+		if (!mo.isFederated() || mo.getFedMapping() == null || mo.getFedMapping().getType() != FType.OTHER)
+			return;
+
+		FederationMap fm = mo.getFedMapping();
+		if (fm.getSize() <= 1)
+			return;
+
+		// check for replicated (all ranges identical) -> BROADCAST
+		long[] b0 = fm.getFederatedRanges()[0].getBeginDims();
+		long[] e0 = fm.getFederatedRanges()[0].getEndDims();
+		boolean allSame = Arrays.stream(fm.getFederatedRanges())
+			.allMatch(r -> Arrays.equals(b0, r.getBeginDims()) && Arrays.equals(e0, r.getEndDims()));
+		if (allSame) {
+			fm.setType(FType.BROADCAST);
+			return;
+		}
+
+		long maxR = fm.getMaxIndexInRange(0);
+		long maxC = fm.getMaxIndexInRange(1);
+		boolean rowPartitioned = Arrays.stream(fm.getFederatedRanges()).allMatch(r -> r.getSize(1) == maxC);
+		boolean colPartitioned = Arrays.stream(fm.getFederatedRanges()).allMatch(r -> r.getSize(0) == maxR);
+		if (rowPartitioned && !colPartitioned)
+			fm.setType(FType.ROW);
+		else if (colPartitioned && !rowPartitioned)
+			fm.setType(FType.COL);
+	}
+
+	private static boolean isSameWorkerPool(FederationMap a, FederationMap b) {
+		if (a == null || b == null)
+			return false;
+		if (a.getSize() != b.getSize())
+			return false;
+
+		int n = a.getSize();
+		String[] as = new String[n];
+		String[] bs = new String[n];
+		for (int i = 0; i < n; i++) {
+			as[i] = String.valueOf(a.getMap().get(i).getValue() != null ? a.getMap().get(i).getValue().getAddress() : null);
+			bs[i] = String.valueOf(b.getMap().get(i).getValue() != null ? b.getMap().get(i).getValue().getAddress() : null);
+		}
+		Arrays.sort(as);
+		Arrays.sort(bs);
+		return Arrays.equals(as, bs);
 	}
 }

@@ -65,9 +65,7 @@ public class FederatedPlannerFedHeuristic extends FederatedPlannerFedAll {
 
 	@Override
 	protected FType getPropagatedFType(Hop hop, FType outFType) {
-		if( outFType != null || hop == null )
-			return outFType;
-		return heuristicFallbackFTypes.get(hop.getHopID());
+		return outFType;
 	}
 
 	private void recordHeuristicFallback(Hop hop, FType inferred, FType ret) {

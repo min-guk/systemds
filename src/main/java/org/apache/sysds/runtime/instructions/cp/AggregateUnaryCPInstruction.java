@@ -136,31 +136,42 @@ public class AggregateUnaryCPInstruction extends UnaryCPInstruction {
 					rval = ((ListObject)ec.getVariable(input1.getName())).getLength();
 				}
 				else if( input1.getDataType().isMatrix() || input1.getDataType().isFrame() ) {
-					DataCharacteristics mc = ec.getDataCharacteristics(input1.getName());
-					rval = getSizeMetaData(_type, mc);
-		
-					//check for valid output, and acquire read if necessary
-					//(Use case: In case of forced exec type singlenode, there are no reblocks. For csv
-					//we however, support unspecified input sizes, which requires a read to obtain the
-					//required meta data)
-					//Note: check on matrix characteristics to cover incorrect length (-1*-1 -> 1)
-					if( !mc.dimsKnown() ) //invalid nrow/ncol/length
-					{
-						if( DMLScript.getGlobalExecMode() == ExecMode.SINGLE_NODE 
-							|| input1.getDataType() == DataType.FRAME )
+					// For federated objects, the federation map ranges are the authoritative source of
+					// dimensionality. Local metadata can be stale (e.g., after planner rewrites) and may
+					// lead to wrong nrow/ncol/length results, which can cascade into shape errors later.
+					CacheableData<?> obj = ec.getCacheableData(input1.getName());
+					if( obj.isFederated() && obj.getFedMapping() != null ) {
+						long nrow = obj.getFedMapping().getMaxIndexInRange(0);
+						long ncol = obj.getFedMapping().getMaxIndexInRange(1);
+						rval = (_type == AUType.NROW) ? nrow :
+							(_type == AUType.NCOL) ? ncol : nrow * ncol;
+					}
+					else {
+						DataCharacteristics mc = ec.getDataCharacteristics(input1.getName());
+						rval = getSizeMetaData(_type, mc);
+
+						//check for valid output, and acquire read if necessary
+						//(Use case: In case of forced exec type singlenode, there are no reblocks. For csv
+						//we however, support unspecified input sizes, which requires a read to obtain the
+						//required meta data)
+						//Note: check on matrix characteristics to cover incorrect length (-1*-1 -> 1)
+						if( !mc.dimsKnown() ) //invalid nrow/ncol/length
 						{
-							//read the input matrix/frame and explicitly refresh meta data
-							CacheableData<?> obj = ec.getCacheableData(input1.getName());
-							obj.acquireRead();
-							obj.refreshMetaData();
-							obj.release();
-							
-							//update meta data information
-							mc = ec.getDataCharacteristics(input1.getName());
-							rval = getSizeMetaData(_type, mc);
-						}
-						else {
-							throw new DMLRuntimeException("Invalid meta data returned by '"+opcode+"': "+rval + ":" + instString);
+							if( DMLScript.getGlobalExecMode() == ExecMode.SINGLE_NODE 
+								|| input1.getDataType() == DataType.FRAME )
+							{
+								//read the input matrix/frame and explicitly refresh meta data
+								obj.acquireRead();
+								obj.refreshMetaData();
+								obj.release();
+								
+								//update meta data information
+								mc = ec.getDataCharacteristics(input1.getName());
+								rval = getSizeMetaData(_type, mc);
+							}
+							else {
+								throw new DMLRuntimeException("Invalid meta data returned by '"+opcode+"': "+rval + ":" + instString);
+							}
 						}
 					}
 				}

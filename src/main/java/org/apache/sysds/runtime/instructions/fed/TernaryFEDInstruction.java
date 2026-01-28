@@ -274,8 +274,14 @@ public class TernaryFEDInstruction extends ComputationFEDInstruction {
 		FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fedOutputID);
 		Future<FederatedResponse>[] executionResponse = fedMapObj.getFedMapping().execute(
 			getTID(), true, federatedSlices1, federatedSlices2, collectRequests(federatedRequests, getRequest));
-		ec.setMatrixOutput(output.getName(), FederationUtils.bind(executionResponse,
-			fedMapObj.isFederated(FType.COL)));
+		FType mapType = fedMapObj.getFedMapping().getType();
+		if (mapType == FType.BROADCAST || (mapType == FType.FULL && fedMapObj.getFedMapping().getSize() > 1)) {
+			ec.setMatrixOutput(output.getName(), FederationUtils.getResults(executionResponse)[0]);
+		}
+		else {
+			// For partitioned inputs, reconstruct local output by binding along the correct axis.
+			ec.setMatrixOutput(output.getName(), FederationUtils.bind(executionResponse, mapType == FType.COL));
+		}
 	}
 
 	/**
