@@ -182,6 +182,41 @@ public final class FederatedRefedPolicy {
 		}
 	}
 
+	public static void registerFoutMaterializeCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
+		if (hop == null)
+			return;
+		List<Hop> roots = new ArrayList<>();
+		roots.add(hop);
+		registerFoutMaterializeCandidates(roots, fTypeMap, sbId);
+	}
+
+	public static void registerFoutMaterializeCandidates(List<Hop> roots, java.util.Map<Long, FType> fTypeMap, long sbId) {
+		if (roots == null || roots.isEmpty())
+			return;
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		for (Hop root : roots)
+			if (root != null)
+				queue.add(root);
+		List<Hop> all = new ArrayList<>();
+
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (!visited.add(hop))
+				continue;
+			all.add(hop);
+			for (Hop in : hop.getInput())
+				queue.add(in);
+		}
+
+		AnchorSelection blockAnchor = buildBlockAnchorSelection(all, fTypeMap, null);
+		for (Hop root : roots) {
+			if (root == null)
+				continue;
+			validateAndRegister(root, fTypeMap, sbId, blockAnchor);
+		}
+	}
+
 	private static void registerFromStatementBlock(StatementBlock sb, java.util.Map<Long, FType> fTypeMap) {
 		if (sb == null)
 			return;

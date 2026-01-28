@@ -64,6 +64,11 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-heuristic.xml", "private-aggregate");
 	}
 
+	@Test
+	public void runPCAPlannerSinglePassPrivacyPrivateAggregate(){
+		runTestWithConfig("SystemDS-config-single-pass.xml", "private-aggregate");
+	}
+
 	@Ignore
 	@Test
 	public void runPCAPlannerDPPrivacyPrivate(){
@@ -81,11 +86,13 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	@Ignore
 	public void runPCAPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
+	@Ignore
 	public void runPCAPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}

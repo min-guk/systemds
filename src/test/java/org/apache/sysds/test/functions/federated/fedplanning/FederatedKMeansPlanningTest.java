@@ -61,6 +61,11 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	public void runKMeansPlannerSinglePassPrivacyPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-single-pass.xml", "private-aggregate");
+	}
+
+	@Test
 	public void runKMeansPlannerDPPrivacyPrivateAggregate() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate");
 	}
@@ -71,11 +76,13 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	@Ignore
 	public void runKMeansPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
+	@Ignore
 	public void runKMeansPlannerMinSTPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}

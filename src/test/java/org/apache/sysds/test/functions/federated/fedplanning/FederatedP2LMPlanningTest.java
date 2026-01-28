@@ -63,6 +63,11 @@ public class FederatedP2LMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-heuristic.xml", null);
 	}
 
+	@Test
+	public void runP2LMSinglePassTestPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-single-pass.xml", "private-aggregate");
+	}
+
 	@Ignore
 	@Test
 	public void runP2LMCostBasedTestPrivate() {

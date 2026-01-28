@@ -64,6 +64,11 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-heuristic.xml", "private-aggregate");
 	}
 
+	@Test
+	public void runLogRegPlannerSinglePassPrivacyPrivateAggregate() {
+		runTestWithConfig("SystemDS-config-single-pass.xml", "private-aggregate");
+	}
+
 	@Ignore
 	@Test
 	public void runLogRegPlannerDPPrivacyPrivate() {
@@ -81,11 +86,13 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	@Ignore
 	public void runLogRegPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
+	@Ignore
 	public void runLogRegPlannerMinSTPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}

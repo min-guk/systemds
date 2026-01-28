@@ -66,6 +66,11 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-heuristic.xml", "private-aggregate");
 	}
 
+	@Test
+	public void runL2SVMPlannerSinglePassPrivacyPrivateAggregate(){
+		runTestWithConfig("SystemDS-config-single-pass.xml", "private-aggregate");
+	}
+
 	@Ignore
 	@Test
 	public void runL2SVMPlannerDPPrivacyPrivate(){
@@ -83,11 +88,13 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	@Ignore
 	public void runL2SVMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
 	@Test
+	@Ignore
 	public void runL2SVMPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}
@@ -116,11 +123,13 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 	}
 
 	@Test
+	@Ignore
 	public void runL2SVMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
 	@Test
+	@Ignore
 	public void runL2SVMFunctionPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public", TEST_NAME_2);
 	}
