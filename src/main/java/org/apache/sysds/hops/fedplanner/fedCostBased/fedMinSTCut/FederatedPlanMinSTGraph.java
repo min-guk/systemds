@@ -174,6 +174,12 @@ public class FederatedPlanMinSTGraph {
 		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
 		double uploadCost = vertex.getNetworkWeight() * vertex.getUploadCostWithoutWeight();
 		double downloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
+		if (vertex.isDerivedFedFout()) {
+			// Derived FED/FOUT: always pay download when exec=FED, upload when placement=FOUT.
+			addCap(cId, rootLocalSink, downloadCost);
+			addCap(pId, rootLocalSink, uploadCost);
+			return;
+		}
 		addCap(cId, pId, downloadCost);
 		addCap(pId, cId, uploadCost);
 	}
@@ -383,14 +389,24 @@ public class FederatedPlanMinSTGraph {
 
 			vertex.getHopRef().setForcedExecType(exec);
 			vertex.getHopRef().setFederatedOutput(out);
+			boolean derivedSelected = vertex.isDerivedFedFout()
+					&& exec == ExecType.FED && out == FederatedOutput.FOUT;
+			vertex.getHopRef().setFederatedOutputDerived(derivedSelected);
 		}
 	}
 
 	public static class ExecPlacementCaps {
+		public enum FedFoutMode {
+			DISABLED,
+			NATIVE,
+			DERIVED_REFED
+		}
+
 		public boolean allowCP_LOUT = true;
 		public boolean allowCP_FOUT = true;
 		public boolean allowFED_LOUT = true;
 		public boolean allowFED_FOUT = true;
+		public FedFoutMode fedFoutMode = FedFoutMode.DISABLED;
 
 		public ExecPlacementCaps() {
 		}
@@ -400,6 +416,7 @@ public class FederatedPlanMinSTGraph {
 			this.allowCP_FOUT = other.allowCP_FOUT;
 			this.allowFED_LOUT = other.allowFED_LOUT;
 			this.allowFED_FOUT = other.allowFED_FOUT;
+			this.fedFoutMode = other.fedFoutMode;
 		}
 
 		public boolean get(ExecType exec, FederatedOutput out) {
@@ -427,6 +444,10 @@ public class FederatedPlanMinSTGraph {
 
 		public boolean hasAny() {
 			return allowCP_LOUT || allowCP_FOUT || allowFED_LOUT || allowFED_FOUT;
+		}
+
+		public boolean isDerivedFedFout() {
+			return fedFoutMode == FedFoutMode.DERIVED_REFED;
 		}
 	}
 
@@ -504,6 +525,10 @@ public class FederatedPlanMinSTGraph {
 
 		public ExecPlacementCaps getCaps() {
 			return caps_;
+		}
+
+		public boolean isDerivedFedFout() {
+			return caps_ != null && caps_.isDerivedFedFout();
 		}
 
 		public double getOpCostWithWeight() {

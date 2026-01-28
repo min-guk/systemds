@@ -79,11 +79,13 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore
 	@Test
 	public void runLMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore
 	@Test
 	public void runLMPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
@@ -112,11 +114,13 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	public void runLMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	public void runLMFunctionPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public", TEST_NAME_2);

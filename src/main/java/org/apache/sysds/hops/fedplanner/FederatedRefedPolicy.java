@@ -162,7 +162,11 @@ public final class FederatedRefedPolicy {
 			ExecType exec = getPlannedExecType(hop);
 			if (exec == null)
 				exec = ExecType.CP;
-			if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+			boolean isFout = hop.getFederatedOutput() == FederatedOutput.FOUT;
+			boolean derivedFedFout = hop.isFederatedOutputDerived();
+			boolean needsRefed = (exec == ExecType.CP && isFout)
+					|| (exec == ExecType.FED && isFout && derivedFedFout);
+			if (needsRefed) {
 				try {
 					validateAndRegister(hop, fTypeMap, sbId, blockAnchor);
 				}

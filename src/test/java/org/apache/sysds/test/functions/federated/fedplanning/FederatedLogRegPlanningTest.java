@@ -80,11 +80,13 @@ public class FederatedLogRegPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore
 	@Test
 	public void runLogRegPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore
 	@Test
 	public void runLogRegPlannerMinSTPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");

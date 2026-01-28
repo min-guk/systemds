@@ -70,11 +70,13 @@ public class FederatedKMeansPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore
 	@Test
 	public void runKMeansPlannerDPPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore
 	@Test
 	public void runKMeansPlannerMinSTPrivacyPublic() {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");

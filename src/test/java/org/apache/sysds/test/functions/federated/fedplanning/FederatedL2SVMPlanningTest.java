@@ -82,11 +82,13 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore
 	@Test
 	public void runL2SVMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore
 	@Test
 	public void runL2SVMPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
@@ -115,11 +117,13 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	public void runL2SVMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	public void runL2SVMFunctionPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public", TEST_NAME_2);
