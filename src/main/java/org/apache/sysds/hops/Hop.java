@@ -193,6 +193,8 @@ public abstract class Hop implements ParseInfo {
 
 	public void setFederatedOutput(FederatedOutput federatedOutput){
 		_federatedOutput = federatedOutput;
+		// Reset derived marker on any explicit assignment to avoid stale state across rewrites/planners.
+		_federatedOutputDerived = false;
 	}
 
 	public void setFederatedOutputDerived(boolean derived) {
