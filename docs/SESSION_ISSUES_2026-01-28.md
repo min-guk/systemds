@@ -20,6 +20,55 @@
 - **잠재 회귀 위험**: derived flag 오설정 시 native FOUT 경로가 깨질 수 있음 → MinST 로그/실행에서 refed 삽입 누락 여부로 감지
 - **의사결정 근거**: 플래너 규칙 수정(oracle 캡 유지, MinST 비용/선택 모델 보완) + 런타임 지원(refed) 사용
 
+## MinST CP->FOUT / derived(FED,FOUT via refed)에서 로컬 존재를 무시해 download 비용 과대계상
+- **상태**: 해결
+- **환경/조건**: MinST planner(min-st-cut), hop이 FOUT을 요구받거나 CP->FOUT materialize가 발생하며, 동시에 CP consumer가 존재하는 경우(dual output)
+- **재현 절차**: (1) 어떤 hop이 `CP,FOUT` 또는 `FED,FOUT(derived)`로 선택되고 (2) 상위에 CP 실행 consumer가 있는 DAG에서 MinST 계획/비용 비교
+- **관측 증상**: parent-child forwarding에서 `FOUT->CP` download가 추가로 비용에 반영되어 (실제로는 로컬 intermediate가 존재하는데도) 네트워크 비용이 과대계상됨 → 최적 plan이 왜곡될 수 있음
+- **원인 분석**: MinST 그래프가 exec/placement 2노드만으로 상태를 표현하면서, `FOUT이면 로컬 없음`으로 가정. 하지만 `CP->FOUT`(fed_fout materialize)와 `FED,FOUT(derived via refed)`는 실제로 로컬 결과가 동시에 존재할 수 있음(dual output). 기존 parent-child DOWNLOAD hyperedge는 child의 exec/derived를 고려하지 않아 download를 잘못 부과.
+- **해결 요약**:
+  - hop당 locality 노드(`NO_LOCAL`)를 Min-cut 그래프에 추가해 “로컬 materialization 존재 여부”를 명시적으로 모델링
+  - `NO_LOCAL => (FED,FOUT)` implication을 hard constraint로 추가
+  - parent-child DOWNLOAD hyperedge를 제거하고, `NO_LOCAL`이 CP parent와 공존할 수 없도록 hard constraint 추가(= CP consumer가 있으면 로컬 materialization 강제)
+  - download 비용은 `compute(FED)`와 `NO_LOCAL=false` 조합에서만 지불하도록 `cId -> lId` edge로 모델링
+  - derived hop은 항상 로컬 intermediate가 존재하므로 `NO_LOCAL`을 false로 고정
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTPlanner.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTGraph.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCostEstimator.java`
+- **검증**: `mvn -Dtest=FederatedPCAPlanningTest,FederatedP2LMPlanningTest,FederatedLogRegPlanningTest,FederatedLMPlanningTest,FederatedL2SVMPlanningTest,FederatedKMeansPlanningTest test` 통과 (2026-01-28)
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: MinST 비용/계획이 바뀌어 일부 케이스에서 exec/placement 선택이 달라질 수 있음 → federated planning 테스트 + planner 로그(diff)로 감지
+- **의사결정 근거**: 플래너 비용/제약 모델 수정(dual output의 로컬 존재를 명시), 런타임 fallback/암묵적 보정에 의존하지 않음
+
+## Hop.setFederatedOutput에서 derived flag가 stale하게 유지됨
+- **상태**: 해결
+- **환경/조건**: 여러 플래너/rewriter가 같은 Hop 인스턴스의 `federatedOutput`을 덮어쓰는 경우
+- **재현 절차**: MinST가 일부 hop에 `setFederatedOutputDerived(true)`를 설정한 후, 다른 rewrite에서 `setFederatedOutput(...)`만 호출
+- **관측 증상**: derived flag가 의도치 않게 남아 refed/materialize 판단이 틀어질 수 있음
+- **원인 분석**: `setFederatedOutput(...)`이 derived 상태를 초기화하지 않음
+- **해결 요약**: `setFederatedOutput(...)`에서 `_federatedOutputDerived=false`로 reset
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/Hop.java`
+- **검증**: `mvn -Dtest=FederatedPCAPlanningTest,FederatedP2LMPlanningTest,FederatedLogRegPlanningTest,FederatedLMPlanningTest,FederatedL2SVMPlanningTest,FederatedKMeansPlanningTest test` 통과
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: derived가 필요한 경우 reset 후 다시 true 설정이 누락되면 derived 경로가 사라질 수 있음 → MinST 로그에서 derived/refed 계획 확인
+- **의사결정 근거**: 플래너-런타임 정합성(derived는 명시적으로만 활성화)
+
+## FederatedRefedPolicy refed 후보 실패 로그가 CP->FOUT로 오해를 유발
+- **상태**: 해결
+- **환경/조건**: `FederatedRefedPolicy.validateAndRegister(...)` 경로에서 예외 발생
+- **재현 절차**: refed 후보 등록 중 예외가 발생하도록 입력/앵커 조건을 만들고 로그 확인
+- **관측 증상**: 실패 로그가 고정 문자열(예: “CP->FOUT ... failed”)로 출력되어, 실제로는 derived FED/FOUT(refed) 실패도 CP->FOUT 실패처럼 보임
+- **원인 분석**: 예외 로깅 메시지가 mode/exec/out/derived 여부를 반영하지 않고 하드코딩되어 있었음
+- **해결 요약**: 로그에 mode(FED/FOUT derived 포함), plannedExecType, federatedOutput, derived, hasLocalOutput 등을 포함하도록 개선
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+- **검증**: `mvn -Dtest=FederatedPCAPlanningTest,FederatedP2LMPlanningTest,FederatedLogRegPlanningTest,FederatedLMPlanningTest,FederatedL2SVMPlanningTest,FederatedKMeansPlanningTest test` 통과
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: 기능 변화는 없고 로그만 변경됨(회귀 위험 낮음)
+- **의사결정 근거**: 관측성 개선(디버깅 정확도 향상)
+
 ## 단일 패스 플래너에 loop-unroll 비활성화 API 부재
 - **상태**: 해결
 - **환경/조건**: 플래너(단일‑패스 Max‑FED/FOUT), DP rewire 사용, loop‑unroll 비활성화 필요
