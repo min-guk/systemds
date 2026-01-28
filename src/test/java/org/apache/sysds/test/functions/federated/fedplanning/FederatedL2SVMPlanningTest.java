@@ -82,12 +82,14 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runL2SVMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runL2SVMPlannerMinSTPrivacyPublic(){
@@ -117,12 +119,14 @@ public class FederatedL2SVMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runL2SVMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runL2SVMFunctionPlannerMinSTPrivacyPublic(){

@@ -79,12 +79,14 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runLMPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runLMPlannerMinSTPrivacyPublic(){
@@ -114,12 +116,14 @@ public class FederatedLMPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-cost-based.xml", "private-aggregate", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runLMFunctionPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public", TEST_NAME_2);
 	}
 
+	@Ignore
 	@Test
 	@Ignore("public privacy constraints ignored in this run")
 	public void runLMFunctionPlannerMinSTPrivacyPublic(){

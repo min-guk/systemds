@@ -316,7 +316,8 @@ public final class FederatedRefedPolicy {
 			ExecType exec = getPlannedExecType(hop);
 			if (exec == null)
 				exec = ExecType.CP;
-			boolean localOutput = exec == ExecType.CP || (exec == ExecType.FED && hop.hasLocalOutput());
+			boolean localOutput = exec == ExecType.CP
+					|| (exec == ExecType.FED && (hop.hasLocalOutput() || hop.isFederatedOutputDerived()));
 			if (localOutput && hop.getDataType().isMatrix()
 				&& (hop.getFederatedOutput() == FederatedOutput.FOUT
 					|| requiresCpfoutForFedParents(hop, fTypeMap))) {

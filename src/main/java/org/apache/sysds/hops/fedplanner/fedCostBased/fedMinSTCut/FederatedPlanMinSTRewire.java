@@ -760,7 +760,7 @@ public class FederatedPlanMinSTRewire {
 						FederatedPlannerLogger.logTransReadRewireDebug(
 								hopName, hop.getHopID(), childHops, true, "RewireTransHop");
 						privacy = Privacy.PUBLIC;
-						caps = buildExecPlacementCaps(hop, privacy, null, null);
+						caps = buildExecPlacementCaps(hop, privacy, null, null, fTypeMap);
 						privacyConstraintMap.put(hop.getHopID(), privacy);
 						fTypeMap.put(hop.getHopID(), null);
 						return new Vertex(hop, privacy, null, caps);
@@ -777,7 +777,7 @@ public class FederatedPlanMinSTRewire {
 						FederatedPlannerLogger.logFilteredChildHopsDebug(
 								hopName, hop.getHopID(), filteredChildHops, true, "RewireTransHop");
 						privacy = Privacy.PUBLIC;
-						caps = buildExecPlacementCaps(hop, privacy, null, null);
+						caps = buildExecPlacementCaps(hop, privacy, null, null, fTypeMap);
 						privacyConstraintMap.put(hop.getHopID(), privacy);
 						fTypeMap.put(hop.getHopID(), null);
 						return new Vertex(hop, privacy, null, caps);
@@ -852,7 +852,7 @@ public class FederatedPlanMinSTRewire {
 						caps = resolvedCaps;
 					} else {
 						OpCaps policyCaps = OpCaps.allow(ExecType.FED, FederatedOutput.FOUT).build();
-						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps);
+						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps, fTypeMap);
 					}
 
 					privacyConstraintMap.put(hop.getHopID(), privacy);
@@ -916,13 +916,13 @@ public class FederatedPlanMinSTRewire {
 				hop, fType, rewireTable, numWorkersEstimate);
 
 		// Exec/Placement capability 결정
-		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps);
-			if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap)) {
-				caps.allowFED_LOUT = false;
-				caps.allowFED_FOUT = false;
-				if (!caps.hasAny()) {
-					throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
-							+ hop.getHopID() + " (" + hop.getOpString() + ")");
+		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
+		if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap)) {
+			caps.allowFED_LOUT = false;
+			caps.allowFED_FOUT = false;
+			if (!caps.hasAny()) {
+				throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
+						+ hop.getHopID() + " (" + hop.getOpString() + ")");
 			}
 		}
 
@@ -933,7 +933,8 @@ public class FederatedPlanMinSTRewire {
 		return new Vertex(hop, privacy, fType, cpFoutType, caps);
 	}
 
-	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle) {
+	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle,
+			Map<Long, FType> fTypeMap) {
 		ExecPlacementCaps caps = new ExecPlacementCaps();
 
 		// 0) 처음엔 전부 false로 시작 (DP가 실제로 생성하는 조합만 켜기 위함)
@@ -953,6 +954,14 @@ public class FederatedPlanMinSTRewire {
 		caps.allowCP_FOUT = policyDecision.allowCP_FOUT;
 		caps.allowFED_LOUT = policyDecision.allowFED_LOUT;
 		caps.allowFED_FOUT = policyDecision.allowFED_FOUT;
+		caps.fedFoutMode = caps.allowFED_FOUT
+				? ExecPlacementCaps.FedFoutMode.NATIVE
+				: ExecPlacementCaps.FedFoutMode.DISABLED;
+
+		if (shouldEnableDerivedFedFout(hop, privacy, fTypeMap, caps)) {
+			caps.allowFED_FOUT = true;
+			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DERIVED_REFED;
+		}
 
 		// If the oracle reports that FOUT is not supported by the runtime for this op, avoid
 		// producing a federated output altogether. MinST's 2-node encoding cannot reliably
@@ -1008,6 +1017,24 @@ public class FederatedPlanMinSTRewire {
 		}
 		return false;
 	}
+
+	private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,
+			Map<Long, FType> fTypeMap, ExecPlacementCaps caps) {
+		if (caps == null || caps.allowFED_FOUT || !caps.allowFED_LOUT)
+			return false;
+		if (hop == null || !hop.getDataType().isMatrix())
+			return false;
+		if (!isDerivedFoutPrivacyAllowed(privacy))
+			return false;
+		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, fTypeMap))
+			return false;
+		return true;
+	}
+
+	private static boolean isDerivedFoutPrivacyAllowed(Privacy privacy) {
+		return privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+	}
+	
 
 	private static void wireUnRefTwriteToLiveOutWithTracking(StatementBlock sb, Set<Long> unRefTwriteSet,
 			FederatedPlanMinSTGraph graph, Map<String, List<Hop>> newFormerTransTable,
