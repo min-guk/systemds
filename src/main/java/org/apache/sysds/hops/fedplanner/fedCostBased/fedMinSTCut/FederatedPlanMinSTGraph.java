@@ -101,8 +101,8 @@ public class FederatedPlanMinSTGraph {
 	private final Set<Pair<Long, Long>> trConsistencyAdded = new HashSet<>();
 	// Track TW/input placement consistency edges to avoid duplicates.
 	private final Set<Pair<Long, Long>> twInputPlacementConsistencyAdded = new HashSet<>();
-	// Track required FED-input constraints to avoid duplicates.
-	private final Set<Pair<Long, Long>> requiredFedInputAdded = new HashSet<>();
+	// Track required local-input constraints (child must have local output if parent executes CP).
+	private final Set<Pair<Long, Long>> requiredLocalInputAdded = new HashSet<>();
 	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
 	private final Set<Long> parentChildUploadCostFallbackLogged = new HashSet<>();
 	private final List<LoopCarryEdge> loopCarryEdges = new ArrayList<>();
@@ -136,6 +136,7 @@ public class FederatedPlanMinSTGraph {
 		memoTable.put(hopID, vertex);
 		graph.addVertex(FederatedPlanMinSTPlanner.computeId(hopID));
 		graph.addVertex(FederatedPlanMinSTPlanner.placementId(hopID));
+		graph.addVertex(FederatedPlanMinSTPlanner.localityId(hopID));
 	}
 
 	public void forbidLOUTUnary(long pId) {
@@ -146,6 +147,24 @@ public class FederatedPlanMinSTGraph {
 	public void forbidFOUTUnary(long pId) {
 		addCap(leafedSource, pId, 0.0);
 		addCap(pId, rootLocalSink, HARD_INF);
+	}
+
+	public void forbidNoLocalUnary(long lId) {
+		// Force locality node to sink side (has local output).
+		addCap(leafedSource, lId, 0.0);
+		addCap(lId, rootLocalSink, HARD_INF);
+	}
+
+	public void addNoLocalImplicationEdges(long hopId) {
+		if (hopId <= 0)
+			return;
+		long cId = FederatedPlanMinSTPlanner.computeId(hopId);
+		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
+		long lId = FederatedPlanMinSTPlanner.localityId(hopId);
+		// lId represents the boolean "NO_LOCAL" (source side=true).
+		// NO_LOCAL implies both FED execution and a federated output (FOUT).
+		addCap(lId, pId, HARD_CONSTRAINT);
+		addCap(lId, cId, HARD_CONSTRAINT);
 	}
 
 	public void setVertexCost(Vertex vertex) {
@@ -179,15 +198,16 @@ public class FederatedPlanMinSTGraph {
 		long hopId = vertex.getHopID();
 		long cId = FederatedPlanMinSTPlanner.computeId(hopId);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
+		long lId = FederatedPlanMinSTPlanner.localityId(hopId);
 		double uploadCost = vertex.getNetworkWeight() * vertex.getCpUploadCostWithoutWeight();
 		double downloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
+		// Download is paid when we execute in FED and the hop needs to have a local materialization.
+		addCap(cId, lId, downloadCost);
 		if (vertex.isDerivedFedFout()) {
-			// Derived FED/FOUT: always pay download when exec=FED, upload when placement=FOUT.
-			addCap(cId, rootLocalSink, downloadCost);
+			// Derived FED/FOUT: FOUT is produced via refed from a local intermediate, so upload depends only on placement.
 			addCap(pId, rootLocalSink, uploadCost);
 			return;
 		}
-		addCap(cId, pId, downloadCost);
 		addCap(pId, cId, uploadCost);
 	}
 
@@ -239,18 +259,16 @@ public class FederatedPlanMinSTGraph {
 								+ childHopID + " (" + childOp + "): " + originalUploadCost + " -> " + uploadCost);
 			}
 		}
-		double downloadCost = childVertex.getDownloadCostWithoutWeight();
 		double uploadWeighted = forwardingWeight * uploadCost;
-		double downloadWeighted = forwardingWeight * downloadCost;
 		// Use child FType as a proxy conversion key since per-input conversion detail is not available here.
 		FType uploadConversionType = childVertex.getCpFoutDataType();
 		if (uploadConversionType == null) {
 			uploadConversionType = childVertex.getDataType();
 		}
-		FType downloadConversionType = childVertex.getDataType();
 
+		// If a parent executes in CP, the child must have a local materialization (either natively or via download).
+		addRequiredLocalInputEdge(parentHopID, childHopID);
 		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
-		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.DOWNLOAD, downloadConversionType, downloadWeighted);
 	}
 
 	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
@@ -294,17 +312,15 @@ public class FederatedPlanMinSTGraph {
 		addXorEdge(twP, inputP, HARD_CONSTRAINT);
 	}
 
-	public void addRequiredFedInputEdge(long parentHopId, long childHopId) {
+	public void addRequiredLocalInputEdge(long parentHopId, long childHopId) {
 		if (parentHopId <= 0 || childHopId <= 0)
 			return;
-		if (!requiredFedInputAdded.add(Pair.of(parentHopId, childHopId)))
+		if (!requiredLocalInputAdded.add(Pair.of(parentHopId, childHopId)))
 			return;
 		long parentC = FederatedPlanMinSTPlanner.computeId(parentHopId);
-		long childP = FederatedPlanMinSTPlanner.placementId(childHopId);
-		// If parent executes FED (compute node on sink side), the child placement must be FOUT
-		// (placement node on sink side). This is encoded as: childP (source) => parentC (source),
-		// i.e., forbid the (childP=source, parentC=sink) combination.
-		addCap(childP, parentC, HARD_CONSTRAINT);
+		long childL = FederatedPlanMinSTPlanner.localityId(childHopId);
+		// If the child has NO_LOCAL (lId on source side), the parent cannot execute CP.
+		addCap(childL, parentC, HARD_CONSTRAINT);
 	}
 
 	public void forbidCombinationCP_FOUT(long cId, long pId) {

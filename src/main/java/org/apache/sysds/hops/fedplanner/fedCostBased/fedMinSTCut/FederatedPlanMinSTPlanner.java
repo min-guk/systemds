@@ -22,11 +22,19 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 public final class FederatedPlanMinSTPlanner {
 
 	static long computeId(long hopId) {
-		return hopId << 1;
+		// Reserve 2 bits for per-hop MinST decision nodes:
+		//   00: compute (CP/FED)
+		//   01: placement (LOUT/FOUT)
+		//   10: locality  (has-local / no-local)
+		return hopId << 2;
 	}
 
 	static long placementId(long hopId) {
-		return (hopId << 1) | 1;
+		return (hopId << 2) | 1;
+	}
+
+	static long localityId(long hopId) {
+		return (hopId << 2) | 2;
 	}
 
 	private FederatedPlanMinSTPlanner() {

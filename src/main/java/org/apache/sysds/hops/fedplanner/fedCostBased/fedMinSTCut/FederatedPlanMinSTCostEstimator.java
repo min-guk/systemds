@@ -38,7 +38,6 @@ import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
@@ -279,6 +278,12 @@ public class FederatedPlanMinSTCostEstimator {
 		boolean afF = caps.allowFED_FOUT;
 		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopID);
+		long lId = FederatedPlanMinSTPlanner.localityId(hopID);
+		graph.addNoLocalImplicationEdges(hopID);
+		if (vertex.isDerivedFedFout()) {
+			// Derived FED/FOUT always has a local intermediate/result.
+			graph.forbidNoLocalUnary(lId);
+		}
 
 		if (!acL && !afL) {
 			graph.forbidLOUTUnary(pId);
@@ -318,18 +323,6 @@ public class FederatedPlanMinSTCostEstimator {
 		}
 
 		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
-		Map<Long, FType> inputFTypeMap = null;
-		if (!childHops.isEmpty()) {
-			inputFTypeMap = new HashMap<>();
-			for (Hop inputHop : childHops) {
-				if (inputHop == null)
-					continue;
-				Vertex inputVertex = graph.getVertex(inputHop.getHopID());
-				FType inputFType = (inputVertex != null) ? inputVertex.getDataType() : null;
-				if (inputFType != null)
-					inputFTypeMap.put(inputHop.getHopID(), inputFType);
-			}
-		}
 		for (int i = 0; i < childHops.size(); i++) {
 			Hop childHop = childHops.get(i);
 			if (childHop == null)
@@ -340,16 +333,6 @@ public class FederatedPlanMinSTCostEstimator {
 
 			graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
 
-			// Enforce: if the parent executes in FED, required matrix inputs must be federated (FOUT).
-			// This prevents FED ops from consuming local-only inputs at runtime.
-			if (childHop.getDataType() != null && childHop.getDataType().isMatrix()) {
-				FederatedRefedPolicy.InputRequirement req =
-						FederatedRefedPolicy.getInputRequirementForFedExec(hop, childHop, i, inputFTypeMap);
-				if (req == FederatedRefedPolicy.InputRequirement.REQUIRED
-						|| req == FederatedRefedPolicy.InputRequirement.AMBIGUOUS) {
-					graph.addRequiredFedInputEdge(hopID, childHop.getHopID());
-				}
-			}
 		}
 
 		addLoopCarryEdgesForHop(hop, vertex, graph);
