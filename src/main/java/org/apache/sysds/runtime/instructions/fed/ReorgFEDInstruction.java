@@ -35,11 +35,12 @@ import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.lops.Lop;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedUDF;
@@ -176,30 +177,12 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		boolean isSpark = instString.startsWith("SPARK");
 
 		if (!mo1.isFederated()) {
-			String debugInfo = String.format(
-					"Federated Reorg Debug Info:\n" +
-							"- Input variable: %s\n" +
-							"- MatrixObject isFederated: %s\n" +
-							"- MatrixObject class: %s\n" +
-							"- Data characteristics: %s\n" +
-							"- Federation mapping: %s\n" +
-							"- Has federation mapping: %s\n" +
-							"- Instruction opcode: %s\n" +
-							"- Instruction string: %s\n" +
-							"- FederatedOutput: %s",
-					input1.getName(),
-					mo1.isFederated(),
-					mo1.getClass().getSimpleName(),
-					mo1.getDataCharacteristics(),
-					mo1.getFedMapping(),
-					mo1.getFedMapping() != null,
-					instOpcode,
-					instString,
-					_fedOut);
-			throw new DMLRuntimeException("Federated Reorg: "
-					+ "Federated input expected, but invoked w/ " + mo1.isFederated() + "\n" + debugInfo);
+			throw new DMLRuntimeException("FED reorg requires federated input but found local at runtime. "
+				+ "op=" + instOpcode + " input=" + input1.getName()
+				+ " dims=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
 		}
-		if (!(mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW)))
+		if (!(mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW) || mo1.isFederated(FType.BROADCAST)))
 			throw new DMLRuntimeException("Federation type " + mo1.getFedMapping().getType()
 					+ " is not supported for Reorg processing");
 
@@ -224,14 +207,22 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 						out.getDataCharacteristics().setDimension(mo1.getNumColumns(), mo1.getNumRows())
 								.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
 						out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()).transpose());
-					} else {
-						FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
-						Future<FederatedResponse>[] execResponse = mo1.getFedMapping().execute(getTID(), true, fr1, getRequest);
-						ec.setMatrixOutput(output.getName(),
-								FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
+						} else {
+							FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
+							Future<FederatedResponse>[] execResponse = mo1.getFedMapping().execute(getTID(), true, fr1, getRequest);
+							// If the input is replicated (BROADCAST), every worker returns the same transposed result.
+							// Binding would duplicate data (e.g., 1xK -> 1x(K*numWorkers)), so we just take one.
+							if (mo1.isFederated(FType.BROADCAST)) {
+								MatrixBlock[] outBlocks = FederationUtils.getResults(execResponse);
+								ec.setMatrixOutput(output.getName(), outBlocks[0]);
+							}
+							else {
+								ec.setMatrixOutput(output.getName(),
+									FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
+							}
+						}
+						break;
 					}
-					break;
-				}
 				catch (DMLRuntimeException ex) {
 					if (!retried && tryReinitMissingInput(mo1, ex)) {
 						retried = true;
@@ -239,8 +230,8 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 					}
 					throw ex;
 				}
-			}
-		} else if (mo1.isFederated(FType.PART)) {
+		}
+	} else if (mo1.isFederated(FType.PART)) {
 			throw new DMLRuntimeException("Operation with opcode " + instOpcode + " is not supported with PART input");
 		} else if (instOpcode.equalsIgnoreCase(Opcodes.REV.toString())) {
 			long id = FederationUtils.getNextFedDataID();
@@ -312,6 +303,21 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			rdiag.setFedMapping(diagFedMap);
 			optionalForceLocal(rdiag);
 		}
+	}
+
+	private String toCPInstructionString() {
+		String[] parts = instString.split(Lop.OPERAND_DELIMITOR, -1);
+		parts[0] = Types.ExecType.CP.name();
+		// strip trailing federated output flag (FOUT/LOUT/NONE) if present
+		if (parts.length > 0) {
+			String last = parts[parts.length - 1];
+			if (last != null) {
+				String upper = last.trim().toUpperCase();
+				if ("FOUT".equals(upper) || "LOUT".equals(upper) || "NONE".equals(upper))
+					parts = Arrays.copyOf(parts, parts.length - 1);
+			}
+		}
+		return String.join(Lop.OPERAND_DELIMITOR, parts);
 	}
 
 	private boolean tryReinitMissingInput(MatrixObject mo, Throwable ex) {

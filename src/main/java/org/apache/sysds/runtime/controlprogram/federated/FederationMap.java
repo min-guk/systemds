@@ -159,6 +159,14 @@ public class FederationMap {
 		boolean transposed) {
 		if( _type == FType.FULL )
 			return new FederatedRequest[]{broadcast(data)};
+		if( _type == FType.BROADCAST ) {
+			// For replicated federated data, slicing does not make sense. Broadcast the full
+			// input object to every worker (one PUT per worker, but sharing a common id).
+			FederatedRequest fr = broadcast(data, lineageItem);
+			FederatedRequest[] ret = new FederatedRequest[_fedMap.size()];
+			Arrays.fill(ret, fr);
+			return ret;
+		}
 
 		// prepare broadcast id and pin input
 		long id = FederationUtils.getNextFedDataID();
@@ -613,6 +621,7 @@ public class FederationMap {
 				break;
 			case FULL:
 			case PART:
+			case BROADCAST:
 				// FULL and PART are not changed
 				break;
 			default:
@@ -706,8 +715,11 @@ public class FederationMap {
 			|| Arrays.stream(ret.getFederatedRanges()).allMatch(range -> range.getSize(1) == ret.getMaxIndexInRange(1));
 		boolean colPartitioned = this.getType().isType(FType.COL)
 			|| Arrays.stream(ret.getFederatedRanges()).allMatch(range -> range.getSize(0) == ret.getMaxIndexInRange(0));
-		if(rowPartitioned && colPartitioned)
-			ret.setType(FType.FULL);
+		if(rowPartitioned && colPartitioned) {
+			// If the filtered map contains multiple entries that each cover the full remaining
+			// index space, this represents replication and should be treated as BROADCAST (not FULL).
+			ret.setType(ret.getSize() == 1 ? FType.FULL : FType.BROADCAST);
+		}
 
 		return ret;
 	}

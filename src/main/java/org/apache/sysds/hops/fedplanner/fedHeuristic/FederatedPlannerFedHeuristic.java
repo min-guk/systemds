@@ -19,18 +19,67 @@
 
 package org.apache.sysds.hops.fedplanner.fedHeuristic;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
 public class FederatedPlannerFedHeuristic extends FederatedPlannerFedAll {
-	
+	private final Map<Long, FType> heuristicFallbackFTypes = new HashMap<>();
+
+	@Override
+	public void rewriteProgram(org.apache.sysds.parser.DMLProgram prog,
+		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph,
+		org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes) {
+		heuristicFallbackFTypes.clear();
+		super.rewriteProgram(prog, fgraph, fcallSizes);
+	}
+
+	@Override
+	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		heuristicFallbackFTypes.clear();
+		super.rewriteFunctionDynamic(function, funcArgs);
+	}
+
 	@Override
 	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops) {
-		FType ret = super.getFederatedOut(hop, fedHops); // FedAll
+		FType inferred = super.getFederatedOut(hop, fedHops); // FedAll
+		FType ret = applyHeuristics(hop, inferred);
+		recordHeuristicFallback(hop, inferred, ret);
+		return ret;
+	}
+
+	@Override
+	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops,
+		Map<Long, java.util.List<Hop>> rewireTable) {
+		FType inferred = super.getFederatedOut(hop, fedHops, rewireTable); // FedAll
+		FType ret = applyHeuristics(hop, inferred);
+		recordHeuristicFallback(hop, inferred, ret);
+		return ret;
+	}
+
+	@Override
+	protected FType getPropagatedFType(Hop hop, FType outFType) {
+		return outFType;
+	}
+
+	private void recordHeuristicFallback(Hop hop, FType inferred, FType ret) {
+		if( hop == null )
+			return;
+		if( ret == null && inferred != null ) {
+			heuristicFallbackFTypes.put(hop.getHopID(), inferred);
+		}
+		else {
+			heuristicFallbackFTypes.remove(hop.getHopID());
+		}
+	}
+
+	private static FType applyHeuristics(Hop hop, FType ret) {
 		
 		//apply operator-specific heuristics
 		if( hop instanceof AggBinaryOp) {

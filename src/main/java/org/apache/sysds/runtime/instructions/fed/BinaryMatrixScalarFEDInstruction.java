@@ -21,6 +21,7 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.concurrent.Future;
 
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
@@ -56,6 +57,12 @@ public class BinaryMatrixScalarFEDInstruction extends BinaryFEDInstruction
 		CPOperand matrix = input1.isMatrix() ? input1 : input2;
 		CPOperand scalar = input2.isScalar() ? input2 : input1;
 		MatrixObject mo = ec.getMatrixObject(matrix);
+
+		if( mo.getFedMapping() == null ) {
+			throw new DMLRuntimeException("FED matrix-scalar requires federated matrix input but found local. "
+				+ "op=" + instOpcode + " matrix=" + matrix.getName() + " scalar=" + scalar.getName()
+				+ " inst=" + instString);
+		}
 
 		//prepare federated request matrix-scalar
 		FederatedRequest fr1 = !scalar.isLiteral() ?

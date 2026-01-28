@@ -137,6 +137,18 @@ public final class Rulesets {
     return false;
   }
 
+  private static boolean isVectorHint(ShapeHint hint) {
+    if (hint == null)
+      return false;
+    long rows = hint.rows();
+    long cols = hint.cols();
+    if (rows <= 0 || cols <= 0)
+      return false;
+    if (rows == 1 && cols == 1)
+      return false;
+    return rows == 1 || cols == 1;
+  }
+
   private static boolean aligned(List<FType> left, List<FType> right, FType axis, ShapeHint hint) {
     return axisKnown(axis, hint) && hasAxis(left, axis) && hasAxis(right, axis);
   }
@@ -847,9 +859,12 @@ public final class Rulesets {
       if (inputs.isEmpty())
         return FTypeProfile.empty();
       Set<FType> outs = new LinkedHashSet<>();
+      boolean vectorHint = isVectorHint(hint);
       for (FType cand : inputs) {
         if (cand == FType.ROW || cand == FType.COL || cand == FType.PART || cand == FType.FULL)
           outs.add(cand);
+        else if (cand == FType.BROADCAST && vectorHint)
+          outs.add(FType.BROADCAST);
       }
       return profileOf(outs);
     }
@@ -893,9 +908,12 @@ public final class Rulesets {
       if (inputs.isEmpty())
         return FTypeProfile.empty();
       Set<FType> outs = new LinkedHashSet<>();
+      boolean vectorHint = isVectorHint(hint);
       for (FType cand : inputs) {
         if (cand == FType.ROW || cand == FType.COL || cand == FType.PART || cand == FType.FULL)
           outs.add(cand);
+        else if (cand == FType.BROADCAST && vectorHint)
+          outs.add(FType.BROADCAST);
       }
       return profileOf(outs);
     }
@@ -918,8 +936,8 @@ public final class Rulesets {
       if (dir != null && dir.equalsIgnoreCase("rows"))
         outAxis = FType.COL;
 
-      Guard.Result guard = Guard.eval(sig);
-      return guardAwareFout(sig, outAxis, ReasonCode.OK, guard);
+      // FED rexpand does not support FOUT materialization in runtime; only FED-LOUT is safe.
+      return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
     }
   }
 
@@ -2825,6 +2843,15 @@ public final class Rulesets {
         outs.add(FType.ROW);
       if (matrixScalarPair(left, right, FType.COL))
         outs.add(FType.COL);
+      boolean vectorHint = isVectorHint(hint);
+      if (vectorHint) {
+        boolean leftHasBroadcast = left != null && left.contains(FType.BROADCAST);
+        boolean rightHasBroadcast = right != null && right.contains(FType.BROADCAST);
+        if ((leftHasBroadcast && hasBroadcastOrScalarFromList(right))
+            || (rightHasBroadcast && hasBroadcastOrScalarFromList(left))) {
+          outs.add(FType.BROADCAST);
+        }
+      }
       return profileOf(outs);
     }
 
@@ -4099,6 +4126,7 @@ public final class Rulesets {
     private static final String OPCODE_PREFIX = "fcall";
     private static final String PLACEHOLDER_NOTE =
         "function call hop treated as federated placeholder; execution occurs inside callee";
+    private static final String MULTIRETURN_BUILTIN_TYPE = "MULTIRETURN_BUILTIN";
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return null; }
@@ -4115,6 +4143,8 @@ public final class Rulesets {
     public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
       if (!supports(sig))
         return FTypeProfile.empty();
+      if (isMultiReturnBuiltin(sig))
+        return FTypeProfile.empty();
       return primaryLikeProfile(inFTypeCandidates);
     }
 
@@ -4122,6 +4152,8 @@ public final class Rulesets {
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
       if (!supports(sig))
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+      if (isMultiReturnBuiltin(sig))
+        return cpCaps(sig, ReasonCode.MISSING_FED_INSTRUCTION);
       Optional<FType> passthroughType = firstMeaningfulInputType(inFTypes);
       if (!passthroughType.isPresent())
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
@@ -4167,6 +4199,11 @@ public final class Rulesets {
       if (parts.isEmpty())
         return "function call hop";
       return String.join(", ", parts);
+    }
+
+    private boolean isMultiReturnBuiltin(OpSig sig) {
+      String type = attrValue(sig, ATTR_FCALL_TYPE);
+      return type != null && type.equalsIgnoreCase(MULTIRETURN_BUILTIN_TYPE);
     }
   }
 

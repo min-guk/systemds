@@ -85,14 +85,14 @@ public class FederatedPCAPlanningTest extends AutomatedTestBase {
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "private-aggregate");
 	}
 
+	@Ignore("public privacy constraints ignored in this run")
 	@Test
-	@Ignore
 	public void runPCAPlannerDPPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-cost-based.xml", "public");
 	}
 
+	@Ignore("public privacy constraints ignored in this run")
 	@Test
-	@Ignore
 	public void runPCAPlannerMinSTPrivacyPublic(){
 		runTestWithConfig("SystemDS-config-min-st-cut.xml", "public");
 	}

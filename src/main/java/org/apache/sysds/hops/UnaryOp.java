@@ -157,11 +157,13 @@ public class UnaryOp extends MultiThreadedHop
 					}
 					else { // general case MATRIX
 						ExecType et = optFindExecType();
-						// special handling cumsum/cumprod/cummin/cumsum
-						if(isCumulativeUnaryOperation() && !(et == ExecType.CP || et == ExecType.GPU)) {
-							// TODO additional physical operation if offsets fit in memory
-							ret = constructLopsSparkCumulativeUnary();
-						}
+							// special handling cumsum/cumprod/cummin/cumsum
+							// NOTE: FED cumulative ops have dedicated runtime support (UnaryMatrixFEDInstruction)
+							// and must not be lowered into Spark-only lops (would require SparkExecutionContext).
+							if(isCumulativeUnaryOperation() && !(et == ExecType.CP || et == ExecType.GPU || et == ExecType.FED)) {
+								// TODO additional physical operation if offsets fit in memory
+								ret = constructLopsSparkCumulativeUnary();
+							}
 						else if(_op == OpOp1.CAST_AS_FRAME && getInput().size() == 2) {
 							throw new NotImplementedException();
 						}

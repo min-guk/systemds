@@ -37,12 +37,17 @@ import org.apache.sysds.runtime.instructions.cp.AggregateUnaryCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.spark.AggregateUnarySPInstruction;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
 public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
+	private static boolean isDebugKMeansVar(String name) {
+		return "minD".equals(name) || "P_denom".equals(name);
+	}
 
 	private AggregateUnaryFEDInstruction(AggregateUnaryOperator auop,
 		CPOperand in, CPOperand out, String opcode, String istr, FederatedOutput fedOut)
@@ -114,8 +119,12 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 	private void processDefault(ExecutionContext ec){
 		AggregateUnaryOperator aop = (AggregateUnaryOperator) _optr;
 		MatrixObject in = ec.getMatrixObject(input1);
-		if ( !in.isFederated() )
-			throw new DMLRuntimeException("Input is not federated " + input1);
+		if ( !in.isFederated() ) {
+			throw new DMLRuntimeException("FED aggregate unary requires federated input but found local at runtime. "
+				+ "op=" + instOpcode + " input=" + input1.getName()
+				+ " dims=" + in.getNumRows() + "x" + in.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
+		}
 		FederationMap map = in.getFedMapping();
 		if ( map == null )
 			throw new DMLRuntimeException("Input federation map is null for input " + input1);
@@ -147,7 +156,44 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 	private void processFederatedOutput(FederationMap map, MatrixObject in, ExecutionContext ec){
 		if ( output.isScalar() )
 			throw new DMLRuntimeException("Output of FED instruction, " + output.toString()
-				+ ", is a scalar and the output is set to be federated. Scalars cannot be federated. ");
+					+ ", is a scalar and the output is set to be federated. Scalars cannot be federated. ");
+		AggregateUnaryOperator aop = (AggregateUnaryOperator) _optr;
+		FType inFtype = in.getFedMapping().getType();
+		boolean isColAgg = aop.isColAggregate();
+		// Only true ROW/COL partitioning requires global consolidation. Treat BROADCAST/FULL separately.
+		boolean needsGlobalAggregation = (inFtype == FType.ROW && isColAgg) ||
+			(inFtype == FType.COL && !isColAgg);
+
+		// If the output would be PART (requires consolidation across workers), we cannot keep it as-is on the workers.
+		// Instead, aggregate the partial results locally and broadcast the consolidated vector/matrix back to all workers.
+		if( needsGlobalAggregation ) {
+			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1}, new long[]{in.getFedMapping().getID()}, true);
+			FederatedRequest fr2 = new FederatedRequest(RequestType.GET_VAR, fr1.getID());
+			Future<FederatedResponse>[] tmp = map.execute(getTID(), true, fr1, fr2);
+			MatrixBlock agg = FederationUtils.aggMatrix(aop, tmp, map);
+
+			long broadcastId = FederationUtils.getNextFedDataID();
+			FederatedRequest fr3 = new FederatedRequest(RequestType.PUT_VAR, broadcastId, agg);
+			FederatedRequest fr4 = map.cleanup(getTID(), fr1.getID());
+			map.execute(getTID(), true, fr3, fr4);
+
+			MatrixObject out = ec.getMatrixObject(output);
+			out.getDataCharacteristics()
+				.setDimension(agg.getNumRows(), agg.getNumColumns())
+				.setBlocksize(in.getBlocksize())
+				.setNonZeros(agg.getNonZeros());
+			FederationMap outFedMap = in.getFedMapping()
+				.copyWithNewIDAndRange(agg.getNumRows(), agg.getNumColumns(), broadcastId, FType.BROADCAST);
+			out.setFedMapping(outFedMap);
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] aggUnary " + instOpcode + " out=" + output.getName()
+					+ " dims=" + agg.getNumRows() + "x" + agg.getNumColumns()
+					+ " ftype=BROADCAST");
+			}
+			return;
+		}
+
 		FederatedRequest fr1 = FederationUtils.callInstruction(instString, output,
 			new CPOperand[]{input1}, new long[]{in.getFedMapping().getID()}, true);
 		map.execute(getTID(), true, fr1);
@@ -169,13 +215,20 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 		boolean isColAgg = ((AggregateUnaryOperator) _optr).isColAggregate();
 		//Get partition type
 		FType inFtype = in.getFedMapping().getType();
+		// Preserve replication semantics for replicated inputs.
+		if (inFtype == FType.BROADCAST || inFtype == FType.FULL) {
+			out.setFedMapping(in.getFedMapping().copyWithNewIDAndRange(
+				out.getNumRows(), out.getNumColumns(), fr1.getID(), inFtype));
+			return;
+		}
+
 		//Get fedmap from in
 		FederationMap inputFedMapCopy = in.getFedMapping().copyWithNewID(fr1.getID());
 
 		//if partition type is row and aggregation type is row
 		//   then get row dim split from input and use as row dimension and get col dimension from output col dimension
 		//   and set FType to ROW
-		if ( inFtype.isRowPartitioned() && !isColAgg ){
+		if ( inFtype == FType.ROW && !isColAgg ){
 			for ( FederatedRange range : inputFedMapCopy.getFederatedRanges() )
 				range.setEndDim(1,out.getNumColumns());
 			inputFedMapCopy.setType(FType.ROW);
@@ -186,7 +239,7 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 		//if partition type is col and aggregation type is row
 		//   then set row and col dimension from out and use those dimensions for both federated workers
 		//   and set FType to PART
-		if ( (inFtype.isRowPartitioned() && isColAgg) || (inFtype.isColPartitioned() && !isColAgg) ){
+		if ( (inFtype == FType.ROW && isColAgg) || (inFtype == FType.COL && !isColAgg) ){
 			/*for ( FederatedRange range : inputFedMapCopy.getFederatedRanges() ){
 				range.setBeginDim(0,0);
 				range.setBeginDim(1,0);
@@ -199,7 +252,7 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 		//if partition type is col and aggregation type is col
 		//   then set row dimension to output and col dimension to in col split
 		//   and set FType to COL
-		if ( inFtype.isColPartitioned() && isColAgg ){
+		if ( inFtype == FType.COL && isColAgg ){
 			for ( FederatedRange range : inputFedMapCopy.getFederatedRanges() )
 				range.setEndDim(0,out.getNumRows());
 			inputFedMapCopy.setType(FType.COL);
@@ -207,6 +260,11 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 
 		//set out fedmap in the end
 		out.setFedMapping(inputFedMapCopy);
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] aggUnary " + instOpcode + " out=" + output.getName()
+				+ " dims=" + out.getNumRows() + "x" + out.getNumColumns()
+				+ " ftype=" + inputFedMapCopy.getType());
+		}
 	}
 
 	/**

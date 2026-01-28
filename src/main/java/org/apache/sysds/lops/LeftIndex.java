@@ -21,6 +21,7 @@ package org.apache.sysds.lops;
 
  
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
@@ -141,6 +142,12 @@ public class LeftIndex extends Lop
 		if( getExecType() == ExecType.SPARK ) {
 			sb.append( OPERAND_DELIMITOR );	
 			sb.append(_type.toString());
+		}
+		else if( getExecType() == ExecType.FED ) {
+			// Propagate forced federated/local output decisions to the runtime instruction.
+			FederatedOutput fedOut = getFederatedOutput();
+			sb.append( OPERAND_DELIMITOR );
+			sb.append( fedOut != null ? fedOut : FederatedOutput.NONE );
 		}
 		
 		return sb.toString();

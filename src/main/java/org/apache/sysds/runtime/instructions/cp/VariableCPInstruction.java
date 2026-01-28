@@ -630,8 +630,12 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 			break;
 
 		case RemoveVariable:
-			for( CPOperand input : inputs )
+			for( CPOperand input : inputs ) {
+				if ("Y".equals(input.getName()) || "X".equals(input.getName())) {
+					System.out.println("[DEBUG] rmvar " + input.getName() + " at " + getFilename() + ":" + getBeginLine());
+				}
 				processRmvarInstruction(ec, input.getName());
+			}
 			break;
 
 		case RemoveVariableAndFile:
@@ -1116,6 +1120,9 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 	 * @param varname variable name
 	 */
 	public static void processRmvarInstruction( ExecutionContext ec, String varname ) {
+		if ("Y".equals(varname)) {
+			System.out.println("[DEBUG] rmvar Y executed");
+		}
 		// remove variable from symbol table
 		Data dat = ec.removeVariable(varname);
 		//cleanup matrix data on fs/hdfs (if necessary)
@@ -1275,6 +1282,17 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 	}
 
 	public static Instruction prepareRemoveInstruction(String... varNames) {
+		for (String varName : varNames) {
+			if ("Y".equals(varName) || "X".equals(varName)) {
+				System.out.println("[DEBUG] prepareRemoveInstruction for " + varName);
+				for (StackTraceElement el : Thread.currentThread().getStackTrace()) {
+					if (el.getClassName().startsWith("org.apache.sysds")) {
+						System.out.println("  at " + el);
+					}
+				}
+				break;
+			}
+		}
 		StringBuilder sb = InstructionUtils.getStringBuilder();
 		sb.append("CP");
 		sb.append(Lop.OPERAND_DELIMITOR);

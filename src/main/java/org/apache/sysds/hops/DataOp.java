@@ -293,6 +293,8 @@ public class DataOp extends Hop {
 			
 			case FEDERATED:
 				l = new Federated(inputLops, getDataType(), getValueType());
+				if (getName() != null)
+					l.getOutputParameters().setLabel(getName());
 				break;
 			
 			default:

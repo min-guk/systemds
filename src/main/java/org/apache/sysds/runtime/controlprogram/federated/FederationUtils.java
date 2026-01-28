@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.controlprogram.federated;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -42,6 +43,7 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.log4j.Logger;
 import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
@@ -80,6 +82,10 @@ import io.netty.handler.codec.serialization.ObjectDecoder;
 public class FederationUtils {
 	protected static Logger log = Logger.getLogger(FederationUtils.class);
 	private static final IDSequence _idSeq = new IDSequence();
+	private static final java.util.concurrent.ConcurrentHashMap<String, FederationMap> _anchorMaps =
+		new java.util.concurrent.ConcurrentHashMap<>();
+	private static final java.util.concurrent.ConcurrentHashMap<String, String> _anchorKeys =
+		new java.util.concurrent.ConcurrentHashMap<>();
 
 	public static void resetFedDataID() {
 		_idSeq.reset();
@@ -87,6 +93,111 @@ public class FederationUtils {
 
 	public static long getNextFedDataID() {
 		return _idSeq.getNextID();
+	}
+
+	public static void registerAnchorMap(String varName, FederationMap map) {
+		if (varName == null || varName.isEmpty() || map == null)
+			return;
+		_anchorMaps.put(varName, map);
+	}
+
+	public static FederationMap getAnchorMap(String varName) {
+		return (varName == null) ? null : _anchorMaps.get(varName);
+	}
+
+	public static void registerAnchorKey(String varName, String anchorKey) {
+		if (varName == null || varName.isEmpty() || anchorKey == null || anchorKey.isEmpty())
+			return;
+		_anchorKeys.put(varName, anchorKey);
+	}
+
+	public static String getAnchorKey(String varName) {
+		return (varName == null) ? null : _anchorKeys.get(varName);
+	}
+
+	public static void removeAnchorMap(String varName) {
+		if (varName == null || varName.isEmpty())
+			return;
+		_anchorMaps.remove(varName);
+	}
+
+	public static void removeAnchorKey(String varName) {
+		if (varName == null || varName.isEmpty())
+			return;
+		_anchorKeys.remove(varName);
+	}
+
+	public static FederationMap buildAnchorMapFromKey(String anchorKey) {
+		if (anchorKey == null || anchorKey.isEmpty())
+			return null;
+		String sig = anchorKey;
+		FType fType = null;
+		int lastSep = anchorKey.lastIndexOf('|');
+		if (lastSep > 0 && lastSep < anchorKey.length() - 1) {
+			String tail = anchorKey.substring(lastSep + 1);
+			try {
+				fType = FType.valueOf(tail);
+				sig = anchorKey.substring(0, lastSep);
+			}
+			catch (IllegalArgumentException ex) {
+				// no ftype suffix
+			}
+		}
+		if (fType == null)
+			return null;
+		int sep = sig.indexOf('|');
+		String addrPart = (sep >= 0) ? sig.substring(0, sep) : sig;
+		if (addrPart == null || addrPart.isEmpty())
+			return null;
+
+		String[] addrTokens = addrPart.split(";");
+		List<Pair<FederatedRange, FederatedData>> entries = new ArrayList<>();
+		for (String token : addrTokens) {
+			if (token == null || token.isEmpty())
+				continue;
+			InetSocketAddress isa = parseAddress(token);
+			if (isa == null)
+				return null;
+			FederatedData data = new FederatedData(Types.DataType.MATRIX, isa, null);
+			FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {0, 0});
+			entries.add(new ImmutablePair<>(range, data));
+		}
+		if (entries.isEmpty())
+			return null;
+		return new FederationMap(getNextFedDataID(), entries, fType);
+	}
+
+	private static InetSocketAddress parseAddress(String token) {
+		if (token == null)
+			return null;
+		String addr = token.trim();
+		if (addr.isEmpty())
+			return null;
+		int slash = addr.indexOf('/');
+		if (slash >= 0) {
+			String before = addr.substring(0, slash);
+			if (before.contains(":") && !before.isEmpty()) {
+				// fedinit signatures embed host:port/path
+				addr = before;
+			}
+			else if (slash < addr.length() - 1) {
+				// InetSocketAddress#toString -> host/addr:port
+				addr = addr.substring(slash + 1);
+			}
+		}
+		int colon = addr.lastIndexOf(':');
+		if (colon <= 0 || colon >= addr.length() - 1)
+			return null;
+		String host = addr.substring(0, colon);
+		String portStr = addr.substring(colon + 1);
+		int port;
+		try {
+			port = Integer.parseInt(portStr);
+		}
+		catch (NumberFormatException ex) {
+			return null;
+		}
+		return new InetSocketAddress(host, port);
 	}
 
 	public static void checkFedMapType(MatrixObject mo) {
@@ -147,6 +258,7 @@ public class FederationUtils {
 		String[] linst = inst;
 		FederatedRequest[] fr = new FederatedRequest[inst.length];
 		for(int j=0; j<inst.length; j++) {
+			boolean isFedInstr = linst[j].startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
 			ExecType targetExec = type == null ? InstructionUtils.getExecType(linst[j]) : type;
 			if(targetExec == ExecType.SPARK)
 				targetExec = ExecType.CP;
@@ -168,7 +280,6 @@ public class FederationUtils {
 					Lop.OPERAND_DELIMITOR + varOldOut.getName() + Lop.DATATYPE_PREFIX,
 					Lop.OPERAND_DELIMITOR + String.valueOf(outputId) + Lop.DATATYPE_PREFIX);
 			}
-			boolean isFedInstr = linst[j].startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR);
 			if(isFedInstr && targetExec != ExecType.FED)
 				linst[j] = InstructionUtils.removeFEDOutputFlag(linst[j]);
 
@@ -440,6 +551,9 @@ public class FederationUtils {
 	}
 
 	public static MatrixBlock aggMatrix(AggregateUnaryOperator aop, Future<FederatedResponse>[] ffr, Future<FederatedResponse>[] meanFfr, FederationMap map) {
+		// Replicated input/output: all workers produce identical results, hence no aggregation required.
+		if (map != null && map.getType() == FType.BROADCAST)
+			return getResults(ffr)[0];
 		if (aop.isRowAggregate() && map.getType() == FType.ROW)
 			return bind(ffr, false);
 		else if (aop.isColAggregate() && map.getType() == FType.COL)
@@ -484,6 +598,20 @@ public class FederationUtils {
 	}
 
 	public static ScalarObject aggScalar(AggregateUnaryOperator aop, Future<FederatedResponse>[] ffr, FederationMap map) {
+		// Replicated input/output: all workers produce identical results, hence no aggregation required.
+		if (map != null && map.getType() == FType.BROADCAST) {
+			try {
+				Object o = ffr[0].get().getData()[0];
+				if (o instanceof ScalarObject)
+					return (ScalarObject) o;
+				if (o instanceof MatrixBlock)
+					return new DoubleObject(((MatrixBlock) o).get(0, 0));
+				throw new DMLRuntimeException("Unexpected federated scalar type: " + (o != null ? o.getClass() : "null"));
+			}
+			catch (Exception ex) {
+				throw new DMLRuntimeException(ex);
+			}
+		}
 		if(!(aop.aggOp.increOp.fn instanceof KahanFunction || (aop.aggOp.increOp.fn instanceof Builtin &&
 			(((Builtin) aop.aggOp.increOp.fn).getBuiltinCode() == BuiltinCode.MIN
 			|| ((Builtin) aop.aggOp.increOp.fn).getBuiltinCode() == BuiltinCode.MAX)
@@ -537,6 +665,9 @@ public class FederationUtils {
 	}
 	
 	public static MatrixBlock aggMatrix(AggregateUnaryOperator aop, Future<FederatedResponse>[] ffr, FederationMap map) {
+		// Replicated input/output: all workers produce identical results, hence no aggregation required.
+		if (map != null && map.getType() == FType.BROADCAST)
+			return getResults(ffr)[0];
 		if (aop.isRowAggregate() && map.getType() == FType.ROW)
 			return bind(ffr, false);
 		else if (aop.isColAggregate() && map.getType() == FType.COL)

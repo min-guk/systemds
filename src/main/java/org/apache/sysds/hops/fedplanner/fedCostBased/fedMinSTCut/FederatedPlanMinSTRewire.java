@@ -55,6 +55,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -87,6 +88,73 @@ public class FederatedPlanMinSTRewire {
 	public static final String FED_MATRIX_IDENTIFIER = "matrix";
 	public static final String FED_FRAME_IDENTIFIER = "frame";
 
+	private static class LoopAnalysisContext {
+		private final Map<String, Boolean> readFromOutside = new HashMap<>();
+		private final Map<String, List<Hop>> headerReads = new HashMap<>();
+		private final Set<String> writtenVars = new HashSet<>();
+		private final boolean trackReadFromOutside;
+		private final boolean trackHeaderReads;
+		private final boolean includeTransReadChildren;
+
+		private LoopAnalysisContext(boolean trackReadFromOutside, boolean trackHeaderReads,
+				boolean includeTransReadChildren) {
+			this.trackReadFromOutside = trackReadFromOutside;
+			this.trackHeaderReads = trackHeaderReads;
+			this.includeTransReadChildren = includeTransReadChildren;
+		}
+
+		private void markReadFromOutside(String var) {
+			if (!trackReadFromOutside || var == null)
+				return;
+			readFromOutside.put(var, true);
+		}
+
+		private void markWritten(String var) {
+			if (var == null)
+				return;
+			writtenVars.add(var);
+		}
+
+		private boolean hasWritten(String var) {
+			return var != null && writtenVars.contains(var);
+		}
+
+		private Set<String> snapshotWritten() {
+			return new HashSet<>(writtenVars);
+		}
+
+		private void restoreWritten(Set<String> snapshot) {
+			writtenVars.clear();
+			if (snapshot != null && !snapshot.isEmpty())
+				writtenVars.addAll(snapshot);
+		}
+
+		private void retainWritten(Set<String> other) {
+			if (other == null)
+				writtenVars.clear();
+			else
+				writtenVars.retainAll(other);
+		}
+
+		private void recordHeaderRead(String var, Hop treadHop) {
+			if (!trackHeaderReads || var == null || treadHop == null)
+				return;
+			headerReads.computeIfAbsent(var, k -> new ArrayList<>()).add(treadHop);
+		}
+
+		private Map<String, Boolean> getReadFromOutside() {
+			return readFromOutside;
+		}
+
+		private Map<String, List<Hop>> getHeaderReads() {
+			return headerReads;
+		}
+
+		private boolean includeTransReadChildren() {
+			return includeTransReadChildren;
+		}
+	}
+
 	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 			FederatedPlanMinSTGraph graph, List<Pair<FederatedRange, FederatedData>> fedMap,
 			Set<Long> unRefTwriteSet, Set<Long> unRefSet, Set<Hop> progRootHopSet,
@@ -99,6 +167,7 @@ public class FederatedPlanMinSTRewire {
 		Set<Long> injectedIds = new HashSet<>();
 		Map<String, Map<String, List<Hop>>> functionTransTableCache = new HashMap<>();
 		List<Pair<Long, Double>> loopStack = new ArrayList<>();
+		List<LoopAnalysisContext> loopCtxStack = new ArrayList<>();
 
 		List<Map<String, List<Hop>>> outerTransTableList = new ArrayList<>();
 		Map<String, List<Hop>> outerTransTable = new HashMap<>();
@@ -108,7 +177,7 @@ public class FederatedPlanMinSTRewire {
 				Map<String, List<Hop>> innerTransTable = rewireStatementBlock(sb, prog, visitedHops, rewireTable,
 						graph, outerTransTableList, null, privacyConstraintMap, fTypeMap,
 						fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds, functionTransTableCache,
-						1, 1, loopStack, oracleFacade);
+						1, 1, loopStack, loopCtxStack, oracleFacade);
 				outerTransTableList.get(0).putAll(innerTransTable);
 			}
 	}
@@ -124,6 +193,7 @@ public class FederatedPlanMinSTRewire {
 			Set<Long> injectedIds = new HashSet<>();
 			Map<String, Map<String, List<Hop>>> functionTransTableCache = new HashMap<>();
 			List<Pair<Long, Double>> loopStack = new ArrayList<>();
+			List<LoopAnalysisContext> loopCtxStack = new ArrayList<>();
 			List<Map<String, List<Hop>>> outerTransTableList = new ArrayList<>();
 		Map<String, List<Hop>> outerTransTable = new HashMap<>();
 		outerTransTableList.add(outerTransTable);
@@ -131,7 +201,7 @@ public class FederatedPlanMinSTRewire {
 			rewireStatementBlock(function, prog, visitedHops, rewireTable, graph, outerTransTableList, null,
 					privacyConstraintMap, fTypeMap,
 					fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds, functionTransTableCache,
-					1, 1, loopStack, oracleFacade);
+					1, 1, loopStack, loopCtxStack, oracleFacade);
 		}
 
 		public static Map<String, List<Hop>> rewireStatementBlock(StatementBlock sb, DMLProgram prog,
@@ -144,6 +214,7 @@ public class FederatedPlanMinSTRewire {
 				Set<Long> injectedIds,
 				Map<String, Map<String, List<Hop>>> functionTransTableCache,
 				double computeWeight, double networkWeight, List<Pair<Long, Double>> parentLoopStack,
+				List<LoopAnalysisContext> loopCtxStack,
 				OracleFacade oracleFacade) {
 		List<Map<String, List<Hop>>> newOuterTransTableList = new ArrayList<>();
 		if (outerTransTableList != null) {
@@ -164,32 +235,43 @@ public class FederatedPlanMinSTRewire {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
 
+			List<Set<String>> writtenBeforeIf = snapshotWritten(loopCtxStack);
+
 				rewireHopDAG(isb.getPredicateHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList,
 						null, innerTransTable,
 						privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 						injectedIds, functionTransTableCache, computeWeight,
-						networkWeight, parentLoopStack, oracleFacade);
+						networkWeight, parentLoopStack, loopCtxStack, oracleFacade);
 
 			newFormerTransTable.putAll(innerTransTable);
 			Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 			elseFormerTransTable.putAll(innerTransTable);
 			computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
-			// Todo: network weight을 0.5로 안하는 이유가 있나? 잘 모르겠음. 고민해봐야함.
-			// networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
+			networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 					newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
 							graph, newOuterTransTableList, newFormerTransTable,
 							privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, parentLoopStack, oracleFacade));
+							networkWeight, parentLoopStack, loopCtxStack, oracleFacade));
+
+			List<Set<String>> writtenAfterIf = snapshotWritten(loopCtxStack);
+			restoreWritten(loopCtxStack, writtenBeforeIf);
 
 			for (StatementBlock innerIsb : istmt.getElseBody())
 					elseFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
 							graph, newOuterTransTableList, elseFormerTransTable,
 							privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, parentLoopStack, oracleFacade));
+							networkWeight, parentLoopStack, loopCtxStack, oracleFacade));
+
+			List<Set<String>> writtenAfterElse = snapshotWritten(loopCtxStack);
+			restoreWritten(loopCtxStack, writtenBeforeIf);
+			if (writtenAfterIf == null)
+				writtenAfterIf = writtenBeforeIf;
+			restoreWritten(loopCtxStack, writtenAfterIf);
+			retainWritten(loopCtxStack, writtenAfterElse);
 
 			// If there are common keys: merge elseValue list into ifValue list
 			elseFormerTransTable.forEach((key, elseValue) -> {
@@ -219,6 +301,13 @@ public class FederatedPlanMinSTRewire {
 					dincr = -1;
 				loopWeight = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
 			}
+			double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
+			double outerWeight = networkWeight;
+			LoopAnalysisContext loopCtx = null;
+			if (iter1Factor > 0.0 && loopCtxStack != null) {
+				loopCtx = new LoopAnalysisContext(true, true, false);
+				loopCtxStack.add(loopCtx);
+			}
 			computeWeight *= loopWeight;
 			networkWeight *= loopWeight;
 
@@ -230,19 +319,19 @@ public class FederatedPlanMinSTRewire {
 						null, innerTransTable,
 						privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 						injectedIds, functionTransTableCache, computeWeight,
-						networkWeight, currentLoopStack, oracleFacade);
+						networkWeight, currentLoopStack, loopCtxStack, oracleFacade);
 				rewireHopDAG(fsb.getToHops(), prog, visitedHops, rewireTable, graph, newOuterTransTableList, null,
 						innerTransTable,
 						privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 						injectedIds, functionTransTableCache, computeWeight,
-						networkWeight, currentLoopStack, oracleFacade);
+						networkWeight, currentLoopStack, loopCtxStack, oracleFacade);
 
 			if (fsb.getIncrementHops() != null) {
 					rewireHopDAG(fsb.getIncrementHops(), prog, visitedHops, rewireTable, graph,
 							newOuterTransTableList, null, innerTransTable,
 							privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, currentLoopStack, oracleFacade);
+							networkWeight, currentLoopStack, loopCtxStack, oracleFacade);
 			}
 			newFormerTransTable.putAll(innerTransTable);
 
@@ -251,7 +340,15 @@ public class FederatedPlanMinSTRewire {
 							graph, newOuterTransTableList, newFormerTransTable,
 							privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, currentLoopStack, oracleFacade));
+							networkWeight, currentLoopStack, loopCtxStack, oracleFacade));
+
+			if (loopCtx != null && loopCtxStack != null && !loopCtxStack.isEmpty()) {
+				Set<String> loopCarriedVars = computeLoopCarriedVars(loopCtx, newFormerTransTable);
+				double loopCarryWeight = outerWeight * iter1Factor;
+				addLoopCarryEdges(loopCarriedVars, newFormerTransTable, loopCtx, graph, loopCarryWeight,
+						unRefTwriteSet);
+				loopCtxStack.remove(loopCtxStack.size() - 1);
+			}
 
 				// Wire UnRefTwrite to liveOutHops
 				wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, graph, newFormerTransTable, fTypeMap,
@@ -261,6 +358,13 @@ public class FederatedPlanMinSTRewire {
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
 			double loopWeight = RewireConstants.estimateWhileLoopWeight(wsb);
+			double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
+			double outerWeight = networkWeight;
+			LoopAnalysisContext loopCtx = null;
+			if (iter1Factor > 0.0 && loopCtxStack != null) {
+				loopCtx = new LoopAnalysisContext(true, true, false);
+				loopCtxStack.add(loopCtx);
+			}
 			computeWeight *= loopWeight;
 			networkWeight *= loopWeight;
 
@@ -272,7 +376,7 @@ public class FederatedPlanMinSTRewire {
 						null, innerTransTable,
 						privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 						injectedIds, functionTransTableCache, computeWeight,
-						networkWeight, currentLoopStack, oracleFacade);
+						networkWeight, currentLoopStack, loopCtxStack, oracleFacade);
 			newFormerTransTable.putAll(innerTransTable);
 
 			for (StatementBlock innerWsb : wstmt.getBody())
@@ -280,7 +384,15 @@ public class FederatedPlanMinSTRewire {
 							graph, newOuterTransTableList, newFormerTransTable,
 							privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, currentLoopStack, oracleFacade));
+							networkWeight, currentLoopStack, loopCtxStack, oracleFacade));
+
+			if (loopCtx != null && loopCtxStack != null && !loopCtxStack.isEmpty()) {
+				Set<String> loopCarriedVars = computeLoopCarriedVars(loopCtx, newFormerTransTable);
+				double loopCarryWeight = outerWeight * iter1Factor;
+				addLoopCarryEdges(loopCarriedVars, newFormerTransTable, loopCtx, graph, loopCarryWeight,
+						unRefTwriteSet);
+				loopCtxStack.remove(loopCtxStack.size() - 1);
+			}
 
 				// Wire UnRefTwrite to liveOutHops
 				wireUnRefTwriteToLiveOutWithTracking(wsb, unRefTwriteSet, graph, newFormerTransTable, fTypeMap,
@@ -294,7 +406,7 @@ public class FederatedPlanMinSTRewire {
 							graph, newOuterTransTableList, newFormerTransTable,
 							privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, parentLoopStack, oracleFacade));
+							networkWeight, parentLoopStack, loopCtxStack, oracleFacade));
 
 				// Wire fcall operation to liveOutHops
 				wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, graph, newFormerTransTable, fTypeMap,
@@ -306,12 +418,129 @@ public class FederatedPlanMinSTRewire {
 								innerTransTable,
 								privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet,
 								fnStack, injectedIds, functionTransTableCache,
-								computeWeight, networkWeight, parentLoopStack, oracleFacade);
+								computeWeight, networkWeight, parentLoopStack, loopCtxStack, oracleFacade);
 			}
 
 			return innerTransTable;
 		}
 		return newFormerTransTable;
+	}
+
+	private static List<Set<String>> snapshotWritten(List<LoopAnalysisContext> loopCtxStack) {
+		if (loopCtxStack == null || loopCtxStack.isEmpty()) {
+			return null;
+		}
+		List<Set<String>> snapshots = new ArrayList<>(loopCtxStack.size());
+		for (LoopAnalysisContext ctx : loopCtxStack) {
+			snapshots.add(ctx.snapshotWritten());
+		}
+		return snapshots;
+	}
+
+	private static void restoreWritten(List<LoopAnalysisContext> loopCtxStack, List<Set<String>> snapshots) {
+		if (loopCtxStack == null || loopCtxStack.isEmpty() || snapshots == null) {
+			return;
+		}
+		int limit = Math.min(loopCtxStack.size(), snapshots.size());
+		for (int i = 0; i < limit; i++) {
+			loopCtxStack.get(i).restoreWritten(snapshots.get(i));
+		}
+	}
+
+	private static void retainWritten(List<LoopAnalysisContext> loopCtxStack, List<Set<String>> snapshots) {
+		if (loopCtxStack == null || loopCtxStack.isEmpty() || snapshots == null) {
+			return;
+		}
+		int limit = Math.min(loopCtxStack.size(), snapshots.size());
+		for (int i = 0; i < limit; i++) {
+			loopCtxStack.get(i).retainWritten(snapshots.get(i));
+		}
+	}
+
+	private static void markWritten(List<LoopAnalysisContext> loopCtxStack, String var) {
+		if (loopCtxStack == null || loopCtxStack.isEmpty()) {
+			return;
+		}
+		for (LoopAnalysisContext ctx : loopCtxStack) {
+			ctx.markWritten(var);
+		}
+	}
+
+	private static void recordReadFromOutside(List<LoopAnalysisContext> loopCtxStack, String var, Hop treadHop,
+			boolean fromOutside) {
+		if (!fromOutside || loopCtxStack == null || loopCtxStack.isEmpty()) {
+			return;
+		}
+		for (LoopAnalysisContext ctx : loopCtxStack) {
+			if (ctx.hasWritten(var)) {
+				continue;
+			}
+			ctx.markReadFromOutside(var);
+			ctx.recordHeaderRead(var, treadHop);
+		}
+	}
+
+	private static Set<String> computeLoopCarriedVars(LoopAnalysisContext ctx,
+			Map<String, List<Hop>> endTransTable) {
+		Set<String> loopCarried = new HashSet<>();
+		if (ctx == null || endTransTable == null || endTransTable.isEmpty())
+			return loopCarried;
+		for (Map.Entry<String, Boolean> entry : ctx.getReadFromOutside().entrySet()) {
+			if (!Boolean.TRUE.equals(entry.getValue()))
+				continue;
+			List<Hop> writes = endTransTable.get(entry.getKey());
+			if (writes != null && !writes.isEmpty())
+				loopCarried.add(entry.getKey());
+		}
+		return loopCarried;
+	}
+
+	private static void addLoopCarryEdges(Set<String> loopCarriedVars, Map<String, List<Hop>> endTransTable,
+			LoopAnalysisContext loopCtx, FederatedPlanMinSTGraph graph, double loopCarryWeight,
+			Set<Long> unRefTwriteSet) {
+		if (loopCarriedVars == null || loopCarriedVars.isEmpty() || loopCtx == null || endTransTable == null) {
+			return;
+		}
+		if (loopCarryWeight <= 0.0) {
+			return;
+		}
+		Map<String, List<Hop>> headerReads = loopCtx.getHeaderReads();
+		for (String var : loopCarriedVars) {
+			Hop endWriter = selectLastHop(endTransTable.get(var));
+			Hop frontReader = selectFirstHop(headerReads.get(var));
+			if (endWriter == null || frontReader == null) {
+				continue;
+			}
+			graph.addLoopCarryEdge(endWriter.getHopID(), frontReader.getHopID(), loopCarryWeight);
+			if (unRefTwriteSet != null) {
+				unRefTwriteSet.remove(endWriter.getHopID());
+			}
+		}
+	}
+
+	private static Hop selectFirstHop(List<Hop> hops) {
+		if (hops == null || hops.isEmpty()) {
+			return null;
+		}
+		for (Hop hop : hops) {
+			if (hop != null) {
+				return hop;
+			}
+		}
+		return null;
+	}
+
+	private static Hop selectLastHop(List<Hop> hops) {
+		if (hops == null || hops.isEmpty()) {
+			return null;
+		}
+		for (int i = hops.size() - 1; i >= 0; i--) {
+			Hop hop = hops.get(i);
+			if (hop != null) {
+				return hop;
+			}
+		}
+		return null;
 	}
 
 	private static void rewireHopDAG(Hop hop, DMLProgram prog, Set<Long> visitedHops,
@@ -323,10 +552,16 @@ public class FederatedPlanMinSTRewire {
 			Set<Hop> progRootHopSet,
 			Set<String> fnStack, Set<Long> injectedIds, Map<String, Map<String, List<Hop>>> functionTransTableCache,
 			double computeWeight, double networkWeight, List<Pair<Long, Double>> loopStack,
+			List<LoopAnalysisContext> loopCtxStack,
 			OracleFacade oracleFacade) {
 
+		LoopAnalysisContext activeLoopCtx = (loopCtxStack != null && !loopCtxStack.isEmpty())
+				? loopCtxStack.get(loopCtxStack.size() - 1)
+				: null;
+		boolean includeTransReadChildren = activeLoopCtx == null || activeLoopCtx.includeTransReadChildren();
 		RewireDagWalker.Context ctx = new RewireDagWalker.Context(
-				visitedHops, rewireTable, outerTransTableList, formerTransTable, innerTransTable, true);
+				visitedHops, rewireTable, outerTransTableList, formerTransTable, innerTransTable,
+				includeTransReadChildren);
 		RewireDagWalker.walk(hop, ctx, new RewireDagWalker.Visitor() {
 			@Override
 			public void afterChildren(Hop hop, RewireDagWalker.Context ctx) {
@@ -382,7 +617,7 @@ public class FederatedPlanMinSTRewire {
 												rewireTable, graph, outerTransTableList, newFormerTransTable,
 												privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet,
 												progRootHopSet, fnStack, injectedIds, functionTransTableCache,
-												computeWeight, networkWeight, loopStack, oracleFacade);
+												computeWeight, networkWeight, loopStack, loopCtxStack, oracleFacade);
 									if (functionTransTable != null)
 										functionTransTableCache.put(fkey, functionTransTable);
 								}
@@ -393,15 +628,43 @@ public class FederatedPlanMinSTRewire {
 							}
 						}
 
-						TransTableRewireUtils.mapFunctionOutputs(
-								fop, fsb, functionTransTable, innerTransTable,
-								outputHop -> unRefTwriteSet.add(outputHop.getHopID()));
-					} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
-						TransTableRewireUtils.mapFunctionOutputs(
-								fop, null, null, innerTransTable,
-								outputHop -> unRefTwriteSet.add(outputHop.getHopID()));
+							TransTableRewireUtils.mapFunctionOutputs(
+									fop, fsb, functionTransTable, innerTransTable,
+									outputHop -> {
+										if (outputHop == null)
+											return;
+										unRefTwriteSet.add(outputHop.getHopID());
+										if (!graph.contains(outputHop.getHopID())) {
+											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
+													formerTransTable, innerTransTable, privacyConstraintMap, graph,
+													fTypeMap, fedMap, unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
+											if (outputVertex != null) {
+												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
+												graph.addVertex(outputVertex);
+												visitedHops.add(outputHop.getHopID());
+											}
+										}
+									});
+						} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
+							TransTableRewireUtils.mapFunctionOutputs(
+									fop, null, null, innerTransTable,
+									outputHop -> {
+										if (outputHop == null)
+											return;
+										unRefTwriteSet.add(outputHop.getHopID());
+										if (!graph.contains(outputHop.getHopID())) {
+											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
+													formerTransTable, innerTransTable, privacyConstraintMap, graph,
+													fTypeMap, fedMap, unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
+											if (outputVertex != null) {
+												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
+												graph.addVertex(outputVertex);
+												visitedHops.add(outputHop.getHopID());
+											}
+										}
+									});
+						}
 					}
-				}
 
 				double hopComputeWeight = computeWeight;
 				double hopNetworkWeight = networkWeight;
@@ -426,7 +689,7 @@ public class FederatedPlanMinSTRewire {
 
 					Vertex vertex = rewireHop(hop, rewireTable, outerTransTableList, formerTransTable, innerTransTable,
 							privacyConstraintMap,
-							graph, fTypeMap, fedMap, unRefTwriteSet, injectedIds, oracleFacade);
+							graph, fTypeMap, fedMap, unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
 				if (vertex != null) {
 					vertex.setMetadata(hopComputeWeight, hopNetworkWeight, hopLoopStack);
 					graph.addVertex(vertex);
@@ -440,7 +703,7 @@ public class FederatedPlanMinSTRewire {
 				Map<String, List<Hop>> innerTransTable, Map<Long, Privacy> privacyConstraintMap,
 				FederatedPlanMinSTGraph graph, Map<Long, FType> fTypeMap,
 				List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet,
-				Set<Long> injectedIds, OracleFacade oracleFacade) {
+				Set<Long> injectedIds, List<LoopAnalysisContext> loopCtxStack, OracleFacade oracleFacade) {
 
 		Privacy privacy;
 		FType fType = null;
@@ -455,28 +718,49 @@ public class FederatedPlanMinSTRewire {
 				// 2) FEDERATED DataOp: privacy + partition metadata 기반 FType
 				privacy = FederatedPlannerUtils.getFedWorkerMetaData(fedMap, dataOp);
 				fType = FederatedTypePropagator.deriveFType(dataOp);
+				FederatedPlannerUtils.registerFedInitVar(hopName, fType,
+					FederatedPlannerUtils.deriveFedInitSignature(dataOp));
 				FederatedPlannerLogger.logDataOpFTypeDebug(
 						hop, fType, "FEDERATED", "Derived from partition ranges");
 			} else if (opType == Types.OpOpData.TRANSIENTWRITE) {
-				// 3) TWrite: 입력 Hop의 FType을 그대로 복사
-				innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
-				unRefTwriteSet.add(hop.getHopID());
-				privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
-				fType = fTypeMap.get(hop.getInput(0).getHopID());
-				FederatedPlannerLogger.logDataOpFTypeDebug(
-						hop, fType, "TRANSIENTWRITE",
-						"Propagated from single input (HopID: " + hop.getInput(0).getHopID() + ")");
+				if ("__pred".equals(hopName)) {
+					// Align with DP: skip transient rewire for __pred.
+					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+				} else {
+					// 3) TWrite: 입력 Hop의 FType을 그대로 복사
+					innerTransTable.computeIfAbsent(hopName, k -> new ArrayList<>()).add(hop);
+					unRefTwriteSet.add(hop.getHopID());
+					markWritten(loopCtxStack, hopName);
+					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
+					fType = fTypeMap.get(hop.getInput(0).getHopID());
+					FederatedPlannerLogger.logDataOpFTypeDebug(
+							hop, fType, "TRANSIENTWRITE",
+							"Propagated from single input (HopID: " + hop.getInput(0).getHopID() + ")");
+				}
 				} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 					// 4) TRead: mapped source hops로부터 privacy/FType/caps 전파
 					List<Hop> childHops = TransTableRewireUtils.resolveTransReadChildren(
 							hop.getHopID(), hopName, rewireTable,
 							innerTransTable, formerTransTable, outerTransTableList);
 
+					boolean hasInner = false;
+					if (innerTransTable != null) {
+						List<Hop> innerHops = innerTransTable.get(hopName);
+						hasInner = innerHops != null && !innerHops.isEmpty();
+					}
+					boolean hasFormer = false;
+					if (formerTransTable != null) {
+						List<Hop> formerHops = formerTransTable.get(hopName);
+						hasFormer = formerHops != null && !formerHops.isEmpty();
+					}
+					boolean fromOutside = !hasInner && !hasFormer && childHops != null && !childHops.isEmpty();
+					recordReadFromOutside(loopCtxStack, hopName, hop, fromOutside);
+
 					if (childHops == null || childHops.isEmpty()) {
 						FederatedPlannerLogger.logTransReadRewireDebug(
 								hopName, hop.getHopID(), childHops, true, "RewireTransHop");
 						privacy = Privacy.PUBLIC;
-						caps = buildExecPlacementCaps(hop, privacy, null, null);
+						caps = buildExecPlacementCaps(hop, privacy, null, null, fTypeMap);
 						privacyConstraintMap.put(hop.getHopID(), privacy);
 						fTypeMap.put(hop.getHopID(), null);
 						return new Vertex(hop, privacy, null, caps);
@@ -493,7 +777,7 @@ public class FederatedPlanMinSTRewire {
 						FederatedPlannerLogger.logFilteredChildHopsDebug(
 								hopName, hop.getHopID(), filteredChildHops, true, "RewireTransHop");
 						privacy = Privacy.PUBLIC;
-						caps = buildExecPlacementCaps(hop, privacy, null, null);
+						caps = buildExecPlacementCaps(hop, privacy, null, null, fTypeMap);
 						privacyConstraintMap.put(hop.getHopID(), privacy);
 						fTypeMap.put(hop.getHopID(), null);
 						return new Vertex(hop, privacy, null, caps);
@@ -506,35 +790,69 @@ public class FederatedPlanMinSTRewire {
 					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, filteredChildHops, privacyConstraintMap);
 
 					FType resolvedFType = null;
+					boolean fTypeMismatch = false;
 					ExecPlacementCaps resolvedCaps = null;
 					Long transientWriteHopId = null;
 					for (Hop childHop : filteredChildHops) {
 						if (childHop == null) {
 							continue;
 						}
-						if (resolvedFType == null) {
-							resolvedFType = fTypeMap.get(childHop.getHopID());
-						}
-						if (resolvedCaps == null) {
-							Vertex childVertex = graph.getVertex(childHop.getHopID());
-							if (childVertex != null && childVertex.getCaps() != null) {
-								resolvedCaps = new ExecPlacementCaps(childVertex.getCaps());
+						// Propagate FType/caps from all mapped sources (not only TW).
+						// This is critical for function arguments where the mapped source can be a FEDERATED
+						// init DataOp (or another FED output) without an intermediate TransientWrite.
+						FType childFType = fTypeMap.get(childHop.getHopID());
+						if (childFType != null) {
+							if (resolvedFType == null && !fTypeMismatch) {
+								resolvedFType = childFType;
+							} else if (resolvedFType != childFType) {
+								resolvedFType = null;
+								fTypeMismatch = true;
 							}
 						}
-						if (transientWriteHopId == null && childHop instanceof DataOp
+						Vertex childVertex = graph.getVertex(childHop.getHopID());
+						if (childVertex != null && childVertex.getCaps() != null) {
+							if (resolvedCaps == null) {
+								resolvedCaps = new ExecPlacementCaps(childVertex.getCaps());
+							} else {
+								ExecPlacementCaps childCaps = childVertex.getCaps();
+								resolvedCaps.allowCP_LOUT &= childCaps.allowCP_LOUT;
+								resolvedCaps.allowCP_FOUT &= childCaps.allowCP_FOUT;
+								resolvedCaps.allowFED_LOUT &= childCaps.allowFED_LOUT;
+								resolvedCaps.allowFED_FOUT &= childCaps.allowFED_FOUT;
+							}
+						}
+						if (transientWriteHopId == null
+								&& childHop instanceof DataOp
 								&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTWRITE) {
 							transientWriteHopId = childHop.getHopID();
 						}
-						if (resolvedFType != null && resolvedCaps != null && transientWriteHopId != null) {
-							break;
+					}
+					resolvedCaps = applyTransientPlacementRestrictions(hop, resolvedCaps);
+					if (resolvedCaps != null && !resolvedCaps.hasAny()) {
+						// If sources disagree on legal combinations, fall back to policy caps.
+						resolvedCaps = null;
+					}
+					// If we could not resolve a consistent FType from multiple TW sources,
+					// infer a CP->FOUT (or local->FED forwarding) type from consumers to avoid
+					// passing null into the Oracle (which can lead to "NOT_FEDERATED_INPUTS"
+					// and illegal privacy/exec combinations).
+					if (resolvedFType == null && hop.getDataType() != null && hop.getDataType().isMatrix()) {
+						FType inferred = OracleUtils.inferFallbackFType(hop, Collections.emptyList(), oracleFacade, rewireTable);
+						if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+							inferred = FType.BROADCAST;
 						}
+						if (inferred == null) {
+							FType axis = FederatedPlannerUtils.getVectorAxis(hop);
+							inferred = (axis != null) ? axis : FType.ROW;
+						}
+						resolvedFType = inferred;
 					}
 					fType = resolvedFType;
 					if (resolvedCaps != null) {
 						caps = resolvedCaps;
 					} else {
 						OpCaps policyCaps = OpCaps.allow(ExecType.FED, FederatedOutput.FOUT).build();
-						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps);
+						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps, fTypeMap);
 					}
 
 					privacyConstraintMap.put(hop.getHopID(), privacy);
@@ -553,14 +871,28 @@ public class FederatedPlanMinSTRewire {
 
 		// ==== 여기서부터는 모든 Hop(비 DataOp + DataOp 공통) 처리 ====
 
-		// 자식 FType들에서 alignedFTypes 구성
-		List<Hop> collectedHops = hop.getInput() == null ? Collections.emptyList() : hop.getInput();
-		List<FType> collectedFTypes = new ArrayList<>();
-		List<Hop> collectedHopList = new ArrayList<>();
-		for (Hop input : collectedHops) {
-			collectedHopList.add(input);
-			collectedFTypes.add(fTypeMap.get(input.getHopID()));
-		}
+			// 자식 FType들에서 alignedFTypes 구성
+			List<Hop> collectedHops = hop.getInput() == null ? Collections.emptyList() : hop.getInput();
+			List<FType> collectedFTypes = new ArrayList<>();
+			List<Hop> collectedHopList = new ArrayList<>();
+			for (Hop input : collectedHops) {
+				if (input == null)
+					continue;
+				collectedHopList.add(input);
+				// Align with DP: the Oracle should not treat a potentially-local input as already-federated,
+				// otherwise it can incorrectly allow FED/FOUT for ops that require BROADCAST/materialization.
+				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we conservatively pass null
+				// for inputs that are allowed to be local in the cut graph.
+				FType inputFType = fTypeMap.get(input.getHopID());
+				Vertex inputVertex = graph.getVertex(input.getHopID());
+				if (inputVertex != null) {
+					ExecPlacementCaps inputCaps = inputVertex.getCaps();
+					boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+					if (inputMayBeLocal)
+						inputFType = null;
+				}
+				collectedFTypes.add(inputFType);
+			}
 
 		OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
 				hop, privacy, collectedHopList, collectedFTypes,
@@ -579,17 +911,30 @@ public class FederatedPlanMinSTRewire {
 			fType = oracleFType;
 		}
 
+		int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+		FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+				hop, fType, rewireTable, numWorkersEstimate);
+
 		// Exec/Placement capability 결정
-		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps);
+		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
+		if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap)) {
+			caps.allowFED_LOUT = false;
+			caps.allowFED_FOUT = false;
+			if (!caps.hasAny()) {
+				throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
+						+ hop.getHopID() + " (" + hop.getOpString() + ")");
+			}
+		}
 
 		// 최종 privacy/FType 저장
 		privacyConstraintMap.put(hop.getHopID(), privacy);
 		fTypeMap.put(hop.getHopID(), fType);
 
-		return new Vertex(hop, privacy, fType, caps);
+		return new Vertex(hop, privacy, fType, cpFoutType, caps);
 	}
 
-	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle) {
+	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle,
+			Map<Long, FType> fTypeMap) {
 		ExecPlacementCaps caps = new ExecPlacementCaps();
 
 		// 0) 처음엔 전부 false로 시작 (DP가 실제로 생성하는 조합만 켜기 위함)
@@ -609,13 +954,87 @@ public class FederatedPlanMinSTRewire {
 		caps.allowCP_FOUT = policyDecision.allowCP_FOUT;
 		caps.allowFED_LOUT = policyDecision.allowFED_LOUT;
 		caps.allowFED_FOUT = policyDecision.allowFED_FOUT;
+		caps.fedFoutMode = caps.allowFED_FOUT
+				? ExecPlacementCaps.FedFoutMode.NATIVE
+				: ExecPlacementCaps.FedFoutMode.DISABLED;
 
+		if (shouldEnableDerivedFedFout(hop, privacy, fTypeMap, caps)) {
+			caps.allowFED_FOUT = true;
+			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DERIVED_REFED;
+		}
+
+		// If the oracle reports that FOUT is not supported by the runtime for this op, avoid
+		// producing a federated output altogether. MinST's 2-node encoding cannot reliably
+		// express "CP->FOUT allowed but FED->FOUT forbidden" without risking illegal FED/FOUT
+		// selections, so we force LOUT at the placement level.
+		if (capsOracle != null && capsOracle.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
+			caps.allowCP_FOUT = false;
+			caps.allowFED_FOUT = false;
+		}
+		// MinST's 2-node encoding cannot safely encode cases where CP->FOUT is allowed but FED->FOUT is not.
+		// If we keep CP->FOUT enabled, the min-cut can still choose (FED,FOUT) because placement/execution are
+		// represented by independent nodes. Force LOUT by disabling CP->FOUT as well.
+		if (caps.allowCP_FOUT && !caps.allowFED_FOUT) {
+			caps.allowCP_FOUT = false;
+		}
+
+		if (isRecompileRegion(hop)) {
+			caps.allowCP_FOUT = false;
+		}
+
+		caps = applyTransientPlacementRestrictions(hop, caps);
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 		}
 		return caps;
 	}
+
+	private static ExecPlacementCaps applyTransientPlacementRestrictions(Hop hop, ExecPlacementCaps caps) {
+		if (caps == null || !(hop instanceof DataOp)) {
+			return caps;
+		}
+		Types.OpOpData op = ((DataOp) hop).getOp();
+		if (op != Types.OpOpData.TRANSIENTREAD && op != Types.OpOpData.TRANSIENTWRITE) {
+			return caps;
+		}
+		caps.allowCP_FOUT = false;
+		caps.allowFED_LOUT = false;
+		return caps;
+	}
+
+	private static boolean isRecompileRegion(Hop hop) {
+		if (hop == null)
+			return false;
+		if (hop.requiresRecompile())
+			return true;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null)
+			return false;
+		for (Hop in : inputs) {
+			if (in != null && in.requiresRecompile())
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,
+			Map<Long, FType> fTypeMap, ExecPlacementCaps caps) {
+		if (caps == null || caps.allowFED_FOUT || !caps.allowFED_LOUT)
+			return false;
+		if (hop == null || !hop.getDataType().isMatrix())
+			return false;
+		if (!isDerivedFoutPrivacyAllowed(privacy))
+			return false;
+		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, fTypeMap))
+			return false;
+		return true;
+	}
+
+	private static boolean isDerivedFoutPrivacyAllowed(Privacy privacy) {
+		return privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+	}
+	
 
 	private static void wireUnRefTwriteToLiveOutWithTracking(StatementBlock sb, Set<Long> unRefTwriteSet,
 			FederatedPlanMinSTGraph graph, Map<String, List<Hop>> newFormerTransTable,

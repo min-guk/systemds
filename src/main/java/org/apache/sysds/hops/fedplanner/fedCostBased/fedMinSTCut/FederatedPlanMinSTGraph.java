@@ -92,12 +92,23 @@ public class FederatedPlanMinSTGraph {
 	private static final double HARD_CONSTRAINT = 1e15;
 	private static final long leafedSource = -1L;
 	private static final long rootLocalSink = -2L;
+	private static final long auxNodeBase = -3L;
 
 	private final Map<Long, Vertex> memoTable = new HashMap<>();
 	private final Graph<Long, DefaultWeightedEdge> graph = new DefaultDirectedWeightedGraph<>(
 			DefaultWeightedEdge.class);
-	private final Set<Long> trConsistencyAdded = new HashSet<>();
+	// Track TR/TW consistency edges to avoid duplicates.
+	private final Set<Pair<Long, Long>> trConsistencyAdded = new HashSet<>();
+	// Track TW/input placement consistency edges to avoid duplicates.
+	private final Set<Pair<Long, Long>> twInputPlacementConsistencyAdded = new HashSet<>();
+	// Track required FED-input constraints to avoid duplicates.
+	private final Set<Pair<Long, Long>> requiredFedInputAdded = new HashSet<>();
+	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
+	private final Set<Long> parentChildUploadCostFallbackLogged = new HashSet<>();
+	private final List<LoopCarryEdge> loopCarryEdges = new ArrayList<>();
+	private final Map<HyperEdgeKey, HyperEdgeGroup> parentChildHyperEdges = new HashMap<>();
 	private int numOfWorkers = 0;
+	private long nextAuxNodeId = auxNodeBase;
 
 	{
 		graph.addVertex(leafedSource);
@@ -168,8 +179,14 @@ public class FederatedPlanMinSTGraph {
 		long hopId = vertex.getHopID();
 		long cId = FederatedPlanMinSTPlanner.computeId(hopId);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
-		double uploadCost = vertex.getNetworkWeight() * vertex.getUploadCostWithoutWeight();
+		double uploadCost = vertex.getNetworkWeight() * vertex.getCpUploadCostWithoutWeight();
 		double downloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
+		if (vertex.isDerivedFedFout()) {
+			// Derived FED/FOUT: always pay download when exec=FED, upload when placement=FOUT.
+			addCap(cId, rootLocalSink, downloadCost);
+			addCap(pId, rootLocalSink, uploadCost);
+			return;
+		}
 		addCap(cId, pId, downloadCost);
 		addCap(pId, cId, uploadCost);
 	}
@@ -180,25 +197,114 @@ public class FederatedPlanMinSTGraph {
 		long childP = FederatedPlanMinSTPlanner.placementId(childHopID);
 
 		double forwardingWeight = parentVertex.computeForwardingWeightOfChild(childVertex.getLoopContext());
-		int numParents = childVertex.getNumParents();
-		double uploadCost = childVertex.getUploadCostWithoutWeight();
+		// Use CP->FOUT upload cost here as well: a parent-child edge can represent
+		// local (LOUT/CP) -> federated (FED) forwarding, and in such cases the CP->FOUT
+		// upload FType (e.g., BROADCAST for vector axis mismatch) must be reflected.
+		double uploadCost = childVertex.getCpUploadCostWithoutWeight();
+		if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
+			final double originalUploadCost = uploadCost;
+			Hop childHop = childVertex.getHopRef();
+			FType cpFoutType = childVertex.getCpFoutDataType();
+			if (cpFoutType == null)
+				cpFoutType = childVertex.getDataType();
+			double outputMemEstimate = (childHop != null) ? childHop.getOutputMemEstimate() : 0.0;
+			if (cpFoutType != null && outputMemEstimate > 0.0) {
+				uploadCost = FederatedCostModel.computeUploadNetworkCost(
+						outputMemEstimate, cpFoutType, numOfWorkers);
+			}
+			// If we still cannot estimate a meaningful cost, warn once per child hop.
+			// This indicates that the plan's forwarding cost is under-estimated (e.g., unknown mem estimate).
+			if ((Double.isNaN(uploadCost) || uploadCost <= 0.0)
+					&& parentChildUploadCostFallbackLogged.add(childHopID)) {
+				String childOp = (childHop != null) ? childHop.getOpString() : "null";
+				Hop parentHop = (parentVertex != null) ? parentVertex.getHopRef() : null;
+				String parentOp = (parentHop != null) ? parentHop.getOpString() : "null";
+				FederatedPlannerLogger.logWarnMessage(
+						"[MinST] Parent-child forwarding CP->FOUT upload cost missing/zero for child hop "
+								+ childHopID + " (" + childOp + ") consumed by parent hop "
+								+ parentHopID + " (" + parentOp + "). "
+								+ "cpUploadCost=" + originalUploadCost
+								+ ", outputMemEstimate=" + outputMemEstimate
+								+ ", cpFoutType=" + cpFoutType
+								+ ", dataType=" + childVertex.getDataType()
+								+ ", numWorkers=" + numOfWorkers
+								+ "; forwarding cost may be under-estimated.");
+			}
+			// If we successfully recovered a cost, keep it debug-only to avoid noise.
+			else if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)
+					&& parentChildUploadCostFallbackLogged.add(childHopID)) {
+				String childOp = (childHop != null) ? childHop.getOpString() : "null";
+				FederatedPlannerLogger.logInfoMessage(
+						"[MinST] Recovered missing parent-child CP->FOUT upload cost for child hop "
+								+ childHopID + " (" + childOp + "): " + originalUploadCost + " -> " + uploadCost);
+			}
+		}
 		double downloadCost = childVertex.getDownloadCostWithoutWeight();
-		double uploadCostPerParent = (numParents >= 2) ? uploadCost / numParents : uploadCost;
-		double downloadCostPerParent = (numParents >= 2) ? downloadCost / numParents : downloadCost;
-		double uploadWeighted = forwardingWeight * uploadCostPerParent;
-		double downloadWeighted = forwardingWeight * downloadCostPerParent;
+		double uploadWeighted = forwardingWeight * uploadCost;
+		double downloadWeighted = forwardingWeight * downloadCost;
+		// Use child FType as a proxy conversion key since per-input conversion detail is not available here.
+		FType uploadConversionType = childVertex.getCpFoutDataType();
+		if (uploadConversionType == null) {
+			uploadConversionType = childVertex.getDataType();
+		}
+		FType downloadConversionType = childVertex.getDataType();
 
-		addCap(parentC, childP, uploadWeighted);
-		addCap(childP, parentC, downloadWeighted);
+		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
+		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.DOWNLOAD, downloadConversionType, downloadWeighted);
 	}
 
-	public void addTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
-		if (!trConsistencyAdded.add(trId))
+	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
+		if (weight <= 0.0 || endWriterHopId <= 0 || frontReaderHopId <= 0)
 			return;
-		long twC = FederatedPlanMinSTPlanner.computeId(twId), trC = FederatedPlanMinSTPlanner.computeId(trId);
-		long twP = FederatedPlanMinSTPlanner.placementId(twId), trP = FederatedPlanMinSTPlanner.placementId(trId);
-		addXorEdge(twC, trC, HARD_CONSTRAINT);
-		addXorEdge(twP, trP, HARD_CONSTRAINT);
+		loopCarryEdges.add(new LoopCarryEdge(endWriterHopId, frontReaderHopId, weight));
+	}
+
+	public List<LoopCarryEdge> getLoopCarryEdges() {
+		return Collections.unmodifiableList(loopCarryEdges);
+	}
+
+	public void addLoopCarryNetEdge(long frontReaderHopId, long endWriterHopId,
+			double uploadWeighted, double downloadWeighted) {
+		long readerC = FederatedPlanMinSTPlanner.computeId(frontReaderHopId);
+		long writerP = FederatedPlanMinSTPlanner.placementId(endWriterHopId);
+		addCap(readerC, writerP, uploadWeighted);
+		addCap(writerP, readerC, downloadWeighted);
+	}
+
+		public void addTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
+			// TR/TW hard-constraint helper for enforcing:
+			//   <TW-LOUT, TR-CP/LOUT>  and  <TW-FOUT, TR-FED/FOUT>
+			// In our min-cut encoding this corresponds to placing TW.P, TR.C, and TR.P on the same side.
+			if (!trConsistencyAdded.add(Pair.of(twId, trId)))
+				return;
+			long twP = FederatedPlanMinSTPlanner.placementId(twId);
+			long trC = FederatedPlanMinSTPlanner.computeId(trId);
+			long trP = FederatedPlanMinSTPlanner.placementId(trId);
+			addXorEdge(twP, trC, HARD_CONSTRAINT);
+			addXorEdge(twP, trP, HARD_CONSTRAINT);
+		}
+
+	public void addTransWriteInputPlacementConsistencyEdge(long twId, long inputHopId) {
+		if (twId <= 0 || inputHopId <= 0)
+			return;
+		if (!twInputPlacementConsistencyAdded.add(Pair.of(twId, inputHopId)))
+			return;
+		long twP = FederatedPlanMinSTPlanner.placementId(twId);
+		long inputP = FederatedPlanMinSTPlanner.placementId(inputHopId);
+		addXorEdge(twP, inputP, HARD_CONSTRAINT);
+	}
+
+	public void addRequiredFedInputEdge(long parentHopId, long childHopId) {
+		if (parentHopId <= 0 || childHopId <= 0)
+			return;
+		if (!requiredFedInputAdded.add(Pair.of(parentHopId, childHopId)))
+			return;
+		long parentC = FederatedPlanMinSTPlanner.computeId(parentHopId);
+		long childP = FederatedPlanMinSTPlanner.placementId(childHopId);
+		// If parent executes FED (compute node on sink side), the child placement must be FOUT
+		// (placement node on sink side). This is encoded as: childP (source) => parentC (source),
+		// i.e., forbid the (childP=source, parentC=sink) combination.
+		addCap(childP, parentC, HARD_CONSTRAINT);
 	}
 
 	public void forbidCombinationCP_FOUT(long cId, long pId) {
@@ -230,6 +336,110 @@ public class FederatedPlanMinSTGraph {
 		}
 	}
 
+	private void addParentChildHyperEdge(long parentC, long childP, HyperEdgeDirection direction,
+			FType conversionType, double cost) {
+		if (Double.isNaN(cost) || cost < 0) {
+			return;
+		}
+
+		HyperEdgeKey key = new HyperEdgeKey(childP, direction, conversionType);
+		HyperEdgeGroup group = parentChildHyperEdges.get(key);
+		if (group == null) {
+			long auxNodeId = nextAuxNodeId--;
+			graph.addVertex(auxNodeId);
+			group = new HyperEdgeGroup(auxNodeId, cost);
+			parentChildHyperEdges.put(key, group);
+			addParentChildGroupCostEdge(group, childP, direction, cost);
+		}
+		else if (cost > group.cost) {
+			// Use max to remain conservative when costs differ across parents.
+			double delta = cost - group.cost;
+			addParentChildGroupCostEdge(group, childP, direction, delta);
+			logParentChildCostMismatch(group, direction, childP, conversionType);
+			group.cost = cost;
+		}
+		else if (cost != group.cost) {
+			logParentChildCostMismatch(group, direction, childP, conversionType);
+		}
+
+		if (group.parents.add(parentC)) {
+			if (direction == HyperEdgeDirection.UPLOAD) {
+				// Use HARD_CONSTRAINT to keep OR semantics intact even when total finite costs are large.
+				addCap(parentC, group.auxNodeId, HARD_CONSTRAINT);
+			}
+			else {
+				addCap(group.auxNodeId, parentC, HARD_CONSTRAINT);
+			}
+		}
+	}
+
+	private void addParentChildGroupCostEdge(HyperEdgeGroup group, long childP,
+			HyperEdgeDirection direction, double cost) {
+		if (direction == HyperEdgeDirection.UPLOAD) {
+			addCap(group.auxNodeId, childP, cost);
+		}
+		else {
+			addCap(childP, group.auxNodeId, cost);
+		}
+	}
+
+	private void logParentChildCostMismatch(HyperEdgeGroup group, HyperEdgeDirection direction,
+			long childP, FType conversionType) {
+		if (group.mismatchLogged) {
+			return;
+		}
+		FederatedPlannerLogger.logInfoMessage(String.format(
+				"[MinST] Parent-child %s costs differ for childP=%d type=%s; using max.",
+				direction.name(), childP, conversionType));
+		group.mismatchLogged = true;
+	}
+
+	private enum HyperEdgeDirection {
+		UPLOAD,
+		DOWNLOAD
+	}
+
+	private static final class HyperEdgeKey {
+		private final long childPlacementId;
+		private final HyperEdgeDirection direction;
+		private final FType conversionType;
+
+		private HyperEdgeKey(long childPlacementId, HyperEdgeDirection direction, FType conversionType) {
+			this.childPlacementId = childPlacementId;
+			this.direction = direction;
+			this.conversionType = conversionType;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof HyperEdgeKey))
+				return false;
+			HyperEdgeKey other = (HyperEdgeKey) obj;
+			return childPlacementId == other.childPlacementId
+					&& direction == other.direction
+					&& conversionType == other.conversionType;
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(childPlacementId, direction, conversionType);
+		}
+	}
+
+	private static final class HyperEdgeGroup {
+		private final long auxNodeId;
+		private final Set<Long> parents = new HashSet<>();
+		private double cost;
+		private boolean mismatchLogged = false;
+
+		private HyperEdgeGroup(long auxNodeId, double cost) {
+			this.auxNodeId = auxNodeId;
+			this.cost = cost;
+		}
+	}
+
 	public Hop getHopRef(long hopID) {
 		return memoTable.get(hopID).getHopRef();
 	}
@@ -242,30 +452,40 @@ public class FederatedPlanMinSTGraph {
 		return memoTable.containsKey(hopID);
 	}
 
-	public void getOptimalPlan() {
-		PushRelabelMFImpl<Long, DefaultWeightedEdge> algo = new PushRelabelMFImpl<>(graph);
-		algo.calculateMinCut(leafedSource, rootLocalSink);
+		public void getOptimalPlan() {
+			PushRelabelMFImpl<Long, DefaultWeightedEdge> algo = new PushRelabelMFImpl<>(graph);
+			algo.calculateMinCut(leafedSource, rootLocalSink);
 
-		Set<Long> sourceSide = algo.getSourcePartition(); // S
+			Set<Long> sourceSide = algo.getSourcePartition(); // S
 
-		for (Vertex vertex : memoTable.values()) {
-			long hopID = vertex.getHopID();
-			long cId = FederatedPlanMinSTPlanner.computeId(hopID);
-			long pId = FederatedPlanMinSTPlanner.placementId(hopID);
+			for (Vertex vertex : memoTable.values()) {
+				long hopID = vertex.getHopID();
+				long cId = FederatedPlanMinSTPlanner.computeId(hopID);
+				long pId = FederatedPlanMinSTPlanner.placementId(hopID);
 
-			ExecType exec = sourceSide.contains(cId) ? ExecType.FED : ExecType.CP;
-			FederatedOutput out = sourceSide.contains(pId) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
+				ExecType exec = sourceSide.contains(cId) ? ExecType.FED : ExecType.CP;
+				FederatedOutput out = sourceSide.contains(pId) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
 
-			vertex.getHopRef().setForcedExecType(exec);
-			vertex.getHopRef().setFederatedOutput(out);
+				vertex.getHopRef().setForcedExecType(exec);
+				vertex.getHopRef().setFederatedOutput(out);
+				boolean derivedSelected = vertex.isDerivedFedFout()
+						&& exec == ExecType.FED && out == FederatedOutput.FOUT;
+				vertex.getHopRef().setFederatedOutputDerived(derivedSelected);
+			}
 		}
-	}
 
 	public static class ExecPlacementCaps {
+		public enum FedFoutMode {
+			DISABLED,
+			NATIVE,
+			DERIVED_REFED
+		}
+
 		public boolean allowCP_LOUT = true;
 		public boolean allowCP_FOUT = true;
 		public boolean allowFED_LOUT = true;
 		public boolean allowFED_FOUT = true;
+		public FedFoutMode fedFoutMode = FedFoutMode.DISABLED;
 
 		public ExecPlacementCaps() {
 		}
@@ -275,6 +495,7 @@ public class FederatedPlanMinSTGraph {
 			this.allowCP_FOUT = other.allowCP_FOUT;
 			this.allowFED_LOUT = other.allowFED_LOUT;
 			this.allowFED_FOUT = other.allowFED_FOUT;
+			this.fedFoutMode = other.fedFoutMode;
 		}
 
 		public boolean get(ExecType exec, FederatedOutput out) {
@@ -303,6 +524,34 @@ public class FederatedPlanMinSTGraph {
 		public boolean hasAny() {
 			return allowCP_LOUT || allowCP_FOUT || allowFED_LOUT || allowFED_FOUT;
 		}
+
+		public boolean isDerivedFedFout() {
+			return fedFoutMode == FedFoutMode.DERIVED_REFED;
+		}
+	}
+
+	public static class LoopCarryEdge {
+		private final long endWriterHopId;
+		private final long frontReaderHopId;
+		private final double weight;
+
+		public LoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
+			this.endWriterHopId = endWriterHopId;
+			this.frontReaderHopId = frontReaderHopId;
+			this.weight = weight;
+		}
+
+		public long getEndWriterHopId() {
+			return endWriterHopId;
+		}
+
+		public long getFrontReaderHopId() {
+			return frontReaderHopId;
+		}
+
+		public double getWeight() {
+			return weight;
+		}
 	}
 
 	public static class Vertex {
@@ -311,6 +560,7 @@ public class FederatedPlanMinSTGraph {
 
 		public final Privacy privacy_;
 		public final FType dataType_;
+		public final FType cpFoutDataType_;
 		public final ExecPlacementCaps caps_;
 
 		public final boolean isFedExecutable_;
@@ -318,19 +568,26 @@ public class FederatedPlanMinSTGraph {
 
 		private double opCostWithWeight_;
 		private double uploadCostWithoutWeight_;
+		private double cpUploadCostWithoutWeight_;
 		private double downloadCostWithoutWeight_;
 
 		private double opWeight; // Weight used to calculate cost based on hop execution frequency
 		private double networkWeight; // Weight used to calculate cost based on hop execution frequency
 		private List<Pair<Long, Double>> loopContext; // Loop context in which this hop exists
+		// Currently unused; retained for potential TR/TW hard-constraint handling.
 		private Long transientWriteHopId;
 		private int numParents = 1;
 
 		public Vertex(Hop hop, Privacy privacy, FType dataType, ExecPlacementCaps caps) {
+			this(hop, privacy, dataType, dataType, caps);
+		}
+
+		public Vertex(Hop hop, Privacy privacy, FType dataType, FType cpFoutDataType, ExecPlacementCaps caps) {
 			this.hop_ = hop;
 			this.hopId_ = hop.getHopID();
 			this.privacy_ = privacy;
 			this.dataType_ = dataType;
+			this.cpFoutDataType_ = cpFoutDataType;
 			this.caps_ = caps;
 
 			isFedExecutable_ = caps != null && (caps.allowFED_LOUT || caps.allowFED_FOUT);
@@ -353,8 +610,16 @@ public class FederatedPlanMinSTGraph {
 			return dataType_;
 		}
 
+		public FType getCpFoutDataType() {
+			return cpFoutDataType_;
+		}
+
 		public ExecPlacementCaps getCaps() {
 			return caps_;
+		}
+
+		public boolean isDerivedFedFout() {
+			return caps_ != null && caps_.isDerivedFedFout();
 		}
 
 		public double getOpCostWithWeight() {
@@ -363,6 +628,10 @@ public class FederatedPlanMinSTGraph {
 
 		public double getUploadCostWithoutWeight() {
 			return uploadCostWithoutWeight_;
+		}
+
+		public double getCpUploadCostWithoutWeight() {
+			return cpUploadCostWithoutWeight_;
 		}
 
 		public double getDownloadCostWithoutWeight() {
@@ -395,7 +664,12 @@ public class FederatedPlanMinSTGraph {
 				double downloadCostWithoutWeight) {
 			this.opCostWithWeight_ = opCostWithWeight;
 			this.uploadCostWithoutWeight_ = uploadCostWithoutWeight;
+			this.cpUploadCostWithoutWeight_ = uploadCostWithoutWeight;
 			this.downloadCostWithoutWeight_ = downloadCostWithoutWeight;
+		}
+
+		public void setCpUploadCostWithoutWeight(double cpUploadCostWithoutWeight) {
+			this.cpUploadCostWithoutWeight_ = cpUploadCostWithoutWeight;
 		}
 
 		public void setTransientWriteHopId(Long transientWriteHopId) {
@@ -410,19 +684,19 @@ public class FederatedPlanMinSTGraph {
 			this.numParents = Math.max(1, numParents);
 		}
 
-			/**
-			 * Estimates how many times this parent's output is forwarded to a child by
-			 * amortizing the parent's networkWeight over loops the child does not execute.
-			 *
-			 * Example:
-			 * parent loopContext = [(for1, 100), (while2, 10)]
-			 * childLoopContext = [(for1, 100)]
-			 * => forwardingWeight = networkWeight / 10 (child result reused across while2 iterations)
-			 */
-			public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
-				return FederatedPlannerUtils.computeForwardingWeightOfChild(
-						networkWeight, loopContext, childLoopContext);
-			}
+		/**
+		 * Estimates how many times this parent's output is forwarded to a child by
+		 * amortizing the parent's networkWeight over loops the child does not execute.
+		 *
+		 * Example:
+		 * parent loopContext = [(for1, 100), (while2, 10)]
+		 * childLoopContext = [(for1, 100)]
+		 * => forwardingWeight = networkWeight / 10 (child result reused across while2 iterations)
+		 */
+		public double computeForwardingWeightOfChild(List<Pair<Long, Double>> childLoopContext) {
+			return FederatedPlannerUtils.computeForwardingWeightOfChild(
+					networkWeight, loopContext, childLoopContext);
+		}
 
 		@Override
 		public boolean equals(Object o) {

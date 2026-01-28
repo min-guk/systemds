@@ -38,8 +38,17 @@ public abstract class ScalarObjectFactory
 	
 	public static ScalarObject createScalarObject(ValueType vt, String value) {
 		switch( vt ) {
-			case INT64:   return new IntObject(UtilFunctions.parseToLong(value));
-			case FP64:    return new DoubleObject(Double.parseDouble(value));
+			case INT64:
+				// Be robust to boolean string literals accidentally tagged as numeric.
+				// This can happen for constant-folded boolean conditions (e.g., in ifelse) sent to federated workers.
+				if( UtilFunctions.isBoolean(value) )
+					return new IntObject(Boolean.parseBoolean(value) ? 1L : 0L);
+				return new IntObject(UtilFunctions.parseToLong(value));
+			case FP64:
+				// Be robust to boolean string literals accidentally tagged as numeric.
+				if( UtilFunctions.isBoolean(value) )
+					return new DoubleObject(Boolean.parseBoolean(value) ? 1.0 : 0.0);
+				return new DoubleObject(Double.parseDouble(value));
 			case BOOLEAN: return new BooleanObject(Boolean.parseBoolean(value));
 			case STRING:  return new StringObject(value);
 			default: throw new RuntimeException("Unsupported scalar value type: "+vt.name());

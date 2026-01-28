@@ -105,6 +105,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
+		FederatedPlannerUtils.clearFedInitVars();
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(prog, memoTable, true);
 
@@ -127,6 +128,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		FederatedPlannerUtils.clearFedInitVars();
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateFunctionDynamic(function,
 				memoTable, true);
@@ -174,14 +176,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FEDInstruction.FederatedOutput resolvedOutType = thisOutType;
 
 			if (prev != null) {
-				if (prevFromClone && !fromClone) {
-					resolvedExecType = prev.getRight();
-					resolvedOutType = prev.getLeft();
-				} else if (!prevFromClone && fromClone) {
-					// Prefer clone decisions (Iter1) over originals (Iter0)
-					resolvedExecType = execType;
-					resolvedOutType = thisOutType;
-				} else if (prev.getLeft() == thisOutType) {
+				if (prev.getLeft() == thisOutType) {
 					if (prev.getRight() != execType) {
 						FederatedPlannerLogger.logWarnMessage(
 								"[FederatedPlannerDpFedCostBased] ExecType conflict in rewriteHop for hop "
@@ -190,8 +185,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 										+ pickExecType(prev.getRight(), execType));
 					}
 					resolvedExecType = pickExecType(prev.getRight(), execType);
+					resolvedOutType = thisOutType;
 				} else {
-					resolvedExecType = pickExecType(prev.getRight(), execType);
+					Pair<FEDInstruction.FederatedOutput, ExecType> resolved =
+						resolvePlacementConflict(prev.getLeft(), prev.getRight(), thisOutType, execType);
+					resolvedOutType = resolved.getLeft();
+					resolvedExecType = resolved.getRight();
 					FederatedPlannerLogger.logPlacementConflict(optimalPlan.getHopRef(), null,
 							prev.getLeft(), thisOutType, "REWRITE_HOP");
 				}
@@ -245,6 +244,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (existing == incoming) {
 			return existing;
 		}
+		if ((existing == ExecType.FED && incoming == ExecType.CP)
+			|| (existing == ExecType.CP && incoming == ExecType.FED)) {
+			return ExecType.CP;
+		}
 
 		int existingPriority = execTypePriority(existing);
 		int incomingPriority = execTypePriority(incoming);
@@ -269,6 +272,43 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			default:
 				return Integer.MAX_VALUE;
 		}
+	}
+
+	private static Pair<FEDInstruction.FederatedOutput, ExecType> resolvePlacementConflict(
+			FEDInstruction.FederatedOutput prevOut, ExecType prevExec,
+			FEDInstruction.FederatedOutput currOut, ExecType currExec) {
+		boolean prevFout = prevOut == FEDInstruction.FederatedOutput.FOUT;
+		boolean currFout = currOut == FEDInstruction.FederatedOutput.FOUT;
+		boolean prevFed = prevExec == ExecType.FED;
+		boolean currFed = currExec == ExecType.FED;
+		boolean prevCp = prevExec == ExecType.CP;
+		boolean currCp = currExec == ExecType.CP;
+
+		// If any variant is CP, prefer the CP variant to keep execution feasible
+		// across contexts with local inputs.
+		if (prevCp && !currCp)
+			return Pair.of(prevOut, ExecType.CP);
+		if (currCp && !prevCp)
+			return Pair.of(currOut, ExecType.CP);
+
+		// If any variant chose FED+FOUT, keep that as the safest federated output.
+		if (prevFout && prevFed)
+			return Pair.of(FEDInstruction.FederatedOutput.FOUT, ExecType.FED);
+		if (currFout && currFed)
+			return Pair.of(FEDInstruction.FederatedOutput.FOUT, ExecType.FED);
+
+		// Otherwise, if any variant chose FOUT, keep its exec type with FOUT.
+		if (prevFout)
+			return Pair.of(FEDInstruction.FederatedOutput.FOUT, prevExec);
+		if (currFout)
+			return Pair.of(FEDInstruction.FederatedOutput.FOUT, currExec);
+
+		// Fall back to a deterministic exec choice for LOUT/Lout conflicts.
+		ExecType resolvedExec = pickExecType(prevExec, currExec);
+		FEDInstruction.FederatedOutput resolvedOut = currOut;
+		if (prevOut == currOut)
+			resolvedOut = prevOut;
+		return Pair.of(resolvedOut, resolvedExec);
 	}
 
 }

@@ -86,6 +86,7 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 public class FederatedPlanMinSTCut extends AFederatedPlanner {
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
+		FederatedPlannerUtils.clearFedInitVars();
 		Map<Long, List<Hop>> rewireTable = new HashMap<>();
 		Set<Hop> progRootHopSet = new HashSet<>();
 		Set<Long> unRefTwriteSet = new HashSet<>();
@@ -109,11 +110,28 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		graph.getOptimalPlan();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		for (Vertex vertex : graph.getMemoTable().values()) {
-			if (vertex.getDataType() == null)
-				continue;
 			Hop hop = vertex.getHopRef();
-			if (hop != null && hop.getFederatedOutput() == FederatedOutput.FOUT)
-				fTypeMap.put(vertex.getHopID(), vertex.getDataType());
+			if (hop == null)
+				continue;
+			boolean isTransient = (hop instanceof DataOp)
+				&& (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD
+					|| ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE);
+			FType fType = null;
+			if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
+				fType = vertex.getDataType();
+				if (hop.getForcedExecType() == ExecType.CP) {
+					FType cpFoutType = vertex.getCpFoutDataType();
+					if (cpFoutType != null)
+						fType = cpFoutType;
+				}
+			} else if (!isTransient) {
+				// Local outputs can still require CP->FOUT materialization; keep the
+				// inferred FType as a hint for refed insertion, but they are NOT treated
+				// as federated sources (see isFederatedInput()).
+				fType = vertex.getCpFoutDataType();
+			}
+			if (fType != null)
+				fTypeMap.put(vertex.getHopID(), fType);
 		}
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 		FederatedPlannerLogger.logOptimalPlan(graph, true);
@@ -121,16 +139,31 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		FederatedPlannerUtils.clearFedInitVars();
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		FederatedPlanMinSTCostEstimator.estimateFunctionDynamic(function, graph, true);
 		graph.getOptimalPlan();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		for (Vertex vertex : graph.getMemoTable().values()) {
-			if (vertex.getDataType() == null)
-				continue;
 			Hop hop = vertex.getHopRef();
-			if (hop != null && hop.getFederatedOutput() == FederatedOutput.FOUT)
-				fTypeMap.put(vertex.getHopID(), vertex.getDataType());
+			if (hop == null)
+				continue;
+			boolean isTransient = (hop instanceof DataOp)
+				&& (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD
+					|| ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE);
+			FType fType = null;
+			if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
+				fType = vertex.getDataType();
+				if (hop.getForcedExecType() == ExecType.CP) {
+					FType cpFoutType = vertex.getCpFoutDataType();
+					if (cpFoutType != null)
+						fType = cpFoutType;
+				}
+			} else if (!isTransient) {
+				fType = vertex.getCpFoutDataType();
+			}
+			if (fType != null)
+				fTypeMap.put(vertex.getHopID(), fType);
 		}
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 		FederatedPlannerLogger.logOptimalPlan(graph, true);

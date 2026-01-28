@@ -127,7 +127,7 @@ public abstract class Lop
 	 * If it is FOUT, the output should be kept at federated sites.
 	 * If it is LOUT, the output should be retrieved by the coordinator.
 	 */
-	protected FederatedOutput _fedOutput = null;
+	protected FederatedOutput _fedOutput = FederatedOutput.NONE;
 
 	/**
 	 * Optional hop id associated with this lop (set when constructed from a Hop).

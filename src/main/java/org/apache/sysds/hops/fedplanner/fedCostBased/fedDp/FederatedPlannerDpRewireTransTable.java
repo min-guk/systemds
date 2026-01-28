@@ -289,8 +289,7 @@ public class FederatedPlannerDpRewireTransTable {
 			Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 			elseFormerTransTable.putAll(innerTransTable);
 			computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
-			// Todo: network weight을 0.5로 안하는 이유가 있나? 잘 모르겠음. 고민해봐야함.
-			// networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
+			networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 				newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
@@ -397,7 +396,7 @@ public class FederatedPlannerDpRewireTransTable {
 							probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet,
 							probeFnStack,
 							probeInjectedIds, probeFnCache, computeWeight,
-							networkWeight, multiplicity, parentLoopStack, maxUnrollDepth, maxUnrollDepth, hopCloneMap,
+							networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, hopCloneMap,
 							probeCtx, null));
 				loopCarriedVars = computeLoopCarriedVars(probeCtx, probeFormer);
 				if (loopCarriedVars.isEmpty())
@@ -450,41 +449,41 @@ public class FederatedPlannerDpRewireTransTable {
 				return newFormerTransTable;
 			}
 
-				List<Pair<Long, Double>> iter0LoopStack = new ArrayList<>();
-				if (parentLoopStack != null)
-					iter0LoopStack.addAll(parentLoopStack);
-				iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
+			List<Pair<Long, Double>> iter0LoopStack = new ArrayList<>();
+			if (parentLoopStack != null)
+				iter0LoopStack.addAll(parentLoopStack);
+			iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
 
-				LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false, false);
-				rewireHopDAG(selectHop(fsb.getFromHops(), hopCloneMap), prog, visitedHops, rewireTable,
-						hopCommonTable, newOuterTransTableList,
-						null, innerTransTable,
+			LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false, false);
+			rewireHopDAG(selectHop(fsb.getFromHops(), hopCloneMap), prog, visitedHops, rewireTable,
+					hopCommonTable, newOuterTransTableList,
+					null, innerTransTable,
+					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+					injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+					iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
+			rewireHopDAG(selectHop(fsb.getToHops(), hopCloneMap), prog, visitedHops, rewireTable,
+					hopCommonTable, newOuterTransTableList,
+					null,
+					innerTransTable,
+					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+					injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+					iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
+			if (fsb.getIncrementHops() != null) {
+				rewireHopDAG(selectHop(fsb.getIncrementHops(), hopCloneMap), prog, visitedHops, rewireTable,
+						hopCommonTable,
+						newOuterTransTableList, null, innerTransTable,
 						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
-						iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
-				rewireHopDAG(selectHop(fsb.getToHops(), hopCloneMap), prog, visitedHops, rewireTable,
-						hopCommonTable, newOuterTransTableList,
-						null,
-						innerTransTable,
+						injectedIds, functionTransTableCache, computeWeight,
+						networkWeight, multiplicity, iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
+			}
+			newFormerTransTable.putAll(innerTransTable);
+			for (StatementBlock innerFsb : fstmt.getBody())
+				newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
+						hopCommonTable, newOuterTransTableList, newFormerTransTable,
 						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
-						iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
-				if (fsb.getIncrementHops() != null) {
-					rewireHopDAG(selectHop(fsb.getIncrementHops(), hopCloneMap), prog, visitedHops, rewireTable,
-							hopCommonTable,
-							newOuterTransTableList, null, innerTransTable,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, multiplicity, iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
-				}
-				newFormerTransTable.putAll(innerTransTable);
-				for (StatementBlock innerFsb : fstmt.getBody())
-					newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
-							hopCommonTable, newOuterTransTableList, newFormerTransTable,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, multiplicity, iter0LoopStack, unrollDepth + 1, maxUnrollDepth, hopCloneMap,
-							iter0Analysis, unrollCtx));
+						injectedIds, functionTransTableCache, computeWeight,
+						networkWeight, multiplicity, iter0LoopStack, unrollDepth + 1, maxUnrollDepth, hopCloneMap,
+						iter0Analysis, unrollCtx));
 
 			Map<String, List<Hop>> iter0End = newFormerTransTable;
 			loopCarriedVars = computeLoopCarriedVars(iter0Analysis, iter0End);
@@ -494,47 +493,47 @@ public class FederatedPlannerDpRewireTransTable {
 				return iter0End;
 			}
 
-				List<Pair<Long, Double>> iter1LoopStack = new ArrayList<>();
-				if (parentLoopStack != null)
-					iter1LoopStack.addAll(parentLoopStack);
-				iter1LoopStack.add(Pair.of(sb.getSBID(), iter1Factor));
+			List<Pair<Long, Double>> iter1LoopStack = new ArrayList<>();
+			if (parentLoopStack != null)
+				iter1LoopStack.addAll(parentLoopStack);
+			iter1LoopStack.add(Pair.of(sb.getSBID(), iter1Factor));
 
-				Map<Long, Hop> iter1HopMap = cloneStatementBlockHops(fsb, hopCloneMap, unrollCtx);
-				unrollCtx.addIter1Roots(collectStatementBlockRoots(fsb, iter1HopMap));
+			Map<Long, Hop> iter1HopMap = cloneStatementBlockHops(fsb, hopCloneMap, unrollCtx);
+			unrollCtx.addIter1Roots(collectStatementBlockRoots(fsb, iter1HopMap));
 
 			LoopAnalysisContext iter1Analysis = new LoopAnalysisContext(false, true, false);
 			Map<String, List<Hop>> iter1Inner = new HashMap<>();
 			Map<String, List<Hop>> iter1Former = new HashMap<>();
 
-				rewireHopDAG(selectHop(fsb.getFromHops(), iter1HopMap), prog, visitedHops, rewireTable,
-						hopCommonTable, newOuterTransTableList,
-						null, iter1Inner,
+			rewireHopDAG(selectHop(fsb.getFromHops(), iter1HopMap), prog, visitedHops, rewireTable,
+					hopCommonTable, newOuterTransTableList,
+					null, iter1Inner,
+					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+					injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+					iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
+			rewireHopDAG(selectHop(fsb.getToHops(), iter1HopMap), prog, visitedHops, rewireTable,
+					hopCommonTable, newOuterTransTableList,
+					null,
+					iter1Inner,
+					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+					injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+					iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
+			if (fsb.getIncrementHops() != null) {
+				rewireHopDAG(selectHop(fsb.getIncrementHops(), iter1HopMap), prog, visitedHops, rewireTable,
+						hopCommonTable,
+						newOuterTransTableList, null, iter1Inner,
 						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
-						iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
-				rewireHopDAG(selectHop(fsb.getToHops(), iter1HopMap), prog, visitedHops, rewireTable,
-						hopCommonTable, newOuterTransTableList,
-						null,
-						iter1Inner,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
-						iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
-				if (fsb.getIncrementHops() != null) {
-					rewireHopDAG(selectHop(fsb.getIncrementHops(), iter1HopMap), prog, visitedHops, rewireTable,
-							hopCommonTable,
-							newOuterTransTableList, null, iter1Inner,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
-				}
+						injectedIds, functionTransTableCache, computeWeight,
+						networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
+			}
 			iter1Former.putAll(iter1Inner);
-				for (StatementBlock innerFsb : fstmt.getBody())
-					iter1Former.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
-							hopCommonTable, newOuterTransTableList, iter1Former,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth + 1, maxUnrollDepth, iter1HopMap,
-							iter1Analysis, unrollCtx));
+			for (StatementBlock innerFsb : fstmt.getBody())
+				iter1Former.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
+						hopCommonTable, newOuterTransTableList, iter1Former,
+						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+						injectedIds, functionTransTableCache, computeWeight,
+						networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth + 1, maxUnrollDepth, iter1HopMap,
+						iter1Analysis, unrollCtx));
 
 			addCrossIterEdges(loopCarriedVars, iter0End, iter1Analysis, rewireTable, unRefTwriteSet);
 			mergeIter0EndIntoIter1Former(iter1Former, iter0End);
@@ -578,7 +577,7 @@ public class FederatedPlannerDpRewireTransTable {
 							probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet,
 							probeFnStack,
 							probeInjectedIds, probeFnCache, computeWeight,
-							networkWeight, multiplicity, parentLoopStack, maxUnrollDepth, maxUnrollDepth, hopCloneMap,
+							networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, hopCloneMap,
 							probeCtx, null));
 				loopCarriedVars = computeLoopCarriedVars(probeCtx, probeFormer);
 				if (loopCarriedVars.isEmpty())
@@ -616,28 +615,28 @@ public class FederatedPlannerDpRewireTransTable {
 				return newFormerTransTable;
 			}
 
-				List<Pair<Long, Double>> iter0LoopStack = new ArrayList<>();
-				if (parentLoopStack != null)
-					iter0LoopStack.addAll(parentLoopStack);
-				iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
+			List<Pair<Long, Double>> iter0LoopStack = new ArrayList<>();
+			if (parentLoopStack != null)
+				iter0LoopStack.addAll(parentLoopStack);
+			iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
 
-				LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false, false);
-				rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
-						hopCommonTable,
-						newOuterTransTableList,
-						null, innerTransTable,
+			LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false, false);
+			rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
+					hopCommonTable,
+					newOuterTransTableList,
+					null, innerTransTable,
+					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+					injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+					iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
+			newFormerTransTable.putAll(innerTransTable);
+
+			for (StatementBlock innerWsb : wstmt.getBody())
+				newFormerTransTable.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
+						hopCommonTable, newOuterTransTableList, newFormerTransTable,
 						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
-						iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
-				newFormerTransTable.putAll(innerTransTable);
-
-				for (StatementBlock innerWsb : wstmt.getBody())
-					newFormerTransTable.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
-							hopCommonTable, newOuterTransTableList, newFormerTransTable,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, multiplicity, iter0LoopStack, unrollDepth + 1, maxUnrollDepth, hopCloneMap,
-							iter0Analysis, unrollCtx));
+						injectedIds, functionTransTableCache, computeWeight,
+						networkWeight, multiplicity, iter0LoopStack, unrollDepth + 1, maxUnrollDepth, hopCloneMap,
+						iter0Analysis, unrollCtx));
 
 			Map<String, List<Hop>> iter0End = newFormerTransTable;
 			loopCarriedVars = computeLoopCarriedVars(iter0Analysis, iter0End);
@@ -647,34 +646,34 @@ public class FederatedPlannerDpRewireTransTable {
 				return iter0End;
 			}
 
-				List<Pair<Long, Double>> iter1LoopStack = new ArrayList<>();
-				if (parentLoopStack != null)
-					iter1LoopStack.addAll(parentLoopStack);
-				iter1LoopStack.add(Pair.of(sb.getSBID(), iter1Factor));
+			List<Pair<Long, Double>> iter1LoopStack = new ArrayList<>();
+			if (parentLoopStack != null)
+				iter1LoopStack.addAll(parentLoopStack);
+			iter1LoopStack.add(Pair.of(sb.getSBID(), iter1Factor));
 
-				Map<Long, Hop> iter1HopMap = cloneStatementBlockHops(wsb, hopCloneMap, unrollCtx);
-				unrollCtx.addIter1Roots(collectStatementBlockRoots(wsb, iter1HopMap));
+			Map<Long, Hop> iter1HopMap = cloneStatementBlockHops(wsb, hopCloneMap, unrollCtx);
+			unrollCtx.addIter1Roots(collectStatementBlockRoots(wsb, iter1HopMap));
 
 			LoopAnalysisContext iter1Analysis = new LoopAnalysisContext(false, true, false);
 			Map<String, List<Hop>> iter1Inner = new HashMap<>();
 			Map<String, List<Hop>> iter1Former = new HashMap<>();
 
-				rewireHopDAG(selectHop(wsb.getPredicateHops(), iter1HopMap), prog, visitedHops, rewireTable,
-						hopCommonTable,
-						newOuterTransTableList,
-						null, iter1Inner,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
-						iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
-				iter1Former.putAll(iter1Inner);
+			rewireHopDAG(selectHop(wsb.getPredicateHops(), iter1HopMap), prog, visitedHops, rewireTable,
+					hopCommonTable,
+					newOuterTransTableList,
+					null, iter1Inner,
+					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+					injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+					iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
+			iter1Former.putAll(iter1Inner);
 
-				for (StatementBlock innerWsb : wstmt.getBody())
-					iter1Former.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
-							hopCommonTable, newOuterTransTableList, iter1Former,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache, computeWeight,
-							networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth + 1, maxUnrollDepth, iter1HopMap,
-							iter1Analysis, unrollCtx));
+			for (StatementBlock innerWsb : wstmt.getBody())
+				iter1Former.putAll(rewireStatementBlock(innerWsb, prog, visitedHops, rewireTable,
+						hopCommonTable, newOuterTransTableList, iter1Former,
+						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+						injectedIds, functionTransTableCache, computeWeight,
+						networkWeight, iter1Multiplicity, iter1LoopStack, unrollDepth + 1, maxUnrollDepth, iter1HopMap,
+						iter1Analysis, unrollCtx));
 
 			addCrossIterEdges(loopCarriedVars, iter0End, iter1Analysis, rewireTable, unRefTwriteSet);
 			mergeIter0EndIntoIter1Former(iter1Former, iter0End);
@@ -685,12 +684,12 @@ public class FederatedPlannerDpRewireTransTable {
 			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
 
 			for (StatementBlock innerFsb : fstmt.getBody())
-				newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
-						hopCommonTable, newOuterTransTableList, newFormerTransTable,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight,
-						networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, hopCloneMap, loopCtx,
-						unrollCtx));
+					newFormerTransTable.putAll(rewireStatementBlock(innerFsb, prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList, newFormerTransTable,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight,
+							networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, hopCloneMap, loopCtx,
+							unrollCtx));
 
 			// Wire fcall operation to liveOutHops
 			wireUnRefTwriteToLiveOutWithTracking(fsb, unRefTwriteSet, hopCommonTable, newFormerTransTable,
@@ -698,13 +697,13 @@ public class FederatedPlannerDpRewireTransTable {
 		} else { // generic (last-level)
 			if (sb.getHops() != null) {
 				for (Hop c : sb.getHops())
-					rewireHopDAG(selectHop(c, hopCloneMap), prog, visitedHops, rewireTable, hopCommonTable,
-							newOuterTransTableList, formerTransTable,
-							innerTransTable,
-							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-							injectedIds, functionTransTableCache,
-							computeWeight, networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, loopCtx,
-							unrollCtx);
+						rewireHopDAG(selectHop(c, hopCloneMap), prog, visitedHops, rewireTable, hopCommonTable,
+								newOuterTransTableList, formerTransTable,
+								innerTransTable,
+								privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+								injectedIds, functionTransTableCache,
+								computeWeight, networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, loopCtx,
+								unrollCtx);
 			}
 
 			return innerTransTable;
@@ -935,8 +934,8 @@ public class FederatedPlannerDpRewireTransTable {
 				double hopMultiplicity = multiplicity;
 				List<Pair<Long, Double>> hopLoopStack = loopStack;
 
-				FederatedPlannerDpMemoTable.HopCommon passThroughCommon =
-						resolvePassThroughSourceCommon(hop, hopCommonTable, ctx.rewireTable());
+				FederatedPlannerDpMemoTable.HopCommon passThroughCommon = resolvePassThroughSourceCommon(hop,
+						hopCommonTable, ctx.rewireTable());
 				if (passThroughCommon == null) {
 					passThroughCommon = resolvePassThroughInputCommon(hop, hopCommonTable);
 				}
@@ -1001,12 +1000,12 @@ public class FederatedPlannerDpRewireTransTable {
 									TransTableRewireUtils.mapFunctionInputsToFormerTransTable(
 											inputArgs, inputHops, rewireTable, newFormerTransTable);
 
-									functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
-											rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
-											privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet,
-											fnStack, injectedIds, functionTransTableCache, computeWeight,
-											networkWeight,
-											multiplicity, loopStack, unrollDepth, maxUnrollDepth, null, loopCtx, unrollCtx);
+										functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
+												rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
+												privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet,
+												fnStack, injectedIds, functionTransTableCache, computeWeight,
+												networkWeight,
+												multiplicity, loopStack, unrollDepth, maxUnrollDepth, null, loopCtx, unrollCtx);
 									if (functionTransTable != null) {
 										functionTransTableCache.put(fkey, functionTransTable);
 									}
@@ -1022,7 +1021,8 @@ public class FederatedPlannerDpRewireTransTable {
 								outputHop -> {
 									if (!hopCommonTable.containsKey(outputHop.getHopID())) {
 										hopCommonTable.put(outputHop.getHopID(),
-												new FederatedPlannerDpMemoTable.HopCommon(outputHop, computeWeight, networkWeight,
+												new FederatedPlannerDpMemoTable.HopCommon(outputHop, computeWeight,
+														networkWeight,
 														multiplicity, 0, loopStack));
 									}
 									unRefTwriteSet.add(outputHop.getHopID());
@@ -1033,7 +1033,8 @@ public class FederatedPlannerDpRewireTransTable {
 								outputHop -> {
 									if (!hopCommonTable.containsKey(outputHop.getHopID())) {
 										hopCommonTable.put(outputHop.getHopID(),
-												new FederatedPlannerDpMemoTable.HopCommon(outputHop, computeWeight, networkWeight,
+												new FederatedPlannerDpMemoTable.HopCommon(outputHop, computeWeight,
+														networkWeight,
 														multiplicity, 0, loopStack));
 									}
 									unRefTwriteSet.add(outputHop.getHopID());
@@ -1193,4 +1194,4 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 	}
 
-	}
+}

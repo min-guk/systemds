@@ -132,7 +132,6 @@ from .builtin.mse import mse
 from .builtin.msmape import msmape 
 from .builtin.msvm import msvm 
 from .builtin.msvmPredict import msvmPredict 
-from .builtin.multiLogReg import multiLogReg 
 from .builtin.multiLogRegPredict import multiLogRegPredict 
 from .builtin.na_locf import na_locf 
 from .builtin.naiveBayes import naiveBayes 
@@ -312,7 +311,6 @@ __all__ = ['WoE',
  'msmape',
  'msvm',
  'msvmPredict',
- 'multiLogReg',
  'multiLogRegPredict',
  'na_locf',
  'naiveBayes',

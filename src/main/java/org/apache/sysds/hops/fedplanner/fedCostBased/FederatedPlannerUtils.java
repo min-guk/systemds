@@ -80,6 +80,8 @@ public class FederatedPlannerUtils {
 	private static final java.util.Set<String> FED_INIT_VARS = ConcurrentHashMap.newKeySet();
 	private static final Map<String, FType> FED_INIT_FTYPES = new ConcurrentHashMap<>();
 	private static final Map<String, String> FED_INIT_SIGNATURES = new ConcurrentHashMap<>();
+	private static final Map<String, String> FED_ANCHOR_KEYS = new ConcurrentHashMap<>();
+	private static final java.util.Set<String> FED_RMVAR_PROTECTED_VARS = ConcurrentHashMap.newKeySet();
 
 	/**
 	 * Get transient inputs from either paramMap or transientWrites.
@@ -123,6 +125,40 @@ public class FederatedPlannerUtils {
 				paramMap.put(inputNames[i], funcOp.getInput(i));
 		}
 		return paramMap;
+	}
+
+	public static boolean isVectorShape(Hop hop) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (!hop.dimsKnown())
+			return false;
+		long rlen = hop.getDim1();
+		long clen = hop.getDim2();
+		if (rlen <= 0 || clen <= 0)
+			return false;
+		if (rlen == 1 && clen == 1)
+			return false;
+		return (rlen == 1 && clen > 1) || (clen == 1 && rlen > 1);
+	}
+
+	public static boolean isScalarLikeMatrix(Hop hop) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (!hop.dimsKnown())
+			return false;
+		return hop.getDim1() == 1 && hop.getDim2() == 1;
+	}
+
+	public static FType getVectorAxis(Hop hop) {
+		if (!isVectorShape(hop))
+			return null;
+		long rlen = hop.getDim1();
+		long clen = hop.getDim2();
+		if (rlen == 1 && clen > 1)
+			return FType.COL;
+		if (clen == 1 && rlen > 1)
+			return FType.ROW;
+		return null;
 	}
 
 	public static double computeForwardingWeightOfChild(double networkWeight,
@@ -401,11 +437,37 @@ public class FederatedPlannerUtils {
 				FED_INIT_FTYPES.put(varName, fedInitFType);
 			if (signature != null)
 				FED_INIT_SIGNATURES.put(varName, signature);
+			if (signature != null) {
+				String key = signature;
+				if (fedInitFType != null)
+					key = key + "|" + fedInitFType.name();
+				registerFedAnchorKey(varName, key);
+			}
 		}
+	}
+
+	public static void clearFedInitVars() {
+		FED_INIT_VARS.clear();
+		FED_INIT_FTYPES.clear();
+		FED_INIT_SIGNATURES.clear();
+		FED_ANCHOR_KEYS.clear();
+		FED_RMVAR_PROTECTED_VARS.clear();
+	}
+
+	public static void clearFedAnchorKeys() {
+		FED_ANCHOR_KEYS.clear();
+	}
+
+	public static void clearFedRmvarProtectedVars() {
+		FED_RMVAR_PROTECTED_VARS.clear();
 	}
 
 	public static boolean isFedInitVar(String varName) {
 		return varName != null && FED_INIT_VARS.contains(varName);
+	}
+
+	public static boolean isFedRmvarProtectedVar(String varName) {
+		return varName != null && FED_RMVAR_PROTECTED_VARS.contains(varName);
 	}
 
 	public static FType getFedInitFType(String varName) {
@@ -414,6 +476,52 @@ public class FederatedPlannerUtils {
 
 	public static String getFedInitSignature(String varName) {
 		return (varName == null) ? null : FED_INIT_SIGNATURES.get(varName);
+	}
+
+	public static void registerFedAnchorKey(String varName, String anchorKey) {
+		if (varName == null || varName.isEmpty() || anchorKey == null || anchorKey.isEmpty())
+			return;
+		String existing = FED_ANCHOR_KEYS.get(varName);
+		if (existing != null) {
+			boolean existingVarKey = existing.startsWith("VAR:");
+			boolean newVarKey = anchorKey.startsWith("VAR:");
+			if (!existingVarKey && newVarKey)
+				return; // keep signature-based key
+			if (existingVarKey && !newVarKey)
+				FED_ANCHOR_KEYS.put(varName, anchorKey);
+			else if (existing.equals(anchorKey))
+				return;
+			else
+				FED_ANCHOR_KEYS.put(varName, anchorKey);
+		}
+		else {
+			FED_ANCHOR_KEYS.put(varName, anchorKey);
+		}
+		org.apache.sysds.runtime.controlprogram.federated.FederationUtils.registerAnchorKey(varName, anchorKey);
+	}
+
+	public static void removeFedAnchorKey(String varName) {
+		if (varName != null && !varName.isEmpty()) {
+			FED_ANCHOR_KEYS.remove(varName);
+			org.apache.sysds.runtime.controlprogram.federated.FederationUtils.removeAnchorKey(varName);
+		}
+	}
+
+	public static void removeFedInitVar(String varName) {
+		if (varName == null || varName.isEmpty())
+			return;
+		FED_INIT_VARS.remove(varName);
+		FED_INIT_FTYPES.remove(varName);
+		FED_INIT_SIGNATURES.remove(varName);
+	}
+
+	public static void registerFedRmvarProtectedVar(String varName) {
+		if (varName != null && !varName.isEmpty())
+			FED_RMVAR_PROTECTED_VARS.add(varName);
+	}
+
+	public static String getFedAnchorKey(String varName) {
+		return (varName == null) ? null : FED_ANCHOR_KEYS.get(varName);
 	}
 
 	public static String getUniqueFedInitVarName() {

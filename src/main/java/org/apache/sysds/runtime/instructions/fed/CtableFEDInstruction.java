@@ -98,7 +98,9 @@ public class CtableFEDInstruction extends ComputationFEDInstruction {
 
 	public static CtableFEDInstruction parseInstruction(String inst) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(inst);
-		InstructionUtils.checkNumFields(parts, 7);
+		// CP/SP instructions include a trailing thread-count / outputEmptyBlocks flag.
+		// FED uses the CP-style format, so accept both variants and ignore the trailing field.
+		InstructionUtils.checkNumFields(parts, 7, 8);
 		String opcode = parts[0];
 		// handle opcode
 		if(!(opcode.equalsIgnoreCase("ctable")) && !(opcode.equalsIgnoreCase("ctableexpand"))) {

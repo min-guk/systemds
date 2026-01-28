@@ -24,16 +24,27 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 
 public final class OracleUtils {
+	private static final List<FType> MATRIX_FTYPE_CANDIDATES = List.of(
+			FType.ROW, FType.COL, FType.FULL, FType.PART, FType.BROADCAST);
+
 	public static final class OracleDecision {
 		private final List<FType> alignedInputFTypes;
 		private final OpCaps caps;
@@ -87,8 +98,468 @@ public final class OracleUtils {
 		if (caps != null && caps.foutFType().isPresent()) {
 			logicalFType = caps.foutFType().get();
 		}
+		if (logicalFType == null) {
+			logicalFType = inferFallbackFType(hop, alignedInputFTypes, oracleFacade, rewireTable);
+		}
+		if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+			logicalFType = FType.BROADCAST;
+		}
+		if (FederatedPlannerUtils.isVectorShape(hop)
+				&& !hasFederatedInput(alignedInputFTypes)) {
+			// Local vectors uploaded for FED consumption should default to BROADCAST to avoid
+			// invalid ROW/COL slicing against unrelated anchors.
+			logicalFType = FType.BROADCAST;
+		}
+		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
+				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
+			logicalFType = FType.BROADCAST;
+		}
 
 		return new OracleDecision(alignedInputFTypes, caps, logicalFType);
+	}
+
+	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,
+			Map<Long, List<Hop>> rewireTable) {
+		return adjustCpFoutFTypeForConsumerAxisMismatch(hop, logicalFType, rewireTable, 0);
+	}
+
+	/**
+	 * Compute a CP-&gt;FOUT (or local-&gt;FED forwarding) FType that is safe w.r.t. runtime behavior.
+	 *
+	 * <p>This method intentionally differs from {@code logicalFType} in cases where the runtime would
+	 * inevitably fall back to a full broadcast (e.g., ROW/COL slicing when the sliced dimension is
+	 * smaller than the worker count, or vector axis mismatch). By selecting {@code BROADCAST} in the
+	 * planner already, we avoid runtime map-type flips that would invalidate downstream assumptions
+	 * and also allow the cost model to correctly account for replicated uploads.</p>
+	 */
+	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,
+			Map<Long, List<Hop>> rewireTable, int numWorkers) {
+		if (logicalFType == null)
+			return null;
+		if (FederatedPlannerUtils.isScalarLikeMatrix(hop))
+			return FType.BROADCAST;
+		if (logicalFType == FType.BROADCAST)
+			return logicalFType;
+		FType vectorAxis = FederatedPlannerUtils.getVectorAxis(hop);
+		if (vectorAxis != null && hasConsumerAxisMismatch(hop, vectorAxis, rewireTable))
+			return FType.BROADCAST;
+		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
+				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
+			return FType.BROADCAST;
+		}
+
+		if (numWorkers > 1 && hop != null && hop.dimsKnown()) {
+			long rows = hop.getDim1();
+			long cols = hop.getDim2();
+			if (logicalFType == FType.ROW && rows > 0 && rows < numWorkers)
+				return FType.BROADCAST;
+			if (logicalFType == FType.COL && cols > 0 && cols < numWorkers)
+				return FType.BROADCAST;
+		}
+		return logicalFType;
+	}
+
+	public static FType inferFallbackFType(Hop hop, List<FType> alignedInputFTypes,
+			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable) {
+		if (hop instanceof FunctionOp) {
+			FunctionOp.FunctionType type = ((FunctionOp) hop).getFunctionType();
+			if (type == FunctionOp.FunctionType.MULTIRETURN_BUILTIN) {
+				return null;
+			}
+		}
+		if (!isMatrixHop(hop)) {
+			return null;
+		}
+
+		boolean preferBroadcast = FederatedPlannerUtils.isVectorShape(hop)
+				&& hasFederatedInput(alignedInputFTypes)
+				&& inferFedInitType(hop) == null;
+
+		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
+		Set<FType> producerCandidates = inferFromProducer(hop, alignedInputFTypes, oracleFacade);
+		ConsumerConstraints consumerConstraints = inferFromConsumers(consumerRefs, oracleFacade);
+		Set<FType> consumerCandidates = consumerConstraints.candidates;
+		Set<FType> merged = mergeCandidates(producerCandidates, consumerCandidates,
+				consumerConstraints.constrained);
+
+		if (!merged.isEmpty()) {
+			if (preferBroadcast && merged.contains(FType.BROADCAST))
+				return FType.BROADCAST;
+			return pickPreferredAxis(merged, hop);
+		}
+
+		FederatedPlannerLogger.logWarnMessage(
+				"[FTypeFallback] No rule candidates for hop " + hop.getHopID()
+						+ " (" + hop.getOpString() + ") inputs=" + alignedInputFTypes
+						+ " producer=" + producerCandidates + " consumer=" + consumerCandidates
+						+ " consumerConstrained=" + consumerConstraints.constrained
+						+ " consumers=" + describeConsumerRefs(consumerRefs)
+						+ "; fallback to fed-init/input FTypes.");
+
+		FType fedInitType = inferFedInitType(hop);
+		if (fedInitType != null) {
+			return fedInitType;
+		}
+
+		Set<FType> inputCandidates = collectInputCandidates(alignedInputFTypes);
+		if (preferBroadcast && inputCandidates.contains(FType.BROADCAST))
+			return FType.BROADCAST;
+		return pickPreferredAxis(inputCandidates, hop);
+	}
+
+	private static Set<FType> inferFromProducer(Hop hop, List<FType> alignedInputFTypes,
+			OracleFacade oracleFacade) {
+		if (oracleFacade == null || hop == null) {
+			return Collections.emptySet();
+		}
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty()) {
+			return Collections.emptySet();
+		}
+		List<List<FType>> inCandidates = new ArrayList<>(inputs.size());
+		for (int i = 0; i < inputs.size(); i++) {
+			Hop inputHop = inputs.get(i);
+			FType known = (alignedInputFTypes != null && i < alignedInputFTypes.size())
+					? alignedInputFTypes.get(i)
+					: null;
+			inCandidates.add(buildInputCandidates(inputHop, known));
+		}
+		FTypeProfile profile = oracleFacade.inferProfile(hop, inCandidates, null);
+		if (profile == null || profile.outputs() == null || profile.outputs().isEmpty()) {
+			return Collections.emptySet();
+		}
+		return new LinkedHashSet<>(profile.outputs());
+	}
+
+	private static ConsumerConstraints inferFromConsumers(List<ConsumerRef> consumerRefs,
+			OracleFacade oracleFacade) {
+		if (oracleFacade == null || consumerRefs == null || consumerRefs.isEmpty()) {
+			return ConsumerConstraints.unconstrained();
+		}
+		Set<FType> candidates = new LinkedHashSet<>(MATRIX_FTYPE_CANDIDATES);
+		boolean constrained = false;
+		for (ConsumerRef ref : consumerRefs) {
+			if (ref == null || ref.consumer == null) {
+				continue;
+			}
+			Set<FType> allowed = new LinkedHashSet<>();
+			for (FType candidate : MATRIX_FTYPE_CANDIDATES) {
+				FTypeProfile profile = oracleFacade.inferProfile(
+						ref.consumer, buildConsumerCandidates(ref.consumer, ref.inputHop, candidate), null);
+				if (profile != null && profile.outputs() != null && !profile.outputs().isEmpty()) {
+					allowed.add(candidate);
+				}
+			}
+			if (!allowed.isEmpty()) {
+				constrained = true;
+				candidates.retainAll(allowed);
+			}
+		}
+		if (!constrained) {
+			return ConsumerConstraints.unconstrained();
+		}
+		return new ConsumerConstraints(candidates, true);
+	}
+
+	private static List<List<FType>> buildConsumerCandidates(Hop consumer, Hop target, FType targetCandidate) {
+		List<Hop> inputs = consumer.getInput();
+		if (inputs == null || inputs.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<List<FType>> inCandidates = new ArrayList<>(inputs.size());
+		for (Hop inputHop : inputs) {
+			FType known = (inputHop != null && target != null && inputHop.getHopID() == target.getHopID())
+					? targetCandidate
+					: null;
+			inCandidates.add(buildInputCandidates(inputHop, known));
+		}
+		return inCandidates;
+	}
+
+	private static List<FType> buildInputCandidates(Hop inputHop, FType known) {
+		if (known != null) {
+			return List.of(known);
+		}
+		if (inputHop != null && inputHop.getDataType() != null && inputHop.getDataType().isMatrix()) {
+			return MATRIX_FTYPE_CANDIDATES;
+		}
+		List<FType> scalar = new ArrayList<>(1);
+		scalar.add(null);
+		return scalar;
+	}
+
+	private static Set<FType> mergeCandidates(Set<FType> producer, Set<FType> consumer,
+			boolean consumerConstrained) {
+		if (consumerConstrained) {
+			if (consumer == null || consumer.isEmpty()) {
+				return Collections.emptySet();
+			}
+			if (producer == null || producer.isEmpty()) {
+				return new LinkedHashSet<>(consumer);
+			}
+			Set<FType> merged = new LinkedHashSet<>(producer);
+			merged.retainAll(consumer);
+			return merged;
+		}
+		if (producer == null || producer.isEmpty()) {
+			return (consumer == null) ? Collections.emptySet() : new LinkedHashSet<>(consumer);
+		}
+		return new LinkedHashSet<>(producer);
+	}
+
+	private static boolean hasConsumerAxisMismatch(Hop hop, FType vectorAxis, Map<Long, List<Hop>> rewireTable) {
+		if (hop == null || vectorAxis == null)
+			return false;
+		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
+		if (consumerRefs == null || consumerRefs.isEmpty())
+			return false;
+		long targetId = hop.getHopID();
+		for (ConsumerRef ref : consumerRefs) {
+			if (ref == null || ref.consumer == null)
+				continue;
+			List<Hop> inputs = ref.consumer.getInput();
+			if (inputs == null || inputs.isEmpty())
+				continue;
+			long proxyId = ref.inputHop != null ? ref.inputHop.getHopID() : -1;
+			for (Hop input : inputs) {
+				if (input == null)
+					continue;
+				long inputId = input.getHopID();
+				if (inputId == targetId || (proxyId >= 0 && inputId == proxyId))
+					continue;
+				FType axis = inferFedInitType(input);
+				if (axis == null && input instanceof DataOp
+						&& ((DataOp) input).getOp() == Types.OpOpData.FEDERATED) {
+					axis = FederatedPlannerUtils.deriveFedInitFType((DataOp) input);
+				}
+				if (axis == FType.ROW || axis == FType.COL) {
+					if (axis != vectorAxis)
+						return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasConsumerAxisLengthMismatch(Hop hop, FType axisType,
+			Map<Long, List<Hop>> rewireTable) {
+		if (hop == null || axisType == null || rewireTable == null)
+			return false;
+		if (!(axisType == FType.ROW || axisType == FType.COL))
+			return false;
+		long hopAxisLen = (axisType == FType.ROW) ? hop.getDim1() : hop.getDim2();
+		if (hopAxisLen <= 0)
+			return false;
+
+		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
+		if (consumerRefs == null || consumerRefs.isEmpty())
+			return false;
+
+		long targetId = hop.getHopID();
+		for (ConsumerRef ref : consumerRefs) {
+			if (ref == null || ref.consumer == null)
+				continue;
+			List<Hop> inputs = ref.consumer.getInput();
+			if (inputs == null || inputs.isEmpty())
+				continue;
+			long proxyId = ref.inputHop != null ? ref.inputHop.getHopID() : -1;
+			for (Hop input : inputs) {
+				if (input == null)
+					continue;
+				long inputId = input.getHopID();
+				if (inputId == targetId || (proxyId >= 0 && inputId == proxyId))
+					continue;
+
+				FType axis = inferFedInitType(input);
+				if (axis == null && input instanceof DataOp
+						&& ((DataOp) input).getOp() == Types.OpOpData.FEDERATED) {
+					axis = FederatedPlannerUtils.deriveFedInitFType((DataOp) input);
+				}
+				if (axis != FType.ROW && axis != FType.COL)
+					continue;
+				long anchorLen = (axis == FType.ROW) ? input.getDim1() : input.getDim2();
+				if (anchorLen <= 0)
+					continue;
+				if (anchorLen != hopAxisLen)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasFederatedInput(List<FType> alignedInputFTypes) {
+		if (alignedInputFTypes == null || alignedInputFTypes.isEmpty())
+			return false;
+		for (FType fType : alignedInputFTypes) {
+			if (fType == null)
+				continue;
+			if (fType == FType.ROW || fType == FType.COL || fType == FType.PART
+					|| fType == FType.FULL || fType == FType.BROADCAST)
+				return true;
+		}
+		return false;
+	}
+
+	private static Set<FType> collectInputCandidates(List<FType> alignedInputFTypes) {
+		if (alignedInputFTypes == null || alignedInputFTypes.isEmpty()) {
+			return Collections.emptySet();
+		}
+		Set<FType> candidates = new LinkedHashSet<>();
+		for (FType fType : alignedInputFTypes) {
+			if (fType != null) {
+				candidates.add(fType);
+			}
+		}
+		return candidates;
+	}
+
+	private static FType pickPreferredAxis(Set<FType> candidates, Hop hop) {
+		if (candidates == null || candidates.isEmpty()) {
+			return null;
+		}
+		boolean hasRow = candidates.contains(FType.ROW);
+		boolean hasCol = candidates.contains(FType.COL);
+		if (hasRow || hasCol) {
+			long rows = hop != null ? hop.getDim1() : -1;
+			long cols = hop != null ? hop.getDim2() : -1;
+			if (rows == 1 && hasCol) {
+				return FType.COL;
+			}
+			if (cols == 1 && hasRow) {
+				return FType.ROW;
+			}
+			return hasRow ? FType.ROW : FType.COL;
+		}
+		if (candidates.contains(FType.FULL)) {
+			return FType.FULL;
+		}
+		if (candidates.contains(FType.PART)) {
+			return FType.PART;
+		}
+		if (candidates.contains(FType.BROADCAST)) {
+			return FType.BROADCAST;
+		}
+		return null;
+	}
+
+	private static FType inferFedInitType(Hop hop) {
+		if (!(hop instanceof DataOp)) {
+			return null;
+		}
+		DataOp dataOp = (DataOp) hop;
+		String name = dataOp.getName();
+		if (FederatedPlannerUtils.isFedInitVar(name)) {
+			return FederatedPlannerUtils.getFedInitFType(name);
+		}
+		return null;
+	}
+
+	private static boolean isMatrixHop(Hop hop) {
+		return hop != null && hop.getDataType() != null && hop.getDataType().isMatrix();
+	}
+
+	private static List<ConsumerRef> resolveConsumerRefs(Hop hop, Map<Long, List<Hop>> rewireTable) {
+		if (hop == null) {
+			return Collections.emptyList();
+		}
+		List<Hop> parents = hop.getParent();
+		if (parents == null || parents.isEmpty()) {
+			return Collections.emptyList();
+		}
+		Set<String> visited = new HashSet<>();
+		Deque<ConsumerEdge> queue = new ArrayDeque<>();
+		for (Hop parent : parents) {
+			queue.add(new ConsumerEdge(parent, hop));
+		}
+		List<ConsumerRef> consumers = new ArrayList<>();
+		while (!queue.isEmpty()) {
+			ConsumerEdge edge = queue.poll();
+			Hop parent = edge.parent;
+			Hop proxy = edge.proxy;
+			if (parent == null) {
+				continue;
+			}
+			String key = parent.getHopID() + ":" + (proxy != null ? proxy.getHopID() : -1);
+			if (!visited.add(key)) {
+				continue;
+			}
+			if (parent instanceof DataOp) {
+				Types.OpOpData opType = ((DataOp) parent).getOp();
+				if (opType == Types.OpOpData.TRANSIENTWRITE) {
+					if (rewireTable != null) {
+						List<Hop> transReads = rewireTable.get(parent.getHopID());
+						if (transReads != null && !transReads.isEmpty()) {
+							for (Hop tr : transReads) {
+								queue.add(new ConsumerEdge(tr, tr));
+							}
+						}
+					}
+					continue;
+				}
+				if (opType == Types.OpOpData.TRANSIENTREAD) {
+					List<Hop> grandParents = parent.getParent();
+					if (grandParents != null && !grandParents.isEmpty()) {
+						for (Hop gp : grandParents) {
+							queue.add(new ConsumerEdge(gp, parent));
+						}
+					}
+					continue;
+				}
+			}
+			consumers.add(new ConsumerRef(parent, proxy));
+		}
+		return consumers;
+	}
+
+	private static List<String> describeConsumerRefs(List<ConsumerRef> refs) {
+		if (refs == null || refs.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<String> desc = new ArrayList<>(refs.size());
+		for (ConsumerRef ref : refs) {
+			if (ref == null || ref.consumer == null) {
+				continue;
+			}
+			String proxy = (ref.inputHop != null)
+					? (ref.inputHop.getHopID() + ":" + ref.inputHop.getOpString())
+					: "null";
+			desc.add(ref.consumer.getHopID() + ":" + ref.consumer.getOpString() + "<-" + proxy);
+		}
+		return desc;
+	}
+
+	private static final class ConsumerRef {
+		private final Hop consumer;
+		private final Hop inputHop;
+
+		private ConsumerRef(Hop consumer, Hop inputHop) {
+			this.consumer = consumer;
+			this.inputHop = inputHop;
+		}
+	}
+
+	private static final class ConsumerEdge {
+		private final Hop parent;
+		private final Hop proxy;
+
+		private ConsumerEdge(Hop parent, Hop proxy) {
+			this.parent = parent;
+			this.proxy = proxy;
+		}
+	}
+
+	private static final class ConsumerConstraints {
+		private final Set<FType> candidates;
+		private final boolean constrained;
+
+		private ConsumerConstraints(Set<FType> candidates, boolean constrained) {
+			this.candidates = (candidates != null) ? candidates : Collections.emptySet();
+			this.constrained = constrained;
+		}
+
+		private static ConsumerConstraints unconstrained() {
+			return new ConsumerConstraints(Collections.emptySet(), false);
+		}
 	}
 
 	public static List<FType> alignInputFTypes(Hop hop, List<Hop> collectedHops, List<FType> collectedFTypes) {

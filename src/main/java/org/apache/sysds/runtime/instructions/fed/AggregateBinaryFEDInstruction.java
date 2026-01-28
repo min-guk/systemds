@@ -44,6 +44,7 @@ import org.apache.sysds.runtime.matrix.operators.Operator;
 
 public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 	private static final Log LOG = LogFactory.getLog(AggregateBinaryFEDInstruction.class.getName());
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 	
 	public AggregateBinaryFEDInstruction(Operator op, CPOperand in1,
 		CPOperand in2, CPOperand out, String opcode, String istr) {
@@ -94,6 +95,26 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 	public void processInstruction(ExecutionContext ec) {
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
+		if (DEBUG_KMEANS) {
+			String f1 = mo1.isFederated() && mo1.getFedMapping() != null ? mo1.getFedMapping().getType().name() : "LOCAL";
+			String f2 = mo2.isFederated() && mo2.getFedMapping() != null ? mo2.getFedMapping().getType().name() : "LOCAL";
+			System.out.println("[DBG-KMEANS] aggBinary in1=" + input1.getName()
+				+ " dims1=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " ftype1=" + f1
+				+ " in2=" + input2.getName()
+				+ " dims2=" + mo2.getNumRows() + "x" + mo2.getNumColumns()
+				+ " ftype2=" + f2
+				+ " fedOut=" + _fedOut);
+		}
+
+		if (!mo1.isFederated() && !mo2.isFederated()) {
+			throw new DMLRuntimeException("FED aggregate binary requires at least one federated input but both are local. "
+				+ "op=" + instOpcode + " in1=" + input1.getName()
+				+ " dims1=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " in2=" + input2.getName()
+				+ " dims2=" + mo2.getNumRows() + "x" + mo2.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
+		}
 
 		//TODO cleanup unnecessary redundancy
 		//#1 federated matrix-vector multiplication
@@ -106,12 +127,55 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 				writeInfoLog(mo1, mo2);
 			aggregateLocally(mo1.getFedMapping(), true, ec, fr1);
 		}
+		// SPECIAL CASE: broadcast-left x row-federated-right should slice/broadcast the left input
+		// according to the RHS row partitions and aggregate by addition. Broadcasting the federated
+		// RHS would attempt to materialize it locally and can yield empty blocks.
+		else if (mo2.isFederated(FType.ROW) && mo1.isFederated(FType.BROADCAST)
+			&& !mo2.isFederated(FType.BROADCAST)) {
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] aggBinary branch=broadcastLeft_rowRight_slice");
+			}
+			if (mo2.isFederated(FType.BROADCAST)) {
+				// should not happen due to guard, but keep for completeness
+				FederatedRequest fr1 = mo2.getFedMapping().broadcast(mo1);
+				FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+					new CPOperand[]{input1, input2},
+					new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
+				aggregateLocallySingleWorker(mo2.getFedMapping(), ec, fr1, fr2);
+			}
+			else {
+				// slice left input along RHS row partitions (columns of the left input)
+				FederatedRequest[] fr1 = mo2.getFedMapping().broadcastSliced(mo1, true);
+				FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+					new CPOperand[]{input1, input2},
+					new long[]{fr1[0].getID(), mo2.getFedMapping().getID()}, true);
+				if ( _fedOut.isForcedFederated() ){
+					writeInfoLog(mo1, mo2);
+				}
+				aggregateLocally(mo2.getFedMapping(), true, ec, fr1, fr2);
+			}
+		}
 		else if(mo1.isFederated(FType.ROW)) { // MV + MM
-			//construct commands: broadcast rhs, fed mv, retrieve results
-			FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] aggBinary branch=leftRow");
+			}
+			//construct commands: broadcast rhs (unless already federated broadcast on same workers), fed mv, retrieve results
+			FederatedRequest fr1 = null;
+			long rhsID;
+			boolean rhsBroadcast = mo2.isFederated(FType.BROADCAST);
+			if (rhsBroadcast) {
+				if (!isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()))
+					throw new DMLRuntimeException("FED aggregate binary requires aligned worker pools for federated broadcast "
+						+ "input. op=" + instOpcode + " in1=" + input1.getName() + " in2=" + input2.getName());
+				rhsID = mo2.getFedMapping().getID();
+			}
+			else {
+				fr1 = mo1.getFedMapping().broadcast(mo2);
+				rhsID = fr1.getID();
+			}
 			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
 				new CPOperand[]{input1, input2},
-				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
+				new long[]{mo1.getFedMapping().getID(), rhsID}, true);
 
 			boolean isVector = mo2.getNumColumns() == 1;
 			boolean isPartOut = mo1.isFederated(FType.PART) || // MV and MM
@@ -121,26 +185,77 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			}
 			if((_fedOut.isForcedFederated() || (!isVector && !_fedOut.isForcedLocal()))
 				&& !isPartOut) { // not creating federated output in the MV case for reasons of performance
-				Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+				Future<FederatedResponse>[] ffr = (fr1 != null) ?
+					mo1.getFedMapping().execute(getTID(), true, fr1, fr2) :
+					mo1.getFedMapping().execute(getTID(), true, fr2);
 				setOutputFedMapping(mo1.getFedMapping(), mo1, mo2,
 					FederationUtils.sumNonZeros(ffr), fr2.getID(), ec);
 			}
 			else {
-				boolean isDoubleBroadcast = (mo1.isFederated(FType.BROADCAST) && mo2.isFederated(FType.BROADCAST));
-				if (isDoubleBroadcast){
-					aggregateLocallySingleWorker(mo1.getFedMapping(), ec, fr1, fr2);
+				// If the left input is replicated (BROADCAST) and the RHS is also replicated, all workers compute
+				// the same result -> use one. Otherwise, BROADCAST x ROW requires summing partial results across
+				// workers (the RHS is partitioned along the shared dimension).
+				if (mo1.isFederated(FType.BROADCAST) && rhsBroadcast && !isPartOut) {
+					if (DEBUG_KMEANS) {
+						System.out.println("[DBG-KMEANS] aggBinary agg=single reason=broadcastXbroadcast");
+					}
+					if (fr1 != null)
+						aggregateLocallySingleWorker(mo1.getFedMapping(), ec, fr1, fr2);
+					else
+						aggregateLocallySingleWorker(mo1.getFedMapping(), ec, fr2);
 				}
-				else{
-					aggregateLocally(mo1.getFedMapping(), false, ec, fr1, fr2);
+				else if (mo1.isFederated(FType.BROADCAST) && mo2.isFederated(FType.ROW) && !rhsBroadcast) {
+					if (DEBUG_KMEANS) {
+						System.out.println("[DBG-KMEANS] aggBinary agg=add reason=broadcastXrow");
+					}
+					if (fr1 != null)
+						aggregateLocally(mo1.getFedMapping(), true, ec, fr1, fr2);
+					else
+						aggregateLocally(mo1.getFedMapping(), true, ec, fr2);
+				}
+				else {
+					if (DEBUG_KMEANS) {
+						System.out.println("[DBG-KMEANS] aggBinary agg=bind reason=default");
+					}
+					if (fr1 != null)
+						aggregateLocally(mo1.getFedMapping(), false, ec, fr1, fr2);
+					else
+						aggregateLocally(mo1.getFedMapping(), false, ec, fr2);
 				}
 			}
 		}
-		//#2 vector - federated matrix multiplication
-		else if (mo2.isFederated(FType.ROW)) {// VM + MM
-			//construct commands: broadcast rhs, fed mv, retrieve results
-			FederatedRequest[] fr1 = mo2.getFedMapping().broadcastSliced(mo1, true);
-			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
-				new CPOperand[]{input1, input2},
+			//#2 vector - federated matrix multiplication
+			else if (mo2.isFederated(FType.ROW)) {// VM + MM
+				if (DEBUG_KMEANS) {
+					System.out.println("[DBG-KMEANS] aggBinary branch=rightRow");
+				}
+				// If the RHS is replicated (BROADCAST), every worker would compute the same result.
+				// Sliced broadcast and aggregation-by-add would either fail (invalid slicing) or duplicate results.
+				if (mo2.isFederated(FType.BROADCAST)) {
+					FederatedRequest fr1 = mo2.getFedMapping().broadcast(mo1);
+					FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+						new CPOperand[]{input1, input2},
+						new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
+					if (_fedOut.isForcedFederated()) {
+						Future<FederatedResponse>[] ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2);
+						long nnz = -1;
+						try {
+							nnz = (Long) ffr[0].get().getData()[0];
+						}
+						catch(Exception ex) {
+							nnz = -1;
+						}
+						setOutputFedMapping(mo2.getFedMapping(), mo1, mo2, nnz, fr2.getID(), ec);
+					}
+					else {
+						aggregateLocallySingleWorker(mo2.getFedMapping(), ec, fr1, fr2);
+					}
+					return;
+				}
+				//construct commands: broadcast rhs, fed mv, retrieve results
+				FederatedRequest[] fr1 = mo2.getFedMapping().broadcastSliced(mo1, true);
+				FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+					new CPOperand[]{input1, input2},
 				new long[]{fr1[0].getID(), mo2.getFedMapping().getID()}, true);
 			if ( _fedOut.isForcedFederated() ){
 				writeInfoLog(mo1, mo2);
@@ -208,6 +323,12 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			.setDimension(mo1.getNumRows(), mo2.getNumColumns())
 			.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
 		out.setFedMapping(federationMap.copyWithNewID(outputID, mo2.getNumColumns()));
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] aggBinary " + instOpcode + " out=" + output.getName()
+				+ " dims=" + mo1.getNumRows() + "x" + mo2.getNumColumns()
+				+ " nnz=" + nnz
+				+ " ftype=" + federationMap.getType());
+		}
 	}
 
 	private void aggregateLocally(FederationMap fedMap, boolean aggAdd, ExecutionContext ec,
@@ -242,6 +363,12 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		else
 			ret = FederationUtils.bind(ffr, false);
 		ec.setMatrixOutput(output.getName(), ret);
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] aggBinary " + instOpcode + " out=" + output.getName()
+				+ " dims=" + ret.getNumRows() + "x" + ret.getNumColumns()
+				+ " nnz=" + ret.getNonZeros()
+				+ " local=true");
+		}
 	}
 
 	private void aggregateLocallySingleWorker(FederationMap fedMap, ExecutionContext ec, FederatedRequest... fr) {
@@ -255,8 +382,31 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			//use only one response (all responses contain the same result)
 			MatrixBlock ret = (MatrixBlock) ffr[0].get().getData()[0];
 			ec.setMatrixOutput(output.getName(), ret);
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] aggBinary " + instOpcode + " out=" + output.getName()
+					+ " dims=" + ret.getNumRows() + "x" + ret.getNumColumns()
+					+ " nnz=" + ret.getNonZeros()
+					+ " local=true(single)");
+			}
 		} catch(Exception ex){
 			throw new DMLRuntimeException(ex);
 		}
+	}
+
+	private static boolean isSameWorkerPool(FederationMap a, FederationMap b) {
+		if (a == null || b == null)
+			return false;
+		if (a.getSize() != b.getSize())
+			return false;
+		int n = a.getSize();
+		String[] as = new String[n];
+		String[] bs = new String[n];
+		for (int i = 0; i < n; i++) {
+			as[i] = String.valueOf(a.getMap().get(i).getValue() != null ? a.getMap().get(i).getValue().getAddress() : null);
+			bs[i] = String.valueOf(b.getMap().get(i).getValue() != null ? b.getMap().get(i).getValue().getAddress() : null);
+		}
+		java.util.Arrays.sort(as);
+		java.util.Arrays.sort(bs);
+		return java.util.Arrays.equals(as, bs);
 	}
 }

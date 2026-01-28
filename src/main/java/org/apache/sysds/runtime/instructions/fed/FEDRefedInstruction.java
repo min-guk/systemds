@@ -21,10 +21,13 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import java.util.ArrayList;
 import java.util.List;
-
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.lops.Lop;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
@@ -42,6 +45,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 	private final CPOperand _input;
 	private final CPOperand _anchor;
 	private final CPOperand _output;
+	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 
 	private FEDRefedInstruction(CPOperand input, CPOperand anchor, CPOperand output, String opcode, String istr) {
 		super(FEDType.Refed, opcode, istr);
@@ -63,17 +67,21 @@ public class FEDRefedInstruction extends FEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
-		if (in.isFederated())
-			throw new DMLRuntimeException("fed_refed expects a local input but found federated input: " + _input.getName());
-
 		MatrixObject anchor = ec.getMatrixObject(_anchor);
-		if (!anchor.isFederated())
+		FederationMap anchorMap = null;
+		if (anchor.isFederated()) {
+			anchorMap = anchor.getFedMapping();
+		}
+		else {
 			throw new DMLRuntimeException("fed_refed requires a federated anchor: " + _anchor.getName());
+		}
 
-		FederationMap anchorMap = anchor.getFedMapping();
 		FType fType = anchorMap.getType();
 		if (fType == FType.PART || fType == FType.OTHER)
 			throw new DMLRuntimeException("fed_refed does not support anchor type " + fType);
+
+		if (in.isFederated())
+			throw new DMLRuntimeException("fed_refed expects a local input but found federated input: " + _input.getName());
 
 		long rlen = in.getNumRows();
 		long clen = in.getNumColumns();
@@ -114,6 +122,13 @@ public class FEDRefedInstruction extends FEDInstruction {
 		MatrixObject out = ec.getMatrixObject(_output);
 		out.setFedMapping(anchorMap.copyWithNewID(outId));
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] fed_refed in=" + _input.getName()
+				+ " out=" + _output.getName()
+				+ " dims=" + rlen + "x" + clen
+				+ " anchor=" + _anchor.getName()
+				+ " type=" + anchorMap.getType());
+		}
 	}
 
 	private static void materializeFallback(long tid, MatrixObject in, FederationMap anchorMap, FType anchorType,
@@ -213,7 +228,13 @@ public class FEDRefedInstruction extends FEDInstruction {
 			}
 		}
 
-		out.setFedMapping(new FederationMap(outId, outMap, outType));
+		// If we broadcast the full object to multiple workers, this is replication and should be
+		// represented via BROADCAST maps (not FULL) to avoid downstream slicing/execute mismatches.
+		FType mapType = outType;
+		if (outType == FType.FULL && anchorMap.getSize() > 1)
+			mapType = FType.BROADCAST;
+		out.setFedMapping(new FederationMap(outId, outMap, mapType));
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
 	}
+
 }

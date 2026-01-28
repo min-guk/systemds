@@ -89,6 +89,17 @@ public final class TransTableRewireUtils {
 				rewireTable.put(hopId, snapshot);
 				childHops = snapshot;
 			}
+		} else if (!containsTransientWrite(childHops)) {
+			// Prefer a prior TWrite mapping over stale mappings that only point to outer sources.
+			// Use former/outer tables (exclude inner table) to avoid capturing same-block assignments.
+			List<Hop> fromFormer = rewireTransRead(hopName, null, formerTransTable, outerTransTableList);
+			if (fromFormer != null && !fromFormer.isEmpty() && containsTransientWrite(fromFormer)) {
+				List<Hop> snapshot = new ArrayList<>(fromFormer);
+				if (rewireTable != null) {
+					rewireTable.put(hopId, snapshot);
+				}
+				childHops = snapshot;
+			}
 		}
 
 		if (childHops == null || childHops.isEmpty()) {
@@ -269,6 +280,16 @@ public final class TransTableRewireUtils {
 		return hop instanceof DataOp
 				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE
 				&& hop.getName().equals(name);
+	}
+
+	private static boolean containsTransientWrite(List<Hop> hops) {
+		if (hops == null || hops.isEmpty())
+			return false;
+		for (Hop hop : hops) {
+			if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
+				return true;
+		}
+		return false;
 	}
 
 	public static List<Hop> filterByName(List<Hop> childHops, String hopName, boolean fallbackToOriginal) {

@@ -24,6 +24,11 @@ import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 
 public final class FederatedCostModel {
+	private static final String ENV_MBS_MEMORY_BANDWIDTH = "SYSDS_FED_COST_MEM_BW";
+	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
+	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
+	private static final String ENV_FLOPS_PER_SEC = "SYSDS_FED_COST_FLOPS";
+
 	// Default values are used as reasonable estimates since we only need to compare
 	// relative costs between different federated plans.
 	// Memory bandwidth for local computations (25 GB/s).
@@ -32,6 +37,18 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
 	// Network latency between federated sites (1 ms).
 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
+	// Compute throughput (FLOPs/s), consistent with CostEstimatorStaticRuntime defaults.
+	private static final double DEFAULT_FLOPS_PER_SEC = 2d * 1024 * 1024 * 1024;
+	// All costs are returned in milliseconds.
+	private static final double TO_MS = 1000.0;
+	private static final double MBS_MEMORY_BANDWIDTH = getConfiguredDouble(ENV_MBS_MEMORY_BANDWIDTH,
+			DEFAULT_MBS_MEMORY_BANDWIDTH);
+	private static final double MBS_NETWORK_BANDWIDTH = getConfiguredDouble(ENV_MBS_NETWORK_BANDWIDTH,
+			DEFAULT_MBS_NETWORK_BANDWIDTH);
+	private static final double MBS_NETWORK_LATENCY = getConfiguredDouble(ENV_MBS_NETWORK_LATENCY,
+			DEFAULT_MBS_NETWORK_LATENCY);
+	private static final double FLOPS_PER_SEC = getConfiguredDouble(ENV_FLOPS_PER_SEC,
+			DEFAULT_FLOPS_PER_SEC);
 
 	private FederatedCostModel() {
 		// utility class
@@ -39,23 +56,24 @@ public final class FederatedCostModel {
 
 	public static double computeOpCost(Hop currentHop) {
 		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
+		double computeTime = (computeCost / FLOPS_PER_SEC) * TO_MS;
 		double inputAccessCost = computeMemoryAccessCost(currentHop.getInputMemEstimate());
 		double outputAccessCost = computeMemoryAccessCost(currentHop.getOutputMemEstimate());
 
 		// Total cost assumes:
 		// 1) Computation and input access can overlap (take max)
 		// 2) Output access must wait for both (add)
-		return Math.max(computeCost, inputAccessCost) + outputAccessCost;
+		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
 	}
 
 	public static double computeMemoryAccessCost(double memSize) {
 		if (memSize <= 0)
 			return 0.0;
-		return memSize / (1024 * 1024) / DEFAULT_MBS_MEMORY_BANDWIDTH;
+		return (memSize / (1024 * 1024) / MBS_MEMORY_BANDWIDTH) * TO_MS;
 	}
 
 	public static double computeNetworkCost(double memSize) {
-		return DEFAULT_MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / DEFAULT_MBS_NETWORK_BANDWIDTH);
+		return (MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / MBS_NETWORK_BANDWIDTH)) * TO_MS;
 	}
 
 	public static double computeDownloadNetworkCost(double memSize) {
@@ -67,7 +85,7 @@ public final class FederatedCostModel {
 	public static double computeUploadNetworkCost(double memSize, FType fType, int numWorkers) {
 		if (memSize <= 0)
 			return 0.0;
-		double multiplier = (fType == FType.FULL || fType == FType.BROADCAST)
+		double multiplier = (fType != null && (fType == FType.FULL || fType == FType.BROADCAST))
 				? Math.max(1, numWorkers)
 				: 1.0;
 		return computeNetworkCost(memSize * multiplier);
@@ -76,5 +94,18 @@ public final class FederatedCostModel {
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return computeUploadNetworkCost(memSize, fType, numWorkers);
 	}
-}
 
+	private static double getConfiguredDouble(String key, double fallback) {
+		String value = System.getProperty(key);
+		if (value == null || value.isEmpty())
+			value = System.getenv(key);
+		if (value == null || value.isEmpty())
+			return fallback;
+		try {
+			return Double.parseDouble(value);
+		} catch (NumberFormatException ex) {
+			return fallback;
+		}
+	}
+}
+ 

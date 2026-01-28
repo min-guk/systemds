@@ -556,8 +556,17 @@ public class MatrixObject extends CacheableData<MatrixBlock> {
 		try {
 			if(fedMap.getType() == FType.PART)
 				return FederationUtils.aggregateResponses(readResponses);
-			else
-				return FederationUtils.bindResponses(readResponses, dims);
+			else {
+				// Robustness: federated outputs may occasionally carry stale/unknown dimensions in their
+				// local metadata. Since the federation map ranges are authoritative for the distributed
+				// shape, ensure that the requested output dims cover at least the map extents to avoid
+				// truncation during bind.
+				long mapR = fedMap.getMaxIndexInRange(0);
+				long mapC = fedMap.getMaxIndexInRange(1);
+				long r = (dims != null && dims.length > 0) ? Math.max(dims[0], mapR) : mapR;
+				long c = (dims != null && dims.length > 1) ? Math.max(dims[1], mapC) : mapC;
+				return FederationUtils.bindResponses(readResponses, new long[] {r, c});
+			}
 		}
 		catch(Exception e) {
 			throw new DMLRuntimeException("Federated matrix read failed.", e);

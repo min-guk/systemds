@@ -49,16 +49,24 @@ import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.IndexingCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
+import org.apache.sysds.runtime.instructions.cp.ScalarObjectFactory;
 import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysds.runtime.instructions.spark.IndexingSPInstruction;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.util.IndexRange;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 	protected final CPOperand rowLower, rowUpper, colLower, colUpper;
 
 	protected IndexingFEDInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu,
 		CPOperand out, String opcode, String istr) {
-		super(FEDInstruction.FEDType.MatrixIndexing, null, in, out, opcode, istr);
+		this(in, rl, ru, cl, cu, out, opcode, istr, FederatedOutput.NONE);
+	}
+
+	protected IndexingFEDInstruction(CPOperand in, CPOperand rl, CPOperand ru, CPOperand cl, CPOperand cu,
+		CPOperand out, String opcode, String istr, FederatedOutput fedOut) {
+		super(FEDInstruction.FEDType.MatrixIndexing, null, in, out, opcode, istr, fedOut);
 		rowLower = rl;
 		rowUpper = ru;
 		colLower = cl;
@@ -67,7 +75,12 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 
 	protected IndexingFEDInstruction(CPOperand lhsInput, CPOperand rhsInput, CPOperand rl, CPOperand ru, CPOperand cl,
 		CPOperand cu, CPOperand out, String opcode, String istr) {
-		super(FEDInstruction.FEDType.MatrixIndexing, null, lhsInput, rhsInput, out, opcode, istr);
+		this(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, istr, FederatedOutput.NONE);
+	}
+
+	protected IndexingFEDInstruction(CPOperand lhsInput, CPOperand rhsInput, CPOperand rl, CPOperand ru, CPOperand cl,
+		CPOperand cu, CPOperand out, String opcode, String istr, FederatedOutput fedOut) {
+		super(FEDInstruction.FEDType.MatrixIndexing, null, lhsInput, rhsInput, out, opcode, istr, fedOut);
 		rowLower = rl;
 		rowUpper = ru;
 		colLower = cl;
@@ -75,11 +88,43 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 	}
 
 	protected IndexRange getIndexRange(ExecutionContext ec) {
+		// NOTE: For federated instructions, scalar operands might be patched via
+		// Instruction.updateLabels (¶_VarX¶ -> "2") while retaining isLiteral=false
+		// (as encoded by Lop.prepScalarOperand for non-CP exec types). In such cases,
+		// ExecutionContext.getScalarInput would try to resolve a variable named "2".
+		// Hence, we add a robustness fallback to interpret numeric strings as literals.
 		return new IndexRange( // rl, ru, cl, ru
-			(int) (ec.getScalarInput(rowLower).getLongValue() - 1),
-			(int) (ec.getScalarInput(rowUpper).getLongValue() - 1),
-			(int) (ec.getScalarInput(colLower).getLongValue() - 1),
-			(int) (ec.getScalarInput(colUpper).getLongValue() - 1));
+			(int) (getScalarIndexValue(ec, rowLower) - 1),
+			(int) (getScalarIndexValue(ec, rowUpper) - 1),
+			(int) (getScalarIndexValue(ec, colLower) - 1),
+			(int) (getScalarIndexValue(ec, colUpper) - 1));
+	}
+
+	private static long getScalarIndexValue(ExecutionContext ec, CPOperand operand) {
+		try {
+			return ec.getScalarInput(operand).getLongValue();
+		}
+		catch(DMLRuntimeException ex) {
+			String name = operand.getName();
+			if(operand.isScalar() && !operand.isLiteral() && isNumericLiteral(name) && !ec.containsVariable(name))
+				return ec.getScalarInput(name, operand.getValueType(), true).getLongValue();
+			throw ex;
+		}
+	}
+
+	private static boolean isNumericLiteral(String value) {
+		if(value == null || value.isEmpty())
+			return false;
+		char c0 = value.charAt(0);
+		if(!Character.isDigit(c0) && c0 != '-' && c0 != '+')
+			return false;
+		try {
+			Double.parseDouble(value);
+			return true;
+		}
+		catch(NumberFormatException e) {
+			return false;
+		}
 	}
 
 	public static IndexingFEDInstruction parseInstruction(IndexingCPInstruction instr) {
@@ -105,11 +150,12 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 				cl = new CPOperand(parts[4]);
 				cu = new CPOperand(parts[5]);
 				out = new CPOperand(parts[6]);
+				FederatedOutput fedOut = parts.length > 7 ? FederatedOutput.valueOf(parts[7]) : FederatedOutput.NONE;
 
 				if(in.getDataType() != Types.DataType.MATRIX && in.getDataType() != Types.DataType.FRAME)
 					throw new DMLRuntimeException("Can index only on matrices, frames in federated.");
 
-				return new IndexingFEDInstruction(in, rl, ru, cl, cu, out, opcode, str);
+				return new IndexingFEDInstruction(in, rl, ru, cl, cu, out, opcode, str, fedOut);
 			}
 			else {
 				throw new DMLRuntimeException("Invalid number of operands in instruction: " + str);
@@ -125,12 +171,13 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 				cl = new CPOperand(parts[5]);
 				cu = new CPOperand(parts[6]);
 				out = new CPOperand(parts[7]);
+				FederatedOutput fedOut = parts.length > 8 ? FederatedOutput.valueOf(parts[8]) : FederatedOutput.NONE;
 
 				if((lhsInput.getDataType() != Types.DataType.MATRIX && lhsInput.getDataType() != Types.DataType.FRAME) &&
 					(rhsInput.getDataType() != Types.DataType.MATRIX && rhsInput.getDataType() != Types.DataType.FRAME))
 					throw new DMLRuntimeException("Can index only on matrices, frames, and lists.");
 
-				return new IndexingFEDInstruction(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, str);
+				return new IndexingFEDInstruction(lhsInput, rhsInput, rl, ru, cl, cu, out, opcode, str, fedOut);
 			}
 			else {
 				throw new DMLRuntimeException("Invalid number of operands in instruction: " + str);
@@ -143,10 +190,31 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 
 	@Override
 	public void processInstruction(ExecutionContext ec) {
+		if(!input1.isList()) {
+			CacheableData<?> in = ec.getCacheableData(input1);
+			if(in.getFedMapping() == null)
+				throw new DMLRuntimeException("FED indexing requires federated input but found local at runtime. "
+					+ "op=" + instOpcode + " input=" + input1.getName() + " output=" + output.getName()
+					+ " inst=" + instString);
+		}
+
 		if(getOpcode().equalsIgnoreCase(Opcodes.RIGHT_INDEX.toString()))
 			rightIndexing(ec);
 		else
 			leftIndexing(ec);
+	}
+
+
+	private static String createCPOperandString(ExecutionContext ec, CPOperand operand) {
+		if(operand.isLiteral())
+			return InstructionUtils.createLiteralOperand(operand.getName(), operand.getValueType());
+
+		String name = operand.getName();
+		if(isNumericLiteral(name) && !ec.containsVariable(name))
+			return InstructionUtils.createLiteralOperand(name, operand.getValueType());
+
+		return InstructionUtils.concatOperandParts(
+			name, operand.getDataType().name(), operand.getValueType().name(), String.valueOf(false));
 	}
 
 	private void rightIndexing(ExecutionContext ec)
@@ -201,6 +269,69 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 		FederatedRequest[] fr1 = FederationUtils.callInstruction(instStrings, output, id,
 			new CPOperand[] {input1}, new long[] {fedMap.getID()}, execType);
 		Future<FederatedResponse>[] ret = fedMap.execute(getTID(), true, fr1, new FederatedRequest[0]);
+
+		// Scalar rightIndex: fetch the (potentially 1x1) result and return a scalar value in CP.
+		// This is required for patterns like A[i,j] or A[i,] with num_runs=1 that are optimized to scalar outputs.
+		if (output.isScalar()) {
+			// Ensure indexing completed (and surface any worker-side errors) before fetching outputs.
+			FederationUtils.sumNonZeros(ret);
+
+			long outId = fr1[0].getID();
+			FederatedRequest frG = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, outId);
+			FederatedRequest frC = fedMap.cleanup(getTID(), outId);
+			Future<FederatedResponse>[] ffrGet = fedMap.execute(getTID(), frG, frC);
+
+			Object scalarObj = null;
+			try {
+				for (Future<FederatedResponse> fr : ffrGet) {
+					Object[] data = fr.get().getData();
+					if (data != null && data.length > 0 && data[0] != null) {
+						scalarObj = data[0];
+						break;
+					}
+				}
+			}
+			catch (Exception ex) {
+				throw new DMLRuntimeException(ex);
+			}
+			if (scalarObj == null)
+				throw new DMLRuntimeException("FED rightIndex failed to retrieve scalar output from federated workers.");
+
+			final ScalarObject outScalar;
+			if (scalarObj instanceof ScalarObject)
+				outScalar = ScalarObjectFactory.createScalarObject(output.getValueType(), (ScalarObject) scalarObj);
+			else if (scalarObj instanceof MatrixBlock)
+				outScalar = ScalarObjectFactory.createScalarObject(output.getValueType(), ((MatrixBlock) scalarObj).get(0, 0));
+			else
+				throw new DMLRuntimeException("FED rightIndex returned unsupported scalar output type: "
+					+ scalarObj.getClass().getName());
+
+			ec.setScalarOutput(output.getName(), outScalar);
+			return;
+		}
+
+		// Respect forced local output: retrieve partition results and bind them into a local MatrixBlock.
+		if (_fedOut != null && _fedOut.isForcedLocal()) {
+			if (!input1.isMatrix())
+				throw new DMLRuntimeException("FED rightIndex forced local output is supported only for matrices.");
+
+			// Ensure indexing completed (and surface any worker-side errors) before fetching outputs.
+			FederationUtils.sumNonZeros(ret);
+
+			long outId = fr1[0].getID();
+			FederatedRequest frG = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, outId);
+			FederatedRequest frC = fedMap.cleanup(getTID(), outId);
+			Future<FederatedResponse>[] ffrGet = fedMap.execute(getTID(), frG, frC);
+
+			org.apache.sysds.runtime.matrix.data.MatrixBlock mb;
+			if (fedMap.getType() == FType.BROADCAST)
+				mb = FederationUtils.getResults(ffrGet)[0];
+			else
+				mb = FederationUtils.bind(ffrGet, fedMap.getType() == FType.COL);
+
+			ec.setMatrixOutput(output.getName(), mb);
+			return;
+		}
 		
 		//set output characteristics for frames and matrices
 		CacheableData<?> out = ec.getCacheableData(output);

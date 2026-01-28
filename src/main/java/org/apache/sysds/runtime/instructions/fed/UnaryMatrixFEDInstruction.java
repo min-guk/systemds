@@ -115,7 +115,10 @@ public class UnaryMatrixFEDInstruction extends UnaryFEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject mo1 = ec.getMatrixObject(input1);
-		if(getOpcode().startsWith("ucum") && mo1.isFederated(FType.ROW))
+		// Cumulative ops (ucum*) have special handling for ROW-partitioned inputs to
+		// preserve global cumulative semantics. Do not treat BROADCAST/FULL as ROW here.
+		FType mapType = (mo1.isFederated() && mo1.getFedMapping() != null) ? mo1.getFedMapping().getType() : null;
+		if(getOpcode().startsWith("ucum") && mapType == FType.ROW)
 			processCumulativeInstruction(ec, mo1);
 		else {
 			//federated execution on arbitrary row/column partitions

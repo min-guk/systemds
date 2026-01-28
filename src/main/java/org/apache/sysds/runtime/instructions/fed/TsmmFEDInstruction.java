@@ -83,6 +83,12 @@ public class TsmmFEDInstruction extends BinaryFEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject mo1 = ec.getMatrixObject(input1);
+		if (!mo1.isFederated()) {
+			throw new DMLRuntimeException("FED tsmm requires federated input but found local at runtime. "
+				+ "input=" + input1.getName() + " output=" + output.getName()
+				+ " dims=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
+		}
 		if((_type.isLeft() && mo1.isFederated(FType.ROW)) || (mo1.isFederated(FType.COL) && _type.isRight()))
 			processRowCol(ec, mo1);
 		else { //other combinations
@@ -128,4 +134,5 @@ public class TsmmFEDInstruction extends BinaryFEDInstruction {
 			.copyWithNewIDAndRange(mo1.getNumColumns(), mo1.getNumColumns(), fr1.getID(), outFType);
 		out.setFedMapping(outputFedMap);
 	}
+
 }

@@ -102,6 +102,8 @@ public abstract class Hop implements ParseInfo {
 	 * If it is lout, the output should be retrieved by the coordinator.
 	 */
 	protected FederatedOutput _federatedOutput = FederatedOutput.NONE;
+	// Indicates whether a FED/FOUT placement is derived via local intermediate (refed).
+	protected boolean _federatedOutputDerived = false;
 
 	/**
 	 * Field defining if prefetch should be activated for operation.
@@ -191,6 +193,14 @@ public abstract class Hop implements ParseInfo {
 
 	public void setFederatedOutput(FederatedOutput federatedOutput){
 		_federatedOutput = federatedOutput;
+	}
+
+	public void setFederatedOutputDerived(boolean derived) {
+		_federatedOutputDerived = derived;
+	}
+
+	public boolean isFederatedOutputDerived() {
+		return _federatedOutputDerived;
 	}
 
 	/**
@@ -384,13 +394,24 @@ public abstract class Hop implements ParseInfo {
 
 	public void updateLopFedOut(Lop lop, ExecType execType, FederatedOutput fedOut){
 		if ( execType == ExecType.FED )
-			lop.setFederatedOutput(fedOut);
+			lop.setFederatedOutput(getEffectiveFederatedOutput(execType, fedOut));
+	}
+
+	private FederatedOutput getEffectiveFederatedOutput(ExecType execType, FederatedOutput fedOut) {
+		if (execType == ExecType.FED && _federatedOutputDerived && fedOut == FederatedOutput.FOUT)
+			return FederatedOutput.LOUT;
+		return fedOut;
 	}
 	
 	public void constructAndSetLopsDataFlowProperties() {
 		//propagate federated output configuration to lops
-		if( isFederated() || getLops().getExecType() == ExecType.FED )
-			getLops().setFederatedOutput(_federatedOutput);
+		// NOTE: DataOps (e.g., transient reads) can execute in CP while still representing
+		// an already-federated object in the symbol table. In such cases we must propagate
+		// the forced federated output marker to the lop as well, otherwise downstream FED
+		// ops might incorrectly try to "refed" an input that is already federated at runtime.
+		if( (_federatedOutput != null && _federatedOutput.isForced())
+			|| isFederated() || getLops().getExecType() == ExecType.FED )
+			getLops().setFederatedOutput(getEffectiveFederatedOutput(getLops().getExecType(), _federatedOutput));
 		if ( prefetchActivated() )
 			getLops().activatePrefetch();
 
@@ -1554,6 +1575,7 @@ public abstract class Hop implements ParseInfo {
 		_etype = that._etype;
 		_etypeForced = that._etypeForced;
 		_federatedOutput = that._federatedOutput;
+		_federatedOutputDerived = that._federatedOutputDerived;
 		_outputMemEstimate = that._outputMemEstimate;
 		_memEstimate = that._memEstimate;
 		_processingMemEstimate = that._processingMemEstimate;

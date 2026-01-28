@@ -28,6 +28,7 @@ import org.apache.sysds.runtime.instructions.fed.AppendFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.BinaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.BuiltinNaryFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CentralMomentFEDInstruction;
+import org.apache.sysds.runtime.instructions.fed.CtableFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.CovarianceFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
@@ -108,6 +109,8 @@ public class FEDInstructionParser extends InstructionParser
 				return ParameterizedBuiltinFEDInstruction.parseInstruction(str);
 			case Variable:
 				return VariableFEDInstruction.parseInstruction(str);
+			case Ctable:
+				return CtableFEDInstruction.parseInstruction(str);
 			default:
 				throw new DMLRuntimeException("Invalid FEDERATED Instruction Type: " + fedtype );
 		}

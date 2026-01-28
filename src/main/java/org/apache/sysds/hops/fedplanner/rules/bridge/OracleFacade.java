@@ -92,10 +92,12 @@ public final class OracleFacade {
 
   private final RuleRegistry registry;
   private final RulesCore.OracleEngine oracle;
+  private final RulesCore.InferenceEngine inference;
 
   public OracleFacade(RuleRegistry registry) {
     this.registry = Objects.requireNonNull(registry, "registry");
     this.oracle = new RulesCore.OracleEngine(registry);
+    this.inference = new RulesCore.InferenceEngine(registry);
   }
 
   public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes) {
@@ -122,6 +124,14 @@ public final class OracleFacade {
       results.add(decide(hop, combo, hint));
     }
     return results;
+  }
+
+  public RulesApi.FTypeProfile inferProfile(
+      Hop hop, List<List<FType>> inCandidates, ShapeHint hint) {
+    Objects.requireNonNull(hop, "hop");
+    OpSig sig = buildSignature(hop);
+    ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop);
+    return inference.infer(sig, inCandidates, effectiveHint);
   }
 
   OpSig describe(Hop hop) {
