@@ -218,7 +218,10 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			}
 
 			if (planned.getLeft() == ExecType.FED) {
-				boolean ok = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, plannedFTypeMap);
+				// Validate FED feasibility against the actual planned ExecType/FedOutput markers.
+				// Using the FType-only variant would incorrectly treat CP->FOUT hint entries as
+				// already-federated sources.
+				boolean ok = FederatedRefedPolicy.canSatisfyFederatedInputs(hop, plannedFTypeMap);
 				if (!ok) {
 					throw new DMLRuntimeException("MinST plan requires FED execution for hop " + hopId
 							+ " (" + hop.getOpString() + ") but federated inputs are not satisfiable.");
