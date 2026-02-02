@@ -228,3 +228,31 @@
 - **잔여 이슈**: 계획 시점에 부모 ExecType이 기본 CP로 잡혀 CP→FOUT anchor 판정이 보수적으로 실패할 가능성 추가 점검 필요
 - **잠재 회귀 위험**: 힌트가 과도하게 전파되면 불필요한 업그레이드 시도가 늘 수 있음 → FED 계획/`fed_fout` 로그 비교로 감지
 - **의사결정 근거**: 플래너 규칙 수정(업그레이드 가능성 보존), 런타임 제약 준수(논리 FOUT 맵은 분리 유지)
+
+## 단일 패스 플래너: 업그레이드 판단 시 부모 FED 마킹 누락
+- **상태**: 해결
+- **환경/조건**: 단일‑패스 Max‑FED/FOUT 플래너, FED op가 CP 입력 업그레이드를 요구하는 케이스 (kmeans mkl-single-pass)
+- **재현 절차**: `run_LAN_docker.sh --conf mkl-single-pass --alg kmeans` 실행 후 로그에서 대부분 CP/`NO_FED_INPUT` 확인
+- **관측 증상**: Oracle가 계속 `NO_FED_INPUT`으로 판단하고 업그레이드가 거의 발생하지 않음
+- **원인 분석**: 업그레이드/입력가능성 체크(`canSatisfyFederatedInputsFromFTypes`, `canGenerateCpfoutCandidate`)가 부모 execType=FED를 전제하는데, 단일‑패스에서는 현재 hop을 FED로 임시 마킹하지 않아 anchor 판정이 실패
+- **해결 요약**: FED 후보 판단 전에 현재 hop을 임시로 `ExecType.FED`로 설정하여 anchor 판정이 가능하도록 함
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java`
+- **검증**: 미실행 (kmeans/mkl-single-pass 재실행 필요)
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: 일시적 FED 마킹이 계획 결과를 과도하게 FED로 유도할 가능성 → FED/CP 비율 및 refed 삽입 로그 비교로 감지
+- **의사결정 근거**: 플래너 규칙(입력 federated 가능성 판단 시 부모 FED 전제 필요)
+
+## 단일 패스 플래너: recompile 구간 TRead가 runtime FED anchor를 반영하지 못함
+- **상태**: 해결
+- **환경/조건**: kmeans mkl-single-pass, while/파라포 리컴파일 구간, 입력 X가 런타임 federated
+- **재현 절차**: `run_LAN_docker.sh --conf mkl-single-pass --alg kmeans` 실행 후 로그에서 `RecompileNewHop TRead X exec=FED`인데 FED 연산이 없고 `fed_fout` 누락
+- **관측 증상**: TRead X는 FED/FOUT으로 보이지만, 오퍼레이션 전부 CP로 남아 `fed_fedinit`만 실행
+- **원인 분석**: 단일‑패스 `planTransientRead`가 런타임 federated anchor(FederationMap)를 참조하지 않아, recompile 단계에서 fedVars/_fedInitVars가 비어 있으면 FType 추론이 실패함
+- **해결 요약**: `FederationUtils.getAnchorMap(var)`을 이용해 런타임 anchor가 있으면 TRead를 FED/FOUT(+FType)로 승격
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedAll/FederatedPlannerFedAllMaxFedFoutSinglePass.java`
+- **검증**: 미실행 (kmeans mkl-single-pass 재실행 필요)
+- **잔여 이슈**: 없음
+- **잠재 회귀 위험**: stale anchorMap이 남아있는 경우 잘못된 FED 승격 가능 → 실험 로그에서 예상치 못한 FED 전환 여부 확인
+- **의사결정 근거**: 런타임 anchor(실제 FederationMap) 기반으로만 FED 입력 인정

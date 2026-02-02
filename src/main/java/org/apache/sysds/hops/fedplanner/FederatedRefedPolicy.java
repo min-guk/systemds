@@ -74,11 +74,26 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 public final class FederatedRefedPolicy {
 	private static final long DEFAULT_SBID = -1L;
 	private static final Log LOG = LogFactory.getLog(FederatedRefedPolicy.class.getName());
+	private static final boolean ENABLE_TRANSREAD_DEBUG =
+		Boolean.parseBoolean(System.getProperty("sysds.fedplanner.transread.debug", "false"));
 	private static final Map<Long, AnchorKey> CPFOUT_ANCHOR_CACHE = new ConcurrentHashMap<>();
+	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TWRITE_CACHE =
+		ThreadLocal.withInitial(java.util.HashMap::new);
+	private static final ThreadLocal<java.util.Map<Long, Long>> HOP_SBID_CACHE =
+		ThreadLocal.withInitial(java.util.HashMap::new);
 	private static final ThreadLocal<Set<String>> LOCAL_TR_VARS = new ThreadLocal<>();
+	static {
+		if (ENABLE_TRANSREAD_DEBUG)
+			System.out.println("[TransReadRefedDebug] enabled");
+	}
 
 	private static void clearCpfoutAnchorCache() {
 		CPFOUT_ANCHOR_CACHE.clear();
+	}
+
+	private static void clearGlobalTWriteCache() {
+		GLOBAL_TWRITE_CACHE.get().clear();
+		HOP_SBID_CACHE.get().clear();
 	}
 
 	private FederatedRefedPolicy() {
@@ -92,6 +107,7 @@ public final class FederatedRefedPolicy {
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
 		clearCpfoutAnchorCache();
+		clearGlobalTWriteCache();
 		FederatedPlannerUtils.clearFedAnchorKeys();
 		if (prog == null)
 			return;
@@ -116,6 +132,7 @@ public final class FederatedRefedPolicy {
 		FederatedFoutMaterializeRegistry.clear();
 		clearCpfoutAnchorCache();
 		FederatedPlannerUtils.clearFedAnchorKeys();
+		clearGlobalTWriteCache();
 		if (function == null)
 			return;
 		FunctionStatement fstmt = (FunctionStatement) function.getStatement(0);
@@ -181,6 +198,25 @@ public final class FederatedRefedPolicy {
 			}
 
 			List<Hop> all = collectAllHops(roots);
+			if (all != null && !all.isEmpty()) {
+				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
+				java.util.Map<Long, Long> hopSbIds = HOP_SBID_CACHE.get();
+				for (Hop hop : all) {
+					if (!(hop instanceof DataOp))
+						continue;
+					DataOp dataOp = (DataOp) hop;
+					if (dataOp.getOp() != OpOpData.TRANSIENTWRITE)
+						continue;
+					String name = dataOp.getName();
+					if (name == null || name.isEmpty())
+						continue;
+					globalWrites.computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
+				}
+				for (Hop hop : all) {
+					if (hop != null && hop.getHopID() > 0 && !hopSbIds.containsKey(hop.getHopID()))
+						hopSbIds.put(hop.getHopID(), sbId);
+				}
+			}
 			if (runtimeSignatures != null && !runtimeSignatures.isEmpty()) {
 				for (Hop hop : all) {
 					if (!(hop instanceof DataOp))
@@ -321,6 +357,24 @@ public final class FederatedRefedPolicy {
 			if (localOutput && hop.getDataType().isMatrix()
 				&& (hop.getFederatedOutput() == FederatedOutput.FOUT
 					|| requiresCpfoutForFedParents(hop, fTypeMap))) {
+				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD) {
+					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
+						System.out.println("[TransReadRefedDebug] hop=" + hop.getHopID()
+							+ " exec=" + exec
+							+ " fout=" + hop.getFederatedOutput()
+							+ " localOutput=" + localOutput
+							+ " needsCpfout=" + requiresCpfoutForFedParents(hop, fTypeMap));
+					}
+					// TRead must not use CP->FOUT directly; promote matching TWrite instead.
+					if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
+						continue;
+					if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+						hop.setFederatedOutput(FederatedOutput.LOUT);
+						if (fTypeMap != null)
+							fTypeMap.remove(hop.getHopID());
+					}
+					continue;
+				}
 				if (registerCpfoutViaTransientWrite(hop, fTypeMap, sbId, blockAnchor))
 					continue;
 				if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor)) {
@@ -356,15 +410,29 @@ public final class FederatedRefedPolicy {
 				}
 			}
 		}
-		enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor);
-		boolean pruned = false;
-		int prunePass = 0;
-		do {
-			pruned = pruneInvalidCpfoutAnchors(all, sbId);
-			if (pruned)
-				enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor);
-			prunePass++;
-		} while (pruned && prunePass < 3);
+		// Final cleanup: prevent illegal CP/FOUT on transient reads by promoting matching TWrite
+		// or demoting to LOUT (so FED parents can be demoted if needed).
+		for (Hop hop : all) {
+			if (!(hop instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() != OpOpData.TRANSIENTREAD)
+				continue;
+			ExecType exec = getPlannedExecType(hop);
+			if (exec == null)
+				exec = ExecType.CP;
+			if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+				if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
+					System.out.println("[TransReadRefedDebug] cleanup hop=" + hop.getHopID()
+						+ " trying promote via TWrite");
+				}
+				if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
+					continue;
+				hop.setFederatedOutput(FederatedOutput.LOUT);
+				if (fTypeMap != null)
+					fTypeMap.remove(hop.getHopID());
+			}
+		}
 		if (!runtimeContext) {
 			for (Hop hop : all) {
 				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
@@ -374,6 +442,16 @@ public final class FederatedRefedPolicy {
 				}
 			}
 		}
+		enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor);
+		boolean pruned = false;
+		int prunePass = 0;
+		do {
+			pruned = pruneInvalidCpfoutAnchors(all, sbId);
+			if (pruned)
+				enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor);
+			prunePass++;
+		} while (pruned && prunePass < 3);
+		// registerTransientWriteAnchor moved earlier (before enforceFederatedInputs)
 	}
 
 	public static void registerFoutMaterializeCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
@@ -440,6 +518,85 @@ public final class FederatedRefedPolicy {
 			return true;
 		}
 		return false;
+	}
+
+	private static boolean promoteTransientReadViaTWrite(DataOp tRead, List<Hop> all,
+			java.util.Map<Long, FType> fTypeMap, long sbId, AnchorSelection blockAnchor) {
+		if (tRead == null || tRead.getOp() != OpOpData.TRANSIENTREAD)
+			return false;
+		if (all == null || all.isEmpty())
+			return false;
+		String name = tRead.getName();
+		if (name == null || name.isEmpty())
+			return false;
+		List<DataOp> writes = new ArrayList<>();
+		for (Hop hop : all) {
+			if (!(hop instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() != OpOpData.TRANSIENTWRITE)
+				continue;
+			String wName = dataOp.getName();
+			if (name.equals(wName))
+				writes.add(dataOp);
+		}
+		if (writes.isEmpty()) {
+			java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
+			List<DataOp> cached = globalWrites.get(name);
+			if (cached != null && !cached.isEmpty())
+				writes.addAll(cached);
+		}
+		DataOp tWrite = selectMatchingTWrite(writes, tRead);
+		if (tWrite == null)
+			return false;
+		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(tRead.getName())) {
+			System.out.println("[TransReadRefedDebug] match TWrite hop=" + tWrite.getHopID()
+				+ " line=" + tWrite.getBeginLine());
+		}
+		if (isRecompileRegion(tWrite))
+			return false;
+
+		boolean tWriteFed = tWrite.hasFederatedOutput();
+		ExecType wExec = getPlannedExecType(tWrite);
+		if (wExec == ExecType.FED && !tWrite.hasLocalOutput())
+			tWriteFed = true;
+
+		if (!tWriteFed) {
+			List<Hop> inputs = tWrite.getInput();
+			Hop input = (inputs != null && !inputs.isEmpty()) ? inputs.get(0) : null;
+			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				return false;
+			AnchorSelection selection = selectAnchorWithinBlock(tWrite, fTypeMap, true, false, blockAnchor);
+			if (selection == null || selection.key == null)
+				return false;
+			if (ENABLE_TRANSREAD_DEBUG && "Y".equals(tRead.getName())) {
+				System.out.println("[TransReadRefedDebug] promote TWrite hop=" + tWrite.getHopID()
+					+ " anchor=" + selection.key.value);
+			}
+			tWrite.setFederatedOutput(FederatedOutput.FOUT);
+			tWrite.setForcedExecType(ExecType.FED);
+			if (fTypeMap != null) {
+				FType fType = getKnownFType(input, fTypeMap);
+				if (fType != null)
+					fTypeMap.put(tWrite.getHopID(), fType);
+			}
+			long tWriteSbId = resolveHopSbId(tWrite.getHopID(), sbId);
+			registerCpfoutWithSelection(tWrite, fTypeMap, tWriteSbId, selection);
+		}
+
+		tRead.setForcedExecType(ExecType.FED);
+		tRead.setFederatedOutput(FederatedOutput.FOUT);
+		if (fTypeMap != null) {
+			FType fType = fTypeMap.get(tWrite.getHopID());
+			if (fType == null && tWrite.getInput() != null && !tWrite.getInput().isEmpty()) {
+				Hop input = tWrite.getInput().get(0);
+				if (input != null)
+					fType = fTypeMap.get(input.getHopID());
+			}
+			if (fType != null)
+				fTypeMap.put(tRead.getHopID(), fType);
+		}
+		return true;
 	}
 
 	private static void propagateTransientFederatedTypes(List<Hop> hops, java.util.Map<Long, FType> fTypeMap) {
@@ -600,6 +757,13 @@ public final class FederatedRefedPolicy {
 		for (Hop hop : all) {
 			if (hop == null)
 				continue;
+			if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
+					&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD
+					&& "Y".equals(((DataOp) hop).getName())) {
+				System.out.println("[TransReadRefedDebug] visit hop=" + hop.getHopID()
+					+ " exec=" + getPlannedExecType(hop)
+					+ " fout=" + hop.getFederatedOutput());
+			}
 			ExecType exec = getPlannedExecType(hop);
 			if (exec != ExecType.FED)
 				continue;
@@ -1135,6 +1299,11 @@ public final class FederatedRefedPolicy {
 		String varName = tWrite.getName();
 		if (varName == null || varName.isEmpty())
 			return;
+		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
+			System.out.println("[TransReadRefedDebug] tWrite hop=" + tWrite.getHopID()
+				+ " conditional=" + conditionalContext
+				+ " fout=" + tWrite.getFederatedOutput());
+		}
 		// If the write is not federated (FOUT), the variable becomes local; clear any stale anchors
 		// and fed-init markers so TRs don't get treated as federated sources.
 		if (tWrite.getFederatedOutput() != FederatedOutput.FOUT) {
@@ -1149,10 +1318,30 @@ public final class FederatedRefedPolicy {
 		if (input == null)
 			return;
 		if (!isRuntimeFederatedInput(input, null, null)) {
-			// Local assignment overwrites any previous federated anchor for this variable.
+			// Local assignment overwrites any previous federated state. Preserve only a VAR anchor
+			// (if we had one) so refed can still reuse worker metadata without treating the value as federated.
+			if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
+				System.out.println("[TransReadRefedDebug] tWrite local override hop=" + tWrite.getHopID());
+			}
+			String existingAnchor = FederatedPlannerUtils.getFedAnchorKey(varName);
+			boolean hadAnchor = existingAnchor != null || FederatedPlannerUtils.isFedInitVar(varName);
 			FederatedPlannerUtils.removeFedAnchorKey(varName);
-			if (!conditionalContext)
-				FederatedPlannerUtils.removeFedInitVar(varName);
+			FederatedPlannerUtils.removeFedInitVar(varName);
+			if (hadAnchor) {
+				FType fType = getKnownFType(input, fTypeMap);
+				if (fType == null) {
+					FType axis = FederatedPlannerUtils.getVectorAxis(input);
+					if (axis != null)
+						fType = axis;
+				}
+				String varKey = "VAR:" + varName;
+				if (fType != null)
+					varKey = varKey + "|" + fType.name();
+				FederatedPlannerUtils.registerFedAnchorKey(varName, varKey);
+				if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
+					System.out.println("[TransReadRefedDebug] tWrite set VAR anchor=" + varKey);
+				}
+			}
 			return;
 		}
 
@@ -1716,11 +1905,9 @@ public final class FederatedRefedPolicy {
 		AnchorSelection selection = selectAnchor(hop, fTypeMap, false, false, null);
 		if (selection == null || selection.key == null)
 			return false;
-		try {
-			validateAnchorTypeSupported(hop, selection.anchorHop, fTypeMap);
-		} catch (DMLRuntimeException ex) {
-			return false;
-		}
+		// PART/OTHER anchors are unsupported for CP->FOUT refed and should hard-fail to avoid
+		// silently falling back to a plan with undefined semantics.
+		validateAnchorTypeSupported(hop, selection.anchorHop, fTypeMap);
 		return true;
 	}
 
@@ -1738,12 +1925,9 @@ public final class FederatedRefedPolicy {
 		AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, false, false, blockAnchor);
 		if (selection == null || selection.key == null)
 			return false;
-		try {
-			validateAnchorTypeSupported(hop, selection.anchorHop, fTypeMap);
-		}
-		catch (DMLRuntimeException ex) {
-			return false;
-		}
+		// PART/OTHER anchors are unsupported for CP->FOUT refed and should hard-fail to avoid
+		// silently falling back to a plan with undefined semantics.
+		validateAnchorTypeSupported(hop, selection.anchorHop, fTypeMap);
 		return true;
 	}
 
@@ -1832,6 +2016,11 @@ public final class FederatedRefedPolicy {
 		registerCpfoutWithSelection(hop, fTypeMap, sbId, selection);
 	}
 
+	private static long resolveHopSbId(long hopId, long fallback) {
+		Long sbId = HOP_SBID_CACHE.get().get(hopId);
+		return sbId != null ? sbId : fallback;
+	}
+
 	private static AnchorSelection selectAnchorWithinBlock(Hop hop, java.util.Map<Long, FType> fTypeMap,
 			boolean onlyFedParents, boolean throwOnFailure, AnchorSelection blockAnchor) {
 		if (blockAnchor != null && blockAnchor.key != null && blockAnchor.anchorHop != null
@@ -1842,7 +2031,17 @@ public final class FederatedRefedPolicy {
 
 	private static void registerCpfoutWithSelection(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection selection) {
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD) {
+		if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE
+				&& "Y".equals(((DataOp) hop).getName())) {
+			Hop anchorHop = selection != null ? selection.anchorHop : null;
+			System.out.println("[TransReadRefedDebug] registerCpfoutWithSelection TWrite Y hop=" + hop.getHopID()
+				+ " anchor=" + (selection != null ? selection.key : null)
+				+ " anchorHop=" + (anchorHop != null ? anchorHop.getHopID() + ":" + anchorHop.getOpString() : "null")
+				+ " anchorFed=" + (anchorHop != null && isRuntimeFederatedInput(anchorHop, null, null)));
+		}
+		boolean isTransientRead = hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD;
+		if (isTransientRead) {
 			ExecType exec = getPlannedExecType(hop);
 			if (exec == ExecType.FED && !hop.hasLocalOutput())
 				return;
@@ -1865,7 +2064,7 @@ public final class FederatedRefedPolicy {
 		ExecType plannedExec = getPlannedExecType(hop);
 		boolean isCpToFout = (plannedExec == null || plannedExec == ExecType.CP);
 		if (isCpToFout) {
-			if (hop.getFederatedOutput() != FederatedOutput.FOUT)
+			if (!isTransientRead && hop.getFederatedOutput() != FederatedOutput.FOUT)
 				hop.setFederatedOutput(FederatedOutput.FOUT);
 			if (selection != null && selection.key != null)
 				CPFOUT_ANCHOR_CACHE.put(hop.getHopID(), selection.key);
@@ -1881,6 +2080,9 @@ public final class FederatedRefedPolicy {
 			// and wire it into the TWrite during lop insertion.
 				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
 					String anchorLabel = findAnchorLabel(selection.anchorHop);
+					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(((DataOp) hop).getName())) {
+						System.out.println("[TransReadRefedDebug] TWrite Y anchorLabel=" + anchorLabel);
+					}
 					Hop tWriteInput = null;
 				List<Hop> inputs = hop.getInput();
 				if (inputs != null && !inputs.isEmpty())
@@ -1905,6 +2107,11 @@ public final class FederatedRefedPolicy {
 				}
 			if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
 				String anchorLabel = findAnchorLabel(selection.anchorHop);
+				if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
+						&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE
+						&& "Y".equals(((DataOp) hop).getName())) {
+					System.out.println("[TransReadRefedDebug] TWrite Y anchorLabel=" + anchorLabel);
+				}
 				if (fTypeMap != null)
 					fTypeMap.put(hop.getHopID(), FType.BROADCAST);
 				FederatedRefedRegistry.remove(scopeId, hop.getHopID());

@@ -369,11 +369,13 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 	}
 
 	private long computeId(long hopId) {
-		return hopId << 1;
+		// Keep in sync with FederatedPlanMinSTPlanner.computeId (MinST uses 3 decision nodes per hop).
+		return hopId << 2;
 	}
 
 	private long placementId(long hopId) {
-		return (hopId << 1) | 1;
+		// Keep in sync with FederatedPlanMinSTPlanner.placementId (MinST uses 3 decision nodes per hop).
+		return (hopId << 2) | 1;
 	}
 
 	private void assertAcyclicFederatedDag(DMLProgram prog, Map<Long, List<Hop>> rewireTable,

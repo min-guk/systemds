@@ -66,6 +66,8 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.CacheableData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
+import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -302,6 +304,8 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 			plan = planGenericOp(hop, fedVars, allowCpFout, sbId);
 		}
 
+		plan = finalizeFoutPlan(hop, plan);
+
 		_planMap.put(hop.getHopID(), plan);
 		_hopSbIds.putIfAbsent(hop.getHopID(), sbId);
 		applyPlanToHop(hop, plan);
@@ -313,6 +317,9 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		}
 		if (plan != null && plan.isLogicalFout() && plan.fType != null) {
 			_fTypeMap.put(hop.getHopID(), plan.fType);
+		}
+		else {
+			_fTypeMap.remove(hop.getHopID());
 		}
 		if (plan != null && plan.needsMaterialize()) {
 			recordMaterializeRequest(hop, sbId);
@@ -405,6 +412,14 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 				&& inputPlan.fType != null && isFoutSupported(hop)) {
 			return new HopPlan(ExecType.FED, FederatedOutput.FOUT, FederatedOutput.FOUT, inputPlan.fType);
 		}
+		if (inputPlan != null && inputPlan.isLogicalFout()) {
+			traceDecision("TW_LOCALIZED", hop,
+				"input=" + formatHopBrief(input)
+					+ " inputExec=" + inputExec
+					+ " inputRuntimeFed=" + inputRuntimeFed
+					+ " inputPlan=" + formatPlan(inputPlan)
+					+ " foutSupported=" + isFoutSupported(hop));
+		}
 		return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, null);
 	}
 
@@ -451,8 +466,16 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 				return enforceFoutConstraints(hop, plan, sbId);
 			}
 			if (loutPossible) {
+				traceDecision("TR_LOUT", hop,
+					"connectedWrites=" + formatWritePlans(connectedWrites)
+						+ " foutPossible=" + foutPossible
+						+ " loutPossible=" + loutPossible);
 				return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, commonLoutType);
 			}
+			traceDecision("TR_CONFLICT", hop,
+				"connectedWrites=" + formatWritePlans(connectedWrites)
+					+ " foutPossible=" + foutPossible
+					+ " loutPossible=" + loutPossible);
 			throw new DMLRuntimeException("TRead placement conflict for hop " + hop.getHopID()
 				+ " (" + hop.getName() + "): connected TWrite placements are inconsistent");
 		}
@@ -460,11 +483,20 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		FType fallback = fedVars.get(hop.getName());
 		if (fallback == null)
 			fallback = _fedInitVars.get(hop.getName());
+		if (fallback == null) {
+			FederationMap anchorMap = FederationUtils.getAnchorMap(hop.getName());
+			if (anchorMap != null)
+				fallback = anchorMap.getType();
+		}
 
 		if (fallback != null && isFoutSupported(hop)) {
 			HopPlan plan = new HopPlan(ExecType.FED, FederatedOutput.FOUT, FederatedOutput.FOUT, fallback);
 			return enforceFoutConstraints(hop, plan, sbId);
 		}
+		traceDecision("TR_FALLBACK_NULL", hop,
+			"fedVars=" + fedVars.get(hop.getName())
+				+ " fedInit=" + _fedInitVars.get(hop.getName())
+				+ " anchor=" + (FederationUtils.getAnchorMap(hop.getName()) != null));
 		return new HopPlan(ExecType.CP, FederatedOutput.LOUT, FederatedOutput.LOUT, null);
 	}
 
@@ -476,10 +508,15 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		List<FType> inputFTypes = collectInputFTypes(hop, false, allowCpFout);
 		OpCaps caps = getOracleCaps(hop, inputFTypes);
 
-		boolean fedAllowed = caps != null && caps.exec() == ExecType.FED
-			&& FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, _fTypeMap);
+		boolean fedAllowed = false;
+		boolean oracleFed = caps != null && caps.exec() == ExecType.FED;
+		if (oracleFed) {
+			forceFedForAnchorChecks(hop);
+			fedAllowed = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, _fTypeMap);
+		}
 		List<Hop> upgradeTargets = Collections.emptyList();
 		if (!fedAllowed) {
+			forceFedForAnchorChecks(hop);
 			List<FType> candidateFTypes = collectInputFTypes(hop, true, allowCpFout);
 			OpCaps candidateCaps = getOracleCaps(hop, candidateFTypes);
 			if (candidateCaps != null && candidateCaps.exec() == ExecType.FED) {
@@ -489,6 +526,14 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 					caps = candidateCaps;
 					fedAllowed = true;
 				}
+			}
+			if (!fedAllowed && oracleFed) {
+				traceDecision("FED_BLOCKED", hop,
+					"oracleExec=FED placement=" + caps.placement()
+						+ " reason=" + caps.reason()
+						+ " inputs=" + inputFTypes
+						+ " plannedInputs=" + formatInputPlans(hop)
+						+ " upgrades=" + formatHopIdList(upgradeTargets));
 			}
 		}
 
@@ -544,6 +589,104 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 		return plan;
 	}
 
+	private HopPlan finalizeFoutPlan(Hop hop, HopPlan plan) {
+		if (plan == null)
+			return null;
+		if (plan.isLogicalFout()) {
+			if (!canConfirmLogicalFout(hop, plan)) {
+				traceDecision("FOUT_DROP", hop,
+					"plan=" + formatPlan(plan)
+						+ " foutSupported=" + isFoutSupported(hop)
+						+ " canMaterialize=" + canMaterializeFout(hop));
+				plan.output = FederatedOutput.LOUT;
+				plan.logicalOutput = FederatedOutput.LOUT;
+			}
+		}
+		return plan;
+	}
+
+	private boolean canConfirmLogicalFout(Hop hop, HopPlan plan) {
+		if (plan == null || !plan.isLogicalFout())
+			return false;
+		if (plan.fType == null || !isFoutSupported(hop))
+			return false;
+		if (plan.execType == ExecType.FED && plan.output == FederatedOutput.FOUT)
+			return true;
+		return canMaterializeFout(hop);
+	}
+
+	private void traceDecision(String tag, Hop hop, String detail) {
+		if (hop == null)
+			return;
+		System.out.println("[SinglePassTrace] " + tag
+			+ " hop=" + hop.getHopID()
+			+ " op=" + hop.getOpString()
+			+ (detail == null || detail.isEmpty() ? "" : " " + detail));
+	}
+
+	private String formatPlan(HopPlan plan) {
+		if (plan == null)
+			return "null";
+		return "exec=" + plan.execType
+			+ " out=" + plan.output
+			+ " logical=" + plan.logicalOutput
+			+ " fType=" + plan.fType;
+	}
+
+	private String formatHopBrief(Hop hop) {
+		if (hop == null)
+			return "null";
+		return hop.getHopID() + "(" + hop.getOpString() + ")";
+	}
+
+	private String formatInputPlans(Hop hop) {
+		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < hop.getInput().size(); i++) {
+			Hop input = hop.getInput().get(i);
+			if (input == null)
+				continue;
+			HopPlan plan = _planMap.get(input.getHopID());
+			if (i > 0)
+				sb.append("; ");
+			sb.append(formatHopBrief(input))
+				.append(" plan=").append(formatPlan(plan))
+				.append(" plannedFType=").append(_fTypeMap.get(input.getHopID()))
+				.append(" canMat=").append(canMaterializeFout(input));
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private String formatWritePlans(List<Hop> writes) {
+		if (writes == null || writes.isEmpty())
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < writes.size(); i++) {
+			Hop write = writes.get(i);
+			HopPlan plan = _planMap.get(write.getHopID());
+			if (i > 0)
+				sb.append("; ");
+			sb.append(formatHopBrief(write)).append(" plan=").append(formatPlan(plan));
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private String formatHopIdList(List<Hop> hops) {
+		if (hops == null || hops.isEmpty())
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < hops.size(); i++) {
+			if (i > 0)
+				sb.append(",");
+			sb.append(hops.get(i).getHopID());
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
 	private List<FType> collectInputFTypes(Hop hop, boolean allowUpgrades, boolean allowCpFout) {
 		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
 			return Collections.emptyList();
@@ -593,9 +736,13 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 			else if (plan.execType == ExecType.FED) {
 				plan.logicalOutput = FederatedOutput.FOUT;
 			}
+			plan = finalizeFoutPlan(input, plan);
 			applyPlanToHop(input, plan);
-			if (plan.fType != null) {
+			if (plan != null && plan.isLogicalFout() && plan.fType != null) {
 				_fTypeMap.put(input.getHopID(), plan.fType);
+			}
+			else {
+				_fTypeMap.remove(input.getHopID());
 			}
 			if (plan.needsMaterialize()) {
 				long inputSbId = _hopSbIds.getOrDefault(input.getHopID(), sbId);
@@ -653,6 +800,13 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 
 	private boolean canMaterializeFout(Hop hop) {
 		return hop != null && FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, _fTypeMap);
+	}
+
+	private void forceFedForAnchorChecks(Hop hop) {
+		if (hop == null)
+			return;
+		if (hop.getForcedExecType() != ExecType.FED)
+			hop.setForcedExecType(ExecType.FED);
 	}
 
 	private static int countFedInitWorkers(DataOp fedInit) {

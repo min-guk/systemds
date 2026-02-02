@@ -793,9 +793,15 @@ public class FederatedPlanMinSTRewire {
 					boolean fTypeMismatch = false;
 					ExecPlacementCaps resolvedCaps = null;
 					Long transientWriteHopId = null;
+					boolean hasFedInitChild = false;
+					boolean hasLocalSource = false;
 					for (Hop childHop : filteredChildHops) {
 						if (childHop == null) {
 							continue;
+						}
+						if (childHop instanceof DataOp
+								&& ((DataOp) childHop).getOp() == Types.OpOpData.FEDERATED) {
+							hasFedInitChild = true;
 						}
 						// Propagate FType/caps from all mapped sources (not only TW).
 						// This is critical for function arguments where the mapped source can be a FEDERATED
@@ -811,10 +817,12 @@ public class FederatedPlanMinSTRewire {
 						}
 						Vertex childVertex = graph.getVertex(childHop.getHopID());
 						if (childVertex != null && childVertex.getCaps() != null) {
+							ExecPlacementCaps childCaps = childVertex.getCaps();
+							if (childCaps.allowCP_LOUT || childCaps.allowFED_LOUT)
+								hasLocalSource = true;
 							if (resolvedCaps == null) {
-								resolvedCaps = new ExecPlacementCaps(childVertex.getCaps());
+								resolvedCaps = new ExecPlacementCaps(childCaps);
 							} else {
-								ExecPlacementCaps childCaps = childVertex.getCaps();
 								resolvedCaps.allowCP_LOUT &= childCaps.allowCP_LOUT;
 								resolvedCaps.allowCP_FOUT &= childCaps.allowCP_FOUT;
 								resolvedCaps.allowFED_LOUT &= childCaps.allowFED_LOUT;
@@ -854,6 +862,11 @@ public class FederatedPlanMinSTRewire {
 						OpCaps policyCaps = OpCaps.allow(ExecType.FED, FederatedOutput.FOUT).build();
 						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps, fTypeMap);
 					}
+					if (hasFedInitChild && !hasLocalSource && caps != null) {
+						// A TRead that is directly backed by a FED init should not assume a local value
+						// without an explicit download/copy path.
+						caps.allowCP_LOUT = false;
+					}
 
 					privacyConstraintMap.put(hop.getHopID(), privacy);
 					fTypeMap.put(hop.getHopID(), fType);
@@ -881,15 +894,26 @@ public class FederatedPlanMinSTRewire {
 				collectedHopList.add(input);
 				// Align with DP: the Oracle should not treat a potentially-local input as already-federated,
 				// otherwise it can incorrectly allow FED/FOUT for ops that require BROADCAST/materialization.
-				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we conservatively pass null
-				// for inputs that are allowed to be local in the cut graph.
+				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we only pass a non-null FType
+				// when the input is guaranteed to be FOUT or can be safely refed (CP->FOUT) in this block.
 				FType inputFType = fTypeMap.get(input.getHopID());
 				Vertex inputVertex = graph.getVertex(input.getHopID());
 				if (inputVertex != null) {
 					ExecPlacementCaps inputCaps = inputVertex.getCaps();
-					boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
-					if (inputMayBeLocal)
+					boolean inputGuaranteedFout = inputCaps != null
+							&& !inputCaps.allowCP_LOUT
+							&& !inputCaps.allowFED_LOUT;
+					boolean inputMayBeLocal = inputCaps != null
+							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+					boolean inputRefedPossible = false;
+					if (inputMayBeLocal && !inputGuaranteedFout) {
+						inputRefedPossible = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
+					}
+					if (!inputGuaranteedFout && !inputRefedPossible) {
 						inputFType = null;
+					} else if (inputFType == null) {
+						inputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
+					}
 				}
 				collectedFTypes.add(inputFType);
 			}
@@ -931,6 +955,30 @@ public class FederatedPlanMinSTRewire {
 		fTypeMap.put(hop.getHopID(), fType);
 
 		return new Vertex(hop, privacy, fType, cpFoutType, caps);
+	}
+
+	private static FType inferFoutInputFType(Hop hop, Map<Long, FType> fTypeMap,
+			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return null;
+		List<Hop> inputs = hop.getInput();
+		List<FType> alignedInputFTypes = new ArrayList<>();
+		if (inputs != null) {
+			for (Hop in : inputs) {
+				if (in == null)
+					continue;
+				alignedInputFTypes.add(fTypeMap.get(in.getHopID()));
+			}
+		}
+		FType inferred = OracleUtils.inferFallbackFType(hop, alignedInputFTypes, oracleFacade, rewireTable);
+		if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+			inferred = FType.BROADCAST;
+		}
+		if (inferred == null) {
+			FType axis = FederatedPlannerUtils.getVectorAxis(hop);
+			inferred = (axis != null) ? axis : FType.ROW;
+		}
+		return inferred;
 	}
 
 	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle,

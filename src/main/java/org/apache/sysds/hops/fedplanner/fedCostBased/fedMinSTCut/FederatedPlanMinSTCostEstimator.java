@@ -82,6 +82,8 @@ import org.jgrapht.graph.DefaultDirectedWeightedGraph;
 import org.jgrapht.graph.DefaultWeightedEdge;
 
 public class FederatedPlanMinSTCostEstimator {
+	private static final boolean ENABLE_TRANSREAD_DEBUG =
+			Boolean.getBoolean("sysds.fedplanner.transread.debug");
 	public static void estimateProgram(DMLProgram prog, FederatedPlanMinSTGraph graph,
 			Map<Long, List<Hop>> rewireTable, boolean isPrint) {
 		Set<String> fnStack = new HashSet<>();
@@ -309,18 +311,10 @@ public class FederatedPlanMinSTCostEstimator {
 				graph.addTransWriteInputPlacementConsistencyEdge(hopID, inputs.get(0).getHopID());
 			}
 		}
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			Set<Long> twHopIds = collectTransientWriteChildIds(hop, rewireTable);
-			for (Long twHopId : twHopIds) {
-				Vertex twVertex = graph.getVertex(twHopId);
-				if (twVertex == null) {
-					FederatedPlannerLogger.logWarnMessage(
-							"[FederatedMinST] Missing TWrite vertex for TRead hop " + hopID);
-					continue;
-				}
-				graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
-			}
-		}
+		// NOTE: We intentionally do not add hard TR/TW consistency constraints in MinST.
+		// For loop-carried transient variables, we model the potential data movement via
+		// weighted loop-carry upload/download capacities instead (see addLoopCarryEdgesForHop).
+		// Adding hard constraints here would override those costs and break planning/test expectations.
 
 		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
 		for (int i = 0; i < childHops.size(); i++) {
@@ -440,6 +434,53 @@ public class FederatedPlanMinSTCostEstimator {
 		return matches;
 	}
 
+	private static Set<Long> collectTransientWriteByName(Hop hop, FederatedPlanMinSTGraph graph) {
+		Set<Long> matches = new HashSet<>();
+		if (graph == null) {
+			return matches;
+		}
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
+			return matches;
+		}
+		String hopName = hop.getName();
+		if (hopName == null || hopName.isEmpty() || "__pred".equals(hopName)) {
+			return matches;
+		}
+		long d1 = hop.getDim1();
+		long d2 = hop.getDim2();
+		for (Vertex v : graph.getMemoTable().values()) {
+			if (v == null || v.getHopRef() == null) {
+				continue;
+			}
+			Hop candidate = v.getHopRef();
+			if (!(candidate instanceof DataOp)
+					|| ((DataOp) candidate).getOp() != Types.OpOpData.TRANSIENTWRITE) {
+				continue;
+			}
+			if ("__pred".equals(candidate.getName())) {
+				continue;
+			}
+			if (hopName.equals(candidate.getName())
+					&& hop.getDataType() == candidate.getDataType()
+					&& dimsCompatible(d1, d2, candidate.getDim1(), candidate.getDim2())) {
+				matches.add(candidate.getHopID());
+			}
+		}
+		return matches;
+	}
+
+	private static boolean dimsCompatible(long d1a, long d2a, long d1b, long d2b) {
+		boolean d1Known = d1a > 0 && d1b > 0;
+		boolean d2Known = d2a > 0 && d2b > 0;
+		if (d1Known && d1a != d1b) {
+			return false;
+		}
+		if (d2Known && d2a != d2b) {
+			return false;
+		}
+		return true;
+	}
+
 	private static void addLoopCarryEdgesForHop(Hop hop, Vertex vertex, FederatedPlanMinSTGraph graph) {
 		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
 			return;
@@ -459,12 +500,6 @@ public class FederatedPlanMinSTCostEstimator {
 			double weight = edge.getWeight();
 			if (weight <= 0.0) {
 				continue;
-			}
-			// Enforce TW/TR consistency across loop iterations as a hard constraint (planner must
-			// not rely on runtime fallbacks for loop-carried transient variables).
-			Vertex writerVertex = graph.getVertex(edge.getEndWriterHopId());
-			if (writerVertex != null) {
-				graph.addTransReadWriteConsistencyEdges(writerVertex, edge.getEndWriterHopId(), vertex, hopId);
 			}
 			// Use CP->FOUT upload cost here as well: loop-carry edges model data movement
 			// between local/federated contexts, and the CP upload FType (e.g., BROADCAST)

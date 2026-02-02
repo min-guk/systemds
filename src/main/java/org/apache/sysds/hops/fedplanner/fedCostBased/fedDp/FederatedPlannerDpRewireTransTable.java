@@ -289,7 +289,8 @@ public class FederatedPlannerDpRewireTransTable {
 			Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 			elseFormerTransTable.putAll(innerTransTable);
 			computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
-			networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
+			// Keep networkWeight unscaled through if/else bodies: for transient variables (e.g., loop-carried)
+			// we conservatively model forwarding/network frequency as unconditional within the enclosing scope.
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 				newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,

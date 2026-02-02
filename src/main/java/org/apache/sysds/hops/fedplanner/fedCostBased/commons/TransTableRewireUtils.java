@@ -36,6 +36,8 @@ import org.apache.sysds.parser.FunctionStatementBlock;
 
 public final class TransTableRewireUtils {
 	private static final int COMMON_CHILD_SEARCH_DEPTH = 5;
+	private static final boolean ENABLE_TRANSREAD_DEBUG =
+			Boolean.getBoolean("sysds.fedplanner.transread.debug");
 
 	private TransTableRewireUtils() {
 		// utility class
@@ -81,7 +83,8 @@ public final class TransTableRewireUtils {
 	public static List<Hop> resolveTransReadChildren(long hopId, String hopName, Map<Long, List<Hop>> rewireTable,
 			Map<String, List<Hop>> innerTransTable, Map<String, List<Hop>> formerTransTable,
 			List<Map<String, List<Hop>>> outerTransTableList) {
-		List<Hop> childHops = (rewireTable != null) ? rewireTable.get(hopId) : null;
+		List<Hop> fromRewireTable = (rewireTable != null) ? rewireTable.get(hopId) : null;
+		List<Hop> childHops = fromRewireTable;
 		if (childHops == null || childHops.isEmpty()) {
 			childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
 			if (rewireTable != null && childHops != null && !childHops.isEmpty()) {
@@ -102,10 +105,73 @@ public final class TransTableRewireUtils {
 			}
 		}
 
+		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hopName)) {
+			StringBuilder sb = new StringBuilder();
+			sb.append("[TransReadDebug] hop=")
+				.append(hopId)
+				.append(" name=")
+				.append(hopName)
+				.append(" rewire=")
+				.append(summarizeHopList(fromRewireTable))
+				.append(" inner=")
+				.append(summarizeHopList(innerTransTable != null ? innerTransTable.get(hopName) : null))
+				.append(" former=")
+				.append(summarizeHopList(formerTransTable != null ? formerTransTable.get(hopName) : null))
+				.append(" outer=")
+				.append(summarizeOuterTables(outerTransTableList, hopName))
+				.append(" chosen=")
+				.append(summarizeHopList(childHops));
+			System.out.println(sb.toString());
+		}
+
 		if (childHops == null || childHops.isEmpty()) {
 			return null;
 		}
 		return childHops;
+	}
+
+	private static String summarizeOuterTables(List<Map<String, List<Hop>>> outerTables, String hopName) {
+		if (outerTables == null || outerTables.isEmpty()) {
+			return "none";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < outerTables.size(); i++) {
+			Map<String, List<Hop>> table = outerTables.get(i);
+			if (i > 0)
+				sb.append(" | ");
+			sb.append(i).append(":");
+			if (table == null) {
+				sb.append("null");
+				continue;
+			}
+			sb.append(summarizeHopList(table.get(hopName)));
+		}
+		return sb.toString();
+	}
+
+	private static String summarizeHopList(List<Hop> hops) {
+		if (hops == null || hops.isEmpty()) {
+			return "none";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < hops.size(); i++) {
+			if (i > 0)
+				sb.append(';');
+			Hop hop = hops.get(i);
+			if (hop == null) {
+				sb.append("null");
+				continue;
+			}
+			String name = hop.getName() != null ? hop.getName() : "null";
+			String op = hop.getOpString() != null ? hop.getOpString() : "null";
+			sb.append(name)
+				.append("(ID:")
+				.append(hop.getHopID())
+				.append(",Op:")
+				.append(op)
+				.append(')');
+		}
+		return sb.toString();
 	}
 
 	public static void mapFunctionInputsToFormerTransTable(String[] inputArgs, List<Hop> inputHops,
