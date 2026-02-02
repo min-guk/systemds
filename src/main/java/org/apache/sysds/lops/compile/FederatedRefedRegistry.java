@@ -61,6 +61,14 @@ public final class FederatedRefedRegistry {
 		return REFED_ANCHORS.isEmpty();
 	}
 
+	public static boolean hasEntry(long hopId) {
+		for (Map<Long, Long> anchors : REFED_ANCHORS.values()) {
+			if (anchors != null && anchors.containsKey(hopId))
+				return true;
+		}
+		return false;
+	}
+
 	public static Map<Long, Long> snapshot(long sbId) {
 		Map<Long, Long> anchors = REFED_ANCHORS.get(sbId);
 		if (anchors == null || anchors.isEmpty())
