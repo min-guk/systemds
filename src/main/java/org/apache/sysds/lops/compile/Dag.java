@@ -19,6 +19,7 @@
 
 package org.apache.sysds.lops.compile;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -449,15 +450,34 @@ public class Dag<N extends Lop>
 
 		final HashMap<Lop, Integer> indegree = new HashMap<>(lops.size());
 		final HashMap<Lop, ArrayList<Lop>> adj = new HashMap<>(lops.size());
+		final HashMap<String, Lop> labelToLop = new HashMap<>(lops.size());
 		for (Lop lop : lops) {
 			indegree.put(lop, 0);
 			adj.put(lop, new ArrayList<>());
+			OutputParameters out = lop.getOutputParameters();
+			if (out != null && out.getLabel() != null) {
+				Lop existing = labelToLop.get(out.getLabel());
+				if (existing == null || lop instanceof FederatedFoutMaterialize)
+					labelToLop.put(out.getLabel(), lop);
+			}
 		}
 		for (Lop lop : lops) {
 			for (Lop in : lop.getInputs()) {
-				if (in == null || !indegree.containsKey(in))
+				if (in == null)
 					continue;
-				adj.get(in).add(lop);
+				Lop dep = in;
+				OutputParameters inOut = in.getOutputParameters();
+				String label = (inOut != null) ? inOut.getLabel() : null;
+				if (label != null) {
+					Lop labelLop = labelToLop.get(label);
+					if (labelLop instanceof FederatedFoutMaterialize)
+						dep = labelLop;
+				}
+				if (!indegree.containsKey(dep) && label != null)
+					dep = labelToLop.get(label);
+				if (dep == null || !indegree.containsKey(dep))
+					continue;
+				adj.get(dep).add(lop);
 				indegree.put(lop, indegree.get(lop) + 1);
 			}
 		}
@@ -672,6 +692,21 @@ public class Dag<N extends Lop>
 					continue;
 				}
 
+				if (anchor != null && materializeInput != null && isReachable(materializeInput, anchor)) {
+					Lop fallbackAnchor = findFallbackAnchor(lops, materializeInput);
+					if (fallbackAnchor != null) {
+						System.out.printf("CP->FOUT anchor cycle: hop=%d anchorHop=%d fallbackHop=%d%n",
+							hopId, anchorHopId, fallbackAnchor.getHopID());
+						anchor = fallbackAnchor;
+						anchorKey = null;
+					}
+					else {
+						System.out.printf("CP->FOUT insert skip: hop=%d anchorCycle=true sbId=%d%n",
+							hopId, sbId);
+						continue;
+					}
+				}
+
 				boolean alreadyInserted = isTransientWrite
 					? (materializeInput instanceof FederatedRefed || materializeInput instanceof FederatedFoutMaterialize)
 					: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
@@ -719,7 +754,35 @@ public class Dag<N extends Lop>
 				final String materializeLabel = (materializeInput.getOutputParameters() != null)
 					? materializeInput.getOutputParameters().getLabel()
 					: null;
-				List<Lop> fedOutputs = new ArrayList<>();
+				final Set<String> aliasLabels = new HashSet<>();
+				if (materializeLabel != null)
+					aliasLabels.add(materializeLabel);
+				for (Lop candidate : lops) {
+					if (!(candidate instanceof Data))
+						continue;
+					Data data = (Data) candidate;
+					if (!data.isTransientWrite())
+						continue;
+					List<Lop> inputs = data.getInputs();
+					if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
+						continue;
+					Lop input = inputs.get(0);
+					boolean matchesInput = (input == materializeInput);
+					if (!matchesInput && materializeHopId >= 0)
+						matchesInput = (input.getHopID() == materializeHopId);
+					if (!matchesInput && materializeLabel != null) {
+						OutputParameters out = input.getOutputParameters();
+						String inLabel = (out != null) ? out.getLabel() : null;
+						matchesInput = materializeLabel.equals(inLabel);
+					}
+					if (!matchesInput)
+						continue;
+					OutputParameters out = data.getOutputParameters();
+					String label = (out != null) ? out.getLabel() : null;
+					if (label != null)
+						aliasLabels.add(label);
+				}
+				List<Lop> consumers = new ArrayList<>();
 				List<Lop> refedToRemove = new ArrayList<>();
 				for (Lop out : lops) {
 					if (out == null || out == fout)
@@ -733,27 +796,45 @@ public class Dag<N extends Lop>
 					if (outInputs == null || outInputs.isEmpty())
 						continue;
 					boolean replacedAny = false;
+					boolean usesFout = false;
+					String foutLabel = (fout.getOutputParameters() != null)
+						? fout.getOutputParameters().getLabel()
+						: null;
 					for (Lop in : new ArrayList<>(outInputs)) {
 						if (in == null)
 							continue;
-						if (in == materializeInput) {
-							out.replaceInput(in, fout);
-							in.removeOutput(out);
-							fout.addOutput(out);
-							replacedAny = true;
+						if (in == fout) {
+							usesFout = true;
 							continue;
 						}
 						String inLabel = (in.getOutputParameters() != null)
 							? in.getOutputParameters().getLabel()
 							: null;
-						boolean sameLabel = (materializeLabel != null && materializeLabel.equals(inLabel));
-						boolean sameHopIdWithoutLabel = (materializeLabel == null && inLabel == null
-							&& materializeHopId >= 0 && in.getHopID() == materializeHopId);
-						if (sameLabel || sameHopIdWithoutLabel) {
+						if (foutLabel != null && foutLabel.equals(inLabel)) {
 							out.replaceInput(in, fout);
 							in.removeOutput(out);
 							fout.addOutput(out);
 							replacedAny = true;
+							usesFout = true;
+							continue;
+						}
+						if (in == materializeInput) {
+							out.replaceInput(in, fout);
+							in.removeOutput(out);
+							fout.addOutput(out);
+							replacedAny = true;
+							usesFout = true;
+							continue;
+						}
+						boolean sameLabel = (materializeLabel != null && materializeLabel.equals(inLabel));
+						boolean aliasLabel = (inLabel != null && aliasLabels.contains(inLabel));
+						boolean sameHopId = (materializeHopId >= 0 && in.getHopID() == materializeHopId);
+						if (sameLabel || aliasLabel || sameHopId) {
+							out.replaceInput(in, fout);
+							in.removeOutput(out);
+							fout.addOutput(out);
+							replacedAny = true;
+							usesFout = true;
 						}
 					}
 						if (replacedAny && out instanceof FederatedRefed) {
@@ -768,8 +849,8 @@ public class Dag<N extends Lop>
 							refedToRemove.add(out);
 							continue;
 						}
-						if (replacedAny && isFedExec)
-							fedOutputs.add(out);
+						if (usesFout)
+							consumers.add(out);
 					}
 
 				if (!refedToRemove.isEmpty()) {
@@ -797,12 +878,12 @@ public class Dag<N extends Lop>
 			if (!lops.contains(fout))
 				lops.add(insertPos, fout);
 
-			if (!fedOutputs.isEmpty()) {
-				fedOutputs.sort((a, b) -> Integer.compare(lops.indexOf(a), lops.indexOf(b)));
-				for (Lop out : fedOutputs)
+			if (!consumers.isEmpty()) {
+				consumers.sort((a, b) -> Integer.compare(lops.indexOf(a), lops.indexOf(b)));
+				for (Lop out : consumers)
 					lops.remove(out);
 				int pos = lops.indexOf(fout) + 1;
-				for (Lop out : fedOutputs)
+				for (Lop out : consumers)
 					lops.add(pos++, out);
 			}
 		}
@@ -852,6 +933,51 @@ public class Dag<N extends Lop>
 				fallback = lop;
 		}
 		return fallback;
+	}
+
+	private static boolean isReachable(Lop from, Lop target) {
+		if (from == null || target == null)
+			return false;
+		if (from == target)
+			return true;
+		HashSet<Lop> visited = new HashSet<>();
+		ArrayDeque<Lop> stack = new ArrayDeque<>();
+		stack.push(from);
+		while (!stack.isEmpty()) {
+			Lop cur = stack.pop();
+			if (!visited.add(cur))
+				continue;
+			if (cur == target)
+				return true;
+			List<Lop> outs = cur.getOutputs();
+			if (outs == null || outs.isEmpty())
+				continue;
+			for (Lop out : outs) {
+				if (out != null)
+					stack.push(out);
+			}
+		}
+		return false;
+	}
+
+	private static Lop findFallbackAnchor(List<Lop> lops, Lop materializeInput) {
+		if (lops == null || lops.isEmpty())
+			return null;
+		for (Lop candidate : lops) {
+			if (candidate == null || candidate == materializeInput)
+				continue;
+			if (candidate.getExecType() != ExecType.FED)
+				continue;
+			if (candidate.getFederatedOutput() != FederatedOutput.FOUT)
+				continue;
+			OutputParameters out = candidate.getOutputParameters();
+			if (out == null || out.getLabel() == null)
+				continue;
+			if (isReachable(materializeInput, candidate))
+				continue;
+			return candidate;
+		}
+		return null;
 	}
 	
 	private ArrayList<Instruction> doPlainInstructionGen(StatementBlock sb, List<Lop> nodes)
@@ -1155,6 +1281,77 @@ public class Dag<N extends Lop>
 		}
 		return labels;
 	}
+
+	private static void enforceFoutBeforeConsumers(List<Lop> execNodes) {
+		if (execNodes == null || execNodes.isEmpty())
+			return;
+		boolean moved = true;
+		while (moved) {
+			moved = false;
+			for (int i = 0; i < execNodes.size(); i++) {
+				Lop node = execNodes.get(i);
+				if (!(node instanceof FederatedFoutMaterialize))
+					continue;
+				int foutIdx = i;
+				int maxInputIdx = -1;
+				List<Lop> inputs = node.getInputs();
+				if (inputs != null) {
+					for (Lop in : inputs) {
+						int idx = execNodes.indexOf(in);
+						if (idx > maxInputIdx)
+							maxInputIdx = idx;
+					}
+				}
+				String foutLabel = (node.getOutputParameters() != null)
+					? node.getOutputParameters().getLabel()
+					: null;
+				int minConsumerIdx = Integer.MAX_VALUE;
+				for (int j = 0; j < execNodes.size(); j++) {
+					if (j == foutIdx)
+						continue;
+					Lop cand = execNodes.get(j);
+					List<Lop> candInputs = cand.getInputs();
+					if (candInputs == null || candInputs.isEmpty())
+						continue;
+					boolean usesFout = false;
+					for (Lop in : candInputs) {
+						if (in == node) {
+							usesFout = true;
+							break;
+						}
+						if (foutLabel != null && in != null) {
+							OutputParameters out = in.getOutputParameters();
+							String inLabel = (out != null) ? out.getLabel() : null;
+							if (foutLabel.equals(inLabel)) {
+								usesFout = true;
+								break;
+							}
+						}
+					}
+					if (usesFout)
+						minConsumerIdx = Math.min(minConsumerIdx, j);
+				}
+				if (maxInputIdx > foutIdx) {
+					execNodes.remove(foutIdx);
+					int target = Math.min(maxInputIdx, execNodes.size());
+					execNodes.add(target, node);
+					moved = true;
+					break;
+				}
+				if (minConsumerIdx < foutIdx) {
+					int target = Math.max(maxInputIdx + 1, 0);
+					if (target <= minConsumerIdx) {
+						execNodes.remove(foutIdx);
+						if (target > foutIdx)
+							target--;
+						execNodes.add(target, node);
+						moved = true;
+						break;
+					}
+				}
+			}
+		}
+	}
 	
 	/**
 	 * Method to generate instructions that are executed in Control Program. At
@@ -1179,6 +1376,10 @@ public class Dag<N extends Lop>
 		boolean doRmVar = false;
 
 		Set<String> protectedLabels = collectFedInputLabels(execNodes);
+		// Re-linearize executable nodes to respect fed_fout dependencies
+		// (including label-based edges) after filtering.
+		execNodes = linearizeTopological(execNodes);
+		enforceFoutBeforeConsumers(execNodes);
 		for (int i = 0; i < execNodes.size(); i++) {
 			Lop node = execNodes.get(i);
 			doRmVar = false;
