@@ -61,6 +61,14 @@ public final class FederatedFoutMaterializeRegistry {
 		return MATERIALIZE_ANCHORS.isEmpty();
 	}
 
+	public static boolean hasEntry(long hopId) {
+		for (Map<Long, MaterializeSpec> entries : MATERIALIZE_ANCHORS.values()) {
+			if (entries != null && entries.containsKey(hopId))
+				return true;
+		}
+		return false;
+	}
+
 	public static Map<Long, MaterializeSpec> snapshot(long sbId) {
 		Map<Long, MaterializeSpec> entries = MATERIALIZE_ANCHORS.get(sbId);
 		if (entries == null || entries.isEmpty())

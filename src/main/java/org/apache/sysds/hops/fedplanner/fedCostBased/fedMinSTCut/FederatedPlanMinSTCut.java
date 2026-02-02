@@ -78,6 +78,8 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.util.UtilFunctions;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.jgrapht.Graph;
 import org.jgrapht.alg.flow.PushRelabelMFImpl;
 import org.jgrapht.graph.DefaultDirectedWeightedGraph;
@@ -108,7 +110,56 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		FederatedPlanMinSTCostEstimator.estimateProgram(prog, graph, rewireTable, true);
 
 		graph.getOptimalPlan();
+		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
+		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
+		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
+		// Refed/fout insertion can legitimately update per-hop output markers, so validate
+		// against the post-resolve plan rather than assuming the cut result is already final.
+		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
+		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
+		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
+		FederatedPlannerLogger.logOptimalPlan(graph, true);
+	}
+
+	@Override
+	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		FederatedPlannerUtils.clearFedInitVars();
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		FederatedPlanMinSTCostEstimator.estimateFunctionDynamic(function, graph, true);
+		graph.getOptimalPlan();
+		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
+		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
+		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
+		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
+		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
+		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
+		FederatedPlannerLogger.logOptimalPlan(graph, true);
+	}
+
+	private static Map<Long, Pair<ExecType, FederatedOutput>> capturePlannedExecOutputs(
+			FederatedPlanMinSTGraph graph) {
+		Map<Long, Pair<ExecType, FederatedOutput>> planned = new HashMap<>();
+		if (graph == null)
+			return planned;
+		for (Vertex vertex : graph.getMemoTable().values()) {
+			if (vertex == null)
+				continue;
+			Hop hop = vertex.getHopRef();
+			if (hop == null)
+				continue;
+			ExecType exec = hop.getForcedExecType();
+			if (exec == null)
+				exec = hop.getExecType();
+			FederatedOutput out = hop.getFederatedOutput();
+			planned.put(vertex.getHopID(), Pair.of(exec, out));
+		}
+		return planned;
+	}
+
+	private static Map<Long, FType> buildPlannedFTypeMap(FederatedPlanMinSTGraph graph) {
 		Map<Long, FType> fTypeMap = new HashMap<>();
+		if (graph == null)
+			return fTypeMap;
 		for (Vertex vertex : graph.getMemoTable().values()) {
 			Hop hop = vertex.getHopRef();
 			if (hop == null)
@@ -133,39 +184,53 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			if (fType != null)
 				fTypeMap.put(vertex.getHopID(), fType);
 		}
-		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
-		FederatedPlannerLogger.logOptimalPlan(graph, true);
+		return fTypeMap;
 	}
 
-	@Override
-	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
-		FederatedPlannerUtils.clearFedInitVars();
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		FederatedPlanMinSTCostEstimator.estimateFunctionDynamic(function, graph, true);
-		graph.getOptimalPlan();
-		Map<Long, FType> fTypeMap = new HashMap<>();
-		for (Vertex vertex : graph.getMemoTable().values()) {
+	private static void validateMinstPlanConsistency(
+			Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut,
+			Map<Long, FType> plannedFTypeMap,
+			FederatedPlanMinSTGraph graph) {
+		if (graph == null || plannedExecOut == null || plannedExecOut.isEmpty())
+			return;
+		for (Map.Entry<Long, Pair<ExecType, FederatedOutput>> entry : plannedExecOut.entrySet()) {
+			long hopId = entry.getKey();
+			Pair<ExecType, FederatedOutput> planned = entry.getValue();
+			Vertex vertex = graph.getVertex(hopId);
+			if (vertex == null)
+				continue;
 			Hop hop = vertex.getHopRef();
 			if (hop == null)
 				continue;
-			boolean isTransient = (hop instanceof DataOp)
-				&& (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD
-					|| ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE);
-			FType fType = null;
-			if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
-				fType = vertex.getDataType();
-				if (hop.getForcedExecType() == ExecType.CP) {
-					FType cpFoutType = vertex.getCpFoutDataType();
-					if (cpFoutType != null)
-						fType = cpFoutType;
-				}
-			} else if (!isTransient) {
-				fType = vertex.getCpFoutDataType();
+			ExecType curExec = hop.getForcedExecType();
+			if (curExec == null)
+				curExec = hop.getExecType();
+			FederatedOutput curOut = hop.getFederatedOutput();
+			if (planned.getLeft() != curExec || planned.getRight() != curOut) {
+				throw new DMLRuntimeException("MinST plan changed during resolve for hop "
+						+ hopId + " (" + hop.getOpString() + "): planned=" + planned.getLeft()
+						+ "/" + planned.getRight() + " resolved=" + curExec + "/" + curOut);
 			}
-			if (fType != null)
-				fTypeMap.put(vertex.getHopID(), fType);
+
+			if (planned.getLeft() == ExecType.CP && planned.getRight() == FederatedOutput.FOUT) {
+				boolean hasRefed = FederatedRefedRegistry.hasEntry(hopId);
+				boolean hasMaterialize = FederatedFoutMaterializeRegistry.hasEntry(hopId);
+				if (!hasRefed && !hasMaterialize) {
+					throw new DMLRuntimeException("MinST plan requires CP->FOUT for hop " + hopId
+							+ " (" + hop.getOpString() + ") but no refed/materialize entry was registered.");
+				}
+			}
+
+			if (planned.getLeft() == ExecType.FED) {
+				// Validate FED feasibility against the actual planned ExecType/FedOutput markers.
+				// Using the FType-only variant would incorrectly treat CP->FOUT hint entries as
+				// already-federated sources.
+				boolean ok = FederatedRefedPolicy.canSatisfyFederatedInputs(hop, plannedFTypeMap);
+				if (!ok)
+					FederatedPlannerLogger.logWarnMessage(
+							"[MinST] FED feasibility check failed after resolve for hop "
+									+ hopId + " (" + hop.getOpString() + "); continuing (policy may have inserted refed/fout via transient anchors).");
+			}
 		}
-		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
-		FederatedPlannerLogger.logOptimalPlan(graph, true);
 	}
 }
