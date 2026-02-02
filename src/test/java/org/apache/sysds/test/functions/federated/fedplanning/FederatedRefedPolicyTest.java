@@ -85,9 +85,9 @@ public class FederatedRefedPolicyTest {
 		fTypeMap.put(anchor.getHopID(), FType.ROW);
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
-		Map<Long, Long> snapshot = FederatedRefedRegistry.snapshot(-1);
+		Map<Long, FederatedRefedRegistry.AnchorSpec> snapshot = FederatedRefedRegistry.snapshot(-1);
 		assertTrue("Expected refed registry entry for target hop", snapshot.containsKey(target.getHopID()));
-		assertEquals("Anchor hop mismatch in registry", anchor.getHopID(), snapshot.get(target.getHopID()).longValue());
+		assertEquals("Anchor hop mismatch in registry", anchor.getHopID(), snapshot.get(target.getHopID()).getAnchorHopId());
 	}
 
 	@Test
@@ -112,10 +112,10 @@ public class FederatedRefedPolicyTest {
 		fTypeMap.put(anchor2.getHopID(), FType.ROW);
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent1, parent2), true, fTypeMap, -1);
-		Map<Long, Long> snapshot = FederatedRefedRegistry.snapshot(-1);
+		Map<Long, FederatedRefedRegistry.AnchorSpec> snapshot = FederatedRefedRegistry.snapshot(-1);
 		assertTrue("Expected refed registry entry for target hop", snapshot.containsKey(target.getHopID()));
 		assertEquals("Anchor hop mismatch when multiple FED parents exist", anchor1.getHopID(),
-			snapshot.get(target.getHopID()).longValue());
+			snapshot.get(target.getHopID()).getAnchorHopId());
 		assertEquals("Expected first parent to remain FED", ExecType.FED, parent1.getForcedExecType());
 		assertEquals("Expected second parent to remain FED", ExecType.FED, parent2.getForcedExecType());
 	}
@@ -139,9 +139,9 @@ public class FederatedRefedPolicyTest {
 		fTypeMap.put(anchor.getHopID(), FType.ROW);
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
-		Map<Long, Long> snapshot = FederatedRefedRegistry.snapshot(-1);
+		Map<Long, FederatedRefedRegistry.AnchorSpec> snapshot = FederatedRefedRegistry.snapshot(-1);
 		assertEquals("Anchor hop mismatch for federated target input", anchor.getHopID(),
-			snapshot.get(target.getHopID()).longValue());
+			snapshot.get(target.getHopID()).getAnchorHopId());
 
 		Lop parentLop = parent.constructLops();
 		Dag<Lop> dag = new Dag<>();
@@ -199,9 +199,9 @@ public class FederatedRefedPolicyTest {
 		fTypeMap.put(broadcast.getHopID(), FType.BROADCAST);
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent1, parent2), true, fTypeMap, -1);
-		Map<Long, Long> snapshot = FederatedRefedRegistry.snapshot(-1);
+		Map<Long, FederatedRefedRegistry.AnchorSpec> snapshot = FederatedRefedRegistry.snapshot(-1);
 		assertEquals("Anchor hop mismatch when broadcast input is present", anchor.getHopID(),
-			snapshot.get(target.getHopID()).longValue());
+			snapshot.get(target.getHopID()).getAnchorHopId());
 	}
 
 	@Test

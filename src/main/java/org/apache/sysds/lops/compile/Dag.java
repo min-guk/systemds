@@ -493,7 +493,7 @@ public class Dag<N extends Lop>
 			return false;
 
 		long sbId = (sb != null) ? sb.getSBID() : -1;
-		Map<Long, Long> refedEntries = FederatedRefedRegistry.snapshot(sbId);
+		Map<Long, FederatedRefedRegistry.AnchorSpec> refedEntries = FederatedRefedRegistry.snapshot(sbId);
 		if (refedEntries.isEmpty())
 			return false;
 		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeEntries =
@@ -510,7 +510,7 @@ public class Dag<N extends Lop>
 		}
 
 		boolean inserted = false;
-		for (Map.Entry<Long, Long> e : refedEntries.entrySet()) {
+		for (Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> e : refedEntries.entrySet()) {
 			long hopId = e.getKey();
 			if (materializeEntries.containsKey(hopId)) {
 				if (LOG.isDebugEnabled()) {
@@ -519,10 +519,12 @@ public class Dag<N extends Lop>
 				}
 				continue;
 			}
-			long anchorHopId = e.getValue();
+			FederatedRefedRegistry.AnchorSpec anchorSpec = e.getValue();
+			long anchorHopId = anchorSpec.getAnchorHopId();
+			String anchorKey = anchorSpec.getAnchorKey();
 			Lop local = hopToLop.get(hopId);
 			Lop anchor = hopToLop.get(anchorHopId);
-			if (local == null || anchor == null) {
+			if (local == null || (anchor == null && anchorKey == null)) {
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
 						+ " due to missing lops in current DAG");
@@ -545,7 +547,9 @@ public class Dag<N extends Lop>
 			if (alreadyInserted)
 				continue;
 
-			FederatedRefed refed = new FederatedRefed(local, anchor, local.getDataType(), local.getValueType());
+			FederatedRefed refed = (anchor != null)
+				? new FederatedRefed(local, anchor, local.getDataType(), local.getValueType())
+				: new FederatedRefed(local, anchorKey, local.getDataType(), local.getValueType());
 			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
 			copyOutputParams(refed.getOutputParameters(), local.getOutputParameters());
 			refed.setFederatedOutput(FederatedOutput.FOUT);
@@ -600,6 +604,7 @@ public class Dag<N extends Lop>
 				FederatedFoutMaterializeRegistry.MaterializeSpec spec = e.getValue();
 				Lop local = hopToLop.get(hopId);
 				long anchorHopId = spec.getAnchorHopId();
+				String anchorKey = spec.getAnchorKey();
 				Lop anchor = hopToLop.get(anchorHopId);
 				// hopToLop is level-based; for anchors we require a lop with a stable output label
 				// (prefer TR/FEDERATED Data lops) to avoid emitting "null" anchor operands.
@@ -619,10 +624,11 @@ public class Dag<N extends Lop>
 						hopId, anchorHopId, spec.getAnchorLabel(), anchorByLabel.getHopID());
 				}
 			}
-			if (local == null || anchor == null) {
+			boolean missingAnchor = (anchor == null && anchorKey == null);
+			if (local == null || missingAnchor) {
 				System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
-					hopId, anchorHopId, local == null, anchor == null, sbId);
-				if (anchor == null) {
+					hopId, anchorHopId, local == null, missingAnchor, sbId);
+				if (missingAnchor) {
 					List<Long> hopIds = new ArrayList<>(hopToLop.keySet());
 					Collections.sort(hopIds);
 					int limit = 200;
@@ -679,7 +685,9 @@ public class Dag<N extends Lop>
 					continue;
 				}
 
-				FederatedFoutMaterialize fout = new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint());
+				FederatedFoutMaterialize fout = (anchor != null)
+					? new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint())
+					: new FederatedFoutMaterialize(materializeInput, anchorKey, spec.getFTypeHint());
 				fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
 				copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
 				fout.setFederatedOutput(FederatedOutput.FOUT);
@@ -687,9 +695,9 @@ public class Dag<N extends Lop>
 			String localLabel = (local.getOutputParameters() != null)
 				? local.getOutputParameters().getLabel()
 				: "null";
-			String anchorLabel = (anchor.getOutputParameters() != null)
+			String anchorLabel = (anchor != null && anchor.getOutputParameters() != null)
 				? anchor.getOutputParameters().getLabel()
-				: "null";
+				: (anchorKey != null ? anchorKey : "null");
 			System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
 					hopId, localLabel, anchorHopId, anchorLabel, fout.getOutputParameters().getLabel(),
 					spec.getFTypeHint());

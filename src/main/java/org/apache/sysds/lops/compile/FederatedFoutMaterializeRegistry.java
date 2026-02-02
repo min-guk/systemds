@@ -35,12 +35,17 @@ public final class FederatedFoutMaterializeRegistry {
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId, String fTypeHint) {
-		register(sbId, hopId, anchorHopId, fTypeHint, null);
+		register(sbId, hopId, anchorHopId, fTypeHint, null, null);
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId, String fTypeHint, String anchorLabel) {
+		register(sbId, hopId, anchorHopId, fTypeHint, anchorLabel, null);
+	}
+
+	public static void register(long sbId, long hopId, long anchorHopId, String fTypeHint, String anchorLabel,
+			String anchorKey) {
 		MATERIALIZE_ANCHORS.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
-			.put(hopId, new MaterializeSpec(anchorHopId, fTypeHint, anchorLabel));
+			.put(hopId, new MaterializeSpec(anchorHopId, fTypeHint, anchorLabel, anchorKey));
 	}
 
 	public static void remove(long sbId, long hopId) {
@@ -67,11 +72,13 @@ public final class FederatedFoutMaterializeRegistry {
 		private final long _anchorHopId;
 		private final String _fTypeHint;
 		private final String _anchorLabel;
+		private final String _anchorKey;
 
-		public MaterializeSpec(long anchorHopId, String fTypeHint, String anchorLabel) {
+		public MaterializeSpec(long anchorHopId, String fTypeHint, String anchorLabel, String anchorKey) {
 			_anchorHopId = anchorHopId;
 			_fTypeHint = fTypeHint;
 			_anchorLabel = anchorLabel;
+			_anchorKey = anchorKey;
 		}
 
 		public long getAnchorHopId() {
@@ -84,6 +91,10 @@ public final class FederatedFoutMaterializeRegistry {
 
 		public String getAnchorLabel() {
 			return _anchorLabel;
+		}
+
+		public String getAnchorKey() {
+			return _anchorKey;
 		}
 	}
 }

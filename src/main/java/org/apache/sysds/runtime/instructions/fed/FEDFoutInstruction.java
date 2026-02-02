@@ -86,21 +86,42 @@ public class FEDFoutInstruction extends FEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
-		MatrixObject anchor = ec.getMatrixObject(_anchor);
-		FederationMap anchorMap = anchor.getFedMapping();
-		if (!anchor.isFederated() || anchorMap == null) {
-			FederationMap fallback = FederationUtils.getAnchorMap(_anchor.getName());
-			if (fallback != null)
+		FederationMap anchorMap = null;
+		boolean anchorLiteral = !_anchor.isMatrix() || !ec.containsVariable(_anchor.getName());
+		if (!anchorLiteral) {
+			MatrixObject anchor = ec.getMatrixObject(_anchor);
+			anchorMap = anchor.getFedMapping();
+			if (!anchor.isFederated() || anchorMap == null) {
+				FederationMap fallback = FederationUtils.getAnchorMap(_anchor.getName());
+				if (fallback != null)
+					anchorMap = fallback;
+				else {
+					FederationMap derived = FederationUtils.buildAnchorMapFromKey(
+						FederationUtils.getAnchorKey(_anchor.getName()));
+					if (derived != null) {
+						anchorMap = derived;
+						FederationUtils.registerAnchorMap(_anchor.getName(), anchorMap);
+					}
+					else {
+						throw new DMLRuntimeException("fed_fout requires a federated anchor: " + _anchor.getName());
+					}
+				}
+			}
+		}
+		else {
+			String anchorKey = _anchor.getName();
+			FederationMap fallback = FederationUtils.getAnchorMap(anchorKey);
+			if (fallback != null) {
 				anchorMap = fallback;
+			}
 			else {
-				FederationMap derived = FederationUtils.buildAnchorMapFromKey(
-					FederationUtils.getAnchorKey(_anchor.getName()));
+				FederationMap derived = FederationUtils.buildAnchorMapFromKey(anchorKey);
 				if (derived != null) {
 					anchorMap = derived;
-					FederationUtils.registerAnchorMap(_anchor.getName(), anchorMap);
+					FederationUtils.registerAnchorMap(anchorKey, anchorMap);
 				}
 				else {
-					throw new DMLRuntimeException("fed_fout requires a federated anchor: " + _anchor.getName());
+					throw new DMLRuntimeException("fed_fout requires a federated anchor: " + anchorKey);
 				}
 			}
 		}

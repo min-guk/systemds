@@ -25,7 +25,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class FederatedRefedRegistry {
-	private static final Map<Long, Map<Long, Long>> REFED_ANCHORS = new ConcurrentHashMap<>();
+	private static final Map<Long, Map<Long, AnchorSpec>> REFED_ANCHORS = new ConcurrentHashMap<>();
 
 	private FederatedRefedRegistry() {
 	}
@@ -35,12 +35,16 @@ public final class FederatedRefedRegistry {
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId) {
+		register(sbId, hopId, anchorHopId, null);
+	}
+
+	public static void register(long sbId, long hopId, long anchorHopId, String anchorKey) {
 		REFED_ANCHORS.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
-			.put(hopId, anchorHopId);
+			.put(hopId, new AnchorSpec(anchorHopId, anchorKey));
 	}
 
 	public static void remove(long sbId, long hopId) {
-		Map<Long, Long> anchors = REFED_ANCHORS.get(sbId);
+		Map<Long, AnchorSpec> anchors = REFED_ANCHORS.get(sbId);
 		if (anchors == null)
 			return;
 		anchors.remove(hopId);
@@ -49,10 +53,10 @@ public final class FederatedRefedRegistry {
 	}
 
 	public static Long getAnchorHopId(long hopId) {
-		for (Map<Long, Long> anchors : REFED_ANCHORS.values()) {
-			Long anchor = anchors.get(hopId);
+		for (Map<Long, AnchorSpec> anchors : REFED_ANCHORS.values()) {
+			AnchorSpec anchor = anchors.get(hopId);
 			if (anchor != null)
-				return anchor;
+				return anchor.getAnchorHopId();
 		}
 		return null;
 	}
@@ -61,10 +65,28 @@ public final class FederatedRefedRegistry {
 		return REFED_ANCHORS.isEmpty();
 	}
 
-	public static Map<Long, Long> snapshot(long sbId) {
-		Map<Long, Long> anchors = REFED_ANCHORS.get(sbId);
+	public static Map<Long, AnchorSpec> snapshot(long sbId) {
+		Map<Long, AnchorSpec> anchors = REFED_ANCHORS.get(sbId);
 		if (anchors == null || anchors.isEmpty())
 			return Collections.emptyMap();
 		return Collections.unmodifiableMap(new HashMap<>(anchors));
+	}
+
+	public static final class AnchorSpec {
+		private final long _anchorHopId;
+		private final String _anchorKey;
+
+		public AnchorSpec(long anchorHopId, String anchorKey) {
+			_anchorHopId = anchorHopId;
+			_anchorKey = anchorKey;
+		}
+
+		public long getAnchorHopId() {
+			return _anchorHopId;
+		}
+
+		public String getAnchorKey() {
+			return _anchorKey;
+		}
 	}
 }

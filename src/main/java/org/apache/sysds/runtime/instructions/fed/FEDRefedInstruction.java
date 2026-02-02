@@ -67,13 +67,33 @@ public class FEDRefedInstruction extends FEDInstruction {
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
-		MatrixObject anchor = ec.getMatrixObject(_anchor);
 		FederationMap anchorMap = null;
-		if (anchor.isFederated()) {
-			anchorMap = anchor.getFedMapping();
+		boolean anchorLiteral = !_anchor.isMatrix() || !ec.containsVariable(_anchor.getName());
+		if (!anchorLiteral) {
+			MatrixObject anchor = ec.getMatrixObject(_anchor);
+			if (anchor.isFederated()) {
+				anchorMap = anchor.getFedMapping();
+			}
+			else {
+				throw new DMLRuntimeException("fed_refed requires a federated anchor: " + _anchor.getName());
+			}
 		}
 		else {
-			throw new DMLRuntimeException("fed_refed requires a federated anchor: " + _anchor.getName());
+			String anchorKey = _anchor.getName();
+			FederationMap fallback = FederationUtils.getAnchorMap(anchorKey);
+			if (fallback != null) {
+				anchorMap = fallback;
+			}
+			else {
+				FederationMap derived = FederationUtils.buildAnchorMapFromKey(anchorKey);
+				if (derived != null) {
+					anchorMap = derived;
+					FederationUtils.registerAnchorMap(anchorKey, anchorMap);
+				}
+				else {
+					throw new DMLRuntimeException("fed_refed requires a federated anchor: " + anchorKey);
+				}
+			}
 		}
 
 		FType fType = anchorMap.getType();

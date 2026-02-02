@@ -285,16 +285,16 @@ public class FederatedPlannerDpRewireTransTable {
 					functionTransTableCache, computeWeight, networkWeight, multiplicity, parentLoopStack,
 					unrollDepth, maxUnrollDepth, loopCtx, unrollCtx);
 
-			newFormerTransTable.putAll(innerTransTable);
-			Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
-			elseFormerTransTable.putAll(innerTransTable);
-			computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
-			// Keep networkWeight unscaled through if/else bodies: for transient variables (e.g., loop-carried)
-			// we conservatively model forwarding/network frequency as unconditional within the enclosing scope.
+				newFormerTransTable.putAll(innerTransTable);
+				Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
+				elseFormerTransTable.putAll(innerTransTable);
+				computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
+				// Keep networkWeight unscaled through if/else bodies: for transient variables (e.g., loop-carried)
+				// we conservatively model forwarding/network frequency as unconditional within the enclosing scope.
 
-			for (StatementBlock innerIsb : istmt.getIfBody())
-				newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
-						hopCommonTable, newOuterTransTableList, newFormerTransTable,
+				for (StatementBlock innerIsb : istmt.getIfBody())
+					newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
+							hopCommonTable, newOuterTransTableList, newFormerTransTable,
 						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
 						injectedIds, functionTransTableCache, computeWeight,
 						networkWeight, multiplicity, parentLoopStack, unrollDepth, maxUnrollDepth, hopCloneMap, loopCtx,

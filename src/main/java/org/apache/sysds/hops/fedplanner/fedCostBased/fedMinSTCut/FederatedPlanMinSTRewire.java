@@ -1074,7 +1074,7 @@ public class FederatedPlanMinSTRewire {
 			return false;
 		if (!isDerivedFoutPrivacyAllowed(privacy))
 			return false;
-		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, fTypeMap))
+		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap))
 			return false;
 		return true;
 	}

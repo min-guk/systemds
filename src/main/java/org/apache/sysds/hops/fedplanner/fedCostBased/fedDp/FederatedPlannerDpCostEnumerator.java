@@ -627,6 +627,7 @@ public class FederatedPlannerDpCostEnumerator {
 					FType oracleLogicalFType = oracleDecision.logicalFType();
 				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
+				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
 			double cpUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 					hop.getOutputMemEstimate(), cpLogicalFType, numOfWorkers);
 
