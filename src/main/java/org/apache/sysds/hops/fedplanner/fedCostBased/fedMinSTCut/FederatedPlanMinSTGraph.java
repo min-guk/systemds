@@ -177,7 +177,11 @@ public class FederatedPlanMinSTGraph {
 		boolean afF = caps.allowFED_FOUT;
 
 		double cpCost = vertex.getOpCostWithWeight();
-		double fedCost = cpCost / Math.max(1, numOfWorkers);
+		double fedOverhead = 0.0;
+		if (!(vertex.getHopRef() instanceof DataOp)) {
+			fedOverhead = vertex.getNetworkWeight() * FederatedCostModel.computeNetworkCost(0);
+		}
+		double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
 
 		if (!acL && !acF)
 			cpCost = HARD_INF;

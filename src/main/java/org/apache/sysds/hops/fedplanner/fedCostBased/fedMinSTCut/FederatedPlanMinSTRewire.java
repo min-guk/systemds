@@ -347,6 +347,7 @@ public class FederatedPlanMinSTRewire {
 				double loopCarryWeight = outerWeight * iter1Factor;
 				addLoopCarryEdges(loopCarriedVars, newFormerTransTable, loopCtx, graph, loopCarryWeight,
 						unRefTwriteSet);
+				adjustLoopInvariantReadWeights(loopCtx, graph, outerWeight);
 				loopCtxStack.remove(loopCtxStack.size() - 1);
 			}
 
@@ -391,6 +392,7 @@ public class FederatedPlanMinSTRewire {
 				double loopCarryWeight = outerWeight * iter1Factor;
 				addLoopCarryEdges(loopCarriedVars, newFormerTransTable, loopCtx, graph, loopCarryWeight,
 						unRefTwriteSet);
+				adjustLoopInvariantReadWeights(loopCtx, graph, outerWeight);
 				loopCtxStack.remove(loopCtxStack.size() - 1);
 			}
 
@@ -468,14 +470,16 @@ public class FederatedPlanMinSTRewire {
 
 	private static void recordReadFromOutside(List<LoopAnalysisContext> loopCtxStack, String var, Hop treadHop,
 			boolean fromOutside) {
-		if (!fromOutside || loopCtxStack == null || loopCtxStack.isEmpty()) {
+		if (loopCtxStack == null || loopCtxStack.isEmpty()) {
 			return;
 		}
 		for (LoopAnalysisContext ctx : loopCtxStack) {
 			if (ctx.hasWritten(var)) {
 				continue;
 			}
-			ctx.markReadFromOutside(var);
+			if (fromOutside) {
+				ctx.markReadFromOutside(var);
+			}
 			ctx.recordHeaderRead(var, treadHop);
 		}
 	}
@@ -514,6 +518,44 @@ public class FederatedPlanMinSTRewire {
 			graph.addLoopCarryEdge(endWriter.getHopID(), frontReader.getHopID(), loopCarryWeight);
 			if (unRefTwriteSet != null) {
 				unRefTwriteSet.remove(endWriter.getHopID());
+			}
+		}
+	}
+
+	private static void adjustLoopInvariantReadWeights(LoopAnalysisContext loopCtx,
+			FederatedPlanMinSTGraph graph, double outerWeight) {
+		if (loopCtx == null || graph == null || outerWeight <= 0.0) {
+			return;
+		}
+		Map<String, List<Hop>> headerReads = loopCtx.getHeaderReads();
+		if (headerReads == null || headerReads.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<String, List<Hop>> entry : headerReads.entrySet()) {
+			String var = entry.getKey();
+			if (loopCtx.hasWritten(var)) {
+				continue;
+			}
+			List<Hop> reads = entry.getValue();
+			if (reads == null || reads.isEmpty()) {
+				continue;
+			}
+			for (Hop readHop : reads) {
+				if (readHop == null) {
+					continue;
+				}
+				if (!(readHop instanceof DataOp)) {
+					continue;
+				}
+				Types.OpOpData op = ((DataOp) readHop).getOp();
+				if (op != Types.OpOpData.TRANSIENTREAD && op != Types.OpOpData.FEDERATED) {
+					continue;
+				}
+				Vertex vertex = graph.getVertex(readHop.getHopID());
+				if (vertex == null) {
+					continue;
+				}
+				vertex.setMetadata(vertex.getOpWeight(), outerWeight, vertex.getLoopContext());
 			}
 		}
 	}
@@ -888,6 +930,7 @@ public class FederatedPlanMinSTRewire {
 			List<Hop> collectedHops = hop.getInput() == null ? Collections.emptyList() : hop.getInput();
 			List<FType> collectedFTypes = new ArrayList<>();
 			List<Hop> collectedHopList = new ArrayList<>();
+			boolean hasGuaranteedFoutInput = false;
 			for (Hop input : collectedHops) {
 				if (input == null)
 					continue;
@@ -903,6 +946,7 @@ public class FederatedPlanMinSTRewire {
 					boolean inputGuaranteedFout = inputCaps != null
 							&& !inputCaps.allowCP_LOUT
 							&& !inputCaps.allowFED_LOUT;
+					hasGuaranteedFoutInput = hasGuaranteedFoutInput || inputGuaranteedFout;
 					boolean inputMayBeLocal = inputCaps != null
 							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
 					boolean inputRefedPossible = false;
@@ -934,10 +978,19 @@ public class FederatedPlanMinSTRewire {
 			}
 			fType = oracleFType;
 		}
+		if (!hasGuaranteedFoutInput
+				&& FederatedPlannerUtils.isVectorShape(hop)
+				&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)) {
+			fType = FType.BROADCAST;
+		}
 
 		int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 		FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 				hop, fType, rewireTable, numWorkersEstimate);
+		if (!hasGuaranteedFoutInput && FederatedPlannerUtils.isVectorShape(hop)
+				&& cpFoutType != FType.BROADCAST) {
+			cpFoutType = FType.BROADCAST;
+		}
 
 		// Exec/Placement capability 결정
 		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
