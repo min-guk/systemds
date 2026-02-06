@@ -38,6 +38,8 @@ import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy.InputRequirement;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
@@ -325,11 +327,43 @@ public class FederatedPlanMinSTCostEstimator {
 			if (childVertex == null)
 				continue;
 
-			graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID);
+			boolean requiresFederatedInput = requiresFederatedInputForParent(hop, childHop, i, graph);
+			graph.addParentChildNetEdge(childVertex, childHop.getHopID(), vertex, hopID, requiresFederatedInput);
 
 		}
 
 		addLoopCarryEdgesForHop(hop, vertex, graph);
+	}
+
+	private static boolean requiresFederatedInputForParent(Hop parentHop, Hop inputHop, int inputIndex,
+			FederatedPlanMinSTGraph graph) {
+		if (parentHop == null || inputHop == null || graph == null)
+			return true;
+		if (inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
+			return false;
+
+		Map<Long, FType> knownFTypes = collectKnownInputFTypes(parentHop, graph);
+		InputRequirement requirement = FederatedRefedPolicy.getInputRequirementForFedExec(
+				parentHop, inputHop, inputIndex, knownFTypes);
+		return requirement != InputRequirement.OPTIONAL;
+	}
+
+	private static Map<Long, FType> collectKnownInputFTypes(Hop parentHop, FederatedPlanMinSTGraph graph) {
+		Map<Long, FType> knownFTypes = new HashMap<>();
+		List<Hop> inputs = parentHop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return knownFTypes;
+		for (Hop input : inputs) {
+			if (input == null)
+				continue;
+			Vertex inputVertex = graph.getVertex(input.getHopID());
+			if (inputVertex == null)
+				continue;
+			FType inputFType = inputVertex.getDataType();
+			if (inputFType != null)
+				knownFTypes.put(input.getHopID(), inputFType);
+		}
+		return knownFTypes;
 	}
 
 	public static void computeVertexCost(Vertex vertex, int numOfWorkers) {

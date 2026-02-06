@@ -51,7 +51,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		List<Vertex> parents = createParents(graph, 3);
 		for (Vertex parent : parents) {
-			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID());
+			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
 		}
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
@@ -76,7 +76,37 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
-	public void testDownloadOrCostSingleActivation() {
+	public void testOptionalFedInputSkipsUploadHyperedge() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		double uploadCost = 8.0;
+		double downloadCost = 5.0;
+
+		Vertex child = createVertex(new LiteralOp(3.0));
+		child.setCost(0.0, uploadCost, downloadCost);
+		graph.addVertex(child);
+
+		List<Vertex> parents = createParents(graph, 2);
+		for (Vertex parent : parents) {
+			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), false);
+		}
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long childP = placementId(child.getHopID());
+		for (DefaultWeightedEdge edge : g.edgeSet()) {
+			if (g.getEdgeTarget(edge).equals(childP)
+					&& approxEqual(g.getEdgeWeight(edge), uploadCost)) {
+				Assert.fail("Optional input must not create an upload hyperedge");
+			}
+		}
+
+		Set<Long> sourceSide = new HashSet<>();
+		for (Vertex parent : parents)
+			sourceSide.add(computeId(parent.getHopID()));
+		Assert.assertEquals("Optional input edge should not add forwarding cost", 0.0, computeCutCost(g, sourceSide), 1e-9);
+	}
+
+	@Test
+	public void testParentChildEdgeDoesNotCreateDownloadHyperedge() {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		double uploadCost = 9.0;
 		double downloadCost = 11.0;
@@ -88,27 +118,29 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		List<Vertex> parents = createParents(graph, 3);
 		for (Vertex parent : parents) {
-			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID());
+			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
 		}
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
 		long childP = placementId(child.getHopID());
 
-		long downloadAux = findAuxFromChild(g, childP, downloadCost);
 		long uploadAux = findAuxToChild(g, childP, uploadCost);
-		Assert.assertTrue("Expected download aux node to be negative", downloadAux < 0);
-
 		for (Vertex parent : parents) {
 			long parentC = computeId(parent.getHopID());
 			Assert.assertNull("Unexpected direct download edge from child placement to parent",
 					g.getEdge(childP, parentC));
+		}
+		for (DefaultWeightedEdge edge : g.edgeSet()) {
+			if (g.getEdgeSource(edge).equals(childP) && approxEqual(g.getEdgeWeight(edge), downloadCost)) {
+				Assert.fail("Parent-child edge must not introduce download hyperedge");
+			}
 		}
 
 		Set<Long> sourceSide = new HashSet<>();
 		sourceSide.add(childP);
 		sourceSide.add(uploadAux);
 		double cutCost = computeCutCost(g, sourceSide);
-		Assert.assertEquals("Download OR cost should be paid once", downloadCost, cutCost, 1e-9);
+		Assert.assertEquals("Download hyperedge should not be charged on parent-child edge", 0.0, cutCost, 1e-9);
 	}
 
 	private static Vertex createVertex(LiteralOp hop) {
@@ -138,17 +170,6 @@ public class FederatedPlanMinSTHyperedgeTest {
 		return matches.get(0);
 	}
 
-	private static long findAuxFromChild(Graph<Long, DefaultWeightedEdge> graph, long childP, double weight) {
-		List<Long> matches = new ArrayList<>();
-		for (DefaultWeightedEdge edge : graph.edgeSet()) {
-			if (graph.getEdgeSource(edge).equals(childP) && approxEqual(graph.getEdgeWeight(edge), weight)) {
-				matches.add(graph.getEdgeTarget(edge));
-			}
-		}
-		Assert.assertEquals("Expected exactly one download aux edge from child placement", 1, matches.size());
-		return matches.get(0);
-	}
-
 	private static double computeCutCost(Graph<Long, DefaultWeightedEdge> graph, Set<Long> sourceSide) {
 		double cost = 0.0;
 		for (DefaultWeightedEdge edge : graph.edgeSet()) {
@@ -166,10 +187,10 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	private static long computeId(long hopId) {
-		return hopId << 1;
+		return hopId << 2;
 	}
 
 	private static long placementId(long hopId) {
-		return (hopId << 1) | 1;
+		return (hopId << 2) | 1;
 	}
 }

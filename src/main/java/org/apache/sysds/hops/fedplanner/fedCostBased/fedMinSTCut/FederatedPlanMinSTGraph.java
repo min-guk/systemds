@@ -216,7 +216,7 @@ public class FederatedPlanMinSTGraph {
 	}
 
 	public void addParentChildNetEdge(Vertex childVertex, long childHopID,
-			Vertex parentVertex, long parentHopID) {
+			Vertex parentVertex, long parentHopID, boolean requiresFederatedInput) {
 		long parentC = FederatedPlanMinSTPlanner.computeId(parentHopID);
 		long childP = FederatedPlanMinSTPlanner.placementId(childHopID);
 
@@ -272,6 +272,10 @@ public class FederatedPlanMinSTGraph {
 
 		// If a parent executes in CP, the child must have a local materialization (either natively or via download).
 		addRequiredLocalInputEdge(parentHopID, childHopID);
+		// Optional FED inputs (e.g., broadcastable vectors) can remain local in FED execution.
+		// In this case we skip CP->FOUT forwarding on this parent-child edge.
+		if (!requiresFederatedInput)
+			return;
 		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
 	}
 
