@@ -931,14 +931,15 @@ public class FederatedPlanMinSTRewire {
 			List<FType> collectedFTypes = new ArrayList<>();
 			List<Hop> collectedHopList = new ArrayList<>();
 			boolean hasGuaranteedFoutInput = false;
-			for (Hop input : collectedHops) {
+			for (int inputIndex = 0; inputIndex < collectedHops.size(); inputIndex++) {
+				Hop input = collectedHops.get(inputIndex);
 				if (input == null)
 					continue;
 				collectedHopList.add(input);
 				// Align with DP: the Oracle should not treat a potentially-local input as already-federated,
 				// otherwise it can incorrectly allow FED/FOUT for ops that require BROADCAST/materialization.
-				// MinST does not enumerate per-child (LOUT/FOUT) variants, so only guaranteed-FOUT inputs
-				// are passed as non-null. Local-capable inputs stay null to avoid over-optimistic FED chains.
+				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we only pass a non-null FType
+				// when the input is guaranteed to be FOUT or can be safely refed (CP->FOUT) in this block.
 				FType inputFType = fTypeMap.get(input.getHopID());
 				Vertex inputVertex = graph.getVertex(input.getHopID());
 				if (inputVertex != null) {
@@ -949,9 +950,25 @@ public class FederatedPlanMinSTRewire {
 					hasGuaranteedFoutInput = hasGuaranteedFoutInput || inputGuaranteedFout;
 					boolean inputMayBeLocal = inputCaps != null
 							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+					FederatedRefedPolicy.InputRequirement inputRequirement =
+							FederatedRefedPolicy.getInputRequirementForFedExec(hop, input, inputIndex, fTypeMap);
 					if (!inputGuaranteedFout && inputMayBeLocal) {
+						boolean inputRefedPossible = false;
+						try {
+							inputRefedPossible = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
+						}
+						catch (DMLRuntimeException ex) {
+							inputRefedPossible = false;
+						}
+						// Keep original MinST Oracle alignment (local-capable inputs stay null),
+						// but remember optional edges that may still require local->FOUT upload
+						// if FED execution is selected.
+						if (inputRefedPossible
+								&& inputRequirement == FederatedRefedPolicy.InputRequirement.OPTIONAL)
+							graph.markParentChildUploadHint(hop.getHopID(), input.getHopID());
 						inputFType = null;
-					} else if (inputFType == null) {
+					}
+					else if (inputFType == null) {
 						inputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
 					}
 				}

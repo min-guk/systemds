@@ -43,6 +43,7 @@ import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
@@ -1115,6 +1116,8 @@ public final class FederatedRefedPolicy {
 			AnchorSelection blockAnchor, boolean treatFTypeMapAsPlannedFederatedInputs) {
 		if (parent == null || parent.getInput() == null)
 			return true;
+		if (parent instanceof FunctionOp)
+			return hasAnyPlannedFederatedMatrixInput(parent, fTypeMap, treatFTypeMapAsPlannedFederatedInputs);
 		AnchorKey globalAnchorKey = treatFTypeMapAsPlannedFederatedInputs ? selectGlobalAnchorKey(fTypeMap) : null;
 		AnchorSelection requiredAnchor = null;
 		AnchorSelection consumerAnchor = null;
@@ -1235,6 +1238,25 @@ public final class FederatedRefedPolicy {
 				return false;
 		}
 		return requiredAnchor != null;
+	}
+
+	private static boolean hasAnyPlannedFederatedMatrixInput(Hop parent,
+			java.util.Map<Long, FType> fTypeMap, boolean treatFTypeMapAsPlannedFederatedInputs) {
+		if (parent == null || parent.getInput() == null)
+			return true;
+		boolean hasMatrixInput = false;
+		for (Hop input : parent.getInput()) {
+			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			hasMatrixInput = true;
+			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
+				? (fTypeMap != null && fTypeMap.get(input.getHopID()) != null)
+				: isPlannedFederatedInput(input, fTypeMap);
+			if (plannedFed)
+				return true;
+		}
+		// Keep previous behavior for function calls with no matrix arguments.
+		return !hasMatrixInput;
 	}
 
 	private static AnchorSelection selectCpfoutAnchorForParent(Hop parent, Hop input,

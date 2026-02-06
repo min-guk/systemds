@@ -103,6 +103,8 @@ public class FederatedPlanMinSTGraph {
 	private final Set<Pair<Long, Long>> twInputPlacementConsistencyAdded = new HashSet<>();
 	// Track required local-input constraints (child must have local output if parent executes CP).
 	private final Set<Pair<Long, Long>> requiredLocalInputAdded = new HashSet<>();
+	// Track parent-child edges where local->federated forwarding was assumed via refed in rewire.
+	private final Set<Pair<Long, Long>> parentChildUploadHintAdded = new HashSet<>();
 	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
 	private final Set<Long> parentChildUploadCostFallbackLogged = new HashSet<>();
 	private final List<LoopCarryEdge> loopCarryEdges = new ArrayList<>();
@@ -273,8 +275,10 @@ public class FederatedPlanMinSTGraph {
 		// If a parent executes in CP, the child must have a local materialization (either natively or via download).
 		addRequiredLocalInputEdge(parentHopID, childHopID);
 		// Optional FED inputs (e.g., broadcastable vectors) can remain local in FED execution.
-		// In this case we skip CP->FOUT forwarding on this parent-child edge.
-		if (!requiresFederatedInput)
+		// In this case we skip CP->FOUT forwarding on this parent-child edge unless rewire
+		// explicitly assumed a local->FOUT(refed) conversion for this parent-child relation.
+		boolean addUploadForwarding = requiresFederatedInput || hasParentChildUploadHint(parentHopID, childHopID);
+		if (!addUploadForwarding)
 			return;
 		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
 	}
@@ -329,6 +333,18 @@ public class FederatedPlanMinSTGraph {
 		long childL = FederatedPlanMinSTPlanner.localityId(childHopId);
 		// If the child has NO_LOCAL (lId on source side), the parent cannot execute CP.
 		addCap(childL, parentC, HARD_CONSTRAINT);
+	}
+
+	public void markParentChildUploadHint(long parentHopId, long childHopId) {
+		if (parentHopId <= 0 || childHopId <= 0)
+			return;
+		parentChildUploadHintAdded.add(Pair.of(parentHopId, childHopId));
+	}
+
+	public boolean hasParentChildUploadHint(long parentHopId, long childHopId) {
+		if (parentHopId <= 0 || childHopId <= 0)
+			return false;
+		return parentChildUploadHintAdded.contains(Pair.of(parentHopId, childHopId));
 	}
 
 	public void forbidCombinationCP_FOUT(long cId, long pId) {
