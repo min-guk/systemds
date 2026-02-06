@@ -179,6 +179,8 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	protected MetaData _metaData = null;
 	
 	protected FederationMap _fedMapping = null;
+	// Monotonic token for local data updates; used by runtime refed/fout reuse cache.
+	private volatile long _mutationVersion = 0;
 
 	protected boolean _compressed = false;
 
@@ -301,6 +303,10 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 	
 	public long getUniqueID() {
 		return _uniqueID;
+	}
+
+	public long getMutationVersion() {
+		return _mutationVersion;
 	}
 
 	public synchronized void setFileName( String file ) {
@@ -703,7 +709,9 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		//set references to new data
 		if (newData == null)
 			throw new DMLRuntimeException("acquireModify with empty cache block.");
-		return _data = newData;
+		_data = newData;
+		_mutationVersion++;
+		return _data;
 	}
 	
 	/**

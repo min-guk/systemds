@@ -19,19 +19,13 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.net.SocketException;
-
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
@@ -206,6 +200,10 @@ public class FEDFoutInstruction extends FEDInstruction {
 		}
 		if (rlen < 0 || clen < 0)
 			throw new DMLRuntimeException("fed_fout requires known output dimensions: rlen=" + rlen + " clen=" + clen);
+		long nnz = in.getNnz();
+		long inputUniqueId = in.getUniqueID();
+		long inputMutationVersion = in.getMutationVersion();
+		long anchorMapId = anchorMap.getID();
 
 		FType outTypeHint = _fTypeHint != null ? _fTypeHint : FType.FULL;
 		if (outTypeHint == FType.PART || outTypeHint == FType.OTHER)
@@ -215,174 +213,48 @@ public class FEDFoutInstruction extends FEDInstruction {
 		FType mapType = broadcastOut ? FType.BROADCAST : outTypeHint;
 		FType materializeType = broadcastOut ? FType.FULL : outTypeHint;
 
-			long[] rowBeg = null;
-			long[] rowEnd = null;
-			long[] colBeg = null;
-			long[] colEnd = null;
-			if (materializeType == FType.ROW) {
-				if (rlen < numWorkers) {
-					// cannot produce non-empty row slices for all workers
-					materializeType = FType.FULL;
-					// We materialize by broadcasting the full object, which is replication.
-					// Keep the resulting map type as BROADCAST so downstream FED ops can
-					// correctly avoid duplicate binding / unsupported FULL handling.
-					mapType = FType.BROADCAST;
-				}
-				else {
-				rowBeg = new long[numWorkers];
-				rowEnd = new long[numWorkers];
-				colBeg = new long[numWorkers];
-			colEnd = new long[numWorkers];
-			long base = rlen / numWorkers;
-			long rem = rlen % numWorkers;
-			long pos = 0;
-			for (int i = 0; i < numWorkers; i++) {
-				long size = base + (i < rem ? 1 : 0);
-				rowBeg[i] = pos;
-				rowEnd[i] = pos + size;
-				colBeg[i] = 0;
-				colEnd[i] = clen;
-				pos += size;
-			}
-			}
-			}
-			else if (materializeType == FType.COL) {
-				if (clen < numWorkers) {
-					// cannot produce non-empty col slices for all workers
-					materializeType = FType.FULL;
-					// See ROW case above.
-					mapType = FType.BROADCAST;
-				}
-				else {
-				rowBeg = new long[numWorkers];
-				rowEnd = new long[numWorkers];
-				colBeg = new long[numWorkers];
-			colEnd = new long[numWorkers];
-			long base = clen / numWorkers;
-			long rem = clen % numWorkers;
-			long pos = 0;
-			for (int i = 0; i < numWorkers; i++) {
-				long size = base + (i < rem ? 1 : 0);
-				rowBeg[i] = 0;
-				rowEnd[i] = rlen;
-				colBeg[i] = pos;
-				colEnd[i] = pos + size;
-				pos += size;
-			}
-			}
+		if (materializeType == FType.ROW && rlen < numWorkers) {
+			materializeType = FType.FULL;
+			mapType = FType.BROADCAST;
+		}
+		else if (materializeType == FType.COL && clen < numWorkers) {
+			materializeType = FType.FULL;
+			mapType = FType.BROADCAST;
 		}
 
-			long outId;
-			List<Pair<FederatedRange, FederatedData>> outMap = new ArrayList<>();
-			if (materializeType == FType.FULL) {
-				// Broadcasting the full object to a worker pool is replication; reflect this via BROADCAST maps.
-				if (mapType == FType.FULL && anchorMap.getSize() > 1)
-					mapType = FType.BROADCAST;
-				FederatedRequest fr = null;
-				int attempts = 0;
-				while (true) {
-					try {
-						fr = anchorMap.broadcast(in);
-						anchorMap.execute(getTID(), true, fr);
-						break;
-					}
-					catch (DMLRuntimeException ex) {
-						if (attempts == 0 && (isConnectionReset(ex) || isChannelClosed(ex))) {
-							LOG.warn("fed_fout retrying broadcast after channel closure");
-							attempts++;
-							continue;
-						}
-						throw ex;
-					}
-				}
-			outId = fr.getID();
-			for (Pair<FederatedRange, FederatedData> entry : anchorMap.getMap()) {
-				FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {rlen, clen});
-				FederatedData data = entry.getValue().copyWithNewID(outId);
-				outMap.add(new ImmutablePair<>(range, data));
+		FType cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
+		FederationMap cached = FederationUtils.getRefedReuseMap(inputUniqueId, inputMutationVersion,
+			rlen, clen, nnz, anchorMapId, cacheMapType);
+		if (cached != null) {
+			MatrixObject out = ec.getMatrixObject(_output);
+			out.setFedMapping(cached);
+			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), nnz);
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] fed_fout reuse-local in=" + _input.getName()
+					+ " out=" + _output.getName()
+					+ " dims=" + rlen + "x" + clen
+					+ " hint=" + outTypeHint
+					+ " mapType=" + cached.getType()
+					+ " reuseFed=false");
 			}
+			return;
 		}
-		else {
-			int[][] ix = new int[numWorkers][4];
-			for (int i = 0; i < numWorkers; i++) {
-				long rb = rowBeg[i];
-				long re = rowEnd[i];
-				long cb = colBeg[i];
-				long ce = colEnd[i];
-				ix[i][0] = (int) rb;
-				ix[i][1] = (int) (re - 1);
-				ix[i][2] = (int) cb;
-				ix[i][3] = (int) (ce - 1);
-			}
 
-			FederationMap sliceMap = anchorMap;
-			if (anchorMap.getType() == FType.FULL)
-				sliceMap = new FederationMap(anchorMap.getID(), anchorMap.getMap(), materializeType);
-			FederatedRequest[] frSlices = null;
-			int attempts = 0;
-			while (true) {
-				try {
-					frSlices = sliceMap.broadcastSliced(in, false, ix);
-					if (frSlices.length != numWorkers)
-						throw new DMLRuntimeException("fed_fout slice request count mismatch: expected=" + numWorkers
-							+ " actual=" + frSlices.length);
-					anchorMap.execute(getTID(), true, frSlices, new FederatedRequest[0]);
-					break;
-				}
-				catch (DMLRuntimeException ex) {
-					if (attempts == 0 && (isConnectionReset(ex) || isChannelClosed(ex))) {
-						LOG.warn("fed_fout retrying sliced broadcast after channel closure");
-						attempts++;
-						continue;
-					}
-					throw ex;
-				}
-			}
-			outId = frSlices[0].getID();
-
-			outMap.clear();
-			for (int i = 0; i < numWorkers; i++) {
-				FederatedRange range = new FederatedRange(new long[] {rowBeg[i], colBeg[i]},
-					new long[] {rowEnd[i], colEnd[i]});
-				FederatedData data = anchorMap.getMap().get(i).getValue().copyWithNewID(outId);
-				outMap.add(new ImmutablePair<>(range, data));
-			}
-		}
+		FederationMap outMap = FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), in, anchorMap,
+			materializeType, mapType, rlen, clen, true, "fed_fout");
 
 		MatrixObject out = ec.getMatrixObject(_output);
-		out.setFedMapping(new FederationMap(outId, outMap, mapType));
+		out.setFedMapping(outMap);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+		FederationUtils.putRefedReuseMap(inputUniqueId, inputMutationVersion,
+			rlen, clen, nnz, anchorMapId, outMap.getType(), outMap);
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
 				+ " out=" + _output.getName()
 				+ " dims=" + rlen + "x" + clen
 				+ " hint=" + outTypeHint
-				+ " mapType=" + mapType
+				+ " mapType=" + outMap.getType()
 				+ " reuseFed=false");
 		}
-	}
-
-	private static boolean isConnectionReset(Throwable ex) {
-		Throwable cur = ex;
-		while (cur != null) {
-			if (cur instanceof SocketException)
-				return true;
-			String msg = cur.getMessage();
-			if (msg != null && msg.contains("Connection reset"))
-				return true;
-			cur = cur.getCause();
-		}
-		return false;
-	}
-
-	private static boolean isChannelClosed(Throwable ex) {
-		Throwable cur = ex;
-		while (cur != null) {
-			String msg = cur.getMessage();
-			if (msg != null && msg.toLowerCase().contains("channel closed"))
-				return true;
-			cur = cur.getCause();
-		}
-		return false;
 	}
 }
