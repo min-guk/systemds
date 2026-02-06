@@ -937,8 +937,8 @@ public class FederatedPlanMinSTRewire {
 				collectedHopList.add(input);
 				// Align with DP: the Oracle should not treat a potentially-local input as already-federated,
 				// otherwise it can incorrectly allow FED/FOUT for ops that require BROADCAST/materialization.
-				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we only pass a non-null FType
-				// when the input is guaranteed to be FOUT or can be safely refed (CP->FOUT) in this block.
+				// MinST does not enumerate per-child (LOUT/FOUT) variants, so only guaranteed-FOUT inputs
+				// are passed as non-null. Local-capable inputs stay null to avoid over-optimistic FED chains.
 				FType inputFType = fTypeMap.get(input.getHopID());
 				Vertex inputVertex = graph.getVertex(input.getHopID());
 				if (inputVertex != null) {
@@ -949,11 +949,7 @@ public class FederatedPlanMinSTRewire {
 					hasGuaranteedFoutInput = hasGuaranteedFoutInput || inputGuaranteedFout;
 					boolean inputMayBeLocal = inputCaps != null
 							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
-					boolean inputRefedPossible = false;
-					if (inputMayBeLocal && !inputGuaranteedFout) {
-						inputRefedPossible = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
-					}
-					if (!inputGuaranteedFout && !inputRefedPossible) {
+					if (!inputGuaranteedFout && inputMayBeLocal) {
 						inputFType = null;
 					} else if (inputFType == null) {
 						inputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
@@ -994,12 +990,28 @@ public class FederatedPlanMinSTRewire {
 
 		// Exec/Placement capability 결정
 		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
-		if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap)) {
+		Map<Long, FType> alignedFedInputFTypeMap = fTypeMap;
+		if (!collectedHopList.isEmpty()) {
+			alignedFedInputFTypeMap = new HashMap<>();
+			if (fTypeMap != null)
+				alignedFedInputFTypeMap.putAll(fTypeMap);
+			for (int i = 0; i < collectedHopList.size(); i++) {
+				Hop input = collectedHopList.get(i);
+				if (input == null)
+					continue;
+				FType alignedInputFType = (i < collectedFTypes.size()) ? collectedFTypes.get(i) : null;
+				if (alignedInputFType == null)
+					alignedFedInputFTypeMap.remove(input.getHopID());
+				else
+					alignedFedInputFTypeMap.put(input.getHopID(), alignedInputFType);
+			}
+		}
+		if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, alignedFedInputFTypeMap)) {
 			caps.allowFED_LOUT = false;
 			caps.allowFED_FOUT = false;
 			if (!caps.hasAny()) {
 				throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
-						+ hop.getHopID() + " (" + hop.getOpString() + ")");
+					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 			}
 		}
 
