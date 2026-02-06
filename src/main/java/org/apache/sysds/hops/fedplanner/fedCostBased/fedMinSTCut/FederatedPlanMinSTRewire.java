@@ -991,19 +991,30 @@ public class FederatedPlanMinSTRewire {
 			}
 			fType = oracleFType;
 		}
+		int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 		if (!hasGuaranteedFoutInput
 				&& FederatedPlannerUtils.isVectorShape(hop)
 				&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)) {
-			fType = FType.BROADCAST;
+			FType axisType = FederatedPlannerUtils.getVectorAxis(hop);
+			boolean axisSafe = axisType != null
+					&& OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+							hop, axisType, rewireTable, numWorkersEstimate) == axisType;
+			boolean canRefedAsAxis = false;
+			if (axisSafe) {
+				try {
+					canRefedAsAxis = FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, fTypeMap);
+				}
+				catch (DMLRuntimeException ex) {
+					canRefedAsAxis = false;
+				}
+			}
+			// Prefer ROW/COL for vectors whenever safe and materializable;
+			// otherwise fall back to BROADCAST.
+			fType = (axisSafe && canRefedAsAxis) ? axisType : FType.BROADCAST;
 		}
 
-		int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 		FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 				hop, fType, rewireTable, numWorkersEstimate);
-		if (!hasGuaranteedFoutInput && FederatedPlannerUtils.isVectorShape(hop)
-				&& cpFoutType != FType.BROADCAST) {
-			cpFoutType = FType.BROADCAST;
-		}
 
 		// Exec/Placement capability 결정
 		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
