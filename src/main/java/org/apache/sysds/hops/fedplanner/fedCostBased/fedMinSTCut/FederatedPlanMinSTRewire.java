@@ -1034,7 +1034,15 @@ public class FederatedPlanMinSTRewire {
 					alignedFedInputFTypeMap.put(input.getHopID(), alignedInputFType);
 			}
 		}
-		if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, alignedFedInputFTypeMap)) {
+		boolean fedInputsSatisfied = FederatedRefedPolicy
+				.canSatisfyFederatedInputsFromFTypes(hop, alignedFedInputFTypeMap);
+		// If strict Oracle-aligned inputs fail, fall back to the broader planned map.
+		// This avoids rejecting legal FED plans where required local inputs can still be
+		// materialized (CP->FOUT) based on upstream planned FTypes.
+		if (!fedInputsSatisfied && fTypeMap != null && alignedFedInputFTypeMap != fTypeMap) {
+			fedInputsSatisfied = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap);
+		}
+		if (!fedInputsSatisfied) {
 			caps.allowFED_LOUT = false;
 			caps.allowFED_FOUT = false;
 			if (!caps.hasAny()) {
