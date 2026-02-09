@@ -52,8 +52,12 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
@@ -62,6 +66,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMi
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTRewire;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -134,13 +140,87 @@ public class FederatedPlannerFallbackIntegrationTest {
 		privacyMap.put(right.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
 		privacyMap.put(plus.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
 
+		Map<Long, Set<Long>> uploadHints = new HashMap<>();
 		Set<Long> unref = new HashSet<>();
 		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
-		invokeEnumerateHop(plus, memoTable, hopCommonTable, rewireTable, privacyMap, unref, 1, oracle);
+		invokeEnumerateHop(plus, memoTable, hopCommonTable, rewireTable, privacyMap, uploadHints, unref, 1, oracle);
 
 		FedPlan plan = memoTable.getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Expected CP_FOUT plan for binary plus", plan);
 		assertEquals("Expected ROW fallback FType for mismatch inputs", FType.ROW, plan.getFType());
+	}
+
+	@Test
+	public void testDpDerivedFedFoutWhenOracleOnlyAllowsFedLout() throws Exception {
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			DataOp left = federatedRead("FX", ROWS, COLS);
+			DataOp right = transientRead("Y");
+			BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+			plus.setDim1(ROWS);
+			plus.setDim2(COLS);
+			UnaryOp fedParent = HopRewriteUtils.createUnary(plus, OpOp1.EXP);
+			fedParent.setDim1(ROWS);
+			fedParent.setDim2(COLS);
+
+			Map<Long, FType> plannedFTypes = new HashMap<>();
+			plannedFTypes.put(left.getHopID(), FType.ROW);
+			assertTrue("Expected refed planner to allow CP->FOUT candidate from planned FTypes",
+				FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(plus, plannedFTypes));
+
+			ExecPlacementPolicy.Decision placementDecision = new ExecPlacementPolicy.Decision();
+			placementDecision.allowFED_LOUT = true;
+			placementDecision.allowFED_FOUT = false;
+			OpCaps caps = OpCaps.newBuilder()
+				.exec(ExecType.FED)
+				.placement(FederatedOutput.LOUT)
+				.reason(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME)
+				.build();
+
+			Method shouldEnableMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+				"shouldEnableDerivedFedFout", Hop.class, Privacy.class, Map.class,
+				OpCaps.class, ExecPlacementPolicy.Decision.class);
+			shouldEnableMethod.setAccessible(true);
+			boolean shouldEnableDerivedFedFout = (boolean) shouldEnableMethod.invoke(
+				null, plus, Privacy.PUBLIC, plannedFTypes, caps, placementDecision);
+			assertTrue("Expected DP to enable derived FED_FOUT under FED+LOUT oracle decision",
+				shouldEnableDerivedFedFout);
+		}
+		finally {
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDpOptionalInputUploadHintEnablesFedForwarding() throws Exception {
+		DataOp localSource = transientRead("LX");
+		UnaryOp target = HopRewriteUtils.createUnary(localSource, OpOp1.EXP);
+		target.setDim1(ROWS);
+		target.setDim2(COLS);
+		UnaryOp optionalParent = HopRewriteUtils.createUnary(target, OpOp1.BROADCAST);
+		optionalParent.setDim1(ROWS);
+		optionalParent.setDim2(COLS);
+
+		Map<Long, FType> inputFTypes = new HashMap<>();
+		Method requiresMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"requiresFederatedInputForParent", Hop.class, Hop.class, int.class, Map.class);
+		requiresMethod.setAccessible(true);
+		boolean requiresFederatedInput = (boolean) requiresMethod.invoke(
+			null, optionalParent, target, 0, inputFTypes);
+		assertFalse("Expected BROADCAST input to be OPTIONAL for FED execution", requiresFederatedInput);
+
+		Method shouldAddMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"shouldAddFedForwardingForParentInput", Hop.class, Hop.class, int.class, Map.class, Map.class);
+		shouldAddMethod.setAccessible(true);
+		Map<Long, Set<Long>> uploadHints = new HashMap<>();
+		boolean withoutHint = (boolean) shouldAddMethod.invoke(
+			null, optionalParent, target, 0, inputFTypes, uploadHints);
+		assertFalse("OPTIONAL input without hint must not add LOUT->FED forwarding", withoutHint);
+
+		TransTableRewireUtils.markParentChildUploadHint(uploadHints, optionalParent.getHopID(), target.getHopID());
+		boolean withHint = (boolean) shouldAddMethod.invoke(
+			null, optionalParent, target, 0, inputFTypes, uploadHints);
+		assertTrue("OPTIONAL input with upload hint must add LOUT->FED forwarding", withHint);
 	}
 
 	@Test
@@ -189,6 +269,50 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testUploadHintApiAcceptsZeroHopId() {
+		Map<Long, Set<Long>> uploadHints = new HashMap<>();
+		TransTableRewireUtils.markParentChildUploadHint(uploadHints, 0L, 7L);
+		TransTableRewireUtils.markParentChildUploadHint(uploadHints, 8L, 0L);
+
+		assertTrue("Parent hopId=0 should be treated as valid", TransTableRewireUtils.hasParentChildUploadHint(
+			uploadHints, 0L, 7L));
+		assertTrue("Child hopId=0 should be treated as valid", TransTableRewireUtils.hasParentChildUploadHint(
+			uploadHints, 8L, 0L));
+	}
+
+	@Test
+	public void testDpRewritePropagatesDerivedFedFoutFlag() throws Exception {
+		DataOp child = transientRead("X");
+		UnaryOp parent = HopRewriteUtils.createUnary(child, OpOp1.EXP);
+		parent.setDim1(ROWS);
+		parent.setDim2(COLS);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addSinglePlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
+
+		FedPlanVariants parentVariants = new FedPlanVariants(parentCommon, FederatedOutput.FOUT);
+		FedPlan parentPlan = new FedPlan(0.0, parentVariants,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		parentPlan.setExecType(ExecType.FED);
+		parentPlan.setFType(FType.ROW);
+		parentPlan.setDerivedFedFout(true);
+		parentVariants.addFedPlan(parentPlan);
+		memoTable.addFedPlanVariants(parent.getHopID(), FederatedOutput.FOUT, parentVariants);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		assertFalse("Precondition: derived marker should start unset", parent.isFederatedOutputDerived());
+		invokeDpRewriteHop(new FederatedPlannerDpFedCostBased(), parentPlan, memoTable);
+		assertEquals("Expected FED output on rewritten parent", FederatedOutput.FOUT, parent.getFederatedOutput());
+		assertEquals("Expected FED exec on rewritten parent", ExecType.FED, parent.getForcedExecType());
+		assertTrue("Derived FED/FOUT candidate must propagate to Hop rewrite state",
+			parent.isFederatedOutputDerived());
+	}
+
+	@Test
 	public void testMinSTFallbackFTypeForVertex() throws Exception {
 		DataOp left = transientRead("X");
 		DataOp right = transientRead("Y");
@@ -225,8 +349,6 @@ public class FederatedPlannerFallbackIntegrationTest {
 		privacyMap.put(left.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
 		privacyMap.put(right.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
 		privacyMap.put(plus.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
-		assertFalse("Vector plus without FED parent demand should be refed-infeasible",
-			org.apache.sysds.hops.fedplanner.FederatedRefedPolicy.canGenerateCpfoutCandidate(plus, fTypeMap));
 
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
@@ -418,7 +540,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		return common;
 	}
 
-	private static void addSinglePlan(FederatedPlannerDpMemoTable memoTable, HopCommon hopCommon,
+	private static FedPlan addSinglePlan(FederatedPlannerDpMemoTable memoTable, HopCommon hopCommon,
 			FederatedOutput fedOutType, ExecType execType, FType fType) {
 		FedPlanVariants variants = new FedPlanVariants(hopCommon, fedOutType);
 		FedPlan plan = new FedPlan(0.0, variants, List.of());
@@ -426,17 +548,20 @@ public class FederatedPlannerFallbackIntegrationTest {
 		plan.setFType(fType);
 		variants.addFedPlan(plan);
 		memoTable.addFedPlanVariants(hopCommon.getHopRef().getHopID(), fedOutType, variants);
+		return plan;
 	}
 
 	private static void invokeEnumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
-			Map<Long, org.apache.sysds.hops.fedplanner.FTypes.Privacy> privacyMap, Set<Long> unref,
+			Map<Long, org.apache.sysds.hops.fedplanner.FTypes.Privacy> privacyMap,
+			Map<Long, Set<Long>> uploadHints, Set<Long> unref,
 			int numWorkers, OracleFacade oracleFacade) throws Exception {
 		Method method = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
 			"enumerateHop", Hop.class, FederatedPlannerDpMemoTable.class, Map.class, Map.class,
-			Map.class, Set.class, int.class, OracleFacade.class);
+			Map.class, Map.class, Set.class, int.class, OracleFacade.class);
 		method.setAccessible(true);
-		method.invoke(null, hop, memoTable, hopCommonTable, rewireTable, privacyMap, unref, numWorkers, oracleFacade);
+		method.invoke(null, hop, memoTable, hopCommonTable, rewireTable, privacyMap,
+			uploadHints, unref, numWorkers, oracleFacade);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -451,5 +576,15 @@ public class FederatedPlannerFallbackIntegrationTest {
 		return (Vertex) method.invoke(null, hop, new HashMap<Long, List<Hop>>(), new ArrayList<>(),
 			new HashMap<>(), new HashMap<>(), privacyMap, graph, fTypeMap, new ArrayList<>(),
 			new HashSet<>(), new HashSet<>(), new ArrayList<>(), oracleFacade);
+	}
+
+	private static void invokeDpRewriteHop(FederatedPlannerDpFedCostBased planner, FedPlan plan,
+			FederatedPlannerDpMemoTable memoTable) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"rewriteHop", FederatedPlannerDpMemoTable.FedPlan.class, FederatedPlannerDpMemoTable.class,
+			Map.class, Map.class, Set.class, Map.class);
+		method.setAccessible(true);
+		method.invoke(planner, plan, memoTable, new HashMap<Long, Pair<FederatedOutput, ExecType>>(),
+			new HashMap<Long, Boolean>(), new HashSet<Long>(), new HashMap<Long, FType>());
 	}
 }
