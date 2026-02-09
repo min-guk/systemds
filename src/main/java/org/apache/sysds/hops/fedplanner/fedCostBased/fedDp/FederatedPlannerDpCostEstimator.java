@@ -269,7 +269,9 @@ public class FederatedPlannerDpCostEstimator {
 		double parentWeight = parentHopCommon.computeForwardingWeightOfChild(
 				childPlan.getLoopContext(), parentHopCommon.getMultiplicity());
 		parentWeight = Math.max(0.0, parentWeight);
-		return (totalCost / numParents) * parentWeight;
+		// Boundary forwarding is paid per parent-child edge; do not amortize by
+		// child parent-count (align with MinST edge-capacity semantics).
+		return totalCost * parentWeight;
 	}
 
 	static double computeForwardingCostShareForParent(double totalCost,
@@ -284,7 +286,7 @@ public class FederatedPlannerDpCostEstimator {
 		double parentWeight = parentPlan.computeForwardingWeightOfChild(
 				childPlan.getLoopContext(), parentPlan.getMultiplicity());
 		parentWeight = Math.max(0.0, parentWeight);
-		return (totalCost / numParents) * parentWeight;
+		return totalCost * parentWeight;
 	}
 
 }

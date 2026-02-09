@@ -501,3 +501,37 @@
   - 감지 방법: LAN 워크로드(l2svm/logreg)에서 DP 플랜/비용 로그 비교.
 - **의사결정 근거(oracle/런타임/플래너)**:
   - 런타임 fallback 없이 플래너(DP) 비용 모델이 FED 실행의 필수 네트워크 비용(브로드캐스트 포함)을 반영하도록 교정.
+
+## 이슈 14: runtime refed policy가 OPTIONAL local 입력까지 강제로 CP->FOUT로 올려 불필요한 `fed_fout`가 삽입됨
+
+- **상태**: 해결
+- **환경/조건**:
+  - Repository: `/home/mchoi/exdra_run/systemds`
+  - Component: `FederatedRefedPolicy.ensureRequiredFederatedInputs`
+  - 시나리오: FED parent가 OPTIONAL(BROADCAST 가능) vector 입력을 local(LOUT)로 유지 가능한 케이스
+- **재현 절차**:
+  1. `FED(X %*% p)` 형태에서 `X`는 federated, `p`는 local vector(LOUT)로 구성한다.
+  2. `fTypeMap.put(pHopId, FType.BROADCAST)` 설정 후 `FederatedRefedPolicy.registerFromHops(...)`를 호출한다.
+- **관측 증상**:
+  - OPTIONAL vector 입력(`p`)이 local로 남아도 되는 경우에도, refed policy가 `p`를 REQUIRED처럼 취급해 `fed_fout` materialize를 등록/삽입했다.
+  - 결과적으로 `FederatedRefedPolicyTest.testOptionalBroadcastInputStaysLocalForFedParent`가 실패했다.
+- **원인 분석**:
+  - `ensureRequiredFederatedInputs`가 OPTIONAL-but-local matrix 입력을 `requiredIndices`에 포함시켜
+    `validateAndRegisterRequired(...)` 경로로 CP->FOUT 후보 등록을 강제했다.
+- **해결 요약**:
+  - OPTIONAL local 입력은, 동일 FED hop 내에 다른 anchor(=runtime federated 입력 또는 REQUIRED 입력)가 존재하면 local로 유지하도록 변경.
+  - anchor가 전혀 없는 경우에만(=FED 실행 성립을 위해 필요할 때만) OPTIONAL local 입력을 federated로 만들도록 유지했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+- **검증**:
+  - 실행 커맨드:
+    - `mvn -q -Dtest=FederatedRefedPolicyTest test`
+  - 결과:
+    - `FederatedRefedPolicyTest` 통과
+- **잔여 이슈**:
+  - 입력이 모두 OPTIONAL인 FED hop에서 anchor가 없는 경우의 선택(업로드 vs demote)은 워크로드 기반으로 추가 확인 여지.
+- **잠재 회귀 위험**:
+  - OPTIONAL input을 local로 유지하는 경로가 늘어나, 특정 연산에서 런타임이 local-input broadcast를 지원하지 않으면 실행 실패 가능.
+  - 감지 방법: OPTIONAL-vector 케이스가 포함된 refed policy 테스트 유지 + LAN 워크로드에서 FED 실행 로그 확인.
+- **의사결정 근거(oracle/런타임/플래너)**:
+  - 런타임 fallback 없이, planner의 OPTIONAL 의미(=broadcast 가능)를 refed policy가 과도하게 상쇄하지 않도록 런타임 계획을 정합화.

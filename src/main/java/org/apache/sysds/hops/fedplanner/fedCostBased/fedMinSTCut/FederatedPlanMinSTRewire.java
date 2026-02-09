@@ -751,20 +751,26 @@ public class FederatedPlanMinSTRewire {
 		FType fType = null;
 		ExecPlacementCaps caps;
 
-		if (hop instanceof DataOp) {
-			DataOp dataOp = (DataOp) hop;
-			Types.OpOpData opType = dataOp.getOp();
-			String hopName = dataOp.getName();
+			if (hop instanceof DataOp) {
+				DataOp dataOp = (DataOp) hop;
+				Types.OpOpData opType = dataOp.getOp();
+				String hopName = dataOp.getName();
 
-			if (opType == Types.OpOpData.FEDERATED) {
-				// 2) FEDERATED DataOp: privacy + partition metadata 기반 FType
-				privacy = FederatedPlannerUtils.getFedWorkerMetaData(fedMap, dataOp);
-				fType = FederatedTypePropagator.deriveFType(dataOp);
-				FederatedPlannerUtils.registerFedInitVar(hopName, fType,
-					FederatedPlannerUtils.deriveFedInitSignature(dataOp));
-				FederatedPlannerLogger.logDataOpFTypeDebug(
-						hop, fType, "FEDERATED", "Derived from partition ranges");
-			} else if (opType == Types.OpOpData.TRANSIENTWRITE) {
+				if (opType == Types.OpOpData.FEDERATED) {
+					// 2) FEDERATED DataOp: preserve partition-derived FType (DP parity).
+					// Do not route fedinit through Oracle decision, which can override ROW/COL to
+					// BROADCAST and trigger repeated FED_FOUT uploads in iterative workloads.
+					privacy = FederatedPlannerUtils.getFedWorkerMetaData(fedMap, dataOp);
+					fType = FederatedTypePropagator.deriveFType(dataOp);
+					FederatedPlannerUtils.registerFedInitVar(hopName, fType,
+						FederatedPlannerUtils.deriveFedInitSignature(dataOp));
+					FederatedPlannerLogger.logDataOpFTypeDebug(
+							hop, fType, "FEDERATED", "Derived from partition ranges");
+					caps = buildExecPlacementCaps(hop, privacy, fType, null, fTypeMap);
+					privacyConstraintMap.put(hop.getHopID(), privacy);
+					fTypeMap.put(hop.getHopID(), fType);
+					return new Vertex(hop, privacy, fType, caps);
+				} else if (opType == Types.OpOpData.TRANSIENTWRITE) {
 				if ("__pred".equals(hopName)) {
 					// Align with DP: skip transient rewire for __pred.
 					privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
@@ -936,10 +942,8 @@ public class FederatedPlanMinSTRewire {
 				if (input == null)
 					continue;
 				collectedHopList.add(input);
-				// Align with DP: the Oracle should not treat a potentially-local input as already-federated,
-				// otherwise it can incorrectly allow FED/FOUT for ops that require BROADCAST/materialization.
-				// MinST does not enumerate per-child (LOUT/FOUT) variants, so we only pass a non-null FType
-				// when the input is guaranteed to be FOUT or can be safely refed (CP->FOUT) in this block.
+				// Align with DP: for local-capable inputs, pass FED FType only when refed is feasible.
+				// Otherwise keep the input local (null) so Oracle does not over-assume federated inputs.
 				FType inputFType = fTypeMap.get(input.getHopID());
 				Vertex inputVertex = graph.getVertex(input.getHopID());
 				if (inputVertex != null) {
@@ -950,14 +954,31 @@ public class FederatedPlanMinSTRewire {
 					hasGuaranteedFoutInput = hasGuaranteedFoutInput || inputGuaranteedFout;
 					boolean inputMayBeLocal = inputCaps != null
 							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+					boolean inputCanRefed = false;
+					boolean keepPlannedFedHint = false;
 					if (!inputGuaranteedFout && inputMayBeLocal) {
-						// Keep original MinST Oracle alignment (local-capable inputs stay null).
-						// OPTIONAL inputs are not forced into local->FOUT upload at rewire time.
-						// Whether BROADCAST/upload is needed is decided by parent execution.
+						try {
+							// Distinguish between:
+							// 1) concrete CP->FOUT feasibility for this input (safe to infer a new FED hint), and
+							// 2) planned-map/global-anchor feasibility (safe only to keep an existing FED hint).
+							inputCanRefed = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
+							if (!inputCanRefed && inputFType != null) {
+								keepPlannedFedHint = FederatedRefedPolicy
+										.canGenerateCpfoutCandidateFromFTypes(input, fTypeMap);
+							}
+						}
+						catch (DMLRuntimeException ex) {
+							inputCanRefed = false;
+							keepPlannedFedHint = false;
+						}
+					}
+					if (!inputGuaranteedFout && inputMayBeLocal && !inputCanRefed && !keepPlannedFedHint) {
 						inputFType = null;
 					}
 					else if (inputFType == null) {
-						inputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
+						if (inputCanRefed || inputGuaranteedFout || !inputMayBeLocal) {
+							inputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
+						}
 					}
 				}
 				collectedFTypes.add(inputFType);

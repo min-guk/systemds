@@ -952,7 +952,28 @@ public final class FederatedRefedPolicy {
 					}
 					continue;
 				}
-				// Optional-but-local inputs still need federation (e.g., broadcast) for FED exec.
+				// Optional local inputs can stay local as long as the FED hop has another anchor input that establishes
+				// runtime federation (or will be made federated as a REQUIRED input). Otherwise we must federate at
+				// least one input to make FED execution feasible.
+				boolean hasAnchorInput = false;
+				for (int j = 0; j < hop.getInput().size(); j++) {
+					if (j == i)
+						continue;
+					Hop other = hop.getInput().get(j);
+					if (other == null || other.getDataType() == null || !other.getDataType().isMatrix())
+						continue;
+					if (isRuntimeFederatedInput(other, materialize, refed)) {
+						hasAnchorInput = true;
+						break;
+					}
+					InputRequirement otherReq = resolveTargetRequirement(hop, other, j, fTypeMap, blockAnchor);
+					if (otherReq != InputRequirement.OPTIONAL) {
+						hasAnchorInput = true;
+						break;
+					}
+				}
+				if (hasAnchorInput)
+					continue;
 			}
 			hasRequiredMatrix = true;
 			if (!runtimeFed)
@@ -2327,6 +2348,19 @@ public final class FederatedRefedPolicy {
 
 		// Scalar-like matrices must always be broadcasted.
 		if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+			if (fTypeMap != null)
+				fTypeMap.put(hop.getHopID(), FType.BROADCAST);
+			FederatedRefedRegistry.remove(scopeId, hop.getHopID());
+			String anchorLabel = (anchorHop != null) ? findAnchorLabel(anchorHop) : null;
+			FederatedFoutMaterializeRegistry.register(scopeId, hop.getHopID(), anchorHopId, "BROADCAST", anchorLabel,
+				anchorKey);
+			return;
+		}
+
+		// If the planner already committed to a BROADCAST upload shape for this CP->FOUT hop, prefer materialization
+		// over refed even when the anchor dimensions match (keeps planned-federated decisions stable).
+		FType plannedFType = getKnownFType(hop, fTypeMap);
+		if (isCpToFout && plannedFType == FType.BROADCAST) {
 			if (fTypeMap != null)
 				fTypeMap.put(hop.getHopID(), FType.BROADCAST);
 			FederatedRefedRegistry.remove(scopeId, hop.getHopID());
