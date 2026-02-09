@@ -483,7 +483,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testPlannerRejectsOptionalLocalTransientReadInputForFedParentWithoutMaterialization() {
+	public void testPlannerAllowsOptionalLocalTransientReadInputWhenFedSiblingPresent() {
 		DataOp fedMatrix = createFederatedInput("X", 100, 10);
 		DataOp localVector = createLocalMatrix("p", 10, 1);
 		localVector.setForcedExecType(ExecType.CP);
@@ -496,8 +496,106 @@ public class FederatedRefedPolicyTest {
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
 
-		assertFalse("Expected planner feasibility to reject optional local transient-read vector input without materialization",
+		assertTrue("Expected planner feasibility to allow optional local transient-read vector input when another FED input anchors execution",
 			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, fTypeMap));
+	}
+
+	@Test
+	public void testRecompileTransientWriteCanPromoteMatchingTransientRead() {
+		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
+		tRead.setForcedExecType(ExecType.CP);
+		tRead.setFederatedOutput(FederatedOutput.LOUT);
+
+		UnaryOp fedParent = HopRewriteUtils.createUnary(tRead, OpOp1.EXP);
+		fedParent.setDim1(3000);
+		fedParent.setDim2(50);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp tWriteInput = createLocalMatrix("map_local_src", 3000, 50);
+		DataOp tWrite = createTransientWrite("samples_vs_runs_map", tWriteInput, 3000, 50);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.LOUT);
+		tWrite.setRequiresRecompile();
+
+		DataOp fedAnchor = createFederatedInput("X", 3000, 50);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedAnchor.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent, tWrite, fedAnchor), true, fTypeMap, -1);
+
+		assertEquals("Expected matching TRead to be promoted to FED when same-block TWrite is available",
+			ExecType.FED, tRead.getForcedExecType());
+		assertEquals("Expected matching TRead to become FOUT",
+			FederatedOutput.FOUT, tRead.getFederatedOutput());
+		assertEquals("Expected matching TWrite to be materialized as FOUT",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+	}
+
+	@Test
+	public void testRecompileTransientWritePromotionUsesRuntimeSignatureAnchorFallback() {
+		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
+		tRead.setForcedExecType(ExecType.CP);
+		tRead.setFederatedOutput(FederatedOutput.LOUT);
+
+		UnaryOp fedParent = HopRewriteUtils.createUnary(tRead, OpOp1.EXP);
+		fedParent.setDim1(3000);
+		fedParent.setDim2(50);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp tWriteInput = createLocalMatrix("map_local_src", 3000, 50);
+		DataOp tWrite = createTransientWrite("samples_vs_runs_map", tWriteInput, 3000, 50);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.LOUT);
+		tWrite.setRequiresRecompile();
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("X",
+			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,50000;50000,100000;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("X", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(fedParent, tWrite)),
+			true, fTypeMap, -1,
+			runtimeSignatures, runtimeTypes);
+
+		assertEquals("Expected matching TRead to be promoted to FED via runtime signature anchor fallback",
+			ExecType.FED, tRead.getForcedExecType());
+		assertEquals("Expected matching TRead to become FOUT",
+			FederatedOutput.FOUT, tRead.getFederatedOutput());
+		assertEquals("Expected matching TWrite to be materialized as FOUT",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+	}
+
+	@Test
+	public void testRequiredTransientReadRegistersRefedAndSatisfiesFedParent() {
+		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
+		tRead.setForcedExecType(ExecType.CP);
+		tRead.setFederatedOutput(FederatedOutput.LOUT);
+
+		DataOp localRhs = createLocalMatrix("local_rhs", 50, 1);
+		localRhs.setForcedExecType(ExecType.CP);
+		localRhs.setFederatedOutput(FederatedOutput.LOUT);
+
+		AggBinaryOp fedParent = HopRewriteUtils.createMatrixMultiply(tRead, localRhs);
+		fedParent.setDim1(3000);
+		fedParent.setDim2(1);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp fedAnchor = createFederatedInput("X", 3000, 50);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedAnchor.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent, fedAnchor), true, fTypeMap, -1);
+
+		Map<Long, FederatedRefedRegistry.AnchorSpec> refedSnapshot = FederatedRefedRegistry.snapshot(-1);
+		assertTrue("Expected required local transient read to be registered via fed_refed",
+			refedSnapshot.containsKey(tRead.getHopID()));
+		assertEquals("Expected FED parent to remain FED after satisfying required transient-read input",
+			ExecType.FED, fedParent.getForcedExecType());
 	}
 
 	@Test
@@ -583,5 +681,13 @@ public class FederatedRefedPolicyTest {
 		op.setFederatedOutput(FederatedOutput.FOUT);
 		op.setForcedExecType(ExecType.FED);
 		return op;
+	}
+
+	private static DataOp createTransientWrite(String name, Hop input, long rows, long cols) {
+		DataOp tWrite = new DataOp(name, DataType.MATRIX, ValueType.FP64, input,
+			OpOpData.TRANSIENTWRITE, name);
+		tWrite.setDim1(rows);
+		tWrite.setDim2(cols);
+		return tWrite;
 	}
 }

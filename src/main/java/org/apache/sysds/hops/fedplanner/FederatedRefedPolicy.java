@@ -613,7 +613,16 @@ public final class FederatedRefedPolicy {
 			System.out.println("[TransReadRefedDebug] match TWrite hop=" + tWrite.getHopID()
 				+ " line=" + tWrite.getBeginLine());
 		}
-		if (isRecompileRegion(tWrite))
+		boolean tWriteInCurrentBlock = false;
+		for (Hop candidate : all) {
+			if (candidate == tWrite) {
+				tWriteInCurrentBlock = true;
+				break;
+			}
+		}
+		// During runtime recompile, matching TWrite hops from the current block are still valid
+		// anchors for TRead promotion. Keep the old guard only for out-of-block cached writes.
+		if (!tWriteInCurrentBlock && isRecompileRegion(tWrite))
 			return false;
 
 		boolean tWriteFed = tWrite.hasFederatedOutput();
@@ -627,6 +636,13 @@ public final class FederatedRefedPolicy {
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
 				return false;
 			AnchorSelection selection = selectAnchorWithinBlock(tWrite, fTypeMap, true, false, blockAnchor);
+			if ((selection == null || selection.key == null) && blockAnchor != null && blockAnchor.key != null)
+				selection = new AnchorSelection(blockAnchor.key, null);
+			if (selection == null || selection.key == null) {
+				AnchorKey globalAnchor = selectGlobalAnchorKey(fTypeMap);
+				if (globalAnchor != null)
+					selection = new AnchorSelection(globalAnchor, null);
+			}
 			if (selection == null || selection.key == null)
 				return false;
 			if (ENABLE_TRANSREAD_DEBUG && "Y".equals(tRead.getName())) {
@@ -722,8 +738,22 @@ public final class FederatedRefedPolicy {
 		if (writes.size() == 1)
 			return writes.get(0);
 		int readLine = tRead.getBeginLine();
-		if (readLine <= 0)
-			return null;
+		if (readLine <= 0) {
+			DataOp best = null;
+			int bestLine = Integer.MIN_VALUE;
+			for (DataOp write : writes) {
+				if (write == null)
+					continue;
+				int writeLine = write.getBeginLine();
+				if (writeLine > bestLine) {
+					bestLine = writeLine;
+					best = write;
+				}
+			}
+			if (best != null)
+				return best;
+			return writes.get(writes.size() - 1);
+		}
 		DataOp best = null;
 		int bestLine = -1;
 		for (DataOp write : writes) {
@@ -736,6 +766,25 @@ public final class FederatedRefedPolicy {
 				bestLine = writeLine;
 				best = write;
 			}
+		}
+		if (best != null)
+			return best;
+		// Fallback for missing/shifted parse positions in recompile clones.
+		int nearestAfter = Integer.MAX_VALUE;
+		for (DataOp write : writes) {
+			if (write == null)
+				continue;
+			int writeLine = write.getBeginLine();
+			if (writeLine > readLine && writeLine < nearestAfter) {
+				nearestAfter = writeLine;
+				best = write;
+			}
+		}
+		if (best != null)
+			return best;
+		for (DataOp write : writes) {
+			if (write != null && write.getBeginLine() <= 0)
+				return write;
 		}
 		return best;
 	}
@@ -906,6 +955,7 @@ public final class FederatedRefedPolicy {
 		AnchorSelection optionalAnchor = null;
 		boolean hasRequiredMatrix = false;
 		List<Integer> requiredIndices = new ArrayList<>();
+		boolean hasSourceAnchorConflict = false;
 
 		for (int i = 0; i < hop.getInput().size(); i++) {
 			Hop input = hop.getInput().get(i);
@@ -957,28 +1007,30 @@ public final class FederatedRefedPolicy {
 			hasRequiredMatrix = true;
 			if (!runtimeFed)
 				requiredIndices.add(i);
-			if (sourceFed) {
-				AnchorKey key = buildAnchorKey(input, fTypeMap);
-				if (key != null) {
-					if (requiredAnchor == null || requiredAnchor.key == null)
-						requiredAnchor = new AnchorSelection(key, input);
-					else if (!anchorsCompatible(requiredAnchor.key, key))
-						return false;
-				} else if (requiredAnchor == null) {
-					requiredAnchor = new AnchorSelection(null, input);
+				if (sourceFed) {
+					AnchorKey key = buildAnchorKey(input, fTypeMap);
+					if (key != null) {
+						if (requiredAnchor == null || requiredAnchor.key == null)
+							requiredAnchor = new AnchorSelection(key, input);
+						else if (!anchorsCompatible(requiredAnchor.key, key))
+							hasSourceAnchorConflict = true;
+					} else if (requiredAnchor == null) {
+						requiredAnchor = new AnchorSelection(null, input);
+					}
 				}
 			}
-		}
 
 		if (!hasRequiredMatrix)
 			return true;
 
-		if (!requiredIndices.isEmpty()) {
-			// Prefer an anchor with a concrete key if we need to upload any required local inputs.
-			if ((requiredAnchor == null || requiredAnchor.key == null) && optionalAnchor != null
-				&& optionalAnchor.key != null) {
-				requiredAnchor = optionalAnchor;
-			}
+			if (!requiredIndices.isEmpty()) {
+				if (hasSourceAnchorConflict)
+					requiredAnchor = null;
+				// Prefer an anchor with a concrete key if we need to upload any required local inputs.
+				if ((requiredAnchor == null || requiredAnchor.key == null) && optionalAnchor != null
+					&& optionalAnchor.key != null) {
+					requiredAnchor = optionalAnchor;
+				}
 			if (requiredAnchor == null || requiredAnchor.key == null)
 				consumerAnchor = selectAnchorWithinBlock(hop, fTypeMap, true, false, blockAnchor);
 		}
@@ -1064,9 +1116,13 @@ public final class FederatedRefedPolicy {
 				String anchorKey = FederatedPlannerUtils.getFedAnchorKey(name);
 				if (anchorKey != null && !isVarAnchorKey(anchorKey))
 					return true;
-				// Transient reads are runtime-federated only if planned as FED/FOUT. Do not treat
-				// CP/LOUT reads as federated even if a refed/materialize is registered for them,
-				// because the federated value exists only after the upload lop.
+				// During FED-input enforcement we may register a refed/materialize upload for this
+				// transient read in the same statement block. In that case the input is valid for
+				// FED execution, even if the read itself stays planned as CP/LOUT.
+				if ((materialize != null && materialize.containsKey(input.getHopID()))
+					|| (refed != null && refed.containsKey(input.getHopID())))
+					return true;
+				// Otherwise, a transient read is runtime-federated only if planned as FED/FOUT.
 				ExecType exec = getPlannedExecType(input);
 				return exec == ExecType.FED && !input.hasLocalOutput();
 			}
@@ -1177,13 +1233,13 @@ public final class FederatedRefedPolicy {
 			return true;
 		if (parent instanceof FunctionOp)
 			return hasAnyPlannedFederatedMatrixInput(parent, fTypeMap, treatFTypeMapAsPlannedFederatedInputs);
-		AnchorKey globalAnchorKey = treatFTypeMapAsPlannedFederatedInputs ? selectGlobalAnchorKey(fTypeMap) : null;
 		AnchorSelection requiredAnchor = null;
 		AnchorSelection consumerAnchor = null;
 		AnchorSelection optionalAnchor = null;
 		boolean hasRequiredMatrix = false;
 		boolean hasUnmaterializableLocal = false;
 		List<Integer> requiredIndices = new ArrayList<>();
+		boolean hasPlannedAnchorConflict = false;
 
 		for (int i = 0; i < parent.getInput().size(); i++) {
 			Hop input = parent.getInput().get(i);
@@ -1198,13 +1254,16 @@ public final class FederatedRefedPolicy {
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
 				? (fTypeMap != null && fTypeMap.containsKey(input.getHopID()))
 				: isPlannedFederatedInput(input, fTypeMap);
+			boolean allowOptionalLocalTransientRead = req == InputRequirement.OPTIONAL
+				&& canKeepOptionalTransientReadLocalForFedExec(parent, input, i, fTypeMap,
+					treatFTypeMapAsPlannedFederatedInputs);
 
 			AnchorSelection plannedAnchor = null;
 			if (plannedFed) {
 				AnchorKey key = buildAnchorKey(input, fTypeMap);
 				plannedAnchor = new AnchorSelection(key, input);
 			}
-			else {
+			else if (!allowOptionalLocalTransientRead) {
 				boolean canMaterialize = canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor);
 				if (canMaterialize) {
 					plannedAnchor = selectCpfoutAnchorForParent(parent, input, fTypeMap, blockAnchor,
@@ -1214,38 +1273,36 @@ public final class FederatedRefedPolicy {
 					else
 						hasUnmaterializableLocal = true;
 				}
-				else if (globalAnchorKey != null && canGenerateCpfoutCandidateFromFTypes(input, fTypeMap)) {
-					plannedFed = true;
-					plannedAnchor = new AnchorSelection(globalAnchorKey, null);
-				}
 				else {
 					hasUnmaterializableLocal = true;
 				}
 			}
 
-				if (req == InputRequirement.OPTIONAL) {
-					if (plannedFed) {
-						if (optionalAnchor == null
-							|| (optionalAnchor.key == null && plannedAnchor != null && plannedAnchor.key != null)) {
-							optionalAnchor = plannedAnchor;
-						}
-						continue;
+			if (req == InputRequirement.OPTIONAL) {
+				if (plannedFed) {
+					if (optionalAnchor == null
+						|| (optionalAnchor.key == null && plannedAnchor != null && plannedAnchor.key != null)) {
+						optionalAnchor = plannedAnchor;
 					}
-					// OPTIONAL local inputs still require materialization feasibility for FED execution.
+					continue;
 				}
+				if (allowOptionalLocalTransientRead)
+					continue;
+				// OPTIONAL local inputs still require materialization feasibility for FED execution.
+			}
 
 			hasRequiredMatrix = true;
-			if (plannedFed) {
-				if (plannedAnchor != null && plannedAnchor.key != null) {
-					if (requiredAnchor == null || requiredAnchor.key == null)
+				if (plannedFed) {
+					if (plannedAnchor != null && plannedAnchor.key != null) {
+						if (requiredAnchor == null || requiredAnchor.key == null)
+							requiredAnchor = plannedAnchor;
+						else if (!anchorsCompatible(requiredAnchor.key, plannedAnchor.key))
+							hasPlannedAnchorConflict = true;
+					}
+					else if (requiredAnchor == null) {
 						requiredAnchor = plannedAnchor;
-					else if (!anchorsCompatible(requiredAnchor.key, plannedAnchor.key))
-						return false;
+					}
 				}
-				else if (requiredAnchor == null) {
-					requiredAnchor = plannedAnchor;
-				}
-			}
 			else {
 				requiredIndices.add(i);
 			}
@@ -1256,12 +1313,14 @@ public final class FederatedRefedPolicy {
 		if (hasUnmaterializableLocal)
 			return false;
 
-		if (!requiredIndices.isEmpty()) {
-			// Prefer an anchor with a concrete key if we need to upload any required local inputs.
-			if ((requiredAnchor == null || requiredAnchor.key == null) && optionalAnchor != null
-				&& optionalAnchor.key != null) {
-				requiredAnchor = optionalAnchor;
-			}
+			if (!requiredIndices.isEmpty()) {
+				if (hasPlannedAnchorConflict)
+					requiredAnchor = null;
+				// Prefer an anchor with a concrete key if we need to upload any required local inputs.
+				if ((requiredAnchor == null || requiredAnchor.key == null) && optionalAnchor != null
+					&& optionalAnchor.key != null) {
+					requiredAnchor = optionalAnchor;
+				}
 			if (requiredAnchor == null || requiredAnchor.key == null)
 				consumerAnchor = selectAnchor(parent, fTypeMap, true, false, blockAnchor);
 		}
@@ -1284,19 +1343,46 @@ public final class FederatedRefedPolicy {
 				selection = selectCpfoutAnchorForParent(parent, input, fTypeMap, blockAnchor,
 					treatFTypeMapAsPlannedFederatedInputs);
 			}
-			if (selection == null || selection.key == null) {
-				if (globalAnchorKey != null)
-					selection = new AnchorSelection(globalAnchorKey, null);
-				else
+				if (selection == null || selection.key == null) {
 					return false;
-			}
+				}
 
 			if (requiredAnchor == null || requiredAnchor.key == null)
 				requiredAnchor = selection;
 			else if (!anchorsCompatible(requiredAnchor.key, selection.key))
 				return false;
 		}
-		return requiredAnchor != null;
+			return requiredIndices.isEmpty() || requiredAnchor != null;
+		}
+
+	private static boolean canKeepOptionalTransientReadLocalForFedExec(Hop parent, Hop input, int index,
+			java.util.Map<Long, FType> fTypeMap, boolean treatFTypeMapAsPlannedFederatedInputs) {
+		if (parent == null || input == null)
+			return false;
+		if (!(input instanceof DataOp))
+			return false;
+		DataOp dataOp = (DataOp) input;
+		if (dataOp.getOp() != OpOpData.TRANSIENTREAD)
+			return false;
+		// Local transient-read matrix inputs can stay local only when there is another planned FED
+		// matrix input that anchors the FED execution; then this optional input is consumed via local
+		// forwarding/broadcast rather than CP->FOUT materialization.
+		List<Hop> inputs = parent.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		for (int i = 0; i < inputs.size(); i++) {
+			if (i == index)
+				continue;
+			Hop other = inputs.get(i);
+			if (other == null || other.getDataType() == null || !other.getDataType().isMatrix())
+				continue;
+			boolean otherPlannedFed = treatFTypeMapAsPlannedFederatedInputs
+				? (fTypeMap != null && fTypeMap.containsKey(other.getHopID()))
+				: isPlannedFederatedInput(other, fTypeMap);
+			if (otherPlannedFed)
+				return true;
+		}
+		return false;
 	}
 
 	private static boolean hasAnyPlannedFederatedMatrixInput(Hop parent,
