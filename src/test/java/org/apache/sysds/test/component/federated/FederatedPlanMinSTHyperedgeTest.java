@@ -170,7 +170,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 		DataOp tRead = new DataOp("X", DataType.MATRIX, ValueType.FP64,
 			OpOpData.TRANSIENTREAD, null, 100000, 1050, 100000L * 1050L, 1000);
 		Vertex trVertex = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
-		trVertex.setMetadata(1.0, 2.0, Collections.emptyList());
+		trVertex.setMetadata(3.0, 2.0, Collections.emptyList());
 		trVertex.setCost(0.0, 13.0, 7.0);
 		graph.addVertex(trVertex);
 
@@ -183,7 +183,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 		DefaultWeightedEdge downloadEdge = g.getEdge(trC, trL);
 		Assert.assertNotNull("TransientRead should add FED->local download edge", downloadEdge);
 		Assert.assertEquals("Unexpected download edge weight for TransientRead",
-			14.0, g.getEdgeWeight(downloadEdge), 1e-9);
+			21.0, g.getEdgeWeight(downloadEdge), 1e-9);
 		Assert.assertNull("TransientRead should not add placement->compute upload edge",
 			g.getEdge(trP, trC));
 	}

@@ -492,6 +492,9 @@ public class FederatedPlannerDpCostEnumerator {
 		final Privacy privacyConstraint = privacyConstraintMap.getOrDefault(hopID, Privacy.PUBLIC);
 
 		double hopNetworkWeight = hopCommon.getNetworkWeight();
+		// Hop-local placement conversion (FED<->local result materialization) follows
+		// the hop's own execution frequency, independent of parent-child forwarding.
+		double hopPlacementWeight = placementTransferWeight(hopCommon);
 		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
 		double cpSelfCost = baseSelfCost;
 		// Align with MinST: FED execution has a fixed per-op coordination overhead that
@@ -500,7 +503,7 @@ public class FederatedPlannerDpCostEnumerator {
 				? 0.0
 				: hopNetworkWeight * FederatedCostModel.computeNetworkCost(0);
 		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers) + fedOverhead;
-		double resultDownloadCost = hopNetworkWeight
+		double resultDownloadCost = hopPlacementWeight
 				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMemEstimate);
 
 		final int enumerationLimit = 1 << numBothOutInputs;
@@ -665,7 +668,7 @@ public class FederatedPlannerDpCostEnumerator {
 				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
-				double cpUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+				double cpUploadCost = hopPlacementWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 						outputMemEstimate, cpLogicalFType, numOfWorkers);
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
@@ -940,6 +943,12 @@ public class FederatedPlannerDpCostEnumerator {
 			return false;
 		}
 		return false;
+	}
+
+	private static double placementTransferWeight(FederatedPlannerDpMemoTable.HopCommon hopCommon) {
+		if (hopCommon == null)
+			return 1.0;
+		return hopCommon.getComputeWeight() * hopCommon.getMultiplicity();
 	}
 
 	private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,

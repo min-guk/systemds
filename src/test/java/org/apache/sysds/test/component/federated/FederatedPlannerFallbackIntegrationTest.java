@@ -207,6 +207,17 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpPlacementTransferWeightUsesComputeWeightAndMultiplicity() throws Exception {
+		HopCommon hopCommon = new HopCommon(transientRead("X"), 2.0, 17.0, 3.5, 1, List.of());
+		Method method = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"placementTransferWeight", HopCommon.class);
+		method.setAccessible(true);
+		double weight = (double) method.invoke(null, hopCommon);
+		assertEquals("Hop-local placement transfer weight must ignore networkWeight",
+			7.0, weight, 1e-9);
+	}
+
+	@Test
 	public void testDpOptionalInputAlwaysAddsFedForwarding() throws Exception {
 		DataOp localSource = transientRead("LX");
 		UnaryOp target = HopRewriteUtils.createUnary(localSource, OpOp1.EXP);

@@ -207,12 +207,13 @@ public class FederatedPlanMinSTGraph {
 			// DP parity: if a TRead is chosen as FED/FOUT but consumed by a CP parent,
 			// the plan must pay the download needed to materialize local output.
 			// Upload for TRead is modeled via parent-child forwarding edges.
-			double trDownloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
+			double trDownloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
 			addCap(cId, lId, trDownloadCost);
 			return;
 		}
-		double uploadCost = vertex.getNetworkWeight() * vertex.getCpUploadCostWithoutWeight();
-		double downloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
+		// Hop-local placement conversion follows the hop's own execution frequency.
+		double uploadCost = vertex.getOpWeight() * vertex.getCpUploadCostWithoutWeight();
+		double downloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
 		// Download is paid when we execute in FED and the hop needs to have a local materialization.
 		addCap(cId, lId, downloadCost);
 		if (vertex.isDerivedFedFout()) {
