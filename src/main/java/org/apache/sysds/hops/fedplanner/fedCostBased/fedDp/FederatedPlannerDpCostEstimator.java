@@ -144,19 +144,19 @@ public class FederatedPlannerDpCostEstimator {
 				continue;
 			}
 
-			childCumulativeCost[currentIndex][0] = childLOutFedPlan.getCumulativeCostPerParents();
-			childCumulativeCost[currentIndex][1] = childFOutFedPlan.getCumulativeCostPerParents();
+			childCumulativeCost[currentIndex][0] = computeCumulativeCostShareForParent(
+					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan);
+			childCumulativeCost[currentIndex][1] = computeCumulativeCostShareForParent(
+					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan);
 			double outputMem = childHop.getOutputMemEstimate();
 			double downloadCost = computeDownloadNetworkCost(outputMem);
 			double uploadCost = computeUploadNetworkCost(outputMem, childLOutFedPlan.getFType(), numOfWorkers);
-			double downloadCostPerParents = computeForwardingCostPerParents(downloadCost, childFOutFedPlan);
-			double uploadCostPerParents = computeForwardingCostPerParents(uploadCost, childLOutFedPlan);
-				double forwardingWeight = hopCommon.computeForwardingWeightOfChild(
-						childLOutFedPlan.getLoopContext(), hopCommon.getMultiplicity());
-				childForwardingCostToCP[currentIndex] = forwardingWeight * downloadCostPerParents;
-				childForwardingCostToFED[currentIndex] = forwardingWeight * uploadCostPerParents;
-				currentIndex++;
-			}
+			childForwardingCostToCP[currentIndex] = computeForwardingCostShareForParent(
+					downloadCost, childFOutFedPlan, hopCommon);
+			childForwardingCostToFED[currentIndex] = computeForwardingCostShareForParent(
+					uploadCost, childLOutFedPlan, hopCommon);
+			currentIndex++;
+		}
 
 		for (int i = 0; i < lOUTOnlyinputHops.size(); i++) {
 			Hop childHop = lOUTOnlyinputHops.get(i);
@@ -170,14 +170,13 @@ public class FederatedPlannerDpCostEstimator {
 						+ childHop.getOpString() + ") while processing parent " + parentHop.getHopID() + " ("
 						+ parentHop.getOpString() + ")");
 			}
-			lOUTOnlychildCumulativeCost.add(childLOutFedPlan.getCumulativeCostPerParents());
+			lOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
+					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan));
 			double outputMem = childHop.getOutputMemEstimate();
 			double uploadCost = computeUploadNetworkCost(outputMem, childLOutFedPlan.getFType(), numOfWorkers);
-			double uploadCostPerParents = computeForwardingCostPerParents(uploadCost, childLOutFedPlan);
-				double forwardingWeight = hopCommon.computeForwardingWeightOfChild(
-						childLOutFedPlan.getLoopContext(), hopCommon.getMultiplicity());
-				lOUTOnlychildForwardingCostToFED.add(forwardingWeight * uploadCostPerParents);
-			}
+			lOUTOnlychildForwardingCostToFED.add(computeForwardingCostShareForParent(
+					uploadCost, childLOutFedPlan, hopCommon));
+		}
 
 		for (int i = 0; i < fOUTOnlyinputHops.size(); i++) {
 			Hop childHop = fOUTOnlyinputHops.get(i);
@@ -191,15 +190,14 @@ public class FederatedPlannerDpCostEstimator {
 						+ childHop.getOpString() + ") while processing parent " + parentHop.getHopID() + " ("
 						+ parentHop.getOpString() + ")");
 			}
-			fOUTOnlychildCumulativeCost.add(childFOutFedPlan.getCumulativeCostPerParents());
+			fOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
+					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan));
 			double outputMem = childHop.getOutputMemEstimate();
 			double downloadCost = computeDownloadNetworkCost(outputMem);
-			double downloadCostPerParents = computeForwardingCostPerParents(downloadCost, childFOutFedPlan);
-				double forwardingWeight = hopCommon.computeForwardingWeightOfChild(
-						childFOutFedPlan.getLoopContext(), hopCommon.getMultiplicity());
-				fOUTOnlychildForwardingCostToCP.add(forwardingWeight * downloadCostPerParents);
-			}
+			fOUTOnlychildForwardingCostToCP.add(computeForwardingCostShareForParent(
+					downloadCost, childFOutFedPlan, hopCommon));
 		}
+	}
 
 	/**
 	 * Computes the cost associated with a given Hop node.
@@ -249,12 +247,42 @@ public class FederatedPlannerDpCostEstimator {
 		return FederatedCostModel.computeRefedNetworkCost(memSize, fType, numWorkers);
 	}
 
-	static double computeForwardingCostPerParents(double cost, FederatedPlannerDpMemoTable.FedPlan plan) {
-		int numParents = plan.getNumOfParents();
-		if (numParents >= 2) {
-			return cost / numParents;
-		}
-		return cost;
+	static double computeCumulativeCostShareForParent(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null || totalCost == 0.0)
+			return 0.0;
+		int numParents = Math.max(1, childPlan.getNumOfParents());
+		return totalCost / numParents;
+	}
+
+	static double computeForwardingCostShareForParent(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
+		if (childPlan == null || totalCost == 0.0)
+			return 0.0;
+		int numParents = Math.max(1, childPlan.getNumOfParents());
+		if (parentHopCommon == null)
+			return totalCost / numParents;
+
+		double parentWeight = parentHopCommon.computeForwardingWeightOfChild(
+				childPlan.getLoopContext(), parentHopCommon.getMultiplicity());
+		parentWeight = Math.max(0.0, parentWeight);
+		return (totalCost / numParents) * parentWeight;
+	}
+
+	static double computeForwardingCostShareForParent(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		if (childPlan == null || totalCost == 0.0)
+			return 0.0;
+		int numParents = Math.max(1, childPlan.getNumOfParents());
+		if (parentPlan == null)
+			return totalCost / numParents;
+
+		double parentWeight = parentPlan.computeForwardingWeightOfChild(
+				childPlan.getLoopContext(), parentPlan.getMultiplicity());
+		parentWeight = Math.max(0.0, parentWeight);
+		return (totalCost / numParents) * parentWeight;
 	}
 
 }

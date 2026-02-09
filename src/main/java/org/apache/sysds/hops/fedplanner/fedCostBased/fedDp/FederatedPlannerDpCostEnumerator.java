@@ -1087,10 +1087,6 @@ public class FederatedPlannerDpCostEnumerator {
 		double lOutUploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 				outputMem, lOutPlan.getFType(), numOfWorkers);
 		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMem);
-		double lOutUploadCostPerParents = FederatedPlannerDpCostEstimator.computeForwardingCostPerParents(
-				lOutUploadCost, lOutPlan);
-		double fOutDownloadCostPerParents = FederatedPlannerDpCostEstimator.computeForwardingCostPerParents(
-				fOutDownloadCost, fOutPlan);
 
 		double lOutAdditionalCost = 0.0;
 		double fOutAdditionalCost = 0.0;
@@ -1098,6 +1094,14 @@ public class FederatedPlannerDpCostEnumerator {
 		boolean fOutNeedsForwarding = false;
 
 		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
+			double lOutCumulativeCostShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
+					lOutPlan.getCumulativeCost(), lOutPlan);
+			double fOutCumulativeCostShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
+					fOutPlan.getCumulativeCost(), fOutPlan);
+			double lOutUploadCostShare = FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(
+					lOutUploadCost, lOutPlan, parentPlan);
+			double fOutDownloadCostShare = FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(
+					fOutDownloadCost, fOutPlan, parentPlan);
 			List<Pair<Integer, Pair<Long, FederatedOutput>>> childEdges = findChildEdges(parentPlan, hopID);
 			if (childEdges.isEmpty()) {
 				String msg = "Parent plan for hop " + hopID + " lost its child edge.";
@@ -1116,31 +1120,25 @@ public class FederatedPlannerDpCostEnumerator {
 				FederatedOutput parentOut = parentPlan.getFedOutType();
 
 				if (originalOut == FederatedOutput.LOUT) {
-					fOutAdditionalCost += fOutPlan.getCumulativeCostPerParents()
-							- lOutPlan.getCumulativeCostPerParents();
+					fOutAdditionalCost += fOutCumulativeCostShare - lOutCumulativeCostShare;
 
 					if (parentOut == FederatedOutput.LOUT) {
 						fOutNeedsForwarding = true;
 					} else if (parentOut == FederatedOutput.FOUT) {
 						lOutNeedsForwarding = true;
-						lOutAdditionalCost -= lOutUploadCostPerParents;
-						fOutAdditionalCost -= lOutUploadCostPerParents;
+						lOutAdditionalCost -= lOutUploadCostShare;
+						fOutAdditionalCost -= lOutUploadCostShare;
 					}
 				} else if (originalOut == FederatedOutput.FOUT) {
-					lOutAdditionalCost += lOutPlan.getCumulativeCostPerParents()
-							- fOutPlan.getCumulativeCostPerParents();
+					lOutAdditionalCost += lOutCumulativeCostShare - fOutCumulativeCostShare;
 
 					if (parentOut == FederatedOutput.FOUT) {
 						lOutNeedsForwarding = true;
 					} else if (parentOut == FederatedOutput.LOUT) {
 						fOutNeedsForwarding = true;
-							double weightedForwarding = parentPlan
-									.computeForwardingWeightOfChild(lOutPlan.getLoopContext(),
-											parentPlan.getMultiplicity())
-									* fOutDownloadCostPerParents;
-							lOutAdditionalCost -= weightedForwarding;
-							fOutAdditionalCost -= weightedForwarding;
-						}
+						lOutAdditionalCost -= fOutDownloadCostShare;
+						fOutAdditionalCost -= fOutDownloadCostShare;
+					}
 				} else {
 					Hop parentHop = parentPlan.getHopRef();
 					FederatedPlannerLogger.logWarnMessage("[Planner] Unexpected child placement " + originalOut
