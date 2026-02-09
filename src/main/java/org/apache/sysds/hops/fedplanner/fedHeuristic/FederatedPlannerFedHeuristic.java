@@ -24,6 +24,7 @@ import java.util.Map;
 
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.parser.FunctionStatementBlock;
@@ -37,12 +38,14 @@ public class FederatedPlannerFedHeuristic extends FederatedPlannerFedAll {
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph,
 		org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes) {
 		heuristicFallbackFTypes.clear();
+		FederatedRefedPolicy.clearHeuristicDemotedHops();
 		super.rewriteProgram(prog, fgraph, fcallSizes);
 	}
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
 		heuristicFallbackFTypes.clear();
+		FederatedRefedPolicy.clearHeuristicDemotedHops();
 		super.rewriteFunctionDynamic(function, funcArgs);
 	}
 
@@ -73,9 +76,11 @@ public class FederatedPlannerFedHeuristic extends FederatedPlannerFedAll {
 			return;
 		if( ret == null && inferred != null ) {
 			heuristicFallbackFTypes.put(hop.getHopID(), inferred);
+			FederatedRefedPolicy.markHeuristicDemotedHop(hop.getHopID());
 		}
 		else {
 			heuristicFallbackFTypes.remove(hop.getHopID());
+			FederatedRefedPolicy.unmarkHeuristicDemotedHop(hop.getHopID());
 		}
 	}
 

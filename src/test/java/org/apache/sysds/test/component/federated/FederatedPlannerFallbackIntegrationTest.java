@@ -20,7 +20,9 @@
 package org.apache.sysds.test.component.federated;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Method;
 import java.util.ArrayDeque;
@@ -36,6 +38,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
@@ -45,6 +48,9 @@ import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.UnaryOp;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
@@ -158,6 +164,90 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals("Expected ROW fallback FType for mismatch inputs", FType.ROW, vertex.getDataType());
 	}
 
+	@Test
+	public void testMinSTVectorWithoutRefedDoesNotForceBroadcast() throws Exception {
+		DataOp left = transientRead("VX", 1, COLS);
+		DataOp right = transientRead("VY", 1, COLS);
+		BinaryOp plus = new BinaryOp("vplus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+		plus.setDim1(1);
+		plus.setDim2(COLS);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(left.getHopID(), FType.ROW);
+		fTypeMap.put(right.getHopID(), FType.COL);
+		Map<Long, org.apache.sysds.hops.fedplanner.FTypes.Privacy> privacyMap = new HashMap<>();
+		privacyMap.put(left.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+		privacyMap.put(right.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+		privacyMap.put(plus.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+		Vertex vertex = invokeRewireHop(plus, graph, fTypeMap, privacyMap, oracle);
+
+		assertNotNull("Expected vertex for vector plus", vertex);
+		assertTrue("Refed-infeasible vector hop should not be forced to BROADCAST",
+			vertex.getDataType() != FType.BROADCAST);
+	}
+
+	@Test
+	public void testMinSTOptionalInputDoesNotMarkUploadHint() throws Exception {
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			DataOp fedAnchor = federatedRead("FX", ROWS, COLS);
+			DataOp localSource = transientRead("LX");
+			UnaryOp target = HopRewriteUtils.createUnary(localSource, OpOp1.EXP);
+			target.setDim1(ROWS);
+			target.setDim2(COLS);
+
+			UnaryOp optionalParent = HopRewriteUtils.createUnary(target, OpOp1.BROADCAST);
+			optionalParent.setDim1(ROWS);
+			optionalParent.setDim2(COLS);
+
+			UnaryOp requiredParent = HopRewriteUtils.createUnary(target, OpOp1.SQRT);
+			requiredParent.setDim1(ROWS);
+			requiredParent.setDim2(COLS);
+			BinaryOp fedConsumer = HopRewriteUtils.createBinary(requiredParent, fedAnchor, OpOp2.PLUS);
+			fedConsumer.setDim1(ROWS);
+			fedConsumer.setDim2(COLS);
+			fedConsumer.setForcedExecType(ExecType.FED);
+			fedConsumer.setFederatedOutput(FederatedOutput.FOUT);
+
+			Map<Long, FType> fTypeMap = new HashMap<>();
+			fTypeMap.put(fedAnchor.getHopID(), FType.ROW);
+
+			Map<Long, org.apache.sysds.hops.fedplanner.FTypes.Privacy> privacyMap = new HashMap<>();
+			privacyMap.put(fedAnchor.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PRIVATE_AGGREGATE);
+			privacyMap.put(localSource.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+			privacyMap.put(target.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+			privacyMap.put(optionalParent.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+			privacyMap.put(requiredParent.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+			privacyMap.put(fedConsumer.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PRIVATE_AGGREGATE);
+
+			assertTrue("Target should be refed-feasible via required parent + fed consumer anchor",
+				org.apache.sysds.hops.fedplanner.FederatedRefedPolicy.canGenerateCpfoutCandidate(target, fTypeMap));
+
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+
+			Vertex fedAnchorVertex = invokeRewireHop(fedAnchor, graph, fTypeMap, privacyMap, oracle);
+			Vertex targetVertex = invokeRewireHop(target, graph, fTypeMap, privacyMap, oracle);
+			assertNotNull("Expected fed anchor vertex", fedAnchorVertex);
+			assertNotNull("Expected target vertex", targetVertex);
+			fedAnchorVertex.setMetadata(1.0, 1.0, List.of());
+			targetVertex.setMetadata(1.0, 1.0, List.of());
+			graph.addVertex(fedAnchorVertex);
+			graph.addVertex(targetVertex);
+
+			Vertex optionalParentVertex = invokeRewireHop(optionalParent, graph, fTypeMap, privacyMap, oracle);
+			assertNotNull("Expected optional parent vertex", optionalParentVertex);
+			assertFalse("OPTIONAL input should not create parent-child upload hint",
+				graph.hasParentChildUploadHint(optionalParent.getHopID(), target.getHopID()));
+		}
+		finally {
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
 	private static DMLProgram parseAndRewrite(String script, Map<String, String> args, String planner) throws Exception {
 		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
 		DMLConfig newConfig = new DMLConfig(oldConfig);
@@ -253,8 +343,20 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	private static DataOp transientRead(String name) {
+		return transientRead(name, ROWS, COLS);
+	}
+
+	private static DataOp transientRead(String name, long rows, long cols) {
 		return new DataOp(name, DataType.MATRIX, ValueType.FP64,
-			OpOpData.TRANSIENTREAD, null, ROWS, COLS, ROWS * COLS, BLOCKSIZE);
+			OpOpData.TRANSIENTREAD, null, rows, cols, rows * cols, BLOCKSIZE);
+	}
+
+	private static DataOp federatedRead(String name, long rows, long cols) {
+		FederatedPlannerUtils.registerFedInitVar(name);
+		DataOp op = transientRead(name, rows, cols);
+		op.setForcedExecType(ExecType.FED);
+		op.setFederatedOutput(FederatedOutput.FOUT);
+		return op;
 	}
 
 	private static HopCommon registerHopCommon(Map<Long, HopCommon> table, Hop hop) {

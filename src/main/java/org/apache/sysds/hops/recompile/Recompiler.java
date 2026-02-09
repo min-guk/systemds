@@ -343,12 +343,14 @@ public class Recompiler {
 			&& SpoofCompiler.RECOMPILE_CODEGEN;
 		boolean rewrittenHops = false;
 		Map<Long, HopState> baseHopStates = null;
+		Map<Long, Hop> deepCopyMemo = null;
 		
 		// prepare hops dag for recompile
 		baseHopStates = snapshotHopStates(hops);
 		if( !inplace ){ 
 			// deep copy hop dag (for non-reversable rewrites)
-			hops = deepCopyHopsDag(hops);
+			deepCopyMemo = new HashMap<>();
+			hops = deepCopyHopsDag(hops, deepCopyMemo);
 		}
 		else if( !codegen ) {
 			// clear existing lops
@@ -411,8 +413,10 @@ public class Recompiler {
 		// codegen if enabled
 		if( codegen ) {
 			//create deep copy for in-place
-			if( inplace )
-				hops = deepCopyHopsDag(hops);
+			if( inplace ) {
+				deepCopyMemo = new HashMap<>();
+				hops = deepCopyHopsDag(hops, deepCopyMemo);
+			}
 			Hop.resetVisitStatus(hops);
 			hops = SpoofCompiler.optimize(hops,
 				(status==null || !status.isInitialCodegen()));
@@ -433,8 +437,14 @@ public class Recompiler {
 		Set<Hop> fTypeRefreshDone = new HashSet<>();
 		for (Hop hopRoot : hops)
 			inferFTypeIfNeeded(hopRoot, fTypeMap, fTypeRefreshDone, new HashSet<>());
-		FederatedRefedPolicy.registerFromHops(hops, true, fTypeMap, sb != null ? sb.getSBID() : -1,
-			runtimeSignatures, runtimeTypes);
+		Set<Long> propagatedDemotedCloneIds = FederatedRefedPolicy.markHeuristicDemotedClones(deepCopyMemo);
+		try {
+			FederatedRefedPolicy.registerFromHops(hops, true, fTypeMap, sb != null ? sb.getSBID() : -1,
+				runtimeSignatures, runtimeTypes);
+		}
+		finally {
+			FederatedRefedPolicy.unmarkHeuristicDemotedHops(propagatedDemotedCloneIds);
+		}
 		
 		// construct lops
 		ArrayList<Lop> lops = new ArrayList<>(hops.size());
@@ -887,6 +897,11 @@ public class Recompiler {
 	 */
 	public static ArrayList<Hop> deepCopyHopsDag( List<Hop> hops )
 	{
+		return deepCopyHopsDag(hops, null);
+	}
+
+	public static ArrayList<Hop> deepCopyHopsDag( List<Hop> hops, Map<Long, Hop> outMemo )
+	{
 		ArrayList<Hop> ret = new ArrayList<>(hops.size());
 		
 		try {
@@ -895,6 +910,8 @@ public class Recompiler {
 			Map<Long, Hop> memo = _memoHop.get(); //orig ID, new clone
 			for( Hop hopRoot : hops )
 				ret.add(rDeepCopyHopsDag(hopRoot, memo));
+			if (outMemo != null)
+				outMemo.putAll(memo);
 		}
 		catch(Exception ex) {
 			throw new HopsException(ex);

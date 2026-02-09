@@ -78,6 +78,7 @@ public final class FederatedRefedPolicy {
 	private static final boolean ENABLE_TRANSREAD_DEBUG =
 		Boolean.parseBoolean(System.getProperty("sysds.fedplanner.transread.debug", "false"));
 	private static final Map<Long, AnchorKey> CPFOUT_ANCHOR_CACHE = new ConcurrentHashMap<>();
+	private static final Set<Long> HEURISTIC_DEMOTED_VECTOR_HOPS = ConcurrentHashMap.newKeySet();
 	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TWRITE_CACHE =
 		ThreadLocal.withInitial(java.util.HashMap::new);
 	private static final ThreadLocal<java.util.Map<Long, Long>> HOP_SBID_CACHE =
@@ -95,6 +96,57 @@ public final class FederatedRefedPolicy {
 	private static void clearGlobalTWriteCache() {
 		GLOBAL_TWRITE_CACHE.get().clear();
 		HOP_SBID_CACHE.get().clear();
+	}
+
+	public static void clearHeuristicDemotedHops() {
+		HEURISTIC_DEMOTED_VECTOR_HOPS.clear();
+	}
+
+	public static void markHeuristicDemotedHop(long hopId) {
+		HEURISTIC_DEMOTED_VECTOR_HOPS.add(hopId);
+	}
+
+	public static void unmarkHeuristicDemotedHop(long hopId) {
+		HEURISTIC_DEMOTED_VECTOR_HOPS.remove(hopId);
+	}
+
+	/**
+	 * Propagate heuristic-demoted markers from original hops to deep-copied hops.
+	 *
+	 * @param originalToClone deep-copy mapping (orig hop id -> cloned hop)
+	 * @return ids that were newly marked on clone hops (for optional scoped cleanup)
+	 */
+	public static Set<Long> markHeuristicDemotedClones(java.util.Map<Long, Hop> originalToClone) {
+		if (originalToClone == null || originalToClone.isEmpty())
+			return Collections.emptySet();
+		Set<Long> added = new HashSet<>();
+		for (java.util.Map.Entry<Long, Hop> e : originalToClone.entrySet()) {
+			Long originalId = e.getKey();
+			Hop cloneHop = e.getValue();
+			if (originalId == null || cloneHop == null)
+				continue;
+			if (!HEURISTIC_DEMOTED_VECTOR_HOPS.contains(originalId))
+				continue;
+			long cloneId = cloneHop.getHopID();
+			if (cloneId <= 0)
+				continue;
+			if (HEURISTIC_DEMOTED_VECTOR_HOPS.add(cloneId))
+				added.add(cloneId);
+		}
+		return added;
+	}
+
+	public static void unmarkHeuristicDemotedHops(Set<Long> hopIds) {
+		if (hopIds == null || hopIds.isEmpty())
+			return;
+		for (Long hopId : hopIds) {
+			if (hopId != null)
+				HEURISTIC_DEMOTED_VECTOR_HOPS.remove(hopId);
+		}
+	}
+
+	private static boolean isHeuristicDemotedHop(Hop hop) {
+		return hop != null && HEURISTIC_DEMOTED_VECTOR_HOPS.contains(hop.getHopID());
 	}
 
 	private FederatedRefedPolicy() {
@@ -355,16 +407,23 @@ public final class FederatedRefedPolicy {
 				exec = ExecType.CP;
 			boolean localOutput = exec == ExecType.CP
 					|| (exec == ExecType.FED && (hop.hasLocalOutput() || hop.isFederatedOutputDerived()));
-			if (localOutput && hop.getDataType().isMatrix()
-				&& (hop.getFederatedOutput() == FederatedOutput.FOUT
-					|| requiresCpfoutForFedParents(hop, fTypeMap))) {
+			if (localOutput && hop.getDataType().isMatrix()) {
+				boolean needsCpfout = requiresCpfoutForFedParents(hop, fTypeMap);
+				if (!needsCpfout) {
+					if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+						hop.setFederatedOutput(FederatedOutput.LOUT);
+						if (fTypeMap != null)
+							fTypeMap.remove(hop.getHopID());
+					}
+					continue;
+				}
 				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD) {
 					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
 						System.out.println("[TransReadRefedDebug] hop=" + hop.getHopID()
 							+ " exec=" + exec
 							+ " fout=" + hop.getFederatedOutput()
 							+ " localOutput=" + localOutput
-							+ " needsCpfout=" + requiresCpfoutForFedParents(hop, fTypeMap));
+							+ " needsCpfout=" + needsCpfout);
 					}
 					// TRead must not use CP->FOUT directly; promote matching TWrite instead.
 					if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
@@ -1943,6 +2002,8 @@ public final class FederatedRefedPolicy {
 	public static boolean canGenerateCpfoutCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
 			return false;
+		if (isHeuristicDemotedHop(hop))
+			return false;
 		if (isRecompileRegion(hop))
 			return false;
 		if (hop instanceof DataOp) {
@@ -1962,6 +2023,8 @@ public final class FederatedRefedPolicy {
 	public static boolean canGenerateCpfoutCandidateFromFTypes(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (canGenerateCpfoutCandidate(hop, fTypeMap))
 			return true;
+		if (isHeuristicDemotedHop(hop))
+			return false;
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
 			return false;
 		if (isRecompileRegion(hop))
@@ -2013,6 +2076,8 @@ public final class FederatedRefedPolicy {
 			AnchorSelection blockAnchor) {
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
 			return false;
+		if (isHeuristicDemotedHop(hop))
+			return false;
 		if (isRecompileRegion(hop))
 			return false;
 		if (hop instanceof DataOp) {
@@ -2046,6 +2111,12 @@ public final class FederatedRefedPolicy {
 
 	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection blockAnchor) {
+		if (isHeuristicDemotedHop(hop)) {
+			hop.setFederatedOutput(FederatedOutput.LOUT);
+			if (fTypeMap != null)
+				fTypeMap.remove(hop.getHopID());
+			return;
+		}
 		if (!hop.getDataType().isMatrix())
 			throw new DMLRuntimeException("CP->FOUT refed supports only matrix outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
@@ -2094,6 +2165,9 @@ public final class FederatedRefedPolicy {
 			AnchorSelection selection) {
 		if (hop == null)
 			return;
+		if (isHeuristicDemotedHop(hop))
+			throw new DMLRuntimeException("Heuristic-demoted vector must remain local (no CP->FOUT refed): hop "
+				+ hop.getHopID() + " (" + hop.getOpString() + ")");
 		if (!hop.getDataType().isMatrix())
 			throw new DMLRuntimeException("CP->FOUT refed supports only matrix outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");

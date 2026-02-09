@@ -950,22 +950,10 @@ public class FederatedPlanMinSTRewire {
 					hasGuaranteedFoutInput = hasGuaranteedFoutInput || inputGuaranteedFout;
 					boolean inputMayBeLocal = inputCaps != null
 							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
-					FederatedRefedPolicy.InputRequirement inputRequirement =
-							FederatedRefedPolicy.getInputRequirementForFedExec(hop, input, inputIndex, fTypeMap);
 					if (!inputGuaranteedFout && inputMayBeLocal) {
-						boolean inputRefedPossible = false;
-						try {
-							inputRefedPossible = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
-						}
-						catch (DMLRuntimeException ex) {
-							inputRefedPossible = false;
-						}
-						// Keep original MinST Oracle alignment (local-capable inputs stay null),
-						// but remember optional edges that may still require local->FOUT upload
-						// if FED execution is selected.
-						if (inputRefedPossible
-								&& inputRequirement == FederatedRefedPolicy.InputRequirement.OPTIONAL)
-							graph.markParentChildUploadHint(hop.getHopID(), input.getHopID());
+						// Keep original MinST Oracle alignment (local-capable inputs stay null).
+						// OPTIONAL inputs are not forced into local->FOUT upload at rewire time.
+						// Whether BROADCAST/upload is needed is decided by parent execution.
 						inputFType = null;
 					}
 					else if (inputFType == null) {
@@ -980,38 +968,38 @@ public class FederatedPlanMinSTRewire {
 				oracleFacade, null, rewireTable);
 		OpCaps opCaps = oracleDecision.caps();
 
-		// Oracle foutFType을 FType으로 반영 (getFederatedType 대체)
-		FType oracleFType = oracleDecision.logicalFType();
-		if (oracleFType != null) {
-			// FEDERATED DataOp는 partition 기반 FType과 충돌할 수 있으니, 필요하면 로깅
-			if (fType != null && !fType.equals(oracleFType)) {
-				FederatedPlannerLogger.logInfoMessage(
-						"[MinST] Oracle foutFType " + oracleFType + " overrides existing FType "
-								+ fType + " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
+			// Oracle foutFType을 FType으로 반영 (getFederatedType 대체)
+			FType oracleFType = oracleDecision.logicalFType();
+			if (oracleFType != null) {
+				// FEDERATED DataOp는 partition 기반 FType과 충돌할 수 있으니, 필요하면 로깅
+				if (fType != null && !fType.equals(oracleFType)) {
+					FederatedPlannerLogger.logInfoMessage(
+							"[MinST] Oracle foutFType " + oracleFType + " overrides existing FType "
+									+ fType + " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
+				}
+				fType = oracleFType;
 			}
-			fType = oracleFType;
-		}
-		int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
-		if (!hasGuaranteedFoutInput
-				&& FederatedPlannerUtils.isVectorShape(hop)
-				&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)) {
-			FType axisType = FederatedPlannerUtils.getVectorAxis(hop);
-			boolean axisSafe = axisType != null
-					&& OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
-							hop, axisType, rewireTable, numWorkersEstimate) == axisType;
-			boolean canRefedAsAxis = false;
-			if (axisSafe) {
+			int numWorkersEstimate = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+			if (!hasGuaranteedFoutInput
+					&& FederatedPlannerUtils.isVectorShape(hop)
+					&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)) {
+				boolean canRefed = false;
 				try {
-					canRefedAsAxis = FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, fTypeMap);
+					canRefed = FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, fTypeMap);
 				}
 				catch (DMLRuntimeException ex) {
-					canRefedAsAxis = false;
+					canRefed = false;
+				}
+				// Only override vector FType for CP->FOUT planning when refed is actually feasible.
+				// If refed is not feasible, keep Oracle/axis-derived type and leave optional inputs local.
+				if (canRefed) {
+					FType axisType = FederatedPlannerUtils.getVectorAxis(hop);
+					boolean axisSafe = axisType != null
+							&& OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+									hop, axisType, rewireTable, numWorkersEstimate) == axisType;
+					fType = axisSafe ? axisType : FType.BROADCAST;
 				}
 			}
-			// Prefer ROW/COL for vectors whenever safe and materializable;
-			// otherwise fall back to BROADCAST.
-			fType = (axisSafe && canRefedAsAxis) ? axisType : FType.BROADCAST;
-		}
 
 		FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 				hop, fType, rewireTable, numWorkersEstimate);

@@ -26,6 +26,7 @@ import static org.junit.Assert.assertTrue;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
@@ -45,6 +46,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.FederatedRefed;
 import org.apache.sysds.lops.Lop;
@@ -65,6 +67,7 @@ public class FederatedRefedPolicyTest {
 	public void clearFedInitState() {
 		// Tests mutate global planner state (fed-init vars / anchor keys). Reset for isolation.
 		FederatedPlannerUtils.clearFedInitVars();
+		FederatedRefedPolicy.clearHeuristicDemotedHops();
 	}
 
 	@Test
@@ -374,6 +377,120 @@ public class FederatedRefedPolicyTest {
 		boolean fedHasRefed = fedParent.getLops().getInputs().stream().anyMatch(l -> l instanceof FederatedRefed);
 		assertTrue("Expected FED parent to be rewired via refed", fedHasRefed);
 		assertTrue("Expected CP parent to keep local input", cpParent.getLops().getInputs().contains(targetLop));
+	}
+
+	@Test
+	public void testNoCpfoutWithoutFedParentDemand() {
+		DataOp localLhs = createLocalMatrix("L", 10, 10);
+		DataOp localRhs = createLocalMatrix("R", 10, 10);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(10);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+
+		UnaryOp cpParent = HopRewriteUtils.createUnary(target, OpOp1.EXP);
+		cpParent.setDim1(10);
+		cpParent.setDim2(10);
+		cpParent.setForcedExecType(ExecType.CP);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(cpParent), true, new HashMap<>(), -1);
+		assertEquals("Expected target to be demoted to LOUT without FED parent demand",
+			FederatedOutput.LOUT, target.getFederatedOutput());
+		assertTrue("Expected no refed entry without FED parent demand",
+			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
+		assertTrue("Expected no fed_fout materialization entry without FED parent demand",
+			!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(target.getHopID()));
+
+		Lop cpLop = cpParent.constructLops();
+		Dag<Lop> dag = new Dag<>();
+		cpLop.addToDag(dag);
+		boolean hasFoutInstruction = false;
+		for (Instruction inst : dag.getJobs(null, ConfigurationManager.getDMLConfig())) {
+			if (inst.getInstructionString().contains("fed_fout")) {
+				hasFoutInstruction = true;
+				break;
+			}
+		}
+		assertTrue("Expected no fed_fout instruction without FED parent demand", !hasFoutInstruction);
+	}
+
+	@Test
+	public void testHeuristicDemotedPersistsForRuntimeRegisterFromHops() {
+		DataOp localLhs = createLocalMatrix("L", 10, 10);
+		DataOp localRhs = createLocalMatrix("R", 10, 10);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(10);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		BinaryOp parent = HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.markHeuristicDemotedHop(target.getHopID());
+		FederatedRefedPolicy.registerFromProgram(null, fTypeMap);
+
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
+
+		assertEquals("Expected heuristic-demoted target to remain local in runtime refed planning",
+			FederatedOutput.LOUT, target.getFederatedOutput());
+		assertTrue("Expected no refed entry for heuristic-demoted target",
+			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
+		assertTrue("Expected no fed_fout materialization entry for heuristic-demoted target",
+			!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(target.getHopID()));
+	}
+
+	@Test
+	public void testHeuristicDemotedPropagatesToDeepCopyForRegisterFromHops() {
+		DataOp localLhs = createLocalMatrix("L", 10, 10);
+		DataOp localRhs = createLocalMatrix("R", 10, 10);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(10);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		BinaryOp parent = HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+		FederatedRefedPolicy.markHeuristicDemotedHop(target.getHopID());
+
+		Map<Long, Hop> deepCopyMemo = new HashMap<>();
+		java.util.ArrayList<Hop> copiedRoots = Recompiler.deepCopyHopsDag(Arrays.asList(parent), deepCopyMemo);
+		Hop copiedTarget = deepCopyMemo.get(target.getHopID());
+		Hop copiedAnchor = deepCopyMemo.get(anchor.getHopID());
+		assertTrue("Expected copied target hop in deep-copy memo", copiedTarget != null);
+		assertTrue("Expected copied anchor hop in deep-copy memo", copiedAnchor != null);
+
+		Set<Long> clonedDemotedIds = FederatedRefedPolicy.markHeuristicDemotedClones(deepCopyMemo);
+		try {
+			Map<Long, FType> copiedFTypeMap = new HashMap<>();
+			copiedFTypeMap.put(copiedAnchor.getHopID(), FType.ROW);
+			FederatedRefedPolicy.registerFromHops(copiedRoots, true, copiedFTypeMap, -1);
+
+			assertEquals("Expected copied demoted target to remain local in runtime refed planning",
+				FederatedOutput.LOUT, copiedTarget.getFederatedOutput());
+			assertTrue("Expected no refed entry for copied heuristic-demoted target",
+				!FederatedRefedRegistry.snapshot(-1).containsKey(copiedTarget.getHopID()));
+			assertTrue("Expected no fed_fout materialization entry for copied heuristic-demoted target",
+				!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(copiedTarget.getHopID()));
+		}
+		finally {
+			FederatedRefedPolicy.unmarkHeuristicDemotedHops(clonedDemotedIds);
+		}
+
+		assertTrue("Expected original demoted marker to remain after clone cleanup",
+			!FederatedRefedPolicy.canGenerateCpfoutCandidate(target, fTypeMap));
 	}
 
 	private static DataOp createLocalMatrix(String name, long rows, long cols) {
