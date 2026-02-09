@@ -180,6 +180,11 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 				// inferred FType as a hint for refed insertion, but they are NOT treated
 				// as federated sources (see isFederatedInput()).
 				fType = vertex.getCpFoutDataType();
+				// Some vertices can miss an explicit cpFout type even though the logical
+				// FType is already BROADCAST/ROW/COL. Keep that planner signal so
+				// refed-policy does not silently fall back to fed_refed on unknown dims.
+				if (fType == null)
+					fType = vertex.getDataType();
 			}
 			if (fType != null)
 				fTypeMap.put(vertex.getHopID(), fType);

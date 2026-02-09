@@ -179,6 +179,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 		privacyMap.put(left.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
 		privacyMap.put(right.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
 		privacyMap.put(plus.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC);
+		assertFalse("Vector plus without FED parent demand should be refed-infeasible",
+			org.apache.sysds.hops.fedplanner.FederatedRefedPolicy.canGenerateCpfoutCandidate(plus, fTypeMap));
 
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());

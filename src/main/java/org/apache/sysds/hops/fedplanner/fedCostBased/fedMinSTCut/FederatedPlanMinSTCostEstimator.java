@@ -372,6 +372,7 @@ public class FederatedPlanMinSTCostEstimator {
 		double uploadCostWithoutWeight = 0;
 		double cpUploadCostWithoutWeight = 0;
 		double downloadCostWithoutWeight = 0;
+		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
 		FType cpFoutType = vertex.getCpFoutDataType();
 		if (cpFoutType == null) {
 			cpFoutType = vertex.getDataType();
@@ -386,34 +387,34 @@ public class FederatedPlanMinSTCostEstimator {
 			} else if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				opCostWithWeight = 0;
 				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
+						outputMemEstimate, vertex.getDataType(), numOfWorkers);
 				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						hop.getOutputMemEstimate(), cpFoutType, numOfWorkers);
+						outputMemEstimate, cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-						hop.getOutputMemEstimate());
+						outputMemEstimate);
 			} else {
-				double opCost = FederatedCostModel.computeOpCost(hop);
+				double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
 				opCostWithWeight = vertex.getOpWeight() * opCost;
 				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
+						outputMemEstimate, vertex.getDataType(), numOfWorkers);
 				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						hop.getOutputMemEstimate(), cpFoutType, numOfWorkers);
+						outputMemEstimate, cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-						hop.getOutputMemEstimate());
+						outputMemEstimate);
 			}
 			vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
 			vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
 			return;
 		}
 
-		double opCost = FederatedCostModel.computeOpCost(hop);
+		double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
 		opCostWithWeight = vertex.getOpWeight() * opCost;
 		uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-				hop.getOutputMemEstimate(), vertex.getDataType(), numOfWorkers);
+				outputMemEstimate, vertex.getDataType(), numOfWorkers);
 		cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-				hop.getOutputMemEstimate(), cpFoutType, numOfWorkers);
+				outputMemEstimate, cpFoutType, numOfWorkers);
 		downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-				hop.getOutputMemEstimate());
+				outputMemEstimate);
 
 		vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
 		vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);

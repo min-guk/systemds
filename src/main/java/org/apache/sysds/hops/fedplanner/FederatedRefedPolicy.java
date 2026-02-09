@@ -952,7 +952,8 @@ public final class FederatedRefedPolicy {
 					}
 					continue;
 				}
-				// Optional-but-local inputs still need federation (e.g., broadcast) for FED exec.
+				// Keep optional local inputs local; do not force planner-side CP->FOUT.
+				continue;
 			}
 			hasRequiredMatrix = true;
 			if (!runtimeFed)
@@ -1026,6 +1027,7 @@ public final class FederatedRefedPolicy {
 	private static InputRequirement resolveTargetRequirement(Hop parent, Hop input, int index,
 			java.util.Map<Long, FType> fTypeMap, AnchorSelection blockAnchor) {
 		InputRequirement req = classifyTargetRequirement(parent, input, index, fTypeMap);
+		req = relaxAmbiguousBroadcastInput(input, req, fTypeMap);
 		if (req == InputRequirement.AMBIGUOUS) {
 			if (FederatedPlannerUtils.isScalarLikeMatrix(input)
 				|| shouldRelaxAmbiguousTargetRequirement(parent, input, index, fTypeMap)) {
@@ -1211,14 +1213,14 @@ public final class FederatedRefedPolicy {
 						treatFTypeMapAsPlannedFederatedInputs);
 					if (plannedAnchor != null)
 						plannedFed = true;
-					else
+					else if (req != InputRequirement.OPTIONAL)
 						hasUnmaterializableLocal = true;
 				}
 				else if (globalAnchorKey != null && canGenerateCpfoutCandidateFromFTypes(input, fTypeMap)) {
 					plannedFed = true;
 					plannedAnchor = new AnchorSelection(globalAnchorKey, null);
 				}
-				else {
+				else if (req != InputRequirement.OPTIONAL) {
 					hasUnmaterializableLocal = true;
 				}
 			}
@@ -1231,7 +1233,8 @@ public final class FederatedRefedPolicy {
 					}
 					continue;
 				}
-				// Optional-but-local inputs still require federation for FED exec.
+				// Optional local inputs are allowed to remain local.
+				continue;
 			}
 
 			hasRequiredMatrix = true;
@@ -2258,6 +2261,7 @@ public final class FederatedRefedPolicy {
 		String anchorKey = toAnchorKeyString(selection);
 		Hop anchorHop = (selection != null) ? selection.anchorHop : null;
 		long anchorHopId = (anchorHop != null) ? anchorHop.getHopID() : -1;
+		FType plannedHopType = getKnownFType(hop, fTypeMap);
 
 		// AnchorKey-only fallback: allow CP->FOUT even when the concrete anchor hop is not visible in this block.
 		if (anchorHop == null && anchorKey == null)
@@ -2319,6 +2323,18 @@ public final class FederatedRefedPolicy {
 
 		// Scalar-like matrices must always be broadcasted.
 		if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
+			if (fTypeMap != null)
+				fTypeMap.put(hop.getHopID(), FType.BROADCAST);
+			FederatedRefedRegistry.remove(scopeId, hop.getHopID());
+			String anchorLabel = (anchorHop != null) ? findAnchorLabel(anchorHop) : null;
+			FederatedFoutMaterializeRegistry.register(scopeId, hop.getHopID(), anchorHopId, "BROADCAST", anchorLabel,
+				anchorKey);
+			return;
+		}
+
+		// If the planner already selected BROADCAST for this CP->FOUT candidate,
+		// preserve that decision and materialize through fed_fout instead of refed.
+		if (plannedHopType == FType.BROADCAST) {
 			if (fTypeMap != null)
 				fTypeMap.put(hop.getHopID(), FType.BROADCAST);
 			FederatedRefedRegistry.remove(scopeId, hop.getHopID());
@@ -2836,6 +2852,13 @@ public final class FederatedRefedPolicy {
 		return runtimeSignatures.get(dataOp.getName());
 	}
 
+	private static InputRequirement relaxAmbiguousBroadcastInput(Hop input, InputRequirement req,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (req == InputRequirement.AMBIGUOUS && getKnownFType(input, fTypeMap) == FType.BROADCAST)
+			return InputRequirement.OPTIONAL;
+		return req;
+	}
+
 	private static InputRequirement classifyTargetRequirement(Hop parent, Hop target, int targetIndex,
 			java.util.Map<Long, FType> fTypeMap) {
 		InputRequirement base = classifyRequiredInput(parent, target, targetIndex);
@@ -2843,6 +2866,7 @@ public final class FederatedRefedPolicy {
 			base = InputRequirement.REQUIRED;
 		if (base == InputRequirement.AMBIGUOUS)
 			base = resolveVectorVectorRequirement(parent, target, targetIndex, fTypeMap);
+		base = relaxAmbiguousBroadcastInput(target, base, fTypeMap);
 		if (base != InputRequirement.REQUIRED)
 			return base;
 		if (target != null && target.getDataType().isMatrix()) {
@@ -2988,6 +3012,7 @@ public final class FederatedRefedPolicy {
 		InputRequirement baseReq = classifyRequiredInput(parent, input, index);
 		if (baseReq == InputRequirement.AMBIGUOUS)
 			baseReq = resolveVectorVectorRequirement(parent, input, index, fTypeMap);
+		baseReq = relaxAmbiguousBroadcastInput(input, baseReq, fTypeMap);
 		if (baseReq == InputRequirement.AMBIGUOUS)
 			return InputRequirement.AMBIGUOUS;
 		if (baseReq == InputRequirement.OPTIONAL)
@@ -3026,6 +3051,7 @@ public final class FederatedRefedPolicy {
 		InputRequirement baseReq = classifyRequiredInput(parent, input, index);
 		if (baseReq == InputRequirement.AMBIGUOUS)
 			baseReq = resolveVectorVectorRequirement(parent, input, index, fTypeMap);
+		baseReq = relaxAmbiguousBroadcastInput(input, baseReq, fTypeMap);
 		if (baseReq == InputRequirement.AMBIGUOUS)
 			return InputRequirement.AMBIGUOUS;
 		if (baseReq == InputRequirement.OPTIONAL)

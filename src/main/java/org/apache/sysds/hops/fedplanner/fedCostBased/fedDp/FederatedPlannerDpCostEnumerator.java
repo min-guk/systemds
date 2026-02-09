@@ -475,7 +475,8 @@ public class FederatedPlannerDpCostEnumerator {
 		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers);
 		double hopNetworkWeight = hopCommon.getNetworkWeight();
 		double resultDownloadCost = hopNetworkWeight
-				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(hop.getOutputMemEstimate());
+				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
+					FederatedCostModel.getEffectiveOutputMemEstimate(hop));
 
 		final int enumerationLimit = 1 << numBothOutInputs;
 
@@ -629,7 +630,7 @@ public class FederatedPlannerDpCostEnumerator {
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
 			double cpUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-					hop.getOutputMemEstimate(), cpLogicalFType, numOfWorkers);
+					FederatedCostModel.getEffectiveOutputMemEstimate(hop), cpLogicalFType, numOfWorkers);
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 						hop, privacyConstraint, oracleLogicalFType, caps);
@@ -1083,7 +1084,7 @@ public class FederatedPlannerDpCostEnumerator {
 			throw new DMLRuntimeException("Expected both LOUT and FOUT plans for hop " + hopID);
 		}
 
-		double outputMem = lOutPlan.getHopRef().getOutputMemEstimate();
+		double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(lOutPlan.getHopRef());
 		double lOutUploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 				outputMem, lOutPlan.getFType(), numOfWorkers);
 		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMem);

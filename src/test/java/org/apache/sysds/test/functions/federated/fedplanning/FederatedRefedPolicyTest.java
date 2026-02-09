@@ -294,6 +294,37 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testPlannedBroadcastPrefersFoutMaterializeOverRefed() {
+		DataOp localLhs = createLocalMatrix("L", 10, 10);
+		DataOp localRhs = createLocalMatrix("R", 10, 10);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(10);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		BinaryOp parent = HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+		// Mimic MinST/DP planned CP->FOUT choice where the upload shape is BROADCAST.
+		fTypeMap.put(target.getHopID(), FType.BROADCAST);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
+
+		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeSnapshot =
+			FederatedFoutMaterializeRegistry.snapshot(-1);
+		assertTrue("Expected materialize registry entry for BROADCAST-planned target",
+			materializeSnapshot.containsKey(target.getHopID()));
+		assertEquals("Expected BROADCAST materialize hint for BROADCAST-planned target", "BROADCAST",
+			materializeSnapshot.get(target.getHopID()).getFTypeHint());
+		assertTrue("Expected no refed registry entry when BROADCAST is planned",
+			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
+	}
+
+	@Test
 	public void testScalarLikeMatrixBroadcastMaterializeUnderTernaryOp() {
 		DataOp localLhs = createLocalMatrix("L", 1, 1);
 		DataOp localRhs = createLocalMatrix("R", 1, 1);
@@ -413,6 +444,48 @@ public class FederatedRefedPolicyTest {
 			}
 		}
 		assertTrue("Expected no fed_fout instruction without FED parent demand", !hasFoutInstruction);
+	}
+
+	@Test
+	public void testOptionalBroadcastInputStaysLocalForFedParent() {
+		DataOp fedMatrix = createFederatedInput("X", 100, 10);
+		DataOp localVector = createLocalMatrix("p", 10, 1);
+		localVector.setForcedExecType(ExecType.CP);
+		localVector.setFederatedOutput(FederatedOutput.LOUT);
+
+		AggBinaryOp fedParent = HopRewriteUtils.createMatrixMultiply(fedMatrix, localVector);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
+		fTypeMap.put(localVector.getHopID(), FType.BROADCAST);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent), true, fTypeMap, -1);
+		assertEquals("Expected optional BROADCAST vector input to remain local",
+			FederatedOutput.LOUT, localVector.getFederatedOutput());
+		assertTrue("Expected no refed entry for optional BROADCAST vector input",
+			!FederatedRefedRegistry.snapshot(-1).containsKey(localVector.getHopID()));
+		assertTrue("Expected no fed_fout materialization for optional BROADCAST vector input",
+			!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(localVector.getHopID()));
+	}
+
+	@Test
+	public void testPlannerAllowsOptionalLocalTransientReadInputForFedParent() {
+		DataOp fedMatrix = createFederatedInput("X", 100, 10);
+		DataOp localVector = createLocalMatrix("p", 10, 1);
+		localVector.setForcedExecType(ExecType.CP);
+		localVector.setFederatedOutput(FederatedOutput.LOUT);
+
+		AggBinaryOp fedParent = HopRewriteUtils.createMatrixMultiply(fedMatrix, localVector);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
+
+		assertTrue("Expected planner feasibility to allow optional local transient-read vector input",
+			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, fTypeMap));
 	}
 
 	@Test

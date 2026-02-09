@@ -223,14 +223,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (visitedFromClone != null) {
 				visitedFromClone.put(hopID, prevFromClone || fromClone);
 			}
-			if (resolvedOutType == FederatedOutput.FOUT) {
-				FType fType = optimalPlan.getFType();
-				if (fType != null) {
-					fTypeMap.put(hopID, fType);
-				}
-			} else {
+			FType fType = optimalPlan.getFType();
+			boolean isTransient = targetHop instanceof DataOp
+				&& (((DataOp) targetHop).getOp() == Types.OpOpData.TRANSIENTREAD
+					|| ((DataOp) targetHop).getOp() == Types.OpOpData.TRANSIENTWRITE);
+			// Keep non-transient local-output FType hints so refed-policy can preserve
+			// planner CP->FOUT decisions (e.g., BROADCAST) even when dims are unknown.
+			// Transient reads/writes are excluded to avoid treating local TR/TW as
+			// federated sources purely due to logical FType annotations.
+			if (fType != null && (resolvedOutType == FederatedOutput.FOUT || !isTransient))
+				fTypeMap.put(hopID, fType);
+			else
 				fTypeMap.remove(hopID);
-			}
 
 		}
 

@@ -198,13 +198,19 @@ public class FederatedPlanMinSTGraph {
 		Hop hop = vertex.getHopRef();
 		if (HopUtils.isPrintOrPWrite(hop))
 			return;
-		if (hop instanceof DataOp &&
-				((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD)
-			return; // Align with DP: TR uses only parent-child forwarding cost
 		long hopId = vertex.getHopID();
 		long cId = FederatedPlanMinSTPlanner.computeId(hopId);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
 		long lId = FederatedPlanMinSTPlanner.localityId(hopId);
+		if (hop instanceof DataOp &&
+				((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			// DP parity: if a TRead is chosen as FED/FOUT but consumed by a CP parent,
+			// the plan must pay the download needed to materialize local output.
+			// Upload for TRead is modeled via parent-child forwarding edges.
+			double trDownloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
+			addCap(cId, lId, trDownloadCost);
+			return;
+		}
 		double uploadCost = vertex.getNetworkWeight() * vertex.getCpUploadCostWithoutWeight();
 		double downloadCost = vertex.getNetworkWeight() * vertex.getDownloadCostWithoutWeight();
 		// Download is paid when we execute in FED and the hop needs to have a local materialization.
@@ -233,7 +239,7 @@ public class FederatedPlanMinSTGraph {
 			FType cpFoutType = childVertex.getCpFoutDataType();
 			if (cpFoutType == null)
 				cpFoutType = childVertex.getDataType();
-			double outputMemEstimate = (childHop != null) ? childHop.getOutputMemEstimate() : 0.0;
+			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
 			if (cpFoutType != null && outputMemEstimate > 0.0) {
 				uploadCost = FederatedCostModel.computeUploadNetworkCost(
 						outputMemEstimate, cpFoutType, numOfWorkers);

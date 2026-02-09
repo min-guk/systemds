@@ -19,7 +19,9 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 
@@ -28,6 +30,9 @@ public final class FederatedCostModel {
 	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
 	private static final String ENV_FLOPS_PER_SEC = "SYSDS_FED_COST_FLOPS";
+	private static final double DEFAULT_MEM_ESTIMATE_PER_CELL = OptimizerUtils.DOUBLE_SIZE;
+	private static final double DEFAULT_FP32_MEM_ESTIMATE_PER_CELL = 4.0;
+	private static final double DEFAULT_STRING_MEM_ESTIMATE_PER_CELL = 100.0 * OptimizerUtils.CHAR_SIZE;
 
 	// Default values are used as reasonable estimates since we only need to compare
 	// relative costs between different federated plans.
@@ -66,10 +71,71 @@ public final class FederatedCostModel {
 		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
 	}
 
+	public static double computeOpCostWithFallback(Hop hop) {
+		if (hop == null) {
+			return 0.0;
+		}
+
+		double opCost = computeOpCost(hop);
+		if (opCost > 0.0) {
+			return opCost;
+		}
+
+		double inputMemEstimate = getEffectiveInputMemEstimate(hop);
+		double outputMemEstimate = getEffectiveOutputMemEstimate(hop);
+		if (inputMemEstimate <= 0.0 && outputMemEstimate <= 0.0) {
+			return 0.0;
+		}
+
+		double inputAccessCost = computeMemoryAccessCost(inputMemEstimate);
+		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
+		return inputAccessCost + outputAccessCost;
+	}
+
 	public static double computeMemoryAccessCost(double memSize) {
 		if (memSize <= 0)
 			return 0.0;
 		return (memSize / (1024 * 1024) / MBS_MEMORY_BANDWIDTH) * TO_MS;
+	}
+
+	public static double getEffectiveInputMemEstimate(Hop hop) {
+		if (hop == null) {
+			return 0.0;
+		}
+		double inputMemEstimate = hop.getInputMemEstimate();
+		if (inputMemEstimate > 0.0) {
+			return inputMemEstimate;
+		}
+
+		double fallbackInputMemEstimate = 0.0;
+		for (int i = 0; i < hop.getInput().size(); i++) {
+			Hop inputHop = hop.getInput(i);
+			double inputOutputMemEstimate = getEffectiveOutputMemEstimate(inputHop);
+			if (inputOutputMemEstimate > 1024 * 1024) {
+				boolean alreadyCounted = false;
+				for (int j = 0; j < i; j++) {
+					alreadyCounted |= (inputHop == hop.getInput(j));
+				}
+				inputOutputMemEstimate = alreadyCounted ? 0.0 : inputOutputMemEstimate;
+			}
+			fallbackInputMemEstimate += Math.max(0.0, inputOutputMemEstimate);
+		}
+		if (fallbackInputMemEstimate > 0.0) {
+			return fallbackInputMemEstimate;
+		}
+
+		return Math.max(0.0, hop.getInputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
+	}
+
+	public static double getEffectiveOutputMemEstimate(Hop hop) {
+		if (hop == null) {
+			return 0.0;
+		}
+		double outputMemEstimate = hop.getOutputMemEstimate();
+		if (outputMemEstimate > 0.0) {
+			return outputMemEstimate;
+		}
+		return Math.max(0.0, hop.getOutputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
 	}
 
 	public static double computeNetworkCost(double memSize) {
@@ -93,6 +159,37 @@ public final class FederatedCostModel {
 
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return computeUploadNetworkCost(memSize, fType, numWorkers);
+	}
+
+	private static double getInjectedDefaultMemEstimatePerCell(Hop hop) {
+		if (hop == null || hop.getValueType() == null) {
+			return DEFAULT_MEM_ESTIMATE_PER_CELL;
+		}
+
+		ValueType valueType = hop.getValueType();
+		switch (valueType) {
+			case BOOLEAN:
+				return OptimizerUtils.BOOLEAN_SIZE;
+			case UINT4:
+			case UINT8:
+			case INT32:
+			case HASH32:
+				return OptimizerUtils.INT_SIZE;
+			case INT64:
+			case HASH64:
+				return OptimizerUtils.DOUBLE_SIZE;
+			case FP32:
+				return DEFAULT_FP32_MEM_ESTIMATE_PER_CELL;
+			case FP64:
+				return OptimizerUtils.DOUBLE_SIZE;
+			case CHARACTER:
+				return OptimizerUtils.CHAR_SIZE;
+			case STRING:
+				return DEFAULT_STRING_MEM_ESTIMATE_PER_CELL;
+			case UNKNOWN:
+			default:
+				return DEFAULT_MEM_ESTIMATE_PER_CELL;
+		}
 	}
 
 	private static double getConfiguredDouble(String key, double fallback) {
