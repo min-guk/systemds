@@ -935,18 +935,18 @@ public class FederatedPlannerDpCostEnumerator {
 		return false;
 	}
 
-		private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,
-				Map<Long, FType> fTypeMap, OpCaps caps, ExecPlacementPolicy.Decision decision) {
-			if (decision == null || decision.allowFED_FOUT || !decision.allowFED_LOUT)
-				return false;
-			if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
-				return false;
-			if (!isDerivedFoutPrivacyAllowed(privacy))
-				return false;
-			if (fTypeMap == null)
-				return false;
-			return canGenerateCpfoutCandidateSafe(hop, fTypeMap);
-		}
+	private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,
+			Map<Long, FType> fTypeMap, OpCaps caps, ExecPlacementPolicy.Decision decision) {
+		if (decision == null || decision.allowFED_FOUT || !decision.allowFED_LOUT)
+			return false;
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (!isDerivedFoutPrivacyAllowed(privacy))
+			return false;
+		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap))
+			return false;
+		return true;
+	}
 
 		private static boolean isDerivedFoutPrivacyAllowed(Privacy privacy) {
 			return privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
