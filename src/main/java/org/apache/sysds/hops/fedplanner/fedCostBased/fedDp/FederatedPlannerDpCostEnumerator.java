@@ -72,6 +72,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUti
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -668,6 +669,13 @@ public class FederatedPlannerDpCostEnumerator {
 				if (derivedFedFout) {
 					placementDecision.allowFED_FOUT = true;
 				}
+				// Align DP with MinST: when runtime does not support FED/FOUT for this op,
+				// disallow both CP_FOUT and FED_FOUT candidates.
+				if (caps != null && caps.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
+					placementDecision.allowCP_FOUT = false;
+					placementDecision.allowFED_FOUT = false;
+					derivedFedFout = false;
+				}
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
 					placementDecision.allowCP_FOUT = false;
 				}
@@ -1063,12 +1071,11 @@ public class FederatedPlannerDpCostEnumerator {
 
 	private static boolean shouldAddFedForwardingForParentInput(Hop parentHop, Hop inputHop, int inputIndex,
 			Map<Long, FType> inputFTypes, Map<Long, Set<Long>> parentChildUploadHints) {
-		if (requiresFederatedInputForParent(parentHop, inputHop, inputIndex, inputFTypes))
-			return true;
-		if (parentHop == null || inputHop == null)
+		if (inputHop == null || inputHop.getDataType() == null)
 			return false;
-		return TransTableRewireUtils.hasParentChildUploadHint(
-				parentChildUploadHints, parentHop.getHopID(), inputHop.getHopID());
+		// Even OPTIONAL inputs need to be transferred to FED sites for FED execution (e.g., broadcast vectors).
+		// Non-matrix inputs are treated as embedded literals and do not incur separate forwarding costs.
+		return inputHop.getDataType().isMatrix();
 	}
 
 	// Creates a dummy root node (fedplan) and selects the FedPlan with the minimum
