@@ -482,8 +482,9 @@ public class FederatedPlannerDpCostEnumerator {
 		int numBothOutInputs = lOutfOutChildHops.size();
 		int numLoutOnlyInputs = lOUTOnlyinputHops.size();
 		int numFoutOnlyInputs = fOUTOnlyinputHops.size();
-		int[] bothInputIndices = resolveParentInputIndices(hop, lOutfOutChildHops);
-		int[] loutOnlyInputIndices = resolveParentInputIndices(hop, lOUTOnlyinputHops);
+		// Boundary transfer accounting is based on selected execution/output combinations:
+		// FED parent + LOUT child always incurs LOUT->FED upload (shared by parent count/weight).
+		// CP parent + FOUT child always incurs FOUT->CP download.
 		List<Hop> inputHopsForPrivacy = new ArrayList<>(childHops);
 		inputHopsForPrivacy.addAll(lOUTOnlyinputHops);
 		inputHopsForPrivacy.addAll(fOUTOnlyinputHops);
@@ -627,17 +628,13 @@ public class FederatedPlannerDpCostEnumerator {
 				Hop inputHop = lOutfOutChildHops.get(j);
 				int bit = selectedBits[j];
 				childCostCPExec += childCumulativeCost[j][bit] + childForwardingCostToCP[j] * bit;
-				boolean addFedForwarding = shouldAddFedForwardingForParentInput(
-						hop, inputHop, bothInputIndices[j], fedInputTypeMap, parentChildUploadHints);
-				double fedForwardingCost = addFedForwarding ? childForwardingCostToFED[j] * (1 - bit) : 0.0;
+				double fedForwardingCost = childForwardingCostToFED[j] * (1 - bit);
 				childCostFEDExec += childCumulativeCost[j][bit] + fedForwardingCost;
 			}
 			for (int j = 0; j < numLoutOnlyInputs; j++) {
 				Hop inputHop = lOUTOnlyinputHops.get(j);
 				childCostCPExec += lOUTOnlychildCumulativeCost.get(j);
-				boolean addFedForwarding = shouldAddFedForwardingForParentInput(
-						hop, inputHop, loutOnlyInputIndices[j], fedInputTypeMap, parentChildUploadHints);
-				double fedForwardingCost = addFedForwarding ? lOUTOnlychildForwardingCostToFED.get(j) : 0.0;
+				double fedForwardingCost = lOUTOnlychildForwardingCostToFED.get(j);
 				childCostFEDExec += lOUTOnlychildCumulativeCost.get(j) + fedForwardingCost;
 			}
 			for (int j = 0; j < numFoutOnlyInputs; j++) {
