@@ -57,7 +57,10 @@ public class FederatedPlanMinSTHyperedgeTest {
 		double uploadCost = 10.0;
 		double downloadCost = 7.0;
 
-		Vertex child = createVertex(new LiteralOp(1.0));
+		DataOp childHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
+		Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		child.setMetadata(1.0, 1.0, Collections.emptyList());
 		child.setCost(0.0, uploadCost, downloadCost);
 		child.setNumParents(3);
 		graph.addVertex(child);
@@ -89,12 +92,15 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
-	public void testOptionalFedInputSkipsUploadHyperedge() {
+	public void testOptionalFedInputAddsUploadHyperedgeForMatrixInput() {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		double uploadCost = 8.0;
 		double downloadCost = 5.0;
 
-		Vertex child = createVertex(new LiteralOp(3.0));
+		DataOp childHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
+		Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		child.setMetadata(1.0, 1.0, Collections.emptyList());
 		child.setCost(0.0, uploadCost, downloadCost);
 		graph.addVertex(child);
 
@@ -105,17 +111,15 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
 		long childP = placementId(child.getHopID());
-		for (DefaultWeightedEdge edge : g.edgeSet()) {
-			if (g.getEdgeTarget(edge).equals(childP)
-					&& approxEqual(g.getEdgeWeight(edge), uploadCost)) {
-				Assert.fail("Optional input must not create an upload hyperedge");
-			}
-		}
+		long uploadAux = findAuxToChild(g, childP, uploadCost);
+		Assert.assertTrue("Expected upload aux node to be negative", uploadAux < 0);
 
 		Set<Long> sourceSide = new HashSet<>();
 		for (Vertex parent : parents)
 			sourceSide.add(computeId(parent.getHopID()));
-		Assert.assertEquals("Optional input edge should not add forwarding cost", 0.0, computeCutCost(g, sourceSide), 1e-9);
+		sourceSide.add(uploadAux);
+		Assert.assertEquals("Optional matrix input should still pay one forwarding upload cost",
+			uploadCost, computeCutCost(g, sourceSide), 1e-9);
 	}
 
 	@Test
@@ -124,7 +128,10 @@ public class FederatedPlanMinSTHyperedgeTest {
 		double uploadCost = 9.0;
 		double downloadCost = 11.0;
 
-		Vertex child = createVertex(new LiteralOp(2.0));
+		DataOp childHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
+		Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		child.setMetadata(1.0, 1.0, Collections.emptyList());
 		child.setCost(0.0, uploadCost, downloadCost);
 		child.setNumParents(3);
 		graph.addVertex(child);

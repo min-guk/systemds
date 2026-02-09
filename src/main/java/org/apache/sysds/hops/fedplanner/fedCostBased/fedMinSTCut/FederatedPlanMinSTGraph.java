@@ -227,6 +227,10 @@ public class FederatedPlanMinSTGraph {
 			Vertex parentVertex, long parentHopID, boolean requiresFederatedInput) {
 		long parentC = FederatedPlanMinSTPlanner.computeId(parentHopID);
 		long childP = FederatedPlanMinSTPlanner.placementId(childHopID);
+		Hop childHopRef = childVertex.getHopRef();
+		boolean matrixInput = childHopRef != null
+				&& childHopRef.getDataType() != null
+				&& childHopRef.getDataType().isMatrix();
 
 		double forwardingWeight = parentVertex.computeForwardingWeightOfChild(childVertex.getLoopContext());
 		// Use child FType as a proxy conversion key since per-input conversion detail is not available here.
@@ -240,7 +244,7 @@ public class FederatedPlanMinSTGraph {
 		double uploadCost = childVertex.getCpUploadCostWithoutWeight();
 		if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
 			final double originalUploadCost = uploadCost;
-			Hop childHop = childVertex.getHopRef();
+			Hop childHop = childHopRef;
 			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
 			if (uploadConversionType != null && outputMemEstimate > 0.0) {
 				uploadCost = FederatedCostModel.computeUploadNetworkCost(
@@ -281,11 +285,11 @@ public class FederatedPlanMinSTGraph {
 
 		// If a parent executes in CP, the child must have a local materialization (either natively or via download).
 		addRequiredLocalInputEdge(parentHopID, childHopID);
-		// Optional FED inputs (e.g., broadcastable vectors) can remain local in FED execution.
-		// In this case we skip CP->FOUT forwarding on this parent-child edge unless rewire
-		// explicitly assumed a local->FOUT(refed) conversion for this parent-child relation.
-		boolean addUploadForwarding = requiresFederatedInput || hasParentChildUploadHint(parentHopID, childHopID);
-		if (!addUploadForwarding)
+		// Cost-model policy: matrix inputs can require local->federated boundary transfer
+		// whenever the parent executes FED, regardless of OPTIONAL/REQUIRED classification.
+		// Upload hints are still used by rewire/materialization policy, but they no longer
+		// gate parent-child boundary cost edges in MinST.
+		if (!matrixInput)
 			return;
 		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
 	}

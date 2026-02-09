@@ -584,3 +584,43 @@
   - 감지 방법: WAN 프로파일에서 planner 선택(FED/CP 비율), `fed_fed_fout` count, `Fed Put` count를 함께 모니터링.
 - **의사결정 근거(oracle/런타임/플래너)**:
   - 런타임 fallback이 아니라 플래너 공통 비용모델 + planner edge cost(DP/MinST) 정합화를 통해 수정.
+
+## 이슈 16: MinST가 OPTIONAL matrix 입력에서 upload-hint가 없으면 parent-child 경계 업로드 엣지를 생략해 FED 비용을 과소평가함
+
+- **상태**: 해결
+- **환경/조건**:
+  - Repository: `/home/mchoi/exdra_run/systemds`
+  - Planner: `fed_min_st_cut`
+  - 관련 로직:
+    - `FederatedPlanMinSTCostEstimator.requiresFederatedInputForParent(...)`
+    - `FederatedPlanMinSTGraph.addParentChildNetEdge(...)`
+- **재현 절차**:
+  1. OPTIONAL로 분류되는 matrix 입력(예: broadcastable vector)을 가진 parent-child 관계를 구성한다.
+  2. rewire upload-hint가 없는 경우 MinST graph에서 해당 parent-child의 upload hyperedge가 생성되는지 확인한다.
+- **관측 증상**:
+  - `requiresFederatedInput==false`이고 hint가 없으면 upload edge가 아예 생기지 않아,
+    min-cut이 FED 실행 쪽을 실제보다 저렴하게 평가할 수 있었다.
+- **원인 분석**:
+  - 경계 업로드 엣지 추가 조건이 `requiresFederatedInput || hasParentChildUploadHint`로 되어 있어,
+    OPTIONAL + no hint 경로에서 matrix 입력의 `LOUT->FED` 비용이 누락됐다.
+- **해결 요약**:
+  - `FederatedPlanMinSTGraph.addParentChildNetEdge(...)`에서 upload-hint 게이트를 제거.
+  - matrix 입력이면 OPTIONAL/REQUIRED 여부와 무관하게 parent-child upload hyperedge를 항상 추가하도록 변경.
+  - non-matrix 입력은 기존처럼 경계 업로드 엣지 대상에서 제외.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTGraph.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlanMinSTHyperedgeTest.java`
+- **검증**:
+  - 실행 커맨드:
+    - `mvn -q -DskipTests compile`
+    - `mvn -q -Dtest=FederatedPlanMinSTHyperedgeTest,FederatedPlannerFallbackIntegrationTest test`
+  - 결과:
+    - compile 및 테스트 통과
+    - `FederatedPlanMinSTHyperedgeTest`에서 OPTIONAL matrix 입력의 upload hyperedge 생성 동작 검증
+- **잔여 이슈**:
+  - 실제 WAN 실험에서 MinST/DP 성능 격차가 얼마만큼 줄어드는지는 end-to-end 재실험으로 추가 확인 필요.
+- **잠재 회귀 위험**:
+  - OPTIONAL matrix 입력에서도 업로드 경계비용을 항상 반영하므로, 일부 그래프에서 FED 선택 비율이 기존보다 감소할 수 있음.
+  - 감지 방법: WAN 프로파일에서 MinST 계획의 FED/CP 비율과 `fed_fed_fout`, `Fed Put` 지표를 함께 모니터링.
+- **의사결정 근거(oracle/런타임/플래너)**:
+  - 런타임 fallback 없이 MinST 플래너 graph 비용 모델(경계 엣지 생성 조건) 수정.

@@ -543,8 +543,17 @@ public class FederatedPlanMinSTCostEstimator {
 			if (uploadType == null)
 				uploadType = vertex.getDataType();
 			double uploadCost = vertex.getCpUploadCostWithoutWeight();
-			uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(
-					uploadType, graph.getNumOfWorkers());
+			if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
+				double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+				if (outputMemEstimate > 0.0) {
+					uploadCost = FederatedCostModel.computeUploadNetworkCost(
+							outputMemEstimate, uploadType, graph.getNumOfWorkers());
+				}
+			}
+			if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)) {
+				uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(
+						uploadType, graph.getNumOfWorkers());
+			}
 			double uploadWeighted = weight * uploadCost;
 			double downloadWeighted = weight * vertex.getDownloadCostWithoutWeight();
 			graph.addLoopCarryNetEdge(hopId, edge.getEndWriterHopId(), uploadWeighted, downloadWeighted);
