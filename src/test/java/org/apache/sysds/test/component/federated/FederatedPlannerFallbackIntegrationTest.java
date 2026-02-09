@@ -192,7 +192,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpOptionalInputUploadHintEnablesFedForwarding() throws Exception {
+	public void testDpOptionalInputAlwaysAddsFedForwarding() throws Exception {
 		DataOp localSource = transientRead("LX");
 		UnaryOp target = HopRewriteUtils.createUnary(localSource, OpOp1.EXP);
 		target.setDim1(ROWS);
@@ -215,12 +215,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		Map<Long, Set<Long>> uploadHints = new HashMap<>();
 		boolean withoutHint = (boolean) shouldAddMethod.invoke(
 			null, optionalParent, target, 0, inputFTypes, uploadHints);
-		assertFalse("OPTIONAL input without hint must not add LOUT->FED forwarding", withoutHint);
-
-		TransTableRewireUtils.markParentChildUploadHint(uploadHints, optionalParent.getHopID(), target.getHopID());
-		boolean withHint = (boolean) shouldAddMethod.invoke(
-			null, optionalParent, target, 0, inputFTypes, uploadHints);
-		assertTrue("OPTIONAL input with upload hint must add LOUT->FED forwarding", withHint);
+		assertTrue("OPTIONAL input must add LOUT->FED forwarding for FED execution", withoutHint);
 	}
 
 	@Test

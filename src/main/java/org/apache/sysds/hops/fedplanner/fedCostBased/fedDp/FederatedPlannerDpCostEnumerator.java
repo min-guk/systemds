@@ -1066,12 +1066,11 @@ public class FederatedPlannerDpCostEnumerator {
 
 	private static boolean shouldAddFedForwardingForParentInput(Hop parentHop, Hop inputHop, int inputIndex,
 			Map<Long, FType> inputFTypes, Map<Long, Set<Long>> parentChildUploadHints) {
-		if (requiresFederatedInputForParent(parentHop, inputHop, inputIndex, inputFTypes))
-			return true;
-		if (parentHop == null || inputHop == null)
+		if (inputHop == null || inputHop.getDataType() == null)
 			return false;
-		return TransTableRewireUtils.hasParentChildUploadHint(
-				parentChildUploadHints, parentHop.getHopID(), inputHop.getHopID());
+		// Even OPTIONAL inputs need to be transferred to FED sites for FED execution (e.g., broadcast vectors).
+		// Non-matrix inputs are treated as embedded literals and do not incur separate forwarding costs.
+		return inputHop.getDataType().isMatrix();
 	}
 
 	// Creates a dummy root node (fedplan) and selects the FedPlan with the minimum
