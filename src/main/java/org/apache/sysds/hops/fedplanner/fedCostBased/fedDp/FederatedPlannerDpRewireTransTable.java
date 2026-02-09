@@ -186,13 +186,30 @@ public class FederatedPlannerDpRewireTransTable {
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, UnrollContext unrollCtx) {
 		rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
-			progRootHopSet, unrollCtx, MAX_UNROLL_DEPTH);
+				progRootHopSet, null, unrollCtx, MAX_UNROLL_DEPTH);
+	}
+
+	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
+			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
+			Set<Hop> progRootHopSet, Map<Long, Set<Long>> parentChildUploadHints, UnrollContext unrollCtx) {
+		rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
+				progRootHopSet, parentChildUploadHints, unrollCtx, MAX_UNROLL_DEPTH);
 	}
 
 	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, UnrollContext unrollCtx, int maxUnrollDepth) {
+		rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
+				progRootHopSet, null, unrollCtx, maxUnrollDepth);
+	}
+
+	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
+			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
+			Set<Hop> progRootHopSet, Map<Long, Set<Long>> parentChildUploadHints, UnrollContext unrollCtx,
+			int maxUnrollDepth) {
 		// Maps Hop ID and fedOutType pairs to their plan variants
 		Set<Long> visitedHops = new HashSet<>();
 		Set<String> fnStack = new HashSet<>();
@@ -219,7 +236,16 @@ public class FederatedPlannerDpRewireTransTable {
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, UnrollContext unrollCtx) {
 		rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
-			unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx, MAX_UNROLL_DEPTH);
+				unRefTwriteSet, unRefSet, progRootHopSet, null, unrollCtx, MAX_UNROLL_DEPTH);
+	}
+
+	public static void rewireFunctionDynamic(FunctionStatementBlock function, DMLProgram prog,
+			Map<Long, List<Hop>> rewireTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
+			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
+			Set<Hop> progRootHopSet, Map<Long, Set<Long>> parentChildUploadHints, UnrollContext unrollCtx) {
+		rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
+				unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx, MAX_UNROLL_DEPTH);
 	}
 
 	public static void rewireFunctionDynamic(FunctionStatementBlock function, DMLProgram prog,
@@ -227,6 +253,16 @@ public class FederatedPlannerDpRewireTransTable {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, UnrollContext unrollCtx, int maxUnrollDepth) {
+		rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
+				unRefTwriteSet, unRefSet, progRootHopSet, null, unrollCtx, maxUnrollDepth);
+	}
+
+	public static void rewireFunctionDynamic(FunctionStatementBlock function, DMLProgram prog,
+			Map<Long, List<Hop>> rewireTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
+			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
+			Set<Hop> progRootHopSet, Map<Long, Set<Long>> parentChildUploadHints, UnrollContext unrollCtx,
+			int maxUnrollDepth) {
 		Set<Long> visitedHops = new HashSet<>();
 		Set<String> fnStack = new HashSet<>();
 		Set<Long> injectedIds = new HashSet<>();

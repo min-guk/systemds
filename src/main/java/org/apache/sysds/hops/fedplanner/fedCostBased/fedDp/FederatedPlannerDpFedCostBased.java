@@ -215,11 +215,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (targetHop != optimalPlan.getHopRef())
 				targetHop.setForcedExecType(resolvedExecType);
 
-			// Keep resolvedOutType as-is; Iter1 preference already applied when clones exist.
-			optimalPlan.setFederatedOutput(resolvedOutType);
-			if (targetHop != optimalPlan.getHopRef())
-				targetHop.setFederatedOutput(resolvedOutType);
-			visited.put(hopID, Pair.of(resolvedOutType, resolvedExecType));
+				// Keep resolvedOutType as-is; Iter1 preference already applied when clones exist.
+				optimalPlan.setFederatedOutput(resolvedOutType);
+				if (targetHop != optimalPlan.getHopRef())
+					targetHop.setFederatedOutput(resolvedOutType);
+				boolean derivedFedFout = resolvedExecType == ExecType.FED
+					&& resolvedOutType == FederatedOutput.FOUT
+					&& optimalPlan.isDerivedFedFout();
+				optimalPlan.setFederatedOutputDerived(derivedFedFout);
+				if (targetHop != optimalPlan.getHopRef())
+					targetHop.setFederatedOutputDerived(derivedFedFout);
+				visited.put(hopID, Pair.of(resolvedOutType, resolvedExecType));
 			if (visitedFromClone != null) {
 				visitedFromClone.put(hopID, prevFromClone || fromClone);
 			}

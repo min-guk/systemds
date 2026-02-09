@@ -130,6 +130,21 @@ public final class TransTableRewireUtils {
 		return childHops;
 	}
 
+	public static void markParentChildUploadHint(Map<Long, Set<Long>> parentChildUploadHints,
+			long parentHopId, long childHopId) {
+		if (parentChildUploadHints == null || parentHopId < 0 || childHopId < 0)
+			return;
+		parentChildUploadHints.computeIfAbsent(parentHopId, k -> new HashSet<>()).add(childHopId);
+	}
+
+	public static boolean hasParentChildUploadHint(Map<Long, Set<Long>> parentChildUploadHints,
+			long parentHopId, long childHopId) {
+		if (parentChildUploadHints == null || parentHopId < 0 || childHopId < 0)
+			return false;
+		Set<Long> childHints = parentChildUploadHints.get(parentHopId);
+		return childHints != null && childHints.contains(childHopId);
+	}
+
 	private static String summarizeOuterTables(List<Map<String, List<Hop>>> outerTables, String hopName) {
 		if (outerTables == null || outerTables.isEmpty()) {
 			return "none";

@@ -171,12 +171,13 @@ public class FederatedPlannerDpMemoTable {
 	 * FedPlan is linked to FedPlanVariants, which in turn uses HopCommon to manage
 	 * common properties and costs.
 	 */
-	public static class FedPlan {
-		private double cumulativeCost; // Total cost = sum of selfCost + cumulativeCost of child plans
-		private final FedPlanVariants fedPlanVariants; // Reference to variant list
-		private final List<Pair<Long, FederatedOutput>> childFedPlans; // Child plan references
-		private ExecType execType;
-		private FType fType;
+		public static class FedPlan {
+			private double cumulativeCost; // Total cost = sum of selfCost + cumulativeCost of child plans
+			private final FedPlanVariants fedPlanVariants; // Reference to variant list
+			private final List<Pair<Long, FederatedOutput>> childFedPlans; // Child plan references
+			private ExecType execType;
+			private FType fType;
+			private boolean derivedFedFout;
 
 		public FedPlan(double cumulativeCost, FedPlanVariants fedPlanVariants,
 				List<Pair<Long, FederatedOutput>> childFedPlans) {
@@ -260,9 +261,13 @@ public class FederatedPlannerDpMemoTable {
 			return childFedPlans;
 		}
 
-		public void setFederatedOutput(FederatedOutput fedOutType) {
-			fedPlanVariants.hopCommon.hopRef.setFederatedOutput(fedOutType);
-		}
+			public void setFederatedOutput(FederatedOutput fedOutType) {
+				fedPlanVariants.hopCommon.hopRef.setFederatedOutput(fedOutType);
+			}
+
+			public void setFederatedOutputDerived(boolean derived) {
+				fedPlanVariants.hopCommon.hopRef.setFederatedOutputDerived(derived);
+			}
 
 		public void setForcedExecType(ExecType execType) {
 			fedPlanVariants.hopCommon.hopRef.setForcedExecType(execType);
@@ -280,10 +285,18 @@ public class FederatedPlannerDpMemoTable {
 			return fType;
 		}
 
-		public void setFType(FType fType) {
-			this.fType = fType;
+			public void setFType(FType fType) {
+				this.fType = fType;
+			}
+
+			public boolean isDerivedFedFout() {
+				return derivedFedFout;
+			}
+
+			public void setDerivedFedFout(boolean derivedFedFout) {
+				this.derivedFedFout = derivedFedFout;
+			}
 		}
-	}
 
 	/**
 	 * Represents a collection of federated execution plan variants for a specific

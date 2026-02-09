@@ -1196,8 +1196,16 @@ public final class FederatedRefedPolicy {
 
 			InputRequirement req = resolveTargetRequirement(parent, input, i, fTypeMap, blockAnchor);
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
-				? (fTypeMap != null && fTypeMap.get(input.getHopID()) != null)
+				? (fTypeMap != null && fTypeMap.containsKey(input.getHopID()))
 				: isPlannedFederatedInput(input, fTypeMap);
+
+			// Planner-only relaxation: when feasibility is evaluated from planned FTypes,
+			// OPTIONAL local inputs are allowed without forcing CP->FOUT materialization.
+			if (req == InputRequirement.OPTIONAL
+					&& treatFTypeMapAsPlannedFederatedInputs
+					&& !plannedFed) {
+				continue;
+			}
 
 			AnchorSelection plannedAnchor = null;
 			if (plannedFed) {
@@ -1223,16 +1231,16 @@ public final class FederatedRefedPolicy {
 				}
 			}
 
-			if (req == InputRequirement.OPTIONAL) {
-				if (plannedFed) {
-					if (optionalAnchor == null
-						|| (optionalAnchor.key == null && plannedAnchor != null && plannedAnchor.key != null)) {
-						optionalAnchor = plannedAnchor;
+				if (req == InputRequirement.OPTIONAL) {
+					if (plannedFed) {
+						if (optionalAnchor == null
+							|| (optionalAnchor.key == null && plannedAnchor != null && plannedAnchor.key != null)) {
+							optionalAnchor = plannedAnchor;
+						}
+						continue;
 					}
-					continue;
+					// Runtime-planning path keeps OPTIONAL local inputs conservative.
 				}
-				// Optional-but-local inputs still require federation for FED exec.
-			}
 
 			hasRequiredMatrix = true;
 			if (plannedFed) {
@@ -1309,7 +1317,7 @@ public final class FederatedRefedPolicy {
 				continue;
 			hasMatrixInput = true;
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
-				? (fTypeMap != null && fTypeMap.get(input.getHopID()) != null)
+				? (fTypeMap != null && fTypeMap.containsKey(input.getHopID()))
 				: isPlannedFederatedInput(input, fTypeMap);
 			if (plannedFed)
 				return true;
@@ -2895,7 +2903,7 @@ public final class FederatedRefedPolicy {
 			boolean runtimeFed = isRuntimeFederatedInput(input, null, null);
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
 					&& fTypeMap != null
-					&& fTypeMap.get(input.getHopID()) != null;
+					&& fTypeMap.containsKey(input.getHopID());
 			if (!runtimeFed && !plannedFed)
 				continue;
 			FType fType = getKnownFType(input, fTypeMap);
