@@ -52,6 +52,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
@@ -140,6 +141,51 @@ public class FederatedPlannerFallbackIntegrationTest {
 		FedPlan plan = memoTable.getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Expected CP_FOUT plan for binary plus", plan);
 		assertEquals("Expected ROW fallback FType for mismatch inputs", FType.ROW, plan.getFType());
+	}
+
+	@Test
+	public void testDpRewireProducesUploadHintForTransientReadOptionalInput() throws Exception {
+		DataOp matrixInput = transientRead("M", ROWS, COLS);
+		DataOp treadInput = transientRead("Y", 1, COLS);
+		DataOp twriteSource = transientWrite("Y", 1, COLS);
+		BinaryOp plusParent = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, matrixInput, treadInput);
+		plusParent.setDim1(ROWS);
+		plusParent.setDim2(COLS);
+
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		rewireTable.put(treadInput.getHopID(), new ArrayList<>(List.of(twriteSource)));
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		registerHopCommon(hopCommonTable, plusParent);
+		registerHopCommon(hopCommonTable, matrixInput);
+		registerHopCommon(hopCommonTable, treadInput);
+		registerHopCommon(hopCommonTable, twriteSource);
+
+		Map<Long, Set<Long>> uploadHints = new HashMap<>();
+		Method populateHintsMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"populateParentChildUploadHintsFromRewire", Map.class, Map.class, Map.class);
+		populateHintsMethod.setAccessible(true);
+		populateHintsMethod.invoke(null, uploadHints, rewireTable, hopCommonTable);
+
+		assertTrue("Expected producer to create parent-child upload hint from rewire",
+			TransTableRewireUtils.hasParentChildUploadHint(
+				uploadHints, plusParent.getHopID(), treadInput.getHopID()));
+
+		int treadInputIndex = 1;
+		Map<Long, FType> inputFTypes = new HashMap<>();
+		Method requiresMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"requiresFederatedInputForParent", Hop.class, Hop.class, int.class, Map.class);
+		requiresMethod.setAccessible(true);
+		boolean requiresFederatedInput = (boolean) requiresMethod.invoke(
+			null, plusParent, treadInput, treadInputIndex, inputFTypes);
+		assertFalse("Vector transient-read input should remain OPTIONAL for binary '+' FED exec",
+			requiresFederatedInput);
+
+		Method shouldAddMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"shouldAddFedForwardingForParentInput", Hop.class, Hop.class, int.class, Map.class, Map.class);
+		shouldAddMethod.setAccessible(true);
+		boolean addForwarding = (boolean) shouldAddMethod.invoke(
+			null, plusParent, treadInput, treadInputIndex, inputFTypes, uploadHints);
+		assertTrue("Producer-generated upload hint must force LOUT->FED forwarding for OPTIONAL input", addForwarding);
 	}
 
 	@Test
@@ -351,6 +397,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 	private static DataOp transientRead(String name, long rows, long cols) {
 		return new DataOp(name, DataType.MATRIX, ValueType.FP64,
 			OpOpData.TRANSIENTREAD, null, rows, cols, rows * cols, BLOCKSIZE);
+	}
+
+	private static DataOp transientWrite(String name, long rows, long cols) {
+		return new DataOp(name, DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTWRITE, null, rows, cols, rows * cols, BLOCKSIZE);
 	}
 
 	private static DataOp federatedRead(String name, long rows, long cols) {
