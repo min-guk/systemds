@@ -784,12 +784,24 @@ public class Dag<N extends Lop>
 				}
 				List<Lop> consumers = new ArrayList<>();
 				List<Lop> refedToRemove = new ArrayList<>();
+				String anchorVarLabel = (anchor != null && anchor.getOutputParameters() != null)
+					? anchor.getOutputParameters().getLabel()
+					: anchorKey;
 				for (Lop out : lops) {
 					if (out == null || out == fout)
+						continue;
+					// Never rewire the producer (or its same-hop-id aliases) to consume its own
+					// fed_fout output; this creates a self-cycle like target <- fed_fout(target).
+					if (out == materializeInput || (materializeHopId >= 0 && out.getHopID() == materializeHopId))
 						continue;
 					boolean isFedExec = out.getExecType() == ExecType.FED;
 					boolean isFoutTWrite = (out instanceof Data) && ((Data) out).isTransientWrite()
 						&& out.getFederatedOutput() == FederatedOutput.FOUT;
+					// Do not rewrite writes of the anchor variable itself. Otherwise loops like
+					// Y = rexpand(Y, ...) can become cyclic (Y <- fed_fout(rexpand(Y))).
+					if (isFoutTWrite && anchorVarLabel != null && out.getOutputParameters() != null
+							&& anchorVarLabel.equals(out.getOutputParameters().getLabel()))
+						continue;
 					if (!isFedExec && !isFoutTWrite)
 						continue;
 					List<Lop> outInputs = out.getInputs();

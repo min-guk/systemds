@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,6 +48,9 @@ import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -74,6 +78,7 @@ import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.ParserWrapper;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.junit.Test;
@@ -433,10 +438,62 @@ public class FederatedPlannerFallbackIntegrationTest {
 			assertNotNull("Expected optional parent vertex", optionalParentVertex);
 			assertFalse("OPTIONAL input should not create parent-child upload hint",
 				graph.hasParentChildUploadHint(optionalParent.getHopID(), target.getHopID()));
+			assertTrue("OPTIONAL parent should keep local execution candidate",
+				optionalParentVertex.getCaps().allowCP_LOUT);
+			assertFalse("OPTIONAL input should not force parent FED/FOUT via eager FED hint propagation",
+				optionalParentVertex.getCaps().allowFED_FOUT);
 		}
 		finally {
 			FederatedPlannerUtils.clearFedInitVars();
 		}
+	}
+
+	@Test
+	public void testMinSTRightIndexMainInputRequiresConcreteFoutPath() throws Exception {
+		DataOp labels = transientRead("Y", 100000, 1);
+		labels.setForcedExecType(ExecType.CP);
+		labels.setFederatedOutput(FederatedOutput.LOUT);
+
+		LinkedHashMap<String, Hop> rexArgs = new LinkedHashMap<>();
+		rexArgs.put("target", labels);
+		rexArgs.put("max", new LiteralOp(2));
+		rexArgs.put("dir", new LiteralOp("rows"));
+		rexArgs.put("cast", new LiteralOp(false));
+		rexArgs.put("ignore", new LiteralOp(true));
+		ParameterizedBuiltinOp rexpand = HopRewriteUtils.createParameterizedBuiltinOp(labels, rexArgs, ParamBuiltinOp.REXPAND);
+		rexpand.setDim1(100000);
+		rexpand.setDim2(2);
+		rexpand.setForcedExecType(ExecType.CP);
+		rexpand.setFederatedOutput(FederatedOutput.LOUT);
+
+		IndexingOp rightIndex = HopRewriteUtils.createIndexingOp(rexpand, 1, 100000, 1, 1);
+		rightIndex.setDim1(100000);
+		rightIndex.setDim2(1);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		// Emulate logical type propagation: local-only REXPAND may still carry a ROW logical type.
+		fTypeMap.put(rexpand.getHopID(), FType.ROW);
+		Map<Long, org.apache.sysds.hops.fedplanner.FTypes.Privacy> privacyMap = new HashMap<>();
+		privacyMap.put(labels.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PRIVATE_AGGREGATE);
+		privacyMap.put(rexpand.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PRIVATE_AGGREGATE);
+		privacyMap.put(rightIndex.getHopID(), org.apache.sysds.hops.fedplanner.FTypes.Privacy.PRIVATE_AGGREGATE);
+
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+
+		Vertex rexpandVertex = invokeRewireHop(rexpand, graph, fTypeMap, privacyMap, oracle);
+		assertNotNull("Expected rexpand vertex", rexpandVertex);
+		assertTrue("REXPAND should stay local-capable for this setup", rexpandVertex.getCaps().allowCP_LOUT);
+		assertFalse("REXPAND should not expose CP->FOUT in this setup", rexpandVertex.getCaps().allowCP_FOUT);
+		assertFalse("REXPAND should not expose FED/FOUT in this setup", rexpandVertex.getCaps().allowFED_FOUT);
+		graph.addVertex(rexpandVertex);
+
+		Vertex rightIndexVertex = invokeRewireHop(rightIndex, graph, fTypeMap, privacyMap, oracle);
+		assertNotNull("Expected rightIndex vertex", rightIndexVertex);
+		assertTrue("RightIndex should keep CP/LOUT when main input lacks concrete FOUT path",
+			rightIndexVertex.getCaps().allowCP_LOUT);
+		assertFalse("RightIndex must not select FED/FOUT from logical-only main-input FType",
+			rightIndexVertex.getCaps().allowFED_FOUT);
 	}
 
 	private static DMLProgram parseAndRewrite(String script, Map<String, String> args, String planner) throws Exception {

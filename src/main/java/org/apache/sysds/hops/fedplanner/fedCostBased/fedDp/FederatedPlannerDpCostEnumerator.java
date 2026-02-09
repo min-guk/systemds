@@ -684,6 +684,13 @@ public class FederatedPlannerDpCostEnumerator {
 				if (caps != null && caps.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
 					placementDecision.allowCP_FOUT = false;
 					placementDecision.allowFED_FOUT = false;
+					// REXPAND with FED/LOUT + materialization can create cyclic anchor rewrites.
+					// Fall back to CP/LOUT for this op when native FOUT is unavailable.
+					if (hop instanceof ParameterizedBuiltinOp
+							&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.REXPAND) {
+						placementDecision.allowFED_LOUT = false;
+						placementDecision.allowCP_LOUT = true;
+					}
 					derivedFedFout = false;
 				}
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
