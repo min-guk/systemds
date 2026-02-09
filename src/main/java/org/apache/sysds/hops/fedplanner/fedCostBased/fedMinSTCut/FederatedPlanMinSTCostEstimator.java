@@ -539,7 +539,13 @@ public class FederatedPlanMinSTCostEstimator {
 			// Use CP->FOUT upload cost here as well: loop-carry edges model data movement
 			// between local/federated contexts, and the CP upload FType (e.g., BROADCAST)
 			// must be reflected in the cost when applicable.
-			double uploadWeighted = weight * vertex.getCpUploadCostWithoutWeight();
+			FType uploadType = vertex.getCpFoutDataType();
+			if (uploadType == null)
+				uploadType = vertex.getDataType();
+			double uploadCost = vertex.getCpUploadCostWithoutWeight();
+			uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(
+					uploadType, graph.getNumOfWorkers());
+			double uploadWeighted = weight * uploadCost;
 			double downloadWeighted = weight * vertex.getDownloadCostWithoutWeight();
 			graph.addLoopCarryNetEdge(hopId, edge.getEndWriterHopId(), uploadWeighted, downloadWeighted);
 		}

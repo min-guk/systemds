@@ -157,6 +157,24 @@ public final class FederatedCostModel {
 		return computeNetworkCost(memSize * multiplier);
 	}
 
+	/**
+	 * Additional latency-only penalty for local-to-federated forwarding
+	 * (CP/LOUT -> FOUT -> FED).
+	 *
+	 * <p>The base upload model accounts for payload size and a single transfer latency.
+	 * For forwarding into federated execution, data is typically sent to multiple
+	 * workers. This penalty captures the extra fan-out control latency
+	 * ((numWorkers - 1) * latency) without changing the shared bandwidth model.
+	 */
+	public static double computeLocalToFedForwardingPenalty(FType fType, int numWorkers) {
+		if (fType == null)
+			return 0.0;
+		int fanout = Math.max(1, numWorkers);
+		if (fanout <= 1)
+			return 0.0;
+		return (fanout - 1) * MBS_NETWORK_LATENCY * TO_MS;
+	}
+
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return computeUploadNetworkCost(memSize, fType, numWorkers);
 	}

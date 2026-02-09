@@ -229,6 +229,11 @@ public class FederatedPlanMinSTGraph {
 		long childP = FederatedPlanMinSTPlanner.placementId(childHopID);
 
 		double forwardingWeight = parentVertex.computeForwardingWeightOfChild(childVertex.getLoopContext());
+		// Use child FType as a proxy conversion key since per-input conversion detail is not available here.
+		FType uploadConversionType = childVertex.getCpFoutDataType();
+		if (uploadConversionType == null) {
+			uploadConversionType = childVertex.getDataType();
+		}
 		// Use CP->FOUT upload cost here as well: a parent-child edge can represent
 		// local (LOUT/CP) -> federated (FED) forwarding, and in such cases the CP->FOUT
 		// upload FType (e.g., BROADCAST for vector axis mismatch) must be reflected.
@@ -236,13 +241,10 @@ public class FederatedPlanMinSTGraph {
 		if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
 			final double originalUploadCost = uploadCost;
 			Hop childHop = childVertex.getHopRef();
-			FType cpFoutType = childVertex.getCpFoutDataType();
-			if (cpFoutType == null)
-				cpFoutType = childVertex.getDataType();
 			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
-			if (cpFoutType != null && outputMemEstimate > 0.0) {
+			if (uploadConversionType != null && outputMemEstimate > 0.0) {
 				uploadCost = FederatedCostModel.computeUploadNetworkCost(
-						outputMemEstimate, cpFoutType, numOfWorkers);
+						outputMemEstimate, uploadConversionType, numOfWorkers);
 			}
 			// If we still cannot estimate a meaningful cost, warn once per child hop.
 			// This indicates that the plan's forwarding cost is under-estimated (e.g., unknown mem estimate).
@@ -257,7 +259,7 @@ public class FederatedPlanMinSTGraph {
 								+ parentHopID + " (" + parentOp + "). "
 								+ "cpUploadCost=" + originalUploadCost
 								+ ", outputMemEstimate=" + outputMemEstimate
-								+ ", cpFoutType=" + cpFoutType
+								+ ", cpFoutType=" + uploadConversionType
 								+ ", dataType=" + childVertex.getDataType()
 								+ ", numWorkers=" + numOfWorkers
 								+ "; forwarding cost may be under-estimated.");
@@ -271,12 +273,11 @@ public class FederatedPlanMinSTGraph {
 								+ childHopID + " (" + childOp + "): " + originalUploadCost + " -> " + uploadCost);
 			}
 		}
-		double uploadWeighted = forwardingWeight * uploadCost;
-		// Use child FType as a proxy conversion key since per-input conversion detail is not available here.
-		FType uploadConversionType = childVertex.getCpFoutDataType();
-		if (uploadConversionType == null) {
-			uploadConversionType = childVertex.getDataType();
+		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)) {
+			uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(
+					uploadConversionType, numOfWorkers);
 		}
+		double uploadWeighted = forwardingWeight * uploadCost;
 
 		// If a parent executes in CP, the child must have a local materialization (either natively or via download).
 		addRequiredLocalInputEdge(parentHopID, childHopID);

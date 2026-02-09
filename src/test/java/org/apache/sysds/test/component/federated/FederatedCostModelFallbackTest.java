@@ -26,6 +26,7 @@ import org.junit.Test;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEstimator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
@@ -173,6 +174,25 @@ public class FederatedCostModelFallbackTest {
 		Assert.assertTrue("DP self cost should be positive with fallback mem estimates", selfCost > 0.0);
 		Assert.assertTrue("DP forwarding cost should be positive with fallback mem estimates",
 				hopCommon.getForwardingCost() > 0.0);
+	}
+
+	@Test
+	public void testLocalToFedForwardingPenaltyRequiresFederatedType() {
+		Assert.assertEquals(0.0,
+				FederatedCostModel.computeLocalToFedForwardingPenalty(null, 4), 0.0);
+	}
+
+	@Test
+	public void testLocalToFedForwardingPenaltyScalesWithWorkerFanout() {
+		double rowPenaltyOneWorker = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 1);
+		double rowPenaltyFourWorkers = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
+		double broadcastPenaltyFourWorkers = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, 4);
+
+		Assert.assertEquals(0.0, rowPenaltyOneWorker, 0.0);
+		Assert.assertTrue("Forwarding penalty should increase with worker fan-out",
+				rowPenaltyFourWorkers > rowPenaltyOneWorker);
+		Assert.assertEquals("Forwarding penalty is latency-fanout based and independent of FType payload multiplier",
+				rowPenaltyFourWorkers, broadcastPenaltyFourWorkers, 0.0);
 	}
 
 	private static void assertOutputFallbackInjectedDefault(ValueType valueType, double expectedDefault) {

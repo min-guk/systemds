@@ -33,6 +33,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
@@ -96,6 +97,10 @@ import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.runtime.DMLRuntimeException;
 
 public class FederatedPlannerDpCostEstimator {
+	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
+	private static final Set<Long> parentChildUploadCostFallbackLogged =
+			Collections.newSetFromMap(new ConcurrentHashMap<>());
+
 	/**
 	 * Retrieves the cumulative and forwarding costs of the child hops and stores
 	 * them in arrays.
@@ -150,7 +155,8 @@ public class FederatedPlannerDpCostEstimator {
 					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan);
 			double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
 			double downloadCost = computeDownloadNetworkCost(outputMem);
-			double uploadCost = computeUploadNetworkCost(outputMem, childLOutFedPlan.getFType(), numOfWorkers);
+			double uploadCost = computeUploadCostWithFallback(
+					childHop, parentHop, childLOutFedPlan.getFType(), numOfWorkers);
 			childForwardingCostToCP[currentIndex] = computeForwardingCostShareForParent(
 					downloadCost, childFOutFedPlan, hopCommon);
 			childForwardingCostToFED[currentIndex] = computeForwardingCostShareForParent(
@@ -172,8 +178,8 @@ public class FederatedPlannerDpCostEstimator {
 			}
 			lOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
 					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan));
-			double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
-			double uploadCost = computeUploadNetworkCost(outputMem, childLOutFedPlan.getFType(), numOfWorkers);
+			double uploadCost = computeUploadCostWithFallback(
+					childHop, parentHop, childLOutFedPlan.getFType(), numOfWorkers);
 			lOUTOnlychildForwardingCostToFED.add(computeForwardingCostShareForParent(
 					uploadCost, childLOutFedPlan, hopCommon));
 		}
@@ -247,6 +253,59 @@ public class FederatedPlannerDpCostEstimator {
 
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return FederatedCostModel.computeRefedNetworkCost(memSize, fType, numWorkers);
+	}
+
+	private static double computeUploadCostWithFallback(Hop childHop, Hop parentHop, FType uploadType, int numWorkers) {
+		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
+		double uploadCost = computeUploadNetworkCost(outputMemEstimate, uploadType, numWorkers);
+		FType effectiveUploadType = uploadType;
+		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0))
+			return uploadCost + FederatedCostModel.computeLocalToFedForwardingPenalty(
+					effectiveUploadType, numWorkers);
+
+		final double originalUploadCost = uploadCost;
+		FType fallbackUploadType = uploadType;
+		double fallbackMemEstimate = outputMemEstimate;
+		if (fallbackUploadType == null && childHop != null)
+			fallbackUploadType = FederatedPlannerUtils.getVectorAxis(childHop);
+		if (fallbackMemEstimate <= 0.0 && childHop != null)
+			fallbackMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(childHop);
+		if (fallbackMemEstimate > 0.0) {
+			uploadCost = FederatedCostModel.computeUploadNetworkCost(
+					fallbackMemEstimate, fallbackUploadType, numWorkers);
+			effectiveUploadType = fallbackUploadType;
+		}
+
+		long childHopID = (childHop != null) ? childHop.getHopID() : -1;
+		if ((Double.isNaN(uploadCost) || uploadCost <= 0.0)
+				&& childHopID >= 0 && parentChildUploadCostFallbackLogged.add(childHopID)) {
+			String childOp = (childHop != null) ? childHop.getOpString() : "null";
+			String parentOp = (parentHop != null) ? parentHop.getOpString() : "null";
+			long parentHopID = (parentHop != null) ? parentHop.getHopID() : -1;
+			FederatedPlannerLogger.logWarnMessage(
+					"[DP] Parent-child forwarding LOUT->FED upload cost missing/zero for child hop "
+							+ childHopID + " (" + childOp + ") consumed by parent hop "
+							+ parentHopID + " (" + parentOp + "). "
+								+ "uploadCost=" + originalUploadCost
+								+ ", outputMemEstimate=" + outputMemEstimate
+								+ ", fallbackMemEstimate=" + fallbackMemEstimate
+								+ ", uploadType=" + uploadType
+								+ ", fallbackType=" + fallbackUploadType
+								+ ", numWorkers=" + numWorkers
+							+ "; forwarding cost may be under-estimated.");
+		}
+		else if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)
+				&& childHopID >= 0 && parentChildUploadCostFallbackLogged.add(childHopID)) {
+			String childOp = (childHop != null) ? childHop.getOpString() : "null";
+			FederatedPlannerLogger.logInfoMessage(
+					"[DP] Recovered missing parent-child LOUT->FED upload cost for child hop "
+							+ childHopID + " (" + childOp + "): " + originalUploadCost + " -> " + uploadCost);
+		}
+		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)) {
+			uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(
+					effectiveUploadType, numWorkers);
+		}
+		return uploadCost;
 	}
 
 	static double computeCumulativeCostShareForParent(double totalCost,

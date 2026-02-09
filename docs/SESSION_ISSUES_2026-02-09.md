@@ -535,3 +535,52 @@
   - 감지 방법: OPTIONAL-vector 케이스가 포함된 refed policy 테스트 유지 + LAN 워크로드에서 FED 실행 로그 확인.
 - **의사결정 근거(oracle/런타임/플래너)**:
   - 런타임 fallback 없이, planner의 OPTIONAL 의미(=broadcast 가능)를 refed policy가 과도하게 상쇄하지 않도록 런타임 계획을 정합화.
+
+## 이슈 15: `CP->LOUT->FOUT->FED` forwarding 경로의 fan-out 지연 패널티 과소평가로 MinST/DP가 업로드 경로를 과선호함
+
+- **상태**: 해결
+- **환경/조건**:
+  - Repository: `/home/mchoi/exdra_run/systemds`
+  - Planner: `fed_dp`, `fed_min_st_cut` (공통 비용모델 + 각 forwarding edge 비용 계산 경유)
+  - 관측 맥락: WAN 프로파일(`wan_light`, `wan_mid`)에서 반복적 `fed_fout` 경로가 많은 워크로드(`lm`, `logreg`, `pca`)의 성능 편차
+- **재현 절차**:
+  1. MinST/DP 로그에서 `fed_fed_fout`, `Fed Put`, `Fed Execute`가 많은 케이스를 확인한다.
+  2. 코드상 비용식을 확인하면 `LOUT->FED` forwarding 비용이 payload 기반 upload + 단일 latency만 반영되고,
+     worker fan-out에 따른 추가 제어 지연((N-1)회 latency)이 별도 반영되지 않음을 확인한다.
+- **관측 증상**:
+  - 작은/중간 크기 벡터를 반복적으로 local->federated로 올리는 경로에서 실제 runtime 지연 대비 비용 예측이 낮아,
+    planner가 `CP->LOUT->FOUT->FED` 체인을 상대적으로 과선호할 수 있었다.
+- **원인 분석**:
+  - 공통 업로드 비용식은 bandwidth와 단일 latency를 중심으로 계산되며,
+    parent-child forwarding(LOUT->FED) 특유의 fan-out 제어 지연 패널티가 DP/MinST 모두에서 누락돼 있었다.
+- **해결 요약**:
+  - 공통 비용모델에 `computeLocalToFedForwardingPenalty(FType, numWorkers)`를 추가해
+    forwarding fan-out 지연 패널티(`(numWorkers-1) * latency`)를 명시적으로 계산.
+  - DP:
+    - `FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(...)`에서
+      `LOUT->FED` forwarding upload 비용에 위 패널티를 합산.
+  - MinST:
+    - `FederatedPlanMinSTGraph.addParentChildNetEdge(...)`의 parent-child upload edge 비용에 동일 패널티를 합산.
+    - `FederatedPlanMinSTCostEstimator.addLoopCarryEdgesForHop(...)`의 loop-carry upload 비용에도 동일 패널티를 합산.
+  - 결과적으로 DP/MinST가 동일 forwarding 패널티 모델을 공유하도록 정렬.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/FederatedCostModel.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTGraph.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCostEstimator.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedCostModelFallbackTest.java`
+- **검증**:
+  - 실행 커맨드:
+    - `mvn -q -DskipTests compile`
+    - `mvn -q -Dtest=FederatedCostModelFallbackTest,FederatedPlanMinSTHyperedgeTest,FederatedPlannerFallbackIntegrationTest test`
+    - `mvn -q -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedRefedPolicyTest,org.apache.sysds.test.component.federated.FederatedPlanMinSTRewireTest test`
+  - 결과:
+    - compile 통과
+    - 신규/기존 관련 테스트 통과
+- **잔여 이슈**:
+  - 실제 `wan_light/wan_mid` 실험 로그에서 MinST vs DP 성능 수치 개선 폭은 사용자 실험 결과로 추가 확인 필요.
+- **잠재 회귀 위험**:
+  - fan-out 패널티 도입으로 FED 경로 비용이 상승해 일부 그래프에서 CP 선택 비율이 증가할 수 있음.
+  - 감지 방법: WAN 프로파일에서 planner 선택(FED/CP 비율), `fed_fed_fout` count, `Fed Put` count를 함께 모니터링.
+- **의사결정 근거(oracle/런타임/플래너)**:
+  - 런타임 fallback이 아니라 플래너 공통 비용모델 + planner edge cost(DP/MinST) 정합화를 통해 수정.
