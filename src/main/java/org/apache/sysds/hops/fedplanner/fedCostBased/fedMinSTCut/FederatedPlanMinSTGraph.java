@@ -21,6 +21,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -44,6 +45,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -192,6 +194,13 @@ public class FederatedPlanMinSTGraph {
 
 		addCap(leafedSource, cId, cpCost);
 		addCap(cId, rootLocalSink, fedCost);
+
+		if (FederatedPlannerTrace.shouldTrace(vertex.getHopRef())) {
+			FederatedPlannerTrace.log(vertex.getHopRef(), "MinST-VertexCost", String.format(
+					"weights(op=%.6f, net=%.6f) unaryCP=%.6f unaryFED=%.6f caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s]",
+					vertex.getOpWeight(), vertex.getNetworkWeight(), cpCost, fedCost,
+					caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT));
+		}
 	}
 
 	public void addExecPlacementResultEdge(Vertex vertex) {
@@ -209,6 +218,10 @@ public class FederatedPlanMinSTGraph {
 			// Upload for TRead is modeled via parent-child forwarding edges.
 			double trDownloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
 			addCap(cId, lId, trDownloadCost);
+			if (FederatedPlannerTrace.shouldTrace(hop)) {
+				FederatedPlannerTrace.log(hop, "MinST-ResultEdge",
+						String.format("TR edge c->l download=%.6f", trDownloadCost));
+			}
 			return;
 		}
 		// Hop-local placement conversion follows the hop's own execution frequency.
@@ -219,9 +232,19 @@ public class FederatedPlanMinSTGraph {
 		if (vertex.isDerivedFedFout()) {
 			// Derived FED/FOUT: FOUT is produced via refed from a local intermediate, so upload depends only on placement.
 			addCap(pId, rootLocalSink, uploadCost);
+			if (FederatedPlannerTrace.shouldTrace(hop)) {
+				FederatedPlannerTrace.log(hop, "MinST-ResultEdge", String.format(
+						"derivedFED_FOUT edge p->t upload=%.6f, c->l download=%.6f",
+						uploadCost, downloadCost));
+			}
 			return;
 		}
 		addCap(pId, cId, uploadCost);
+		if (FederatedPlannerTrace.shouldTrace(hop)) {
+			FederatedPlannerTrace.log(hop, "MinST-ResultEdge", String.format(
+					"native edge p->c upload=%.6f, c->l download=%.6f",
+					uploadCost, downloadCost));
+		}
 	}
 
 	public void addParentChildNetEdge(Vertex childVertex, long childHopID,
@@ -278,9 +301,11 @@ public class FederatedPlanMinSTGraph {
 								+ childHopID + " (" + childOp + "): " + originalUploadCost + " -> " + uploadCost);
 			}
 		}
+		double forwardingPenalty = 0.0;
 		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)) {
-			uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(
+			forwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
 					uploadConversionType, numOfWorkers);
+			uploadCost += forwardingPenalty;
 		}
 		double uploadWeighted = forwardingWeight * uploadCost;
 
@@ -290,9 +315,25 @@ public class FederatedPlanMinSTGraph {
 		// whenever the parent executes FED, regardless of OPTIONAL/REQUIRED classification.
 		// Upload hints are still used by rewire/materialization policy, but they no longer
 		// gate parent-child boundary cost edges in MinST.
-		if (!matrixInput)
+		if (!matrixInput) {
+			Hop traceHop = FederatedPlannerTrace.shouldTrace(parentVertex.getHopRef())
+					? parentVertex.getHopRef() : childHopRef;
+			if (FederatedPlannerTrace.shouldTrace(traceHop)) {
+				FederatedPlannerTrace.log(traceHop, "MinST-BoundaryEdge", String.format(
+						"parent=%d child=%d requiresFedInput=%s matrixInput=%s edge=SKIP",
+						parentHopID, childHopID, requiresFederatedInput, matrixInput));
+			}
 			return;
+		}
 		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
+		Hop traceHop = FederatedPlannerTrace.shouldTrace(parentVertex.getHopRef())
+				? parentVertex.getHopRef() : childHopRef;
+		if (FederatedPlannerTrace.shouldTrace(traceHop)) {
+			FederatedPlannerTrace.log(traceHop, "MinST-BoundaryEdge", String.format(
+					"parent=%d child=%d requiresFedInput=%s fwdWeight=%.6f baseUpload=%.6f penalty=%.6f weightedUpload=%.6f type=%s",
+					parentHopID, childHopID, requiresFederatedInput, forwardingWeight,
+					childVertex.getCpUploadCostWithoutWeight(), forwardingPenalty, uploadWeighted, uploadConversionType));
+		}
 	}
 
 	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
@@ -509,6 +550,8 @@ public class FederatedPlanMinSTGraph {
 			algo.calculateMinCut(leafedSource, rootLocalSink);
 
 			Set<Long> sourceSide = algo.getSourcePartition(); // S
+			FederatedPlannerTrace.logGlobal("MinST-Cut",
+					"sourcePartitionSize=" + sourceSide.size() + ", totalGraphVertices=" + graph.vertexSet().size());
 
 			for (Vertex vertex : memoTable.values()) {
 				long hopID = vertex.getHopID();
@@ -523,8 +566,123 @@ public class FederatedPlanMinSTGraph {
 				boolean derivedSelected = vertex.isDerivedFedFout()
 						&& exec == ExecType.FED && out == FederatedOutput.FOUT;
 				vertex.getHopRef().setFederatedOutputDerived(derivedSelected);
+				logSelectedDecision(vertex, sourceSide);
 			}
 		}
+
+	private void logSelectedDecision(Vertex vertex, Set<Long> sourceSide) {
+		Hop hop = (vertex != null) ? vertex.getHopRef() : null;
+		if (!FederatedPlannerTrace.shouldTrace(hop))
+			return;
+
+		long hopID = vertex.getHopID();
+		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
+		long pId = FederatedPlanMinSTPlanner.placementId(hopID);
+		long lId = FederatedPlanMinSTPlanner.localityId(hopID);
+
+		boolean cSide = sourceSide.contains(cId);
+		boolean pSide = sourceSide.contains(pId);
+		boolean lSide = sourceSide.contains(lId);
+		ExecType exec = cSide ? ExecType.FED : ExecType.CP;
+		FederatedOutput out = pSide ? FederatedOutput.FOUT : FederatedOutput.LOUT;
+
+		double unaryCP = getEdgeWeightOrZero(leafedSource, cId);
+		double unaryFED = getEdgeWeightOrZero(cId, rootLocalSink);
+		double uploadPtoC = getEdgeWeightOrZero(pId, cId);
+		double uploadPtoT = getEdgeWeightOrZero(pId, rootLocalSink);
+		double downloadCtoL = getEdgeWeightOrZero(cId, lId);
+
+		ExecPlacementCaps caps = vertex.getCaps();
+		FederatedPlannerTrace.log(hop, "MinST-Select", String.format(
+				"selected=%s/%s noLocal=%s side[c=%s,p=%s,l=%s] unary[CP=%.6f,FED=%.6f] conv[p->c=%.6f,p->t=%.6f,c->l=%.6f] caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s] fType=%s cpFoutType=%s",
+				exec, out, lSide, cSide ? "S" : "T", pSide ? "S" : "T", lSide ? "S" : "T",
+				unaryCP, unaryFED, uploadPtoC, uploadPtoT, downloadCtoL,
+				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT,
+				vertex.getDataType(), vertex.getCpFoutDataType()));
+
+		List<String> cutEdges = collectIncidentCutEdges(cId, pId, lId, sourceSide,
+				FederatedPlannerTrace.getMaxEdgeLogsPerHop());
+		for (String edgeLine : cutEdges) {
+			FederatedPlannerTrace.log(hop, "MinST-CutEdge", edgeLine);
+		}
+	}
+
+	private List<String> collectIncidentCutEdges(long cId, long pId, long lId, Set<Long> sourceSide, int maxEdges) {
+		Set<DefaultWeightedEdge> seen = new HashSet<>();
+		List<CutEdgeInfo> cutEdges = new ArrayList<>();
+		long[] focusNodes = new long[] { cId, pId, lId };
+		for (long nodeId : focusNodes) {
+			for (DefaultWeightedEdge edge : graph.outgoingEdgesOf(nodeId)) {
+				collectCutEdge(edge, sourceSide, seen, cutEdges);
+			}
+			for (DefaultWeightedEdge edge : graph.incomingEdgesOf(nodeId)) {
+				collectCutEdge(edge, sourceSide, seen, cutEdges);
+			}
+		}
+
+		if (cutEdges.isEmpty()) {
+			return Collections.singletonList("none");
+		}
+
+		cutEdges.sort(Comparator.comparingDouble((CutEdgeInfo info) -> info.weight).reversed());
+		int limit = Math.max(1, maxEdges);
+		List<String> lines = new ArrayList<>();
+		for (int i = 0; i < cutEdges.size() && i < limit; i++) {
+			CutEdgeInfo info = cutEdges.get(i);
+			lines.add(String.format("%s -> %s w=%.6f",
+					describeNode(info.src), describeNode(info.dst), info.weight));
+		}
+		if (cutEdges.size() > limit) {
+			lines.add("... +" + (cutEdges.size() - limit) + " more cut edges");
+		}
+		return lines;
+	}
+
+	private void collectCutEdge(DefaultWeightedEdge edge, Set<Long> sourceSide, Set<DefaultWeightedEdge> seen,
+			List<CutEdgeInfo> cutEdges) {
+		if (edge == null || !seen.add(edge))
+			return;
+		long src = graph.getEdgeSource(edge);
+		long dst = graph.getEdgeTarget(edge);
+		if (sourceSide.contains(src) && !sourceSide.contains(dst)) {
+			cutEdges.add(new CutEdgeInfo(src, dst, graph.getEdgeWeight(edge)));
+		}
+	}
+
+	private double getEdgeWeightOrZero(long src, long dst) {
+		DefaultWeightedEdge edge = graph.getEdge(src, dst);
+		return (edge == null) ? 0.0 : graph.getEdgeWeight(edge);
+	}
+
+	private static String describeNode(long nodeId) {
+		if (nodeId == leafedSource)
+			return "S";
+		if (nodeId == rootLocalSink)
+			return "T";
+		if (nodeId <= auxNodeBase)
+			return "AUX(" + nodeId + ")";
+		long hopId = nodeId >> 2;
+		long role = nodeId & 3L;
+		if (role == 0L)
+			return "C(" + hopId + ")";
+		if (role == 1L)
+			return "P(" + hopId + ")";
+		if (role == 2L)
+			return "L(" + hopId + ")";
+		return "N(" + nodeId + ")";
+	}
+
+	private static class CutEdgeInfo {
+		private final long src;
+		private final long dst;
+		private final double weight;
+
+		private CutEdgeInfo(long src, long dst, double weight) {
+			this.src = src;
+			this.dst = dst;
+			this.weight = weight;
+		}
+	}
 
 	public static class ExecPlacementCaps {
 		public enum FedFoutMode {

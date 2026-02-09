@@ -77,6 +77,7 @@ public final class FederatedRefedPolicy {
 	private static final Log LOG = LogFactory.getLog(FederatedRefedPolicy.class.getName());
 	private static final boolean ENABLE_TRANSREAD_DEBUG =
 		Boolean.parseBoolean(System.getProperty("sysds.fedplanner.transread.debug", "false"));
+	private static final int MAX_ENFORCE_FED_INPUT_PASSES = 4;
 	private static final Map<Long, AnchorKey> CPFOUT_ANCHOR_CACHE = new ConcurrentHashMap<>();
 	private static final Set<Long> HEURISTIC_DEMOTED_VECTOR_HOPS = ConcurrentHashMap.newKeySet();
 	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TWRITE_CACHE =
@@ -814,16 +815,49 @@ public final class FederatedRefedPolicy {
 			AnchorSelection blockAnchor) {
 		if (all == null || all.isEmpty())
 			return;
-		for (Hop hop : all) {
+		for (int pass = 0; pass < MAX_ENFORCE_FED_INPUT_PASSES; pass++) {
+			boolean changed = false;
+			// Process bottom-up so child demotions are visible before validating their FED parents.
+			for (int i = all.size() - 1; i >= 0; i--) {
+				Hop hop = all.get(i);
+				if (hop == null)
+					continue;
+				if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
+						&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD
+						&& "Y".equals(((DataOp) hop).getName())) {
+					System.out.println("[TransReadRefedDebug] visit hop=" + hop.getHopID()
+						+ " exec=" + getPlannedExecType(hop)
+						+ " fout=" + hop.getFederatedOutput());
+				}
+				ExecType exec = getPlannedExecType(hop);
+				if (exec != ExecType.FED)
+					continue;
+				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE)
+					continue;
+				String opString = hop.getOpString();
+				if (opString != null && opString.startsWith("TWrite"))
+					continue;
+				if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
+					continue;
+				if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
+					if (tryDemoteFederatedHop(hop, fTypeMap, sbId, blockAnchor)) {
+						changed = true;
+						continue;
+					}
+					throw new DMLRuntimeException("FED hop has no federated inputs and no CP->FOUT candidate. "
+						+ "hopID=" + hop.getHopID() + " op=" + hop.getOpString()
+						+ " name=" + hop.getName() + " inputs=" + describeInputs(hop));
+				}
+			}
+			if (!changed)
+				return;
+		}
+
+		// One strict pass after convergence attempts to surface any remaining invalid FED hops.
+		for (int i = all.size() - 1; i >= 0; i--) {
+			Hop hop = all.get(i);
 			if (hop == null)
 				continue;
-			if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
-					&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD
-					&& "Y".equals(((DataOp) hop).getName())) {
-				System.out.println("[TransReadRefedDebug] visit hop=" + hop.getHopID()
-					+ " exec=" + getPlannedExecType(hop)
-					+ " fout=" + hop.getFederatedOutput());
-			}
 			ExecType exec = getPlannedExecType(hop);
 			if (exec != ExecType.FED)
 				continue;
@@ -834,13 +868,10 @@ public final class FederatedRefedPolicy {
 				continue;
 			if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
 				continue;
-			if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
-				if (tryDemoteFederatedHop(hop, fTypeMap, sbId, blockAnchor))
-					continue;
+			if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor))
 				throw new DMLRuntimeException("FED hop has no federated inputs and no CP->FOUT candidate. "
 					+ "hopID=" + hop.getHopID() + " op=" + hop.getOpString()
 					+ " name=" + hop.getName() + " inputs=" + describeInputs(hop));
-			}
 		}
 	}
 
@@ -907,8 +938,10 @@ public final class FederatedRefedPolicy {
 			fTypeMap.remove(hop.getHopID());
 		if (!requiresCpfoutForFedParents(hop, fTypeMap))
 			return true;
+		// If no CP->FOUT candidate exists for this demoted hop, keep it local and let
+		// parent FED hops get revalidated/demoted in a later enforcement pass.
 		if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor))
-			return false;
+			return true;
 		validateAndRegister(hop, fTypeMap, sbId, blockAnchor);
 		return true;
 	}
@@ -1388,10 +1421,12 @@ public final class FederatedRefedPolicy {
 	}
 
 	/**
-	 * If a matrix-valued hop is planned as CP (local) but is consumed by a FED hop as a REQUIRED
-	 * matrix input, it must be uploaded (CP-&gt;FOUT) regardless of whether the FED hop already has
-	 * another federated input. Otherwise, FED execution would implicitly rely on runtime fallbacks
-	 * for local matrix inputs, which can break alignment assumptions and lead to incorrect results.
+	 * If a matrix-valued hop is planned as CP (local) but is consumed by a FED hop, it should be
+	 * uploaded (CP-&gt;FOUT) regardless of REQUIRED/OPTIONAL classification.
+	 *
+	 * <p>Rationale: even OPTIONAL matrix inputs can trigger repeated runtime refed materialization when
+	 * consumed by FED parents. This is especially expensive on hot paths such as {@code ba+*}
+	 * (AggBinaryOp). For stability and predictable WAN behavior, we force CP-&gt;FOUT upfront.</p>
 	 */
 	private static boolean requiresCpfoutForFedParents(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
@@ -1420,10 +1455,7 @@ public final class FederatedRefedPolicy {
 			}
 			if (targetIndex < 0)
 				continue;
-
-			InputRequirement req = classifyTargetRequirement(parent, hop, targetIndex, fTypeMap);
-			if (req != InputRequirement.OPTIONAL)
-				return true;
+			return true;
 		}
 		return false;
 	}

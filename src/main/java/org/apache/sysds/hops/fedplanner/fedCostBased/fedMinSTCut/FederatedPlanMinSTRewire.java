@@ -44,6 +44,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -930,7 +931,7 @@ public class FederatedPlanMinSTRewire {
 			privacy = FederatedPlannerUtils.getPrivacyConstraint(hop, hop.getInput(), privacyConstraintMap);
 		}
 
-		// ==== 여기서부터는 모든 Hop(비 DataOp + DataOp 공통) 처리 ====
+			// ==== 여기서부터는 모든 Hop(비 DataOp + DataOp 공통) 처리 ====
 
 			// 자식 FType들에서 alignedFTypes 구성
 			List<Hop> collectedHops = hop.getInput() == null ? Collections.emptyList() : hop.getInput();
@@ -942,6 +943,7 @@ public class FederatedPlanMinSTRewire {
 				if (input == null)
 					continue;
 				collectedHopList.add(input);
+
 				// Align with DP: for local-capable inputs, pass FED FType only when refed is feasible.
 				// Otherwise keep the input local (null) so Oracle does not over-assume federated inputs.
 				FType inputFType = fTypeMap.get(input.getHopID());
@@ -949,22 +951,24 @@ public class FederatedPlanMinSTRewire {
 				if (inputVertex != null) {
 					ExecPlacementCaps inputCaps = inputVertex.getCaps();
 					boolean inputGuaranteedFout = inputCaps != null
-							&& !inputCaps.allowCP_LOUT
-							&& !inputCaps.allowFED_LOUT;
+						&& !inputCaps.allowCP_LOUT
+						&& !inputCaps.allowFED_LOUT;
 					hasGuaranteedFoutInput = hasGuaranteedFoutInput || inputGuaranteedFout;
+
 					boolean inputMayBeLocal = inputCaps != null
-							&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+						&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
 					boolean inputCanRefed = false;
 					boolean keepPlannedFedHint = false;
+					boolean strictConcreteRefedRequired = (hop instanceof IndexingOp && inputIndex == 0);
 					if (!inputGuaranteedFout && inputMayBeLocal) {
 						try {
 							// Distinguish between:
 							// 1) concrete CP->FOUT feasibility for this input (safe to infer a new FED hint), and
 							// 2) planned-map/global-anchor feasibility (safe only to keep an existing FED hint).
 							inputCanRefed = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
-							if (!inputCanRefed && inputFType != null) {
+							if (!strictConcreteRefedRequired && !inputCanRefed && inputFType != null) {
 								keepPlannedFedHint = FederatedRefedPolicy
-										.canGenerateCpfoutCandidateFromFTypes(input, fTypeMap);
+									.canGenerateCpfoutCandidateFromFTypes(input, fTypeMap);
 							}
 						}
 						catch (DMLRuntimeException ex) {
@@ -984,10 +988,10 @@ public class FederatedPlanMinSTRewire {
 				collectedFTypes.add(inputFType);
 			}
 
-		OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
+			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
 				hop, privacy, collectedHopList, collectedFTypes,
 				oracleFacade, null, rewireTable);
-		OpCaps opCaps = oracleDecision.caps();
+			OpCaps opCaps = oracleDecision.caps();
 
 			// Oracle foutFType을 FType으로 반영 (getFederatedType 대체)
 			FType oracleFType = oracleDecision.logicalFType();
@@ -995,8 +999,8 @@ public class FederatedPlanMinSTRewire {
 				// FEDERATED DataOp는 partition 기반 FType과 충돌할 수 있으니, 필요하면 로깅
 				if (fType != null && !fType.equals(oracleFType)) {
 					FederatedPlannerLogger.logInfoMessage(
-							"[MinST] Oracle foutFType " + oracleFType + " overrides existing FType "
-									+ fType + " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
+						"[MinST] Oracle foutFType " + oracleFType + " overrides existing FType "
+							+ fType + " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
 				}
 				fType = oracleFType;
 			}
@@ -1016,55 +1020,117 @@ public class FederatedPlanMinSTRewire {
 				if (canRefed) {
 					FType axisType = FederatedPlannerUtils.getVectorAxis(hop);
 					boolean axisSafe = axisType != null
-							&& OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
-									hop, axisType, rewireTable, numWorkersEstimate) == axisType;
+						&& OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+							hop, axisType, rewireTable, numWorkersEstimate) == axisType;
 					fType = axisSafe ? axisType : FType.BROADCAST;
 				}
 			}
 
-		FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+			FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 				hop, fType, rewireTable, numWorkersEstimate);
 
-		// Exec/Placement capability 결정
-		caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
-		Map<Long, FType> alignedFedInputFTypeMap = fTypeMap;
-		if (!collectedHopList.isEmpty()) {
-			alignedFedInputFTypeMap = new HashMap<>();
-			if (fTypeMap != null)
-				alignedFedInputFTypeMap.putAll(fTypeMap);
-			for (int i = 0; i < collectedHopList.size(); i++) {
-				Hop input = collectedHopList.get(i);
-				if (input == null)
-					continue;
-				FType alignedInputFType = (i < collectedFTypes.size()) ? collectedFTypes.get(i) : null;
-				if (alignedInputFType == null)
-					alignedFedInputFTypeMap.remove(input.getHopID());
-				else
-					alignedFedInputFTypeMap.put(input.getHopID(), alignedInputFType);
+			// Exec/Placement capability 결정
+			caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
+			Map<Long, FType> alignedFedInputFTypeMap = fTypeMap;
+			if (!collectedHopList.isEmpty()) {
+				alignedFedInputFTypeMap = new HashMap<>();
+				if (fTypeMap != null)
+					alignedFedInputFTypeMap.putAll(fTypeMap);
+				for (int i = 0; i < collectedHopList.size(); i++) {
+					Hop input = collectedHopList.get(i);
+					if (input == null)
+						continue;
+					FType alignedInputFType = (i < collectedFTypes.size()) ? collectedFTypes.get(i) : null;
+					if (alignedInputFType == null)
+						alignedFedInputFTypeMap.remove(input.getHopID());
+					else
+						alignedFedInputFTypeMap.put(input.getHopID(), alignedInputFType);
+				}
 			}
-		}
-		boolean fedInputsSatisfied = FederatedRefedPolicy
+			boolean fedInputsSatisfied = FederatedRefedPolicy
 				.canSatisfyFederatedInputsFromFTypes(hop, alignedFedInputFTypeMap);
-		// If strict Oracle-aligned inputs fail, fall back to the broader planned map.
-		// This avoids rejecting legal FED plans where required local inputs can still be
-		// materialized (CP->FOUT) based on upstream planned FTypes.
-		if (!fedInputsSatisfied && fTypeMap != null && alignedFedInputFTypeMap != fTypeMap) {
-			fedInputsSatisfied = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap);
-		}
-		if (!fedInputsSatisfied) {
-			caps.allowFED_LOUT = false;
-			caps.allowFED_FOUT = false;
-			if (!caps.hasAny()) {
-				throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
-					+ hop.getHopID() + " (" + hop.getOpString() + ")");
+			// If strict Oracle-aligned inputs fail, fall back to the broader planned map.
+			// This avoids rejecting legal FED plans where required local inputs can still be
+			// materialized (CP->FOUT) based on upstream planned FTypes.
+			boolean allowPlannedFallback = !(hop instanceof IndexingOp);
+			if (!fedInputsSatisfied && allowPlannedFallback
+					&& fTypeMap != null && alignedFedInputFTypeMap != fTypeMap) {
+				fedInputsSatisfied = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, fTypeMap);
 			}
+			if (!fedInputsSatisfied) {
+				caps.allowFED_LOUT = false;
+				caps.allowFED_FOUT = false;
+				if (!caps.hasAny()) {
+					throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
+						+ hop.getHopID() + " (" + hop.getOpString() + ")");
+				}
+			}
+
+			traceRewireDecision(hop, privacy, collectedHopList, collectedFTypes, opCaps,
+				oracleFType, fType, cpFoutType, fedInputsSatisfied, caps, fTypeMap);
+
+			// 최종 privacy/FType 저장
+			privacyConstraintMap.put(hop.getHopID(), privacy);
+			fTypeMap.put(hop.getHopID(), fType);
+
+			return new Vertex(hop, privacy, fType, cpFoutType, caps);
+	}
+
+	private static void traceRewireDecision(Hop hop, Privacy privacy, List<Hop> inputHops,
+			List<FType> alignedInputFTypes, OpCaps opCaps, FType oracleFType, FType finalFType,
+			FType cpFoutType, boolean fedInputsSatisfied, ExecPlacementCaps caps,
+			Map<Long, FType> plannedFTypeMap) {
+		if (!FederatedPlannerTrace.shouldTrace(hop))
+			return;
+
+		String reason = (opCaps != null && opCaps.reason() != null) ? opCaps.reason().name() : "null";
+		String detail = (opCaps != null && opCaps.detail().isPresent()) ? opCaps.detail().get() : "";
+		String notes = formatOracleNotes(opCaps);
+		String inputs = formatInputTrace(inputHops, alignedInputFTypes, plannedFTypeMap);
+		FederatedPlannerTrace.log(hop, "MinST-Rewire", String.format(
+				"privacy=%s oracleReason=%s oracleDetail=%s notes=%s inputs=%s oracleFType=%s finalFType=%s cpFoutType=%s fedInputsSatisfied=%s caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s,mode=%s]",
+				privacy, reason, detail, notes, inputs, oracleFType, finalFType, cpFoutType,
+				fedInputsSatisfied,
+				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT,
+				caps.fedFoutMode));
+	}
+
+	private static String formatInputTrace(List<Hop> inputHops, List<FType> alignedInputFTypes,
+			Map<Long, FType> plannedFTypeMap) {
+		if (inputHops == null || inputHops.isEmpty())
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < inputHops.size(); i++) {
+			Hop input = inputHops.get(i);
+			if (input == null)
+				continue;
+			if (sb.length() > 1)
+				sb.append("; ");
+			FType aligned = (alignedInputFTypes != null && i < alignedInputFTypes.size())
+					? alignedInputFTypes.get(i) : null;
+			FType planned = (plannedFTypeMap != null) ? plannedFTypeMap.get(input.getHopID()) : null;
+			sb.append(input.getHopID()).append(":").append(input.getOpString())
+					.append("{aligned=").append(aligned)
+					.append(",planned=").append(planned).append("}");
 		}
+		sb.append("]");
+		return sb.toString();
+	}
 
-		// 최종 privacy/FType 저장
-		privacyConstraintMap.put(hop.getHopID(), privacy);
-		fTypeMap.put(hop.getHopID(), fType);
-
-		return new Vertex(hop, privacy, fType, cpFoutType, caps);
+	private static String formatOracleNotes(OpCaps opCaps) {
+		if (opCaps == null || opCaps.notes() == null || opCaps.notes().isEmpty())
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < opCaps.notes().size(); i++) {
+			OpCaps.DecisionNote note = opCaps.notes().get(i);
+			if (i > 0)
+				sb.append("; ");
+			sb.append(note.code());
+			if (note.message() != null && !note.message().isEmpty())
+				sb.append(":").append(note.message());
+		}
+		sb.append("]");
+		return sb.toString();
 	}
 
 	private static FType inferFoutInputFType(Hop hop, Map<Long, FType> fTypeMap,

@@ -59,6 +59,7 @@ import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -697,54 +698,69 @@ public class FederatedPlannerDpCostEnumerator {
 				sawAllowFedFout |= placementDecision.allowFED_FOUT;
 				sawCanSatisfyFedInputs |= canSatisfyFedInputs;
 
-				// FED Exec, FOUT placement
-				if (canSatisfyFedInputs && placementDecision.allowFED_FOUT
+				double cpLoutCost = cpSelfCost + childCostCPExec;
+				double cpFoutCost = cpLoutCost + cpUploadCost;
+				double fedLoutCost = fedSelfCost + childCostFEDExec + resultDownloadCost;
+				double fedFoutCost = fedSelfCost + childCostFEDExec
+						+ derivedFedFoutBoundaryCost(derivedFedFout, cpUploadCost, resultDownloadCost);
+
+				boolean allowFedFoutCandidate = canSatisfyFedInputs && placementDecision.allowFED_FOUT
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
-								ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
-					double fedFoutCost = fedSelfCost + childCostFEDExec
-							+ derivedFedFoutBoundaryCost(derivedFedFout, cpUploadCost, resultDownloadCost);
+								ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut));
+				boolean allowFedLoutCandidate = canSatisfyFedInputs && placementDecision.allowFED_LOUT
+						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+								ExecType.FED, FederatedOutput.LOUT, tWriteExec, tWriteOut));
+				boolean allowCpLoutCandidate = placementDecision.allowCP_LOUT
+						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+								ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut));
+				boolean allowCpFoutCandidate = placementDecision.allowCP_FOUT
+						&& canGenerateCpfoutCandidateSafe(hop, fedInputTypeMap)
+						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
+								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut));
+
+				if (allowFedFoutCandidate) {
 					FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-						fedFoutCost,
-						fOutFedPlanVariants, planChilds);
+							fedFoutCost,
+							fOutFedPlanVariants, planChilds);
 					fedFOutPlan.setExecType(ExecType.FED);
 					fedFOutPlan.setFType(derivedFedFout ? cpLogicalFType : oracleLogicalFType);
 					fedFOutPlan.setDerivedFedFout(derivedFedFout);
 					fOutFedPlanVariants.addFedPlan(fedFOutPlan);
 				}
 
-			// FED Exec, LOUT placement
-			if (canSatisfyFedInputs && placementDecision.allowFED_LOUT
-					&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
-							ExecType.FED, FederatedOutput.LOUT, tWriteExec, tWriteOut))) {
+				if (allowFedLoutCandidate) {
 					FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-						fedSelfCost + childCostFEDExec + resultDownloadCost,
-						lOutFedPlanVariants, planChilds);
+							fedLoutCost,
+							lOutFedPlanVariants, planChilds);
 					fedLOutPlan.setExecType(ExecType.FED);
 					fedLOutPlan.setFType(cpLogicalFType);
 					lOutFedPlanVariants.addFedPlan(fedLOutPlan);
 				}
 
-			// CP Exec, LOUT/FOUT placement
-				if (placementDecision.allowCP_LOUT
-						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
-								ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut))) {
-						FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-							cpSelfCost + childCostCPExec,
+				if (allowCpLoutCandidate) {
+					FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+							cpLoutCost,
 							lOutFedPlanVariants, planChilds);
-						cpLOutPlan.setExecType(ExecType.CP);
-						cpLOutPlan.setFType(cpLogicalFType);
-						lOutFedPlanVariants.addFedPlan(cpLOutPlan);
-					}
-				if (placementDecision.allowCP_FOUT
-						&& canGenerateCpfoutCandidateSafe(hop, fedInputTypeMap)
-						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
-								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
+					cpLOutPlan.setExecType(ExecType.CP);
+					cpLOutPlan.setFType(cpLogicalFType);
+					lOutFedPlanVariants.addFedPlan(cpLOutPlan);
+				}
+				if (allowCpFoutCandidate) {
 					FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-							cpSelfCost + childCostCPExec + cpUploadCost,
+							cpFoutCost,
 							fOutFedPlanVariants, planChilds);
 					cpFOutPlan.setExecType(ExecType.CP);
 					cpFOutPlan.setFType(cpLogicalFType);
 					fOutFedPlanVariants.addFedPlan(cpFOutPlan);
+				}
+
+				if (FederatedPlannerTrace.shouldTrace(hop)) {
+					FederatedPlannerTrace.log(hop, "DP-Candidate", String.format(Locale.ROOT,
+							"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] boundary[upload=%.6f,download=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s",
+							formatSelectedBits(selectedBits), childCostCPExec, childCostFEDExec,
+							cpSelfCost, fedSelfCost, cpUploadCost, resultDownloadCost,
+							allowCpLoutCandidate, allowCpFoutCandidate, allowFedLoutCandidate, allowFedFoutCandidate,
+							canSatisfyFedInputs, cpLoutCost, cpFoutCost, fedLoutCost, fedFoutCost, derivedFedFout));
 				}
 			}
 
@@ -759,6 +775,7 @@ public class FederatedPlannerDpCostEnumerator {
 			fOutFedPlanVariants.pruneFedPlans();
 			memoTable.addFedPlanVariants(hopID, FederatedOutput.FOUT, fOutFedPlanVariants);
 		}
+		logDpBestPlans(hop, lOutFedPlanVariants, fOutFedPlanVariants, hasLOutPlan, hasFOutPlan);
 	
 			if (!hasLOutPlan && !hasFOutPlan) {
 				throw new DMLRuntimeException("No valid federated plan for hop " + hopID + " (" + hop.getOpString()
@@ -973,7 +990,7 @@ public class FederatedPlannerDpCostEnumerator {
 		return derivedFedFout ? cpUploadCost + resultDownloadCost : 0.0;
 	}
 
-		private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
+	private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
 			try {
 				if (hop == null)
 					return false;
@@ -996,6 +1013,46 @@ public class FederatedPlannerDpCostEnumerator {
 				return false;
 			}
 		}
+
+	private static String formatSelectedBits(int[] bits) {
+		if (bits == null || bits.length == 0)
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < bits.length; i++) {
+			if (i > 0)
+				sb.append(",");
+			sb.append(bits[i]);
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private static void logDpBestPlans(Hop hop,
+			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants,
+			FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants,
+			boolean hasLOutPlan, boolean hasFOutPlan) {
+		if (!FederatedPlannerTrace.shouldTrace(hop))
+			return;
+
+		String loutSummary = "none";
+		if (hasLOutPlan && lOutFedPlanVariants != null
+				&& !lOutFedPlanVariants.getFedPlanVariants().isEmpty()) {
+			FederatedPlannerDpMemoTable.FedPlan plan = lOutFedPlanVariants.getFedPlanVariants().get(0);
+			loutSummary = String.format(Locale.ROOT, "exec=%s,fType=%s,cost=%.6f",
+					plan.getExecType(), plan.getFType(), plan.getCumulativeCost());
+		}
+
+		String foutSummary = "none";
+		if (hasFOutPlan && fOutFedPlanVariants != null
+				&& !fOutFedPlanVariants.getFedPlanVariants().isEmpty()) {
+			FederatedPlannerDpMemoTable.FedPlan plan = fOutFedPlanVariants.getFedPlanVariants().get(0);
+			foutSummary = String.format(Locale.ROOT, "exec=%s,fType=%s,cost=%.6f,derived=%s",
+					plan.getExecType(), plan.getFType(), plan.getCumulativeCost(), plan.isDerivedFedFout());
+		}
+
+		FederatedPlannerTrace.log(hop, "DP-Selected",
+				"bestLOUT={" + loutSummary + "} bestFOUT={" + foutSummary + "}");
+	}
 
 		private static void populateParentChildUploadHintsFromRewire(
 				Map<Long, Set<Long>> parentChildUploadHints,

@@ -28,7 +28,10 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 public final class FederatedCostModel {
 	private static final String ENV_MBS_MEMORY_BANDWIDTH = "SYSDS_FED_COST_MEM_BW";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
+	private static final String ENV_MBS_NETWORK_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_BW_C2W";
+	private static final String ENV_MBS_NETWORK_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_BW_W2C";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
+	private static final String ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS = "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS";
 	private static final String ENV_FLOPS_PER_SEC = "SYSDS_FED_COST_FLOPS";
 	private static final double DEFAULT_MEM_ESTIMATE_PER_CELL = OptimizerUtils.DOUBLE_SIZE;
 	private static final double DEFAULT_FP32_MEM_ESTIMATE_PER_CELL = 4.0;
@@ -42,6 +45,7 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
 	// Network latency between federated sites (1 ms).
 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
+	private static final double DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS = 0.0;
 	// Compute throughput (FLOPs/s), consistent with CostEstimatorStaticRuntime defaults.
 	private static final double DEFAULT_FLOPS_PER_SEC = 2d * 1024 * 1024 * 1024;
 	// All costs are returned in milliseconds.
@@ -50,8 +54,14 @@ public final class FederatedCostModel {
 			DEFAULT_MBS_MEMORY_BANDWIDTH);
 	private static final double MBS_NETWORK_BANDWIDTH = getConfiguredDouble(ENV_MBS_NETWORK_BANDWIDTH,
 			DEFAULT_MBS_NETWORK_BANDWIDTH);
+	private static final double MBS_NETWORK_BANDWIDTH_C2W = getConfiguredDouble(ENV_MBS_NETWORK_BANDWIDTH_C2W,
+			MBS_NETWORK_BANDWIDTH);
+	private static final double MBS_NETWORK_BANDWIDTH_W2C = getConfiguredDouble(ENV_MBS_NETWORK_BANDWIDTH_W2C,
+			MBS_NETWORK_BANDWIDTH);
 	private static final double MBS_NETWORK_LATENCY = getConfiguredDouble(ENV_MBS_NETWORK_LATENCY,
 			DEFAULT_MBS_NETWORK_LATENCY);
+	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = getConfiguredDouble(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
+			DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 	private static final double FLOPS_PER_SEC = getConfiguredDouble(ENV_FLOPS_PER_SEC,
 			DEFAULT_FLOPS_PER_SEC);
 
@@ -139,13 +149,13 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeNetworkCost(double memSize) {
-		return (MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / MBS_NETWORK_BANDWIDTH)) * TO_MS;
+		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH);
 	}
 
 	public static double computeDownloadNetworkCost(double memSize) {
 		if (memSize <= 0)
 			return 0.0;
-		return computeNetworkCost(memSize);
+		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C);
 	}
 
 	public static double computeUploadNetworkCost(double memSize, FType fType, int numWorkers) {
@@ -154,7 +164,14 @@ public final class FederatedCostModel {
 		double multiplier = (fType != null && (fType == FType.FULL || fType == FType.BROADCAST))
 				? Math.max(1, numWorkers)
 				: 1.0;
-		return computeNetworkCost(memSize * multiplier);
+		return computeDirectionalNetworkCost(memSize * multiplier, MBS_NETWORK_BANDWIDTH_C2W);
+	}
+
+	private static double computeDirectionalNetworkCost(double memSize, double bandwidthMBps) {
+		if (memSize <= 0)
+			return 0.0;
+		double effectiveBw = (bandwidthMBps > 0.0) ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
+		return (MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / effectiveBw)) * TO_MS;
 	}
 
 	/**
@@ -172,7 +189,9 @@ public final class FederatedCostModel {
 		int fanout = Math.max(1, numWorkers);
 		if (fanout <= 1)
 			return 0.0;
-		return (fanout - 1) * MBS_NETWORK_LATENCY * TO_MS;
+		double latencyPenaltyMs = (fanout - 1) * MBS_NETWORK_LATENCY * TO_MS;
+		double controlPenaltyMs = fanout * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		return latencyPenaltyMs + controlPenaltyMs;
 	}
 
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
