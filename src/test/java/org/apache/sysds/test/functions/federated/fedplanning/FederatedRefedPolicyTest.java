@@ -20,6 +20,7 @@
 package org.apache.sysds.test.functions.federated.fedplanning;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -68,6 +69,17 @@ public class FederatedRefedPolicyTest {
 		// Tests mutate global planner state (fed-init vars / anchor keys). Reset for isolation.
 		FederatedPlannerUtils.clearFedInitVars();
 		FederatedRefedPolicy.clearHeuristicDemotedHops();
+	}
+
+	@Test
+	public void testFromFTypesOptionalLocalDoesNotBypassFedInputFeasibility() {
+		DataOp localInput = createLocalMatrix("L", 10, 10);
+		UnaryOp optionalParent = HopRewriteUtils.createUnary(localInput, OpOp1.BROADCAST);
+		optionalParent.setDim1(10);
+		optionalParent.setDim2(10);
+
+		boolean canSatisfy = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(optionalParent, new HashMap<>());
+		assertFalse("OPTIONAL local input must still prove materialization feasibility for FED execution", canSatisfy);
 	}
 
 	@Test
@@ -471,7 +483,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testPlannerAllowsOptionalLocalTransientReadInputForFedParent() {
+	public void testPlannerRejectsOptionalLocalTransientReadInputForFedParentWithoutMaterialization() {
 		DataOp fedMatrix = createFederatedInput("X", 100, 10);
 		DataOp localVector = createLocalMatrix("p", 10, 1);
 		localVector.setForcedExecType(ExecType.CP);
@@ -484,7 +496,7 @@ public class FederatedRefedPolicyTest {
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
 
-		assertTrue("Expected planner feasibility to allow optional local transient-read vector input",
+		assertFalse("Expected planner feasibility to reject optional local transient-read vector input without materialization",
 			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, fTypeMap));
 	}
 
@@ -510,14 +522,10 @@ public class FederatedRefedPolicyTest {
 
 		target.setForcedExecType(ExecType.CP);
 		target.setFederatedOutput(FederatedOutput.FOUT);
-		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
-
-		assertEquals("Expected heuristic-demoted target to remain local in runtime refed planning",
-			FederatedOutput.LOUT, target.getFederatedOutput());
-		assertTrue("Expected no refed entry for heuristic-demoted target",
-			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
-		assertTrue("Expected no fed_fout materialization entry for heuristic-demoted target",
-			!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(target.getHopID()));
+		DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
+			() -> FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1));
+		assertTrue("Expected fail-fast error for FED parent with unsatisfied federated inputs",
+			ex.getMessage().contains("FED hop has no federated inputs and no CP->FOUT candidate"));
 	}
 
 	@Test
@@ -549,14 +557,10 @@ public class FederatedRefedPolicyTest {
 		try {
 			Map<Long, FType> copiedFTypeMap = new HashMap<>();
 			copiedFTypeMap.put(copiedAnchor.getHopID(), FType.ROW);
-			FederatedRefedPolicy.registerFromHops(copiedRoots, true, copiedFTypeMap, -1);
-
-			assertEquals("Expected copied demoted target to remain local in runtime refed planning",
-				FederatedOutput.LOUT, copiedTarget.getFederatedOutput());
-			assertTrue("Expected no refed entry for copied heuristic-demoted target",
-				!FederatedRefedRegistry.snapshot(-1).containsKey(copiedTarget.getHopID()));
-			assertTrue("Expected no fed_fout materialization entry for copied heuristic-demoted target",
-				!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(copiedTarget.getHopID()));
+			DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
+				() -> FederatedRefedPolicy.registerFromHops(copiedRoots, true, copiedFTypeMap, -1));
+			assertTrue("Expected fail-fast error for copied FED parent with unsatisfied federated inputs",
+				ex.getMessage().contains("FED hop has no federated inputs and no CP->FOUT candidate"));
 		}
 		finally {
 			FederatedRefedPolicy.unmarkHeuristicDemotedHops(clonedDemotedIds);

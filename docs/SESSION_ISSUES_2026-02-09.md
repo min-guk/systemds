@@ -662,3 +662,48 @@
   - 감지 방법: DP planner 로그에서 `derivedFedFout` 선택 빈도와 runtime `fed_fout/fed_refed` 비율 비교.
 - **의사결정 근거(oracle/런타임/플래너)**:
   - 런타임 fallback 없이 DP 플래너 비용식(경계비용 항) 정합화.
+
+## 이슈 18: `fromFTypes` OPTIONAL local 완화가 FED 가능성 게이트를 우회해 불가능한 FED 계획을 통과시킴
+
+- **상태**: 해결
+- **환경/조건**:
+  - Repository: `/home/mchoi/exdra_run/systemds`
+  - Planner: `compile_cost_based` (DP)
+  - Component: `FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes`
+  - 적용 작업: `/tmp/systemds-wt-dp-align`에서 검증한 refed 정책 변경을 target repo로 포팅
+- **재현 절차**:
+  1. OPTIONAL 입력만 가진 FED parent(예: `BROADCAST(local matrix)`)를 구성한다.
+  2. `canSatisfyFederatedInputsFromFTypes(parent, new HashMap<>())`를 호출한다.
+  3. 기존 완화 로직에서는 planned-fed가 아니어도 true로 통과 가능함을 확인한다.
+- **관측 증상**:
+  - planner feasibility 경로에서 OPTIONAL local 입력이 materialization feasibility 검증을 건너뛰어
+    runtime에서 FED 입력이 없는 계획이 살아남을 수 있었다.
+  - 관련 테스트 기대가 완화 동작(허용)을 기준으로 되어 있어 정책 불일치가 발생했다.
+- **원인 분석**:
+  - `canSatisfyFederatedInputs(...)`의 fromFTypes 경로에
+    `OPTIONAL && treatFTypeMapAsPlannedFederatedInputs && !plannedFed`일 때 continue 하는 예외가 있었다.
+  - 이 예외가 “FED exec은 입력 federated 가능성을 사전 검증” 원칙과 충돌했다.
+- **해결 요약**:
+  - fromFTypes 경로의 OPTIONAL local 우회 분기를 제거해, OPTIONAL 입력도 FED 실행 시 materialization 가능성을 반드시 검증하도록 정렬했다.
+  - 테스트를 정책에 맞게 갱신:
+    - OPTIONAL local만 있는 경우 `canSatisfy...FromFTypes == false`
+    - heuristic-demoted hop이 FED parent 입력을 만족시키지 못하면 `registerFromHops(...)`가 fail-fast 예외를 내도록 기대를 수정
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+- **검증**:
+  - 실행 커맨드:
+    - `mvn -q -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedRefedPolicyTest test`
+    - `mvn -q -Dtest=FederatedRefedPolicyTest,FederatedPlannerFallbackIntegrationTest test`
+    - `mvn -q -Dtest=FederatedPlanCostEnumeratorTest,FederatedPlannerFallbackIntegrationTest,FederatedRefedPolicyTest test`
+    - `mvn -q -DskipTests compile`
+    - `mvn -q -DskipTests package`
+  - 결과:
+    - 상기 테스트, compile, package 모두 통과
+- **잔여 이슈**:
+  - MinST hard-edge 테스트 계약 불일치 이슈(이슈 7)는 본 변경 범위와 별개로 남아 있음.
+- **잠재 회귀 위험**:
+  - OPTIONAL local 입력이 많은 그래프에서 FED 후보가 줄어 planner 선택이 CP로 이동할 수 있음.
+  - 감지 방법: DP 후보 수(`FED/FOUT`, `FED/LOUT`)와 `fed_fout/fed_refed` heavy hitter 비율을 LAN/WAN 로그에서 비교.
+- **의사결정 근거(oracle/런타임/플래너)**:
+  - 런타임 fallback/우회 없이, 플래너 feasibility 규칙(`FederatedRefedPolicy`)을 런타임 제약과 일치시키는 방향으로 수정.
