@@ -192,6 +192,21 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpDerivedFedFoutBoundaryCostIncludesDownloadAndUpload() throws Exception {
+		Method boundaryCostMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"derivedFedFoutBoundaryCost", boolean.class, double.class, double.class);
+		boundaryCostMethod.setAccessible(true);
+
+		double derivedCost = (double) boundaryCostMethod.invoke(null, true, 7.0, 11.0);
+		double nativeCost = (double) boundaryCostMethod.invoke(null, false, 7.0, 11.0);
+
+		assertEquals("Derived FED_FOUT should include both upload and download boundary costs",
+			18.0, derivedCost, 1e-9);
+		assertEquals("Native FED_FOUT should not add derived boundary costs",
+			0.0, nativeCost, 1e-9);
+	}
+
+	@Test
 	public void testDpOptionalInputAlwaysAddsFedForwarding() throws Exception {
 		DataOp localSource = transientRead("LX");
 		UnaryOp target = HopRewriteUtils.createUnary(localSource, OpOp1.EXP);

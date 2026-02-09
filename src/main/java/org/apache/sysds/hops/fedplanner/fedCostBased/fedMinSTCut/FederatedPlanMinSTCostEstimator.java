@@ -529,7 +529,8 @@ public class FederatedPlanMinSTCostEstimator {
 			if (edge.getFrontReaderHopId() != hopId) {
 				continue;
 			}
-			if (graph.getVertex(edge.getEndWriterHopId()) == null) {
+			Vertex writerVertex = graph.getVertex(edge.getEndWriterHopId());
+			if (writerVertex == null) {
 				continue;
 			}
 			double weight = edge.getWeight();
@@ -545,6 +546,10 @@ public class FederatedPlanMinSTCostEstimator {
 			double uploadCost = vertex.getCpUploadCostWithoutWeight();
 			if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
 				double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+				// Prefer reader estimate first, then fall back to matched loop-carry writer.
+				if (outputMemEstimate <= 0.0 && writerVertex.getHopRef() != null) {
+					outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(writerVertex.getHopRef());
+				}
 				if (outputMemEstimate > 0.0) {
 					uploadCost = FederatedCostModel.computeUploadNetworkCost(
 							outputMemEstimate, uploadType, graph.getNumOfWorkers());

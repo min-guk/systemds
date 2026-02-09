@@ -491,11 +491,17 @@ public class FederatedPlannerDpCostEnumerator {
 		inputHopsForPrivacy.addAll(fOUTOnlyinputHops);
 		final Privacy privacyConstraint = privacyConstraintMap.getOrDefault(hopID, Privacy.PUBLIC);
 
-		double cpSelfCost = baseSelfCost;
-		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers);
 		double hopNetworkWeight = hopCommon.getNetworkWeight();
+		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		double cpSelfCost = baseSelfCost;
+		// Align with MinST: FED execution has a fixed per-op coordination overhead that
+		// should be modeled even when compute cost scales down with workers.
+		double fedOverhead = (hop instanceof DataOp)
+				? 0.0
+				: hopNetworkWeight * FederatedCostModel.computeNetworkCost(0);
+		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers) + fedOverhead;
 		double resultDownloadCost = hopNetworkWeight
-				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(hop.getOutputMemEstimate());
+				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMemEstimate);
 
 		final int enumerationLimit = 1 << numBothOutInputs;
 
@@ -660,7 +666,7 @@ public class FederatedPlannerDpCostEnumerator {
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
 				double cpUploadCost = hopNetworkWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-						hop.getOutputMemEstimate(), cpLogicalFType, numOfWorkers);
+						outputMemEstimate, cpLogicalFType, numOfWorkers);
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 						hop, privacyConstraint, oracleLogicalFType, caps);
@@ -692,7 +698,8 @@ public class FederatedPlannerDpCostEnumerator {
 				if (canSatisfyFedInputs && placementDecision.allowFED_FOUT
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut))) {
-					double fedFoutCost = fedSelfCost + childCostFEDExec + (derivedFedFout ? cpUploadCost : 0.0);
+					double fedFoutCost = fedSelfCost + childCostFEDExec
+							+ derivedFedFoutBoundaryCost(derivedFedFout, cpUploadCost, resultDownloadCost);
 					FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 						fedFoutCost,
 						fOutFedPlanVariants, planChilds);
@@ -949,8 +956,13 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 		private static boolean isDerivedFoutPrivacyAllowed(Privacy privacy) {
-			return privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-		}
+		return privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
+	}
+
+	private static double derivedFedFoutBoundaryCost(boolean derivedFedFout, double cpUploadCost,
+			double resultDownloadCost) {
+		return derivedFedFout ? cpUploadCost + resultDownloadCost : 0.0;
+	}
 
 		private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
 			try {
@@ -1272,7 +1284,7 @@ public class FederatedPlannerDpCostEnumerator {
 			throw new DMLRuntimeException("Expected both LOUT and FOUT plans for hop " + hopID);
 		}
 
-		double outputMem = lOutPlan.getHopRef().getOutputMemEstimate();
+		double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(lOutPlan.getHopRef());
 		double lOutUploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 				outputMem, lOutPlan.getFType(), numOfWorkers);
 		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMem);

@@ -44,6 +44,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMi
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.jgrapht.Graph;
@@ -283,6 +284,113 @@ public class FederatedPlanMinSTHyperedgeTest {
 		}
 		Assert.assertTrue("Parent-child upload edge should use fallback mem estimate",
 			hasPositiveUploadCostToChild);
+	}
+
+	@Test
+	public void testLoopCarryUploadFallbackAddsForwardingPenalty() throws Exception {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(4);
+		DataOp readerHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000) {
+			@Override
+			public double getOutputMemEstimate() {
+				return 0.0;
+			}
+
+			@Override
+			public double getOutputMemEstimate(double injectedDefault) {
+				return 2 * 1024 * 1024;
+			}
+		};
+		Vertex reader = new Vertex(readerHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		reader.setMetadata(1.0, 1.0, Collections.emptyList());
+		reader.setCost(0.0, 0.0, 3.0);
+		reader.setCpUploadCostWithoutWeight(0.0);
+		graph.addVertex(reader);
+
+		Vertex writer = createVertex(new LiteralOp(17.0));
+		graph.addVertex(writer);
+		graph.addLoopCarryEdge(writer.getHopID(), reader.getHopID(), 2.0);
+
+		Method m = FederatedPlanMinSTCostEstimator.class.getDeclaredMethod(
+			"addLoopCarryEdgesForHop", Hop.class, Vertex.class, FederatedPlanMinSTGraph.class);
+		m.setAccessible(true);
+		m.invoke(null, readerHop, reader, graph);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long readerC = computeId(reader.getHopID());
+		long writerP = placementId(writer.getHopID());
+		DefaultWeightedEdge uploadEdge = g.getEdge(readerC, writerP);
+		DefaultWeightedEdge downloadEdge = g.getEdge(writerP, readerC);
+		Assert.assertNotNull("Expected loop-carry upload edge", uploadEdge);
+		Assert.assertNotNull("Expected loop-carry download edge", downloadEdge);
+
+		double uploadBase = FederatedCostModel.computeUploadNetworkCost(2 * 1024 * 1024, FType.ROW, 4);
+		double penalty = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
+		double expectedUpload = 2.0 * (uploadBase + penalty);
+		Assert.assertEquals("Loop-carry upload should use fallback mem and fan-out penalty",
+			expectedUpload, g.getEdgeWeight(uploadEdge), 1e-9);
+		Assert.assertEquals("Loop-carry download should preserve reader download cost",
+			6.0, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testLoopCarryUploadFallbackUsesWriterMemWhenReaderUnknown() throws Exception {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(4);
+		DataOp readerHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, -1, -1, -1, 1000) {
+			@Override
+			public double getOutputMemEstimate() {
+				return 0.0;
+			}
+
+			@Override
+			public double getOutputMemEstimate(double injectedDefault) {
+				return 0.0;
+			}
+		};
+		DataOp writerHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTWRITE, null, 1000, 1000, 1000L * 1000L, 1000) {
+			@Override
+			public double getOutputMemEstimate() {
+				return 0.0;
+			}
+
+			@Override
+			public double getOutputMemEstimate(double injectedDefault) {
+				return 3 * 1024 * 1024;
+			}
+		};
+
+		Vertex reader = new Vertex(readerHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		reader.setMetadata(1.0, 1.0, Collections.emptyList());
+		reader.setCost(0.0, 0.0, 2.0);
+		reader.setCpUploadCostWithoutWeight(0.0);
+		graph.addVertex(reader);
+
+		Vertex writer = new Vertex(writerHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		writer.setMetadata(1.0, 1.0, Collections.emptyList());
+		writer.setCost(0.0, 0.0, 0.0);
+		graph.addVertex(writer);
+
+		graph.addLoopCarryEdge(writer.getHopID(), reader.getHopID(), 1.0);
+
+		Method m = FederatedPlanMinSTCostEstimator.class.getDeclaredMethod(
+			"addLoopCarryEdgesForHop", Hop.class, Vertex.class, FederatedPlanMinSTGraph.class);
+		m.setAccessible(true);
+		m.invoke(null, readerHop, reader, graph);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long readerC = computeId(reader.getHopID());
+		long writerP = placementId(writer.getHopID());
+		DefaultWeightedEdge uploadEdge = g.getEdge(readerC, writerP);
+		Assert.assertNotNull("Expected loop-carry upload edge via writer fallback mem", uploadEdge);
+
+		double uploadBase = FederatedCostModel.computeUploadNetworkCost(3 * 1024 * 1024, FType.ROW, 4);
+		double penalty = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
+		Assert.assertEquals("Loop-carry upload should recover from writer-side mem estimate",
+			uploadBase + penalty, g.getEdgeWeight(uploadEdge), 1e-9);
 	}
 
 	@Test

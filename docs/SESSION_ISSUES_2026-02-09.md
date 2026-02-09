@@ -624,3 +624,41 @@
   - 감지 방법: WAN 프로파일에서 MinST 계획의 FED/CP 비율과 `fed_fed_fout`, `Fed Put` 지표를 함께 모니터링.
 - **의사결정 근거(oracle/런타임/플래너)**:
   - 런타임 fallback 없이 MinST 플래너 graph 비용 모델(경계 엣지 생성 조건) 수정.
+
+## 이슈 17: DP에서 derived `FED/FOUT`의 경계비용에 upload만 반영되고 download가 누락됨
+
+- **상태**: 해결
+- **환경/조건**:
+  - Repository: `/home/mchoi/exdra_run/systemds`
+  - Planner: `compile_cost_based` (DP)
+  - 대상 시나리오: Oracle가 `FED/LOUT`만 허용하는 홉에서 planner가 derived `FED/FOUT`를 여는 경우
+- **재현 절차**:
+  1. DP 열거기에서 derived `FED/FOUT` 후보 비용식을 확인한다.
+  2. 기존 코드가 `fedFoutCost = fedSelf + childCostFED + cpUploadCost` 형태로 download 항을 포함하지 않는지 확인한다.
+- **관측 증상**:
+  - derived `FED/FOUT`가 local intermediate를 거치는 경로임에도 `FED->LOUT` download 비용이 누락되어
+    해당 후보가 실제보다 저렴하게 평가될 수 있었다.
+- **원인 분석**:
+  - `FederatedPlannerDpCostEnumerator`의 derived `FED/FOUT` 비용식에 boundary upload만 더하고
+    같은 경로의 boundary download(`resultDownloadCost`)를 더하지 않았다.
+- **해결 요약**:
+  - derived `FED/FOUT` 경계비 계산을 헬퍼로 분리:
+    - `derivedFedFoutBoundaryCost(derived, cpUploadCost, resultDownloadCost)`
+  - derived일 때 `cpUploadCost + resultDownloadCost`를 함께 더하도록 비용식 수정.
+  - 회귀 테스트를 추가해 derived boundary cost가 upload+download 합으로 계산되는지 검증.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+- **검증**:
+  - 실행 커맨드:
+    - `mvn -q -DskipTests compile`
+    - `mvn -q -Dtest=FederatedPlannerFallbackIntegrationTest,FederatedPlanMinSTHyperedgeTest test`
+  - 결과:
+    - compile 및 테스트 통과
+- **잔여 이슈**:
+  - end-to-end WAN 실험에서 derived `FED/FOUT` 후보 선택 비율/성능 영향은 별도 실험으로 확인 필요.
+- **잠재 회귀 위험**:
+  - derived `FED/FOUT` 비용이 증가해 일부 워크로드에서 `FED/LOUT` 또는 CP 대안이 더 자주 선택될 수 있음.
+  - 감지 방법: DP planner 로그에서 `derivedFedFout` 선택 빈도와 runtime `fed_fout/fed_refed` 비율 비교.
+- **의사결정 근거(oracle/런타임/플래너)**:
+  - 런타임 fallback 없이 DP 플래너 비용식(경계비용 항) 정합화.
