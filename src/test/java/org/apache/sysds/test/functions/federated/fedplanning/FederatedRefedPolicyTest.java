@@ -501,6 +501,31 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testPlannerAllowsOptionalLocalDerivedInputWhenFedSiblingPresent() {
+		DataOp fedMatrix = createFederatedInput("X", 100, 10);
+		DataOp localA = createLocalMatrix("A", 100, 10);
+		DataOp localB = createLocalMatrix("B", 100, 10);
+
+		BinaryOp localDerived = HopRewriteUtils.createBinary(localA, localB, OpOp2.PLUS);
+		localDerived.setDim1(100);
+		localDerived.setDim2(10);
+		localDerived.setForcedExecType(ExecType.CP);
+		localDerived.setFederatedOutput(FederatedOutput.LOUT);
+
+		BinaryOp fedParent = HopRewriteUtils.createBinary(fedMatrix, localDerived, OpOp2.MINUS);
+		fedParent.setDim1(100);
+		fedParent.setDim2(10);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
+
+		assertTrue("Expected planner feasibility to allow optional local derived-matrix input when another FED input anchors execution",
+			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, fTypeMap));
+	}
+
+	@Test
 	public void testRecompileTransientWriteCanPromoteMatchingTransientRead() {
 		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
 		tRead.setForcedExecType(ExecType.CP);

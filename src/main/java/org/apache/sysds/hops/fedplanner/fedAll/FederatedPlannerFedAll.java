@@ -278,7 +278,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 				fedVars.put(hop.getName(), outFType);
 				updateFTypeMap(fTypeMap, hop.getHopID(), outFType);
 			}
-			else if( allowsFederated(hop, memo) ) {
+			else if( allowsFederated(hop, memo, rewireTable) ) {
 				hop.setForcedExecType(ExecType.FED);
 				outFType = getFederatedOut(hop, memo, rewireTable);
 			FType propagated = getPropagatedFType(hop, outFType);
@@ -447,9 +447,13 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 
 	@Override
 	protected boolean allowsFederated(Hop hop, Map<Long, FType> fedHops) {
+		return allowsFederated(hop, fedHops, null);
+	}
+
+	private boolean allowsFederated(Hop hop, Map<Long, FType> fedHops, Map<Long, List<Hop>> rewireTable) {
 		if (!FederatedRefedPolicy.canSatisfyFederatedInputs(hop, fedHops))
 			return false;
-		OpCaps caps = getOracleCaps(hop, fedHops);
+		OpCaps caps = getOracleCaps(hop, fedHops, rewireTable);
 		return caps != null && caps.exec() == ExecType.FED;
 	}
 
@@ -460,14 +464,14 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 
 	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops,
 		Map<Long, List<Hop>> rewireTable) {
-		OpCaps caps = getOracleCaps(hop, fedHops);
+		List<FType> inputFTypes = collectOracleInputFTypes(hop, fedHops, rewireTable);
+		OpCaps caps = getOracleCaps(hop, inputFTypes);
 		if( caps == null )
 			return null;
 		if( caps.foutFType().isPresent() )
 			return caps.foutFType().get();
 		if( caps.placement() != FederatedOutput.FOUT )
 			return null;
-		List<FType> inputFTypes = collectInputFTypes(hop, fedHops);
 		FType inferred = OracleUtils.inferFallbackFType(hop, inputFTypes, _oracle, rewireTable);
 		return inferred != null ? inferred : FederatedTypePropagator.getFederatedType(hop, fedHops);
 	}
@@ -491,7 +495,11 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	}
 
 	private OpCaps getOracleCaps(Hop hop, Map<Long, FType> fedHops) {
-		return getOracleCaps(hop, collectInputFTypes(hop, fedHops));
+		return getOracleCaps(hop, fedHops, null);
+	}
+
+	private OpCaps getOracleCaps(Hop hop, Map<Long, FType> fedHops, Map<Long, List<Hop>> rewireTable) {
+		return getOracleCaps(hop, collectOracleInputFTypes(hop, fedHops, rewireTable));
 	}
 
 	private OpCaps getOracleCaps(Hop hop, List<FType> inputFTypes) {
@@ -508,13 +516,50 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		return caps;
 	}
 
-	private static List<FType> collectInputFTypes(Hop hop, Map<Long, FType> memo) {
+	private List<FType> collectInputFTypes(Hop hop, Map<Long, FType> memo) {
+		return collectInputFTypes(hop, memo, null, false);
+	}
+
+	private List<FType> collectOracleInputFTypes(Hop hop, Map<Long, FType> memo,
+		Map<Long, List<Hop>> rewireTable) {
+		List<FType> base = collectInputFTypes(hop, memo, rewireTable, false);
+		List<FType> hinted = collectInputFTypes(hop, memo, rewireTable, true);
+		return hasCpFoutHint(base, hinted) ? hinted : base;
+	}
+
+	private List<FType> collectInputFTypes(Hop hop, Map<Long, FType> memo,
+		Map<Long, List<Hop>> rewireTable, boolean includeCpFoutHints) {
 		if( hop.getInput() == null || hop.getInput().isEmpty() )
 			return Collections.emptyList();
 		List<FType> types = new ArrayList<>(hop.getInput().size());
-		for( Hop input : hop.getInput() )
-			types.add(memo.get(input.getHopID()));
+		for( Hop input : hop.getInput() ) {
+			FType planned = memo.get(input.getHopID());
+			if( planned != null || !includeCpFoutHints ) {
+				types.add(planned);
+				continue;
+			}
+			FType cpfoutHint = inferCpfoutInputHint(input, memo, rewireTable);
+			types.add(cpfoutHint);
+		}
 		return types;
+	}
+
+	private static boolean hasCpFoutHint(List<FType> base, List<FType> hinted) {
+		if( base == null || hinted == null || base.size() != hinted.size() )
+			return false;
+		for( int i = 0; i < base.size(); i++ ) {
+			if( base.get(i) == null && hinted.get(i) != null )
+				return true;
+		}
+		return false;
+	}
+
+	private FType inferCpfoutInputHint(Hop input, Map<Long, FType> memo, Map<Long, List<Hop>> rewireTable) {
+		if( input == null )
+			return null;
+		if( !shouldGenerateCpfoutCandidate(input, memo) )
+			return null;
+		return inferCpfoutFType(input, memo, rewireTable);
 	}
 
 	private static ExecType resolveExecType(Hop hop, FType outFType) {

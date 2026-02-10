@@ -19,9 +19,13 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
+import java.util.List;
+
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
@@ -57,6 +61,13 @@ public final class ExecPlacementPolicy {
 
 		if (HopUtils.isPrintOrPWrite(hop)) {
 			decision.allowCP_LOUT = true;
+			return decision;
+		}
+
+		if (isMultiReturnBuiltinHop(hop) || isFunctionOutputFromMultiReturn(hop)) {
+			decision.allowCP_LOUT = true;
+			if (privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
+				decision.allowCP_FOUT = allowCpFout(hop, fType);
 			return decision;
 		}
 
@@ -118,6 +129,28 @@ public final class ExecPlacementPolicy {
 		}
 
 		return decision;
+	}
+
+	private static boolean isMultiReturnBuiltinHop(Hop hop) {
+		return hop instanceof FunctionOp
+				&& ((FunctionOp) hop).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN;
+	}
+
+	private static boolean isFunctionOutputFromMultiReturn(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.FUNCTIONOUTPUT)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
+			return false;
+		List<Hop> parents = inputs.get(0).getParent();
+		if (parents == null || parents.isEmpty())
+			return false;
+		for (Hop parent : parents) {
+			if (parent instanceof FunctionOp
+					&& ((FunctionOp) parent).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN)
+				return true;
+		}
+		return false;
 	}
 
 	private static boolean isTransientDataOp(Hop hop) {

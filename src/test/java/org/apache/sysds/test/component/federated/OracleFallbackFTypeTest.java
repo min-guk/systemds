@@ -34,19 +34,27 @@ import java.util.Map;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class OracleFallbackFTypeTest {
@@ -121,6 +129,70 @@ public class OracleFallbackFTypeTest {
 		Map<Long, List<Hop>> rewire = buildTransientRewireTable(Arrays.asList(tw1, tw2));
 		assertTrue("Expected no rewire entries when multiple TWRITEs exist",
 			rewire == null || rewire.isEmpty());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	public void testFedAllOracleInputUsesCpfoutHintWhenAvailable() throws Exception {
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			DataOp fedX = transientRead("Xfed");
+			FederatedPlannerUtils.registerFedInitVar("Xfed");
+			fedX.setForcedExecType(ExecType.FED);
+			fedX.setFederatedOutput(FederatedOutput.FOUT);
+
+			DataOp localA = transientRead("A");
+			DataOp localB = transientRead("B");
+			BinaryOp localCandidate = new BinaryOp("localCandidate", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, localA, localB);
+			localCandidate.setDim1(ROWS);
+			localCandidate.setDim2(COLS);
+
+			BinaryOp parent = new BinaryOp("parent", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, fedX, localCandidate);
+			parent.setDim1(ROWS);
+			parent.setDim2(COLS);
+
+			Map<Long, FType> memo = new java.util.HashMap<>();
+			memo.put(fedX.getHopID(), FType.ROW);
+
+			FederatedPlannerFedAll planner = new FederatedPlannerFedAll();
+			Method method = FederatedPlannerFedAll.class.getDeclaredMethod(
+				"collectInputFTypes", Hop.class, Map.class, Map.class, boolean.class);
+			method.setAccessible(true);
+
+			List<FType> base = (List<FType>) method.invoke(planner, parent, memo, null, false);
+			List<FType> hinted = (List<FType>) method.invoke(planner, parent, memo, null, true);
+
+			assertEquals("Expected base input FType to preserve existing FED input", FType.ROW, base.get(0));
+			assertNull("Expected local input to be null without CP->FOUT hint injection", base.get(1));
+			assertNotNull("Expected CP->FOUT-capable local input to receive inferred FType hint", hinted.get(1));
+		}
+		finally {
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testFunctionOutputFromMultiReturnBuiltinIsCpOnlyButKeepsLogicalFType() {
+		DataOp input = matrixRead("X", ROWS, COLS);
+		DataOp eigenValues = new DataOp("eigen_values", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.FUNCTIONOUTPUT, null);
+		DataOp eigenVectors = new DataOp("eigen_vectors", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.FUNCTIONOUTPUT, null);
+		new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, ".builtinNS", "eigen",
+			new String[] {"X"}, List.of(input), new String[] {"eigen_values", "eigen_vectors"},
+			new java.util.ArrayList<>(List.of(eigenValues, eigenVectors)));
+
+		OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+		OpCaps caps = oracle.decide(eigenValues, List.of(FType.ROW));
+		assertNotNull(caps);
+		assertEquals(ExecType.CP, caps.exec());
+		assertEquals(ReasonCode.MISSING_FED_INSTRUCTION, caps.reason());
+
+		OracleUtils.OracleDecision decision = OracleUtils.decideWithOracle(
+			eigenValues, Privacy.PUBLIC, List.of(input), List.of(FType.ROW), oracle, null, null);
+		assertNotNull(decision);
+		assertEquals("FunOut should keep logical FType for downstream candidate reasoning",
+			FType.ROW, decision.logicalFType());
 	}
 
 	@SuppressWarnings("unchecked")

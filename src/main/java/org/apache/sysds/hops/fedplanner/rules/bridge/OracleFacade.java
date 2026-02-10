@@ -88,6 +88,7 @@ public final class OracleFacade {
   private static final String ATTR_FCALL_NAMESPACE = "fcall.namespace";
   private static final String ATTR_FCALL_NAME = "fcall.name";
   private static final String ATTR_FCALL_TYPE = "fcall.type";
+  private static final String ATTR_FUNOUT_FCALL_TYPE = "funout.fcall.type";
   private static final String ALIGN_COL_T = "COL_T";
 
   private final RuleRegistry registry;
@@ -294,6 +295,12 @@ public final class OracleFacade {
   }
 
   private void addDataOpAttrs(DataOp hop, Map<String,String> attrs) {
+    if (hop.getOp() == OpOpData.FUNCTIONOUTPUT) {
+      FunctionOp.FunctionType sourceType = resolveFunctionOutputSourceType(hop);
+      if (sourceType != null)
+        attrs.put(ATTR_FUNOUT_FCALL_TYPE, sourceType.name());
+    }
+
     if (hop.isWrite()) {
       boolean federatedTarget = hop.getFileFormat() == FileFormat.FEDERATED
           || hop.isFederatedDataOp();
@@ -309,6 +316,26 @@ public final class OracleFacade {
           attrs.put(ATTR_VAR_READ_FTYPE, initType.name());
       }
     }
+  }
+
+  private static FunctionOp.FunctionType resolveFunctionOutputSourceType(DataOp hop) {
+    if (hop == null || hop.getOp() != OpOpData.FUNCTIONOUTPUT)
+      return null;
+    List<Hop> inputs = hop.getInput();
+    if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
+      return null;
+
+    FunctionOp.FunctionType fallback = null;
+    for (Hop parent : inputs.get(0).getParent()) {
+      if (!(parent instanceof FunctionOp))
+        continue;
+      FunctionOp.FunctionType type = ((FunctionOp) parent).getFunctionType();
+      if (type == FunctionOp.FunctionType.MULTIRETURN_BUILTIN)
+        return type;
+      if (fallback == null)
+        fallback = type;
+    }
+    return fallback;
   }
 
   private void addSpoofAttrs(SpoofFusedOp hop, Map<String,String> attrs) {

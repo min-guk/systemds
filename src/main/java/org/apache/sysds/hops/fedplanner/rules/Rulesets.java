@@ -71,6 +71,8 @@ public final class Rulesets {
   private static final String ATTR_FCALL_NAMESPACE = "fcall.namespace";
   private static final String ATTR_FCALL_NAME = "fcall.name";
   private static final String ATTR_FCALL_TYPE = "fcall.type";
+  private static final String ATTR_FUNOUT_FCALL_TYPE = "funout.fcall.type";
+  private static final String MULTIRETURN_BUILTIN_TYPE = "MULTIRETURN_BUILTIN";
   private static final String WUMM_X_AXIS_ONLY_DETAIL =
       "WUMM supports only ROW or COL partitioned X (per QuaternaryWUMMFEDInstruction)";
   private static final String APPEND_FULL_SINGLE_RANGE_DETAIL =
@@ -4073,6 +4075,10 @@ public final class Rulesets {
 
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      String sourceType = attrValue(sig, ATTR_FUNOUT_FCALL_TYPE);
+      if (sourceType != null && sourceType.equalsIgnoreCase(MULTIRETURN_BUILTIN_TYPE))
+        return cpCaps(sig, ReasonCode.MISSING_FED_INSTRUCTION);
+
       FType in = typeAt(inFTypes, 0);
       if (isFederatedLike(in))
         return fedFoutCaps(sig, preserveOrAxis(in), ReasonCode.OK);
@@ -4126,7 +4132,6 @@ public final class Rulesets {
     private static final String OPCODE_PREFIX = "fcall";
     private static final String PLACEHOLDER_NOTE =
         "function call hop treated as federated placeholder; execution occurs inside callee";
-    private static final String MULTIRETURN_BUILTIN_TYPE = "MULTIRETURN_BUILTIN";
 
     @Override public OpCategory category() { return OpCategory.OTHER; }
     @Override public Set<String> opcodes() { return null; }

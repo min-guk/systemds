@@ -1562,6 +1562,7 @@ public class FederatedPlanMinSTRewire {
 			caps.allowCP_FOUT = false;
 		}
 
+		caps = applyFunctionPlacementRestrictions(hop, caps);
 		caps = applyTransientPlacementRestrictions(hop, caps);
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
@@ -1593,6 +1594,23 @@ public class FederatedPlanMinSTRewire {
 		}
 		caps.allowCP_FOUT = false;
 		caps.allowFED_LOUT = false;
+		return caps;
+	}
+
+	private static ExecPlacementCaps applyFunctionPlacementRestrictions(Hop hop, ExecPlacementCaps caps) {
+		if (caps == null || hop == null)
+			return caps;
+
+		// Runtime does not support federated instructions for multi-return builtins (e.g., eigen).
+		// Keep only this hop local; adjacent hops still keep normal candidate wiring/inference.
+		if (hop instanceof FunctionOp
+				&& ((FunctionOp) hop).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
+			caps.allowCP_LOUT = true;
+			caps.allowCP_FOUT = false;
+			caps.allowFED_LOUT = false;
+			caps.allowFED_FOUT = false;
+			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
+		}
 		return caps;
 	}
 

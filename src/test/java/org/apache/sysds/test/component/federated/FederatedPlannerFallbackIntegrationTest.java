@@ -47,6 +47,8 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
@@ -81,6 +83,8 @@ import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.common.Types.ReOrgOp;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.junit.Test;
 
 public class FederatedPlannerFallbackIntegrationTest {
@@ -449,7 +453,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testMinSTRightIndexMainInputRequiresConcreteFoutPath() throws Exception {
+	public void testMinSTRightIndexMainInputKeepsCpCandidateWithoutConcreteFoutPath() throws Exception {
 		DataOp labels = transientRead("Y", 100000, 1);
 		labels.setForcedExecType(ExecType.CP);
 		labels.setFederatedOutput(FederatedOutput.LOUT);
@@ -492,8 +496,112 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertNotNull("Expected rightIndex vertex", rightIndexVertex);
 		assertTrue("RightIndex should keep CP/LOUT when main input lacks concrete FOUT path",
 			rightIndexVertex.getCaps().allowCP_LOUT);
-		assertFalse("RightIndex must not select FED/FOUT from logical-only main-input FType",
-			rightIndexVertex.getCaps().allowFED_FOUT);
+	}
+
+	@Test
+	public void testMinSTFunctionPlacementRestrictionTargetsOnlyMultiReturnBuiltinHop() throws Exception {
+		DataOp input = transientRead("X", 128, 64);
+		FunctionOp multiReturn = new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, "builtin", "eigen",
+			new String[] {"X"}, List.of(input), new String[] {"D", "V"}, false);
+		DataOp functionOutput = new DataOp("out", DataType.MATRIX, ValueType.FP64,
+			OpOpData.FUNCTIONOUTPUT, "out", 128, 64, -1, BLOCKSIZE);
+
+		FederatedPlanMinSTGraph.ExecPlacementCaps multiReturnCaps = allowAllCaps();
+		FederatedPlanMinSTGraph.ExecPlacementCaps directInputCaps = allowAllCaps();
+		FederatedPlanMinSTGraph.ExecPlacementCaps functionOutputCaps = allowAllCaps();
+
+		Method method = FederatedPlanMinSTRewire.class.getDeclaredMethod(
+			"applyFunctionPlacementRestrictions", Hop.class, FederatedPlanMinSTGraph.ExecPlacementCaps.class);
+		method.setAccessible(true);
+
+		FederatedPlanMinSTGraph.ExecPlacementCaps restrictedMultiReturn =
+			(FederatedPlanMinSTGraph.ExecPlacementCaps) method.invoke(null, multiReturn, multiReturnCaps);
+		FederatedPlanMinSTGraph.ExecPlacementCaps directInputUnchanged =
+			(FederatedPlanMinSTGraph.ExecPlacementCaps) method.invoke(null, input, directInputCaps);
+		FederatedPlanMinSTGraph.ExecPlacementCaps functionOutputUnchanged =
+			(FederatedPlanMinSTGraph.ExecPlacementCaps) method.invoke(null, functionOutput, functionOutputCaps);
+
+		assertTrue(restrictedMultiReturn.allowCP_LOUT);
+		assertFalse(restrictedMultiReturn.allowCP_FOUT);
+		assertFalse(restrictedMultiReturn.allowFED_LOUT);
+		assertFalse(restrictedMultiReturn.allowFED_FOUT);
+
+		assertTrue("Direct input of MultiReturnBuiltin should keep normal candidate wiring",
+			directInputUnchanged.allowFED_FOUT);
+		assertTrue("FunctionOutput boundary should keep normal candidate wiring",
+			functionOutputUnchanged.allowFED_FOUT);
+	}
+
+	@Test
+	public void testExecPlacementPolicyAllowsMultiReturnPrivacyException() {
+		DataOp input = transientRead("X", 128, 64);
+		DataOp functionOutput = new DataOp("out", DataType.MATRIX, ValueType.FP64,
+			input, OpOpData.FUNCTIONOUTPUT, "out");
+
+		FunctionOp multiReturn = new FunctionOp(FunctionType.MULTIRETURN_BUILTIN, "builtin", "eigen",
+			new String[] {"X"}, List.of(input), new String[] {"D", "V"}, false);
+
+		ExecPlacementPolicy.Decision privateFunctionDecision = ExecPlacementPolicy.decide(
+			multiReturn, Privacy.PRIVATE, null, null);
+		assertTrue("MULTIRETURN_BUILTIN must keep CP/LOUT under PRIVATE as runtime-safe exception",
+			privateFunctionDecision.allowCP_LOUT);
+		assertFalse(privateFunctionDecision.allowFED_FOUT);
+
+		ExecPlacementPolicy.Decision privateOutDecision = ExecPlacementPolicy.decide(
+			functionOutput, Privacy.PRIVATE, FType.ROW, null);
+		assertTrue("FUNCTIONOUTPUT from MULTIRETURN_BUILTIN must stay locally materializable under PRIVATE",
+			privateOutDecision.allowCP_LOUT);
+		assertFalse(privateOutDecision.allowCP_FOUT);
+
+		ExecPlacementPolicy.Decision publicOutDecision = ExecPlacementPolicy.decide(
+			functionOutput, Privacy.PUBLIC, FType.ROW, null);
+		assertTrue(publicOutDecision.allowCP_LOUT);
+		assertTrue("PUBLIC FUNCTIONOUTPUT should still keep CP->FOUT candidate for optional refederation",
+			publicOutDecision.allowCP_FOUT);
+	}
+
+	@Test
+	public void testMinSTConsistencyAcceptsCpfoutRegisteredOnTransientWriteParent() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			DataOp fedInput = federatedRead("X", ROWS, COLS);
+			DataOp localVec = transientRead("v", COLS, 1);
+			Hop mm = HopRewriteUtils.createMatrixMultiply(fedInput, localVec);
+			mm.setDim1(ROWS);
+			mm.setDim2(1);
+			mm.setForcedExecType(ExecType.CP);
+			mm.setFederatedOutput(FederatedOutput.FOUT);
+
+			DataOp tWrite = HopRewriteUtils.createTransientWrite("Xd", mm);
+			tWrite.setForcedExecType(ExecType.FED);
+			tWrite.setFederatedOutput(FederatedOutput.FOUT);
+
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			FederatedPlanMinSTGraph.ExecPlacementCaps caps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
+			graph.addVertex(new Vertex(mm, Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, FType.ROW, FType.ROW, caps));
+			graph.addVertex(new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, FType.ROW, caps));
+
+			Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = new HashMap<>();
+			plannedExecOut.put(mm.getHopID(), Pair.of(ExecType.CP, FederatedOutput.FOUT));
+			plannedExecOut.put(tWrite.getHopID(), Pair.of(ExecType.FED, FederatedOutput.FOUT));
+
+			Map<Long, FType> plannedFTypeMap = new HashMap<>();
+			plannedFTypeMap.put(fedInput.getHopID(), FType.ROW);
+			plannedFTypeMap.put(mm.getHopID(), FType.ROW);
+			plannedFTypeMap.put(tWrite.getHopID(), FType.ROW);
+
+			// CP->FOUT can be registered on the TWrite parent (not necessarily on the producer hop).
+			FederatedRefedRegistry.register(-1L, tWrite.getHopID(), fedInput.getHopID());
+
+			invokeValidateMinstPlanConsistency(plannedExecOut, plannedFTypeMap, graph);
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
 	}
 
 	private static DMLProgram parseAndRewrite(String script, Map<String, String> args, String planner) throws Exception {
@@ -664,5 +772,25 @@ public class FederatedPlannerFallbackIntegrationTest {
 		method.setAccessible(true);
 		method.invoke(planner, plan, memoTable, new HashMap<Long, Pair<FederatedOutput, ExecType>>(),
 			new HashMap<Long, Boolean>(), new HashSet<Long>(), new HashMap<Long, FType>());
+	}
+
+	private static void invokeValidateMinstPlanConsistency(
+			Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut,
+			Map<Long, FType> plannedFTypeMap,
+			FederatedPlanMinSTGraph graph) throws Exception {
+		Method method = org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut.class
+			.getDeclaredMethod("validateMinstPlanConsistency", Map.class, Map.class, FederatedPlanMinSTGraph.class);
+		method.setAccessible(true);
+		method.invoke(null, plannedExecOut, plannedFTypeMap, graph);
+	}
+
+	private static FederatedPlanMinSTGraph.ExecPlacementCaps allowAllCaps() {
+		FederatedPlanMinSTGraph.ExecPlacementCaps caps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
+		caps.allowCP_LOUT = true;
+		caps.allowCP_FOUT = true;
+		caps.allowFED_LOUT = true;
+		caps.allowFED_FOUT = true;
+		caps.fedFoutMode = FederatedPlanMinSTGraph.ExecPlacementCaps.FedFoutMode.NATIVE;
+		return caps;
 	}
 }

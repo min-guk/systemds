@@ -218,9 +218,7 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			}
 
 			if (planned.getLeft() == ExecType.CP && planned.getRight() == FederatedOutput.FOUT) {
-				boolean hasRefed = FederatedRefedRegistry.hasEntry(hopId);
-				boolean hasMaterialize = FederatedFoutMaterializeRegistry.hasEntry(hopId);
-				if (!hasRefed && !hasMaterialize) {
+				if (!hasCpFoutRegistration(hop)) {
 					throw new DMLRuntimeException("MinST plan requires CP->FOUT for hop " + hopId
 							+ " (" + hop.getOpString() + ") but no refed/materialize entry was registered.");
 				}
@@ -237,5 +235,31 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 									+ hopId + " (" + hop.getOpString() + "); continuing (policy may have inserted refed/fout via transient anchors).");
 			}
 		}
+	}
+
+	private static boolean hasCpFoutRegistration(Hop hop) {
+		if (hop == null)
+			return false;
+		long hopId = hop.getHopID();
+		if (FederatedRefedRegistry.hasEntry(hopId) || FederatedFoutMaterializeRegistry.hasEntry(hopId))
+			return true;
+		List<Hop> parents = hop.getParent();
+		if (parents == null || parents.isEmpty())
+			return false;
+		for (Hop parent : parents) {
+			if (!(parent instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) parent;
+			if (dataOp.getOp() != Types.OpOpData.TRANSIENTWRITE)
+				continue;
+			List<Hop> inputs = dataOp.getInput();
+			if (inputs == null || inputs.isEmpty() || inputs.get(0) != hop)
+				continue;
+			long parentHopId = dataOp.getHopID();
+			if (FederatedRefedRegistry.hasEntry(parentHopId)
+					|| FederatedFoutMaterializeRegistry.hasEntry(parentHopId))
+				return true;
+		}
+		return false;
 	}
 }
