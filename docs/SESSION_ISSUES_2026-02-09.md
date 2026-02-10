@@ -707,3 +707,57 @@
   - 감지 방법: DP 후보 수(`FED/FOUT`, `FED/LOUT`)와 `fed_fout/fed_refed` heavy hitter 비율을 LAN/WAN 로그에서 비교.
 - **의사결정 근거(oracle/런타임/플래너)**:
   - 런타임 fallback/우회 없이, 플래너 feasibility 규칙(`FederatedRefedPolicy`)을 런타임 제약과 일치시키는 방향으로 수정.
+
+## 이슈 19: planner-only anchor 완화가 `logreg/wan_light`에서 local 체인을 과도하게 FED로 전파해 `fed_fout/refed` 폭증
+
+- **상태**: 해결
+- **환경/조건**:
+  - Repository: `/home/mchoi/exdra_run/systemds`
+  - Planner: `compile_cost_based` (DP), conf=`mkl-cost`
+  - 워크로드/프로파일: `logreg`, `wan_light`
+  - 비교 로그:
+    - 빠른 기준: `experiments/results/fed2/mkl-cost/logreg_P2P_coordinator_mkl-cost_20260210_064509_1957457_wan_light.log`
+    - 느린 회귀: `experiments/results/fed2/mkl-cost/logreg_P2P_coordinator_mkl-cost_20260210_102756_2417941_wan_light.log`
+    - 수정 후: `experiments/results/fed2/mkl-cost/logreg_P2P_coordinator_mkl-cost_20260210_104033_2442407_wan_light.log`
+- **재현 절차**:
+  1. 빠른/느린 로그에서 `Total elapsed time`, `Federated I/O`, `fed_fed_fout/fed_fed_refed`를 비교한다.
+  2. 느린 로그에서 `hop=612/775/780/785` Oracle/LOP를 확인해 local 체인에 `FED/FOUT` 후보와 `CP->FOUT insert`가 생겼는지 확인한다.
+- **관측 증상**:
+  - 실행 시간: `31.522s -> 189.778s`
+  - Federated I/O: `8/0/7 -> 8/1109/817`
+  - heavy hitter: `fed_ba+*`, `fed_fed_fout`, `fed_fed_refed`가 반복 루프에서 급증.
+  - 느린 로그에서 `CP->FOUT insert: hop=785 ...`가 반복적으로 삽입됨.
+- **원인 분석**:
+  - `FederatedRefedPolicy`의 planner-only 완화가 local 홉의 speculative FED 가능성을 과도하게 열었다.
+  - 특히 다음 조합이 과전파를 유발:
+    - `canSatisfyFederatedInputs(...)`에서 local 입력 materialization precheck 약화
+    - `selectCpfoutAnchorForParent(...)`의 fallback 허용
+    - `determineParentAnchor(...)`의 planner synthetic anchor key fallback
+  - 결과적으로 `TWrite/rix` local 체인(`P_new`)까지 FED 후보로 승격되어 루프 내 `CP->FOUT/fed_refed`가 폭증했다.
+- **해결 요약**:
+  - `FederatedRefedPolicy`를 보수 정책으로 롤백/정렬:
+    - local 입력은 `canGenerateCpfoutCandidate(...)`를 먼저 통과해야만 materialization 후보로 인정
+    - `selectCpfoutAnchorForParent(...)`에서 fallback anchor 경로 제거 (concrete parent anchor만 허용)
+    - `determineParentAnchor(...)`에서 planner synthetic anchor fallback 제거 및 input requirement 판정을 기존 `classifyInput(...)` 기준으로 복원
+  - multi-return builtin FED 차단 및 공통 transfer-cost 보정은 유지.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `docs/SESSION_ISSUES_2026-02-09.md`
+- **검증**:
+  - 빌드/테스트:
+    - `mvn -q -Dtest=FederatedRefedPolicyTest test`
+    - `mvn -q -DskipTests package`
+  - 실험:
+    - `bash ./experiments/run_LAN_docker.sh --conf mkl-cost --net-profiles wan_light --salg logreg`
+      - `27.778s`, `Federated I/O: 8/0/7` (회귀 해소)
+    - `bash ./experiments/run_LAN_docker.sh --conf mkl-cost --net-profiles wan_light --alg pca`
+      - `11.312s`, `Federated I/O: 4/3/7` (PCA 개선 유지)
+    - `bash ./experiments/run_LAN_docker.sh --conf mkl-cost --net-profiles wan_light --salg l2svm`
+      - `47.023s`, 기존 패턴 유지
+- **잔여 이슈**:
+  - 전체 sweep(`lan/wan_light` x 5 workload)은 추가 배치 실행으로 최종 확인 필요.
+- **잠재 회귀 위험**:
+  - speculative anchor를 제한하면서 일부 경계 케이스에서 FED 후보가 줄어들 수 있음.
+  - 감지 방법: DP planner trace에서 `MISSING_IN_FTYPE`/`reasonFedInputs=false` 빈도와 runtime `CP->FOUT insert` 카운트를 함께 모니터링.
+- **의사결정 근거(oracle/런타임/플래너)**:
+  - 런타임 fallback 없이, 플래너의 anchor/feasibility 게이트를 보수적으로 맞춰 과도한 FED 후보 생성을 차단.

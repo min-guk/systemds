@@ -65,9 +65,10 @@ public final class ExecPlacementPolicy {
 		}
 
 		if (isMultiReturnBuiltinHop(hop) || isFunctionOutputFromMultiReturn(hop)) {
+			// Multi-return builtins (e.g., eigen) have no runtime FED instruction, and their
+			// FunctionOutput hops must stay local as well. Allowing CP->FOUT on outputs can
+			// still push FED inputs into the builtin call and trigger invalid FED instructions.
 			decision.allowCP_LOUT = true;
-			if (privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
-				decision.allowCP_FOUT = allowCpFout(hop, fType);
 			return decision;
 		}
 

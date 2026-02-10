@@ -54,6 +54,7 @@ import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -1231,8 +1232,15 @@ public final class FederatedRefedPolicy {
 			AnchorSelection blockAnchor, boolean treatFTypeMapAsPlannedFederatedInputs) {
 		if (parent == null || parent.getInput() == null)
 			return true;
-		if (parent instanceof FunctionOp)
+		boolean traceParent = FederatedPlannerTrace.shouldTrace(parent);
+		if (parent instanceof FunctionOp) {
+			FunctionOp fop = (FunctionOp) parent;
+			// Runtime has no federated instruction for multi-return builtins (e.g., eigen).
+			// Keep these hops local regardless of federated input hints.
+			if (fop.getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN)
+				return false;
 			return hasAnyPlannedFederatedMatrixInput(parent, fTypeMap, treatFTypeMapAsPlannedFederatedInputs);
+		}
 		AnchorSelection requiredAnchor = null;
 		AnchorSelection consumerAnchor = null;
 		AnchorSelection optionalAnchor = null;
@@ -1254,6 +1262,7 @@ public final class FederatedRefedPolicy {
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
 				? (fTypeMap != null && fTypeMap.containsKey(input.getHopID()))
 				: isPlannedFederatedInput(input, fTypeMap);
+			boolean plannedFedBefore = plannedFed;
 			boolean allowOptionalLocalTransientRead = req == InputRequirement.OPTIONAL
 				&& canKeepOptionalTransientReadLocalForFedExec(parent, input, i, fTypeMap,
 					treatFTypeMapAsPlannedFederatedInputs);
@@ -1276,6 +1285,13 @@ public final class FederatedRefedPolicy {
 				else {
 					hasUnmaterializableLocal = true;
 				}
+			}
+			if (traceParent) {
+				FederatedPlannerTrace.log(parent, "FedInputCheck", String.format(java.util.Locale.ROOT,
+						"inputIndex=%d inputHop=%d req=%s plannedFedBefore=%s plannedFedAfter=%s allowOptionalLocalTR=%s plannedAnchor=%s hasUnmaterializableLocal=%s recompileRegion=%s",
+						i, input.getHopID(), req, plannedFedBefore, plannedFed, allowOptionalLocalTransientRead,
+						(plannedAnchor != null && plannedAnchor.key != null) ? plannedAnchor.key : "null",
+						hasUnmaterializableLocal, isRecompileRegion(input)));
 			}
 
 			if (req == InputRequirement.OPTIONAL) {
@@ -1310,8 +1326,12 @@ public final class FederatedRefedPolicy {
 
 		if (!hasRequiredMatrix)
 			return true;
-		if (hasUnmaterializableLocal)
+		if (hasUnmaterializableLocal) {
+			if (traceParent)
+				FederatedPlannerTrace.log(parent, "FedInputCheck",
+					"return=false (hasUnmaterializableLocal=true)");
 			return false;
+		}
 
 			if (!requiredIndices.isEmpty()) {
 				if (hasPlannedAnchorConflict)
@@ -1327,8 +1347,12 @@ public final class FederatedRefedPolicy {
 
 		for (int idx : requiredIndices) {
 			Hop input = parent.getInput().get(idx);
-			if (!canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor))
+			if (!canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor)) {
+				if (traceParent)
+					FederatedPlannerTrace.log(parent, "FedInputCheck",
+						"return=false (required input has no CP->FOUT candidate): inputHop=" + input.getHopID());
 				return false;
+			}
 
 			AnchorSelection selection = null;
 			if (requiredAnchor != null && requiredAnchor.key != null)
@@ -1344,6 +1368,9 @@ public final class FederatedRefedPolicy {
 					treatFTypeMapAsPlannedFederatedInputs);
 			}
 				if (selection == null || selection.key == null) {
+					if (traceParent)
+						FederatedPlannerTrace.log(parent, "FedInputCheck",
+							"return=false (required input has no anchor selection): inputHop=" + input.getHopID());
 					return false;
 				}
 
@@ -1352,7 +1379,12 @@ public final class FederatedRefedPolicy {
 			else if (!anchorsCompatible(requiredAnchor.key, selection.key))
 				return false;
 		}
-			return requiredIndices.isEmpty() || requiredAnchor != null;
+		boolean ok = requiredIndices.isEmpty() || requiredAnchor != null;
+		if (traceParent)
+			FederatedPlannerTrace.log(parent, "FedInputCheck", "return=" + ok
+				+ " requiredCount=" + requiredIndices.size()
+				+ " requiredAnchor=" + ((requiredAnchor != null && requiredAnchor.key != null) ? requiredAnchor.key : "null"));
+		return ok;
 		}
 
 	private static boolean canKeepOptionalTransientReadLocalForFedExec(Hop parent, Hop input, int index,
@@ -1411,6 +1443,7 @@ public final class FederatedRefedPolicy {
 			return null;
 		if (!canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor))
 			return null;
+
 		ParentAnchor parentAnchor = determineParentAnchor(parent, input, fTypeMap,
 				treatFTypeMapAsPlannedFederatedInputs, false, false);
 		if (parentAnchor == null || parentAnchor.isEmpty() || parentAnchor.key == null)

@@ -556,7 +556,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		ExecPlacementPolicy.Decision publicOutDecision = ExecPlacementPolicy.decide(
 			functionOutput, Privacy.PUBLIC, FType.ROW, null);
 		assertTrue(publicOutDecision.allowCP_LOUT);
-		assertTrue("PUBLIC FUNCTIONOUTPUT should still keep CP->FOUT candidate for optional refederation",
+		assertFalse("FUNCTIONOUTPUT from MULTIRETURN_BUILTIN must not keep CP->FOUT even under PUBLIC",
 			publicOutDecision.allowCP_FOUT);
 	}
 

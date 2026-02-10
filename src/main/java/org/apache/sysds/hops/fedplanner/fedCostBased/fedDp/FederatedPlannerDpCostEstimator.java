@@ -153,8 +153,8 @@ public class FederatedPlannerDpCostEstimator {
 					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan);
 			childCumulativeCost[currentIndex][1] = computeCumulativeCostShareForParent(
 					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan);
-			double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
-			double downloadCost = computeDownloadNetworkCost(outputMem);
+			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
+			double downloadCost = computeDownloadNetworkCost(transferMem);
 			double uploadCost = computeUploadCostWithFallback(
 					childHop, parentHop, childLOutFedPlan.getFType(), numOfWorkers);
 			childForwardingCostToCP[currentIndex] = computeForwardingCostShareForParent(
@@ -198,8 +198,8 @@ public class FederatedPlannerDpCostEstimator {
 			}
 			fOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
 					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan));
-			double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
-			double downloadCost = computeDownloadNetworkCost(outputMem);
+			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
+			double downloadCost = computeDownloadNetworkCost(transferMem);
 			fOUTOnlychildForwardingCostToCP.add(computeForwardingCostShareForParent(
 					downloadCost, childFOutFedPlan, hopCommon));
 		}
@@ -227,7 +227,7 @@ public class FederatedPlannerDpCostEstimator {
 				// TRead may have a different FedOutType from its parent, so calculate
 				// forwarding cost
 				hopCommon.setForwardingCost(computeDownloadNetworkCost(
-					FederatedCostModel.getEffectiveOutputMemEstimate(hopCommon.hopRef)));
+					FederatedCostModel.getEffectiveUploadMemEstimate(hopCommon.hopRef)));
 				return 0;
 			}
 		}
@@ -235,7 +235,7 @@ public class FederatedPlannerDpCostEstimator {
 		double selfCost = hopCommon.getComputeWeight() * hopCommon.getMultiplicity()
 				* FederatedCostModel.computeOpCostWithFallback(hopCommon.hopRef);
 		double forwardingCost = computeDownloadNetworkCost(
-			FederatedCostModel.getEffectiveOutputMemEstimate(hopCommon.hopRef));
+			FederatedCostModel.getEffectiveUploadMemEstimate(hopCommon.hopRef));
 
 		hopCommon.setSelfCost(selfCost);
 		hopCommon.setForwardingCost(forwardingCost);
@@ -256,7 +256,7 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	private static double computeUploadCostWithFallback(Hop childHop, Hop parentHop, FType uploadType, int numWorkers) {
-		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
+		double outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
 		double uploadCost = computeUploadNetworkCost(outputMemEstimate, uploadType, numWorkers);
 		FType effectiveUploadType = uploadType;
 		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0))

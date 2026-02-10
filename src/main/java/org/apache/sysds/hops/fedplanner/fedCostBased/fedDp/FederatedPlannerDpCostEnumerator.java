@@ -497,6 +497,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// the hop's own execution frequency, independent of parent-child forwarding.
 		double hopPlacementWeight = placementTransferWeight(hopCommon);
 		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		double uploadMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
 		double cpSelfCost = baseSelfCost;
 		// Align with MinST: FED execution has a fixed per-op coordination overhead that
 		// should be modeled even when compute cost scales down with workers.
@@ -505,7 +506,7 @@ public class FederatedPlannerDpCostEnumerator {
 				: hopNetworkWeight * FederatedCostModel.computeNetworkCost(0);
 		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers) + fedOverhead;
 		double resultDownloadCost = hopPlacementWeight
-				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMemEstimate);
+				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
 
 		final int enumerationLimit = 1 << numBothOutInputs;
 
@@ -670,7 +671,7 @@ public class FederatedPlannerDpCostEnumerator {
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
 				double cpUploadCost = hopPlacementWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-						outputMemEstimate, cpLogicalFType, numOfWorkers);
+						uploadMemEstimate, cpLogicalFType, numOfWorkers);
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 						hop, privacyConstraint, oracleLogicalFType, caps);
@@ -1357,10 +1358,10 @@ public class FederatedPlannerDpCostEnumerator {
 			throw new DMLRuntimeException("Expected both LOUT and FOUT plans for hop " + hopID);
 		}
 
-		double outputMem = FederatedCostModel.getEffectiveOutputMemEstimate(lOutPlan.getHopRef());
+		double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(lOutPlan.getHopRef());
 		double lOutUploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-				outputMem, lOutPlan.getFType(), numOfWorkers);
-		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(outputMem);
+				transferMem, lOutPlan.getFType(), numOfWorkers);
+		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(transferMem);
 
 		double lOutAdditionalCost = 0.0;
 		double fOutAdditionalCost = 0.0;

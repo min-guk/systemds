@@ -373,6 +373,7 @@ public class FederatedPlanMinSTCostEstimator {
 		double cpUploadCostWithoutWeight = 0;
 		double downloadCostWithoutWeight = 0;
 		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		double uploadMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
 		FType cpFoutType = vertex.getCpFoutDataType();
 		if (cpFoutType == null) {
 			cpFoutType = vertex.getDataType();
@@ -386,21 +387,21 @@ public class FederatedPlanMinSTCostEstimator {
 				downloadCostWithoutWeight = 0;
 			} else if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				opCostWithWeight = 0;
-				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						outputMemEstimate, vertex.getDataType(), numOfWorkers);
-				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						outputMemEstimate, cpFoutType, numOfWorkers);
+					uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+							uploadMemEstimate, vertex.getDataType(), numOfWorkers);
+					cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+							uploadMemEstimate, cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-						outputMemEstimate);
+						uploadMemEstimate);
 			} else {
 				double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
 				opCostWithWeight = vertex.getOpWeight() * opCost;
-				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						outputMemEstimate, vertex.getDataType(), numOfWorkers);
-				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-						outputMemEstimate, cpFoutType, numOfWorkers);
+					uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+							uploadMemEstimate, vertex.getDataType(), numOfWorkers);
+					cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+							uploadMemEstimate, cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-						outputMemEstimate);
+						uploadMemEstimate);
 			}
 			vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
 			vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
@@ -410,11 +411,11 @@ public class FederatedPlanMinSTCostEstimator {
 		double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
 		opCostWithWeight = vertex.getOpWeight() * opCost;
 		uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-				outputMemEstimate, vertex.getDataType(), numOfWorkers);
+				uploadMemEstimate, vertex.getDataType(), numOfWorkers);
 		cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-				outputMemEstimate, cpFoutType, numOfWorkers);
+				uploadMemEstimate, cpFoutType, numOfWorkers);
 		downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-				outputMemEstimate);
+				uploadMemEstimate);
 
 		vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
 		vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
@@ -544,13 +545,13 @@ public class FederatedPlanMinSTCostEstimator {
 			if (uploadType == null)
 				uploadType = vertex.getDataType();
 			double uploadCost = vertex.getCpUploadCostWithoutWeight();
-			if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
-				double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-				// Prefer reader estimate first, then fall back to matched loop-carry writer.
-				if (outputMemEstimate <= 0.0 && writerVertex.getHopRef() != null) {
-					outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(writerVertex.getHopRef());
-				}
-				if (outputMemEstimate > 0.0) {
+				if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
+					double outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
+					// Prefer reader estimate first, then fall back to matched loop-carry writer.
+					if (outputMemEstimate <= 0.0 && writerVertex.getHopRef() != null) {
+						outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(writerVertex.getHopRef());
+					}
+					if (outputMemEstimate > 0.0) {
 					uploadCost = FederatedCostModel.computeUploadNetworkCost(
 							outputMemEstimate, uploadType, graph.getNumOfWorkers());
 				}

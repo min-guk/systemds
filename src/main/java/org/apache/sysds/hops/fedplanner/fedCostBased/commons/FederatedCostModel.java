@@ -19,8 +19,12 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -32,6 +36,8 @@ public final class FederatedCostModel {
 	private static final String ENV_MBS_NETWORK_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_BW_W2C";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
 	private static final String ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS = "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS";
+	private static final String ENV_UPLOAD_ESTIMATE_CLAMP_RATIO = "SYSDS_FED_COST_UPLOAD_MEM_CLAMP_RATIO";
+	private static final String ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = "SYSDS_FED_COST_UNKNOWN_DIM_TRANSFER_MB";
 	private static final String ENV_FLOPS_PER_SEC = "SYSDS_FED_COST_FLOPS";
 	private static final double DEFAULT_MEM_ESTIMATE_PER_CELL = OptimizerUtils.DOUBLE_SIZE;
 	private static final double DEFAULT_FP32_MEM_ESTIMATE_PER_CELL = 4.0;
@@ -46,6 +52,14 @@ public final class FederatedCostModel {
 	// Network latency between federated sites (1 ms).
 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
 	private static final double DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS = 0.0;
+	// Clamp suspiciously large upload-size estimates when output dimensions are unknown.
+	// This avoids over-penalizing CP->FOUT candidates for shape-dependent operators
+	// (e.g., rightIndex/matmult chains before recompile resolves dimensions).
+	private static final double DEFAULT_UPLOAD_ESTIMATE_CLAMP_RATIO = 4.0;
+	private static final double DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES = 8d * 1024 * 1024 * 1024;
+	private static final double UNKNOWN_DIM_MEM_SENTINEL_EPSILON = 0.01;
+	private static final int UNKNOWN_DIM_DESCENT_MAX_DEPTH = 6;
+	private static final double DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = 64.0;
 	// Compute throughput (FLOPs/s), consistent with CostEstimatorStaticRuntime defaults.
 	private static final double DEFAULT_FLOPS_PER_SEC = 2d * 1024 * 1024 * 1024;
 	// All costs are returned in milliseconds.
@@ -62,6 +76,11 @@ public final class FederatedCostModel {
 			DEFAULT_MBS_NETWORK_LATENCY);
 	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = getConfiguredDouble(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
 			DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+	private static final double UPLOAD_ESTIMATE_CLAMP_RATIO = getConfiguredDouble(ENV_UPLOAD_ESTIMATE_CLAMP_RATIO,
+			DEFAULT_UPLOAD_ESTIMATE_CLAMP_RATIO);
+	private static final double UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES =
+		Math.max(1.0, getConfiguredDouble(ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB,
+			DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB) * 1024 * 1024);
 	private static final double FLOPS_PER_SEC = getConfiguredDouble(ENV_FLOPS_PER_SEC,
 			DEFAULT_FLOPS_PER_SEC);
 
@@ -146,6 +165,101 @@ public final class FederatedCostModel {
 			return outputMemEstimate;
 		}
 		return Math.max(0.0, hop.getOutputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
+	}
+
+	/**
+	 * Returns an upload-size estimate for CP->FOUT/local->FED transfers.
+	 *
+	 * <p>When output dimensions are unresolved at planning time, raw output-memory
+	 * estimates can be orders of magnitude larger than the true runtime payload.
+	 * For these cases, clamp uploads to input-memory scale to avoid systematic
+	 * over-penalization of CP->FOUT candidates.</p>
+	 */
+	public static double getEffectiveUploadMemEstimate(Hop hop) {
+		if (hop == null)
+			return 0.0;
+
+		double outputMemEstimate = getEffectiveOutputMemEstimate(hop);
+		double inputMemEstimate = getEffectiveInputMemEstimate(hop);
+		if (outputMemEstimate <= 0.0)
+			return Math.max(0.0, inputMemEstimate);
+		if (inputMemEstimate <= 0.0)
+			return outputMemEstimate;
+
+		// Indexing-derived sizes often carry one unresolved axis before recompile.
+		// Bound upload size with a square estimate on the known axis to avoid
+		// pathological over-estimation (e.g., rightIndex into principal components).
+		double indexingBound = getIndexingUploadBound(hop);
+		if (indexingBound > 0.0)
+			outputMemEstimate = Math.min(outputMemEstimate, indexingBound);
+
+		if (hasUnknownOutputDims(hop) && isLikelyDefaultUnknownMemEstimate(outputMemEstimate)) {
+			Set<Long> visited = new HashSet<>();
+			visited.add(hop.getHopID());
+			double descendantKnownMem = getKnownDescendantOutputMemEstimate(hop, UNKNOWN_DIM_DESCENT_MAX_DEPTH, visited);
+			if (descendantKnownMem > 0.0) {
+				outputMemEstimate = Math.min(outputMemEstimate, descendantKnownMem);
+				if (isLikelyDefaultUnknownMemEstimate(inputMemEstimate)) {
+					double fanInScale = Math.max(1, hop.getInput() == null ? 1 : hop.getInput().size());
+					inputMemEstimate = Math.min(inputMemEstimate, descendantKnownMem * fanInScale);
+				}
+			}
+		}
+		if (hasUnknownOutputDims(hop)
+			&& isLikelyDefaultUnknownMemEstimate(outputMemEstimate)
+			&& isLikelyDefaultUnknownMemEstimate(inputMemEstimate)) {
+			outputMemEstimate = Math.min(outputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES);
+			double fanInScale = Math.max(1, hop.getInput() == null ? 1 : hop.getInput().size());
+			inputMemEstimate = Math.min(inputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES * fanInScale);
+		}
+
+		double clampRatio = Math.max(1.0, UPLOAD_ESTIMATE_CLAMP_RATIO);
+		if (hasUnknownOutputDims(hop) && outputMemEstimate > inputMemEstimate * clampRatio)
+			return inputMemEstimate;
+		return outputMemEstimate;
+	}
+
+	private static boolean isLikelyDefaultUnknownMemEstimate(double memEstimate) {
+		if (memEstimate <= 0.0)
+			return false;
+		double lower = DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES * (1.0 - UNKNOWN_DIM_MEM_SENTINEL_EPSILON);
+		double upper = DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES * (1.0 + UNKNOWN_DIM_MEM_SENTINEL_EPSILON);
+		return memEstimate >= lower && memEstimate <= upper;
+	}
+
+	private static double getKnownDescendantOutputMemEstimate(Hop hop, int remainingDepth, Set<Long> visited) {
+		if (hop == null || remainingDepth <= 0 || hop.getInput() == null || hop.getInput().isEmpty())
+			return 0.0;
+		double best = 0.0;
+		for (Hop input : hop.getInput()) {
+			if (input == null || !visited.add(input.getHopID()))
+				continue;
+			double inputMem = getEffectiveOutputMemEstimate(input);
+			if (inputMem > 0.0 && !isLikelyDefaultUnknownMemEstimate(inputMem))
+				best = Math.max(best, inputMem);
+			best = Math.max(best,
+				getKnownDescendantOutputMemEstimate(input, remainingDepth - 1, visited));
+		}
+		return best;
+	}
+
+	private static boolean hasUnknownOutputDims(Hop hop) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		return !hop.dimsKnown() || hop.getDim1() <= 0 || hop.getDim2() <= 0;
+	}
+
+	private static double getIndexingUploadBound(Hop hop) {
+		if (!(hop instanceof IndexingOp) || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return 0.0;
+		long rows = hop.getDim1();
+		long cols = hop.getDim2();
+		double perCell = getInjectedDefaultMemEstimatePerCell(hop);
+		if (rows > 0 && cols <= 0)
+			return rows * (double) rows * perCell;
+		if (cols > 0 && rows <= 0)
+			return cols * (double) cols * perCell;
+		return 0.0;
 	}
 
 	public static double computeNetworkCost(double memSize) {

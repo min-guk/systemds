@@ -526,6 +526,53 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testPlannerAllowsRequiredLocalDerivedInputWhenFedSiblingPresent() {
+		DataOp fedMatrix = createFederatedInput("X", 100, 50);
+		DataOp localA = createLocalMatrix("A", 50, 10);
+		DataOp localB = createLocalMatrix("B", 50, 10);
+
+		BinaryOp localDerived = HopRewriteUtils.createBinary(localA, localB, OpOp2.PLUS);
+		localDerived.setDim1(50);
+		localDerived.setDim2(10);
+		localDerived.setForcedExecType(ExecType.CP);
+		localDerived.setFederatedOutput(FederatedOutput.LOUT);
+
+		AggBinaryOp fedParent = HopRewriteUtils.createMatrixMultiply(fedMatrix, localDerived);
+		fedParent.setDim1(100);
+		fedParent.setDim2(10);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
+
+		assertTrue("Expected planner feasibility to allow required local derived input when FED sibling provides a concrete anchor",
+			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, fTypeMap));
+	}
+
+	@Test
+	public void testPlannerRejectsRequiredLocalDerivedInputWithoutFedSiblingAnchor() {
+		DataOp localMatrix = createLocalMatrix("X", 100, 50);
+		DataOp localA = createLocalMatrix("A", 50, 10);
+		DataOp localB = createLocalMatrix("B", 50, 10);
+
+		BinaryOp localDerived = HopRewriteUtils.createBinary(localA, localB, OpOp2.PLUS);
+		localDerived.setDim1(50);
+		localDerived.setDim2(10);
+		localDerived.setForcedExecType(ExecType.CP);
+		localDerived.setFederatedOutput(FederatedOutput.LOUT);
+
+		AggBinaryOp fedParent = HopRewriteUtils.createMatrixMultiply(localMatrix, localDerived);
+		fedParent.setDim1(100);
+		fedParent.setDim2(10);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		assertFalse("Required local inputs without any FED sibling anchor must not pass FED-input feasibility",
+			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, new HashMap<>()));
+	}
+
+	@Test
 	public void testRecompileTransientWriteCanPromoteMatchingTransientRead() {
 		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
 		tRead.setForcedExecType(ExecType.CP);

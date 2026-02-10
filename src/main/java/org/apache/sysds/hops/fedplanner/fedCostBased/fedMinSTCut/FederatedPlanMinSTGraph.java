@@ -268,8 +268,8 @@ public class FederatedPlanMinSTGraph {
 		double uploadCost = childVertex.getCpUploadCostWithoutWeight();
 		if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
 			final double originalUploadCost = uploadCost;
-			Hop childHop = childHopRef;
-			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
+				Hop childHop = childHopRef;
+				double outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
 			if (uploadConversionType != null && outputMemEstimate > 0.0) {
 				uploadCost = FederatedCostModel.computeUploadNetworkCost(
 						outputMemEstimate, uploadConversionType, numOfWorkers);
