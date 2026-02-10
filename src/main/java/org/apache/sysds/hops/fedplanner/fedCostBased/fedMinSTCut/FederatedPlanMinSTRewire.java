@@ -939,6 +939,9 @@ public class FederatedPlanMinSTRewire {
 			List<Hop> collectedHopList = new ArrayList<>();
 			List<Integer> collectedInputIndices = new ArrayList<>();
 			boolean hasGuaranteedFoutInput = false;
+			boolean hasNonConcreteLocalMatrixInput = false;
+			boolean hasSubtractiveLocalMatrixInput = false;
+			boolean hasFederatedHintInput = false;
 			for (int inputIndex = 0; inputIndex < collectedHops.size(); inputIndex++) {
 				Hop input = collectedHops.get(inputIndex);
 				if (input == null)
@@ -963,36 +966,95 @@ public class FederatedPlanMinSTRewire {
 						&& (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
 					boolean inputHasConcreteFoutPath = inputCaps != null
 						&& (inputCaps.allowCP_FOUT || inputCaps.allowFED_FOUT);
-					boolean inputCanRefed = false;
+						boolean vectorParent = FederatedPlannerUtils.isVectorShape(hop);
+						boolean requiresFederatedInput = requiresFederatedInputForParent(hop, input, inputIndex, fTypeMap);
+						boolean shouldAllowRequiredRefedInference =
+							requiresFederatedInput
+							&& !vectorParent
+							&& (hop instanceof AggBinaryOp)
+							&& (input instanceof IndexingOp);
+						boolean inputNativeFedFout = inputCaps != null
+							&& inputCaps.allowFED_FOUT
+							&& inputCaps.fedFoutMode == ExecPlacementCaps.FedFoutMode.NATIVE;
+						boolean inputCanRefed = false;
 					// Important: when child caps are already known and expose no FOUT path,
 					// do not resurrect a FED hint via canGenerateCpfoutCandidate(). That
 					// candidate check is anchor-based and can ignore runtime FOUT constraints
 					// (e.g., FOUT_NOT_SUPPORTED ops like REXPAND).
-					boolean allowRefedInference = (inputCaps == null) || inputHasConcreteFoutPath;
-					if (!inputGuaranteedFout && inputMayBeLocal && allowRefedInference) {
-						try {
-							inputCanRefed = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
+					// Exception: for non-vector parents that require a federated input on this edge,
+					// we must still test concrete CP->FOUT feasibility for AggBinary+Indexing paths;
+					// otherwise required edges can get stuck in CP-only and force broad local plans
+					// (e.g., PCA right-index chains).
+					boolean allowRefedInference = (inputCaps == null)
+						|| inputHasConcreteFoutPath
+						|| shouldAllowRequiredRefedInference;
+						if (!inputGuaranteedFout && inputMayBeLocal && allowRefedInference) {
+							try {
+								inputCanRefed = FederatedRefedPolicy.canGenerateCpfoutCandidate(input, fTypeMap);
+							}
+							catch (DMLRuntimeException ex) {
+								inputCanRefed = false;
+							}
 						}
-						catch (DMLRuntimeException ex) {
-							inputCanRefed = false;
+						// For vector-like parents, be conservative on derived/refed inference, but always
+						// treat native FED/FOUT support as a concrete materialization path.
+						// For non-vector parents, explicit child caps exposing a concrete FOUT path are safe.
+						boolean hasConcreteFoutPath = inputGuaranteedFout || inputCanRefed;
+						if (!vectorParent)
+							hasConcreteFoutPath = hasConcreteFoutPath || inputHasConcreteFoutPath;
+						boolean hasParentUploadHint = graph.hasParentChildUploadHint(hop.getHopID(), input.getHopID());
+						// Keep Oracle FED-hint gating strict: only hard input requirements should force
+						// federated demand. Parent upload hints are soft cost signals and must not push
+						// optional local-capable edges into FED execution candidates.
+						boolean hasFederatedDemand = requiresFederatedInput;
+						if (oracleInputFType == null && inputNativeFedFout && hasFederatedDemand) {
+							oracleInputFType = inputVertex.getDataType();
+							if (oracleInputFType == null)
+								oracleInputFType = inputVertex.getCpFoutDataType();
 						}
-					}
-					boolean hasConcreteFoutPath = inputHasConcreteFoutPath || (inputCaps == null && inputCanRefed);
-					boolean requiresFederatedInput = requiresFederatedInputForParent(hop, input, inputIndex, fTypeMap);
-					boolean hasParentUploadHint = graph.hasParentChildUploadHint(hop.getHopID(), input.getHopID());
-					boolean hasFederatedDemand = requiresFederatedInput || hasParentUploadHint;
-
-					if (!inputGuaranteedFout && inputMayBeLocal
-						&& (!hasConcreteFoutPath || !hasFederatedDemand)) {
-						oracleInputFType = null;
-					}
-					else if (oracleInputFType == null) {
-						if (hasConcreteFoutPath || inputGuaranteedFout || !inputMayBeLocal) {
-							oracleInputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
+						if (!inputGuaranteedFout && inputMayBeLocal
+								&& (!hasConcreteFoutPath || !hasFederatedDemand)) {
+							oracleInputFType = null;
+						}
+						if (oracleInputFType == null) {
+							boolean shouldInferHint = !inputMayBeLocal
+								|| inputGuaranteedFout
+								|| (hasFederatedDemand && hasConcreteFoutPath);
+							if (shouldInferHint) {
+								oracleInputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
+							}
+						}
+					if (input.getDataType() != null && input.getDataType().isMatrix()) {
+						if (oracleInputFType != null)
+							hasFederatedHintInput = true;
+						if (inputMayBeLocal && !inputGuaranteedFout && !hasConcreteFoutPath) {
+							hasNonConcreteLocalMatrixInput = true;
+							if (isSubtractiveMatrixBinary(input))
+								hasSubtractiveLocalMatrixInput = true;
 						}
 					}
 				}
+				else if (input.getDataType() != null && input.getDataType().isMatrix()
+						&& oracleInputFType != null) {
+					hasFederatedHintInput = true;
+				}
 				oracleInputFTypes.add(oracleInputFType);
+			}
+			// For protected aggregate matmul: if any matrix input is local-only without a concrete
+			// materialization path, avoid mixed FED/local hints that lead to repeated per-iteration refed.
+			// Force Oracle re-evaluation with local inputs to keep this hop on CP unless all matrix inputs
+			// are concretely federatable.
+			if (hop instanceof AggBinaryOp
+				&& privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC
+				&& hasNonConcreteLocalMatrixInput
+				&& ((hop.getParent() != null && hop.getParent().size() > 2)
+					|| hasSubtractiveLocalMatrixInput)
+				&& hasFederatedHintInput) {
+				for (int i = 0; i < collectedHopList.size() && i < oracleInputFTypes.size(); i++) {
+					Hop input = collectedHopList.get(i);
+					if (input != null && input.getDataType() != null && input.getDataType().isMatrix())
+						oracleInputFTypes.set(i, null);
+				}
 			}
 
 			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
@@ -1036,12 +1098,36 @@ public class FederatedPlanMinSTRewire {
 			FType cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 				hop, fType, rewireTable, numWorkersEstimate);
 
-			// Exec/Placement capability 결정
-			caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
-			Map<Long, FType> oracleAlignedInputFTypeMap =
-				buildOracleAlignedInputFTypeMap(fTypeMap, collectedHopList, oracleInputFTypes);
-			boolean fedInputsSatisfied = FederatedRefedPolicy
-				.canSatisfyFederatedInputsFromFTypes(hop, oracleAlignedInputFTypeMap);
+				// Exec/Placement capability 결정
+				caps = buildExecPlacementCaps(hop, privacy, fType, opCaps, fTypeMap);
+				// If Oracle input hints are mixed (some FED hints, some local/null), a single Oracle
+				// decision can over-constrain this hop to FED-only or CP-only even though both are
+				// legal under different materialization choices. Keep planning candidates complete by
+				// evaluating a local-only alternative and merging CP placements.
+				ExecPlacementCaps localAlternativeCaps = deriveLocalAlternativeCaps(
+					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
+				if (localAlternativeCaps != null) {
+					caps.allowCP_LOUT |= localAlternativeCaps.allowCP_LOUT;
+					caps.allowCP_FOUT |= localAlternativeCaps.allowCP_FOUT;
+				}
+				ExecPlacementCaps federatedAlternativeCaps = deriveFederatedAlternativeCaps(
+					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
+				if (federatedAlternativeCaps != null) {
+					caps.allowFED_LOUT |= federatedAlternativeCaps.allowFED_LOUT;
+					caps.allowFED_FOUT |= federatedAlternativeCaps.allowFED_FOUT;
+					if (caps.fedFoutMode == ExecPlacementCaps.FedFoutMode.DISABLED
+							&& federatedAlternativeCaps.allowFED_FOUT) {
+						caps.fedFoutMode = federatedAlternativeCaps.fedFoutMode;
+					}
+				}
+				Map<Long, FType> oracleAlignedInputFTypeMap =
+					buildOracleAlignedInputFTypeMap(fTypeMap, collectedHopList, oracleInputFTypes);
+				boolean fedInputsSatisfied = FederatedRefedPolicy
+					.canSatisfyFederatedInputsFromFTypes(hop, oracleAlignedInputFTypeMap);
+				if (!fedInputsSatisfied && federatedAlternativeCaps != null
+						&& (federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT)) {
+					fedInputsSatisfied = true;
+				}
 			if (!fedInputsSatisfied) {
 				caps.allowFED_LOUT = false;
 				caps.allowFED_FOUT = false;
@@ -1238,10 +1324,9 @@ public class FederatedPlanMinSTRewire {
 
 			boolean hasConcreteFoutPath = false;
 			try {
+				// Keep fallback re-evaluation on concrete CP->FOUT feasibility only.
 				hasConcreteFoutPath = FederatedRefedPolicy.canGenerateCpfoutCandidate(
-					input, oracleAlignedInputFTypeMap)
-					|| FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(
-						input, oracleAlignedInputFTypeMap);
+					input, oracleAlignedInputFTypeMap);
 			}
 			catch (DMLRuntimeException ex) {
 				hasConcreteFoutPath = false;
@@ -1255,7 +1340,7 @@ public class FederatedPlanMinSTRewire {
 	}
 
 	private static boolean requiresFederatedInputForParent(Hop parentHop, Hop inputHop, int inputIndex,
-			Map<Long, FType> inputFTypes) {
+				Map<Long, FType> inputFTypes) {
 		if (parentHop == null || inputHop == null)
 			return true;
 		if (inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
@@ -1265,6 +1350,125 @@ public class FederatedPlanMinSTRewire {
 		FederatedRefedPolicy.InputRequirement requirement = FederatedRefedPolicy.getInputRequirementForFedExec(
 				parentHop, inputHop, inputIndex, inputFTypes);
 		return requirement != FederatedRefedPolicy.InputRequirement.OPTIONAL;
+	}
+
+	private static boolean isSubtractiveMatrixBinary(Hop hop) {
+		if (!(hop instanceof BinaryOp))
+			return false;
+		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		Types.OpOp2 op = ((BinaryOp) hop).getOp();
+		return op == Types.OpOp2.MINUS || op == Types.OpOp2.MINUS1_MULT;
+	}
+
+	private static ExecPlacementCaps deriveLocalAlternativeCaps(Hop hop, Privacy privacy,
+			List<Hop> inputHops, List<FType> oracleInputFTypes,
+			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable,
+			Map<Long, FType> fTypeMap) {
+		if (hop == null || inputHops == null || inputHops.isEmpty()
+				|| oracleInputFTypes == null || oracleInputFTypes.size() != inputHops.size())
+			return null;
+		boolean hasFedHint = false;
+		boolean hasNullHint = false;
+		for (int i = 0; i < inputHops.size(); i++) {
+			Hop input = inputHops.get(i);
+			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			FType hint = oracleInputFTypes.get(i);
+			if (hint == null)
+				hasNullHint = true;
+			else
+				hasFedHint = true;
+		}
+		// If any matrix input is hinted as FED, also evaluate local-only hints so
+		// Oracle-driven FED selections do not suppress legal CP candidates.
+		if (!hasFedHint)
+			return null;
+
+		List<FType> localOnlyInputHints = new ArrayList<>(oracleInputFTypes.size());
+		for (int i = 0; i < inputHops.size(); i++) {
+			Hop input = inputHops.get(i);
+			if (input != null && input.getDataType() != null && input.getDataType().isMatrix())
+				localOnlyInputHints.add(null);
+			else
+				localOnlyInputHints.add(oracleInputFTypes.get(i));
+		}
+		try {
+			OracleUtils.OracleDecision localOracleDecision = OracleUtils.decideWithOracle(
+				hop, privacy, inputHops, localOnlyInputHints, oracleFacade, null, rewireTable);
+			OpCaps localOpCaps = localOracleDecision.caps();
+			FType localFType = localOracleDecision.logicalFType();
+			if (localFType == null && fTypeMap != null)
+				localFType = fTypeMap.get(hop.getHopID());
+			return buildExecPlacementCaps(hop, privacy, localFType, localOpCaps, fTypeMap);
+		}
+		catch (DMLRuntimeException ex) {
+			return null;
+		}
+	}
+
+	private static ExecPlacementCaps deriveFederatedAlternativeCaps(Hop hop, Privacy privacy,
+			List<Hop> inputHops, List<FType> oracleInputFTypes,
+			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable,
+			Map<Long, FType> fTypeMap) {
+		if (hop == null || inputHops == null || inputHops.isEmpty()
+				|| oracleInputFTypes == null || oracleInputFTypes.size() != inputHops.size()
+				|| fTypeMap == null || fTypeMap.isEmpty())
+			return null;
+
+		ExecPlacementCaps mergedFedCaps = null;
+		for (int i = 0; i < inputHops.size(); i++) {
+			Hop input = inputHops.get(i);
+			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			if (oracleInputFTypes.get(i) != null)
+				continue;
+
+			FType plannedInputFType = fTypeMap.get(input.getHopID());
+			if (plannedInputFType == null)
+				continue;
+
+			List<FType> promotedInputHints = new ArrayList<>(oracleInputFTypes);
+			promotedInputHints.set(i, plannedInputFType);
+			try {
+				OracleUtils.OracleDecision promotedDecision = OracleUtils.decideWithOracle(
+					hop, privacy, inputHops, promotedInputHints, oracleFacade, null, rewireTable);
+				OpCaps promotedOpCaps = promotedDecision.caps();
+				FType promotedFType = promotedDecision.logicalFType();
+				if (promotedFType == null)
+					promotedFType = fTypeMap.get(hop.getHopID());
+				ExecPlacementCaps promotedCaps = buildExecPlacementCaps(
+					hop, privacy, promotedFType, promotedOpCaps, fTypeMap);
+				Map<Long, FType> promotedAlignedMap =
+					buildOracleAlignedInputFTypeMap(fTypeMap, inputHops, promotedInputHints);
+				boolean promotedFedSatisfied = FederatedRefedPolicy
+					.canSatisfyFederatedInputsFromFTypes(hop, promotedAlignedMap);
+				if (!promotedFedSatisfied)
+					continue;
+				if (!promotedCaps.allowFED_LOUT && !promotedCaps.allowFED_FOUT)
+					continue;
+
+				if (mergedFedCaps == null) {
+					mergedFedCaps = new ExecPlacementCaps();
+					mergedFedCaps.allowCP_LOUT = false;
+					mergedFedCaps.allowCP_FOUT = false;
+					mergedFedCaps.allowFED_LOUT = false;
+					mergedFedCaps.allowFED_FOUT = false;
+					mergedFedCaps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
+				}
+				mergedFedCaps.allowFED_LOUT |= promotedCaps.allowFED_LOUT;
+				mergedFedCaps.allowFED_FOUT |= promotedCaps.allowFED_FOUT;
+				if (mergedFedCaps.fedFoutMode == ExecPlacementCaps.FedFoutMode.DISABLED
+						&& promotedCaps.allowFED_FOUT) {
+					mergedFedCaps.fedFoutMode = promotedCaps.fedFoutMode;
+				}
+			}
+			catch (DMLRuntimeException ex) {
+				// Best-effort candidate expansion: ignore invalid promoted hints.
+			}
+		}
+		return (mergedFedCaps != null && (mergedFedCaps.allowFED_LOUT || mergedFedCaps.allowFED_FOUT))
+			? mergedFedCaps : null;
 	}
 
 	private static ExecPlacementCaps buildLocalOnlyCaps(Hop hop, Privacy privacy, FType fType,
@@ -1312,8 +1516,11 @@ public class FederatedPlanMinSTRewire {
 		ExecPlacementPolicy.Decision policyDecision = ExecPlacementPolicy.decide(
 				hop, privacy, fType, capsOracle);
 		if (!policyDecision.hasAny()) {
-			throw new DMLRuntimeException("Unsupported privacy level " + privacy
-					+ " for hop " + hop.getHopID() + " (" + hop.getOpString() + ")");
+			FederatedPlannerLogger.logWarnMessage(
+					"[MinST] Empty exec/placement policy decision for hop " + hop.getHopID()
+							+ " (" + hop.getOpString() + "), privacy=" + privacy
+							+ ". Applying conservative fallback.");
+			policyDecision = buildConservativePolicyDecision(privacy);
 		}
 
 		caps.allowCP_LOUT = policyDecision.allowCP_LOUT;
@@ -1361,6 +1568,19 @@ public class FederatedPlanMinSTRewire {
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 		}
 		return caps;
+	}
+
+	private static ExecPlacementPolicy.Decision buildConservativePolicyDecision(Privacy privacy) {
+		ExecPlacementPolicy.Decision fallback = new ExecPlacementPolicy.Decision();
+		if (privacy == Privacy.PRIVATE) {
+			// Keep strict privacy-safe fallback for PRIVATE results.
+			fallback.allowFED_FOUT = true;
+		}
+		else {
+			// For all other levels, keep execution local rather than failing rewrite.
+			fallback.allowCP_LOUT = true;
+		}
+		return fallback;
 	}
 
 	private static ExecPlacementCaps applyTransientPlacementRestrictions(Hop hop, ExecPlacementCaps caps) {
