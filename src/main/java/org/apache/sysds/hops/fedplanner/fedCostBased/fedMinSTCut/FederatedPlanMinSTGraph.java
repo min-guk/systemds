@@ -576,6 +576,7 @@ public class FederatedPlanMinSTGraph {
 			}
 
 			repairTransientReadWriteSelection(execSelection, outSelection);
+			repairFederatedInputSelection(execSelection, outSelection);
 
 			for (Vertex vertex : memoTable.values()) {
 				long hopID = vertex.getHopID();
@@ -658,6 +659,62 @@ public class FederatedPlanMinSTGraph {
 			}
 		}
 		while (changed && iter < 4);
+	}
+
+	private void repairFederatedInputSelection(Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		if (execSelection == null || outSelection == null)
+			return;
+		boolean changed;
+		int iter = 0;
+		do {
+			changed = false;
+			iter++;
+			Map<Long, FType> selectedFTypeMap = buildSelectedFTypeMap(execSelection, outSelection);
+			for (Vertex vertex : memoTable.values()) {
+				if (vertex == null || vertex.getHopRef() == null || vertex.getCaps() == null)
+					continue;
+				long hopId = vertex.getHopID();
+				if (execSelection.getOrDefault(hopId, ExecType.CP) != ExecType.FED)
+					continue;
+
+				Hop hop = vertex.getHopRef();
+				if (FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, selectedFTypeMap))
+					continue;
+
+				ExecPlacementCaps caps = vertex.getCaps();
+				if (caps.allowCP_LOUT || caps.allowCP_FOUT) {
+					execSelection.put(hopId, ExecType.CP);
+					outSelection.put(hopId, FederatedOutput.LOUT);
+					selectedFTypeMap.put(hopId, null);
+					changed = true;
+					if (FederatedPlannerTrace.shouldTrace(hop))
+						FederatedPlannerTrace.log(hop, "MinST-FedInput-Repair",
+								"demote parent " + hopId + " to CP/LOUT due unsatisfied FED inputs");
+				}
+			}
+		}
+		while (changed && iter < 4);
+	}
+
+	private Map<Long, FType> buildSelectedFTypeMap(Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		Map<Long, FType> selected = new HashMap<>();
+		for (Vertex vertex : memoTable.values()) {
+			if (vertex == null)
+				continue;
+			long hopId = vertex.getHopID();
+			ExecType exec = execSelection.getOrDefault(hopId, ExecType.CP);
+			FederatedOutput out = outSelection.getOrDefault(hopId, FederatedOutput.LOUT);
+			if (out == FederatedOutput.FOUT) {
+				FType type = (exec == ExecType.FED) ? vertex.getDataType() : vertex.getCpFoutDataType();
+				selected.put(hopId, type != null ? type : FType.BROADCAST);
+			}
+			else {
+				selected.put(hopId, null);
+			}
+		}
+		return selected;
 	}
 
 	private void logSelectedDecision(Vertex vertex, Set<Long> sourceSide) {
