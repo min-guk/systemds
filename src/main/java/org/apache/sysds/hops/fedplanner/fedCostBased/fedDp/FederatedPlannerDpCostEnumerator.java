@@ -697,6 +697,12 @@ public class FederatedPlannerDpCostEnumerator {
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
 					placementDecision.allowCP_FOUT = false;
 				}
+				// Keep DP candidate space aligned with MinST's legal state encoding:
+				// MinST cannot safely represent CP/FOUT when FED/FOUT is disallowed.
+				// If DP keeps this state, DP/MinST optimize over different state spaces.
+				if (placementDecision.allowCP_FOUT && !placementDecision.allowFED_FOUT) {
+					placementDecision.allowCP_FOUT = false;
+				}
 				if (caps != null && caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT) {
 					sawOracleFedFout = true;
 				}
