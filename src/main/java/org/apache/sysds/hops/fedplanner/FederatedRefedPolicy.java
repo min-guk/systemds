@@ -427,6 +427,8 @@ public final class FederatedRefedPolicy {
 			ExecType exec = getPlannedExecType(hop);
 			if (exec == null)
 				exec = ExecType.CP;
+			if (shouldDemoteAggBinaryFedFout(hop, exec, fTypeMap))
+				hop.setFederatedOutput(FederatedOutput.LOUT);
 			boolean localOutput = exec == ExecType.CP
 					|| (exec == ExecType.FED && (hop.hasLocalOutput() || hop.isFederatedOutputDerived()));
 			if (localOutput && hop.getDataType().isMatrix()) {
@@ -2351,6 +2353,27 @@ public final class FederatedRefedPolicy {
 				return true;
 		}
 		return false;
+	}
+
+	private static boolean shouldDemoteAggBinaryFedFout(Hop hop, ExecType exec, Map<Long, FType> fTypeMap) {
+		if (!(hop instanceof AggBinaryOp))
+			return false;
+		if (exec != ExecType.FED || hop.getFederatedOutput() != FederatedOutput.FOUT)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.size() < 2)
+			return false;
+		FType left = getKnownFType(inputs.get(0), fTypeMap);
+		FType right = getKnownFType(inputs.get(1), fTypeMap);
+		if (left == null || right == null)
+			return false;
+		boolean leftColLike = left.isType(FType.COL);
+		boolean rightRowLike = right.isType(FType.ROW);
+		if (!leftColLike || !rightRowLike)
+			return false;
+		boolean leftReplicated = (left == FType.FULL || left == FType.BROADCAST);
+		boolean rightReplicated = (right == FType.FULL || right == FType.BROADCAST);
+		return leftReplicated && rightReplicated;
 	}
 
 	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,

@@ -2626,7 +2626,7 @@ public final class Rulesets {
       if (isTsmmType(tsmmType)) {
         if (inFTypes == null || inFTypes.isEmpty())
           return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
-        return tsmmCaps(sig, normalize(typeAt(inFTypes, 0)), tsmmType);
+        return tsmmCaps(sig, normalize(typeAt(inFTypes, tsmmInputIndex(tsmmType))), tsmmType);
       }
 
       FType left = normalize(typeAt(inFTypes, 0));
@@ -2637,9 +2637,17 @@ public final class Rulesets {
       boolean rIsVector = attrBoolean(sig, ATTR_R_IS_VECTOR);
 
       boolean leftRowLike = isRowPartition(left);
+      boolean leftColLike = left != null && left.isType(FType.COL);
       boolean leftStrictRow = left == FType.ROW;
       boolean rightIsRow = right == FType.ROW;
+      boolean rightRowLike = right != null && right.isType(FType.ROW);
+      boolean alignColT = isAlignColT(sig);
       boolean partOut = (left == FType.PART) || (!rIsVector && right == FType.PART);
+
+      // Runtime AggregateBinaryFEDInstruction handles COL_T-aligned (left COL-like, right ROW-like)
+      // by local aggregation; forcing FOUT here causes planner/runtime mismatch.
+      if (leftColLike && rightRowLike && alignColT)
+        return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
 
       if (leftRowLike) {
         if (partOut)
@@ -2699,6 +2707,11 @@ public final class Rulesets {
 
     private static boolean isTsmmType(String tsmmType) {
       return "LEFT".equalsIgnoreCase(tsmmType) || "RIGHT".equalsIgnoreCase(tsmmType);
+    }
+
+    private static int tsmmInputIndex(String tsmmType) {
+      // AggBinaryOp.checkTransposeSelf(): LEFT is t(X)%*%X (input1 is X), RIGHT is X%*%t(X) (input0 is X).
+      return "LEFT".equalsIgnoreCase(tsmmType) ? 1 : 0;
     }
 
     private static boolean hasFederated(List<FType> types) {

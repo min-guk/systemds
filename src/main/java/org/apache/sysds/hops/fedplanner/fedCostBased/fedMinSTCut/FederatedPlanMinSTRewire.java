@@ -1670,6 +1670,10 @@ public class FederatedPlanMinSTRewire {
 			return false;
 		if (hop == null || !hop.getDataType().isMatrix())
 			return false;
+		// Runtime AggregateBinary FED execution has COL_T-aligned branches that aggregate locally.
+		// Keep AggBinary on FED/LOUT unless native FOUT is explicitly supported by oracle caps.
+		if (hop instanceof AggBinaryOp)
+			return false;
 		if (!isDerivedFoutPrivacyAllowed(privacy))
 			return false;
 		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap))

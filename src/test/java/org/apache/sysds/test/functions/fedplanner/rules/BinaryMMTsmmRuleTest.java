@@ -42,7 +42,7 @@ public class BinaryMMTsmmRuleTest {
 
   @Test
   public void tsmmLeftRowUsesFedLoutOnly() {
-    OpCaps caps = rule.caps(sig(Map.of("tsmm.type", "LEFT")), Arrays.asList(FType.ROW, null), UNKNOWN);
+    OpCaps caps = rule.caps(sig(Map.of("tsmm.type", "LEFT")), Arrays.asList(FType.COL, FType.ROW), UNKNOWN);
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -51,7 +51,7 @@ public class BinaryMMTsmmRuleTest {
 
   @Test
   public void tsmmRightColUsesFedLoutOnly() {
-    OpCaps caps = rule.caps(sig(Map.of("tsmm.type", "RIGHT")), Arrays.asList(FType.COL, null), UNKNOWN);
+    OpCaps caps = rule.caps(sig(Map.of("tsmm.type", "RIGHT")), Arrays.asList(FType.COL, FType.ROW), UNKNOWN);
     assertEquals(ExecType.FED, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertFalse(caps.foutEnabled());
@@ -60,7 +60,7 @@ public class BinaryMMTsmmRuleTest {
 
   @Test
   public void tsmmAxisMismatchFallsBackToCp() {
-    OpCaps caps = rule.caps(sig(Map.of("tsmm.type", "LEFT")), Arrays.asList(FType.COL, null), UNKNOWN);
+    OpCaps caps = rule.caps(sig(Map.of("tsmm.type", "LEFT")), Arrays.asList(FType.COL, FType.COL), UNKNOWN);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(FederatedOutput.LOUT, caps.placement());
     assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, caps.reason());
@@ -73,6 +73,15 @@ public class BinaryMMTsmmRuleTest {
         List.of(List.of(FType.ROW), List.of()),
         UNKNOWN).outputs();
     assertEquals(List.of(FType.BROADCAST), outs);
+  }
+
+  @Test
+  public void colTAlignedColFullInputsAreFedLoutOnly() {
+    OpCaps caps = rule.caps(sig(Map.of("align", "COL_T")), Arrays.asList(FType.COL, FType.FULL), UNKNOWN);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
+    assertFalse(caps.foutEnabled());
+    assertEquals(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME, caps.reason());
   }
 
   private static OpSig sig(Map<String,String> attrs) {
