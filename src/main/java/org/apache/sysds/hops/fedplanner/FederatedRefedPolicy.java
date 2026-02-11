@@ -229,12 +229,20 @@ public final class FederatedRefedPolicy {
 			if (clearRegistry)
 				clearCpfoutAnchorCache();
 			// In the recompiler path we get the authoritative runtime federation state (signatures/types)
-			// from the current symbol table. Reset variable anchor keys to avoid staleness across recompilations.
-			boolean runtimeContext = (runtimeSignatures != null && !runtimeSignatures.isEmpty());
+			// from the current symbol table. Treat a provided (even empty) runtimeSignatures map as
+			// authoritative and reset variable anchor keys to avoid staleness across recompilations.
+			boolean runtimeContext = (runtimeSignatures != null);
 			if (clearRegistry && runtimeContext)
 				FederatedPlannerUtils.clearFedAnchorKeys();
 			if (roots == null || roots.isEmpty())
 				return;
+			Set<String> runtimeLocalTransientReads = null;
+			if (runtimeContext) {
+				runtimeLocalTransientReads = new HashSet<>();
+				LOCAL_TR_VARS.set(runtimeLocalTransientReads);
+			}
+
+			try {
 
 			// Make runtime federated variables visible to anchor selection and "runtime federated input"
 			// checks by registering a stable signature-based anchor key per variable.
@@ -271,39 +279,48 @@ public final class FederatedRefedPolicy {
 						hopSbIds.put(hop.getHopID(), sbId);
 				}
 			}
-			if (runtimeSignatures != null && !runtimeSignatures.isEmpty()) {
+			if (runtimeSignatures != null) {
 				for (Hop hop : all) {
 					if (!(hop instanceof DataOp))
-					continue;
-				DataOp dataOp = (DataOp) hop;
-				if (dataOp.getOp() != OpOpData.TRANSIENTREAD)
-					continue;
-				String name = dataOp.getName();
-				if (name == null || name.isEmpty())
-					continue;
-				boolean runtimeFed = runtimeSignatures.containsKey(name)
-					|| FederatedPlannerUtils.isFedInitVar(name)
-					|| FederatedPlannerUtils.getFedAnchorKey(name) != null;
-				ExecType planned = getPlannedExecType(hop);
-				if (runtimeFed) {
-					if (planned != ExecType.FED) {
-						hop.setForcedExecType(ExecType.FED);
-						hop.setFederatedOutput(FederatedOutput.FOUT);
+						continue;
+					DataOp dataOp = (DataOp) hop;
+					if (dataOp.getOp() != OpOpData.TRANSIENTREAD)
+						continue;
+					String name = dataOp.getName();
+					if (name == null || name.isEmpty())
+						continue;
+					// In runtime recompile, runtimeSignatures are authoritative for current symbol-table
+					// federation state. Stale fed-init markers and propagated anchor keys must be removed
+					// for transient reads that are not federated at runtime.
+					boolean runtimeFed = runtimeSignatures.containsKey(name);
+					ExecType planned = getPlannedExecType(hop);
+					if (runtimeFed) {
+						if (runtimeLocalTransientReads != null)
+							runtimeLocalTransientReads.remove(name);
+						if (planned != ExecType.FED) {
+							hop.setForcedExecType(ExecType.FED);
+							hop.setFederatedOutput(FederatedOutput.FOUT);
+						}
+						if (fTypeMap != null && runtimeTypes != null) {
+							FType runtimeType = runtimeTypes.get(name);
+							if (runtimeType != null)
+								fTypeMap.put(hop.getHopID(), runtimeType);
+						}
 					}
-					if (fTypeMap != null && runtimeTypes != null) {
-						FType runtimeType = runtimeTypes.get(name);
-						if (runtimeType != null)
-							fTypeMap.put(hop.getHopID(), runtimeType);
+					else {
+						FederatedPlannerUtils.removeFedInitVar(name);
+						FederatedPlannerUtils.removeFedAnchorKey(name);
+						if (planned == ExecType.FED) {
+							if (runtimeLocalTransientReads != null)
+								runtimeLocalTransientReads.add(name);
+							hop.setForcedExecType(ExecType.CP);
+							hop.setFederatedOutput(FederatedOutput.LOUT);
+						}
+						if (fTypeMap != null)
+							fTypeMap.remove(hop.getHopID());
 					}
-				}
-				else if (planned == ExecType.FED) {
-					hop.setForcedExecType(ExecType.CP);
-					hop.setFederatedOutput(FederatedOutput.LOUT);
-					if (fTypeMap != null)
-						fTypeMap.remove(hop.getHopID());
 				}
 			}
-		}
 
 		// Clear stale anchor keys for variables that are locally overwritten in this block,
 		// so subsequent anchor selection does not treat them as federated.
@@ -313,8 +330,11 @@ public final class FederatedRefedPolicy {
 					DataOp tWrite = (DataOp) hop;
 					if (tWrite.getFederatedOutput() != FederatedOutput.FOUT) {
 						String varName = tWrite.getName();
-						if (varName != null && !varName.isEmpty())
+						if (varName != null && !varName.isEmpty()) {
 							FederatedPlannerUtils.removeFedAnchorKey(varName);
+							if (!conditionalContext)
+								FederatedPlannerUtils.removeFedInitVar(varName);
+						}
 					}
 				}
 			}
@@ -503,17 +523,22 @@ public final class FederatedRefedPolicy {
 				}
 			}
 		}
-		enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor);
-		boolean pruned = false;
-		int prunePass = 0;
+		boolean changed;
+		int enforcePass = 0;
 		do {
-			pruned = pruneInvalidCpfoutAnchors(all, sbId);
-			if (pruned)
-				enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor);
-			prunePass++;
-		} while (pruned && prunePass < 3);
-		// registerTransientWriteAnchor moved earlier (before enforceFederatedInputs)
-	}
+			boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor, runtimeContext);
+			boolean pruned = pruneInvalidCpfoutAnchors(all, sbId);
+			changed = demoted || pruned;
+			enforcePass++;
+		} while (changed && enforcePass < 5);
+			// registerTransientWriteAnchor moved earlier (before enforceFederatedInputs)
+				}
+				finally {
+					if (runtimeContext) {
+						LOCAL_TR_VARS.remove();
+					}
+				}
+		}
 
 	public static void registerFoutMaterializeCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
 		if (hop == null)
@@ -590,6 +615,7 @@ public final class FederatedRefedPolicy {
 		String name = tRead.getName();
 		if (name == null || name.isEmpty())
 			return false;
+		Set<String> runtimeLocalTransientReads = LOCAL_TR_VARS.get();
 		List<DataOp> writes = new ArrayList<>();
 		for (Hop hop : all) {
 			if (!(hop instanceof DataOp))
@@ -602,6 +628,9 @@ public final class FederatedRefedPolicy {
 				writes.add(dataOp);
 		}
 		if (writes.isEmpty()) {
+			// Runtime recompile: do not use global cached writes when this block has no local TWrite.
+			if (runtimeLocalTransientReads != null)
+				return false;
 			java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
 			List<DataOp> cached = globalWrites.get(name);
 			if (cached != null && !cached.isEmpty())
@@ -623,6 +652,8 @@ public final class FederatedRefedPolicy {
 		}
 		// During runtime recompile, matching TWrite hops from the current block are still valid
 		// anchors for TRead promotion. Keep the old guard only for out-of-block cached writes.
+		if (runtimeLocalTransientReads != null && !tWriteInCurrentBlock)
+			return false;
 		if (!tWriteInCurrentBlock && isRecompileRegion(tWrite))
 			return false;
 
@@ -816,6 +847,9 @@ public final class FederatedRefedPolicy {
 			String name = dataOp.getName();
 			if (name == null || name.isEmpty())
 				continue;
+			Set<String> runtimeLocalTransientReads = LOCAL_TR_VARS.get();
+			if (runtimeLocalTransientReads != null && runtimeLocalTransientReads.contains(name))
+				continue;
 			// If this read is dominated by a local (non-federated) TWrite in the same block,
 			// do NOT promote it to FED even if a global anchor exists for the variable.
 			List<DataOp> writes = tWrites.get(name);
@@ -860,10 +894,11 @@ public final class FederatedRefedPolicy {
 		}
 	}
 
-	private static void enforceFederatedInputs(List<Hop> all, java.util.Map<Long, FType> fTypeMap, long sbId,
-			AnchorSelection blockAnchor) {
+	private static boolean enforceFederatedInputs(List<Hop> all, java.util.Map<Long, FType> fTypeMap, long sbId,
+			AnchorSelection blockAnchor, boolean allowRuntimeDemotion) {
 		if (all == null || all.isEmpty())
-			return;
+			return false;
+		boolean demoted = false;
 		for (int i = all.size() - 1; i >= 0; i--) {
 			Hop hop = all.get(i);
 			if (hop == null)
@@ -885,11 +920,44 @@ public final class FederatedRefedPolicy {
 				continue;
 			if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
 				continue;
-			if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor))
+			if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
+				if (allowRuntimeDemotion && canDemoteUnsatisfiedFedHop(hop)) {
+					demoteUnsatisfiedFedHop(hop, fTypeMap, sbId);
+					demoted = true;
+					continue;
+				}
 				throw new DMLRuntimeException("FED hop has no federated inputs and no CP->FOUT candidate. "
 					+ "hopID=" + hop.getHopID() + " op=" + hop.getOpString()
 					+ " name=" + hop.getName() + " inputs=" + describeInputs(hop));
+			}
 		}
+		return demoted;
+	}
+
+	private static boolean canDemoteUnsatisfiedFedHop(Hop hop) {
+		if (hop == null)
+			return false;
+		if (isFederatedInitDataOp(hop))
+			return false;
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == OpOpData.FEDERATED)
+				return false;
+		}
+		return true;
+	}
+
+	private static void demoteUnsatisfiedFedHop(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
+		if (hop == null)
+			return;
+		hop.setForcedExecType(ExecType.CP);
+		if (hop.getFederatedOutput() == FederatedOutput.FOUT)
+			hop.setFederatedOutput(FederatedOutput.LOUT);
+		if (fTypeMap != null)
+			fTypeMap.remove(hop.getHopID());
+		FederatedRefedRegistry.remove(sbId, hop.getHopID());
+		FederatedFoutMaterializeRegistry.remove(sbId, hop.getHopID());
+		CPFOUT_ANCHOR_CACHE.remove(hop.getHopID());
 	}
 
 	private static boolean pruneInvalidCpfoutAnchors(List<Hop> all, long sbId) {
@@ -916,9 +984,16 @@ public final class FederatedRefedPolicy {
 			FederatedRefedRegistry.AnchorSpec spec = entry.getValue();
 			long anchorHopId = spec.getAnchorHopId();
 			Hop anchorHop = hopById.get(anchorHopId);
-			if ((anchorHop == null || !isRuntimeFederatedInput(anchorHop, null, null)) && spec.getAnchorKey() == null) {
+			boolean anchorHopRuntimeFed = anchorHop != null && isRuntimeFederatedInput(anchorHop, null, null);
+			String anchorKey = spec.getAnchorKey();
+			boolean usableAnchorKey = isNonVarAnchorKey(anchorKey);
+			if (!anchorHopRuntimeFed && !usableAnchorKey) {
 				FederatedRefedRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
+				changed = true;
+			}
+			else if (!anchorHopRuntimeFed && usableAnchorKey) {
+				FederatedRefedRegistry.register(sbId, entry.getKey(), -1, anchorKey);
 				changed = true;
 			}
 		}
@@ -930,15 +1005,23 @@ public final class FederatedRefedPolicy {
 				changed = true;
 				continue;
 			}
-			FederatedFoutMaterializeRegistry.MaterializeSpec spec = entry.getValue();
-			long anchorHopId = spec.getAnchorHopId();
-			Hop anchorHop = hopById.get(anchorHopId);
-			if ((anchorHop == null || !isRuntimeFederatedInput(anchorHop, null, null)) && spec.getAnchorKey() == null) {
-				FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
-				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
-				changed = true;
+				FederatedFoutMaterializeRegistry.MaterializeSpec spec = entry.getValue();
+				long anchorHopId = spec.getAnchorHopId();
+				Hop anchorHop = hopById.get(anchorHopId);
+				boolean anchorHopRuntimeFed = anchorHop != null && isRuntimeFederatedInput(anchorHop, null, null);
+				String anchorKey = spec.getAnchorKey();
+				boolean usableAnchorKey = isNonVarAnchorKey(anchorKey);
+				if (!anchorHopRuntimeFed && !usableAnchorKey) {
+					FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
+					CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
+					changed = true;
+				}
+				else if (!anchorHopRuntimeFed && usableAnchorKey) {
+					FederatedFoutMaterializeRegistry.register(sbId, entry.getKey(), -1, spec.getFTypeHint(),
+						spec.getAnchorLabel(), anchorKey);
+					changed = true;
+				}
 			}
-		}
 		return changed;
 	}
 
@@ -1099,15 +1182,18 @@ public final class FederatedRefedPolicy {
 			java.util.Map<Long, FederatedRefedRegistry.AnchorSpec> refed) {
 		if (input == null)
 			return false;
-		if (isFederatedInitDataOp(input))
-			return true;
 
 		if (input instanceof DataOp) {
 			DataOp dataOp = (DataOp) input;
 			OpOpData op = dataOp.getOp();
+			if (op == OpOpData.FEDERATED)
+				return true;
 			if (op == OpOpData.TRANSIENTREAD) {
 				String name = dataOp.getName();
 				if (name == null)
+					return false;
+				Set<String> runtimeLocalTransientReads = LOCAL_TR_VARS.get();
+				if (runtimeLocalTransientReads != null && runtimeLocalTransientReads.contains(name))
 					return false;
 				// Fed-init reads are always runtime federated.
 				if (FederatedPlannerUtils.isFedInitVar(name))
@@ -2268,16 +2354,33 @@ public final class FederatedRefedPolicy {
 			hop.setFederatedOutput(FederatedOutput.LOUT);
 			return;
 		}
-		// Anchor mismatch: multiple incompatible FED parents exist. Do not pick an arbitrary anchor; fall back to local output.
-		if (selection.key == null) {
-			if (LOG.isDebugEnabled())
-				LOG.debug("CP->FOUT decision: LOUT (anchor_mismatch) hopID=" + hop.getHopID()
-					+ " op=" + hop.getOpString());
-			hop.setFederatedOutput(FederatedOutput.LOUT);
-			return;
+			// Anchor mismatch: multiple incompatible FED parents exist. Do not pick an arbitrary anchor; fall back to local output.
+			if (selection.key == null) {
+				if (LOG.isDebugEnabled())
+					LOG.debug("CP->FOUT decision: LOUT (anchor_mismatch) hopID=" + hop.getHopID()
+						+ " op=" + hop.getOpString());
+				hop.setFederatedOutput(FederatedOutput.LOUT);
+				return;
+			}
+			AnchorSelection effectiveSelection = selection;
+			if (selection.anchorHop != null && !isRuntimeFederatedInput(selection.anchorHop, null, null)) {
+				// Anchor hop exists but is not runtime-federated in the current context.
+				// Allow only signature-key fallback (non-VAR) and otherwise keep this hop local.
+				if (selection.key != null && !isVarAnchor(selection.key))
+					effectiveSelection = new AnchorSelection(selection.key, null);
+				else {
+					if (LOG.isDebugEnabled())
+						LOG.debug("CP->FOUT decision: LOUT (non_runtime_anchor) hopID=" + hop.getHopID()
+							+ " op=" + hop.getOpString()
+							+ " anchorHop=" + selection.anchorHop.getHopID());
+					hop.setFederatedOutput(FederatedOutput.LOUT);
+					if (fTypeMap != null)
+						fTypeMap.remove(hop.getHopID());
+					return;
+				}
+			}
+			registerCpfoutWithSelection(hop, fTypeMap, sbId, effectiveSelection);
 		}
-		registerCpfoutWithSelection(hop, fTypeMap, sbId, selection);
-	}
 
 	private static void validateAndRegisterRequired(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection selection) {
@@ -2299,20 +2402,25 @@ public final class FederatedRefedPolicy {
 			if (exec == ExecType.FED && !hop.hasLocalOutput() && isRuntimeFederatedInput(hop, null, null))
 				return;
 		}
-		if (selection == null || selection.key == null)
-			throw new DMLRuntimeException("CP->FOUT refed requires a federated anchor for hop "
-					+ hop.getHopID() + " (" + hop.getOpString() + ")");
-		if (selection.anchorHop != null && !isRuntimeFederatedInput(selection.anchorHop, null, null))
-			throw new DMLRuntimeException("CP->FOUT refed requires a federated anchor for hop "
-				+ hop.getHopID() + " (" + hop.getOpString() + ")");
-		if (selection.anchorHop == null) {
-			String anchorKey = toAnchorKeyString(selection);
-			if (anchorKey == null)
+			if (selection == null || selection.key == null)
 				throw new DMLRuntimeException("CP->FOUT refed requires a federated anchor for hop "
-					+ hop.getHopID() + " (" + hop.getOpString() + ")");
+						+ hop.getHopID() + " (" + hop.getOpString() + ")");
+			AnchorSelection effectiveSelection = selection;
+			if (selection.anchorHop != null && !isRuntimeFederatedInput(selection.anchorHop, null, null)) {
+				if (selection.key != null && !isVarAnchor(selection.key))
+					effectiveSelection = new AnchorSelection(selection.key, null);
+				else
+					throw new DMLRuntimeException("CP->FOUT refed requires a federated anchor for hop "
+						+ hop.getHopID() + " (" + hop.getOpString() + ")");
+			}
+			if (effectiveSelection.anchorHop == null) {
+				String anchorKey = toAnchorKeyString(effectiveSelection);
+				if (anchorKey == null)
+					throw new DMLRuntimeException("CP->FOUT refed requires a federated anchor for hop "
+						+ hop.getHopID() + " (" + hop.getOpString() + ")");
+			}
+			registerCpfoutWithSelection(hop, fTypeMap, sbId, effectiveSelection);
 		}
-		registerCpfoutWithSelection(hop, fTypeMap, sbId, selection);
-	}
 
 	private static long resolveHopSbId(long hopId, long fallback) {
 		Long sbId = HOP_SBID_CACHE.get().get(hopId);
@@ -2659,21 +2767,33 @@ public final class FederatedRefedPolicy {
 			}
 		}
 
-		if (!sawAnchorParent) {
-			if (sawOptionalParent && !sawRequiredParent)
-				return null;
-			AnchorSelection inputAnchor = findInputAnchorSelection(hop, fTypeMap);
-			if (inputAnchor != null)
-				return inputAnchor;
-			if (blockAnchor != null) {
-				if (debug != null)
-					debug.add("fallback blockAnchor=" + blockAnchor.anchorHop.getHopID()
-						+ " anchorKey=" + blockAnchor.key);
-				return blockAnchor;
-			}
-			if (throwOnFailure) {
-				if (debug != null)
-					LOG.warn("CP->FOUT refed missing FED anchor-parent for hop " + hop.getHopID()
+			if (!sawAnchorParent) {
+				if (sawOptionalParent && !sawRequiredParent)
+					return null;
+				AnchorSelection inputAnchor = findInputAnchorSelection(hop, fTypeMap);
+				if (inputAnchor != null)
+					return inputAnchor;
+				if (blockAnchor != null) {
+					Hop blockAnchorHop = blockAnchor.anchorHop;
+					boolean blockAnchorRuntimeFed = blockAnchorHop == null
+						|| isRuntimeFederatedInput(blockAnchorHop, null, null);
+					if (!blockAnchorRuntimeFed) {
+						if (blockAnchor.key != null && !isVarAnchor(blockAnchor.key))
+							return new AnchorSelection(blockAnchor.key, null);
+						if (debug != null)
+							debug.add("skip blockAnchor: anchorHop is not runtime-federated "
+								+ "(hop=" + (blockAnchorHop != null ? blockAnchorHop.getHopID() : -1) + ")");
+					}
+					else {
+					if (debug != null)
+						debug.add("fallback blockAnchor=" + blockAnchor.anchorHop.getHopID()
+							+ " anchorKey=" + blockAnchor.key);
+					return blockAnchor;
+					}
+				}
+				if (throwOnFailure) {
+					if (debug != null)
+						LOG.warn("CP->FOUT refed missing FED anchor-parent for hop " + hop.getHopID()
 						+ " (" + hop.getOpString() + "): " + String.join(" | ", debug)
 						+ " | fallback=LOUT");
 				return null;
@@ -2700,11 +2820,18 @@ public final class FederatedRefedPolicy {
 		if (!canPropagateAnchorFromConsumers(parent))
 			return null;
 		List<Hop> parents = parent.getParent();
-		if (parents == null || parents.isEmpty()) {
-			if (blockAnchor != null && blockAnchor.key != null)
-				return new ParentAnchor(blockAnchor.key, blockAnchor.anchorHop);
-			return null;
-		}
+			if (parents == null || parents.isEmpty()) {
+				if (blockAnchor != null && blockAnchor.key != null) {
+					Hop blockAnchorHop = blockAnchor.anchorHop;
+					boolean blockAnchorRuntimeFed = blockAnchorHop == null
+						|| isRuntimeFederatedInput(blockAnchorHop, null, null);
+					if (blockAnchorRuntimeFed)
+						return new ParentAnchor(blockAnchor.key, blockAnchorHop);
+					if (!isVarAnchor(blockAnchor.key))
+						return new ParentAnchor(blockAnchor.key, null);
+				}
+				return null;
+			}
 		AnchorKey selectedKey = null;
 		Hop selectedAnchor = null;
 		Deque<Hop> queue = new ArrayDeque<>(parents);
@@ -2735,10 +2862,17 @@ public final class FederatedRefedPolicy {
 		}
 		if (selectedKey != null && selectedAnchor != null)
 			return new ParentAnchor(selectedKey, selectedAnchor);
-		if (blockAnchor != null && blockAnchor.key != null)
-			return new ParentAnchor(blockAnchor.key, blockAnchor.anchorHop);
-		return null;
-	}
+			if (blockAnchor != null && blockAnchor.key != null) {
+				Hop blockAnchorHop = blockAnchor.anchorHop;
+				boolean blockAnchorRuntimeFed = blockAnchorHop == null
+					|| isRuntimeFederatedInput(blockAnchorHop, null, null);
+				if (blockAnchorRuntimeFed)
+					return new ParentAnchor(blockAnchor.key, blockAnchorHop);
+				if (!isVarAnchor(blockAnchor.key))
+					return new ParentAnchor(blockAnchor.key, null);
+			}
+			return null;
+		}
 
 	private static boolean canPropagateAnchorFromConsumers(Hop hop) {
 		if (hop == null)

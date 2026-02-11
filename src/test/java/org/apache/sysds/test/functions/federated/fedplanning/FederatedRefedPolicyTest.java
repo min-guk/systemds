@@ -642,6 +642,110 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testRuntimeSignaturesOverrideStaleTransientReadAnchorKey() {
+		DataOp tRead = createLocalMatrix("X", 3000, 50);
+		tRead.setForcedExecType(ExecType.FED);
+		tRead.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(tRead.getHopID(), FType.ROW);
+
+		// Simulate stale propagated anchor metadata from a previous block.
+		FederatedPlannerUtils.registerFedAnchorKey("X", "worker1:8001/data/P2P_features_2_1.data;|0,50000;|ROW");
+
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("Y",
+			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,50000;50000,100000;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("Y", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
+			runtimeSignatures, runtimeTypes);
+
+		assertEquals("Expected runtime signatures to demote stale FED transient read to CP",
+			ExecType.CP, tRead.getForcedExecType());
+		assertEquals("Expected runtime signatures to demote stale FED transient read to LOUT",
+			FederatedOutput.LOUT, tRead.getFederatedOutput());
+		assertFalse("Expected stale transient read FType hint to be cleared after runtime demotion",
+			fTypeMap.containsKey(tRead.getHopID()));
+	}
+
+	@Test
+	public void testRuntimeEmptySignaturesDemoteStaleTransientReadAnchorKey() {
+		DataOp tRead = createLocalMatrix("X", 3000, 50);
+		tRead.setForcedExecType(ExecType.FED);
+		tRead.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(tRead.getHopID(), FType.ROW);
+
+		// Simulate stale propagated anchor metadata from a previous block.
+		FederatedPlannerUtils.registerFedAnchorKey("X", "worker1:8001/data/P2P_features_2_1.data;|0,50000;|ROW");
+
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		Map<String, FType> runtimeTypes = new HashMap<>();
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
+			runtimeSignatures, runtimeTypes);
+
+		assertEquals("Expected empty runtime signatures to demote stale FED transient read to CP",
+			ExecType.CP, tRead.getForcedExecType());
+		assertEquals("Expected empty runtime signatures to demote stale FED transient read to LOUT",
+			FederatedOutput.LOUT, tRead.getFederatedOutput());
+		assertFalse("Expected stale transient read FType hint to be cleared after runtime demotion",
+			fTypeMap.containsKey(tRead.getHopID()));
+	}
+
+	@Test
+	public void testRuntimeContextLocalTransientWriteClearsFedInitVar() {
+		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW,
+			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,50000;50000,100000;");
+		assertTrue("Expected test setup to register fed-init marker for X",
+			FederatedPlannerUtils.isFedInitVar("X"));
+
+		DataOp localSrc = createLocalMatrix("x_local_src", 3000, 50);
+		DataOp tWrite = createTransientWrite("X", localSrc, 3000, 50);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.LOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		Map<String, FType> runtimeTypes = new HashMap<>();
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tWrite)), true, fTypeMap, -1,
+			runtimeSignatures, runtimeTypes);
+
+		assertFalse("Expected local transient write to clear stale fed-init marker in runtime context",
+			FederatedPlannerUtils.isFedInitVar("X"));
+		assertTrue("Expected local transient write to clear stale anchor key in runtime context",
+			FederatedPlannerUtils.getFedAnchorKey("X") == null);
+	}
+
+	@Test
+	public void testRuntimeEmptySignaturesDoNotRepromoteFedInitTransientRead() {
+		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW,
+			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,50000;50000,100000;");
+
+		DataOp tRead = createLocalMatrix("X", 3000, 50);
+		tRead.setForcedExecType(ExecType.FED);
+		tRead.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(tRead.getHopID(), FType.ROW);
+
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		Map<String, FType> runtimeTypes = new HashMap<>();
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
+			runtimeSignatures, runtimeTypes);
+
+		assertEquals("Expected empty runtime signatures to demote stale fed-init transient read to CP",
+			ExecType.CP, tRead.getForcedExecType());
+		assertEquals("Expected empty runtime signatures to demote stale fed-init transient read to LOUT",
+			FederatedOutput.LOUT, tRead.getFederatedOutput());
+	}
+
+	@Test
 	public void testRequiredTransientReadRegistersRefedAndSatisfiesFedParent() {
 		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
 		tRead.setForcedExecType(ExecType.CP);

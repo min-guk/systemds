@@ -431,9 +431,9 @@ public class Recompiler {
 			restoreHopStates(hops, baseHopStates);
 		if (LOG_RECOMPILE_NEW_HOPS)
 			logRecompileNewHops(hops, baseHopStates, sb, pred, tid);
-		Map<String, FType> runtimeTypes = new HashMap<>();
-		Map<String, String> runtimeSignatures = buildRuntimeFedSignatures(ec, runtimeTypes);
-		Map<Long, FType> fTypeMap = buildFederatedTypeMap(hops, runtimeTypes);
+			Map<String, FType> runtimeTypes = new HashMap<>();
+			Map<String, String> runtimeSignatures = buildRuntimeFedSignatures(ec, runtimeTypes);
+			Map<Long, FType> fTypeMap = buildFederatedTypeMap(hops, runtimeTypes);
 		Set<Hop> fTypeRefreshDone = new HashSet<>();
 		for (Hop hopRoot : hops)
 			inferFTypeIfNeeded(hopRoot, fTypeMap, fTypeRefreshDone, new HashSet<>());
