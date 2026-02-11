@@ -2445,7 +2445,7 @@ public final class Rulesets {
           .exec(ExecType.FED)
           .placement(FederatedOutput.LOUT)
           
-          .reason(ReasonCode.OK)
+          .reason(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME)
           .note(ReasonCode.INFO, TSMM_AGG_NOTE)
           .build();
     }
@@ -2579,7 +2579,10 @@ public final class Rulesets {
     private static final String ATTR_OUTER = "outer";
     private static final String ATTR_ALIGN = "align";
     private static final String ATTR_R_IS_VECTOR = "r_is_vector";
+    private static final String ATTR_TSMM_TYPE = "tsmm.type";
     private static final String ALIGN_COL_T = "COL_T";
+    private static final String TSMM_AXIS_ONLY_DETAIL =
+        "TSMM supports only LEFT with ROW or RIGHT with COL partitioned X (per TsmmFEDInstruction)";
 
     @Override public OpCategory category() { return OpCategory.BINARY_MM; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -2602,6 +2605,8 @@ public final class Rulesets {
       List<FType> right = candidates(inFTypeCandidates, 1);
       if (!hasFederated(left) && !hasFederated(right))
         return FTypeProfile.empty();
+      if (isTsmmType(attr(sig, ATTR_TSMM_TYPE)))
+        return FTypeProfile.ofOutput(List.of(FType.BROADCAST));
 
       boolean leftHasRow = hasAxis(left, FType.ROW);
       boolean leftHasCol = hasAxis(left, FType.COL);
@@ -2617,6 +2622,13 @@ public final class Rulesets {
 
     @Override
     public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      String tsmmType = attr(sig, ATTR_TSMM_TYPE);
+      if (isTsmmType(tsmmType)) {
+        if (inFTypes == null || inFTypes.isEmpty())
+          return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+        return tsmmCaps(sig, normalize(typeAt(inFTypes, 0)), tsmmType);
+      }
+
       FType left = normalize(typeAt(inFTypes, 0));
       FType right = normalize(typeAt(inFTypes, 1));
       if (!eligible(left, right))
@@ -2649,6 +2661,44 @@ public final class Rulesets {
         return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
 
       return fedLocalCaps(sig, ReasonCode.OK);
+    }
+
+    private static OpCaps tsmmCaps(OpSig sig, FType in, String tsmmType) {
+      if (in == null)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (in == FType.FULL || in == FType.PART)
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            .reason(ReasonCode.PARTITION_FORBIDDEN)
+            .detail(TSMM_AXIS_ONLY_DETAIL)
+            .build();
+
+      boolean left = "LEFT".equalsIgnoreCase(tsmmType);
+      boolean right = "RIGHT".equalsIgnoreCase(tsmmType);
+      if (!left && !right)
+        return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      boolean axisOK = (left && in == FType.ROW) || (right && in == FType.COL);
+      if (!axisOK)
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            .reason(ReasonCode.UNSUPPORTED_ALIGNMENT)
+            .detail(TSMM_AXIS_ONLY_DETAIL)
+            .build();
+
+      return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
+    }
+
+    private static boolean isTsmmType(String tsmmType) {
+      return "LEFT".equalsIgnoreCase(tsmmType) || "RIGHT".equalsIgnoreCase(tsmmType);
     }
 
     private static boolean hasFederated(List<FType> types) {
