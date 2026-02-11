@@ -313,10 +313,6 @@ public class FederatedPlanMinSTCostEstimator {
 				graph.addTransWriteInputPlacementConsistencyEdge(hopID, inputs.get(0).getHopID());
 			}
 		}
-		// NOTE: We intentionally do not add hard TR/TW consistency constraints in MinST.
-		// For loop-carried transient variables, we model the potential data movement via
-		// weighted loop-carry upload/download capacities instead (see addLoopCarryEdgesForHop).
-		// Adding hard constraints here would override those costs and break planning/test expectations.
 
 		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
 		for (int i = 0; i < childHops.size(); i++) {

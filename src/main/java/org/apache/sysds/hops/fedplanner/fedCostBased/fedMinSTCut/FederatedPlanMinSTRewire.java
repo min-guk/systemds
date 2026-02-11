@@ -88,6 +88,10 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 public class FederatedPlanMinSTRewire {
 	public static final String FED_MATRIX_IDENTIFIER = "matrix";
 	public static final String FED_FRAME_IDENTIFIER = "frame";
+	// Guard rail for enabling planner-only federated alternative fallback.
+	// High local->fed forwarding control penalty (e.g., WAN) should keep strict feasibility
+	// and avoid resurrecting expensive FED alternatives for optional/local-capable edges.
+	private static final double FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS = 10.0;
 
 	private static class LoopAnalysisContext {
 		private final Map<String, Boolean> readFromOutside = new HashMap<>();
@@ -1012,14 +1016,29 @@ public class FederatedPlanMinSTRewire {
 							if (oracleInputFType == null)
 								oracleInputFType = inputVertex.getCpFoutDataType();
 						}
-						if (!inputGuaranteedFout && inputMayBeLocal
-								&& (!hasConcreteFoutPath || !hasFederatedDemand)) {
+						boolean transientReadWithoutFedInit = false;
+						boolean localCapableTransientRead = false;
+						if (input instanceof DataOp
+								&& ((DataOp) input).getOp() == Types.OpOpData.TRANSIENTREAD) {
+							String transientVar = ((DataOp) input).getName();
+							transientReadWithoutFedInit = !FederatedPlannerUtils.isFedInitVar(transientVar);
+							// DP parity: local-capable transient reads without FED-init provenance should
+							// not be pre-hinted as FED inputs in MinST rewire.
+							localCapableTransientRead = transientReadWithoutFedInit && inputMayBeLocal;
+						}
+						if (inputMayBeLocal
+								&& (localCapableTransientRead
+									|| (!inputGuaranteedFout
+										&& (!hasConcreteFoutPath || !hasFederatedDemand)))) {
 							oracleInputFType = null;
 						}
+						if (transientReadWithoutFedInit)
+							oracleInputFType = null;
 						if (oracleInputFType == null) {
-							boolean shouldInferHint = !inputMayBeLocal
+							boolean shouldInferHint = !transientReadWithoutFedInit
+								&& (!inputMayBeLocal
 								|| inputGuaranteedFout
-								|| (hasFederatedDemand && hasConcreteFoutPath);
+								|| (hasFederatedDemand && hasConcreteFoutPath));
 							if (shouldInferHint) {
 								oracleInputFType = inferFoutInputFType(input, fTypeMap, oracleFacade, rewireTable);
 							}
@@ -1124,13 +1143,13 @@ public class FederatedPlanMinSTRewire {
 					buildOracleAlignedInputFTypeMap(fTypeMap, collectedHopList, oracleInputFTypes);
 				boolean fedInputsSatisfied = FederatedRefedPolicy
 					.canSatisfyFederatedInputsFromFTypes(hop, oracleAlignedInputFTypeMap);
-				if (!fedInputsSatisfied && federatedAlternativeCaps != null
-						&& (federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT)) {
+				if (!fedInputsSatisfied && shouldEnableFederatedAlternativeFallback(
+						hop, federatedAlternativeCaps, cpFoutType, numWorkersEstimate)) {
 					fedInputsSatisfied = true;
 				}
-			if (!fedInputsSatisfied) {
-				caps.allowFED_LOUT = false;
-				caps.allowFED_FOUT = false;
+				if (!fedInputsSatisfied) {
+					caps.allowFED_LOUT = false;
+					caps.allowFED_FOUT = false;
 				if (!caps.hasAny()) {
 					List<FType> relaxedOracleInputFTypes = relaxUnsatisfiedRequiredInputsToLocal(
 						hop, collectedHopList, collectedInputIndices, oracleInputFTypes, oracleAlignedInputFTypeMap);
@@ -1216,7 +1235,23 @@ public class FederatedPlanMinSTRewire {
 			privacyConstraintMap.put(hop.getHopID(), privacy);
 			fTypeMap.put(hop.getHopID(), fType);
 
-			return new Vertex(hop, privacy, fType, cpFoutType, caps);
+		return new Vertex(hop, privacy, fType, cpFoutType, caps);
+	}
+
+	private static boolean shouldEnableFederatedAlternativeFallback(Hop hop,
+			ExecPlacementCaps federatedAlternativeCaps, FType cpFoutType, int numWorkersEstimate) {
+		// Keep indexing chains on strict feasibility: planner-only FED fallback here tends to
+		// create unnecessary CP->FOUT/rightIndex materialization paths.
+		if (hop instanceof IndexingOp)
+			return false;
+		if (federatedAlternativeCaps == null)
+			return false;
+		if (!(federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT))
+			return false;
+		FType penaltyType = (cpFoutType != null) ? cpFoutType : FType.BROADCAST;
+		double forwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
+				penaltyType, Math.max(1, numWorkersEstimate));
+		return forwardingPenalty <= FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS;
 	}
 
 	private static void traceRewireDecision(Hop hop, Privacy privacy, List<Hop> inputHops,

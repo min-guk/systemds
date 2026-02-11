@@ -526,6 +526,34 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testPlannerAllowsOptionalLocalVectorInputWithoutStandaloneAnchor() {
+		DataOp fedMatrix = createFederatedInput("X", 100, 10);
+		DataOp localA = createLocalMatrix("A", 100, 1);
+		DataOp localB = createLocalMatrix("B", 100, 1);
+
+		BinaryOp localVector = HopRewriteUtils.createBinary(localA, localB, OpOp2.PLUS);
+		localVector.setDim1(100);
+		localVector.setDim2(1);
+		localVector.setForcedExecType(ExecType.CP);
+		localVector.setFederatedOutput(FederatedOutput.LOUT);
+
+		BinaryOp fedParent = HopRewriteUtils.createBinary(fedMatrix, localVector, OpOp2.DIV);
+		fedParent.setDim1(100);
+		fedParent.setDim2(10);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
+
+		assertEquals("Expected vector RHS to be classified as OPTIONAL for FED execution",
+			FederatedRefedPolicy.InputRequirement.OPTIONAL,
+			FederatedRefedPolicy.getInputRequirementForFedExec(fedParent, localVector, 1, fTypeMap));
+		assertTrue("Expected optional local vector input to be materializable via parent FED anchor",
+			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(fedParent, fTypeMap));
+	}
+
+	@Test
 	public void testPlannerAllowsRequiredLocalDerivedInputWhenFedSiblingPresent() {
 		DataOp fedMatrix = createFederatedInput("X", 100, 50);
 		DataOp localA = createLocalMatrix("A", 50, 10);

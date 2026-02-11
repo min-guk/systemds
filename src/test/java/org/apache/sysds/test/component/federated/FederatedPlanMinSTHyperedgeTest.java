@@ -74,22 +74,21 @@ public class FederatedPlanMinSTHyperedgeTest {
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
 		long childP = placementId(child.getHopID());
 
-		long uploadAux = findAuxToChild(g, childP, uploadCost);
-		Assert.assertTrue("Expected upload aux node to be negative", uploadAux < 0);
-
 		for (Vertex parent : parents) {
 			long parentC = computeId(parent.getHopID());
-			Assert.assertNull("Unexpected direct upload edge from parent to child placement",
-					g.getEdge(parentC, childP));
+			DefaultWeightedEdge uploadEdge = g.getEdge(parentC, childP);
+			Assert.assertNotNull("Expected direct upload edge from parent to child placement", uploadEdge);
+			Assert.assertEquals("Unexpected direct upload edge weight",
+				uploadCost, g.getEdgeWeight(uploadEdge), 1e-9);
 		}
 
 		Set<Long> sourceSide = new HashSet<>();
 		for (Vertex parent : parents) {
 			sourceSide.add(computeId(parent.getHopID()));
 		}
-		sourceSide.add(uploadAux);
 		double cutCost = computeCutCost(g, sourceSide);
-		Assert.assertEquals("Upload OR cost should be paid once", uploadCost, cutCost, 1e-9);
+		Assert.assertEquals("Upload cost should be paid per parent-child edge",
+			uploadCost * parents.size(), cutCost, 1e-9);
 	}
 
 	@Test
@@ -112,15 +111,18 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
 		long childP = placementId(child.getHopID());
-		long uploadAux = findAuxToChild(g, childP, uploadCost);
-		Assert.assertTrue("Expected upload aux node to be negative", uploadAux < 0);
 
 		Set<Long> sourceSide = new HashSet<>();
-		for (Vertex parent : parents)
+		for (Vertex parent : parents) {
+			long parentC = computeId(parent.getHopID());
+			DefaultWeightedEdge uploadEdge = g.getEdge(parentC, childP);
+			Assert.assertNotNull("Expected direct upload edge from parent to child placement", uploadEdge);
+			Assert.assertEquals("Unexpected direct upload edge weight",
+				uploadCost, g.getEdgeWeight(uploadEdge), 1e-9);
 			sourceSide.add(computeId(parent.getHopID()));
-		sourceSide.add(uploadAux);
-		Assert.assertEquals("Optional matrix input should still pay one forwarding upload cost",
-			uploadCost, computeCutCost(g, sourceSide), 1e-9);
+		}
+		Assert.assertEquals("Optional matrix input should still pay forwarding upload per parent edge",
+			uploadCost * parents.size(), computeCutCost(g, sourceSide), 1e-9);
 	}
 
 	@Test
@@ -144,10 +146,12 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
 		long childP = placementId(child.getHopID());
-
-		long uploadAux = findAuxToChild(g, childP, uploadCost);
 		for (Vertex parent : parents) {
 			long parentC = computeId(parent.getHopID());
+			DefaultWeightedEdge uploadEdge = g.getEdge(parentC, childP);
+			Assert.assertNotNull("Expected direct upload edge from parent to child placement", uploadEdge);
+			Assert.assertEquals("Unexpected direct upload edge weight",
+				uploadCost, g.getEdgeWeight(uploadEdge), 1e-9);
 			Assert.assertNull("Unexpected direct download edge from child placement to parent",
 					g.getEdge(childP, parentC));
 		}
@@ -159,7 +163,6 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		Set<Long> sourceSide = new HashSet<>();
 		sourceSide.add(childP);
-		sourceSide.add(uploadAux);
 		double cutCost = computeCutCost(g, sourceSide);
 		Assert.assertEquals("Download hyperedge should not be charged on parent-child edge", 0.0, cutCost, 1e-9);
 	}
@@ -273,15 +276,9 @@ public class FederatedPlanMinSTHyperedgeTest {
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
 		long childP = placementId(child.getHopID());
-		boolean hasPositiveUploadCostToChild = false;
-		for (DefaultWeightedEdge edge : g.edgeSet()) {
-			if (g.getEdgeTarget(edge).equals(childP)
-				&& g.getEdgeSource(edge) < 0
-				&& g.getEdgeWeight(edge) > 0.0) {
-				hasPositiveUploadCostToChild = true;
-				break;
-			}
-		}
+		long parentC = computeId(parent.getHopID());
+		DefaultWeightedEdge uploadEdge = g.getEdge(parentC, childP);
+		boolean hasPositiveUploadCostToChild = uploadEdge != null && g.getEdgeWeight(uploadEdge) > 0.0;
 		Assert.assertTrue("Parent-child upload edge should use fallback mem estimate",
 			hasPositiveUploadCostToChild);
 	}
@@ -434,17 +431,6 @@ public class FederatedPlanMinSTHyperedgeTest {
 			parents.add(parent);
 		}
 		return parents;
-	}
-
-	private static long findAuxToChild(Graph<Long, DefaultWeightedEdge> graph, long childP, double weight) {
-		List<Long> matches = new ArrayList<>();
-		for (DefaultWeightedEdge edge : graph.edgeSet()) {
-			if (graph.getEdgeTarget(edge).equals(childP) && approxEqual(graph.getEdgeWeight(edge), weight)) {
-				matches.add(graph.getEdgeSource(edge));
-			}
-		}
-		Assert.assertEquals("Expected exactly one upload aux edge to child placement", 1, matches.size());
-		return matches.get(0);
 	}
 
 	private static double computeCutCost(Graph<Long, DefaultWeightedEdge> graph, Set<Long> sourceSide) {

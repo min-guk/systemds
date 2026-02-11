@@ -325,7 +325,9 @@ public class FederatedPlanMinSTGraph {
 			}
 			return;
 		}
-		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD, uploadConversionType, uploadWeighted);
+		// DP parity: boundary forwarding is charged per parent-child edge.
+		// This keeps candidate scoring consistent between DP and MinST.
+		addCap(parentC, childP, uploadWeighted);
 		Hop traceHop = FederatedPlannerTrace.shouldTrace(parentVertex.getHopRef())
 				? parentVertex.getHopRef() : childHopRef;
 		if (FederatedPlannerTrace.shouldTrace(traceHop)) {
@@ -365,6 +367,13 @@ public class FederatedPlanMinSTGraph {
 			long trP = FederatedPlanMinSTPlanner.placementId(trId);
 			addXorEdge(twP, trC, HARD_CONSTRAINT);
 			addXorEdge(twP, trP, HARD_CONSTRAINT);
+			Hop traceHop = (tw != null && FederatedPlannerTrace.shouldTrace(tw.getHopRef()))
+					? tw.getHopRef()
+					: ((tr != null) ? tr.getHopRef() : null);
+			if (FederatedPlannerTrace.shouldTrace(traceHop)) {
+				FederatedPlannerTrace.log(traceHop, "MinST-TRTW-Consistency", String.format(
+						"tw=%d tr=%d twP=%d trC=%d trP=%d", twId, trId, twP, trC, trP));
+			}
 		}
 
 	public void addTransWriteInputPlacementConsistencyEdge(long twId, long inputHopId) {
@@ -553,6 +562,8 @@ public class FederatedPlanMinSTGraph {
 			FederatedPlannerTrace.logGlobal("MinST-Cut",
 					"sourcePartitionSize=" + sourceSide.size() + ", totalGraphVertices=" + graph.vertexSet().size());
 
+			Map<Long, ExecType> execSelection = new HashMap<>();
+			Map<Long, FederatedOutput> outSelection = new HashMap<>();
 			for (Vertex vertex : memoTable.values()) {
 				long hopID = vertex.getHopID();
 				long cId = FederatedPlanMinSTPlanner.computeId(hopID);
@@ -560,7 +571,16 @@ public class FederatedPlanMinSTGraph {
 
 				ExecType exec = sourceSide.contains(cId) ? ExecType.FED : ExecType.CP;
 				FederatedOutput out = sourceSide.contains(pId) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
+				execSelection.put(hopID, exec);
+				outSelection.put(hopID, out);
+			}
 
+			repairTransientReadWriteSelection(execSelection, outSelection);
+
+			for (Vertex vertex : memoTable.values()) {
+				long hopID = vertex.getHopID();
+				ExecType exec = execSelection.getOrDefault(hopID, ExecType.CP);
+				FederatedOutput out = outSelection.getOrDefault(hopID, FederatedOutput.LOUT);
 				vertex.getHopRef().setForcedExecType(exec);
 				vertex.getHopRef().setFederatedOutput(out);
 				boolean derivedSelected = vertex.isDerivedFedFout()
@@ -569,6 +589,76 @@ public class FederatedPlanMinSTGraph {
 				logSelectedDecision(vertex, sourceSide);
 			}
 		}
+
+	private void repairTransientReadWriteSelection(Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		if (execSelection == null || outSelection == null)
+			return;
+		boolean changed;
+		int iter = 0;
+		do {
+			changed = false;
+			iter++;
+			for (Vertex trVertex : memoTable.values()) {
+				if (trVertex == null || trVertex.getHopRef() == null || trVertex.getCaps() == null)
+					continue;
+				Hop trHop = trVertex.getHopRef();
+				if (!(trHop instanceof DataOp)
+						|| ((DataOp) trHop).getOp() != Types.OpOpData.TRANSIENTREAD)
+					continue;
+				Long twHopId = trVertex.getTransientWriteHopId();
+				if (twHopId == null)
+					continue;
+				Vertex twVertex = memoTable.get(twHopId);
+				if (twVertex == null || twVertex.getCaps() == null)
+					continue;
+				ExecType trExec = execSelection.get(trVertex.getHopID());
+				ExecType twExec = execSelection.get(twHopId);
+				if (trExec == null || twExec == null || trExec == twExec)
+					continue;
+
+				ExecPlacementCaps trCaps = trVertex.getCaps();
+				ExecPlacementCaps twCaps = twVertex.getCaps();
+				if (trExec == ExecType.FED && twExec == ExecType.CP) {
+					if (trCaps.allowCP_LOUT) {
+						execSelection.put(trVertex.getHopID(), ExecType.CP);
+						outSelection.put(trVertex.getHopID(), FederatedOutput.LOUT);
+						changed = true;
+						if (FederatedPlannerTrace.shouldTrace(trHop))
+							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
+									"demote TR " + trVertex.getHopID() + " to CP/LOUT to match TW");
+					}
+					else if (twCaps.allowFED_FOUT) {
+						execSelection.put(twHopId, ExecType.FED);
+						outSelection.put(twHopId, FederatedOutput.FOUT);
+						changed = true;
+						if (FederatedPlannerTrace.shouldTrace(trHop))
+							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
+									"promote TW " + twHopId + " to FED/FOUT to match TR");
+					}
+				}
+				else if (trExec == ExecType.CP && twExec == ExecType.FED) {
+					if (twCaps.allowCP_LOUT) {
+						execSelection.put(twHopId, ExecType.CP);
+						outSelection.put(twHopId, FederatedOutput.LOUT);
+						changed = true;
+						if (FederatedPlannerTrace.shouldTrace(trHop))
+							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
+									"demote TW " + twHopId + " to CP/LOUT to match TR");
+					}
+					else if (trCaps.allowFED_FOUT) {
+						execSelection.put(trVertex.getHopID(), ExecType.FED);
+						outSelection.put(trVertex.getHopID(), FederatedOutput.FOUT);
+						changed = true;
+						if (FederatedPlannerTrace.shouldTrace(trHop))
+							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
+									"promote TR " + trVertex.getHopID() + " to FED/FOUT to match TW");
+					}
+				}
+			}
+		}
+		while (changed && iter < 4);
+	}
 
 	private void logSelectedDecision(Vertex vertex, Set<Long> sourceSide) {
 		Hop hop = (vertex != null) ? vertex.getHopRef() : null;

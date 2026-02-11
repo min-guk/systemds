@@ -23,6 +23,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -491,8 +492,24 @@ public final class FederatedRefedPolicy {
 				}
 			}
 		}
-		// Final cleanup: prevent illegal CP/FOUT on transient reads by promoting matching TWrite
-		// or demoting to LOUT (so FED parents can be demoted if needed).
+		// Final cleanup: prevent illegal transient-read placements.
+		// 1) CP/FOUT TRead is illegal -> promote matching TWrite or demote to LOUT.
+		// 2) FED/FOUT TRead backed by local TWrite input without materialization is illegal at runtime
+		//    (FED op receives local matrix) -> demote TRead to CP/LOUT so parent FED candidates can be pruned.
+		Map<String, List<DataOp>> transientWritesByName = new HashMap<>();
+		for (Hop candidate : all) {
+			if (!(candidate instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) candidate;
+			if (dataOp.getOp() != OpOpData.TRANSIENTWRITE)
+				continue;
+			String name = dataOp.getName();
+			if (name == null || name.isEmpty())
+				continue;
+			transientWritesByName.computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
+		}
+		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeSpecs =
+			FederatedFoutMaterializeRegistry.snapshot(sbId);
 		for (Hop hop : all) {
 			if (!(hop instanceof DataOp))
 				continue;
@@ -502,18 +519,39 @@ public final class FederatedRefedPolicy {
 			ExecType exec = getPlannedExecType(hop);
 			if (exec == null)
 				exec = ExecType.CP;
-			if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
-				if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
-					System.out.println("[TransReadRefedDebug] cleanup hop=" + hop.getHopID()
-						+ " trying promote via TWrite");
+				if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
+						System.out.println("[TransReadRefedDebug] cleanup hop=" + hop.getHopID()
+							+ " trying promote via TWrite");
+					}
+					if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
+						continue;
+					hop.setFederatedOutput(FederatedOutput.LOUT);
+					if (fTypeMap != null)
+						fTypeMap.remove(hop.getHopID());
 				}
-				if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
-					continue;
-				hop.setFederatedOutput(FederatedOutput.LOUT);
-				if (fTypeMap != null)
-					fTypeMap.remove(hop.getHopID());
+				else if (exec == ExecType.FED && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+					String name = dataOp.getName();
+					List<DataOp> writes = (name != null) ? transientWritesByName.get(name) : null;
+					DataOp tWrite = selectMatchingTWrite(writes, dataOp);
+					if (tWrite == null)
+						continue;
+					Hop tWriteInput = (tWrite.getInput() != null && !tWrite.getInput().isEmpty())
+						? tWrite.getInput().get(0) : null;
+					boolean inputFederated = tWriteInput != null && isRuntimeFederatedInput(tWriteInput, null, null);
+					boolean hasMaterialize = materializeSpecs.containsKey(tWrite.getHopID());
+					if (!inputFederated && !hasMaterialize) {
+						if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
+							System.out.println("[TransReadRefedDebug] demote FED TRead hop=" + hop.getHopID()
+								+ " due local TWrite input without materialization; tWrite=" + tWrite.getHopID());
+						}
+						hop.setForcedExecType(ExecType.CP);
+						hop.setFederatedOutput(FederatedOutput.LOUT);
+						if (fTypeMap != null)
+							fTypeMap.remove(hop.getHopID());
+					}
+				}
 			}
-		}
 		if (!runtimeContext) {
 			for (Hop hop : all) {
 				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
@@ -1214,15 +1252,18 @@ public final class FederatedRefedPolicy {
 				return exec == ExecType.FED && !input.hasLocalOutput();
 			}
 			if (op == OpOpData.TRANSIENTWRITE) {
-				// TWrite forwards its input into the symbol table; if the input is federated,
-				// the written variable is federated regardless of TWrite exec type.
-				if (dataOp.hasFederatedOutput())
-					return true;
 				Hop in = dataOp.getInput() != null && !dataOp.getInput().isEmpty() ? dataOp.getInput().get(0) : null;
-				if (in != null && isRuntimeFederatedInput(in, materialize, refed))
+				boolean inputFed = in != null && isRuntimeFederatedInput(in, materialize, refed);
+				boolean hasUploadPath = (materialize != null && materialize.containsKey(input.getHopID()))
+					|| (refed != null && refed.containsKey(input.getHopID()));
+				// TWrite does not execute a conversion by itself. A federated transient value exists only if
+				// the write input is already federated, or an explicit materialize/refed upload is registered.
+				if (dataOp.hasFederatedOutput())
+					return inputFed || hasUploadPath;
+				if (inputFed)
 					return true;
 				ExecType exec = getPlannedExecType(input);
-				return exec == ExecType.FED && !input.hasLocalOutput();
+				return exec == ExecType.FED && !input.hasLocalOutput() && (inputFed || hasUploadPath);
 			}
 			return false;
 		}
@@ -1359,18 +1400,12 @@ public final class FederatedRefedPolicy {
 				plannedAnchor = new AnchorSelection(key, input);
 			}
 			else if (!allowOptionalLocalTransientRead) {
-				boolean canMaterialize = canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor);
-				if (canMaterialize) {
-					plannedAnchor = selectCpfoutAnchorForParent(parent, input, fTypeMap, blockAnchor,
-						treatFTypeMapAsPlannedFederatedInputs);
-					if (plannedAnchor != null)
-						plannedFed = true;
-					else
-						hasUnmaterializableLocal = true;
-				}
-				else {
+				plannedAnchor = selectCpfoutAnchorForParent(parent, input, fTypeMap, blockAnchor,
+					treatFTypeMapAsPlannedFederatedInputs);
+				if (plannedAnchor != null)
+					plannedFed = true;
+				else
 					hasUnmaterializableLocal = true;
-				}
 			}
 			if (traceParent) {
 				FederatedPlannerTrace.log(parent, "FedInputCheck", String.format(java.util.Locale.ROOT,
@@ -1433,13 +1468,6 @@ public final class FederatedRefedPolicy {
 
 		for (int idx : requiredIndices) {
 			Hop input = parent.getInput().get(idx);
-			if (!canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor)) {
-				if (traceParent)
-					FederatedPlannerTrace.log(parent, "FedInputCheck",
-						"return=false (required input has no CP->FOUT candidate): inputHop=" + input.getHopID());
-				return false;
-			}
-
 			AnchorSelection selection = null;
 			if (requiredAnchor != null && requiredAnchor.key != null)
 				selection = requiredAnchor;
@@ -1527,11 +1555,22 @@ public final class FederatedRefedPolicy {
 			boolean treatFTypeMapAsPlannedFederatedInputs) {
 		if (parent == null || input == null)
 			return null;
-		if (!canGenerateCpfoutCandidate(input, fTypeMap, blockAnchor))
+		if (input.getParent() == null || input.getParent().isEmpty())
 			return null;
-
+		if (isHeuristicDemotedHop(input))
+			return null;
+		if (isRecompileRegion(input))
+			return null;
+		if (input instanceof DataOp) {
+			OpOpData op = ((DataOp) input).getOp();
+			if (op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE)
+				return null;
+		}
+		// Parent/sibling anchors are valid CP->FOUT anchors even when the local input itself has no
+		// standalone anchor yet. This keeps planner feasibility aligned with runtime refed behavior.
+		// (Example: optional local REPLACE input materialized against a required federated sibling.)
 		ParentAnchor parentAnchor = determineParentAnchor(parent, input, fTypeMap,
-				treatFTypeMapAsPlannedFederatedInputs, false, false);
+			treatFTypeMapAsPlannedFederatedInputs, false, false);
 		if (parentAnchor == null || parentAnchor.isEmpty() || parentAnchor.key == null)
 			return null;
 		try {
@@ -1564,12 +1603,11 @@ public final class FederatedRefedPolicy {
 	}
 
 	/**
-	 * If a matrix-valued hop is planned as CP (local) but is consumed by a FED hop, it should be
-	 * uploaded (CP-&gt;FOUT) regardless of REQUIRED/OPTIONAL classification.
+	 * If a matrix-valued hop is planned as CP (local) and consumed by a FED parent, force CP-&gt;FOUT
+	 * only when the input is REQUIRED by the parent.
 	 *
-	 * <p>Rationale: even OPTIONAL matrix inputs can trigger repeated runtime refed materialization when
-	 * consumed by FED parents. This is especially expensive on hot paths such as {@code ba+*}
-	 * (AggBinaryOp). For stability and predictable WAN behavior, we force CP-&gt;FOUT upfront.</p>
+	 * <p>OPTIONAL inputs should remain local-capable and let parent-side execution decide whether to
+	 * consume them locally (e.g., broadcast/metadata path) instead of eagerly materializing them.</p>
 	 */
 	private static boolean requiresCpfoutForFedParents(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
@@ -1598,7 +1636,9 @@ public final class FederatedRefedPolicy {
 			}
 			if (targetIndex < 0)
 				continue;
-			return true;
+			InputRequirement req = resolveTargetRequirement(parent, hop, targetIndex, fTypeMap, null);
+			if (req == InputRequirement.REQUIRED)
+				return true;
 		}
 		return false;
 	}
