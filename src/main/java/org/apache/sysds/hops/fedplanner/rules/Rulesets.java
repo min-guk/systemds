@@ -938,8 +938,8 @@ public final class Rulesets {
       if (dir != null && dir.equalsIgnoreCase("rows"))
         outAxis = FType.COL;
 
-      // FED rexpand does not support FOUT materialization in runtime; only FED-LOUT is safe.
-      return fedLocalCaps(sig, ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME);
+      Guard.Result guard = Guard.eval(sig);
+      return guardAwareFout(sig, outAxis, ReasonCode.OK, guard);
     }
   }
 
@@ -2009,6 +2009,8 @@ public final class Rulesets {
           return cpCaps(sig, ReasonCode.UNALIGNED_OR_INSUFFICIENT_FED_INPUTS);
         if (!scalarOut)
           return cpCaps(sig, ReasonCode.NOT_IMPLEMENTED_FED_MATRIX_OUT);
+        if (yAxisFed && !zAxisFed)
+          return cpCaps(sig, ReasonCode.UNSUPPORTED_ALIGNMENT);
         return fedLocalCaps(sig, ReasonCode.OK);
       }
 

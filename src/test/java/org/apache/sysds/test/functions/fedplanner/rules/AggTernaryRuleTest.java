@@ -58,13 +58,13 @@ public class AggTernaryRuleTest {
   }
 
   @Test
-  public void caseBScalarOutputAllowed() {
+  public void caseBDualFedScalarThirdFallsBackToCp() {
     OpCaps caps = aggRule.caps(
         TACKPM,
         Arrays.asList(FType.COL, FType.COL, null),
         scalarShape());
-    assertEquals(ExecType.FED, caps.exec());
-    assertEquals(ReasonCode.OK, caps.reason());
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(ReasonCode.UNSUPPORTED_ALIGNMENT, caps.reason());
   }
 
   @Test

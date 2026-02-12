@@ -332,9 +332,17 @@ public final class FederatedRefedPolicy {
 					if (tWrite.getFederatedOutput() != FederatedOutput.FOUT) {
 						String varName = tWrite.getName();
 						if (varName != null && !varName.isEmpty()) {
-							FederatedPlannerUtils.removeFedAnchorKey(varName);
-							if (!conditionalContext)
-								FederatedPlannerUtils.removeFedInitVar(varName);
+							Hop writeInput = (tWrite.getInput() != null && !tWrite.getInput().isEmpty())
+								? tWrite.getInput().get(0) : null;
+							boolean preservesFederatedRuntimeValue = writeInput != null
+								&& (isRuntimeFederatedInput(writeInput, null, null)
+									|| getPlannedExecType(writeInput) == ExecType.FED
+									|| writeInput.hasFederatedOutput());
+							if (!preservesFederatedRuntimeValue) {
+								FederatedPlannerUtils.removeFedAnchorKey(varName);
+								if (runtimeContext && !conditionalContext)
+									FederatedPlannerUtils.removeFedInitVar(varName);
+							}
 						}
 					}
 				}
@@ -1088,22 +1096,26 @@ public final class FederatedRefedPolicy {
 			InputRequirement req = resolveTargetRequirement(hop, input, i, fTypeMap, blockAnchor);
 			boolean runtimeFed = isRuntimeFederatedInput(input, materialize, refed);
 			boolean sourceFed = runtimeFed && isRuntimeFederatedInput(input, null, null);
-			if (req == InputRequirement.OPTIONAL) {
-				if (runtimeFed) {
-					// Do not use planned CP->FOUT candidates as anchors; only accept true runtime
-					// federated sources here to avoid cyclic anchoring chains.
-					if (sourceFed) {
-						if (optionalAnchor == null) {
-							AnchorKey key = buildAnchorKey(input, fTypeMap);
-							optionalAnchor = new AnchorSelection(key, input);
-						}
-						else if (optionalAnchor.key == null) {
-							AnchorKey key = buildAnchorKey(input, fTypeMap);
-							if (key != null)
+				if (req == InputRequirement.OPTIONAL) {
+					if (runtimeFed) {
+						// Do not use planned CP->FOUT candidates as anchors; only accept true runtime
+						// federated sources here to avoid cyclic anchoring chains.
+						if (sourceFed) {
+							if (optionalAnchor == null) {
+								AnchorKey key = buildAnchorKey(input, fTypeMap);
+								if (key == null)
+									key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
 								optionalAnchor = new AnchorSelection(key, input);
+							}
+							else if (optionalAnchor.key == null) {
+								AnchorKey key = buildAnchorKey(input, fTypeMap);
+								if (key == null)
+									key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
+								if (key != null)
+									optionalAnchor = new AnchorSelection(key, input);
+							}
 						}
-					}
-					continue;
+						continue;
 				}
 				// Optional local inputs can stay local as long as the FED hop has another anchor input that establishes
 				// runtime federation (or will be made federated as a REQUIRED input). Otherwise we must federate at
@@ -1129,15 +1141,17 @@ public final class FederatedRefedPolicy {
 					continue;
 			}
 			hasRequiredMatrix = true;
-			if (!runtimeFed)
-				requiredIndices.add(i);
-				if (sourceFed) {
-					AnchorKey key = buildAnchorKey(input, fTypeMap);
-					if (key != null) {
-						if (requiredAnchor == null || requiredAnchor.key == null)
-							requiredAnchor = new AnchorSelection(key, input);
-						else if (!anchorsCompatible(requiredAnchor.key, key))
-							hasSourceAnchorConflict = true;
+				if (!runtimeFed)
+					requiredIndices.add(i);
+					if (sourceFed) {
+						AnchorKey key = buildAnchorKey(input, fTypeMap);
+						if (key == null)
+							key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
+						if (key != null) {
+							if (requiredAnchor == null || requiredAnchor.key == null)
+								requiredAnchor = new AnchorSelection(key, input);
+							else if (!anchorsCompatible(requiredAnchor.key, key))
+								hasSourceAnchorConflict = true;
 					} else if (requiredAnchor == null) {
 						requiredAnchor = new AnchorSelection(null, input);
 					}
@@ -2384,6 +2398,10 @@ public final class FederatedRefedPolicy {
 				fTypeMap.remove(hop.getHopID());
 			return;
 		}
+		long scopeId = (sbId >= 0) ? sbId : DEFAULT_SBID;
+		if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID())
+			|| FederatedRefedRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
+			return;
 		if (!hop.getDataType().isMatrix())
 			throw new DMLRuntimeException("CP->FOUT refed supports only matrix outputs for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
@@ -2406,7 +2424,9 @@ public final class FederatedRefedPolicy {
 			}
 		}
 
-		AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, true, true, blockAnchor);
+		AnchorSelection selection = selectAnchorFromFedParentSiblings(hop, fTypeMap);
+		if (selection == null)
+			selection = selectAnchorWithinBlock(hop, fTypeMap, true, true, blockAnchor);
 		if (selection == null) {
 			if (hop.hasFederatedOutput())
 				throw new DMLRuntimeException("CP->FOUT refed requires an anchor for hop "
@@ -2448,6 +2468,10 @@ public final class FederatedRefedPolicy {
 	private static void validateAndRegisterRequired(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection selection) {
 		if (hop == null)
+			return;
+		long scopeId = (sbId >= 0) ? sbId : DEFAULT_SBID;
+		if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID())
+			|| FederatedRefedRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
 			return;
 		if (isHeuristicDemotedHop(hop))
 			throw new DMLRuntimeException("Heuristic-demoted vector must remain local (no CP->FOUT refed): hop "
@@ -2692,6 +2716,38 @@ public final class FederatedRefedPolicy {
 		return selectAnchor(hop, fTypeMap, onlyFedParents, throwOnFailure, blockAnchor, new HashSet<>());
 	}
 
+	private static AnchorSelection selectAnchorFromFedParentSiblings(Hop hop,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
+			return null;
+		AnchorKey selectedKey = null;
+		Hop selectedAnchor = null;
+		for (Hop parent : hop.getParent()) {
+			if (parent == null || getPlannedExecType(parent) != ExecType.FED || parent.getInput() == null)
+				continue;
+			for (Hop sibling : parent.getInput()) {
+				if (sibling == null || sibling == hop)
+					continue;
+				if (sibling.getDataType() == null || !sibling.getDataType().isMatrix())
+					continue;
+				AnchorKey key = buildAnchorKey(sibling, fTypeMap);
+				if (key == null)
+					key = deriveFallbackAnchorKeyForRuntimeSource(sibling, fTypeMap);
+				if (key == null)
+					continue;
+				if (selectedKey == null) {
+					selectedKey = key;
+					selectedAnchor = sibling;
+				}
+				else if (!anchorsCompatible(selectedKey, key))
+					return null;
+			}
+		}
+		if (selectedKey == null)
+			return null;
+		return new AnchorSelection(selectedKey, selectedAnchor);
+	}
+
 	private static AnchorSelection selectAnchor(Hop hop, java.util.Map<Long, FType> fTypeMap,
 				boolean onlyFedParents, boolean throwOnFailure, AnchorSelection blockAnchor, Set<Long> visited) {
 		if (hop == null)
@@ -2759,43 +2815,55 @@ public final class FederatedRefedPolicy {
 						sawRequiredParent = true;
 					if (targetReq == InputRequirement.OPTIONAL) {
 						sawOptionalParent = true;
+						boolean keepForAnchorCompatibility = hasRuntimeFederatedInputExcluding(parent, hop);
+						if (!keepForAnchorCompatibility) {
+							if (debug != null)
+								debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString()
+									+ "): targetReq=OPTIONAL at inputIndex=" + targetIndex);
+							continue;
+						}
 						if (debug != null)
-							debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString()
-								+ "): targetReq=OPTIONAL at inputIndex=" + targetIndex);
-						continue;
+							debug.add("retain parent=" + parent.getHopID() + " (" + parent.getOpString()
+								+ "): targetReq=OPTIONAL but federated sibling anchor exists");
 					}
 				}
-			ParentAnchor parentAnchor = null;
-			// IMPORTANT: for CP->FOUT anchoring we must rely on an already-existing runtime
-			// federated map. Planned CP->FOUT candidates (cached or hinted via fTypeMap)
-			// must not be used as anchors, otherwise we can create invalid/cyclic refed
-			// chains where the "anchor" is still local at runtime.
-			if (!hasRuntimeFederatedInputExcluding(parent, hop)) {
-				parentAnchor = findConsumerAnchor(parent, hop, fTypeMap, blockAnchor, visited);
+				ParentAnchor parentAnchor = null;
+				ParentAnchor siblingAnchor = selectDirectSiblingAnchor(parent, hop, fTypeMap);
+				if (siblingAnchor != null && !siblingAnchor.isEmpty())
+					parentAnchor = siblingAnchor;
+				// IMPORTANT: for CP->FOUT anchoring we must rely on an already-existing runtime
+				// federated map. Planned CP->FOUT candidates (cached or hinted via fTypeMap)
+				// must not be used as anchors, otherwise we can create invalid/cyclic refed
+				// chains where the "anchor" is still local at runtime.
 				if (parentAnchor == null) {
-					if (debug != null)
-						debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString()
-							+ "): no federated inputs besides target");
-					continue;
-				}
-			} else {
-				try {
-					parentAnchor = determineParentAnchor(parent, hop, fTypeMap,
-							false, throwOnFailure, true);
-				}
-				catch (RuntimeException ex) {
-					if (debug != null) {
-						debug.add("fail parent=" + parent.getHopID() + " (" + parent.getOpString()
-							+ "): determineParentAnchor threw " + ex.getClass().getSimpleName()
-							+ ": " + ex.getMessage());
-						LOG.error("CP->FOUT refed anchor selection failed for hop " + hop.getHopID()
-							+ " (" + hop.getOpString() + "): " + String.join(" | ", debug), ex);
+					if (!hasRuntimeFederatedInputExcluding(parent, hop)) {
+						parentAnchor = findConsumerAnchor(parent, hop, fTypeMap, blockAnchor, visited);
+						if (parentAnchor == null) {
+							if (debug != null)
+								debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString()
+									+ "): no federated inputs besides target");
+							continue;
+						}
 					}
-					throw ex;
+					else {
+						try {
+							parentAnchor = determineParentAnchor(parent, hop, fTypeMap,
+									false, throwOnFailure, true);
+						}
+						catch (RuntimeException ex) {
+							if (debug != null) {
+								debug.add("fail parent=" + parent.getHopID() + " (" + parent.getOpString()
+									+ "): determineParentAnchor threw " + ex.getClass().getSimpleName()
+									+ ": " + ex.getMessage());
+								LOG.error("CP->FOUT refed anchor selection failed for hop " + hop.getHopID()
+									+ " (" + hop.getOpString() + "): " + String.join(" | ", debug), ex);
+							}
+							throw ex;
+						}
+					}
 				}
-			}
-			if (parentAnchor == null)
-				return null;
+				if (parentAnchor == null)
+					return null;
 			if (parentAnchor.isEmpty()) {
 				if (debug != null)
 					debug.add("skip parent=" + parent.getHopID() + " (" + parent.getOpString() + "): empty anchor");
@@ -3031,6 +3099,29 @@ public final class FederatedRefedPolicy {
 		return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
 	}
 
+	private static AnchorKey deriveFallbackAnchorKeyForRuntimeSource(Hop input,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (!(input instanceof DataOp))
+			return null;
+		DataOp dataOp = (DataOp) input;
+		OpOpData op = dataOp.getOp();
+		if (op != OpOpData.TRANSIENTREAD && op != OpOpData.TRANSIENTWRITE)
+			return null;
+		String varName = dataOp.getName();
+		if (varName == null || varName.isEmpty())
+			return null;
+		FType fType = getKnownFType(input, fTypeMap);
+		if (fType == null) {
+			FType axis = FederatedPlannerUtils.getVectorAxis(input);
+			if (axis != null)
+				fType = axis;
+		}
+		String key = "VAR:" + varName;
+		if (fType != null)
+			key = key + "|" + fType.name();
+		return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, key);
+	}
+
 	private static String toAnchorKeyString(AnchorSelection selection) {
 		if (selection == null || selection.key == null)
 			return null;
@@ -3189,6 +3280,7 @@ public final class FederatedRefedPolicy {
 			java.util.Map<Long, FType> fTypeMap, boolean treatFTypeMapAsPlannedFederatedInputs,
 			boolean throwOnFailure, boolean allowEmpty) {
 		List<InputCandidate> candidates = new ArrayList<>();
+		List<InputCandidate> optionalCandidates = new ArrayList<>();
 		boolean hasPartitioned = false;
 		List<Hop> inputs = parent.getInput();
 		for (int i = 0; i < inputs.size(); i++) {
@@ -3215,8 +3307,6 @@ public final class FederatedRefedPolicy {
 					return null;
 				}
 			}
-			if (req == InputRequirement.OPTIONAL)
-				continue;
 			// Only accept anchors that are federated at runtime (have an actual FederationMap).
 			// Do not accept planned CP->FOUT candidates as anchors, because they may still be
 			// local at the point where the refed/materialize is executed.
@@ -3224,6 +3314,17 @@ public final class FederatedRefedPolicy {
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
 					&& fTypeMap != null
 					&& fTypeMap.containsKey(input.getHopID());
+			if (req == InputRequirement.OPTIONAL) {
+				if (runtimeFed || plannedFed) {
+					FType optionalType = getKnownFType(input, fTypeMap);
+					if (optionalType == null) {
+						FType axis = FederatedPlannerUtils.getVectorAxis(input);
+						optionalType = (axis != null) ? axis : FType.FULL;
+					}
+					optionalCandidates.add(new InputCandidate(input, optionalType));
+				}
+				continue;
+			}
 			if (!runtimeFed && !plannedFed)
 				continue;
 			FType fType = getKnownFType(input, fTypeMap);
@@ -3237,6 +3338,11 @@ public final class FederatedRefedPolicy {
 			}
 			hasPartitioned |= (fType == FType.ROW || fType == FType.COL);
 			candidates.add(new InputCandidate(input, fType));
+		}
+		if (candidates.isEmpty() && !optionalCandidates.isEmpty()) {
+			candidates.addAll(optionalCandidates);
+			for (InputCandidate cand : optionalCandidates)
+				hasPartitioned |= (cand.fType == FType.ROW || cand.fType == FType.COL);
 		}
 
 		if (hasPartitioned) {
@@ -3282,6 +3388,34 @@ public final class FederatedRefedPolicy {
 			return null;
 		}
 		return new ParentAnchor(parentKey, parentAnchor);
+	}
+
+	private static ParentAnchor selectDirectSiblingAnchor(Hop parent, Hop target,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (parent == null || target == null || parent.getInput() == null)
+			return null;
+		AnchorKey selectedKey = null;
+		Hop selectedAnchor = null;
+		for (Hop input : parent.getInput()) {
+			if (input == null || input == target)
+				continue;
+			if (input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			AnchorKey key = buildAnchorKey(input, fTypeMap);
+			if (key == null)
+				key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
+			if (key == null)
+				continue;
+			if (selectedKey == null) {
+				selectedKey = key;
+				selectedAnchor = input;
+			}
+			else if (!anchorsCompatible(selectedKey, key))
+				return null;
+		}
+		if (selectedKey == null)
+			return null;
+		return new ParentAnchor(selectedKey, selectedAnchor);
 	}
 
 	private static boolean dependsOn(Hop candidate, Hop target) {
@@ -3983,17 +4117,22 @@ public final class FederatedRefedPolicy {
 		AnchorKey cached = CPFOUT_ANCHOR_CACHE.get(hop.getHopID());
 		if (cached != null)
 			return cached;
-		if (hop instanceof DataOp) {
-			DataOp dataOp = (DataOp) hop;
-			if (dataOp.getOp() == OpOpData.TRANSIENTREAD) {
-				String anchorKey = FederatedPlannerUtils.getFedAnchorKey(dataOp.getName());
-				if (anchorKey != null)
-					return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
-				// Only fed-init reads (or TR reads with explicit anchorKeys) can provide a
-				// runtime federation map. Do not generate anchor keys for arbitrary local
-				// transient reads just because they have inferred FType hints.
-				if (FederatedPlannerUtils.isFedInitVar(dataOp.getName())) {
-					FType fType = getKnownFType(hop, fTypeMap);
+			if (hop instanceof DataOp) {
+				DataOp dataOp = (DataOp) hop;
+				if (dataOp.getOp() == OpOpData.TRANSIENTREAD) {
+					String anchorKey = FederatedPlannerUtils.getFedAnchorKey(dataOp.getName());
+					if (anchorKey != null)
+						return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
+					if (isRuntimeFederatedInput(hop, null, null)) {
+						AnchorKey fallback = deriveFallbackAnchorKeyForRuntimeSource(hop, fTypeMap);
+						if (fallback != null)
+							return fallback;
+					}
+					// Only fed-init reads (or TR reads with explicit anchorKeys) can provide a
+					// runtime federation map. Do not generate anchor keys for arbitrary local
+					// transient reads just because they have inferred FType hints.
+					if (FederatedPlannerUtils.isFedInitVar(dataOp.getName())) {
+						FType fType = getKnownFType(hop, fTypeMap);
 					AnchorKey key = buildAnchorKeyForDataOp(dataOp, fType, fTypeMap);
 					if (key != null)
 						return key;
