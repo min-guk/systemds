@@ -92,6 +92,10 @@ public class FederatedPlanMinSTGraph {
 	// HARD_CONSTRAINT: represents impossible states (consistency violations or
 	// illegal combos)
 	private static final double HARD_CONSTRAINT = 1e15;
+	// Single-worker FED execution rarely provides compute benefit but can add large
+	// orchestration/materialization overhead at runtime. Keep FED reachable when it
+	// is the only legal choice, but strongly prefer CP in this degenerate topology.
+	private static final double SINGLE_WORKER_FED_EXEC_PENALTY = 1e6;
 	private static final long leafedSource = -1L;
 	private static final long rootLocalSink = -2L;
 	private static final long auxNodeBase = -3L;
@@ -186,6 +190,9 @@ public class FederatedPlanMinSTGraph {
 			fedOverhead = vertex.getNetworkWeight() * FederatedCostModel.computeNetworkCost(0);
 		}
 		double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
+		if (numOfWorkers <= 1 && !(vertex.getHopRef() instanceof DataOp)) {
+			fedCost += SINGLE_WORKER_FED_EXEC_PENALTY;
+		}
 
 		if (!acL && !acF)
 			cpCost = HARD_INF;
