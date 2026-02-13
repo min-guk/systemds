@@ -93,6 +93,74 @@ public class FederatedPlanMinSTRewire {
 	// and avoid resurrecting expensive FED alternatives for optional/local-capable edges.
 	private static final double FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS = 10.0;
 
+	private static int getConfiguredWorkerCount() {
+		String raw = System.getenv("DOCKER_NUM_WORKERS");
+		if (raw == null || raw.isEmpty())
+			raw = System.getProperty("DOCKER_NUM_WORKERS");
+		if (raw == null || raw.isEmpty())
+			return -1;
+		try {
+			return Integer.parseInt(raw.trim());
+		}
+		catch (NumberFormatException ex) {
+			return -1;
+		}
+	}
+
+	private static boolean hasImmediateFedMatrixInput(Hop hop) {
+		if (hop == null)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		for (Hop in : inputs) {
+			if (in == null || in.getDataType() == null || !in.getDataType().isMatrix())
+				continue;
+			if (in instanceof DataOp) {
+				DataOp dataOp = (DataOp) in;
+				Types.OpOpData op = dataOp.getOp();
+				if (op == Types.OpOpData.FEDERATED)
+					return true;
+				if (op == Types.OpOpData.TRANSIENTREAD) {
+					String name = dataOp.getName();
+					if (name != null && FederatedPlannerUtils.isFedInitVar(name))
+						return true;
+				}
+			}
+			ExecType forcedExec = in.getForcedExecType();
+			if (forcedExec == ExecType.FED && in.getFederatedOutput() == FederatedOutput.FOUT)
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean hasUnknownMatrixInputForFedExec(Hop hop) {
+		if (hop == null)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		for (Hop in : inputs) {
+			if (in == null || in.getDataType() == null || !in.getDataType().isMatrix())
+				continue;
+			if (FederatedPlannerUtils.isScalarLikeMatrix(in))
+				continue;
+			if (in instanceof DataOp) {
+				DataOp dataOp = (DataOp) in;
+				Types.OpOpData op = dataOp.getOp();
+				if (op == Types.OpOpData.FEDERATED)
+					continue;
+				if (op == Types.OpOpData.TRANSIENTREAD) {
+					String name = dataOp.getName();
+					if (name != null && FederatedPlannerUtils.isFedInitVar(name))
+						continue;
+				}
+			}
+			return true;
+		}
+		return false;
+	}
+
 	private static class LoopAnalysisContext {
 		private final Map<String, Boolean> readFromOutside = new HashMap<>();
 		private final Map<String, List<Hop>> headerReads = new HashMap<>();
@@ -772,6 +840,12 @@ public class FederatedPlanMinSTRewire {
 					FederatedPlannerLogger.logDataOpFTypeDebug(
 							hop, fType, "FEDERATED", "Derived from partition ranges");
 					caps = buildExecPlacementCaps(hop, privacy, fType, null, fTypeMap);
+					// Fed-init DataOps must remain FED/FOUT (avoid false local sources).
+					caps.allowCP_LOUT = false;
+					caps.allowCP_FOUT = false;
+					caps.allowFED_LOUT = false;
+					caps.allowFED_FOUT = true;
+					caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.NATIVE;
 					privacyConstraintMap.put(hop.getHopID(), privacy);
 					fTypeMap.put(hop.getHopID(), fType);
 					return new Vertex(hop, privacy, fType, caps);
@@ -1625,6 +1699,7 @@ public class FederatedPlanMinSTRewire {
 	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle,
 			Map<Long, FType> fTypeMap) {
 		ExecPlacementCaps caps = new ExecPlacementCaps();
+		int configuredWorkers = getConfiguredWorkerCount();
 
 		// 0) 처음엔 전부 false로 시작 (DP가 실제로 생성하는 조합만 켜기 위함)
 		caps.allowCP_LOUT = false;
@@ -1650,7 +1725,7 @@ public class FederatedPlanMinSTRewire {
 				? ExecPlacementCaps.FedFoutMode.NATIVE
 				: ExecPlacementCaps.FedFoutMode.DISABLED;
 
-		if (shouldEnableDerivedFedFout(hop, privacy, fTypeMap, caps)) {
+		if (configuredWorkers != 1 && shouldEnableDerivedFedFout(hop, privacy, fTypeMap, caps)) {
 			caps.allowFED_FOUT = true;
 			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DERIVED_REFED;
 		}
@@ -1683,6 +1758,47 @@ public class FederatedPlanMinSTRewire {
 
 		caps = applyFunctionPlacementRestrictions(hop, caps);
 		caps = applyTransientPlacementRestrictions(hop, caps);
+		// With configuredWorkers=1, federated execution of AggBinary (e.g., ba+*) can trigger
+		// unnecessary CP->FOUT uploads (fed_fout) for local intermediates. Keep these ops local
+		// unless all matrix inputs are already known-federated anchors.
+		if (configuredWorkers == 1
+				&& (caps.allowFED_LOUT || caps.allowFED_FOUT)
+				&& hop instanceof AggBinaryOp
+				&& (privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)) {
+			boolean prevAllowFedLout = caps.allowFED_LOUT;
+			boolean prevAllowFedFout = caps.allowFED_FOUT;
+			ExecPlacementCaps.FedFoutMode prevFedFoutMode = caps.fedFoutMode;
+			boolean prevAllowCpFout = caps.allowCP_FOUT;
+			caps.allowFED_LOUT = false;
+			caps.allowFED_FOUT = false;
+			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
+			if (caps.allowCP_FOUT && !caps.allowFED_FOUT)
+				caps.allowCP_FOUT = false;
+			// If this restriction eliminates all legal choices, keep the original caps to
+			// avoid breaking privacy-constrained cases where FED is required.
+			if (!caps.hasAny()) {
+				caps.allowFED_LOUT = prevAllowFedLout;
+				caps.allowFED_FOUT = prevAllowFedFout;
+				caps.fedFoutMode = prevFedFoutMode;
+				caps.allowCP_FOUT = prevAllowCpFout;
+			}
+		}
+		boolean isTransientReadFedInit = false;
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			String name = ((DataOp) hop).getName();
+			isTransientReadFedInit = (name != null && FederatedPlannerUtils.isFedInitVar(name));
+		}
+		if (configuredWorkers == 1
+				&& (caps.allowFED_LOUT || caps.allowFED_FOUT)
+				&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)
+				&& !isTransientReadFedInit
+				&& !hasImmediateFedMatrixInput(hop)) {
+			caps.allowFED_LOUT = false;
+			caps.allowFED_FOUT = false;
+			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
+			if (caps.allowCP_FOUT && !caps.allowFED_FOUT)
+				caps.allowCP_FOUT = false;
+		}
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
@@ -1710,6 +1826,13 @@ public class FederatedPlanMinSTRewire {
 		Types.OpOpData op = ((DataOp) hop).getOp();
 		if (op != Types.OpOpData.TRANSIENTREAD && op != Types.OpOpData.TRANSIENTWRITE) {
 			return caps;
+		}
+		if (op == Types.OpOpData.TRANSIENTREAD) {
+			String name = ((DataOp) hop).getName();
+			// Keep fed-init transient reads federated (avoid CP materialization).
+			if (name != null && FederatedPlannerUtils.isFedInitVar(name)) {
+				caps.allowCP_LOUT = false;
+			}
 		}
 		caps.allowCP_FOUT = false;
 		caps.allowFED_LOUT = false;

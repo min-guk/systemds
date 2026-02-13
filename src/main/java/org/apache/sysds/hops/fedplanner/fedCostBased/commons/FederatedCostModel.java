@@ -283,7 +283,7 @@ public final class FederatedCostModel {
 
 	private static double computeDirectionalNetworkCost(double memSize, double bandwidthMBps) {
 		if (memSize <= 0)
-			return 0.0;
+			return MBS_NETWORK_LATENCY * TO_MS + Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 		double effectiveBw = (bandwidthMBps > 0.0) ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
 		return (MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / effectiveBw)) * TO_MS;
 	}

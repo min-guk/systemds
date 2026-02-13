@@ -96,6 +96,48 @@ public class FederatedPlanMinSTGraph {
 	// orchestration/materialization overhead at runtime. Keep FED reachable when it
 	// is the only legal choice, but strongly prefer CP in this degenerate topology.
 	private static final double SINGLE_WORKER_FED_EXEC_PENALTY = 1e6;
+	private static final double SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS = 10.0;
+
+	private static boolean hasImmediateFedMatrixInput(Hop hop) {
+		if (hop == null)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		for (Hop in : inputs) {
+			if (in == null || in.getDataType() == null || !in.getDataType().isMatrix())
+				continue;
+			if (in instanceof DataOp) {
+				DataOp dataOp = (DataOp) in;
+				Types.OpOpData op = dataOp.getOp();
+				if (op == Types.OpOpData.FEDERATED)
+					return true;
+				if (op == Types.OpOpData.TRANSIENTREAD) {
+					String name = dataOp.getName();
+					if (name != null && FederatedPlannerUtils.isFedInitVar(name))
+						return true;
+				}
+			}
+			ExecType forcedExec = in.getForcedExecType();
+			if (forcedExec == ExecType.FED && in.getFederatedOutput() == FederatedOutput.FOUT)
+				return true;
+		}
+		return false;
+	}
+
+	private static double getConfiguredLocalToFedCtrlOverheadMs() {
+		String raw = System.getenv("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS");
+		if (raw == null || raw.isEmpty())
+			raw = System.getProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS");
+		if (raw == null || raw.isEmpty())
+			return 0.0;
+		try {
+			return Double.parseDouble(raw.trim());
+		}
+		catch (NumberFormatException ex) {
+			return 0.0;
+		}
+	}
 	private static final long leafedSource = -1L;
 	private static final long rootLocalSink = -2L;
 	private static final long auxNodeBase = -3L;
@@ -190,8 +232,18 @@ public class FederatedPlanMinSTGraph {
 			fedOverhead = vertex.getNetworkWeight() * FederatedCostModel.computeNetworkCost(0);
 		}
 		double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
-		if (numOfWorkers <= 1 && !(vertex.getHopRef() instanceof DataOp)) {
-			fedCost += SINGLE_WORKER_FED_EXEC_PENALTY;
+		if (numOfWorkers <= 1) {
+			Hop hopRef = vertex.getHopRef();
+			boolean isFedInit = hopRef instanceof DataOp
+					&& ((DataOp) hopRef).getOp() == Types.OpOpData.FEDERATED;
+			boolean hasFedInput = hasImmediateFedMatrixInput(hopRef);
+			double hopWeight = vertex.getOpWeight();
+			double ctrlMs = getConfiguredLocalToFedCtrlOverheadMs();
+			boolean repeated = hopWeight > 1.0;
+			if (!isFedInit
+					&& ctrlMs > SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS
+					&& (!hasFedInput || repeated))
+				fedCost += SINGLE_WORKER_FED_EXEC_PENALTY;
 		}
 
 		if (!acL && !acF)

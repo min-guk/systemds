@@ -54,6 +54,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;

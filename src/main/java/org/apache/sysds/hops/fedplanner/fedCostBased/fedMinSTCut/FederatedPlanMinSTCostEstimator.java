@@ -427,10 +427,10 @@ public class FederatedPlanMinSTCostEstimator {
 				downloadCostWithoutWeight = 0;
 			} else if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				opCostWithWeight = 0;
-					uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-							uploadMemEstimate, vertex.getDataType(), numOfWorkers);
-					cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-							uploadMemEstimate, cpFoutType, numOfWorkers);
+				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+						uploadMemEstimate, vertex.getDataType(), numOfWorkers);
+				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+						uploadMemEstimate, cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
 						uploadMemEstimate);
 			} else {
