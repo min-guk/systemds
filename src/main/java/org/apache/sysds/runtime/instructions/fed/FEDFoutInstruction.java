@@ -104,18 +104,29 @@ public class FEDFoutInstruction extends FEDInstruction {
 		}
 		else {
 			String anchorKey = _anchor.getName();
-			FederationMap fallback = FederationUtils.getAnchorMap(anchorKey);
-			if (fallback != null) {
-				anchorMap = fallback;
+			// Resolve "VAR:<name>" anchors against live runtime variables first.
+			if (anchorKey != null && anchorKey.startsWith("VAR:")) {
+				String varName = anchorKey.substring("VAR:".length());
+				if (ec.containsVariable(varName)) {
+					MatrixObject anchor = ec.getMatrixObject(varName);
+					if (anchor != null && anchor.isFederated() && anchor.getFedMapping() != null)
+						anchorMap = anchor.getFedMapping();
+				}
 			}
-			else {
-				FederationMap derived = FederationUtils.buildAnchorMapFromKey(anchorKey);
-				if (derived != null) {
-					anchorMap = derived;
-					FederationUtils.registerAnchorMap(anchorKey, anchorMap);
+			if (anchorMap == null) {
+				FederationMap fallback = FederationUtils.getAnchorMap(anchorKey);
+				if (fallback != null) {
+					anchorMap = fallback;
 				}
 				else {
-					throw new DMLRuntimeException("fed_fout requires a federated anchor: " + anchorKey);
+					FederationMap derived = FederationUtils.buildAnchorMapFromKey(anchorKey);
+					if (derived != null) {
+						anchorMap = derived;
+						FederationUtils.registerAnchorMap(anchorKey, anchorMap);
+					}
+					else {
+						throw new DMLRuntimeException("fed_fout requires a federated anchor: " + anchorKey);
+					}
 				}
 			}
 		}

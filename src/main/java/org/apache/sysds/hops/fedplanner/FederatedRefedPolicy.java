@@ -34,6 +34,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.AggOp;
+import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
@@ -687,6 +689,8 @@ public final class FederatedRefedPolicy {
 		DataOp tWrite = selectMatchingTWrite(writes, tRead);
 		if (tWrite == null)
 			return false;
+		if (!isWriteDominatingRead(tWrite, tRead))
+			return false;
 		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(tRead.getName())) {
 			System.out.println("[TransReadRefedDebug] match TWrite hop=" + tWrite.getHopID()
 				+ " line=" + tWrite.getBeginLine());
@@ -867,6 +871,16 @@ public final class FederatedRefedPolicy {
 				return write;
 		}
 		return best;
+	}
+
+	private static boolean isWriteDominatingRead(DataOp tWrite, DataOp tRead) {
+		if (tWrite == null || tRead == null)
+			return false;
+		int writeLine = tWrite.getBeginLine();
+		int readLine = tRead.getBeginLine();
+		if (writeLine <= 0 || readLine <= 0)
+			return true;
+		return writeLine <= readLine;
 	}
 
 	private static void promoteTransientReadsFromAnchors(List<Hop> hops, java.util.Map<Long, FType> fTypeMap) {
@@ -2645,13 +2659,25 @@ public final class FederatedRefedPolicy {
 		// over refed even when the anchor dimensions match (keeps planned-federated decisions stable).
 		FType plannedFType = getKnownFType(hop, fTypeMap);
 		if (isCpToFout && plannedFType == FType.BROADCAST) {
-			if (fTypeMap != null)
-				fTypeMap.put(hop.getHopID(), FType.BROADCAST);
-			FederatedRefedRegistry.remove(scopeId, hop.getHopID());
-			String anchorLabel = (anchorHop != null) ? findAnchorLabel(anchorHop) : null;
-			FederatedFoutMaterializeRegistry.register(scopeId, hop.getHopID(), anchorHopId, "BROADCAST", anchorLabel,
-				anchorKey);
-			return;
+			boolean forceBroadcast = true;
+			if (anchorHop != null && (anchorType == FType.ROW || anchorType == FType.COL)) {
+				boolean axisMismatch = isVectorAxisMismatch(hop, anchorHop, fTypeMap)
+					|| isMaterializeAxisMismatch(hop, anchorHop, fTypeMap);
+				// When a concrete axis-aligned anchor exists, do not hard-force BROADCAST from
+				// planner hints; keep the aligned CP->FOUT path to avoid invalid federated
+				// elementwise ops on worker-local slices.
+				if (!axisMismatch)
+					forceBroadcast = false;
+			}
+			if (forceBroadcast) {
+				if (fTypeMap != null)
+					fTypeMap.put(hop.getHopID(), FType.BROADCAST);
+				FederatedRefedRegistry.remove(scopeId, hop.getHopID());
+				String anchorLabel = (anchorHop != null) ? findAnchorLabel(anchorHop) : null;
+				FederatedFoutMaterializeRegistry.register(scopeId, hop.getHopID(), anchorHopId, "BROADCAST", anchorLabel,
+					anchorKey);
+				return;
+			}
 		}
 
 		// If we only have an anchorKey, we can still choose between aligned upload and broadcast based on
@@ -3654,6 +3680,8 @@ public final class FederatedRefedPolicy {
 		if (thisShape != ShapeClass.VECTOR)
 			return InputRequirement.AMBIGUOUS;
 		boolean anyFed = isFederatedInput(input, fTypeMap);
+		boolean thisSourceFed = isRuntimeFederatedInput(input, null, null);
+		int sourceFedCount = thisSourceFed ? 1 : 0;
 		boolean sawVector = false;
 		for (int i = 0; i < inputs.size(); i++) {
 			if (i == index)
@@ -3671,10 +3699,31 @@ public final class FederatedRefedPolicy {
 			sawVector = true;
 			if (isFederatedInput(other, fTypeMap))
 				anyFed = true;
+			if (isRuntimeFederatedInput(other, null, null))
+				sourceFedCount++;
 		}
 		if (!sawVector)
 			return InputRequirement.AMBIGUOUS;
+		// For dot-like vector expressions that are immediately fully aggregated (tak+* rewrite path),
+		// keep non-source vectors local whenever there is exactly one concrete federated source.
+		// This avoids forcing a second CP->FOUT upload that can create an unsupported dual-fed,
+		// non-aligned AggregateTernary runtime combination.
+		if (hasFullAggregateConsumer(parent) && sourceFedCount == 1)
+			return thisSourceFed ? InputRequirement.REQUIRED : InputRequirement.OPTIONAL;
 		return anyFed ? InputRequirement.REQUIRED : InputRequirement.OPTIONAL;
+	}
+
+	private static boolean hasFullAggregateConsumer(Hop hop) {
+		if (hop == null || hop.getParent() == null)
+			return false;
+		for (Hop parent : hop.getParent()) {
+			if (!(parent instanceof AggUnaryOp))
+				continue;
+			AggUnaryOp agg = (AggUnaryOp) parent;
+			if (agg.getDirection() == Direction.RowCol && agg.getOp() == AggOp.SUM)
+				return true;
+		}
+		return false;
 	}
 
 	private static ShapeClass getShapeClass(Hop hop) {

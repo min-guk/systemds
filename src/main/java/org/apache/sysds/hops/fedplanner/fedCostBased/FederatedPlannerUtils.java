@@ -38,7 +38,6 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.OpOp1;
-import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
@@ -522,6 +521,46 @@ public class FederatedPlannerUtils {
 
 	public static String getFedAnchorKey(String varName) {
 		return (varName == null) ? null : FED_ANCHOR_KEYS.get(varName);
+	}
+
+	/**
+	 * Returns true iff the given variable name is known to have a concrete runtime
+	 * federated source (fed-init var or non-VAR anchor key).
+	 */
+	public static boolean hasConcreteFederatedSourceVar(String varName) {
+		if (varName == null || varName.isEmpty())
+			return false;
+		if (isFedInitVar(varName))
+			return true;
+		String anchorKey = getFedAnchorKey(varName);
+		return anchorKey != null && !anchorKey.startsWith("VAR:");
+	}
+
+	/**
+	 * Checks whether a transient-read can be treated as runtime-federated based on
+	 * its mapped sources.
+	 * This intentionally rejects planner-only hints (e.g., inferred FType on local
+	 * sources) and only accepts concrete runtime federation origins.
+	 */
+	public static boolean hasConcreteFederatedSourceForTransientRead(DataOp transientRead, List<Hop> sourceHops) {
+		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return false;
+		boolean hasMappedSources = sourceHops != null && !sourceHops.isEmpty();
+		if (!hasMappedSources)
+			return hasConcreteFederatedSourceVar(transientRead.getName());
+		for (Hop source : sourceHops) {
+			if (source == null)
+				continue;
+			if (source instanceof DataOp) {
+				DataOp dataSource = (DataOp) source;
+				if (dataSource.getOp() == Types.OpOpData.FEDERATED)
+					return true;
+				if (dataSource.getOp() == Types.OpOpData.TRANSIENTREAD
+						&& hasConcreteFederatedSourceVar(dataSource.getName()))
+					return true;
+			}
+		}
+		return false;
 	}
 
 	public static String getUniqueFedInitVarName() {

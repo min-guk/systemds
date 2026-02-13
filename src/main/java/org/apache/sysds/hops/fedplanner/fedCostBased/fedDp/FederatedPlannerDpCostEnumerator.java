@@ -450,6 +450,10 @@ public class FederatedPlannerDpCostEnumerator {
 
 		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, childHops);
 		final boolean enforceTReadConsistency = !tWriteChildIds.isEmpty();
+		final boolean isTransientReadHop = hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD;
+		final boolean hasConcreteTransientReadSource = !isTransientReadHop
+				|| FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead((DataOp) hop, childHops);
 
 		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
 
@@ -697,6 +701,13 @@ public class FederatedPlannerDpCostEnumerator {
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
 					placementDecision.allowCP_FOUT = false;
 				}
+				if (isTransientReadHop && !hasConcreteTransientReadSource) {
+					placementDecision.allowFED_LOUT = false;
+					placementDecision.allowFED_FOUT = false;
+					placementDecision.allowCP_FOUT = false;
+					placementDecision.allowCP_LOUT = true;
+					canSatisfyFedInputs = false;
+				}
 				// Keep DP candidate space aligned with MinST's legal state encoding:
 				// MinST cannot safely represent CP/FOUT when FED/FOUT is disallowed.
 				// If DP keeps this state, DP/MinST optimize over different state spaces.
@@ -718,10 +729,12 @@ public class FederatedPlannerDpCostEnumerator {
 				double fedFoutCost = fedSelfCost + childCostFEDExec
 						+ derivedFedFoutBoundaryCost(derivedFedFout, cpUploadCost, resultDownloadCost);
 
-				boolean allowFedFoutCandidate = canSatisfyFedInputs && placementDecision.allowFED_FOUT
+				boolean allowFedFoutCandidate = hasConcreteTransientReadSource
+						&& canSatisfyFedInputs && placementDecision.allowFED_FOUT
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut));
-				boolean allowFedLoutCandidate = canSatisfyFedInputs && placementDecision.allowFED_LOUT
+				boolean allowFedLoutCandidate = hasConcreteTransientReadSource
+						&& canSatisfyFedInputs && placementDecision.allowFED_LOUT
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.FED, FederatedOutput.LOUT, tWriteExec, tWriteOut));
 				boolean allowCpLoutCandidate = placementDecision.allowCP_LOUT

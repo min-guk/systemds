@@ -83,6 +83,37 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testTransientReadConcreteFedSourceRejectsLocalOnlySource() {
+		DataOp tRead = createLocalMatrix("Y", 100, 10);
+		DataOp localSource = createLocalMatrix("Y_local", 100, 10);
+
+		boolean hasConcreteSource = FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(
+				tRead, Arrays.asList(localSource));
+		assertFalse("Local transient-read source must not be treated as concrete federated source", hasConcreteSource);
+	}
+
+	@Test
+	public void testTransientReadConcreteFedSourceAcceptsFederatedSource() {
+		DataOp tRead = createLocalMatrix("Y", 100, 10);
+		DataOp fedSource = createFederatedInput("Xfed", 100, 10);
+
+		boolean hasConcreteSource = FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(
+				tRead, Arrays.asList(fedSource));
+		assertTrue("Federated transient-read source should be treated as concrete federated source", hasConcreteSource);
+	}
+
+	@Test
+	public void testTransientReadMappedLocalSourceOverridesGlobalFedVarName() {
+		FederatedPlannerUtils.registerFedInitVar("Y");
+		DataOp tRead = createLocalMatrix("Y", 100, 10);
+		DataOp localSource = createLocalMatrix("Y_local", 100, 10);
+
+		boolean hasConcreteSource = FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(
+				tRead, Arrays.asList(localSource));
+		assertFalse("Mapped local source must override global fed-init var name for transient-read", hasConcreteSource);
+	}
+
+	@Test
 	public void testSingleFedParentAnchorRegistration() {
 		DataOp localLhs = createLocalMatrix("L", 10, 10);
 		DataOp localRhs = createLocalMatrix("R", 10, 10);
@@ -306,7 +337,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testPlannedBroadcastPrefersFoutMaterializeOverRefed() {
+	public void testPlannedBroadcastCanBeOverriddenByAlignedAnchor() {
 		DataOp localLhs = createLocalMatrix("L", 10, 10);
 		DataOp localRhs = createLocalMatrix("R", 10, 10);
 		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
@@ -328,12 +359,11 @@ public class FederatedRefedPolicyTest {
 
 		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeSnapshot =
 			FederatedFoutMaterializeRegistry.snapshot(-1);
-		assertTrue("Expected materialize registry entry for BROADCAST-planned target",
-			materializeSnapshot.containsKey(target.getHopID()));
-		assertEquals("Expected BROADCAST materialize hint for BROADCAST-planned target", "BROADCAST",
-			materializeSnapshot.get(target.getHopID()).getFTypeHint());
-		assertTrue("Expected no refed registry entry when BROADCAST is planned",
-			!FederatedRefedRegistry.snapshot(-1).containsKey(target.getHopID()));
+		Map<Long, FederatedRefedRegistry.AnchorSpec> refedSnapshot = FederatedRefedRegistry.snapshot(-1);
+		assertTrue("Expected no materialize registry entry when aligned anchor is available",
+			!materializeSnapshot.containsKey(target.getHopID()));
+		assertTrue("Expected refed registry entry for aligned anchor override",
+			refedSnapshot.containsKey(target.getHopID()));
 	}
 
 	@Test

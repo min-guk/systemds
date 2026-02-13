@@ -908,12 +908,25 @@ public class FederatedPlanMinSTRewire {
 						}
 						resolvedFType = inferred;
 					}
+					boolean hasConcreteTransientReadSource = FederatedPlannerUtils
+							.hasConcreteFederatedSourceForTransientRead((DataOp) hop, filteredChildHops);
+					if (!hasConcreteTransientReadSource
+							&& hasFederatedTransientWriteSource(filteredChildHops, fTypeMap, graph)) {
+						hasConcreteTransientReadSource = true;
+					}
+					if (!hasConcreteTransientReadSource) {
+						resolvedFType = null;
+					}
 					fType = resolvedFType;
 					if (resolvedCaps != null) {
 						caps = resolvedCaps;
 					} else {
 						OpCaps policyCaps = OpCaps.allow(ExecType.FED, FederatedOutput.FOUT).build();
 						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps, fTypeMap);
+					}
+					if (caps != null && !hasConcreteTransientReadSource) {
+						caps.allowFED_LOUT = false;
+						caps.allowFED_FOUT = false;
 					}
 					if (hasFedInitChild && !hasLocalSource && caps != null) {
 						// A TRead that is directly backed by a FED init should not assume a local value
@@ -1017,26 +1030,45 @@ public class FederatedPlanMinSTRewire {
 								oracleInputFType = inputVertex.getCpFoutDataType();
 						}
 						boolean transientReadWithoutFedInit = false;
+						boolean transientReadHasConcreteSource = false;
 						boolean localCapableTransientRead = false;
 						if (input instanceof DataOp
 								&& ((DataOp) input).getOp() == Types.OpOpData.TRANSIENTREAD) {
-							String transientVar = ((DataOp) input).getName();
+							DataOp transientRead = (DataOp) input;
+							String transientVar = transientRead.getName();
 							transientReadWithoutFedInit = !FederatedPlannerUtils.isFedInitVar(transientVar);
-							// DP parity: local-capable transient reads without FED-init provenance should
-							// not be pre-hinted as FED inputs in MinST rewire.
-							localCapableTransientRead = transientReadWithoutFedInit && inputMayBeLocal;
+							List<Hop> transientSources = (rewireTable != null) ? rewireTable.get(transientRead.getHopID()) : null;
+							transientReadHasConcreteSource = FederatedPlannerUtils
+									.hasConcreteFederatedSourceForTransientRead(transientRead, transientSources)
+								|| hasFederatedTransientWriteSource(transientSources, fTypeMap, graph)
+								|| (inputCaps != null && inputCaps.allowFED_FOUT);
+							// DP parity: local-capable transient reads without concrete federated provenance
+							// should not be pre-hinted as FED inputs in MinST rewire.
+							localCapableTransientRead = transientReadWithoutFedInit
+									&& !transientReadHasConcreteSource
+									&& inputMayBeLocal;
 						}
+						boolean transientWriteHop = (hop instanceof DataOp)
+									&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE;
+								boolean transientWriteVector = transientWriteHop
+									&& FederatedPlannerUtils.isVectorShape(hop);
+								boolean keepConcreteHintForTransientWrite = transientWriteHop
+									&& inputHasConcreteFoutPath
+									&& !transientWriteVector;
 						if (inputMayBeLocal
+								&& !keepConcreteHintForTransientWrite
 								&& (localCapableTransientRead
 									|| (!inputGuaranteedFout
 										&& (!hasConcreteFoutPath || !hasFederatedDemand)))) {
 							oracleInputFType = null;
 						}
-						if (transientReadWithoutFedInit)
+						boolean blockTransientReadHint = transientReadWithoutFedInit && !transientReadHasConcreteSource;
+						if (blockTransientReadHint)
 							oracleInputFType = null;
 						if (oracleInputFType == null) {
-							boolean shouldInferHint = !transientReadWithoutFedInit
-								&& (!inputMayBeLocal
+							boolean shouldInferHint = !blockTransientReadHint
+								&& (keepConcreteHintForTransientWrite
+								|| !inputMayBeLocal
 								|| inputGuaranteedFout
 								|| (hasFederatedDemand && hasConcreteFoutPath));
 							if (shouldInferHint) {
@@ -1147,6 +1179,10 @@ public class FederatedPlanMinSTRewire {
 						hop, federatedAlternativeCaps, cpFoutType, numWorkersEstimate)) {
 					fedInputsSatisfied = true;
 				}
+				if (!fedInputsSatisfied && shouldKeepFedAlternativeForPrivateTransientWrite(
+						hop, privacy, federatedAlternativeCaps, collectedHopList, fTypeMap)) {
+					fedInputsSatisfied = true;
+				}
 				if (!fedInputsSatisfied) {
 					caps.allowFED_LOUT = false;
 					caps.allowFED_FOUT = false;
@@ -1252,6 +1288,28 @@ public class FederatedPlanMinSTRewire {
 		double forwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
 				penaltyType, Math.max(1, numWorkersEstimate));
 		return forwardingPenalty <= FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS;
+	}
+
+	private static boolean shouldKeepFedAlternativeForPrivateTransientWrite(Hop hop, Privacy privacy,
+			ExecPlacementCaps federatedAlternativeCaps, List<Hop> inputHops, Map<Long, FType> fTypeMap) {
+		if (!(hop instanceof DataOp)
+				|| ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTWRITE)
+			return false;
+		if (!(privacy == Privacy.PRIVATE_AGGREGATE
+				|| privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC))
+			return false;
+		if (hop.getParent() != null && !hop.getParent().isEmpty())
+			return false;
+		if (federatedAlternativeCaps == null
+				|| !(federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT))
+			return false;
+		if (inputHops == null || inputHops.isEmpty() || fTypeMap == null || fTypeMap.isEmpty())
+			return false;
+		Hop primaryInput = inputHops.get(0);
+		if (primaryInput == null || primaryInput.getDataType() == null || !primaryInput.getDataType().isMatrix())
+			return false;
+		FType plannedInputFType = fTypeMap.get(primaryInput.getHopID());
+		return plannedInputFType != null;
 	}
 
 	private static void traceRewireDecision(Hop hop, Privacy privacy, List<Hop> inputHops,
@@ -1372,6 +1430,32 @@ public class FederatedPlanMinSTRewire {
 			}
 		}
 		return needsReeval ? relaxed : null;
+	}
+
+	private static boolean hasFederatedTransientWriteSource(List<Hop> sourceHops,
+			Map<Long, FType> fTypeMap, FederatedPlanMinSTGraph graph) {
+		if (sourceHops == null || sourceHops.isEmpty())
+			return false;
+		for (Hop sourceHop : sourceHops) {
+			if (!(sourceHop instanceof DataOp))
+				continue;
+			DataOp sourceDataOp = (DataOp) sourceHop;
+			if (sourceDataOp.getOp() != Types.OpOpData.TRANSIENTWRITE)
+				continue;
+			Vertex sourceVertex = (graph != null) ? graph.getVertex(sourceHop.getHopID()) : null;
+			ExecPlacementCaps sourceCaps = (sourceVertex != null) ? sourceVertex.getCaps() : null;
+			boolean sourceHasFedPlacement = sourceCaps != null
+					&& (sourceCaps.allowFED_LOUT || sourceCaps.allowFED_FOUT);
+			if (!sourceHasFedPlacement)
+				continue;
+			if (sourceHop.getInput() == null || sourceHop.getInput().isEmpty())
+				continue;
+			Hop writeInput = sourceHop.getInput().get(0);
+			FType writeInputFType = (fTypeMap != null) ? fTypeMap.get(writeInput.getHopID()) : null;
+			if (writeInputFType != null)
+				return true;
+		}
+		return false;
 	}
 
 	private static boolean requiresFederatedInputForParent(Hop parentHop, Hop inputHop, int inputIndex,

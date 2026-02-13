@@ -315,6 +315,50 @@ public class FederatedPlanMinSTCostEstimator {
 		}
 
 		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			List<Hop> transChildHops = (rewireTable != null) ? rewireTable.get(hopID) : null;
+			if (transChildHops != null && !transChildHops.isEmpty()) {
+				Set<Long> seenChildIds = new HashSet<>();
+				for (Hop childHop : childHops) {
+					if (childHop != null) {
+						seenChildIds.add(childHop.getHopID());
+					}
+				}
+				for (Hop transChildHop : transChildHops) {
+					if (transChildHop == null) {
+						continue;
+					}
+					if (transChildHop instanceof DataOp
+							&& ((DataOp) transChildHop).getOp() == Types.OpOpData.TRANSIENTREAD
+							&& Objects.equals(hop.getName(), transChildHop.getName())) {
+						continue;
+					}
+					if (seenChildIds.add(transChildHop.getHopID())) {
+						childHops.add(transChildHop);
+					}
+				}
+			}
+
+			Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, rewireTable);
+			if (tWriteChildIds.isEmpty()) {
+				tWriteChildIds = collectTransientWriteByName(hop, graph);
+			}
+			if (!tWriteChildIds.isEmpty()) {
+				if (vertex.getTransientWriteHopId() == null) {
+					vertex.setTransientWriteHopId(tWriteChildIds.iterator().next());
+				}
+				for (Long twHopId : tWriteChildIds) {
+					if (twHopId == null) {
+						continue;
+					}
+					Vertex twVertex = graph.getVertex(twHopId);
+					if (twVertex == null) {
+						continue;
+					}
+					graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
+				}
+			}
+		}
 		for (int i = 0; i < childHops.size(); i++) {
 			Hop childHop = childHops.get(i);
 			if (childHop == null)
