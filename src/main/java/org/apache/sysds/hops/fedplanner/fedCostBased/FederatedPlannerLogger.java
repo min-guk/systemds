@@ -73,6 +73,16 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 public class FederatedPlannerLogger {
     private static final boolean ENABLE_REWIRE_HIERARCHY_LOG = false;
     private static final Log LOG = LogFactory.getLog(FederatedPlannerLogger.class.getName());
+	private static final boolean ENABLE_STDOUT_LOGS = FederatedPlannerTrace.isEnabled();
+	private static final boolean ENABLE_UNGATED_STDOUT_LOGS = Boolean.getBoolean("sysds.fedplanner.stdout");
+
+	private static boolean allowUngatedStdout() {
+		return ENABLE_STDOUT_LOGS || ENABLE_UNGATED_STDOUT_LOGS;
+	}
+
+	private static boolean shouldStdout(Hop hop) {
+		return FederatedPlannerTrace.shouldTrace(hop);
+	}
 
     // ===================================================================================
     // Generic Logging Helpers
@@ -209,6 +219,8 @@ public class FederatedPlannerLogger {
      */
     public static void logOracleDecision(Hop hop, Privacy privacyConstraint,
             List<FType> inputFTypes, OpCaps caps, Map<Long, List<Hop>> rewireTable) {
+        if (!shouldStdout(hop))
+            return;
         if (hop == null || caps == null)
             return;
 
@@ -344,6 +356,8 @@ public class FederatedPlannerLogger {
      * @param logPrefix Prefix string to identify the log source
      */
     public static void logNullFedPlanError(long hopID, String logPrefix) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
         System.err.println("[" + logPrefix + "] childFedPlan is null for hopID: " + hopID);
     }
     
@@ -354,6 +368,8 @@ public class FederatedPlannerLogger {
      * @param logPrefix Prefix string to identify the log source
      */
     public static void logConflictResolutionError(long hopID, Object fedPlan, String logPrefix) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
         System.err.println("[" + logPrefix + "] confilctLOutFedPlan or confilctFOutFedPlan is null for hopID: " + hopID);
         System.err.println("  Child Hop Details:");
         if (fedPlan != null) {
@@ -406,6 +422,8 @@ public class FederatedPlannerLogger {
      * @param additionalMessage Additional error message
      */
     public static void logHopErrorDetails(Hop hop, String logPrefix, String additionalMessage) {
+		if (!shouldStdout(hop))
+			return;
         System.err.println("[" + logPrefix + "] " + additionalMessage);
         System.err.println("  Child Hop Details:");
         System.err.println("    - Class: " + hop.getClass().getSimpleName());
@@ -423,6 +441,8 @@ public class FederatedPlannerLogger {
     public static void logNullChildPlanDebug(Pair<Long, FederatedOutput> childFedPlanPair, 
                                            FedPlan optimalPlan, 
                                            FederatedPlannerDpMemoTable memoTable) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
         FederatedOutput alternativeFedType = (childFedPlanPair.getRight() == FederatedOutput.LOUT) ? 
                                            FederatedOutput.FOUT : FederatedOutput.LOUT;
         FedPlan alternativeChildPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair.getLeft(), alternativeFedType);
@@ -516,7 +536,9 @@ public class FederatedPlannerLogger {
      * @param logPrefix Prefix string to identify the log source
      */
     public static void logTransReadRewireDebug(String hopName, long hopID, List<Hop> childHops, 
-                                             boolean isEmptyChildHops, String logPrefix) {
+                                              boolean isEmptyChildHops, String logPrefix) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
         if (isEmptyChildHops) {
             System.err.println("[" + logPrefix + "] (hopName: " + hopName + ", hopID: " + hopID + ") child hops is empty");
         }
@@ -531,7 +553,9 @@ public class FederatedPlannerLogger {
      * @param logPrefix Prefix string to identify the log source
      */
     public static void logFilteredChildHopsDebug(String hopName, long hopID, List<Hop> filteredChildHops, 
-                                               boolean isEmptyFilteredChildHops, String logPrefix) {
+                                                boolean isEmptyFilteredChildHops, String logPrefix) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
         if (isEmptyFilteredChildHops) {
             System.err.println("[" + logPrefix + "] (hopName: " + hopName + ", hopID: " + hopID + ") filtered child hops is empty");
         }
@@ -550,6 +574,8 @@ public class FederatedPlannerLogger {
      */
     public static void logRewireHierarchy(Hop transReadHop, List<Hop> candidateChildHops,
             List<Hop> filteredChildHops, String logPrefix) {
+        if (!ENABLE_STDOUT_LOGS)
+            return;
         if (transReadHop == null || !ENABLE_REWIRE_HIERARCHY_LOG)
             return;
 
@@ -646,6 +672,8 @@ public class FederatedPlannerLogger {
      */
     public static void logFTypeMismatchError(Hop hop, List<Hop> filteredChildHops, Map<Long, FType> fTypeMap,
                                            FType expectedFType, FType mismatchedFType, int mismatchIndex) {
+        if (!shouldStdout(hop))
+            return;
         String hopName = hop.getName();
         long hopID = hop.getHopID();
         
@@ -682,6 +710,8 @@ public class FederatedPlannerLogger {
      * @param reason The reason for the FType decision
      */
     public static void logDataOpFTypeDebug(Hop hop, FType fType, String opType, String reason) {
+        if (!shouldStdout(hop))
+            return;
         String hopName = hop.getName() != null ? hop.getName() : "null";
         long hopID = hop.getHopID();
         String hopClass = hop.getClass().getSimpleName();
@@ -715,6 +745,8 @@ public class FederatedPlannerLogger {
 
     public static void printFedPlanTree(FederatedPlannerDpMemoTable.FedPlan rootFedPlan, Set<Long> rootHopStatSet,
                                         FederatedPlannerDpMemoTable memoTable, double additionalTotalCost, boolean onlyEdge) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
         System.out.println("Additional Cost: " + additionalTotalCost);
         Set<Long> visited = new HashSet<>();
         printFedPlanTreeRecursive(rootFedPlan, memoTable, visited, 0, onlyEdge);
@@ -991,6 +1023,8 @@ public class FederatedPlannerLogger {
      * @param unRefTwriteSetSize Number of unRefTwrite hops to process
      */
     public static void logWireUnRefTwriteStart(int unRefTwriteSetSize) {
+		if (!allowUngatedStdout())
+			return;
         System.out.println("\n[INFO] wireUnRefTwriteToLiveOut - Processing " + unRefTwriteSetSize + " unRefTwrite hops");
     }
 
@@ -1002,6 +1036,8 @@ public class FederatedPlannerLogger {
      * @param fType FType of the hop
      */
     public static void logProcessingUnRefTwriteHop(String hopName, long hopID, Hop hop, FType fType) {
+		if (!allowUngatedStdout())
+			return;
         System.out.println("[INFO] Processing unRefTwrite hop: " + hopName + " (ID: " + hopID + ")");
         System.out.println("  - Type: " + hop.getClass().getSimpleName());
         System.out.println("  - DataType: " + hop.getDataType());
@@ -1014,6 +1050,8 @@ public class FederatedPlannerLogger {
      * @param candidateInfo List of candidate information strings
      */
     public static void logCandidateInfo(List<String> candidateInfo) {
+		if (!allowUngatedStdout())
+			return;
         for (String info : candidateInfo) {
             System.out.println(info);
         }
@@ -1025,6 +1063,8 @@ public class FederatedPlannerLogger {
      * @param bestScore Score of the connection
      */
     public static void logSuccessfulConnection(String bestLiveOutHopName, int bestScore) {
+		if (!allowUngatedStdout())
+			return;
         System.out.println("  ✓ CONNECTED to: " + bestLiveOutHopName + " (Score: " + bestScore + ")");
     }
 
@@ -1032,6 +1072,8 @@ public class FederatedPlannerLogger {
      * Logs no compatible connection found
      */
     public static void logNoCompatibleConnection() {
+		if (!allowUngatedStdout())
+			return;
         System.out.println("  ✗ NO COMPATIBLE CONNECTION FOUND");
         System.out.println("  - Falling back to original algorithm...");
     }
@@ -1041,6 +1083,8 @@ public class FederatedPlannerLogger {
      * @param liveOutHopName Name of the fallback connection
      */
     public static void logFallbackConnection(String liveOutHopName) {
+		if (!allowUngatedStdout())
+			return;
         System.out.println("  ✓ FALLBACK CONNECTION to: " + liveOutHopName + " (No compatibility check)");
     }
 
@@ -1050,6 +1094,8 @@ public class FederatedPlannerLogger {
      * @param liveOutHopName Name of the liveOut hop
      */
     public static void logNameMatchingFallbackWarning(String unRefTwriteHopName, String liveOutHopName) {
+		if (!allowUngatedStdout())
+			return;
         System.err.println("WARNING: No exact match found, using partial name matching for " + 
                           unRefTwriteHopName + " -> " + liveOutHopName + 
                           " - algorithm needs improvement");
@@ -1090,6 +1136,8 @@ public class FederatedPlannerLogger {
     public static void logExecTypeConflict(Hop currentHop, ExecType previousExecType,
                                           ExecType incomingExecType, ExecType resolvedExecType,
                                           String logPrefix) {
+		if (!shouldStdout(currentHop))
+			return;
         System.out.println("[" + logPrefix + "] EXEC TYPE CONFLICT DETECTED:");
         System.out.println("  Hop - ID:" + currentHop.getHopID() +
                           " Name:" + (currentHop.getName() != null ? currentHop.getName() : "null") +
@@ -1111,6 +1159,8 @@ public class FederatedPlannerLogger {
                                            FEDInstruction.FederatedOutput currentFedOutType,
                                            FEDInstruction.FederatedOutput parentFedOutType,
                                            String logPrefix) {
+		if (!shouldStdout(currentHop))
+			return;
         System.out.println("[" + logPrefix + "] PLACEMENT CONFLICT DETECTED:");
 
         // Current hop information
@@ -1170,6 +1220,8 @@ public class FederatedPlannerLogger {
 	 * @param debug If true, prints additional debug information including all graph edges.
 	 */
 	public static void logOptimalPlan(FederatedPlanMinSTGraph planGraph, boolean debug) {
+		if (!ENABLE_STDOUT_LOGS)
+			return;
 		System.out.println("\n[Optimal Federated Plan]");
 		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
 		System.out.printf("%-7s | %-12s | %-20s | %-10s | %-13s | %-8s | %-9s | %-15s | %-15s | %-10s | %s%n",

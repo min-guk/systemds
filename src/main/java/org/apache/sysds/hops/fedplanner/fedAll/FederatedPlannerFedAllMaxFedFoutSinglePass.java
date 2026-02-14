@@ -618,6 +618,8 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 	private void traceDecision(String tag, Hop hop, String detail) {
 		if (hop == null)
 			return;
+		if (!org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace.shouldTrace(hop))
+			return;
 		System.out.println("[SinglePassTrace] " + tag
 			+ " hop=" + hop.getHopID()
 			+ " op=" + hop.getOpString()

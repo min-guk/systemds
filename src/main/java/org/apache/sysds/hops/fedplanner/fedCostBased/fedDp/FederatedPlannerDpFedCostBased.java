@@ -59,6 +59,7 @@ import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -107,7 +108,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
 		FederatedPlannerUtils.clearFedInitVars();
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(prog, memoTable, true);
+		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
+			prog, memoTable, FederatedPlannerTrace.isEnabled());
 
 			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>();
 			Map<Long, Boolean> visitedFromClone = new HashMap<>();
@@ -131,7 +133,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerUtils.clearFedInitVars();
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateFunctionDynamic(function,
-				memoTable, true);
+				memoTable, FederatedPlannerTrace.isEnabled());
 			Map<Long, Pair<FEDInstruction.FederatedOutput, ExecType>> visited = new HashMap<>(); // hop ID, selected
 																									// placement/exec
 			Map<Long, Boolean> visitedFromClone = new HashMap<>();
