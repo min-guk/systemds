@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.utils.Statistics;
 import org.apache.sysds.common.Builtins;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.AggOp;
@@ -337,7 +338,10 @@ public class DMLTranslator
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 		// fcallSizes are not recomputed here; planner uses null when unavailable.
+		long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		fedPlanner.getPlanner().rewriteProgram(dmlp, fgraph, null);
+		if( DMLScript.STATISTICS )
+			Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 		registerFedInitVarsFromProgram(dmlp);
 		FederatedPlannerUtils.clearFedRmvarProtectedVars();
 		registerFedRmvarProtectedVarsFromProgram(dmlp);

@@ -25,6 +25,7 @@ import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.utils.Statistics;
 
 /**
  * This rewrite generates a federated execution plan by estimating and setting costs and the FederatedOutput values of
@@ -72,6 +73,8 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 			FederatedPlanner.COMPILE_FED_HEURISTIC;
 
 		// run planner rewrite with forced federated exec types
+		long tFedPlanner = System.nanoTime();
 		planner.getPlanner().rewriteProgram(prog, fgraph, fcallSizes);
+		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 	}
 }
