@@ -83,7 +83,8 @@ public class Dag<N extends Lop>
 
 	private static IDSequence job_id = null;
 	private static IDSequence var_index = null;
-	private static final boolean LOG_LOP_MAPPING = true;
+	private static final boolean LOG_LOP_MAPPING =
+		Boolean.parseBoolean(System.getProperty("sysds.compile.log_lop_mapping", "false"));
 	
 	private String scratch = "";
 	private String scratchFilePath = null;
@@ -694,49 +695,54 @@ public class Dag<N extends Lop>
 
 				if (anchor != null && materializeInput != null && isReachable(materializeInput, anchor)) {
 					Lop fallbackAnchor = findFallbackAnchor(lops, materializeInput);
-					if (fallbackAnchor != null) {
-						System.out.printf("CP->FOUT anchor cycle: hop=%d anchorHop=%d fallbackHop=%d%n",
-							hopId, anchorHopId, fallbackAnchor.getHopID());
-						anchor = fallbackAnchor;
-						anchorKey = null;
+						if (fallbackAnchor != null) {
+							if (LOG_LOP_MAPPING)
+								System.out.printf("CP->FOUT anchor cycle: hop=%d anchorHop=%d fallbackHop=%d%n",
+									hopId, anchorHopId, fallbackAnchor.getHopID());
+							anchor = fallbackAnchor;
+							anchorKey = null;
+						}
+						else {
+							if (LOG_LOP_MAPPING)
+								System.out.printf("CP->FOUT insert skip: hop=%d anchorCycle=true sbId=%d%n",
+									hopId, sbId);
+							continue;
+						}
 					}
-					else {
-						System.out.printf("CP->FOUT insert skip: hop=%d anchorCycle=true sbId=%d%n",
-							hopId, sbId);
-						continue;
-					}
-				}
 
 				boolean alreadyInserted = isTransientWrite
 					? (materializeInput instanceof FederatedRefed || materializeInput instanceof FederatedFoutMaterialize)
 					: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
 						|| out instanceof FederatedFoutMaterialize);
-				if (alreadyInserted) {
-					String localLabel = (local.getOutputParameters() != null)
-						? local.getOutputParameters().getLabel()
-						: "null";
-				System.out.printf("CP->FOUT insert skip: hop=%d local=%s alreadyInserted=true%n",
-					hopId, localLabel);
-					continue;
-				}
+					if (alreadyInserted) {
+						String localLabel = (local.getOutputParameters() != null)
+							? local.getOutputParameters().getLabel()
+							: "null";
+						if (LOG_LOP_MAPPING)
+							System.out.printf("CP->FOUT insert skip: hop=%d local=%s alreadyInserted=true%n",
+								hopId, localLabel);
+						continue;
+					}
 
 				FederatedFoutMaterialize fout = (anchor != null)
 					? new FederatedFoutMaterialize(materializeInput, anchor, spec.getFTypeHint())
 					: new FederatedFoutMaterialize(materializeInput, anchorKey, spec.getFTypeHint());
 				fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
 				copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
-				fout.setFederatedOutput(FederatedOutput.FOUT);
-				addNode(fout);
-			String localLabel = (local.getOutputParameters() != null)
-				? local.getOutputParameters().getLabel()
-				: "null";
-			String anchorLabel = (anchor != null && anchor.getOutputParameters() != null)
-				? anchor.getOutputParameters().getLabel()
-				: (anchorKey != null ? anchorKey : "null");
-			System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
-					hopId, localLabel, anchorHopId, anchorLabel, fout.getOutputParameters().getLabel(),
-					spec.getFTypeHint());
-				inserted = true;
+					fout.setFederatedOutput(FederatedOutput.FOUT);
+					addNode(fout);
+					if (LOG_LOP_MAPPING) {
+						String localLabel = (local.getOutputParameters() != null)
+							? local.getOutputParameters().getLabel()
+							: "null";
+						String anchorLabel = (anchor != null && anchor.getOutputParameters() != null)
+							? anchor.getOutputParameters().getLabel()
+							: (anchorKey != null ? anchorKey : "null");
+						System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
+								hopId, localLabel, anchorHopId, anchorLabel, fout.getOutputParameters().getLabel(),
+								spec.getFTypeHint());
+					}
+					inserted = true;
 
 				if (isTransientWrite) {
 					local.replaceInput(materializeInput, fout);
