@@ -33,9 +33,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Date;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
 
 import org.apache.commons.cli.AlreadySelectedException;
 import org.apache.commons.cli.HelpFormatter;
@@ -48,16 +53,27 @@ import org.apache.sysds.common.Types.ExecMode;
 import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.codegen.SpoofCompiler.GeneratorAPI;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ForStatement;
+import org.apache.sysds.parser.ForStatementBlock;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.IfStatement;
+import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.LanguageException;
+import org.apache.sysds.parser.ParForStatementBlock;
 import org.apache.sysds.parser.ParseException;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.ParserWrapper;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.DMLScriptException;
 import org.apache.sysds.runtime.codegen.CodegenUtils;
@@ -462,29 +478,47 @@ public class DMLScript
 
 		//Step 3: parse dml script
 		Statistics.startCompileTimer();
+		long tParse = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		ParserWrapper parser = ParserFactory.createParser();
 		DMLProgram prog = parser.parse(DML_FILE_PATH_ANTLR_PARSER, dmlScriptStr, argVals);
+		if( DMLScript.STATISTICS )
+			Statistics.setCompilePhaseParseTime(System.nanoTime() - tParse);
 		
 		//Step 4: construct HOP DAGs (incl LVA, validate, and setup)
+		long tHopsBuild = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		DMLTranslator dmlt = new DMLTranslator(prog);
 		dmlt.liveVariableAnalysis(prog);
 		dmlt.validateParseTree(prog);
 		dmlt.constructHops(prog);
+		if( DMLScript.STATISTICS )
+			Statistics.setCompilePhaseHopsBuildTime(System.nanoTime() - tHopsBuild);
 		
 		//init working directories (before usage by following compilation steps)
 		initHadoopExecution( ConfigurationManager.getDMLConfig() );
 	
 		//Step 5: rewrite HOP DAGs (incl IPA and memory estimates)
+		long tHopsRewrite = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		dmlt.rewriteHopsDAG(prog);
+		if( DMLScript.STATISTICS )
+			Statistics.setCompilePhaseHopsRewriteTime(System.nanoTime() - tHopsRewrite);
 		
 		//Step 6: construct lops (incl exec type and op selection)
+		long tLopsBuild = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		dmlt.constructLops(prog);
+		if( DMLScript.STATISTICS )
+			Statistics.setCompilePhaseLopsBuildTime(System.nanoTime() - tLopsBuild);
 
 		//Step 7: rewrite LOP DAGs (incl adding new LOPs s.a. prefetch, broadcast)
+		long tLopsRewrite = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		dmlt.rewriteLopDAG(prog);
+		if( DMLScript.STATISTICS )
+			Statistics.setCompilePhaseLopsRewriteTime(System.nanoTime() - tLopsRewrite);
 		
 		//Step 8: generate runtime program, incl codegen
+		long tRtprog = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		Program rtprog = dmlt.getRuntimeProgram(prog, ConfigurationManager.getDMLConfig());
+		if( DMLScript.STATISTICS )
+			Statistics.setCompilePhaseRuntimeProgramTime(System.nanoTime() - tRtprog);
 		
 		//Step 9: prepare statistics [and optional explain output]
 		//count number compiled MR jobs / SP instructions	
@@ -496,6 +530,20 @@ public class DMLScript
 			System.out.println(Explain.display(prog, rtprog, EXPLAIN, counts));
 		
 		Statistics.stopCompileTimer();
+		if( DMLScript.STATISTICS )
+			Statistics.setCompileObservedHops(countUniqueHops(prog));
+
+		if( STATISTICS && ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.BENCHMARK_COMPILE_ONLY) ) {
+			try {
+				System.out.println(Statistics.display(STATISTICS_COUNT));
+			}
+			finally {
+				cleanupHadoopExecution(ConfigurationManager.getDMLConfig());
+				FederatedData.clearWorkGroup();
+				LOG.info("END DML run " + getDateTime() );
+			}
+			return;
+		}
 		
 		//double costs = CostEstimationWrapper.getTimeEstimate(rtprog, ExecutionContextFactory.createContext());
 		//System.out.println("Estimated costs: "+costs);
@@ -515,6 +563,78 @@ public class DMLScript
 			if(ec != null && ec instanceof SparkExecutionContext)
 				((SparkExecutionContext) ec).close();
 			LOG.info("END DML run " + getDateTime() );
+		}
+	}
+
+	private static long countUniqueHops(DMLProgram prog) {
+		Set<Long> visited = new HashSet<>();
+		for( StatementBlock sb : prog.getStatementBlocks() )
+			collectHopsFromStatementBlock(sb, visited);
+		for( FunctionStatementBlock fsb : prog.getFunctionStatementBlocks() )
+			collectHopsFromStatementBlock(fsb, visited);
+		return visited.size();
+	}
+
+	private static void collectHopsFromStatementBlock(StatementBlock sb, Set<Long> visited) {
+		if( sb == null )
+			return;
+		if( sb instanceof IfStatementBlock ) {
+			IfStatementBlock isb = (IfStatementBlock) sb;
+			IfStatement istmt = (IfStatement) isb.getStatement(0);
+			if( isb.getPredicateHops() != null )
+				collectHopsFromRoot(isb.getPredicateHops(), visited);
+			for( StatementBlock inner : istmt.getIfBody() )
+				collectHopsFromStatementBlock(inner, visited);
+			for( StatementBlock inner : istmt.getElseBody() )
+				collectHopsFromStatementBlock(inner, visited);
+			return;
+		}
+		if( sb instanceof ParForStatementBlock || sb instanceof ForStatementBlock ) {
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+			if( fsb.getFromHops() != null )
+				collectHopsFromRoot(fsb.getFromHops(), visited);
+			if( fsb.getToHops() != null )
+				collectHopsFromRoot(fsb.getToHops(), visited);
+			if( fsb.getIncrementHops() != null )
+				collectHopsFromRoot(fsb.getIncrementHops(), visited);
+			for( StatementBlock inner : fstmt.getBody() )
+				collectHopsFromStatementBlock(inner, visited);
+			return;
+		}
+		if( sb instanceof WhileStatementBlock ) {
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+			if( wsb.getPredicateHops() != null )
+				collectHopsFromRoot(wsb.getPredicateHops(), visited);
+			for( StatementBlock inner : wstmt.getBody() )
+				collectHopsFromStatementBlock(inner, visited);
+			return;
+		}
+		if( sb instanceof FunctionStatementBlock ) {
+			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+			for( StatementBlock inner : fstmt.getBody() )
+				collectHopsFromStatementBlock(inner, visited);
+			return;
+		}
+		if( sb.getHops() != null )
+			for( Hop root : sb.getHops() )
+				collectHopsFromRoot(root, visited);
+	}
+
+	private static void collectHopsFromRoot(Hop root, Set<Long> visited) {
+		if( root == null )
+			return;
+		Deque<Hop> queue = new ArrayDeque<>();
+		queue.add(root);
+		while( !queue.isEmpty() ) {
+			Hop hop = queue.poll();
+			if( hop == null || !visited.add(hop.getHopID()) )
+				continue;
+			List<Hop> inputs = hop.getInput();
+			if( inputs != null )
+				queue.addAll(inputs);
 		}
 	}
 

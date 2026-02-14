@@ -128,6 +128,7 @@ public class DMLConfig
 	public static final String FEDERATED_READCACHE = "sysds.federated.readcache";
 	public static final String FEDERATED_COMPRESSION = "sysds.federated.compression";
 	public static final String PRIVACY_CONSTRAINT_MOCK = "sysds.federated.priv_mock";
+	public static final String BENCHMARK_COMPILE_ONLY = "sysds.benchmark.compile_only";
 	/** Trigger frequency of the collecting and parsing statistics process on registered workers for monitoring in seconds */
 	public static final String FEDERATED_MONITOR_FREQUENCY = "sysds.federated.monitorFreq";
 	public static final int DEFAULT_FEDERATED_PORT = 4040; // borrowed default Spark Port
@@ -210,6 +211,7 @@ public class DMLConfig
 		_defaultVals.put(FEDERATED_MONITOR_FREQUENCY, "3");
 		_defaultVals.put(FEDERATED_COMPRESSION, "none");
 		_defaultVals.put(PRIVACY_CONSTRAINT_MOCK, null);
+		_defaultVals.put(BENCHMARK_COMPILE_ONLY, "false");
 		_defaultVals.put(ASYNC_PREFETCH,   "false" );
 		_defaultVals.put(ASYNC_SPARK_BROADCAST,  "false" );
 		_defaultVals.put(ASYNC_SPARK_CHECKPOINT,  "false" );

@@ -183,6 +183,106 @@ public class Statistics
 	private static long compileEndTime = 0;
 	private static long execStartTime = 0;
 	private static long execEndTime = 0;
+
+	private static long compilePhaseParseTime = 0;
+	private static long compilePhaseHopsBuildTime = 0;
+	private static long compilePhaseHopsRewriteTime = 0;
+	private static long compilePhaseLopsBuildTime = 0;
+	private static long compilePhaseLopsRewriteTime = 0;
+	private static long compilePhaseRuntimeProgramTime = 0;
+	private static long compilePhaseFedPlannerTime = 0;
+	private static long compilePhaseFedPlannerCalls = 0;
+	private static long compileObservedHops = -1;
+
+	public static void resetCompilePhaseTimes() {
+		compilePhaseParseTime = 0;
+		compilePhaseHopsBuildTime = 0;
+		compilePhaseHopsRewriteTime = 0;
+		compilePhaseLopsBuildTime = 0;
+		compilePhaseLopsRewriteTime = 0;
+		compilePhaseRuntimeProgramTime = 0;
+		compilePhaseFedPlannerTime = 0;
+		compilePhaseFedPlannerCalls = 0;
+		compileObservedHops = -1;
+	}
+
+	public static void setCompileObservedHops(long hops) {
+		if( DMLScript.STATISTICS )
+			compileObservedHops = hops;
+	}
+
+	public static long getCompileObservedHops() {
+		return compileObservedHops;
+	}
+
+	public static void setCompilePhaseParseTime(long nanos) {
+		if( DMLScript.STATISTICS )
+			compilePhaseParseTime = nanos;
+	}
+
+	public static void setCompilePhaseHopsBuildTime(long nanos) {
+		if( DMLScript.STATISTICS )
+			compilePhaseHopsBuildTime = nanos;
+	}
+
+	public static void setCompilePhaseHopsRewriteTime(long nanos) {
+		if( DMLScript.STATISTICS )
+			compilePhaseHopsRewriteTime = nanos;
+	}
+
+	public static void setCompilePhaseLopsBuildTime(long nanos) {
+		if( DMLScript.STATISTICS )
+			compilePhaseLopsBuildTime = nanos;
+	}
+
+	public static void setCompilePhaseLopsRewriteTime(long nanos) {
+		if( DMLScript.STATISTICS )
+			compilePhaseLopsRewriteTime = nanos;
+	}
+
+	public static void setCompilePhaseRuntimeProgramTime(long nanos) {
+		if( DMLScript.STATISTICS )
+			compilePhaseRuntimeProgramTime = nanos;
+	}
+
+	public static void addCompilePhaseFedPlannerTime(long nanos) {
+		if( DMLScript.STATISTICS ) {
+			compilePhaseFedPlannerTime += nanos;
+			compilePhaseFedPlannerCalls++;
+		}
+	}
+
+	public static long getCompilePhaseParseTime() {
+		return compilePhaseParseTime;
+	}
+
+	public static long getCompilePhaseHopsBuildTime() {
+		return compilePhaseHopsBuildTime;
+	}
+
+	public static long getCompilePhaseHopsRewriteTime() {
+		return compilePhaseHopsRewriteTime;
+	}
+
+	public static long getCompilePhaseLopsBuildTime() {
+		return compilePhaseLopsBuildTime;
+	}
+
+	public static long getCompilePhaseLopsRewriteTime() {
+		return compilePhaseLopsRewriteTime;
+	}
+
+	public static long getCompilePhaseRuntimeProgramTime() {
+		return compilePhaseRuntimeProgramTime;
+	}
+
+	public static long getCompilePhaseFedPlannerTime() {
+		return compilePhaseFedPlannerTime;
+	}
+
+	public static long getCompilePhaseFedPlannerCalls() {
+		return compilePhaseFedPlannerCalls;
+	}
 	
 	//heavy hitter counts and times 
 	private static final ConcurrentHashMap<String,InstStats> _instStats = new ConcurrentHashMap<>();
@@ -303,6 +403,7 @@ public class Statistics
 	public static void startCompileTimer() {
 		if( DMLScript.STATISTICS )
 			compileStartTime = System.nanoTime();
+		resetCompilePhaseTimes();
 	}
 
 	public static void stopCompileTimer() {
@@ -369,6 +470,8 @@ public class Statistics
 		DMLCompressionStatistics.reset();
 
 		FederatedStatistics.reset();
+
+		resetCompilePhaseTimes();
 
 		_instStatsNGram.clear();
 		_instStatsLineageTracker.clear();
@@ -1030,8 +1133,17 @@ public class Statistics
 
 		sb.append("SystemDS Statistics:\n");
 		if( DMLScript.STATISTICS ) {
-			sb.append("Total elapsed time:\t\t" + String.format("%.3f", (getCompileTime()+getRunTime())*1e-9) + " sec.\n"); // nanoSec --> sec
-			sb.append("Total compilation time:\t\t" + String.format("%.3f", getCompileTime()*1e-9) + " sec.\n"); // nanoSec --> sec
+			sb.append("Total elapsed time:\t\t" + String.format("%.6f", (getCompileTime()+getRunTime())*1e-9) + " sec.\n"); // nanoSec --> sec
+			sb.append("Total compilation time:\t\t" + String.format("%.6f", getCompileTime()*1e-9) + " sec.\n"); // nanoSec --> sec
+			sb.append("Compile Phase Parse:\t\t" + String.format("%.6f", getCompilePhaseParseTime()*1e-9) + " sec.\n");
+			sb.append("Compile Phase HopsBuild:\t" + String.format("%.6f", getCompilePhaseHopsBuildTime()*1e-9) + " sec.\n");
+			sb.append("Compile Phase HopsRewrite:\t" + String.format("%.6f", getCompilePhaseHopsRewriteTime()*1e-9) + " sec.\n");
+			if( getCompileObservedHops() >= 0 )
+				sb.append("Compile Observed HOPs:\t\t" + getCompileObservedHops() + ".\n");
+			sb.append("Compile Phase LopsBuild:\t" + String.format("%.6f", getCompilePhaseLopsBuildTime()*1e-9) + " sec.\n");
+			sb.append("Compile Phase LopsRewrite:\t" + String.format("%.6f", getCompilePhaseLopsRewriteTime()*1e-9) + " sec.\n");
+			sb.append("Compile Phase RuntimeProgram:\t" + String.format("%.6f", getCompilePhaseRuntimeProgramTime()*1e-9) + " sec.\n");
+			sb.append("Compile Phase FedPlanner:\t" + String.format("%.6f", getCompilePhaseFedPlannerTime()*1e-9) + " sec.\n");
 			sb.append(FederatedCompilationTimer.getStringRepresentation());
 		}
 		sb.append("Total execution time:\t\t" + String.format("%.3f", getRunTime()*1e-9) + " sec.\n"); // nanoSec --> sec
