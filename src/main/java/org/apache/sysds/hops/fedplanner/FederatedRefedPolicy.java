@@ -960,40 +960,47 @@ public final class FederatedRefedPolicy {
 			AnchorSelection blockAnchor, boolean allowRuntimeDemotion) {
 		if (all == null || all.isEmpty())
 			return false;
-		boolean demoted = false;
-		for (int i = all.size() - 1; i >= 0; i--) {
-			Hop hop = all.get(i);
-			if (hop == null)
-				continue;
-			if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
-					&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD
-					&& "Y".equals(((DataOp) hop).getName())) {
-				System.out.println("[TransReadRefedDebug] visit hop=" + hop.getHopID()
-					+ " exec=" + getPlannedExecType(hop)
-					+ " fout=" + hop.getFederatedOutput());
-			}
-			ExecType exec = getPlannedExecType(hop);
-			if (exec != ExecType.FED)
-				continue;
-			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE)
-				continue;
-			String opString = hop.getOpString();
-			if (opString != null && opString.startsWith("TWrite"))
-				continue;
-			if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
-				continue;
-			if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
-				if (allowRuntimeDemotion && canDemoteUnsatisfiedFedHop(hop)) {
-					demoteUnsatisfiedFedHop(hop, fTypeMap, sbId);
-					demoted = true;
+		boolean demotedAny = false;
+		boolean changed;
+		do {
+			changed = false;
+			for (int i = all.size() - 1; i >= 0; i--) {
+				Hop hop = all.get(i);
+				if (hop == null)
 					continue;
+				if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
+						&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD
+						&& "Y".equals(((DataOp) hop).getName())) {
+					System.out.println("[TransReadRefedDebug] visit hop=" + hop.getHopID()
+						+ " exec=" + getPlannedExecType(hop)
+						+ " fout=" + hop.getFederatedOutput());
 				}
-				throw new DMLRuntimeException("FED hop has no federated inputs and no CP->FOUT candidate. "
-					+ "hopID=" + hop.getHopID() + " op=" + hop.getOpString()
-					+ " name=" + hop.getName() + " inputs=" + describeInputs(hop));
+				ExecType exec = getPlannedExecType(hop);
+				boolean plannedFed = exec == ExecType.FED && !hop.hasLocalOutput();
+				boolean plannedFout = hop.getFederatedOutput() == FederatedOutput.FOUT;
+				if (!plannedFed && !plannedFout)
+					continue;
+				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE)
+					continue;
+				String opString = hop.getOpString();
+				if (opString != null && opString.startsWith("TWrite"))
+					continue;
+				if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
+					continue;
+				if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
+					if (canDemoteUnsatisfiedFedHop(hop)) {
+						demoteUnsatisfiedFedHop(hop, fTypeMap, sbId);
+						demotedAny = true;
+						changed = true;
+						continue;
+					}
+					throw new DMLRuntimeException("FED hop has no federated inputs and no CP->FOUT candidate. "
+						+ "hopID=" + hop.getHopID() + " op=" + hop.getOpString()
+						+ " name=" + hop.getName() + " inputs=" + describeInputs(hop));
+				}
 			}
-		}
-		return demoted;
+		} while (changed);
+		return demotedAny;
 	}
 
 	private static boolean canDemoteUnsatisfiedFedHop(Hop hop) {
@@ -1305,11 +1312,8 @@ public final class FederatedRefedPolicy {
 		ExecType exec = getPlannedExecType(input);
 		if (exec != ExecType.FED || input.hasLocalOutput())
 			return false;
-		// If the planner forced a federated output, treat it as federated regardless
-		// of input detection to keep plan/exec consistent.
 		if (input.hasFederatedOutput())
-			return true;
-		// For intermediate FED ops with local output, require at least one runtime federated input.
+			return hasRuntimeFederatedInput(input, materialize, refed);
 		return hasRuntimeFederatedInput(input, materialize, refed);
 	}
 

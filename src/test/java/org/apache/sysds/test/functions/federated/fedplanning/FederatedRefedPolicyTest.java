@@ -854,10 +854,13 @@ public class FederatedRefedPolicyTest {
 
 		target.setForcedExecType(ExecType.CP);
 		target.setFederatedOutput(FederatedOutput.FOUT);
-		DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
-			() -> FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1));
-		assertTrue("Expected fail-fast error for FED parent with unsatisfied federated inputs",
-			ex.getMessage().contains("FED hop has no federated inputs and no CP->FOUT candidate"));
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(parent), true, fTypeMap, -1);
+		assertEquals("Expected unsatisfied FED parent to be demoted to CP after heuristic demotion blocks CP->FOUT",
+			ExecType.CP, parent.getForcedExecType());
+		assertTrue("Expected demoted parent not to remain FOUT",
+			parent.getFederatedOutput() != FederatedOutput.FOUT);
+		assertTrue("Expected heuristic-demoted target to remain non-candidate for CP->FOUT",
+			!FederatedRefedPolicy.canGenerateCpfoutCandidate(target, fTypeMap));
 	}
 
 	@Test
@@ -885,18 +888,19 @@ public class FederatedRefedPolicyTest {
 		assertTrue("Expected copied target hop in deep-copy memo", copiedTarget != null);
 		assertTrue("Expected copied anchor hop in deep-copy memo", copiedAnchor != null);
 
-		Set<Long> clonedDemotedIds = FederatedRefedPolicy.markHeuristicDemotedClones(deepCopyMemo);
-		try {
-			Map<Long, FType> copiedFTypeMap = new HashMap<>();
-			copiedFTypeMap.put(copiedAnchor.getHopID(), FType.ROW);
-			DMLRuntimeException ex = assertThrows(DMLRuntimeException.class,
-				() -> FederatedRefedPolicy.registerFromHops(copiedRoots, true, copiedFTypeMap, -1));
-			assertTrue("Expected fail-fast error for copied FED parent with unsatisfied federated inputs",
-				ex.getMessage().contains("FED hop has no federated inputs and no CP->FOUT candidate"));
-		}
-		finally {
-			FederatedRefedPolicy.unmarkHeuristicDemotedHops(clonedDemotedIds);
-		}
+			Set<Long> clonedDemotedIds = FederatedRefedPolicy.markHeuristicDemotedClones(deepCopyMemo);
+			try {
+				Map<Long, FType> copiedFTypeMap = new HashMap<>();
+				copiedFTypeMap.put(copiedAnchor.getHopID(), FType.ROW);
+				FederatedRefedPolicy.registerFromHops(copiedRoots, true, copiedFTypeMap, -1);
+				assertEquals("Expected copied FED parent to be demoted to CP when copied target remains heuristic-demoted",
+					ExecType.CP, copiedRoots.get(0).getForcedExecType());
+				assertTrue("Expected copied demoted parent not to remain FOUT",
+					copiedRoots.get(0).getFederatedOutput() != FederatedOutput.FOUT);
+			}
+			finally {
+				FederatedRefedPolicy.unmarkHeuristicDemotedHops(clonedDemotedIds);
+			}
 
 		assertTrue("Expected original demoted marker to remain after clone cleanup",
 			!FederatedRefedPolicy.canGenerateCpfoutCandidate(target, fTypeMap));

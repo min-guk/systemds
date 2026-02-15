@@ -231,20 +231,18 @@ public class FederatedPlanMinSTGraph {
 		if (!(vertex.getHopRef() instanceof DataOp)) {
 			fedOverhead = vertex.getNetworkWeight() * FederatedCostModel.computeNetworkCost(0);
 		}
-		double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
-		if (numOfWorkers <= 1) {
-			Hop hopRef = vertex.getHopRef();
-			boolean isFedInit = hopRef instanceof DataOp
-					&& ((DataOp) hopRef).getOp() == Types.OpOpData.FEDERATED;
-			boolean hasFedInput = hasImmediateFedMatrixInput(hopRef);
-			double hopWeight = vertex.getOpWeight();
-			double ctrlMs = getConfiguredLocalToFedCtrlOverheadMs();
-			boolean repeated = hopWeight > 1.0;
-			if (!isFedInit
-					&& ctrlMs > SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS
-					&& (!hasFedInput || repeated))
-				fedCost += SINGLE_WORKER_FED_EXEC_PENALTY;
-		}
+			double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
+			if (numOfWorkers <= 1) {
+				Hop hopRef = vertex.getHopRef();
+				boolean isFedInit = hopRef instanceof DataOp
+						&& ((DataOp) hopRef).getOp() == Types.OpOpData.FEDERATED;
+				double ctrlMs = getConfiguredLocalToFedCtrlOverheadMs();
+				boolean cpAllowed = caps.allowCP_LOUT || caps.allowCP_FOUT;
+				if (!isFedInit
+						&& cpAllowed
+						&& ctrlMs > SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS)
+					fedCost += SINGLE_WORKER_FED_EXEC_PENALTY;
+			}
 
 		if (!acL && !acF)
 			cpCost = HARD_INF;

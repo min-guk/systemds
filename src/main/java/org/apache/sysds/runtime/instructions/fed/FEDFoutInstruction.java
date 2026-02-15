@@ -107,6 +107,9 @@ public class FEDFoutInstruction extends FEDInstruction {
 			// Resolve "VAR:<name>" anchors against live runtime variables first.
 			if (anchorKey != null && anchorKey.startsWith("VAR:")) {
 				String varName = anchorKey.substring("VAR:".length());
+				int pipeIx = varName.indexOf('|');
+				if (pipeIx >= 0)
+					varName = varName.substring(0, pipeIx);
 				if (ec.containsVariable(varName)) {
 					MatrixObject anchor = ec.getMatrixObject(varName);
 					if (anchor != null && anchor.isFederated() && anchor.getFedMapping() != null)
