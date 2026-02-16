@@ -30,8 +30,11 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.instructions.cp.BinaryMatrixScalarCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.CPOperand;
+import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.spark.BinaryMatrixScalarSPInstruction;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
+import org.apache.sysds.runtime.matrix.operators.ScalarOperator;
 
 public class BinaryMatrixScalarFEDInstruction extends BinaryFEDInstruction
 {
@@ -59,9 +62,13 @@ public class BinaryMatrixScalarFEDInstruction extends BinaryFEDInstruction
 		MatrixObject mo = ec.getMatrixObject(matrix);
 
 		if( mo.getFedMapping() == null ) {
-			throw new DMLRuntimeException("FED matrix-scalar requires federated matrix input but found local. "
-				+ "op=" + instOpcode + " matrix=" + matrix.getName() + " scalar=" + scalar.getName()
-				+ " inst=" + instString);
+			MatrixBlock inBlock = ec.getMatrixInput(matrix.getName());
+			ScalarObject constant = ec.getScalarInput(scalar);
+			ScalarOperator scOp = ((ScalarOperator) _optr).setConstant(constant.getDoubleValue());
+			MatrixBlock outBlock = inBlock.scalarOperations(scOp, new MatrixBlock());
+			ec.releaseMatrixInput(matrix.getName());
+			ec.setMatrixOutput(output.getName(), outBlock);
+			return;
 		}
 
 		//prepare federated request matrix-scalar
