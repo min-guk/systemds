@@ -90,28 +90,39 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 	public void processInstruction(ExecutionContext ec) {
 		if(output.getDataType() == Types.DataType.MATRIX) {
 			MatrixObject mo1 = ec.getMatrixObject(input1);
-			BooleanObject byRow = (BooleanObject) ec
-				.getScalarInput(_opByRow.getName(), Types.ValueType.BOOLEAN, _opByRow.isLiteral());
-			int rows = (int) ec.getScalarInput(_opRows).getLongValue();
-			int cols = (int) ec.getScalarInput(_opCols).getLongValue();
+			boolean byRow = resolveByRow(ec);
+			int rows = resolveDim(ec, _opRows);
+			int cols = resolveDim(ec, _opCols);
+			long inCells = mo1.getNumRows() * mo1.getNumColumns();
+			if(rows <= 0 && cols > 0 && inCells > 0)
+				rows = (int) (inCells / cols);
+			if(cols <= 0 && rows > 0 && inCells > 0)
+				cols = (int) (inCells / rows);
+				if(rows <= 0)
+					rows = (int) mo1.getNumRows();
+				if(cols <= 0)
+					cols = (int) mo1.getNumColumns();
+				final int fRows = rows;
+				final int fCols = cols;
+				final boolean fByRow = byRow;
 
-			if(!mo1.isFederated()) {
-				executeLocalReshape(ec, rows, cols, byRow.getBooleanValue());
-				return;
-			}
-			if(mo1.getNumColumns() * mo1.getNumRows() != rows * cols)
-				throw new DMLRuntimeException("Reshape matrix requires consistent numbers of input/output cells (" 
-					+ mo1.getNumRows() + ":" + mo1.getNumColumns() + ", " + rows + ":" + cols + ").");
+				if(!mo1.isFederated()) {
+					executeLocalReshape(ec, fRows, fCols, fByRow);
+					return;
+				}
+				if(mo1.getNumColumns() * mo1.getNumRows() != fRows * fCols)
+					throw new DMLRuntimeException("Reshape matrix requires consistent numbers of input/output cells (" 
+						+ mo1.getNumRows() + ":" + mo1.getNumColumns() + ", " + fRows + ":" + fCols + ").");
 
-			boolean isNotAligned = Arrays.stream(mo1.getFedMapping().getFederatedRanges())
-				.map(e -> e.getSize() % (byRow.getBooleanValue() ? cols : rows) == 0).collect(Collectors.toList())
-				.contains(false);
+				boolean isNotAligned = Arrays.stream(mo1.getFedMapping().getFederatedRanges())
+					.map(e -> e.getSize() % (fByRow ? fCols : fRows) == 0).collect(Collectors.toList())
+					.contains(false);
 
 			if(isNotAligned)
 				throw new DMLRuntimeException(
 					"Reshape matrix requires consistent numbers of input/output cells for each worker.");
 
-			String[] newInstString = getNewInstString(mo1, instString, rows, cols, byRow.getBooleanValue());
+				String[] newInstString = getNewInstString(mo1, instString, fRows, fCols, fByRow);
 
 			long id = FederationUtils.getNextFedDataID();
 			FederatedRequest tmp = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id, mo1.getMetaData().getDataCharacteristics(), mo1.getDataType());
@@ -124,20 +135,20 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 				mo1.getFedMapping().execute(getTID(), true, tmp);
 				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, new FederatedRequest[0]);
 			}
-			catch (DMLRuntimeException ex) {
-				if(isMissingFedVarFailure(ex)) {
-					executeLocalReshape(ec, rows, cols, byRow.getBooleanValue());
-					return;
+				catch (DMLRuntimeException ex) {
+					if(isMissingFedVarFailure(ex)) {
+						executeLocalReshape(ec, fRows, fCols, fByRow);
+						return;
+					}
+					throw ex;
 				}
-				throw ex;
-			}
 
 			// set new fed map
-			FederationMap reshapedFedMap = mo1.getFedMapping().copyWithNewID(fr1[0].getID());
-			for(int i = 0; i < reshapedFedMap.getFederatedRanges().length; i++) {
-				long cells = reshapedFedMap.getFederatedRanges()[i].getSize();
-				long row = byRow.getBooleanValue() ? cells / cols : rows;
-				long col = byRow.getBooleanValue() ? cols : cells / rows;
+				FederationMap reshapedFedMap = mo1.getFedMapping().copyWithNewID(fr1[0].getID());
+				for(int i = 0; i < reshapedFedMap.getFederatedRanges().length; i++) {
+					long cells = reshapedFedMap.getFederatedRanges()[i].getSize();
+					long row = fByRow ? cells / fCols : fRows;
+					long col = fByRow ? fCols : cells / fRows;
 
 				reshapedFedMap.getFederatedRanges()[i].setBeginDim(0,
 					(reshapedFedMap.getFederatedRanges()[i].getBeginDims()[0] == 0 || i == 0) ? 0 : 
@@ -151,11 +162,11 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 					.setEndDim(1, reshapedFedMap.getFederatedRanges()[i].getBeginDims()[1] + col);
 			}
 
-			//derive output federated mapping
-			MatrixObject out = ec.getMatrixObject(output);
-			long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
-			out.getDataCharacteristics().setDimension(rows, cols)
-				.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
+				//derive output federated mapping
+				MatrixObject out = ec.getMatrixObject(output);
+				long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
+				out.getDataCharacteristics().setDimension(fRows, fCols)
+					.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
 			out.setFedMapping(reshapedFedMap);
 		}
 		else {
@@ -180,6 +191,26 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 			cur = cur.getCause();
 		}
 		return false;
+	}
+
+	private static int resolveDim(ExecutionContext ec, CPOperand dimOp) {
+		try {
+			return (int) ec.getScalarInput(dimOp).getLongValue();
+		}
+		catch (Exception ex) {
+			return -1;
+		}
+	}
+
+	private boolean resolveByRow(ExecutionContext ec) {
+		try {
+			BooleanObject byRow = (BooleanObject) ec
+				.getScalarInput(_opByRow.getName(), Types.ValueType.BOOLEAN, _opByRow.isLiteral());
+			return byRow.getBooleanValue();
+		}
+		catch (Exception ex) {
+			return true;
+		}
 	}
 
 	// replace old reshape values for each worker
