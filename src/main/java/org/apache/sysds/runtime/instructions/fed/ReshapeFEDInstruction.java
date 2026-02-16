@@ -41,6 +41,7 @@ import org.apache.sysds.runtime.instructions.cp.ReshapeCPInstruction;
 import org.apache.sysds.runtime.instructions.spark.MatrixReshapeSPInstruction;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 
 public class ReshapeFEDInstruction extends UnaryFEDInstruction {
@@ -94,9 +95,10 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 			int rows = (int) ec.getScalarInput(_opRows).getLongValue();
 			int cols = (int) ec.getScalarInput(_opCols).getLongValue();
 
-			if(!mo1.isFederated())
-				throw new DMLRuntimeException("Federated Rshape: " 
-					+ "Federated input expected, but invoked w/ " + mo1.isFederated());
+			if(!mo1.isFederated()) {
+				executeLocalReshape(ec, rows, cols, byRow.getBooleanValue());
+				return;
+			}
 			if(mo1.getNumColumns() * mo1.getNumRows() != rows * cols)
 				throw new DMLRuntimeException("Reshape matrix requires consistent numbers of input/output cells (" 
 					+ mo1.getNumRows() + ":" + mo1.getNumColumns() + ", " + rows + ":" + cols + ").");
@@ -117,8 +119,18 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 			//execute at federated site
 			FederatedRequest[] fr1 = FederationUtils.callInstruction(newInstString, output, id,
 				new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, InstructionUtils.getExecType(instString));
-			mo1.getFedMapping().execute(getTID(), true, tmp);
-			Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr1, new FederatedRequest[0]);
+			Future<FederatedResponse>[] ffr;
+			try {
+				mo1.getFedMapping().execute(getTID(), true, tmp);
+				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, new FederatedRequest[0]);
+			}
+			catch (DMLRuntimeException ex) {
+				if(isMissingFedVarFailure(ex)) {
+					executeLocalReshape(ec, rows, cols, byRow.getBooleanValue());
+					return;
+				}
+				throw ex;
+			}
 
 			// set new fed map
 			FederationMap reshapedFedMap = mo1.getFedMapping().copyWithNewID(fr1[0].getID());
@@ -150,6 +162,24 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 			// TODO support tensor out, frame and list
 			throw new DMLRuntimeException("Federated Reshape Instruction only supports matrix as output.");
 		}
+	}
+
+	private void executeLocalReshape(ExecutionContext ec, int rows, int cols, boolean byRow) {
+		MatrixBlock in = ec.getMatrixInput(input1.getName());
+		MatrixBlock out = in.reshape(rows, cols, byRow);
+		ec.releaseMatrixInput(input1.getName());
+		ec.setMatrixOutput(output.getName(), out);
+	}
+
+	private static boolean isMissingFedVarFailure(Throwable ex) {
+		Throwable cur = ex;
+		while(cur != null) {
+			String msg = cur.getMessage();
+			if(msg != null && (msg.contains("Unknown variable") || msg.contains("does not exist")))
+				return true;
+			cur = cur.getCause();
+		}
+		return false;
 	}
 
 	// replace old reshape values for each worker
