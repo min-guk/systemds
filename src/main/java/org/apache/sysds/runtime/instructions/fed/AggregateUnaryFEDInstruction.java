@@ -38,6 +38,7 @@ import org.apache.sysds.runtime.instructions.cp.CPOperand;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
 import org.apache.sysds.runtime.instructions.spark.AggregateUnarySPInstruction;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
+import org.apache.sysds.runtime.matrix.data.MatrixIndexes;
 import org.apache.sysds.runtime.matrix.operators.AggregateUnaryOperator;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
@@ -120,10 +121,15 @@ public class AggregateUnaryFEDInstruction extends UnaryFEDInstruction {
 		AggregateUnaryOperator aop = (AggregateUnaryOperator) _optr;
 		MatrixObject in = ec.getMatrixObject(input1);
 		if ( !in.isFederated() ) {
-			throw new DMLRuntimeException("FED aggregate unary requires federated input but found local at runtime. "
-				+ "op=" + instOpcode + " input=" + input1.getName()
-				+ " dims=" + in.getNumRows() + "x" + in.getNumColumns()
-				+ " fedOut=" + _fedOut + " inst=" + instString);
+			MatrixBlock matBlock = ec.getMatrixInput(input1.getName());
+			MatrixBlock resultBlock = matBlock.aggregateUnaryOperations(aop, new MatrixBlock(),
+				matBlock.getNumRows(), new MatrixIndexes(1, 1), true);
+			ec.releaseMatrixInput(input1.getName());
+			if(output.isScalar())
+				ec.setScalarOutput(output.getName(), new org.apache.sysds.runtime.instructions.cp.DoubleObject(resultBlock.get(0, 0)));
+			else
+				ec.setMatrixOutput(output.getName(), resultBlock);
+			return;
 		}
 		FederationMap map = in.getFedMapping();
 		if ( map == null )
