@@ -1389,6 +1389,12 @@ public final class FederatedRefedPolicy {
 		return canSatisfyFederatedInputs(parent, fTypeMap, null, true);
 	}
 
+	private static boolean isPlannedFederatedFromFTypeMap(Hop input, java.util.Map<Long, FType> fTypeMap) {
+		if (input == null || fTypeMap == null)
+			return false;
+		return fTypeMap.get(input.getHopID()) != null;
+	}
+
 	private static boolean canSatisfyFederatedInputs(Hop parent, java.util.Map<Long, FType> fTypeMap,
 			AnchorSelection blockAnchor, boolean treatFTypeMapAsPlannedFederatedInputs) {
 		if (parent == null || parent.getInput() == null)
@@ -1421,7 +1427,7 @@ public final class FederatedRefedPolicy {
 
 			InputRequirement req = resolveTargetRequirement(parent, input, i, fTypeMap, blockAnchor);
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
-				? (fTypeMap != null && fTypeMap.containsKey(input.getHopID()))
+				? isPlannedFederatedFromFTypeMap(input, fTypeMap)
 				: isPlannedFederatedInput(input, fTypeMap);
 			boolean plannedFedBefore = plannedFed;
 			boolean allowOptionalLocalTransientRead = req == InputRequirement.OPTIONAL
@@ -1557,7 +1563,7 @@ public final class FederatedRefedPolicy {
 			if (other == null || other.getDataType() == null || !other.getDataType().isMatrix())
 				continue;
 			boolean otherPlannedFed = treatFTypeMapAsPlannedFederatedInputs
-				? (fTypeMap != null && fTypeMap.containsKey(other.getHopID()))
+				? isPlannedFederatedFromFTypeMap(other, fTypeMap)
 				: isPlannedFederatedInput(other, fTypeMap);
 			if (otherPlannedFed)
 				return true;
@@ -1575,7 +1581,7 @@ public final class FederatedRefedPolicy {
 				continue;
 			hasMatrixInput = true;
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
-				? (fTypeMap != null && fTypeMap.containsKey(input.getHopID()))
+				? isPlannedFederatedFromFTypeMap(input, fTypeMap)
 				: isPlannedFederatedInput(input, fTypeMap);
 			if (plannedFed)
 				return true;
@@ -3342,8 +3348,7 @@ public final class FederatedRefedPolicy {
 			// local at the point where the refed/materialize is executed.
 			boolean runtimeFed = isRuntimeFederatedInput(input, null, null);
 			boolean plannedFed = treatFTypeMapAsPlannedFederatedInputs
-					&& fTypeMap != null
-					&& fTypeMap.containsKey(input.getHopID());
+					&& isPlannedFederatedFromFTypeMap(input, fTypeMap);
 			if (req == InputRequirement.OPTIONAL) {
 				if (runtimeFed || plannedFed) {
 					FType optionalType = getKnownFType(input, fTypeMap);
