@@ -322,7 +322,15 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		out.getDataCharacteristics()
 			.setDimension(mo1.getNumRows(), mo2.getNumColumns())
 			.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
-		out.setFedMapping(federationMap.copyWithNewID(outputID, mo2.getNumColumns()));
+		// Robustness: copying a BROADCAST/FULL federation map can carry stale row/col extents from the
+		// input (e.g., large broadcast matrix) into a smaller output (e.g., row vector). This can later
+		// break local materialization (bind) and lead to shape explosions such as KxN instead of Kx1.
+		FederationMap outMap = federationMap.copyWithNewID(outputID, mo2.getNumColumns());
+		if(outMap.getType() == FType.BROADCAST || outMap.getType() == FType.FULL) {
+			outMap.modifyFedRanges(mo1.getNumRows(), 0);
+			outMap.modifyFedRanges(mo2.getNumColumns(), 1);
+		}
+		out.setFedMapping(outMap);
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] aggBinary " + instOpcode + " out=" + output.getName()
 				+ " dims=" + mo1.getNumRows() + "x" + mo2.getNumColumns()
