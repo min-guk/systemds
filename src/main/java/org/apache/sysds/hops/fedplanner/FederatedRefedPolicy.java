@@ -1101,6 +1101,17 @@ public final class FederatedRefedPolicy {
 		java.util.Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materialize =
 			FederatedFoutMaterializeRegistry.snapshot(sbId);
 		java.util.Map<Long, FederatedRefedRegistry.AnchorSpec> refed = FederatedRefedRegistry.snapshot(sbId);
+		ExecType plannedExec = getPlannedExecType(hop);
+		if (plannedExec == null)
+			plannedExec = ExecType.CP;
+		boolean plannedCpFout = plannedExec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT;
+		// CP->FOUT hops already have their own refed/materialize decision registered via validateAndRegister().
+		// Do not force their inputs to become federated just to satisfy the "has federated input" gate; this can
+		// introduce dead CP->FOUT materializations (e.g., uploading a CP intermediate that is never consumed).
+		if (plannedCpFout && (materialize.containsKey(hop.getHopID()) || refed.containsKey(hop.getHopID())
+			|| CPFOUT_ANCHOR_CACHE.containsKey(hop.getHopID()))) {
+			return true;
+		}
 		AnchorKey globalAnchorKey = selectGlobalAnchorKey(fTypeMap);
 
 		AnchorSelection requiredAnchor = null;
@@ -1221,16 +1232,25 @@ public final class FederatedRefedPolicy {
 			refed = FederatedRefedRegistry.snapshot(sbId);
 		}
 
+		boolean hasAnyRuntimeFederatedMatrixInput = false;
 		for (int i = 0; i < hop.getInput().size(); i++) {
 			Hop input = hop.getInput().get(i);
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
 				continue;
+			boolean runtimeFed = isRuntimeFederatedInput(input, materialize, refed);
+			if (runtimeFed)
+				hasAnyRuntimeFederatedMatrixInput = true;
 			InputRequirement req = resolveTargetRequirement(hop, input, i, fTypeMap, blockAnchor);
 			if (req == InputRequirement.OPTIONAL)
 				continue;
-			if (!isRuntimeFederatedInput(input, materialize, refed))
+			if (!runtimeFed)
 				return false;
 		}
+		// FED execution requires at least one runtime-federated matrix input.
+		// If every matrix input remains local after required-input enforcement,
+		// force planner fallback to CP to avoid invalid FED runtime instructions.
+		if (!hasAnyRuntimeFederatedMatrixInput)
+			return false;
 		return true;
 	}
 
