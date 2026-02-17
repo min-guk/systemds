@@ -534,7 +534,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// enumerating candidates that localize the target and prefer FED/FOUT output.
 		final boolean isRmempty = hop instanceof ParameterizedBuiltinOp
 				&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.RMEMPTY;
-		final long rmemptyLargeTargetThresholdBytes = 8L * 1024 * 1024; // 8 MiB
+		final long rmemptyLargeTargetThresholdBytes = 4L * 1024 * 1024; // 4 MiB
 		int rmemptyTargetBitIndex = -1;
 		boolean preferRmemptyFedFout = false;
 		if (isRmempty && numBothOutInputs > 0) {
