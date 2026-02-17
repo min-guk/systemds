@@ -889,6 +889,51 @@ public final class Rulesets {
     }
   }
 
+  public static final class RmemptyRule extends BaseRule {
+    private static final Set<String> OPCODES = Set.of(
+        Opcodes.RMEMPTY.toString());
+
+    @Override public OpCategory category() { return OpCategory.OTHER; }
+    @Override public Set<String> opcodes() { return OPCODES; }
+
+    @Override
+    public boolean supports(OpSig sig) {
+      return sig != null && OPCODES.contains(normalizedOpcode(sig));
+    }
+
+    @Override
+    public FTypeProfile profile(OpSig sig, List<List<FType>> inFTypeCandidates, ShapeHint hint) {
+      if (!supports(sig))
+        return FTypeProfile.empty();
+      List<FType> inputs = candidates(inFTypeCandidates, 0);
+      if (inputs.isEmpty())
+        return FTypeProfile.empty();
+      Set<FType> outs = new LinkedHashSet<>();
+      for (FType cand : inputs) {
+        if (cand == FType.ROW || cand == FType.COL || cand == FType.PART || cand == FType.FULL)
+          outs.add(cand);
+      }
+      return profileOf(outs);
+    }
+
+    @Override
+    public OpCaps caps(OpSig sig, List<FType> inFTypes, ShapeHint hint) {
+      if (inFTypes == null || inFTypes.isEmpty())
+        return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
+
+      FType in = typeAt(inFTypes, 0);
+      if (in == null)
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+      if (in == FType.BROADCAST)
+        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
+      if (!isFederatedLike(in))
+        return cpCaps(sig, ReasonCode.NO_FED_INPUT);
+
+      Guard.Result guard = Guard.eval(sig);
+      return guardAwareFout(sig, in, ReasonCode.OK, guard);
+    }
+  }
+
   public static final class RexpandRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(
         Opcodes.REXPAND.toString());

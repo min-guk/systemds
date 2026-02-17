@@ -367,6 +367,7 @@ public final class RulesCore {
       rr.register(new Rulesets.CumulativeOffsetRule());
       rr.register(new Rulesets.ContainsRule());
       rr.register(new Rulesets.ReplaceRule());
+      rr.register(new Rulesets.RmemptyRule());
       rr.register(new Rulesets.RexpandRule());
       rr.register(new Rulesets.LeftIndexRule());
       rr.register(new Rulesets.MMChainRule());
