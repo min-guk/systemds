@@ -33,13 +33,14 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.AggOp;
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
-import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.AggBinaryOp;
@@ -1215,7 +1216,11 @@ public final class FederatedRefedPolicy {
 		// WAN uploads introduced solely by required-input enforcement.
 		boolean plannedFedOrCpfout = plannedExec == ExecType.FED || plannedCpFout;
 		// Demotion scope: only simple ops where CP is safe/cheap and refederating huge intermediates is rarely desired.
-		boolean demotionCandidateOp = hop instanceof AggUnaryOp || (hop instanceof BinaryOp && "*".equals(hop.getOpString()));
+		boolean demotionCandidateOp = hop instanceof AggUnaryOp;
+		if (hop instanceof BinaryOp) {
+			OpOp2 op = ((BinaryOp) hop).getOp();
+			demotionCandidateOp |= op == OpOp2.MULT || op == OpOp2.EQUAL;
+		}
 		if (plannedFedOrCpfout && demotionCandidateOp && !requiredIndices.isEmpty()
 			&& maxRequiredLocalInputCells >= LARGE_LOCAL_REQUIRED_INPUT_CELLS_DEMOTE_THRESHOLD) {
 			return false;
