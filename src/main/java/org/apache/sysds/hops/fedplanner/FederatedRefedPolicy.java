@@ -1210,12 +1210,14 @@ public final class FederatedRefedPolicy {
 		if (!hasRequiredMatrix)
 			return true;
 
-		// If this FED hop would require uploading/refederating a large local input matrix, prefer demotion to CP
-		// (runtime can materialize smaller federated inputs locally when needed). This avoids expensive WAN uploads
-		// introduced solely by required-input enforcement.
-		if (plannedExec == ExecType.FED && !requiredIndices.isEmpty()
-			&& maxRequiredLocalInputCells >= LARGE_LOCAL_REQUIRED_INPUT_CELLS_DEMOTE_THRESHOLD
-			&& (hop instanceof AggUnaryOp || (hop instanceof BinaryOp && "*".equals(hop.getOpString())))) {
+		// If this hop (FED or CP->FOUT) would require uploading/refederating a large local input matrix, prefer
+		// demotion to CP (runtime can materialize smaller federated inputs locally when needed). This avoids expensive
+		// WAN uploads introduced solely by required-input enforcement.
+		boolean plannedFedOrCpfout = plannedExec == ExecType.FED || plannedCpFout;
+		// Demotion scope: only simple ops where CP is safe/cheap and refederating huge intermediates is rarely desired.
+		boolean demotionCandidateOp = hop instanceof AggUnaryOp || (hop instanceof BinaryOp && "*".equals(hop.getOpString()));
+		if (plannedFedOrCpfout && demotionCandidateOp && !requiredIndices.isEmpty()
+			&& maxRequiredLocalInputCells >= LARGE_LOCAL_REQUIRED_INPUT_CELLS_DEMOTE_THRESHOLD) {
 			return false;
 		}
 
