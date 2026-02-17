@@ -764,8 +764,16 @@ public class FederatedPlannerDpCostEnumerator {
 				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
-				double cpUploadCost = hopPlacementWeight * FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+				double cpUploadCostWithoutWeight = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 						uploadMemEstimate, cpLogicalFType, numOfWorkers);
+				// CP->FOUT forwarding fans out to multiple workers. The base upload model
+				// accounts for payload size but under-estimates fan-out latency/control
+				// overhead, which can make DP over-prefer CP/FOUT candidates (notably in
+				// WAN profiles). Add the forwarding penalty to align the cost model with
+				// runtime behavior.
+				cpUploadCostWithoutWeight += FederatedCostModel.computeLocalToFedForwardingPenalty(
+						cpLogicalFType, numOfWorkers);
+				double cpUploadCost = hopPlacementWeight * cpUploadCostWithoutWeight;
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 						hop, privacyConstraint, oracleLogicalFType, caps);
