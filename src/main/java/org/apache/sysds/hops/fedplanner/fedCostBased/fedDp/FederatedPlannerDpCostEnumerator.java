@@ -525,6 +525,41 @@ public class FederatedPlannerDpCostEnumerator {
 		double resultDownloadCost = hopPlacementWeight
 				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
 
+		// Heuristic guard: keep RMEMPTY (removeEmpty) on large federated targets federated.
+		//
+		// Motivation: In sliceline, DP can pick a very cheap CP/LOUT alternative by
+		// materializing the federated table output locally, which then triggers large
+		// local->FED forwarding costs downstream (e.g., `colMaxs(X2 * e)`).
+		// When the target has an FOUT variant and is sufficiently large, avoid
+		// enumerating candidates that localize the target and prefer FED/FOUT output.
+		final boolean isRmempty = hop instanceof ParameterizedBuiltinOp
+				&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.RMEMPTY;
+		final long rmemptyLargeTargetThresholdBytes = 8L * 1024 * 1024; // 8 MiB
+		int rmemptyTargetBitIndex = -1;
+		boolean preferRmemptyFedFout = false;
+		if (isRmempty && numBothOutInputs > 0) {
+			Hop rmemptyTargetHop = ((ParameterizedBuiltinOp) hop).getTargetHop();
+			if (rmemptyTargetHop != null) {
+				for (int j = 0; j < numBothOutInputs; j++) {
+					if (lOutfOutChildHops.get(j) == rmemptyTargetHop) {
+						rmemptyTargetBitIndex = j;
+						break;
+					}
+				}
+				if (rmemptyTargetBitIndex >= 0) {
+					double targetUploadEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(rmemptyTargetHop);
+					preferRmemptyFedFout = targetUploadEstimate > rmemptyLargeTargetThresholdBytes;
+					if (preferRmemptyFedFout && FederatedPlannerTrace.shouldTrace(hop)) {
+						FederatedPlannerTrace.log(hop, "DP-RMEMPTY-PreferFedFout", String.format(Locale.ROOT,
+								"targetHop=%d uploadEstimateMB=%.3f thresholdMB=%.3f",
+								rmemptyTargetHop.getHopID(),
+								targetUploadEstimate / (1024.0 * 1024.0),
+								rmemptyLargeTargetThresholdBytes / (1024.0 * 1024.0)));
+					}
+				}
+			}
+		}
+
 		final int enumerationLimit = 1 << numBothOutInputs;
 
 			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
@@ -541,6 +576,10 @@ public class FederatedPlannerDpCostEnumerator {
 			boolean sawAllowFedLout = false;
 
 			for (int i = 0; i < enumerationLimit; i++) {
+				// Skip candidates that localize the RMEMPTY target when the heuristic triggers.
+				if (preferRmemptyFedFout && rmemptyTargetBitIndex >= 0 && (i & (1 << rmemptyTargetBitIndex)) == 0) {
+					continue;
+				}
 				List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
 				List<FType> collectedFTypes = new ArrayList<>();
 				List<Hop> collectedHops = new ArrayList<>();
@@ -692,6 +731,12 @@ public class FederatedPlannerDpCostEnumerator {
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 						hop, privacyConstraint, oracleLogicalFType, caps);
+				// Prefer FED/FOUT for RMEMPTY on large targets by disallowing LOUT output plans
+				// when FED/FOUT is feasible under the current selected-bit configuration.
+				if (preferRmemptyFedFout && canSatisfyFedInputs && placementDecision.allowFED_FOUT) {
+					placementDecision.allowCP_LOUT = false;
+					placementDecision.allowFED_LOUT = false;
+				}
 				// DP can over-prefer FED for elementwise multiplications that feed directly into
 				// a column-wise MAX reduction (colMaxs). In practice, executing these multiplies
 				// as federated instructions is often slower than local execution (notably in
