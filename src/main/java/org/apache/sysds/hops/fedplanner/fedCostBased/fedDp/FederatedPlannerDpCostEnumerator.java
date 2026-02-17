@@ -37,7 +37,10 @@ import java.util.function.Function;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types;
+import org.apache.sysds.common.Types.AggOp;
+import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
@@ -689,6 +692,15 @@ public class FederatedPlannerDpCostEnumerator {
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 						hop, privacyConstraint, oracleLogicalFType, caps);
+				// DP can over-prefer FED for elementwise multiplications that feed directly into
+				// a column-wise MAX reduction (colMaxs). In practice, executing these multiplies
+				// as federated instructions is often slower than local execution (notably in
+				// sliceline's `t(colMaxs(X*e))` patterns). If the multiplication is exclusively
+				// consumed by colMaxs, restrict the candidate space to local execution.
+				if (isBinaryMultConsumedOnlyByColMaxs(hop)) {
+					placementDecision.allowFED_LOUT = false;
+					placementDecision.allowFED_FOUT = false;
+				}
 				boolean derivedFedFout = shouldEnableDerivedFedFout(
 						hop, privacyConstraint, fedInputTypeMap, caps, placementDecision);
 				if (derivedFedFout) {
@@ -1089,6 +1101,19 @@ public class FederatedPlannerDpCostEnumerator {
 
 		FederatedPlannerTrace.log(hop, "DP-Selected",
 				"bestLOUT={" + loutSummary + "} bestFOUT={" + foutSummary + "}");
+	}
+
+	private static boolean isBinaryMultConsumedOnlyByColMaxs(Hop hop) {
+		if (!(hop instanceof BinaryOp) || ((BinaryOp) hop).getOp() != OpOp2.MULT)
+			return false;
+		List<Hop> parents = hop.getParent();
+		if (parents == null || parents.size() != 1)
+			return false;
+		Hop parent = parents.get(0);
+		if (!(parent instanceof AggUnaryOp))
+			return false;
+		AggUnaryOp au = (AggUnaryOp) parent;
+		return au.getOp() == AggOp.MAX && au.getDirection() == Direction.Col;
 	}
 
 		private static void populateParentChildUploadHintsFromRewire(
