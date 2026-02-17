@@ -508,7 +508,17 @@ public class FederatedPlannerDpCostEnumerator {
 		double fedOverhead = (hop instanceof DataOp)
 				? 0.0
 				: hopNetworkWeight * FederatedCostModel.computeNetworkCost(0);
-		double fedSelfCost = baseSelfCost / Math.max(1, numOfWorkers) + fedOverhead;
+		// For elementwise operations, real-world speedups from federated execution
+		// are often far from linear in the number of workers due to per-site overheads
+		// and sparse/dense representation effects. Over-aggressive scaling can make DP
+		// prefer FED plans that are slower than local execution (notably in sliceline).
+		//
+		// Heuristic/MinST commonly keep these hops local; keep DP competitive by
+		// conservatively modeling FED compute scaling for BinaryOps.
+		double fedComputeCost = (hop instanceof BinaryOp)
+				? baseSelfCost
+				: baseSelfCost / Math.max(1, numOfWorkers);
+		double fedSelfCost = fedComputeCost + fedOverhead;
 		double resultDownloadCost = hopPlacementWeight
 				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
 
