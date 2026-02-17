@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -21,6 +22,7 @@ import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
@@ -55,6 +57,7 @@ import org.apache.sysds.runtime.codegen.SpoofOperator;
 import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
 import org.apache.sysds.runtime.codegen.SpoofRowwise;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.common.Types.OpOpDG;
 
 /**
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
@@ -281,8 +284,77 @@ public final class OracleFacade {
         attrs.put(ATTR_MAP_MARGIN, Long.toString(margin));
     }
     if (hop.getOp() == OpOp3.CTABLE) {
-      attrs.put(ATTR_CTABLE_DISJOINT, Boolean.toString(hop.isDisjointInputs()));
+      boolean disjoint = hop.isDisjointInputs() || inferDisjointCtableBins(hop);
+      attrs.put(ATTR_CTABLE_DISJOINT, Boolean.toString(disjoint));
     }
+  }
+
+  /**
+   * Best-effort static hint for whether a CTABLE can keep its output federated (disjoint bins).
+   * <p>
+   * CTABLE disjointness is ultimately a data property (see {@code CtableFEDInstruction.isFedOutput}),
+   * but in common patterns (e.g., table with a sequence-based row index vector), we can infer
+   * disjoint bins without accessing runtime data. This hint is intentionally conservative and only
+   * triggers on clear sequence-based constructions.
+   */
+  private static boolean inferDisjointCtableBins(TernaryOp hop) {
+    if (hop == null || hop.getOp() != OpOp3.CTABLE)
+      return false;
+    List<Hop> inputs = hop.getInput();
+    if (inputs == null || inputs.size() < 2)
+      return false;
+    // Focus on the "table with output dims" variant used by sliceline and related workloads.
+    if (inputs.size() < 5)
+      return false;
+    // Only inspect the index inputs (first two) for a clear seq(.., incr=1) lineage.
+    for (int i = 0; i < 2; i++) {
+      if (containsUnitIncrementSeq(inputs.get(i), 0, new HashSet<>()))
+        return true;
+    }
+    return false;
+  }
+
+  private static boolean containsUnitIncrementSeq(Hop hop, int depth, Set<Long> visited) {
+    if (hop == null)
+      return false;
+    // Protect against deep/recursive graphs.
+    if (depth > 8)
+      return false;
+    if (!visited.add(hop.getHopID()))
+      return false;
+    if (hop instanceof DataGenOp && ((DataGenOp) hop).getOp() == OpOpDG.SEQ) {
+      DataGenOp dg = (DataGenOp) hop;
+      // Mirror existing seq checks used in CTABLE rewrites: accept literal incr=1 or
+      // recompiler-propagated incrementValue==1.0.
+      if (dg.getIncrementValue() == 1.0)
+        return true;
+      List<Hop> in = dg.getInput();
+      if (in != null) {
+        int ix = dg.getParamIndex(org.apache.sysds.parser.Statement.SEQ_INCR);
+        if (ix >= 0 && ix < in.size() && in.get(ix) instanceof LiteralOp) {
+          try {
+            if (((LiteralOp) in.get(ix)).getDoubleValue() == 1.0)
+              return true;
+          }
+          catch (Exception ignored) {
+            // fall through
+          }
+        }
+      }
+    }
+    if (hop instanceof LiteralOp) {
+      String v = ((LiteralOp) hop).getStringValue();
+      if (v != null && v.contains("seq("))
+        return true;
+    }
+    List<Hop> in = hop.getInput();
+    if (in == null || in.isEmpty())
+      return false;
+    for (Hop child : in) {
+      if (containsUnitIncrementSeq(child, depth + 1, visited))
+        return true;
+    }
+    return false;
   }
 
   private void addReorgAttrs(ReorgOp hop, Map<String,String> attrs) {

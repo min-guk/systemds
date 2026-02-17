@@ -3505,7 +3505,9 @@ public final class Rulesets {
           ? sig.opcode()
           : Opcodes.CTABLE.toString();
 
-      if (n != 2 && n != 3) {
+      // CTABLE hops may include additional scalar inputs for output dimensions / flags
+      // (e.g., the 6-input table variant). Only the first 2-3 inputs can be matrices.
+      if (n < 2) {
         return OpCaps.newBuilder()
             .category(category)
             .opcode(opcode)
@@ -3513,13 +3515,13 @@ public final class Rulesets {
             .placement(FederatedOutput.LOUT)
             
             .reason(ReasonCode.ARITY_MISMATCH)
-            .detail("expected=2 or 3, got=" + n)
+            .detail("expected>=2, got=" + n)
             .build();
       }
 
       FType a = typeAt(inFTypes, 0);
       FType b = typeAt(inFTypes, 1);
-      FType w = (n == 3) ? typeAt(inFTypes, 2) : null;
+      FType w = (n >= 3) ? typeAt(inFTypes, 2) : null;
 
       boolean hasRowFed = (a == FType.ROW) || (b == FType.ROW) || (w == FType.ROW);
       if (!hasRowFed) {
