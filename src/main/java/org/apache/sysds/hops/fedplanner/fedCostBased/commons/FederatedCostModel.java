@@ -59,7 +59,16 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES = 8d * 1024 * 1024 * 1024;
 	private static final double UNKNOWN_DIM_MEM_SENTINEL_EPSILON = 0.01;
 	private static final int UNKNOWN_DIM_DESCENT_MAX_DEPTH = 6;
-	private static final double DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = 64.0;
+	// Fallback transfer payload used when output dimensions remain unknown and no
+	// reliable descendant size estimate is available. This value directly impacts
+	// DP/MinST decisions that trade off local materialization vs. federated plans
+	// in early planning phases (before recompile resolves dimensions).
+	//
+	// In practice (notably in sliceline), under-estimation here can cause DP to
+	// over-prefer CP/LOUT materialization and later pay large local->FED forwarding
+	// costs. Use a conservative default; it can still be overridden via
+	// SYSDS_FED_COST_UNKNOWN_DIM_TRANSFER_MB.
+	private static final double DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = 256.0;
 	// Compute throughput (FLOPs/s), consistent with CostEstimatorStaticRuntime defaults.
 	private static final double DEFAULT_FLOPS_PER_SEC = 2d * 1024 * 1024 * 1024;
 	// All costs are returned in milliseconds.
