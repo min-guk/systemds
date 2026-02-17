@@ -573,7 +573,7 @@ public class FederatedPlannerDpCostEnumerator {
 		boolean preferTWriteFedFout = false;
 		Hop tWriteInputHop = null;
 		if (isTransientWrite && hop.getDataType() != null && hop.getDataType().isMatrix()
-				&& hop.getInput() != null && !hop.getInput().isEmpty()) {
+				&& numBothOutInputs > 0 && hop.getInput() != null && !hop.getInput().isEmpty()) {
 			tWriteInputHop = hop.getInput(0);
 			for (int j = 0; j < numBothOutInputs; j++) {
 				if (lOutfOutChildHops.get(j) == tWriteInputHop) {
@@ -581,9 +581,7 @@ public class FederatedPlannerDpCostEnumerator {
 					break;
 				}
 			}
-			final boolean inputHasFoutOption = tWriteInputBitIndex >= 0
-					|| fOUTOnlyinputHops.contains(tWriteInputHop);
-			if (inputHasFoutOption) {
+			if (tWriteInputBitIndex >= 0) {
 				double inputUploadEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(tWriteInputHop);
 				preferTWriteFedFout = inputUploadEstimate > tWriteLargeInputThresholdBytes;
 				if (preferTWriteFedFout && FederatedPlannerTrace.shouldTrace(hop)) {
