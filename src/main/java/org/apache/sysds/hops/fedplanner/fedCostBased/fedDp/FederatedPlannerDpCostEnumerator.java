@@ -51,6 +51,7 @@ import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.HopsException;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
@@ -794,6 +795,19 @@ public class FederatedPlannerDpCostEnumerator {
 						hop, privacyConstraint, fedInputTypeMap, caps, placementDecision);
 				if (derivedFedFout) {
 					placementDecision.allowFED_FOUT = true;
+				}
+				// Runtime guard: The FED instruction set does not support all NaryOp opcodes.
+				// In particular, NaryOp CBIND/RBIND is represented as a BuiltinNary FED
+				// instruction ("cbind"/"rbind") which currently fails at compile time
+				// (Unsupported federated nary opcode). Disallow FED execution for these ops.
+				if (hop instanceof NaryOp) {
+					Types.OpOpN nOp = ((NaryOp) hop).getOp();
+					if (nOp == Types.OpOpN.CBIND || nOp == Types.OpOpN.RBIND) {
+						placementDecision.allowFED_LOUT = false;
+						placementDecision.allowFED_FOUT = false;
+						placementDecision.allowCP_FOUT = false;
+						derivedFedFout = false;
+					}
 				}
 				// Align DP with MinST: when runtime does not support FED/FOUT for this op,
 				// disallow both CP_FOUT and FED_FOUT candidates.
