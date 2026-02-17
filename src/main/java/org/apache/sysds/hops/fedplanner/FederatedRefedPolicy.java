@@ -981,7 +981,9 @@ public final class FederatedRefedPolicy {
 						+ " fout=" + hop.getFederatedOutput());
 				}
 				ExecType exec = getPlannedExecType(hop);
-				boolean plannedFed = exec == ExecType.FED && !hop.hasLocalOutput();
+				// Enforce input feasibility for all FED hops, including FED+LOUT. FED+LOUT hops can otherwise
+				// silently refederate large CP intermediates at runtime if upstream demotions localize inputs.
+				boolean plannedFed = exec == ExecType.FED;
 				boolean plannedFout = hop.getFederatedOutput() == FederatedOutput.FOUT;
 				if (!plannedFed && !plannedFout)
 					continue;
