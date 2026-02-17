@@ -560,6 +560,39 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 		}
 
+		// Heuristic guard: keep large transient writes federated when possible.
+		//
+		// Motivation: Once a large intermediate is produced as FOUT, downloading it at
+		// TWrite (CP/LOUT) destroys the federated anchor and can re-introduce repeated
+		// local->FED forwarding downstream. Prefer FED/FOUT for such TWrite nodes.
+		final boolean isTransientWrite = hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE;
+		final long tWriteLargeInputThresholdBytes = 4L * 1024 * 1024; // 4 MiB
+		int tWriteInputBitIndex = -1;
+		boolean preferTWriteFedFout = false;
+		Hop tWriteInputHop = null;
+		if (isTransientWrite && hop.getDataType() != null && hop.getDataType().isMatrix()
+				&& numBothOutInputs > 0 && hop.getInput() != null && !hop.getInput().isEmpty()) {
+			tWriteInputHop = hop.getInput(0);
+			for (int j = 0; j < numBothOutInputs; j++) {
+				if (lOutfOutChildHops.get(j) == tWriteInputHop) {
+					tWriteInputBitIndex = j;
+					break;
+				}
+			}
+			if (tWriteInputBitIndex >= 0) {
+				double inputUploadEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(tWriteInputHop);
+				preferTWriteFedFout = inputUploadEstimate > tWriteLargeInputThresholdBytes;
+				if (preferTWriteFedFout && FederatedPlannerTrace.shouldTrace(hop)) {
+					FederatedPlannerTrace.log(hop, "DP-TWRITE-PreferFedFout", String.format(Locale.ROOT,
+							"inputHop=%d uploadEstimateMB=%.3f thresholdMB=%.3f",
+							tWriteInputHop.getHopID(),
+							inputUploadEstimate / (1024.0 * 1024.0),
+							tWriteLargeInputThresholdBytes / (1024.0 * 1024.0)));
+				}
+			}
+		}
+
 		final int enumerationLimit = 1 << numBothOutInputs;
 
 			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
@@ -578,6 +611,10 @@ public class FederatedPlannerDpCostEnumerator {
 			for (int i = 0; i < enumerationLimit; i++) {
 				// Skip candidates that localize the RMEMPTY target when the heuristic triggers.
 				if (preferRmemptyFedFout && rmemptyTargetBitIndex >= 0 && (i & (1 << rmemptyTargetBitIndex)) == 0) {
+					continue;
+				}
+				// Skip candidates that localize the TWrite input when the heuristic triggers.
+				if (preferTWriteFedFout && tWriteInputBitIndex >= 0 && (i & (1 << tWriteInputBitIndex)) == 0) {
 					continue;
 				}
 				List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
@@ -734,6 +771,12 @@ public class FederatedPlannerDpCostEnumerator {
 				// Prefer FED/FOUT for RMEMPTY on large targets by disallowing LOUT output plans
 				// when FED/FOUT is feasible under the current selected-bit configuration.
 				if (preferRmemptyFedFout && canSatisfyFedInputs && placementDecision.allowFED_FOUT) {
+					placementDecision.allowCP_LOUT = false;
+					placementDecision.allowFED_LOUT = false;
+				}
+				// Prefer FED/FOUT for large transient writes by disallowing LOUT output plans
+				// when FED/FOUT is feasible under the current selected-bit configuration.
+				if (preferTWriteFedFout && canSatisfyFedInputs && placementDecision.allowFED_FOUT) {
 					placementDecision.allowCP_LOUT = false;
 					placementDecision.allowFED_LOUT = false;
 				}
