@@ -350,6 +350,15 @@ public class ParameterizedBuiltinOp extends MultiThreadedHop {
 			}
 			*/
 		}
+		else if( et == ExecType.FED )
+		{
+			// Federated execution uses the same logical lop as CP but is executed via a FED instruction at runtime.
+			// This keeps the hop-level execution choice consistent with the federated planner decisions.
+			ParameterizedBuiltin pbilop = new ParameterizedBuiltin(inputlops, _op, getDataType(), getValueType(), et);
+			setOutputDimensions(pbilop);
+			setLineNumbers(pbilop);
+			setLops(pbilop);
+		}
 		else if( et == ExecType.SPARK )
 		{
 			if( !(marginHop instanceof LiteralOp) )
