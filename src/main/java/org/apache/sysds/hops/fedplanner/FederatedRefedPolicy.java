@@ -482,7 +482,9 @@ public final class FederatedRefedPolicy {
 						? hop.getInput().get(0) : null;
 					boolean inputRuntimeFed = reorgInput != null
 						&& isRuntimeFederatedInput(reorgInput, null, null);
-					if (!inputRuntimeFed) {
+					FType inputFType = getKnownFType(reorgInput, fTypeMap);
+					boolean unsupportedFedInputForReorgFout = (inputFType == FType.FULL);
+					if (!inputRuntimeFed || unsupportedFedInputForReorgFout) {
 						hop.setFederatedOutput(FederatedOutput.LOUT);
 						if (fTypeMap != null)
 							fTypeMap.remove(hop.getHopID());
