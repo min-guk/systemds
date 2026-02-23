@@ -91,7 +91,8 @@ public class FederatedPlanMinSTRewire {
 	// Guard rail for enabling planner-only federated alternative fallback.
 	// High local->fed forwarding control penalty (e.g., WAN) should keep strict feasibility
 	// and avoid resurrecting expensive FED alternatives for optional/local-capable edges.
-	private static final double FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS = 10.0;
+	// 30ms keeps low-latency LAN eligible while disabling fallback on high-latency WAN profiles.
+	private static final double FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS = 30.0;
 
 	private static int getConfiguredWorkerCount() {
 		String raw = System.getenv("DOCKER_NUM_WORKERS");
@@ -1237,6 +1238,16 @@ public class FederatedPlanMinSTRewire {
 				}
 				ExecPlacementCaps federatedAlternativeCaps = deriveFederatedAlternativeCaps(
 					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
+				// Keep worker=1 AggBinary local restriction effective even when alternative FED candidates
+				// are derivable from promoted Oracle input hints, but only when forwarding penalty
+				// is high enough to disable federated-alternative fallback.
+				if (getConfiguredWorkerCount() == 1
+						&& hop instanceof AggBinaryOp
+						&& (privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
+						&& !shouldEnableFederatedAlternativeFallback(
+							hop, federatedAlternativeCaps, cpFoutType, numWorkersEstimate)) {
+					federatedAlternativeCaps = null;
+				}
 				if (federatedAlternativeCaps != null) {
 					caps.allowFED_LOUT |= federatedAlternativeCaps.allowFED_LOUT;
 					caps.allowFED_FOUT |= federatedAlternativeCaps.allowFED_FOUT;
@@ -1359,9 +1370,14 @@ public class FederatedPlanMinSTRewire {
 		if (!(federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT))
 			return false;
 		FType penaltyType = (cpFoutType != null) ? cpFoutType : FType.BROADCAST;
+		int fanout = Math.max(1, numWorkersEstimate);
 		double forwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
-				penaltyType, Math.max(1, numWorkersEstimate));
-		return forwardingPenalty <= FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS;
+				penaltyType, fanout);
+		// computeLocalToFedForwardingPenalty returns 0 for fanout<=1 by design, so add
+		// a latency-only network term to keep worker=1 decisions WAN-sensitive as well.
+		double baseNetworkPenalty = FederatedCostModel.computeNetworkCost(0.0);
+		double totalPenalty = forwardingPenalty + baseNetworkPenalty;
+		return totalPenalty <= FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS;
 	}
 
 	private static boolean shouldKeepFedAlternativeForPrivateTransientWrite(Hop hop, Privacy privacy,
@@ -1748,7 +1764,7 @@ public class FederatedPlanMinSTRewire {
 		// MinST's 2-node encoding cannot safely encode cases where CP->FOUT is allowed but FED->FOUT is not.
 		// If we keep CP->FOUT enabled, the min-cut can still choose (FED,FOUT) because placement/execution are
 		// represented by independent nodes. Force LOUT by disabling CP->FOUT as well.
-		if (caps.allowCP_FOUT && !caps.allowFED_FOUT) {
+		if (caps.allowCP_FOUT && !caps.allowFED_FOUT && caps.allowFED_LOUT) {
 			caps.allowCP_FOUT = false;
 		}
 
