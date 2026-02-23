@@ -520,6 +520,25 @@ public class Dag<N extends Lop>
 		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeEntries =
 			FederatedFoutMaterializeRegistry.snapshot(sbId);
 
+		// In some recompilation paths, transient reads may still appear as CP lops even if the
+		// variable is written as FED/FOUT in the same statement block. Refed insertion on such
+		// inputs would fail at runtime because fed_refed requires a local input.
+		// We conservatively treat transient reads of FED/FOUT transient writes as already-federated.
+		Set<String> federatedTransientWrites = new HashSet<>();
+		for (Lop lop : lops) {
+			if (!(lop instanceof Data))
+				continue;
+			Data data = (Data) lop;
+			if (!data.isTransientWrite())
+				continue;
+			if (data.getFederatedOutput().isForcedFederated()) {
+				OutputParameters out = data.getOutputParameters();
+				String label = (out != null) ? out.getLabel() : null;
+				if (label != null)
+					federatedTransientWrites.add(label);
+			}
+		}
+
 		Map<Long, Lop> hopToLop = new HashMap<>();
 		for (Lop lop : lops) {
 			long hopId = lop.getHopID();
@@ -551,6 +570,21 @@ public class Dag<N extends Lop>
 						+ " due to missing lops in current DAG");
 				}
 				continue;
+			}
+
+			if (!federatedTransientWrites.isEmpty() && local instanceof Data) {
+				Data data = (Data) local;
+				if (data.isTransientRead()) {
+					OutputParameters out = data.getOutputParameters();
+					String label = (out != null) ? out.getLabel() : null;
+					if (label != null && federatedTransientWrites.contains(label)) {
+						if (LOG.isDebugEnabled()) {
+							LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
+								+ " because input is a transient read of a FED/FOUT transient write: " + label);
+						}
+						continue;
+					}
+				}
 			}
 
 			// If the "local" lop is already a federated object (e.g., transient read of a federated var),

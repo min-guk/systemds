@@ -591,13 +591,17 @@ public final class FederatedRefedPolicy {
 					}
 				}
 			}
-		if (!runtimeContext) {
-			for (Hop hop : all) {
-				if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
-					// Track transient writes that carry federated anchors so later TRead hops can
-					// be treated as federated inputs in subsequent blocks.
-					registerTransientWriteAnchor((DataOp) hop, fTypeMap, blockAnchor, sbId, conditionalContext);
-				}
+		for (Hop hop : all) {
+			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
+				// Track transient writes that carry federated anchors so later TRead hops can
+				// be treated as federated inputs in subsequent blocks.
+				//
+				// This is also required in runtime recompile: runtime signatures are authoritative
+				// for *existing* symbol-table vars, but transient writes inside the current block
+				// may introduce new federated vars (or overwrite federated vars locally). Without
+				// updating anchor-key state here, later refed/materialize decisions may become
+				// inconsistent and produce invalid fed_refed insertions on already-federated vars.
+				registerTransientWriteAnchor((DataOp) hop, fTypeMap, blockAnchor, sbId, conditionalContext);
 			}
 		}
 		boolean changed;
