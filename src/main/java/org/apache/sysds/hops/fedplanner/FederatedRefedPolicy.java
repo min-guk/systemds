@@ -550,6 +550,12 @@ public final class FederatedRefedPolicy {
 				else if (exec == ExecType.FED) {
 					String name = dataOp.getName();
 					List<DataOp> writes = (name != null) ? transientWritesByName.get(name) : null;
+					if ((writes == null || writes.isEmpty()) && runtimeLocalTransientReads == null && name != null) {
+						java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
+						List<DataOp> cached = globalWrites.get(name);
+						if (cached != null && !cached.isEmpty())
+							writes = cached;
+					}
 					DataOp tWrite = selectMatchingTWrite(writes, dataOp);
 					if (tWrite == null)
 						continue;
