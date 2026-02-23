@@ -512,15 +512,21 @@ public class Recompiler {
 						fType = FederatedPlannerUtils.deriveFedInitFType(dataOp);
 					if (fType != null)
 						fTypeMap.put(hop.getHopID(), fType);
-				} else if (dataOp.getOp() == OpOpData.TRANSIENTREAD
-						&& FederatedPlannerUtils.isFedInitVar(dataOp.getName())) {
-					FType fType = FederatedPlannerUtils.getFedInitFType(dataOp.getName());
-					if (fType != null)
-						fTypeMap.put(hop.getHopID(), fType);
-				} else if (dataOp.getOp() == OpOpData.TRANSIENTREAD && runtimeTypes != null) {
-					FType fType = runtimeTypes.get(dataOp.getName());
-					if (fType != null)
-						fTypeMap.put(hop.getHopID(), fType);
+				} else if (dataOp.getOp() == OpOpData.TRANSIENTREAD) {
+					// Runtime state is authoritative in recompile:
+					//  - key present with null => currently local (suppress stale fed-init registry)
+					//  - key present with ftype => currently federated
+					//  - key absent => fallback to fed-init metadata if available
+					if (runtimeTypes != null && runtimeTypes.containsKey(dataOp.getName())) {
+						FType fType = runtimeTypes.get(dataOp.getName());
+						if (fType != null)
+							fTypeMap.put(hop.getHopID(), fType);
+					}
+					else if (FederatedPlannerUtils.isFedInitVar(dataOp.getName())) {
+						FType fType = FederatedPlannerUtils.getFedInitFType(dataOp.getName());
+						if (fType != null)
+							fTypeMap.put(hop.getHopID(), fType);
+					}
 				}
 			}
 		}
@@ -543,6 +549,8 @@ public class Recompiler {
 			if (!(data instanceof MatrixObject))
 				continue;
 			MatrixObject mo = (MatrixObject) data;
+			if (runtimeTypes != null)
+				runtimeTypes.put(entry.getKey(), null); // observed runtime-local by default
 			if (!mo.isFederated())
 				continue;
 			org.apache.sysds.runtime.controlprogram.federated.FederationMap fmap = mo.getFedMapping();
