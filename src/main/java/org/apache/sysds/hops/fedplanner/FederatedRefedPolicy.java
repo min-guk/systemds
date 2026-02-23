@@ -476,6 +476,19 @@ public final class FederatedRefedPolicy {
 				}
 				if (registerCpfoutViaTransientWrite(hop, fTypeMap, sbId, blockAnchor))
 					continue;
+				if (hop instanceof ReorgOp && exec == ExecType.CP
+					&& hop.getFederatedOutput() == FederatedOutput.FOUT) {
+					Hop reorgInput = (hop.getInput() != null && !hop.getInput().isEmpty())
+						? hop.getInput().get(0) : null;
+					boolean inputRuntimeFed = reorgInput != null
+						&& isRuntimeFederatedInput(reorgInput, null, null);
+					if (!inputRuntimeFed) {
+						hop.setFederatedOutput(FederatedOutput.LOUT);
+						if (fTypeMap != null)
+							fTypeMap.remove(hop.getHopID());
+						continue;
+					}
+				}
 				if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor)) {
 					if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
 						hop.setFederatedOutput(FederatedOutput.LOUT);
