@@ -2475,6 +2475,8 @@ public final class FederatedRefedPolicy {
 			return false;
 		if (exec != ExecType.FED || hop.getFederatedOutput() != FederatedOutput.FOUT)
 			return false;
+		if (hop.dimsKnown() && (hop.getDim1() == 1 || hop.getDim2() == 1))
+			return true;
 		List<Hop> inputs = hop.getInput();
 		if (inputs == null || inputs.size() < 2)
 			return false;
