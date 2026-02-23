@@ -1793,11 +1793,24 @@ public class FederatedPlanMinSTRewire {
 				&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)
 				&& !isTransientReadFedInit
 				&& !hasImmediateFedMatrixInput(hop)) {
+			boolean prevAllowFedLout = caps.allowFED_LOUT;
+			boolean prevAllowFedFout = caps.allowFED_FOUT;
+			ExecPlacementCaps.FedFoutMode prevFedFoutMode = caps.fedFoutMode;
+			boolean prevAllowCpFout = caps.allowCP_FOUT;
 			caps.allowFED_LOUT = false;
 			caps.allowFED_FOUT = false;
 			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
 			if (caps.allowCP_FOUT && !caps.allowFED_FOUT)
 				caps.allowCP_FOUT = false;
+			// Keep worker=1 restriction best-effort only. For privacy-constrained cases where
+			// FED/FOUT is the only legal option, restoring previous caps avoids illegal
+			// "No legal Exec/Placement combination" planner failures.
+			if (!caps.hasAny()) {
+				caps.allowFED_LOUT = prevAllowFedLout;
+				caps.allowFED_FOUT = prevAllowFedFout;
+				caps.fedFoutMode = prevFedFoutMode;
+				caps.allowCP_FOUT = prevAllowCpFout;
+			}
 		}
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "

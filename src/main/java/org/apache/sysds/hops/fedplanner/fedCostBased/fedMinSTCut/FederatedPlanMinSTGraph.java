@@ -633,7 +633,9 @@ public class FederatedPlanMinSTGraph {
 			}
 
 			repairTransientReadWriteSelection(execSelection, outSelection);
+			repairCapsInconsistentSelection(execSelection, outSelection);
 			repairFederatedInputSelection(execSelection, outSelection);
+			repairCapsInconsistentSelection(execSelection, outSelection);
 
 			for (Vertex vertex : memoTable.values()) {
 				long hopID = vertex.getHopID();
@@ -748,6 +750,73 @@ public class FederatedPlanMinSTGraph {
 					if (FederatedPlannerTrace.shouldTrace(hop))
 						FederatedPlannerTrace.log(hop, "MinST-FedInput-Repair",
 								"demote parent " + hopId + " to CP/LOUT due unsatisfied FED inputs");
+				}
+			}
+		}
+		while (changed && iter < 4);
+	}
+
+	private void repairCapsInconsistentSelection(Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		if (execSelection == null || outSelection == null)
+			return;
+		boolean changed;
+		int iter = 0;
+		do {
+			changed = false;
+			iter++;
+			for (Vertex vertex : memoTable.values()) {
+				if (vertex == null || vertex.getHopRef() == null || vertex.getCaps() == null)
+					continue;
+				long hopId = vertex.getHopID();
+				ExecPlacementCaps caps = vertex.getCaps();
+				ExecType exec = execSelection.getOrDefault(hopId, ExecType.CP);
+				FederatedOutput out = outSelection.getOrDefault(hopId, FederatedOutput.LOUT);
+				if (caps.get(exec, out))
+					continue;
+
+				ExecType newExec = exec;
+				FederatedOutput newOut = out;
+				if (exec == ExecType.CP && out == FederatedOutput.FOUT && caps.allowCP_LOUT)
+					newOut = FederatedOutput.LOUT;
+				else if (exec == ExecType.FED && out == FederatedOutput.FOUT && caps.allowFED_LOUT)
+					newOut = FederatedOutput.LOUT;
+				else if (exec == ExecType.FED && out == FederatedOutput.LOUT && caps.allowFED_FOUT)
+					newOut = FederatedOutput.FOUT;
+				else if (exec == ExecType.CP && out == FederatedOutput.LOUT && caps.allowCP_FOUT)
+					newOut = FederatedOutput.FOUT;
+				else if (caps.allowCP_LOUT) {
+					newExec = ExecType.CP;
+					newOut = FederatedOutput.LOUT;
+				}
+				else if (caps.allowCP_FOUT) {
+					newExec = ExecType.CP;
+					newOut = FederatedOutput.FOUT;
+				}
+				else if (caps.allowFED_LOUT) {
+					newExec = ExecType.FED;
+					newOut = FederatedOutput.LOUT;
+				}
+				else if (caps.allowFED_FOUT) {
+					newExec = ExecType.FED;
+					newOut = FederatedOutput.FOUT;
+				}
+				else {
+					continue;
+				}
+
+				if (newExec != exec || newOut != out) {
+					execSelection.put(hopId, newExec);
+					outSelection.put(hopId, newOut);
+					changed = true;
+					Hop hop = vertex.getHopRef();
+					if (FederatedPlannerTrace.shouldTrace(hop))
+						FederatedPlannerTrace.log(hop, "MinST-Caps-Repair",
+								"adjust " + exec + "/" + out + " -> " + newExec + "/" + newOut
+										+ " due caps [CP_LOUT=" + caps.allowCP_LOUT
+										+ ",CP_FOUT=" + caps.allowCP_FOUT
+										+ ",FED_LOUT=" + caps.allowFED_LOUT
+										+ ",FED_FOUT=" + caps.allowFED_FOUT + "]");
 				}
 			}
 		}
