@@ -547,7 +547,7 @@ public final class FederatedRefedPolicy {
 					if (fTypeMap != null)
 						fTypeMap.remove(hop.getHopID());
 				}
-				else if (exec == ExecType.FED && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+				else if (exec == ExecType.FED) {
 					String name = dataOp.getName();
 					List<DataOp> writes = (name != null) ? transientWritesByName.get(name) : null;
 					DataOp tWrite = selectMatchingTWrite(writes, dataOp);
@@ -560,7 +560,8 @@ public final class FederatedRefedPolicy {
 					if (!inputFederated && !hasMaterialize) {
 						if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
 							System.out.println("[TransReadRefedDebug] demote FED TRead hop=" + hop.getHopID()
-								+ " due local TWrite input without materialization; tWrite=" + tWrite.getHopID());
+								+ " due local TWrite input without materialization; tWrite=" + tWrite.getHopID()
+								+ " fedOut=" + hop.getFederatedOutput());
 						}
 						hop.setForcedExecType(ExecType.CP);
 						hop.setFederatedOutput(FederatedOutput.LOUT);
