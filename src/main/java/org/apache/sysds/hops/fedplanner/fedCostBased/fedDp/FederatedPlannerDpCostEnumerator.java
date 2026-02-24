@@ -766,13 +766,14 @@ public class FederatedPlannerDpCostEnumerator {
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
 				double cpUploadCostWithoutWeight = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 						uploadMemEstimate, cpLogicalFType, numOfWorkers);
-				// CP->FOUT forwarding fans out to multiple workers. The base upload model
-				// accounts for payload size but under-estimates fan-out latency/control
-				// overhead, which can make DP over-prefer CP/FOUT candidates (notably in
-				// WAN profiles). Add the forwarding penalty to align the cost model with
-				// runtime behavior.
-				cpUploadCostWithoutWeight += FederatedCostModel.computeLocalToFedForwardingPenalty(
-						cpLogicalFType, numOfWorkers);
+				// NOTE: Do not add local-to-fed forwarding penalty here.
+				//
+				// The CP/FOUT candidate already pays a full multi-worker payload upload
+				// (computeUploadNetworkCost multiplies by fan-out for BROADCAST/FULL).
+				// The additional forwarding penalty is intended to model repeated LOUT->FED
+				// forwarding (refed) at parent boundaries. Applying it here can make DP
+				// systematically under-prefer CP/FOUT even when it avoids large WAN refed
+				// costs and enables faster federated downstream execution (e.g., kmeans WAN).
 				double cpUploadCost = hopPlacementWeight * cpUploadCostWithoutWeight;
 
 				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
@@ -841,10 +842,21 @@ public class FederatedPlannerDpCostEnumerator {
 					placementDecision.allowCP_LOUT = true;
 					canSatisfyFedInputs = false;
 				}
-				// Keep DP candidate space aligned with MinST's legal state encoding:
-				// MinST cannot safely represent CP/FOUT when FED/FOUT is disallowed.
-				// If DP keeps this state, DP/MinST optimize over different state spaces.
-				if (placementDecision.allowCP_FOUT && !placementDecision.allowFED_FOUT) {
+				// Keep DP candidate space aligned with MinST's legal state encoding.
+				//
+				// MinST's min-cut encoding represents execution (CP vs FED) and placement (LOUT vs FOUT)
+				// with independent nodes. If FED/LOUT is legal while FED/FOUT is illegal, allowing CP/FOUT
+				// would permit the cut to select an illegal (FED,FOUT) combination. In that situation,
+				// disable CP/FOUT as well.
+				//
+				// However, if federated execution is infeasible under the current selected-bit configuration
+				// (canSatisfyFedInputs == false), CP/FOUT is safe and can avoid expensive WAN forwarding
+				// (e.g., broadcasting a CP result to an existing anchor instead of materializing local and
+				// refed-forwarding later). Keep CP/FOUT enabled in that case.
+				if (placementDecision.allowCP_FOUT
+						&& placementDecision.allowFED_LOUT
+						&& !placementDecision.allowFED_FOUT
+						&& canSatisfyFedInputs) {
 					placementDecision.allowCP_FOUT = false;
 				}
 				if (caps != null && caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT) {

@@ -1349,6 +1349,16 @@ public class FederatedPlanMinSTRewire {
 					}
 				}
 
+				// MinST's min-cut encoding represents execution (CP vs FED) and placement (LOUT vs FOUT)
+				// with independent nodes. If FED/LOUT is legal while FED/FOUT is illegal, allowing
+				// CP/FOUT would permit the cut to select an illegal (FED,FOUT) combination. Disable
+				// CP/FOUT in that situation, but do it *after* federated-input feasibility gating to
+				// avoid prematurely disabling CP/FOUT in cases where FED candidates are later ruled out
+				// (e.g., due to unsatisfied federated inputs).
+				if (caps.allowCP_FOUT && !caps.allowFED_FOUT && caps.allowFED_LOUT) {
+					caps.allowCP_FOUT = false;
+				}
+
 				traceRewireDecision(hop, privacy, collectedHopList, oracleInputFTypes, opCaps,
 					oracleFType, fType, cpFoutType, fedInputsSatisfied, caps, fTypeMap);
 
@@ -1761,13 +1771,6 @@ public class FederatedPlanMinSTRewire {
 				caps.allowCP_LOUT = true;
 			}
 		}
-		// MinST's 2-node encoding cannot safely encode cases where CP->FOUT is allowed but FED->FOUT is not.
-		// If we keep CP->FOUT enabled, the min-cut can still choose (FED,FOUT) because placement/execution are
-		// represented by independent nodes. Force LOUT by disabling CP->FOUT as well.
-		if (caps.allowCP_FOUT && !caps.allowFED_FOUT && caps.allowFED_LOUT) {
-			caps.allowCP_FOUT = false;
-		}
-
 		if (isRecompileRegion(hop)) {
 			caps.allowCP_FOUT = false;
 		}

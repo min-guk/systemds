@@ -153,8 +153,18 @@ public class FederatedPlannerDpCostEstimator {
 					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan);
 			childCumulativeCost[currentIndex][1] = computeCumulativeCostShareForParent(
 					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan);
-			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-			double downloadCost = computeDownloadNetworkCost(transferMem);
+			// If the child produces FOUT via CP execution (CP/FOUT), its local materialization
+			// is already available for CP parents. Charging a FED->CP download here would
+			// incorrectly penalize CP/FOUT candidates and can force DP to keep intermediates
+			// local (LOUT) even when CP/FOUT would avoid expensive WAN refed forwarding.
+			double downloadCost;
+			if (childFOutFedPlan.getExecType() == ExecType.CP) {
+				downloadCost = 0.0;
+			}
+			else {
+				double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
+				downloadCost = computeDownloadNetworkCost(transferMem);
+			}
 			double uploadCost = computeUploadCostWithFallback(
 					childHop, parentHop, childLOutFedPlan.getFType(), numOfWorkers);
 			childForwardingCostToCP[currentIndex] = computeForwardingCostShareForParent(
@@ -198,8 +208,14 @@ public class FederatedPlannerDpCostEstimator {
 			}
 			fOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
 					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan));
-			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-			double downloadCost = computeDownloadNetworkCost(transferMem);
+			double downloadCost;
+			if (childFOutFedPlan.getExecType() == ExecType.CP) {
+				downloadCost = 0.0;
+			}
+			else {
+				double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
+				downloadCost = computeDownloadNetworkCost(transferMem);
+			}
 			fOUTOnlychildForwardingCostToCP.add(computeForwardingCostShareForParent(
 					downloadCost, childFOutFedPlan, hopCommon));
 		}
