@@ -326,6 +326,11 @@ public class FederatedPlanMinSTGraph {
 		if (uploadConversionType == null) {
 			uploadConversionType = childVertex.getDataType();
 		}
+		// Align parent-child forwarding-cost estimation with runtime CP->FOUT materialization policy.
+		// If a global anchor key implies ROW/COL partitioning but this hop's axis length (or vector axis)
+		// does not match, runtime will broadcast even if the logical FType is ROW/COL. Reflect that here
+		// to avoid under-estimating LOUT->FED forwarding cost by missing the fan-out multiplier.
+		uploadConversionType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(childHopRef, uploadConversionType);
 		// Use CP->FOUT upload cost here as well: a parent-child edge can represent
 		// local (LOUT/CP) -> federated (FED) forwarding, and in such cases the CP->FOUT
 		// upload FType (e.g., BROADCAST for vector axis mismatch) must be reflected.
@@ -841,6 +846,8 @@ public class FederatedPlanMinSTGraph {
 			FederatedOutput out = outSelection.getOrDefault(hopId, FederatedOutput.LOUT);
 			if (out == FederatedOutput.FOUT) {
 				FType type = (exec == ExecType.FED) ? vertex.getDataType() : vertex.getCpFoutDataType();
+				if (exec == ExecType.CP)
+					type = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(vertex.getHopRef(), type);
 				selected.put(hopId, type != null ? type : FType.BROADCAST);
 			}
 			else {

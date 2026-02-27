@@ -255,6 +255,9 @@ public abstract class CacheableData<T extends CacheBlock<?>> extends Data
 		_compressed = that._compressed;
 		_compressedSize = that._compressedSize;
 		_fedMapping = that._fedMapping;
+		// Preserve mutation token across cpvar/copy to keep refed/fout reuse-cache stable
+		// for loop-invariant locals that are copied into new MatrixObjects.
+		_mutationVersion = that._mutationVersion;
 	}
 	
 	/**

@@ -82,6 +82,10 @@ public final class FederatedRefedPolicy {
 	private static final Log LOG = LogFactory.getLog(FederatedRefedPolicy.class.getName());
 	private static final boolean ENABLE_TRANSREAD_DEBUG =
 		Boolean.parseBoolean(System.getProperty("sysds.fedplanner.transread.debug", "false"));
+	// NOTE: Runtime recompile must not apply cost-ignorant placement "repairs".
+	// If a FED/CP + FOUT/LOUT combination is (not) supported, the oracle/rules must
+	// report this and the planner must model the resulting cost. Do not silently
+	// constrain or promote combinations at runtime.
 	private static final Map<Long, AnchorKey> CPFOUT_ANCHOR_CACHE = new ConcurrentHashMap<>();
 	private static final Set<Long> HEURISTIC_DEMOTED_VECTOR_HOPS = ConcurrentHashMap.newKeySet();
 	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TWRITE_CACHE =
@@ -284,6 +288,13 @@ public final class FederatedRefedPolicy {
 				}
 			}
 			if (runtimeSignatures != null) {
+				// Use the global transient-write cache to detect variables that will be materialized as
+				// federated (FOUT) within the current (recompiled) hop set. This is crucial for cases
+				// where the runtime symbol table has not yet observed the federated value (because the
+				// write executes later in the same statement block), but subsequent transient reads
+				// should still be compiled as FED/FOUT to avoid repeated local->fed forwarding inside loops
+				// (e.g., X_samples in kmeans).
+				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
 				for (Hop hop : all) {
 					if (!(hop instanceof DataOp))
 						continue;
@@ -296,7 +307,24 @@ public final class FederatedRefedPolicy {
 					// In runtime recompile, runtimeSignatures are authoritative for current symbol-table
 					// federation state. Stale fed-init markers and propagated anchor keys must be removed
 					// for transient reads that are not federated at runtime.
-					boolean runtimeFed = runtimeSignatures.containsKey(name);
+					// Runtime federation state is authoritative in recompile. Prefer concrete signatures when
+					// available, but also treat variables with a known runtime federation type as federated
+					// sources even if we cannot derive a stable signature encoding (e.g., derived CP->FOUT
+					// materializations without explicit range metadata).
+					boolean runtimeFed = runtimeSignatures.containsKey(name)
+						|| (runtimeTypes != null && runtimeTypes.containsKey(name) && runtimeTypes.get(name) != null);
+					if (!runtimeFed && globalWrites != null) {
+						List<DataOp> writes = globalWrites.get(name);
+						if (writes != null) {
+							for (DataOp w : writes) {
+								if (w != null && w.getOp() == OpOpData.TRANSIENTWRITE
+										&& w.getFederatedOutput() == FederatedOutput.FOUT) {
+									runtimeFed = true;
+									break;
+								}
+							}
+						}
+					}
 					ExecType planned = getPlannedExecType(hop);
 					if (runtimeFed) {
 						if (runtimeLocalTransientReads != null)
@@ -607,15 +635,13 @@ public final class FederatedRefedPolicy {
 			boolean pruned = pruneInvalidCpfoutAnchors(all, sbId);
 			changed = demoted || pruned;
 			enforcePass++;
-		} while (changed && enforcePass < 5);
-			// registerTransientWriteAnchor moved earlier (before enforceFederatedInputs)
-				}
-				finally {
-					if (runtimeContext) {
-						LOCAL_TR_VARS.remove();
-					}
-				}
+			} while (changed && enforcePass < 5);
 		}
+		finally {
+			if (runtimeContext)
+				LOCAL_TR_VARS.remove();
+		}
+	}
 
 	public static void registerFoutMaterializeCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
 		if (hop == null)
@@ -1759,6 +1785,35 @@ public final class FederatedRefedPolicy {
 		if (input == null)
 			return;
 		if (!isRuntimeFederatedInput(input, null, null)) {
+			// CP->FOUT / local-to-federated materialization:
+			//
+			// Even if the input is local, a TRANSIENTWRITE with FOUT materializes the value to the
+			// worker pool at runtime (fed_fout). Record a concrete anchor key so subsequent transient
+			// reads inside recompile regions can be treated as federated and avoid re-uploading the
+			// same payload per iteration (e.g., X_samples in kmeans).
+			if (tWrite.getFederatedOutput() == FederatedOutput.FOUT) {
+				String anchorKey = null;
+				if (blockAnchor != null && blockAnchor.key != null && blockAnchor.key.value instanceof String)
+					anchorKey = (String) blockAnchor.key.value;
+				if (anchorKey == null || anchorKey.isEmpty()) {
+					String unique = FederatedPlannerUtils.getUniqueFedInitVarName();
+					if (unique != null) {
+						String sig = FederatedPlannerUtils.getFedInitSignature(unique);
+						FType fType = FederatedPlannerUtils.getFedInitFType(unique);
+						AnchorKey sigKey = buildAnchorKeyFromSignature(sig, fType);
+						if (sigKey != null && sigKey.value instanceof String)
+							anchorKey = (String) sigKey.value;
+					}
+				}
+				if (anchorKey != null && !anchorKey.isEmpty()) {
+					FederatedPlannerUtils.registerFedAnchorKey(varName, anchorKey);
+					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
+						System.out.println("[TransReadRefedDebug] tWrite local->fed anchor=" + anchorKey);
+					}
+				}
+				return;
+			}
+
 			// Local assignment overwrites any previous federated state. Preserve only a VAR anchor
 			// (if we had one) so refed can still reuse worker metadata without treating the value as federated.
 			if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
@@ -2672,28 +2727,36 @@ public final class FederatedRefedPolicy {
 		// TransientWrite must never be handled via fed_refed insertion: the written variable does not exist at the
 		// time the refed would execute. Always materialize the TWrite input via fed_fout and wire it into the TWrite
 		// during lop insertion.
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
-			Hop tWriteInput = null;
-			List<Hop> inputs = hop.getInput();
-			if (inputs != null && !inputs.isEmpty())
-				tWriteInput = inputs.get(0);
+			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
+				Hop tWriteInput = null;
+				List<Hop> inputs = hop.getInput();
+				if (inputs != null && !inputs.isEmpty())
+					tWriteInput = inputs.get(0);
 
-			FType effective = anchorType != null ? anchorType : FType.FULL;
-			String fTypeHint = toFTypeHint(effective);
-			if (anchorHop != null && tWriteInput != null && tWriteInput.getDataType() != null
-				&& tWriteInput.getDataType().isMatrix() && hasDimMismatch(tWriteInput, anchorHop, fTypeMap)) {
-				boolean broadcastMismatch = isVectorAxisMismatch(tWriteInput, anchorHop, fTypeMap)
-					|| isMaterializeAxisMismatch(tWriteInput, anchorHop, fTypeMap);
-				if (broadcastMismatch) {
-					effective = FType.BROADCAST;
-					fTypeHint = "BROADCAST";
+				// IMPORTANT: Prefer the planner-selected FType hint (if available) over
+				// anchor-derived fallbacks. Otherwise, we may silently degrade to FULL when
+				// the anchor type cannot be derived (e.g., signature-only anchors), which
+				// then disables FED execution for downstream elementwise ops (kmeans regression).
+				FType plannedHint = getKnownFType(hop, fTypeMap);
+				if (plannedHint == FType.PART || plannedHint == FType.OTHER)
+					plannedHint = null;
+
+				FType effective = plannedHint != null ? plannedHint : (anchorType != null ? anchorType : FType.FULL);
+				String fTypeHint = (effective == FType.BROADCAST) ? "BROADCAST" : toFTypeHint(effective);
+				if (anchorHop != null && tWriteInput != null && tWriteInput.getDataType() != null
+					&& tWriteInput.getDataType().isMatrix() && hasDimMismatch(tWriteInput, anchorHop, fTypeMap)) {
+					boolean broadcastMismatch = isVectorAxisMismatch(tWriteInput, anchorHop, fTypeMap)
+						|| isMaterializeAxisMismatch(tWriteInput, anchorHop, fTypeMap);
+					if (broadcastMismatch) {
+						effective = FType.BROADCAST;
+						fTypeHint = "BROADCAST";
+					}
 				}
-			}
-			else if (anchorHop == null) {
-				Hop probe = (tWriteInput != null) ? tWriteInput : hop;
-				effective = adjustCpFoutFTypeForAnchorKey(probe, effective);
-				fTypeHint = (effective == FType.BROADCAST) ? "BROADCAST" : toFTypeHint(effective);
-			}
+				else if (anchorHop == null) {
+					Hop probe = (tWriteInput != null) ? tWriteInput : hop;
+					effective = adjustCpFoutFTypeForAnchorKey(probe, effective);
+					fTypeHint = (effective == FType.BROADCAST) ? "BROADCAST" : toFTypeHint(effective);
+				}
 
 			if (fTypeMap != null)
 				fTypeMap.put(hop.getHopID(), effective);
@@ -2742,13 +2805,18 @@ public final class FederatedRefedPolicy {
 			}
 		}
 
-		// If we only have an anchorKey, we can still choose between aligned upload and broadcast based on
-		// vector axis / axis length mismatch inferred from the signature.
-		if (anchorHop == null) {
-			FType effective = anchorType != null ? anchorType : FType.FULL;
-			effective = adjustCpFoutFTypeForAnchorKey(hop, effective);
-			if (fTypeMap != null)
-				fTypeMap.put(hop.getHopID(), effective);
+			// If we only have an anchorKey, we can still choose between aligned upload and broadcast based on
+			// vector axis / axis length mismatch inferred from the signature.
+			if (anchorHop == null) {
+				// Preserve planner-selected CP->FOUT upload shape hints when anchor type is unknown.
+				// Otherwise we default to FULL and may unnecessarily disable FED execution downstream.
+				FType plannedHint = getKnownFType(hop, fTypeMap);
+				if (plannedHint == FType.PART || plannedHint == FType.OTHER)
+					plannedHint = null;
+				FType effective = plannedHint != null ? plannedHint : (anchorType != null ? anchorType : FType.FULL);
+				effective = adjustCpFoutFTypeForAnchorKey(hop, effective);
+				if (fTypeMap != null)
+					fTypeMap.put(hop.getHopID(), effective);
 
 			if (effective == FType.BROADCAST) {
 				FederatedRefedRegistry.remove(scopeId, hop.getHopID());
@@ -4135,23 +4203,39 @@ public final class FederatedRefedPolicy {
 		}
 
 		private static boolean hasDimMismatch(Hop hop, Hop anchorHop, java.util.Map<Long, FType> fTypeMap) {
-			if (anchorHop == null)
+			if (hop == null || anchorHop == null)
 				return false;
 			long[] dims = getAnchorDimsIfKnown(anchorHop);
-			if (dims != null && hop.dimsKnown()) {
+			// If we know both output dimensions, compare full shape.
+			if (dims != null) {
 				long rlen = hop.getDim1();
 				long clen = hop.getDim2();
-				return rlen != dims[0] || clen != dims[1];
+				if (rlen > 0 && clen > 0)
+					return rlen != dims[0] || clen != dims[1];
 			}
-			if (hop == null || !hop.dimsKnown())
-				return false;
+
+			// Partial-dim fallback: even if one dimension is unknown (-1), we can still
+			// safely detect mismatches on the partition axis. This is critical for
+			// refed/materialize decisions on vectors whose non-partition axis may be
+			// unresolved at planning time (e.g., samples_vs_runs_map in kmeans).
 			FType anchorType = getKnownFType(anchorHop, fTypeMap);
 			if (anchorType != FType.ROW && anchorType != FType.COL)
 				return false;
 				Long axisLen = getAnchorAxisLenIfKnown(anchorHop, anchorType);
 				if (axisLen == null)
 					return false;
-				return (anchorType == FType.ROW) ? hop.getDim1() != axisLen : hop.getDim2() != axisLen;
+				if (anchorType == FType.ROW) {
+					long rlen = hop.getDim1();
+					if (rlen <= 0)
+						return false;
+					return rlen != axisLen;
+				}
+				else { // COL
+					long clen = hop.getDim2();
+					if (clen <= 0)
+						return false;
+					return clen != axisLen;
+				}
 			}
 
 		private static boolean isVectorAxisMismatch(Hop hop, Hop anchorHop, java.util.Map<Long, FType> fTypeMap) {

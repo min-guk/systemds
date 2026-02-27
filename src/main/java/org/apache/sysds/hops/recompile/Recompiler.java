@@ -556,12 +556,14 @@ public class Recompiler {
 			org.apache.sysds.runtime.controlprogram.federated.FederationMap fmap = mo.getFedMapping();
 			if (fmap == null)
 				continue;
-			String sig = FederatedPlannerUtils.deriveFedMappingSignature(fmap);
-			if (sig == null)
-				continue;
-			signatures.put(entry.getKey(), sig);
+			// Record runtime federation type even if we cannot derive a stable signature encoding.
+			// This allows runtime recompile to treat derived federated variables (e.g., CP->FOUT materializations)
+			// as federated sources for transient reads.
 			if (runtimeTypes != null)
 				runtimeTypes.put(entry.getKey(), fmap.getType());
+			String sig = FederatedPlannerUtils.deriveFedMappingSignature(fmap);
+			if (sig != null)
+				signatures.put(entry.getKey(), sig);
 		}
 		return signatures;
 	}

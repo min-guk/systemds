@@ -188,23 +188,33 @@ public class FEDFoutInstruction extends FEDInstruction {
 					|| (mapType == FType.BROADCAST && (inType == FType.FULL || inType == FType.BROADCAST));
 				// BROADCAST is a special case of FULL replication; allow cheap metadata conversion.
 				compatible |= (mapType == FType.FULL && inType == FType.BROADCAST);
-				if (!compatible)
-					throw new DMLRuntimeException("fed_fout cannot convert federated input " + _input.getName()
-						+ " of type " + inType + " to " + mapType + " without materialization");
+				if (compatible) {
+					MatrixObject out = ec.getMatrixObject(_output);
+					FederationMap outMap = (inType == mapType)
+						? inMap
+						: new FederationMap(inMap.getID(), inMap.getMap(), mapType);
+					out.setFedMapping(outMap);
+					out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+					if (DEBUG_KMEANS) {
+						System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
+							+ " out=" + _output.getName()
+							+ " dims=" + rlen + "x" + clen
+							+ " hint=" + outTypeHint
+							+ " mapType=" + outMap.getType()
+							+ " reuseFed=true");
+					}
+					return;
+				}
 
-			MatrixObject out = ec.getMatrixObject(_output);
-			FederationMap outMap = (inType == mapType) ? inMap : new FederationMap(inMap.getID(), inMap.getMap(), mapType);
-			out.setFedMapping(outMap);
-			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-			if (DEBUG_KMEANS) {
-				System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
-					+ " out=" + _output.getName()
-					+ " dims=" + rlen + "x" + clen
-					+ " hint=" + outTypeHint
-					+ " mapType=" + outMap.getType()
-					+ " reuseFed=true");
-			}
-			return;
+				// Fallback: materialize the federated input to local and upload according to the
+				// requested fout type. This handles cases such as ROW/COL -> BROADCAST which are
+				// not representable as a pure metadata conversion.
+				if (DEBUG_KMEANS) {
+					System.out.println("[DBG-KMEANS] fed_fout materialize-fed in=" + _input.getName()
+						+ " dims=" + rlen + "x" + clen
+						+ " inType=" + inType + " outType=" + mapType
+						+ " anchor=" + _anchor.getName());
+				}
 		}
 		if (rlen < 0 || clen < 0) {
 			MatrixBlock block = in.acquireRead();
@@ -218,6 +228,9 @@ public class FEDFoutInstruction extends FEDInstruction {
 		long inputUniqueId = in.getUniqueID();
 		long inputMutationVersion = in.getMutationVersion();
 		long anchorMapId = anchorMap.getID();
+		String inputKey = in.getFileName();
+		if (inputKey == null || inputKey.isEmpty())
+			inputKey = _input.getName();
 
 		FType outTypeHint = _fTypeHint != null ? _fTypeHint : FType.FULL;
 		if (outTypeHint == FType.PART || outTypeHint == FType.OTHER)
@@ -237,7 +250,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 		}
 
 		FType cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
-		FederationMap cached = FederationUtils.getRefedReuseMap(inputUniqueId, inputMutationVersion,
+		FederationMap cached = FederationUtils.getRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
 			rlen, clen, nnz, anchorMapId, cacheMapType);
 		if (cached != null) {
 			MatrixObject out = ec.getMatrixObject(_output);
@@ -260,7 +273,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 		MatrixObject out = ec.getMatrixObject(_output);
 		out.setFedMapping(outMap);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-		FederationUtils.putRefedReuseMap(inputUniqueId, inputMutationVersion,
+		FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
 			rlen, clen, nnz, anchorMapId, outMap.getType(), outMap);
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()

@@ -272,18 +272,26 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	private static double computeUploadCostWithFallback(Hop childHop, Hop parentHop, FType uploadType, int numWorkers) {
+		// Align forwarding-cost estimation with runtime CP->FOUT materialization policy.
+		//
+		// When the global anchor key implies ROW/COL partitioning but the forwarded local matrix's
+		// axis length (or vector axis) does not match, runtime will broadcast the data even if the
+		// logical FType is ROW/COL. If we do not apply the same adjustment here, the planner can
+		// severely under-estimate LOUT->FED upload cost (missing the replication multiplier).
+		FType adjustedUploadType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(childHop, uploadType);
 		double outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-		double uploadCost = computeUploadNetworkCost(outputMemEstimate, uploadType, numWorkers);
-		FType effectiveUploadType = uploadType;
+		double uploadCost = computeUploadNetworkCost(outputMemEstimate, adjustedUploadType, numWorkers);
+		FType effectiveUploadType = adjustedUploadType;
 		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0))
 			return uploadCost + FederatedCostModel.computeLocalToFedForwardingPenalty(
 					effectiveUploadType, numWorkers);
 
 		final double originalUploadCost = uploadCost;
-		FType fallbackUploadType = uploadType;
+		FType fallbackUploadType = adjustedUploadType;
 		double fallbackMemEstimate = outputMemEstimate;
 		if (fallbackUploadType == null && childHop != null)
 			fallbackUploadType = FederatedPlannerUtils.getVectorAxis(childHop);
+		fallbackUploadType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(childHop, fallbackUploadType);
 		if (fallbackMemEstimate <= 0.0 && childHop != null)
 			fallbackMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(childHop);
 		if (fallbackMemEstimate > 0.0) {

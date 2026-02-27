@@ -102,7 +102,10 @@ public class FederatedPlannerDpCostEnumerator {
 	// this flag flips.
 	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
 	// Planner option: disallow CP->FOUT in recompile regions (function/while).
-	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
+	// NOTE: Runtime supports CP->FOUT materialization via fed_fout. Do not close the
+	// candidate space with recompile-specific guards; conflicts should be resolved
+	// via cost-based selection instead.
+	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = false;
 	/**
 	 * Enumerates the entire DML program to generate federated execution plans.
 	 * It processes each statement block, computes the optimal federated plan,
@@ -128,11 +131,13 @@ public class FederatedPlannerDpCostEnumerator {
 				unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
+		memoTable.registerAdditionalRootHopIDs(unrollCtx.getIter1Roots());
 		populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 
 		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
 		OracleFacade oracleFacade = new OracleFacade(registry);
 		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+		memoTable.setNumWorkers(numOfWorkers);
 
 		for (long hopID : unRefTwriteSet) {
 			// Todo (Future): Need to check unRefTwriteSet connecting to progRoot.
@@ -154,10 +159,16 @@ public class FederatedPlannerDpCostEnumerator {
 
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
 
-		// Todo : Fix & Update Conflict Resolve Plan
-		// Detect conflicts in the federated plans where different FedPlans have
-		// different FederatedOutput types
-		double additionalTotalCost = detectAndResolveConflictFedPlan(memoTable, optimalPlan, numOfWorkers);
+		// NOTE: Do not resolve placement conflicts here by mutating only parent->child
+		// edge labels. Edge-only mutation cannot update parent exec types (notably for
+		// TRead/TWrite consistency) and can lock the plan into cost-ignorant defaults
+		// (e.g., forcing large loop inputs local and triggering repeated uploads at
+		// runtime).
+		//
+		// Conflict resolution is performed in the rewrite stage
+		// (FederatedPlannerDpFedCostBased.computeOutputDecisions) where we can
+		// select the correct plan variants (exec + placement) under loop-aware costs.
+		double additionalTotalCost = 0.0;
 
 		unRefSet.addAll(unRefTwriteSet);
 		// Print the federated plan tree if requested
@@ -200,11 +211,13 @@ public class FederatedPlannerDpCostEnumerator {
 				fedMap, unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
+		memoTable.registerAdditionalRootHopIDs(unrollCtx.getIter1Roots());
 		populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 
 		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
 		OracleFacade oracleFacade = new OracleFacade(registry);
 		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+		memoTable.setNumWorkers(numOfWorkers);
 
 		Set<String> fnStack = new HashSet<>();
 		Set<Long> visitedHops = new HashSet<>();
@@ -219,10 +232,9 @@ public class FederatedPlannerDpCostEnumerator {
 
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
 
-		// Detect conflicts in the federated plans where different FedPlans have
-		// different FederatedOutput types
-		// Todo : Fix & Update Conflict Resolve Plan
-		double additionalTotalCost = detectAndResolveConflictFedPlan(memoTable, optimalPlan, numOfWorkers);
+		// See enumerateProgram: conflict resolution is handled in the rewrite stage,
+		// not by edge-only mutation here.
+		double additionalTotalCost = 0.0;
 
 		// Print the federated plan tree if requested
 		if (isPrint) {
@@ -716,19 +728,28 @@ public class FederatedPlannerDpCostEnumerator {
 						derivedFedFout = false;
 					}
 				}
-				// Align DP with MinST: when runtime does not support FED/FOUT for this op,
-				// disallow both CP_FOUT and FED_FOUT candidates.
+				// Runtime limitation: some ops can execute FED but cannot produce a native federated output (FOUT).
+				//
+				// IMPORTANT: Do not "close" CP->FOUT (materialize) or derived FED/FOUT candidates here.
+				// Even when native FED/FOUT is unavailable, DP must still be able to compare:
+				//   - CP->FOUT (upload/refed materialization), and/or
+				//   - derived FED/FOUT (FED/LOUT + download+upload),
+				// against local alternatives. If MinST cannot encode such combinations, MinST should
+				// fall back to DP rather than constraining DP's candidate space.
 				if (caps != null && caps.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
-					placementDecision.allowCP_FOUT = false;
-					placementDecision.allowFED_FOUT = false;
 					// REXPAND with FED/LOUT + materialization can create cyclic anchor rewrites.
 					// Fall back to CP/LOUT for this op when native FOUT is unavailable.
 					if (hop instanceof ParameterizedBuiltinOp
 							&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.REXPAND) {
 						placementDecision.allowFED_LOUT = false;
+						placementDecision.allowFED_FOUT = false;
+						derivedFedFout = false;
 						placementDecision.allowCP_LOUT = true;
 					}
-					derivedFedFout = false;
+					else if (!derivedFedFout) {
+						// Ensure we don't accidentally allow a native FED/FOUT plan when runtime can't.
+						placementDecision.allowFED_FOUT = false;
+					}
 				}
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
 					placementDecision.allowCP_FOUT = false;
@@ -740,23 +761,10 @@ public class FederatedPlannerDpCostEnumerator {
 					placementDecision.allowCP_LOUT = true;
 					canSatisfyFedInputs = false;
 				}
-				// Keep DP candidate space aligned with MinST's legal state encoding.
-				//
-				// MinST's min-cut encoding represents execution (CP vs FED) and placement (LOUT vs FOUT)
-				// with independent nodes. If FED/LOUT is legal while FED/FOUT is illegal, allowing CP/FOUT
-				// would permit the cut to select an illegal (FED,FOUT) combination. In that situation,
-				// disable CP/FOUT as well.
-				//
-				// However, if federated execution is infeasible under the current selected-bit configuration
-				// (canSatisfyFedInputs == false), CP/FOUT is safe and can avoid expensive WAN forwarding
-				// (e.g., broadcasting a CP result to an existing anchor instead of materializing local and
-				// refed-forwarding later). Keep CP/FOUT enabled in that case.
-				if (placementDecision.allowCP_FOUT
-						&& placementDecision.allowFED_LOUT
-						&& !placementDecision.allowFED_FOUT
-						&& canSatisfyFedInputs) {
-					placementDecision.allowCP_FOUT = false;
-				}
+				// DP must not constrain its candidate space to match MinST's min-cut state encoding.
+				// If MinST cannot encode a combination (e.g., due to non-submodular costs), it should
+				// mark itself unsafe and fall back to DP. DP should remain cost-based over all
+				// runtime-supported combinations.
 				if (caps != null && caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT) {
 					sawOracleFedFout = true;
 				}
@@ -1321,6 +1329,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 			for (Pair<Long, FederatedOutput> childEdge : current.getChildFedPlans()) {
 				long childHopID = childEdge.getKey();
+				long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
 				FederatedOutput childOut = childEdge.getValue();
 
 				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childEdge);
@@ -1335,11 +1344,11 @@ public class FederatedPlannerDpCostEnumerator {
 					continue;
 				}
 
-				ConflictEntry entry = conflictCheckMap.get(childHopID);
+				ConflictEntry entry = conflictCheckMap.get(childOrigHopID);
 				if (entry == null) {
-					conflictCheckMap.put(childHopID, new ConflictEntry(childOut, current));
+					conflictCheckMap.put(childOrigHopID, new ConflictEntry(childOut, current, childHopID));
 				} else {
-					entry.addUsage(childOut, current);
+					entry.addUsage(childOut, current, childHopID);
 				}
 
 				queue.add(childPlan);
@@ -1361,15 +1370,20 @@ public class FederatedPlannerDpCostEnumerator {
 			if (!entry.isTrulyConflicting())
 				continue;
 
-			FederatedPlannerDpMemoTable.FedPlan lOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
-			FederatedPlannerDpMemoTable.FedPlan fOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
+			boolean canChooseLOUT = true;
+			boolean canChooseFOUT = true;
+			for (long memberHopID : entry.memberHopIDs) {
+				if (memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.LOUT) == null)
+					canChooseLOUT = false;
+				if (memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.FOUT) == null)
+					canChooseFOUT = false;
+			}
+			entry.canChooseLOUT = canChooseLOUT;
+			entry.canChooseFOUT = canChooseFOUT;
 
-			boolean hasLOUT = (lOutPlan != null);
-			boolean hasFOUT = (fOutPlan != null);
-
-			if (!hasLOUT || !hasFOUT) {
+			if (!canChooseLOUT && !canChooseFOUT) {
 				String msg = "Federated placement conflict on hop " + hopID
-						+ " but only one of LOUT/FOUT exists (hasLOUT=" + hasLOUT + ", hasFOUT=" + hasFOUT + ")";
+						+ " but neither LOUT nor FOUT is available across all clones (clones=" + entry.memberHopIDs + ")";
 				if (OptimizerUtils.isStrictFederatedConflictCheck())
 					throw new DMLRuntimeException(msg);
 				else
@@ -1412,34 +1426,14 @@ public class FederatedPlannerDpCostEnumerator {
 
 	private static double resolveOneHopConflict(
 			FederatedPlannerDpMemoTable memoTable, long hopID, ConflictEntry entry, int numOfWorkers) {
+		final boolean canChooseLOUT = entry.canChooseLOUT;
+		final boolean canChooseFOUT = entry.canChooseFOUT;
 
-		FederatedPlannerDpMemoTable.FedPlan lOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
-		FederatedPlannerDpMemoTable.FedPlan fOutPlan = memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
-
-		if (lOutPlan == null || fOutPlan == null) {
-			throw new DMLRuntimeException("Expected both LOUT and FOUT plans for hop " + hopID);
-		}
-
-		double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(lOutPlan.getHopRef());
-		double lOutUploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-				transferMem, lOutPlan.getFType(), numOfWorkers);
-		double fOutDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(transferMem);
-
-		double lOutAdditionalCost = 0.0;
-		double fOutAdditionalCost = 0.0;
-		boolean lOutNeedsForwarding = false;
-		boolean fOutNeedsForwarding = false;
+		double lOutAdditionalCost = canChooseLOUT ? 0.0 : Double.POSITIVE_INFINITY;
+		double fOutAdditionalCost = canChooseFOUT ? 0.0 : Double.POSITIVE_INFINITY;
 
 		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
-			double lOutCumulativeCostShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
-					lOutPlan.getCumulativeCost(), lOutPlan);
-			double fOutCumulativeCostShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
-					fOutPlan.getCumulativeCost(), fOutPlan);
-			double lOutUploadCostShare = FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(
-					lOutUploadCost, lOutPlan, parentPlan);
-			double fOutDownloadCostShare = FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(
-					fOutDownloadCost, fOutPlan, parentPlan);
-			List<Pair<Integer, Pair<Long, FederatedOutput>>> childEdges = findChildEdges(parentPlan, hopID);
+			List<Pair<Integer, Pair<Long, FederatedOutput>>> childEdges = findChildEdges(memoTable, parentPlan, hopID);
 			if (childEdges.isEmpty()) {
 				String msg = "Parent plan for hop " + hopID + " lost its child edge.";
 				if (OptimizerUtils.isStrictFederatedConflictCheck())
@@ -1453,46 +1447,29 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 
 			for (Pair<Integer, Pair<Long, FederatedOutput>> edgeEntry : childEdges) {
+				long childHopID = edgeEntry.getValue().getKey();
 				FederatedOutput originalOut = edgeEntry.getValue().getValue();
-				FederatedOutput parentOut = parentPlan.getFedOutType();
+				ExecType parentExec = parentPlan.getExecType();
+				boolean parentIsFed = parentExec == ExecType.FED;
 
-				if (originalOut == FederatedOutput.LOUT) {
-					fOutAdditionalCost += fOutCumulativeCostShare - lOutCumulativeCostShare;
-
-					if (parentOut == FederatedOutput.LOUT) {
-						fOutNeedsForwarding = true;
-					} else if (parentOut == FederatedOutput.FOUT) {
-						lOutNeedsForwarding = true;
-						lOutAdditionalCost -= lOutUploadCostShare;
-						fOutAdditionalCost -= lOutUploadCostShare;
-					}
-				} else if (originalOut == FederatedOutput.FOUT) {
-					lOutAdditionalCost += lOutCumulativeCostShare - fOutCumulativeCostShare;
-
-					if (parentOut == FederatedOutput.FOUT) {
-						lOutNeedsForwarding = true;
-					} else if (parentOut == FederatedOutput.LOUT) {
-						fOutNeedsForwarding = true;
-						lOutAdditionalCost -= fOutDownloadCostShare;
-						fOutAdditionalCost -= fOutDownloadCostShare;
-					}
-				} else {
-					Hop parentHop = parentPlan.getHopRef();
-					FederatedPlannerLogger.logWarnMessage("[Planner] Unexpected child placement " + originalOut
-							+ " for hop " + hopID + " under parent "
-							+ (parentHop != null ? parentHop.getHopID() : -1));
+				if (canChooseLOUT && originalOut != FederatedOutput.LOUT) {
+					double delta = computeSwitchEdgeCostDelta(
+							memoTable, childHopID, originalOut, FederatedOutput.LOUT,
+							parentPlan, parentIsFed, numOfWorkers);
+					lOutAdditionalCost += delta;
+				}
+				if (canChooseFOUT && originalOut != FederatedOutput.FOUT) {
+					double delta = computeSwitchEdgeCostDelta(
+							memoTable, childHopID, originalOut, FederatedOutput.FOUT,
+							parentPlan, parentIsFed, numOfWorkers);
+					fOutAdditionalCost += delta;
 				}
 			}
 		}
 
-		if (lOutNeedsForwarding)
-			lOutAdditionalCost += lOutUploadCost;
-		if (fOutNeedsForwarding)
-			fOutAdditionalCost += fOutDownloadCost;
-
 		FederatedOutput chosen;
 		double chosenCost;
-		if (lOutAdditionalCost <= fOutAdditionalCost) {
+		if (!canChooseFOUT || (canChooseLOUT && lOutAdditionalCost <= fOutAdditionalCost)) {
 			chosen = FederatedOutput.LOUT;
 			chosenCost = lOutAdditionalCost;
 		} else {
@@ -1504,7 +1481,7 @@ public class FederatedPlannerDpCostEnumerator {
 			List<Pair<Long, FederatedOutput>> childs = parentPlan.getChildFedPlans();
 			for (int i = 0; i < childs.size(); i++) {
 				Pair<Long, FederatedOutput> edge = childs.get(i);
-				if (edge.getKey() == hopID && edge.getValue() != chosen) {
+				if (memoTable.resolveOriginalHopId(edge.getKey()) == hopID && edge.getValue() != chosen) {
 					childs.set(i, Pair.of(edge.getKey(), chosen));
 				}
 			}
@@ -1513,18 +1490,70 @@ public class FederatedPlannerDpCostEnumerator {
 		return chosenCost;
 	}
 
+	private static double computeSwitchEdgeCostDelta(
+			FederatedPlannerDpMemoTable memoTable, long childHopID,
+			FederatedOutput fromOut, FederatedOutput toOut,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan,
+			boolean parentIsFed, int numOfWorkers) {
+
+		FederatedPlannerDpMemoTable.FedPlan fromPlan = memoTable.getFedPlanAfterPrune(childHopID, fromOut);
+		FederatedPlannerDpMemoTable.FedPlan toPlan = memoTable.getFedPlanAfterPrune(childHopID, toOut);
+		if (fromPlan == null || toPlan == null) {
+			String msg = "Missing FedPlan variant for hop " + childHopID
+					+ " when switching " + fromOut + " -> " + toOut
+					+ " (fromPlan=" + (fromPlan != null) + ", toPlan=" + (toPlan != null) + ")";
+			if (OptimizerUtils.isStrictFederatedConflictCheck())
+				throw new DMLRuntimeException(msg);
+			FederatedPlannerLogger.logWarnMessage("[Planner] " + msg);
+			return Double.POSITIVE_INFINITY;
+		}
+
+		double fromCumulativeShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
+				fromPlan.getCumulativeCost(), fromPlan);
+		double toCumulativeShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
+				toPlan.getCumulativeCost(), toPlan);
+		double fromForwardingShare = computeParentChildForwardingCostShare(
+				parentIsFed, fromOut, fromPlan, parentPlan, numOfWorkers);
+		double toForwardingShare = computeParentChildForwardingCostShare(
+				parentIsFed, toOut, toPlan, parentPlan, numOfWorkers);
+
+		return (toCumulativeShare - fromCumulativeShare) + (toForwardingShare - fromForwardingShare);
+	}
+
+	private static double computeParentChildForwardingCostShare(
+			boolean parentIsFed, FederatedOutput childOut,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan,
+			int numOfWorkers) {
+
+		if (childPlan == null || parentPlan == null)
+			return 0.0;
+
+		if (parentIsFed && childOut == FederatedOutput.LOUT) {
+			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childPlan.getHopRef());
+			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+					transferMem, childPlan.getFType(), numOfWorkers);
+			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
+		} else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
+			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childPlan.getHopRef());
+			double downloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(transferMem);
+			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(downloadCost, childPlan, parentPlan);
+		}
+		return 0.0;
+	}
+
 	// Parent-child edge uniqueness: duplicates of the same hopID in a parent's
 	// childFedPlans
 	// are not expected, but we return all matches so duplicates are processed
 	// uniformly.
 	private static List<Pair<Integer, Pair<Long, FederatedOutput>>> findChildEdges(
-			FederatedPlannerDpMemoTable.FedPlan parentPlan, long hopID) {
+			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.FedPlan parentPlan, long hopID) {
 
 		List<Pair<Integer, Pair<Long, FederatedOutput>>> matches = new ArrayList<>();
 		List<Pair<Long, FederatedOutput>> childs = parentPlan.getChildFedPlans();
 		for (int i = 0; i < childs.size(); i++) {
 			Pair<Long, FederatedOutput> edge = childs.get(i);
-			if (edge.getKey() == hopID) {
+			if (memoTable.resolveOriginalHopId(edge.getKey()) == hopID) {
 				matches.add(Pair.of(i, edge));
 			}
 		}
@@ -1537,19 +1566,27 @@ public class FederatedPlannerDpCostEnumerator {
 		// LinkedHashSet keeps insertion order for debugging while avoiding duplicate
 		// parents.
 		final java.util.LinkedHashSet<FederatedPlannerDpMemoTable.FedPlan> parents;
+		final java.util.LinkedHashSet<Long> memberHopIDs;
 		boolean seenLOUT;
 		boolean seenFOUT;
+		boolean canChooseLOUT;
+		boolean canChooseFOUT;
 
-		ConflictEntry(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent) {
+		ConflictEntry(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent, long memberHopID) {
 			this.firstSeenOut = out;
 			this.parents = new java.util.LinkedHashSet<>();
+			this.memberHopIDs = new java.util.LinkedHashSet<>();
 			this.parents.add(parent);
+			this.memberHopIDs.add(memberHopID);
 			this.seenLOUT = (out == FederatedOutput.LOUT);
 			this.seenFOUT = (out == FederatedOutput.FOUT);
+			this.canChooseLOUT = true;
+			this.canChooseFOUT = true;
 		}
 
-		void addUsage(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent) {
+		void addUsage(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent, long memberHopID) {
 			this.parents.add(parent);
+			this.memberHopIDs.add(memberHopID);
 			if (out == FederatedOutput.LOUT)
 				this.seenLOUT = true;
 			else if (out == FederatedOutput.FOUT)

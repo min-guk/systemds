@@ -124,9 +124,23 @@ public final class ExecPlacementPolicy {
 				break;
 		}
 
-		if (isTransientDataOp(hop)) {
-			decision.allowCP_FOUT = false;
-			decision.allowFED_LOUT = false;
+		if (hop instanceof DataOp) {
+			Types.OpOpData op = ((DataOp) hop).getOp();
+			if (op == Types.OpOpData.TRANSIENTREAD) {
+				// TRANSIENTREAD placement is resolved via its corresponding TRANSIENTWRITE(s) in the
+				// DP rewire table. Do not allow standalone CP->FOUT / FED->LOUT candidates here as they
+				// can create inconsistent transient read/write pairings.
+				decision.allowCP_FOUT = false;
+				decision.allowFED_LOUT = false;
+			}
+			else if (op == Types.OpOpData.TRANSIENTWRITE) {
+				// Do NOT close the candidate space for TRANSIENTWRITE:
+				// - CP->FOUT is a valid, runtime-supported materialization (fed_fout/refed) used to
+				//   persist a local transient as federated for downstream consumers (e.g., X_samples in kmeans).
+				// - FED->LOUT does not represent a meaningful transient-write placement; downloads belong at
+				//   parent boundaries, not at the write itself.
+				decision.allowFED_LOUT = false;
+			}
 		}
 
 		return decision;

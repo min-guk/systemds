@@ -418,6 +418,10 @@ public class FederatedPlanMinSTCostEstimator {
 		if (cpFoutType == null) {
 			cpFoutType = vertex.getDataType();
 		}
+		// Mirror runtime CP->FOUT materialization behavior when a global anchor key is present.
+		// If the anchor implies ROW/COL partitioning but this hop's axis length doesn't match,
+		// local->federated uploads will effectively broadcast at runtime; reflect that in cost.
+		cpFoutType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpFoutType);
 
 		if (hop instanceof DataOp) {
 			if (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE) {

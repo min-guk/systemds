@@ -100,6 +100,16 @@ public class FederatedPlannerDpMemoTable {
 	private final Map<Pair<Long, FederatedOutput>, FedPlanVariants> hopMemoTable = new HashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
 	private final Map<Long, Long> cloneToOrig = new HashMap<>();
+	/**
+	 * Additional root hops that are executed (e.g., loop-unrolled "iter1" roots)
+	 * but might not be reachable from the dummy root through Hop parent links.
+	 *
+	 * <p>We store the <em>clone</em> hop IDs (not original IDs) so downstream
+	 * rewrite/conflict resolution can observe the correct loop multiplicity and
+	 * forwarding weights.</p>
+	 */
+	private final LinkedHashSet<Long> additionalRootHopIDs = new LinkedHashSet<>();
+	private int _numWorkers = 1;
 
 	public void addFedPlanVariants(long hopID, FederatedOutput fedOutType, FedPlanVariants fedPlanVariants) {
 		hopMemoTable.put(new ImmutablePair<>(hopID, fedOutType), fedPlanVariants);
@@ -143,6 +153,27 @@ public class FederatedPlannerDpMemoTable {
 		if (cloneToOrigMap == null || cloneToOrigMap.isEmpty())
 			return;
 		cloneToOrig.putAll(cloneToOrigMap);
+	}
+
+	public void registerAdditionalRootHopIDs(List<Hop> roots) {
+		if (roots == null || roots.isEmpty())
+			return;
+		for (Hop root : roots) {
+			if (root != null)
+				additionalRootHopIDs.add(root.getHopID());
+		}
+	}
+
+	public Set<Long> getAdditionalRootHopIDs() {
+		return Collections.unmodifiableSet(additionalRootHopIDs);
+	}
+
+	public void setNumWorkers(int numWorkers) {
+		_numWorkers = Math.max(1, numWorkers);
+	}
+
+	public int getNumWorkers() {
+		return Math.max(1, _numWorkers);
 	}
 
 	public long resolveOriginalHopId(long hopId) {
@@ -337,18 +368,35 @@ public class FederatedPlannerDpMemoTable {
 		}
 
 		public boolean pruneFedPlans() {
-			if (!_fedPlanVariants.isEmpty()) {
-				// Find the FedPlan with the minimum cumulative cost
-				FedPlan minCostPlan = _fedPlanVariants.stream()
-						.min(Comparator.comparingDouble(FedPlan::getCumulativeCost))
-						.orElse(null);
+			if (_fedPlanVariants.isEmpty())
+				return false;
 
-				// Retain only the minimum cost plan
-				_fedPlanVariants.clear();
-				_fedPlanVariants.add(minCostPlan);
-				return true;
+			// Keep one CP and one FED plan (if present) so downstream conflict
+			// resolution can switch execution types without needing to re-enumerate.
+			// This is a bounded alternative to retaining the full variant set.
+			FedPlan bestCP = null;
+			FedPlan bestFED = null;
+			for (FedPlan plan : _fedPlanVariants) {
+				if (plan == null || plan.getExecType() == null)
+					continue;
+				if (plan.getExecType() == ExecType.CP) {
+					if (bestCP == null || plan.getCumulativeCost() < bestCP.getCumulativeCost())
+						bestCP = plan;
+				}
+				else if (plan.getExecType() == ExecType.FED) {
+					if (bestFED == null || plan.getCumulativeCost() < bestFED.getCumulativeCost())
+						bestFED = plan;
+				}
 			}
-			return false;
+
+			_fedPlanVariants.clear();
+			if (bestCP != null)
+				_fedPlanVariants.add(bestCP);
+			if (bestFED != null && bestFED != bestCP)
+				_fedPlanVariants.add(bestFED);
+
+			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
+			return true;
 		}
 	}
 

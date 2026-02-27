@@ -145,23 +145,44 @@ public class FederationUtils {
 
 	public static FederationMap getRefedReuseMap(long inputUniqueId, long inputMutationVersion,
 		long rows, long cols, long nnz, long anchorMapId, FType outType) {
-		RefedReuseKey key = new RefedReuseKey(inputUniqueId, inputMutationVersion,
+		return getRefedReuseMap(null, inputUniqueId, inputMutationVersion,
 			rows, cols, nnz, anchorMapId, outType);
+	}
+
+	public static FederationMap getRefedReuseMap(String inputKey, long inputUniqueId, long inputMutationVersion,
+		long rows, long cols, long nnz, long anchorMapId, FType outType) {
+		RefedReuseKey key = new RefedReuseKey(normalizeRefedReuseInputSig(inputKey, inputUniqueId),
+			inputMutationVersion, rows, cols, nnz, anchorMapId, outType);
 		FederationMap map = _refedReuseCache.get(key);
 		return (map != null) ? map.copyWithNewID(map.getID()) : null;
 	}
 
 	public static void putRefedReuseMap(long inputUniqueId, long inputMutationVersion,
 		long rows, long cols, long nnz, long anchorMapId, FType outType, FederationMap map) {
+		putRefedReuseMap(null, inputUniqueId, inputMutationVersion,
+			rows, cols, nnz, anchorMapId, outType, map);
+	}
+
+	public static void putRefedReuseMap(String inputKey, long inputUniqueId, long inputMutationVersion,
+		long rows, long cols, long nnz, long anchorMapId, FType outType, FederationMap map) {
 		if (map == null || map.getMap() == null || map.getMap().isEmpty())
 			return;
-		RefedReuseKey key = new RefedReuseKey(inputUniqueId, inputMutationVersion,
-			rows, cols, nnz, anchorMapId, outType);
+		RefedReuseKey key = new RefedReuseKey(normalizeRefedReuseInputSig(inputKey, inputUniqueId),
+			inputMutationVersion, rows, cols, nnz, anchorMapId, outType);
 		_refedReuseCache.put(key, map.copyWithNewID(map.getID()));
 	}
 
 	public static void clearRefedReuseCache() {
 		_refedReuseCache.clear();
+	}
+
+	private static String normalizeRefedReuseInputSig(String inputKey, long inputUniqueId) {
+		if (inputKey != null) {
+			String trimmed = inputKey.trim();
+			if (!trimmed.isEmpty())
+				return trimmed;
+		}
+		return "uid:" + inputUniqueId;
 	}
 
 	public static FederationMap buildAnchorMapFromKey(String anchorKey) {
@@ -834,7 +855,7 @@ public class FederationUtils {
 	}
 
 	private static final class RefedReuseKey {
-		private final long _inputUniqueId;
+		private final String _inputSig;
 		private final long _inputMutationVersion;
 		private final long _rows;
 		private final long _cols;
@@ -842,9 +863,9 @@ public class FederationUtils {
 		private final long _anchorMapId;
 		private final FType _outType;
 
-		private RefedReuseKey(long inputUniqueId, long inputMutationVersion,
+		private RefedReuseKey(String inputSig, long inputMutationVersion,
 			long rows, long cols, long nnz, long anchorMapId, FType outType) {
-			_inputUniqueId = inputUniqueId;
+			_inputSig = inputSig;
 			_inputMutationVersion = inputMutationVersion;
 			_rows = rows;
 			_cols = cols;
@@ -855,7 +876,7 @@ public class FederationUtils {
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(_inputUniqueId, _inputMutationVersion, _rows, _cols, _nnz,
+			return Objects.hash(_inputSig, _inputMutationVersion, _rows, _cols, _nnz,
 				_anchorMapId, _outType);
 		}
 
@@ -866,7 +887,7 @@ public class FederationUtils {
 			if (!(obj instanceof RefedReuseKey))
 				return false;
 			RefedReuseKey that = (RefedReuseKey) obj;
-			return _inputUniqueId == that._inputUniqueId
+			return Objects.equals(_inputSig, that._inputSig)
 				&& _inputMutationVersion == that._inputMutationVersion
 				&& _rows == that._rows
 				&& _cols == that._cols

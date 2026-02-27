@@ -225,6 +225,10 @@ public class DataOp extends Hop {
 		return _fileName;
 	}
 
+	public boolean hasParameter(String name) {
+		return _paramIndexMap.containsKey(name);
+	}
+
 	public int getParameterIndex(String name) {
 		return _paramIndexMap.get(name);
 	}

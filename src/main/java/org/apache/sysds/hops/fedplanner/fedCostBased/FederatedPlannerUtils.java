@@ -62,6 +62,7 @@ import org.apache.hadoop.fs.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -286,6 +287,22 @@ public class FederatedPlannerUtils {
 	// NOTE: keep privacy semantics in sync with DP planner.
 	public static Privacy getFedWorkerMetaData(
 			List<Pair<FederatedRange, FederatedData>> fedMap, DataOp initFedOp) {
+		final boolean hasLocalObject = initFedOp.hasParameter(DataExpression.FED_LOCAL_OBJECT);
+		final Hop localObjectHop = hasLocalObject
+				? initFedOp.getInput(initFedOp.getParameterIndex(DataExpression.FED_LOCAL_OBJECT))
+				: null;
+
+		// For `federated(local_matrix=...)`, addresses are allowed to omit the file path (host:port),
+		// and privacy must be derived locally (workers do not own a stable on-disk file at compile-time).
+		// Do not issue compile-time READ_VAR/privacy RPCs in this case because they would force a
+		// spurious worker-side file read of a coordinator-local scratch path.
+		final String localObjectFilePath = (localObjectHop instanceof DataOp)
+				? ((DataOp) localObjectHop).getFileName()
+				: null;
+		final String localInitFilePath = (localObjectFilePath != null && !localObjectFilePath.isEmpty())
+				? localObjectFilePath
+				: (initFedOp.getName() != null ? initFedOp.getName() : "__local_matrix__");
+
 		// Address
 		Hop addressListHop = initFedOp.getInput(initFedOp.getParameterIndex("addresses"));
 		List<String> addressList = new ArrayList<>();
@@ -314,11 +331,21 @@ public class FederatedPlannerUtils {
 		// Init Fed Data
 		for (int i = 0; i < addressList.size(); i++) {
 			String address = addressList.get(i);
-			// We split address into url/ip, the port and file path of file to read
-			String[] parsedValues = InitFEDInstruction.parseURL(address);
-			String host = parsedValues[0];
-			int port = Integer.parseInt(parsedValues[1]);
-			String filePath = parsedValues[2];
+			// We split address into url/ip, the port and (optionally) file path of file to read.
+			final String host;
+			final int port;
+			final String filePath;
+			if (hasLocalObject) {
+				String[] parsedValues = InitFEDInstruction.parseURLNoFilePath(address);
+				host = parsedValues[0];
+				port = Integer.parseInt(parsedValues[1]);
+				filePath = localInitFilePath;
+			} else {
+				String[] parsedValues = InitFEDInstruction.parseURL(address);
+				host = parsedValues[0];
+				port = Integer.parseInt(parsedValues[1]);
+				filePath = parsedValues[2];
+			}
 
 			long[] beginRange = rangeList.get(2 * i);
 			long[] endRange = rangeList.get(2 * i + 1);
@@ -338,9 +365,24 @@ public class FederatedPlannerUtils {
 		Privacy privacyConstraint = null;
 		boolean hadPrivacyFailure = false;
 
+		if (hasLocalObject) {
+			// Best-effort: derive privacy from local metadata (if available); otherwise default to PUBLIC.
+			Privacy derived = null;
+			if (localObjectFilePath != null && !localObjectFilePath.isEmpty()) {
+				try {
+					derived = parsePrivacyConstraint(readPrivacyConstraintsFromLocalMTD(localObjectFilePath));
+				} catch (Exception ex) {
+					derived = null;
+				}
+			}
+			privacyConstraint = (derived != null) ? derived : Privacy.PUBLIC;
+		}
+
 		// Request Privacy Constraints.
 		// Privacy is derived only from this DataOp's workers (localWorkers).
 		for (FedWorkerContext wctx : localWorkers) {
+			if (hasLocalObject) // do not contact workers for local_matrix-fedinit (see above)
+				break;
 			FederatedData data = wctx.data;
 			if (!data.isInitialized())
 				data.initFederatedData(FederationUtils.getNextFedDataID());
@@ -528,12 +570,30 @@ public class FederatedPlannerUtils {
 	 * federated source (fed-init var or non-VAR anchor key).
 	 */
 	public static boolean hasConcreteFederatedSourceVar(String varName) {
+		return hasConcreteFederatedSourceVar(varName, new HashSet<>());
+	}
+
+	private static boolean hasConcreteFederatedSourceVar(String varName, Set<String> visited) {
 		if (varName == null || varName.isEmpty())
+			return false;
+		// Avoid infinite loops on self-referential or cyclic VAR anchors.
+		if (!visited.add(varName))
 			return false;
 		if (isFedInitVar(varName))
 			return true;
 		String anchorKey = getFedAnchorKey(varName);
-		return anchorKey != null && !anchorKey.startsWith("VAR:");
+		if (anchorKey == null || anchorKey.isEmpty())
+			return false;
+		// Concrete signature-based / address-based anchors are always considered concrete.
+		if (!anchorKey.startsWith("VAR:"))
+			return true;
+		// VAR anchors can still be concrete if they ultimately resolve to a concrete anchor.
+		// Example: X_samples anchored to VAR:X where X is a fed-init var.
+		String ref = anchorKey.substring("VAR:".length());
+		int pipeIx = ref.indexOf('|');
+		if (pipeIx >= 0)
+			ref = ref.substring(0, pipeIx);
+		return hasConcreteFederatedSourceVar(ref, visited);
 	}
 
 	/**

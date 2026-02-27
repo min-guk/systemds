@@ -2986,6 +2986,34 @@ public final class Rulesets {
           axis = FType.COL;
       }
 
+      // FULL is a single-partition federated mapping (one worker holds the entire matrix).
+      // The runtime supports elementwise binary FED execution for FULL inputs as long as the
+      // mapping has exactly one partition (see BinaryMatrixMatrixFEDInstruction). The rules
+      // layer, however, cannot always prove axis alignment statically, which previously caused
+      // it to pessimistically return CP and trigger refed uploads inside loops (kmeans DP regression).
+      //
+      // Treat FULL as federated-capable: prefer FED/FOUT with FULL placement when at least one
+      // input is FULL and we are not in an outer-product-like topology.
+      if (axis == null && hasFedInput && !outerLike
+          && (left == FType.FULL || right == FType.FULL)) {
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
+            .fout(true, FType.FULL)
+            .reason(ReasonCode.OK)
+            .note(ReasonCode.INFO, "FULL federated elemwise (runtime validates single-partition mapping)");
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+
       if (axis != null && hasFedInput) {
         Guard.Result guard = Guard.eval(sig);
         return guardAwareFout(sig, axis, ReasonCode.OK, guard);

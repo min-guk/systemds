@@ -34,6 +34,13 @@ public final class FederatedCostModel {
 	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_BW_C2W";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_BW_W2C";
+	// Additional per-byte overhead for federated PUT/GET (serialization + deserialization + RPC/Netty framing).
+	//
+	// Model: t(bytes) ~= latency + bytes/net_bw + bytes/serdes_bw (+ optional control overhead).
+	// Setting serdes_bw=0 disables this term (legacy behaviour).
+	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH = "SYSDS_FED_COST_NET_SERDES_BW";
+	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_SERDES_BW_C2W";
+	private static final String ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C = "SYSDS_FED_COST_NET_SERDES_BW_W2C";
 	private static final String ENV_MBS_NETWORK_LATENCY = "SYSDS_FED_COST_NET_LATENCY";
 	private static final String ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS = "SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS";
 	private static final String ENV_UPLOAD_ESTIMATE_CLAMP_RATIO = "SYSDS_FED_COST_UPLOAD_MEM_CLAMP_RATIO";
@@ -49,6 +56,8 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_MBS_MEMORY_BANDWIDTH = 25000.0;
 	// Network bandwidth for data transfers between federated sites (1 Gbps).
 	private static final double DEFAULT_MBS_NETWORK_BANDWIDTH = 125.0;
+	// Additional per-byte overhead term for federated transfers (disabled by default).
+	private static final double DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH = 0.0;
 	// Network latency between federated sites (1 ms).
 	private static final double DEFAULT_MBS_NETWORK_LATENCY = 0.001;
 	private static final double DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS = 0.0;
@@ -81,6 +90,12 @@ public final class FederatedCostModel {
 			MBS_NETWORK_BANDWIDTH);
 	private static final double MBS_NETWORK_BANDWIDTH_W2C = getConfiguredDouble(ENV_MBS_NETWORK_BANDWIDTH_W2C,
 			MBS_NETWORK_BANDWIDTH);
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH = getConfiguredDouble(ENV_MBS_NETWORK_SERDES_BANDWIDTH,
+			DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH);
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH_C2W = getConfiguredDouble(ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W,
+			MBS_NETWORK_SERDES_BANDWIDTH);
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = getConfiguredDouble(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
+			MBS_NETWORK_SERDES_BANDWIDTH);
 	private static final double MBS_NETWORK_LATENCY = getConfiguredDouble(ENV_MBS_NETWORK_LATENCY,
 			DEFAULT_MBS_NETWORK_LATENCY);
 	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = getConfiguredDouble(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
@@ -272,13 +287,13 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeNetworkCost(double memSize) {
-		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH);
+		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH, MBS_NETWORK_SERDES_BANDWIDTH);
 	}
 
 	public static double computeDownloadNetworkCost(double memSize) {
 		if (memSize <= 0)
 			return 0.0;
-		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C);
+		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
 	}
 
 	public static double computeUploadNetworkCost(double memSize, FType fType, int numWorkers) {
@@ -287,15 +302,21 @@ public final class FederatedCostModel {
 		double multiplier = (fType != null && (fType == FType.FULL || fType == FType.BROADCAST))
 				? Math.max(1, numWorkers)
 				: 1.0;
-		return computeDirectionalNetworkCost(memSize * multiplier, MBS_NETWORK_BANDWIDTH_C2W);
+		return computeDirectionalNetworkCost(memSize * multiplier, MBS_NETWORK_BANDWIDTH_C2W, MBS_NETWORK_SERDES_BANDWIDTH_C2W);
 	}
 
-	private static double computeDirectionalNetworkCost(double memSize, double bandwidthMBps) {
+	private static double computeDirectionalNetworkCost(double memSize, double bandwidthMBps, double serdesBwMBps) {
 		double ctrlMs = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 		if (memSize <= 0)
 			return MBS_NETWORK_LATENCY * TO_MS + ctrlMs;
 		double effectiveBw = (bandwidthMBps > 0.0) ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
-		return (MBS_NETWORK_LATENCY + (memSize / (1024 * 1024) / effectiveBw)) * TO_MS + ctrlMs;
+		double payloadMb = memSize / (1024 * 1024);
+		double payloadSec = payloadMb / effectiveBw;
+		double effectiveSerdesBw = (serdesBwMBps > 0.0) ? serdesBwMBps : 0.0;
+		if (effectiveSerdesBw > 0.0) {
+			payloadSec += payloadMb / effectiveSerdesBw;
+		}
+		return (MBS_NETWORK_LATENCY + payloadSec) * TO_MS + ctrlMs;
 	}
 
 	/**
