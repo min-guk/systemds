@@ -37,13 +37,9 @@ import java.util.function.Function;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types;
-import org.apache.sysds.common.Types.AggOp;
-import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.hops.AggBinaryOp;
-import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
@@ -511,7 +507,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// should be modeled even when compute cost scales down with workers.
 		double fedOverhead = (hop instanceof DataOp)
 				? 0.0
-				: hopNetworkWeight * FederatedCostModel.computeNetworkCost(0);
+				: hopNetworkWeight * FederatedCostModel.computeNetworkCost(0) * Math.max(1, numOfWorkers);
 		// For elementwise operations, real-world speedups from federated execution
 		// are often far from linear in the number of workers due to per-site overheads
 		// and sparse/dense representation effects. Over-aggressive scaling can make DP
@@ -522,79 +518,11 @@ public class FederatedPlannerDpCostEnumerator {
 		double fedComputeCost = (hop instanceof BinaryOp)
 				? baseSelfCost
 				: baseSelfCost / Math.max(1, numOfWorkers);
-		double fedSelfCost = fedComputeCost + fedOverhead;
-		double resultDownloadCost = hopPlacementWeight
-				* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
+			double fedSelfCost = fedComputeCost + fedOverhead;
+			double resultDownloadCost = hopPlacementWeight
+					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
 
-		// Heuristic guard: keep RMEMPTY (removeEmpty) on large federated targets federated.
-		//
-		// Motivation: In sliceline, DP can pick a very cheap CP/LOUT alternative by
-		// materializing the federated table output locally, which then triggers large
-		// local->FED forwarding costs downstream (e.g., `colMaxs(X2 * e)`).
-		// When the target has an FOUT variant and is sufficiently large, avoid
-		// enumerating candidates that localize the target and prefer FED/FOUT output.
-		final boolean isRmempty = hop instanceof ParameterizedBuiltinOp
-				&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.RMEMPTY;
-		final long rmemptyLargeTargetThresholdBytes = 4L * 1024 * 1024; // 4 MiB
-		int rmemptyTargetBitIndex = -1;
-		boolean preferRmemptyFedFout = false;
-		if (isRmempty && numBothOutInputs > 0) {
-			Hop rmemptyTargetHop = ((ParameterizedBuiltinOp) hop).getTargetHop();
-			if (rmemptyTargetHop != null) {
-				for (int j = 0; j < numBothOutInputs; j++) {
-					if (lOutfOutChildHops.get(j) == rmemptyTargetHop) {
-						rmemptyTargetBitIndex = j;
-						break;
-					}
-				}
-				if (rmemptyTargetBitIndex >= 0) {
-					double targetUploadEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(rmemptyTargetHop);
-					preferRmemptyFedFout = targetUploadEstimate > rmemptyLargeTargetThresholdBytes;
-					if (preferRmemptyFedFout && FederatedPlannerTrace.shouldTrace(hop)) {
-						FederatedPlannerTrace.log(hop, "DP-RMEMPTY-PreferFedFout", String.format(Locale.ROOT,
-								"targetHop=%d uploadEstimateMB=%.3f thresholdMB=%.3f",
-								rmemptyTargetHop.getHopID(),
-								targetUploadEstimate / (1024.0 * 1024.0),
-								rmemptyLargeTargetThresholdBytes / (1024.0 * 1024.0)));
-					}
-				}
-			}
-		}
-
-		// Heuristic guard: keep large transient writes federated when possible.
-		//
-		// Motivation: Once a large intermediate is produced as FOUT, downloading it at
-		// TWrite (CP/LOUT) destroys the federated anchor and can re-introduce repeated
-		// local->FED forwarding downstream. Prefer FED/FOUT for such TWrite nodes.
-		final boolean isTransientWrite = hop instanceof DataOp
-				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE;
-		final long tWriteLargeInputThresholdBytes = 4L * 1024 * 1024; // 4 MiB
-		int tWriteInputBitIndex = -1;
-		boolean preferTWriteFedFout = false;
-		Hop tWriteInputHop = null;
-		if (isTransientWrite && hop.getDataType() != null && hop.getDataType().isMatrix()
-				&& numBothOutInputs > 0 && hop.getInput() != null && !hop.getInput().isEmpty()) {
-			tWriteInputHop = hop.getInput(0);
-			for (int j = 0; j < numBothOutInputs; j++) {
-				if (lOutfOutChildHops.get(j) == tWriteInputHop) {
-					tWriteInputBitIndex = j;
-					break;
-				}
-			}
-			if (tWriteInputBitIndex >= 0) {
-				double inputUploadEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(tWriteInputHop);
-				preferTWriteFedFout = inputUploadEstimate > tWriteLargeInputThresholdBytes;
-				if (preferTWriteFedFout && FederatedPlannerTrace.shouldTrace(hop)) {
-					FederatedPlannerTrace.log(hop, "DP-TWRITE-PreferFedFout", String.format(Locale.ROOT,
-							"inputHop=%d uploadEstimateMB=%.3f thresholdMB=%.3f",
-							tWriteInputHop.getHopID(),
-							inputUploadEstimate / (1024.0 * 1024.0),
-							tWriteLargeInputThresholdBytes / (1024.0 * 1024.0)));
-				}
-			}
-		}
-
-		final int enumerationLimit = 1 << numBothOutInputs;
+			final int enumerationLimit = 1 << numBothOutInputs;
 
 			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
 					FederatedOutput.LOUT);
@@ -609,18 +537,10 @@ public class FederatedPlannerDpCostEnumerator {
 			boolean sawAllowCpFout = false;
 			boolean sawAllowFedLout = false;
 
-			for (int i = 0; i < enumerationLimit; i++) {
-				// Skip candidates that localize the RMEMPTY target when the heuristic triggers.
-				if (preferRmemptyFedFout && rmemptyTargetBitIndex >= 0 && (i & (1 << rmemptyTargetBitIndex)) == 0) {
-					continue;
-				}
-				// Skip candidates that localize the TWrite input when the heuristic triggers.
-				if (preferTWriteFedFout && tWriteInputBitIndex >= 0 && (i & (1 << tWriteInputBitIndex)) == 0) {
-					continue;
-				}
-				List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
-				List<FType> collectedFTypes = new ArrayList<>();
-				List<Hop> collectedHops = new ArrayList<>();
+				for (int i = 0; i < enumerationLimit; i++) {
+					List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
+					List<FType> collectedFTypes = new ArrayList<>();
+					List<Hop> collectedHops = new ArrayList<>();
 				Map<Long, FType> fedInputTypeMap = new HashMap<>();
 				int[] selectedBits = new int[numBothOutInputs];
 				ExecType tWriteExec = null;
@@ -774,36 +694,14 @@ public class FederatedPlannerDpCostEnumerator {
 				// forwarding (refed) at parent boundaries. Applying it here can make DP
 				// systematically under-prefer CP/FOUT even when it avoids large WAN refed
 				// costs and enables faster federated downstream execution (e.g., kmeans WAN).
-				double cpUploadCost = hopPlacementWeight * cpUploadCostWithoutWeight;
+					double cpUploadCost = hopPlacementWeight * cpUploadCostWithoutWeight;
 
-				ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
-						hop, privacyConstraint, oracleLogicalFType, caps);
-				// Prefer FED/FOUT for RMEMPTY on large targets by disallowing LOUT output plans
-				// when FED/FOUT is feasible under the current selected-bit configuration.
-				if (preferRmemptyFedFout && canSatisfyFedInputs && placementDecision.allowFED_FOUT) {
-					placementDecision.allowCP_LOUT = false;
-					placementDecision.allowFED_LOUT = false;
-				}
-				// Prefer FED/FOUT for large transient writes by disallowing LOUT output plans
-				// when FED/FOUT is feasible under the current selected-bit configuration.
-				if (preferTWriteFedFout && canSatisfyFedInputs && placementDecision.allowFED_FOUT) {
-					placementDecision.allowCP_LOUT = false;
-					placementDecision.allowFED_LOUT = false;
-				}
-				// DP can over-prefer FED for elementwise multiplications that feed directly into
-				// a column-wise MAX reduction (colMaxs). In practice, executing these multiplies
-				// as federated instructions is often slower than local execution (notably in
-				// sliceline's `t(colMaxs(X*e))` patterns). If the multiplication is exclusively
-				// consumed by colMaxs and CP execution is legal under the current privacy/oracle
-				// constraints, restrict the candidate space to local execution.
-				if (placementDecision.allowCP_LOUT && isBinaryMultConsumedOnlyByColMaxs(hop)) {
-					placementDecision.allowFED_LOUT = false;
-					placementDecision.allowFED_FOUT = false;
-				}
-				boolean derivedFedFout = shouldEnableDerivedFedFout(
-						hop, privacyConstraint, fedInputTypeMap, caps, placementDecision);
-				if (derivedFedFout) {
-					placementDecision.allowFED_FOUT = true;
+					ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
+							hop, privacyConstraint, oracleLogicalFType, caps);
+					boolean derivedFedFout = shouldEnableDerivedFedFout(
+							hop, privacyConstraint, fedInputTypeMap, caps, placementDecision);
+					if (derivedFedFout) {
+						placementDecision.allowFED_FOUT = true;
 				}
 				// Runtime guard: The FED instruction set does not support all NaryOp opcodes.
 				// In particular, NaryOp CBIND/RBIND is represented as a BuiltinNary FED
@@ -1222,22 +1120,9 @@ public class FederatedPlannerDpCostEnumerator {
 					plan.getExecType(), plan.getFType(), plan.getCumulativeCost(), plan.isDerivedFedFout());
 		}
 
-		FederatedPlannerTrace.log(hop, "DP-Selected",
-				"bestLOUT={" + loutSummary + "} bestFOUT={" + foutSummary + "}");
-	}
-
-	private static boolean isBinaryMultConsumedOnlyByColMaxs(Hop hop) {
-		if (!(hop instanceof BinaryOp) || ((BinaryOp) hop).getOp() != OpOp2.MULT)
-			return false;
-		List<Hop> parents = hop.getParent();
-		if (parents == null || parents.size() != 1)
-			return false;
-		Hop parent = parents.get(0);
-		if (!(parent instanceof AggUnaryOp))
-			return false;
-		AggUnaryOp au = (AggUnaryOp) parent;
-		return au.getOp() == AggOp.MAX && au.getDirection() == Direction.Col;
-	}
+			FederatedPlannerTrace.log(hop, "DP-Selected",
+					"bestLOUT={" + loutSummary + "} bestFOUT={" + foutSummary + "}");
+		}
 
 		private static void populateParentChildUploadHintsFromRewire(
 				Map<Long, Set<Long>> parentChildUploadHints,

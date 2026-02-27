@@ -229,7 +229,14 @@ public class FederatedPlanMinSTGraph {
 		double cpCost = vertex.getOpCostWithWeight();
 		double fedOverhead = 0.0;
 		if (!(vertex.getHopRef() instanceof DataOp)) {
-			fedOverhead = vertex.getNetworkWeight() * FederatedCostModel.computeNetworkCost(0);
+			// Federated execution incurs a per-worker coordination overhead at runtime:
+			// FederationMap.execute iterates over workers and FederatedData.executeFederatedOperation()
+			// performs a (blocking) connect+send per worker. This overhead scales with the
+			// number of workers and is the dominant factor for "many small" FED ops in WAN.
+			// Model this as: networkWeight * (per-message overhead) * numWorkers.
+			fedOverhead = vertex.getNetworkWeight()
+					* FederatedCostModel.computeNetworkCost(0)
+					* Math.max(1, numOfWorkers);
 		}
 			double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
 			if (numOfWorkers <= 1) {

@@ -84,10 +84,6 @@ public final class FederatedRefedPolicy {
 		Boolean.parseBoolean(System.getProperty("sysds.fedplanner.transread.debug", "false"));
 	private static final Map<Long, AnchorKey> CPFOUT_ANCHOR_CACHE = new ConcurrentHashMap<>();
 	private static final Set<Long> HEURISTIC_DEMOTED_VECTOR_HOPS = ConcurrentHashMap.newKeySet();
-	// Heuristic guard: avoid refederating/materializing very large local intermediates purely to satisfy FED execution
-	// requirements for simple operations. Such refederations often create expensive CP->FED->CP "ping-pong" in WAN
-	// settings (e.g., sliceline evalSlice colMaxs path) and can even trigger worker instability.
-	private static final long LARGE_LOCAL_REQUIRED_INPUT_CELLS_DEMOTE_THRESHOLD = 10_000_000L;
 	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TWRITE_CACHE =
 		ThreadLocal.withInitial(java.util.HashMap::new);
 	private static final ThreadLocal<java.util.Map<Long, Long>> HOP_SBID_CACHE =
@@ -1148,12 +1144,11 @@ public final class FederatedRefedPolicy {
 		AnchorKey globalAnchorKey = selectGlobalAnchorKey(fTypeMap);
 
 		AnchorSelection requiredAnchor = null;
-		AnchorSelection consumerAnchor = null;
-		AnchorSelection optionalAnchor = null;
-		boolean hasRequiredMatrix = false;
-		List<Integer> requiredIndices = new ArrayList<>();
-		long maxRequiredLocalInputCells = -1L;
-		boolean hasSourceAnchorConflict = false;
+			AnchorSelection consumerAnchor = null;
+			AnchorSelection optionalAnchor = null;
+			boolean hasRequiredMatrix = false;
+			List<Integer> requiredIndices = new ArrayList<>();
+			boolean hasSourceAnchorConflict = false;
 
 		for (int i = 0; i < hop.getInput().size(); i++) {
 			Hop input = hop.getInput().get(i);
@@ -1205,26 +1200,15 @@ public final class FederatedRefedPolicy {
 				}
 				if (hasAnchorInput)
 					continue;
-			}
-			hasRequiredMatrix = true;
-				if (!runtimeFed) {
-					requiredIndices.add(i);
-					long r = input.getDim1();
-					long c = input.getDim2();
-					long cells = -1L;
-					if (r > 0 && c > 0) {
-						if (r > Long.MAX_VALUE / c)
-							cells = Long.MAX_VALUE;
-						else
-							cells = r * c;
-					}
-					if (cells > maxRequiredLocalInputCells)
-						maxRequiredLocalInputCells = cells;
 				}
-					if (sourceFed) {
-						AnchorKey key = buildAnchorKey(input, fTypeMap);
-						if (key == null)
-							key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
+				hasRequiredMatrix = true;
+					if (!runtimeFed) {
+						requiredIndices.add(i);
+					}
+						if (sourceFed) {
+							AnchorKey key = buildAnchorKey(input, fTypeMap);
+							if (key == null)
+								key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
 						if (key != null) {
 							if (requiredAnchor == null || requiredAnchor.key == null)
 								requiredAnchor = new AnchorSelection(key, input);
@@ -1236,27 +1220,12 @@ public final class FederatedRefedPolicy {
 				}
 			}
 
-		if (!hasRequiredMatrix)
-			return true;
+			if (!hasRequiredMatrix)
+				return true;
 
-		// If this hop (FED or CP->FOUT) would require uploading/refederating a large local input matrix, prefer
-		// demotion to CP (runtime can materialize smaller federated inputs locally when needed). This avoids expensive
-		// WAN uploads introduced solely by required-input enforcement.
-		boolean plannedFedOrCpfout = plannedExec == ExecType.FED || plannedCpFout;
-		// Demotion scope: only simple ops where CP is safe/cheap and refederating huge intermediates is rarely desired.
-		boolean demotionCandidateOp = hop instanceof AggUnaryOp;
-		if (hop instanceof BinaryOp) {
-			OpOp2 op = ((BinaryOp) hop).getOp();
-			demotionCandidateOp |= op == OpOp2.MULT || op == OpOp2.EQUAL;
-		}
-		if (plannedFedOrCpfout && demotionCandidateOp && !requiredIndices.isEmpty()
-			&& maxRequiredLocalInputCells >= LARGE_LOCAL_REQUIRED_INPUT_CELLS_DEMOTE_THRESHOLD) {
-			return false;
-		}
-
-			if (!requiredIndices.isEmpty()) {
-				if (hasSourceAnchorConflict)
-					requiredAnchor = null;
+				if (!requiredIndices.isEmpty()) {
+					if (hasSourceAnchorConflict)
+						requiredAnchor = null;
 				// Prefer an anchor with a concrete key if we need to upload any required local inputs.
 				if ((requiredAnchor == null || requiredAnchor.key == null) && optionalAnchor != null
 					&& optionalAnchor.key != null) {

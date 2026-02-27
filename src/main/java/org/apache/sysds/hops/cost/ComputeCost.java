@@ -163,9 +163,22 @@ public class ComputeCost {
 			costs = HopRewriteUtils.isNary(currentHop, Types.OpOpN.MIN, Types.OpOpN.MAX, Types.OpOpN.PLUS) ?
 				currentHop.getInput().size() : 1;
 		}
-		else if( currentHop instanceof ParameterizedBuiltinOp) {
-			costs = 1;
-		}
+			else if( currentHop instanceof ParameterizedBuiltinOp) {
+				// Parameterized builtins typically scan their input(s) regardless of the output size.
+				// Using only the output cell count can significantly under-estimate ops whose output
+				// shrinks relative to the input (e.g., RMEMPTY/removeEmpty).
+				ParameterizedBuiltinOp pb = (ParameterizedBuiltinOp) currentHop;
+				if (pb.getOp() == Types.ParamBuiltinOp.RMEMPTY) {
+					Hop target = pb.getTargetHop();
+					long inSize = (target != null) ? getSize(target) : getSize(currentHop);
+					long outSize = getSize(currentHop);
+					long effective = Math.max(inSize, outSize);
+					costs = (outSize > 0) ? ((double) effective) / outSize : effective;
+				}
+				else {
+					costs = 1;
+				}
+			}
 		else if( currentHop instanceof IndexingOp) {
 			costs = 1;
 		}

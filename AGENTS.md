@@ -57,6 +57,23 @@
   - 예외가 필요하다고 판단될 경우 **반박 문서(논리적 근거 포함)**를 먼저 작성한 뒤 진행한다.
   - **반박 문서 작성 후에는 승인 없이 진행**하며, 문서 없이 원칙 위반 수정/실험을 시도하지 않는다.
 
+- **runtime이 지원하는 조합을 플래너가 임의로 “닫는(continue/skip)” 가드 추가는 금지**한다.
+  - 예: 특정 opcode(예: `RMEMPTY`)에서 runtime이 지원하는 Exec/placement/child-bit 조합을 “편의상/정신승리용”으로 닫지 않는다.
+  - 후보를 닫을 수 있는 근거는 아래처럼 **명시적으로 증명/문서화 가능한 제약**으로 한정한다.
+    - runtime cap/ReasonCode(=실제 federated instruction 미지원)
+    - privacy/정책 제약
+    - 문서화된 전역 합법성 제약(예: TR/TW 일관성, recompile 구간 CP→FOUT 금지)
+  - 그 외의 경우는 “가드로 후보군 축소”가 아니라 **비용 모델/상태 표현을 확장**해서 cost-based로 비교 가능하게 만들어야 한다.
+  - 새로 후보를 닫는 로직을 추가/변경할 때는, **왜 runtime이 지원하지 않는지(또는 어떤 전역 합법성 제약인지)**를 코드 주석 + `docs/SESSION_ISSUES_YYYY-MM-DD.md`에 함께 남긴다.
+
+- **특정 연산(opcode)의 조합을 닫고 싶어질 때(성능/안정성/과선택 등), 먼저 비용/메모리 측정이 틀린 게 아닌지 확인하고 고친다.**
+  - “DP/MinST가 이상한 선택을 한다”는 이유만으로 candidate-space를 닫지 않는다.
+  - 최소 확인 체크리스트(해당 opcode 기준):
+    - compute cost: `ComputeCost.getHOPComputeCost(...)`가 0/과소평가가 아닌지
+    - size/mem estimate: `Hop.inferOutputCharacteristics(...)`/`getOutputMemEstimate(...)`/`FederatedCostModel.getEffective*MemEstimate(...)`가 0/unknown-sentinel/과소평가가 아닌지
+    - boundary cost: upload/download/forwarding penalty가 해당 경로에 실제로 반영되는지 (DP/MinST parity 포함)
+  - 위 측정이 문제라면 “가드 추가”가 아니라 **비용 모델/추정 로직을 수정**해서 해결한다.
+
 - **TRead/TWrite는 `<CP,LOUT>` 또는 `<FED,FOUT>`만 허용**한다.  
   - `<CP,FOUT>`은 TRead/TWrite 경로에서 허용하지 않는다.  
   - 위 제약을 위반해야 한다면 **오라클 규칙 또는 런타임 지원**이 잘못된 것으로 간주하고 수정한다.

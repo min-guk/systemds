@@ -56,7 +56,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -1349,16 +1348,6 @@ public class FederatedPlanMinSTRewire {
 					}
 				}
 
-				// MinST's min-cut encoding represents execution (CP vs FED) and placement (LOUT vs FOUT)
-				// with independent nodes. If FED/LOUT is legal while FED/FOUT is illegal, allowing
-				// CP/FOUT would permit the cut to select an illegal (FED,FOUT) combination. Disable
-				// CP/FOUT in that situation, but do it *after* federated-input feasibility gating to
-				// avoid prematurely disabling CP/FOUT in cases where FED candidates are later ruled out
-				// (e.g., due to unsatisfied federated inputs).
-				if (caps.allowCP_FOUT && !caps.allowFED_FOUT && caps.allowFED_LOUT) {
-					caps.allowCP_FOUT = false;
-				}
-
 				traceRewireDecision(hop, privacy, collectedHopList, oracleInputFTypes, opCaps,
 					oracleFType, fType, cpFoutType, fedInputsSatisfied, caps, fTypeMap);
 
@@ -1725,7 +1714,6 @@ public class FederatedPlanMinSTRewire {
 	private static ExecPlacementCaps buildExecPlacementCaps(Hop hop, Privacy privacy, FType fType, OpCaps capsOracle,
 			Map<Long, FType> fTypeMap) {
 		ExecPlacementCaps caps = new ExecPlacementCaps();
-		int configuredWorkers = getConfiguredWorkerCount();
 
 		// 0) 처음엔 전부 false로 시작 (DP가 실제로 생성하는 조합만 켜기 위함)
 		caps.allowCP_LOUT = false;
@@ -1751,86 +1739,35 @@ public class FederatedPlanMinSTRewire {
 				? ExecPlacementCaps.FedFoutMode.NATIVE
 				: ExecPlacementCaps.FedFoutMode.DISABLED;
 
-		if (configuredWorkers != 1 && shouldEnableDerivedFedFout(hop, privacy, fTypeMap, caps)) {
+		// CP->FOUT requires materializing a local output into a federated value (e.g., fed_fout/refed).
+		// This is only legal when we can attach the result to an existing federated anchor
+		// (i.e., canGenerateCpfoutCandidate... is true). If no anchor exists, exposing CP/FOUT
+		// as a candidate leads to plans that cannot be realized at runtime.
+		if (caps.allowCP_FOUT
+				&& hop != null
+				&& hop.getDataType() != null
+				&& hop.getDataType().isMatrix()
+				&& !canGenerateCpfoutCandidateSafe(hop, fTypeMap)) {
+			caps.allowCP_FOUT = false;
+		}
+
+		// If FED/FOUT is not supported natively by the runtime but FED/LOUT is legal, we can still
+		// produce a federated output by materializing the local FED result to FOUT
+		// (FED,LOUT) -> (FED,FOUT via refed). This is the FED analogue of CP->FOUT and must be
+		// treated as a legal candidate whenever that materialization is feasible.
+		// If materialization is NOT feasible, then CP/FOUT must be disabled as well (see above),
+		// because both rely on the same anchor-based LOUT->FOUT mechanism.
+		if (shouldEnableDerivedFedFout(hop, privacy, fTypeMap, caps)) {
 			caps.allowFED_FOUT = true;
 			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DERIVED_REFED;
 		}
 
-		// If the oracle reports that FOUT is not supported by the runtime for this op, avoid
-		// producing a federated output altogether. MinST's 2-node encoding cannot reliably
-		// express "CP->FOUT allowed but FED->FOUT forbidden" without risking illegal FED/FOUT
-		// selections, so we force LOUT at the placement level.
-		if (capsOracle != null && capsOracle.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
-			caps.allowCP_FOUT = false;
-			caps.allowFED_FOUT = false;
-			// REXPAND with FED/LOUT + materialization can create cyclic anchor rewrites (Y <- fed_fout(rexpand(Y))).
-			// Keep this op local when runtime has no native FOUT support.
-			if (hop instanceof ParameterizedBuiltinOp
-					&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.REXPAND) {
-				caps.allowFED_LOUT = false;
-				caps.allowCP_LOUT = true;
-			}
-		}
 		if (isRecompileRegion(hop)) {
 			caps.allowCP_FOUT = false;
 		}
 
 		caps = applyFunctionPlacementRestrictions(hop, caps);
 		caps = applyTransientPlacementRestrictions(hop, caps);
-		// With configuredWorkers=1, federated execution of AggBinary (e.g., ba+*) can trigger
-		// unnecessary CP->FOUT uploads (fed_fout) for local intermediates. Keep these ops local
-		// unless all matrix inputs are already known-federated anchors.
-		if (configuredWorkers == 1
-				&& (caps.allowFED_LOUT || caps.allowFED_FOUT)
-				&& hop instanceof AggBinaryOp
-				&& (privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)) {
-			boolean prevAllowFedLout = caps.allowFED_LOUT;
-			boolean prevAllowFedFout = caps.allowFED_FOUT;
-			ExecPlacementCaps.FedFoutMode prevFedFoutMode = caps.fedFoutMode;
-			boolean prevAllowCpFout = caps.allowCP_FOUT;
-			caps.allowFED_LOUT = false;
-			caps.allowFED_FOUT = false;
-			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
-			if (caps.allowCP_FOUT && !caps.allowFED_FOUT)
-				caps.allowCP_FOUT = false;
-			// If this restriction eliminates all legal choices, keep the original caps to
-			// avoid breaking privacy-constrained cases where FED is required.
-			if (!caps.hasAny()) {
-				caps.allowFED_LOUT = prevAllowFedLout;
-				caps.allowFED_FOUT = prevAllowFedFout;
-				caps.fedFoutMode = prevFedFoutMode;
-				caps.allowCP_FOUT = prevAllowCpFout;
-			}
-		}
-		boolean isTransientReadFedInit = false;
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			String name = ((DataOp) hop).getName();
-			isTransientReadFedInit = (name != null && FederatedPlannerUtils.isFedInitVar(name));
-		}
-		if (configuredWorkers == 1
-				&& (caps.allowFED_LOUT || caps.allowFED_FOUT)
-				&& !(hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)
-				&& !isTransientReadFedInit
-				&& !hasImmediateFedMatrixInput(hop)) {
-			boolean prevAllowFedLout = caps.allowFED_LOUT;
-			boolean prevAllowFedFout = caps.allowFED_FOUT;
-			ExecPlacementCaps.FedFoutMode prevFedFoutMode = caps.fedFoutMode;
-			boolean prevAllowCpFout = caps.allowCP_FOUT;
-			caps.allowFED_LOUT = false;
-			caps.allowFED_FOUT = false;
-			caps.fedFoutMode = ExecPlacementCaps.FedFoutMode.DISABLED;
-			if (caps.allowCP_FOUT && !caps.allowFED_FOUT)
-				caps.allowCP_FOUT = false;
-			// Keep worker=1 restriction best-effort only. For privacy-constrained cases where
-			// FED/FOUT is the only legal option, restoring previous caps avoids illegal
-			// "No legal Exec/Placement combination" planner failures.
-			if (!caps.hasAny()) {
-				caps.allowFED_LOUT = prevAllowFedLout;
-				caps.allowFED_FOUT = prevAllowFedFout;
-				caps.fedFoutMode = prevFedFoutMode;
-				caps.allowCP_FOUT = prevAllowCpFout;
-			}
-		}
 		if (!caps.hasAny()) {
 			throw new DMLRuntimeException("No legal Exec/Placement combination for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
@@ -1903,19 +1840,39 @@ public class FederatedPlanMinSTRewire {
 		return false;
 	}
 
+	private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
+		try {
+			if (hop == null)
+				return false;
+			// Root CP->FOUT materialization is still legal when an anchor exists, even if this hop has
+			// no FED parents (e.g., to keep the final result federated for privacy constraints).
+			List<Hop> parents = hop.getParent();
+			if (parents == null || parents.isEmpty()) {
+				if (fTypeMap != null && !fTypeMap.isEmpty()) {
+					for (FType fType : fTypeMap.values()) {
+						if (fType == null || (fType != FType.PART && fType != FType.OTHER))
+							return true;
+					}
+					return false;
+				}
+				return FederatedPlannerUtils.getUniqueFedInitVarName() != null;
+			}
+			return FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap);
+		}
+		catch (DMLRuntimeException ex) {
+			return false;
+		}
+	}
+
 	private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,
 			Map<Long, FType> fTypeMap, ExecPlacementCaps caps) {
 		if (caps == null || caps.allowFED_FOUT || !caps.allowFED_LOUT)
 			return false;
-		if (hop == null || !hop.getDataType().isMatrix())
-			return false;
-		// Runtime AggregateBinary FED execution has COL_T-aligned branches that aggregate locally.
-		// Keep AggBinary on FED/LOUT unless native FOUT is explicitly supported by oracle caps.
-		if (hop instanceof AggBinaryOp)
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
 			return false;
 		if (!isDerivedFoutPrivacyAllowed(privacy))
 			return false;
-		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap))
+		if (!canGenerateCpfoutCandidateSafe(hop, fTypeMap))
 			return false;
 		return true;
 	}

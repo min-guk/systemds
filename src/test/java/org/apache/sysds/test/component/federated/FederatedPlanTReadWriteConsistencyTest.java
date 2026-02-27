@@ -123,10 +123,12 @@ public class FederatedPlanTReadWriteConsistencyTest {
 		invokeEstimateHop(tr, graph, rewireTable);
 
 		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
-		assertConstraintEdge(g, computeId(tw1.getHopID()), computeId(tr.getHopID()));
-		assertConstraintEdge(g, computeId(tr.getHopID()), computeId(tw1.getHopID()));
-		assertConstraintEdge(g, computeId(tw2.getHopID()), computeId(tr.getHopID()));
-		assertConstraintEdge(g, computeId(tr.getHopID()), computeId(tw2.getHopID()));
+		// MinST encodes TR/TW consistency by forcing TW.P, TR.C, and TR.P on the same cut side.
+		// (TW.C is already coupled to TW.P via transient placement restrictions.)
+		assertConstraintEdge(g, placementId(tw1.getHopID()), computeId(tr.getHopID()));
+		assertConstraintEdge(g, computeId(tr.getHopID()), placementId(tw1.getHopID()));
+		assertConstraintEdge(g, placementId(tw2.getHopID()), computeId(tr.getHopID()));
+		assertConstraintEdge(g, computeId(tr.getHopID()), placementId(tw2.getHopID()));
 		assertConstraintEdge(g, placementId(tw1.getHopID()), placementId(tr.getHopID()));
 		assertConstraintEdge(g, placementId(tr.getHopID()), placementId(tw1.getHopID()));
 		assertConstraintEdge(g, placementId(tw2.getHopID()), placementId(tr.getHopID()));
@@ -230,11 +232,12 @@ public class FederatedPlanTReadWriteConsistencyTest {
 	}
 
 	private static long computeId(long hopId) {
-		return hopId << 1;
+		// Keep consistent with FederatedPlanMinSTPlanner: 2-bit node role encoding.
+		return hopId << 2;
 	}
 
 	private static long placementId(long hopId) {
-		return (hopId << 1) | 1;
+		return (hopId << 2) | 1;
 	}
 
 	private static final class DpScenario {
