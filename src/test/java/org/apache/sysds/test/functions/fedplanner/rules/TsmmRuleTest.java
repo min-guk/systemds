@@ -42,6 +42,7 @@ import org.junit.Test;
 public class TsmmRuleTest {
 
   private static final ShapeHint UNKNOWN = new ShapeHint(-1, -1, 0);
+  private static final ShapeHint FULL_SINGLE = new ShapeHint(-1, -1, 0, true);
   private static final String AXIS_DETAIL = extractConstant("TSMM_AXIS_ONLY_DETAIL");
   private static final String AGG_NOTE = extractConstant("TSMM_AGG_NOTE");
   private static final String FORCED_NOTE = extractConstant("TSMM_FORCED_BC_NOTE");
@@ -100,10 +101,22 @@ public class TsmmRuleTest {
   }
 
   @Test
-  public void fullInputForbidden() {
+  public void fullInputRejectedWhenHintUnknown() {
     OpCaps caps = rule.caps(sig(Map.of()), List.of(FType.FULL), UNKNOWN);
+    assertEquals(ExecType.CP, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
     assertEquals(ReasonCode.PARTITION_FORBIDDEN, caps.reason());
     assertTrue(caps.detail().orElse("").contains(AXIS_DETAIL));
+  }
+
+  @Test
+  public void fullSinglePartitionAllowed() {
+    OpCaps caps = rule.caps(sig(Map.of()), List.of(FType.FULL), FULL_SINGLE);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
+    assertFalse(caps.foutEnabled());
+    assertEquals(ReasonCode.OK, caps.reason());
+    assertTrue(hasNote(caps, ReasonCode.INFO, AGG_NOTE));
   }
 
   @Test

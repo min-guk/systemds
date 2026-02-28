@@ -58,6 +58,7 @@ import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
 import org.apache.sysds.runtime.codegen.SpoofRowwise;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.common.Types.OpOpDG;
+import org.apache.sysds.parser.DataExpression;
 
 /**
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
@@ -105,14 +106,16 @@ public final class OracleFacade {
   }
 
   public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes) {
-    return decide(hop, inFTypes, buildShapeHint(hop));
+    return decide(hop, inFTypes, buildShapeHint(hop, inFTypes));
   }
 
   public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
     Objects.requireNonNull(hop, "hop");
     OpSig sig = buildSignature(hop);
     List<FType> mapped = mapFederatedTypes(hop, inFTypes);
-    ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop);
+    ShapeHint effectiveHint = (hint != null)
+        ? mergeFullSinglePartitionHint(hint, hop, inFTypes)
+        : buildShapeHint(hop, inFTypes);
     logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
     RulesApi.OpCaps caps = oracle.decide(sig, mapped, effectiveHint);
     logOracleResult(hop, caps);
@@ -134,7 +137,7 @@ public final class OracleFacade {
       Hop hop, List<List<FType>> inCandidates, ShapeHint hint) {
     Objects.requireNonNull(hop, "hop");
     OpSig sig = buildSignature(hop);
-    ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop);
+    ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop, null);
     return inference.infer(sig, inCandidates, effectiveHint);
   }
 
@@ -267,6 +270,8 @@ public final class OracleFacade {
     if (tsmm != null && tsmm != MMTSJType.NONE) {
       attrs.put(ATTR_TSMM_TYPE, tsmm.name());
       attrs.put(ATTR_ALIGN, ALIGN_COL_T);
+      if (hop.hasFederatedOutput())
+        attrs.put(ATTR_TSMM_FED_OUT, "FORCED");
     }
   }
 
@@ -622,6 +627,10 @@ public final class OracleFacade {
   }
 
   private ShapeHint buildShapeHint(Hop hop) {
+    return buildShapeHint(hop, null);
+  }
+
+  private ShapeHint buildShapeHint(Hop hop, List<FTypes.FType> inFTypes) {
     long rows = hop.getDim1();
     long cols = hop.getDim2();
     int blockSize = hop.getBlocksize();
@@ -631,7 +640,113 @@ public final class OracleFacade {
     long colsA = (a != null) ? a.getDim2() : -1;
     long rowsB = (b != null) ? b.getDim1() : -1;
     long colsB = (b != null) ? b.getDim2() : -1;
-    return new ShapeHint(rows, cols, blockSize, Optional.empty(), rowsA, colsA, rowsB, colsB);
+    Optional<Boolean> fullSinglePartition = inferFullSinglePartition(hop, inFTypes);
+    return new ShapeHint(rows, cols, blockSize, fullSinglePartition, rowsA, colsA, rowsB, colsB);
+  }
+
+  private static ShapeHint mergeFullSinglePartitionHint(
+      ShapeHint hint, Hop hop, List<FTypes.FType> inFTypes) {
+    if (hint == null)
+      return hint;
+    if (hint.fullSinglePartition().isPresent())
+      return hint;
+    Optional<Boolean> inferred = inferFullSinglePartition(hop, inFTypes);
+    if (!inferred.isPresent())
+      return hint;
+    return new ShapeHint(hint.rows(), hint.cols(), hint.blockSize(), inferred,
+        hint.rowsA(), hint.colsA(), hint.rowsB(), hint.colsB());
+  }
+
+  private static Optional<Boolean> inferFullSinglePartition(Hop hop, List<FTypes.FType> inFTypes) {
+    if (hop == null || inFTypes == null || inFTypes.isEmpty())
+      return Optional.empty();
+
+    List<Hop> inputs = hop.getInput();
+    boolean sawFull = false;
+    boolean anyMulti = false;
+    boolean anyKnown = false;
+
+    for (int i = 0; i < inFTypes.size(); i++) {
+      if (inFTypes.get(i) != FTypes.FType.FULL)
+        continue;
+      sawFull = true;
+      Hop inHop = (inputs != null && i < inputs.size()) ? inputs.get(i) : null;
+      Optional<Integer> count = inferFederatedRangeCount(inHop);
+      if (!count.isPresent())
+        continue;
+      anyKnown = true;
+      if (count.get() > 1) {
+        anyMulti = true;
+        break;
+      }
+    }
+
+    if (!sawFull)
+      return Optional.empty();
+    if (anyKnown)
+      return Optional.of(!anyMulti);
+
+    // Fallback: if the program is effectively single-worker, treat FULL as single-range.
+    return (FederatedPlannerUtils.getMaxFedInitWorkers() == 1)
+        ? Optional.of(true)
+        : Optional.empty();
+  }
+
+  private static Optional<Integer> inferFederatedRangeCount(Hop inputHop) {
+    if (inputHop == null)
+      return Optional.empty();
+
+    if (inputHop instanceof DataOp) {
+      DataOp dop = (DataOp) inputHop;
+      if (dop.getOp() == OpOpData.FEDERATED) {
+        int ridx = dop.getParameterIndex(DataExpression.FED_RANGES);
+        if (ridx >= 0) {
+          Hop ranges = dop.getInput(ridx);
+          List<Hop> rangeItems = (ranges != null) ? ranges.getInput() : null;
+          if (rangeItems != null && !rangeItems.isEmpty() && rangeItems.size() % 2 == 0) {
+            return Optional.of(rangeItems.size() / 2);
+          }
+        }
+      }
+    }
+
+    String name = inputHop.getName();
+    if (name == null || name.isEmpty())
+      return Optional.empty();
+    return inferFederatedRangeCountFromVarName(name, new HashSet<>());
+  }
+
+  private static Optional<Integer> inferFederatedRangeCountFromVarName(String varName, Set<String> visited) {
+    if (varName == null || varName.isEmpty() || visited == null)
+      return Optional.empty();
+    if (!visited.add(varName))
+      return Optional.empty();
+
+    String signature = FederatedPlannerUtils.getFedInitSignature(varName);
+    if (signature == null || signature.isEmpty()) {
+      String anchorKey = FederatedPlannerUtils.getFedAnchorKey(varName);
+      if (anchorKey == null || anchorKey.isEmpty())
+        return Optional.empty();
+      if (anchorKey.startsWith("VAR:")) {
+        String ref = anchorKey.substring("VAR:".length());
+        int pipeIx = ref.indexOf('|');
+        if (pipeIx >= 0)
+          ref = ref.substring(0, pipeIx);
+        return inferFederatedRangeCountFromVarName(ref, visited);
+      }
+      signature = anchorKey;
+    }
+
+    int bar = signature.indexOf('|');
+    String addrPart = (bar >= 0) ? signature.substring(0, bar) : signature;
+    if (addrPart.isEmpty())
+      return Optional.empty();
+    int count = 0;
+    for (String tok : addrPart.split(";")) {
+      if (tok != null && !tok.isBlank())
+        count++;
+    }
+    return (count > 0) ? Optional.of(count) : Optional.empty();
   }
 
   private List<List<FTypes.FType>> enumerateCandidates(List<Set<FTypes.FType>> candidates) {

@@ -444,8 +444,14 @@ public class InitFEDInstruction extends FEDInstruction implements LineageTraceab
 		output.getDataCharacteristics().setBlocksize(ConfigurationManager.getBlocksize());
 		output.setFedMapping(new FederationMap(id, fedMapping));
 
-		output.getFedMapping().setType(rowPartitioned &&
-			colPartitioned ? FType.FULL : rowPartitioned ? FType.ROW : colPartitioned ? FType.COL : FType.OTHER);
+		if (rowPartitioned && colPartitioned) {
+			// Disambiguate "FULL": a single full-range slice is a true FULL mapping, while
+			// multiple full-range slices imply replicated data (broadcast-like).
+			output.getFedMapping().setType(output.getFedMapping().getSize() > 1 ? FType.BROADCAST : FType.FULL);
+		}
+		else {
+			output.getFedMapping().setType(rowPartitioned ? FType.ROW : colPartitioned ? FType.COL : FType.OTHER);
+		}
 
 		if(LOG.isDebugEnabled())
 			LOG.debug("Fed map Inited:" + output.getFedMapping());
@@ -508,8 +514,13 @@ public class InitFEDInstruction extends FEDInstruction implements LineageTraceab
 		output.getDataCharacteristics().setNonZeros(output.getNumColumns() * output.getNumRows());
 		output.setSchema(schema);
 		output.setFedMapping(new FederationMap(id, fedMapping));
-		output.getFedMapping().setType(rowPartitioned &&
-			colPartitioned ? FType.FULL : rowPartitioned ? FType.ROW : colPartitioned ? FType.COL : FType.OTHER);
+		if (rowPartitioned && colPartitioned) {
+			// Same disambiguation as federateMatrix: multiple full-range slices imply replication.
+			output.getFedMapping().setType(output.getFedMapping().getSize() > 1 ? FType.BROADCAST : FType.FULL);
+		}
+		else {
+			output.getFedMapping().setType(rowPartitioned ? FType.ROW : colPartitioned ? FType.COL : FType.OTHER);
+		}
 
 		if(LOG.isDebugEnabled())
 			LOG.debug("Fed map Inited: " + output.getFedMapping());

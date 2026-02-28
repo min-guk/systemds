@@ -48,11 +48,12 @@ public class RulesetsReorgTest {
         Scenario.of("transpose-col", ReOrgOp.TRANS.toString(), Map.of(), List.of(FType.COL),
             ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, true),
         Scenario.of("rev-part", ReOrgOp.REV.toString(), Map.of(), List.of(FType.PART),
-            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
+            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.PARTITION_FORBIDDEN,
+            "ReorgFEDInstruction supports only ROW or COL partitioned input", false),
         Scenario.of("roll-full", ReOrgOp.ROLL.toString(), Map.of(), List.of(FType.FULL),
-            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY, null, false),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.FULL, ReasonCode.OK, null, true),
         Scenario.of("diag-broadcast", ReOrgOp.DIAG.toString(), Map.of(), List.of(FType.BROADCAST),
-            ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.BROADCAST_CONSTRAINT, null, false),
+            ExecType.FED, FederatedOutput.FOUT, true, FType.BROADCAST, ReasonCode.OK, null, true),
         Scenario.of("rev-guard-fail", ReOrgOp.REV.toString(), Map.of("rc.guardOverride", "false"), List.of(FType.ROW),
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.REPR_CHANGE_GUARD_FAIL, "override=false", false));
     runScenarios(scenarios);
@@ -63,7 +64,7 @@ public class RulesetsReorgTest {
     OpSig sig = OpSig.of(ReOrgOp.TRANS.toString(), rule.category(), Map.of(), InputKind.MATRIX);
     List<List<FType>> candidates = List.of(List.of(FType.ROW, FType.COL));
     List<FType> outs = rule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
-    assertEquals(List.of(FType.ROW, FType.COL), outs);
+    assertEquals(List.of(FType.COL, FType.ROW), outs);
   }
 
   @Test
@@ -71,7 +72,7 @@ public class RulesetsReorgTest {
     OpSig sig = OpSig.of(ReOrgOp.DIAG.toString(), rule.category(), Map.of(), InputKind.MATRIX);
     List<List<FType>> candidates = List.of(List.of(FType.COL, FType.ROW));
     List<FType> outs = rule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
-    assertEquals(List.of(FType.COL, FType.ROW), outs);
+    assertEquals(List.of(FType.ROW, FType.COL), outs);
   }
 
   private void runScenarios(List<Scenario> scenarios) {

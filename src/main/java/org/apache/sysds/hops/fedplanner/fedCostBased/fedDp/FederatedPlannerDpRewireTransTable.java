@@ -1037,12 +1037,15 @@ public class FederatedPlannerDpRewireTransTable {
 									TransTableRewireUtils.mapFunctionInputsToFormerTransTable(
 											inputArgs, inputHops, rewireTable, newFormerTransTable);
 
+									try (FederatedPlannerUtils.ScopedFedVarOverride ignored =
+											FederatedPlannerUtils.scopedFedVarsForFunctionCall(inputArgs, inputHops)) {
 										functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
 												rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
 												privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet,
 												fnStack, injectedIds, functionTransTableCache, computeWeight,
 												networkWeight,
 												multiplicity, loopStack, unrollDepth, maxUnrollDepth, null, loopCtx, unrollCtx);
+									}
 									if (functionTransTable != null) {
 										functionTransTableCache.put(fkey, functionTransTable);
 									}

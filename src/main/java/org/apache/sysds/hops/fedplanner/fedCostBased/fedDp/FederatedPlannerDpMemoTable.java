@@ -336,6 +336,22 @@ public class FederatedPlannerDpMemoTable {
 	 * It uses HopCommon to store common properties and costs related to the Hop.
 	 */
 	public static class FedPlanVariants {
+		/**
+		 * Maximum number of plan variants to retain per output type (LOUT/FOUT) after pruning.
+		 *
+		 * <p>DP enumerates multiple variants that differ in (a) exec type (CP vs FED) and
+		 * (b) child output signatures (which children are LOUT vs FOUT). Downstream rewrite
+		 * stages (e.g., clone-set output conflict resolution) may later select a different
+		 * child-output decision than the cheapest variant. If pruning retains only a single
+		 * CP and single FED plan, the cheapest CP plan can become incompatible with the
+		 * chosen child decisions, forcing selection of a more expensive FED plan and
+		 * causing performance regressions (observed in kmeans WAN-mid at hop 364).</p>
+		 *
+		 * <p>We therefore retain the top-K cheapest variants (bounded), while still ensuring
+		 * at least one CP and one FED variant remain available for conflict resolution.</p>
+		 */
+		private static final int MAX_PRUNED_VARIANTS_PER_OUTPUT = 8;
+
 		protected HopCommon hopCommon; // Common properties and costs for the Hop
 		private final FederatedOutput fedOutType; // Output type (FOUT/LOUT)
 		protected List<FedPlan> _fedPlanVariants; // List of plan variants
@@ -371,30 +387,39 @@ public class FederatedPlannerDpMemoTable {
 			if (_fedPlanVariants.isEmpty())
 				return false;
 
-			// Keep one CP and one FED plan (if present) so downstream conflict
-			// resolution can switch execution types without needing to re-enumerate.
-			// This is a bounded alternative to retaining the full variant set.
+			_fedPlanVariants.removeIf(p -> p == null || p.getExecType() == null);
+			if (_fedPlanVariants.isEmpty())
+				return false;
+
+			// Sort once by cumulative cost (stable in Java's TimSort implementation).
+			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
+
 			FedPlan bestCP = null;
 			FedPlan bestFED = null;
 			for (FedPlan plan : _fedPlanVariants) {
-				if (plan == null || plan.getExecType() == null)
-					continue;
-				if (plan.getExecType() == ExecType.CP) {
-					if (bestCP == null || plan.getCumulativeCost() < bestCP.getCumulativeCost())
-						bestCP = plan;
-				}
-				else if (plan.getExecType() == ExecType.FED) {
-					if (bestFED == null || plan.getCumulativeCost() < bestFED.getCumulativeCost())
-						bestFED = plan;
-				}
+				if (bestCP == null && plan.getExecType() == ExecType.CP)
+					bestCP = plan;
+				if (bestFED == null && plan.getExecType() == ExecType.FED)
+					bestFED = plan;
+				if (bestCP != null && bestFED != null)
+					break;
 			}
 
-			_fedPlanVariants.clear();
+			// Keep the top-K cheapest variants, plus ensure one CP and one FED remain.
+			LinkedHashSet<FedPlan> kept = new LinkedHashSet<>();
+			int cap = Math.max(2, MAX_PRUNED_VARIANTS_PER_OUTPUT);
+			for (FedPlan plan : _fedPlanVariants) {
+				if (kept.size() >= cap)
+					break;
+				kept.add(plan);
+			}
 			if (bestCP != null)
-				_fedPlanVariants.add(bestCP);
-			if (bestFED != null && bestFED != bestCP)
-				_fedPlanVariants.add(bestFED);
+				kept.add(bestCP);
+			if (bestFED != null)
+				kept.add(bestFED);
 
+			_fedPlanVariants.clear();
+			_fedPlanVariants.addAll(kept);
 			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
 			return true;
 		}

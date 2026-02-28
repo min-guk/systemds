@@ -233,23 +233,22 @@ public class FederatedPlanMinSTGraph {
 			// FederationMap.execute iterates over workers and FederatedData.executeFederatedOperation()
 			// performs a (blocking) connect+send per worker. This overhead scales with the
 			// number of workers and is the dominant factor for "many small" FED ops in WAN.
-			// Model this as: networkWeight * (per-message overhead) * numWorkers.
-			fedOverhead = vertex.getNetworkWeight()
+			// DP parity: this overhead follows the hop's execution frequency (compute weight),
+			// not the parent-child forwarding weight. DP uses HopCommon.computeWeight*multiplicity
+			// (networkWeight equals computeWeight in DP rewire), which corresponds to Vertex.opWeight here.
+			// Model this as: opWeight * (per-message overhead) * numWorkers.
+			fedOverhead = vertex.getOpWeight()
 					* FederatedCostModel.computeNetworkCost(0)
 					* Math.max(1, numOfWorkers);
 		}
-			double fedCost = cpCost / Math.max(1, numOfWorkers) + fedOverhead;
-			if (numOfWorkers <= 1) {
-				Hop hopRef = vertex.getHopRef();
-				boolean isFedInit = hopRef instanceof DataOp
-						&& ((DataOp) hopRef).getOp() == Types.OpOpData.FEDERATED;
-				double ctrlMs = getConfiguredLocalToFedCtrlOverheadMs();
-				boolean cpAllowed = caps.allowCP_LOUT || caps.allowCP_FOUT;
-				if (!isFedInit
-						&& cpAllowed
-						&& ctrlMs > SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS)
-					fedCost += SINGLE_WORKER_FED_EXEC_PENALTY;
-			}
+		// DP parity: conservatively model FED compute scaling for elementwise BinaryOps.
+		// For many small elementwise operations, real-world speedups are far from linear in
+		// the number of workers due to per-site overheads and representation effects.
+		// DP therefore avoids dividing BinaryOp compute cost by numWorkers; keep MinST aligned.
+		double fedComputeCost = (vertex.getHopRef() instanceof BinaryOp)
+				? cpCost
+				: cpCost / Math.max(1, numOfWorkers);
+		double fedCost = fedComputeCost + fedOverhead;
 
 		if (!acL && !acF)
 			cpCost = HARD_INF;

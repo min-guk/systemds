@@ -43,7 +43,13 @@ final class FEDLocalMaterializeUtil {
 	}
 
 	static FType normalizeReplicatedMapType(FType materializeType, FType mapType, int workers) {
-		if (materializeType == FType.FULL && mapType == FType.FULL && workers > 1)
+		// If we materialize via FULL broadcast, every worker receives the entire object,
+		// which is semantically replicated (BROADCAST) regardless of worker count.
+		//
+		// Keeping FULL for a single-worker pool causes downstream FED ops to treat the
+		// value as non-broadcast and can trigger expensive fallback paths (e.g., FULL
+		// alignment checks leading to GET+PUT of large matrices).
+		if (materializeType == FType.FULL && mapType == FType.FULL)
 			return FType.BROADCAST;
 		return mapType;
 	}

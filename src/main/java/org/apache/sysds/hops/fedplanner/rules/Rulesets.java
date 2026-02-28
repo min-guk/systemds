@@ -1337,12 +1337,20 @@ public final class Rulesets {
           outs.add(FType.COL);
         if (inputs.contains(FType.COL))
           outs.add(FType.ROW);
+        if (inputs.contains(FType.FULL))
+          outs.add(FType.FULL);
+        if (inputs.contains(FType.BROADCAST))
+          outs.add(FType.BROADCAST);
       }
       else if (isRev || isRoll || isDiag) {
         if (inputs.contains(FType.ROW))
           outs.add(FType.ROW);
         if (inputs.contains(FType.COL))
           outs.add(FType.COL);
+        if (inputs.contains(FType.FULL))
+          outs.add(FType.FULL);
+        if (inputs.contains(FType.BROADCAST))
+          outs.add(FType.BROADCAST);
       }
       return profileOf(outs);
     }
@@ -1373,15 +1381,17 @@ public final class Rulesets {
       FType in = typeAt(inFTypes, 0);
       if (in == null)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
-      if (in == FType.BROADCAST)
-        return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-      if (in == FType.PART || in == FType.FULL)
+      if (in == FType.PART)
         return axisOnlyCp(sig);
-      if (!isAxis(in))
+      // FULL/BROADCAST are runtime-supported and keep their mapping under transpose/rev/roll/diag.
+      if (!(isAxis(in) || in == FType.FULL || in == FType.BROADCAST))
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
 
       FType outAxis;
-      if (isTrans) {
+      if (in == FType.FULL || in == FType.BROADCAST) {
+        outAxis = in;
+      }
+      else if (isTrans) {
         outAxis = (in == FType.ROW) ? FType.COL : FType.ROW;
       }
       else if (isRev || isRoll || isDiag) {
@@ -1427,8 +1437,11 @@ public final class Rulesets {
     }
 
     private static String infoNoteFor(String opcode, FType inAxis) {
-      if (ReOrgOp.TRANS.toString().equals(opcode))
-        return "axis flipped ROW↔COL";
+      if (ReOrgOp.TRANS.toString().equals(opcode)) {
+        if (inAxis == FType.ROW || inAxis == FType.COL)
+          return "axis flipped ROW↔COL";
+        return "mapping preserved (FULL/BROADCAST)";
+      }
       if (ReOrgOp.REV.toString().equals(opcode))
         return (inAxis == FType.ROW) ? "ROW mapping reversed on workers" : null;
       if (ReOrgOp.ROLL.toString().equals(opcode))
@@ -2287,7 +2300,12 @@ public final class Rulesets {
         return FTypeProfile.empty();
 
       for (FType cand : inputs) {
-        if (cand != null && axisMatch(cand, dir))
+        if (cand == null)
+          continue;
+        // BROADCAST/FULL are runtime-supported and preserve their mapping on output.
+        if (cand == FType.BROADCAST || cand == FType.FULL)
+          return FTypeProfile.ofOutput(List.of(cand));
+        if (axisMatch(cand, dir))
           return FTypeProfile.ofOutput(List.of(cand));
       }
       return FTypeProfile.empty();
@@ -2310,6 +2328,10 @@ public final class Rulesets {
 
       if (isScalarOutput(dir, hint))
         return fedLocalCaps(sig, ReasonCode.SCALAR_CANNOT_BE_FEDERATED);
+
+      // Runtime supports BROADCAST/FULL and preserves mapping semantics on output.
+      if (in == FType.BROADCAST || in == FType.FULL)
+        return fedFoutCaps(sig, in, ReasonCode.OK);
 
       if (!isAxis(in))
         return cpCaps(sig, ReasonCode.NON_ALIGNED_INPUT_FTYPE);
@@ -2420,6 +2442,8 @@ public final class Rulesets {
         "TSMM supports only LEFT with ROW or RIGHT with COL partitioned X (per TsmmFEDInstruction)";
     private static final String TSMM_AGG_NOTE =
         "per-partition Gram aggregated to driver";
+    private static final String TSMM_FORCED_BC_NOTE =
+        "forced FOUT via broadcasted output (runtime executes tsmm on worker(s) then broadcasts result)";
 
     @Override public OpCategory category() { return OpCategory.TSMM; }
     @Override public Set<String> opcodes() { return OPCODES; }
@@ -2453,7 +2477,7 @@ public final class Rulesets {
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (x == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-      if (x == FType.FULL || x == FType.PART) {
+      if (x == FType.PART) {
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
@@ -2473,7 +2497,26 @@ public final class Rulesets {
       if (!left && !right)
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
 
-      boolean axisOK = (left && x == FType.ROW) || (right && x == FType.COL);
+      // FULL is only supported for TSMM when it represents a single federated range
+      // (e.g., worker=1). Treat unknown as multi-range for safety.
+      boolean fullSingle = x == FType.FULL
+          && hint != null
+          && hint.fullSinglePartition().orElse(false);
+
+      if (x == FType.FULL && !fullSingle) {
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            
+            .reason(ReasonCode.PARTITION_FORBIDDEN)
+            .detail(TSMM_AXIS_ONLY_DETAIL)
+            .build();
+      }
+
+      boolean axisOK = (left && (x == FType.ROW || x == FType.FULL))
+          || (right && (x == FType.COL || x == FType.FULL));
       if (!axisOK) {
         return OpCaps.newBuilder()
             .category(sig.category())
@@ -2486,13 +2529,35 @@ public final class Rulesets {
             .build();
       }
 
+      boolean forceFout = "true".equalsIgnoreCase(attrValue(sig, "force_fout"))
+          || "FORCED".equalsIgnoreCase(attrValue(sig, "tsmm.fedOut"));
+      if (forceFout) {
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
+            .fout(true, FType.BROADCAST)
+            .reason(ReasonCode.OK)
+            .note(ReasonCode.INFO, TSMM_FORCED_BC_NOTE);
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
+      }
+
       return OpCaps.newBuilder()
           .category(sig.category())
           .opcode(sig.opcode())
           .exec(ExecType.FED)
           .placement(FederatedOutput.LOUT)
           
-          .reason(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME)
+          .reason(ReasonCode.OK)
           .note(ReasonCode.INFO, TSMM_AGG_NOTE)
           .build();
     }
@@ -2673,11 +2738,18 @@ public final class Rulesets {
       if (isTsmmType(tsmmType)) {
         if (inFTypes == null || inFTypes.isEmpty())
           return cpCaps(sig, ReasonCode.ARITY_MISMATCH);
-        return tsmmCaps(sig, normalize(typeAt(inFTypes, tsmmInputIndex(tsmmType))), tsmmType);
+        return tsmmCaps(sig, normalize(typeAt(inFTypes, tsmmInputIndex(tsmmType))), tsmmType, hint);
       }
 
       FType left = normalize(typeAt(inFTypes, 0));
       FType right = normalize(typeAt(inFTypes, 1));
+
+      // FULL represents a single-worker federated mapping. Runtime AggregateBinaryFEDInstruction can execute
+      // FULL x local and local x FULL by broadcasting the local side to the single federated worker.
+      // This case is critical for worker=1 plans (e.g., PCA), where disallowing FULL forces mixed CP/FED plans.
+      if ((left == FType.FULL && right == null) || (right == FType.FULL && left == null))
+        return fedLocalCaps(sig, ReasonCode.OK);
+
       if (!eligible(left, right))
         return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);
 
@@ -2718,12 +2790,27 @@ public final class Rulesets {
       return fedLocalCaps(sig, ReasonCode.OK);
     }
 
-    private static OpCaps tsmmCaps(OpSig sig, FType in, String tsmmType) {
+    private static OpCaps tsmmCaps(OpSig sig, FType in, String tsmmType, ShapeHint hint) {
       if (in == null)
         return cpCaps(sig, ReasonCode.NO_FED_INPUT);
       if (in == FType.BROADCAST)
         return cpCaps(sig, ReasonCode.BROADCAST_CONSTRAINT);
-      if (in == FType.FULL || in == FType.PART)
+      if (in == FType.PART)
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            .reason(ReasonCode.PARTITION_FORBIDDEN)
+            .detail(TSMM_AXIS_ONLY_DETAIL)
+            .build();
+
+      // FULL is only supported for TSMM when it represents a single federated range.
+      // Treat unknown as multi-range for safety.
+      boolean fullSingle = in == FType.FULL
+          && hint != null
+          && hint.fullSinglePartition().orElse(false);
+      if (in == FType.FULL && !fullSingle)
         return OpCaps.newBuilder()
             .category(sig.category())
             .opcode(sig.opcode())
@@ -2738,7 +2825,8 @@ public final class Rulesets {
       if (!left && !right)
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
 
-      boolean axisOK = (left && in == FType.ROW) || (right && in == FType.COL);
+      boolean axisOK = (left && (in == FType.ROW || in == FType.FULL))
+          || (right && (in == FType.COL || in == FType.FULL));
       if (!axisOK)
         return OpCaps.newBuilder()
             .category(sig.category())

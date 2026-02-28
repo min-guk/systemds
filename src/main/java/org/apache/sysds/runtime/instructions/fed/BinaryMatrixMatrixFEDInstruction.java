@@ -92,7 +92,20 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 		//execute federated operation on mo1 or mo2
 		FederatedRequest fr2 = null;
 		Future<FederatedResponse>[] ffr = null;
-		if( mo2.isFederatedExcept(FType.BROADCAST) ) {
+		// FULL(single-partition) inputs are co-located on a single worker. Even if their
+		// ranges are not "aligned" (e.g., matrix + rowVector), we must not fall back to
+		// expensive broadcastSliced paths that materialize large federated matrices on
+		// the driver. Execute the instruction directly on that worker pool.
+		if( mo1.isFederated(FType.FULL) && mo2.isFederated(FType.FULL)
+			&& mo1.getFedMapping().getSize() == 1 && mo2.getFedMapping().getSize() == 1
+			&& isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()) )
+		{
+			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, true);
+			ffr = mo1.getFedMapping().execute(getTID(), true, fr2);
+			fedMo = mo1.getMO();
+		}
+		else if( mo2.isFederatedExcept(FType.BROADCAST) ) {
 			if(mo1.isFederated() && mo1.getFedMapping().isAligned(mo2.getFedMapping(),
 				mo1.isFederated(FType.ROW) ? AlignType.ROW : AlignType.COL)) {
 				fr2 = FederationUtils.callInstruction(instString, output,

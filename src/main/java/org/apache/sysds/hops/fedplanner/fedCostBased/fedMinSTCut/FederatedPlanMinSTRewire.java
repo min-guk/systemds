@@ -728,11 +728,14 @@ public class FederatedPlanMinSTRewire {
 									TransTableRewireUtils.mapFunctionInputsToFormerTransTable(
 											inputArgs, inputHops, rewireTable, newFormerTransTable);
 
+									try (FederatedPlannerUtils.ScopedFedVarOverride ignored =
+											FederatedPlannerUtils.scopedFedVarsForFunctionCall(inputArgs, inputHops)) {
 										functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
 												rewireTable, graph, outerTransTableList, newFormerTransTable,
 												privacyConstraintMap, fTypeMap, fedMap, unRefTwriteSet, unRefSet,
 												progRootHopSet, fnStack, injectedIds, functionTransTableCache,
 												computeWeight, networkWeight, loopStack, loopCtxStack, oracleFacade);
+									}
 									if (functionTransTable != null)
 										functionTransTableCache.put(fkey, functionTransTable);
 								}

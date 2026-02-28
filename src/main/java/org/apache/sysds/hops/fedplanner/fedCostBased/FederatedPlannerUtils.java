@@ -479,9 +479,11 @@ public class FederatedPlannerUtils {
 			if (signature != null)
 				FED_INIT_SIGNATURES.put(varName, signature);
 			if (signature != null) {
-				String key = signature;
-				if (fedInitFType != null)
-					key = key + "|" + fedInitFType.name();
+				// Signature-based anchor keys must carry a concrete FType suffix so runtime
+				// refederation can rebuild a worker-pool anchor from the literal key.
+				// If the fType is unknown at planning time, default to FULL (safe fallback).
+				FType effectiveType = (fedInitFType != null) ? fedInitFType : FType.FULL;
+				String key = signature + "|" + effectiveType.name();
 				registerFedAnchorKey(varName, key);
 			}
 		}
@@ -554,6 +556,153 @@ public class FederatedPlannerUtils {
 		FED_INIT_VARS.remove(varName);
 		FED_INIT_FTYPES.remove(varName);
 		FED_INIT_SIGNATURES.remove(varName);
+	}
+
+	/**
+	 * Scoped override for federated-init metadata keyed by variable name.
+	 *
+	 * <p>Function parameters in DML functions can legitimately share the same names as global
+	 * federated-init variables (e.g., {@code X}, {@code Y}). Using the global fed-init registries
+	 * by name inside callee rewiring can therefore produce invalid plans when the call-site
+	 * passes a local expression into a parameter that happens to share a global fed-init name.
+	 *
+	 * <p>This helper temporarily clears (and optionally re-registers) fed-init metadata for the
+	 * given parameter names based on the call-site argument hops, and restores the previous state
+	 * on {@link #close()}.</p>
+	 */
+	public static final class ScopedFedVarOverride implements AutoCloseable {
+		private final java.util.Map<String, FedVarState> _previous;
+		private boolean _closed = false;
+
+		private ScopedFedVarOverride(java.util.Map<String, FedVarState> previous) {
+			_previous = (previous != null) ? previous : java.util.Collections.emptyMap();
+		}
+
+		@Override
+		public void close() {
+			if (_closed)
+				return;
+			_closed = true;
+			for (java.util.Map.Entry<String, FedVarState> e : _previous.entrySet()) {
+				String varName = e.getKey();
+				FedVarState state = e.getValue();
+				removeFedAnchorKey(varName);
+				removeFedInitVar(varName);
+				if (state == null)
+					continue;
+				if (state.fedInit) {
+					registerFedInitVar(varName, state.fType, state.signature);
+				}
+				else if (state.anchorKey != null && !state.anchorKey.isEmpty()) {
+					registerFedAnchorKey(varName, state.anchorKey);
+				}
+			}
+		}
+	}
+
+	private static final class FedVarState {
+		private final boolean fedInit;
+		private final FType fType;
+		private final String signature;
+		private final String anchorKey;
+
+		private FedVarState(boolean fedInit, FType fType, String signature, String anchorKey) {
+			this.fedInit = fedInit;
+			this.fType = fType;
+			this.signature = signature;
+			this.anchorKey = anchorKey;
+		}
+	}
+
+	private static FedVarState captureFedVarState(String varName) {
+		boolean fedInit = isFedInitVar(varName);
+		FType fType = getFedInitFType(varName);
+		String sig = getFedInitSignature(varName);
+		String anchorKey = getFedAnchorKey(varName);
+		return new FedVarState(fedInit, fType, sig, anchorKey);
+	}
+
+	private static FedVarState deriveFedVarStateFromArgument(Hop argHop) {
+		if (argHop == null)
+			return null;
+		if (argHop instanceof DataOp) {
+			DataOp dataOp = (DataOp) argHop;
+			Types.OpOpData op = dataOp.getOp();
+			if (op == Types.OpOpData.FEDERATED) {
+				String name = dataOp.getName();
+				if (name == null || name.isEmpty())
+					return null;
+				FType fType = getFedInitFType(name);
+				String sig = getFedInitSignature(name);
+				if (sig == null)
+					sig = deriveFedInitSignature(dataOp);
+				if (fType == null)
+					fType = deriveFedInitFType(dataOp);
+				String anchorKey = getFedAnchorKey(name);
+				return new FedVarState(true, fType, sig, anchorKey);
+			}
+			if (op == Types.OpOpData.TRANSIENTREAD) {
+				String name = dataOp.getName();
+				if (name == null || name.isEmpty())
+					return null;
+				if (!isFedInitVar(name))
+					return null;
+				FType fType = getFedInitFType(name);
+				String sig = getFedInitSignature(name);
+				String anchorKey = getFedAnchorKey(name);
+				return new FedVarState(true, fType, sig, anchorKey);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Temporarily override fed-init metadata for the given function parameters based on their
+	 * call-site argument hops.
+	 *
+	 * <p>Only arguments that are known fed-init sources (FEDERATED op, or transient-read of a
+	 * registered fed-init var) are re-registered as fed-init parameters. All other parameters are
+	 * treated as non-fed-init for the duration of the scope.</p>
+	 */
+	public static ScopedFedVarOverride scopedFedVarsForFunctionCall(String[] paramNames, List<Hop> argHops) {
+		if (paramNames == null || paramNames.length == 0)
+			return new ScopedFedVarOverride(java.util.Collections.emptyMap());
+
+		final int n = (argHops == null) ? 0 : Math.min(paramNames.length, argHops.size());
+		java.util.Map<String, FedVarState> argStates = new java.util.HashMap<>();
+		for (int i = 0; i < n; i++) {
+			String param = paramNames[i];
+			if (param == null || param.isEmpty())
+				continue;
+			FedVarState state = deriveFedVarStateFromArgument(argHops.get(i));
+			if (state != null)
+				argStates.put(param, state);
+		}
+
+		java.util.Map<String, FedVarState> previous = new java.util.HashMap<>();
+		for (String param : paramNames) {
+			if (param == null || param.isEmpty())
+				continue;
+			previous.put(param, captureFedVarState(param));
+		}
+
+		for (String param : previous.keySet()) {
+			removeFedAnchorKey(param);
+			removeFedInitVar(param);
+		}
+
+		for (java.util.Map.Entry<String, FedVarState> e : argStates.entrySet()) {
+			String param = e.getKey();
+			FedVarState state = e.getValue();
+			if (state == null || !state.fedInit)
+				continue;
+			registerFedInitVar(param, state.fType, state.signature);
+			// If the argument had a stable non-VAR anchor key, keep it as well (best-effort).
+			if (state.anchorKey != null && !state.anchorKey.isEmpty())
+				registerFedAnchorKey(param, state.anchorKey);
+		}
+
+		return new ScopedFedVarOverride(previous);
 	}
 
 	public static void registerFedRmvarProtectedVar(String varName) {
@@ -643,13 +792,45 @@ public class FederatedPlannerUtils {
 		return varName;
 	}
 
+	/**
+	 * Best-effort count of distinct federated workers based on registered FED init signatures.
+	 *
+	 * <p>Signatures encode the address list as a semicolon-separated prefix up to the first '|'.</p>
+	 *
+	 * @return maximum number of worker addresses seen across known FED init variables (at least 1)
+	 */
+	public static int getMaxFedInitWorkers() {
+		int max = 0;
+		for (String signature : FED_INIT_SIGNATURES.values()) {
+			max = Math.max(max, countWorkersInSignature(signature));
+		}
+		return Math.max(1, max);
+	}
+
+	private static int countWorkersInSignature(String signature) {
+		if (signature == null || signature.isEmpty())
+			return 0;
+		int bar = signature.indexOf('|');
+		String addrPart = (bar >= 0) ? signature.substring(0, bar) : signature;
+		if (addrPart.isEmpty())
+			return 0;
+		int count = 0;
+		for (String tok : addrPart.split(";")) {
+			if (tok != null && !tok.isBlank())
+				count++;
+		}
+		return count;
+	}
+
 	public static FType deriveFedInitFType(DataOp fedInit) {
 		if (fedInit == null)
 			return null;
 		Hop ranges = fedInit.getInput(fedInit.getParameterIndex(DataExpression.FED_RANGES));
 		boolean rowPartitioned = true;
 		boolean colPartitioned = true;
+		int numRanges = 0;
 		for (int i = 0; i < ranges.getInput().size() / 2; i++) {
+			numRanges++;
 			Hop beg = ranges.getInput(2 * i);
 			Hop end = ranges.getInput(2 * i + 1);
 			long rl = HopRewriteUtils.getIntValueSafe(beg.getInput(0));
@@ -659,8 +840,11 @@ public class FederatedPlannerUtils {
 			rowPartitioned &= (cu - cl == fedInit.getDim2());
 			colPartitioned &= (ru - rl == fedInit.getDim1());
 		}
-		if (rowPartitioned && colPartitioned)
-			return FType.FULL;
+		if (rowPartitioned && colPartitioned) {
+			// If every range spans the full matrix and multiple ranges exist, the mapping
+			// is replicated (broadcast-like) rather than a single full partition.
+			return (numRanges > 1) ? FType.BROADCAST : FType.FULL;
+		}
 		if (rowPartitioned)
 			return FType.ROW;
 		if (colPartitioned)

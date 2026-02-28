@@ -76,6 +76,24 @@ public class BinaryMMTsmmRuleTest {
   }
 
   @Test
+  public void fullLeftLocalRightIsFedLout() {
+    OpCaps caps = rule.caps(sig(Map.of()), Arrays.asList(FType.FULL, null), UNKNOWN);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
+    assertFalse(caps.foutEnabled());
+    assertEquals(ReasonCode.OK, caps.reason());
+  }
+
+  @Test
+  public void localLeftFullRightIsFedLout() {
+    OpCaps caps = rule.caps(sig(Map.of()), Arrays.asList(null, FType.FULL), UNKNOWN);
+    assertEquals(ExecType.FED, caps.exec());
+    assertEquals(FederatedOutput.LOUT, caps.placement());
+    assertFalse(caps.foutEnabled());
+    assertEquals(ReasonCode.OK, caps.reason());
+  }
+
+  @Test
   public void colTAlignedColFullInputsAreFedLoutOnly() {
     OpCaps caps = rule.caps(sig(Map.of("align", "COL_T")), Arrays.asList(FType.COL, FType.FULL), UNKNOWN);
     assertEquals(ExecType.FED, caps.exec());
