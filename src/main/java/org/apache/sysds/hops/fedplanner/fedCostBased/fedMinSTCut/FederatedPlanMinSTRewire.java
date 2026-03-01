@@ -48,7 +48,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
@@ -1235,20 +1234,10 @@ public class FederatedPlanMinSTRewire {
 				}
 				ExecPlacementCaps federatedAlternativeCaps = deriveFederatedAlternativeCaps(
 					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
-				// Keep worker=1 AggBinary local restriction effective even when alternative FED candidates
-				// are derivable from promoted Oracle input hints, but only when forwarding penalty
-				// is high enough to disable federated-alternative fallback.
-				if (getConfiguredWorkerCount() == 1
-						&& hop instanceof AggBinaryOp
-						&& (privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
-						&& !shouldEnableFederatedAlternativeFallback(
-							hop, federatedAlternativeCaps, cpFoutType, numWorkersEstimate)) {
-					federatedAlternativeCaps = null;
-				}
-				if (federatedAlternativeCaps != null) {
-					caps.allowFED_LOUT |= federatedAlternativeCaps.allowFED_LOUT;
-					caps.allowFED_FOUT |= federatedAlternativeCaps.allowFED_FOUT;
-					if (caps.fedFoutMode == ExecPlacementCaps.FedFoutMode.DISABLED
+					if (federatedAlternativeCaps != null) {
+						caps.allowFED_LOUT |= federatedAlternativeCaps.allowFED_LOUT;
+						caps.allowFED_FOUT |= federatedAlternativeCaps.allowFED_FOUT;
+						if (caps.fedFoutMode == ExecPlacementCaps.FedFoutMode.DISABLED
 							&& federatedAlternativeCaps.allowFED_FOUT) {
 						caps.fedFoutMode = federatedAlternativeCaps.fedFoutMode;
 					}
@@ -1366,15 +1355,10 @@ public class FederatedPlanMinSTRewire {
 			return false;
 		if (!(federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT))
 			return false;
-		FType penaltyType = (cpFoutType != null) ? cpFoutType : FType.BROADCAST;
-		int fanout = Math.max(1, numWorkersEstimate);
-		double forwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
-				penaltyType, fanout);
-		// computeLocalToFedForwardingPenalty returns 0 for fanout<=1 by design, so add
-		// a latency-only network term to keep worker=1 decisions WAN-sensitive as well.
-		double baseNetworkPenalty = FederatedCostModel.computeNetworkCost(0.0);
-		double totalPenalty = forwardingPenalty + baseNetworkPenalty;
-		return totalPenalty <= FED_ALT_FALLBACK_MAX_CTRL_PENALTY_MS;
+		// Candidate expansion should be driven by feasibility (Oracle + FedInput checks) and then
+		// evaluated by the shared cost model, rather than applying planner-specific WAN/worker
+		// thresholds that can over-prune FED alternatives and force expensive CP downloads.
+		return true;
 	}
 
 	private static boolean shouldKeepFedAlternativeForPrivateTransientWrite(Hop hop, Privacy privacy,
