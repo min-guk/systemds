@@ -882,19 +882,71 @@ public class ExecutionContext {
 			for( Data dat2 : ((ListObject)dat).getData() )
 				cleanupDataObject(dat2);
 	}
+
+	/**
+	 * Federated matrices allocate and retain their actual data on remote workers. Clearing the local
+	 * {@link MatrixObject} metadata alone is insufficient and can lead to worker-side memory leaks
+	 * (e.g., long-running iterative programs like kmeans with many federated temporaries).
+	 *
+	 * We therefore explicitly remove federated variables on workers once they are no longer referenced
+	 * in the current symbol table. To avoid premature deletes in the presence of shared/reused fed IDs,
+	 * we conservatively skip cleanup if any remaining variable (including list members) still refers to
+	 * the same federated data ID.
+	 */
+	protected void cleanupFederatedData(CacheableData<?> dat) {
+		if (!(dat instanceof MatrixObject))
+			return;
+		MatrixObject mo = (MatrixObject) dat;
+		if (!mo.isFederated() || mo.getFedMapping() == null)
+			return;
+
+		long fedDataID = mo.getFedMapping().getID();
+		if (hasFederatedDataIDReference(fedDataID))
+			return;
+
+		// ensure no stale refed-reuse cache entries survive beyond worker-side deletes
+		FederationUtils.purgeRefedReuseCacheByFedDataID(fedDataID);
+		mo.getFedMapping().execCleanup(getTID(), fedDataID);
+	}
+
+	protected boolean hasFederatedDataIDReference(long fedDataID) {
+		if (fedDataID <= 0)
+			return false;
+		for (String var : _variables.keySet()) {
+			Data dat = _variables.get(var);
+			if (dat instanceof MatrixObject) {
+				MatrixObject mo = (MatrixObject) dat;
+				if (mo.isFederated() && mo.getFedMapping() != null && mo.getFedMapping().getID() == fedDataID)
+					return true;
+			}
+			else if (dat instanceof ListObject) {
+				for (Data item : ((ListObject) dat).getData()) {
+					if (item instanceof MatrixObject) {
+						MatrixObject mo = (MatrixObject) item;
+						if (mo.isFederated() && mo.getFedMapping() != null && mo.getFedMapping().getID() == fedDataID)
+							return true;
+					}
+				}
+			}
+		}
+		return false;
+	}
 	
 	public void cleanupCacheableData(CacheableData<?> mo) {
 		if (DMLScript.JMLC_MEM_STATISTICS)
 			Statistics.removeCPMemObject(System.identityHashCode(mo));
 		//early abort w/o scan of symbol table if no cleanup required
 		boolean fileExists = (mo.isHDFSFileExists() && mo.getFileName() != null);
-		if( !CacheableData.isCachingActive() && !fileExists )
+		boolean isFederated = (mo instanceof MatrixObject) && ((MatrixObject)mo).isFederated();
+		if( !CacheableData.isCachingActive() && !fileExists && !isFederated )
 			return;
 		
 		try {
 			//compute ref count only if matrix cleanup actually necessary
 			if ( mo.isCleanupEnabled() && !getVariables().hasReferences(mo) )  {
 				mo.clearData(getTID()); //clean cached data
+				if (isFederated)
+					cleanupFederatedData(mo);
 				if( fileExists ) {
 					HDFSTool.deleteFileIfExistOnHDFS(mo.getFileName());
 					HDFSTool.deleteFileIfExistOnHDFS(mo.getFileName()+".mtd");

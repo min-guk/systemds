@@ -1501,10 +1501,14 @@ public class SparkExecutionContext extends ExecutionContext
 		
 		try
 		{
+			boolean isFederated = (mo instanceof MatrixObject) && ((MatrixObject)mo).isFederated();
+
 			//compute ref count only if matrix cleanup actually necessary
 			if( !getVariables().hasReferences(mo) ) {
 				//clean cached data
 				mo.clearData(getTID());
+				if (isFederated)
+					cleanupFederatedData(mo);
 
 				//clean hdfs data if no pending rdd operations on it
 				if( mo.isHDFSFileExists() && mo.getFileName()!=null ) {

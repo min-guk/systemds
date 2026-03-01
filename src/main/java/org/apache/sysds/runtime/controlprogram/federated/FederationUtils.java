@@ -107,6 +107,21 @@ public class FederationUtils {
 		clearRefedReuseCache();
 	}
 
+	/**
+	 * Remove refed-reuse cache entries that refer to the given federated data ID.
+	 * <p>
+	 * This is required when worker-side federated variables are explicitly cleaned up (rmvar),
+	 * because otherwise stale cached federation maps could be reused later and reference deleted
+	 * variables on the workers.
+	 */
+	public static void purgeRefedReuseCacheByFedDataID(long fedDataID) {
+		if (fedDataID <= 0)
+			return;
+		synchronized (_refedReuseCache) {
+			_refedReuseCache.entrySet().removeIf(e -> e.getValue() != null && e.getValue().getID() == fedDataID);
+		}
+	}
+
 	public static long getNextFedDataID() {
 		return _idSeq.getNextID();
 	}
