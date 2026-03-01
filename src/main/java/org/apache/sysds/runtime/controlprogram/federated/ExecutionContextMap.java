@@ -31,12 +31,34 @@ import org.apache.sysds.runtime.controlprogram.context.ExecutionContextFactory;
 public class ExecutionContextMap {
 	private ExecutionContext _main;
 	private final Map<Long, ExecutionContext> _parEc;
+	/**
+	 * Serialize execution of federated requests per coordinator thread-id (tid).
+	 * <p>
+	 * Note that federated workers are stateful servers and requests can arrive
+	 * concurrently over independent Netty channels. The coordinator assumes
+	 * per-(PID,TID) request order without interleaving (e.g., PUT_VAR -> EXEC -> GET -> rmvar).
+	 * Interleaving those sequences across channels can corrupt the shared symbol
+	 * table and trigger issues such as missing variables or redundant releases.
+	 * <p>
+	 * We therefore provide a stable lock object per tid to allow the worker handler
+	 * to serialize request batches on the same (PID,TID) while still permitting
+	 * concurrency across different tids (e.g., remote parfor).
+	 */
+	private final Object _mainLock;
+	private final Map<Long, Object> _parLocks;
 	
 	public ExecutionContextMap() {
 		_main = createExecutionContext();
 		_parEc = new ConcurrentHashMap<>();
+		_mainLock = new Object();
+		_parLocks = new ConcurrentHashMap<>();
 	}
-	
+
+	public Object getLock(long tid) {
+		// all tid<=0 share the main execution context (and hence the same lock)
+		return (tid <= 0) ? _mainLock : _parLocks.computeIfAbsent(tid, k -> new Object());
+	}
+
 	public synchronized ExecutionContext get(long tid) {
 		//return main execution context
 		if( tid <= 0 )
@@ -57,6 +79,7 @@ public class ExecutionContextMap {
 			for( String varName : ec.getVariables().keySet() )
 				_main.cleanupDataObject(ec.removeVariable(varName));
 		_parEc.clear();
+		_parLocks.clear();
 	}
 
 	public synchronized void convertToSparkCtx() {

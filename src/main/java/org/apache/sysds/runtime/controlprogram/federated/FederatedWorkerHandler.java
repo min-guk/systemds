@@ -232,67 +232,73 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		var event = new EventModel();
 		final String coordinatorHostIdFormat = "%s-%d";
 		event.setCoordinatorHostId(String.format(coordinatorHostIdFormat, remoteHost, requests[0].getPID()));
-		for(int i = 0; i < requests.length; i++) {
-			final FederatedRequest request = requests[i];
-			final RequestType t = request.getType();
-			final ExecutionContextMap ecm = _flt.getECM(remoteHost, request.getPID());
-			logRequests(request, i, requests.length);
+		// Federated requests can arrive concurrently over independent network channels.
+		// Serialize processing per coordinator (PID,TID) to prevent cross-request interleaving
+		// of stateful symbol table mutations and cleanup (rmvar/releaseAcquiredData).
+		final long pid = requests[0].getPID();
+		final ExecutionContextMap ecm = _flt.getECM(remoteHost, pid);
+		synchronized(ecm.getLock(requests[0].getTID())) {
+			for(int i = 0; i < requests.length; i++) {
+				final FederatedRequest request = requests[i];
+				final RequestType t = request.getType();
+				logRequests(request, i, requests.length);
 
-			var eventStage = new EventStageModel();
-			// execute command and handle privacy constraints
-			final FederatedResponse tmp = executeCommand(request, ecm, eventStage);
+				var eventStage = new EventStageModel();
+				// execute command and handle privacy constraints
+				final FederatedResponse tmp = executeCommand(request, ecm, eventStage);
 
-			if (DMLScript.STATISTICS) {
-				var requestStat = new RequestModel(request.getType().name(), 1L);
-				requestStat.setCoordinatorHostId(String.format(coordinatorHostIdFormat, remoteHost, request.getPID()));
-				FederatedStatistics.addWorkerRequest(requestStat);
+				if (DMLScript.STATISTICS) {
+					var requestStat = new RequestModel(request.getType().name(), 1L);
+					requestStat.setCoordinatorHostId(String.format(coordinatorHostIdFormat, remoteHost, request.getPID()));
+					FederatedStatistics.addWorkerRequest(requestStat);
 
-				event.stages.add(eventStage);
-			}
+					event.stages.add(eventStage);
+				}
 
-			// select the response
-			if(!tmp.isSuccessful()) {
-				LOG.error("Command " + t + " resulted in error:\n" + tmp.getErrorMessage());
-				if (DMLScript.STATISTICS)
-					FederatedStatistics.addEvent(event);
-				return tmp; // Return first error without executing anything further
-			}
-			else if(t == RequestType.GET_VAR) {
-				// If any of the requests was a GET_VAR then set it as output.
-				if(response != null && numGETrequests > 0) {
-					String message = "Multiple GET_VAR are not supported in single batch of requests.";
-					LOG.error(message);
+				// select the response
+				if(!tmp.isSuccessful()) {
+					LOG.error("Command " + t + " resulted in error:\n" + tmp.getErrorMessage());
 					if (DMLScript.STATISTICS)
 						FederatedStatistics.addEvent(event);
-					throw new FederatedWorkerHandlerException(message);
+					return tmp; // Return first error without executing anything further
 				}
-				response = tmp;
-				numGETrequests ++;
-			}
-			else if(response == null
-				&& (t == RequestType.EXEC_INST || t == RequestType.EXEC_UDF)) {
-				// If there was no GET, use the EXEC INST or UDF to obtain the returned nnz
-				response = tmp;
-			}
-			else if(response == null && i == requests.length - 1) {
-				response = tmp; // return last
-			}
+				else if(t == RequestType.GET_VAR) {
+					// If any of the requests was a GET_VAR then set it as output.
+					if(response != null && numGETrequests > 0) {
+						String message = "Multiple GET_VAR are not supported in single batch of requests.";
+						LOG.error(message);
+						if (DMLScript.STATISTICS)
+							FederatedStatistics.addEvent(event);
+						throw new FederatedWorkerHandlerException(message);
+					}
+					response = tmp;
+					numGETrequests ++;
+				}
+				else if(response == null
+					&& (t == RequestType.EXEC_INST || t == RequestType.EXEC_UDF)) {
+					// If there was no GET, use the EXEC INST or UDF to obtain the returned nnz
+					response = tmp;
+				}
+				else if(response == null && i == requests.length - 1) {
+					response = tmp; // return last
+				}
 
-			if (DMLScript.STATISTICS) {
-				if(t == RequestType.PUT_VAR || t == RequestType.EXEC_UDF) {
-					for (int paramIndex = 0; paramIndex < request.getNumParams(); paramIndex++)
-						FederatedStatistics.incFedTransfer(request.getParam(paramIndex), _remoteAddress, request.getPID());
+				if (DMLScript.STATISTICS) {
+					if(t == RequestType.PUT_VAR || t == RequestType.EXEC_UDF) {
+						for (int paramIndex = 0; paramIndex < request.getNumParams(); paramIndex++)
+							FederatedStatistics.incFedTransfer(request.getParam(paramIndex), _remoteAddress, request.getPID());
+					}
+					if(t == RequestType.GET_VAR) {
+						var data = response.getData();
+						for (int dataObjIndex = 0; dataObjIndex < Arrays.stream(data).count(); dataObjIndex++)
+							FederatedStatistics.incFedTransfer(data[dataObjIndex], _remoteAddress, request.getPID());
+					}
 				}
-				if(t == RequestType.GET_VAR) {
-					var data = response.getData();
-					for (int dataObjIndex = 0; dataObjIndex < Arrays.stream(data).count(); dataObjIndex++)
-						FederatedStatistics.incFedTransfer(data[dataObjIndex], _remoteAddress, request.getPID());
-				}
-			}
 
-			if(t == RequestType.CLEAR) {
-				containsCLEAR = true;
-				clearReqPid = request.getPID();
+				if(t == RequestType.CLEAR) {
+					containsCLEAR = true;
+					clearReqPid = request.getPID();
+				}
 			}
 		}
 
