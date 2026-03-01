@@ -1227,7 +1227,7 @@ public class FederatedPlanMinSTRewire {
 				// legal under different materialization choices. Keep planning candidates complete by
 				// evaluating a local-only alternative and merging CP placements.
 				ExecPlacementCaps localAlternativeCaps = deriveLocalAlternativeCaps(
-					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
+					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap, graph);
 				if (localAlternativeCaps != null) {
 					caps.allowCP_LOUT |= localAlternativeCaps.allowCP_LOUT;
 					caps.allowCP_FOUT |= localAlternativeCaps.allowCP_FOUT;
@@ -1554,35 +1554,58 @@ public class FederatedPlanMinSTRewire {
 	private static ExecPlacementCaps deriveLocalAlternativeCaps(Hop hop, Privacy privacy,
 			List<Hop> inputHops, List<FType> oracleInputFTypes,
 			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable,
-			Map<Long, FType> fTypeMap) {
+			Map<Long, FType> fTypeMap, FederatedPlanMinSTGraph graph) {
 		if (hop == null || inputHops == null || inputHops.isEmpty()
 				|| oracleInputFTypes == null || oracleInputFTypes.size() != inputHops.size())
 			return null;
 		boolean hasFedHint = false;
-		boolean hasNullHint = false;
+		boolean hasRelaxableMatrixInput = false;
 		for (int i = 0; i < inputHops.size(); i++) {
 			Hop input = inputHops.get(i);
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
 				continue;
 			FType hint = oracleInputFTypes.get(i);
-			if (hint == null)
-				hasNullHint = true;
-			else
+			if (hint != null)
 				hasFedHint = true;
+			Vertex inputVertex = (graph != null) ? graph.getVertex(input.getHopID()) : null;
+			ExecPlacementCaps inputCaps = inputVertex != null ? inputVertex.getCaps() : null;
+			boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+			hasRelaxableMatrixInput |= inputMayBeLocal;
 		}
-		// If any matrix input is hinted as FED, also evaluate local-only hints so
-		// Oracle-driven FED selections do not suppress legal CP candidates.
-		if (!hasFedHint)
+		// If any matrix input is hinted as FED, also evaluate a local-only oracle view,
+		// but ONLY for inputs that can actually produce a local output in this planner.
+		//
+		// DP parity: inputs that are guaranteed to be FED/FOUT (e.g., FEDERATED DataOp)
+		// are never presented to the oracle as local (null). Relaxing such inputs here
+		// can incorrectly open CP candidates for ops that must stay federated and can
+		// lead to runtime capability mismatches (fed instruction expects federated input
+		// but receives local at runtime).
+		if (!hasFedHint || !hasRelaxableMatrixInput)
 			return null;
 
 		List<FType> localOnlyInputHints = new ArrayList<>(oracleInputFTypes.size());
+		boolean changed = false;
 		for (int i = 0; i < inputHops.size(); i++) {
 			Hop input = inputHops.get(i);
-			if (input != null && input.getDataType() != null && input.getDataType().isMatrix())
-				localOnlyInputHints.add(null);
-			else
+			if (input != null && input.getDataType() != null && input.getDataType().isMatrix()) {
+				Vertex inputVertex = (graph != null) ? graph.getVertex(input.getHopID()) : null;
+				ExecPlacementCaps inputCaps = inputVertex != null ? inputVertex.getCaps() : null;
+				boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
+				if (inputMayBeLocal) {
+					if (oracleInputFTypes.get(i) != null)
+						changed = true;
+					localOnlyInputHints.add(null);
+				}
+				else {
+					localOnlyInputHints.add(oracleInputFTypes.get(i));
+				}
+			}
+			else {
 				localOnlyInputHints.add(oracleInputFTypes.get(i));
+			}
 		}
+		if (!changed)
+			return null;
 		try {
 			OracleUtils.OracleDecision localOracleDecision = OracleUtils.decideWithOracle(
 				hop, privacy, inputHops, localOnlyInputHints, oracleFacade, null, rewireTable);
