@@ -167,7 +167,8 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 				new CPOperand[]{input1, input2},
 				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
 			if (_fedOut.isForcedFederated()) {
-				Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+				FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+				Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
 				setOutputFedMapping(mo1.getFedMapping(), mo1, mo2,
 					FederationUtils.sumNonZeros(ffr), fr2.getID(), ec);
 			}
@@ -205,9 +206,14 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			}
 			if((_fedOut.isForcedFederated() || (!isVector && !_fedOut.isForcedLocal()))
 				&& !isPartOut) { // not creating federated output in the MV case for reasons of performance
-				Future<FederatedResponse>[] ffr = (fr1 != null) ?
-					mo1.getFedMapping().execute(getTID(), true, fr1, fr2) :
-					mo1.getFedMapping().execute(getTID(), true, fr2);
+				Future<FederatedResponse>[] ffr = null;
+				if (fr1 != null) {
+					FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+					ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+				}
+				else {
+					ffr = mo1.getFedMapping().execute(getTID(), true, fr2);
+				}
 				setOutputFedMapping(mo1.getFedMapping(), mo1, mo2,
 					FederationUtils.sumNonZeros(ffr), fr2.getID(), ec);
 			}
@@ -257,13 +263,16 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 						new CPOperand[]{input1, input2},
 						new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
 					if (_fedOut.isForcedFederated()) {
-						Future<FederatedResponse>[] ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2);
+						FederatedRequest frC = mo2.getFedMapping().cleanup(getTID(), fr1.getID());
+						Future<FederatedResponse>[] ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
 						long nnz = -1;
 						try {
-							nnz = (Long) ffr[0].get().getData()[0];
+							Object[] data = ffr[0].get().getData();
+							if (data != null && data.length > 0 && data[0] instanceof Long)
+								nnz = (Long) data[0];
 						}
 						catch(Exception ex) {
-							nnz = -1;
+							throw new DMLRuntimeException(ex);
 						}
 						setOutputFedMapping(mo2.getFedMapping(), mo1, mo2, nnz, fr2.getID(), ec);
 					}
@@ -365,6 +374,31 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 	}
 
 	/**
+	 * Collect cleanup IDs for local materialization: always remove the output ID and, additionally,
+	 * any temporary PUT_VAR broadcast IDs (e.g., from broadcast/broadcastSliced) used in this request batch.
+	 * This prevents unbounded accumulation of broadcast temporaries on federated workers (e.g., in kmeans loops).
+	 */
+	private static long[] collectCleanupIDs(long callInstID, FederatedRequest[] frSliced, FederatedRequest... fr) {
+		java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+		ids.add(callInstID);
+		if (frSliced != null && frSliced.length > 0 && frSliced[0] != null
+			&& frSliced[0].getType() == RequestType.PUT_VAR) {
+			ids.add(frSliced[0].getID());
+		}
+		if (fr != null) {
+			for (FederatedRequest r : fr) {
+				if (r != null && r.getType() == RequestType.PUT_VAR)
+					ids.add(r.getID());
+			}
+		}
+		long[] ret = new long[ids.size()];
+		int i = 0;
+		for (Long id : ids)
+			ret[i++] = id;
+		return ret;
+	}
+
+	/**
 	 * Get the partial results and aggregate the partial results locally
 	 * @param fedMap the federated mapping
 	 * @param aggAdd indicates whether to aggregate the results by addition or binding
@@ -377,7 +411,7 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		FederatedRequest[] frSliced, FederatedRequest... fr) {
 		long callInstID = fr[fr.length - 1].getID();
 		FederatedRequest frG = new FederatedRequest(RequestType.GET_VAR, callInstID);
-		FederatedRequest frC = fedMap.cleanup(getTID(), callInstID);
+		FederatedRequest frC = fedMap.cleanup(getTID(), collectCleanupIDs(callInstID, frSliced, fr));
 		//execute federated operations and aggregate
 		Future<FederatedResponse>[] ffr;
 		if(frSliced != null)
@@ -403,7 +437,7 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		//create GET calls on output
 		long callInstID = fr[fr.length - 1].getID();
 		FederatedRequest frG = new FederatedRequest(RequestType.GET_VAR, callInstID);
-		FederatedRequest frC = fedMap.cleanup(getTID(), callInstID);
+		FederatedRequest frC = fedMap.cleanup(getTID(), collectCleanupIDs(callInstID, null, fr));
 		//execute federated operations
 		Future<FederatedResponse>[] ffr = fedMap.execute(getTID(), ArrayUtils.addAll(fr, frG, frC));
 		try {

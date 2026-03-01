@@ -845,13 +845,23 @@ public class FederationUtils {
 
 	public static long sumNonZeros(Future<FederatedResponse>[] responses) {
 		long nnz = 0;
-		try {
-			for( Future<FederatedResponse> r : responses)
-				nnz += (Long)r.get().getData()[0];
-			return nnz;
+		boolean allLong = true;
+		for(Future<FederatedResponse> r : responses) {
+			try {
+				Object[] data = r.get().getData(); // propagates federated worker errors
+				if(data == null || data.length == 0 || !(data[0] instanceof Long))
+					allLong = false;
+				else
+					nnz += (Long) data[0];
+			}
+			catch(Exception ex) {
+				// Do not silently swallow federated execution errors: otherwise callers may
+				// proceed with inconsistent fed mappings and fail later with confusing
+				// "variable does not exist" errors.
+				throw new DMLRuntimeException(ex);
+			}
 		}
-		catch(Exception ex) { }
-		return -1;
+		return allLong ? nnz : -1;
 	}
 
 	private static final class RefedReuseKey {
