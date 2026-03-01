@@ -233,11 +233,12 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		final String coordinatorHostIdFormat = "%s-%d";
 		event.setCoordinatorHostId(String.format(coordinatorHostIdFormat, remoteHost, requests[0].getPID()));
 		// Federated requests can arrive concurrently over independent network channels.
-		// Serialize processing per coordinator (PID,TID) to prevent cross-request interleaving
-		// of stateful symbol table mutations and cleanup (rmvar/releaseAcquiredData).
+		// Federated workers are stateful servers (shared ECM per coordinator PID), hence we
+		// must not allow cross-channel interleaving of request batches that mutate or clean
+		// up the shared symbol table (rmvar/releaseAcquiredData). We serialize per (host,PID).
 		final long pid = requests[0].getPID();
 		final ExecutionContextMap ecm = _flt.getECM(remoteHost, pid);
-		synchronized(ecm.getLock(requests[0].getTID())) {
+		synchronized(ecm) {
 			for(int i = 0; i < requests.length; i++) {
 				final FederatedRequest request = requests[i];
 				final RequestType t = request.getType();
