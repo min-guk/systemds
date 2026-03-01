@@ -155,6 +155,26 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 				aggregateLocally(mo2.getFedMapping(), true, ec, fr1, fr2);
 			}
 		}
+		// SPECIAL CASE: broadcast-left x local-right. Both operands will be identical on all workers
+		// after broadcasting the local RHS, so the result is replicated. Aggregating by binding would
+		// incorrectly stack identical results (e.g., W x N instead of 1 x N for kmeans centroid placer).
+		else if (mo1.isFederated(FType.BROADCAST) && !mo2.isFederated()) {
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] aggBinary branch=broadcastLeft_localRight_single");
+			}
+			FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
+			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1, input2},
+				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
+			if (_fedOut.isForcedFederated()) {
+				Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+				setOutputFedMapping(mo1.getFedMapping(), mo1, mo2,
+					FederationUtils.sumNonZeros(ffr), fr2.getID(), ec);
+			}
+			else {
+				aggregateLocallySingleWorker(mo1.getFedMapping(), ec, fr1, fr2);
+			}
+		}
 		else if(mo1.isFederated(FType.ROW)) { // MV + MM
 			if (DEBUG_KMEANS) {
 				System.out.println("[DBG-KMEANS] aggBinary branch=leftRow");
