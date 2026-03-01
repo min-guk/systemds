@@ -55,7 +55,7 @@ This document captures planner/runtime issues encountered and fixed during this 
 
 **패치 커밋**
 - `8ac4cc03f9` — initial attempt: serialize batches per (PID,TID) (helps kmeans but logreg w4 still flaky)
-- `<TBD>` — final: serialize batches per (host,PID) via `synchronized(ecm)` (fixes logreg w4 `Redundant release`)
+- `ca075fe948` — final: serialize batches per (host,PID) via `synchronized(ecm)` (fixes logreg w4 `Redundant release`)
 
 **검증**
 - Build:
