@@ -2746,8 +2746,15 @@ public final class Rulesets {
 
       // FULL represents a single-worker federated mapping. Runtime AggregateBinaryFEDInstruction can execute
       // FULL x local and local x FULL by broadcasting the local side to the single federated worker.
-      // This case is critical for worker=1 plans (e.g., PCA), where disallowing FULL forces mixed CP/FED plans.
-      if ((left == FType.FULL && right == null) || (right == FType.FULL && left == null))
+      //
+      // Some planners (notably MinST) may conservatively model local/vector operands as BROADCAST
+      // (rather than null) even when the operand can be provided locally. Treat BROADCAST like a
+      // local operand for this special worker=1 FULL case to avoid planner/oracle divergence that
+      // forces expensive CP fallbacks (e.g., l2svm/pca worker=1).
+      // This change is shared (Oracle) and therefore applies fairly to both DP and MinST.
+      boolean rightLocalLike = (right == null) || (right == FType.BROADCAST);
+      boolean leftLocalLike = (left == null) || (left == FType.BROADCAST);
+      if ((left == FType.FULL && rightLocalLike) || (right == FType.FULL && leftLocalLike))
         return fedLocalCaps(sig, ReasonCode.OK);
 
       if (!eligible(left, right))

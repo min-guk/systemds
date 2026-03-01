@@ -78,6 +78,24 @@ public class RulesetsGuardTest {
   }
 
   @Test
+  public void mmFullBroadcastAllowedAsFedLocal() {
+    Rulesets.BinaryMMRule rule = new Rulesets.BinaryMMRule();
+    OpSig sig = sig(Opcodes.MMULT.toString(), OpCategory.BINARY_MM, Map.of());
+
+    OpCaps capsLeftFull = rule.caps(sig, List.of(FType.FULL, FType.BROADCAST), KNOWN_SHAPE);
+    assertEquals(ExecType.FED, capsLeftFull.exec());
+    assertEquals(FederatedOutput.LOUT, capsLeftFull.placement());
+    assertFalse(capsLeftFull.foutEnabled());
+    assertEquals(ReasonCode.OK, capsLeftFull.reason());
+
+    OpCaps capsRightFull = rule.caps(sig, List.of(FType.BROADCAST, FType.FULL), KNOWN_SHAPE);
+    assertEquals(ExecType.FED, capsRightFull.exec());
+    assertEquals(FederatedOutput.LOUT, capsRightFull.placement());
+    assertFalse(capsRightFull.foutEnabled());
+    assertEquals(ReasonCode.OK, capsRightFull.reason());
+  }
+
+  @Test
   public void appendWithoutHintsDefaultsToGuardUnknown() {
     Rulesets.AppendRule rule = new Rulesets.AppendRule();
     OpSig sig = sig(Opcodes.APPEND.toString(), OpCategory.APPEND, Map.of("cbind", "false"));
