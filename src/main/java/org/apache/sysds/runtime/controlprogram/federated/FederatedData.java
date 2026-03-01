@@ -515,10 +515,14 @@ public class FederatedData {
 	 * @return Future containing the federated response with privacy constraints
 	 */
 	public Future<FederatedResponse> requestPrivacyConstraints() {
-		if (!isInitialized())
-			throw new DMLRuntimeException("Cannot request privacy constraints from uninitialized federated data");
-		
-		FederatedRequest request = new FederatedRequest(RequestType.EXEC_UDF, _varID, new GetPrivacyConstraints(_filepath));
+		// NOTE: Requesting privacy constraints does not require an initialized federated variable:
+		// the GetPrivacyConstraints UDF has no input IDs and only reads the local metadata file.
+		//
+		// Avoid forcing READ_VAR initialization here, as doing so during planning would duplicate
+		// federated reads at runtime (planner-time init + runtime fedinit).
+		final long id = isInitialized() ? _varID : -1;
+		FederatedRequest request = new FederatedRequest(RequestType.EXEC_UDF, id,
+			new GetPrivacyConstraints(_filepath));
 		return executeFederatedOperation(request);
 	}
 

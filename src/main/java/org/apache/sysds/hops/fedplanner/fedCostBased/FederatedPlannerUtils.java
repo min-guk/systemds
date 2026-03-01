@@ -383,9 +383,16 @@ public class FederatedPlannerUtils {
 		for (FedWorkerContext wctx : localWorkers) {
 			if (hasLocalObject) // do not contact workers for local_matrix-fedinit (see above)
 				break;
+			// Best-effort: if the coordinator can access the worker-local file path (e.g., shared
+			// filesystem / docker bind mount), prefer local metadata parsing to avoid planner-time
+			// federated RPCs (READ_VAR + EXEC_UDF) that would otherwise be repeated at runtime.
+			String localFallback = tryLocalPrivacyFallback(wctx);
+			if (localFallback != null) {
+				privacyConstraint = mergePrivacyConstraint(privacyConstraint, localFallback);
+				continue;
+			}
+
 			FederatedData data = wctx.data;
-			if (!data.isInitialized())
-				data.initFederatedData(FederationUtils.getNextFedDataID());
 
 			Future<FederatedResponse> future = data.requestPrivacyConstraints();
 			try {
@@ -1065,7 +1072,7 @@ public class FederatedPlannerUtils {
 	}
 
 	private static String tryLocalPrivacyFallback(FedWorkerContext wctx) {
-		if (wctx == null || wctx.filePath == null || !isLocalHost(wctx.host))
+		if (wctx == null || wctx.filePath == null)
 			return null;
 		return readPrivacyConstraintsFromLocalMTD(wctx.filePath);
 	}
