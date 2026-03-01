@@ -28,11 +28,16 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
 
 import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -75,6 +80,21 @@ public class FederatedData {
 
 	/** Thread pool specific for the federated requests */
 	private static EventLoopGroup workerGroup = null;
+
+	/**
+	 * Client-side connection pool to federated workers.
+	 * <p>
+	 * Historically, we opened a fresh Netty connection for every federated request batch.
+	 * However, the federated runtime is stateful (per worker PID/TID) and relies on strict
+	 * request ordering (e.g., PUT_VAR -> EXEC -> GET -> rmvar). Using separate TCP connections
+	 * makes <i>arrival order</i> non-deterministic even if the coordinator issues requests in
+	 * program order, which can lead to missing variables and redundant releases on workers.
+	 * <p>
+	 * We therefore keep a persistent channel per (address, tid-key) and multiplex requests
+	 * over it, matching responses to requests by FIFO order. This preserves request ordering
+	 * without requiring planner-specific workarounds.
+	 */
+	private static final Map<ImmutablePair<InetSocketAddress, Long>, PooledConnection> pooledConnections = new ConcurrentHashMap<>();
 
 
 
@@ -199,46 +219,46 @@ public class FederatedData {
 	public synchronized static Future<FederatedResponse> executeFederatedOperation(InetSocketAddress address, int retry,
 		FederatedRequest... request) {
 		try {
-			final Bootstrap b = new Bootstrap();
 			if(workerGroup == null)
 				createWorkGroup();
-			b.group(workerGroup);
-			b.channel(NioSocketChannel.class);
-			final DataRequestHandler handler = new DataRequestHandler();
-			// Client Netty
 
-			b.handler(createChannel(address, handler));
-
-			ChannelFuture f = b.connect(address).sync();
-			Promise<FederatedResponse> promise = f.channel().eventLoop().newPromise();
-			handler.setPromise(promise);
-			f.channel().writeAndFlush(request);
-
-			return handler.getProm();
+			// All tid<=0 share the main execution context on federated workers and must therefore
+			// preserve strict request order. Use a stable tid-key for pooling connections.
+			final long tid = (request != null && request.length > 0) ? request[0].getTID() : 0;
+			final long tidKey = (tid <= 0) ? 0 : tid;
+			final ImmutablePair<InetSocketAddress, Long> key = ImmutablePair.of(address, tidKey);
+			final PooledConnection conn = pooledConnections.computeIfAbsent(key, k -> new PooledConnection(k, address));
+			return conn.send(request);
 		}
 		catch(Exception e) {
-			if(e instanceof ConnectException) {
-
+			if(isConnectException(e)) {
 				if(retry < 5) {
 					try {
 						// Increasing retry timeout
-						Thread.sleep(200 * retry);
+						Thread.sleep(200L * retry);
 					}
 					catch(Exception e2) {
 						throw new DMLRuntimeException(e);
 					}
 					return executeFederatedOperation(address, retry + 1, request);
 				}
-				else {
-					throw new DMLRuntimeException(e);
-				}
+				throw new DMLRuntimeException(e);
 			}
 			throw new DMLRuntimeException("Failed sending federated operation", e);
 		}
 	}
 
+	private static boolean isConnectException(Throwable t) {
+		while(t != null) {
+			if(t instanceof ConnectException)
+				return true;
+			t = t.getCause();
+		}
+		return false;
+	}
+
 	private static ChannelInitializer<SocketChannel> createChannel(InetSocketAddress address,
-		DataRequestHandler handler) {
+		ChannelInboundHandlerAdapter handler) {
 		final int timeout = ConfigurationManager.getFederatedTimeout();
 		final boolean ssl = ConfigurationManager.isFederatedSSL();
 
@@ -263,6 +283,105 @@ public class FederatedData {
 		};
 	}
 
+	private static class PooledConnection {
+		private final ImmutablePair<InetSocketAddress, Long> _key;
+		private final InetSocketAddress _address;
+		private final Object _connectLock = new Object();
+		private volatile Channel _channel;
+		private final Queue<Promise<FederatedResponse>> _pending = new ConcurrentLinkedQueue<>();
+
+		public PooledConnection(ImmutablePair<InetSocketAddress, Long> key, InetSocketAddress address) {
+			_key = key;
+			_address = address;
+		}
+
+		public Future<FederatedResponse> send(FederatedRequest... request) throws Exception {
+			final Channel ch = getOrCreateChannel();
+			final Promise<FederatedResponse> prom = ch.eventLoop().newPromise();
+			_pending.add(prom);
+
+			final ChannelFuture writeFuture = ch.writeAndFlush(request);
+			writeFuture.addListener(f -> {
+				if(!f.isSuccess()) {
+					_pending.remove(prom);
+					if(!prom.isDone())
+						prom.setFailure(f.cause());
+					invalidateChannel(ch);
+				}
+			});
+			return prom;
+		}
+
+		private Channel getOrCreateChannel() throws Exception {
+			Channel ch = _channel;
+			if(ch != null && ch.isActive())
+				return ch;
+			synchronized(_connectLock) {
+				ch = _channel;
+				if(ch != null && ch.isActive())
+					return ch;
+
+				final Bootstrap b = new Bootstrap();
+				b.group(workerGroup);
+				b.channel(NioSocketChannel.class);
+				b.handler(createChannel(_address, new PooledDataRequestHandler(this)));
+				final ChannelFuture f = b.connect(_address).sync();
+				_channel = f.channel();
+				return _channel;
+			}
+		}
+
+		private void invalidateChannel(Channel ch) {
+			// fail all pending promises (if any)
+			Promise<FederatedResponse> prom;
+			final DMLRuntimeException ex = new DMLRuntimeException("Federated response channel closed without a reply");
+			while((prom = _pending.poll()) != null) {
+				if(!prom.isDone())
+					prom.setFailure(ex);
+			}
+
+			// remove from pool so future requests reconnect
+			_channel = null;
+			pooledConnections.remove(_key, this);
+
+			if(ch != null)
+				ch.close();
+		}
+
+		private void completeNext(FederatedResponse res) {
+			final Promise<FederatedResponse> prom = _pending.poll();
+			if(prom == null) {
+				LOG.error("Received federated response without a pending request: " + res);
+				return;
+			}
+			prom.setSuccess(res);
+		}
+	}
+
+	private static class PooledDataRequestHandler extends ChannelInboundHandlerAdapter {
+		private final PooledConnection _conn;
+
+		public PooledDataRequestHandler(PooledConnection conn) {
+			_conn = conn;
+		}
+
+		@Override
+		public void channelRead(ChannelHandlerContext ctx, Object msg) {
+			_conn.completeNext((FederatedResponse) msg);
+		}
+
+		@Override
+		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+			LOG.error("Federated pooled request channel error", cause);
+			_conn.invalidateChannel(ctx.channel());
+		}
+
+		@Override
+		public void channelInactive(ChannelHandlerContext ctx) {
+			_conn.invalidateChannel(ctx.channel());
+		}
+	}
+
 	public static void clearFederatedWorkers() {
 		if(_allFedSites.isEmpty())
 			return;
@@ -281,8 +400,21 @@ public class FederatedData {
 			LOG.warn("Failed to execute CLEAR request on existing federated sites.", ex);
 		}
 		finally {
+			closePooledConnections();
 			resetFederatedSites();
 		}
+	}
+
+	private static void closePooledConnections() {
+		for(PooledConnection conn : pooledConnections.values()) {
+			try {
+				conn.invalidateChannel(null);
+			}
+			catch(Exception ignore) {
+				// ignore
+			}
+		}
+		pooledConnections.clear();
 	}
 
 
@@ -292,6 +424,7 @@ public class FederatedData {
 	}
 
 	public static void clearWorkGroup() {
+		closePooledConnections();
 		if(workerGroup != null)
 			workerGroup.shutdownGracefully();
 		workerGroup = null;

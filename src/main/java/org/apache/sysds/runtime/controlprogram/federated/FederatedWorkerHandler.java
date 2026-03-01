@@ -84,8 +84,6 @@ import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 import org.apache.sysds.utils.stats.ParamServStatistics;
 import org.apache.sysds.utils.stats.Timing;
 
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 
@@ -154,8 +152,16 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	public void channelRead(ChannelHandlerContext ctx, Object msg) {
 		if(LOG.isInfoEnabled())
 			LOG.info("Federated worker received request: " + msg.getClass().getName());
+		// Do NOT close the channel after every response. Federated requests can be
+		// multiplexed over a persistent connection to preserve strict request order
+		// (important for stateful worker-side execution contexts and cleanup).
 		ctx.writeAndFlush(createResponse(msg, ctx.channel().remoteAddress()))
-			.addListener(new CloseListener());
+			.addListener(f -> {
+				if(!f.isSuccess()) {
+					LOG.error("Federated worker write failed", f.cause());
+					ctx.close();
+				}
+			});
 	}
 
 	@Override
@@ -831,17 +837,6 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		return CompressConfig.valueOf(conf.getTextValue(DMLConfig.COMPRESSED_LINALG).toUpperCase()) == CompressConfig.TRUE;
 	}
 
-	private static class CloseListener implements ChannelFutureListener {
-		@Override
-		public void operationComplete(ChannelFuture channelFuture) throws InterruptedException {
-			if(!channelFuture.isSuccess()) {
-				LOG.error("Federated Worker Write failed");
-				channelFuture.channel().writeAndFlush(new FederatedResponse(ResponseType.ERROR,
-					new FederatedWorkerHandlerException("Error while sending response."))).channel().close().sync();
-			}
-			else {
-				channelFuture.channel().close().sync();
-			}
-		}
-	}
+	// NOTE: We intentionally keep channels open (no CloseListener). Channel lifecycle is
+	// managed by the coordinator-side connection pool and normal TCP teardown.
 }
