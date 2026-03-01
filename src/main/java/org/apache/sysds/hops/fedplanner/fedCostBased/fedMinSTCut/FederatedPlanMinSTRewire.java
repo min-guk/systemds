@@ -1168,22 +1168,17 @@ public class FederatedPlanMinSTRewire {
 				}
 				oracleInputFTypes.add(oracleInputFType);
 			}
-			// For protected aggregate matmul: if any matrix input is local-only without a concrete
-			// materialization path, avoid mixed FED/local hints that lead to repeated per-iteration refed.
-			// Force Oracle re-evaluation with local inputs to keep this hop on CP unless all matrix inputs
-			// are concretely federatable.
-			if (hop instanceof AggBinaryOp
-				&& privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC
-				&& hasNonConcreteLocalMatrixInput
-				&& ((hop.getParent() != null && hop.getParent().size() > 2)
-					|| hasSubtractiveLocalMatrixInput)
-				&& hasFederatedHintInput) {
-				for (int i = 0; i < collectedHopList.size() && i < oracleInputFTypes.size(); i++) {
-					Hop input = collectedHopList.get(i);
-					if (input != null && input.getDataType() != null && input.getDataType().isMatrix())
-						oracleInputFTypes.set(i, null);
-				}
-			}
+			// NOTE: We intentionally do NOT null-out oracle input hints for AggBinaryOp (ba+*) in the
+			// PRIVATE_AGGREGATE_TO_PUBLIC setting.
+			//
+			// A previous "protected aggregate matmul" heuristic forced all matrix inputs to appear local
+			// (oracleInputFType=null) whenever mixed FED/local hints were detected. While this avoided
+			// certain per-iteration refed patterns, it also silently disabled valid FED/LOUT candidates
+			// (e.g., FULL×BROADCAST) and forced large CP downloads under WAN, causing severe regressions
+			// (notably l2svm worker=1).
+			//
+			// Per session strategy: avoid planner-specific candidate-space closures; instead fix shared
+			// cost-model/oracle estimation if repeated refed becomes an issue again.
 
 			OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
 				hop, privacy, collectedHopList, oracleInputFTypes,
