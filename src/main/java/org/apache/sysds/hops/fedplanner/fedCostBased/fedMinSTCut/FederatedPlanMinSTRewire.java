@@ -1091,9 +1091,9 @@ public class FederatedPlanMinSTRewire {
 							}
 						}
 						// For vector-like parents, be conservative on derived/refed inference, but always
-						// treat native FED/FOUT support as a concrete materialization path.
+						// treat *native* FED/FOUT support as a concrete materialization path.
 						// For non-vector parents, explicit child caps exposing a concrete FOUT path are safe.
-						boolean hasConcreteFoutPath = inputGuaranteedFout || inputCanRefed;
+						boolean hasConcreteFoutPath = inputGuaranteedFout || inputCanRefed || inputNativeFedFout;
 						if (!vectorParent)
 							hasConcreteFoutPath = hasConcreteFoutPath || inputHasConcreteFoutPath;
 						boolean hasParentUploadHint = graph.hasParentChildUploadHint(hop.getHopID(), input.getHopID());
