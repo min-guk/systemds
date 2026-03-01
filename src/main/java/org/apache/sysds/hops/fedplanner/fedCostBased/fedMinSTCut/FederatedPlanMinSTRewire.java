@@ -1227,7 +1227,7 @@ public class FederatedPlanMinSTRewire {
 				// legal under different materialization choices. Keep planning candidates complete by
 				// evaluating a local-only alternative and merging CP placements.
 				ExecPlacementCaps localAlternativeCaps = deriveLocalAlternativeCaps(
-					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap, graph);
+					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
 				if (localAlternativeCaps != null) {
 					caps.allowCP_LOUT |= localAlternativeCaps.allowCP_LOUT;
 					caps.allowCP_FOUT |= localAlternativeCaps.allowCP_FOUT;
@@ -1554,33 +1554,32 @@ public class FederatedPlanMinSTRewire {
 	private static ExecPlacementCaps deriveLocalAlternativeCaps(Hop hop, Privacy privacy,
 			List<Hop> inputHops, List<FType> oracleInputFTypes,
 			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable,
-			Map<Long, FType> fTypeMap, FederatedPlanMinSTGraph graph) {
+			Map<Long, FType> fTypeMap) {
 		if (hop == null || inputHops == null || inputHops.isEmpty()
 				|| oracleInputFTypes == null || oracleInputFTypes.size() != inputHops.size())
 			return null;
 		boolean hasFedHint = false;
-		boolean hasRelaxableMatrixInput = false;
 		for (int i = 0; i < inputHops.size(); i++) {
 			Hop input = inputHops.get(i);
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
 				continue;
 			FType hint = oracleInputFTypes.get(i);
-			if (hint != null)
+			if (hint != null) {
 				hasFedHint = true;
-			Vertex inputVertex = (graph != null) ? graph.getVertex(input.getHopID()) : null;
-			ExecPlacementCaps inputCaps = inputVertex != null ? inputVertex.getCaps() : null;
-			boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
-			hasRelaxableMatrixInput |= inputMayBeLocal;
+				break;
+			}
 		}
-		// If any matrix input is hinted as FED, also evaluate a local-only oracle view,
-		// but ONLY for inputs that can actually produce a local output in this planner.
+		// If any matrix input is hinted as FED, also evaluate a local-only oracle view.
 		//
-		// DP parity: inputs that are guaranteed to be FED/FOUT (e.g., FEDERATED DataOp)
-		// are never presented to the oracle as local (null). Relaxing such inputs here
-		// can incorrectly open CP candidates for ops that must stay federated and can
-		// lead to runtime capability mismatches (fed instruction expects federated input
-		// but receives local at runtime).
-		if (!hasFedHint || !hasRelaxableMatrixInput)
+		// Rationale:
+		// - Oracle decisions can over-constrain ops to FED-only when any input is hinted as federated,
+		//   even though a CP plan is legal via materialization (download) at runtime.
+		// - Gating this relaxation on the *current* input vertex caps is circular in MinST: the
+		//   input caps themselves depend on prior Oracle decisions and can eliminate CP candidates
+		//   needed to derive local alternatives in iterative/loop-heavy DAGs (e.g., l2svm worker=1).
+		// - Legality is still enforced by privacy constraints and downstream capability checks
+		//   (e.g., CP/FOUT anchor feasibility) when building exec/placement caps.
+		if (!hasFedHint)
 			return null;
 
 		List<FType> localOnlyInputHints = new ArrayList<>(oracleInputFTypes.size());
@@ -1588,17 +1587,9 @@ public class FederatedPlanMinSTRewire {
 		for (int i = 0; i < inputHops.size(); i++) {
 			Hop input = inputHops.get(i);
 			if (input != null && input.getDataType() != null && input.getDataType().isMatrix()) {
-				Vertex inputVertex = (graph != null) ? graph.getVertex(input.getHopID()) : null;
-				ExecPlacementCaps inputCaps = inputVertex != null ? inputVertex.getCaps() : null;
-				boolean inputMayBeLocal = inputCaps != null && (inputCaps.allowCP_LOUT || inputCaps.allowFED_LOUT);
-				if (inputMayBeLocal) {
-					if (oracleInputFTypes.get(i) != null)
-						changed = true;
-					localOnlyInputHints.add(null);
-				}
-				else {
-					localOnlyInputHints.add(oracleInputFTypes.get(i));
-				}
+				if (oracleInputFTypes.get(i) != null)
+					changed = true;
+				localOnlyInputHints.add(null);
 			}
 			else {
 				localOnlyInputHints.add(oracleInputFTypes.get(i));
