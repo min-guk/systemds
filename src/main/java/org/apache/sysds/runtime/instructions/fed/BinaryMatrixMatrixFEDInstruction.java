@@ -113,22 +113,24 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 					new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, true);
 				ffr = mo2.getFedMapping().execute(getTID(), true, fr2);
 			}
-			else {
-				FederatedRequest[] fr1 = mo2.getFedMapping().broadcastSliced(mo1, false);
-				fr2 = FederationUtils.callInstruction(instString, output,
-					new CPOperand[]{input1, input2},
-					new long[]{fr1[0].getID(), mo2.getFedMapping().getID()}, true);
-				ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2);
+				else {
+					FederatedRequest[] fr1 = mo2.getFedMapping().broadcastSliced(mo1, false);
+					fr2 = FederationUtils.callInstruction(instString, output,
+						new CPOperand[]{input1, input2},
+						new long[]{fr1[0].getID(), mo2.getFedMapping().getID()}, true);
+					FederatedRequest frC = mo2.getFedMapping().cleanup(getTID(), fr1[0].getID());
+					ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+				}
+				fedMo = mo2.getMO(); // for setting the output federated mapping afterwards
 			}
-			fedMo = mo2.getMO(); // for setting the output federated mapping afterwards
-		}
-		else if ( mo2.isFederated(FType.BROADCAST) && !mo1.isFederated() ){
-			FederatedRequest fr1 = mo2.getFedMapping().broadcast(mo1);
-			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
-				new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
-			ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2);
-			fedMo = mo2.getMO();
-		}
+			else if ( mo2.isFederated(FType.BROADCAST) && !mo1.isFederated() ){
+				FederatedRequest fr1 = mo2.getFedMapping().broadcast(mo1);
+				fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+					new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
+				FederatedRequest frC = mo2.getFedMapping().cleanup(getTID(), fr1.getID());
+				ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+				fedMo = mo2.getMO();
+			}
 		else if ( mo1.isFederatedExcept(FType.BROADCAST) && mo2.isFederated(FType.BROADCAST) ){
 			if (!isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()))
 				throw new DMLRuntimeException("FED binary op requires aligned worker pools for federated broadcast "
@@ -147,14 +149,15 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 			ffr = mo2.getFedMapping().execute(getTID(), true, fr2);
 			fedMo = mo2.getMO();
 		}
-		else if ( mo1.isFederated(FType.BROADCAST) && !mo2.isFederated() ){
-			// replicated lhs + local rhs -> broadcast rhs and execute on lhs workers
-			FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
-			fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
-				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
-			ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
-			fedMo = mo1.getMO();
-		}
+			else if ( mo1.isFederated(FType.BROADCAST) && !mo2.isFederated() ){
+				// replicated lhs + local rhs -> broadcast rhs and execute on lhs workers
+				FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
+				fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+					new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
+				FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+				fedMo = mo1.getMO();
+			}
 			else if ( mo1.isFederated(FType.BROADCAST) && mo2.isFederated(FType.BROADCAST)
 				&& isSameWorkerPool(mo1.getFedMapping(), mo2.getFedMapping()) ){
 				// replicated inputs -> execute on all (same result on each worker)
@@ -166,43 +169,47 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 		else { // matrix-matrix binary operations -> lhs fed input -> fed output
 			if(mo1.isFederated(FType.FULL) ) {
 				// full federated (row and col)
-				if(mo1.getFedMapping().getSize() == 1) {
-					// only one partition (MM on a single fed worker)
+					if(mo1.getFedMapping().getSize() == 1) {
+						// only one partition (MM on a single fed worker)
+						FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
+						fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+						new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
+						FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+						ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+					}
+					else {
+						throw new DMLRuntimeException("Matrix-matrix binary operations with a full partitioned federated input with multiple partitions are not supported yet.");
+					}
+				}
+				else if((mo1.isFederated(FType.ROW) && mo2.getNumRows() == 1)      //matrix-rowVect
+					|| (mo1.isFederated(FType.COL) && mo2.getNumColumns() == 1)) { //matrix-colVect
+					// MV row partitioned row vector, MV col partitioned col vector
 					FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
 					fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
 					new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
-					ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
+					FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+					ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+				}
+				else if((mo1.isFederated(FType.ROW) ^ mo1.isFederated(FType.COL))
+				 	|| (mo1.isFederated(FType.FULL) && mo1.getFedMapping().getSize() == 1)) {
+					// row partitioned MM or col partitioned MM
+					FederatedRequest[] fr1 = mo1.getFedMapping().broadcastSliced(mo2, false);
+					fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+						new long[]{mo1.getFedMapping().getID(), fr1[0].getID()}, true);
+					FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1[0].getID());
+					ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+				}
+				else if ( mo1.isFederated(FType.PART) && !mo2.isFederated() ){
+					FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
+					fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
+						new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
+					FederatedRequest frC = mo1.getFedMapping().cleanup(getTID(), fr1.getID());
+					ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
 				}
 				else {
-					throw new DMLRuntimeException("Matrix-matrix binary operations with a full partitioned federated input with multiple partitions are not supported yet.");
-				}
-			}
-			else if((mo1.isFederated(FType.ROW) && mo2.getNumRows() == 1)      //matrix-rowVect
-				|| (mo1.isFederated(FType.COL) && mo2.getNumColumns() == 1)) { //matrix-colVect
-				// MV row partitioned row vector, MV col partitioned col vector
-				FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
-				fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
-				new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
-				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
-			}
-			else if((mo1.isFederated(FType.ROW) ^ mo1.isFederated(FType.COL))
-			 	|| (mo1.isFederated(FType.FULL) && mo1.getFedMapping().getSize() == 1)) {
-				// row partitioned MM or col partitioned MM
-				FederatedRequest[] fr1 = mo1.getFedMapping().broadcastSliced(mo2, false);
-				fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
-					new long[]{mo1.getFedMapping().getID(), fr1[0].getID()}, true);
-				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
-			}
-			else if ( mo1.isFederated(FType.PART) && !mo2.isFederated() ){
-				FederatedRequest fr1 = mo1.getFedMapping().broadcast(mo2);
-				fr2 = FederationUtils.callInstruction(instString, output, new CPOperand[]{input1, input2},
-					new long[]{mo1.getFedMapping().getID(), fr1.getID()}, true);
-				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, fr2);
-			}
-			else {
-				throw new DMLRuntimeException("Matrix-matrix binary operations are only supported with a row partitioned "
-					+ "or column partitioned federated input yet. Input1=" + mo1.isFederated() + ":" + mo1.getFedMapping()
-					+ " Input2=" + mo2.isFederated() + ":" + mo2.getFedMapping());
+					throw new DMLRuntimeException("Matrix-matrix binary operations are only supported with a row partitioned "
+						+ "or column partitioned federated input yet. Input1=" + mo1.isFederated() + ":" + mo1.getFedMapping()
+						+ " Input2=" + mo2.isFederated() + ":" + mo2.getFedMapping());
 			}
 			fedMo = mo1.getMO(); // for setting the output federated mapping afterwards
 		}
