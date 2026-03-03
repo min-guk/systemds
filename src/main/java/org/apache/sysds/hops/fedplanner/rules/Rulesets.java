@@ -139,6 +139,14 @@ public final class Rulesets {
     return false;
   }
 
+  private static boolean isVectorDims(long rows, long cols) {
+    if (rows <= 0 || cols <= 0)
+      return false;
+    if (rows == 1 && cols == 1)
+      return false;
+    return rows == 1 || cols == 1;
+  }
+
   private static boolean isVectorHint(ShapeHint hint) {
     if (hint == null)
       return false;
@@ -186,6 +194,13 @@ public final class Rulesets {
       return false;
     if (hint == null)
       return true;
+    // Matrix-vector elementwise operations (e.g., X / rowVector) are not outer-product-like even
+    // when their *output* is a full matrix. Treat them as broadcastable and avoid pessimistic
+    // UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY fallbacks.
+    boolean aVec = isVectorDims(hint.rowsA(), hint.colsA());
+    boolean bVec = isVectorDims(hint.rowsB(), hint.colsB());
+    if (aVec ^ bVec)
+      return false;
     boolean rowsLarge = hint.rows() > 1 || hint.rows() == -1;
     boolean colsLarge = hint.cols() > 1 || hint.cols() == -1;
     return rowsLarge && colsLarge;
@@ -2860,7 +2875,10 @@ public final class Rulesets {
       if (types == null)
         return false;
       for (FType t : types) {
-        if (t == FType.ROW || t == FType.COL || t == FType.PART)
+        // FULL represents a single-worker federated mapping (one range spans the full matrix).
+        // Treat it as a federated input for profile inference; otherwise the oracle can
+        // incorrectly return NOT_FEDERATED_INPUTS for worker=1 FULL cases and force CP fallbacks.
+        if (t == FType.ROW || t == FType.COL || t == FType.PART || t == FType.FULL)
           return true;
       }
       return false;
@@ -2878,6 +2896,13 @@ public final class Rulesets {
   }
 
     private static boolean eligible(FType left, FType right) {
+      // FULL represents a single-worker federated mapping. Even without ROW/COL/PART partitioning,
+      // runtime can execute matrix multiplication federated by broadcasting the other operand to
+      // that single worker. Without treating FULL as eligible here, the oracle can return
+      // NOT_FEDERATED_INPUTS for FULL×(ROW/COL/...) combinations, causing planner/oracle divergence
+      // and expensive CP fallbacks (notably MinST worker=1 in kmeans/l2svm/pca).
+      if (left == FType.FULL || right == FType.FULL)
+        return true;
       if (isRowPartition(left) && isTrueFederated(left))
         return true;
       if (left == FType.COL && isTrueFederated(left))
@@ -3079,6 +3104,45 @@ public final class Rulesets {
           axis = FType.ROW;
         else if (matrixScalarPair(left, right, FType.COL))
           axis = FType.COL;
+      }
+
+      // Matrix-vector broadcasting: allow elementwise ops like X / rowVector to run FED by treating the
+      // vector input as broadcastable to the matrix's federated axis.
+      //
+      // This avoids CP fallbacks due to ROW/COL ftype mismatches for row/col vectors (e.g., PCA scale()).
+      if (axis == null && hasFedInput && !outerLike && hint != null) {
+        boolean leftVec = isVectorDims(hint.rowsA(), hint.colsA());
+        boolean rightVec = isVectorDims(hint.rowsB(), hint.colsB());
+        if (leftVec ^ rightVec) {
+          // (matrix ROW) op (rowVector 1 x cols)  ==> broadcast vector, keep ROW
+          if (!leftVec && rightVec
+              && matchesAxis(left, FType.ROW) && matchesAxis(right, FType.COL)
+              && hint.rowsB() == 1 && hint.colsB() > 1
+              && hint.colsA() > 0 && hint.colsB() == hint.colsA()) {
+            axis = FType.ROW;
+          }
+          // (matrix COL) op (colVector rows x 1) ==> broadcast vector, keep COL
+          else if (!leftVec && rightVec
+              && matchesAxis(left, FType.COL) && matchesAxis(right, FType.ROW)
+              && hint.colsB() == 1 && hint.rowsB() > 1
+              && hint.rowsA() > 0 && hint.rowsB() == hint.rowsA()) {
+            axis = FType.COL;
+          }
+          // (rowVector 1 x cols) op (matrix ROW)  ==> broadcast vector, keep ROW
+          else if (leftVec && !rightVec
+              && matchesAxis(right, FType.ROW) && matchesAxis(left, FType.COL)
+              && hint.rowsA() == 1 && hint.colsA() > 1
+              && hint.colsB() > 0 && hint.colsA() == hint.colsB()) {
+            axis = FType.ROW;
+          }
+          // (colVector rows x 1) op (matrix COL)  ==> broadcast vector, keep COL
+          else if (leftVec && !rightVec
+              && matchesAxis(right, FType.COL) && matchesAxis(left, FType.ROW)
+              && hint.colsA() == 1 && hint.rowsA() > 1
+              && hint.rowsB() > 0 && hint.rowsA() == hint.rowsB()) {
+            axis = FType.COL;
+          }
+        }
       }
 
       // FULL is a single-partition federated mapping (one worker holds the entire matrix).

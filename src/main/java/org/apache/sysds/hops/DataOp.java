@@ -40,8 +40,11 @@ import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.Sql;
 import org.apache.sysds.parser.DataExpression;
 import static org.apache.sysds.parser.DataExpression.FED_RANGES;
+import static org.apache.sysds.parser.DataExpression.FED_ADDRESSES;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
+import org.apache.sysds.runtime.meta.MetaDataAll;
+import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.util.LocalFileUtils;
 
 /**
@@ -50,6 +53,8 @@ import org.apache.sysds.runtime.util.LocalFileUtils;
  */
 public class DataOp extends Hop {
 	private static final Log LOG =  LogFactory.getLog(DataOp.class.getName());
+	private static final boolean DEBUG_FED_NNZ =
+			Boolean.parseBoolean(System.getProperty("sysds.debug.fednnz", "false"));
 	private OpOpData _op;
 	private String _fileName = null;
 	
@@ -501,18 +506,104 @@ public class DataOp extends Hop {
 		else if( _op == OpOpData.FEDERATED ) {
 			Hop ranges = getInput().get(getParameterIndex(FED_RANGES));
 			long nrow = -1, ncol = -1;
+			boolean literalRanges = true;
 			for( Hop c : ranges.getInput() ) {
-				if( !(c.getInput(0) instanceof LiteralOp && c.getInput(1) instanceof LiteralOp))
-					return; // invalid size inference if not all know.
+				if( !(c.getInput(0) instanceof LiteralOp && c.getInput(1) instanceof LiteralOp)) {
+					literalRanges = false;
+					break;
+				}
 				nrow = Math.max(nrow, HopRewriteUtils.getIntValueSafe(c.getInput(0)));
 				ncol = Math.max(ncol, HopRewriteUtils.getIntValueSafe(c.getInput(1)));
 			}
-			setDim1(nrow);
-			setDim2(ncol);
+			if( literalRanges ) {
+				setDim1(nrow);
+				setDim2(ncol);
+			}
+			else if( DEBUG_FED_NNZ ) {
+				// NOTE: Under SYSDS_QUIET=1, SystemDS logger output is typically suppressed.
+				// Use stdout to ensure visibility in coordinator logs for targeted debugging.
+				System.out.println("[FEDNNZ] ranges not literal for federated input " + getName()
+					+ "; skipping dim inference");
+			}
+			// Best-effort: infer federated NNZ from local metadata files when address literals
+			// include file paths accessible from the coordinator.
+			//
+			// Motivation: DP/MinST cost-based federated planners rely on Hop memory estimates.
+			// If federated inputs have unknown nnz, the compiler falls back to default sparsity
+			// assumptions, which can drastically under-estimate network/compute costs and lead
+			// to plans that are slower than heuristic/fedall (notably in kmeans/lm).
+			//
+			// This inference is intentionally best-effort: if paths are not accessible (real
+			// federated deployments), we keep nnz unknown (-1) and do not fail compilation.
+			long nnz = inferFederatedNnzFromAddresses();
+			if( nnz >= 0 ) {
+				setNnz(nnz);
+				if( DEBUG_FED_NNZ ) {
+					System.out.println("[FEDNNZ] inferred nnz=" + nnz + " for federated input " + getName()
+						+ " dims=" + getDim1() + "x" + getDim2());
+				}
+			}
+			else if( DEBUG_FED_NNZ ) {
+				System.out.println("[FEDNNZ] could not infer nnz for federated input " + getName()
+					+ " dims=" + getDim1() + "x" + getDim2());
+			}
 		}
 		else { //READ
 			//do nothing; dimensions updated via set output params
 		}
+	}
+
+	private long inferFederatedNnzFromAddresses() {
+		if( !hasParameter(FED_ADDRESSES) )
+			return -1;
+		int addrIx = getParameterIndex(FED_ADDRESSES);
+		if( addrIx < 0 || addrIx >= getInput().size() )
+			return -1;
+		Hop addressListHop = getInput().get(addrIx);
+		if( addressListHop == null || addressListHop.getInput() == null || addressListHop.getInput().isEmpty() )
+			return -1;
+
+		long total = 0;
+		for( Hop addressHop : addressListHop.getInput() ) {
+			if( !(addressHop instanceof LiteralOp) )
+				return -1;
+			String address = addressHop.getName();
+			if( address == null || address.isEmpty() )
+				return -1;
+			final String[] parsed;
+			try {
+				parsed = InitFEDInstruction.parseURL(address);
+			}
+			catch( Exception ex ) {
+				return -1;
+			}
+			if( parsed.length < 3 )
+				return -1;
+			String filePath = parsed[2];
+			if( filePath == null || filePath.isEmpty() )
+				return -1;
+			String mtdName = DataExpression.getMTDFileName(filePath);
+			MetaDataAll mtd = new MetaDataAll(mtdName, true, true);
+			if( !mtd.mtdExists() )
+				return -1;
+			long nnz = mtd.getNnz();
+			if( nnz < 0 )
+				return -1;
+			total += nnz;
+		}
+
+		// Clamp to the maximum possible nnz when dimensions are known.
+		if( getDim1() > 0 && getDim2() > 0 ) {
+			try {
+				long maxNnz = Math.multiplyExact(getDim1(), getDim2());
+				if( maxNnz > 0 )
+					total = Math.min(total, maxNnz);
+			}
+			catch( ArithmeticException ex ) {
+				// ignore overflow (leave unclamped)
+			}
+		}
+		return total;
 	}
 
 	

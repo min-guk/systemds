@@ -217,38 +217,69 @@ public class FederatedPlanMinSTGraph {
 		addCap(lId, cId, HARD_CONSTRAINT);
 	}
 
-	public void setVertexCost(Vertex vertex) {
-		long hopID = vertex.getHopID();
-		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
-		ExecPlacementCaps caps = vertex.getCaps();
+		public void setVertexCost(Vertex vertex) {
+			Hop hop = vertex.getHopRef();
+			long hopID = vertex.getHopID();
+			long cId = FederatedPlanMinSTPlanner.computeId(hopID);
+			ExecPlacementCaps caps = vertex.getCaps();
 		boolean acL = caps.allowCP_LOUT;
 		boolean acF = caps.allowCP_FOUT;
 		boolean afL = caps.allowFED_LOUT;
 		boolean afF = caps.allowFED_FOUT;
 
 		double cpCost = vertex.getOpCostWithWeight();
+		// DP/MinST parity: choosing CP-local for a concrete federated TRANSIENTREAD
+		// must pay federated->local materialization (runtime acquire_read path).
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			if (caps.allowCP_LOUT && caps.allowFED_FOUT
+					&& hop.getDim1() > 0 && hop.getDim2() > 0) {
+				cpCost += vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
+			}
+		}
 		double fedOverhead = 0.0;
 		if (!(vertex.getHopRef() instanceof DataOp)) {
-			// Federated execution incurs a per-worker coordination overhead at runtime:
-			// FederationMap.execute iterates over workers and FederatedData.executeFederatedOperation()
-			// performs a (blocking) connect+send per worker. This overhead scales with the
-			// number of workers and is the dominant factor for "many small" FED ops in WAN.
+			// Federated execution incurs a coordination overhead at runtime.
+			//
+			// IMPORTANT: Although a single logical FED instruction targets all workers,
+			// requests are issued without waiting per worker; the critical path is closer to
+			// "one latency" (slowest worker) plus per-worker control overhead, not
+			// (latency * numWorkers). Over-penalizing latency with worker count can flip
+			// iterative workloads (e.g., kmeans) into CP elementwise chains, which then
+			// trigger large repeated CP->FED uploads each iteration under WAN.
 			// DP parity: this overhead follows the hop's execution frequency (compute weight),
 			// not the parent-child forwarding weight. DP uses HopCommon.computeWeight*multiplicity
 			// (networkWeight equals computeWeight in DP rewire), which corresponds to Vertex.opWeight here.
-			// Model this as: opWeight * (per-message overhead) * numWorkers.
 			fedOverhead = vertex.getOpWeight()
-					* FederatedCostModel.computeNetworkCost(0)
-					* Math.max(1, numOfWorkers);
+					* FederatedCostModel.computeFedCoordinationCost(numOfWorkers);
 		}
-		// DP parity: conservatively model FED compute scaling for elementwise BinaryOps.
-		// For many small elementwise operations, real-world speedups are far from linear in
-		// the number of workers due to per-site overheads and representation effects.
-		// DP therefore avoids dividing BinaryOp compute cost by numWorkers; keep MinST aligned.
-		double fedComputeCost = (vertex.getHopRef() instanceof BinaryOp)
-				? cpCost
-				: cpCost / Math.max(1, numOfWorkers);
-		double fedCost = fedComputeCost + fedOverhead;
+			// DP parity: conservatively model FED compute scaling for elementwise BinaryOps.
+			// For many small elementwise operations, real-world speedups are far from linear in
+			// the number of workers due to per-site overheads and representation effects.
+			// DP therefore avoids dividing BinaryOp compute cost by numWorkers; keep MinST aligned.
+			// Additional DP parity: If all matrix inputs are BROADCAST (fully replicated),
+			// runtime executes the operation redundantly on every worker; do not assume
+			// any compute speedup from worker parallelism in this case.
+			boolean hasMatrixInputForFedCompute = false;
+			boolean hasNonBroadcastMatrixInputForFedCompute = false;
+			if (hop != null && hop.getInput() != null) {
+				for (Hop in : hop.getInput()) {
+					if (in == null || in.getDataType() == null || !in.getDataType().isMatrix())
+						continue;
+					hasMatrixInputForFedCompute = true;
+					Vertex inVertex = memoTable.get(in.getHopID());
+					FType inType = (inVertex != null) ? inVertex.getDataType() : null;
+					if (inType != null && inType != FType.BROADCAST) {
+						hasNonBroadcastMatrixInputForFedCompute = true;
+						break;
+					}
+				}
+			}
+			boolean broadcastOnlyFedCompute = hasMatrixInputForFedCompute
+					&& !hasNonBroadcastMatrixInputForFedCompute;
+			double fedComputeCost = (vertex.getHopRef() instanceof BinaryOp || broadcastOnlyFedCompute)
+					? cpCost
+					: cpCost / Math.max(1, numOfWorkers);
+			double fedCost = fedComputeCost + fedOverhead;
 
 		if (!acL && !acF)
 			cpCost = HARD_INF;

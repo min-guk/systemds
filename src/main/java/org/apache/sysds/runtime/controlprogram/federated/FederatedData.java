@@ -76,6 +76,7 @@ import io.netty.util.concurrent.Promise;
 @SuppressWarnings("deprecation")
 public class FederatedData {
 	private static final Log LOG = LogFactory.getLog(FederatedData.class.getName());
+	private static final boolean DEBUG_FEDREQ = Boolean.getBoolean("sysds.debug.fedreq");
 	private static final Set<InetSocketAddress> _allFedSites = new HashSet<>();
 
 	/** Thread pool specific for the federated requests */
@@ -296,6 +297,9 @@ public class FederatedData {
 		}
 
 		public Future<FederatedResponse> send(FederatedRequest... request) throws Exception {
+			if (DEBUG_FEDREQ)
+				System.out.println("[DBG-FEDREQ][coordinator][send] addr=" + _address
+					+ " keyTid=" + _key.right + " batch=" + summarizeRequestBatch(request));
 			final Channel ch = getOrCreateChannel();
 			final Promise<FederatedResponse> prom = ch.eventLoop().newPromise();
 			_pending.add(prom);
@@ -356,6 +360,44 @@ public class FederatedData {
 			}
 			prom.setSuccess(res);
 		}
+	}
+
+	private static String summarizeRequestBatch(FederatedRequest[] requests) {
+		if (requests == null)
+			return "null";
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < requests.length; i++) {
+			if (i > 0)
+				sb.append(" | ");
+			sb.append(summarizeRequest(requests[i]));
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private static String summarizeRequest(FederatedRequest req) {
+		if (req == null)
+			return "null";
+		StringBuilder sb = new StringBuilder();
+		sb.append(req.getType()).append("#id=").append(req.getID()).append("@t").append(req.getTID());
+		if (req.getType() == RequestType.EXEC_INST && req.getNumParams() > 0 && req.getParam(0) instanceof String) {
+			String inst = (String) req.getParam(0);
+			sb.append(" inst=").append(truncate(inst, 220));
+		}
+		else if (req.getType() == RequestType.PUT_VAR) {
+			sb.append(" params=").append(req.getNumParams());
+			if (req.getNumParams() > 0 && req.getParam(0) != null)
+				sb.append(" p0=").append(req.getParam(0).getClass().getSimpleName());
+			if (req.getNumParams() > 1 && req.getParam(1) != null)
+				sb.append(" p1=").append(req.getParam(1));
+		}
+		return sb.toString();
+	}
+
+	private static String truncate(String s, int maxLen) {
+		if (s == null || s.length() <= maxLen)
+			return s;
+		return s.substring(0, maxLen) + "...";
 	}
 
 	private static class PooledDataRequestHandler extends ChannelInboundHandlerAdapter {

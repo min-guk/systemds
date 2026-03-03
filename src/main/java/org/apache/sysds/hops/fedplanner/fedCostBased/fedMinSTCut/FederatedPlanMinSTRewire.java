@@ -360,20 +360,27 @@ public class FederatedPlanMinSTRewire {
 			double loopWeight = RewireConstants.DEFAULT_LOOP_WEIGHT;
 			Hop from = fsb.getFromHops().getInput().get(0);
 			Hop to = fsb.getToHops().getInput().get(0);
-			Hop incr = (fsb.getIncrementHops() != null) ? fsb.getIncrementHops().getInput().get(0)
-					: new LiteralOp(1);
+				Hop incr = (fsb.getIncrementHops() != null) ? fsb.getIncrementHops().getInput().get(0)
+						: new LiteralOp(1);
 
-			// Calculate for-loop iteration count (weight) if from, to, and incr are literal
-			// ops (constant values)
-			if (from instanceof LiteralOp && to instanceof LiteralOp && incr instanceof LiteralOp) {
-				double dfrom = HopRewriteUtils.getDoubleValue((LiteralOp) from);
-				double dto = HopRewriteUtils.getDoubleValue((LiteralOp) to);
-				double dincr = HopRewriteUtils.getDoubleValue((LiteralOp) incr);
-				if (dfrom > dto && dincr == 1)
-					dincr = -1;
-				loopWeight = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
-			}
-			double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
+				// Calculate for-loop iteration count (weight) if possible.
+				//
+				// See DP rewiring for rationale: resolve scalar loop bounds through transient-variable
+				// mappings to avoid systematic DEFAULT_LOOP_WEIGHT fallbacks for builtin workloads.
+				Double dfromConst = RewireConstants.tryEvaluateScalarConstant(from, newOuterTransTableList);
+				Double dtoConst = RewireConstants.tryEvaluateScalarConstant(to, newOuterTransTableList);
+				Double dincrConst = RewireConstants.tryEvaluateScalarConstant(incr, newOuterTransTableList);
+				if (dfromConst != null && dtoConst != null && dincrConst != null && dincrConst != 0.0) {
+					double dfrom = dfromConst.doubleValue();
+					double dto = dtoConst.doubleValue();
+					double dincr = dincrConst.doubleValue();
+					if (dfrom > dto && dincr == 1)
+						dincr = -1;
+					double est = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
+					if (est > 0.0)
+						loopWeight = est;
+				}
+				double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
 			double outerWeight = networkWeight;
 			LoopAnalysisContext loopCtx = null;
 			if (iter1Factor > 0.0 && loopCtxStack != null) {

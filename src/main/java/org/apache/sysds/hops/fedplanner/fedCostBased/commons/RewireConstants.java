@@ -20,12 +20,17 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
 import java.util.ArrayDeque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
+import java.util.Set;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.ForStatement;
 import org.apache.sysds.parser.ForStatementBlock;
@@ -38,6 +43,7 @@ import org.apache.sysds.parser.WhileStatementBlock;
 public final class RewireConstants {
 	public static final double DEFAULT_LOOP_WEIGHT = 10.0;
 	public static final double DEFAULT_IF_ELSE_WEIGHT = 0.5;
+	private static final int SCALAR_CONST_EVAL_MAX_DEPTH = 8;
 
 	public static double estimateWhileLoopWeight(WhileStatementBlock wsb) {
 		double maxLiteralBound = -1;
@@ -99,6 +105,113 @@ public final class RewireConstants {
 		}
 
 		return maxLiteralBound > 0 ? maxLiteralBound : DEFAULT_LOOP_WEIGHT;
+	}
+
+	/**
+	 * Best-effort scalar constant evaluation for loop-bound estimation.
+	 *
+	 * <p>This resolves scalar literals through transient variables (TRead/TWrite) and
+	 * basic scalar expressions. It is used to improve loop iteration-count estimation
+	 * in federated planner rewiring, especially for builtins where loop bounds are
+	 * derived from constant function arguments (e.g., {@code kmeans} with {@code k=50}).</p>
+	 *
+	 * <p>Returns {@code null} if the value cannot be determined safely.</p>
+	 */
+	public static Double tryEvaluateScalarConstant(Hop hop, List<Map<String, List<Hop>>> transTableStack) {
+		if (hop == null)
+			return null;
+		Set<Long> visited = new HashSet<>();
+		return tryEvaluateScalarConstant(hop, transTableStack, visited, 0);
+	}
+
+	private static Double tryEvaluateScalarConstant(Hop hop, List<Map<String, List<Hop>>> transTableStack,
+			Set<Long> visited, int depth) {
+		if (hop == null || depth > SCALAR_CONST_EVAL_MAX_DEPTH)
+			return null;
+		if (!visited.add(hop.getHopID()))
+			return null;
+
+		if (hop instanceof LiteralOp) {
+			return HopRewriteUtils.getDoubleValue((LiteralOp) hop);
+		}
+
+		if (hop instanceof DataOp) {
+			DataOp dop = (DataOp) hop;
+			if (dop.getOp() == Types.OpOpData.TRANSIENTWRITE) {
+				if (hop.getInput() != null && !hop.getInput().isEmpty())
+					return tryEvaluateScalarConstant(hop.getInput().get(0), transTableStack, visited, depth + 1);
+				return null;
+			}
+			if (dop.getOp() == Types.OpOpData.TRANSIENTREAD) {
+				String name = dop.getName();
+				Hop mapped = lookupLatestTransTableHop(name, transTableStack);
+				if (mapped == null || mapped == hop)
+					return null;
+				return tryEvaluateScalarConstant(mapped, transTableStack, visited, depth + 1);
+			}
+		}
+
+		if (hop instanceof UnaryOp && hop.getDataType() == Types.DataType.SCALAR) {
+			UnaryOp uop = (UnaryOp) hop;
+			if (uop.getInput() == null || uop.getInput().isEmpty())
+				return null;
+			Double in = tryEvaluateScalarConstant(uop.getInput().get(0), transTableStack, visited, depth + 1);
+			if (in == null)
+				return null;
+			switch (uop.getOp()) {
+				case CAST_AS_INT:
+				case CAST_AS_DOUBLE:
+				case CAST_AS_BOOLEAN:
+				case CAST_AS_MATRIX:
+				case CAST_AS_SCALAR:
+					return in;
+				case ABS:
+					return Math.abs(in);
+				default:
+					return null;
+			}
+		}
+
+		if (hop instanceof BinaryOp && hop.getDataType() == Types.DataType.SCALAR) {
+			BinaryOp bop = (BinaryOp) hop;
+			if (bop.getInput() == null || bop.getInput().size() < 2)
+				return null;
+			Double left = tryEvaluateScalarConstant(bop.getInput().get(0), transTableStack, visited, depth + 1);
+			Double right = tryEvaluateScalarConstant(bop.getInput().get(1), transTableStack, visited, depth + 1);
+			if (left == null || right == null)
+				return null;
+			switch (bop.getOp()) {
+				case PLUS:
+					return left + right;
+				case MINUS:
+					return left - right;
+				case MULT:
+					return left * right;
+				case DIV:
+					if (right == 0.0)
+						return null;
+					return left / right;
+				default:
+					return null;
+			}
+		}
+
+		return null;
+	}
+
+	private static Hop lookupLatestTransTableHop(String name, List<Map<String, List<Hop>>> transTableStack) {
+		if (name == null || name.isEmpty() || transTableStack == null || transTableStack.isEmpty())
+			return null;
+		for (int i = transTableStack.size() - 1; i >= 0; i--) {
+			Map<String, List<Hop>> table = transTableStack.get(i);
+			if (table == null)
+				continue;
+			List<Hop> hops = table.get(name);
+			if (hops == null || hops.isEmpty())
+				continue;
+			return hops.get(hops.size() - 1);
+		}
+		return null;
 	}
 
 	private static final int BODY_SCAN_MAX_DEPTH = 6;

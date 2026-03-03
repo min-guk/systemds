@@ -540,7 +540,7 @@ public class FederatedPlannerDpCostEnumerator {
 			double resultDownloadCost = hopPlacementWeight
 					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
 
-			final int enumerationLimit = 1 << numBothOutInputs;
+			final long enumerationLimit = 1L << numBothOutInputs;
 
 			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
 					FederatedOutput.LOUT);
@@ -555,7 +555,7 @@ public class FederatedPlannerDpCostEnumerator {
 			boolean sawAllowCpFout = false;
 			boolean sawAllowFedLout = false;
 
-				for (int i = 0; i < enumerationLimit; i++) {
+				for (long i = 0; i < enumerationLimit; i++) {
 					List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
 					List<FType> collectedFTypes = new ArrayList<>();
 					List<Hop> collectedHops = new ArrayList<>();
@@ -571,7 +571,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 				for (int j = 0; j < numBothOutInputs; j++) {
 					Hop inputHop = lOutfOutChildHops.get(j);
-					final int bit = (i & (1 << j)) != 0 ? 1 : 0;
+					final int bit = (i & (1L << j)) != 0 ? 1 : 0;
 					selectedBits[j] = bit;
 					final FederatedOutput childType = (bit == 1) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
 					FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(inputHop.getHopID(),
@@ -780,7 +780,14 @@ public class FederatedPlannerDpCostEnumerator {
 				sawAllowFedFout |= placementDecision.allowFED_FOUT;
 				sawCanSatisfyFedInputs |= canSatisfyFedInputs;
 
-				double cpLoutCost = cpSelfCost + childCostCPExec;
+				// CP-local materialization of a concrete federated TRANSIENTREAD is paid
+				// on the hop's own execution frequency (matches runtime acquire_read path).
+				double tReadAcquireCost = 0.0;
+				if (isTransientReadHop && hasConcreteTransientReadSource) {
+					tReadAcquireCost = hopPlacementWeight
+							* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
+				}
+				double cpLoutCost = cpSelfCost + childCostCPExec + tReadAcquireCost;
 				double cpFoutCost = cpLoutCost + cpUploadCost;
 				double fedLoutCost = fedSelfCost + childCostFEDExec + resultDownloadCost;
 				double fedFoutCost = fedSelfCost + childCostFEDExec
@@ -840,9 +847,9 @@ public class FederatedPlannerDpCostEnumerator {
 
 				if (FederatedPlannerTrace.shouldTrace(hop)) {
 					FederatedPlannerTrace.log(hop, "DP-Candidate", String.format(Locale.ROOT,
-							"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] boundary[upload=%.6f,download=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s",
+							"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] boundary[upload=%.6f,download=%.6f,trAcquire=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s",
 							formatSelectedBits(selectedBits), childCostCPExec, childCostFEDExec,
-							cpSelfCost, fedSelfCost, cpUploadCost, resultDownloadCost,
+							cpSelfCost, fedSelfCost, cpUploadCost, resultDownloadCost, tReadAcquireCost,
 							allowCpLoutCandidate, allowCpFoutCandidate, allowFedLoutCandidate, allowFedFoutCandidate,
 							canSatisfyFedInputs, cpLoutCost, cpFoutCost, fedLoutCost, fedFoutCost, derivedFedFout));
 				}
@@ -909,6 +916,8 @@ public class FederatedPlannerDpCostEnumerator {
 		FType foutFType = null;
 		double loutCost = baseSelfCost;
 		double foutCost = baseSelfCost;
+		double loutAcquireCost = 0.0;
+		boolean hasFederatedSourcePlan = false;
 		List<Pair<Long, FederatedOutput>> loutChilds = new ArrayList<>();
 		List<Pair<Long, FederatedOutput>> foutChilds = new ArrayList<>();
 
@@ -935,6 +944,7 @@ public class FederatedPlannerDpCostEnumerator {
 			if (foutPlan == null || foutPlan.getFType() == null) {
 				allowFOUT = false;
 			} else {
+				hasFederatedSourcePlan = true;
 				FType childFType = foutPlan.getFType();
 				if (foutFType == null) {
 					foutFType = childFType;
@@ -950,8 +960,15 @@ public class FederatedPlannerDpCostEnumerator {
 			throw new DMLRuntimeException("No valid federated plan for hop " + dataOp.getHopID()
 					+ " (" + dataOp.getOpString() + ") based on transient write placements");
 		}
+		if (hasFederatedSourcePlan && dataOp.getDim1() > 0 && dataOp.getDim2() > 0) {
+			double hopPlacementWeight = placementTransferWeight(hopCommon);
+			double uploadMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(dataOp);
+			loutAcquireCost = hopPlacementWeight
+					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
+		}
 
 		if (allowLOUT) {
+			loutCost += loutAcquireCost;
 			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants =
 					new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.LOUT);
 			FederatedPlannerDpMemoTable.FedPlan loutPlan =

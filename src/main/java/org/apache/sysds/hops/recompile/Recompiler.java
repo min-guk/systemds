@@ -428,7 +428,7 @@ public class Recompiler {
 		rSetMaxParallelism(hops, maxK);
 
 		if (baseHopStates != null && !baseHopStates.isEmpty())
-			restoreHopStates(hops, baseHopStates);
+			restoreHopStates(hops, baseHopStates, deepCopyMemo);
 		if (LOG_RECOMPILE_NEW_HOPS)
 			logRecompileNewHops(hops, baseHopStates, sb, pred, tid);
 			Map<String, FType> runtimeTypes = new HashMap<>();
@@ -581,8 +581,19 @@ public class Recompiler {
 			Hop hop = queue.poll();
 			if (hop == null || !visited.add(hop))
 				continue;
-			states.put(hop.getHopID(),
-				new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput()));
+			HopState hs = new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput(), signatureOf(hop));
+			states.put(hop.getHopID(), hs);
+			// Debug aid for diagnosing recompile-time plan drift on key transient vars.
+			if (LOG_RECOMPILE_NEW_HOPS && "X_samples".equals(hop.getName())) {
+				System.out.println("[RecompileBaseHopState] hopID=" + hop.getHopID()
+					+ " name=" + hop.getName()
+					+ " op=" + hop.getOpString()
+					+ " type=" + hop.getClass().getSimpleName()
+					+ " exec=" + hop.getExecType()
+					+ " forced=" + hop.getForcedExecType()
+					+ " fedOut=" + hop.getFederatedOutput()
+					+ " sig=" + hs.signature);
+			}
 			List<Hop> inputs = hop.getInput();
 			if (inputs != null)
 				for (Hop in : inputs)
@@ -592,9 +603,38 @@ public class Recompiler {
 		return states;
 	}
 
-	private static void restoreHopStates(List<Hop> roots, Map<Long, HopState> baseStates) {
+	private static void restoreHopStates(List<Hop> roots, Map<Long, HopState> baseStates, Map<Long, Hop> deepCopyMemo) {
 		if (roots == null || roots.isEmpty() || baseStates == null || baseStates.isEmpty())
 			return;
+		// If we deep-copied the Hop DAG, use the deep-copy memo (origHopID -> clone Hop)
+		// to restore states exactly. This is more reliable than signature matching because
+		// transient names (e.g., parsertemp*) can change across copies/rewrites.
+		java.util.Map<Long, HopState> cloneIdStates = null;
+		if (deepCopyMemo != null && !deepCopyMemo.isEmpty()) {
+			cloneIdStates = new java.util.HashMap<>(deepCopyMemo.size());
+			for (java.util.Map.Entry<Long, Hop> e : deepCopyMemo.entrySet()) {
+				if (e == null)
+					continue;
+				Long origId = e.getKey();
+				Hop clone = e.getValue();
+				if (origId == null || clone == null)
+					continue;
+				HopState st = baseStates.get(origId);
+				if (st != null)
+					cloneIdStates.put(clone.getHopID(), st);
+			}
+		}
+		// In dynamic recompilation, the compiler may construct a fresh Hop DAG for the
+		// same statement block with new HopIDs (e.g., parsertemp* intermediates and
+		// transient reads/writes). Restoring HopState purely by HopID can therefore
+		// lose planner decisions (execType/fedOut) and lead to recompile-time plan
+		// drift, including pathological CP->FOUT broadcasts inside loops (notably in
+		// kmeans initialization).
+		//
+		// To keep runtime recompile consistent with the planner's base decisions, we
+		// also restore states by a stable (type, opcode, source-position) signature when
+		// there is an unambiguous match in the base graph.
+		java.util.Map<String, HopState> signatureIndex = buildUniqueSignatureIndex(baseStates);
 		Set<Hop> visited = new HashSet<>();
 		Deque<Hop> queue = new ArrayDeque<>();
 		for (Hop root : roots)
@@ -604,7 +644,14 @@ public class Recompiler {
 			Hop hop = queue.poll();
 			if (hop == null || !visited.add(hop))
 				continue;
-			HopState state = baseStates.get(hop.getHopID());
+			HopState state = (cloneIdStates != null) ? cloneIdStates.get(hop.getHopID()) : null;
+			if (state == null)
+				state = baseStates.get(hop.getHopID());
+			if (state == null && signatureIndex != null && !signatureIndex.isEmpty()) {
+				String sig = signatureOf(hop);
+				if (sig != null && !sig.isEmpty())
+					state = signatureIndex.get(sig);
+			}
 			if (state != null) {
 				if (state.execType != null && hop.getForcedExecType() == null)
 					hop.setExecType(state.execType);
@@ -668,12 +715,73 @@ public class Recompiler {
 		private final ExecType execType;
 		private final ExecType forcedExecType;
 		private final FederatedOutput fedOut;
+		private final String signature;
 
-		private HopState(ExecType execType, ExecType forcedExecType, FederatedOutput fedOut) {
+		private HopState(ExecType execType, ExecType forcedExecType, FederatedOutput fedOut, String signature) {
 			this.execType = execType;
 			this.forcedExecType = forcedExecType;
 			this.fedOut = fedOut;
+			this.signature = signature;
 		}
+	}
+
+	private static String signatureOf(Hop hop) {
+		if (hop == null)
+			return null;
+		String op = hop.getOpString();
+		if (op == null || op.isEmpty())
+			return null;
+		String type = hop.getClass().getName();
+		// Prefer source position information over Hop names. Temporary Hop names (e.g.,
+		// parsertemp*) can change across deep copies and dynamic rewrites, which would
+		// break restore-by-signature and cause recompile-time plan drift.
+		//
+		// NOTE: Do not include hop input arity. Dynamic rewrites can add/remove auxiliary
+		// parameter inputs, which would otherwise break matching.
+		return type + "|" + op + "|" + hop.getBeginLine() + ":" + hop.getBeginColumn()
+			+ ":" + hop.getEndLine() + ":" + hop.getEndColumn();
+	}
+
+	private static java.util.Map<String, HopState> buildUniqueSignatureIndex(java.util.Map<Long, HopState> baseStates) {
+		if (baseStates == null || baseStates.isEmpty())
+			return java.util.Collections.emptyMap();
+		java.util.Map<String, HopState> index = new java.util.HashMap<>();
+		java.util.Set<String> ambiguous = new java.util.HashSet<>();
+		for (HopState state : baseStates.values()) {
+			if (state == null || state.signature == null || state.signature.isEmpty())
+				continue;
+			String sig = state.signature;
+			if (ambiguous.contains(sig))
+				continue;
+			HopState existing = index.get(sig);
+			if (existing == null) {
+				index.put(sig, state);
+			}
+			else {
+				// Multiple base hops share this signature. If their restore-relevant states
+				// are identical (execType/forcedExecType/fedOut), it's safe to keep the
+				// mapping because applying it yields the same outcome. Otherwise, mark the
+				// signature ambiguous and do not use it for restore to avoid misapplying
+				// states to unrelated recompiled hops.
+				if (sameRestoreState(existing, state)) {
+					// keep existing mapping
+					continue;
+				}
+				index.remove(sig);
+				ambiguous.add(sig);
+			}
+		}
+		return index;
+	}
+
+	private static boolean sameRestoreState(HopState a, HopState b) {
+		if (a == b)
+			return true;
+		if (a == null || b == null)
+			return false;
+		return a.execType == b.execType
+			&& a.forcedExecType == b.forcedExecType
+			&& a.fedOut == b.fedOut;
 	}
 
 	private static void inferFTypeIfNeeded(Hop hop, Map<Long, FType> fTypeMap, Set<Hop> done, Set<Hop> stack) {

@@ -64,7 +64,8 @@ import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
 public class ReorgFEDInstruction extends UnaryFEDInstruction {
 	private static final Pattern MISSING_VAR_PATTERN = Pattern.compile("Variable '?(\\d+)'? does not exist");
-	private static final boolean ENABLE_MISSING_VAR_REINIT = false;
+	private static final boolean ENABLE_MISSING_VAR_REINIT =
+		Boolean.parseBoolean(System.getProperty("sysds.fed.reorg.missingvar.reinit", "true"));
 
 	// roll-specific attributes
 	private CPOperand _shift = null;
@@ -199,6 +200,7 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 							new long[] { mo1.getFedMapping().getID() }, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP,
 							true);
 					Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
+					ensureSuccessful(ffr);
 
 					if (_fedOut != null && !_fedOut.isForcedLocal()) {
 						// drive output federated mapping
@@ -341,13 +343,44 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		if (!matches)
 			return false;
 
+		// Attempt 1: if a local materialization is available, re-upload it with the missing federated ID.
+		try {
+			FType mapType = fedMap.getType();
+			boolean canReplicateAsWhole = (mapType == FType.BROADCAST || mapType == FType.FULL || fedMap.getSize() == 1);
+			if (canReplicateAsWhole) {
+				MatrixBlock local = mo.acquireReadAndRelease();
+				if (local != null && local.getNumRows() > 0 && local.getNumColumns() > 0) {
+					FederatedRequest put = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, missingId, local);
+					fedMap.execute(getTID(), true, put);
+					LOG.warn("Reinitialized missing federated input id=" + missingId
+						+ " via local re-upload for reorg retry.");
+					return true;
+				}
+			}
+		}
+		catch (Exception rex) {
+			LOG.warn("Local re-upload recovery failed for missing federated input id=" + missingId
+				+ ": " + rex.getMessage());
+		}
+
+		// Attempt 2: re-read from original federated file paths (safe for source partitioned inputs).
+		// For BROADCAST/FULL mappings, file paths can refer to anchor/source datasets and
+		// may not match the logical value of this intermediate variable.
+		FType mapType = fedMap.getType();
+		if (mapType == FType.BROADCAST || mapType == FType.FULL) {
+			LOG.warn("Skipping path-based reinit for missing federated input id=" + missingId
+				+ " due to mapType=" + mapType + " (unsafe for replicated/intermediate values).");
+			return false;
+		}
+
 		List<Future<FederatedResponse>> reads = new ArrayList<>();
+		boolean canReadByPath = true;
 		for (Pair<FederatedRange, FederatedData> entry : fedMap.getMap()) {
 			FederatedData data = entry.getValue();
 			String path = data.getFilepath();
 			if (path == null || path.isEmpty()) {
-				LOG.warn("Cannot reinitialize federated input id=" + missingId + " due to missing filepath.");
-				return false;
+				canReadByPath = false;
+				break;
 			}
 			FederatedRequest req = new FederatedRequest(FederatedRequest.RequestType.READ_VAR, data.getVarID());
 			req.appendParam(path);
@@ -355,9 +388,14 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			req.setTID(getTID());
 			reads.add(data.executeFederatedOperation(req));
 		}
-		FederationUtils.waitFor(reads);
-		LOG.warn("Reinitialized missing federated input id=" + missingId + " for reorg retry.");
-		return true;
+		if (canReadByPath && !reads.isEmpty()) {
+			FederationUtils.waitFor(reads);
+			LOG.warn("Reinitialized missing federated input id=" + missingId + " from source paths for reorg retry.");
+			return true;
+		}
+
+		LOG.warn("Cannot reinitialize missing federated input id=" + missingId + " for reorg retry.");
+		return false;
 	}
 
 	private static Long extractMissingVarId(Throwable ex) {
@@ -378,6 +416,21 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			cur = cur.getCause();
 		}
 		return null;
+	}
+
+	private static void ensureSuccessful(Future<FederatedResponse>[] responses) {
+		if (responses == null)
+			return;
+		for (Future<FederatedResponse> future : responses) {
+			try {
+				FederatedResponse response = future.get();
+				if (response != null && !response.isSuccessful())
+					response.throwExceptionFromResponse();
+			}
+			catch (Exception ex) {
+				throw new DMLRuntimeException(ex);
+			}
+		}
 	}
 
 	public Pair<FederationMap, Long> rollFedMap(List<Pair<FederatedRange, FederatedData>> oldMap, long inID,

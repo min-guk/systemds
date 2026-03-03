@@ -181,6 +181,14 @@ public class FederatedPlannerDpMemoTable {
 		return orig != null ? orig : hopId;
 	}
 
+	/**
+	 * @return true if this hop id belongs to a planning-time virtual clone
+	 * (e.g., loop-unrolled iter1 clone) rather than an original executable hop.
+	 */
+	public boolean isVirtualClone(long hopId) {
+		return cloneToOrig.containsKey(hopId);
+	}
+
 	public Hop resolveOriginalHop(long hopId) {
 		long origId = resolveOriginalHopId(hopId);
 		Hop hop = hopRefMap.get(origId);

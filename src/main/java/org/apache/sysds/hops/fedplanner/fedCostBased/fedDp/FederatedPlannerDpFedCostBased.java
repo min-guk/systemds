@@ -80,9 +80,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap);
 		}
 
-		// Also rewrite any additional executed roots (e.g., loop-unrolled iter1 roots)
-		// that may not be reachable from the dummy root through Hop parent links.
+		// Also rewrite additional non-clone roots that may not be reachable from the
+		// dummy root through Hop parent links. Skip virtual clone roots because they
+		// are planning-only artifacts and rewriting them can override executable-hop
+		// decisions through original-id aliasing.
 		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
+			if (memoTable.isVirtualClone(rootHopID))
+				continue;
 			FederatedPlannerDpMemoTable.FedPlan lPlan =
 				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.LOUT);
 			FederatedPlannerDpMemoTable.FedPlan fPlan =
@@ -119,6 +123,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
+			if (memoTable.isVirtualClone(rootHopID))
+				continue;
 			FederatedPlannerDpMemoTable.FedPlan lPlan =
 				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.LOUT);
 			FederatedPlannerDpMemoTable.FedPlan fPlan =
@@ -223,7 +229,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			for (ConflictEntry entry : conflictCheckMap.values()) {
 				boolean canChooseLOUT = true;
 				boolean canChooseFOUT = true;
-				for (long memberHopID : entry.memberHopIDs) {
+				Set<Long> decisionMembers = selectDecisionMembers(entry.memberHopIDs, memoTable);
+				for (long memberHopID : decisionMembers) {
 					canChooseLOUT &= (memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.LOUT) != null);
 					canChooseFOUT &= (memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.FOUT) != null);
 				}
@@ -296,6 +303,24 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		return decisions;
+	}
+
+	/**
+	 * Prefer executable/original members for output-decision feasibility checks.
+	 * If no executable members exist, fall back to all members.
+	 */
+	private static Set<Long> selectDecisionMembers(Set<Long> memberHopIDs,
+		FederatedPlannerDpMemoTable memoTable) {
+
+		if (memberHopIDs == null || memberHopIDs.isEmpty())
+			return memberHopIDs;
+
+		LinkedHashSet<Long> executable = new LinkedHashSet<>();
+		for (long hopID : memberHopIDs) {
+			if (!memoTable.isVirtualClone(hopID))
+				executable.add(hopID);
+		}
+		return executable.isEmpty() ? memberHopIDs : executable;
 	}
 
 	/**
@@ -515,11 +540,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			queue.add(childPlan);
 		}
 
-		// Include additional executed roots such as loop-unrolled "iter1" roots. These
-		// hops can carry large loop multiplicities, and omitting them would cause
-		// placement conflict decisions to ignore repeated forwarding costs (e.g.,
-		// refed/PUT inside loops).
+		// Include additional executed non-clone roots. Virtual clone roots are
+		// planning-time artifacts (e.g., loop-unrolled iter1 clones) and can
+		// introduce non-executable parent edges into output-conflict resolution.
 		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
+			if (memoTable.isVirtualClone(rootHopID))
+				continue;
 			long rootOrigId = memoTable.resolveOriginalHopId(rootHopID);
 			FederatedOutput desiredOut = (outputDecisions != null) ? outputDecisions.get(rootOrigId) : null;
 			FederatedPlannerDpMemoTable.FedPlan lPlan =
@@ -603,6 +629,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		double lOutAdditionalCost = canChooseLOUT ? 0.0 : Double.POSITIVE_INFINITY;
 		double fOutAdditionalCost = canChooseFOUT ? 0.0 : Double.POSITIVE_INFINITY;
+		boolean hasExecutableEdge = false;
+		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
+			for (Pair<Long, FederatedOutput> edge : parentPlan.getChildFedPlans()) {
+				if (memoTable.resolveOriginalHopId(edge.getKey()) != hopID)
+					continue;
+				if (!memoTable.isVirtualClone(edge.getKey())) {
+					hasExecutableEdge = true;
+					break;
+				}
+			}
+			if (hasExecutableEdge)
+				break;
+		}
 
 		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
 			ExecType parentExec = parentPlan.getExecType();
@@ -612,6 +651,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				if (memoTable.resolveOriginalHopId(edge.getKey()) != hopID)
 					continue;
 				long childHopID = edge.getKey();
+				if (hasExecutableEdge && memoTable.isVirtualClone(childHopID))
+					continue;
 				FederatedOutput originalOut = edge.getValue();
 
 				if (trace && edgeLogs < maxEdgeLogs) {
@@ -734,9 +775,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// representation, regardless of other child-edge outputs. This intentionally
 		// allows the parent to "self-heal" by also switching other child edges if that
 		// yields a lower-cost compatible plan (important when demoting FED parents to CP).
+		// Parent/child relationships can involve cloned hop IDs across loop contexts.
+		// Match edges by original hop id (not by concrete clone id) so that we can
+		// correctly find compatible parent variants even when the parent references a
+		// different clone of the same logical child hop.
+		final long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
+
 		boolean parentReferencesChild = false;
 		for (Pair<Long, FederatedOutput> edge : parentPlan.getChildFedPlans()) {
-			if (edge != null && edge.getKey() == childHopID) {
+			if (edge == null)
+				continue;
+			if (memoTable.resolveOriginalHopId(edge.getKey()) == childOrigHopID) {
 				parentReferencesChild = true;
 				break;
 			}
@@ -757,7 +806,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				for (Pair<Long, FederatedOutput> edge : cand.getChildFedPlans()) {
 					if (edge == null)
 						continue;
-					if (edge.getKey() == childHopID && edge.getValue() == desiredChildOut) {
+					if (memoTable.resolveOriginalHopId(edge.getKey()) == childOrigHopID
+						&& edge.getValue() == desiredChildOut) {
 						ok = true;
 						break;
 					}

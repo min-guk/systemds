@@ -438,6 +438,14 @@ public class FederationMap {
 	}
 
 	public FederatedRequest cleanup(long tid, long... id) {
+		// Keep runtime-side refed/fout reuse caches consistent with worker-side rmvar.
+		// Request-based cleanup paths (e.g., FED instructions appending cleanup requests)
+		// can remove worker variables without going through ExecutionContext cleanup hooks.
+		// Purging here prevents stale cached federated IDs from being reused later.
+		if (id != null) {
+			for (long fedId : id)
+				FederationUtils.purgeRefedReuseCacheByFedDataID(fedId);
+		}
 		FederatedRequest request = new FederatedRequest(RequestType.EXEC_INST, -1,
 			VariableCPInstruction.prepareRemoveInstruction(id).toString());
 		request.setTID(tid);
@@ -445,6 +453,11 @@ public class FederationMap {
 	}
 
 	public void execCleanup(long tid, long... id) {
+		// Mirror purge behavior of cleanup(...) for async cleanup requests.
+		if (id != null) {
+			for (long fedId : id)
+				FederationUtils.purgeRefedReuseCacheByFedDataID(fedId);
+		}
 		FederatedRequest request = new FederatedRequest(RequestType.EXEC_INST, -1,
 			VariableCPInstruction.prepareRemoveInstruction(id).toString());
 		request.setTID(tid);

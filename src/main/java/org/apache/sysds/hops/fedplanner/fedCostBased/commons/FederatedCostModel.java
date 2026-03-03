@@ -112,6 +112,33 @@ public final class FederatedCostModel {
 		// utility class
 	}
 
+	/**
+	 * Estimated per-operation coordination overhead for executing a federated instruction
+	 * across multiple workers.
+	 *
+	 * <p>This captures (1) one network-latency term (requests are issued without waiting
+	 * per worker, and the critical path is dominated by the slowest worker), plus
+	 * (2) a per-worker control overhead (RPC framing / Netty bookkeeping) that scales
+	 * with the number of contacted workers.
+	 *
+	 * <p>Note: This model intentionally does <b>not</b> multiply the latency term by the
+	 * number of workers. Doing so can significantly over-penalize "many small" FED ops
+	 * and cause planner flips to CP that introduce large repeated uploads (e.g., in
+	 * iterative workloads such as kmeans under WAN profiles).
+	 *
+	 * @param numWorkers number of federated workers participating in the operation
+	 * @return estimated coordination overhead in milliseconds
+	 */
+	public static double computeFedCoordinationCost(int numWorkers) {
+		final int fanout = Math.max(1, numWorkers);
+		final double base = computeNetworkCost(0); // latency + 1*ctrl
+		final double ctrl = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		if (fanout <= 1 || ctrl <= 0.0)
+			return base;
+		// base already accounts for a single ctrl term; add remaining (fanout-1) control costs
+		return base + (fanout - 1) * ctrl;
+	}
+
 	public static double computeOpCost(Hop currentHop) {
 		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
 		double computeTime = (computeCost / FLOPS_PER_SEC) * TO_MS;
@@ -205,6 +232,42 @@ public final class FederatedCostModel {
 
 		double outputMemEstimate = getEffectiveOutputMemEstimate(hop);
 		double inputMemEstimate = getEffectiveInputMemEstimate(hop);
+		if (outputMemEstimate <= 0.0)
+			outputMemEstimate = 0.0;
+		if (inputMemEstimate <= 0.0)
+			inputMemEstimate = 0.0;
+
+		// If output dimensions are unknown, Hop.getOutputMemEstimate(double) falls back to
+		// max(dim,1) which implicitly treats unknown axes as 1. This can massively under-estimate
+		// CP->FOUT/local->FED payloads (e.g., 3000x? becomes ~3000x1), making CP/FOUT candidates
+		// look nearly free and leading to pathological broadcast-heavy plans in iterative workloads
+		// (notably kmeans initialization).
+		//
+		// Apply a conservative lower bound for unknown-dimension uploads:
+		// - if exactly one axis is known, use a square bound on that axis (capped by the global
+		//   UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES),
+		// - otherwise fall back to UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES.
+		if (hasUnknownOutputDims(hop)) {
+			double perCell = getInjectedDefaultMemEstimatePerCell(hop);
+			long r = hop.getDim1();
+			long c = hop.getDim2();
+			double squareBound = 0.0;
+			if (r > 1 && c <= 0)
+				squareBound = r * (double) r * perCell;
+			else if (c > 1 && r <= 0)
+				squareBound = c * (double) c * perCell;
+			double floor = (squareBound > 0.0) ? squareBound : UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES;
+			if (UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES > 0.0 && squareBound > 0.0)
+				floor = Math.min(squareBound, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES);
+			// Only lift tiny estimates; keep existing large estimates (including sentinel unknown).
+			if (floor > 0.0 && outputMemEstimate > 0.0 && outputMemEstimate < floor) {
+				outputMemEstimate = floor;
+			}
+			else if (floor > 0.0 && outputMemEstimate <= 0.0) {
+				outputMemEstimate = floor;
+			}
+		}
+
 		if (outputMemEstimate <= 0.0)
 			return Math.max(0.0, inputMemEstimate);
 		if (inputMemEstimate <= 0.0)

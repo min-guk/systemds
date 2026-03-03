@@ -92,6 +92,10 @@ public final class FederatedRefedPolicy {
 		ThreadLocal.withInitial(java.util.HashMap::new);
 	private static final ThreadLocal<java.util.Map<Long, Long>> HOP_SBID_CACHE =
 		ThreadLocal.withInitial(java.util.HashMap::new);
+	// Cached global signature-based anchor key for the current program translation.
+	// This remains available even if fed-init metadata for the anchor variable is later demoted due
+	// to local overwrites (e.g., PCA scale() overwriting X), and is used to stabilize CP->FOUT anchors.
+	private static final ThreadLocal<AnchorKey> GLOBAL_SIGNATURE_ANCHOR_KEY = new ThreadLocal<>();
 	private static final ThreadLocal<Set<String>> LOCAL_TR_VARS = new ThreadLocal<>();
 	static {
 		if (ENABLE_TRANSREAD_DEBUG)
@@ -171,9 +175,12 @@ public final class FederatedRefedPolicy {
 		clearCpfoutAnchorCache();
 		clearGlobalTWriteCache();
 		FederatedPlannerUtils.clearFedAnchorKeys();
+		GLOBAL_SIGNATURE_ANCHOR_KEY.remove();
 		if (prog == null)
 			return;
 		AnchorSelection programAnchor = buildGlobalAnchorForProgram(prog, fTypeMap);
+		if (programAnchor != null && programAnchor.key != null && !isVarAnchor(programAnchor.key))
+			GLOBAL_SIGNATURE_ANCHOR_KEY.set(programAnchor.key);
 		for (StatementBlock sb : prog.getStatementBlocks())
 			registerFromStatementBlock(sb, fTypeMap, programAnchor, false);
 		for (String namespaceKey : prog.getNamespaces().keySet()) {
@@ -195,12 +202,15 @@ public final class FederatedRefedPolicy {
 		clearCpfoutAnchorCache();
 		FederatedPlannerUtils.clearFedAnchorKeys();
 		clearGlobalTWriteCache();
+		GLOBAL_SIGNATURE_ANCHOR_KEY.remove();
 		if (function == null)
 			return;
 		FunctionStatement fstmt = (FunctionStatement) function.getStatement(0);
 		if (fstmt == null)
 			return;
 		AnchorSelection functionAnchor = buildGlobalAnchorForFunction(function, fTypeMap);
+		if (functionAnchor != null && functionAnchor.key != null && !isVarAnchor(functionAnchor.key))
+			GLOBAL_SIGNATURE_ANCHOR_KEY.set(functionAnchor.key);
 		for (StatementBlock inner : fstmt.getBody())
 			registerFromStatementBlock(inner, fTypeMap, functionAnchor, true);
 	}
@@ -2401,6 +2411,15 @@ public final class FederatedRefedPolicy {
 				return false;
 		}
 		AnchorSelection selection = selectAnchor(hop, fTypeMap, false, false, null);
+		// Planner-side CP->FOUT feasibility checks are also used for oracle input hints (FedAll/Heuristic).
+		// In such contexts, the hop may have no FED parent *yet* (chicken-and-egg), even though a
+		// concrete global FED-init anchor exists in the same program. If so, fall back to the global
+		// signature-based anchor instead of failing the candidate-space check.
+		if (selection == null || selection.key == null) {
+			AnchorKey globalAnchor = selectGlobalAnchorKey(fTypeMap);
+			if (globalAnchor != null && !isVarAnchor(globalAnchor))
+				selection = new AnchorSelection(globalAnchor, null);
+		}
 		if (selection == null || selection.key == null)
 			return false;
 		// PART/OTHER anchors are unsupported for CP->FOUT refed and should hard-fail to avoid
@@ -2475,6 +2494,11 @@ public final class FederatedRefedPolicy {
 				return false;
 		}
 		AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, false, false, blockAnchor);
+		if (selection == null || selection.key == null) {
+			AnchorKey globalAnchor = selectGlobalAnchorKey(fTypeMap);
+			if (globalAnchor != null && !isVarAnchor(globalAnchor))
+				selection = new AnchorSelection(globalAnchor, null);
+		}
 		if (selection == null || selection.key == null)
 			return false;
 		// PART/OTHER anchors are unsupported for CP->FOUT refed and should hard-fail to avoid
@@ -2658,12 +2682,26 @@ public final class FederatedRefedPolicy {
 		if (hop == null)
 			return;
 
+		// Prefer concrete (non-VAR) anchors for CP->FOUT whenever a unique global fed-init signature exists.
+		//
+		// VAR anchors are best-effort identities and may become self-referential after local overwrites of
+		// fed-init parameters (e.g., PCA scale() overwriting X). In such cases, emitting a CP->FOUT materialize
+		// anchored on VAR:<name> makes runtime-dependent behavior (anchor resolved from live symbol table) and
+		// can disable subsequent FED execution. Upgrade VAR anchors to the unique global signature-based anchor
+		// when available (common worker pool), otherwise keep the VAR anchor.
+		AnchorSelection effectiveSelection = selection;
+		if (effectiveSelection != null && effectiveSelection.key != null && isVarAnchor(effectiveSelection.key)) {
+			AnchorKey global = selectGlobalAnchorKey(fTypeMap);
+			if (global != null && !isVarAnchor(global))
+				effectiveSelection = new AnchorSelection(global, null);
+		}
+
 		if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
 				&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE
 				&& "Y".equals(((DataOp) hop).getName())) {
-			Hop selAnchor = selection != null ? selection.anchorHop : null;
+			Hop selAnchor = effectiveSelection != null ? effectiveSelection.anchorHop : null;
 			System.out.println("[TransReadRefedDebug] registerCpfoutWithSelection TWrite Y hop=" + hop.getHopID()
-				+ " anchor=" + (selection != null ? selection.key : null)
+				+ " anchor=" + (effectiveSelection != null ? effectiveSelection.key : null)
 				+ " anchorHop=" + (selAnchor != null ? selAnchor.getHopID() + ":" + selAnchor.getOpString() : "null")
 				+ " anchorFed=" + (selAnchor != null && isRuntimeFederatedInput(selAnchor, null, null)));
 		}
@@ -2695,18 +2733,29 @@ public final class FederatedRefedPolicy {
 		if (isCpToFout) {
 			if (!isTransientRead && hop.getFederatedOutput() != FederatedOutput.FOUT)
 				hop.setFederatedOutput(FederatedOutput.FOUT);
-			if (selection != null && selection.key != null)
-				CPFOUT_ANCHOR_CACHE.put(hop.getHopID(), selection.key);
+			if (effectiveSelection != null && effectiveSelection.key != null)
+				CPFOUT_ANCHOR_CACHE.put(hop.getHopID(), effectiveSelection.key);
 		}
 
-		String anchorKey = toAnchorKeyString(selection);
-		Hop anchorHop = (selection != null) ? selection.anchorHop : null;
+		String anchorKey = toAnchorKeyString(effectiveSelection);
+		Hop anchorHop = (effectiveSelection != null) ? effectiveSelection.anchorHop : null;
 		long anchorHopId = (anchorHop != null) ? anchorHop.getHopID() : -1;
 
 		// AnchorKey-only fallback: allow CP->FOUT even when the concrete anchor hop is not visible in this block.
 		if (anchorHop == null && anchorKey == null)
 			throw new DMLRuntimeException("CP->FOUT refed requires an anchor for hop " + hop.getHopID()
 				+ " (" + hop.getOpString() + ")");
+
+		// If a transient write is planned/promoted to produce a federated output (FOUT), ensure its variable
+		// name is associated with a concrete anchor key. This allows subsequent transient reads to be treated
+		// as runtime-federated inputs during recompile, avoiding CP fallback due to VAR/self anchors.
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE
+			&& hop.getFederatedOutput() == FederatedOutput.FOUT
+			&& isNonVarAnchorKey(anchorKey)) {
+			String varName = ((DataOp) hop).getName();
+			if (varName != null && !varName.isEmpty())
+				FederatedPlannerUtils.registerFedAnchorKey(varName, anchorKey);
+		}
 
 		if (anchorHop != null)
 			validateAnchorTypeSupported(hop, anchorHop, fTypeMap);
@@ -3290,16 +3339,19 @@ public final class FederatedRefedPolicy {
 
 	private static AnchorKey selectGlobalAnchorKey(java.util.Map<Long, FType> fTypeMap) {
 		String varName = FederatedPlannerUtils.getUniqueFedInitVarName();
-		if (varName == null || varName.isEmpty())
-			return null;
-		String anchorKey = FederatedPlannerUtils.getFedAnchorKey(varName);
-		if (isNonVarAnchorKey(anchorKey))
-			return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
-		String signature = FederatedPlannerUtils.getFedInitSignature(varName);
-		FType fType = FederatedPlannerUtils.getFedInitFType(varName);
-		AnchorKey key = buildAnchorKeyFromSignature(signature, fType);
-		if (key != null && !isVarAnchor(key))
-			return key;
+		if (varName != null && !varName.isEmpty()) {
+			String anchorKey = FederatedPlannerUtils.getFedAnchorKey(varName);
+			if (isNonVarAnchorKey(anchorKey))
+				return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
+			String signature = FederatedPlannerUtils.getFedInitSignature(varName);
+			FType fType = FederatedPlannerUtils.getFedInitFType(varName);
+			AnchorKey key = buildAnchorKeyFromSignature(signature, fType);
+			if (key != null && !isVarAnchor(key))
+				return key;
+		}
+		AnchorKey cached = GLOBAL_SIGNATURE_ANCHOR_KEY.get();
+		if (cached != null && !isVarAnchor(cached))
+			return cached;
 		return null;
 	}
 
@@ -4305,6 +4357,73 @@ public final class FederatedRefedPolicy {
 		return buildAnchorKey(hop, fTypeMap, new HashSet<>());
 	}
 
+	/**
+	 * Resolve a transient-read anchor key to a concrete signature-based anchor whenever possible.
+	 *
+	 * <p>Variable anchors (VAR:&lt;name&gt;) are best-effort identities and may lose the concrete
+	 * worker-pool/FType information required for stable CP-&gt;FOUT decisions (e.g., PCA scale()
+	 * overwriting {@code X} inside a recompile region). If the referenced variable still has a
+	 * fed-init signature or a concrete (non-VAR) anchor key, prefer that over the VAR anchor.
+	 *
+	 * <p>If no concrete anchor can be resolved, ensure the returned VAR anchor carries an FType
+	 * suffix so downstream CP-&gt;FOUT materialization can preserve ROW/COL alignment instead of
+	 * silently defaulting to FULL.
+	 */
+	private static AnchorKey resolveTransientReadAnchorKey(DataOp transientRead, String anchorKey,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (transientRead == null || anchorKey == null || anchorKey.isEmpty())
+			return null;
+		if (!isVarAnchorKey(anchorKey))
+			return null;
+
+		final java.util.Set<String> visited = new java.util.HashSet<>();
+		String curKey = anchorKey;
+		while (curKey != null && isVarAnchorKey(curKey)) {
+			String ref = curKey.substring("VAR:".length());
+			int pipeIx = ref.indexOf('|');
+			if (pipeIx >= 0)
+				ref = ref.substring(0, pipeIx);
+			if (ref == null || ref.isEmpty() || !visited.add(ref))
+				break;
+
+			String refAnchor = FederatedPlannerUtils.getFedAnchorKey(ref);
+			if (isNonVarAnchorKey(refAnchor))
+				return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, refAnchor);
+
+			String sig = FederatedPlannerUtils.getFedInitSignature(ref);
+			if (sig != null) {
+				FType fType = FederatedPlannerUtils.getFedInitFType(ref);
+				if (fType == null)
+					fType = getFTypeFromAnchorKey(refAnchor);
+				if (fType == null)
+					fType = FType.FULL;
+				AnchorKey sigKey = buildAnchorKeyFromSignature(sig, fType);
+				if (sigKey != null && sigKey.value instanceof String && !isVarAnchor(sigKey))
+					return sigKey;
+			}
+			curKey = refAnchor;
+		}
+
+		AnchorKey globalKey = selectGlobalAnchorKey(fTypeMap);
+		if (globalKey != null && !isVarAnchor(globalKey))
+			return globalKey;
+
+		// Best-effort: add an FType suffix to VAR anchors to preserve alignment decisions.
+		if (getFTypeFromAnchorKey(anchorKey) == null) {
+			FType fType = getKnownFType(transientRead, fTypeMap);
+			if (fType == null) {
+				FType axis = FederatedPlannerUtils.getVectorAxis(transientRead);
+				if (axis != null)
+					fType = axis;
+			}
+			if (fType == null)
+				fType = FType.FULL;
+			return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey + "|" + fType.name());
+		}
+
+		return null;
+	}
+
 	private static AnchorKey buildAnchorKey(Hop hop, java.util.Map<Long, FType> fTypeMap, Set<Long> visited) {
 		if (hop == null)
 			return null;
@@ -4315,8 +4434,12 @@ public final class FederatedRefedPolicy {
 				DataOp dataOp = (DataOp) hop;
 				if (dataOp.getOp() == OpOpData.TRANSIENTREAD) {
 					String anchorKey = FederatedPlannerUtils.getFedAnchorKey(dataOp.getName());
-					if (anchorKey != null)
+					if (anchorKey != null) {
+						AnchorKey resolved = resolveTransientReadAnchorKey(dataOp, anchorKey, fTypeMap);
+						if (resolved != null)
+							return resolved;
 						return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
+					}
 					if (isRuntimeFederatedInput(hop, null, null)) {
 						AnchorKey fallback = deriveFallbackAnchorKeyForRuntimeSource(hop, fTypeMap);
 						if (fallback != null)

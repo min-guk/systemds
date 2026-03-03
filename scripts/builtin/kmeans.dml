@@ -258,7 +258,13 @@ get_sample_maps = function (int num_records, int num_samples, int approx_sample_
     sample_positions = (num_rows + 1) - is_row_in_samples * seq (num_rows, 1, -1);
     # Column ID positions = 1, 1, ..., 1, 2, 2, ..., 2, . . . , n_c, n_c, ..., n_c:
     col_positions = round (0.5 + seq (0, num_rows - 1, 1) / sample_block_size);
-    sample_col_map = table (sample_positions, col_positions);
+    # NOTE: Provide explicit dimensions to table() to enable static size inference.
+    # The generated sample_positions may include the sentinel row id = num_rows+1
+    # for out-of-sample-range positions, which is subsequently removed by slicing
+    # off the last row. Without explicit dimensions, the compiler may treat the
+    # second dimension as unknown (-1), which propagates to cost-based federated
+    # planning and can drastically mis-estimate network costs.
+    sample_col_map = table (sample_positions, col_positions, num_rows + 1, num_samples);
     # Remove the out-of-sample-range positions by cutting off the last row:
     sample_col_map = sample_col_map [1 : (num_rows), ];
   }

@@ -24,7 +24,9 @@ import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -96,6 +98,7 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 	private static final Pattern MISSING_VAR_PATTERN = Pattern.compile("Variable '?(\\d+)'? does not exist");
 	private static final Map<Long, FedReadInfo> FED_READ_REGISTRY = new ConcurrentHashMap<>();
 	private static final boolean ENABLE_MISSING_VAR_RECOVERY = false;
+	private static final boolean DEBUG_FEDREQ = Boolean.getBoolean("sysds.debug.fedreq");
 
 	private static final class FedReadInfo {
 		private final String filename;
@@ -248,11 +251,26 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			for(int i = 0; i < requests.length; i++) {
 				final FederatedRequest request = requests[i];
 				final RequestType t = request.getType();
+				if (DEBUG_FEDREQ) {
+					final ExecutionContext dbgEc = ecm.get(request.getTID());
+					System.out.println("[DBG-FEDREQ][worker][before] pid=" + request.getPID()
+						+ " tid=" + request.getTID()
+						+ " req=" + summarizeRequest(request)
+						+ " vars=" + summarizeVariables(dbgEc));
+				}
 				logRequests(request, i, requests.length);
 
 				var eventStage = new EventStageModel();
 				// execute command and handle privacy constraints
 				final FederatedResponse tmp = executeCommand(request, ecm, eventStage);
+				if (DEBUG_FEDREQ) {
+					final ExecutionContext dbgEc = ecm.get(request.getTID());
+					System.out.println("[DBG-FEDREQ][worker][after] pid=" + request.getPID()
+						+ " tid=" + request.getTID()
+						+ " req=" + summarizeRequest(request)
+						+ " success=" + tmp.isSuccessful()
+						+ " vars=" + summarizeVariables(dbgEc));
+				}
 
 				if (DMLScript.STATISTICS) {
 					var requestStat = new RequestModel(request.getType().name(), 1L);
@@ -757,6 +775,65 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			}
 		});
 		LOG.error(sb.toString());
+	}
+
+	private static String summarizeRequest(FederatedRequest request) {
+		if (request == null)
+			return "null";
+		StringBuilder sb = new StringBuilder();
+		sb.append(request.getType()).append("#id=").append(request.getID());
+		if (request.getType() == RequestType.EXEC_INST && request.getNumParams() > 0
+			&& request.getParam(0) instanceof String) {
+			sb.append(" inst=").append(truncate((String) request.getParam(0), 220));
+		}
+		else if (request.getType() == RequestType.PUT_VAR) {
+			sb.append(" params=").append(request.getNumParams());
+			if (request.getNumParams() > 0 && request.getParam(0) != null)
+				sb.append(" p0=").append(request.getParam(0).getClass().getSimpleName());
+			if (request.getNumParams() > 1 && request.getParam(1) != null)
+				sb.append(" p1=").append(request.getParam(1));
+		}
+		return sb.toString();
+	}
+
+	private static String summarizeVariables(ExecutionContext ec) {
+		if (ec == null)
+			return "ec=null";
+		ArrayList<String> keys = new ArrayList<>(ec.getVariables().keySet());
+		keys.sort(Comparator.comparingLong(FederatedWorkerHandler::sortableVarKey));
+		StringBuilder sb = new StringBuilder();
+		sb.append("count=").append(keys.size()).append(" [");
+		int lim = Math.min(keys.size(), 24);
+		for (int i = 0; i < lim; i++) {
+			if (i > 0)
+				sb.append(", ");
+			String key = keys.get(i);
+			Data d = ec.getVariable(key);
+			sb.append(key);
+			if (d != null)
+				sb.append(":").append(d.getDataType());
+		}
+		if (keys.size() > lim)
+			sb.append(", ...");
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private static long sortableVarKey(String key) {
+		if (key == null)
+			return Long.MAX_VALUE;
+		try {
+			return Long.parseLong(key);
+		}
+		catch (NumberFormatException ex) {
+			return Long.MAX_VALUE - 1L;
+		}
+	}
+
+	private static String truncate(String s, int maxLen) {
+		if (s == null || s.length() <= maxLen)
+			return s;
+		return s.substring(0, maxLen) + "...";
 	}
 
 	private FederatedResponse execUDF(FederatedRequest request, ExecutionContextMap ecm, EventStageModel eventStage) {

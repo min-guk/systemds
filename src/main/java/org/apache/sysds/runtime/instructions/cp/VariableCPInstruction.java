@@ -124,6 +124,7 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 
 	private static final IDSequence _uniqueVarID = new IDSequence(true);
 	private static final int CREATEVAR_FILE_NAME_VAR_POS=3;
+	private static final boolean DEBUG_FEDREQ = Boolean.getBoolean("sysds.debug.fedreq");
 
 	private final VariableOperationCode opcode;
 	private final List<CPOperand> inputs;
@@ -1122,6 +1123,18 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 	public static void processRmvarInstruction( ExecutionContext ec, String varname ) {
 		if ("Y".equals(varname)) {
 			System.out.println("[DEBUG] rmvar Y executed");
+		}
+		if (DEBUG_FEDREQ) {
+			Data peek = ec.getVariable(varname);
+			if (peek instanceof MatrixObject) {
+				MatrixObject mo = (MatrixObject) peek;
+				if (mo.isFederated() && mo.getFedMapping() != null) {
+					System.out.println("[DBG-FEDREQ][coord][rmvar] var=" + varname
+						+ " fedId=" + mo.getFedMapping().getID()
+						+ " ftype=" + mo.getFedMapping().getType()
+						+ " dims=" + mo.getNumRows() + "x" + mo.getNumColumns());
+				}
+			}
 		}
 		// remove variable from symbol table
 		Data dat = ec.removeVariable(varname);

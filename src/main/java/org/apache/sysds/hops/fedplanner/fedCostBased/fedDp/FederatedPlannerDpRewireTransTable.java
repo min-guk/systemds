@@ -374,20 +374,33 @@ public class FederatedPlannerDpRewireTransTable {
 			double loopWeight = RewireConstants.DEFAULT_LOOP_WEIGHT;
 			Hop from = fsb.getFromHops().getInput().get(0);
 			Hop to = fsb.getToHops().getInput().get(0);
-			Hop incr = (fsb.getIncrementHops() != null) ? fsb.getIncrementHops().getInput().get(0)
-					: new LiteralOp(1);
+				Hop incr = (fsb.getIncrementHops() != null) ? fsb.getIncrementHops().getInput().get(0)
+						: new LiteralOp(1);
 
-			// Calculate for-loop iteration count (weight) if from, to, and incr are literal
-			// ops (constant values)
-			if (from instanceof LiteralOp && to instanceof LiteralOp && incr instanceof LiteralOp) {
-				double dfrom = HopRewriteUtils.getDoubleValue((LiteralOp) from);
-				double dto = HopRewriteUtils.getDoubleValue((LiteralOp) to);
-				double dincr = HopRewriteUtils.getDoubleValue((LiteralOp) incr);
-				if (dfrom > dto && dincr == 1)
-					dincr = -1;
-				loopWeight = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
-			}
-			double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
+				// Calculate for-loop iteration count (weight) if possible.
+				//
+				// Builtin workloads often pass constant arguments to functions (e.g., kmeans(k=50)),
+				// but loop bounds inside the builtin body are expressed via transient variables
+				// (e.g., num_centroids). If we only accept LiteralOp bounds, we systematically
+				// fall back to DEFAULT_LOOP_WEIGHT and under-estimate repeated forwarding costs.
+				//
+				// Best-effort: resolve scalar loop bounds through trans tables and simple scalar
+				// expressions. This is common to DP/MinST and improves planning accuracy without
+				// closing candidates ad-hoc.
+				Double dfromConst = RewireConstants.tryEvaluateScalarConstant(from, newOuterTransTableList);
+				Double dtoConst = RewireConstants.tryEvaluateScalarConstant(to, newOuterTransTableList);
+				Double dincrConst = RewireConstants.tryEvaluateScalarConstant(incr, newOuterTransTableList);
+				if (dfromConst != null && dtoConst != null && dincrConst != null && dincrConst != 0.0) {
+					double dfrom = dfromConst.doubleValue();
+					double dto = dtoConst.doubleValue();
+					double dincr = dincrConst.doubleValue();
+					if (dfrom > dto && dincr == 1)
+						dincr = -1;
+					double est = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
+					if (est > 0.0)
+						loopWeight = est;
+				}
+				double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
 			boolean allowUnroll = unrollCtx != null && loopCtx == null
 					&& unrollDepth < maxUnrollDepth && iter1Factor > 0.0;
 			Set<String> loopCarriedVars = Collections.emptySet();
