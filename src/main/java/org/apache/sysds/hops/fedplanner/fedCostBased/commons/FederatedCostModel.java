@@ -116,27 +116,18 @@ public final class FederatedCostModel {
 	 * Estimated per-operation coordination overhead for executing a federated instruction
 	 * across multiple workers.
 	 *
-	 * <p>This captures (1) one network-latency term (requests are issued without waiting
-	 * per worker, and the critical path is dominated by the slowest worker), plus
-	 * (2) a per-worker control overhead (RPC framing / Netty bookkeeping) that scales
-	 * with the number of contacted workers.
-	 *
-	 * <p>Note: This model intentionally does <b>not</b> multiply the latency term by the
-	 * number of workers. Doing so can significantly over-penalize "many small" FED ops
-	 * and cause planner flips to CP that introduce large repeated uploads (e.g., in
-	 * iterative workloads such as kmeans under WAN profiles).
+	 * <p>This helper is intentionally <b>control-plane only</b> (RPC framing / Netty bookkeeping).
+	 * Boundary upload/download costs already account for network latency and payload transfer,
+	 * so adding a full latency term here would double-count and over-penalize FED execution
+	 * in iterative workloads (e.g., lm/pca under WAN profiles).</p>
 	 *
 	 * @param numWorkers number of federated workers participating in the operation
-	 * @return estimated coordination overhead in milliseconds
+	 * @return estimated control-only coordination overhead in milliseconds
 	 */
 	public static double computeFedCoordinationCost(int numWorkers) {
 		final int fanout = Math.max(1, numWorkers);
-		final double base = computeNetworkCost(0); // latency + 1*ctrl
 		final double ctrl = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		if (fanout <= 1 || ctrl <= 0.0)
-			return base;
-		// base already accounts for a single ctrl term; add remaining (fanout-1) control costs
-		return base + (fanout - 1) * ctrl;
+		return fanout * ctrl;
 	}
 
 	public static double computeOpCost(Hop currentHop) {
@@ -295,6 +286,16 @@ public final class FederatedCostModel {
 		if (hasUnknownOutputDims(hop)
 			&& isLikelyDefaultUnknownMemEstimate(outputMemEstimate)
 			&& isLikelyDefaultUnknownMemEstimate(inputMemEstimate)) {
+			outputMemEstimate = Math.min(outputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES);
+			double fanInScale = Math.max(1, hop.getInput() == null ? 1 : hop.getInput().size());
+			inputMemEstimate = Math.min(inputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES * fanInScale);
+		}
+		// Unknown-dimension hops may still carry very large non-sentinel estimates (e.g., -1 axes
+		// propagated through matmult/indexing chains). These values are frequently pessimistic by
+		// multiple orders of magnitude before recompile resolves concrete shapes, and can dominate
+		// planner decisions in favor of CP fallbacks. Cap unknown-dimension transfer payloads to the
+		// same configured fallback envelope used above.
+		if (hasUnknownOutputDims(hop) && UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES > 0.0) {
 			outputMemEstimate = Math.min(outputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES);
 			double fanInScale = Math.max(1, hop.getInput() == null ? 1 : hop.getInput().size());
 			inputMemEstimate = Math.min(inputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES * fanInScale);

@@ -515,17 +515,19 @@ public class FederatedPlannerDpCostEnumerator {
 		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
 		double uploadMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
 		double cpSelfCost = baseSelfCost;
-		// Align with MinST: FED execution has a fixed per-op coordination overhead that
-		// should be modeled even when compute cost scales down with workers.
+		// Align with MinST: FED execution has a per-op coordination overhead that should
+		// be modeled even when compute cost scales down with workers.
 		//
-		// IMPORTANT: In DP we represent unrolled-loop iteration counts via HopCommon.multiplicity
-		// (see FederatedPlannerDpRewireTransTable). This overhead must therefore scale with
-		// multiplicity as well; otherwise DP under-estimates the cost of "many small" FED ops
-		// in iterative workloads (e.g., kmeans) and can incorrectly prefer FED execution under WAN.
+		// IMPORTANT: In DP we represent unrolled-loop iteration counts via
+		// HopCommon.multiplicity (see FederatedPlannerDpRewireTransTable). This overhead
+		// must therefore scale with multiplicity as well.
+		//
+		// DP/MinST parity: use the shared control-only helper. The helper already applies
+		// worker fanout semantics, so do not multiply by numWorkers again here.
 		double fedOverhead = (hop instanceof DataOp)
 				? 0.0
 				: (hopNetworkWeight * hopCommon.getMultiplicity())
-						* FederatedCostModel.computeNetworkCost(0) * Math.max(1, numOfWorkers);
+						* FederatedCostModel.computeFedCoordinationCost(numOfWorkers);
 		// For elementwise operations, real-world speedups from federated execution
 		// are often far from linear in the number of workers due to per-site overheads
 		// and sparse/dense representation effects. Over-aggressive scaling can make DP
