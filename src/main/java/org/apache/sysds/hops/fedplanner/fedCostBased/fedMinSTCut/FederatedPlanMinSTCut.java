@@ -114,11 +114,13 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
 		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
+		FederatedRefedPolicy.repairResolvedHopSelections(collectGraphHops(graph), fTypeMap, true);
 		// Refed/fout insertion can legitimately update per-hop output markers, so validate
 		// against the post-resolve plan rather than assuming the cut result is already final.
 		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
+		FederatedPlannerLogger.logOptimalPlanStructured(graph);
 		FederatedPlannerLogger.logOptimalPlan(graph, true);
 	}
 
@@ -131,9 +133,11 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
 		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
+		FederatedRefedPolicy.repairResolvedHopSelections(collectGraphHops(graph), fTypeMap, true);
 		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
+		FederatedPlannerLogger.logOptimalPlanStructured(graph);
 		FederatedPlannerLogger.logOptimalPlan(graph, true);
 	}
 
@@ -155,6 +159,18 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			planned.put(vertex.getHopID(), Pair.of(exec, out));
 		}
 		return planned;
+	}
+
+	private static List<Hop> collectGraphHops(FederatedPlanMinSTGraph graph) {
+		List<Hop> hops = new ArrayList<>();
+		if (graph == null)
+			return hops;
+		for (Vertex vertex : graph.getMemoTable().values()) {
+			if (vertex == null || vertex.getHopRef() == null)
+				continue;
+			hops.add(vertex.getHopRef());
+		}
+		return hops;
 	}
 
 	private static Map<Long, FType> buildPlannedFTypeMap(FederatedPlanMinSTGraph graph) {

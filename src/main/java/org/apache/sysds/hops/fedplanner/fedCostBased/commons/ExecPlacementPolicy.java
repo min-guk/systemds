@@ -51,6 +51,7 @@ public final class ExecPlacementPolicy {
 	public static Decision decide(Hop hop, Privacy privacy, FType fType, OpCaps caps) {
 		ExecType oracleExec = (caps != null) ? caps.exec() : ExecType.CP;
 		FederatedOutput placement = (caps != null) ? caps.placement() : FederatedOutput.LOUT;
+		boolean dmlFunctionPlaceholder = isDmlFunctionPlaceholder(hop);
 
 		Decision decision = new Decision();
 
@@ -89,6 +90,12 @@ public final class ExecPlacementPolicy {
 				else if (oracleExec == ExecType.CP) {
 					decision.allowCP_LOUT = true;
 				}
+				// A DML FunctionOp is only a coordinator-side call placeholder; the concrete
+				// execution happens inside the callee. Even if the oracle exposes a federated
+				// placeholder path here, local execution of the call boundary remains legal
+				// whenever privacy permits aggregate release.
+				if (dmlFunctionPlaceholder)
+					decision.allowCP_LOUT = true;
 				if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
 					decision.allowCP_LOUT = true;
 				break;
@@ -102,6 +109,8 @@ public final class ExecPlacementPolicy {
 				else if (oracleExec == ExecType.CP) {
 					decision.allowCP_LOUT = true;
 				}
+				if (dmlFunctionPlaceholder)
+					decision.allowCP_LOUT = true;
 				if (allowCpFout(hop, fType)) {
 					decision.allowCP_FOUT = true;
 				}
@@ -149,6 +158,11 @@ public final class ExecPlacementPolicy {
 	private static boolean isMultiReturnBuiltinHop(Hop hop) {
 		return hop instanceof FunctionOp
 				&& ((FunctionOp) hop).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN;
+	}
+
+	private static boolean isDmlFunctionPlaceholder(Hop hop) {
+		return hop instanceof FunctionOp
+				&& ((FunctionOp) hop).getFunctionType() == FunctionType.DML;
 	}
 
 	private static boolean isFunctionOutputFromMultiReturn(Hop hop) {

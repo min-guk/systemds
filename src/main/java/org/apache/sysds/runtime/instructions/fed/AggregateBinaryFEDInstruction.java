@@ -101,10 +101,13 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			System.out.println("[DBG-KMEANS] aggBinary in1=" + input1.getName()
 				+ " dims1=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
 				+ " ftype1=" + f1
+				+ " local1=" + !mo1.isFederated()
 				+ " in2=" + input2.getName()
 				+ " dims2=" + mo2.getNumRows() + "x" + mo2.getNumColumns()
 				+ " ftype2=" + f2
-				+ " fedOut=" + _fedOut);
+				+ " local2=" + !mo2.isFederated()
+				+ " fedOut=" + _fedOut
+				+ " inst=" + instString);
 		}
 
 		if (!mo1.isFederated() && !mo2.isFederated()) {
@@ -364,7 +367,9 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			System.out.println("[DBG-KMEANS] aggBinary " + instOpcode + " out=" + output.getName()
 				+ " dims=" + mo1.getNumRows() + "x" + mo2.getNumColumns()
 				+ " nnz=" + nnz
-				+ " ftype=" + federationMap.getType());
+				+ " ftype=" + federationMap.getType()
+				+ " fedOut=" + _fedOut
+				+ " inst=" + instString);
 		}
 	}
 

@@ -230,10 +230,13 @@ public class FederatedPlanMinSTGraph {
 		double cpCost = vertex.getOpCostWithWeight();
 		// DP/MinST parity: choosing CP-local for a concrete federated TRANSIENTREAD
 		// must pay federated->local materialization (runtime acquire_read path).
+		// Stable fed-init TReads can reuse one local buffer across loop iterations
+		// and multiple CP parents, so charge the amortized shared materialization
+		// cost instead of the full loop-weighted download at each consumer.
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 			if (caps.allowCP_LOUT && caps.allowFED_FOUT
 					&& hop.getDim1() > 0 && hop.getDim2() > 0) {
-				cpCost += vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
+				cpCost += computeTransientReadLocalMaterializationCost(vertex);
 			}
 		}
 		double fedOverhead = 0.0;
@@ -279,7 +282,9 @@ public class FederatedPlanMinSTGraph {
 			double fedComputeCost = (vertex.getHopRef() instanceof BinaryOp || broadcastOnlyFedCompute)
 					? cpCost
 					: cpCost / Math.max(1, numOfWorkers);
-			double fedCost = fedComputeCost + fedOverhead;
+			double fedCost = fedComputeCost + fedOverhead
+					+ FederatedCostModel.computeSingleWorkerFedExecPenalty(
+							hop, vertex.getOpWeight(), numOfWorkers);
 
 		if (!acL && !acF)
 			cpCost = HARD_INF;
@@ -307,14 +312,19 @@ public class FederatedPlanMinSTGraph {
 		long lId = FederatedPlanMinSTPlanner.localityId(hopId);
 		if (hop instanceof DataOp &&
 				((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			// DP parity: if a TRead is chosen as FED/FOUT but consumed by a CP parent,
-			// the plan must pay the download needed to materialize local output.
-			// Upload for TRead is modeled via parent-child forwarding edges.
-			double trDownloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
+			// DP parity: a stable federated-input TRead (fed-init var) can materialize
+			// once and share the local buffer across loop iterations / CP parents. The
+			// MinST graph already shares this edge globally across all parents, so do not
+			// multiply the FED->CP download by the hop execution frequency again.
+			//
+			// For ordinary TReads we still charge the loop-weighted download, because the
+			// local materialization may legitimately happen per execution.
+			double trDownloadCost = computeTransientReadDownloadEdgeCost(vertex);
 			addCap(cId, lId, trDownloadCost);
 			if (FederatedPlannerTrace.shouldTrace(hop)) {
 				FederatedPlannerTrace.log(hop, "MinST-ResultEdge",
-						String.format("TR edge c->l download=%.6f", trDownloadCost));
+						String.format("TR edge c->l download=%.6f stableFedInput=%s",
+								trDownloadCost, shouldReuseTransientReadDownload(vertex)));
 			}
 			return;
 		}
@@ -345,6 +355,7 @@ public class FederatedPlanMinSTGraph {
 			Vertex parentVertex, long parentHopID, boolean requiresFederatedInput) {
 		long parentC = FederatedPlanMinSTPlanner.computeId(parentHopID);
 		long childP = FederatedPlanMinSTPlanner.placementId(childHopID);
+		Hop parentHopRef = (parentVertex != null) ? parentVertex.getHopRef() : null;
 		Hop childHopRef = childVertex.getHopRef();
 		boolean matrixInput = childHopRef != null
 				&& childHopRef.getDataType() != null
@@ -494,6 +505,47 @@ public class FederatedPlanMinSTGraph {
 		long childL = FederatedPlanMinSTPlanner.localityId(childHopId);
 		// If the child has NO_LOCAL (lId on source side), the parent cannot execute CP.
 		addCap(childL, parentC, HARD_CONSTRAINT);
+	}
+
+	private static double computeTransientReadLocalMaterializationCost(Vertex vertex) {
+		if (vertex == null)
+			return 0.0;
+		double baseDownload = vertex.getDownloadCostWithoutWeight();
+		if (Double.isNaN(baseDownload) || baseDownload <= 0.0)
+			return 0.0;
+		if (!shouldReuseTransientReadDownload(vertex))
+			return vertex.getOpWeight() * baseDownload;
+		double opWeight = Math.max(1.0, vertex.getOpWeight());
+		double networkWeight = vertex.getNetworkWeight();
+		if (Double.isNaN(networkWeight) || networkWeight <= 0.0)
+			networkWeight = 1.0;
+		double reuseShare = Math.min(1.0, networkWeight / opWeight);
+		int numParents = Math.max(1, vertex.getNumParents());
+		return baseDownload * reuseShare / numParents;
+	}
+
+	private static double computeTransientReadDownloadEdgeCost(Vertex vertex) {
+		if (vertex == null)
+			return 0.0;
+		if (shouldReuseTransientReadDownload(vertex))
+			return computeTransientReadLocalMaterializationCost(vertex);
+		double baseDownload = vertex.getDownloadCostWithoutWeight();
+		if (Double.isNaN(baseDownload) || baseDownload <= 0.0)
+			return 0.0;
+		return vertex.getOpWeight() * baseDownload;
+	}
+
+	private static boolean shouldReuseTransientReadDownload(Vertex vertex) {
+		if (vertex == null)
+			return false;
+		Hop hop = vertex.getHopRef();
+		if (!(hop instanceof DataOp))
+			return false;
+		DataOp dataOp = (DataOp) hop;
+		if (dataOp.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return false;
+		String name = dataOp.getName();
+		return name != null && FederatedPlannerUtils.isFedInitVar(name);
 	}
 
 	public void markParentChildUploadHint(long parentHopId, long childHopId) {
@@ -674,10 +726,8 @@ public class FederatedPlanMinSTGraph {
 				outSelection.put(hopID, out);
 			}
 
-			repairTransientReadWriteSelection(execSelection, outSelection);
-			repairCapsInconsistentSelection(execSelection, outSelection);
-			repairFederatedInputSelection(execSelection, outSelection);
-			repairCapsInconsistentSelection(execSelection, outSelection);
+			repairSelectionFixpoint(execSelection, outSelection);
+			Map<Long, FType> finalFTypeMap = buildSelectedFTypeMap(execSelection, outSelection);
 
 			for (Vertex vertex : memoTable.values()) {
 				long hopID = vertex.getHopID();
@@ -689,14 +739,37 @@ public class FederatedPlanMinSTGraph {
 						&& exec == ExecType.FED && out == FederatedOutput.FOUT;
 				vertex.getHopRef().setFederatedOutputDerived(derivedSelected);
 				logSelectedDecision(vertex, sourceSide);
+				logFinalSelectedDecision(vertex, sourceSide, exec, out, finalFTypeMap.get(hopID), derivedSelected);
 			}
 		}
 
-	private void repairTransientReadWriteSelection(Map<Long, ExecType> execSelection,
+	private void repairSelectionFixpoint(Map<Long, ExecType> execSelection,
 			Map<Long, FederatedOutput> outSelection) {
 		if (execSelection == null || outSelection == null)
 			return;
 		boolean changed;
+		int iter = 0;
+		do {
+			changed = false;
+			// These repairs are coupled:
+			// - FED-input repair can demote a TWrite after the initial TR/TW alignment pass
+			// - the linked TRead must then be reconsidered against the repaired TWrite
+			// - cap repair normalizes any intermediate illegal combination exposed by the demotions
+			changed |= repairTransientReadWriteSelection(execSelection, outSelection);
+			changed |= repairCapsInconsistentSelection(execSelection, outSelection);
+			changed |= repairFederatedInputSelection(execSelection, outSelection);
+			changed |= repairCapsInconsistentSelection(execSelection, outSelection);
+			iter++;
+		}
+		while (changed && iter < 6);
+	}
+
+	private boolean repairTransientReadWriteSelection(Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		if (execSelection == null || outSelection == null)
+			return false;
+		boolean changed;
+		boolean changedAny = false;
 		int iter = 0;
 		do {
 			changed = false;
@@ -726,6 +799,7 @@ public class FederatedPlanMinSTGraph {
 						execSelection.put(trVertex.getHopID(), ExecType.CP);
 						outSelection.put(trVertex.getHopID(), FederatedOutput.LOUT);
 						changed = true;
+						changedAny = true;
 						if (FederatedPlannerTrace.shouldTrace(trHop))
 							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
 									"demote TR " + trVertex.getHopID() + " to CP/LOUT to match TW");
@@ -734,6 +808,7 @@ public class FederatedPlanMinSTGraph {
 						execSelection.put(twHopId, ExecType.FED);
 						outSelection.put(twHopId, FederatedOutput.FOUT);
 						changed = true;
+						changedAny = true;
 						if (FederatedPlannerTrace.shouldTrace(trHop))
 							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
 									"promote TW " + twHopId + " to FED/FOUT to match TR");
@@ -744,6 +819,7 @@ public class FederatedPlanMinSTGraph {
 						execSelection.put(twHopId, ExecType.CP);
 						outSelection.put(twHopId, FederatedOutput.LOUT);
 						changed = true;
+						changedAny = true;
 						if (FederatedPlannerTrace.shouldTrace(trHop))
 							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
 									"demote TW " + twHopId + " to CP/LOUT to match TR");
@@ -752,6 +828,7 @@ public class FederatedPlanMinSTGraph {
 						execSelection.put(trVertex.getHopID(), ExecType.FED);
 						outSelection.put(trVertex.getHopID(), FederatedOutput.FOUT);
 						changed = true;
+						changedAny = true;
 						if (FederatedPlannerTrace.shouldTrace(trHop))
 							FederatedPlannerTrace.log(trHop, "MinST-TRTW-Repair",
 									"promote TR " + trVertex.getHopID() + " to FED/FOUT to match TW");
@@ -760,13 +837,15 @@ public class FederatedPlanMinSTGraph {
 			}
 		}
 		while (changed && iter < 4);
+		return changedAny;
 	}
 
-	private void repairFederatedInputSelection(Map<Long, ExecType> execSelection,
+	private boolean repairFederatedInputSelection(Map<Long, ExecType> execSelection,
 			Map<Long, FederatedOutput> outSelection) {
 		if (execSelection == null || outSelection == null)
-			return;
+			return false;
 		boolean changed;
+		boolean changedAny = false;
 		int iter = 0;
 		do {
 			changed = false;
@@ -789,6 +868,7 @@ public class FederatedPlanMinSTGraph {
 					outSelection.put(hopId, FederatedOutput.LOUT);
 					selectedFTypeMap.put(hopId, null);
 					changed = true;
+					changedAny = true;
 					if (FederatedPlannerTrace.shouldTrace(hop))
 						FederatedPlannerTrace.log(hop, "MinST-FedInput-Repair",
 								"demote parent " + hopId + " to CP/LOUT due unsatisfied FED inputs");
@@ -796,13 +876,15 @@ public class FederatedPlanMinSTGraph {
 			}
 		}
 		while (changed && iter < 4);
+		return changedAny;
 	}
 
-	private void repairCapsInconsistentSelection(Map<Long, ExecType> execSelection,
+	private boolean repairCapsInconsistentSelection(Map<Long, ExecType> execSelection,
 			Map<Long, FederatedOutput> outSelection) {
 		if (execSelection == null || outSelection == null)
-			return;
+			return false;
 		boolean changed;
+		boolean changedAny = false;
 		int iter = 0;
 		do {
 			changed = false;
@@ -851,6 +933,7 @@ public class FederatedPlanMinSTGraph {
 					execSelection.put(hopId, newExec);
 					outSelection.put(hopId, newOut);
 					changed = true;
+					changedAny = true;
 					Hop hop = vertex.getHopRef();
 					if (FederatedPlannerTrace.shouldTrace(hop))
 						FederatedPlannerTrace.log(hop, "MinST-Caps-Repair",
@@ -863,6 +946,7 @@ public class FederatedPlanMinSTGraph {
 			}
 		}
 		while (changed && iter < 4);
+		return changedAny;
 	}
 
 	private Map<Long, FType> buildSelectedFTypeMap(Map<Long, ExecType> execSelection,
@@ -922,6 +1006,29 @@ public class FederatedPlanMinSTGraph {
 		for (String edgeLine : cutEdges) {
 			FederatedPlannerTrace.log(hop, "MinST-CutEdge", edgeLine);
 		}
+	}
+
+	private void logFinalSelectedDecision(Vertex vertex, Set<Long> sourceSide, ExecType finalExec,
+			FederatedOutput finalOut, FType finalFType, boolean derivedFedFout) {
+		Hop hop = (vertex != null) ? vertex.getHopRef() : null;
+		if (!FederatedPlannerTrace.shouldTrace(hop))
+			return;
+
+		long hopID = vertex.getHopID();
+		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
+		long pId = FederatedPlanMinSTPlanner.placementId(hopID);
+		long lId = FederatedPlanMinSTPlanner.localityId(hopID);
+		ExecType rawExec = sourceSide.contains(cId) ? ExecType.FED : ExecType.CP;
+		FederatedOutput rawOut = sourceSide.contains(pId) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
+		boolean repaired = rawExec != finalExec || rawOut != finalOut;
+		boolean rawNoLocal = sourceSide.contains(lId);
+		ExecPlacementCaps caps = vertex.getCaps();
+
+		FederatedPlannerTrace.log(hop, "MinST-FinalSelect", String.format(
+				"raw=%s/%s noLocal=%s final=%s/%s repaired=%s derivedFedFout=%s caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s] finalFType=%s cpFoutType=%s",
+				rawExec, rawOut, rawNoLocal, finalExec, finalOut, repaired, derivedFedFout,
+				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT,
+				finalFType, vertex.getCpFoutDataType()));
 	}
 
 	private List<String> collectIncidentCutEdges(long cId, long pId, long lId, Set<Long> sourceSide, int maxEdges) {

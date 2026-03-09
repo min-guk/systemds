@@ -190,6 +190,15 @@ public final class FederatedRefedPolicy {
 				registerFromStatementBlock(fsb, fTypeMap, functionAnchor, true);
 			}
 		}
+		for (StatementBlock sb : prog.getStatementBlocks())
+			finalizeRegisteredStatementBlock(sb, fTypeMap, programAnchor, false);
+		for (String namespaceKey : prog.getNamespaces().keySet()) {
+			for (String fname : prog.getFunctionStatementBlocks(namespaceKey).keySet()) {
+				FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespaceKey, fname);
+				AnchorSelection functionAnchor = buildGlobalAnchorForFunction(fsb, fTypeMap);
+				finalizeRegisteredStatementBlock(fsb, fTypeMap, functionAnchor, true);
+			}
+		}
 	}
 
 	public static void registerFromFunction(FunctionStatementBlock function) {
@@ -213,6 +222,66 @@ public final class FederatedRefedPolicy {
 			GLOBAL_SIGNATURE_ANCHOR_KEY.set(functionAnchor.key);
 		for (StatementBlock inner : fstmt.getBody())
 			registerFromStatementBlock(inner, fTypeMap, functionAnchor, true);
+		for (StatementBlock inner : fstmt.getBody())
+			finalizeRegisteredStatementBlock(inner, fTypeMap, functionAnchor, true);
+	}
+
+	public static void repairResolvedHopSelections(java.util.Collection<Hop> hops,
+			java.util.Map<Long, FType> fTypeMap, boolean conditionalContext) {
+		if (hops == null || hops.isEmpty())
+			return;
+		List<Hop> all = new ArrayList<>();
+		Set<Long> seen = new HashSet<>();
+		for (Hop hop : hops) {
+			if (hop == null || !seen.add(hop.getHopID()))
+				continue;
+			all.add(hop);
+		}
+		if (all.isEmpty())
+			return;
+
+		boolean changed;
+		int pass = 0;
+		do {
+			boolean demoted = false;
+			for (int i = all.size() - 1; i >= 0; i--) {
+				Hop hop = all.get(i);
+				if (hop == null)
+					continue;
+				ExecType exec = getPlannedExecType(hop);
+				boolean plannedFed = exec == ExecType.FED;
+				boolean plannedFout = hop.getFederatedOutput() == FederatedOutput.FOUT;
+				if (!plannedFed && !plannedFout)
+					continue;
+				if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
+					continue;
+				if (!canSatisfyFederatedInputs(hop, fTypeMap)) {
+					if (canDemoteUnsatisfiedFedHop(hop)) {
+						demoteUnsatisfiedFedHop(hop, fTypeMap, resolveHopSbId(hop.getHopID(), -1L));
+						demoted = true;
+					}
+				}
+			}
+
+			boolean pruned = false;
+			boolean twDemoted = false;
+			Map<Long, List<Hop>> bySbId = new HashMap<>();
+			for (Hop hop : all) {
+				long sbId = resolveHopSbId(hop.getHopID(), -1L);
+				bySbId.computeIfAbsent(sbId, k -> new ArrayList<>()).add(hop);
+			}
+			for (Map.Entry<Long, List<Hop>> entry : bySbId.entrySet()) {
+				long sbId = entry.getKey();
+				List<Hop> sbHops = entry.getValue();
+				pruned |= pruneInvalidCpfoutAnchors(sbHops, fTypeMap, sbId);
+				twDemoted |= demoteStaleTransientWriteFederatedSelections(sbHops, fTypeMap, sbId,
+					conditionalContext);
+			}
+
+			changed = demoted || pruned || twDemoted;
+			pass++;
+		}
+		while (changed && pass < 6);
 	}
 
 	public static void registerFromHops(List<Hop> roots, boolean clearRegistry) {
@@ -625,27 +694,25 @@ public final class FederatedRefedPolicy {
 					}
 				}
 			}
-		for (Hop hop : all) {
-			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
-				// Track transient writes that carry federated anchors so later TRead hops can
-				// be treated as federated inputs in subsequent blocks.
-				//
-				// This is also required in runtime recompile: runtime signatures are authoritative
-				// for *existing* symbol-table vars, but transient writes inside the current block
-				// may introduce new federated vars (or overwrite federated vars locally). Without
-				// updating anchor-key state here, later refed/materialize decisions may become
-				// inconsistent and produce invalid fed_refed insertions on already-federated vars.
-				registerTransientWriteAnchor((DataOp) hop, fTypeMap, blockAnchor, sbId, conditionalContext);
-			}
-		}
 		boolean changed;
 		int enforcePass = 0;
 		do {
 			boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor, runtimeContext);
-			boolean pruned = pruneInvalidCpfoutAnchors(all, sbId);
-			changed = demoted || pruned;
+			boolean pruned = pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
+			boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all, fTypeMap, sbId,
+				conditionalContext);
+			changed = demoted || pruned || twDemoted;
 			enforcePass++;
 			} while (changed && enforcePass < 5);
+		for (Hop hop : all) {
+			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
+				// Track transient writes only after the enforce/prune loop settles on the final
+				// repaired selection. Registering anchors from raw pre-repair FED/FOUT candidates
+				// can leak stale federated state into later recompiles even when the final plan
+				// demotes the write back to CP/LOUT.
+				registerTransientWriteAnchor((DataOp) hop, fTypeMap, blockAnchor, sbId, conditionalContext);
+			}
+		}
 		}
 		finally {
 			if (runtimeContext)
@@ -1094,7 +1161,30 @@ public final class FederatedRefedPolicy {
 		CPFOUT_ANCHOR_CACHE.remove(hop.getHopID());
 	}
 
-	private static boolean pruneInvalidCpfoutAnchors(List<Hop> all, long sbId) {
+	private static boolean stillNeedsRegisteredFederatedUpload(Hop hop, java.util.Map<Long, FType> fTypeMap) {
+		if (hop == null)
+			return false;
+
+		ExecType plannedExec = getPlannedExecType(hop);
+		if (plannedExec == null)
+			plannedExec = ExecType.CP;
+
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == OpOpData.TRANSIENTWRITE)
+				return plannedExec == ExecType.FED
+					&& hop.getFederatedOutput() == FederatedOutput.FOUT
+					&& !hop.hasLocalOutput();
+			if (dataOp.getOp() == OpOpData.TRANSIENTREAD)
+				return plannedExec == ExecType.FED && !hop.hasLocalOutput();
+		}
+
+		boolean localOutput = plannedExec == ExecType.CP
+			|| (plannedExec == ExecType.FED && (hop.hasLocalOutput() || hop.isFederatedOutputDerived()));
+		return localOutput && requiresCpfoutForFedParents(hop, fTypeMap);
+	}
+
+	private static boolean pruneInvalidCpfoutAnchors(List<Hop> all, java.util.Map<Long, FType> fTypeMap, long sbId) {
 		if (all == null || all.isEmpty())
 			return false;
 		java.util.Map<Long, Hop> hopById = new java.util.HashMap<>();
@@ -1109,6 +1199,17 @@ public final class FederatedRefedPolicy {
 
 		for (java.util.Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> entry : refed.entrySet()) {
 			Hop localHop = hopById.get(entry.getKey());
+			if (localHop != null && !stillNeedsRegisteredFederatedUpload(localHop, fTypeMap)) {
+				FederatedRefedRegistry.remove(sbId, entry.getKey());
+				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
+				if (FederatedPlannerTrace.shouldTrace(localHop)) {
+					FederatedPlannerTrace.log(localHop, "Refed-Prune",
+						"remove=refed reason=no_longer_needed plannedExec=" + getPlannedExecType(localHop)
+							+ " fedOut=" + localHop.getFederatedOutput());
+				}
+				changed = true;
+				continue;
+			}
 			if (localHop != null && isRuntimeFederatedInput(localHop, null, null)) {
 				FederatedRefedRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
@@ -1133,6 +1234,17 @@ public final class FederatedRefedPolicy {
 		}
 		for (java.util.Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> entry : materialize.entrySet()) {
 			Hop localHop = hopById.get(entry.getKey());
+			if (localHop != null && !stillNeedsRegisteredFederatedUpload(localHop, fTypeMap)) {
+				FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
+				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
+				if (FederatedPlannerTrace.shouldTrace(localHop)) {
+					FederatedPlannerTrace.log(localHop, "Refed-Prune",
+						"remove=materialize reason=no_longer_needed plannedExec=" + getPlannedExecType(localHop)
+							+ " fedOut=" + localHop.getFederatedOutput());
+				}
+				changed = true;
+				continue;
+			}
 			if (localHop != null && isRuntimeFederatedInput(localHop, null, null)) {
 				FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
@@ -1157,6 +1269,121 @@ public final class FederatedRefedPolicy {
 				}
 			}
 		return changed;
+	}
+
+	private static boolean demoteStaleTransientWriteFederatedSelections(List<Hop> all,
+			java.util.Map<Long, FType> fTypeMap, long sbId, boolean conditionalContext) {
+		if (all == null || all.isEmpty())
+			return false;
+
+		Map<String, List<DataOp>> writesByName = new HashMap<>();
+		Map<String, List<DataOp>> readsByName = new HashMap<>();
+		for (Hop hop : all) {
+			if (!(hop instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) hop;
+			String name = dataOp.getName();
+			if (name == null || name.isEmpty())
+				continue;
+			if (dataOp.getOp() == OpOpData.TRANSIENTWRITE)
+				writesByName.computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
+			else if (dataOp.getOp() == OpOpData.TRANSIENTREAD)
+				readsByName.computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
+		}
+
+		boolean changedAny = false;
+		for (Hop hop : all) {
+			if (!(hop instanceof DataOp))
+				continue;
+			DataOp tWrite = (DataOp) hop;
+			if (tWrite.getOp() != OpOpData.TRANSIENTWRITE)
+				continue;
+
+			ExecType exec = getPlannedExecType(tWrite);
+			if (exec == null)
+				exec = ExecType.CP;
+			if (exec != ExecType.FED && tWrite.getFederatedOutput() != FederatedOutput.FOUT)
+				continue;
+
+			List<Hop> inputs = tWrite.getInput();
+			Hop input = (inputs != null && !inputs.isEmpty()) ? inputs.get(0) : null;
+			if (input == null)
+				continue;
+
+			boolean inputRuntimeFed = isRuntimeFederatedInput(input, null, null);
+			if (!inputRuntimeFed) {
+				ExecType inputExec = getPlannedExecType(input);
+				inputRuntimeFed = inputExec == ExecType.FED && !input.hasLocalOutput();
+			}
+			if (inputRuntimeFed) {
+				if (FederatedPlannerTrace.shouldTrace(tWrite)) {
+					FederatedPlannerTrace.log(tWrite, "Refed-TWrite-Review",
+						"keep reason=input_runtime_fed inputHop=" + input.getHopID()
+							+ " inputExec=" + getPlannedExecType(input)
+							+ " inputFedOut=" + input.getFederatedOutput());
+				}
+				continue;
+			}
+
+			boolean inputNeedsCpfout = requiresCpfoutForFedParents(input, fTypeMap);
+			if (inputNeedsCpfout) {
+				if (FederatedPlannerTrace.shouldTrace(tWrite)) {
+					FederatedPlannerTrace.log(tWrite, "Refed-TWrite-Review",
+						"keep reason=input_needs_cpfout inputHop=" + input.getHopID());
+				}
+				continue;
+			}
+
+			List<DataOp> sameNameWrites = writesByName.get(tWrite.getName());
+			List<DataOp> sameNameReads = readsByName.get(tWrite.getName());
+			if (hasLiveFederatedTransientReadConsumer(tWrite, sameNameWrites, sameNameReads)) {
+				if (FederatedPlannerTrace.shouldTrace(tWrite)) {
+					FederatedPlannerTrace.log(tWrite, "Refed-TWrite-Review",
+						"keep reason=live_fed_tread var=" + tWrite.getName());
+				}
+				continue;
+			}
+
+			tWrite.setForcedExecType(ExecType.CP);
+			if (tWrite.getFederatedOutput() == FederatedOutput.FOUT)
+				tWrite.setFederatedOutput(FederatedOutput.LOUT);
+			tWrite.setFederatedOutputDerived(false);
+			if (fTypeMap != null)
+				fTypeMap.remove(tWrite.getHopID());
+			FederatedRefedRegistry.remove(sbId, tWrite.getHopID());
+			FederatedFoutMaterializeRegistry.remove(sbId, tWrite.getHopID());
+			CPFOUT_ANCHOR_CACHE.remove(tWrite.getHopID());
+			String varName = tWrite.getName();
+			if (varName != null && !varName.isEmpty()) {
+				FederatedPlannerUtils.removeFedAnchorKey(varName);
+				if (!conditionalContext)
+					FederatedPlannerUtils.removeFedInitVar(varName);
+			}
+			if (FederatedPlannerTrace.shouldTrace(tWrite)) {
+				FederatedPlannerTrace.log(tWrite, "Refed-Prune",
+					"remove=twrite_fout reason=no_live_fed_need plannedExec=" + getPlannedExecType(tWrite)
+						+ " fedOut=" + tWrite.getFederatedOutput());
+			}
+			changedAny = true;
+		}
+
+		return changedAny;
+	}
+
+	private static boolean hasLiveFederatedTransientReadConsumer(DataOp tWrite, List<DataOp> writes, List<DataOp> reads) {
+		if (tWrite == null || writes == null || writes.isEmpty() || reads == null || reads.isEmpty())
+			return false;
+		for (DataOp tRead : reads) {
+			if (tRead == null)
+				continue;
+			DataOp matchedWrite = selectMatchingTWrite(writes, tRead);
+			if (matchedWrite != tWrite)
+				continue;
+			ExecType readExec = getPlannedExecType(tRead);
+			if (readExec == ExecType.FED || tRead.getFederatedOutput() == FederatedOutput.FOUT)
+				return true;
+		}
+		return false;
 	}
 
 	private static boolean ensureRequiredFederatedInputs(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
@@ -1949,6 +2176,86 @@ public final class FederatedRefedPolicy {
 				registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
 						null, null, fallbackAnchor, conditionalContext);
 		}
+	}
+
+	private static void finalizeRegisteredStatementBlock(StatementBlock sb, java.util.Map<Long, FType> fTypeMap,
+			AnchorSelection fallbackAnchor, boolean conditionalContext) {
+		if (sb == null)
+			return;
+		Set<Hop> roots = new HashSet<>();
+		if (sb instanceof IfStatementBlock) {
+			IfStatementBlock isb = (IfStatementBlock) sb;
+			if (isb.getPredicateHops() != null)
+				roots.add(isb.getPredicateHops());
+			if (!roots.isEmpty())
+				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
+					conditionalContext);
+			IfStatement istmt = (IfStatement) isb.getStatement(0);
+			for (StatementBlock inner : istmt.getIfBody())
+				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
+			for (StatementBlock inner : istmt.getElseBody())
+				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
+		}
+		else if (sb instanceof ForStatementBlock) {
+			ForStatementBlock fsb = (ForStatementBlock) sb;
+			if (fsb.getFromHops() != null)
+				roots.add(fsb.getFromHops());
+			if (fsb.getToHops() != null)
+				roots.add(fsb.getToHops());
+			if (fsb.getIncrementHops() != null)
+				roots.add(fsb.getIncrementHops());
+			if (!roots.isEmpty())
+				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
+					conditionalContext);
+			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+			for (StatementBlock inner : fstmt.getBody())
+				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
+		}
+		else if (sb instanceof WhileStatementBlock) {
+			WhileStatementBlock wsb = (WhileStatementBlock) sb;
+			if (wsb.getPredicateHops() != null)
+				roots.add(wsb.getPredicateHops());
+			if (!roots.isEmpty())
+				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
+					conditionalContext);
+			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+			for (StatementBlock inner : wstmt.getBody())
+				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
+		}
+		else if (sb instanceof FunctionStatementBlock) {
+			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+			for (StatementBlock inner : fstmt.getBody())
+				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
+		}
+		else {
+			if (sb.getHops() != null)
+				roots.addAll(sb.getHops());
+			if (!roots.isEmpty())
+				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
+					conditionalContext);
+		}
+	}
+
+	private static void finalizeRegisteredRoots(List<Hop> roots, java.util.Map<Long, FType> fTypeMap, long sbId,
+			AnchorSelection fallbackAnchor, boolean conditionalContext) {
+		if (roots == null || roots.isEmpty())
+			return;
+		List<Hop> all = collectAllHops(roots);
+		if (all.isEmpty())
+			return;
+
+		boolean changed;
+		int pass = 0;
+		do {
+			boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, fallbackAnchor, false);
+			boolean pruned = pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
+			boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all, fTypeMap, sbId,
+				conditionalContext);
+			changed = demoted || pruned || twDemoted;
+			pass++;
+		}
+		while (changed && pass < 5);
 	}
 
 	private static AnchorSelection buildGlobalAnchorForProgram(DMLProgram prog, java.util.Map<Long, FType> fTypeMap) {

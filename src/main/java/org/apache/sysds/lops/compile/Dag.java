@@ -706,6 +706,9 @@ public class Dag<N extends Lop>
 				// Special handling for transient writes: the variable doesn't exist yet at the time of materialization.
 				// We therefore materialize the computed value (twrite input) and wire the fout result into the twrite.
 				final boolean isTransientWrite = (local instanceof Data) && ((Data) local).isTransientWrite();
+				final boolean isSelectedFederatedTWrite = isTransientWrite
+					&& local.getExecType() == ExecType.FED
+					&& local.getFederatedOutput() == FederatedOutput.FOUT;
 				Lop materializeInput = local;
 				if (isTransientWrite) {
 					List<Lop> inputs = local.getInputs();
@@ -744,7 +747,7 @@ public class Dag<N extends Lop>
 						}
 					}
 
-				boolean alreadyInserted = isTransientWrite
+				boolean alreadyInserted = isSelectedFederatedTWrite
 					? (materializeInput instanceof FederatedRefed || materializeInput instanceof FederatedFoutMaterialize)
 					: local.getOutputs().stream().anyMatch(out -> out instanceof FederatedRefed
 						|| out instanceof FederatedFoutMaterialize);
@@ -763,22 +766,9 @@ public class Dag<N extends Lop>
 					: new FederatedFoutMaterialize(materializeInput, anchorKey, spec.getFTypeHint());
 				fout.getOutputParameters().setLabel(getNextUniqueVarname(fout.getDataType()));
 				copyOutputParams(fout.getOutputParameters(), local.getOutputParameters());
-					fout.setFederatedOutput(FederatedOutput.FOUT);
-					addNode(fout);
-					if (LOG_LOP_MAPPING) {
-						String localLabel = (local.getOutputParameters() != null)
-							? local.getOutputParameters().getLabel()
-							: "null";
-						String anchorLabel = (anchor != null && anchor.getOutputParameters() != null)
-							? anchor.getOutputParameters().getLabel()
-							: (anchorKey != null ? anchorKey : "null");
-						System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
-								hopId, localLabel, anchorHopId, anchorLabel, fout.getOutputParameters().getLabel(),
-								spec.getFTypeHint());
-					}
-					inserted = true;
+				fout.setFederatedOutput(FederatedOutput.FOUT);
 
-				if (isTransientWrite) {
+				if (isSelectedFederatedTWrite) {
 					local.replaceInput(materializeInput, fout);
 					materializeInput.removeOutput(local);
 					fout.addOutput(local);
@@ -917,6 +907,48 @@ public class Dag<N extends Lop>
 					}
 				}
 
+				if (consumers.isEmpty() && !fout.getOutputs().isEmpty()) {
+					java.util.LinkedHashSet<Lop> dedupedOutputs = new java.util.LinkedHashSet<>(fout.getOutputs());
+					dedupedOutputs.remove(local);
+					consumers.addAll(dedupedOutputs);
+				}
+
+				// A stale materialize registration can survive planner-side cleanup when a local-output
+				// hop was tentatively prepared for FED consumers, but the final selected DAG ends up with
+				// only CP/LOUT consumers. In that case the fed_fout would become an orphan side-effect
+				// node: no FED/FOUT consumer is rewired to use it, yet the lop still executes and shows up
+				// as pure churn in inst-stats (observed on kmeans wan_mid around X_samples/C_new paths).
+				//
+				// Skip insertion unless the materialized value is actually consumed in the final lop DAG.
+				// TRANSIENTWRITE is only exempt when the TWrite itself is still selected as FED/FOUT and
+				// therefore must write the materialized federated value. If the final TWrite stayed local,
+				// treat the registration as stale and skip it unless some other FED/FOUT consumer actually
+				// rewired to the materialized value.
+				if (!isSelectedFederatedTWrite && fout.getOutputs().isEmpty()) {
+					if (LOG_LOP_MAPPING) {
+						String localLabel = (local.getOutputParameters() != null)
+							? local.getOutputParameters().getLabel()
+							: "null";
+						System.out.printf("CP->FOUT insert skip: hop=%d local=%s noFedConsumers=true transientWriteSelectedFed=%s sbId=%d%n",
+							hopId, localLabel, isSelectedFederatedTWrite, sbId);
+					}
+					continue;
+				}
+
+				addNode(fout);
+				if (LOG_LOP_MAPPING) {
+					String localLabel = (local.getOutputParameters() != null)
+						? local.getOutputParameters().getLabel()
+						: "null";
+					String anchorLabel = (anchor != null && anchor.getOutputParameters() != null)
+						? anchor.getOutputParameters().getLabel()
+						: (anchorKey != null ? anchorKey : "null");
+					System.out.printf("CP->FOUT insert: hop=%d local=%s anchor=%d anchorVar=%s out=%s fTypeHint=%s%n",
+							hopId, localLabel, anchorHopId, anchorLabel, fout.getOutputParameters().getLabel(),
+							spec.getFTypeHint());
+				}
+				inserted = true;
+
 			int inputIdx = (materializeInput != null) ? lops.indexOf(materializeInput) : -1;
 			if (inputIdx < 0)
 				inputIdx = lops.indexOf(local);
@@ -959,7 +991,8 @@ public class Dag<N extends Lop>
 				continue;
 			if (lop instanceof Data) {
 				OpOpData op = ((Data) lop).getOperationType();
-				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+				if ((op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					&& isConcreteFederatedAnchorLop(lop))
 					return lop;
 			}
 		}
@@ -978,13 +1011,25 @@ public class Dag<N extends Lop>
 				continue;
 			if (lop instanceof Data) {
 				OpOpData op = ((Data) lop).getOperationType();
-				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+				if ((op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
+					&& isConcreteFederatedAnchorLop(lop))
 					return lop;
 			}
 			if (fallback == null)
 				fallback = lop;
 		}
 		return fallback;
+	}
+
+	private static boolean isConcreteFederatedAnchorLop(Lop lop) {
+		if (lop == null || lop.getDataType() == null || !lop.getDataType().isMatrix())
+			return false;
+		if (lop instanceof Federated || lop instanceof FederatedRefed || lop instanceof FederatedFoutMaterialize)
+			return true;
+		if (lop.getExecType() != ExecType.FED)
+			return false;
+		FederatedOutput fedOut = lop.getFederatedOutput();
+		return fedOut == null || !fedOut.isForcedLocal();
 	}
 
 	private static boolean isReachable(Lop from, Lop target) {

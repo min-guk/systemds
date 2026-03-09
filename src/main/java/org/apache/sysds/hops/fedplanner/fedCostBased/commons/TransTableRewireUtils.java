@@ -80,9 +80,11 @@ public final class TransTableRewireUtils {
 		return childHops;
 	}
 
-	public static List<Hop> resolveTransReadChildren(long hopId, String hopName, Map<Long, List<Hop>> rewireTable,
+	public static List<Hop> resolveTransReadChildren(DataOp transientRead, Map<Long, List<Hop>> rewireTable,
 			Map<String, List<Hop>> innerTransTable, Map<String, List<Hop>> formerTransTable,
 			List<Map<String, List<Hop>>> outerTransTableList) {
+		long hopId = transientRead.getHopID();
+		String hopName = transientRead.getName();
 		List<Hop> fromRewireTable = (rewireTable != null) ? rewireTable.get(hopId) : null;
 		List<Hop> childHops = fromRewireTable;
 		if (childHops == null || childHops.isEmpty()) {
@@ -93,6 +95,20 @@ public final class TransTableRewireUtils {
 				childHops = snapshot;
 			}
 		} else if (!containsTransientWrite(childHops)) {
+			// A stale outer/fed-init mapping can survive in rewireTable even after a dominating local
+			// TWrite becomes visible via the current inner/former tables (e.g., function output X later
+			// overwritten locally, then reread as TRead X). Prefer the most specific currently-visible
+			// dominating TWrite over the stale outer mapping.
+			List<Hop> fromCurrentScope = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
+			if (fromCurrentScope != null && !fromCurrentScope.isEmpty()
+					&& hasDominatingTransientWrite(fromCurrentScope, transientRead)) {
+				List<Hop> snapshot = new ArrayList<>(fromCurrentScope);
+				if (rewireTable != null)
+					rewireTable.put(hopId, snapshot);
+				childHops = snapshot;
+			}
+		}
+		if (!containsTransientWrite(childHops)) {
 			// Prefer a prior TWrite mapping over stale mappings that only point to outer sources.
 			// Use former/outer tables (exclude inner table) to avoid capturing same-block assignments.
 			List<Hop> fromFormer = rewireTransRead(hopName, null, formerTransTable, outerTransTableList);
@@ -128,6 +144,59 @@ public final class TransTableRewireUtils {
 			return null;
 		}
 		return childHops;
+	}
+
+	public static List<Hop> resolveTransReadChildren(long hopId, String hopName, Map<Long, List<Hop>> rewireTable,
+			Map<String, List<Hop>> innerTransTable, Map<String, List<Hop>> formerTransTable,
+			List<Map<String, List<Hop>>> outerTransTableList) {
+		List<Hop> fromRewireTable = (rewireTable != null) ? rewireTable.get(hopId) : null;
+		List<Hop> childHops = fromRewireTable;
+		if (childHops == null || childHops.isEmpty()) {
+			childHops = rewireTransRead(hopName, innerTransTable, formerTransTable, outerTransTableList);
+			if (rewireTable != null && childHops != null && !childHops.isEmpty()) {
+				List<Hop> snapshot = new ArrayList<>(childHops);
+				rewireTable.put(hopId, snapshot);
+				childHops = snapshot;
+			}
+		}
+		else if (!containsTransientWrite(childHops)) {
+			// Preserve legacy behavior for non-DataOp callers that do not provide source-position
+			// information for dominance checks.
+			List<Hop> fromFormer = rewireTransRead(hopName, null, formerTransTable, outerTransTableList);
+			if (fromFormer != null && !fromFormer.isEmpty() && containsTransientWrite(fromFormer)) {
+				List<Hop> snapshot = new ArrayList<>(fromFormer);
+				if (rewireTable != null)
+					rewireTable.put(hopId, snapshot);
+				childHops = snapshot;
+			}
+		}
+		return childHops;
+	}
+
+	private static boolean hasDominatingTransientWrite(List<Hop> hops, DataOp transientRead) {
+		return selectDominatingTransientWrite(hops, transientRead) != null;
+	}
+
+	private static Hop selectDominatingTransientWrite(List<Hop> hops, DataOp transientRead) {
+		if (hops == null || hops.isEmpty() || transientRead == null)
+			return null;
+		int readLine = transientRead.getBeginLine();
+		Hop best = null;
+		int bestLine = Integer.MIN_VALUE;
+		for (Hop hop : hops) {
+			if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTWRITE)
+				continue;
+			int writeLine = hop.getBeginLine();
+			if (readLine > 0 && writeLine > readLine)
+				continue;
+			if (writeLine <= 0)
+				return hop;
+			if (writeLine >= bestLine) {
+				bestLine = writeLine;
+				best = hop;
+			}
+		}
+		return best;
 	}
 
 	public static void markParentChildUploadHint(Map<Long, Set<Long>> parentChildUploadHints,

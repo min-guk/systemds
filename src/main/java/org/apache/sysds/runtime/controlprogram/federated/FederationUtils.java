@@ -159,31 +159,31 @@ public class FederationUtils {
 	}
 
 	public static FederationMap getRefedReuseMap(long inputUniqueId, long inputMutationVersion,
-		long rows, long cols, long nnz, long anchorMapId, FType outType) {
+		long rows, long cols, long nnz, String layoutSig, FType outType) {
 		return getRefedReuseMap(null, inputUniqueId, inputMutationVersion,
-			rows, cols, nnz, anchorMapId, outType);
+			rows, cols, nnz, layoutSig, outType);
 	}
 
 	public static FederationMap getRefedReuseMap(String inputKey, long inputUniqueId, long inputMutationVersion,
-		long rows, long cols, long nnz, long anchorMapId, FType outType) {
+		long rows, long cols, long nnz, String layoutSig, FType outType) {
 		RefedReuseKey key = new RefedReuseKey(normalizeRefedReuseInputSig(inputKey, inputUniqueId),
-			inputMutationVersion, rows, cols, nnz, anchorMapId, outType);
+			inputMutationVersion, rows, cols, nnz, normalizeRefedReuseLayoutSig(layoutSig), outType);
 		FederationMap map = _refedReuseCache.get(key);
 		return (map != null) ? map.copyWithNewID(map.getID()) : null;
 	}
 
 	public static void putRefedReuseMap(long inputUniqueId, long inputMutationVersion,
-		long rows, long cols, long nnz, long anchorMapId, FType outType, FederationMap map) {
+		long rows, long cols, long nnz, String layoutSig, FType outType, FederationMap map) {
 		putRefedReuseMap(null, inputUniqueId, inputMutationVersion,
-			rows, cols, nnz, anchorMapId, outType, map);
+			rows, cols, nnz, layoutSig, outType, map);
 	}
 
 	public static void putRefedReuseMap(String inputKey, long inputUniqueId, long inputMutationVersion,
-		long rows, long cols, long nnz, long anchorMapId, FType outType, FederationMap map) {
+		long rows, long cols, long nnz, String layoutSig, FType outType, FederationMap map) {
 		if (map == null || map.getMap() == null || map.getMap().isEmpty())
 			return;
 		RefedReuseKey key = new RefedReuseKey(normalizeRefedReuseInputSig(inputKey, inputUniqueId),
-			inputMutationVersion, rows, cols, nnz, anchorMapId, outType);
+			inputMutationVersion, rows, cols, nnz, normalizeRefedReuseLayoutSig(layoutSig), outType);
 		_refedReuseCache.put(key, map.copyWithNewID(map.getID()));
 	}
 
@@ -198,6 +198,99 @@ public class FederationUtils {
 				return trimmed;
 		}
 		return "uid:" + inputUniqueId;
+	}
+
+	private static String normalizeRefedReuseLayoutSig(String layoutSig) {
+		if (layoutSig == null)
+			return "layout:null";
+		String trimmed = layoutSig.trim();
+		return trimmed.isEmpty() ? "layout:null" : trimmed;
+	}
+
+	public static String deriveFedLayoutSignature(FederationMap fmap) {
+		if (fmap == null)
+			return null;
+		List<Pair<FederatedRange, FederatedData>> entries = fmap.getMap();
+		if (entries == null || entries.isEmpty() || fmap.getType() == null)
+			return null;
+
+		StringBuilder sb = new StringBuilder();
+		for (Pair<FederatedRange, FederatedData> entry : entries) {
+			FederatedData data = entry.getValue();
+			if (data == null || data.getAddress() == null)
+				return null;
+			sb.append(data.getAddress().toString()).append(';');
+		}
+		sb.append('|');
+
+		FType fType = fmap.getType();
+		for (Pair<FederatedRange, FederatedData> entry : entries) {
+			FederatedRange range = entry.getKey();
+			if (range == null)
+				return null;
+			long[] beg = range.getBeginDims();
+			long[] end = range.getEndDims();
+			if (beg == null || end == null || beg.length < 2 || end.length < 2)
+				return null;
+			if (fType == FType.ROW)
+				sb.append(beg[0]).append(',').append(end[0]).append(';');
+			else if (fType == FType.COL)
+				sb.append(beg[1]).append(',').append(end[1]).append(';');
+			else
+				sb.append(beg[0]).append(',').append(beg[1]).append(',')
+					.append(end[0]).append(',').append(end[1]).append(';');
+		}
+
+		sb.append('|').append(fType.name());
+		return sb.toString();
+	}
+
+	public static String deriveMaterializedLayoutSignature(FederationMap workerPoolMap, FType mapType,
+		long rlen, long clen) {
+		if (workerPoolMap == null || workerPoolMap.getMap() == null || workerPoolMap.getMap().isEmpty() || mapType == null)
+			return null;
+		List<Pair<FederatedRange, FederatedData>> entries = workerPoolMap.getMap();
+		int numWorkers = entries.size();
+		if (numWorkers <= 0)
+			return null;
+
+		StringBuilder sb = new StringBuilder();
+		for (Pair<FederatedRange, FederatedData> entry : entries) {
+			FederatedData data = entry.getValue();
+			if (data == null || data.getAddress() == null)
+				return null;
+			sb.append(data.getAddress().toString()).append(';');
+		}
+		sb.append('|');
+
+		if (mapType == FType.ROW) {
+			long base = rlen / numWorkers;
+			long rem = rlen % numWorkers;
+			long pos = 0;
+			for (int i = 0; i < numWorkers; i++) {
+				long size = base + (i < rem ? 1 : 0);
+				sb.append(pos).append(',').append(pos + size).append(';');
+				pos += size;
+			}
+		}
+		else if (mapType == FType.COL) {
+			long base = clen / numWorkers;
+			long rem = clen % numWorkers;
+			long pos = 0;
+			for (int i = 0; i < numWorkers; i++) {
+				long size = base + (i < rem ? 1 : 0);
+				sb.append(pos).append(',').append(pos + size).append(';');
+				pos += size;
+			}
+		}
+		else {
+			for (int i = 0; i < numWorkers; i++)
+				sb.append(0).append(',').append(0).append(',')
+					.append(rlen).append(',').append(clen).append(';');
+		}
+
+		sb.append('|').append(mapType.name());
+		return sb.toString();
 	}
 
 	public static FederationMap buildAnchorMapFromKey(String anchorKey) {
@@ -220,11 +313,20 @@ public class FederationUtils {
 			return null;
 		int sep = sig.indexOf('|');
 		String addrPart = (sep >= 0) ? sig.substring(0, sep) : sig;
+		String rangePart = (sep >= 0 && sep < sig.length() - 1) ? sig.substring(sep + 1) : "";
 		if (addrPart == null || addrPart.isEmpty())
 			return null;
 
 		String[] addrTokens = addrPart.split(";");
+		List<String> rangeTokens = new ArrayList<>();
+		if (rangePart != null && !rangePart.isEmpty()) {
+			for (String token : rangePart.split(";")) {
+				if (token != null && !token.isEmpty())
+					rangeTokens.add(token);
+			}
+		}
 		List<Pair<FederatedRange, FederatedData>> entries = new ArrayList<>();
+		int workerIx = 0;
 		for (String token : addrTokens) {
 			if (token == null || token.isEmpty())
 				continue;
@@ -232,12 +334,47 @@ public class FederationUtils {
 			if (isa == null)
 				return null;
 			FederatedData data = new FederatedData(Types.DataType.MATRIX, isa, null);
-			FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {0, 0});
+			FederatedRange range = parseRangeToken(rangeTokens, workerIx, fType);
+			if (range == null)
+				range = new FederatedRange(new long[] {0, 0}, new long[] {0, 0});
 			entries.add(new ImmutablePair<>(range, data));
+			workerIx++;
 		}
 		if (entries.isEmpty())
 			return null;
 		return new FederationMap(getNextFedDataID(), entries, fType);
+	}
+
+	private static FederatedRange parseRangeToken(List<String> rangeTokens, int workerIx, FType fType) {
+		if (rangeTokens == null || workerIx < 0 || workerIx >= rangeTokens.size())
+			return null;
+		String token = rangeTokens.get(workerIx);
+		if (token == null || token.isEmpty())
+			return null;
+		String[] dims = token.split(",");
+		try {
+			if (fType == FType.ROW && dims.length == 2) {
+				long rb = Long.parseLong(dims[0].trim());
+				long re = Long.parseLong(dims[1].trim());
+				return new FederatedRange(new long[] {rb, 0}, new long[] {re, 0});
+			}
+			if (fType == FType.COL && dims.length == 2) {
+				long cb = Long.parseLong(dims[0].trim());
+				long ce = Long.parseLong(dims[1].trim());
+				return new FederatedRange(new long[] {0, cb}, new long[] {0, ce});
+			}
+			if ((fType == FType.FULL || fType == FType.BROADCAST) && dims.length == 4) {
+				long rb = Long.parseLong(dims[0].trim());
+				long cb = Long.parseLong(dims[1].trim());
+				long re = Long.parseLong(dims[2].trim());
+				long ce = Long.parseLong(dims[3].trim());
+				return new FederatedRange(new long[] {rb, cb}, new long[] {re, ce});
+			}
+		}
+		catch (NumberFormatException ex) {
+			return null;
+		}
+		return null;
 	}
 
 	private static InetSocketAddress parseAddress(String token) {
@@ -885,24 +1022,24 @@ public class FederationUtils {
 		private final long _rows;
 		private final long _cols;
 		private final long _nnz;
-		private final long _anchorMapId;
+		private final String _layoutSig;
 		private final FType _outType;
 
 		private RefedReuseKey(String inputSig, long inputMutationVersion,
-			long rows, long cols, long nnz, long anchorMapId, FType outType) {
+			long rows, long cols, long nnz, String layoutSig, FType outType) {
 			_inputSig = inputSig;
 			_inputMutationVersion = inputMutationVersion;
 			_rows = rows;
 			_cols = cols;
 			_nnz = nnz;
-			_anchorMapId = anchorMapId;
+			_layoutSig = layoutSig;
 			_outType = outType;
 		}
 
 		@Override
 		public int hashCode() {
 			return Objects.hash(_inputSig, _inputMutationVersion, _rows, _cols, _nnz,
-				_anchorMapId, _outType);
+				_layoutSig, _outType);
 		}
 
 		@Override
@@ -917,7 +1054,7 @@ public class FederationUtils {
 				&& _rows == that._rows
 				&& _cols == that._cols
 				&& _nnz == that._nnz
-				&& _anchorMapId == that._anchorMapId
+				&& Objects.equals(_layoutSig, that._layoutSig)
 				&& _outType == that._outType;
 		}
 	}

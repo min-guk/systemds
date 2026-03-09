@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -752,12 +753,19 @@ public class FederatedPlanMinSTRewire {
 							}
 						}
 
+							Set<Long> functionOutputIds = new LinkedHashSet<>();
+							List<Hop> functionOutputHops = new ArrayList<>();
 							TransTableRewireUtils.mapFunctionOutputs(
 									fop, fsb, functionTransTable, innerTransTable,
 									outputHop -> {
 										if (outputHop == null)
 											return;
 										unRefTwriteSet.add(outputHop.getHopID());
+										if (outputHop.getDataType() != null
+												&& outputHop.getDataType().isMatrix()
+												&& functionOutputIds.add(outputHop.getHopID())) {
+											functionOutputHops.add(outputHop);
+										}
 										if (!graph.contains(outputHop.getHopID())) {
 											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
 													formerTransTable, innerTransTable, privacyConstraintMap, graph,
@@ -769,6 +777,12 @@ public class FederatedPlanMinSTRewire {
 											}
 										}
 									});
+							if (!functionOutputHops.isEmpty()) {
+								rewireTable.put(fop.getHopID(), functionOutputHops);
+							}
+							else {
+								rewireTable.remove(fop.getHopID());
+							}
 						} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
 							TransTableRewireUtils.mapFunctionOutputs(
 									fop, null, null, innerTransTable,
@@ -876,7 +890,7 @@ public class FederatedPlanMinSTRewire {
 				} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 					// 4) TRead: mapped source hops로부터 privacy/FType/caps 전파
 					List<Hop> childHops = TransTableRewireUtils.resolveTransReadChildren(
-							hop.getHopID(), hopName, rewireTable,
+							dataOp, rewireTable,
 							innerTransTable, formerTransTable, outerTransTableList);
 
 					boolean hasInner = false;
@@ -1799,13 +1813,14 @@ public class FederatedPlanMinSTRewire {
 		if (op != Types.OpOpData.TRANSIENTREAD && op != Types.OpOpData.TRANSIENTWRITE) {
 			return caps;
 		}
-		if (op == Types.OpOpData.TRANSIENTREAD) {
-			String name = ((DataOp) hop).getName();
-			// Keep fed-init transient reads federated (avoid CP materialization).
-			if (name != null && FederatedPlannerUtils.isFedInitVar(name)) {
-				caps.allowCP_LOUT = false;
-			}
-		}
+		// TRead/TWrite legality is strictly:
+		//   - <CP,LOUT>
+		//   - <FED,FOUT>
+		// Do not close CP/LOUT for fed-init TRANSIENTREADs here. Runtime supports
+		// local materialization from a federated read, and DP already compares that
+		// costed alternative. Keeping the local candidate open avoids a MinST-only
+		// candidate-space closure that can force repeated FED/refed chains (observed
+		// on logreg wan_mid hop 603 via TRead X).
 		caps.allowCP_FOUT = false;
 		caps.allowFED_LOUT = false;
 		return caps;

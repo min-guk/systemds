@@ -23,6 +23,8 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.OptimizerUtils;
@@ -46,6 +48,7 @@ public final class FederatedCostModel {
 	private static final String ENV_UPLOAD_ESTIMATE_CLAMP_RATIO = "SYSDS_FED_COST_UPLOAD_MEM_CLAMP_RATIO";
 	private static final String ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = "SYSDS_FED_COST_UNKNOWN_DIM_TRANSFER_MB";
 	private static final String ENV_FLOPS_PER_SEC = "SYSDS_FED_COST_FLOPS";
+	private static final String ENV_AGGBINARY_FLOPS_PER_SEC = "SYSDS_FED_COST_AGGBINARY_FLOPS";
 	private static final double DEFAULT_MEM_ESTIMATE_PER_CELL = OptimizerUtils.DOUBLE_SIZE;
 	private static final double DEFAULT_FP32_MEM_ESTIMATE_PER_CELL = 4.0;
 	private static final double DEFAULT_STRING_MEM_ESTIMATE_PER_CELL = 100.0 * OptimizerUtils.CHAR_SIZE;
@@ -80,6 +83,22 @@ public final class FederatedCostModel {
 	private static final double DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB = 256.0;
 	// Compute throughput (FLOPs/s), consistent with CostEstimatorStaticRuntime defaults.
 	private static final double DEFAULT_FLOPS_PER_SEC = 2d * 1024 * 1024 * 1024;
+	// AggBinaryOp (notably ba+* / matrix multiplication) executes on optimized BLAS kernels.
+	// The generic 2 GiFLOPs/s fallback dramatically over-prices CP execution for these ops in
+	// multi-worker planning and can bias MinST/DP toward pathological FED/FOUT chains.
+	// Keep the calibration shared so both planners see the same correction.
+	private static final double DEFAULT_AGGBINARY_FLOPS_PER_SEC = 32d * 1000 * 1000 * 1000;
+	// DML FunctionOp placeholders summarize whole callees. A pure output-size shell cost
+	// under-estimates the work because the placeholder at least has to account for one
+	// logical pass over distinct inputs plus result production. Keep this floor small and
+	// shared so both DP and MinST see the same correction without planner-specific hacks.
+	private static final double MIN_DML_FUNCTION_OP_COMPUTE_FLOPS_PER_CELL = 1.0;
+	// In the single-worker case, a federated function placeholder often provides no
+	// compute parallelism benefit but still incurs orchestration/materialization cost.
+	// Keep FED reachable when it is the only legal choice, but strongly prefer CP if
+	// the planner would otherwise pick FED only because placeholder self-cost is tiny.
+	private static final double SINGLE_WORKER_FED_EXEC_PENALTY = 1e6;
+	private static final double SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS = 10.0;
 	// All costs are returned in milliseconds.
 	private static final double TO_MS = 1000.0;
 	private static final double MBS_MEMORY_BANDWIDTH = getConfiguredDouble(ENV_MBS_MEMORY_BANDWIDTH,
@@ -107,6 +126,8 @@ public final class FederatedCostModel {
 			DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB) * 1024 * 1024);
 	private static final double FLOPS_PER_SEC = getConfiguredDouble(ENV_FLOPS_PER_SEC,
 			DEFAULT_FLOPS_PER_SEC);
+	private static final double AGGBINARY_FLOPS_PER_SEC = getConfiguredDouble(ENV_AGGBINARY_FLOPS_PER_SEC,
+			Math.max(FLOPS_PER_SEC, DEFAULT_AGGBINARY_FLOPS_PER_SEC));
 
 	private FederatedCostModel() {
 		// utility class
@@ -130,16 +151,104 @@ public final class FederatedCostModel {
 		return fanout * ctrl;
 	}
 
+	/**
+	 * Additional penalty for single-worker federated execution in degenerate cases.
+	 *
+	 * <p>This targets function-placeholder plans where FED execution over one worker
+	 * offers no data-parallel speedup, but the planner can still prefer FED because
+	 * the placeholder hop itself has near-zero compute cost. The penalty is applied
+	 * only when control-plane overhead is materially non-zero and either the hop has
+	 * no immediate concrete federated matrix input or it is executed repeatedly.</p>
+	 */
+	public static double computeSingleWorkerFedExecPenalty(Hop hop, double execWeight, int numWorkers) {
+		if (hop == null || numWorkers > 1)
+			return 0.0;
+		if (!(hop instanceof FunctionOp))
+			return 0.0;
+		FunctionOp functionOp = (FunctionOp) hop;
+		if (functionOp.getFunctionType() != FunctionOp.FunctionType.DML)
+			return 0.0;
+		final double ctrlMs = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		if (ctrlMs <= SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS)
+			return 0.0;
+
+		// A single-worker DML FunctionOp placeholder does not expose any inter-worker compute
+		// parallelism at the call boundary. Even when the call has a federated matrix input,
+		// FED execution still pays the orchestration/materialization cost of keeping the callee
+		// boundary federated, while the actual function body is planned separately. Bias these
+		// placeholders toward CP unless FED is the only legal choice.
+		return SINGLE_WORKER_FED_EXEC_PENALTY;
+	}
+
 	public static double computeOpCost(Hop currentHop) {
+		double inputMemEstimate = getEffectiveInputMemEstimate(currentHop);
+		double outputMemEstimate = getEffectiveOutputMemEstimate(currentHop);
 		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
-		double computeTime = (computeCost / FLOPS_PER_SEC) * TO_MS;
-		double inputAccessCost = computeMemoryAccessCost(currentHop.getInputMemEstimate());
-		double outputAccessCost = computeMemoryAccessCost(currentHop.getOutputMemEstimate());
+		if (isDmlFunctionOp(currentHop)) {
+			computeCost = Math.max(computeCost,
+				estimateDmlFunctionOpComputeFloor((FunctionOp) currentHop, inputMemEstimate, outputMemEstimate));
+		}
+		double computeTime = (computeCost / getComputeFlopsPerSec(currentHop)) * TO_MS;
+		double inputAccessCost = computeMemoryAccessCost(inputMemEstimate);
+		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
 
 		// Total cost assumes:
 		// 1) Computation and input access can overlap (take max)
 		// 2) Output access must wait for both (add)
 		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
+	}
+
+	private static double getComputeFlopsPerSec(Hop hop) {
+		if (hop instanceof AggBinaryOp && hop.getDataType() != null && hop.getDataType().isMatrix())
+			return AGGBINARY_FLOPS_PER_SEC;
+		return FLOPS_PER_SEC;
+	}
+
+	private static boolean isDmlFunctionOp(Hop hop) {
+		return hop instanceof FunctionOp
+			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.DML;
+	}
+
+	private static double estimateDmlFunctionOpComputeFloor(FunctionOp hop,
+		double inputMemEstimate, double outputMemEstimate) {
+		if (hop == null || hop.getFunctionType() != FunctionOp.FunctionType.DML)
+			return 0.0;
+
+		double logicalCells = 0.0;
+		Set<Long> seenInputHops = new HashSet<>();
+		if (hop.getInput() != null) {
+			for (Hop inputHop : hop.getInput()) {
+				if (inputHop == null || !seenInputHops.add(inputHop.getHopID()))
+					continue;
+				logicalCells += estimateLogicalCellCount(inputHop, getEffectiveOutputMemEstimate(inputHop));
+			}
+		}
+		logicalCells += estimateLogicalCellCount(hop, outputMemEstimate);
+
+		if (logicalCells <= 0.0 && inputMemEstimate > 0.0) {
+			double perCell = Math.max(1.0, getInjectedDefaultMemEstimatePerCell(hop));
+			logicalCells = inputMemEstimate / perCell;
+		}
+
+		return Math.max(0.0, logicalCells) * MIN_DML_FUNCTION_OP_COMPUTE_FLOPS_PER_CELL;
+	}
+
+	private static double estimateLogicalCellCount(Hop hop, double memEstimate) {
+		if (hop == null)
+			return 0.0;
+		if (hop.getDataType() != null && hop.getDataType().isScalar())
+			return 1.0;
+
+		long rows = hop.getDim1();
+		long cols = hop.getDim2();
+		if (rows > 0 && cols > 0)
+			return Math.max(1.0, rows * (double) cols);
+
+		double perCell = Math.max(1.0, getInjectedDefaultMemEstimatePerCell(hop));
+		if (memEstimate > 0.0)
+			return Math.max(1.0, memEstimate / perCell);
+
+		return 0.0;
 	}
 
 	public static double computeOpCostWithFallback(Hop hop) {
@@ -174,7 +283,9 @@ public final class FederatedCostModel {
 			return 0.0;
 		}
 		double inputMemEstimate = hop.getInputMemEstimate();
-		if (inputMemEstimate > 0.0) {
+		boolean useRawInputMemEstimate = inputMemEstimate > 0.0
+				&& !isLikelyDefaultUnknownMemEstimate(inputMemEstimate);
+		if (useRawInputMemEstimate) {
 			return inputMemEstimate;
 		}
 
@@ -195,6 +306,11 @@ public final class FederatedCostModel {
 			return fallbackInputMemEstimate;
 		}
 
+		if (inputMemEstimate > 0.0 && hasUnknownOutputDims(hop) && UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES > 0.0) {
+			double fanInScale = Math.max(1, hop.getInput() == null ? 1 : hop.getInput().size());
+			return Math.min(inputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES * fanInScale);
+		}
+
 		return Math.max(0.0, hop.getInputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
 	}
 
@@ -203,10 +319,15 @@ public final class FederatedCostModel {
 			return 0.0;
 		}
 		double outputMemEstimate = hop.getOutputMemEstimate();
-		if (outputMemEstimate > 0.0) {
+		if (outputMemEstimate <= 0.0)
+			outputMemEstimate = Math.max(0.0, hop.getOutputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
+		if (outputMemEstimate <= 0.0 || !hasUnknownOutputDims(hop))
 			return outputMemEstimate;
-		}
-		return Math.max(0.0, hop.getOutputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
+
+		double inputMemEstimate = hop.getInputMemEstimate();
+		if (inputMemEstimate <= 0.0)
+			inputMemEstimate = getEffectiveInputMemEstimate(hop);
+		return clampUnknownDimOutputMemEstimate(hop, outputMemEstimate, inputMemEstimate);
 	}
 
 	/**
@@ -221,6 +342,7 @@ public final class FederatedCostModel {
 		if (hop == null)
 			return 0.0;
 
+		double rawOutputMemEstimate = hop.getOutputMemEstimate();
 		double outputMemEstimate = getEffectiveOutputMemEstimate(hop);
 		double inputMemEstimate = getEffectiveInputMemEstimate(hop);
 		if (outputMemEstimate <= 0.0)
@@ -234,11 +356,13 @@ public final class FederatedCostModel {
 		// look nearly free and leading to pathological broadcast-heavy plans in iterative workloads
 		// (notably kmeans initialization).
 		//
-		// Apply a conservative lower bound for unknown-dimension uploads:
-		// - if exactly one axis is known, use a square bound on that axis (capped by the global
-		//   UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES),
-		// - otherwise fall back to UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES.
-		if (hasUnknownOutputDims(hop)) {
+		// Apply a conservative lower bound for unknown-dimension uploads only when the raw
+		// output estimate is genuinely missing and we therefore fall back to
+		// Hop.getOutputMemEstimate(double). That fallback uses max(dim,1) for unknown axes and
+		// can under-estimate one-known-axis payloads by orders of magnitude (e.g., 3000x? ->
+		// 3000x1). Do not re-inflate estimates that already came from the generic unknown-size
+		// sentinel path and were subsequently clamped by descendant/input bounds.
+		if (hasUnknownOutputDims(hop) && rawOutputMemEstimate <= 0.0) {
 			double perCell = getInjectedDefaultMemEstimatePerCell(hop);
 			long r = hop.getDim1();
 			long c = hop.getDim2();
@@ -313,6 +437,33 @@ public final class FederatedCostModel {
 		double lower = DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES * (1.0 - UNKNOWN_DIM_MEM_SENTINEL_EPSILON);
 		double upper = DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES * (1.0 + UNKNOWN_DIM_MEM_SENTINEL_EPSILON);
 		return memEstimate >= lower && memEstimate <= upper;
+	}
+
+	private static double clampUnknownDimOutputMemEstimate(Hop hop, double outputMemEstimate, double inputMemEstimate) {
+		if (hop == null || outputMemEstimate <= 0.0 || !hasUnknownOutputDims(hop))
+			return Math.max(0.0, outputMemEstimate);
+
+		double clampedOutputMemEstimate = Math.max(0.0, outputMemEstimate);
+		double indexingBound = getIndexingUploadBound(hop);
+		if (indexingBound > 0.0)
+			clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, indexingBound);
+
+		if (isLikelyDefaultUnknownMemEstimate(clampedOutputMemEstimate)) {
+			Set<Long> visited = new HashSet<>();
+			visited.add(hop.getHopID());
+			double descendantKnownMem = getKnownDescendantOutputMemEstimate(hop, UNKNOWN_DIM_DESCENT_MAX_DEPTH, visited);
+			if (descendantKnownMem > 0.0)
+				clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, descendantKnownMem);
+		}
+
+		if (UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES > 0.0)
+			clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES);
+
+		double clampRatio = Math.max(1.0, UPLOAD_ESTIMATE_CLAMP_RATIO);
+		if (inputMemEstimate > 0.0)
+			clampedOutputMemEstimate = Math.min(clampedOutputMemEstimate, inputMemEstimate * clampRatio);
+
+		return clampedOutputMemEstimate;
 	}
 
 	private static double getKnownDescendantOutputMemEstimate(Hop hop, int remainingDepth, Set<Long> visited) {
@@ -406,6 +557,7 @@ public final class FederatedCostModel {
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return computeUploadNetworkCost(memSize, fType, numWorkers);
 	}
+
 
 	private static double getInjectedDefaultMemEstimatePerCell(Hop hop) {
 		if (hop == null || hop.getValueType() == null) {

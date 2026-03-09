@@ -1022,6 +1022,8 @@ public class FederatedPlannerDpRewireTransTable {
 								? prog.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName())
 								: null;
 						Map<String, List<Hop>> functionTransTable = functionTransTableCache.get(fkey);
+						Set<Long> functionOutputIds = new LinkedHashSet<>();
+						List<Hop> functionOutputHops = new ArrayList<>();
 						boolean pushed = false;
 
 						if (functionTransTable == null && !fnStack.contains(fkey)) {
@@ -1042,6 +1044,9 @@ public class FederatedPlannerDpRewireTransTable {
 										newFormerTransTable.putAll(formerTransTable);
 									}
 									newFormerTransTable.putAll(innerTransTable);
+									Set<Long> nestedUnRefTwriteSet = new HashSet<>();
+									Set<Long> nestedUnRefSet = new HashSet<>();
+									Set<Hop> nestedProgRootHopSet = new LinkedHashSet<>();
 
 									String[] inputArgs = fop.getInputVariableNames();
 									List<Hop> inputHops = fop.getInput();
@@ -1054,7 +1059,8 @@ public class FederatedPlannerDpRewireTransTable {
 											FederatedPlannerUtils.scopedFedVarsForFunctionCall(inputArgs, inputHops)) {
 										functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
 												rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
-												privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet,
+												privacyConstraintMap, fedMap, nestedUnRefTwriteSet, nestedUnRefSet,
+												nestedProgRootHopSet,
 												fnStack, injectedIds, functionTransTableCache, computeWeight,
 												networkWeight,
 												multiplicity, loopStack, unrollDepth, maxUnrollDepth, null, loopCtx, unrollCtx);
@@ -1078,8 +1084,17 @@ public class FederatedPlannerDpRewireTransTable {
 														networkWeight,
 														multiplicity, 0, loopStack));
 									}
-									unRefTwriteSet.add(outputHop.getHopID());
+									if (outputHop.getDataType() != null
+											&& outputHop.getDataType().isMatrix()
+											&& functionOutputIds.add(outputHop.getHopID())) {
+										functionOutputHops.add(outputHop);
+									}
 								});
+						if (!functionOutputHops.isEmpty()) {
+							ctx.rewireTable().put(fop.getHopID(), functionOutputHops);
+						} else {
+							ctx.rewireTable().remove(fop.getHopID());
+						}
 					} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
 						TransTableRewireUtils.mapFunctionOutputs(
 								fop, null, null, innerTransTable,

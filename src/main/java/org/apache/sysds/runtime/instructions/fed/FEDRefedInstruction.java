@@ -338,10 +338,32 @@ public class FEDRefedInstruction extends FEDInstruction {
 		long nnz = in.getNnz();
 		long inputUniqueId = in.getUniqueID();
 		long inputMutationVersion = in.getMutationVersion();
-		long anchorMapId = anchorMap.getID();
 		String inputKey = in.getFileName();
 		if (inputKey == null || inputKey.isEmpty())
 			inputKey = _input.getName();
+		int numWorkers = anchorMap.getSize();
+		long maxRow = anchorMap.getMaxIndexInRange(0);
+		long maxCol = anchorMap.getMaxIndexInRange(1);
+		FType cacheMapType = fType;
+		String layoutSig;
+		if ((fType == FType.ROW || fType == FType.COL || fType == FType.FULL || fType == FType.BROADCAST)
+			&& maxRow == rlen && maxCol == clen) {
+			layoutSig = FederationUtils.deriveFedLayoutSignature(anchorMap);
+		}
+		else {
+			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
+			FType mapType = materializeType;
+			if (materializeType == FType.ROW && rlen < numWorkers) {
+				materializeType = FType.FULL;
+				mapType = FType.BROADCAST;
+			}
+			else if (materializeType == FType.COL && clen < numWorkers) {
+				materializeType = FType.FULL;
+				mapType = FType.BROADCAST;
+			}
+			cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
+			layoutSig = FederationUtils.deriveMaterializedLayoutSignature(anchorMap, cacheMapType, rlen, clen);
+		}
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_refed cachekey in=" + _input.getName()
 				+ " inputKey=" + inputKey
@@ -350,11 +372,11 @@ public class FEDRefedInstruction extends FEDInstruction {
 				+ " dims=" + rlen + "x" + clen
 				+ " nnz=" + nnz
 				+ " anchor=" + _anchor.getName()
-				+ " anchorId=" + anchorMapId
-				+ " outType=" + fType);
+				+ " layoutSig=" + layoutSig
+				+ " outType=" + cacheMapType);
 		}
 		FederationMap cached = FederationUtils.getRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, anchorMapId, fType);
+			rlen, clen, nnz, layoutSig, cacheMapType);
 		if (cached != null) {
 			out.setFedMapping(cached);
 			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), nnz);
@@ -368,8 +390,6 @@ public class FEDRefedInstruction extends FEDInstruction {
 			return;
 		}
 
-		long maxRow = anchorMap.getMaxIndexInRange(0);
-		long maxCol = anchorMap.getMaxIndexInRange(1);
 		if (maxRow != rlen || maxCol != clen) {
 			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
 			FType mapType = materializeType;
@@ -385,7 +405,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 				materializeType, mapType, rlen, clen, false, "fed_refed"));
 			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
 			FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-				rlen, clen, nnz, anchorMapId, fType, out.getFedMapping());
+				rlen, clen, nnz, layoutSig, cacheMapType, out.getFedMapping());
 			return;
 		}
 
@@ -409,13 +429,14 @@ public class FEDRefedInstruction extends FEDInstruction {
 		out.setFedMapping(anchorMap.copyWithNewID(outId));
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
 		FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, anchorMapId, fType, out.getFedMapping());
+			rlen, clen, nnz, layoutSig, cacheMapType, out.getFedMapping());
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_refed in=" + _input.getName()
 				+ " out=" + _output.getName()
 				+ " dims=" + rlen + "x" + clen
 				+ " anchor=" + _anchor.getName()
-				+ " type=" + anchorMap.getType());
+				+ " type=" + anchorMap.getType()
+				+ " layoutSig=" + layoutSig);
 		}
 	}
 }

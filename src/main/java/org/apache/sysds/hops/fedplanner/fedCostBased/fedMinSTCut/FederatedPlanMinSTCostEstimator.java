@@ -215,6 +215,7 @@ public class FederatedPlanMinSTCostEstimator {
 				}
 			}
 		}
+		appendFunctionOutputHopsIfNeeded(hop, rewireTable, childHops);
 
 		for (Hop inputHop : childHops) {
 			estimateHopDAG(inputHop, prog, graph, rewireTable, fnStack, functionEstimateCache, visitedHops);
@@ -335,11 +336,12 @@ public class FederatedPlanMinSTCostEstimator {
 					}
 					if (seenChildIds.add(transChildHop.getHopID())) {
 						childHops.add(transChildHop);
-					}
 				}
 			}
+		}
+		appendFunctionOutputHopsIfNeeded(hop, rewireTable, childHops);
 
-			Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, rewireTable);
+		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, rewireTable);
 			if (tWriteChildIds.isEmpty()) {
 				tWriteChildIds = collectTransientWriteByName(hop, graph);
 			}
@@ -373,6 +375,27 @@ public class FederatedPlanMinSTCostEstimator {
 		}
 
 		addLoopCarryEdgesForHop(hop, vertex, graph);
+	}
+
+	private static void appendFunctionOutputHopsIfNeeded(Hop hop, Map<Long, List<Hop>> rewireTable, List<Hop> childHops) {
+		if (!(hop instanceof FunctionOp)
+				|| ((FunctionOp) hop).getFunctionType() != FunctionType.DML
+				|| rewireTable == null)
+			return;
+		List<Hop> functionOutputHops = rewireTable.get(hop.getHopID());
+		if (functionOutputHops == null || functionOutputHops.isEmpty())
+			return;
+		Set<Long> seenChildIds = new HashSet<>();
+		for (Hop childHop : childHops) {
+			if (childHop != null)
+				seenChildIds.add(childHop.getHopID());
+		}
+		for (Hop outputHop : functionOutputHops) {
+			if (outputHop == null)
+				continue;
+			if (seenChildIds.add(outputHop.getHopID()))
+				childHops.add(outputHop);
+		}
 	}
 
 	private static boolean requiresFederatedInputForParent(Hop parentHop, Hop inputHop, int inputIndex,
@@ -589,13 +612,20 @@ public class FederatedPlanMinSTCostEstimator {
 			if (uploadType == null)
 				uploadType = vertex.getDataType();
 			double uploadCost = vertex.getCpUploadCostWithoutWeight();
-				if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
-					double outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
-					// Prefer reader estimate first, then fall back to matched loop-carry writer.
-					if (outputMemEstimate <= 0.0 && writerVertex.getHopRef() != null) {
-						outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(writerVertex.getHopRef());
-					}
-					if (outputMemEstimate > 0.0) {
+			if (Double.isNaN(uploadCost) || uploadCost <= 0.0) {
+				double readerOutputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+				boolean preferWriterFallback = readerOutputMemEstimate <= 0.0
+						&& hop.getDim1() <= 0 && hop.getDim2() <= 0;
+				double outputMemEstimate = preferWriterFallback
+						? 0.0
+						: FederatedCostModel.getEffectiveUploadMemEstimate(hop);
+				// Prefer reader estimate first, but for fully-unknown TRead loop-carried vars
+				// with no concrete reader-side output estimate, fall back to the matched writer
+				// instead of charging a synthetic unknown-dim upload floor.
+				if (outputMemEstimate <= 0.0 && writerVertex.getHopRef() != null) {
+					outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(writerVertex.getHopRef());
+				}
+				if (outputMemEstimate > 0.0) {
 					uploadCost = FederatedCostModel.computeUploadNetworkCost(
 							outputMemEstimate, uploadType, graph.getNumOfWorkers());
 				}

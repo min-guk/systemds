@@ -102,10 +102,9 @@ public class FederatedPlannerDpCostEnumerator {
 	// this flag flips.
 	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
 	// Planner option: disallow CP->FOUT in recompile regions (function/while).
-	// NOTE: Runtime supports CP->FOUT materialization via fed_fout. Do not close the
-	// candidate space with recompile-specific guards; conflicts should be resolved
-	// via cost-based selection instead.
-	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = false;
+	// This is treated as a global legality constraint for planner/runtime consistency,
+	// not a workload-specific pruning heuristic.
+	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
 	/**
 	 * Enumerates the entire DML program to generate federated execution plans.
 	 * It processes each statement block, computes the optimal federated plan,
@@ -418,6 +417,25 @@ public class FederatedPlannerDpCostEnumerator {
 		long hopID = hop.getHopID();
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
 		int numParentHops = hop.getParent().size();
+		if (hop instanceof FunctionOp
+				&& ((FunctionOp) hop).getFunctionType() == FunctionType.DML) {
+			List<Hop> functionOutputHops = rewireTable.get(hopID);
+			if (functionOutputHops != null) {
+				LinkedHashSet<Long> seenChildIds = new LinkedHashSet<>();
+				for (Hop inputHop : childHops)
+					seenChildIds.add(inputHop.getHopID());
+				for (Hop outputHop : functionOutputHops) {
+					if (outputHop == null)
+						continue;
+					long outputHopId = outputHop.getHopID();
+					if (!memoTable.contains(outputHopId, FederatedOutput.LOUT)
+							&& !memoTable.contains(outputHopId, FederatedOutput.FOUT))
+						continue;
+					if (seenChildIds.add(outputHopId))
+						childHops.add(outputHop);
+				}
+			}
+		}
 
 		if (hop instanceof DataOp) {
 			Types.OpOpData opType = ((DataOp) hop).getOp();
@@ -475,6 +493,7 @@ public class FederatedPlannerDpCostEnumerator {
 		double[][] childCumulativeCost = new double[initialNumInputs][2]; // # of child, LOUT/FOUT of child
 		double[] childForwardingCostToCP = new double[initialNumInputs]; // # of child (FOUT -> CP)
 		double[] childForwardingCostToFED = new double[initialNumInputs]; // # of child (LOUT -> FED)
+		double[] childForwardingCostFOutToFED = new double[initialNumInputs]; // # of child (transient FOUT -> FED)
 		List<Hop> lOutfOutChildHops = new ArrayList<>(childHops);
 
 		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
@@ -484,13 +503,15 @@ public class FederatedPlannerDpCostEnumerator {
 		List<Hop> fOUTOnlyinputHops = new ArrayList<>();
 		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
 		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
 
 		// The self cost follows its own weight, while the forwarding cost follows the
 		// parent's weight.
 		FederatedPlannerDpCostEstimator.getChildCosts(hopCommon, memoTable, lOutfOutChildHops, childCumulativeCost,
-				childForwardingCostToCP, childForwardingCostToFED, lOUTOnlyinputHops,
+				childForwardingCostToCP, childForwardingCostToFED, childForwardingCostFOutToFED, lOUTOnlyinputHops,
 				lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops,
-				fOUTOnlychildCumulativeCost, fOUTOnlychildForwardingCostToCP, numOfWorkers);
+				fOUTOnlychildCumulativeCost, fOUTOnlychildForwardingCostToCP,
+				fOUTOnlychildForwardingCostToFED, numOfWorkers);
 
 		// childCumulativeCost/childForwardingCost arrays are treated as buffers sized
 		// by
@@ -538,7 +559,9 @@ public class FederatedPlannerDpCostEnumerator {
 		double fedComputeCost = (hop instanceof BinaryOp)
 				? baseSelfCost
 				: baseSelfCost / Math.max(1, numOfWorkers);
-			double fedSelfCost = fedComputeCost + fedOverhead;
+		double singleWorkerFedPenalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(
+				hop, hopNetworkWeight * hopCommon.getMultiplicity(), numOfWorkers);
+			double fedSelfCost = fedComputeCost + fedOverhead + singleWorkerFedPenalty;
 			double resultDownloadCost = hopPlacementWeight
 					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(uploadMemEstimate);
 
@@ -674,7 +697,8 @@ public class FederatedPlannerDpCostEnumerator {
 				Hop inputHop = lOutfOutChildHops.get(j);
 				int bit = selectedBits[j];
 				childCostCPExec += childCumulativeCost[j][bit] + childForwardingCostToCP[j] * bit;
-				double fedForwardingCost = childForwardingCostToFED[j] * (1 - bit);
+				double fedForwardingCost = childForwardingCostToFED[j] * (1 - bit)
+						+ childForwardingCostFOutToFED[j] * bit;
 				childCostFEDExec += childCumulativeCost[j][bit] + fedForwardingCost;
 			}
 			for (int j = 0; j < numLoutOnlyInputs; j++) {
@@ -685,7 +709,7 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 			for (int j = 0; j < numFoutOnlyInputs; j++) {
 				childCostCPExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToCP.get(j);
-				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j);
+				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToFED.get(j);
 			}
 
 				OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
@@ -848,12 +872,22 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 
 				if (FederatedPlannerTrace.shouldTrace(hop)) {
+					String childBreakdown = formatDpChildBreakdown(
+							lOutfOutChildHops, childCumulativeCost, childForwardingCostToCP,
+							childForwardingCostToFED, childForwardingCostFOutToFED,
+							lOUTOnlyinputHops, lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED,
+							fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+							fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED);
 					FederatedPlannerTrace.log(hop, "DP-Candidate", String.format(Locale.ROOT,
-							"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] boundary[upload=%.6f,download=%.6f,trAcquire=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s",
+							"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] selfModel[base=%.6f,fedCompute=%.6f,fedOverhead=%.6f,singleWorkerPenalty=%.6f,computeWeight=%.6f,networkWeight=%.6f,multiplicity=%.6f,placementWeight=%.6f] boundary[upload=%.6f,download=%.6f,trAcquire=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s children=%s",
 							formatSelectedBits(selectedBits), childCostCPExec, childCostFEDExec,
-							cpSelfCost, fedSelfCost, cpUploadCost, resultDownloadCost, tReadAcquireCost,
+							cpSelfCost, fedSelfCost,
+							baseSelfCost, fedComputeCost, fedOverhead, singleWorkerFedPenalty,
+							hopCommon.getComputeWeight(), hopNetworkWeight, hopCommon.getMultiplicity(), hopPlacementWeight,
+							cpUploadCost, resultDownloadCost, tReadAcquireCost,
 							allowCpLoutCandidate, allowCpFoutCandidate, allowFedLoutCandidate, allowFedFoutCandidate,
-							canSatisfyFedInputs, cpLoutCost, cpFoutCost, fedLoutCost, fedFoutCost, derivedFedFout));
+							canSatisfyFedInputs, cpLoutCost, cpFoutCost, fedLoutCost, fedFoutCost, derivedFedFout,
+							childBreakdown));
 				}
 			}
 
@@ -1559,12 +1593,67 @@ public class FederatedPlannerDpCostEnumerator {
 			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 					transferMem, childPlan.getFType(), numOfWorkers);
 			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
+		} else if (parentIsFed && childOut == FederatedOutput.FOUT && childPlan.getExecType() == ExecType.CP) {
+			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
+					childPlan.getHopRef(), parentPlan.getHopRef(), childPlan.getFType(), numOfWorkers);
+			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
 		} else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
 			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childPlan.getHopRef());
 			double downloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(transferMem);
-			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(downloadCost, childPlan, parentPlan);
+			return FederatedPlannerDpCostEstimator.computeFoutToCpDownloadShareForParent(
+					downloadCost, childPlan, parentPlan);
 		}
 		return 0.0;
+	}
+
+	private static String formatDpChildBreakdown(
+			List<Hop> bothOutInputs,
+			double[][] childCumulativeCost,
+			double[] childForwardingCostToCP,
+			double[] childForwardingCostToFED,
+			double[] childForwardingCostFOutToFED,
+			List<Hop> lOUTOnlyinputHops,
+			List<Double> lOUTOnlychildCumulativeCost,
+			List<Double> lOUTOnlychildForwardingCostToFED,
+			List<Hop> fOUTOnlyinputHops,
+			List<Double> fOUTOnlychildCumulativeCost,
+			List<Double> fOUTOnlychildForwardingCostToCP,
+			List<Double> fOUTOnlychildForwardingCostToFED) {
+
+		StringBuilder sb = new StringBuilder();
+		sb.append("both=[");
+		for (int i = 0; i < bothOutInputs.size(); i++) {
+			if (i > 0)
+				sb.append(';');
+			Hop child = bothOutInputs.get(i);
+			sb.append(child.getHopID()).append(':')
+				.append(String.format(Locale.ROOT,
+					"cumCP=%.6f,cumFED=%.6f,toCP=%.6f,toFED=%.6f,fOutToFED=%.6f",
+					childCumulativeCost[i][0], childCumulativeCost[i][1],
+					childForwardingCostToCP[i], childForwardingCostToFED[i],
+					childForwardingCostFOutToFED[i]));
+		}
+		sb.append("],lOnly=[");
+		for (int i = 0; i < lOUTOnlyinputHops.size(); i++) {
+			if (i > 0)
+				sb.append(';');
+			Hop child = lOUTOnlyinputHops.get(i);
+			sb.append(child.getHopID()).append(':')
+				.append(String.format(Locale.ROOT, "cum=%.6f,toFED=%.6f",
+					lOUTOnlychildCumulativeCost.get(i), lOUTOnlychildForwardingCostToFED.get(i)));
+		}
+		sb.append("],fOnly=[");
+		for (int i = 0; i < fOUTOnlyinputHops.size(); i++) {
+			if (i > 0)
+				sb.append(';');
+			Hop child = fOUTOnlyinputHops.get(i);
+			sb.append(child.getHopID()).append(':')
+				.append(String.format(Locale.ROOT, "cum=%.6f,toCP=%.6f,toFED=%.6f",
+					fOUTOnlychildCumulativeCost.get(i), fOUTOnlychildForwardingCostToCP.get(i),
+					fOUTOnlychildForwardingCostToFED.get(i)));
+		}
+		sb.append(']');
+		return sb.toString();
 	}
 
 	// Parent-child edge uniqueness: duplicates of the same hopID in a parent's

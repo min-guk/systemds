@@ -201,7 +201,8 @@ public class FEDFoutInstruction extends FEDInstruction {
 							+ " dims=" + rlen + "x" + clen
 							+ " hint=" + outTypeHint
 							+ " mapType=" + outMap.getType()
-							+ " reuseFed=true");
+							+ " reuseFed=true"
+							+ " inst=" + instString);
 					}
 					return;
 				}
@@ -213,7 +214,8 @@ public class FEDFoutInstruction extends FEDInstruction {
 					System.out.println("[DBG-KMEANS] fed_fout materialize-fed in=" + _input.getName()
 						+ " dims=" + rlen + "x" + clen
 						+ " inType=" + inType + " outType=" + mapType
-						+ " anchor=" + _anchor.getName());
+						+ " anchor=" + _anchor.getName()
+						+ " inst=" + instString);
 				}
 		}
 		if (rlen < 0 || clen < 0) {
@@ -227,7 +229,6 @@ public class FEDFoutInstruction extends FEDInstruction {
 		long nnz = in.getNnz();
 		long inputUniqueId = in.getUniqueID();
 		long inputMutationVersion = in.getMutationVersion();
-		long anchorMapId = anchorMap.getID();
 		String inputKey = in.getFileName();
 		if (inputKey == null || inputKey.isEmpty())
 			inputKey = _input.getName();
@@ -250,8 +251,22 @@ public class FEDFoutInstruction extends FEDInstruction {
 		}
 
 		FType cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
+		String layoutSig = FederationUtils.deriveMaterializedLayoutSignature(anchorMap, cacheMapType, rlen, clen);
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] fed_fout cachekey in=" + _input.getName()
+				+ " inputKey=" + inputKey
+				+ " uid=" + inputUniqueId
+				+ " mut=" + inputMutationVersion
+				+ " dims=" + rlen + "x" + clen
+				+ " nnz=" + nnz
+				+ " anchor=" + _anchor.getName()
+				+ " layoutSig=" + layoutSig
+				+ " outType=" + cacheMapType
+				+ " inputFed=" + in.isFederated()
+				+ " inst=" + instString);
+		}
 		FederationMap cached = FederationUtils.getRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, anchorMapId, cacheMapType);
+			rlen, clen, nnz, layoutSig, cacheMapType);
 		if (cached != null) {
 			MatrixObject out = ec.getMatrixObject(_output);
 			out.setFedMapping(cached);
@@ -262,7 +277,8 @@ public class FEDFoutInstruction extends FEDInstruction {
 					+ " dims=" + rlen + "x" + clen
 					+ " hint=" + outTypeHint
 					+ " mapType=" + cached.getType()
-					+ " reuseFed=false");
+					+ " reuseFed=false"
+					+ " inst=" + instString);
 			}
 			return;
 		}
@@ -274,14 +290,16 @@ public class FEDFoutInstruction extends FEDInstruction {
 		out.setFedMapping(outMap);
 		out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
 		FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
-			rlen, clen, nnz, anchorMapId, outMap.getType(), outMap);
+			rlen, clen, nnz, layoutSig, outMap.getType(), outMap);
 		if (DEBUG_KMEANS) {
 			System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
 				+ " out=" + _output.getName()
 				+ " dims=" + rlen + "x" + clen
 				+ " hint=" + outTypeHint
 				+ " mapType=" + outMap.getType()
-				+ " reuseFed=false");
+				+ " layoutSig=" + layoutSig
+				+ " reuseFed=false"
+				+ " inst=" + instString);
 		}
 	}
 }
