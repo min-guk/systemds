@@ -27,6 +27,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -46,6 +47,20 @@ public final class ExecPlacementPolicy {
 
 	private ExecPlacementPolicy() {
 		// utility class
+	}
+
+	/**
+	 * Some HOPs do not expose FED lops directly even though runtime can still execute them via
+	 * CP/SP instructions that get recompiled into FED instructions at runtime. Keep the planner
+	 * state as-is for costing, but normalize the forced exec type during rewrite so LOP
+	 * construction stays valid.
+	 */
+	public static ExecType normalizeRewriteExecType(Hop hop, ExecType plannedExec) {
+		if (plannedExec != ExecType.FED || hop == null)
+			return plannedExec;
+		if (hop instanceof QuaternaryOp)
+			return ExecType.CP;
+		return plannedExec;
 	}
 
 	public static Decision decide(Hop hop, Privacy privacy, FType fType, OpCaps caps) {
@@ -81,15 +96,28 @@ public final class ExecPlacementPolicy {
 				}
 				break;
 			case PRIVATE_AGGREGATE:
+				// PRIVATE_AGGREGATE results are still allowed to materialize locally on the
+				// coordinator; only public release is disallowed. Keeping the CP/LOUT competitor
+				// open is important for cost-based planners because some private-aggregate hops
+				// (e.g., ALS masks, steplm rightIndex chains) can otherwise be forced into FED-only
+				// regimes even though a legal local/private plan exists. This mirrors MinST's
+				// alternative-cap merge, which already compares the local/private competitor on
+				// the same workloads.
+				//
+				// Likewise, if a concrete FType is known and the hop can be materialized safely
+				// onto an existing federated anchor, keep CP->FOUT open as a common competitor
+				// for both DP and MinST. The planners' downstream safety checks still close the
+				// candidate when no realizable anchor/materialization path exists, so this gate
+				// should model "materializable" rather than a narrow subset of oracle reasons.
+				decision.allowCP_LOUT = true;
 				if (oracleExec == ExecType.FED) {
 					if (placement == FederatedOutput.FOUT)
 						decision.allowFED_FOUT = true;
 					else
 						decision.allowFED_LOUT = true;
 				}
-				else if (oracleExec == ExecType.CP) {
-					decision.allowCP_LOUT = true;
-				}
+				if (allowCpFout(hop, fType))
+					decision.allowCP_FOUT = true;
 				// A DML FunctionOp is only a coordinator-side call placeholder; the concrete
 				// execution happens inside the callee. Even if the oracle exposes a federated
 				// placeholder path here, local execution of the call boundary remains legal
@@ -100,14 +128,16 @@ public final class ExecPlacementPolicy {
 					decision.allowCP_LOUT = true;
 				break;
 			case PRIVATE_AGGREGATE_TO_PUBLIC:
+				// Aggregate-to-public release must keep a local/public competitor available even when
+				// the oracle exposes a FED path. DP enumerates parent transitions off this decision,
+				// and closing CP/LOUT here can force hot aggregate/quaternary operators into FED-only
+				// regimes (e.g., ALS wdivmm, steplm ba(+*)) although a legal local/public plan exists.
+				decision.allowCP_LOUT = true;
 				if (oracleExec == ExecType.FED) {
 					if (placement == FederatedOutput.FOUT) {
 						decision.allowFED_FOUT = true;
 					}
 					decision.allowFED_LOUT = true;
-				}
-				else if (oracleExec == ExecType.CP) {
-					decision.allowCP_LOUT = true;
 				}
 				if (dmlFunctionPlaceholder)
 					decision.allowCP_LOUT = true;
@@ -194,6 +224,6 @@ public final class ExecPlacementPolicy {
 		if (hop == null || !hop.getDataType().isMatrix()) {
 			return false;
 		}
-		return true;
+		return fType != null && fType != FType.PART && fType != FType.OTHER;
 	}
 }

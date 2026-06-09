@@ -21,9 +21,11 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.apache.sysds.common.Types;
@@ -32,6 +34,8 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.CompatibilityScore;
+import org.apache.sysds.parser.DataIdentifier;
+import org.apache.sysds.parser.FunctionStatement;
 import org.apache.sysds.parser.FunctionStatementBlock;
 
 public final class TransTableRewireUtils {
@@ -199,6 +203,32 @@ public final class TransTableRewireUtils {
 		return best;
 	}
 
+	public static List<Hop> preferDominatingTransientWrites(List<Hop> hops, DataOp transientRead) {
+		if (hops == null || hops.isEmpty() || transientRead == null)
+			return hops;
+		int readLine = transientRead.getBeginLine();
+		if (readLine <= 0)
+			return hops;
+		List<Hop> dominating = new ArrayList<>();
+		int bestLine = Integer.MIN_VALUE;
+		for (Hop hop : hops) {
+			if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTWRITE)
+				continue;
+			int writeLine = hop.getBeginLine();
+			if (writeLine <= 0 || writeLine > readLine)
+				return hops;
+			if (writeLine > bestLine) {
+				bestLine = writeLine;
+				dominating.clear();
+				dominating.add(hop);
+			}
+			else if (writeLine == bestLine) {
+				dominating.add(hop);
+			}
+		}
+		return dominating.isEmpty() ? hops : dominating;
+	}
+
 	public static void markParentChildUploadHint(Map<Long, Set<Long>> parentChildUploadHints,
 			long parentHopId, long childHopId) {
 		if (parentChildUploadHints == null || parentHopId < 0 || childHopId < 0)
@@ -298,35 +328,60 @@ public final class TransTableRewireUtils {
 	public static void mapFunctionOutputs(FunctionOp fop, FunctionStatementBlock fsb,
 			Map<String, List<Hop>> functionTransTable, Map<String, List<Hop>> innerTransTable,
 			Consumer<Hop> outputHandler) {
+		mapFunctionOutputsWithNames(fop, fsb, functionTransTable, innerTransTable,
+			(outputHop, callerOutputName) -> {
+				if (outputHandler != null && outputHop != null)
+					outputHandler.accept(outputHop);
+			});
+	}
+
+	public static void mapFunctionOutputsWithNames(FunctionOp fop, FunctionStatementBlock fsb,
+			Map<String, List<Hop>> functionTransTable, Map<String, List<Hop>> innerTransTable,
+			BiConsumer<Hop, String> outputHandler) {
 		if (fop == null || innerTransTable == null) {
 			return;
 		}
 
-		if (fop.getFunctionType() == FunctionType.DML) {
+		if (fop.getFunctionType() == FunctionType.DML
+				|| fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
 			if (fsb == null || functionTransTable == null) {
-				return;
+				if (fop.getFunctionType() == FunctionType.DML)
+					return;
 			}
-			String[] outputNames = fop.getOutputVariableNames();
-			if (outputNames == null) {
-				return;
-			}
-			int limit = Math.min(outputNames.length, fsb.getOutputsofSB().size());
-			for (int i = 0; i < limit; i++) {
-				String tWriteName = outputNames[i];
-				List<Hop> outputHops = functionTransTable.get(fsb.getOutputsofSB().get(i).getName());
-				if (outputHops == null || outputHops.isEmpty()) {
-					continue;
+			else {
+				String[] outputNames = fop.getOutputVariableNames();
+				if (outputNames == null) {
+					return;
 				}
-				innerTransTable.computeIfAbsent(tWriteName, k -> new ArrayList<>()).addAll(outputHops);
-				if (outputHandler != null) {
-					for (Hop outputHop : outputHops) {
-						if (outputHop != null) {
-							outputHandler.accept(outputHop);
+				List<DataIdentifier> orderedFunctionOutputs = null;
+				if (fsb.getStatements() != null && !fsb.getStatements().isEmpty()
+					&& fsb.getStatement(0) instanceof FunctionStatement) {
+					orderedFunctionOutputs = ((FunctionStatement) fsb.getStatement(0)).getOutputParams();
+				}
+				List<DataIdentifier> functionOutputs = (orderedFunctionOutputs != null && !orderedFunctionOutputs.isEmpty())
+					? orderedFunctionOutputs
+					: fsb.getOutputsofSB();
+				if (functionOutputs == null || functionOutputs.isEmpty())
+					return;
+				int limit = Math.min(outputNames.length, functionOutputs.size());
+				for (int i = 0; i < limit; i++) {
+					String tWriteName = outputNames[i];
+					String functionOutputName = functionOutputs.get(i).getName();
+					List<Hop> outputHops = sanitizeFunctionOutputMappings(
+						functionOutputName, functionTransTable.get(functionOutputName));
+					if (outputHops == null || outputHops.isEmpty()) {
+						continue;
+					}
+					innerTransTable.computeIfAbsent(tWriteName, k -> new ArrayList<>()).addAll(outputHops);
+					if (outputHandler != null) {
+						for (Hop outputHop : outputHops) {
+							if (outputHop != null)
+								outputHandler.accept(outputHop, tWriteName);
 						}
 					}
 				}
+				return;
 			}
-			return;
 		}
 
 		if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
@@ -343,10 +398,36 @@ public final class TransTableRewireUtils {
 				}
 				innerTransTable.computeIfAbsent(outputNames[i], k -> new ArrayList<>()).add(outputHop);
 				if (outputHandler != null) {
-					outputHandler.accept(outputHop);
+					outputHandler.accept(outputHop, outputNames[i]);
 				}
 			}
 		}
+	}
+
+	private static List<Hop> sanitizeFunctionOutputMappings(String functionOutputName, List<Hop> outputHops) {
+		if (outputHops == null || outputHops.isEmpty())
+			return outputHops;
+
+		List<Hop> filtered = filterByName(outputHops, functionOutputName, false);
+		List<Hop> candidates = (filtered != null && !filtered.isEmpty()) ? filtered : outputHops;
+
+		LinkedHashMap<String, Hop> deduped = new LinkedHashMap<>();
+		for (Hop hop : candidates) {
+			if (hop == null)
+				continue;
+			deduped.putIfAbsent(buildFunctionOutputSignature(hop), hop);
+		}
+
+		return deduped.isEmpty() ? outputHops : new ArrayList<>(deduped.values());
+	}
+
+	private static String buildFunctionOutputSignature(Hop hop) {
+		return hop.getClass().getSimpleName()
+			+ "|" + hop.getName()
+			+ "|" + hop.getOpString()
+			+ "|" + hop.getBeginLine() + ":" + hop.getBeginColumn()
+			+ ":" + hop.getEndLine() + ":" + hop.getEndColumn()
+			+ "|" + hop.getDim1() + "x" + hop.getDim2();
 	}
 
 	public static List<Hop> filterTransReadChildren(String hopName, List<Hop> childHops,

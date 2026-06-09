@@ -820,6 +820,18 @@ public class Dag<N extends Lop>
 				for (Lop out : lops) {
 					if (out == null || out == fout)
 						continue;
+					// For transient writes, only consumers of the post-write value may be rewired to the
+					// materialized federated output. Ancestor consumers that participate in building the
+					// transient-write input still need the pre-write value; rewiring them would create a
+					// self-cycle such as X <- fed_fout(f(X)) where f(X) itself depends on X.
+					if (isTransientWrite
+						&& shouldSkipTransientWriteMaterializeConsumer(materializeInput, out)) {
+						if (LOG_LOP_MAPPING) {
+							System.out.printf("CP->FOUT transient-write skip: hop=%d producer=%d consumer=%d consumerType=%s%n",
+								hopId, materializeHopId, out.getHopID(), out.getType());
+						}
+						continue;
+					}
 					// Never rewire the producer (or its same-hop-id aliases) to consume its own
 					// fed_fout output; this creates a self-cycle like target <- fed_fout(target).
 					if (out == materializeInput || (materializeHopId >= 0 && out.getHopID() == materializeHopId))
@@ -972,6 +984,12 @@ public class Dag<N extends Lop>
 			}
 		}
 		return inserted;
+	}
+
+	private static boolean shouldSkipTransientWriteMaterializeConsumer(Lop materializeInput, Lop consumer) {
+		if (materializeInput == null || consumer == null)
+			return false;
+		return isReachable(consumer, materializeInput);
 	}
 
 	private static void copyOutputParams(OutputParameters target, OutputParameters source) {
@@ -1176,11 +1194,10 @@ public class Dag<N extends Lop>
 
 		// generate RM instructions
 		for ( String label : updatedLabels ) {
-			if (label != null && protectedLabels.contains(label))
+			if (label != null
+				&& (protectedLabels.contains(label)
+					|| FederatedPlannerUtils.isFedRmvarProtectedVar(label)))
 				continue;
-			if ("Y".equals(label) || "X".equals(label)) {
-				System.out.println("[DEBUG] rmvar " + label + " from deleteUpdatedTransientReadVariables");
-			}
 			Instruction rm_inst = VariableCPInstruction.prepareRemoveInstruction(label);
 			rm_inst.setLocation(updatedLabelsLineNum.get(label));
 			if( LOG.isTraceEnabled() )
@@ -1215,11 +1232,9 @@ public class Dag<N extends Lop>
 		// (currently required for specific cases of external functions)
 		for (String varName : sb.liveIn().getVariableNames()) {
 			if (!sb.liveOut().containsVariable(varName)) {
-				if (protectedLabels.contains(varName))
+				if (protectedLabels.contains(varName)
+					|| FederatedPlannerUtils.isFedRmvarProtectedVar(varName))
 					continue;
-				if ("Y".equals(varName) || "X".equals(varName)) {
-					System.out.println("[DEBUG] rmvar " + varName + " from generateRemoveInstructions");
-				}
 				Instruction inst = VariableCPInstruction.prepareRemoveInstruction(varName);
 				inst.setLocation(sb.getFilename(), sb.getEndLine(), sb.getEndLine(), -1, -1);
 				insts.add(inst);
@@ -2096,28 +2111,26 @@ public class Dag<N extends Lop>
 				//collect all subsequent rmvar instructions
 				currRmVar.add(((VariableCPInstruction)inst).getInput1().getName());
 			}
-			else {
-				//construct packed rmvar instruction
-				if( !currRmVar.isEmpty() ) {
-					if (currRmVar.contains("Y") || currRmVar.contains("X")) {
-						System.out.println("[DEBUG] packed rmvar contains Y/X: " + currRmVar);
+				else {
+					//construct packed rmvar instruction
+					if( !currRmVar.isEmpty() ) {
+						currRmVar.removeIf(FederatedPlannerUtils::isFedRmvarProtectedVar);
+						if( !currRmVar.isEmpty() )
+							ret.add(VariableCPInstruction.prepareRemoveInstruction(
+								currRmVar.toArray(new String[0])));
+						currRmVar.clear();
 					}
+					//add other instruction
+					ret.add(inst);
+				}
+			}
+			//construct last packed rmvar instruction
+			if( !currRmVar.isEmpty() ) {
+				currRmVar.removeIf(FederatedPlannerUtils::isFedRmvarProtectedVar);
+				if( !currRmVar.isEmpty() )
 					ret.add(VariableCPInstruction.prepareRemoveInstruction(
 						currRmVar.toArray(new String[0])));
-					currRmVar.clear();
-				}
-				//add other instruction
-				ret.add(inst);
 			}
+			return ret;
 		}
-		//construct last packed rmvar instruction
-		if( !currRmVar.isEmpty() ) {
-			if (currRmVar.contains("Y") || currRmVar.contains("X")) {
-				System.out.println("[DEBUG] packed rmvar contains Y/X: " + currRmVar);
-			}
-			ret.add(VariableCPInstruction.prepareRemoveInstruction(
-				currRmVar.toArray(new String[0])));
-		}
-		return ret;
-	}
 }

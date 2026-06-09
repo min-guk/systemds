@@ -27,6 +27,7 @@ import java.net.UnknownHostException;
 import java.util.Iterator;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.MemoTable;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.UnaryOp;
@@ -63,6 +64,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -764,6 +766,7 @@ public class FederatedPlannerUtils {
 		boolean hasMappedSources = sourceHops != null && !sourceHops.isEmpty();
 		if (!hasMappedSources)
 			return hasConcreteFederatedSourceVar(transientRead.getName());
+		boolean sawTransientWriteBoundary = false;
 		for (Hop source : sourceHops) {
 			if (source == null)
 				continue;
@@ -771,10 +774,195 @@ public class FederatedPlannerUtils {
 				DataOp dataSource = (DataOp) source;
 				if (dataSource.getOp() == Types.OpOpData.FEDERATED)
 					return true;
+				if (dataSource.getOp() == Types.OpOpData.TRANSIENTWRITE) {
+					sawTransientWriteBoundary = true;
+					continue;
+				}
 				if (dataSource.getOp() == Types.OpOpData.TRANSIENTREAD
 						&& hasConcreteFederatedSourceVar(dataSource.getName()))
 					return true;
 			}
+			if (hasConcreteFederatedSourceHop(source, new HashSet<>()))
+				return true;
+		}
+		return !sawTransientWriteBoundary && hasConcreteFederatedSourceVar(transientRead.getName());
+	}
+
+	public static Hop getPreferredMultiReturnFunctionOutputSourceForTransientRead(DataOp transientRead,
+			List<Hop> sourceHops) {
+		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD
+				|| sourceHops == null || sourceHops.isEmpty())
+			return null;
+		Hop namedFallback = null;
+		Hop compatibleFallback = null;
+		Hop fallback = null;
+		for (Hop sourceHop : sourceHops) {
+			if (!isMultiReturnFunctionOutputHop(sourceHop))
+				continue;
+			boolean sameName = Objects.equals(transientRead.getName(), sourceHop.getName());
+			boolean compatible = dimsCompatible(transientRead, sourceHop);
+			if (sameName && compatible)
+				return sourceHop;
+			if (sameName && namedFallback == null)
+				namedFallback = sourceHop;
+			if (compatible && compatibleFallback == null)
+				compatibleFallback = sourceHop;
+			if (fallback == null)
+				fallback = sourceHop;
+		}
+		if (namedFallback != null)
+			return namedFallback;
+		if (compatibleFallback != null)
+			return compatibleFallback;
+		return fallback;
+	}
+
+	public static boolean isMultiReturnFunctionOutputHop(Hop hop) {
+		return getMultiReturnFunctionOutputParent(hop) != null;
+	}
+
+	public static FunctionOp getMultiReturnFunctionOutputParent(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.FUNCTIONOUTPUT)
+			return null;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
+			return null;
+		List<Hop> parents = inputs.get(0).getParent();
+		if (parents == null || parents.isEmpty())
+			return null;
+		for (Hop parent : parents) {
+			if (parent instanceof FunctionOp
+					&& ((FunctionOp) parent).getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+					&& ((FunctionOp) parent).getOutputs() != null
+					&& ((FunctionOp) parent).getOutputs().contains(hop))
+				return (FunctionOp) parent;
+		}
+		return null;
+	}
+
+	public static boolean propagateMultiReturnFunctionOutputStatsToTransientRead(DataOp transientRead, Hop sourceHop) {
+		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return false;
+		FunctionOp functionOp = getMultiReturnFunctionOutputParent(sourceHop);
+		if (functionOp == null)
+			return false;
+		long[] dims = functionOp.getMultiReturnBuiltinOutputDims(sourceHop);
+		long nnz = functionOp.getMultiReturnBuiltinOutputNnz(sourceHop);
+		boolean changed = false;
+		if (transientRead.getDim1() <= 0 && dims[0] > 0) {
+			transientRead.setDim1(dims[0]);
+			changed = true;
+		}
+		if (transientRead.getDim2() <= 0 && dims[1] > 0) {
+			transientRead.setDim2(dims[1]);
+			changed = true;
+		}
+		if (transientRead.getNnz() < 0 && nnz >= 0) {
+			transientRead.setNnz(nnz);
+			changed = true;
+		}
+		return changed;
+	}
+
+	private static boolean dimsCompatible(Hop left, Hop right) {
+		if (left == null || right == null)
+			return false;
+		boolean d1Known = left.getDim1() > 0 && right.getDim1() > 0;
+		boolean d2Known = left.getDim2() > 0 && right.getDim2() > 0;
+		if (d1Known && left.getDim1() != right.getDim1())
+			return false;
+		if (d2Known && left.getDim2() != right.getDim2())
+			return false;
+		return true;
+	}
+
+	/**
+	 * Checks whether a matched TRANSIENTWRITE producer can safely keep a later
+	 * TRANSIENTREAD on FED/FOUT without relying on a self-anchored local overwrite.
+	 *
+	 * <p>The producer is considered concrete when it is backed by a runtime-concrete
+	 * federated source (FEDERATED leaf or transient read with a concrete anchor).
+	 * However, if the producer also reads the same transient variable through a
+	 * non-concrete transient-read path, we must reject reuse because the runtime
+	 * value can still be local even if some planner-only FOUT variants exist.</p>
+	 */
+	public static boolean hasConcreteMatchedWriteReuseSource(Hop producerInput, String transientVarName) {
+		MatchedWriteReuseAnalysis analysis =
+			analyzeMatchedWriteReuseSource(producerInput, transientVarName, new HashSet<>());
+		return analysis.hasConcreteSource && !analysis.hasUnsafeSelfReference;
+	}
+
+	private static MatchedWriteReuseAnalysis analyzeMatchedWriteReuseSource(Hop hop, String transientVarName,
+		Set<Long> visited) {
+		if (hop == null || visited == null || !visited.add(hop.getHopID()))
+			return MatchedWriteReuseAnalysis.EMPTY;
+
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == Types.OpOpData.FEDERATED)
+				return MatchedWriteReuseAnalysis.CONCRETE;
+			if (dataOp.getOp() == Types.OpOpData.TRANSIENTREAD) {
+				boolean concrete = hasConcreteFederatedSourceForTransientRead(dataOp, null);
+				if (transientVarName != null && transientVarName.equals(dataOp.getName()))
+					return concrete ? MatchedWriteReuseAnalysis.CONCRETE
+						: MatchedWriteReuseAnalysis.UNSAFE_SELF_REFERENCE;
+				return concrete ? MatchedWriteReuseAnalysis.CONCRETE : MatchedWriteReuseAnalysis.EMPTY;
+			}
+		}
+
+		MatchedWriteReuseAnalysis result = MatchedWriteReuseAnalysis.EMPTY;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return result;
+		for (Hop input : inputs)
+			result = result.merge(analyzeMatchedWriteReuseSource(input, transientVarName, visited));
+		return result;
+	}
+
+	private static final class MatchedWriteReuseAnalysis {
+		private static final MatchedWriteReuseAnalysis EMPTY =
+			new MatchedWriteReuseAnalysis(false, false);
+		private static final MatchedWriteReuseAnalysis CONCRETE =
+			new MatchedWriteReuseAnalysis(true, false);
+		private static final MatchedWriteReuseAnalysis UNSAFE_SELF_REFERENCE =
+			new MatchedWriteReuseAnalysis(false, true);
+
+		private final boolean hasConcreteSource;
+		private final boolean hasUnsafeSelfReference;
+
+		private MatchedWriteReuseAnalysis(boolean hasConcreteSource, boolean hasUnsafeSelfReference) {
+			this.hasConcreteSource = hasConcreteSource;
+			this.hasUnsafeSelfReference = hasUnsafeSelfReference;
+		}
+
+		private MatchedWriteReuseAnalysis merge(MatchedWriteReuseAnalysis other) {
+			if (other == null)
+				return this;
+			return new MatchedWriteReuseAnalysis(
+				hasConcreteSource || other.hasConcreteSource,
+				hasUnsafeSelfReference || other.hasUnsafeSelfReference);
+		}
+	}
+
+	private static boolean hasConcreteFederatedSourceHop(Hop hop, Set<Long> visited) {
+		if (hop == null || visited == null || !visited.add(hop.getHopID()))
+			return false;
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == Types.OpOpData.FEDERATED)
+				return true;
+			if (dataOp.getOp() == Types.OpOpData.TRANSIENTWRITE)
+				return false;
+			if (dataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+					&& hasConcreteFederatedSourceVar(dataOp.getName()))
+				return true;
+		}
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		for (Hop input : inputs) {
+			if (hasConcreteFederatedSourceHop(input, visited))
+				return true;
 		}
 		return false;
 	}

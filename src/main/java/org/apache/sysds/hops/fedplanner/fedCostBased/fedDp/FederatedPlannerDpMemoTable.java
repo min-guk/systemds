@@ -100,6 +100,7 @@ public class FederatedPlannerDpMemoTable {
 	private final Map<Pair<Long, FederatedOutput>, FedPlanVariants> hopMemoTable = new HashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
 	private final Map<Long, Long> cloneToOrig = new HashMap<>();
+	private final LinkedHashSet<Long> deadFunctionOutputHopIDs = new LinkedHashSet<>();
 	/**
 	 * Additional root hops that are executed (e.g., loop-unrolled "iter1" roots)
 	 * but might not be reachable from the dummy root through Hop parent links.
@@ -124,7 +125,7 @@ public class FederatedPlannerDpMemoTable {
 		if (fedPlanVariantList == null || fedPlanVariantList.isEmpty()) {
 			return null;
 		}
-		return fedPlanVariantList._fedPlanVariants.get(0);
+		return selectPrimaryVariantAfterPrune(fedPlanVariantList);
 	}
 
 	public FedPlan getFedPlanAfterPrune(Pair<Long, FederatedOutput> fedPlanPair) {
@@ -132,7 +133,86 @@ public class FederatedPlannerDpMemoTable {
 		if (fedPlanVariantList == null || fedPlanVariantList.isEmpty()) {
 			return null;
 		}
-		return fedPlanVariantList._fedPlanVariants.get(0);
+		return selectPrimaryVariantAfterPrune(fedPlanVariantList);
+	}
+
+	private FedPlan selectPrimaryVariantAfterPrune(FedPlanVariants fedPlanVariantList) {
+		if (fedPlanVariantList == null || fedPlanVariantList._fedPlanVariants == null
+				|| fedPlanVariantList._fedPlanVariants.isEmpty()) {
+			return null;
+		}
+
+		FedPlan preferredConcreteSourceTransientReadPlan =
+			selectConcreteSourceTransientReadFoutPrimary(fedPlanVariantList);
+		return preferredConcreteSourceTransientReadPlan != null
+			? preferredConcreteSourceTransientReadPlan
+			: fedPlanVariantList._fedPlanVariants.get(0);
+	}
+
+	private FedPlan selectConcreteSourceTransientReadFoutPrimary(FedPlanVariants fedPlanVariantList) {
+		if (fedPlanVariantList == null || fedPlanVariantList.getFedOutType() != FederatedOutput.FOUT
+				|| fedPlanVariantList.hopCommon == null
+				|| !(fedPlanVariantList.hopCommon.getHopRef() instanceof DataOp)) {
+			return null;
+		}
+
+		DataOp transientRead = (DataOp) fedPlanVariantList.hopCommon.getHopRef();
+		if (transientRead.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return null;
+
+		List<Hop> sourceHops = collectSourceHopsForPrimarySelection(fedPlanVariantList);
+		if (!FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(transientRead, sourceHops))
+			return null;
+
+		for (FedPlan candidate : fedPlanVariantList._fedPlanVariants) {
+			if (candidate == null || candidate.getExecType() != ExecType.FED)
+				continue;
+			FType candidateFType = candidate.getFType();
+			if (candidateFType == null || candidateFType == FType.BROADCAST)
+				continue;
+			if (!preservesConcreteSourceOnChildEdge(candidate))
+				continue;
+			return candidate;
+		}
+		return null;
+	}
+
+	private List<Hop> collectSourceHopsForPrimarySelection(FedPlanVariants fedPlanVariantList) {
+		if (fedPlanVariantList == null || fedPlanVariantList._fedPlanVariants == null
+				|| fedPlanVariantList._fedPlanVariants.isEmpty()) {
+			return Collections.emptyList();
+		}
+
+		LinkedHashSet<Long> seenSourceIds = new LinkedHashSet<>();
+		List<Hop> sourceHops = new ArrayList<>();
+		for (FedPlan candidate : fedPlanVariantList._fedPlanVariants) {
+			if (candidate == null || candidate.getChildFedPlans() == null)
+				continue;
+			for (Pair<Long, FederatedOutput> childEdge : candidate.getChildFedPlans()) {
+				if (childEdge == null)
+					continue;
+				long sourceOrigId = resolveOriginalHopId(childEdge.getKey());
+				if (!seenSourceIds.add(sourceOrigId))
+					continue;
+				Hop sourceHop = resolveOriginalHop(sourceOrigId);
+				if (sourceHop != null)
+					sourceHops.add(sourceHop);
+			}
+		}
+		return sourceHops;
+	}
+
+	private static boolean preservesConcreteSourceOnChildEdge(FedPlan candidate) {
+		if (candidate == null)
+			return false;
+		List<Pair<Long, FederatedOutput>> childEdges = candidate.getChildFedPlans();
+		if (childEdges == null || childEdges.isEmpty())
+			return true;
+		for (Pair<Long, FederatedOutput> childEdge : childEdges) {
+			if (childEdge != null && childEdge.getRight() == FederatedOutput.FOUT)
+				return true;
+		}
+		return false;
 	}
 
 	public boolean contains(long hopID, FederatedOutput fedOutType) {
@@ -166,6 +246,62 @@ public class FederatedPlannerDpMemoTable {
 
 	public Set<Long> getAdditionalRootHopIDs() {
 		return Collections.unmodifiableSet(additionalRootHopIDs);
+	}
+
+	public void registerDeadFunctionOutputHopIDs(Set<Long> deadOutputHopIDs) {
+		if (deadOutputHopIDs == null || deadOutputHopIDs.isEmpty())
+			return;
+		for (Long hopID : deadOutputHopIDs) {
+			if (hopID != null && hopID >= 0)
+				deadFunctionOutputHopIDs.add(hopID);
+		}
+	}
+
+	public boolean isDeadFunctionOutputHop(long hopID) {
+		return hopID >= 0 && deadFunctionOutputHopIDs.contains(hopID);
+	}
+
+	public List<Long> collectTransientReadSiblingHopIDs(long producerOrigHopId, String transientVarName) {
+		if (producerOrigHopId < 0)
+			return Collections.emptyList();
+		LinkedHashMap<Long, Long> siblingHopIds = new LinkedHashMap<>();
+		for (Map.Entry<Pair<Long, FederatedOutput>, FedPlanVariants> entry : hopMemoTable.entrySet()) {
+			if (entry == null || entry.getKey() == null)
+				continue;
+			long hopID = entry.getKey().getLeft();
+			long hopOrigID = resolveOriginalHopId(hopID);
+			if (siblingHopIds.containsKey(hopOrigID))
+				continue;
+			Hop hopRef = resolveOriginalHop(hopID);
+			if (!(hopRef instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) hopRef;
+			if (dataOp.getOp() != Types.OpOpData.TRANSIENTREAD)
+				continue;
+			if (transientVarName != null && dataOp.getName() != null && !transientVarName.equals(dataOp.getName()))
+				continue;
+			FedPlanVariants variants = entry.getValue();
+			if (variants == null || variants.getFedPlanVariants() == null)
+				continue;
+			boolean readsFromProducer = false;
+			for (FedPlan candidate : variants.getFedPlanVariants()) {
+				if (candidate == null || candidate.getChildFedPlans() == null)
+					continue;
+				for (Pair<Long, FederatedOutput> childEdge : candidate.getChildFedPlans()) {
+					if (childEdge == null)
+						continue;
+					if (resolveOriginalHopId(childEdge.getKey()) == producerOrigHopId) {
+						readsFromProducer = true;
+						break;
+					}
+				}
+				if (readsFromProducer)
+					break;
+			}
+			if (readsFromProducer)
+				siblingHopIds.put(hopOrigID, hopID);
+		}
+		return new ArrayList<>(siblingHopIds.values());
 	}
 
 	public void setNumWorkers(int numWorkers) {
@@ -216,6 +352,7 @@ public class FederatedPlannerDpMemoTable {
 			private final List<Pair<Long, FederatedOutput>> childFedPlans; // Child plan references
 			private ExecType execType;
 			private FType fType;
+			private FType cpFoutType;
 			private boolean derivedFedFout;
 
 		public FedPlan(double cumulativeCost, FedPlanVariants fedPlanVariants,
@@ -320,15 +457,27 @@ public class FederatedPlannerDpMemoTable {
 			this.execType = execType;
 		}
 
-		public FType getFType() {
-			return fType;
-		}
+			public FType getFType() {
+				return fType;
+			}
 
-			public void setFType(FType fType) {
+				public void setFType(FType fType) {
 				this.fType = fType;
 			}
 
-			public boolean isDerivedFedFout() {
+			public FType getCpFoutType() {
+				return cpFoutType;
+			}
+
+			public void setCpFoutType(FType cpFoutType) {
+				this.cpFoutType = cpFoutType;
+			}
+
+			public FType getCpFoutTypeOrFType() {
+				return cpFoutType != null ? cpFoutType : fType;
+			}
+
+				public boolean isDerivedFedFout() {
 				return derivedFedFout;
 			}
 

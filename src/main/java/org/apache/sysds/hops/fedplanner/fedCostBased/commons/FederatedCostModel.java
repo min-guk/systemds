@@ -22,14 +22,26 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 import java.util.HashSet;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 public final class FederatedCostModel {
 	private static final String ENV_MBS_MEMORY_BANDWIDTH = "SYSDS_FED_COST_MEM_BW";
@@ -93,11 +105,13 @@ public final class FederatedCostModel {
 	// logical pass over distinct inputs plus result production. Keep this floor small and
 	// shared so both DP and MinST see the same correction without planner-specific hacks.
 	private static final double MIN_DML_FUNCTION_OP_COMPUTE_FLOPS_PER_CELL = 1.0;
-	// In the single-worker case, a federated function placeholder often provides no
-	// compute parallelism benefit but still incurs orchestration/materialization cost.
-	// Keep FED reachable when it is the only legal choice, but strongly prefer CP if
-	// the planner would otherwise pick FED only because placeholder self-cost is tiny.
-	private static final double SINGLE_WORKER_FED_EXEC_PENALTY = 1e6;
+	// In the single-worker case, a federated function placeholder can still pay
+	// additional call-boundary control cost when we keep the callee federated.
+	//
+	// Important: this must remain a bounded boundary term, not a hard blocker.
+	// The function body is planned separately and can legitimately make FED cheaper
+	// than CP even with one worker (e.g., iterative federated matrix kernels).
+	private static final double SINGLE_WORKER_FED_EXEC_PENALTY_FACTOR = 1.0;
 	private static final double SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS = 10.0;
 	// All costs are returned in milliseconds.
 	private static final double TO_MS = 1000.0;
@@ -152,6 +166,29 @@ public final class FederatedCostModel {
 	}
 
 	/**
+	 * Some federated executions are effectively metadata propagation at the planner/runtime
+	 * boundary and should not pay a full per-op FED coordination term.
+	 *
+	 * <p>In particular, transpose on a FULL/BROADCAST federated layout preserves the
+	 * runtime mapping contract instead of initiating an ordinary worker RPC fanout. Charging
+	 * the generic per-op coordination cost there can lock DP/MinST into local transient
+	 * materialization even though the runtime keeps the federated path cheap.</p>
+	 */
+	public static double adjustFedCoordinationCost(Hop hop, FType logicalFType, double coordinationCost) {
+		if (coordinationCost <= 0.0)
+			return coordinationCost;
+		return isMappingPreservingFederatedTranspose(hop, logicalFType) ? 0.0 : coordinationCost;
+	}
+
+	public static boolean isMappingPreservingFederatedTranspose(Hop hop, FType logicalFType) {
+		if (!(hop instanceof ReorgOp))
+			return false;
+		if (((ReorgOp) hop).getOp() != ReOrgOp.TRANS)
+			return false;
+		return logicalFType == FType.FULL || logicalFType == FType.BROADCAST;
+	}
+
+	/**
 	 * Additional penalty for single-worker federated execution in degenerate cases.
 	 *
 	 * <p>This targets function-placeholder plans where FED execution over one worker
@@ -172,12 +209,52 @@ public final class FederatedCostModel {
 		if (ctrlMs <= SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS)
 			return 0.0;
 
-		// A single-worker DML FunctionOp placeholder does not expose any inter-worker compute
-		// parallelism at the call boundary. Even when the call has a federated matrix input,
-		// FED execution still pays the orchestration/materialization cost of keeping the callee
-		// boundary federated, while the actual function body is planned separately. Bias these
-		// placeholders toward CP unless FED is the only legal choice.
-		return SINGLE_WORKER_FED_EXEC_PENALTY;
+		final boolean hasConcreteFedMatrixInput = hasConcreteFederatedMatrixInput(functionOp);
+		final double boundedExecWeight = Math.max(1.0, execWeight);
+		if (hasConcreteFedMatrixInput && boundedExecWeight <= 1.0)
+			return 0.0;
+
+		// Model only the additional call-boundary control cost that is not already captured by
+		// ordinary per-hop FED coordination. When a concrete federated matrix input already anchors
+		// the call boundary, a one-shot call should not receive any extra penalty. Repeated calls
+		// and fully local boundaries still pay a bounded overhead proportional to the number of
+		// distinct materialized inputs that must participate in the call.
+		final int boundaryInputs = Math.max(1, countDistinctFunctionBoundaryInputs(functionOp));
+		final double repetitionFactor = hasConcreteFedMatrixInput
+			? Math.max(0.0, boundedExecWeight - 1.0)
+			: boundedExecWeight;
+		return repetitionFactor * boundaryInputs * ctrlMs * SINGLE_WORKER_FED_EXEC_PENALTY_FACTOR;
+	}
+
+	private static boolean hasConcreteFederatedMatrixInput(FunctionOp hop) {
+		if (hop == null || hop.getInput() == null)
+			return false;
+		Set<Long> seen = new HashSet<>();
+		for (Hop inputHop : hop.getInput()) {
+			if (inputHop == null || !seen.add(inputHop.getHopID()))
+				continue;
+			if (inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
+				continue;
+			if (inputHop.getForcedExecType() == ExecType.FED || inputHop.getFederatedOutput() == FederatedOutput.FOUT)
+				return true;
+			if (inputHop instanceof DataOp && ((DataOp) inputHop).getOp() == OpOpData.FEDERATED)
+				return true;
+		}
+		return false;
+	}
+
+	private static int countDistinctFunctionBoundaryInputs(FunctionOp hop) {
+		if (hop == null || hop.getInput() == null)
+			return 0;
+		Set<Long> seen = new HashSet<>();
+		for (Hop inputHop : hop.getInput()) {
+			if (inputHop == null)
+				continue;
+			if (inputHop.getDataType() != null && inputHop.getDataType().isScalar())
+				continue;
+			seen.add(inputHop.getHopID());
+		}
+		return seen.size();
 	}
 
 	public static double computeOpCost(Hop currentHop) {
@@ -318,16 +395,77 @@ public final class FederatedCostModel {
 		if (hop == null) {
 			return 0.0;
 		}
+		double multiReturnFunctionOutputMemEstimate = getMultiReturnFunctionOutputMemEstimate(hop);
+		if (multiReturnFunctionOutputMemEstimate > 0.0)
+			return multiReturnFunctionOutputMemEstimate;
 		double outputMemEstimate = hop.getOutputMemEstimate();
+		double transientReadSourceMemEstimate = getConcreteTransientReadSourceMemEstimate(hop);
+		double directFederatedTransientReadFallback = transientReadSourceMemEstimate > 0.0
+			? -1.0
+			: getDirectFederatedTransientReadFallbackMemEstimate(hop);
+		double sourceClampRatio = Math.max(1.0, UPLOAD_ESTIMATE_CLAMP_RATIO);
+		if (transientReadSourceMemEstimate > 0.0
+			&& (outputMemEstimate <= 0.0
+				|| hasUnknownOutputDims(hop)
+				|| isLikelyDefaultUnknownMemEstimate(outputMemEstimate)
+				|| outputMemEstimate > transientReadSourceMemEstimate * sourceClampRatio)) {
+			outputMemEstimate = transientReadSourceMemEstimate;
+		}
+		else if (directFederatedTransientReadFallback > 0.0
+			&& (outputMemEstimate <= 0.0
+				|| hasUnknownOutputDims(hop)
+				|| isLikelyDefaultUnknownMemEstimate(outputMemEstimate)
+				|| outputMemEstimate > directFederatedTransientReadFallback * sourceClampRatio)) {
+			outputMemEstimate = directFederatedTransientReadFallback;
+		}
+		double elementwiseInputMemUpperBound = getElementwiseInputMemUpperBound(hop);
+		if (elementwiseInputMemUpperBound > 0.0 && hasUnknownOutputDims(hop)) {
+			if (outputMemEstimate <= 0.0
+				|| isLikelyDefaultUnknownMemEstimate(outputMemEstimate)
+				|| outputMemEstimate > elementwiseInputMemUpperBound) {
+				outputMemEstimate = elementwiseInputMemUpperBound;
+			}
+		}
+		if (outputMemEstimate <= 0.0 && hasUnknownOutputDims(hop)) {
+			double indexingBound = getIndexingUploadBound(hop);
+			if (indexingBound > 0.0)
+				return indexingBound;
+		}
 		if (outputMemEstimate <= 0.0)
 			outputMemEstimate = Math.max(0.0, hop.getOutputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
-		if (outputMemEstimate <= 0.0 || !hasUnknownOutputDims(hop))
+		if (outputMemEstimate <= 0.0)
+			return outputMemEstimate;
+		if (!hasUnknownOutputDims(hop))
 			return outputMemEstimate;
 
 		double inputMemEstimate = hop.getInputMemEstimate();
 		if (inputMemEstimate <= 0.0)
 			inputMemEstimate = getEffectiveInputMemEstimate(hop);
 		return clampUnknownDimOutputMemEstimate(hop, outputMemEstimate, inputMemEstimate);
+	}
+
+	public static double getEffectiveTransientReadSourceMemEstimate(Hop transientReadHop, Hop sourceHop) {
+		double readerMemEstimate = getEffectiveOutputMemEstimate(transientReadHop);
+		if (!(transientReadHop instanceof DataOp)
+				|| ((DataOp) transientReadHop).getOp() != OpOpData.TRANSIENTREAD
+				|| sourceHop == null
+				|| !FederatedPlannerUtils.isMultiReturnFunctionOutputHop(sourceHop)) {
+			return readerMemEstimate;
+		}
+		// Prefer the transient-read's own estimate once it is concrete/reliable. The explicit
+		// function-output source is needed only while the reader still carries unresolved or
+		// sentinel-sized stats; otherwise, always forcing the source estimate can leak broader
+		// function-boundary costs into unrelated transient-write output decisions (observed on
+		// the PCA overwritten-X chain 224 -> 225(TWrite X) -> 74(TRead X) -> 75).
+		if (readerMemEstimate > 0.0
+			&& !hasUnknownOutputDims(transientReadHop)
+			&& !isLikelyDefaultUnknownMemEstimate(readerMemEstimate)) {
+			return readerMemEstimate;
+		}
+		double sourceMemEstimate = getEffectiveOutputMemEstimate(sourceHop);
+		if (sourceMemEstimate > 0.0)
+			return sourceMemEstimate;
+		return readerMemEstimate;
 	}
 
 	/**
@@ -392,7 +530,8 @@ public final class FederatedCostModel {
 		// Bound upload size with a square estimate on the known axis to avoid
 		// pathological over-estimation (e.g., rightIndex into principal components).
 		double indexingBound = getIndexingUploadBound(hop);
-		if (indexingBound > 0.0)
+		boolean recoveredConcreteIndexingBound = indexingBound > 0.0;
+		if (recoveredConcreteIndexingBound)
 			outputMemEstimate = Math.min(outputMemEstimate, indexingBound);
 
 		if (hasUnknownOutputDims(hop) && isLikelyDefaultUnknownMemEstimate(outputMemEstimate)) {
@@ -426,8 +565,11 @@ public final class FederatedCostModel {
 		}
 
 		double clampRatio = Math.max(1.0, UPLOAD_ESTIMATE_CLAMP_RATIO);
-		if (hasUnknownOutputDims(hop) && outputMemEstimate > inputMemEstimate * clampRatio)
+		if (hasUnknownOutputDims(hop) && outputMemEstimate > inputMemEstimate * clampRatio) {
+			if (recoveredConcreteIndexingBound && inputMemEstimate < outputMemEstimate)
+				return outputMemEstimate;
 			return inputMemEstimate;
+		}
 		return outputMemEstimate;
 	}
 
@@ -437,6 +579,107 @@ public final class FederatedCostModel {
 		double lower = DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES * (1.0 - UNKNOWN_DIM_MEM_SENTINEL_EPSILON);
 		double upper = DEFAULT_UNKNOWN_DIM_MEM_SENTINEL_BYTES * (1.0 + UNKNOWN_DIM_MEM_SENTINEL_EPSILON);
 		return memEstimate >= lower && memEstimate <= upper;
+	}
+
+	private static double getConcreteTransientReadSourceMemEstimate(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.TRANSIENTREAD)
+			return -1.0;
+		if (hop.getInput() == null || hop.getInput().isEmpty())
+			return -1.0;
+
+		double best = -1.0;
+		for (Hop sourceHop : hop.getInput()) {
+			if (!(sourceHop instanceof DataOp))
+				continue;
+			OpOpData sourceOp = ((DataOp) sourceHop).getOp();
+			if (sourceOp != OpOpData.TRANSIENTWRITE
+				&& sourceOp != OpOpData.TRANSIENTREAD
+				&& sourceOp != OpOpData.FEDERATED
+				&& sourceOp != OpOpData.FUNCTIONOUTPUT) {
+				continue;
+			}
+			// Do not automatically size a generic TRANSIENTREAD from the raw FEDERATED source
+			// envelope. The federated source often represents the full original dataset while
+			// the local TRANSIENTREAD node still carries a narrower planner-visible payload
+			// envelope; inheriting the full source size here can over-penalize direct FED-input
+			// transient boundaries and cascade into DP local fallback on overwritten-X / loop
+			// carried chains (observed on current PCA/logreg traces). Function-output-specific
+			// propagation is still handled explicitly via getEffectiveTransientReadSourceMemEstimate.
+			if (sourceOp == OpOpData.FEDERATED)
+				continue;
+			if (!dimsCompatible(hop, sourceHop))
+				continue;
+			if (hasUnknownOutputDims(sourceHop) && sourceOp != OpOpData.FEDERATED)
+				continue;
+			double sourceMemEstimate = getEffectiveOutputMemEstimate(sourceHop);
+			if (sourceMemEstimate <= 0.0 || isLikelyDefaultUnknownMemEstimate(sourceMemEstimate))
+				continue;
+			best = Math.max(best, sourceMemEstimate);
+		}
+		return best;
+	}
+
+	private static double getDirectFederatedTransientReadFallbackMemEstimate(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.TRANSIENTREAD)
+			return -1.0;
+		if (!hasUnknownOutputDims(hop) || hop.getInput() == null || hop.getInput().isEmpty())
+			return -1.0;
+
+		boolean hasDirectFederatedSource = false;
+		for (Hop sourceHop : hop.getInput()) {
+			if (!(sourceHop instanceof DataOp))
+				continue;
+			if (((DataOp) sourceHop).getOp() != OpOpData.FEDERATED)
+				continue;
+			hasDirectFederatedSource = true;
+			break;
+		}
+		if (!hasDirectFederatedSource)
+			return -1.0;
+
+		double fallbackMemEstimate = Math.max(0.0, hop.getOutputMemEstimate(getInjectedDefaultMemEstimatePerCell(hop)));
+		if (fallbackMemEstimate <= 0.0 || isLikelyDefaultUnknownMemEstimate(fallbackMemEstimate))
+			return -1.0;
+		return fallbackMemEstimate;
+	}
+
+	private static double getElementwiseInputMemUpperBound(Hop hop) {
+		if (!isElementwiseSizePreservingHop(hop) || hop.getInput() == null || hop.getInput().isEmpty())
+			return -1.0;
+
+		double best = -1.0;
+		for (Hop inputHop : hop.getInput()) {
+			if (inputHop == null || inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
+				continue;
+			if (!dimsCompatible(hop, inputHop))
+				continue;
+			double inputMemEstimate = getEffectiveOutputMemEstimate(inputHop);
+			if (inputMemEstimate <= 0.0 || isLikelyDefaultUnknownMemEstimate(inputMemEstimate))
+				continue;
+			best = Math.max(best, inputMemEstimate);
+		}
+		return best;
+	}
+
+	private static boolean isElementwiseSizePreservingHop(Hop hop) {
+		if (hop instanceof UnaryOp)
+			return true;
+		if (!(hop instanceof BinaryOp))
+			return false;
+		OpOp2 op = ((BinaryOp) hop).getOp();
+		return op != OpOp2.CBIND && op != OpOp2.RBIND;
+	}
+
+	private static boolean dimsCompatible(Hop left, Hop right) {
+		if (left == null || right == null)
+			return false;
+		boolean d1Known = left.getDim1() > 0 && right.getDim1() > 0;
+		boolean d2Known = left.getDim2() > 0 && right.getDim2() > 0;
+		if (d1Known && left.getDim1() != right.getDim1())
+			return false;
+		if (d2Known && left.getDim2() != right.getDim2())
+			return false;
+		return true;
 	}
 
 	private static double clampUnknownDimOutputMemEstimate(Hop hop, double outputMemEstimate, double inputMemEstimate) {
@@ -491,14 +734,89 @@ public final class FederatedCostModel {
 	private static double getIndexingUploadBound(Hop hop) {
 		if (!(hop instanceof IndexingOp) || hop.getDataType() == null || !hop.getDataType().isMatrix())
 			return 0.0;
-		long rows = hop.getDim1();
-		long cols = hop.getDim2();
+		IndexingOp indexingHop = (IndexingOp) hop;
+		long rows = resolveIndexingAxisSize(indexingHop, true);
+		long cols = resolveIndexingAxisSize(indexingHop, false);
+		if (rows > 0 && cols > 0)
+			return OptimizerUtils.estimateSizeExactSparsity(rows, cols, 1.0, hop.getDataType());
 		double perCell = getInjectedDefaultMemEstimatePerCell(hop);
 		if (rows > 0 && cols <= 0)
 			return rows * (double) rows * perCell;
 		if (cols > 0 && rows <= 0)
 			return cols * (double) cols * perCell;
 		return 0.0;
+	}
+
+	private static long resolveIndexingAxisSize(IndexingOp hop, boolean rowAxis) {
+		long declaredSize = rowAxis ? hop.getDim1() : hop.getDim2();
+		if (declaredSize > 0)
+			return declaredSize;
+		if (rowAxis ? hop.isRowLowerEqualsUpper() : hop.isColLowerEqualsUpper())
+			return 1;
+
+		Hop input = hop.getInput().get(0);
+		Hop lower = hop.getInput().get(rowAxis ? 1 : 3);
+		Hop upper = hop.getInput().get(rowAxis ? 2 : 4);
+		long literalRangeSize = resolveLiteralIndexRangeSize(lower, upper);
+		if (literalRangeSize > 0)
+			return literalRangeSize;
+		if (HopRewriteUtils.isLiteralOfValue(lower, 1)) {
+			long sizeExprValue = resolveSizeExpressionValue(upper, input, rowAxis);
+			if (sizeExprValue > 0)
+				return sizeExprValue;
+		}
+		return 0;
+	}
+
+	private static long resolveLiteralIndexRangeSize(Hop lower, Hop upper) {
+		if (!(lower instanceof org.apache.sysds.hops.LiteralOp) || !(upper instanceof org.apache.sysds.hops.LiteralOp))
+			return 0;
+		long lowerVal = HopRewriteUtils.getIntValueSafe(lower);
+		long upperVal = HopRewriteUtils.getIntValueSafe(upper);
+		if (lowerVal <= 0 || upperVal < lowerVal)
+			return 0;
+		return upperVal - lowerVal + 1;
+	}
+
+	private static long resolveSizeExpressionValue(Hop sizeExpr, Hop input, boolean rowAxis) {
+		if (sizeExpr == null || input == null)
+			return 0;
+		if (HopRewriteUtils.isSizeExpressionOf(sizeExpr, input, rowAxis)) {
+			long axisSize = resolveAxisSizeFromHop(input, rowAxis, 4);
+			if (axisSize > 0)
+				return axisSize;
+		}
+		if (HopRewriteUtils.isUnary(sizeExpr, rowAxis ? OpOp1.NROW : OpOp1.NCOL)) {
+			Hop sizeInput = sizeExpr.getInput().get(0);
+			long axisSize = resolveAxisSizeFromHop(sizeInput, rowAxis, 4);
+			if (axisSize > 0)
+				return axisSize;
+			if (HopRewriteUtils.isColumnRightIndexing(input) && sizeInput == input.getInput().get(0)) {
+				long originalAxisSize = resolveAxisSizeFromHop(input.getInput().get(0), rowAxis, 4);
+				if (originalAxisSize > 0)
+					return originalAxisSize;
+			}
+		}
+		return 0;
+	}
+
+	private static long resolveAxisSizeFromHop(Hop hop, boolean rowAxis, int remainingDepth) {
+		if (hop == null || remainingDepth <= 0)
+			return 0;
+		long directSize = rowAxis ? hop.getDim1() : hop.getDim2();
+		if (directSize > 0)
+			return directSize;
+		if (hop instanceof ReorgOp && ((ReorgOp) hop).getOp() == ReOrgOp.TRANS && hop.getInput() != null
+			&& !hop.getInput().isEmpty()) {
+			return resolveAxisSizeFromHop(hop.getInput().get(0), !rowAxis, remainingDepth - 1);
+		}
+		if (hop instanceof AggBinaryOp && hop.getInput() != null && hop.getInput().size() >= 2) {
+			Hop left = hop.getInput().get(0);
+			Hop right = hop.getInput().get(1);
+			return rowAxis ? resolveAxisSizeFromHop(left, true, remainingDepth - 1)
+				: resolveAxisSizeFromHop(right, false, remainingDepth - 1);
+		}
+		return 0;
 	}
 
 	public static double computeNetworkCost(double memSize) {
@@ -509,6 +827,24 @@ public final class FederatedCostModel {
 		if (memSize <= 0)
 			return 0.0;
 		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+	}
+
+	public static double computeDownloadNetworkCost(double memSize, FType fType, int numWorkers) {
+		double baseCost = computeDownloadNetworkCost(memSize);
+		if (baseCost <= 0.0)
+			return baseCost;
+		int fanIn = estimateDownloadFanIn(fType, numWorkers);
+		if (fanIn <= 1)
+			return baseCost;
+		double latencyPenaltyMs = (fanIn - 1) * MBS_NETWORK_LATENCY * TO_MS;
+		double controlPenaltyMs = (fanIn - 1) * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		return baseCost + latencyPenaltyMs + controlPenaltyMs;
+	}
+
+	public static boolean requiresExplicitMatrixBoundaryTransfer(Hop hop) {
+		return hop != null
+			&& hop.getDataType() != null
+			&& hop.getDataType().isMatrix();
 	}
 
 	public static double computeUploadNetworkCost(double memSize, FType fType, int numWorkers) {
@@ -558,6 +894,15 @@ public final class FederatedCostModel {
 		return computeUploadNetworkCost(memSize, fType, numWorkers);
 	}
 
+	private static int estimateDownloadFanIn(FType fType, int numWorkers) {
+		int workers = Math.max(1, numWorkers);
+		if (workers <= 1)
+			return 1;
+		if (fType == FType.FULL || fType == FType.BROADCAST)
+			return 1;
+		return workers;
+	}
+
 
 	private static double getInjectedDefaultMemEstimatePerCell(Hop hop) {
 		if (hop == null || hop.getValueType() == null) {
@@ -588,6 +933,33 @@ public final class FederatedCostModel {
 			default:
 				return DEFAULT_MEM_ESTIMATE_PER_CELL;
 		}
+	}
+
+	private static double getMultiReturnFunctionOutputMemEstimate(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.FUNCTIONOUTPUT)
+			return -1.0;
+		FunctionOp functionOp = resolveMultiReturnBuiltinParent(hop);
+		return functionOp != null ? functionOp.getMultiReturnBuiltinOutputMemEstimate(hop) : -1.0;
+	}
+
+	private static FunctionOp resolveMultiReturnBuiltinParent(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.FUNCTIONOUTPUT)
+			return null;
+		if (hop.getInput() == null || hop.getInput().isEmpty() || hop.getInput().get(0) == null)
+			return null;
+		for (Hop parent : hop.getInput().get(0).getParent()) {
+			if (!(parent instanceof FunctionOp))
+				continue;
+			FunctionOp functionOp = (FunctionOp) parent;
+			if (functionOp.getFunctionType() != FunctionOp.FunctionType.MULTIRETURN_BUILTIN
+					|| functionOp.getOutputs() == null)
+				continue;
+			for (Hop outputHop : functionOp.getOutputs()) {
+				if (outputHop == hop)
+					return functionOp;
+			}
+		}
+		return null;
 	}
 
 	private static double getConfiguredDouble(String key, double fallback) {

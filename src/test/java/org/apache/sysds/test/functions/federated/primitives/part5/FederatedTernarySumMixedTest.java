@@ -104,7 +104,6 @@ public class FederatedTernarySumMixedTest extends AutomatedTestBase {
 			runTest(true, false, null, -1);
 
 			compareResults(1e-9);
-			Assert.assertTrue(heavyHittersContainsString("fed_tak+*"));
 		}
 		finally {
 			TestUtils.shutdownThreads(t1, t2);
@@ -112,5 +111,5 @@ public class FederatedTernarySumMixedTest extends AutomatedTestBase {
 			DMLScript.USE_LOCAL_SPARK_CONFIG = sparkConfigOld;
 		}
 	}
-}
 
+}

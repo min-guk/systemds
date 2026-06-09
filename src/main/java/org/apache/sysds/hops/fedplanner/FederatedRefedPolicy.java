@@ -181,22 +181,27 @@ public final class FederatedRefedPolicy {
 		AnchorSelection programAnchor = buildGlobalAnchorForProgram(prog, fTypeMap);
 		if (programAnchor != null && programAnchor.key != null && !isVarAnchor(programAnchor.key))
 			GLOBAL_SIGNATURE_ANCHOR_KEY.set(programAnchor.key);
+		List<Hop> programScopeHops = collectAllHopsFromStatementBlocks(prog.getStatementBlocks());
 		for (StatementBlock sb : prog.getStatementBlocks())
-			registerFromStatementBlock(sb, fTypeMap, programAnchor, false);
+			registerFromStatementBlock(sb, fTypeMap, programAnchor, false, programScopeHops);
 		for (String namespaceKey : prog.getNamespaces().keySet()) {
 			for (String fname : prog.getFunctionStatementBlocks(namespaceKey).keySet()) {
 				FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespaceKey, fname);
 				AnchorSelection functionAnchor = buildGlobalAnchorForFunction(fsb, fTypeMap);
-				registerFromStatementBlock(fsb, fTypeMap, functionAnchor, true);
+				List<Hop> functionScopeHops = collectAllHopsFromStatementBlocks(
+					((FunctionStatement) fsb.getStatement(0)).getBody());
+				registerFromStatementBlock(fsb, fTypeMap, functionAnchor, true, functionScopeHops);
 			}
 		}
 		for (StatementBlock sb : prog.getStatementBlocks())
-			finalizeRegisteredStatementBlock(sb, fTypeMap, programAnchor, false);
+			finalizeRegisteredStatementBlock(sb, fTypeMap, programAnchor, false, programScopeHops);
 		for (String namespaceKey : prog.getNamespaces().keySet()) {
 			for (String fname : prog.getFunctionStatementBlocks(namespaceKey).keySet()) {
 				FunctionStatementBlock fsb = prog.getFunctionStatementBlock(namespaceKey, fname);
 				AnchorSelection functionAnchor = buildGlobalAnchorForFunction(fsb, fTypeMap);
-				finalizeRegisteredStatementBlock(fsb, fTypeMap, functionAnchor, true);
+				List<Hop> functionScopeHops = collectAllHopsFromStatementBlocks(
+					((FunctionStatement) fsb.getStatement(0)).getBody());
+				finalizeRegisteredStatementBlock(fsb, fTypeMap, functionAnchor, true, functionScopeHops);
 			}
 		}
 	}
@@ -220,10 +225,11 @@ public final class FederatedRefedPolicy {
 		AnchorSelection functionAnchor = buildGlobalAnchorForFunction(function, fTypeMap);
 		if (functionAnchor != null && functionAnchor.key != null && !isVarAnchor(functionAnchor.key))
 			GLOBAL_SIGNATURE_ANCHOR_KEY.set(functionAnchor.key);
+		List<Hop> functionScopeHops = collectAllHopsFromStatementBlocks(fstmt.getBody());
 		for (StatementBlock inner : fstmt.getBody())
-			registerFromStatementBlock(inner, fTypeMap, functionAnchor, true);
+			registerFromStatementBlock(inner, fTypeMap, functionAnchor, true, functionScopeHops);
 		for (StatementBlock inner : fstmt.getBody())
-			finalizeRegisteredStatementBlock(inner, fTypeMap, functionAnchor, true);
+			finalizeRegisteredStatementBlock(inner, fTypeMap, functionAnchor, true, functionScopeHops);
 	}
 
 	public static void repairResolvedHopSelections(java.util.Collection<Hop> hops,
@@ -270,13 +276,13 @@ public final class FederatedRefedPolicy {
 				long sbId = resolveHopSbId(hop.getHopID(), -1L);
 				bySbId.computeIfAbsent(sbId, k -> new ArrayList<>()).add(hop);
 			}
-			for (Map.Entry<Long, List<Hop>> entry : bySbId.entrySet()) {
-				long sbId = entry.getKey();
-				List<Hop> sbHops = entry.getValue();
-				pruned |= pruneInvalidCpfoutAnchors(sbHops, fTypeMap, sbId);
-				twDemoted |= demoteStaleTransientWriteFederatedSelections(sbHops, fTypeMap, sbId,
-					conditionalContext);
-			}
+				for (Map.Entry<Long, List<Hop>> entry : bySbId.entrySet()) {
+					long sbId = entry.getKey();
+					List<Hop> sbHops = entry.getValue();
+					pruned |= pruneInvalidCpfoutAnchors(sbHops, fTypeMap, sbId);
+					twDemoted |= demoteStaleTransientWriteFederatedSelections(sbHops, all, fTypeMap, sbId,
+						conditionalContext);
+				}
 
 			changed = demoted || pruned || twDemoted;
 			pass++;
@@ -301,14 +307,15 @@ public final class FederatedRefedPolicy {
 			java.util.Map<Long, FType> fTypeMap, long sbId,
 			java.util.Map<String, String> runtimeSignatures,
 			java.util.Map<String, FType> runtimeTypes) {
-		registerFromHopsInternal(roots, clearRegistry, fTypeMap, sbId, runtimeSignatures, runtimeTypes, null, false);
+		registerFromHopsInternal(roots, clearRegistry, fTypeMap, sbId, runtimeSignatures, runtimeTypes, null, false, null);
 	}
 
 	private static void registerFromHopsInternal(List<Hop> roots, boolean clearRegistry,
 			java.util.Map<Long, FType> fTypeMap, long sbId,
 			java.util.Map<String, String> runtimeSignatures,
 			java.util.Map<String, FType> runtimeTypes,
-			AnchorSelection fallbackAnchor, boolean conditionalContext) {
+			AnchorSelection fallbackAnchor, boolean conditionalContext,
+			List<Hop> scopeHops) {
 			if (clearRegistry)
 				FederatedRefedRegistry.clear();
 			if (clearRegistry)
@@ -699,8 +706,9 @@ public final class FederatedRefedPolicy {
 		do {
 			boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor, runtimeContext);
 			boolean pruned = pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
-			boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all, fTypeMap, sbId,
-				conditionalContext);
+				boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all,
+					(scopeHops != null && !scopeHops.isEmpty()) ? scopeHops : all, fTypeMap, sbId,
+					conditionalContext);
 			changed = demoted || pruned || twDemoted;
 			enforcePass++;
 			} while (changed && enforcePass < 5);
@@ -959,7 +967,8 @@ public final class FederatedRefedPolicy {
 				if (write == null)
 					continue;
 				int writeLine = write.getBeginLine();
-				if (writeLine > bestLine) {
+				if (writeLine > bestLine || (writeLine == bestLine
+					&& prefersFederatedTransientWrite(write, best))) {
 					bestLine = writeLine;
 					best = write;
 				}
@@ -976,7 +985,8 @@ public final class FederatedRefedPolicy {
 			int writeLine = write.getBeginLine();
 			if (writeLine <= 0 || writeLine > readLine)
 				continue;
-			if (writeLine > bestLine) {
+			if (writeLine > bestLine || (writeLine == bestLine
+				&& prefersFederatedTransientWrite(write, best))) {
 				bestLine = writeLine;
 				best = write;
 			}
@@ -989,7 +999,8 @@ public final class FederatedRefedPolicy {
 			if (write == null)
 				continue;
 			int writeLine = write.getBeginLine();
-			if (writeLine > readLine && writeLine < nearestAfter) {
+			if (writeLine > readLine && (writeLine < nearestAfter || (writeLine == nearestAfter
+				&& prefersFederatedTransientWrite(write, best)))) {
 				nearestAfter = writeLine;
 				best = write;
 			}
@@ -1001,6 +1012,22 @@ public final class FederatedRefedPolicy {
 				return write;
 		}
 		return best;
+	}
+
+	private static boolean prefersFederatedTransientWrite(DataOp candidate, DataOp currentBest) {
+		if (candidate == null)
+			return false;
+		if (currentBest == null)
+			return true;
+		return isRuntimeFederatedTransientWrite(candidate) && !isRuntimeFederatedTransientWrite(currentBest);
+	}
+
+	private static boolean isRuntimeFederatedTransientWrite(DataOp tWrite) {
+		if (tWrite == null)
+			return false;
+		ExecType exec = getPlannedExecType(tWrite);
+		return tWrite.getFederatedOutput() == FederatedOutput.FOUT
+			|| (exec == ExecType.FED && !tWrite.hasLocalOutput());
 	}
 
 	private static boolean isWriteDominatingRead(DataOp tWrite, DataOp tRead) {
@@ -1176,7 +1203,8 @@ public final class FederatedRefedPolicy {
 					&& hop.getFederatedOutput() == FederatedOutput.FOUT
 					&& !hop.hasLocalOutput();
 			if (dataOp.getOp() == OpOpData.TRANSIENTREAD)
-				return plannedExec == ExecType.FED && !hop.hasLocalOutput();
+				return (plannedExec == ExecType.FED && !hop.hasLocalOutput())
+					|| requiresCpfoutForFedParents(hop, fTypeMap);
 		}
 
 		boolean localOutput = plannedExec == ExecType.CP
@@ -1273,12 +1301,18 @@ public final class FederatedRefedPolicy {
 
 	private static boolean demoteStaleTransientWriteFederatedSelections(List<Hop> all,
 			java.util.Map<Long, FType> fTypeMap, long sbId, boolean conditionalContext) {
-		if (all == null || all.isEmpty())
+		return demoteStaleTransientWriteFederatedSelections(all, all, fTypeMap, sbId, conditionalContext);
+	}
+
+	private static boolean demoteStaleTransientWriteFederatedSelections(List<Hop> candidateHops, List<Hop> scopeHops,
+			java.util.Map<Long, FType> fTypeMap, long sbId, boolean conditionalContext) {
+		if (candidateHops == null || candidateHops.isEmpty())
 			return false;
 
 		Map<String, List<DataOp>> writesByName = new HashMap<>();
 		Map<String, List<DataOp>> readsByName = new HashMap<>();
-		for (Hop hop : all) {
+		List<Hop> lookupScope = (scopeHops != null && !scopeHops.isEmpty()) ? scopeHops : candidateHops;
+		for (Hop hop : lookupScope) {
 			if (!(hop instanceof DataOp))
 				continue;
 			DataOp dataOp = (DataOp) hop;
@@ -1292,7 +1326,7 @@ public final class FederatedRefedPolicy {
 		}
 
 		boolean changedAny = false;
-		for (Hop hop : all) {
+		for (Hop hop : candidateHops) {
 			if (!(hop instanceof DataOp))
 				continue;
 			DataOp tWrite = (DataOp) hop;
@@ -1924,6 +1958,10 @@ public final class FederatedRefedPolicy {
 		// (Example: optional local REPLACE input materialized against a required federated sibling.)
 		ParentAnchor parentAnchor = determineParentAnchor(parent, input, fTypeMap,
 			treatFTypeMapAsPlannedFederatedInputs, false, false);
+		if ((parentAnchor == null || parentAnchor.isEmpty() || parentAnchor.key == null)
+				&& canPropagateAnchorFromConsumers(parent)) {
+			parentAnchor = findConsumerAnchor(parent, input, fTypeMap, blockAnchor, new HashSet<>());
+		}
 		if (parentAnchor == null || parentAnchor.isEmpty() || parentAnchor.key == null)
 			return null;
 		try {
@@ -2003,6 +2041,8 @@ public final class FederatedRefedPolicy {
 		String varName = tWrite.getName();
 		if (varName == null || varName.isEmpty())
 			return;
+		String priorAnchorKey = FederatedPlannerUtils.getFedAnchorKey(varName);
+		boolean hadPriorFedInit = FederatedPlannerUtils.isFedInitVar(varName);
 		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
 			System.out.println("[TransReadRefedDebug] tWrite hop=" + tWrite.getHopID()
 				+ " conditional=" + conditionalContext
@@ -2029,6 +2069,14 @@ public final class FederatedRefedPolicy {
 			// reads inside recompile regions can be treated as federated and avoid re-uploading the
 			// same payload per iteration (e.g., X_samples in kmeans).
 			if (tWrite.getFederatedOutput() == FederatedOutput.FOUT) {
+				if (dependsOnSameTransientRead(input, varName, new HashSet<>())) {
+					preserveVarAnchorForLocalOverwrite(varName, priorAnchorKey, hadPriorFedInit, input, fTypeMap);
+					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
+						System.out.println("[TransReadRefedDebug] tWrite self-anchored local->fed keeps VAR anchor="
+							+ FederatedPlannerUtils.getFedAnchorKey(varName));
+					}
+					return;
+				}
 				String anchorKey = null;
 				if (blockAnchor != null && blockAnchor.key != null && blockAnchor.key.value instanceof String)
 					anchorKey = (String) blockAnchor.key.value;
@@ -2056,25 +2104,7 @@ public final class FederatedRefedPolicy {
 			if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
 				System.out.println("[TransReadRefedDebug] tWrite local override hop=" + tWrite.getHopID());
 			}
-			String existingAnchor = FederatedPlannerUtils.getFedAnchorKey(varName);
-			boolean hadAnchor = existingAnchor != null || FederatedPlannerUtils.isFedInitVar(varName);
-			FederatedPlannerUtils.removeFedAnchorKey(varName);
-			FederatedPlannerUtils.removeFedInitVar(varName);
-			if (hadAnchor) {
-				FType fType = getKnownFType(input, fTypeMap);
-				if (fType == null) {
-					FType axis = FederatedPlannerUtils.getVectorAxis(input);
-					if (axis != null)
-						fType = axis;
-				}
-				String varKey = "VAR:" + varName;
-				if (fType != null)
-					varKey = varKey + "|" + fType.name();
-				FederatedPlannerUtils.registerFedAnchorKey(varName, varKey);
-				if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
-					System.out.println("[TransReadRefedDebug] tWrite set VAR anchor=" + varKey);
-				}
-			}
+			preserveVarAnchorForLocalOverwrite(varName, priorAnchorKey, hadPriorFedInit, input, fTypeMap);
 			return;
 		}
 
@@ -2123,121 +2153,170 @@ public final class FederatedRefedPolicy {
 		}
 	}
 
+	private static void preserveVarAnchorForLocalOverwrite(String varName, String priorAnchorKey,
+			boolean hadPriorFedInit, Hop input, java.util.Map<Long, FType> fTypeMap) {
+		boolean hadAnchor = priorAnchorKey != null || hadPriorFedInit;
+		FederatedPlannerUtils.removeFedAnchorKey(varName);
+		FederatedPlannerUtils.removeFedInitVar(varName);
+		if (!hadAnchor)
+			return;
+		// Preserve the prior anchor/fed-init layout when converting a local overwrite into
+		// a VAR anchor. The local input may infer a transient BROADCAST/temporary layout
+		// even though refed/runtime reuse must remain aligned with the previously anchored
+		// worker distribution (observed for Y chains in logreg/l2svm).
+		FType fType = getFTypeFromAnchorKey(priorAnchorKey);
+		if (fType == null && hadPriorFedInit)
+			fType = FederatedPlannerUtils.getFedInitFType(varName);
+		if (fType == null)
+			fType = getKnownFType(input, fTypeMap);
+		if (fType == null) {
+			FType axis = FederatedPlannerUtils.getVectorAxis(input);
+			if (axis != null)
+				fType = axis;
+		}
+		String varKey = "VAR:" + varName;
+		if (fType != null)
+			varKey = varKey + "|" + fType.name();
+		FederatedPlannerUtils.registerFedAnchorKey(varName, varKey);
+		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
+			System.out.println("[TransReadRefedDebug] tWrite set VAR anchor=" + varKey);
+		}
+	}
+
+	private static boolean dependsOnSameTransientRead(Hop hop, String varName, Set<Long> visited) {
+		if (hop == null || varName == null || varName.isEmpty() || visited == null || !visited.add(hop.getHopID()))
+			return false;
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == OpOpData.TRANSIENTREAD && varName.equals(dataOp.getName()))
+				return true;
+		}
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		for (Hop input : inputs) {
+			if (dependsOnSameTransientRead(input, varName, visited))
+				return true;
+		}
+		return false;
+	}
+
 	private static void registerFromStatementBlock(StatementBlock sb, java.util.Map<Long, FType> fTypeMap,
-			AnchorSelection fallbackAnchor, boolean conditionalContext) {
+			AnchorSelection fallbackAnchor, boolean conditionalContext, List<Hop> scopeHops) {
 		if (sb == null)
 			return;
 		Set<Hop> roots = new HashSet<>();
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
-			if (isb.getPredicateHops() != null)
-				roots.add(isb.getPredicateHops());
-			if (!roots.isEmpty())
-				registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
-						null, null, fallbackAnchor, conditionalContext);
-			IfStatement istmt = (IfStatement) isb.getStatement(0);
-			for (StatementBlock inner : istmt.getIfBody())
-				registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-			for (StatementBlock inner : istmt.getElseBody())
-				registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		} else if (sb instanceof ForStatementBlock) {
+				if (isb.getPredicateHops() != null)
+					roots.add(isb.getPredicateHops());
+				if (!roots.isEmpty())
+					registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
+							null, null, fallbackAnchor, conditionalContext, scopeHops);
+				IfStatement istmt = (IfStatement) isb.getStatement(0);
+				for (StatementBlock inner : istmt.getIfBody())
+					registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+				for (StatementBlock inner : istmt.getElseBody())
+					registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			} else if (sb instanceof ForStatementBlock) {
 			ForStatementBlock fsb = (ForStatementBlock) sb;
 			if (fsb.getFromHops() != null)
 				roots.add(fsb.getFromHops());
 			if (fsb.getToHops() != null)
 				roots.add(fsb.getToHops());
-			if (fsb.getIncrementHops() != null)
-				roots.add(fsb.getIncrementHops());
-			if (!roots.isEmpty())
-				registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
-						null, null, fallbackAnchor, conditionalContext);
-			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
-			for (StatementBlock inner : fstmt.getBody())
-				registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		} else if (sb instanceof WhileStatementBlock) {
+				if (fsb.getIncrementHops() != null)
+					roots.add(fsb.getIncrementHops());
+				if (!roots.isEmpty())
+					registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
+							null, null, fallbackAnchor, conditionalContext, scopeHops);
+				ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+				for (StatementBlock inner : fstmt.getBody())
+					registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			} else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
-			if (wsb.getPredicateHops() != null)
-				roots.add(wsb.getPredicateHops());
-			if (!roots.isEmpty())
-				registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
-						null, null, fallbackAnchor, conditionalContext);
-			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
-			for (StatementBlock inner : wstmt.getBody())
-				registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		} else if (sb instanceof FunctionStatementBlock) {
-			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
-			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
-			for (StatementBlock inner : fstmt.getBody())
-				registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		} else {
-			if (sb.getHops() != null)
-				roots.addAll(sb.getHops());
-			if (!roots.isEmpty())
-				registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
-						null, null, fallbackAnchor, conditionalContext);
-		}
+				if (wsb.getPredicateHops() != null)
+					roots.add(wsb.getPredicateHops());
+				if (!roots.isEmpty())
+					registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
+							null, null, fallbackAnchor, conditionalContext, scopeHops);
+				WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+				for (StatementBlock inner : wstmt.getBody())
+					registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			} else if (sb instanceof FunctionStatementBlock) {
+				FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+				FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+				for (StatementBlock inner : fstmt.getBody())
+					registerFromStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			} else {
+				if (sb.getHops() != null)
+					roots.addAll(sb.getHops());
+				if (!roots.isEmpty())
+					registerFromHopsInternal(new ArrayList<>(roots), false, fTypeMap, sb.getSBID(),
+							null, null, fallbackAnchor, conditionalContext, scopeHops);
+			}
 	}
 
 	private static void finalizeRegisteredStatementBlock(StatementBlock sb, java.util.Map<Long, FType> fTypeMap,
-			AnchorSelection fallbackAnchor, boolean conditionalContext) {
+			AnchorSelection fallbackAnchor, boolean conditionalContext, List<Hop> scopeHops) {
 		if (sb == null)
 			return;
 		Set<Hop> roots = new HashSet<>();
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
-			if (isb.getPredicateHops() != null)
-				roots.add(isb.getPredicateHops());
-			if (!roots.isEmpty())
-				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
-					conditionalContext);
-			IfStatement istmt = (IfStatement) isb.getStatement(0);
-			for (StatementBlock inner : istmt.getIfBody())
-				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-			for (StatementBlock inner : istmt.getElseBody())
-				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		}
-		else if (sb instanceof ForStatementBlock) {
+				if (isb.getPredicateHops() != null)
+					roots.add(isb.getPredicateHops());
+				if (!roots.isEmpty())
+					finalizeRegisteredRoots(new ArrayList<>(roots), scopeHops, fTypeMap, sb.getSBID(),
+						fallbackAnchor, conditionalContext);
+				IfStatement istmt = (IfStatement) isb.getStatement(0);
+				for (StatementBlock inner : istmt.getIfBody())
+					finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+				for (StatementBlock inner : istmt.getElseBody())
+					finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			}
+			else if (sb instanceof ForStatementBlock) {
 			ForStatementBlock fsb = (ForStatementBlock) sb;
 			if (fsb.getFromHops() != null)
 				roots.add(fsb.getFromHops());
 			if (fsb.getToHops() != null)
 				roots.add(fsb.getToHops());
-			if (fsb.getIncrementHops() != null)
-				roots.add(fsb.getIncrementHops());
-			if (!roots.isEmpty())
-				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
-					conditionalContext);
-			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
-			for (StatementBlock inner : fstmt.getBody())
-				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		}
-		else if (sb instanceof WhileStatementBlock) {
+				if (fsb.getIncrementHops() != null)
+					roots.add(fsb.getIncrementHops());
+				if (!roots.isEmpty())
+					finalizeRegisteredRoots(new ArrayList<>(roots), scopeHops, fTypeMap, sb.getSBID(),
+						fallbackAnchor, conditionalContext);
+				ForStatement fstmt = (ForStatement) fsb.getStatement(0);
+				for (StatementBlock inner : fstmt.getBody())
+					finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			}
+			else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
-			if (wsb.getPredicateHops() != null)
-				roots.add(wsb.getPredicateHops());
-			if (!roots.isEmpty())
-				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
-					conditionalContext);
-			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
-			for (StatementBlock inner : wstmt.getBody())
-				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		}
-		else if (sb instanceof FunctionStatementBlock) {
-			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
-			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
-			for (StatementBlock inner : fstmt.getBody())
-				finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true);
-		}
-		else {
-			if (sb.getHops() != null)
-				roots.addAll(sb.getHops());
-			if (!roots.isEmpty())
-				finalizeRegisteredRoots(new ArrayList<>(roots), fTypeMap, sb.getSBID(), fallbackAnchor,
-					conditionalContext);
-		}
+				if (wsb.getPredicateHops() != null)
+					roots.add(wsb.getPredicateHops());
+				if (!roots.isEmpty())
+					finalizeRegisteredRoots(new ArrayList<>(roots), scopeHops, fTypeMap, sb.getSBID(),
+						fallbackAnchor, conditionalContext);
+				WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
+				for (StatementBlock inner : wstmt.getBody())
+					finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			}
+			else if (sb instanceof FunctionStatementBlock) {
+				FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
+				FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
+				for (StatementBlock inner : fstmt.getBody())
+					finalizeRegisteredStatementBlock(inner, fTypeMap, fallbackAnchor, true, scopeHops);
+			}
+			else {
+				if (sb.getHops() != null)
+					roots.addAll(sb.getHops());
+				if (!roots.isEmpty())
+					finalizeRegisteredRoots(new ArrayList<>(roots), scopeHops, fTypeMap, sb.getSBID(),
+						fallbackAnchor, conditionalContext);
+			}
 	}
 
-	private static void finalizeRegisteredRoots(List<Hop> roots, java.util.Map<Long, FType> fTypeMap, long sbId,
+	private static void finalizeRegisteredRoots(List<Hop> roots, List<Hop> scopeHops,
+			java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection fallbackAnchor, boolean conditionalContext) {
 		if (roots == null || roots.isEmpty())
 			return;
@@ -2246,16 +2325,28 @@ public final class FederatedRefedPolicy {
 			return;
 
 		boolean changed;
-		int pass = 0;
-		do {
-			boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, fallbackAnchor, false);
-			boolean pruned = pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
-			boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all, fTypeMap, sbId,
-				conditionalContext);
-			changed = demoted || pruned || twDemoted;
-			pass++;
-		}
-		while (changed && pass < 5);
+			int pass = 0;
+			do {
+				boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, fallbackAnchor, false);
+				boolean pruned = pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
+				boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all,
+					(scopeHops != null && !scopeHops.isEmpty()) ? scopeHops : all, fTypeMap, sbId,
+					conditionalContext);
+				changed = demoted || pruned || twDemoted;
+				pass++;
+			}
+			while (changed && pass < 5);
+	}
+
+	private static List<Hop> collectAllHopsFromStatementBlocks(List<StatementBlock> blocks) {
+		if (blocks == null || blocks.isEmpty())
+			return Collections.emptyList();
+		Set<Hop> roots = new HashSet<>();
+		for (StatementBlock sb : blocks)
+			collectRoots(sb, roots);
+		if (roots.isEmpty())
+			return Collections.emptyList();
+		return collectAllHops(new ArrayList<>(roots));
 	}
 
 	private static AnchorSelection buildGlobalAnchorForProgram(DMLProgram prog, java.util.Map<Long, FType> fTypeMap) {
@@ -3484,17 +3575,15 @@ public final class FederatedRefedPolicy {
 				continue;
 			if (!visited.add(consumer.getHopID()))
 				continue;
-			ExecType exec = getPlannedExecType(consumer);
-			if (exec == ExecType.FED) {
-				ParentAnchor anchor = determineParentAnchor(consumer, target, fTypeMap,
-						false, false, true);
-				if (anchor != null && !anchor.isEmpty()) {
-					if (selectedKey == null) {
-						selectedKey = anchor.key;
-						selectedAnchor = anchor.anchorHop;
-					} else if (!anchorsCompatible(selectedKey, anchor.key)) {
-						return null;
-					}
+			ParentAnchor anchor = determineParentAnchor(consumer, target, fTypeMap,
+					false, false, true);
+			if (anchor != null && !anchor.isEmpty()) {
+				if (selectedKey == null) {
+					selectedKey = anchor.key;
+					selectedAnchor = anchor.anchorHop;
+				}
+				else if (!anchorsCompatible(selectedKey, anchor.key)) {
+					return null;
 				}
 			}
 			if (canPropagateAnchorFromConsumers(consumer)) {
@@ -3520,10 +3609,18 @@ public final class FederatedRefedPolicy {
 	private static boolean canPropagateAnchorFromConsumers(Hop hop) {
 		if (hop == null)
 			return false;
+		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
 		if (hop instanceof ReorgOp)
 			return true;
 		if (hop instanceof UnaryOp)
 			return ((UnaryOp) hop).getOp() != OpOp1.BROADCAST;
+		if (hop instanceof BinaryOp || hop instanceof AggUnaryOp
+				|| hop instanceof AggBinaryOp || hop instanceof IndexingOp
+				|| hop instanceof NaryOp)
+			return true;
+		if (hop instanceof DataOp)
+			return ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE;
 		return false;
 	}
 

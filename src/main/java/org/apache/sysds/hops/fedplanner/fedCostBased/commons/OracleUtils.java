@@ -110,12 +110,39 @@ public final class OracleUtils {
 			// invalid ROW/COL slicing against unrelated anchors.
 			logicalFType = FType.BROADCAST;
 		}
+		logicalFType = preferConcreteTransientReadSourceLayout(hop, alignedInputFTypes, logicalFType);
 		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
 				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
 			logicalFType = FType.BROADCAST;
 		}
 
 		return new OracleDecision(alignedInputFTypes, caps, logicalFType);
+	}
+
+	private static FType preferConcreteTransientReadSourceLayout(Hop hop, List<FType> alignedInputFTypes,
+			FType logicalFType) {
+		if (logicalFType != FType.BROADCAST || !(hop instanceof DataOp)
+				|| ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| alignedInputFTypes == null || alignedInputFTypes.isEmpty()) {
+			return logicalFType;
+		}
+
+		FType concreteSourceType = null;
+		for (FType inputType : alignedInputFTypes) {
+			if (inputType == null)
+				continue;
+			if (inputType == FType.BROADCAST)
+				return logicalFType;
+			if (concreteSourceType == null)
+				concreteSourceType = inputType;
+			else if (concreteSourceType != inputType)
+				return logicalFType;
+		}
+
+		// Transient reads backed by a concrete mapped federated source should preserve that source
+		// layout instead of degrading to BROADCAST. Runtime refed reuses the source worker mapping,
+		// and forcing BROADCAST here suppresses valid FED/FOUT variants for downstream consumers.
+		return concreteSourceType != null ? concreteSourceType : logicalFType;
 	}
 
 	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,

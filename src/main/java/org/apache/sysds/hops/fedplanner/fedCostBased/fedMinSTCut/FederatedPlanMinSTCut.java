@@ -115,6 +115,7 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 		FederatedRefedPolicy.repairResolvedHopSelections(collectGraphHops(graph), fTypeMap, true);
+		registerMinstCpfoutSelections(graph, fTypeMap);
 		// Refed/fout insertion can legitimately update per-hop output markers, so validate
 		// against the post-resolve plan rather than assuming the cut result is already final.
 		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
@@ -134,6 +135,7 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 		FederatedRefedPolicy.repairResolvedHopSelections(collectGraphHops(graph), fTypeMap, true);
+		registerMinstCpfoutSelections(graph, fTypeMap);
 		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
@@ -171,6 +173,25 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			hops.add(vertex.getHopRef());
 		}
 		return hops;
+	}
+
+	private static void registerMinstCpfoutSelections(FederatedPlanMinSTGraph graph,
+			Map<Long, FType> fTypeMap) {
+		if (graph == null || fTypeMap == null)
+			return;
+		List<Hop> cpfoutHops = new ArrayList<>();
+		for (Vertex vertex : graph.getMemoTable().values()) {
+			if (vertex == null || vertex.getHopRef() == null)
+				continue;
+			Hop hop = vertex.getHopRef();
+			ExecType exec = hop.getForcedExecType();
+			if (exec == null)
+				exec = hop.getExecType();
+			if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT)
+				cpfoutHops.add(hop);
+		}
+		if (!cpfoutHops.isEmpty())
+			FederatedRefedPolicy.registerFoutMaterializeCandidates(cpfoutHops, fTypeMap, -1L);
 	}
 
 	private static Map<Long, FType> buildPlannedFTypeMap(FederatedPlanMinSTGraph graph) {

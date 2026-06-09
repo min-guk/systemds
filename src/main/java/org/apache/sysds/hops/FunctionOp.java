@@ -121,6 +121,84 @@ public class FunctionOp extends MultiThreadedHop
 	public ArrayList<Hop> getOutputs() {
 		return _outputHops;
 	}
+
+	public double getMultiReturnBuiltinOutputMemEstimate(Hop outputHop) {
+		if (getFunctionType() != FunctionType.MULTIRETURN_BUILTIN || outputHop == null)
+			return -1.0;
+		long[] dims = getMultiReturnBuiltinOutputDims(outputHop);
+		long dim1 = dims[0];
+		long dim2 = dims[1];
+		if (dim1 > 0 && dim2 > 0)
+			return estimateMultiReturnOutputMem(outputHop, dim1, dim2, 1.0);
+		return -1.0;
+	}
+
+	public long[] getMultiReturnBuiltinOutputDims(Hop outputHop) {
+		if (getFunctionType() != FunctionType.MULTIRETURN_BUILTIN || outputHop == null)
+			return new long[] {-1, -1};
+		int outputIndex = getMultiReturnBuiltinOutputIndex(outputHop);
+		if (outputIndex < 0)
+			return new long[] {-1, -1};
+		if (getFunctionName().equalsIgnoreCase(Opcodes.EIGEN.toString())) {
+			Hop input = (getInput() != null && !getInput().isEmpty()) ? getInput().get(0) : null;
+			long inputRows = (input != null) ? input.getDim1() : -1;
+			long inputCols = (input != null) ? input.getDim2() : -1;
+			// Parser validation/order:
+			//   output[0] = eigen_values  (n x 1)
+			//   output[1] = eigen_vectors (n x n)
+			if (outputIndex == 0)
+				return new long[] {resolveOutputDim(outputHop.getDim1(), inputRows), resolveOutputDim(outputHop.getDim2(), 1)};
+			if (outputIndex == 1)
+				return new long[] {resolveOutputDim(outputHop.getDim1(), inputRows), resolveOutputDim(outputHop.getDim2(), inputCols)};
+		}
+		return new long[] {outputHop.getDim1(), outputHop.getDim2()};
+	}
+
+	public long getMultiReturnBuiltinOutputNnz(Hop outputHop) {
+		long[] dims = getMultiReturnBuiltinOutputDims(outputHop);
+		if (dims[0] <= 0 || dims[1] <= 0)
+			return -1;
+		long nnz = outputHop.getNnz();
+		if (nnz >= 0)
+			return nnz;
+		if (getFunctionName().equalsIgnoreCase(Opcodes.EIGEN.toString()))
+			return dims[0] * dims[1];
+		return -1;
+	}
+
+	private int getMultiReturnBuiltinOutputIndex(Hop outputHop) {
+		if (_outputHops == null || _outputHops.isEmpty())
+			return -1;
+		for (int i = 0; i < _outputHops.size(); i++) {
+			if (_outputHops.get(i) == outputHop)
+				return i;
+		}
+		if (outputHop.getName() == null)
+			return -1;
+		for (int i = 0; i < _outputHops.size(); i++) {
+			Hop candidate = _outputHops.get(i);
+			if (candidate != null && outputHop.getName().equals(candidate.getName()))
+				return i;
+		}
+		return -1;
+	}
+
+	private static long resolveOutputDim(long outputDim, long fallbackDim) {
+		return outputDim > 0 ? outputDim : fallbackDim;
+	}
+
+	private static double estimateMultiReturnOutputMem(Hop outputHop, long fallbackDim1, long fallbackDim2,
+			double defaultSparsity) {
+		if (outputHop == null || outputHop.getDataType() == null || !outputHop.getDataType().isMatrix())
+			return -1.0;
+		long dim1 = (outputHop.getDim1() > 0) ? outputHop.getDim1() : fallbackDim1;
+		long dim2 = (outputHop.getDim2() > 0) ? outputHop.getDim2() : fallbackDim2;
+		if (dim1 <= 0 || dim2 <= 0)
+			return -1.0;
+		long nnz = outputHop.getNnz();
+		double sparsity = (nnz >= 0) ? OptimizerUtils.getSparsity(dim1, dim2, nnz) : defaultSparsity;
+		return OptimizerUtils.estimateSizeExactSparsity(dim1, dim2, sparsity, outputHop.getDataType());
+	}
 	
 	public String[] getInputVariableNames() {
 		return _inputNames;
@@ -195,8 +273,12 @@ public class FunctionOp extends MultiThreadedHop
 				return outputL+outputU+outputP; 
 			}
 			else if ( getFunctionName().equalsIgnoreCase(Opcodes.EIGEN.toString()) ) {
-				long outputVectors = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(0).getDim1(), getOutputs().get(0).getDim2(), 1.0);
-				long outputValues = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(1).getDim1(), 1, 1.0);
+				double outputValues = getMultiReturnBuiltinOutputMemEstimate(getOutputs().get(0));
+				double outputVectors = getMultiReturnBuiltinOutputMemEstimate(getOutputs().get(1));
+				if (outputValues < 0.0)
+					outputValues = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(0).getDim1(), 1, 1.0);
+				if (outputVectors < 0.0)
+					outputVectors = OptimizerUtils.estimateSizeExactSparsity(getOutputs().get(1).getDim1(), getOutputs().get(1).getDim2(), 1.0);
 				return outputVectors+outputValues; 
 			}
 			else if ( getFunctionName().equalsIgnoreCase(Opcodes.FFT.toString()) ) {

@@ -19,9 +19,11 @@
 
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -74,6 +76,7 @@ import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DataIdentifier;
 import org.apache.sysds.parser.ForStatement;
 import org.apache.sysds.parser.ForStatementBlock;
 import org.apache.sysds.parser.FunctionStatement;
@@ -93,11 +96,15 @@ import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.runtime.DMLRuntimeException;
 
 public class FederatedPlannerDpRewireTransTable {
+	private static final String FUNCTION_HIDDEN_ROOTS_KEY = "\u0000fedplanner_hidden_roots";
 	private static final int MAX_UNROLL_DEPTH = 1;
 
 	public static class UnrollContext {
 		private final Map<Long, Long> cloneToOrig = new HashMap<>();
 		private final List<Hop> iter1Roots = new ArrayList<>();
+		private final List<Hop> additionalRoots = new ArrayList<>();
+		private final LinkedHashSet<Long> deadFunctionOutputHopIDs = new LinkedHashSet<>();
+		private final Deque<Set<String>> statementLiveOutStack = new ArrayDeque<>();
 
 		public Map<Long, Long> getCloneToOrig() {
 			return cloneToOrig;
@@ -107,10 +114,49 @@ public class FederatedPlannerDpRewireTransTable {
 			return iter1Roots;
 		}
 
+		public List<Hop> getAdditionalRoots() {
+			return additionalRoots;
+		}
+
+		public Set<Long> getDeadFunctionOutputHopIDs() {
+			return Collections.unmodifiableSet(deadFunctionOutputHopIDs);
+		}
+
+		public boolean isDeadFunctionOutputHop(long hopID) {
+			return hopID >= 0 && deadFunctionOutputHopIDs.contains(hopID);
+		}
+
+		public Set<String> getCurrentStatementLiveOuts() {
+			Set<String> current = statementLiveOutStack.peek();
+			return current != null ? current : Collections.emptySet();
+		}
+
 		private void addIter1Roots(List<Hop> roots) {
 			if (roots == null || roots.isEmpty())
 				return;
 			iter1Roots.addAll(roots);
+		}
+
+		private void addAdditionalRoots(List<Hop> roots) {
+			if (roots == null || roots.isEmpty())
+				return;
+			additionalRoots.addAll(roots);
+		}
+
+		private void addDeadFunctionOutputHop(Hop hop) {
+			if (hop != null)
+				deadFunctionOutputHopIDs.add(hop.getHopID());
+		}
+
+		private void pushStatementLiveOuts(Set<String> liveOuts) {
+			statementLiveOutStack.push((liveOuts == null || liveOuts.isEmpty())
+				? Collections.emptySet()
+				: new LinkedHashSet<>(liveOuts));
+		}
+
+		private void popStatementLiveOuts() {
+			if (!statementLiveOutStack.isEmpty())
+				statementLiveOutStack.pop();
 		}
 	}
 
@@ -303,7 +349,10 @@ public class FederatedPlannerDpRewireTransTable {
 
 		Map<String, List<Hop>> newFormerTransTable = new HashMap<>();
 		Map<String, List<Hop>> innerTransTable = new HashMap<>();
+		if (unrollCtx != null)
+			unrollCtx.pushStatementLiveOuts(extractStatementLiveOutNames(sb));
 
+		try {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
@@ -313,20 +362,25 @@ public class FederatedPlannerDpRewireTransTable {
 				writtenBeforeIf = loopCtx.snapshotWritten();
 			}
 
-			rewireHopDAG(selectHop(isb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
-					hopCommonTable,
-					newOuterTransTableList,
-					null, innerTransTable,
-					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
-					functionTransTableCache, computeWeight, networkWeight, multiplicity, parentLoopStack,
-					unrollDepth, maxUnrollDepth, loopCtx, unrollCtx);
+			for (Hop controlRoot : collectControlExecutionRoots(selectHop(isb.getPredicateHops(), hopCloneMap)))
+				rewireHopDAG(controlRoot, prog, visitedHops, rewireTable,
+						hopCommonTable,
+						newOuterTransTableList,
+						null, innerTransTable,
+						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+						injectedIds,
+						functionTransTableCache, computeWeight, networkWeight, multiplicity, parentLoopStack,
+						unrollDepth, maxUnrollDepth, loopCtx, unrollCtx);
 
 				newFormerTransTable.putAll(innerTransTable);
 				Map<String, List<Hop>> elseFormerTransTable = new HashMap<>();
 				elseFormerTransTable.putAll(innerTransTable);
 				computeWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
-				// Keep networkWeight unscaled through if/else bodies: for transient variables (e.g., loop-carried)
-				// we conservatively model forwarding/network frequency as unconditional within the enclosing scope.
+				networkWeight *= RewireConstants.DEFAULT_IF_ELSE_WEIGHT;
+				// If/else bodies are mutually exclusive. Keeping networkWeight unscaled here causes
+				// transient-write/read forwarding costs for branch-local variables (e.g., steplm's X_global)
+				// to accumulate as if both branches executed together, which over-penalizes FED/FOUT
+				// alternatives and diverges from MinST parity.
 
 				for (StatementBlock innerIsb : istmt.getIfBody())
 					newFormerTransTable.putAll(rewireStatementBlock(innerIsb, prog, visitedHops, rewireTable,
@@ -614,11 +668,12 @@ public class FederatedPlannerDpRewireTransTable {
 				List<Pair<FederatedRange, FederatedData>> probeFedMap = new ArrayList<>(fedMap);
 
 				Map<String, List<Hop>> probeInner = new HashMap<>();
-				rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, probeVisited, probeRewireTable,
-						probeHopCommon, newOuterTransTableList, null, probeInner,
-						probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet, probeFnStack,
-						probeInjectedIds, probeFnCache, computeWeight, networkWeight, multiplicity,
-						parentLoopStack, unrollDepth, maxUnrollDepth, probeCtx, null);
+				for (Hop controlRoot : collectControlExecutionRoots(selectHop(wsb.getPredicateHops(), hopCloneMap)))
+					rewireHopDAG(controlRoot, prog, probeVisited, probeRewireTable,
+							probeHopCommon, newOuterTransTableList, null, probeInner,
+							probePrivacy, probeFedMap, probeUnRefTwriteSet, probeUnRefSet, probeRootSet, probeFnStack,
+							probeInjectedIds, probeFnCache, computeWeight, networkWeight, multiplicity,
+							parentLoopStack, unrollDepth, maxUnrollDepth, probeCtx, null);
 				Map<String, List<Hop>> probeFormer = new HashMap<>();
 				probeFormer.putAll(probeInner);
 				for (StatementBlock innerWsb : wstmt.getBody())
@@ -642,13 +697,14 @@ public class FederatedPlannerDpRewireTransTable {
 				List<Pair<Long, Double>> currentLoopStack = new ArrayList<>(parentLoopStack);
 				currentLoopStack.add(Pair.of(sb.getSBID(), loopWeight));
 
-				rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
-						hopCommonTable,
-						newOuterTransTableList,
-						null, innerTransTable,
-						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-						injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
-						currentLoopStack, unrollDepth, maxUnrollDepth, loopCtx, unrollCtx);
+				for (Hop controlRoot : collectControlExecutionRoots(selectHop(wsb.getPredicateHops(), hopCloneMap)))
+					rewireHopDAG(controlRoot, prog, visitedHops, rewireTable,
+							hopCommonTable,
+							newOuterTransTableList,
+							null, innerTransTable,
+							privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+							injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+							currentLoopStack, unrollDepth, maxUnrollDepth, loopCtx, unrollCtx);
 				newFormerTransTable.putAll(innerTransTable);
 
 				for (StatementBlock innerWsb : wstmt.getBody())
@@ -671,13 +727,14 @@ public class FederatedPlannerDpRewireTransTable {
 			iter0LoopStack.add(Pair.of(sb.getSBID(), 1.0));
 
 			LoopAnalysisContext iter0Analysis = new LoopAnalysisContext(true, false, false);
-			rewireHopDAG(selectHop(wsb.getPredicateHops(), hopCloneMap), prog, visitedHops, rewireTable,
-					hopCommonTable,
-					newOuterTransTableList,
-					null, innerTransTable,
-					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-					injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
-					iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
+			for (Hop controlRoot : collectControlExecutionRoots(selectHop(wsb.getPredicateHops(), hopCloneMap)))
+				rewireHopDAG(controlRoot, prog, visitedHops, rewireTable,
+						hopCommonTable,
+						newOuterTransTableList,
+						null, innerTransTable,
+						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+						injectedIds, functionTransTableCache, computeWeight, networkWeight, multiplicity,
+						iter0LoopStack, unrollDepth, maxUnrollDepth, iter0Analysis, unrollCtx);
 			newFormerTransTable.putAll(innerTransTable);
 
 			for (StatementBlock innerWsb : wstmt.getBody())
@@ -708,13 +765,14 @@ public class FederatedPlannerDpRewireTransTable {
 			Map<String, List<Hop>> iter1Inner = new HashMap<>();
 			Map<String, List<Hop>> iter1Former = new HashMap<>();
 
-			rewireHopDAG(selectHop(wsb.getPredicateHops(), iter1HopMap), prog, visitedHops, rewireTable,
-					hopCommonTable,
-					newOuterTransTableList,
-					null, iter1Inner,
-					privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
-					injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
-					iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
+			for (Hop controlRoot : collectControlExecutionRoots(selectHop(wsb.getPredicateHops(), iter1HopMap)))
+				rewireHopDAG(controlRoot, prog, visitedHops, rewireTable,
+						hopCommonTable,
+						newOuterTransTableList,
+						null, iter1Inner,
+						privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack,
+						injectedIds, functionTransTableCache, computeWeight, networkWeight, iter1Multiplicity,
+						iter1LoopStack, unrollDepth, maxUnrollDepth, iter1Analysis, unrollCtx);
 			iter1Former.putAll(iter1Inner);
 
 			for (StatementBlock innerWsb : wstmt.getBody())
@@ -759,6 +817,17 @@ public class FederatedPlannerDpRewireTransTable {
 			return innerTransTable;
 		}
 		return newFormerTransTable;
+		}
+		finally {
+			if (unrollCtx != null)
+				unrollCtx.popStatementLiveOuts();
+		}
+	}
+
+	private static Set<String> extractStatementLiveOutNames(StatementBlock sb) {
+		if (sb == null || sb.liveOut() == null || sb.liveOut().getVariableNames() == null)
+			return Collections.emptySet();
+		return new LinkedHashSet<>(sb.liveOut().getVariableNames());
 	}
 
 	private static Hop selectHop(Hop hop, Map<Long, Hop> hopCloneMap) {
@@ -774,12 +843,43 @@ public class FederatedPlannerDpRewireTransTable {
 		return roots;
 	}
 
+	private static List<Hop> collectControlExecutionRoots(Hop predicateHop) {
+		if (predicateHop == null)
+			return Collections.emptyList();
+		List<Hop> roots = new ArrayList<>();
+		LinkedHashSet<Long> seenRootIds = new LinkedHashSet<>();
+		addRootIfNew(predicateHop, roots, seenRootIds);
+		for (Hop parentHop : predicateHop.getParent()) {
+			if (HopUtils.isPredTWrite(parentHop))
+				addRootIfNew(parentHop, roots, seenRootIds);
+		}
+		return roots;
+	}
+
+	private static void addRootIfNew(Hop rootHop, List<Hop> roots, Set<Long> seenRootIds) {
+		if (rootHop == null || roots == null || seenRootIds == null)
+			return;
+		if (seenRootIds.add(rootHop.getHopID()))
+			roots.add(rootHop);
+	}
+
+	static List<Hop> collectExecutableStatementRoots(StatementBlock sb) {
+		List<Hop> executableRoots = new ArrayList<>();
+		LinkedHashSet<Long> seenRootIds = new LinkedHashSet<>();
+		for (Hop rootHop : collectStatementBlockRoots(sb, null)) {
+			if (rootHop == null || rootHop instanceof LiteralOp || !seenRootIds.add(rootHop.getHopID()))
+				continue;
+			executableRoots.add(rootHop);
+		}
+		return executableRoots;
+	}
+
 	private static void collectStatementBlockRoots(StatementBlock sb, Map<Long, Hop> hopCloneMap,
 			List<Hop> roots) {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
-			roots.add(selectHop(isb.getPredicateHops(), hopCloneMap));
+			roots.addAll(collectControlExecutionRoots(selectHop(isb.getPredicateHops(), hopCloneMap)));
 			for (StatementBlock inner : istmt.getIfBody())
 				collectStatementBlockRoots(inner, hopCloneMap, roots);
 			for (StatementBlock inner : istmt.getElseBody())
@@ -796,7 +896,7 @@ public class FederatedPlannerDpRewireTransTable {
 		} else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
-			roots.add(selectHop(wsb.getPredicateHops(), hopCloneMap));
+			roots.addAll(collectControlExecutionRoots(selectHop(wsb.getPredicateHops(), hopCloneMap)));
 			for (StatementBlock inner : wstmt.getBody())
 				collectStatementBlockRoots(inner, hopCloneMap, roots);
 		} else if (sb instanceof FunctionStatementBlock) {
@@ -855,7 +955,8 @@ public class FederatedPlannerDpRewireTransTable {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
-			deepCopyHop(selectHop(isb.getPredicateHops(), baseHopMap), memo);
+			for (Hop rootHop : collectControlExecutionRoots(selectHop(isb.getPredicateHops(), baseHopMap)))
+				deepCopyHop(rootHop, memo);
 			for (StatementBlock inner : istmt.getIfBody())
 				cloneStatementBlockHops(inner, baseHopMap, memo);
 			for (StatementBlock inner : istmt.getElseBody())
@@ -872,7 +973,8 @@ public class FederatedPlannerDpRewireTransTable {
 		} else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
-			deepCopyHop(selectHop(wsb.getPredicateHops(), baseHopMap), memo);
+			for (Hop rootHop : collectControlExecutionRoots(selectHop(wsb.getPredicateHops(), baseHopMap)))
+				deepCopyHop(rootHop, memo);
 			for (StatementBlock inner : wstmt.getBody())
 				cloneStatementBlockHops(inner, baseHopMap, memo);
 		} else if (sb instanceof FunctionStatementBlock) {
@@ -1015,98 +1117,98 @@ public class FederatedPlannerDpRewireTransTable {
 					// maintain counters and investigate functions if not seen so far
 					FunctionOp fop = (FunctionOp) hop;
 					unRefTwriteSet.add(fop.getHopID());
-
-					if (fop.getFunctionType() == FunctionType.DML) {
+					FunctionType functionType = fop.getFunctionType();
+					if (functionType == FunctionType.DML || functionType == FunctionType.MULTIRETURN_BUILTIN) {
 						String fkey = fop.getFunctionKey();
 						FunctionStatementBlock fsb = (prog != null)
-								? prog.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName())
-								: null;
+							? prog.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName())
+							: null;
 						Map<String, List<Hop>> functionTransTable = functionTransTableCache.get(fkey);
+						List<Hop> hiddenFunctionBoundaryHops = getHiddenFunctionBoundaryHops(functionTransTable);
 						Set<Long> functionOutputIds = new LinkedHashSet<>();
 						List<Hop> functionOutputHops = new ArrayList<>();
 						boolean pushed = false;
 
-						if (functionTransTable == null && !fnStack.contains(fkey)) {
+						// DML-backed multi-return builtins (e.g., builtin pca) execute the full
+						// function body even when the caller only consumes a subset of outputs.
+						// Therefore, when a concrete FunctionStatementBlock exists, rewire/map the
+						// actual function outputs rather than relying only on fop.getOutputs(),
+						// which can omit caller-unused outputs and leave their executable subgraphs
+						// unrevised.
+						if (functionTransTable == null && fsb != null && !fnStack.contains(fkey)) {
 							fnStack.add(fkey);
 							pushed = true;
 							try {
-								if (prog == null) {
-									FederatedPlannerLogger.logWarnMessage(
-											"[FederatedCost] Skipping nested function " + fkey
-													+ " because DMLProgram is unavailable");
-								} else if (fsb == null) {
-									FederatedPlannerLogger.logWarnMessage(
-											"[FederatedCost] Function " + fkey
-													+ " not found in DMLProgram; skipping nested planning");
-								} else {
-									Map<String, List<Hop>> newFormerTransTable = new HashMap<>();
-									if (formerTransTable != null) {
-										newFormerTransTable.putAll(formerTransTable);
-									}
-									newFormerTransTable.putAll(innerTransTable);
-									Set<Long> nestedUnRefTwriteSet = new HashSet<>();
-									Set<Long> nestedUnRefSet = new HashSet<>();
-									Set<Hop> nestedProgRootHopSet = new LinkedHashSet<>();
+								Map<String, List<Hop>> newFormerTransTable = new HashMap<>();
+								if (formerTransTable != null)
+									newFormerTransTable.putAll(formerTransTable);
+								newFormerTransTable.putAll(innerTransTable);
+								Set<Long> nestedUnRefTwriteSet = new HashSet<>();
+								Set<Long> nestedUnRefSet = new HashSet<>();
+								Set<Hop> nestedProgRootHopSet = new LinkedHashSet<>();
 
-									String[] inputArgs = fop.getInputVariableNames();
-									List<Hop> inputHops = fop.getInput();
+								String[] inputArgs = fop.getInputVariableNames();
+								List<Hop> inputHops = fop.getInput();
 
-									// Only used outside of functionTransTable.
-									TransTableRewireUtils.mapFunctionInputsToFormerTransTable(
-											inputArgs, inputHops, rewireTable, newFormerTransTable);
+								TransTableRewireUtils.mapFunctionInputsToFormerTransTable(
+									inputArgs, inputHops, rewireTable, newFormerTransTable);
 
-									try (FederatedPlannerUtils.ScopedFedVarOverride ignored =
-											FederatedPlannerUtils.scopedFedVarsForFunctionCall(inputArgs, inputHops)) {
-										functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
-												rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
-												privacyConstraintMap, fedMap, nestedUnRefTwriteSet, nestedUnRefSet,
-												nestedProgRootHopSet,
-												fnStack, injectedIds, functionTransTableCache, computeWeight,
-												networkWeight,
-												multiplicity, loopStack, unrollDepth, maxUnrollDepth, null, loopCtx, unrollCtx);
-									}
-									if (functionTransTable != null) {
-										functionTransTableCache.put(fkey, functionTransTable);
-									}
+								try (FederatedPlannerUtils.ScopedFedVarOverride ignored =
+										FederatedPlannerUtils.scopedFedVarsForFunctionCall(inputArgs, inputHops)) {
+									functionTransTable = rewireStatementBlock(fsb, prog, visitedHops,
+										rewireTable, hopCommonTable, outerTransTableList, newFormerTransTable,
+										privacyConstraintMap, fedMap, nestedUnRefTwriteSet, nestedUnRefSet,
+										nestedProgRootHopSet, fnStack, injectedIds, functionTransTableCache,
+										computeWeight, networkWeight, multiplicity, loopStack, unrollDepth,
+										maxUnrollDepth, null, loopCtx, unrollCtx);
 								}
-							} finally {
+									if (functionTransTable != null) {
+										attachHiddenFunctionBoundaryHops(functionTransTable,
+											nestedUnRefTwriteSet, hopCommonTable);
+										functionTransTableCache.put(fkey, functionTransTable);
+										hiddenFunctionBoundaryHops = getHiddenFunctionBoundaryHops(functionTransTable);
+									}
+							}
+							finally {
 								if (pushed)
 									fnStack.remove(fkey);
 							}
 						}
 
-						TransTableRewireUtils.mapFunctionOutputs(
+						boolean mappedFromFunctionBody = false;
+						if (fsb != null && functionTransTable != null) {
+							List<Hop> callerUnconsumedOutputHops = collectCallerUnconsumedFunctionOutputHops(
+								fop, fsb, functionTransTable);
+							Set<Long> callerUnconsumedOutputHopIds = toHopIdSet(callerUnconsumedOutputHops);
+							TransTableRewireUtils.mapFunctionOutputsWithNames(
 								fop, fsb, functionTransTable, innerTransTable,
-								outputHop -> {
-									if (!hopCommonTable.containsKey(outputHop.getHopID())) {
-										hopCommonTable.put(outputHop.getHopID(),
-												new FederatedPlannerDpMemoTable.HopCommon(outputHop, computeWeight,
-														networkWeight,
-														multiplicity, 0, loopStack));
-									}
-									if (outputHop.getDataType() != null
-											&& outputHop.getDataType().isMatrix()
-											&& functionOutputIds.add(outputHop.getHopID())) {
-										functionOutputHops.add(outputHop);
-									}
-								});
-						if (!functionOutputHops.isEmpty()) {
-							ctx.rewireTable().put(fop.getHopID(), functionOutputHops);
-						} else {
-							ctx.rewireTable().remove(fop.getHopID());
+								(outputHop, callerOutputName) -> registerFunctionBoundaryHop(
+									outputHop, hopCommonTable, unRefTwriteSet,
+									functionOutputIds, functionOutputHops, computeWeight,
+									networkWeight, multiplicity, loopStack, false));
+							if (unrollCtx != null && !callerUnconsumedOutputHops.isEmpty())
+								unrollCtx.addAdditionalRoots(callerUnconsumedOutputHops);
+							appendHiddenFunctionBoundaryHops(filterHiddenFunctionBoundaryHops(
+									hiddenFunctionBoundaryHops, callerUnconsumedOutputHopIds), hopCommonTable,
+								unRefTwriteSet, functionOutputIds, functionOutputHops,
+								computeWeight, networkWeight, multiplicity, loopStack);
+							mappedFromFunctionBody = !functionOutputHops.isEmpty();
 						}
-					} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
-						TransTableRewireUtils.mapFunctionOutputs(
+						appendAdditionalFunctionExecutionRoots(fsb, functionOutputIds, unrollCtx);
+
+						if (!mappedFromFunctionBody && functionType == FunctionType.MULTIRETURN_BUILTIN) {
+							TransTableRewireUtils.mapFunctionOutputsWithNames(
 								fop, null, null, innerTransTable,
-								outputHop -> {
-									if (!hopCommonTable.containsKey(outputHop.getHopID())) {
-										hopCommonTable.put(outputHop.getHopID(),
-												new FederatedPlannerDpMemoTable.HopCommon(outputHop, computeWeight,
-														networkWeight,
-														multiplicity, 0, loopStack));
-									}
-									unRefTwriteSet.add(outputHop.getHopID());
-								});
+								(outputHop, callerOutputName) -> registerFunctionBoundaryHop(
+									outputHop, hopCommonTable, unRefTwriteSet,
+									functionOutputIds, functionOutputHops, computeWeight,
+									networkWeight, multiplicity, loopStack, true));
+						}
+
+						if (!functionOutputHops.isEmpty())
+							ctx.rewireTable().put(fop.getHopID(), functionOutputHops);
+						else
+							ctx.rewireTable().remove(fop.getHopID());
 					}
 				}
 
@@ -1151,7 +1253,7 @@ public class FederatedPlannerDpRewireTransTable {
 		} else if (opType == Types.OpOpData.TRANSIENTREAD) {
 			// Rewire TransRead
 			List<Hop> childHops = TransTableRewireUtils.resolveTransReadChildren(
-					hop.getHopID(), hopName, rewireTable,
+					dataOp, rewireTable,
 					innerTransTable, formerTransTable, outerTransTableList);
 			boolean hasInner = false;
 			if (innerTransTable != null) {
@@ -1210,6 +1312,160 @@ public class FederatedPlannerDpRewireTransTable {
 			return null;
 		}
 		return hopCommonTable.get(sourceHop.getHopID());
+	}
+
+	private static void attachHiddenFunctionBoundaryHops(Map<String, List<Hop>> functionTransTable,
+			Set<Long> nestedUnRefTwriteSet,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable) {
+		if (functionTransTable == null)
+			return;
+		if (nestedUnRefTwriteSet == null || nestedUnRefTwriteSet.isEmpty()) {
+			functionTransTable.remove(FUNCTION_HIDDEN_ROOTS_KEY);
+			return;
+		}
+		List<Hop> hiddenRoots = new ArrayList<>();
+		Set<Long> seenHopIds = new LinkedHashSet<>();
+		for (Long hopId : nestedUnRefTwriteSet) {
+			if (hopId == null || !seenHopIds.add(hopId))
+				continue;
+			FederatedPlannerDpMemoTable.HopCommon hopCommon =
+					(hopCommonTable != null) ? hopCommonTable.get(hopId) : null;
+			Hop hopRef = (hopCommon != null) ? hopCommon.getHopRef() : null;
+			if (hopRef == null || hopRef.getDataType() == null || !hopRef.getDataType().isMatrix())
+				continue;
+			hiddenRoots.add(hopRef);
+		}
+		if (hiddenRoots.isEmpty())
+			functionTransTable.remove(FUNCTION_HIDDEN_ROOTS_KEY);
+		else
+			functionTransTable.put(FUNCTION_HIDDEN_ROOTS_KEY, hiddenRoots);
+	}
+
+	private static void appendAdditionalFunctionExecutionRoots(FunctionStatementBlock fsb,
+			Set<Long> functionOutputIds, UnrollContext unrollCtx) {
+		if (fsb == null || unrollCtx == null)
+			return;
+		List<Hop> additionalRoots = new ArrayList<>();
+		LinkedHashSet<Long> seenRootIds = new LinkedHashSet<>();
+		if (functionOutputIds != null)
+			seenRootIds.addAll(functionOutputIds);
+		for (Hop rootHop : collectStatementBlockRoots(fsb, null)) {
+			if (rootHop == null || rootHop instanceof LiteralOp)
+				continue;
+			if (seenRootIds.add(rootHop.getHopID()))
+				additionalRoots.add(rootHop);
+		}
+		unrollCtx.addAdditionalRoots(additionalRoots);
+	}
+
+	private static List<Hop> getHiddenFunctionBoundaryHops(Map<String, List<Hop>> functionTransTable) {
+		if (functionTransTable == null)
+			return Collections.emptyList();
+		List<Hop> hiddenRoots = functionTransTable.get(FUNCTION_HIDDEN_ROOTS_KEY);
+		return (hiddenRoots == null || hiddenRoots.isEmpty()) ? Collections.emptyList() : hiddenRoots;
+	}
+
+	private static List<Hop> collectCallerUnconsumedFunctionOutputHops(FunctionOp fop, FunctionStatementBlock fsb,
+			Map<String, List<Hop>> functionTransTable) {
+		if (fop == null || fsb == null || functionTransTable == null)
+			return Collections.emptyList();
+		String[] callerOutputNames = fop.getOutputVariableNames();
+		int callerOutputCount = (callerOutputNames != null) ? callerOutputNames.length : 0;
+		List<DataIdentifier> functionOutputs = resolveFunctionOutputParams(fsb);
+		if (functionOutputs == null || functionOutputs.isEmpty() || callerOutputCount >= functionOutputs.size())
+			return Collections.emptyList();
+		List<Hop> additionalRoots = new ArrayList<>();
+		LinkedHashSet<Long> seenHopIds = new LinkedHashSet<>();
+		for (int i = callerOutputCount; i < functionOutputs.size(); i++) {
+			DataIdentifier output = functionOutputs.get(i);
+			if (output == null)
+				continue;
+			List<Hop> mappedHops = functionTransTable.get(output.getName());
+			if (mappedHops == null || mappedHops.isEmpty())
+				continue;
+			for (Hop mappedHop : mappedHops) {
+				if (mappedHop == null || mappedHop instanceof LiteralOp || !seenHopIds.add(mappedHop.getHopID()))
+					continue;
+				additionalRoots.add(mappedHop);
+			}
+		}
+		return additionalRoots;
+	}
+
+	private static List<DataIdentifier> resolveFunctionOutputParams(FunctionStatementBlock fsb) {
+		if (fsb == null)
+			return Collections.emptyList();
+		List<DataIdentifier> orderedFunctionOutputs = null;
+		if (fsb.getStatements() != null && !fsb.getStatements().isEmpty()
+			&& fsb.getStatement(0) instanceof FunctionStatement) {
+			orderedFunctionOutputs = ((FunctionStatement) fsb.getStatement(0)).getOutputParams();
+		}
+		List<DataIdentifier> functionOutputs = (orderedFunctionOutputs != null && !orderedFunctionOutputs.isEmpty())
+			? orderedFunctionOutputs
+			: fsb.getOutputsofSB();
+		return (functionOutputs == null) ? Collections.emptyList() : functionOutputs;
+	}
+
+	private static Set<Long> toHopIdSet(List<Hop> hops) {
+		if (hops == null || hops.isEmpty())
+			return Collections.emptySet();
+		LinkedHashSet<Long> hopIds = new LinkedHashSet<>();
+		for (Hop hop : hops) {
+			if (hop != null)
+				hopIds.add(hop.getHopID());
+		}
+		return hopIds;
+	}
+
+	private static List<Hop> filterHiddenFunctionBoundaryHops(List<Hop> hiddenFunctionBoundaryHops,
+			Set<Long> excludedHopIds) {
+		if (hiddenFunctionBoundaryHops == null || hiddenFunctionBoundaryHops.isEmpty())
+			return Collections.emptyList();
+		if (excludedHopIds == null || excludedHopIds.isEmpty())
+			return hiddenFunctionBoundaryHops;
+		List<Hop> filtered = new ArrayList<>();
+		for (Hop hiddenBoundaryHop : hiddenFunctionBoundaryHops) {
+			if (hiddenBoundaryHop == null || excludedHopIds.contains(hiddenBoundaryHop.getHopID()))
+				continue;
+			filtered.add(hiddenBoundaryHop);
+		}
+		return filtered;
+	}
+
+	private static void appendHiddenFunctionBoundaryHops(List<Hop> hiddenFunctionBoundaryHops,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Set<Long> unRefTwriteSet,
+			Set<Long> functionOutputIds, List<Hop> functionOutputHops,
+			double computeWeight, double networkWeight, double multiplicity,
+			List<Pair<Long, Double>> loopStack) {
+		if (hiddenFunctionBoundaryHops == null || hiddenFunctionBoundaryHops.isEmpty())
+			return;
+		for (Hop hiddenBoundaryHop : hiddenFunctionBoundaryHops) {
+			registerFunctionBoundaryHop(hiddenBoundaryHop, hopCommonTable, unRefTwriteSet,
+				functionOutputIds, functionOutputHops, computeWeight, networkWeight,
+				multiplicity, loopStack, true);
+		}
+	}
+
+	private static void registerFunctionBoundaryHop(Hop boundaryHop,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Set<Long> unRefTwriteSet,
+			Set<Long> functionOutputIds, List<Hop> functionOutputHops,
+			double computeWeight, double networkWeight, double multiplicity,
+			List<Pair<Long, Double>> loopStack, boolean markUnreferenced) {
+		if (boundaryHop == null)
+			return;
+		FederatedPlannerDpMemoTable.HopCommon hopCommon =
+				(hopCommonTable != null) ? hopCommonTable.get(boundaryHop.getHopID()) : null;
+		if (hopCommon == null && hopCommonTable != null) {
+			hopCommon = new FederatedPlannerDpMemoTable.HopCommon(boundaryHop, computeWeight,
+					networkWeight, multiplicity, 0, loopStack);
+			hopCommonTable.put(boundaryHop.getHopID(), hopCommon);
+		}
+		if (markUnreferenced && unRefTwriteSet != null)
+			unRefTwriteSet.add(boundaryHop.getHopID());
+		if (boundaryHop instanceof LiteralOp || functionOutputIds == null || functionOutputHops == null)
+			return;
+		if (functionOutputIds.add(boundaryHop.getHopID()))
+			functionOutputHops.add(boundaryHop);
 	}
 
 	private static FederatedPlannerDpMemoTable.HopCommon resolvePassThroughInputCommon(Hop hop,

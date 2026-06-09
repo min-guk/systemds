@@ -1295,17 +1295,6 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 	}
 
 	public static Instruction prepareRemoveInstruction(String... varNames) {
-		for (String varName : varNames) {
-			if ("Y".equals(varName) || "X".equals(varName)) {
-				System.out.println("[DEBUG] prepareRemoveInstruction for " + varName);
-				for (StackTraceElement el : Thread.currentThread().getStackTrace()) {
-					if (el.getClassName().startsWith("org.apache.sysds")) {
-						System.out.println("  at " + el);
-					}
-				}
-				break;
-			}
-		}
 		StringBuilder sb = InstructionUtils.getStringBuilder();
 		sb.append("CP");
 		sb.append(Lop.OPERAND_DELIMITOR);

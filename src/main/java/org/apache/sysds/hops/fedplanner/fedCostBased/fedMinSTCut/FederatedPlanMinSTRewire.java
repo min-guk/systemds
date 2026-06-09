@@ -701,10 +701,11 @@ public class FederatedPlanMinSTRewire {
 					FunctionOp fop = (FunctionOp) hop;
 					unRefTwriteSet.add(fop.getHopID());
 
-					if (fop.getFunctionType() == FunctionType.DML) {
-						String fkey = fop.getFunctionKey();
-						FunctionStatementBlock fsb = (prog != null)
-								? prog.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName())
+						if (fop.getFunctionType() == FunctionType.DML
+								|| fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
+							String fkey = fop.getFunctionKey();
+							FunctionStatementBlock fsb = (prog != null)
+									? prog.getFunctionStatementBlock(fop.getFunctionNamespace(), fop.getFunctionName())
 								: null;
 						Map<String, List<Hop>> functionTransTable = functionTransTableCache.get(fkey);
 						boolean pushed = false;
@@ -753,12 +754,12 @@ public class FederatedPlanMinSTRewire {
 							}
 						}
 
-							Set<Long> functionOutputIds = new LinkedHashSet<>();
-							List<Hop> functionOutputHops = new ArrayList<>();
-							TransTableRewireUtils.mapFunctionOutputs(
-									fop, fsb, functionTransTable, innerTransTable,
-									outputHop -> {
-										if (outputHop == null)
+								Set<Long> functionOutputIds = new LinkedHashSet<>();
+								List<Hop> functionOutputHops = new ArrayList<>();
+								TransTableRewireUtils.mapFunctionOutputs(
+										fop, fsb, functionTransTable, innerTransTable,
+										outputHop -> {
+											if (outputHop == null)
 											return;
 										unRefTwriteSet.add(outputHop.getHopID());
 										if (outputHop.getDataType() != null
@@ -773,36 +774,43 @@ public class FederatedPlanMinSTRewire {
 											if (outputVertex != null) {
 												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
 												graph.addVertex(outputVertex);
-												visitedHops.add(outputHop.getHopID());
+													visitedHops.add(outputHop.getHopID());
+												}
 											}
-										}
-									});
-							if (!functionOutputHops.isEmpty()) {
-								rewireTable.put(fop.getHopID(), functionOutputHops);
+										});
+								boolean mappedFromFunctionBody = !functionOutputHops.isEmpty();
+								if (!mappedFromFunctionBody
+										&& fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
+									TransTableRewireUtils.mapFunctionOutputs(
+											fop, null, null, innerTransTable,
+											outputHop -> {
+												if (outputHop == null)
+													return;
+												unRefTwriteSet.add(outputHop.getHopID());
+												if (functionOutputIds.add(outputHop.getHopID())) {
+													functionOutputHops.add(outputHop);
+												}
+												if (!graph.contains(outputHop.getHopID())) {
+													Vertex outputVertex = rewireHop(outputHop, rewireTable,
+															outerTransTableList, formerTransTable, innerTransTable,
+															privacyConstraintMap, graph, fTypeMap, fedMap,
+															unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
+													if (outputVertex != null) {
+														outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
+														graph.addVertex(outputVertex);
+														visitedHops.add(outputHop.getHopID());
+													}
+												}
+											});
+								}
+								if (!functionOutputHops.isEmpty()) {
+									rewireTable.put(fop.getHopID(), functionOutputHops);
+								}
+								else {
+									rewireTable.remove(fop.getHopID());
+								}
 							}
-							else {
-								rewireTable.remove(fop.getHopID());
-							}
-						} else if (fop.getFunctionType() == FunctionType.MULTIRETURN_BUILTIN) {
-							TransTableRewireUtils.mapFunctionOutputs(
-									fop, null, null, innerTransTable,
-									outputHop -> {
-										if (outputHop == null)
-											return;
-										unRefTwriteSet.add(outputHop.getHopID());
-										if (!graph.contains(outputHop.getHopID())) {
-											Vertex outputVertex = rewireHop(outputHop, rewireTable, outerTransTableList,
-													formerTransTable, innerTransTable, privacyConstraintMap, graph,
-													fTypeMap, fedMap, unRefTwriteSet, injectedIds, loopCtxStack, oracleFacade);
-											if (outputVertex != null) {
-												outputVertex.setMetadata(computeWeight, networkWeight, loopStack);
-												graph.addVertex(outputVertex);
-												visitedHops.add(outputHop.getHopID());
-											}
-										}
-									});
 						}
-					}
 
 				double hopComputeWeight = computeWeight;
 				double hopNetworkWeight = networkWeight;
@@ -1253,14 +1261,27 @@ public class FederatedPlanMinSTRewire {
 					caps.allowCP_LOUT |= localAlternativeCaps.allowCP_LOUT;
 					caps.allowCP_FOUT |= localAlternativeCaps.allowCP_FOUT;
 				}
-				ExecPlacementCaps federatedAlternativeCaps = deriveFederatedAlternativeCaps(
+				boolean baseAllowsFederated = caps.allowFED_LOUT || caps.allowFED_FOUT;
+				FederatedAlternativeDecision federatedAlternative = deriveFederatedAlternativeDecision(
 					hop, privacy, collectedHopList, oracleInputFTypes, oracleFacade, rewireTable, fTypeMap);
-					if (federatedAlternativeCaps != null) {
-						caps.allowFED_LOUT |= federatedAlternativeCaps.allowFED_LOUT;
-						caps.allowFED_FOUT |= federatedAlternativeCaps.allowFED_FOUT;
-						if (caps.fedFoutMode == ExecPlacementCaps.FedFoutMode.DISABLED
+				ExecPlacementCaps federatedAlternativeCaps =
+					(federatedAlternative != null) ? federatedAlternative.caps : null;
+				if (federatedAlternativeCaps != null) {
+					caps.allowFED_LOUT |= federatedAlternativeCaps.allowFED_LOUT;
+					caps.allowFED_FOUT |= federatedAlternativeCaps.allowFED_FOUT;
+					if (caps.fedFoutMode == ExecPlacementCaps.FedFoutMode.DISABLED
 							&& federatedAlternativeCaps.allowFED_FOUT) {
 						caps.fedFoutMode = federatedAlternativeCaps.fedFoutMode;
+					}
+					// If FED feasibility only becomes available via promoted input hints, keep the
+					// promoted FED output FType alongside the merged caps. Otherwise the boolean caps
+					// would expose FED candidates while the vertex retains an unrelated local-only
+					// oracle FType (e.g., COL), causing downstream MinST cost/compatibility to drift
+					// from DP even though the valid promoted FED path is FULL.
+					if (!baseAllowsFederated && federatedAlternative.promotedFType != null) {
+						fType = federatedAlternative.promotedFType;
+						cpFoutType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
+							hop, fType, rewireTable, numWorkersEstimate);
 					}
 				}
 				Map<Long, FType> oracleAlignedInputFTypeMap =
@@ -1632,7 +1653,7 @@ public class FederatedPlanMinSTRewire {
 		}
 	}
 
-	private static ExecPlacementCaps deriveFederatedAlternativeCaps(Hop hop, Privacy privacy,
+	private static FederatedAlternativeDecision deriveFederatedAlternativeDecision(Hop hop, Privacy privacy,
 			List<Hop> inputHops, List<FType> oracleInputFTypes,
 			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable,
 			Map<Long, FType> fTypeMap) {
@@ -1642,6 +1663,7 @@ public class FederatedPlanMinSTRewire {
 			return null;
 
 		ExecPlacementCaps mergedFedCaps = null;
+		FType promotedFedFType = null;
 		for (int i = 0; i < inputHops.size(); i++) {
 			Hop input = inputHops.get(i);
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
@@ -1687,13 +1709,38 @@ public class FederatedPlanMinSTRewire {
 						&& promotedCaps.allowFED_FOUT) {
 					mergedFedCaps.fedFoutMode = promotedCaps.fedFoutMode;
 				}
+				promotedFedFType = preferPromotedFederatedFType(promotedFedFType, promotedFType);
 			}
 			catch (DMLRuntimeException ex) {
 				// Best-effort candidate expansion: ignore invalid promoted hints.
 			}
 		}
 		return (mergedFedCaps != null && (mergedFedCaps.allowFED_LOUT || mergedFedCaps.allowFED_FOUT))
-			? mergedFedCaps : null;
+			? new FederatedAlternativeDecision(mergedFedCaps, promotedFedFType) : null;
+	}
+
+	private static FType preferPromotedFederatedFType(FType current, FType candidate) {
+		if (candidate == null)
+			return current;
+		if (current == null || current == candidate)
+			return candidate;
+		if (isFullLikeFType(candidate) && !isFullLikeFType(current))
+			return candidate;
+		return current;
+	}
+
+	private static boolean isFullLikeFType(FType fType) {
+		return fType == FType.FULL || fType == FType.BROADCAST;
+	}
+
+	private static final class FederatedAlternativeDecision {
+		private final ExecPlacementCaps caps;
+		private final FType promotedFType;
+
+		private FederatedAlternativeDecision(ExecPlacementCaps caps, FType promotedFType) {
+			this.caps = caps;
+			this.promotedFType = promotedFType;
+		}
 	}
 
 	private static ExecPlacementCaps buildLocalOnlyCaps(Hop hop, Privacy privacy, FType fType,

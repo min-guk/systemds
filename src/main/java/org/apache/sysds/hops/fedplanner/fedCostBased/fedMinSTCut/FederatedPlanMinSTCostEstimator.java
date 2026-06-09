@@ -273,6 +273,43 @@ public class FederatedPlanMinSTCostEstimator {
 			return;
 		}
 
+		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
+		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
+			List<Hop> transChildHops = (rewireTable != null) ? rewireTable.get(hopID) : null;
+			if (transChildHops != null && !transChildHops.isEmpty()) {
+				Set<Long> seenChildIds = new HashSet<>();
+				for (Hop childHop : childHops) {
+					if (childHop != null)
+						seenChildIds.add(childHop.getHopID());
+				}
+				for (Hop transChildHop : transChildHops) {
+					if (transChildHop == null) {
+						continue;
+					}
+					if (transChildHop instanceof DataOp
+							&& ((DataOp) transChildHop).getOp() == Types.OpOpData.TRANSIENTREAD
+							&& Objects.equals(hop.getName(), transChildHop.getName())) {
+						continue;
+					}
+					if (seenChildIds.add(transChildHop.getHopID()))
+						childHops.add(transChildHop);
+				}
+			}
+		}
+		appendFunctionOutputHopsIfNeeded(hop, rewireTable, childHops);
+		Hop explicitFunctionOutputSourceHop = (hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD)
+				? FederatedPlannerUtils.getPreferredMultiReturnFunctionOutputSourceForTransientRead(
+						(DataOp) hop, childHops)
+				: null;
+		if (explicitFunctionOutputSourceHop != null) {
+			FederatedPlannerUtils.propagateMultiReturnFunctionOutputStatsToTransientRead(
+					(DataOp) hop, explicitFunctionOutputSourceHop);
+		}
+		vertex.setSourceOutputMemEstimateOverride(explicitFunctionOutputSourceHop != null
+				? FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(hop, explicitFunctionOutputSourceHop)
+				: -1.0);
+
 		vertex.setNumParents(estimateNumParents(hop, rewireTable));
 		computeVertexCost(vertex, graph.getNumOfWorkers());
 
@@ -315,50 +352,23 @@ public class FederatedPlanMinSTCostEstimator {
 			}
 		}
 
-		List<Hop> childHops = (hop.getInput() != null) ? new ArrayList<>(hop.getInput()) : new ArrayList<>();
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			List<Hop> transChildHops = (rewireTable != null) ? rewireTable.get(hopID) : null;
-			if (transChildHops != null && !transChildHops.isEmpty()) {
-				Set<Long> seenChildIds = new HashSet<>();
-				for (Hop childHop : childHops) {
-					if (childHop != null) {
-						seenChildIds.add(childHop.getHopID());
-					}
-				}
-				for (Hop transChildHop : transChildHops) {
-					if (transChildHop == null) {
-						continue;
-					}
-					if (transChildHop instanceof DataOp
-							&& ((DataOp) transChildHop).getOp() == Types.OpOpData.TRANSIENTREAD
-							&& Objects.equals(hop.getName(), transChildHop.getName())) {
-						continue;
-					}
-					if (seenChildIds.add(transChildHop.getHopID())) {
-						childHops.add(transChildHop);
-				}
-			}
-		}
-		appendFunctionOutputHopsIfNeeded(hop, rewireTable, childHops);
-
 		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, rewireTable);
-			if (tWriteChildIds.isEmpty()) {
-				tWriteChildIds = collectTransientWriteByName(hop, graph);
+		if (tWriteChildIds.isEmpty()) {
+			tWriteChildIds = collectTransientWriteByName(hop, graph);
+		}
+		if (!tWriteChildIds.isEmpty()) {
+			if (vertex.getTransientWriteHopId() == null) {
+				vertex.setTransientWriteHopId(tWriteChildIds.iterator().next());
 			}
-			if (!tWriteChildIds.isEmpty()) {
-				if (vertex.getTransientWriteHopId() == null) {
-					vertex.setTransientWriteHopId(tWriteChildIds.iterator().next());
+			for (Long twHopId : tWriteChildIds) {
+				if (twHopId == null) {
+					continue;
 				}
-				for (Long twHopId : tWriteChildIds) {
-					if (twHopId == null) {
-						continue;
-					}
-					Vertex twVertex = graph.getVertex(twHopId);
-					if (twVertex == null) {
-						continue;
-					}
-					graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
+				Vertex twVertex = graph.getVertex(twHopId);
+				if (twVertex == null) {
+					continue;
 				}
+				graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
 			}
 		}
 		for (int i = 0; i < childHops.size(); i++) {
@@ -435,8 +445,13 @@ public class FederatedPlanMinSTCostEstimator {
 		double uploadCostWithoutWeight = 0;
 		double cpUploadCostWithoutWeight = 0;
 		double downloadCostWithoutWeight = 0;
-		double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-		double uploadMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
+		double sourceOutputMemEstimateOverride = vertex.getSourceOutputMemEstimateOverride();
+		double outputMemEstimate = sourceOutputMemEstimateOverride > 0.0
+				? sourceOutputMemEstimateOverride
+				: FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		double uploadMemEstimate = sourceOutputMemEstimateOverride > 0.0
+				? sourceOutputMemEstimateOverride
+				: FederatedCostModel.getEffectiveUploadMemEstimate(hop);
 		FType cpFoutType = vertex.getCpFoutDataType();
 		if (cpFoutType == null) {
 			cpFoutType = vertex.getDataType();
@@ -531,10 +546,38 @@ public class FederatedPlanMinSTCostEstimator {
 				matches.add(candidate.getHopID());
 			}
 		}
-		if (matches.isEmpty()) {
-			matches.addAll(fallback);
+		Set<Long> preferred = matches.isEmpty() ? fallback : matches;
+		Set<Long> dimCompatible = new HashSet<>();
+		for (Hop candidate : candidates) {
+			if (!(candidate instanceof DataOp)
+					|| ((DataOp) candidate).getOp() != Types.OpOpData.TRANSIENTWRITE) {
+				continue;
+			}
+			if (!preferred.contains(candidate.getHopID())) {
+				continue;
+			}
+			if (dimsCompatible(hop.getDim1(), hop.getDim2(), candidate.getDim1(), candidate.getDim2())) {
+				dimCompatible.add(candidate.getHopID());
+			}
 		}
-		return matches;
+		if (!dimCompatible.isEmpty()) {
+			preferred = dimCompatible;
+		}
+		List<Hop> preferredHops = new ArrayList<>();
+		for (Hop candidate : candidates) {
+			if (!(candidate instanceof DataOp)
+					|| ((DataOp) candidate).getOp() != Types.OpOpData.TRANSIENTWRITE)
+				continue;
+			if (preferred.contains(candidate.getHopID()))
+				preferredHops.add(candidate);
+		}
+		List<Hop> dominating = TransTableRewireUtils.preferDominatingTransientWrites(preferredHops, (DataOp) hop);
+		if (dominating == preferredHops)
+			return preferred;
+		Set<Long> dominatingIds = new HashSet<>();
+		for (Hop dominatingHop : dominating)
+			dominatingIds.add(dominatingHop.getHopID());
+		return dominatingIds.isEmpty() ? preferred : dominatingIds;
 	}
 
 	private static Set<Long> collectTransientWriteByName(Hop hop, FederatedPlanMinSTGraph graph) {

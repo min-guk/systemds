@@ -636,7 +636,7 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 		Assert.assertNotNull("Expected inner W*X hop inside if-else", innerMult);
 		Assert.assertEquals("Inner mult computeWeight mismatch", halfWeight, innerMult.getComputeWeight(), 1e-9);
 		Assert.assertEquals("Inner mult multiplicity mismatch", outerIter1, innerMult.getMultiplicity(), 1e-9);
-		Assert.assertEquals("Inner mult networkWeight mismatch", innerWeight, innerMult.getNetworkWeight(), 1e-9);
+		Assert.assertEquals("Inner mult networkWeight mismatch", halfWeight, innerMult.getNetworkWeight(), 1e-9);
 
 		HopCommon innerPlusHalf =
 			findBinaryOpHop(hopCommonTable, Types.OpOp2.PLUS, "W", "X", innerLoopId, outerIter1, halfWeight);

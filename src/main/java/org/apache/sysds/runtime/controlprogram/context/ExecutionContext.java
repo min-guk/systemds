@@ -85,7 +85,8 @@ public class ExecutionContext {
 			|| "C_new".equals(varName) || "C".equals(varName);
 	}
 	private static final String TRACE_VAR_NAME =
-		System.getProperty("sysds.trace.var");
+		System.getProperty("sysds.trace.var",
+			System.getenv("SYSDS_TRACE_VAR"));
 
 	//program reference (e.g., function repository)
 	protected Program _prog = null;
@@ -1022,8 +1023,13 @@ public class ExecutionContext {
 	}
 
 	private static boolean shouldTraceVar(String name) {
-		return TRACE_VAR_NAME != null && !TRACE_VAR_NAME.isEmpty()
-			&& TRACE_VAR_NAME.equals(name);
+		if (TRACE_VAR_NAME == null || TRACE_VAR_NAME.isEmpty())
+			return false;
+		for (String candidate : TRACE_VAR_NAME.split(",")) {
+			if (name.equals(candidate.trim()))
+				return true;
+		}
+		return false;
 	}
 
 	private void traceVarUpdate(String name, Data val, String event) {

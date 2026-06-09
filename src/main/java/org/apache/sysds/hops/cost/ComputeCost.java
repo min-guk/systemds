@@ -31,6 +31,7 @@ import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
@@ -195,6 +196,28 @@ public class ComputeCost {
 					LOG.warn("Cost model not "
 						+ "implemented yet for: "+((DnnOp)currentHop).getOp());
 			}
+		}
+		else if( currentHop instanceof QuaternaryOp) {
+			long outputSize = getSize(currentHop);
+			if( outputSize <= 0 )
+				outputSize = 1;
+			double totalFlops;
+			switch( ((QuaternaryOp)currentHop).getOp() ) {
+				case WSLOSS:
+				case WDIVMM:
+				case WCEMM:
+					totalFlops = 4d * getSize(currentHop.getInput().get(0));
+					break;
+				case WSIGMOID:
+				case WUMM:
+					totalFlops = 3d * getSize(currentHop.getInput().get(0));
+					break;
+				default:
+					LOG.warn("Cost model not "
+						+ "implemented yet for: "+((QuaternaryOp)currentHop).getOp());
+					totalFlops = outputSize;
+			}
+			costs = totalFlops / outputSize;
 		}
 		else if( currentHop instanceof AggBinaryOp) {
 			//outer product template w/ matrix-matrix

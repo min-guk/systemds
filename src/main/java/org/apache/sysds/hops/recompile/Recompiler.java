@@ -583,8 +583,8 @@ public class Recompiler {
 				continue;
 			HopState hs = new HopState(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput(), signatureOf(hop));
 			states.put(hop.getHopID(), hs);
-			// Debug aid for diagnosing recompile-time plan drift on key transient vars.
-			if (LOG_RECOMPILE_NEW_HOPS && "X_samples".equals(hop.getName())) {
+			// Debug aid for diagnosing recompile-time plan drift on key transient vars / PCA hot path hops.
+			if (LOG_RECOMPILE_NEW_HOPS && shouldDebugRecompileHop(hop.getName())) {
 				System.out.println("[RecompileBaseHopState] hopID=" + hop.getHopID()
 					+ " name=" + hop.getName()
 					+ " op=" + hop.getOpString()
@@ -659,6 +659,20 @@ public class Recompiler {
 					hop.setForcedExecType(state.forcedExecType);
 				if (state.fedOut != null)
 					hop.setFederatedOutput(state.fedOut);
+				if (LOG_RECOMPILE_NEW_HOPS && shouldDebugRecompileHop(hop.getName())) {
+					System.out.println("[RecompileRestoreHop] hopID=" + hop.getHopID()
+						+ " name=" + hop.getName()
+						+ " op=" + hop.getOpString()
+						+ " type=" + hop.getClass().getSimpleName()
+						+ " exec=" + hop.getExecType()
+						+ " forced=" + hop.getForcedExecType()
+						+ " fedOut=" + hop.getFederatedOutput()
+						+ " sig=" + signatureOf(hop)
+						+ " matchedSig=" + state.signature
+						+ " stateExec=" + state.execType
+						+ " stateForced=" + state.forcedExecType
+						+ " stateFedOut=" + state.fedOut);
+				}
 			}
 			List<Hop> inputs = hop.getInput();
 			if (inputs != null) {
@@ -698,6 +712,19 @@ public class Recompiler {
 		System.out.println("[RecompileNewHop] count=" + newHops.size()
 			+ " sbId=" + sbId + " pred=" + pred + " tid=" + tid);
 		for (Hop hop : newHops) {
+			HopState matchedState = null;
+			if (baseStates != null) {
+				matchedState = baseStates.get(hop.getHopID());
+				if (matchedState == null) {
+					String sig = signatureOf(hop);
+					for (HopState candidate : baseStates.values()) {
+						if (candidate != null && candidate.signature != null && candidate.signature.equals(sig)) {
+							matchedState = candidate;
+							break;
+						}
+					}
+				}
+			}
 			System.out.println("[RecompileNewHop] hopID=" + hop.getHopID()
 				+ " name=" + String.valueOf(hop.getName())
 				+ " op=" + hop.getOpString()
@@ -705,9 +732,30 @@ public class Recompiler {
 				+ " exec=" + hop.getExecType()
 				+ " forced=" + hop.getForcedExecType()
 				+ " fedOut=" + hop.getFederatedOutput()
+				+ " sig=" + signatureOf(hop)
+				+ " matchedExec=" + (matchedState != null ? matchedState.execType : null)
+				+ " matchedForced=" + (matchedState != null ? matchedState.forcedExecType : null)
+				+ " matchedFedOut=" + (matchedState != null ? matchedState.fedOut : null)
+				+ " matchedSig=" + (matchedState != null ? matchedState.signature : null)
 				+ " dataType=" + hop.getDataType()
 				+ " valueType=" + hop.getValueType()
 				+ " dims=" + hop.getDim1() + "x" + hop.getDim2());
+		}
+	}
+
+	private static boolean shouldDebugRecompileHop(String name) {
+		if (name == null || name.isEmpty())
+			return false;
+		switch (name) {
+			case "X_samples":
+			case "X_samples_sq_norms":
+			case "XReduced":
+			case "Components":
+			case "Mout":
+			case "X":
+				return true;
+			default:
+				return false;
 		}
 	}
 

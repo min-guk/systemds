@@ -105,6 +105,51 @@ public class FederatedPlanTReadWriteConsistencyTest {
 	}
 
 	@Test
+	public void testDpTReadPrefersDominatingLineAwareTWrite() throws Exception {
+		DataOp op1 = createTransientRead("op1");
+		DataOp op2 = createTransientRead("op2");
+		DataOp tw1 = createTransientWrite("X", op1);
+		DataOp tw2 = createTransientWrite("X", op2);
+		DataOp tr = createTransientRead("X");
+		tw1.setBeginLine(10);
+		tw2.setBeginLine(20);
+		tr.setBeginLine(30);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		registerHopCommon(hopCommonTable, op1);
+		registerHopCommon(hopCommonTable, op2);
+		registerHopCommon(hopCommonTable, tw1);
+		registerHopCommon(hopCommonTable, tw2);
+		registerHopCommon(hopCommonTable, tr);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addSinglePlan(memoTable, hopCommonTable.get(op1.getHopID()),
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW);
+		addSinglePlan(memoTable, hopCommonTable.get(op2.getHopID()),
+			FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST);
+
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		rewireTable.put(tr.getHopID(), Arrays.asList(tw1, tw2));
+		rewireTable.put(tw1.getHopID(), Collections.singletonList(tr));
+		rewireTable.put(tw2.getHopID(), Collections.singletonList(tr));
+
+		Map<Long, Privacy> privacyMap = new HashMap<>();
+		privacyMap.put(tw1.getHopID(), Privacy.PUBLIC);
+		privacyMap.put(tw2.getHopID(), Privacy.PUBLIC);
+		privacyMap.put(tr.getHopID(), Privacy.PUBLIC);
+
+		OracleFacade oracleFacade = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
+		Set<Long> unref = new HashSet<>();
+		invokeEnumerateHop(tw1, memoTable, hopCommonTable, rewireTable, privacyMap, unref, 2, oracleFacade);
+		invokeEnumerateHop(tw2, memoTable, hopCommonTable, rewireTable, privacyMap, unref, 2, oracleFacade);
+		invokeEnumerateHop(tr, memoTable, hopCommonTable, rewireTable, privacyMap, unref, 2, oracleFacade);
+
+		FedPlan trFout = memoTable.getFedPlanAfterPrune(tr.getHopID(), FederatedOutput.FOUT);
+		Assert.assertNotNull("Expected FOUT plan for line-aware TREAD", trFout);
+		Assert.assertEquals("Expected latest dominating TWRITE FType", FType.BROADCAST, trFout.getFType());
+	}
+
+	@Test
 	public void testMinSTAddsHardConstraintEdgesForMultipleTWrites() throws Exception {
 		DataOp op1 = createTransientRead("op1");
 		DataOp op2 = createTransientRead("op2");

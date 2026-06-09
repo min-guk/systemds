@@ -31,6 +31,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,6 +61,7 @@ import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -152,40 +154,56 @@ public class FederatedPlannerDpCostEstimator {
 
 			childCumulativeCost[currentIndex][0] = computeCumulativeCostShareForParent(
 					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan);
-			childCumulativeCost[currentIndex][1] = computeCumulativeCostShareForParent(
-					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan);
+			childCumulativeCost[currentIndex][1] = computeStableTransientReadFoutCumulativeShareForParent(
+					childFOutFedPlan, memoTable);
 			// If the child produces FOUT via CP execution (CP/FOUT), its local materialization
 			// is already available for CP parents. Charging a FED->CP download here would
 			// incorrectly penalize CP/FOUT candidates and can force DP to keep intermediates
 			// local (LOUT) even when CP/FOUT would avoid expensive WAN refed forwarding.
 			double downloadCost;
-			if (childFOutFedPlan.getExecType() == ExecType.CP) {
+			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop)) {
 				downloadCost = 0.0;
 			}
-			else {
-				double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-				downloadCost = computeDownloadNetworkCost(transferMem);
+			else if (childFOutFedPlan.getExecType() == ExecType.CP) {
+				downloadCost = 0.0;
 			}
-			double uploadCost = computeUploadCostWithFallback(
-					childHop, parentHop, childLOutFedPlan.getFType(), numOfWorkers);
-			childForwardingCostToCP[currentIndex] = computeFoutToCpDownloadShareForParent(
-					downloadCost, childFOutFedPlan, hopCommon);
-			childForwardingCostToFED[currentIndex] = computeForwardingCostShareForParent(
+				else
+					downloadCost = computeDownloadNetworkCost(
+						FederatedCostModel.getEffectiveOutputMemEstimate(childHop),
+						childFOutFedPlan.getFType(), numOfWorkers);
+				FType localUploadType = childLOutFedPlan.getCpFoutTypeOrFType();
+				double uploadCost = computeUploadCostWithFallback(
+						childHop, parentHop, localUploadType, numOfWorkers);
+				childForwardingCostToCP[currentIndex] = computeParentChildFoutToCpDownloadShare(
+						parentHop, downloadCost, childFOutFedPlan, hopCommon, memoTable);
+				childForwardingCostToFED[currentIndex] = computeForwardingCostShareForParent(
 					uploadCost, childLOutFedPlan, hopCommon);
 			double refedForwardingCost = 0.0;
-			if (childFOutFedPlan.getExecType() == ExecType.CP) {
-				double cpFoutUploadCost = computeUploadCostWithFallback(
-						childHop, parentHop, childFOutFedPlan.getFType(), numOfWorkers);
-				refedForwardingCost = computeForwardingCostShareForParent(
-						cpFoutUploadCost, childFOutFedPlan, hopCommon);
-			}
-			else if (isTransientFedBoundary(childHop) || isTransientFedBoundary(parentHop)) {
-				double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-				double refedCost = computeRefedNetworkCost(transferMem, childFOutFedPlan.getFType(), numOfWorkers);
-				refedForwardingCost = computeForwardingCostShareForParent(
-						refedCost, childFOutFedPlan, hopCommon);
-			}
-			childForwardingCostFOutToFED[currentIndex] = refedForwardingCost;
+			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop)) {
+				refedForwardingCost = 0.0;
+				}
+				else if (parentHop instanceof DataOp
+					&& ((DataOp) parentHop).getOp() == Types.OpOpData.TRANSIENTWRITE) {
+					refedForwardingCost = 0.0;
+				}
+				else if (childFOutFedPlan.getExecType() == ExecType.CP) {
+					FType cpUploadType = childFOutFedPlan.getCpFoutTypeOrFType();
+					double cpFoutUploadCost = computeUploadCostWithFallback(
+							childHop, parentHop, cpUploadType, numOfWorkers);
+					refedForwardingCost = computeForwardingCostShareForParent(
+							cpFoutUploadCost, childFOutFedPlan, hopCommon);
+				}
+				else if (isStableFederatedTransientProducerForLocalMaterialization(
+						childFOutFedPlan, memoTable, new HashSet<>())) {
+					refedForwardingCost = 0.0;
+				}
+				else if (shouldChargeTransientFoutToFedRefed(childHop, parentHop)) {
+					double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
+					double refedCost = computeRefedNetworkCost(transferMem, childFOutFedPlan.getFType(), numOfWorkers);
+					refedForwardingCost = computeFoutToFedForwardingShareForParent(
+							refedCost, childFOutFedPlan, hopCommon, memoTable);
+				}
+				childForwardingCostFOutToFED[currentIndex] = refedForwardingCost;
 			currentIndex++;
 		}
 
@@ -200,13 +218,14 @@ public class FederatedPlannerDpCostEstimator {
 				throw new DMLRuntimeException("Missing LOUT federated plan for child hop " + childHopID + " ("
 						+ childHop.getOpString() + ") while processing parent " + parentHop.getHopID() + " ("
 						+ parentHop.getOpString() + ")");
-			}
-			lOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
-					childLOutFedPlan.getCumulativeCost(), childLOutFedPlan));
-			double uploadCost = computeUploadCostWithFallback(
-					childHop, parentHop, childLOutFedPlan.getFType(), numOfWorkers);
-			lOUTOnlychildForwardingCostToFED.add(computeForwardingCostShareForParent(
-					uploadCost, childLOutFedPlan, hopCommon));
+				}
+				lOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
+						childLOutFedPlan.getCumulativeCost(), childLOutFedPlan));
+				FType localUploadType = childLOutFedPlan.getCpFoutTypeOrFType();
+				double uploadCost = computeUploadCostWithFallback(
+						childHop, parentHop, localUploadType, numOfWorkers);
+				lOUTOnlychildForwardingCostToFED.add(computeForwardingCostShareForParent(
+						uploadCost, childLOutFedPlan, hopCommon));
 		}
 
 		for (int i = 0; i < fOUTOnlyinputHops.size(); i++) {
@@ -221,32 +240,45 @@ public class FederatedPlannerDpCostEstimator {
 						+ childHop.getOpString() + ") while processing parent " + parentHop.getHopID() + " ("
 						+ parentHop.getOpString() + ")");
 			}
-			fOUTOnlychildCumulativeCost.add(computeCumulativeCostShareForParent(
-					childFOutFedPlan.getCumulativeCost(), childFOutFedPlan));
+			fOUTOnlychildCumulativeCost.add(computeStableTransientReadFoutCumulativeShareForParent(
+					childFOutFedPlan, memoTable));
 			double downloadCost;
-			if (childFOutFedPlan.getExecType() == ExecType.CP) {
+			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop)) {
 				downloadCost = 0.0;
 			}
-			else {
-				double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-				downloadCost = computeDownloadNetworkCost(transferMem);
+			else if (childFOutFedPlan.getExecType() == ExecType.CP) {
+				downloadCost = 0.0;
 			}
-			fOUTOnlychildForwardingCostToCP.add(computeFoutToCpDownloadShareForParent(
-					downloadCost, childFOutFedPlan, hopCommon));
+			else
+				downloadCost = computeDownloadNetworkCost(
+					FederatedCostModel.getEffectiveOutputMemEstimate(childHop),
+					childFOutFedPlan.getFType(), numOfWorkers);
+			fOUTOnlychildForwardingCostToCP.add(computeParentChildFoutToCpDownloadShare(
+					parentHop, downloadCost, childFOutFedPlan, hopCommon, memoTable));
 			double refedForwardingCost = 0.0;
-			if (childFOutFedPlan.getExecType() == ExecType.CP) {
-				double cpFoutUploadCost = computeUploadCostWithFallback(
-						childHop, parentHop, childFOutFedPlan.getFType(), numOfWorkers);
-				refedForwardingCost = computeForwardingCostShareForParent(
-						cpFoutUploadCost, childFOutFedPlan, hopCommon);
-			}
-			else if (isTransientFedBoundary(childHop) || isTransientFedBoundary(parentHop)) {
-				double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
-				double refedCost = computeRefedNetworkCost(transferMem, childFOutFedPlan.getFType(), numOfWorkers);
-				refedForwardingCost = computeForwardingCostShareForParent(
-						refedCost, childFOutFedPlan, hopCommon);
-			}
-			fOUTOnlychildForwardingCostToFED.add(refedForwardingCost);
+			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop)) {
+				refedForwardingCost = 0.0;
+				}
+				else if (childFOutFedPlan.getExecType() == ExecType.CP) {
+					FType cpUploadType = childFOutFedPlan.getCpFoutTypeOrFType();
+					double cpFoutUploadCost = computeUploadCostWithFallback(
+							childHop, parentHop, cpUploadType, numOfWorkers);
+					refedForwardingCost = computeForwardingCostShareForParent(
+							cpFoutUploadCost, childFOutFedPlan, hopCommon);
+				}
+				else if (parentHop instanceof DataOp
+					&& ((DataOp) parentHop).getOp() == Types.OpOpData.TRANSIENTWRITE
+					&& isStableFederatedTransientProducerForLocalMaterialization(
+						childFOutFedPlan, memoTable, new HashSet<>())) {
+					refedForwardingCost = 0.0;
+				}
+				else if (shouldChargeTransientFoutToFedRefed(childHop, parentHop)) {
+					double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
+					double refedCost = computeRefedNetworkCost(transferMem, childFOutFedPlan.getFType(), numOfWorkers);
+					refedForwardingCost = computeFoutToFedForwardingShareForParent(
+							refedCost, childFOutFedPlan, hopCommon, memoTable);
+				}
+				fOUTOnlychildForwardingCostToFED.add(refedForwardingCost);
 		}
 	}
 
@@ -255,6 +287,29 @@ public class FederatedPlannerDpCostEstimator {
 			return false;
 		Types.OpOpData op = ((DataOp) hop).getOp();
 		return op == Types.OpOpData.TRANSIENTREAD || op == Types.OpOpData.TRANSIENTWRITE;
+	}
+
+	static boolean shouldChargeTransientFoutToFedRefed(Hop childHop, Hop parentHop) {
+		// Charge FOUT->FED refed only on transient boundaries that represent a real
+		// runtime materialization / handoff:
+		//   - any transient child consumed by a FED parent,
+		//   - producer -> TRANSIENTWRITE boundaries for non-anchor producers.
+		//
+		// Bare FEDERATED anchors flowing into TRANSIENTWRITE remain metadata pass-throughs
+		// and must not pay another refed/upload share. Direct FEDERATED/FedInit source
+		// -> TRANSIENTREAD edges are also metadata aliases rather than runtime refed
+		// handoffs, so they stay free here; stable TRANSIENTREAD continuations can still
+		// be zeroed later by computeFoutToFedForwardingShareForParent(...).
+		if (isTransientFedBoundary(childHop))
+			return true;
+		if (!(parentHop instanceof DataOp))
+			return false;
+		Types.OpOpData parentOp = ((DataOp) parentHop).getOp();
+		if (parentOp == Types.OpOpData.TRANSIENTWRITE)
+			return childHop == null || !childHop.isFederatedDataOp();
+		if (parentOp == Types.OpOpData.TRANSIENTREAD)
+			return false;
+		return false;
 	}
 
 	/**
@@ -279,7 +334,7 @@ public class FederatedPlannerDpCostEstimator {
 				// TRead may have a different FedOutType from its parent, so calculate
 				// forwarding cost
 				hopCommon.setForwardingCost(computeDownloadNetworkCost(
-					FederatedCostModel.getEffectiveUploadMemEstimate(hopCommon.hopRef)));
+					FederatedCostModel.getEffectiveOutputMemEstimate(hopCommon.hopRef)));
 				return 0;
 			}
 		}
@@ -287,7 +342,7 @@ public class FederatedPlannerDpCostEstimator {
 		double selfCost = hopCommon.getComputeWeight() * hopCommon.getMultiplicity()
 				* FederatedCostModel.computeOpCostWithFallback(hopCommon.hopRef);
 		double forwardingCost = computeDownloadNetworkCost(
-			FederatedCostModel.getEffectiveUploadMemEstimate(hopCommon.hopRef));
+			FederatedCostModel.getEffectiveOutputMemEstimate(hopCommon.hopRef));
 
 		hopCommon.setSelfCost(selfCost);
 		hopCommon.setForwardingCost(forwardingCost);
@@ -299,6 +354,10 @@ public class FederatedPlannerDpCostEstimator {
 		return FederatedCostModel.computeDownloadNetworkCost(memSize);
 	}
 
+	static double computeDownloadNetworkCost(double memSize, FType fType, int numWorkers) {
+		return FederatedCostModel.computeDownloadNetworkCost(memSize, fType, numWorkers);
+	}
+
 	static double computeUploadNetworkCost(double memSize, FType fType, int numWorkers) {
 		return FederatedCostModel.computeUploadNetworkCost(memSize, fType, numWorkers);
 	}
@@ -308,6 +367,8 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	static double computeUploadCostWithFallback(Hop childHop, Hop parentHop, FType uploadType, int numWorkers) {
+		if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop))
+			return 0.0;
 		// Align forwarding-cost estimation with runtime CP->FOUT materialization policy.
 		//
 		// When the global anchor key implies ROW/COL partitioning but the forwarded local matrix's
@@ -372,8 +433,76 @@ public class FederatedPlannerDpCostEstimator {
 			FederatedPlannerDpMemoTable.FedPlan childPlan) {
 		if (childPlan == null || totalCost == 0.0)
 			return 0.0;
+		if (shouldKeepFullCalleeCostForFunctionOutputParents(childPlan))
+			return totalCost;
 		int numParents = Math.max(1, childPlan.getNumOfParents());
 		return totalCost / numParents;
+	}
+
+	static double computeStableTransientReadFoutCumulativeShareForParent(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null)
+			return 0.0;
+		Hop childHop = childPlan.getHopRef();
+		boolean trace = FederatedPlannerTrace.shouldTrace(childHop);
+		double share = computeCumulativeCostShareForParent(childPlan.getCumulativeCost(), childPlan);
+		double materializationFactor = computeStableTransientReadLocalMaterializationFactor(childPlan, memoTable);
+		if (materializationFactor <= 1) {
+			if (trace) {
+				FederatedPlannerTrace.log(childHop, "DP-StableTRShare", String.format(Locale.ROOT,
+					"factor=%.6f share=%.6f forwardingShare=0.000000 embeddedForwardingShare=0.000000 result=%.6f",
+					materializationFactor, share, share));
+			}
+			return share;
+		}
+		double forwardingShare = computeCumulativeCostShareForParent(childPlan.getForwardingCost(), childPlan);
+		// Some stable FED-input TRANSIENTREAD plans do not embed their boundary-forwarding cost
+		// inside cumulativeCost (the forwarding stays on the edge accounting side and is handled
+		// separately via FOUT->CP materialization sharing). In those cases, subtracting the full
+		// forwarding share here drives the child cumulative share negative and makes CP-local
+		// parent variants appear artificially cheap on visible federated-input chains such as
+		// PCA X -> b(-) -> b(/) -> TWrite X.
+		//
+		// Only amortize the forwarding portion that is actually represented inside the cumulative
+		// share. This preserves the intended sharing when cumulativeCost includes the forwarding
+		// term, while avoiding negative exact-hop costs when it does not.
+		double embeddedForwardingShare = Math.min(Math.max(0.0, share), Math.max(0.0, forwardingShare));
+		double result = share - embeddedForwardingShare + embeddedForwardingShare / materializationFactor;
+		if (trace) {
+			FederatedPlannerTrace.log(childHop, "DP-StableTRShare", String.format(Locale.ROOT,
+				"factor=%.6f share=%.6f forwardingShare=%.6f embeddedForwardingShare=%.6f result=%.6f",
+				materializationFactor, share, forwardingShare, embeddedForwardingShare, result));
+		}
+		return result;
+	}
+
+	private static boolean shouldKeepFullCalleeCostForFunctionOutputParents(
+			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null || childPlan.getNumOfParents() <= 1)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null)
+			return false;
+		List<Hop> parentHops = childHop.getParent();
+		if (parentHops == null || parentHops.size() <= 1)
+			return false;
+		for (Hop parentHop : parentHops) {
+			if (!isFunctionBoundaryParent(parentHop)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static boolean isFunctionBoundaryParent(Hop parentHop) {
+		if (parentHop instanceof DataOp
+				&& ((DataOp) parentHop).getOp() == Types.OpOpData.FUNCTIONOUTPUT) {
+			return true;
+		}
+		return parentHop instanceof FunctionOp
+				&& ((((FunctionOp) parentHop).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN)
+					|| (((FunctionOp) parentHop).getFunctionType() == FunctionType.DML));
 	}
 
 	static double computeFoutToCpDownloadShareForParent(double totalCost,
@@ -386,12 +515,104 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	static double computeFoutToCpDownloadShareForParent(double totalCost,
-			FederatedPlannerDpMemoTable.FedPlan childPlan,
-			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.FedPlan parentPlan) {
 		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
 		if (!shouldAmortizeFederatedInputDownloadAcrossParents(childPlan))
 			return share;
 		return share / Math.max(1, childPlan.getNumOfParents());
+	}
+
+	static double computeParentChildFoutToCpDownloadShare(Hop parentHop, double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
+		if (shouldSkipAggregateToPublicFoutDownload(parentHop, childPlan, null))
+			return 0.0;
+		return computeFoutToCpDownloadShareForParent(totalCost, childPlan, parentHopCommon);
+	}
+
+	static double computeParentChildFoutToCpDownloadShare(Hop parentHop, double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (shouldSkipAggregateToPublicFoutDownload(parentHop, childPlan, memoTable))
+			return 0.0;
+		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
+		double materializationFactor = computeFoutToCpLocalMaterializationFactor(childPlan, memoTable);
+		materializationFactor *= computeStableTransientReadParentIterationReuseFactor(
+			childPlan, parentHopCommon, memoTable);
+		double result = share / materializationFactor;
+		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
+		if (FederatedPlannerTrace.shouldTrace(childHop)) {
+			FederatedPlannerTrace.log(childHop, "DP-FoutCpShare", String.format(Locale.ROOT,
+				"parentHop=%d totalCost=%.6f rawShare=%.6f factor=%.6f result=%.6f",
+				parentHop != null ? parentHop.getHopID() : -1L,
+				totalCost, share, materializationFactor, result));
+		}
+		return result;
+	}
+
+	static double computeParentChildFoutToCpDownloadShare(Hop parentHop, double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		if (shouldSkipAggregateToPublicFoutDownload(parentHop, childPlan, null))
+			return 0.0;
+		return computeFoutToCpDownloadShareForParent(totalCost, childPlan, parentPlan);
+	}
+
+	static double computeParentChildFoutToCpDownloadShare(Hop parentHop, double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (shouldSkipAggregateToPublicFoutDownload(parentHop, childPlan, memoTable))
+			return 0.0;
+		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
+		double materializationFactor = computeFoutToCpLocalMaterializationFactor(childPlan, memoTable);
+		materializationFactor *= computeStableTransientReadParentIterationReuseFactor(
+			childPlan, parentPlan, memoTable);
+		double result = share / materializationFactor;
+		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
+		if (FederatedPlannerTrace.shouldTrace(childHop)) {
+			FederatedPlannerTrace.log(childHop, "DP-FoutCpShare", String.format(Locale.ROOT,
+				"parentHop=%d totalCost=%.6f rawShare=%.6f factor=%.6f result=%.6f",
+				parentPlan != null && parentPlan.getHopRef() != null ? parentPlan.getHopRef().getHopID() : -1L,
+				totalCost, share, materializationFactor, result));
+		}
+		return result;
+	}
+
+	static double computeFoutToFedForwardingShareForParent(double totalCost,
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
+		if (isStableFederatedTransientReadForFoutToFed(childPlan))
+			return 0.0;
+		return computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
+	}
+
+	static double computeFoutToFedForwardingShareForParent(double totalCost,
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+				FederatedPlannerDpMemoTable memoTable) {
+		if (isStableFederatedTransientReadForFoutToFed(childPlan, memoTable))
+			return 0.0;
+		return computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
+	}
+
+	static double computeFoutToFedForwardingShareForParent(double totalCost,
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		if (isStableFederatedTransientReadForFoutToFed(childPlan))
+			return 0.0;
+		return computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
+	}
+
+	static double computeFoutToFedForwardingShareForParent(double totalCost,
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.FedPlan parentPlan,
+				FederatedPlannerDpMemoTable memoTable) {
+		if (isStableFederatedTransientReadForFoutToFed(childPlan, memoTable))
+			return 0.0;
+		return computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
 	}
 
 	static double computeForwardingCostShareForParent(double totalCost,
@@ -427,19 +648,464 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	private static boolean shouldAmortizeFederatedInputDownloadAcrossParents(
-			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+				FederatedPlannerDpMemoTable.FedPlan childPlan) {
 		if (childPlan == null || childPlan.getNumOfParents() <= 1)
+			return false;
+		return isStableFederatedInputRead(childPlan);
+	}
+
+	private static double computeStableTransientReadLocalMaterializationFactor(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null)
+			return 1.0;
+		if (!isStableFederatedInputReadForLocalMaterialization(childPlan, memoTable))
+			return 1.0;
+
+		double factor = Math.max(1, childPlan.getNumOfParents());
+		if (memoTable == null)
+			return factor;
+
+		Hop childHop = childPlan.getHopRef();
+		if (!(childHop instanceof DataOp))
+			return factor;
+		DataOp childDataOp = (DataOp) childHop;
+		if (childDataOp.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return factor;
+
+		List<Pair<Long, FederatedOutput>> producerEdges = childPlan.getChildFedPlans();
+		if (producerEdges == null || producerEdges.isEmpty())
+			return factor;
+
+		Set<Long> seenSiblingOrigHopIds = new HashSet<>();
+		int sharedConsumerCount = 0;
+		for (Pair<Long, FederatedOutput> producerEdge : producerEdges) {
+			FederatedPlannerDpMemoTable.FedPlan producerPlan = memoTable.getFedPlanAfterPrune(producerEdge);
+			if (producerPlan == null || !(producerPlan.getHopRef() instanceof DataOp))
+				continue;
+			DataOp producerHop = (DataOp) producerPlan.getHopRef();
+			if (producerHop.getOp() != Types.OpOpData.TRANSIENTWRITE)
+				continue;
+			long producerOrigHopId = memoTable.resolveOriginalHopId(producerPlan.getHopID());
+			List<Long> siblingHopIds = memoTable.collectTransientReadSiblingHopIDs(
+				producerOrigHopId, childDataOp.getName());
+			if (siblingHopIds == null || siblingHopIds.isEmpty())
+				continue;
+			for (long siblingHopId : siblingHopIds) {
+				long siblingOrigHopId = memoTable.resolveOriginalHopId(siblingHopId);
+				if (!seenSiblingOrigHopIds.add(siblingOrigHopId))
+					continue;
+				FederatedPlannerDpMemoTable.FedPlan siblingLocalPlan =
+					memoTable.getFedPlanAfterPrune(siblingHopId, FederatedOutput.LOUT);
+				if (siblingLocalPlan == null)
+					continue;
+				sharedConsumerCount += Math.max(1, siblingLocalPlan.getNumOfParents());
+			}
+		}
+
+		if (sharedConsumerCount > 0)
+			factor = Math.max(factor, sharedConsumerCount);
+		factor = Math.max(factor, computeStableTransientReadLoopReuseFactor(childPlan));
+		return Math.max(1.0, factor);
+	}
+
+	private static double computeFoutToCpLocalMaterializationFactor(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		double stableTransientFactor = computeStableTransientReadLocalMaterializationFactor(childPlan, memoTable);
+		int computedFamilyFactor = computeTransientWriteBackedComputedMaterializationFactor(childPlan, memoTable);
+		return Math.max(stableTransientFactor, computedFamilyFactor);
+	}
+
+	private static double computeStableTransientReadLoopReuseFactor(
+			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null)
+			return 1.0;
+		double opWeight = childPlan.getComputeWeight();
+		if (!Double.isFinite(opWeight) || opWeight <= 0.0)
+			opWeight = 1.0;
+		double networkWeight = childPlan.getNetworkWeight();
+		if (!Double.isFinite(networkWeight) || networkWeight <= 0.0)
+			networkWeight = 1.0;
+		return Math.max(1.0, opWeight / networkWeight);
+	}
+
+	private static double computeStableTransientReadParentIterationReuseFactor(
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+				FederatedPlannerDpMemoTable memoTable) {
+		if (!isStableFederatedInputReadForLocalMaterialization(childPlan, memoTable) || parentHopCommon == null)
+			return 1.0;
+		if (isSameLoopContext(parentHopCommon.getLoopContext(), childPlan.getLoopContext()))
+			return 1.0;
+		double parentMultiplicity = parentHopCommon.getMultiplicity();
+		return (!Double.isFinite(parentMultiplicity) || parentMultiplicity <= 1.0) ? 1.0 : parentMultiplicity;
+	}
+
+	private static double computeStableTransientReadParentIterationReuseFactor(
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable.FedPlan parentPlan,
+				FederatedPlannerDpMemoTable memoTable) {
+		if (!isStableFederatedInputReadForLocalMaterialization(childPlan, memoTable) || parentPlan == null)
+			return 1.0;
+		if (isSameLoopContext(parentPlan.getLoopContext(), childPlan.getLoopContext()))
+			return 1.0;
+		double parentMultiplicity = parentPlan.getMultiplicity();
+		return (!Double.isFinite(parentMultiplicity) || parentMultiplicity <= 1.0) ? 1.0 : parentMultiplicity;
+	}
+
+	private static boolean isSameLoopContext(List<Pair<Long, Double>> parentLoopContext,
+			List<Pair<Long, Double>> childLoopContext) {
+		if (parentLoopContext == null || parentLoopContext.isEmpty()
+				|| childLoopContext == null || childLoopContext.isEmpty())
+			return false;
+		if (parentLoopContext.size() != childLoopContext.size())
+			return false;
+		for (int i = 0; i < parentLoopContext.size(); i++) {
+			Pair<Long, Double> p = parentLoopContext.get(i);
+			Pair<Long, Double> c = childLoopContext.get(i);
+			if (p == null || c == null)
+				return false;
+			if (!Objects.equals(p.getLeft(), c.getLeft()))
+				return false;
+			double pv = p.getRight() == null ? Double.NaN : p.getRight();
+			double cv = c.getRight() == null ? Double.NaN : c.getRight();
+			if (Double.isNaN(pv) || Double.isNaN(cv) || Math.abs(pv - cv) > 1e-9)
+				return false;
+		}
+		return true;
+	}
+
+	private static int computeTransientWriteBackedComputedMaterializationFactor(
+				FederatedPlannerDpMemoTable.FedPlan childPlan,
+				FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null || memoTable == null)
+			return 1;
+		if (childPlan.getExecType() != ExecType.FED || childPlan.getFedOutType() != FederatedOutput.FOUT)
+			return 1;
+		Hop childHop = childPlan.getHopRef();
+		Hop originalChildHop = memoTable.resolveOriginalHop(childPlan.getHopID());
+		Hop materializedChildHop = (originalChildHop != null) ? originalChildHop : childHop;
+		if (materializedChildHop == null || materializedChildHop instanceof DataOp
+				|| !materializedChildHop.getDataType().isMatrix())
+			return 1;
+		if (childPlan.getNumOfParents() <= 1)
+			return 1;
+
+		List<Hop> parentHops = materializedChildHop.getParent();
+		if (parentHops == null || parentHops.size() <= 1)
+			return 1;
+
+		boolean hasTransientWriteParent = false;
+		Set<Long> seenParentOrigHopIds = new HashSet<>();
+		int reusableConsumerCount = 0;
+		for (Hop parentHop : parentHops) {
+			if (parentHop == null)
+				continue;
+			long parentOrigHopId = memoTable.resolveOriginalHopId(parentHop.getHopID());
+			if (!seenParentOrigHopIds.add(parentOrigHopId))
+				continue;
+			reusableConsumerCount++;
+			if (parentHop instanceof DataOp
+					&& ((DataOp) parentHop).getOp() == Types.OpOpData.TRANSIENTWRITE)
+				hasTransientWriteParent = true;
+		}
+
+		return (hasTransientWriteParent && reusableConsumerCount > 1)
+			? reusableConsumerCount
+			: 1;
+	}
+
+	private static boolean isStableFederatedInputReadForLocalMaterialization(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null || childPlan.getExecType() != ExecType.FED)
+			return false;
+		if (!(childHop instanceof DataOp)
+				|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| childPlan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		if (childHop.isFederatedDataOp())
+			return true;
+		if (memoTable == null)
+			return isStableFederatedInputRead(childPlan);
+		List<Pair<Long, FederatedOutput>> producerEdges = childPlan.getChildFedPlans();
+		if (producerEdges == null || producerEdges.isEmpty())
+			return isStableFedInitTransientRead(childPlan)
+				|| FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead((DataOp) childHop, null);
+		for (Pair<Long, FederatedOutput> producerEdge : producerEdges) {
+			FederatedPlannerDpMemoTable.FedPlan producerPlan = memoTable.getFedPlanAfterPrune(producerEdge);
+			if (producerPlan == null)
+				continue;
+			if (isFederatedTransientWriteProducerForLocalMaterialization(producerPlan))
+				return true;
+			if (isStableFederatedTransientProducerForLocalMaterialization(producerPlan, memoTable, new HashSet<>()))
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean isFederatedTransientWriteProducerForLocalMaterialization(
+			FederatedPlannerDpMemoTable.FedPlan producerPlan) {
+		if (producerPlan == null)
+			return false;
+		Hop producerHop = producerPlan.getHopRef();
+		if (!(producerHop instanceof DataOp))
+			return false;
+		DataOp producerDataOp = (DataOp) producerHop;
+		return producerPlan.getExecType() == ExecType.FED
+			&& producerPlan.getFedOutType() == FederatedOutput.FOUT
+			&& producerDataOp.getOp() == Types.OpOpData.TRANSIENTWRITE;
+	}
+
+	private static boolean isStableFederatedTransientProducerForLocalMaterialization(
+			FederatedPlannerDpMemoTable.FedPlan producerPlan,
+			FederatedPlannerDpMemoTable memoTable,
+			Set<Long> visitedHopIds) {
+		if (producerPlan == null || memoTable == null)
+			return false;
+		Hop producerHop = producerPlan.getHopRef();
+		if (producerHop == null
+				|| producerPlan.getExecType() != ExecType.FED
+				|| producerPlan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		FType producerFType = producerPlan.getFType();
+		if (producerFType == null)
+			return false;
+		long producerHopId = producerHop.getHopID();
+		if (!visitedHopIds.add(producerHopId))
+			return false;
+		if (producerHop.isFederatedDataOp())
+			return true;
+		if (producerHop instanceof DataOp) {
+			DataOp producerDataOp = (DataOp) producerHop;
+			if (producerDataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+					&& FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(producerDataOp, null))
+				return true;
+		}
+		List<Pair<Long, FederatedOutput>> childEdges = producerPlan.getChildFedPlans();
+		if (childEdges == null || childEdges.isEmpty())
+			return false;
+		for (Pair<Long, FederatedOutput> childEdge : childEdges) {
+			FederatedPlannerDpMemoTable.FedPlan upstreamPlan = memoTable.getFedPlanAfterPrune(childEdge);
+			if (upstreamPlan == null)
+				continue;
+			if (isStableFederatedTransientProducerForLocalMaterialization(upstreamPlan, memoTable, visitedHopIds))
+				return true;
+		}
+		return false;
+	}
+
+	static boolean shouldSkipAggregateToPublicFoutDownload(Hop parentHop,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (!(parentHop instanceof AggBinaryOp) && !(parentHop instanceof QuaternaryOp))
+			return false;
+		return memoTable != null
+			? isStableAggregateToPublicInputRead(childPlan, memoTable)
+			: isStableAggregateToPublicInputRead(childPlan);
+	}
+
+	static boolean isStableFedInitTransientRead(FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null || childPlan.getExecType() != ExecType.FED || !(childHop instanceof DataOp))
+			return false;
+		String childName = childHop.getName();
+		return ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD
+				&& childName != null
+				&& FederatedPlannerUtils.isFedInitVar(childName);
+	}
+
+	private static boolean isFederatedTransientRead(FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null || childPlan.getExecType() != ExecType.FED)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		return childHop instanceof DataOp
+				&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD
+				&& childPlan.getFedOutType() == FederatedOutput.FOUT;
+	}
+
+	private static boolean isStableFederatedTransientReadForFoutToFed(
+			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		return isFederatedTransientRead(childPlan) && isStableFederatedInputRead(childPlan);
+	}
+
+	private static boolean isStableFederatedTransientReadForFoutToFed(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		return isFederatedTransientRead(childPlan) && isStableFederatedInputRead(childPlan, memoTable);
+	}
+
+	private static boolean isStableFederatedInputRead(FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null)
 			return false;
 		Hop childHop = childPlan.getHopRef();
 		if (childHop == null || childPlan.getExecType() != ExecType.FED)
 			return false;
 		if (childHop.isFederatedDataOp())
 			return true;
-		String childName = childHop.getName();
-		return childHop instanceof DataOp
-				&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD
-				&& childName != null
-				&& FederatedPlannerUtils.isFedInitVar(childName);
+		return isStableFedInitTransientRead(childPlan);
+	}
+
+	private static boolean isStableAggregateToPublicInputRead(
+			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null || childPlan.getExecType() != ExecType.FED)
+			return false;
+		if (childHop.isFederatedDataOp())
+			return true;
+		if (!(childHop instanceof DataOp)
+				|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| childPlan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		DataOp transientRead = (DataOp) childHop;
+		return isStableFedInitTransientRead(childPlan)
+				|| FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(transientRead, null);
+	}
+
+	private static boolean isStableAggregateToPublicInputRead(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null || childPlan.getExecType() != ExecType.FED)
+			return false;
+		if (childHop.isFederatedDataOp())
+			return true;
+		if (!(childHop instanceof DataOp)
+				|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| childPlan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		DataOp transientRead = (DataOp) childHop;
+		List<Pair<Long, FederatedOutput>> producerEdges = childPlan.getChildFedPlans();
+		if (memoTable != null && producerEdges != null && !producerEdges.isEmpty()) {
+			// Explicit producer edges describe the real runtime source for this TRANSIENTREAD.
+			// Do not hide that concrete local materialization boundary behind the old
+			// aggregate-to-public skip. This keeps CP-local aggregate parents from treating
+			// federated-source reads as free when the runtime still has to acquire the data
+			// locally before the ba(+*)/wdivmm executes.
+			return false;
+		}
+		return isStableFedInitTransientRead(childPlan)
+				|| FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(transientRead, null);
+	}
+
+	private static boolean isStableFederatedInputRead(FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null)
+			return false;
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null || childPlan.getExecType() != ExecType.FED)
+			return false;
+		if (childHop.isFederatedDataOp())
+			return true;
+		if (!(childHop instanceof DataOp)
+				|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| childPlan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		DataOp transientRead = (DataOp) childHop;
+		FType childFType = childPlan.getFType();
+		if (childFType == null)
+			return false;
+		List<Pair<Long, FederatedOutput>> producerEdges = childPlan.getChildFedPlans();
+		if (memoTable != null && producerEdges != null && !producerEdges.isEmpty()) {
+			for (Pair<Long, FederatedOutput> producerEdge : producerEdges) {
+				FederatedPlannerDpMemoTable.FedPlan producerPlan = memoTable.getFedPlanAfterPrune(producerEdge);
+				if (!isStableFederatedTransientProducer(childPlan, producerPlan, memoTable))
+					continue;
+				return true;
+			}
+			return false;
+		}
+
+		// Only fall back to anchor / fed-init name semantics when the selected plan has no
+		// explicit producer edges. If a transient read is fed by a concrete local producer
+		// (e.g., rewritten X in PCA), the producer edges describe the real runtime source and
+		// must win over a stale variable-name-level fed-init anchor.
+		return isStableFedInitTransientRead(childPlan)
+				|| FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(transientRead, null);
+	}
+
+	private static boolean isStableFederatedTransientProducer(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan producerPlan,
+			FederatedPlannerDpMemoTable memoTable) {
+		if (childPlan == null || producerPlan == null)
+			return false;
+		Hop producerHop = producerPlan.getHopRef();
+		if (!(producerHop instanceof DataOp)
+				|| producerPlan.getExecType() != ExecType.FED
+				|| producerPlan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		FType childFType = childPlan.getFType();
+		FType producerFType = producerPlan.getFType();
+		if (childFType == null || producerFType == null || childFType != producerFType)
+			return false;
+		DataOp producerDataOp = (DataOp) producerHop;
+		if (producerDataOp.getOp() == Types.OpOpData.FEDERATED)
+			return true;
+		if (producerDataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+				&& FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(producerDataOp, null))
+			return true;
+		if (producerDataOp.getOp() != Types.OpOpData.TRANSIENTWRITE)
+			return false;
+		if (hasStableFederatedUpstreamChain(childFType, producerPlan, memoTable, new HashSet<>()))
+			return true;
+		List<Hop> producerInputs = producerHop.getInput();
+		if (producerInputs == null || producerInputs.size() != 1)
+			return false;
+		Hop producerInput = producerInputs.get(0);
+		if (!(producerInput instanceof DataOp))
+			return false;
+		DataOp producerDataInput = (DataOp) producerInput;
+		if (producerDataInput.getOp() == Types.OpOpData.FEDERATED)
+			return true;
+		return producerDataInput.getOp() == Types.OpOpData.TRANSIENTREAD
+				&& FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(producerDataInput, null);
+	}
+
+	private static boolean hasStableFederatedUpstreamChain(FType expectedFType,
+			FederatedPlannerDpMemoTable.FedPlan plan,
+			FederatedPlannerDpMemoTable memoTable,
+			Set<Long> visitedHopIds) {
+		if (expectedFType == null || plan == null || memoTable == null)
+			return false;
+		Hop planHop = plan.getHopRef();
+		if (planHop == null || plan.getExecType() != ExecType.FED || plan.getFedOutType() != FederatedOutput.FOUT)
+			return false;
+		FType planFType = plan.getFType();
+		if (planFType == null || planFType != expectedFType)
+			return false;
+		long planHopId = planHop.getHopID();
+		if (!visitedHopIds.add(planHopId))
+			return false;
+		if (planHop.isFederatedDataOp())
+			return true;
+		if (planHop instanceof DataOp) {
+			DataOp dataOp = (DataOp) planHop;
+			if (dataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+					&& FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(dataOp, null))
+				return true;
+		}
+		List<Pair<Long, FederatedOutput>> childEdges = plan.getChildFedPlans();
+		if (childEdges == null || childEdges.isEmpty())
+			return false;
+		for (Pair<Long, FederatedOutput> childEdge : childEdges) {
+			FederatedPlannerDpMemoTable.FedPlan upstreamPlan = memoTable.getFedPlanAfterPrune(childEdge);
+			if (upstreamPlan == null)
+				continue;
+			if (hasStableFederatedUpstreamChain(expectedFType, upstreamPlan, memoTable, visitedHopIds))
+				return true;
+		}
+		return false;
 	}
 
 }
