@@ -982,7 +982,8 @@ public class FederatedPlanMinSTGraph {
 				}
 				continue;
 			}
-			if (childCaps.allowCP_LOUT
+			if (numOfWorkers > 1
+					&& childCaps.allowCP_LOUT
 					&& getConfiguredLocalToFedCtrlOverheadMs()
 							> REQUIRED_LOCAL_REPAIR_DEMOTE_CTRL_PENALTY_THRESHOLD_MS) {
 				execSelection.put(childHopId, ExecType.CP);
