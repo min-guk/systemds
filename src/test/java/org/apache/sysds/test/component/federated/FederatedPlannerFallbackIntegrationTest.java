@@ -1936,6 +1936,55 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testMinSTRequiredLocalRepairDemotesChildUnderHighForwardingPenalty() throws Exception {
+		try {
+			System.setProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "100.0");
+			DataOp fedChild = federatedRead("Yrepair", ROWS, COLS);
+			LiteralOp zero = new LiteralOp(0L);
+			BinaryOp parent = new BinaryOp("gtRepair", DataType.MATRIX, ValueType.FP64,
+				OpOp2.GREATER, fedChild, zero);
+			parent.setDim1(ROWS);
+			parent.setDim2(COLS);
+
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			FederatedPlanMinSTGraph.ExecPlacementCaps childCaps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
+			childCaps.allowCP_LOUT = true;
+			childCaps.allowCP_FOUT = false;
+			childCaps.allowFED_LOUT = false;
+			childCaps.allowFED_FOUT = true;
+			graph.addVertex(new Vertex(fedChild, Privacy.PUBLIC, FType.ROW, FType.ROW, childCaps));
+
+			FederatedPlanMinSTGraph.ExecPlacementCaps parentCaps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
+			parentCaps.allowCP_LOUT = true;
+			parentCaps.allowCP_FOUT = true;
+			parentCaps.allowFED_LOUT = false;
+			parentCaps.allowFED_FOUT = true;
+			graph.addVertex(new Vertex(parent, Privacy.PRIVATE_AGGREGATE, FType.ROW, FType.ROW, parentCaps));
+			graph.addRequiredLocalInputEdge(parent.getHopID(), fedChild.getHopID());
+
+			Map<Long, ExecType> execSelection = new HashMap<>();
+			Map<Long, FederatedOutput> outSelection = new HashMap<>();
+			execSelection.put(fedChild.getHopID(), ExecType.FED);
+			outSelection.put(fedChild.getHopID(), FederatedOutput.FOUT);
+			execSelection.put(parent.getHopID(), ExecType.CP);
+			outSelection.put(parent.getHopID(), FederatedOutput.LOUT);
+
+			invokeRepairSelectionFixpoint(graph, execSelection, outSelection);
+
+			assertEquals("High WAN control penalty should preserve the selected CP parent",
+				ExecType.CP, execSelection.get(parent.getHopID()));
+			assertEquals(FederatedOutput.LOUT, outSelection.get(parent.getHopID()));
+			assertEquals("Required-local repair should materialize the child locally instead of promoting the parent",
+				ExecType.CP, execSelection.get(fedChild.getHopID()));
+			assertEquals(FederatedOutput.LOUT, outSelection.get(fedChild.getHopID()));
+		}
+		finally {
+			System.clearProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS");
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
 	public void testMinSTRepairFixpointPromotesRawFedLoutToFedFoutForSelectedFoutChain() throws Exception {
 		DataOp fedInput = federatedRead("X", ROWS, COLS);
 		DataOp localVec = federatedRead("V", COLS, 1);

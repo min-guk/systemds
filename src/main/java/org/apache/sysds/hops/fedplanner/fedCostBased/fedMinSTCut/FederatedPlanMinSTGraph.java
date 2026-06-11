@@ -97,6 +97,7 @@ public class FederatedPlanMinSTGraph {
 	// is the only legal choice, but strongly prefer CP in this degenerate topology.
 	private static final double SINGLE_WORKER_FED_EXEC_PENALTY = 1e6;
 	private static final double SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS = 10.0;
+	private static final double REQUIRED_LOCAL_REPAIR_DEMOTE_CTRL_PENALTY_THRESHOLD_MS = 30.0;
 
 	private static boolean hasImmediateFedMatrixInput(Hop hop) {
 		if (hop == null)
@@ -964,6 +965,7 @@ public class FederatedPlanMinSTGraph {
 
 			Hop parentHop = parentVertex.getHopRef();
 			ExecPlacementCaps parentCaps = parentVertex.getCaps();
+			ExecPlacementCaps childCaps = childVertex.getCaps();
 			FType adjustedCpFoutType = getAdjustedCpFoutType(parentVertex);
 			if (parentCaps.allowCP_FOUT && adjustedCpFoutType != null
 					&& hasSelectedFoutConsumerOpportunity(
@@ -977,6 +979,21 @@ public class FederatedPlanMinSTGraph {
 							"preserve parent " + parentHopId
 									+ " as CP/FOUT because selected FOUT consumers can materialize child "
 									+ childHopId);
+				}
+				continue;
+			}
+			if (childCaps.allowCP_LOUT
+					&& getConfiguredLocalToFedCtrlOverheadMs()
+							> REQUIRED_LOCAL_REPAIR_DEMOTE_CTRL_PENALTY_THRESHOLD_MS) {
+				execSelection.put(childHopId, ExecType.CP);
+				outSelection.put(childHopId, FederatedOutput.LOUT);
+				selectedFTypeMap.put(childHopId, null);
+				changedAny = true;
+				Hop childHop = childVertex.getHopRef();
+				if (FederatedPlannerTrace.shouldTrace(childHop)) {
+					FederatedPlannerTrace.log(childHop, "MinST-RequiredLocal-Repair",
+							"demote child " + childHopId + " to CP/LOUT for CP parent " + parentHopId
+									+ " under high local-to-federated control penalty");
 				}
 				continue;
 			}
@@ -998,7 +1015,6 @@ public class FederatedPlanMinSTGraph {
 				continue;
 			}
 
-			ExecPlacementCaps childCaps = childVertex.getCaps();
 			if (childCaps.allowCP_LOUT) {
 				execSelection.put(childHopId, ExecType.CP);
 				outSelection.put(childHopId, FederatedOutput.LOUT);
