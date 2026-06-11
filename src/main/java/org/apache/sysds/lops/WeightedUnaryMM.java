@@ -69,7 +69,7 @@ public class WeightedUnaryMM extends Lop
 		sb.append(getExecType());
 		
 		sb.append(Lop.OPERAND_DELIMITOR);
-		if( getExecType() == ExecType.CP )
+		if( getExecType() == ExecType.CP || getExecType() == ExecType.FED )
 			sb.append(OPCODE_CP);
 		else
 			sb.append(OPCODE);
@@ -93,7 +93,7 @@ public class WeightedUnaryMM extends Lop
 		sb.append(_wummType);
 		
 		//append degree of parallelism
-		if( getExecType()==ExecType.CP ) {
+		if( getExecType()==ExecType.CP || getExecType()==ExecType.FED ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _numThreads );
 		}

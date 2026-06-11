@@ -1736,6 +1736,12 @@ public final class FederatedRefedPolicy {
 		return canSatisfyFederatedInputs(parent, fTypeMap, null, true);
 	}
 
+	public static boolean canExecuteFederatedHop(Hop parent) {
+		if (parent instanceof QuaternaryOp)
+			return ((QuaternaryOp) parent).supportsFederatedExecution();
+		return true;
+	}
+
 	private static boolean isPlannedFederatedFromFTypeMap(Hop input, java.util.Map<Long, FType> fTypeMap) {
 		if (input == null || fTypeMap == null)
 			return false;
@@ -1747,6 +1753,12 @@ public final class FederatedRefedPolicy {
 		if (parent == null || parent.getInput() == null)
 			return true;
 		boolean traceParent = FederatedPlannerTrace.shouldTrace(parent);
+		if (!canExecuteFederatedHop(parent)) {
+			if (traceParent)
+				FederatedPlannerTrace.log(parent, "FedInputCheck",
+					"return=false (hop has no supported FED execution path)");
+			return false;
+		}
 		if (parent instanceof FunctionOp) {
 			FunctionOp fop = (FunctionOp) parent;
 			// Runtime has no federated instruction for multi-return builtins (e.g., eigen).

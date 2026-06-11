@@ -43,6 +43,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
@@ -55,9 +56,11 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.ParameterizedBuiltinOp;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.lops.Lop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
@@ -86,7 +89,10 @@ import org.apache.sysds.parser.ParserWrapper;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.instructions.fed.QuaternaryFEDInstruction;
 import org.apache.sysds.common.Types.ReOrgOp;
+import org.apache.sysds.runtime.instructions.FEDInstructionParser;
+import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.junit.Test;
@@ -1307,6 +1313,54 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDirectFederatedQuaternaryLopsParse() {
+		assertDirectFederatedQuaternaryInstruction(
+			new QuaternaryOp("wsloss", DataType.SCALAR, ValueType.FP64, OpOp4.WSLOSS,
+				federatedRead("Xwsloss", ROWS, COLS), transientRead("Uwsloss", ROWS, 2),
+				transientRead("Vwsloss", COLS, 2), transientRead("Wwsloss", ROWS, COLS), false),
+			"wsloss", true);
+		assertDirectFederatedQuaternaryInstruction(
+			new QuaternaryOp("wsigmoid", DataType.MATRIX, ValueType.FP64, OpOp4.WSIGMOID,
+				federatedRead("Xwsigmoid", ROWS, COLS), transientRead("Uwsigmoid", ROWS, 2),
+				transientRead("Vwsigmoid", COLS, 2), false, false),
+			"wsigmoid", false);
+		assertDirectFederatedQuaternaryInstruction(
+			new QuaternaryOp("wdivmm", DataType.MATRIX, ValueType.FP64, OpOp4.WDIVMM,
+				federatedRead("Xwdivmm", ROWS, COLS), transientRead("Uwdivmm", ROWS, 2),
+				transientRead("Vwdivmm", COLS, 2), new LiteralOp(-1), 1, false, false),
+			"wdivmm", true);
+		assertDirectFederatedQuaternaryInstruction(
+			new QuaternaryOp("wcemm", DataType.SCALAR, ValueType.FP64, OpOp4.WCEMM,
+				federatedRead("Xwcemm", ROWS, COLS), transientRead("Uwcemm", ROWS, 2),
+				transientRead("Vwcemm", COLS, 2), new LiteralOp(0.1), 1, false, false),
+			"wcemm", true, "0.1");
+		assertDirectFederatedQuaternaryInstruction(
+			new QuaternaryOp("wumm", DataType.MATRIX, ValueType.FP64, OpOp4.WUMM,
+				federatedRead("Xwumm", ROWS, COLS), transientRead("Uwumm", ROWS, 2),
+				transientRead("Vwumm", COLS, 2), true, OpOp1.MULT2, null),
+			"wumm", false);
+	}
+
+	@Test
+	public void testPlannerAllowsSupportedFederatedWdivmmHopExecution() {
+		DataOp x = federatedRead("XwdivmmPlan", ROWS, COLS);
+		DataOp u = transientRead("UwdivmmPlan", ROWS, 2);
+		DataOp v = transientRead("VwdivmmPlan", COLS, 2);
+		QuaternaryOp wdivmm = new QuaternaryOp("wdivmm", DataType.MATRIX, ValueType.FP64,
+			OpOp4.WDIVMM, x, u, v, new LiteralOp(-1), 1, false, false);
+
+		Map<Long, FType> fTypes = new HashMap<>();
+		fTypes.put(x.getHopID(), FType.ROW);
+		fTypes.put(u.getHopID(), FType.FULL);
+		fTypes.put(v.getHopID(), FType.FULL);
+
+		assertTrue("WDIVMM has a direct FED lowering path backed by QuaternaryWDivMMFEDInstruction",
+			FederatedRefedPolicy.canExecuteFederatedHop(wdivmm));
+		assertTrue("Supported WDIVMM inputs should be feasible for planner-enforced FED execution",
+			FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(wdivmm, fTypes));
+	}
+
+	@Test
 	public void testDpRewritePropagatesDerivedFedFoutFlag() throws Exception {
 		DataOp child = transientRead("X");
 		UnaryOp parent = HopRewriteUtils.createUnary(child, OpOp1.EXP);
@@ -2060,6 +2114,28 @@ public class FederatedPlannerFallbackIntegrationTest {
 		op.setForcedExecType(ExecType.FED);
 		op.setFederatedOutput(FederatedOutput.FOUT);
 		return op;
+	}
+
+	private static void assertDirectFederatedQuaternaryInstruction(QuaternaryOp hop, String opcode, boolean hasFourInputSlot) {
+		assertDirectFederatedQuaternaryInstruction(hop, opcode, hasFourInputSlot, "W");
+	}
+
+	private static void assertDirectFederatedQuaternaryInstruction(QuaternaryOp hop, String opcode,
+			boolean hasFourInputSlot, String input4Name) {
+		assertTrue("QuaternaryOp should advertise existing FED runtime support", hop.supportsFederatedExecution());
+		hop.setForcedExecType(ExecType.FED);
+		Lop lop = hop.constructLops();
+		assertEquals("Expected direct FED lop lowering", ExecType.FED, lop.getExecType());
+		String instruction = hasFourInputSlot
+			? lop.getInstructions("X", "U", "V", input4Name, "OUT")
+			: lop.getInstructions("X", "U", "V", "OUT");
+		assertTrue("Instruction should use FED exec prefix: " + instruction,
+			instruction.startsWith(ExecType.FED.name() + Lop.OPERAND_DELIMITOR + opcode));
+		assertFalse("Direct FED quaternary lowering should not emit Spark map/reduce opcode: " + instruction,
+			instruction.contains("map") || instruction.contains("red"));
+		Instruction parsed = FEDInstructionParser.parseSingleInstruction(instruction);
+		assertTrue("FED parser should dispatch quaternary instruction: " + instruction,
+			parsed instanceof QuaternaryFEDInstruction);
 	}
 
 	private static HopCommon registerHopCommon(Map<Long, HopCommon> table, Hop hop) {

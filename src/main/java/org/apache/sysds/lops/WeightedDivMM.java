@@ -114,7 +114,7 @@ public class WeightedDivMM extends Lop
 		sb.append(et);
 		
 		sb.append(Lop.OPERAND_DELIMITOR);
-		if( et == ExecType.CP )
+		if( et == ExecType.CP || et == ExecType.FED )
 			sb.append(OPCODE_CP);
 		else
 			sb.append(OPCODE);
@@ -138,7 +138,7 @@ public class WeightedDivMM extends Lop
 		sb.append(_weightsType);
 		
 		//append degree of parallelism
-		if( et == ExecType.CP ) {
+		if( et == ExecType.CP || et == ExecType.FED ) {
 			sb.append( OPERAND_DELIMITOR );
 			sb.append( _numThreads );
 		}
