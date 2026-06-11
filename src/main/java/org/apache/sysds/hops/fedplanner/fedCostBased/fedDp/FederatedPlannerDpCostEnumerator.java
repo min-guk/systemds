@@ -46,6 +46,7 @@ import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.HopsException;
+import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
@@ -818,6 +819,11 @@ public class FederatedPlannerDpCostEnumerator {
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
 					placementDecision.allowCP_FOUT = false;
 				}
+				if (shouldKeepRecompileIndexingLocal(hop, privacyConstraint)) {
+					placementDecision.allowFED_LOUT = false;
+					placementDecision.allowFED_FOUT = false;
+					derivedFedFout = false;
+				}
 				if (isTransientReadHop && !hasConcreteTransientReadSource) {
 					placementDecision.allowFED_LOUT = false;
 					placementDecision.allowFED_FOUT = false;
@@ -1232,6 +1238,26 @@ public class FederatedPlannerDpCostEnumerator {
 				return true;
 		}
 		return false;
+	}
+
+	private static boolean shouldKeepRecompileIndexingLocal(Hop hop, Privacy privacy) {
+		if (!(hop instanceof IndexingOp) || privacy == Privacy.PRIVATE)
+			return false;
+		IndexingOp indexing = (IndexingOp) hop;
+		boolean singleColumnResult = indexing.isColLowerEqualsUpper() || hop.getDim2() == 1;
+		if (!singleColumnResult || indexing.isRowLowerEqualsUpper())
+			return false;
+		if (hop.getDim2() > 1)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.size() < 5)
+			return false;
+		Hop source = inputs.get(0);
+		if (source == null || source.getDataType() == null || !source.getDataType().isMatrix())
+			return false;
+		if (source.getDim2() > 0 && source.getDim2() <= 1)
+			return false;
+		return !(inputs.get(3) instanceof LiteralOp) || !(inputs.get(4) instanceof LiteralOp);
 	}
 
 	private static boolean isTReadConsistentWithTWrite(ExecType execType, FederatedOutput fedOutType,
