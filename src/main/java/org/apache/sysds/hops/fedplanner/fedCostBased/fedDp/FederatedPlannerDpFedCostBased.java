@@ -1616,21 +1616,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	/**
-	 * Prefer executable/original members for output-decision feasibility checks.
-	 * If no executable members exist, fall back to all members.
+	 * Return all concrete members that contributed to a logical-hop output decision.
+	 *
+	 * <p>Loop-unrolled virtual clones carry the multiplicity-weighted cost of the
+	 * repeated iterations. Dropping them here makes the decision depend only on the
+	 * executable original hop and reintroduces a heuristic original-over-clone bias.
+	 * Keep every observed member so LOUT/FOUT feasibility and delta comparisons are
+	 * based on the aggregate cost of the full original+clone family.</p>
 	 */
 	private static Set<Long> selectDecisionMembers(Set<Long> memberHopIDs,
 		FederatedPlannerDpMemoTable memoTable) {
 
-		if (memberHopIDs == null || memberHopIDs.isEmpty())
-			return memberHopIDs;
-
-		LinkedHashSet<Long> executable = new LinkedHashSet<>();
-		for (long hopID : memberHopIDs) {
-			if (!memoTable.isVirtualClone(hopID))
-				executable.add(hopID);
-		}
-		return executable.isEmpty() ? memberHopIDs : executable;
+		return memberHopIDs;
 	}
 
 	/**
@@ -2244,7 +2241,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				currentPlan.getCumulativeCost(), currentPlan);
 			double targetShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
 				targetPlan.getCumulativeCost(), targetPlan);
-			delta += targetShare - currentShare;
+			double memberDelta = targetShare - currentShare;
+			Hop memberHopRef = memoTable.resolveOriginalHop(memberHopID);
+			if (FederatedPlannerTrace.shouldTrace(memberHopRef)) {
+				FederatedPlannerTrace.log(memberHopRef, "DP-OutputDecision-Member",
+					String.format(Locale.ROOT,
+						"orig=%d member=%d virtual=%s current=%s target=%s currentExec=%s targetExec=%s currentCost=%.6f targetCost=%.6f delta=%.6f multiplicity=%.6f loop=%s",
+						hopID, memberHopID, memoTable.isVirtualClone(memberHopID), currentOut, targetOut,
+						currentPlan.getExecType(), targetPlan.getExecType(), currentShare, targetShare,
+						memberDelta, targetPlan.getMultiplicity(), formatLoopContext(targetPlan.getLoopContext())));
+			}
+			delta += memberDelta;
 		}
 
 		return delta;

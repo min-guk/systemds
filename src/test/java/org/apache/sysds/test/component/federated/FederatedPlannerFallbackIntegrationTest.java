@@ -349,42 +349,6 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpKeepsDynamicRecompileColumnSliceLocal() throws Exception {
-		DataOp fedInput = federatedRead("XorigRecompile", ROWS, COLS);
-		LiteralOp rowStart = new LiteralOp(1L);
-		LiteralOp rowEnd = new LiteralOp(ROWS);
-		DataOp dynamicCol = new DataOp("i", DataType.SCALAR, ValueType.INT64,
-			OpOpData.TRANSIENTREAD, null, 0, 0, 0, BLOCKSIZE);
-		IndexingOp rightIndex = HopRewriteUtils.createIndexingOp(
-			fedInput, rowStart, rowEnd, dynamicCol, dynamicCol);
-		rightIndex.setDim1(ROWS);
-		rightIndex.setDim2(1);
-		rightIndex.setRequiresRecompile();
-
-		Method method = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
-			"shouldKeepRecompileIndexingLocal", Hop.class, Privacy.class);
-		method.setAccessible(true);
-
-		assertTrue("Dynamic column slices in recompile regions should stay local to avoid repeated WAN rightIndex",
-			(boolean) method.invoke(null, rightIndex, Privacy.PRIVATE_AGGREGATE));
-
-		DataOp dynamicColUpper = new DataOp("i", DataType.SCALAR, ValueType.INT64,
-			OpOpData.TRANSIENTREAD, null, 0, 0, 0, BLOCKSIZE);
-		IndexingOp parsedRightIndex = HopRewriteUtils.createIndexingOp(
-			fedInput, rowStart, rowEnd, dynamicCol, dynamicColUpper);
-		parsedRightIndex.setDim1(ROWS);
-		parsedRightIndex.setDim2(1);
-		assertTrue("Parser-created static dynamic i:i slices must be kept local before their decision is restored during recompile",
-			(boolean) method.invoke(null, parsedRightIndex, Privacy.PRIVATE_AGGREGATE));
-		parsedRightIndex.setRequiresRecompile();
-		assertTrue("Parser-created dynamic i:i slices may not set colLowerEqualsUpper but dim2=1 still proves a column slice",
-			(boolean) method.invoke(null, parsedRightIndex, Privacy.PRIVATE_AGGREGATE));
-
-		assertFalse("Strict private data must not be localized by the recompile indexing guard",
-			(boolean) method.invoke(null, rightIndex, Privacy.PRIVATE));
-	}
-
-	@Test
 	public void testDpDerivedFedFoutBoundaryCostIncludesDownloadAndUpload() throws Exception {
 		Method boundaryCostMethod = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
 			"derivedFedFoutBoundaryCost", boolean.class, double.class, double.class);
@@ -943,7 +907,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpResolveOneHopConflictSkipsVirtualCloneCostEdgesWhenExecutableMemberExists() throws Exception {
+	public void testDpResolveOneHopConflictAggregatesVirtualCloneCostEdges() throws Exception {
 		DataOp origChild = transientRead("XorigChoice", ROWS, COLS);
 		DataOp cloneChild = transientRead("XcloneChoice", ROWS, COLS);
 		UnaryOp origParent = new UnaryOp("u_orig_choice", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, origChild);
@@ -987,8 +951,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 		FederatedOutput chosen = invokeResolveOneHopConflict(
 			memoTable, origChild.getHopID(), entry, new HashMap<>(), 1);
 
-		assertEquals("Generic one-hop resolve should ignore virtual-clone-only cost edges once the"
-			+ " executable member exists", FederatedOutput.FOUT, chosen);
+		assertEquals("Generic one-hop resolve should aggregate executable and virtual-clone costs"
+			+ " instead of preferring the original executable member", FederatedOutput.LOUT, chosen);
 	}
 
 

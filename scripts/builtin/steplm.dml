@@ -94,7 +94,7 @@ m_steplm = function(Matrix[Double] X, Matrix[Double] y, Integer icpt = 0,
 
   # First pass to examine single features
   AICs = matrix(0, 1, m_orig);
-  parfor (i in 1:m_orig) {
+  for (i in 1:m_orig) {
     [AIC_1, beta_out_i] = linear_regression(X_orig[, i], y, icpt, reg, tol, maxi, verbose);
     AICs[1, i] = AIC_1;
     beta_out_all[1:nrow(beta_out_i), i] = beta_out_i;
@@ -126,7 +126,7 @@ m_steplm = function(Matrix[Double] X, Matrix[Double] y, Integer icpt = 0,
       # Subsequent passes over the features
       beta_out_all_2 = matrix(0, boa_ncol, m_orig * 1);
       AICs_2 = matrix(0, 1, m_orig); # full overwrite
-      parfor (i in 1:m_orig) {
+      for (i in 1:m_orig) {
         if (as.scalar(columns_fixed[1, i]) == 0) {
           # Construct the feature matrix
           Xi = cbind(X_global, X_orig[, i]);
