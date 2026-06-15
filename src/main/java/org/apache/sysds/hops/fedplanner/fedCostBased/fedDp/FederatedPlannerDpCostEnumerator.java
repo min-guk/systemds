@@ -523,10 +523,11 @@ public class FederatedPlannerDpCostEnumerator {
 		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
 		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
 
-		// The self cost follows its own weight, while the forwarding cost follows the
-		// parent's weight.
-		FederatedPlannerDpCostEstimator.getChildCosts(hopCommon, memoTable, lOutfOutChildHops, childCumulativeCost,
-				childForwardingCostToCP, childForwardingCostToFED, childForwardingCostFOutToFED, lOUTOnlyinputHops,
+		// The self cost follows the producer weight. Boundary forwarding is shared by
+		// producer occurrence and parent demand weights.
+		FederatedPlannerDpCostEstimator.getChildCosts(hopCommon, memoTable, hopCommonTable,
+				lOutfOutChildHops, childCumulativeCost, childForwardingCostToCP,
+				childForwardingCostToFED, childForwardingCostFOutToFED, lOUTOnlyinputHops,
 				lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops,
 				fOUTOnlychildCumulativeCost, fOUTOnlychildForwardingCostToCP,
 				fOUTOnlychildForwardingCostToFED, numOfWorkers);

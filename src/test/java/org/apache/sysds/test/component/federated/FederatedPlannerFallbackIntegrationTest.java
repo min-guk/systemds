@@ -805,6 +805,97 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpLoutToFedUploadShareUsesParentDemandWeights() throws Exception {
+		DataOp localInput = transientRead("XsharedUploadIn", ROWS, COLS);
+		UnaryOp child = new UnaryOp("sharedUploadChild", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, localInput);
+		UnaryOp currentFedParent = new UnaryOp("currentFedParent", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, child);
+		UnaryOp hotSiblingParent = new UnaryOp("hotSiblingParent", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, child);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = new HopCommon(child, 1.0, 1.0, 1.0, 2, List.of());
+		HopCommon currentParentCommon = new HopCommon(currentFedParent, 1.0, 1.0, 1.0, 1, List.of());
+		HopCommon hotParentCommon = new HopCommon(hotSiblingParent, 1.0, 1.0, 9.0, 1, List.of());
+		hopCommonTable.put(child.getHopID(), childCommon);
+		hopCommonTable.put(currentFedParent.getHopID(), currentParentCommon);
+		hopCommonTable.put(hotSiblingParent.getHopID(), hotParentCommon);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon, FederatedOutput.LOUT, ExecType.CP, FType.FULL, 10.0);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		List<Hop> bothOutInputs = new ArrayList<>(List.of(child));
+		double[][] childCumulativeCost = new double[1][2];
+		double[] childForwardingCostToCP = new double[1];
+		double[] childForwardingCostToFED = new double[1];
+		double[] childForwardingCostFOutToFED = new double[1];
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>();
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		FederatedPlannerDpCostEstimator.getChildCosts(currentParentCommon, memoTable, hopCommonTable, bothOutInputs,
+			childCumulativeCost, childForwardingCostToCP, childForwardingCostToFED,
+			childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildCumulativeCost,
+			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, 1);
+
+		assertEquals("Expected child to move to LOUT-only inputs", 1, lOUTOnlyinputHops.size());
+		assertEquals(1, lOUTOnlychildForwardingCostToFED.size());
+		double uploadCost = FederatedCostModel.computeUploadNetworkCost(
+			FederatedCostModel.getEffectiveUploadMemEstimate(child), FType.FULL, 1)
+			+ FederatedCostModel.computeLocalToFedForwardingPenalty(FType.FULL, 1);
+		assertEquals("LOUT->FED upload should be split by parent demand weights",
+			uploadCost / 10.0, lOUTOnlychildForwardingCostToFED.get(0), 1e-9);
+	}
+
+	@Test
+	public void testDpFoutToCpDownloadShareUsesSameParentDemandWeights() throws Exception {
+		DataOp fedInput = federatedRead("XsharedDownload", ROWS, COLS);
+		UnaryOp currentCpParent = new UnaryOp("currentCpParent", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, fedInput);
+		UnaryOp hotSiblingParent = new UnaryOp("hotCpSiblingParent", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, fedInput);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = new HopCommon(fedInput, 1.0, 1.0, 1.0, 2, List.of());
+		HopCommon currentParentCommon = new HopCommon(currentCpParent, 1.0, 1.0, 1.0, 1, List.of());
+		HopCommon hotParentCommon = new HopCommon(hotSiblingParent, 1.0, 1.0, 9.0, 1, List.of());
+		hopCommonTable.put(fedInput.getHopID(), childCommon);
+		hopCommonTable.put(currentCpParent.getHopID(), currentParentCommon);
+		hopCommonTable.put(hotSiblingParent.getHopID(), hotParentCommon);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.FULL, 10.0);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		List<Hop> bothOutInputs = new ArrayList<>();
+		double[][] childCumulativeCost = new double[1][2];
+		double[] childForwardingCostToCP = new double[1];
+		double[] childForwardingCostToFED = new double[1];
+		double[] childForwardingCostFOutToFED = new double[1];
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(fedInput));
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		FederatedPlannerDpCostEstimator.getChildCosts(currentParentCommon, memoTable, hopCommonTable, bothOutInputs,
+			childCumulativeCost, childForwardingCostToCP, childForwardingCostToFED,
+			childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildCumulativeCost,
+			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, 1);
+
+		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
+		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(fedInput), FType.FULL, 1);
+		assertEquals("FOUT->CP download should use the same shared boundary formula as upload",
+			downloadCost / 10.0, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+	}
+
+	@Test
 	public void testDpNonTransientCpfoutCpParentForwardingSkipsSyntheticDownloadShare() throws Exception {
 		DataOp localInput = transientRead("XlocalCpParent", ROWS, COLS);
 		UnaryOp child = new UnaryOp("localCpfout", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, localInput);

@@ -124,6 +124,21 @@ public class FederatedPlannerDpCostEstimator {
 			List<Hop> fOUTOnlyinputHops, List<Double> fOUTOnlychildCumulativeCost,
 			List<Double> fOUTOnlychildForwardingCostToCP, List<Double> fOUTOnlychildForwardingCostToFED,
 			int numOfWorkers) {
+		getChildCosts(hopCommon, memoTable, null, inputHops, childCumulativeCost, childForwardingCostToCP,
+			childForwardingCostToFED, childForwardingCostFOutToFED, lOUTOnlyinputHops,
+			lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops,
+			fOUTOnlychildCumulativeCost, fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED,
+			numOfWorkers);
+	}
+
+	public static void getChildCosts(FederatedPlannerDpMemoTable.HopCommon hopCommon, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, List<Hop> inputHops,
+			double[][] childCumulativeCost, double[] childForwardingCostToCP,
+			double[] childForwardingCostToFED, double[] childForwardingCostFOutToFED, List<Hop> lOUTOnlyinputHops,
+			List<Double> lOUTOnlychildCumulativeCost, List<Double> lOUTOnlychildForwardingCostToFED,
+			List<Hop> fOUTOnlyinputHops, List<Double> fOUTOnlychildCumulativeCost,
+			List<Double> fOUTOnlychildForwardingCostToCP, List<Double> fOUTOnlychildForwardingCostToFED,
+			int numOfWorkers) {
 
 		Hop parentHop = hopCommon.getHopRef();
 		Iterator<Hop> iterator = inputHops.iterator();
@@ -175,9 +190,9 @@ public class FederatedPlannerDpCostEstimator {
 				double uploadCost = computeUploadCostWithFallback(
 						childHop, parentHop, localUploadType, numOfWorkers);
 				childForwardingCostToCP[currentIndex] = computeParentChildFoutToCpDownloadShare(
-						parentHop, downloadCost, childFOutFedPlan, hopCommon, memoTable);
-				childForwardingCostToFED[currentIndex] = computeForwardingCostShareForParent(
-					uploadCost, childLOutFedPlan, hopCommon);
+						parentHop, downloadCost, childFOutFedPlan, hopCommon, hopCommonTable, memoTable);
+				childForwardingCostToFED[currentIndex] = computeBoundaryTransferShareForParent(
+					uploadCost, childLOutFedPlan, hopCommon, hopCommonTable, memoTable);
 			double refedForwardingCost = 0.0;
 			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop)) {
 				refedForwardingCost = 0.0;
@@ -190,8 +205,8 @@ public class FederatedPlannerDpCostEstimator {
 					FType cpUploadType = childFOutFedPlan.getCpFoutTypeOrFType();
 					double cpFoutUploadCost = computeUploadCostWithFallback(
 							childHop, parentHop, cpUploadType, numOfWorkers);
-					refedForwardingCost = computeForwardingCostShareForParent(
-							cpFoutUploadCost, childFOutFedPlan, hopCommon);
+					refedForwardingCost = computeBoundaryTransferShareForParent(
+							cpFoutUploadCost, childFOutFedPlan, hopCommon, hopCommonTable, memoTable);
 				}
 				else if (isStableFederatedTransientProducerForLocalMaterialization(
 						childFOutFedPlan, memoTable, new HashSet<>())) {
@@ -201,7 +216,7 @@ public class FederatedPlannerDpCostEstimator {
 					double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
 					double refedCost = computeRefedNetworkCost(transferMem, childFOutFedPlan.getFType(), numOfWorkers);
 					refedForwardingCost = computeFoutToFedForwardingShareForParent(
-							refedCost, childFOutFedPlan, hopCommon, memoTable);
+							refedCost, childFOutFedPlan, hopCommon, hopCommonTable, memoTable);
 				}
 				childForwardingCostFOutToFED[currentIndex] = refedForwardingCost;
 			currentIndex++;
@@ -224,8 +239,8 @@ public class FederatedPlannerDpCostEstimator {
 				FType localUploadType = childLOutFedPlan.getCpFoutTypeOrFType();
 				double uploadCost = computeUploadCostWithFallback(
 						childHop, parentHop, localUploadType, numOfWorkers);
-				lOUTOnlychildForwardingCostToFED.add(computeForwardingCostShareForParent(
-						uploadCost, childLOutFedPlan, hopCommon));
+				lOUTOnlychildForwardingCostToFED.add(computeBoundaryTransferShareForParent(
+						uploadCost, childLOutFedPlan, hopCommon, hopCommonTable, memoTable));
 		}
 
 		for (int i = 0; i < fOUTOnlyinputHops.size(); i++) {
@@ -254,7 +269,7 @@ public class FederatedPlannerDpCostEstimator {
 					FederatedCostModel.getEffectiveOutputMemEstimate(childHop),
 					childFOutFedPlan.getFType(), numOfWorkers);
 			fOUTOnlychildForwardingCostToCP.add(computeParentChildFoutToCpDownloadShare(
-					parentHop, downloadCost, childFOutFedPlan, hopCommon, memoTable));
+					parentHop, downloadCost, childFOutFedPlan, hopCommon, hopCommonTable, memoTable));
 			double refedForwardingCost = 0.0;
 			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop)) {
 				refedForwardingCost = 0.0;
@@ -263,8 +278,8 @@ public class FederatedPlannerDpCostEstimator {
 					FType cpUploadType = childFOutFedPlan.getCpFoutTypeOrFType();
 					double cpFoutUploadCost = computeUploadCostWithFallback(
 							childHop, parentHop, cpUploadType, numOfWorkers);
-					refedForwardingCost = computeForwardingCostShareForParent(
-							cpFoutUploadCost, childFOutFedPlan, hopCommon);
+					refedForwardingCost = computeBoundaryTransferShareForParent(
+							cpFoutUploadCost, childFOutFedPlan, hopCommon, hopCommonTable, memoTable);
 				}
 				else if (parentHop instanceof DataOp
 					&& ((DataOp) parentHop).getOp() == Types.OpOpData.TRANSIENTWRITE
@@ -276,7 +291,7 @@ public class FederatedPlannerDpCostEstimator {
 					double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
 					double refedCost = computeRefedNetworkCost(transferMem, childFOutFedPlan.getFType(), numOfWorkers);
 					refedForwardingCost = computeFoutToFedForwardingShareForParent(
-							refedCost, childFOutFedPlan, hopCommon, memoTable);
+							refedCost, childFOutFedPlan, hopCommon, hopCommonTable, memoTable);
 				}
 				fOUTOnlychildForwardingCostToFED.add(refedForwardingCost);
 		}
@@ -508,19 +523,13 @@ public class FederatedPlannerDpCostEstimator {
 	static double computeFoutToCpDownloadShareForParent(double totalCost,
 			FederatedPlannerDpMemoTable.FedPlan childPlan,
 			FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
-		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
-		if (!shouldAmortizeFederatedInputDownloadAcrossParents(childPlan))
-			return share;
-		return share / Math.max(1, childPlan.getNumOfParents());
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentHopCommon, null, null);
 	}
 
 	static double computeFoutToCpDownloadShareForParent(double totalCost,
-				FederatedPlannerDpMemoTable.FedPlan childPlan,
-				FederatedPlannerDpMemoTable.FedPlan parentPlan) {
-		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
-		if (!shouldAmortizeFederatedInputDownloadAcrossParents(childPlan))
-			return share;
-		return share / Math.max(1, childPlan.getNumOfParents());
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentPlan);
 	}
 
 	static double computeParentChildFoutToCpDownloadShare(Hop parentHop, double totalCost,
@@ -535,19 +544,24 @@ public class FederatedPlannerDpCostEstimator {
 			FederatedPlannerDpMemoTable.FedPlan childPlan,
 			FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
 			FederatedPlannerDpMemoTable memoTable) {
+		return computeParentChildFoutToCpDownloadShare(
+			parentHop, totalCost, childPlan, parentHopCommon, null, memoTable);
+	}
+
+	static double computeParentChildFoutToCpDownloadShare(Hop parentHop, double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			FederatedPlannerDpMemoTable memoTable) {
 		if (shouldSkipAggregateToPublicFoutDownload(parentHop, childPlan, memoTable))
 			return 0.0;
-		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
-		double materializationFactor = computeFoutToCpLocalMaterializationFactor(childPlan, memoTable);
-		materializationFactor *= computeStableTransientReadParentIterationReuseFactor(
-			childPlan, parentHopCommon, memoTable);
-		double result = share / materializationFactor;
+		double result = computeBoundaryTransferShareForParent(
+			totalCost, childPlan, parentHopCommon, hopCommonTable, memoTable);
 		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
 		if (FederatedPlannerTrace.shouldTrace(childHop)) {
 			FederatedPlannerTrace.log(childHop, "DP-FoutCpShare", String.format(Locale.ROOT,
-				"parentHop=%d totalCost=%.6f rawShare=%.6f factor=%.6f result=%.6f",
-				parentHop != null ? parentHop.getHopID() : -1L,
-				totalCost, share, materializationFactor, result));
+				"parentHop=%d totalCost=%.6f result=%.6f",
+				parentHop != null ? parentHop.getHopID() : -1L, totalCost, result));
 		}
 		return result;
 	}
@@ -566,73 +580,95 @@ public class FederatedPlannerDpCostEstimator {
 			FederatedPlannerDpMemoTable memoTable) {
 		if (shouldSkipAggregateToPublicFoutDownload(parentHop, childPlan, memoTable))
 			return 0.0;
-		double share = computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
-		double materializationFactor = computeFoutToCpLocalMaterializationFactor(childPlan, memoTable);
-		materializationFactor *= computeStableTransientReadParentIterationReuseFactor(
-			childPlan, parentPlan, memoTable);
-		double result = share / materializationFactor;
+		double result = computeBoundaryTransferShareForParent(totalCost, childPlan, parentPlan);
 		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
 		if (FederatedPlannerTrace.shouldTrace(childHop)) {
 			FederatedPlannerTrace.log(childHop, "DP-FoutCpShare", String.format(Locale.ROOT,
-				"parentHop=%d totalCost=%.6f rawShare=%.6f factor=%.6f result=%.6f",
+				"parentHop=%d totalCost=%.6f result=%.6f",
 				parentPlan != null && parentPlan.getHopRef() != null ? parentPlan.getHopRef().getHopID() : -1L,
-				totalCost, share, materializationFactor, result));
+				totalCost, result));
 		}
 		return result;
 	}
 
 	static double computeFoutToFedForwardingShareForParent(double totalCost,
-				FederatedPlannerDpMemoTable.FedPlan childPlan,
-				FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
 		if (isStableFederatedTransientReadForFoutToFed(childPlan))
 			return 0.0;
-		return computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentHopCommon, null, null);
 	}
 
 	static double computeFoutToFedForwardingShareForParent(double totalCost,
-				FederatedPlannerDpMemoTable.FedPlan childPlan,
-				FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
-				FederatedPlannerDpMemoTable memoTable) {
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+			FederatedPlannerDpMemoTable memoTable) {
+		return computeFoutToFedForwardingShareForParent(totalCost, childPlan, parentHopCommon, null, memoTable);
+	}
+
+	static double computeFoutToFedForwardingShareForParent(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			FederatedPlannerDpMemoTable memoTable) {
 		if (isStableFederatedTransientReadForFoutToFed(childPlan, memoTable))
 			return 0.0;
-		return computeForwardingCostShareForParent(totalCost, childPlan, parentHopCommon);
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentHopCommon, hopCommonTable, memoTable);
 	}
 
 	static double computeFoutToFedForwardingShareForParent(double totalCost,
-				FederatedPlannerDpMemoTable.FedPlan childPlan,
-				FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
 		if (isStableFederatedTransientReadForFoutToFed(childPlan))
 			return 0.0;
-		return computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentPlan);
 	}
 
 	static double computeFoutToFedForwardingShareForParent(double totalCost,
-				FederatedPlannerDpMemoTable.FedPlan childPlan,
-				FederatedPlannerDpMemoTable.FedPlan parentPlan,
-				FederatedPlannerDpMemoTable memoTable) {
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan,
+			FederatedPlannerDpMemoTable memoTable) {
 		if (isStableFederatedTransientReadForFoutToFed(childPlan, memoTable))
 			return 0.0;
-		return computeForwardingCostShareForParent(totalCost, childPlan, parentPlan);
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentPlan);
 	}
 
 	static double computeForwardingCostShareForParent(double totalCost,
 			FederatedPlannerDpMemoTable.FedPlan childPlan,
 			FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentHopCommon, null, null);
+	}
+
+	static double computeForwardingCostShareForParent(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		return computeBoundaryTransferShareForParent(totalCost, childPlan, parentPlan);
+	}
+
+	static double computeBoundaryTransferShareForParent(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+			FederatedPlannerDpMemoTable memoTable) {
 		if (childPlan == null || totalCost == 0.0)
 			return 0.0;
 		int numParents = Math.max(1, childPlan.getNumOfParents());
 		if (parentHopCommon == null)
 			return totalCost / numParents;
 
-		double parentWeight = parentHopCommon.computeForwardingWeightOfChild(
-				childPlan.getLoopContext(), parentHopCommon.getMultiplicity());
-		parentWeight = Math.max(0.0, parentWeight);
-		// Boundary forwarding is paid per parent-child edge; do not amortize by
-		// child parent-count (align with MinST edge-capacity semantics).
-		return totalCost * parentWeight;
+		double parentDemand = computeBoundaryDemandWeight(childPlan, parentHopCommon);
+		if (parentDemand <= 0.0)
+			return 0.0;
+		double totalDemand = computeTotalBoundaryDemandWeight(childPlan, parentDemand, hopCommonTable);
+		double producerWeight = computeProducerTransferWeight(childPlan);
+		double chargedOccurrences = Math.min(producerWeight, totalDemand);
+		double result = totalCost * chargedOccurrences * parentDemand / totalDemand;
+		traceBoundaryTransferShare(totalCost, childPlan, parentHopCommon.getHopRef(), producerWeight,
+			parentDemand, totalDemand, chargedOccurrences, result);
+		return result;
 	}
 
-	static double computeForwardingCostShareForParent(double totalCost,
+	private static double computeBoundaryTransferShareForParent(double totalCost,
 			FederatedPlannerDpMemoTable.FedPlan childPlan,
 			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
 		if (childPlan == null || totalCost == 0.0)
@@ -641,10 +677,89 @@ public class FederatedPlannerDpCostEstimator {
 		if (parentPlan == null)
 			return totalCost / numParents;
 
-		double parentWeight = parentPlan.computeForwardingWeightOfChild(
-				childPlan.getLoopContext(), parentPlan.getMultiplicity());
-		parentWeight = Math.max(0.0, parentWeight);
-		return totalCost * parentWeight;
+		double parentDemand = computeBoundaryDemandWeight(childPlan, parentPlan);
+		if (parentDemand <= 0.0)
+			return 0.0;
+		double totalDemand = Math.max(parentDemand, parentDemand * numParents);
+		double producerWeight = computeProducerTransferWeight(childPlan);
+		double chargedOccurrences = Math.min(producerWeight, totalDemand);
+		double result = totalCost * chargedOccurrences * parentDemand / totalDemand;
+		traceBoundaryTransferShare(totalCost, childPlan, parentPlan.getHopRef(), producerWeight,
+			parentDemand, totalDemand, chargedOccurrences, result);
+		return result;
+	}
+
+	private static double computeBoundaryDemandWeight(FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.HopCommon parentHopCommon) {
+		if (childPlan == null || parentHopCommon == null)
+			return 0.0;
+		double weight = parentHopCommon.computeForwardingWeightOfChild(
+			childPlan.getLoopContext(), parentHopCommon.getMultiplicity());
+		return isPositiveFinite(weight) ? weight : 0.0;
+	}
+
+	private static double computeBoundaryDemandWeight(FederatedPlannerDpMemoTable.FedPlan childPlan,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+		if (childPlan == null || parentPlan == null)
+			return 0.0;
+		double weight = parentPlan.computeForwardingWeightOfChild(
+			childPlan.getLoopContext(), parentPlan.getMultiplicity());
+		return isPositiveFinite(weight) ? weight : 0.0;
+	}
+
+	private static double computeTotalBoundaryDemandWeight(FederatedPlannerDpMemoTable.FedPlan childPlan,
+			double currentParentDemand,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable) {
+		int numParents = Math.max(1, childPlan.getNumOfParents());
+		if (hopCommonTable == null || hopCommonTable.isEmpty())
+			return Math.max(currentParentDemand, currentParentDemand * numParents);
+		Hop childHop = childPlan.getHopRef();
+		if (childHop == null || childHop.getParent() == null || childHop.getParent().isEmpty())
+			return Math.max(currentParentDemand, currentParentDemand * numParents);
+
+		double total = 0.0;
+		Set<Long> seenParentHopIds = new HashSet<>();
+		for (Hop parentHop : childHop.getParent()) {
+			if (parentHop == null || !seenParentHopIds.add(parentHop.getHopID()))
+				continue;
+			FederatedPlannerDpMemoTable.HopCommon parentCommon = hopCommonTable.get(parentHop.getHopID());
+			if (parentCommon == null)
+				continue;
+			total += computeBoundaryDemandWeight(childPlan, parentCommon);
+		}
+		return total > 0.0 ? Math.max(total, currentParentDemand)
+			: Math.max(currentParentDemand, currentParentDemand * numParents);
+	}
+
+	private static double computeProducerTransferWeight(FederatedPlannerDpMemoTable.FedPlan childPlan) {
+		if (childPlan == null)
+			return 1.0;
+		double multiplicity = childPlan.getMultiplicity();
+		if (!isPositiveFinite(multiplicity))
+			multiplicity = 1.0;
+		double producerWeight = childPlan.getNetworkWeight();
+		if (!isPositiveFinite(producerWeight))
+			producerWeight = childPlan.getComputeWeight();
+		if (!isPositiveFinite(producerWeight))
+			producerWeight = 1.0;
+		return Math.max(0.0, producerWeight * multiplicity);
+	}
+
+	private static boolean isPositiveFinite(double value) {
+		return Double.isFinite(value) && value > 0.0;
+	}
+
+	private static void traceBoundaryTransferShare(double totalCost,
+			FederatedPlannerDpMemoTable.FedPlan childPlan, Hop parentHop,
+			double producerWeight, double parentDemand, double totalDemand,
+			double chargedOccurrences, double result) {
+		Hop childHop = childPlan != null ? childPlan.getHopRef() : null;
+		if (!FederatedPlannerTrace.shouldTrace(childHop))
+			return;
+		FederatedPlannerTrace.log(childHop, "DP-BoundaryShare", String.format(Locale.ROOT,
+			"parentHop=%d totalCost=%.6f producerWeight=%.6f parentDemand=%.6f totalDemand=%.6f charged=%.6f result=%.6f",
+			parentHop != null ? parentHop.getHopID() : -1L, totalCost, producerWeight,
+			parentDemand, totalDemand, chargedOccurrences, result));
 	}
 
 	private static boolean shouldAmortizeFederatedInputDownloadAcrossParents(
