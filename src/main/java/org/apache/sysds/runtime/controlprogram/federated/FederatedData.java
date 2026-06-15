@@ -520,7 +520,7 @@ public class FederatedData {
 		StringBuilder sb = new StringBuilder();
 		sb.append(this.getClass().getSimpleName().toString());
 		sb.append(" " + _dataType);
-		sb.append(" " + _address.toString());
+		sb.append(" " + (_address != null ? _address.toString() : "null"));
 		sb.append(":" + _filepath);
 		return sb.toString();
 	}

@@ -292,19 +292,43 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 					getOpcode().equals("fed_tak+*") ? Opcodes.UAKP.toString() : Opcodes.UACKP.toString());
 				ec.setMatrixOutput(output.getName(), FederationUtils.aggMatrix(aop, response, base.getFedMapping()));
 			}
-		}
-		else {
-			if(mo3 == null)
-				throw new DMLRuntimeException("Federated AggregateTernary not supported with the "
-					+ "following federated objects: " + mo1.isFederated() + ":" + mo1.getFedMapping() + " "
+			}
+			else if(_fedOut != null && _fedOut.isForcedLocal()) {
+				executeForcedLocalFallback(ec);
+			}
+			else {
+				if(mo3 == null)
+					throw new DMLRuntimeException("Federated AggregateTernary not supported with the "
+						+ "following federated objects: " + mo1.isFederated() + ":" + mo1.getFedMapping() + " "
 					+ mo2.isFederated() + ":" + mo2.getFedMapping());
 			throw new DMLRuntimeException("Federated AggregateTernary not supported with the "
 				+ "following federated objects: " + mo1.isFederated() + ":" + mo1.getFedMapping() + " "
 				+ mo2.isFederated() + ":" + mo2.getFedMapping() + mo3.isFederated() + ":" + mo3.getFedMapping());
+			}
 		}
-	}
 
-	private static boolean isSameWorkerPool(FederationMap a, FederationMap b) {
+		private void executeForcedLocalFallback(ExecutionContext ec) {
+			MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName());
+			MatrixBlock matBlock2 = ec.getMatrixInput(input2.getName());
+			MatrixBlock matBlock3 = input3.isLiteral() ? null : ec.getMatrixInput(input3.getName());
+			try {
+				AggregateTernaryOperator abOp = (AggregateTernaryOperator) _optr;
+				MatrixBlock ret = MatrixBlock.aggregateTernaryOperations(matBlock1, matBlock2, matBlock3,
+					new MatrixBlock(), abOp, true);
+				if(output.getDataType().isScalar())
+					ec.setScalarOutput(output.getName(), new DoubleObject(ret.get(0, 0)));
+				else
+					ec.setMatrixOutput(output.getName(), ret);
+			}
+			finally {
+				ec.releaseMatrixInput(input1.getName());
+				ec.releaseMatrixInput(input2.getName());
+				if(!input3.isLiteral())
+					ec.releaseMatrixInput(input3.getName());
+			}
+		}
+
+		private static boolean isSameWorkerPool(FederationMap a, FederationMap b) {
 		if (a == null || b == null)
 			return false;
 		if (a.getSize() != b.getSize())

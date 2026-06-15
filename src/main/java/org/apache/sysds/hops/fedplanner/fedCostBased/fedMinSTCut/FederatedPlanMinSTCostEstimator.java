@@ -320,12 +320,6 @@ public class FederatedPlanMinSTCostEstimator {
 		boolean afF = caps.allowFED_FOUT;
 		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopID);
-		long lId = FederatedPlanMinSTPlanner.localityId(hopID);
-		graph.addNoLocalImplicationEdges(hopID);
-		if (vertex.isDerivedFedFout()) {
-			// Derived FED/FOUT always has a local intermediate/result.
-			graph.forbidNoLocalUnary(lId);
-		}
 
 		if (!acL && !afL) {
 			graph.forbidLOUTUnary(pId);

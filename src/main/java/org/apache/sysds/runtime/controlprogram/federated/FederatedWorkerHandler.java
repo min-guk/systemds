@@ -68,6 +68,7 @@ import org.apache.sysds.runtime.instructions.cp.ComputationCPInstruction;
 import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.cp.ListObject;
 import org.apache.sysds.runtime.instructions.cp.ScalarObject;
+import org.apache.sysds.runtime.instructions.cp.VariableCPInstruction;
 import org.apache.sysds.runtime.io.FileFormatPropertiesCSV;
 import org.apache.sysds.runtime.io.IOUtilFunctions;
 import org.apache.sysds.runtime.lineage.Lineage;
@@ -550,7 +551,11 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 			var block = ExecutionContext.createCacheableData((CacheBlock<?>) v);
 			size = block.getDataSize();
 			data = block;
-			((CacheableData<?>) data).requireLocalWrite();
+			CacheableData<?> cacheable = (CacheableData<?>) data;
+			cacheable.requireLocalWrite();
+			// Federated PUT_VAR outputs can be reused by multiple later federation ids/aliases.
+			// Keep the worker-side backing file alive until the execution context is cleared.
+			cacheable.enableCleanup(false);
 		}
 		else if(v instanceof ScalarObject) {
 			data = (ScalarObject) v;
@@ -640,9 +645,9 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 		final long tid = request.getTID();
 		final ExecutionContext ec = getContextForInstruction(tid, ins, ecm);
 		setThreads(ins);
-		try {
-			exec(ec, ins);
-		}
+			try {
+				exec(ec, ins);
+			}
 		catch (Exception ex) {
 			if (ENABLE_MISSING_VAR_RECOVERY) {
 				Long missingVarId = extractMissingVarId(ex);
@@ -665,12 +670,13 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 				logExecutionContextState(ec, ins);
 				throw new FederatedWorkerHandlerException(
 					"Failed to execute federated instruction: " + ins.toString(), ex);
+				}
 			}
+			preserveWorkerOutputForReuse(ec, ins);
+			adaptToWorkload(ec, _fan, tid, ins);
+			return new FederatedResponse(
+				ResponseType.SUCCESS_EMPTY, getOutputNnz(ec, ins));
 		}
-		adaptToWorkload(ec, _fan, tid, ins);
-		return new FederatedResponse(
-			ResponseType.SUCCESS_EMPTY, getOutputNnz(ec, ins));
-	}
 	
 	private static ExecutionContext getContextForInstruction(long id, Instruction ins, ExecutionContextMap ecm){
 		final ExecutionContext ec = ecm.get(id);
@@ -751,6 +757,32 @@ public class FederatedWorkerHandler extends ChannelInboundHandlerAdapter {
 				return ((MatrixObject)dat).getNnz();
 		}
 		return -1L;
+	}
+
+	private static void preserveWorkerOutputForReuse(ExecutionContext ec, Instruction ins) {
+		if(ins instanceof ComputationCPInstruction) {
+			preserveWorkerVariableForReuse(ec, ((ComputationCPInstruction)ins).getOutputVariableName());
+		}
+		else if(ins instanceof VariableCPInstruction) {
+			VariableCPInstruction vinst = (VariableCPInstruction) ins;
+			if(vinst.isAssignOrCopyVariable() || vinst.isMoveVariable()) {
+				if(vinst.getInput1() != null)
+					preserveWorkerVariableForReuse(ec, vinst.getInput1().getName());
+				if(vinst.getInput2() != null)
+					preserveWorkerVariableForReuse(ec, vinst.getInput2().getName());
+			}
+		}
+	}
+
+	private static void preserveWorkerVariableForReuse(ExecutionContext ec, String varName) {
+		if(varName == null || !ec.containsVariable(varName))
+			return;
+		Data dat = ec.getVariable(varName);
+		if(dat instanceof CacheableData)
+			// Federated worker outputs may be consumed under multiple later ids/aliases.
+			// Do not let cleanup of one alias remove the worker-side backing file while
+			// the execution context still holds another live reference.
+			((CacheableData<?>) dat).enableCleanup(false);
 	}
 
 	private static void logExecutionContextState(ExecutionContext ec, Instruction ins) {

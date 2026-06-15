@@ -95,6 +95,7 @@ import org.apache.sysds.runtime.instructions.FEDInstructionParser;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.jgrapht.graph.DefaultWeightedEdge;
 import org.junit.Test;
 
 public class FederatedPlannerFallbackIntegrationTest {
@@ -1734,11 +1735,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 			Method getEdgeWeightOrZero = FederatedPlanMinSTGraph.class.getDeclaredMethod(
 				"getEdgeWeightOrZero", long.class, long.class);
-			getEdgeWeightOrZero.setAccessible(true);
-			long cId = fedInitRead.getHopID() << 2;
-			long lId = (fedInitRead.getHopID() << 2) | 2L;
-			double cpUnaryCost = (double) getEdgeWeightOrZero.invoke(graph, leafedSource, cId);
-			double localMaterialization = (double) getEdgeWeightOrZero.invoke(graph, cId, lId);
+				getEdgeWeightOrZero.setAccessible(true);
+				long cId = fedInitRead.getHopID() << 2;
+				long pId = (fedInitRead.getHopID() << 2) | 1L;
+				double cpUnaryCost = (double) getEdgeWeightOrZero.invoke(graph, leafedSource, cId);
+				double localMaterialization = (double) getEdgeWeightOrZero.invoke(graph, cId, pId);
 			double expectedSharedDownload = 100.0 / 30.0 / 2.0;
 
 			assertEquals("Stable fed-init TRead should pay one shared local materialization cost",
@@ -1991,102 +1992,45 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testMinSTRequiredLocalRepairDemotesChildUnderHighForwardingPenalty() throws Exception {
-		try {
-			System.setProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "100.0");
-			DataOp fedChild = federatedRead("Yrepair", ROWS, COLS);
-			LiteralOp zero = new LiteralOp(0L);
-			BinaryOp parent = new BinaryOp("gtRepair", DataType.MATRIX, ValueType.FP64,
-				OpOp2.GREATER, fedChild, zero);
-			parent.setDim1(ROWS);
-			parent.setDim2(COLS);
+	public void testMinSTRequiredLocalDemandAddsGraphConstraint() {
+		DataOp fedChild = federatedRead("Yconstraint", ROWS, COLS);
+		BinaryOp parent = new BinaryOp("gtConstraint", DataType.MATRIX, ValueType.FP64,
+			OpOp2.GREATER, fedChild, new LiteralOp(0L));
 
-			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-			graph.setNumOfWorkers(4);
-			FederatedPlanMinSTGraph.ExecPlacementCaps childCaps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
-			childCaps.allowCP_LOUT = true;
-			childCaps.allowCP_FOUT = false;
-			childCaps.allowFED_LOUT = false;
-			childCaps.allowFED_FOUT = true;
-			graph.addVertex(new Vertex(fedChild, Privacy.PUBLIC, FType.ROW, FType.ROW, childCaps));
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.addVertex(new Vertex(fedChild, Privacy.PUBLIC, FType.ROW, FType.ROW, allowAllCaps()));
+		graph.addVertex(new Vertex(parent, Privacy.PRIVATE_AGGREGATE, FType.ROW, FType.ROW, allowAllCaps()));
+		graph.addRequiredLocalInputEdge(parent.getHopID(), fedChild.getHopID());
 
-			FederatedPlanMinSTGraph.ExecPlacementCaps parentCaps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
-			parentCaps.allowCP_LOUT = true;
-			parentCaps.allowCP_FOUT = true;
-			parentCaps.allowFED_LOUT = false;
-			parentCaps.allowFED_FOUT = true;
-			graph.addVertex(new Vertex(parent, Privacy.PRIVATE_AGGREGATE, FType.ROW, FType.ROW, parentCaps));
-			graph.addRequiredLocalInputEdge(parent.getHopID(), fedChild.getHopID());
-
-			Map<Long, ExecType> execSelection = new HashMap<>();
-			Map<Long, FederatedOutput> outSelection = new HashMap<>();
-			execSelection.put(fedChild.getHopID(), ExecType.FED);
-			outSelection.put(fedChild.getHopID(), FederatedOutput.FOUT);
-			execSelection.put(parent.getHopID(), ExecType.CP);
-			outSelection.put(parent.getHopID(), FederatedOutput.LOUT);
-
-			invokeRepairSelectionFixpoint(graph, execSelection, outSelection);
-
-			assertEquals("High WAN control penalty should preserve the selected CP parent",
-				ExecType.CP, execSelection.get(parent.getHopID()));
-			assertEquals(FederatedOutput.LOUT, outSelection.get(parent.getHopID()));
-			assertEquals("Required-local repair should materialize the child locally instead of promoting the parent",
-				ExecType.CP, execSelection.get(fedChild.getHopID()));
-			assertEquals(FederatedOutput.LOUT, outSelection.get(fedChild.getHopID()));
-		}
-		finally {
-			System.clearProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS");
-			FederatedPlannerUtils.clearFedInitVars();
-		}
+		long childP = minstPlacementId(fedChild.getHopID());
+		long parentC = minstComputeId(parent.getHopID());
+		DefaultWeightedEdge constraint = graph.getGraph().getEdge(childP, parentC);
+		assertNotNull("Required-local demand must be encoded before the cut", constraint);
+		assertTrue("Constraint must make child FOUT + parent CP infeasible",
+			graph.getGraph().getEdgeWeight(constraint) > 1e12);
 	}
 
 	@Test
-	public void testMinSTRequiredLocalRepairKeepsSingleWorkerPromotionPath() throws Exception {
-		try {
-			System.setProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "100.0");
-			DataOp fedChild = federatedRead("YsingleRepair", ROWS, COLS);
-			LiteralOp zero = new LiteralOp(0L);
-			BinaryOp parent = new BinaryOp("gtSingleRepair", DataType.MATRIX, ValueType.FP64,
-				OpOp2.GREATER, fedChild, zero);
-			parent.setDim1(ROWS);
-			parent.setDim2(COLS);
+	public void testMinSTRequiredLocalConstraintTruthTable() {
+		DataOp fedChild = federatedRead("YconstraintTable", ROWS, COLS);
+		BinaryOp parent = new BinaryOp("gtConstraintTable", DataType.MATRIX, ValueType.FP64,
+			OpOp2.GREATER, fedChild, new LiteralOp(0L));
 
-			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-			graph.setNumOfWorkers(1);
-			FederatedPlanMinSTGraph.ExecPlacementCaps childCaps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
-			childCaps.allowCP_LOUT = true;
-			childCaps.allowCP_FOUT = false;
-			childCaps.allowFED_LOUT = false;
-			childCaps.allowFED_FOUT = true;
-			graph.addVertex(new Vertex(fedChild, Privacy.PUBLIC, FType.ROW, FType.ROW, childCaps));
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.addVertex(new Vertex(fedChild, Privacy.PUBLIC, FType.ROW, FType.ROW, allowAllCaps()));
+		graph.addVertex(new Vertex(parent, Privacy.PRIVATE_AGGREGATE, FType.ROW, FType.ROW, allowAllCaps()));
+		graph.addRequiredLocalInputEdge(parent.getHopID(), fedChild.getHopID());
 
-			FederatedPlanMinSTGraph.ExecPlacementCaps parentCaps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
-			parentCaps.allowCP_LOUT = true;
-			parentCaps.allowCP_FOUT = true;
-			parentCaps.allowFED_LOUT = false;
-			parentCaps.allowFED_FOUT = true;
-			graph.addVertex(new Vertex(parent, Privacy.PRIVATE_AGGREGATE, FType.ROW, FType.ROW, parentCaps));
-			graph.addRequiredLocalInputEdge(parent.getHopID(), fedChild.getHopID());
-
-			Map<Long, ExecType> execSelection = new HashMap<>();
-			Map<Long, FederatedOutput> outSelection = new HashMap<>();
-			execSelection.put(fedChild.getHopID(), ExecType.FED);
-			outSelection.put(fedChild.getHopID(), FederatedOutput.FOUT);
-			execSelection.put(parent.getHopID(), ExecType.CP);
-			outSelection.put(parent.getHopID(), FederatedOutput.LOUT);
-
-			invokeRepairSelectionFixpoint(graph, execSelection, outSelection);
-
-			assertEquals("Single-worker runs should avoid the WAN demotion path that regresses l2svm",
-				ExecType.FED, execSelection.get(parent.getHopID()));
-			assertEquals(FederatedOutput.FOUT, outSelection.get(parent.getHopID()));
-			assertEquals(ExecType.FED, execSelection.get(fedChild.getHopID()));
-			assertEquals(FederatedOutput.FOUT, outSelection.get(fedChild.getHopID()));
-		}
-		finally {
-			System.clearProperty("SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS");
-			FederatedPlannerUtils.clearFedInitVars();
-		}
+		long childP = minstPlacementId(fedChild.getHopID());
+		long parentC = minstComputeId(parent.getHopID());
+		assertTrue("Child FOUT with CP parent must cut the hard constraint",
+			computeMinSTCutCost(graph, childP) > 1e12);
+		assertEquals("Child LOUT with CP parent is allowed", 0.0,
+			computeMinSTCutCost(graph), 1e-9);
+		assertEquals("Child FOUT with FED parent is allowed by this local-demand constraint", 0.0,
+			computeMinSTCutCost(graph, childP, parentC), 1e-9);
+		assertEquals("Child LOUT with FED parent is allowed by this local-demand constraint", 0.0,
+			computeMinSTCutCost(graph, parentC), 1e-9);
 	}
 
 	@Test
@@ -2658,6 +2602,28 @@ public class FederatedPlannerFallbackIntegrationTest {
 			"repairSelectionFixpoint", Map.class, Map.class);
 		method.setAccessible(true);
 		method.invoke(graph, execSelection, outSelection);
+	}
+
+	private static double computeMinSTCutCost(FederatedPlanMinSTGraph graph, long... sourceNodes) {
+		Set<Long> sourceSide = new HashSet<>();
+		for (long node : sourceNodes)
+			sourceSide.add(node);
+		double cost = 0.0;
+		for (DefaultWeightedEdge edge : graph.getGraph().edgeSet()) {
+			Long src = graph.getGraph().getEdgeSource(edge);
+			Long dst = graph.getGraph().getEdgeTarget(edge);
+			if (sourceSide.contains(src) && !sourceSide.contains(dst))
+				cost += graph.getGraph().getEdgeWeight(edge);
+		}
+		return cost;
+	}
+
+	private static long minstComputeId(long hopId) {
+		return hopId << 2;
+	}
+
+	private static long minstPlacementId(long hopId) {
+		return (hopId << 2) | 1;
 	}
 
 	private static boolean invokeDemoteStaleTransientWriteFederatedSelections(List<Hop> all,

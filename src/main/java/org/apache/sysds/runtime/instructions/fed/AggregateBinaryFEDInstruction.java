@@ -19,9 +19,13 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import java.net.InetSocketAddress;
 import java.util.concurrent.Future;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysds.common.Opcodes;
@@ -95,6 +99,8 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 	public void processInstruction(ExecutionContext ec) {
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
+		mo1 = ensureRemoteFederatedInputForFedAggregate(ec, input1, mo1, mo2);
+		mo2 = ensureRemoteFederatedInputForFedAggregate(ec, input2, mo2, mo1);
 		if (DEBUG_KMEANS) {
 			String f1 = mo1.isFederated() && mo1.getFedMapping() != null ? mo1.getFedMapping().getType().name() : "LOCAL";
 			String f2 = mo2.isFederated() && mo2.getFedMapping() != null ? mo2.getFedMapping().getType().name() : "LOCAL";
@@ -313,6 +319,97 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		}
 	}
 
+	private MatrixLineagePair ensureRemoteFederatedInputForFedAggregate(ExecutionContext ec, CPOperand operand,
+			MatrixLineagePair input, MatrixLineagePair other) {
+		if (input == null || !input.isFederated() || input.getFedMapping() == null
+			|| !FEDLocalMaterializeUtil.hasLocalFederatedData(input.getFedMapping()))
+			return input;
+		FederationMap anchor = selectRemoteAnchor(other, input);
+		if (anchor == null || anchor.getSize() <= 0)
+			return input;
+		FType anchorType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchor);
+		if (anchorType == FType.PART || anchorType == FType.OTHER)
+			return input;
+
+		MatrixObject mo = input.getMO();
+		long rlen = mo.getNumRows();
+		long clen = mo.getNumColumns();
+		if (rlen < 0 || clen < 0) {
+			MatrixBlock block = mo.acquireRead();
+			rlen = block.getNumRows();
+			clen = block.getNumColumns();
+			mo.release();
+		}
+		if (rlen < 0 || clen < 0)
+			return input;
+
+		FType requested = input.getFedMapping().getType();
+		FType materializeType = (requested == FType.ROW || requested == FType.COL || requested == FType.FULL)
+			? requested : anchorType;
+		if (materializeType == FType.BROADCAST)
+			materializeType = FType.FULL;
+		if (materializeType == FType.PART || materializeType == FType.OTHER)
+			materializeType = (anchorType == FType.ROW || anchorType == FType.COL) ? anchorType : FType.FULL;
+		FType mapType = (requested == FType.BROADCAST) ? FType.BROADCAST : materializeType;
+		if (materializeType == FType.ROW && rlen < anchor.getSize()) {
+			materializeType = FType.FULL;
+			mapType = FType.BROADCAST;
+		}
+		else if (materializeType == FType.COL && clen < anchor.getSize()) {
+			materializeType = FType.FULL;
+			mapType = FType.BROADCAST;
+		}
+
+		FederationMap remoteMap = FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), mo, anchor,
+			materializeType, mapType, rlen, clen, true, "fed_agg_binary_mixed_local");
+		mo.setFedMapping(remoteMap);
+		mo.getDataCharacteristics().set(rlen, clen, mo.getBlocksize(), mo.getNnz());
+		if (DEBUG_KMEANS) {
+			System.out.println("[DBG-KMEANS] aggBinary mixed-local remote materialize input=" + operand.getName()
+				+ " dims=" + rlen + "x" + clen
+				+ " oldType=" + requested
+				+ " newType=" + remoteMap.getType()
+				+ " anchorType=" + anchorType
+				+ " inst=" + instString);
+		}
+		return ec.getMatrixLineagePair(operand);
+	}
+
+	private static FederationMap selectRemoteAnchor(MatrixLineagePair preferred, MatrixLineagePair fallback) {
+		if (preferred != null && preferred.isFederated() && preferred.getFedMapping() != null
+			&& !FEDLocalMaterializeUtil.hasLocalFederatedData(preferred.getFedMapping()))
+			return preferred.getFedMapping();
+		if (fallback != null && fallback.isFederated() && fallback.getFedMapping() != null
+			&& !FEDLocalMaterializeUtil.hasLocalFederatedData(fallback.getFedMapping()))
+			return fallback.getFedMapping();
+		FederationMap anchor = remoteOnlyAnchor(preferred);
+		if (anchor != null)
+			return anchor;
+		anchor = remoteOnlyAnchor(fallback);
+		if (anchor != null)
+			return anchor;
+		return null;
+	}
+
+	private static FederationMap remoteOnlyAnchor(MatrixLineagePair pair) {
+		if (pair == null || !pair.isFederated() || pair.getFedMapping() == null)
+			return null;
+		List<Pair<org.apache.sysds.runtime.controlprogram.federated.FederatedRange,
+			org.apache.sysds.runtime.controlprogram.federated.FederatedData>> remote = new ArrayList<>();
+		for (Pair<org.apache.sysds.runtime.controlprogram.federated.FederatedRange,
+				org.apache.sysds.runtime.controlprogram.federated.FederatedData> entry : pair.getFedMapping().getMap()) {
+			if (entry == null || entry.getValue() == null || entry.getValue().getAddress() == null)
+				continue;
+			remote.add(entry);
+		}
+		if (remote.isEmpty())
+			return null;
+		FType type = pair.getFedMapping().getType();
+		if (remote.size() == 1 && (type == FType.OTHER || type == FType.PART))
+			type = FType.FULL;
+		return new FederationMap(pair.getFedMapping().getID(), remote, type);
+	}
+
 	private void writeInfoLog(MatrixLineagePair mo1, MatrixLineagePair mo2){
 		FType mo1FType = (mo1.getFedMapping()==null) ? null : mo1.getFedMapping().getType();
 		FType mo2FType = (mo2.getFedMapping()==null) ? null : mo2.getFedMapping().getType();
@@ -469,11 +566,20 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		String[] as = new String[n];
 		String[] bs = new String[n];
 		for (int i = 0; i < n; i++) {
-			as[i] = String.valueOf(a.getMap().get(i).getValue() != null ? a.getMap().get(i).getValue().getAddress() : null);
-			bs[i] = String.valueOf(b.getMap().get(i).getValue() != null ? b.getMap().get(i).getValue().getAddress() : null);
+			as[i] = workerAddressKey(a.getMap().get(i).getValue() != null ?
+				a.getMap().get(i).getValue().getAddress() : null);
+			bs[i] = workerAddressKey(b.getMap().get(i).getValue() != null ?
+				b.getMap().get(i).getValue().getAddress() : null);
 		}
 		java.util.Arrays.sort(as);
 		java.util.Arrays.sort(bs);
 		return java.util.Arrays.equals(as, bs);
+	}
+
+	private static String workerAddressKey(InetSocketAddress address) {
+		if (address == null)
+			return "null";
+		String host = address.getAddress() != null ? address.getAddress().getHostAddress() : address.getHostString();
+		return host + ":" + address.getPort();
 	}
 }

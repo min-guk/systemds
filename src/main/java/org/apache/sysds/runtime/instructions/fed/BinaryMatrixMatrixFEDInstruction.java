@@ -19,6 +19,7 @@
 
 package org.apache.sysds.runtime.instructions.fed;
 
+import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.Future;
 
@@ -342,11 +343,20 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 		String[] as = new String[n];
 		String[] bs = new String[n];
 		for (int i = 0; i < n; i++) {
-			as[i] = String.valueOf(a.getMap().get(i).getValue() != null ? a.getMap().get(i).getValue().getAddress() : null);
-			bs[i] = String.valueOf(b.getMap().get(i).getValue() != null ? b.getMap().get(i).getValue().getAddress() : null);
+			as[i] = workerAddressKey(a.getMap().get(i).getValue() != null ?
+				a.getMap().get(i).getValue().getAddress() : null);
+			bs[i] = workerAddressKey(b.getMap().get(i).getValue() != null ?
+				b.getMap().get(i).getValue().getAddress() : null);
 		}
 		Arrays.sort(as);
 		Arrays.sort(bs);
 		return Arrays.equals(as, bs);
+	}
+
+	private static String workerAddressKey(InetSocketAddress address) {
+		if (address == null)
+			return "null";
+		String host = address.getAddress() != null ? address.getAddress().getHostAddress() : address.getHostString();
+		return host + ":" + address.getPort();
 	}
 }

@@ -53,6 +53,7 @@ import org.apache.sysds.lops.UnaryCP;
 import org.apache.sysds.lops.compile.linearization.IDagLinearizer;
 import org.apache.sysds.lops.compile.linearization.IDagLinearizerFactory;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
@@ -190,7 +191,8 @@ public class Dag<N extends Lop>
 
 		IDagLinearizer dl = IDagLinearizerFactory.createDagLinearizer();
 		List<Lop> node_v = dl.linearize(nodes);
-		boolean modified = prefetchFederated(node_v);
+		boolean modified = insertLocalMaterializeLops(node_v, sb);
+		modified |= prefetchFederated(node_v);
 		modified |= insertRefedLops(node_v, sb);
 		modified |= insertFoutMaterializeLops(node_v, sb);
 
@@ -438,6 +440,115 @@ public class Dag<N extends Lop>
 			}
 		}
 		return inserted;
+	}
+
+	private boolean insertLocalMaterializeLops(List<Lop> lops, StatementBlock sb) {
+		if (FederatedLocalMaterializeRegistry.isEmpty())
+			return false;
+		long sbId = (sb != null) ? sb.getSBID() : -1;
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> entries =
+			FederatedLocalMaterializeRegistry.snapshot(sbId);
+		if (entries.isEmpty())
+			return false;
+
+		Map<Long, Lop> hopToLop = new HashMap<>();
+		for (Lop lop : lops) {
+			long hopId = lop.getHopID();
+			if (hopId < 0)
+				continue;
+			Lop existing = hopToLop.get(hopId);
+			if (existing == null || lop.getLevel() > existing.getLevel())
+				hopToLop.put(hopId, lop);
+		}
+
+		boolean inserted = false;
+		for (Map.Entry<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> e : entries.entrySet()) {
+			long producerHopId = e.getKey();
+			FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = e.getValue();
+			Lop producer = hopToLop.get(producerHopId);
+			if (producer == null || !isFederatedMatrixLop(producer)) {
+				if (LOG.isDebugEnabled())
+					LOG.debug("Skipping local materialize insertion for hop=" + producerHopId
+						+ " because producer lop is missing or not federated");
+				continue;
+			}
+			if (producer.getFederatedOutput() == FederatedOutput.LOUT)
+				continue;
+
+			UnaryCP materialize = new UnaryCP(producer, OpOp1.PREFETCH,
+				producer.getDataType(), producer.getValueType(), ExecType.CP);
+			materialize.getOutputParameters().setLabel(getNextUniqueVarname(materialize.getDataType()));
+			if (producer.getOutputParameters() != null)
+				copyOutputParams(materialize.getOutputParameters(), producer.getOutputParameters());
+			materialize.setFederatedOutput(FederatedOutput.LOUT);
+
+			Set<Long> selectedConsumers = new HashSet<>(spec.getConsumerHopIds());
+			boolean rewiredAny = false;
+			int insertPos = -1;
+			List<Lop> candidates = new ArrayList<>(lops);
+			for (Lop consumer : candidates) {
+				if (consumer == null || consumer == producer || consumer == materialize)
+					continue;
+				if (!selectedConsumers.isEmpty() && !selectedConsumers.contains(consumer.getHopID()))
+					continue;
+				if (consumer.getExecType() == ExecType.FED)
+					continue;
+				boolean replaced = replaceProducerInput(consumer, producer, materialize);
+				if (!replaced)
+					continue;
+				rewiredAny = true;
+				int idx = lops.indexOf(consumer);
+				if (idx >= 0 && (insertPos < 0 || idx < insertPos))
+					insertPos = idx;
+			}
+
+			if (!rewiredAny) {
+				if (LOG.isDebugEnabled())
+					LOG.debug("Skipping local materialize insertion for hop=" + producerHopId
+						+ " because no selected local consumer was rewired; reason=" + spec.getReason());
+				continue;
+			}
+
+			addNode(materialize);
+			producer.addOutput(materialize);
+			if (insertPos < 0)
+				insertPos = lops.indexOf(producer) + 1;
+			if (insertPos < 0)
+				insertPos = lops.size();
+			if (!lops.contains(materialize))
+				lops.add(insertPos, materialize);
+			inserted = true;
+			if (LOG_LOP_MAPPING)
+				System.out.printf("MinST-D insert: producerHop=%d consumers=%s out=%s reason=%s%n",
+					producerHopId, selectedConsumers, materialize.getOutputParameters().getLabel(), spec.getReason());
+		}
+		return inserted;
+	}
+
+	private static boolean replaceProducerInput(Lop consumer, Lop producer, Lop replacement) {
+		List<Lop> inputs = consumer.getInputs();
+		if (inputs == null || inputs.isEmpty())
+			return false;
+		boolean replaced = false;
+		long producerHopId = producer.getHopID();
+		String producerLabel = (producer.getOutputParameters() != null)
+			? producer.getOutputParameters().getLabel() : null;
+		for (Lop in : new ArrayList<>(inputs)) {
+			if (in == null || in == replacement)
+				continue;
+			boolean match = (in == producer);
+			if (!match && producerHopId >= 0)
+				match = in.getHopID() == producerHopId;
+			if (!match && producerLabel != null && in.getOutputParameters() != null)
+				match = producerLabel.equals(in.getOutputParameters().getLabel());
+			if (!match)
+				continue;
+			consumer.replaceInput(in, replacement);
+			in.removeOutput(consumer);
+			replacement.addOutput(consumer);
+			replaced = true;
+		}
+		return replaced;
 	}
 
 	private static List<Lop> linearizeTopological(List<Lop> lops) {

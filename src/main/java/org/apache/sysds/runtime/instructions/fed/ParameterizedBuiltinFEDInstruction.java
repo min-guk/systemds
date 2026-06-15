@@ -176,6 +176,10 @@ public class ParameterizedBuiltinFEDInstruction extends ComputationFEDInstructio
 		String opcode = getOpcode();
 		if(opcode.equalsIgnoreCase("contains")) {
 			FederationMap map = getTarget(ec).getFedMapping();
+			if(map == null) {
+				ParameterizedBuiltinCPInstruction.parseInstruction(instString).processInstruction(ec);
+				return;
+			}
 			FederatedRequest fr1 = FederationUtils.callInstruction(instString,
 				output, new CPOperand[] {getTargetOperand()}, new long[] {map.getID()});
 			FederatedRequest fr2 = new FederatedRequest(RequestType.GET_VAR, fr1.getID());

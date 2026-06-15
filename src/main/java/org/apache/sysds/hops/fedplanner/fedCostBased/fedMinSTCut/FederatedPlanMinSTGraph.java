@@ -157,7 +157,9 @@ public class FederatedPlanMinSTGraph {
 	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
 	private final Set<Long> parentChildUploadCostFallbackLogged = new HashSet<>();
 	private final List<LoopCarryEdge> loopCarryEdges = new ArrayList<>();
+	private final Map<Long, List<EffectiveDemandRecord>> effectiveDemandIndex = new HashMap<>();
 	private final Map<HyperEdgeKey, HyperEdgeGroup> parentChildHyperEdges = new HashMap<>();
+	private final List<SelectedObligation> selectedObligations = new ArrayList<>();
 	private int numOfWorkers = 0;
 	private long nextAuxNodeId = auxNodeBase;
 
@@ -187,7 +189,6 @@ public class FederatedPlanMinSTGraph {
 		memoTable.put(hopID, vertex);
 		graph.addVertex(FederatedPlanMinSTPlanner.computeId(hopID));
 		graph.addVertex(FederatedPlanMinSTPlanner.placementId(hopID));
-		graph.addVertex(FederatedPlanMinSTPlanner.localityId(hopID));
 	}
 
 	public void forbidLOUTUnary(long pId) {
@@ -201,22 +202,13 @@ public class FederatedPlanMinSTGraph {
 	}
 
 	public void forbidNoLocalUnary(long lId) {
-		// Force locality node to sink side (has local output).
-		addCap(leafedSource, lId, 0.0);
-		addCap(lId, rootLocalSink, HARD_INF);
+		// C/P-only MinST graph no longer creates unconditional locality nodes.
+		// Kept as a compatibility no-op for staged callers while L is removed.
 	}
 
 	public void addNoLocalImplicationEdges(long hopId) {
-		// Hop IDs are non-negative; synthetic/unit-test graphs can legitimately use 0.
-		if (hopId < 0)
-			return;
-		long cId = FederatedPlanMinSTPlanner.computeId(hopId);
-		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
-		long lId = FederatedPlanMinSTPlanner.localityId(hopId);
-		// lId represents the boolean "NO_LOCAL" (source side=true).
-		// NO_LOCAL implies both FED execution and a federated output (FOUT).
-		addCap(lId, pId, HARD_CONSTRAINT);
-		addCap(lId, cId, HARD_CONSTRAINT);
+		// C/P-only MinST graph no longer encodes a third no-local decision bit.
+		// Extra U/D obligations, if proven later, must be explicit conversion nodes.
 	}
 
 		public void setVertexCost(Vertex vertex) {
@@ -312,7 +304,6 @@ public class FederatedPlanMinSTGraph {
 		long hopId = vertex.getHopID();
 		long cId = FederatedPlanMinSTPlanner.computeId(hopId);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
-		long lId = FederatedPlanMinSTPlanner.localityId(hopId);
 		if (hop instanceof DataOp &&
 				((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 			// DP parity: a stable federated-input TRead (fed-init var) can materialize
@@ -323,10 +314,10 @@ public class FederatedPlanMinSTGraph {
 			// For ordinary TReads we still charge the loop-weighted download, because the
 			// local materialization may legitimately happen per execution.
 			double trDownloadCost = computeTransientReadDownloadEdgeCost(vertex);
-			addCap(cId, lId, trDownloadCost);
+			addCap(cId, pId, trDownloadCost);
 			if (FederatedPlannerTrace.shouldTrace(hop)) {
 				FederatedPlannerTrace.log(hop, "MinST-ResultEdge",
-						String.format("TR edge c->l download=%.6f stableFedInput=%s",
+						String.format("TR edge c->p download=%.6f stableFedInput=%s",
 								trDownloadCost, shouldReuseTransientReadDownload(vertex)));
 			}
 			return;
@@ -334,14 +325,14 @@ public class FederatedPlanMinSTGraph {
 		// Hop-local placement conversion follows the hop's own execution frequency.
 		double uploadCost = vertex.getOpWeight() * vertex.getCpUploadCostWithoutWeight();
 		double downloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
-		// Download is paid when we execute in FED and the hop needs to have a local materialization.
-		addCap(cId, lId, downloadCost);
+		// Download is paid by the intrinsic FED/LOUT combination in the C/P graph.
+		addCap(cId, pId, downloadCost);
 		if (vertex.isDerivedFedFout()) {
 			// Derived FED/FOUT: FOUT is produced via refed from a local intermediate, so upload depends only on placement.
 			addCap(pId, rootLocalSink, uploadCost);
 			if (FederatedPlannerTrace.shouldTrace(hop)) {
 				FederatedPlannerTrace.log(hop, "MinST-ResultEdge", String.format(
-						"derivedFED_FOUT edge p->t upload=%.6f, c->l download=%.6f",
+						"derivedFED_FOUT edge p->t upload=%.6f, c->p download=%.6f",
 						uploadCost, downloadCost));
 			}
 			return;
@@ -349,7 +340,7 @@ public class FederatedPlanMinSTGraph {
 		addCap(pId, cId, uploadCost);
 		if (FederatedPlannerTrace.shouldTrace(hop)) {
 			FederatedPlannerTrace.log(hop, "MinST-ResultEdge", String.format(
-					"native edge p->c upload=%.6f, c->l download=%.6f",
+					"native edge p->c upload=%.6f, c->p download=%.6f",
 					uploadCost, downloadCost));
 		}
 	}
@@ -438,14 +429,35 @@ public class FederatedPlanMinSTGraph {
 			}
 			return;
 		}
-		// DP parity: boundary forwarding is charged per parent-child edge.
-		// This keeps candidate scoring consistent between DP and MinST.
-		addCap(parentC, childP, uploadWeighted);
+		recordEffectiveDemand(childHopID, EffectiveDemandSide.FED, parentHopID,
+				"raw-parent-fed-boundary", forwardingWeight, uploadConversionType);
+		if (childHopRef instanceof DataGenOp) {
+			// DataGen CP->FOUT has no concrete runtime anchor in the local result.
+			// Treat a FED consumer as requiring native FED/FOUT generation instead of
+			// selecting a post-cut U obligation that would fail during registration.
+			long childC = FederatedPlanMinSTPlanner.computeId(childHopID);
+			addCap(parentC, childP, HARD_CONSTRAINT);
+			addCap(parentC, childC, HARD_CONSTRAINT);
+			if (FederatedPlannerTrace.shouldTrace(childHopRef)) {
+				FederatedPlannerTrace.log(childHopRef, "MinST-CapabilityGate", String.format(
+						"parent=%d child=%d reason=DataGen CP/LOUT U has no anchor; FED consumer requires native FED/FOUT or parent CP",
+						parentHopID, childHopID));
+			}
+			return;
+		}
+		// State-conditioned U obligation: if one or more selected FED consumers need
+		// a federated representation while the child primary placement stays LOUT,
+		// the upload/refed conversion is charged once for the compatible child domain.
+		// The auxiliary hyperedge encodes the OR over parent C states before the cut:
+		// any FED parent forces the aux node to source; if child P remains sink (LOUT),
+		// the group pays exactly one upload cost.
+		addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.UPLOAD,
+				uploadConversionType, uploadWeighted);
 		Hop traceHop = FederatedPlannerTrace.shouldTrace(parentVertex.getHopRef())
 				? parentVertex.getHopRef() : childHopRef;
 		if (FederatedPlannerTrace.shouldTrace(traceHop)) {
 			FederatedPlannerTrace.log(traceHop, "MinST-BoundaryEdge", String.format(
-					"parent=%d child=%d requiresFedInput=%s fwdWeight=%.6f baseUpload=%.6f penalty=%.6f weightedUpload=%.6f type=%s",
+					"parent=%d child=%d requiresFedInput=%s fwdWeight=%.6f baseUpload=%.6f penalty=%.6f weightedUpload=%.6f type=%s encoding=U-HYPEREDGE",
 					parentHopID, childHopID, requiresFederatedInput, forwardingWeight,
 					childVertex.getCpUploadCostWithoutWeight(), forwardingPenalty, uploadWeighted, uploadConversionType));
 		}
@@ -465,6 +477,10 @@ public class FederatedPlanMinSTGraph {
 			double uploadWeighted, double downloadWeighted) {
 		long readerC = FederatedPlanMinSTPlanner.computeId(frontReaderHopId);
 		long writerP = FederatedPlanMinSTPlanner.placementId(endWriterHopId);
+		recordEffectiveDemand(endWriterHopId, EffectiveDemandSide.FED, frontReaderHopId,
+				"loop-carry-fed", uploadWeighted, null);
+		recordEffectiveDemand(endWriterHopId, EffectiveDemandSide.LOCAL, frontReaderHopId,
+				"loop-carry-local", downloadWeighted, null);
 		addCap(readerC, writerP, uploadWeighted);
 		addCap(writerP, readerC, downloadWeighted);
 	}
@@ -505,9 +521,117 @@ public class FederatedPlanMinSTGraph {
 		if (!requiredLocalInputAdded.add(Pair.of(parentHopId, childHopId)))
 			return;
 		long parentC = FederatedPlanMinSTPlanner.computeId(parentHopId);
-		long childL = FederatedPlanMinSTPlanner.localityId(childHopId);
-		// If the child has NO_LOCAL (lId on source side), the parent cannot execute CP.
-		addCap(childL, parentC, HARD_CONSTRAINT);
+		long childP = FederatedPlanMinSTPlanner.placementId(childHopId);
+		// Conservative C/P fallback: without an explicit D obligation, a CP parent
+		// requires the child primary placement to be local. This converts the former
+		// post-cut required-local repair into a graph constraint.
+		recordEffectiveDemand(childHopId, EffectiveDemandSide.LOCAL, parentHopId,
+				"raw-parent-local", 1.0, null);
+		addCap(childP, parentC, HARD_CONSTRAINT);
+	}
+
+	public EffectiveDemandClass getEffectiveDemandClass(long hopId) {
+		List<EffectiveDemandRecord> records = effectiveDemandIndex.get(hopId);
+		if (records == null || records.isEmpty())
+			return EffectiveDemandClass.NONE;
+		boolean local = false;
+		boolean fed = false;
+		for (EffectiveDemandRecord record : records) {
+			if (record.side == EffectiveDemandSide.LOCAL)
+				local = true;
+			else if (record.side == EffectiveDemandSide.FED)
+				fed = true;
+		}
+		if (local && fed)
+			return EffectiveDemandClass.MIXED_LOCAL_FED;
+		if (local)
+			return EffectiveDemandClass.LOCAL_ONLY;
+		return EffectiveDemandClass.FED_ONLY;
+	}
+
+	public List<String> getEffectiveDemandSummary(long hopId) {
+		List<EffectiveDemandRecord> records = effectiveDemandIndex.get(hopId);
+		if (records == null || records.isEmpty())
+			return Collections.emptyList();
+		List<String> summary = new ArrayList<>();
+		for (EffectiveDemandRecord record : records)
+			summary.add(record.toString());
+		return Collections.unmodifiableList(summary);
+	}
+
+	private void recordEffectiveDemand(long hopId, EffectiveDemandSide side, long consumerHopId,
+			String kind, double weight, FType fType) {
+		if (hopId < 0 || side == null)
+			return;
+		List<EffectiveDemandRecord> records =
+				effectiveDemandIndex.computeIfAbsent(hopId, k -> new ArrayList<>());
+		EffectiveDemandRecord record =
+				new EffectiveDemandRecord(side, consumerHopId, kind, weight, fType);
+		if (!records.contains(record))
+			records.add(record);
+	}
+
+	public List<SelectedObligation> getSelectedObligations() {
+		return Collections.unmodifiableList(selectedObligations);
+	}
+
+	private void computeSelectedObligations(Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		selectedObligations.clear();
+		for (Map.Entry<Long, List<EffectiveDemandRecord>> entry : effectiveDemandIndex.entrySet()) {
+			long childHopId = entry.getKey();
+			Vertex childVertex = memoTable.get(childHopId);
+			if (childVertex == null || childVertex.getHopRef() == null)
+				continue;
+			Hop childHop = childVertex.getHopRef();
+			if (childHop.getDataType() == null || !childHop.getDataType().isMatrix())
+				continue;
+			ExecType childExec = execSelection.getOrDefault(childHopId, ExecType.CP);
+			FederatedOutput childOut = outSelection.getOrDefault(childHopId, FederatedOutput.LOUT);
+			List<Long> activeFedConsumers = new ArrayList<>();
+			List<Long> activeLocalConsumers = new ArrayList<>();
+			for (EffectiveDemandRecord record : entry.getValue()) {
+				if (record.side == EffectiveDemandSide.FED
+						&& isDemandActive(record, ExecType.FED, execSelection))
+					activeFedConsumers.add(record.consumerHopId);
+				else if (record.side == EffectiveDemandSide.LOCAL
+						&& isDemandActive(record, ExecType.CP, execSelection))
+					activeLocalConsumers.add(record.consumerHopId);
+			}
+			if (!activeFedConsumers.isEmpty()
+					&& childExec == ExecType.CP
+					&& childOut == FederatedOutput.LOUT) {
+				FType fType = childVertex.getCpFoutDataType();
+				if (fType == null)
+					fType = childVertex.getDataType();
+				selectedObligations.add(new SelectedObligation(
+						ObligationKind.U, childHopId, activeFedConsumers, fType,
+						"CP/LOUT child has active FED consumers"));
+			}
+			if (!activeLocalConsumers.isEmpty()
+					&& childExec == ExecType.FED
+					&& childOut == FederatedOutput.FOUT) {
+				selectedObligations.add(new SelectedObligation(
+						ObligationKind.D, childHopId, activeLocalConsumers, childVertex.getDataType(),
+						"FED/FOUT child has active LOCAL consumers"));
+			}
+		}
+	}
+
+	private boolean isDemandActive(EffectiveDemandRecord record, ExecType activeConsumerExec,
+			Map<Long, ExecType> execSelection) {
+		if (record == null)
+			return false;
+		if (record.kind != null && (record.kind.startsWith("loop-carry")
+				|| record.kind.startsWith("boundary")
+				|| record.kind.startsWith("final")
+				|| record.kind.startsWith("memo")
+				|| record.kind.startsWith("tw-tr")))
+			return true;
+		Vertex consumerVertex = memoTable.get(record.consumerHopId);
+		if (consumerVertex == null)
+			return true;
+		return execSelection.getOrDefault(record.consumerHopId, ExecType.CP) == activeConsumerExec;
 	}
 
 	private double computeTransientReadLocalMaterializationCost(Vertex vertex) {
@@ -742,6 +866,139 @@ public class FederatedPlanMinSTGraph {
 		}
 	}
 
+	public enum EffectiveDemandClass {
+		NONE,
+		LOCAL_ONLY,
+		FED_ONLY,
+		MIXED_LOCAL_FED
+	}
+
+	public enum ObligationKind {
+		U,
+		D
+	}
+
+	public static final class SelectedObligation {
+		private final ObligationKind kind;
+		private final long childHopId;
+		private final long originalHopId;
+		private final String domainId;
+		private final List<Long> consumerHopIds;
+		private final FType fType;
+		private final boolean capability;
+		private final String capabilityReason;
+		private final String reason;
+
+		private SelectedObligation(ObligationKind kind, long childHopId,
+				List<Long> consumerHopIds, FType fType, String reason) {
+			this(kind, childHopId, childHopId, consumerHopIds, fType, true, "capability-proven-by-planner", reason);
+		}
+
+		private SelectedObligation(ObligationKind kind, long childHopId, long originalHopId,
+				List<Long> consumerHopIds, FType fType, boolean capability,
+				String capabilityReason, String reason) {
+			this.kind = kind;
+			this.childHopId = childHopId;
+			this.originalHopId = originalHopId;
+			this.consumerHopIds = Collections.unmodifiableList(new ArrayList<>(consumerHopIds));
+			this.fType = fType;
+			this.capability = capability;
+			this.capabilityReason = capabilityReason;
+			this.reason = reason;
+			this.domainId = String.format("%s:%d:%s:%s", kind, originalHopId, fType, this.consumerHopIds);
+		}
+
+		public ObligationKind getKind() {
+			return kind;
+		}
+
+		public long getChildHopId() {
+			return childHopId;
+		}
+
+		public long getOriginalHopId() {
+			return originalHopId;
+		}
+
+		public String getDomainId() {
+			return domainId;
+		}
+
+		public List<Long> getConsumerHopIds() {
+			return consumerHopIds;
+		}
+
+		public FType getFType() {
+			return fType;
+		}
+
+		public boolean hasCapability() {
+			return capability;
+		}
+
+		public String getCapabilityReason() {
+			return capabilityReason;
+		}
+
+		public String getReason() {
+			return reason;
+		}
+
+		@Override
+		public String toString() {
+			return String.format("kind=%s domain=%s child=%d original=%d consumers=%s fType=%s capability=%s capabilityReason=%s reason=%s",
+					kind, domainId, childHopId, originalHopId, consumerHopIds, fType,
+					capability, capabilityReason, reason);
+		}
+	}
+
+	private enum EffectiveDemandSide {
+		LOCAL,
+		FED
+	}
+
+	private static final class EffectiveDemandRecord {
+		private final EffectiveDemandSide side;
+		private final long consumerHopId;
+		private final String kind;
+		private final double weight;
+		private final FType fType;
+
+		private EffectiveDemandRecord(EffectiveDemandSide side, long consumerHopId,
+				String kind, double weight, FType fType) {
+			this.side = side;
+			this.consumerHopId = consumerHopId;
+			this.kind = kind;
+			this.weight = weight;
+			this.fType = fType;
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof EffectiveDemandRecord))
+				return false;
+			EffectiveDemandRecord other = (EffectiveDemandRecord) obj;
+			return side == other.side
+					&& consumerHopId == other.consumerHopId
+					&& Objects.equals(kind, other.kind)
+					&& Double.compare(weight, other.weight) == 0
+					&& fType == other.fType;
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(side, consumerHopId, kind, weight, fType);
+		}
+
+		@Override
+		public String toString() {
+			return String.format("side=%s consumer=%d kind=%s weight=%.6f fType=%s",
+					side, consumerHopId, kind, weight, fType);
+		}
+	}
+
 	public Hop getHopRef(long hopID) {
 		return memoTable.get(hopID).getHopRef();
 	}
@@ -775,7 +1032,10 @@ public class FederatedPlanMinSTGraph {
 				outSelection.put(hopID, out);
 			}
 
-			repairSelectionFixpoint(execSelection, outSelection);
+			// U/D obligations are pre-cut graph terms. Do not silently reverse C/P or
+			// placement decisions after the cut; downstream validation and selected
+			// obligation registration must either satisfy the selected plan or fail.
+			computeSelectedObligations(execSelection, outSelection);
 			Map<Long, FType> finalFTypeMap = buildSelectedFTypeMap(execSelection, outSelection);
 
 			for (Vertex vertex : memoTable.values()) {
@@ -804,16 +1064,14 @@ public class FederatedPlanMinSTGraph {
 				// These repairs are coupled:
 				// - FED-input repair can demote a TWrite after the initial TR/TW alignment pass
 				// - the linked TRead must then be reconsidered against the repaired TWrite
-				// - required-local repair prevents CP parents from consuming no-local FED/FOUT children
+				// - required-local demand is now encoded as graph constraints
 				// - CP/FOUT parity repair back-propagates output materialization through selected FOUT chains
 				// - cap repair normalizes any intermediate illegal combination exposed by the repairs
 				changed |= repairTransientReadWriteSelection(execSelection, outSelection);
-				changed |= repairRequiredLocalInputSelection(execSelection, outSelection);
 				changed |= repairCpfoutPropagationSelection(execSelection, outSelection);
 				changed |= repairCapsInconsistentSelection(execSelection, outSelection);
 				changed |= repairFederatedInputSelection(execSelection, outSelection);
 				changed |= repairCpfoutPropagationSelection(execSelection, outSelection);
-				changed |= repairRequiredLocalInputSelection(execSelection, outSelection);
 				changed |= repairCapsInconsistentSelection(execSelection, outSelection);
 				iter++;
 			}
@@ -1491,11 +1749,9 @@ public class FederatedPlanMinSTGraph {
 		long hopID = vertex.getHopID();
 		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopID);
-		long lId = FederatedPlanMinSTPlanner.localityId(hopID);
 
 		boolean cSide = sourceSide.contains(cId);
 		boolean pSide = sourceSide.contains(pId);
-		boolean lSide = sourceSide.contains(lId);
 		ExecType exec = cSide ? ExecType.FED : ExecType.CP;
 		FederatedOutput out = pSide ? FederatedOutput.FOUT : FederatedOutput.LOUT;
 
@@ -1503,17 +1759,17 @@ public class FederatedPlanMinSTGraph {
 		double unaryFED = getEdgeWeightOrZero(cId, rootLocalSink);
 		double uploadPtoC = getEdgeWeightOrZero(pId, cId);
 		double uploadPtoT = getEdgeWeightOrZero(pId, rootLocalSink);
-		double downloadCtoL = getEdgeWeightOrZero(cId, lId);
+		double downloadCtoP = getEdgeWeightOrZero(cId, pId);
 
 		ExecPlacementCaps caps = vertex.getCaps();
 		FederatedPlannerTrace.log(hop, "MinST-Select", String.format(
-				"selected=%s/%s noLocal=%s side[c=%s,p=%s,l=%s] unary[CP=%.6f,FED=%.6f] conv[p->c=%.6f,p->t=%.6f,c->l=%.6f] caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s] fType=%s cpFoutType=%s",
-				exec, out, lSide, cSide ? "S" : "T", pSide ? "S" : "T", lSide ? "S" : "T",
-				unaryCP, unaryFED, uploadPtoC, uploadPtoT, downloadCtoL,
+				"selected=%s/%s side[c=%s,p=%s] unary[CP=%.6f,FED=%.6f] conv[p->c=%.6f,p->t=%.6f,c->p=%.6f] caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s] fType=%s cpFoutType=%s",
+				exec, out, cSide ? "S" : "T", pSide ? "S" : "T",
+				unaryCP, unaryFED, uploadPtoC, uploadPtoT, downloadCtoP,
 				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT,
 				vertex.getDataType(), vertex.getCpFoutDataType()));
 
-		List<String> cutEdges = collectIncidentCutEdges(cId, pId, lId, sourceSide,
+		List<String> cutEdges = collectIncidentCutEdges(cId, pId, sourceSide,
 				FederatedPlannerTrace.getMaxEdgeLogsPerHop());
 		for (String edgeLine : cutEdges) {
 			FederatedPlannerTrace.log(hop, "MinST-CutEdge", edgeLine);
@@ -1529,24 +1785,23 @@ public class FederatedPlanMinSTGraph {
 		long hopID = vertex.getHopID();
 		long cId = FederatedPlanMinSTPlanner.computeId(hopID);
 		long pId = FederatedPlanMinSTPlanner.placementId(hopID);
-		long lId = FederatedPlanMinSTPlanner.localityId(hopID);
 		ExecType rawExec = sourceSide.contains(cId) ? ExecType.FED : ExecType.CP;
 		FederatedOutput rawOut = sourceSide.contains(pId) ? FederatedOutput.FOUT : FederatedOutput.LOUT;
 		boolean repaired = rawExec != finalExec || rawOut != finalOut;
-		boolean rawNoLocal = sourceSide.contains(lId);
 		ExecPlacementCaps caps = vertex.getCaps();
+		EffectiveDemandClass demandClass = getEffectiveDemandClass(hopID);
 
 		FederatedPlannerTrace.log(hop, "MinST-FinalSelect", String.format(
-				"raw=%s/%s noLocal=%s final=%s/%s repaired=%s derivedFedFout=%s caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s] finalFType=%s cpFoutType=%s",
-				rawExec, rawOut, rawNoLocal, finalExec, finalOut, repaired, derivedFedFout,
-				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT,
+				"raw=%s/%s final=%s/%s repaired=%s derivedFedFout=%s demand=%s caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s] finalFType=%s cpFoutType=%s",
+				rawExec, rawOut, finalExec, finalOut, repaired, derivedFedFout,
+				demandClass, caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT,
 				finalFType, vertex.getCpFoutDataType()));
 	}
 
-	private List<String> collectIncidentCutEdges(long cId, long pId, long lId, Set<Long> sourceSide, int maxEdges) {
+	private List<String> collectIncidentCutEdges(long cId, long pId, Set<Long> sourceSide, int maxEdges) {
 		Set<DefaultWeightedEdge> seen = new HashSet<>();
 		List<CutEdgeInfo> cutEdges = new ArrayList<>();
-		long[] focusNodes = new long[] { cId, pId, lId };
+		long[] focusNodes = new long[] { cId, pId };
 		for (long nodeId : focusNodes) {
 			for (DefaultWeightedEdge edge : graph.outgoingEdgesOf(nodeId)) {
 				collectCutEdge(edge, sourceSide, seen, cutEdges);

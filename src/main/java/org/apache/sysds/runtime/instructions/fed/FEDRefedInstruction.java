@@ -213,7 +213,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 			}
 		}
 
-		FType fType = anchorMap.getType();
+		FType fType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchorMap);
 		if (fType == FType.PART || fType == FType.OTHER)
 			throw new DMLRuntimeException("fed_refed does not support anchor type " + fType);
 

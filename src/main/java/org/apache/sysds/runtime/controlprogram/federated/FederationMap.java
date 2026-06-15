@@ -157,7 +157,7 @@ public class FederationMap {
 	 */
 	private FederatedRequest[] broadcastSliced(CacheableData<?> data, LineageItem lineageItem,
 		boolean transposed) {
-		if( _type == FType.FULL )
+		if( _type == FType.FULL || _fedMap.size() == 1 )
 			return new FederatedRequest[]{broadcast(data)};
 		if( _type == FType.BROADCAST ) {
 			// For replicated federated data, slicing does not make sense. Broadcast the full
@@ -188,10 +188,48 @@ public class FederationMap {
 				new int[] {rl, ru, cl, cu} : new int[] {cl, cu, rl, ru};
 		}
 		
+		if(!allSlicesWithinBounds(ix, cb)) {
+			if(isSingletonBroadcastCompatible(ix, cb))
+				return broadcastFullBlockForEachFederatedRange(id, cb, lineageItem);
+		}
+
 		FederatedRequest[] ret = new FederatedRequest[ix.length];
 		// multi-threaded block slicing and federation request creation
 		Arrays.parallelSetAll(ret, i -> sliceBroadcastBlock(ix[i], id, cb, lineageItem, false));
 		return ret;
+	}
+
+	private FederatedRequest[] broadcastFullBlockForEachFederatedRange(long id, CacheBlock<?> cb,
+		LineageItem lineageItem) {
+		FederatedRequest fr = new FederatedRequest(RequestType.PUT_VAR, lineageItem, id, cb);
+		FederatedRequest[] ret = new FederatedRequest[_fedMap.size()];
+		Arrays.fill(ret, fr);
+		return ret;
+	}
+
+	private static boolean allSlicesWithinBounds(int[][] ix, CacheBlock<?> cb) {
+		for(int[] slice : ix) {
+			if(slice[0] < 0 || slice[2] < 0 || slice[0] > slice[1] || slice[2] > slice[3]
+				|| slice[1] >= cb.getNumRows() || slice[3] >= cb.getNumColumns())
+				return false;
+		}
+		return true;
+	}
+
+	private static boolean isSingletonBroadcastCompatible(int[][] ix, CacheBlock<?> cb) {
+		for(int[] slice : ix) {
+			if(slice[0] < 0 || slice[2] < 0 || slice[0] > slice[1] || slice[2] > slice[3])
+				return false;
+			boolean rowsOk = slice[1] < cb.getNumRows();
+			boolean colsOk = slice[3] < cb.getNumColumns();
+			boolean rowsSingleton = cb.getNumRows() == 1 && slice[0] == slice[1];
+			boolean colsSingleton = cb.getNumColumns() == 1 && slice[2] == slice[3];
+			if(!rowsOk && !rowsSingleton)
+				return false;
+			if(!colsOk && !colsSingleton)
+				return false;
+		}
+		return true;
 	}
 
 	public FederatedRequest[] broadcastSliced(CacheableData<?> data, boolean isFrame, int[][] ix) {

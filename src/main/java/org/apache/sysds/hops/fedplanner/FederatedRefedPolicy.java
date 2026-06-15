@@ -62,6 +62,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.DMLProgram;
@@ -172,6 +173,7 @@ public final class FederatedRefedPolicy {
 	public static void registerFromProgram(DMLProgram prog, java.util.Map<Long, FType> fTypeMap) {
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
 		clearCpfoutAnchorCache();
 		clearGlobalTWriteCache();
 		FederatedPlannerUtils.clearFedAnchorKeys();
@@ -213,6 +215,7 @@ public final class FederatedRefedPolicy {
 	public static void registerFromFunction(FunctionStatementBlock function, java.util.Map<Long, FType> fTypeMap) {
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
 		clearCpfoutAnchorCache();
 		FederatedPlannerUtils.clearFedAnchorKeys();
 		clearGlobalTWriteCache();
@@ -320,6 +323,8 @@ public final class FederatedRefedPolicy {
 				FederatedRefedRegistry.clear();
 			if (clearRegistry)
 				FederatedFoutMaterializeRegistry.clear();
+			if (clearRegistry)
+				FederatedLocalMaterializeRegistry.clear();
 			if (clearRegistry)
 				clearCpfoutAnchorCache();
 			// In the recompiler path we get the authoritative runtime federation state (signatures/types)
@@ -734,6 +739,63 @@ public final class FederatedRefedPolicy {
 		List<Hop> roots = new ArrayList<>();
 		roots.add(hop);
 		registerFoutMaterializeCandidates(roots, fTypeMap, sbId);
+	}
+
+	public static void registerFoutMaterializeObligation(Hop hop, List<Hop> consumers,
+			java.util.Map<Long, FType> fTypeMap, long sbId) {
+		if (hop == null)
+			return;
+		List<Hop> scope = collectObligationAnchorScope(hop, consumers);
+		AnchorSelection selection = selectAnchorFromFedParentSiblings(hop, fTypeMap);
+		if (selection == null)
+			selection = buildBlockAnchorSelection(scope, fTypeMap, null);
+		if (selection == null) {
+			AnchorKey global = selectGlobalAnchorKey(fTypeMap);
+			if (global != null && !isVarAnchor(global))
+				selection = new AnchorSelection(global, null);
+		}
+		ExecType oldExec = hop.getForcedExecType();
+		FederatedOutput oldOut = hop.getFederatedOutput();
+		try {
+			// Selected MinST U obligations are defined over a CP/LOUT child that
+			// needs one additional federated representation for grouped FED
+			// consumers.  Register the runtime rewrite from that selected state,
+			// even if earlier policy phases temporarily marked the same hop as FED
+			// while enforcing upstream transient-read/fed-init feasibility.
+			hop.setForcedExecType(ExecType.CP);
+			hop.setFederatedOutput(FederatedOutput.FOUT);
+			validateAndRegisterRequired(hop, fTypeMap, sbId, selection);
+		}
+		finally {
+			hop.setForcedExecType(oldExec);
+			hop.setFederatedOutput(oldOut);
+		}
+	}
+
+	private static List<Hop> collectObligationAnchorScope(Hop hop, List<Hop> consumers) {
+		List<Hop> all = new ArrayList<>();
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		if (hop != null)
+			queue.add(hop);
+		if (consumers != null) {
+			for (Hop consumer : consumers)
+				if (consumer != null)
+					queue.add(consumer);
+		}
+		while (!queue.isEmpty()) {
+			Hop current = queue.poll();
+			if (current == null || !visited.add(current))
+				continue;
+			all.add(current);
+			List<Hop> inputs = current.getInput();
+			if (inputs == null)
+				continue;
+			for (Hop input : inputs)
+				if (input != null)
+					queue.add(input);
+		}
+		return all;
 	}
 
 	public static void registerFoutMaterializeCandidates(List<Hop> roots, java.util.Map<Long, FType> fTypeMap, long sbId) {
@@ -2992,6 +3054,11 @@ public final class FederatedRefedPolicy {
 		AnchorSelection selection = selectAnchorFromFedParentSiblings(hop, fTypeMap);
 		if (selection == null)
 			selection = selectAnchorWithinBlock(hop, fTypeMap, true, true, blockAnchor);
+		if (selection == null) {
+			AnchorKey globalAnchor = selectGlobalAnchorKey(fTypeMap);
+			if (globalAnchor != null && !isVarAnchor(globalAnchor))
+				selection = new AnchorSelection(globalAnchor, null);
+		}
 		if (selection == null) {
 			if (hop.hasFederatedOutput())
 				throw new DMLRuntimeException("CP->FOUT refed requires an anchor for hop "

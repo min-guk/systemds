@@ -80,6 +80,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.jgrapht.Graph;
 import org.jgrapht.alg.flow.PushRelabelMFImpl;
@@ -111,14 +112,14 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		FederatedPlanMinSTCostEstimator.estimateProgram(prog, graph, rewireTable, true);
 
 		graph.getOptimalPlan();
+		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
 		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
 		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
-		FederatedRefedPolicy.repairResolvedHopSelections(collectGraphHops(graph), fTypeMap, true);
+		restoreMinstPlanDecisions(plannedExecOut, graph);
 		registerMinstCpfoutSelections(graph, fTypeMap);
-		// Refed/fout insertion can legitimately update per-hop output markers, so validate
-		// against the post-resolve plan rather than assuming the cut result is already final.
-		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
+		registerMinstSelectedObligations(graph, fTypeMap);
+		restoreMinstPlanDecisions(plannedExecOut, graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
 		FederatedPlannerLogger.logOptimalPlanStructured(graph);
@@ -131,12 +132,14 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		FederatedPlanMinSTCostEstimator.estimateFunctionDynamic(function, graph, true);
 		graph.getOptimalPlan();
+		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
 		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
 		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
-		FederatedRefedPolicy.repairResolvedHopSelections(collectGraphHops(graph), fTypeMap, true);
+		restoreMinstPlanDecisions(plannedExecOut, graph);
 		registerMinstCpfoutSelections(graph, fTypeMap);
-		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
+		registerMinstSelectedObligations(graph, fTypeMap);
+		restoreMinstPlanDecisions(plannedExecOut, graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
 		FederatedPlannerLogger.logOptimalPlanStructured(graph);
@@ -161,6 +164,20 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			planned.put(vertex.getHopID(), Pair.of(exec, out));
 		}
 		return planned;
+	}
+
+	private static void restoreMinstPlanDecisions(Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut,
+			FederatedPlanMinSTGraph graph) {
+		if (plannedExecOut == null || graph == null)
+			return;
+		for (Map.Entry<Long, Pair<ExecType, FederatedOutput>> entry : plannedExecOut.entrySet()) {
+			Vertex vertex = graph.getVertex(entry.getKey());
+			if (vertex == null || vertex.getHopRef() == null || entry.getValue() == null)
+				continue;
+			Hop hop = vertex.getHopRef();
+			hop.setForcedExecType(entry.getValue().getLeft());
+			hop.setFederatedOutput(entry.getValue().getRight());
+		}
 	}
 
 	private static List<Hop> collectGraphHops(FederatedPlanMinSTGraph graph) {
@@ -192,6 +209,61 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		}
 		if (!cpfoutHops.isEmpty())
 			FederatedRefedPolicy.registerFoutMaterializeCandidates(cpfoutHops, fTypeMap, -1L);
+	}
+
+	private static void registerMinstSelectedObligations(FederatedPlanMinSTGraph graph,
+			Map<Long, FType> fTypeMap) {
+		if (graph == null || fTypeMap == null)
+			return;
+		for (FederatedPlanMinSTGraph.SelectedObligation obligation : graph.getSelectedObligations()) {
+			if (obligation == null)
+				continue;
+			if (!obligation.hasCapability()) {
+				throw new DMLRuntimeException("MinST selected obligation without runtime capability: "
+						+ obligation);
+			}
+			if (obligation.getKind() == FederatedPlanMinSTGraph.ObligationKind.D) {
+				String fTypeHint = obligation.getFType() != null ? obligation.getFType().name() : null;
+				FederatedPlannerLogger.logInfoMessage("[MinST] Register selected D obligation: " + obligation);
+				FederatedLocalMaterializeRegistry.register(-1L, obligation.getChildHopId(),
+						obligation.getConsumerHopIds(), fTypeHint, obligation.getReason());
+				continue;
+			}
+			if (obligation.getKind() != FederatedPlanMinSTGraph.ObligationKind.U)
+				continue;
+			Hop hop = graph.getHopRef(obligation.getChildHopId());
+			if (hop == null)
+				continue;
+			ExecType oldExec = hop.getForcedExecType();
+			FederatedOutput oldOut = hop.getFederatedOutput();
+			if (obligation.getFType() != null)
+				fTypeMap.put(obligation.getChildHopId(), obligation.getFType());
+			FederatedPlannerLogger.logInfoMessage("[MinST] Register selected U obligation: " + obligation);
+			FederatedRefedPolicy.registerFoutMaterializeObligation(hop,
+					collectObligationConsumers(graph, obligation), fTypeMap, -1L);
+			hop.setForcedExecType(oldExec);
+			hop.setFederatedOutput(oldOut);
+			if (!hasCpFoutRegistration(hop)) {
+				throw new DMLRuntimeException("MinST selected U obligation for hop "
+						+ obligation.getChildHopId()
+						+ " but no refed/materialize entry was registered: " + obligation);
+			}
+		}
+	}
+
+	private static List<Hop> collectObligationConsumers(FederatedPlanMinSTGraph graph,
+			FederatedPlanMinSTGraph.SelectedObligation obligation) {
+		List<Hop> consumers = new ArrayList<>();
+		if (graph == null || obligation == null)
+			return consumers;
+		for (Long consumerId : obligation.getConsumerHopIds()) {
+			if (consumerId == null || !graph.contains(consumerId))
+				continue;
+			Hop consumer = graph.getHopRef(consumerId);
+			if (consumer != null)
+				consumers.add(consumer);
+		}
+		return consumers;
 	}
 
 	private static Map<Long, FType> buildPlannedFTypeMap(FederatedPlanMinSTGraph graph) {
@@ -278,6 +350,8 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 	private static boolean hasCpFoutRegistration(Hop hop) {
 		if (hop == null)
 			return false;
+		if (isExistingFederatedTransientSource(hop))
+			return true;
 		long hopId = hop.getHopID();
 		if (FederatedRefedRegistry.hasEntry(hopId) || FederatedFoutMaterializeRegistry.hasEntry(hopId))
 			return true;
@@ -299,5 +373,17 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 				return true;
 		}
 		return false;
+	}
+
+	private static boolean isExistingFederatedTransientSource(Hop hop) {
+		if (!(hop instanceof DataOp))
+			return false;
+		DataOp dataOp = (DataOp) hop;
+		if (dataOp.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return false;
+		String name = dataOp.getName();
+		if (name == null || name.isEmpty())
+			return false;
+		return FederatedPlannerUtils.isFedInitVar(name);
 	}
 }

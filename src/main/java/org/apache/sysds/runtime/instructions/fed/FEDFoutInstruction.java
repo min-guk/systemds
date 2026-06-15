@@ -136,7 +136,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 		int numWorkers = anchorMap.getSize();
 		if (numWorkers <= 0)
 			throw new DMLRuntimeException("fed_fout cannot materialize: no federated parent/worker pool (empty anchor map)");
-		FType anchorType = anchorMap.getType();
+		FType anchorType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchorMap);
 		if (anchorType == FType.PART || anchorType == FType.OTHER)
 			throw new DMLRuntimeException("fed_fout does not support anchor type " + anchorType);
 
@@ -148,21 +148,24 @@ public class FEDFoutInstruction extends FEDInstruction {
 				throw new DMLRuntimeException("fed_fout does not support ftype " + outTypeHint);
 
 			FederationMap inMap = in.getFedMapping();
-			if (inMap == null || inMap.getSize() == 0)
-				throw new DMLRuntimeException("fed_fout expects a non-empty federated input map: " + _input.getName());
+				if (inMap == null || inMap.getSize() == 0)
+					throw new DMLRuntimeException("fed_fout expects a non-empty federated input map: " + _input.getName());
+				boolean hasLocalFedData = FEDLocalMaterializeUtil.hasLocalFederatedData(inMap);
 
-			// Ensure the input is hosted on the same worker pool as the anchor.
-			java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
-			for (Pair<FederatedRange, FederatedData> e : inMap.getMap())
-				inWorkers.add(e.getValue().getAddress());
-			java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
-			for (Pair<FederatedRange, FederatedData> e : anchorMap.getMap())
-				anchorWorkers.add(e.getValue().getAddress());
-			if (!inWorkers.equals(anchorWorkers))
-				throw new DMLRuntimeException("fed_fout cannot reuse federated input " + _input.getName()
-					+ " because its worker pool differs from anchor " + _anchor.getName());
+				// Ensure the input is hosted on the same worker pool as the anchor.
+				if (!hasLocalFedData) {
+					java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
+					for (Pair<FederatedRange, FederatedData> e : inMap.getMap())
+						inWorkers.add(e.getValue().getAddress());
+					java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
+					for (Pair<FederatedRange, FederatedData> e : anchorMap.getMap())
+						anchorWorkers.add(e.getValue().getAddress());
+					if (!inWorkers.equals(anchorWorkers))
+						throw new DMLRuntimeException("fed_fout cannot reuse federated input " + _input.getName()
+							+ " because its worker pool differs from anchor " + _anchor.getName());
+				}
 
-			// Determine output dimensions if not already known.
+				// Determine output dimensions if not already known.
 			if (rlen < 0 || clen < 0) {
 				long maxR = 0, maxC = 0;
 				for (Pair<FederatedRange, FederatedData> e : inMap.getMap()) {
@@ -184,14 +187,14 @@ public class FEDFoutInstruction extends FEDInstruction {
 				// If the input is already federated, treat fed_fout as a no-op provided the types are compatible.
 				FType inType = inMap.getType();
 				FType mapType = (outTypeHint == FType.BROADCAST) ? FType.BROADCAST : outTypeHint;
-				boolean compatible = (inType == mapType)
-					|| (mapType == FType.BROADCAST && (inType == FType.FULL || inType == FType.BROADCAST));
-				// BROADCAST is a special case of FULL replication; allow cheap metadata conversion.
-				compatible |= (mapType == FType.FULL && inType == FType.BROADCAST);
-				if (compatible) {
-					MatrixObject out = ec.getMatrixObject(_output);
-					FederationMap outMap = (inType == mapType)
-						? inMap
+					boolean compatible = (inType == mapType)
+						|| (mapType == FType.BROADCAST && (inType == FType.FULL || inType == FType.BROADCAST));
+					// BROADCAST is a special case of FULL replication; allow cheap metadata conversion.
+					compatible |= (mapType == FType.FULL && inType == FType.BROADCAST);
+					if (compatible && !hasLocalFedData) {
+						MatrixObject out = ec.getMatrixObject(_output);
+						FederationMap outMap = (inType == mapType)
+							? inMap
 						: new FederationMap(inMap.getID(), inMap.getMap(), mapType);
 					out.setFedMapping(outMap);
 					out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());

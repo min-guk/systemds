@@ -25,7 +25,7 @@ public final class FederatedPlanMinSTPlanner {
 		// Reserve 2 bits for per-hop MinST decision nodes:
 		//   00: compute (CP/FED)
 		//   01: placement (LOUT/FOUT)
-		//   10: locality  (has-local / no-local)
+		//   10: legacy locality slot (not created by the C/P-only graph)
 		return hopId << 2;
 	}
 

@@ -178,10 +178,8 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		boolean isSpark = instString.startsWith("SPARK");
 
 		if (!mo1.isFederated()) {
-			throw new DMLRuntimeException("FED reorg requires federated input but found local at runtime. "
-				+ "op=" + instOpcode + " input=" + input1.getName()
-				+ " dims=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
-				+ " fedOut=" + _fedOut + " inst=" + instString);
+			processLocalInputFallback(ec);
+			return;
 		}
 		if (!(mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW) || mo1.isFederated(FType.BROADCAST)))
 			throw new DMLRuntimeException("Federation type " + mo1.getFedMapping().getType()
@@ -320,6 +318,36 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			}
 		}
 		return String.join(Lop.OPERAND_DELIMITOR, parts);
+	}
+
+	private void processLocalInputFallback(ExecutionContext ec) {
+		ReorgCPInstruction.parseInstruction(toCPInstructionString()).processInstruction(ec);
+		if (_fedOut == null || _fedOut.isForcedLocal())
+			return;
+
+		MatrixObject out = ec.getMatrixObject(output);
+		FederationMap anchorMap = FEDLocalMaterializeUtil.findUniqueWorkerPoolAnchor(ec);
+		if (anchorMap == null || anchorMap.getSize() == 0)
+			throw new DMLRuntimeException("FED reorg local-input FOUT fallback requires a unique federated anchor. "
+				+ "op=" + instOpcode + " input=" + input1.getName()
+				+ " dims=" + out.getNumRows() + "x" + out.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
+		FType anchorType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchorMap);
+		if (anchorType == FType.PART || anchorType == FType.OTHER)
+			throw new DMLRuntimeException("FED reorg local-input FOUT fallback does not support anchor type " + anchorType);
+
+		long rlen = out.getNumRows();
+		long clen = out.getNumColumns();
+		if (rlen < 0 || clen < 0) {
+			MatrixBlock block = out.acquireRead();
+			rlen = block.getNumRows();
+			clen = block.getNumColumns();
+			out.release();
+		}
+		FederationMap outMap = FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), out, anchorMap,
+			FType.FULL, FType.FULL, rlen, clen, true, "FED reorg local-input FOUT fallback");
+		out.setFedMapping(outMap);
+		out.getDataCharacteristics().set(rlen, clen, out.getBlocksize(), out.getNnz());
 	}
 
 	private boolean tryReinitMissingInput(MatrixObject mo, Throwable ex) {
