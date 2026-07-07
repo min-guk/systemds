@@ -131,6 +131,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		resetState();
 		_program = prog;
 		buildRewireTable(prog);
@@ -146,6 +147,7 @@ public class FederatedPlannerFedAllMaxFedFoutSinglePass extends AFederatedPlanne
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		FederatedPlannerUtils.clearFedInitVars();
 		resetState();
 		_program = function.getDMLProg();
 		buildRewireTable(function);

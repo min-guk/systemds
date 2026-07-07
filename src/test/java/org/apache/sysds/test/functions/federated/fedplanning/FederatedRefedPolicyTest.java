@@ -68,6 +68,7 @@ public class FederatedRefedPolicyTest {
 	public void clearFedInitState() {
 		// Tests mutate global planner state (fed-init vars / anchor keys). Reset for isolation.
 		FederatedPlannerUtils.clearFedInitVars();
+		FederatedRefedPolicy.registerFromProgram(null);
 		FederatedRefedPolicy.clearHeuristicDemotedHops();
 	}
 
@@ -663,6 +664,63 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testCpFoutTransientWriteMaterializationSurvivesLiveFedTransientReadCleanup() throws Exception {
+		long sbId = 17017L;
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+
+		DataOp tRead = createLocalMatrix("is_row_in_samples_like", 3000, 1);
+		tRead.setBeginLine(110);
+		tRead.setForcedExecType(ExecType.FED);
+		tRead.setFederatedOutput(FederatedOutput.FOUT);
+
+		UnaryOp fedParent = HopRewriteUtils.createUnary(tRead, OpOp1.EXP);
+		fedParent.setDim1(3000);
+		fedParent.setDim2(1);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp tWriteInput = createLocalMatrix("is_row_local_src", 3000, 1);
+		tWriteInput.setForcedExecType(ExecType.CP);
+		tWriteInput.setFederatedOutput(FederatedOutput.LOUT);
+		DataOp tWrite = createTransientWrite("is_row_in_samples_like", tWriteInput, 3000, 1);
+		tWrite.setBeginLine(69);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp fedAnchor = createFederatedInput("X_anchor", 3000, 1);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedAnchor.getHopID(), FType.ROW);
+		fTypeMap.put(tWrite.getHopID(), FType.ROW);
+		fTypeMap.put(tRead.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent, tWrite, fedAnchor), true, fTypeMap, sbId);
+
+		assertEquals("Live FED transient read must not be demoted after its CP/FOUT TWrite materialization is kept",
+			ExecType.FED, tRead.getForcedExecType());
+		assertEquals("Live FED transient read must remain FOUT",
+			FederatedOutput.FOUT, tRead.getFederatedOutput());
+		assertEquals("CP/FOUT transient write must remain a materialized federated source for the live TRead",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertTrue("Expected materialize registry entry to survive cleanup for the live transient-read consumer",
+			FederatedFoutMaterializeRegistry.snapshot(sbId).containsKey(tWrite.getHopID()));
+
+		java.lang.reflect.Method stillNeeds = FederatedRefedPolicy.class.getDeclaredMethod(
+			"stillNeedsRegisteredFederatedUpload", Hop.class, Map.class, java.util.List.class);
+		stillNeeds.setAccessible(true);
+		assertTrue("Prune pass must defer CP/FOUT TWrite materialization liveness to stale-TWrite cleanup",
+			(Boolean) stillNeeds.invoke(null, tWrite, fTypeMap, Arrays.asList(tWrite, fedAnchor)));
+		java.lang.reflect.Method hasMaterialize = FederatedRefedPolicy.class.getDeclaredMethod(
+			"hasRegisteredTransientWriteMaterialize", long.class, DataOp.class, Map.class);
+		hasMaterialize.setAccessible(true);
+		assertTrue("TRead cleanup must find TWrite materialization registered under the TWrite statement block",
+			(Boolean) hasMaterialize.invoke(null, sbId + 1, tWrite, new HashMap<Long, Object>()));
+
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+	}
+
+	@Test
 	public void testRecompileTransientWritePromotionUsesRuntimeSignatureAnchorFallback() {
 		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
 		tRead.setForcedExecType(ExecType.CP);
@@ -801,6 +859,60 @@ public class FederatedRefedPolicyTest {
 			ExecType.CP, tRead.getForcedExecType());
 		assertEquals("Expected empty runtime signatures to demote stale fed-init transient read to LOUT",
 			FederatedOutput.LOUT, tRead.getFederatedOutput());
+	}
+
+	@Test
+	public void testRuntimeTransientWriteMaterializeSurvivesFuturePlannedFedTRead() {
+		DataOp fedAnchor = createFederatedInput("X", 3000, 50);
+		DataOp localMask = createLocalMatrix("mask_local", 3000, 1);
+		localMask.setForcedExecType(ExecType.CP);
+		localMask.setFederatedOutput(FederatedOutput.LOUT);
+
+		DataOp tWrite = createTransientWrite("is_row_in_samples", localMask, 3000, 1);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp futureTRead = createLocalMatrix("is_row_in_samples", 3000, 1);
+		futureTRead.setForcedExecType(ExecType.FED);
+		futureTRead.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedAnchor.getHopID(), FType.ROW);
+		fTypeMap.put(futureTRead.getHopID(), FType.ROW);
+
+		// Seed the global write/read relationship as the planner does before runtime recompile.
+		FederatedRefedPolicy.registerFromHops(
+			new java.util.ArrayList<>(Arrays.asList(tWrite, futureTRead, fedAnchor)), true, fTypeMap, 85);
+		assertEquals("Expected initial planner pass to keep transient write materialization",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("X",
+			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,1500;1500,3000;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("X", FType.ROW);
+
+		// Runtime recompile of the TWrite block is narrower than the future TRead block.
+		// The stale-write pass must still preserve the CP/FOUT materialization because the
+		// already-approved planner state has a matching future FED/FOUT TRead for the same variable.
+		FederatedRefedPolicy.registerFromHops(
+			new java.util.ArrayList<>(Arrays.asList(tWrite, fedAnchor)), true, fTypeMap, 85,
+			runtimeSignatures, runtimeTypes);
+
+		assertEquals("Expected runtime stale-write cleanup to preserve CP/FOUT TWrite for future FED TRead",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertTrue("Expected runtime TWrite materialization registry entry to remain",
+			FederatedFoutMaterializeRegistry.snapshot(85).containsKey(tWrite.getHopID()));
+
+		// Later runtime recompile of the TRead block should then see the preserved planned write
+		// as the federated source and must not silently demote the FED/FOUT TRead.
+		FederatedRefedPolicy.registerFromHops(
+			new java.util.ArrayList<>(Arrays.asList(futureTRead, fedAnchor)), true, fTypeMap, 4,
+			runtimeSignatures, runtimeTypes);
+		assertEquals("Expected future transient read to remain FED after matching materialized TWrite is preserved",
+			ExecType.FED, futureTRead.getForcedExecType());
+		assertEquals("Expected future transient read to remain FOUT after matching materialized TWrite is preserved",
+			FederatedOutput.FOUT, futureTRead.getFederatedOutput());
 	}
 
 	@Test

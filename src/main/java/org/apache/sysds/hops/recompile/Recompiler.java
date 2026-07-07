@@ -445,6 +445,8 @@ public class Recompiler {
 		finally {
 			FederatedRefedPolicy.unmarkHeuristicDemotedHops(propagatedDemotedCloneIds);
 		}
+		if (LOG_RECOMPILE_NEW_HOPS)
+			logPlannerRecompileStates("RecompilePostRefedPlannerState", hops, sb, pred, tid);
 		
 		// construct lops
 		ArrayList<Lop> lops = new ArrayList<>(hops.size());
@@ -644,21 +646,47 @@ public class Recompiler {
 			Hop hop = queue.poll();
 			if (hop == null || !visited.add(hop))
 				continue;
-			HopState state = (cloneIdStates != null) ? cloneIdStates.get(hop.getHopID()) : null;
-			if (state == null)
-				state = baseStates.get(hop.getHopID());
-			if (state == null && signatureIndex != null && !signatureIndex.isEmpty()) {
-				String sig = signatureOf(hop);
+			String sig = signatureOf(hop);
+			FederatedPlannerUtils.PlannerRecompileState plannerState =
+				FederatedPlannerUtils.getPlannerRecompileState(sig);
+			HopState state = plannerState != null
+				? new HopState(plannerState.getExecType(), plannerState.getExecType(),
+					plannerState.getFederatedOutput(), sig)
+				: null;
+			if (state == null) {
+				HopState idState = (cloneIdStates != null) ? cloneIdStates.get(hop.getHopID()) : null;
+				if (idState == null)
+					idState = baseStates.get(hop.getHopID());
+				HopState signatureState = null;
 				if (sig != null && !sig.isEmpty())
-					state = signatureIndex.get(sig);
+					signatureState = signatureIndex.get(sig);
+				state = selectRestoreState(hop, idState, signatureState);
 			}
 			if (state != null) {
+				ExecType beforeExec = hop.getExecType();
+				ExecType beforeForced = hop.getForcedExecType();
+				FederatedOutput beforeFedOut = hop.getFederatedOutput();
 				if (state.execType != null && hop.getForcedExecType() == null)
 					hop.setExecType(state.execType);
 				if (state.forcedExecType != null)
 					hop.setForcedExecType(state.forcedExecType);
 				if (state.fedOut != null)
 					hop.setFederatedOutput(state.fedOut);
+				if (LOG_RECOMPILE_NEW_HOPS && plannerState != null) {
+					System.out.println("[RecompilePlannerStateRestore] hopID=" + hop.getHopID()
+						+ " name=" + String.valueOf(hop.getName())
+						+ " op=" + hop.getOpString()
+						+ " type=" + hop.getClass().getSimpleName()
+						+ " beforeExec=" + beforeExec
+						+ " beforeForced=" + beforeForced
+						+ " beforeFedOut=" + beforeFedOut
+						+ " afterExec=" + hop.getExecType()
+						+ " afterForced=" + hop.getForcedExecType()
+						+ " afterFedOut=" + hop.getFederatedOutput()
+						+ " planner=" + plannerState.getExecType() + "/" + plannerState.getFederatedOutput()
+						+ " sig=" + sig
+						+ " inputs=" + formatHopInputs(hop));
+				}
 				if (LOG_RECOMPILE_NEW_HOPS && shouldDebugRecompileHop(hop.getName())) {
 					System.out.println("[RecompileRestoreHop] hopID=" + hop.getHopID()
 						+ " name=" + hop.getName()
@@ -681,6 +709,85 @@ public class Recompiler {
 						queue.add(in);
 			}
 		}
+	}
+
+	private static void logPlannerRecompileStates(String event, List<Hop> roots, StatementBlock sb, boolean pred, long tid) {
+		if (roots == null || roots.isEmpty())
+			return;
+		Set<Hop> visited = new HashSet<>();
+		Deque<Hop> queue = new ArrayDeque<>();
+		for (Hop root : roots)
+			if (root != null)
+				queue.add(root);
+		while (!queue.isEmpty()) {
+			Hop hop = queue.poll();
+			if (hop == null || !visited.add(hop))
+				continue;
+			String sig = signatureOf(hop);
+			FederatedPlannerUtils.PlannerRecompileState plannerState =
+				FederatedPlannerUtils.getPlannerRecompileState(sig);
+			if (plannerState != null) {
+				System.out.println("[" + event + "] hopID=" + hop.getHopID()
+					+ " name=" + String.valueOf(hop.getName())
+					+ " op=" + hop.getOpString()
+					+ " type=" + hop.getClass().getSimpleName()
+					+ " exec=" + hop.getExecType()
+					+ " forced=" + hop.getForcedExecType()
+					+ " fedOut=" + hop.getFederatedOutput()
+					+ " planner=" + plannerState.getExecType() + "/" + plannerState.getFederatedOutput()
+					+ " sbId=" + (sb != null ? sb.getSBID() : -1)
+					+ " pred=" + pred
+					+ " tid=" + tid
+					+ " sig=" + sig
+					+ " inputs=" + formatHopInputs(hop));
+			}
+			List<Hop> inputs = hop.getInput();
+			if (inputs != null)
+				for (Hop in : inputs)
+					if (in != null)
+						queue.add(in);
+		}
+	}
+
+	private static String formatHopInputs(Hop hop) {
+		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
+			return "[]";
+		StringBuilder sb = new StringBuilder("[");
+		boolean first = true;
+		for (Hop in : hop.getInput()) {
+			if (!first)
+				sb.append("; ");
+			first = false;
+			sb.append(in == null ? "null" : ("id=" + in.getHopID()
+				+ ",name=" + String.valueOf(in.getName())
+				+ ",op=" + in.getOpString()
+				+ ",exec=" + in.getExecType()
+				+ ",forced=" + in.getForcedExecType()
+				+ ",fedOut=" + in.getFederatedOutput()));
+		}
+		sb.append("]");
+		return sb.toString();
+	}
+
+	private static HopState selectRestoreState(Hop hop, HopState idState, HopState signatureState) {
+		if (idState == null)
+			return signatureState;
+		if (signatureState == null)
+			return idState;
+		return shouldPreferSignatureLocalOutputState(hop, idState, signatureState)
+			? signatureState : idState;
+	}
+
+	private static boolean shouldPreferSignatureLocalOutputState(
+		Hop hop, HopState idState, HopState signatureState) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (idState.fedOut != FederatedOutput.NONE || signatureState.fedOut != FederatedOutput.LOUT)
+			return false;
+		ExecType idExec = idState.forcedExecType != null ? idState.forcedExecType : idState.execType;
+		ExecType sigExec = signatureState.forcedExecType != null
+			? signatureState.forcedExecType : signatureState.execType;
+		return idExec == ExecType.CP && sigExec == ExecType.CP;
 	}
 
 	private static void logRecompileNewHops(List<Hop> roots, Map<Long, HopState> baseStates,
@@ -713,10 +820,17 @@ public class Recompiler {
 			+ " sbId=" + sbId + " pred=" + pred + " tid=" + tid);
 		for (Hop hop : newHops) {
 			HopState matchedState = null;
+			String sig = signatureOf(hop);
+			FederatedPlannerUtils.PlannerRecompileState plannerState =
+				FederatedPlannerUtils.getPlannerRecompileState(sig);
+			if (plannerState != null) {
+				matchedState = new HopState(plannerState.getExecType(), plannerState.getExecType(),
+					plannerState.getFederatedOutput(), sig);
+			}
 			if (baseStates != null) {
-				matchedState = baseStates.get(hop.getHopID());
+				if (matchedState == null)
+					matchedState = baseStates.get(hop.getHopID());
 				if (matchedState == null) {
-					String sig = signatureOf(hop);
 					for (HopState candidate : baseStates.values()) {
 						if (candidate != null && candidate.signature != null && candidate.signature.equals(sig)) {
 							matchedState = candidate;
@@ -774,20 +888,7 @@ public class Recompiler {
 	}
 
 	private static String signatureOf(Hop hop) {
-		if (hop == null)
-			return null;
-		String op = hop.getOpString();
-		if (op == null || op.isEmpty())
-			return null;
-		String type = hop.getClass().getName();
-		// Prefer source position information over Hop names. Temporary Hop names (e.g.,
-		// parsertemp*) can change across deep copies and dynamic rewrites, which would
-		// break restore-by-signature and cause recompile-time plan drift.
-		//
-		// NOTE: Do not include hop input arity. Dynamic rewrites can add/remove auxiliary
-		// parameter inputs, which would otherwise break matching.
-		return type + "|" + op + "|" + hop.getBeginLine() + ":" + hop.getBeginColumn()
-			+ ":" + hop.getEndLine() + ":" + hop.getEndColumn();
+		return FederatedPlannerUtils.plannerRecompileSignature(hop);
 	}
 
 	private static java.util.Map<String, HopState> buildUniqueSignatureIndex(java.util.Map<Long, HopState> baseStates) {

@@ -782,18 +782,28 @@ public class Dag<N extends Lop>
 							anchor = resolved;
 					}
 				}
-			if (anchor == null && spec.getAnchorLabel() != null) {
-				Lop anchorByLabel = findAnchorByLabel(lops, spec.getAnchorLabel());
-				if (anchorByLabel != null) {
-					anchor = anchorByLabel;
-					System.out.printf("CP->FOUT anchor fallback: hop=%d anchorHop=%d anchorLabel=%s resolvedHop=%d%n",
-						hopId, anchorHopId, spec.getAnchorLabel(), anchorByLabel.getHopID());
+				if (anchor == null && spec.getAnchorLabel() != null) {
+					Lop anchorByLabel = findAnchorByLabel(lops, spec.getAnchorLabel());
+					if (anchorByLabel != null) {
+						anchor = anchorByLabel;
+						System.out.printf("CP->FOUT anchor fallback: hop=%d anchorHop=%d anchorLabel=%s resolvedHop=%d%n",
+							hopId, anchorHopId, spec.getAnchorLabel(), anchorByLabel.getHopID());
+					}
 				}
-			}
-			boolean missingAnchor = (anchor == null && anchorKey == null);
-			if (local == null || missingAnchor) {
-				System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
-					hopId, anchorHopId, local == null, missingAnchor, sbId);
+				if (anchor != null && isTransientDataLop(anchor) && isConcreteAnchorKey(anchorKey)) {
+					if (LOG_LOP_MAPPING) {
+						String anchorLabel = (anchor.getOutputParameters() != null)
+							? anchor.getOutputParameters().getLabel()
+							: "null";
+						System.out.printf("CP->FOUT anchor key preference: hop=%d anchorHop=%d anchorVar=%s anchorKey=%s%n",
+							hopId, anchorHopId, anchorLabel, anchorKey);
+					}
+					anchor = null;
+				}
+				boolean missingAnchor = (anchor == null && anchorKey == null);
+				if (local == null || missingAnchor) {
+					System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
+						hopId, anchorHopId, local == null, missingAnchor, sbId);
 				if (missingAnchor) {
 					List<Long> hopIds = new ArrayList<>(hopToLop.keySet());
 					Collections.sort(hopIds);
@@ -1159,6 +1169,14 @@ public class Dag<N extends Lop>
 			return false;
 		FederatedOutput fedOut = lop.getFederatedOutput();
 		return fedOut == null || !fedOut.isForcedLocal();
+	}
+
+	private static boolean isTransientDataLop(Lop lop) {
+		return (lop instanceof Data) && (((Data) lop).isTransientRead() || ((Data) lop).isTransientWrite());
+	}
+
+	private static boolean isConcreteAnchorKey(String anchorKey) {
+		return anchorKey != null && !anchorKey.isEmpty() && !anchorKey.startsWith("VAR:");
 	}
 
 	private static boolean isReachable(Lop from, Lop target) {

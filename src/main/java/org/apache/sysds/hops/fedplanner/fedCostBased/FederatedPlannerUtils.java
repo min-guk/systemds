@@ -84,6 +84,32 @@ public class FederatedPlannerUtils {
 	private static final Map<String, String> FED_INIT_SIGNATURES = new ConcurrentHashMap<>();
 	private static final Map<String, String> FED_ANCHOR_KEYS = new ConcurrentHashMap<>();
 	private static final java.util.Set<String> FED_RMVAR_PROTECTED_VARS = ConcurrentHashMap.newKeySet();
+	private static final Map<String, PlannerRecompileState> PLANNER_RECOMPILE_STATES = new ConcurrentHashMap<>();
+	private static final java.util.Set<String> AMBIGUOUS_PLANNER_RECOMPILE_STATES = ConcurrentHashMap.newKeySet();
+
+	public static final class PlannerRecompileState {
+		private final Types.ExecType _execType;
+		private final FederatedOutput _fedOut;
+
+		private PlannerRecompileState(Types.ExecType execType, FederatedOutput fedOut) {
+			_execType = execType;
+			_fedOut = fedOut;
+		}
+
+		public Types.ExecType getExecType() {
+			return _execType;
+		}
+
+		public FederatedOutput getFederatedOutput() {
+			return _fedOut;
+		}
+
+		private boolean sameAs(PlannerRecompileState that) {
+			if (that == null)
+				return false;
+			return _execType == that._execType && _fedOut == that._fedOut;
+		}
+	}
 
 	/**
 	 * Get transient inputs from either paramMap or transientWrites.
@@ -504,6 +530,84 @@ public class FederatedPlannerUtils {
 		FED_INIT_SIGNATURES.clear();
 		FED_ANCHOR_KEYS.clear();
 		FED_RMVAR_PROTECTED_VARS.clear();
+	}
+
+	public static void resetFederatedPlannerRunState() {
+		clearFedInitVars();
+		clearPlannerRecompileStates();
+	}
+
+	public static void clearPlannerRecompileStates() {
+		PLANNER_RECOMPILE_STATES.clear();
+		AMBIGUOUS_PLANNER_RECOMPILE_STATES.clear();
+	}
+
+	public static String plannerRecompileSignature(Hop hop) {
+		if (hop == null)
+			return null;
+		String op = hop.getOpString();
+		if (op == null || op.isEmpty())
+			return null;
+		return hop.getClass().getName() + "|" + op + "|" + hop.getBeginLine() + ":"
+			+ hop.getBeginColumn() + ":" + hop.getEndLine() + ":" + hop.getEndColumn();
+	}
+
+	public static void registerPlannerRecompileState(
+		Hop hop, Types.ExecType execType, FederatedOutput fedOut) {
+		String signature = plannerRecompileSignature(hop);
+		if (signature == null || signature.isEmpty() || execType == null || fedOut == null)
+			return;
+		PlannerRecompileState state = new PlannerRecompileState(execType, fedOut);
+		if (AMBIGUOUS_PLANNER_RECOMPILE_STATES.contains(signature)) {
+			tracePlannerRecompileState(hop, "PlannerRecompileState-SkipAmbiguous",
+				signature, state, null);
+			return;
+		}
+		PlannerRecompileState existing = PLANNER_RECOMPILE_STATES.putIfAbsent(signature, state);
+		if (existing == null) {
+			tracePlannerRecompileState(hop, "PlannerRecompileState-Register",
+				signature, state, null);
+			return;
+		}
+		if (existing.sameAs(state)) {
+			tracePlannerRecompileState(hop, "PlannerRecompileState-Repeat",
+				signature, state, existing);
+			return;
+		}
+		tracePlannerRecompileState(hop, "PlannerRecompileState-Ambiguous",
+			signature, state, existing);
+		PLANNER_RECOMPILE_STATES.remove(signature);
+		AMBIGUOUS_PLANNER_RECOMPILE_STATES.add(signature);
+	}
+
+	private static void tracePlannerRecompileState(Hop hop, String event,
+		String signature, PlannerRecompileState state, PlannerRecompileState existing) {
+		if (hop == null || !FederatedPlannerTrace.shouldTrace(hop))
+			return;
+		FederatedPlannerTrace.log(hop, event,
+			"signature=" + signature
+			+ " state=" + formatPlannerRecompileState(state)
+			+ " existing=" + formatPlannerRecompileState(existing)
+			+ " hopID=" + hop.getHopID()
+			+ " name=" + String.valueOf(hop.getName())
+			+ " op=" + hop.getOpString()
+			+ " pos=" + hop.getBeginLine() + ":" + hop.getBeginColumn()
+				+ ":" + hop.getEndLine() + ":" + hop.getEndColumn());
+	}
+
+	private static String formatPlannerRecompileState(PlannerRecompileState state) {
+		return state == null ? "null" : state.getExecType() + "/" + state.getFederatedOutput();
+	}
+
+	public static PlannerRecompileState getPlannerRecompileState(Hop hop) {
+		return getPlannerRecompileState(plannerRecompileSignature(hop));
+	}
+
+	public static PlannerRecompileState getPlannerRecompileState(String signature) {
+		if (signature == null || signature.isEmpty()
+			|| AMBIGUOUS_PLANNER_RECOMPILE_STATES.contains(signature))
+			return null;
+		return PLANNER_RECOMPILE_STATES.get(signature);
 	}
 
 	public static void clearFedAnchorKeys() {

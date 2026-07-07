@@ -91,6 +91,8 @@ public final class FederatedRefedPolicy {
 	private static final Set<Long> HEURISTIC_DEMOTED_VECTOR_HOPS = ConcurrentHashMap.newKeySet();
 	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TWRITE_CACHE =
 		ThreadLocal.withInitial(java.util.HashMap::new);
+	private static final ThreadLocal<java.util.Map<String, List<DataOp>>> GLOBAL_TREAD_CACHE =
+		ThreadLocal.withInitial(java.util.HashMap::new);
 	private static final ThreadLocal<java.util.Map<Long, Long>> HOP_SBID_CACHE =
 		ThreadLocal.withInitial(java.util.HashMap::new);
 	// Cached global signature-based anchor key for the current program translation.
@@ -109,6 +111,7 @@ public final class FederatedRefedPolicy {
 
 	private static void clearGlobalTWriteCache() {
 		GLOBAL_TWRITE_CACHE.get().clear();
+		GLOBAL_TREAD_CACHE.get().clear();
 		HOP_SBID_CACHE.get().clear();
 	}
 
@@ -366,12 +369,13 @@ public final class FederatedRefedPolicy {
 					if (!(hop instanceof DataOp))
 						continue;
 					DataOp dataOp = (DataOp) hop;
-					if (dataOp.getOp() != OpOpData.TRANSIENTWRITE)
-						continue;
 					String name = dataOp.getName();
 					if (name == null || name.isEmpty())
 						continue;
-					globalWrites.computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
+					if (dataOp.getOp() == OpOpData.TRANSIENTWRITE)
+						globalWrites.computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
+					else if (isPlannedFederatedTransientRead(dataOp))
+						GLOBAL_TREAD_CACHE.get().computeIfAbsent(name, k -> new ArrayList<>()).add(dataOp);
 				}
 				for (Hop hop : all) {
 					if (hop != null && hop.getHopID() > 0 && !hopSbIds.containsKey(hop.getHopID()))
@@ -415,9 +419,9 @@ public final class FederatedRefedPolicy {
 								}
 							}
 						}
-					}
-					ExecType planned = getPlannedExecType(hop);
-					if (runtimeFed) {
+						}
+						ExecType planned = getPlannedExecType(hop);
+						if (runtimeFed) {
 						if (runtimeLocalTransientReads != null)
 							runtimeLocalTransientReads.remove(name);
 						if (planned != ExecType.FED) {
@@ -430,13 +434,16 @@ public final class FederatedRefedPolicy {
 								fTypeMap.put(hop.getHopID(), runtimeType);
 						}
 					}
-					else {
-						FederatedPlannerUtils.removeFedInitVar(name);
-						FederatedPlannerUtils.removeFedAnchorKey(name);
-						if (planned == ExecType.FED) {
-							if (runtimeLocalTransientReads != null)
-								runtimeLocalTransientReads.add(name);
-							hop.setForcedExecType(ExecType.CP);
+						else {
+							FederatedPlannerUtils.removeFedInitVar(name);
+							FederatedPlannerUtils.removeFedAnchorKey(name);
+							if (planned == ExecType.FED) {
+								logPlannerRefedEvent("RefedRuntimeLocalTReadDemote", hop,
+									"name=" + name + " reason=runtime_symbol_not_federated runtimeTypes="
+										+ (runtimeTypes != null && runtimeTypes.containsKey(name)));
+								if (runtimeLocalTransientReads != null)
+									runtimeLocalTransientReads.add(name);
+								hop.setForcedExecType(ExecType.CP);
 							hop.setFederatedOutput(FederatedOutput.LOUT);
 						}
 						if (fTypeMap != null)
@@ -554,13 +561,16 @@ public final class FederatedRefedPolicy {
 				}
 				continue;
 			}
-			ExecType exec = getPlannedExecType(hop);
-			if (exec == null)
-				exec = ExecType.CP;
-			if (shouldDemoteAggBinaryFedFout(hop, exec, fTypeMap))
-				hop.setFederatedOutput(FederatedOutput.LOUT);
-			boolean localOutput = exec == ExecType.CP
-					|| (exec == ExecType.FED && (hop.hasLocalOutput() || hop.isFederatedOutputDerived()));
+				ExecType exec = getPlannedExecType(hop);
+				if (exec == null)
+					exec = ExecType.CP;
+				if (shouldDemoteAggBinaryFedFout(hop, exec, fTypeMap)) {
+					logPlannerRefedEvent("RefedAggBinaryFoutDemote", hop,
+						"reason=scalar_or_replicated_vector_output inputs=" + describeInputs(hop));
+					hop.setFederatedOutput(FederatedOutput.LOUT);
+				}
+				boolean localOutput = exec == ExecType.CP
+						|| (exec == ExecType.FED && (hop.hasLocalOutput() || hop.isFederatedOutputDerived()));
 			if (localOutput && hop.getDataType().isMatrix()) {
 				boolean needsCpfout = requiresCpfoutForFedParents(hop, fTypeMap);
 				if (!needsCpfout) {
@@ -606,10 +616,12 @@ public final class FederatedRefedPolicy {
 						continue;
 					}
 				}
-				if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor)) {
-					if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
-						hop.setFederatedOutput(FederatedOutput.LOUT);
-						if (fTypeMap != null)
+					if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor)) {
+						if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
+							logPlannerRefedEvent("RefedCpfoutCandidateDemote", hop,
+								"reason=no_cp_fout_candidate inputs=" + describeInputs(hop));
+							hop.setFederatedOutput(FederatedOutput.LOUT);
+							if (fTypeMap != null)
 							fTypeMap.remove(hop.getHopID());
 					}
 					continue;
@@ -692,10 +704,14 @@ public final class FederatedRefedPolicy {
 					Hop tWriteInput = (tWrite.getInput() != null && !tWrite.getInput().isEmpty())
 						? tWrite.getInput().get(0) : null;
 					boolean inputFederated = tWriteInput != null && isRuntimeFederatedInput(tWriteInput, null, null);
-					boolean hasMaterialize = materializeSpecs.containsKey(tWrite.getHopID());
-					if (!inputFederated && !hasMaterialize) {
-						if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
-							System.out.println("[TransReadRefedDebug] demote FED TRead hop=" + hop.getHopID()
+					boolean hasMaterialize = hasRegisteredTransientWriteMaterialize(sbId, tWrite, materializeSpecs);
+						if (!inputFederated && !hasMaterialize) {
+							logPlannerRefedEvent("RefedFedTReadCleanupDemote", hop,
+								"reason=local_twrite_input_without_materialization tWrite="
+									+ tWrite.getHopID() + " tWriteInput="
+									+ (tWriteInput != null ? tWriteInput.getHopID() : -1));
+							if (ENABLE_TRANSREAD_DEBUG && "Y".equals(hop.getName())) {
+								System.out.println("[TransReadRefedDebug] demote FED TRead hop=" + hop.getHopID()
 								+ " due local TWrite input without materialization; tWrite=" + tWrite.getHopID()
 								+ " fedOut=" + hop.getFederatedOutput());
 						}
@@ -1240,6 +1256,9 @@ public final class FederatedRefedPolicy {
 	private static void demoteUnsatisfiedFedHop(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId) {
 		if (hop == null)
 			return;
+		logPlannerRefedEvent("RefedUnsatisfiedFedInputDemote", hop,
+			"reason=required_federated_input_unavailable sbId=" + sbId
+				+ " inputs=" + describeInputs(hop));
 		hop.setForcedExecType(ExecType.CP);
 		if (hop.getFederatedOutput() == FederatedOutput.FOUT)
 			hop.setFederatedOutput(FederatedOutput.LOUT);
@@ -1250,7 +1269,31 @@ public final class FederatedRefedPolicy {
 		CPFOUT_ANCHOR_CACHE.remove(hop.getHopID());
 	}
 
+	private static void logPlannerRefedEvent(String event, Hop hop, String details) {
+		if (hop == null)
+			return;
+		FederatedPlannerUtils.PlannerRecompileState state =
+			FederatedPlannerUtils.getPlannerRecompileState(hop);
+		if (state == null)
+			return;
+		System.out.println("[" + event + "] hopID=" + hop.getHopID()
+			+ " name=" + String.valueOf(hop.getName())
+			+ " op=" + hop.getOpString()
+			+ " type=" + hop.getClass().getSimpleName()
+			+ " exec=" + hop.getExecType()
+			+ " forced=" + hop.getForcedExecType()
+			+ " fedOut=" + hop.getFederatedOutput()
+			+ " planner=" + state.getExecType() + "/" + state.getFederatedOutput()
+			+ " sig=" + FederatedPlannerUtils.plannerRecompileSignature(hop)
+			+ " details=" + details);
+	}
+
 	private static boolean stillNeedsRegisteredFederatedUpload(Hop hop, java.util.Map<Long, FType> fTypeMap) {
+		return stillNeedsRegisteredFederatedUpload(hop, fTypeMap, null);
+	}
+
+	private static boolean stillNeedsRegisteredFederatedUpload(Hop hop, java.util.Map<Long, FType> fTypeMap,
+			List<Hop> all) {
 		if (hop == null)
 			return false;
 
@@ -1260,10 +1303,16 @@ public final class FederatedRefedPolicy {
 
 		if (hop instanceof DataOp) {
 			DataOp dataOp = (DataOp) hop;
-			if (dataOp.getOp() == OpOpData.TRANSIENTWRITE)
-				return plannedExec == ExecType.FED
-					&& hop.getFederatedOutput() == FederatedOutput.FOUT
-					&& !hop.hasLocalOutput();
+			if (dataOp.getOp() == OpOpData.TRANSIENTWRITE) {
+				if (hop.getFederatedOutput() != FederatedOutput.FOUT)
+					return false;
+				// TransientWrite materialization liveness depends on matching future/sibling
+				// TransientRead consumers, and this prune pass is often scoped narrower than
+				// that consumer set. Do not delete TWrite materialization here; the dedicated
+				// stale-transient-write pass below owns the live-read check and removes dead
+				// entries after it has built the read/write name scope.
+				return true;
+			}
 			if (dataOp.getOp() == OpOpData.TRANSIENTREAD)
 				return (plannedExec == ExecType.FED && !hop.hasLocalOutput())
 					|| requiresCpfoutForFedParents(hop, fTypeMap);
@@ -1289,7 +1338,10 @@ public final class FederatedRefedPolicy {
 
 		for (java.util.Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> entry : refed.entrySet()) {
 			Hop localHop = hopById.get(entry.getKey());
-			if (localHop != null && !stillNeedsRegisteredFederatedUpload(localHop, fTypeMap)) {
+			if (localHop != null && !stillNeedsRegisteredFederatedUpload(localHop, fTypeMap, all)) {
+				logPlannerRefedEvent("RefedPruneUpload", localHop,
+					"remove=refed reason=no_longer_needed anchorHop="
+						+ (entry.getValue() != null ? entry.getValue().getAnchorHopId() : -1));
 				FederatedRefedRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
 				if (FederatedPlannerTrace.shouldTrace(localHop)) {
@@ -1301,6 +1353,8 @@ public final class FederatedRefedPolicy {
 				continue;
 			}
 			if (localHop != null && isRuntimeFederatedInput(localHop, null, null)) {
+				logPlannerRefedEvent("RefedPruneUpload", localHop,
+					"remove=refed reason=already_runtime_federated");
 				FederatedRefedRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
 				changed = true;
@@ -1324,7 +1378,10 @@ public final class FederatedRefedPolicy {
 		}
 		for (java.util.Map.Entry<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> entry : materialize.entrySet()) {
 			Hop localHop = hopById.get(entry.getKey());
-			if (localHop != null && !stillNeedsRegisteredFederatedUpload(localHop, fTypeMap)) {
+			if (localHop != null && !stillNeedsRegisteredFederatedUpload(localHop, fTypeMap, all)) {
+				logPlannerRefedEvent("RefedPruneUpload", localHop,
+					"remove=materialize reason=no_longer_needed anchorHop="
+						+ (entry.getValue() != null ? entry.getValue().getAnchorHopId() : -1));
 				FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
 				if (FederatedPlannerTrace.shouldTrace(localHop)) {
@@ -1336,6 +1393,8 @@ public final class FederatedRefedPolicy {
 				continue;
 			}
 			if (localHop != null && isRuntimeFederatedInput(localHop, null, null)) {
+				logPlannerRefedEvent("RefedPruneUpload", localHop,
+					"remove=materialize reason=already_runtime_federated");
 				FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
 				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
 				changed = true;
@@ -1430,8 +1489,10 @@ public final class FederatedRefedPolicy {
 				continue;
 			}
 
-			List<DataOp> sameNameWrites = writesByName.get(tWrite.getName());
-			List<DataOp> sameNameReads = readsByName.get(tWrite.getName());
+			List<DataOp> sameNameWrites = mergeDataOps(writesByName.get(tWrite.getName()),
+				GLOBAL_TWRITE_CACHE.get().get(tWrite.getName()));
+			List<DataOp> sameNameReads = mergeDataOps(readsByName.get(tWrite.getName()),
+				GLOBAL_TREAD_CACHE.get().get(tWrite.getName()));
 			if (hasLiveFederatedTransientReadConsumer(tWrite, sameNameWrites, sameNameReads)) {
 				if (FederatedPlannerTrace.shouldTrace(tWrite)) {
 					FederatedPlannerTrace.log(tWrite, "Refed-TWrite-Review",
@@ -1473,13 +1534,78 @@ public final class FederatedRefedPolicy {
 			if (tRead == null)
 				continue;
 			DataOp matchedWrite = selectMatchingTWrite(writes, tRead);
-			if (matchedWrite != tWrite)
+			if (!sameTransientWriteSelection(matchedWrite, tWrite))
 				continue;
 			ExecType readExec = getPlannedExecType(tRead);
 			if (readExec == ExecType.FED || tRead.getFederatedOutput() == FederatedOutput.FOUT)
 				return true;
 		}
 		return false;
+	}
+
+	private static boolean isPlannedFederatedTransientRead(DataOp dataOp) {
+		if (dataOp == null || dataOp.getOp() != OpOpData.TRANSIENTREAD)
+			return false;
+		ExecType exec = getPlannedExecType(dataOp);
+		return exec == ExecType.FED || dataOp.getFederatedOutput() == FederatedOutput.FOUT;
+	}
+
+	private static List<DataOp> mergeDataOps(List<DataOp> first, List<DataOp> second) {
+		if ((first == null || first.isEmpty()) && (second == null || second.isEmpty()))
+			return Collections.emptyList();
+		List<DataOp> merged = new ArrayList<>();
+		Set<Long> seenIds = new HashSet<>();
+		addDataOps(merged, seenIds, first);
+		addDataOps(merged, seenIds, second);
+		return merged;
+	}
+
+	private static void addDataOps(List<DataOp> out, Set<Long> seenIds, List<DataOp> input) {
+		if (input == null || input.isEmpty())
+			return;
+		for (DataOp op : input) {
+			if (op == null)
+				continue;
+			long hopID = op.getHopID();
+			if (hopID > 0 && !seenIds.add(hopID))
+				continue;
+			out.add(op);
+		}
+	}
+
+	private static boolean sameTransientWriteSelection(DataOp a, DataOp b) {
+		if (a == b)
+			return true;
+		if (a == null || b == null)
+			return false;
+		if (a.getOp() != OpOpData.TRANSIENTWRITE || b.getOp() != OpOpData.TRANSIENTWRITE)
+			return false;
+		String aName = a.getName();
+		String bName = b.getName();
+		if (!Objects.equals(aName, bName))
+			return false;
+		int aBegin = a.getBeginLine();
+		int bBegin = b.getBeginLine();
+		int aEnd = a.getEndLine();
+		int bEnd = b.getEndLine();
+		if (aBegin > 0 && bBegin > 0)
+			return aBegin == bBegin && aEnd == bEnd;
+		return a.getHopID() == b.getHopID();
+	}
+
+	private static boolean hasRegisteredTransientWriteMaterialize(long sbId, DataOp tWrite,
+			Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> currentScopeMaterialize) {
+		if (tWrite == null)
+			return false;
+		long hopID = tWrite.getHopID();
+		if (currentScopeMaterialize != null && currentScopeMaterialize.containsKey(hopID))
+			return true;
+		long tWriteSbId = resolveHopSbId(hopID, sbId);
+		if (tWriteSbId != sbId
+			&& FederatedFoutMaterializeRegistry.snapshot(tWriteSbId).containsKey(hopID))
+			return true;
+		return sbId != DEFAULT_SBID
+			&& FederatedFoutMaterializeRegistry.snapshot(DEFAULT_SBID).containsKey(hopID);
 	}
 
 	private static boolean ensureRequiredFederatedInputs(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
@@ -2943,6 +3069,8 @@ public final class FederatedRefedPolicy {
 			return FType.BROADCAST;
 		if (hop.dimsKnown()) {
 			Long axisLen = parseAxisLenFromSignature(anchorKey);
+			if (allowsAggBinarySharedDimensionMaterialization(hop, fType, anchorType, axisLen))
+				return fType;
 			if (axisLen != null) {
 				long hopAxisLen = (anchorType == FType.ROW) ? hop.getDim1() : hop.getDim2();
 				if (hopAxisLen > 0 && hopAxisLen != axisLen)
@@ -2950,6 +3078,69 @@ public final class FederatedRefedPolicy {
 			}
 		}
 		return fType;
+	}
+
+	private static boolean allowsAggBinarySharedDimensionMaterialization(Hop hop, FType requestedType,
+			FType anchorType, Long anchorAxisLen) {
+		if (hop == null || requestedType == null || anchorType == null || anchorAxisLen == null)
+			return false;
+		if (!(requestedType == FType.ROW || requestedType == FType.COL)
+				|| !(anchorType == FType.ROW || anchorType == FType.COL)
+				|| requestedType == anchorType)
+			return false;
+		if (requestedType == FType.COL && anchorType == FType.ROW) {
+			if (hop.getDim2() <= 0 || hop.getDim2() != anchorAxisLen)
+				return false;
+			return hasAggBinarySharedDimensionConsumer(hop, 0, FType.ROW, anchorAxisLen);
+		}
+		if (requestedType == FType.ROW && anchorType == FType.COL) {
+			if (hop.getDim1() <= 0 || hop.getDim1() != anchorAxisLen)
+				return false;
+			return hasAggBinarySharedDimensionConsumer(hop, 1, FType.COL, anchorAxisLen);
+		}
+		return false;
+	}
+
+	private static boolean hasAggBinarySharedDimensionConsumer(Hop hop, int targetIndex,
+			FType otherRequiredType, long sharedAxisLen) {
+		List<Hop> parents = hop.getParent();
+		if (parents == null || parents.isEmpty())
+			return false;
+		for (Hop parent : parents) {
+			if (!(parent instanceof AggBinaryOp))
+				continue;
+			AggBinaryOp agg = (AggBinaryOp) parent;
+			if (!agg.isMatrixMultiply())
+				continue;
+			List<Hop> inputs = agg.getInput();
+			if (inputs == null || inputs.size() < 2)
+				continue;
+			Hop target = inputs.get(targetIndex);
+			if (target == null || target.getHopID() != hop.getHopID())
+				continue;
+			Hop other = inputs.get(targetIndex == 0 ? 1 : 0);
+			FType otherType = inferRuntimeFedInitType(other);
+			if (otherType != otherRequiredType)
+				continue;
+			long otherAxisLen = otherRequiredType == FType.ROW
+				? other.getDim1()
+				: other.getDim2();
+			if (otherAxisLen > 0 && otherAxisLen == sharedAxisLen)
+				return true;
+		}
+		return false;
+	}
+
+	private static FType inferRuntimeFedInitType(Hop hop) {
+		if (!(hop instanceof DataOp))
+			return null;
+		DataOp dataOp = (DataOp) hop;
+		if (dataOp.getOp() == OpOpData.FEDERATED)
+			return FederatedPlannerUtils.deriveFedInitFType(dataOp);
+		String name = dataOp.getName();
+		return FederatedPlannerUtils.isFedInitVar(name)
+			? FederatedPlannerUtils.getFedInitFType(name)
+			: null;
 	}
 
 	private static boolean canGenerateCpfoutCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap,
@@ -3171,6 +3362,19 @@ public final class FederatedRefedPolicy {
 			AnchorKey global = selectGlobalAnchorKey(fTypeMap);
 			if (global != null && !isVarAnchor(global))
 				effectiveSelection = new AnchorSelection(global, null);
+		}
+		else if (effectiveSelection != null && effectiveSelection.anchorHop != null
+				&& !isRuntimeFederatedInput(effectiveSelection.anchorHop, null, null)
+				&& effectiveSelection.key != null && !isVarAnchor(effectiveSelection.key)) {
+			// Anchor selection can be inferred through a transient/local producer while
+			// carrying a concrete signature key for the actual worker pool.  Do not pass
+			// that local transient lop as the FEDFOUT anchor: at runtime it may not be
+			// federated yet (e.g., a selected FED/FOUT TWrite of a local aggregate), so
+			// fed_fout would look up the transient variable itself and fail with
+			// "requires a federated anchor".  When a non-VAR key is available, use the
+			// key-only anchor path instead; this preserves the planner's FOUT decision
+			// and materializes against the concrete federated source signature.
+			effectiveSelection = new AnchorSelection(effectiveSelection.key, null);
 		}
 
 		if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp

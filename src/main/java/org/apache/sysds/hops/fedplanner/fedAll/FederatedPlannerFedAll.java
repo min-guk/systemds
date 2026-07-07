@@ -87,7 +87,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	public void rewriteProgram( DMLProgram prog,
 		FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes )
 	{
-		FederatedPlannerUtils.clearFedInitVars();
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		_oracleCache.clear();
 		_numWorkers = 0;
 		// handle main program
