@@ -40,7 +40,6 @@ import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.hops.AggBinaryOp;
-import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
@@ -569,22 +568,18 @@ public class FederatedPlannerDpCostEnumerator {
 		//
 		// DP/MinST parity: use the shared control-only helper. The helper already applies
 		// worker fanout semantics, so do not multiply by numWorkers again here.
+		double fedExecWeight = hopNetworkWeight * hopCommon.getMultiplicity();
 		double fedOverhead = (hop instanceof DataOp)
 				? 0.0
-				: (hopNetworkWeight * hopCommon.getMultiplicity())
-						* FederatedCostModel.computeFedCoordinationCost(numOfWorkers);
-		// For elementwise operations, real-world speedups from federated execution
-		// are often far from linear in the number of workers due to per-site overheads
-		// and sparse/dense representation effects. Over-aggressive scaling can make DP
-		// prefer FED plans that are slower than local execution (notably in sliceline).
-		//
-		// Heuristic/MinST commonly keep these hops local; keep DP competitive by
-		// conservatively modeling FED compute scaling for BinaryOps.
-		double fedComputeCost = (hop instanceof BinaryOp)
-				? baseSelfCost
-				: baseSelfCost / Math.max(1, numOfWorkers);
+				: fedExecWeight * FederatedCostModel.computeFedCoordinationCost(numOfWorkers);
+		// DP/MinST parity: use the shared runtime-stage predicate for FED compute scaling.
+		// The DP enumerator resolves per-input ftypes later in the variant loop; the
+		// operation-family predicate still prevents blanket linear speedup for low-arithmetic
+		// intensity FED stages such as cell ops, slicing, and transpose.
+		double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+				hop, baseSelfCost, numOfWorkers, false);
 		double singleWorkerFedPenalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(
-				hop, hopNetworkWeight * hopCommon.getMultiplicity(), numOfWorkers);
+				hop, fedExecWeight, numOfWorkers);
 			final long enumerationLimit = 1L << numBothOutInputs;
 
 			FederatedPlannerDpMemoTable.FedPlanVariants lOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
@@ -756,12 +751,39 @@ public class FederatedPlannerDpCostEnumerator {
 				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
-				double resultDownloadCost = hopPlacementWeight
-						* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
+						double genericResultDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
 								outputMemEstimate, lOutLogicalFType, numOfWorkers);
+						double nativeAggUnaryResultDownloadCost =
+								FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
+										hop, oracleLogicalFType, outputMemEstimate, numOfWorkers,
+										genericResultDownloadCost);
+						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
+								FederatedCostModel.computeMixedFedLocalCost(
+										hop, collectedHops, collectedFTypes, oracleLogicalFType,
+										baseSelfCost, outputMemEstimate, numOfWorkers);
+						double nativeAggUnaryFedComputeCost =
+								FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+										hop, oracleLogicalFType, defaultFedComputeCost);
+						nativeAggUnaryFedComputeCost =
+								FederatedCostModel.computeNativeFederatedIndexingCost(
+										hop, oracleLogicalFType, nativeAggUnaryFedComputeCost);
+						double mixedCoordinatorPhaseCost = mixedFedLocalCost.getCoordinatorPhaseCost();
+						double fedComputeCost =
+								mixedFedLocalCost.hasFederatedComputeFloor()
+										? Math.max(nativeAggUnaryFedComputeCost, mixedFedLocalCost.getFederatedComputeFloor())
+										: nativeAggUnaryFedComputeCost;
+						double resultDownloadCost = hopPlacementWeight
+								* (mixedFedLocalCost.hasCoordinatorPhase()
+										? mixedCoordinatorPhaseCost
+										: nativeAggUnaryResultDownloadCost);
+					double inputPreparationCost = hopPlacementWeight
+							* mixedFedLocalCost.getInputPreparationCost();
 				double effectiveFedOverhead = FederatedCostModel.adjustFedCoordinationCost(
 						hop, oracleLogicalFType, fedOverhead);
-				double fedSelfCost = fedComputeCost + effectiveFedOverhead + singleWorkerFedPenalty;
+				double fedInstructionLatencyCost = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+						hop, oracleLogicalFType, fedExecWeight, numOfWorkers, false);
+				double fedSelfCost = fedComputeCost + effectiveFedOverhead + singleWorkerFedPenalty
+						+ fedInstructionLatencyCost + inputPreparationCost;
 				double cpUploadCostWithoutWeight = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 						uploadMemEstimate, cpLogicalFType, numOfWorkers);
 				// NOTE: Do not add local-to-fed forwarding penalty here.
@@ -844,7 +866,10 @@ public class FederatedPlannerDpCostEnumerator {
 				// on the hop's own execution frequency (matches runtime acquire_read path).
 				double tReadAcquireCost = 0.0;
 				if (isTransientReadHop && hasConcreteTransientReadSource) {
-					tReadAcquireCost = hopPlacementWeight
+					double tReadAcquireWeight =
+						FederatedPlannerDpCostEstimator.computeStableFederatedInputLocalMaterializationWeight(
+							hop, hopPlacementWeight, true);
+					tReadAcquireCost = tReadAcquireWeight
 							* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
 									outputMemEstimate, lOutLogicalFType, numOfWorkers);
 				}
@@ -907,26 +932,33 @@ public class FederatedPlannerDpCostEnumerator {
 						FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 								cpFoutCost,
 								fOutFedPlanVariants, planChilds);
-						cpFOutPlan.setExecType(ExecType.CP);
-						cpFOutPlan.setFType(cpLogicalFType);
-						cpFOutPlan.setCpFoutType(cpLogicalFType);
-						fOutFedPlanVariants.addFedPlan(cpFOutPlan);
-					}
+							cpFOutPlan.setExecType(ExecType.CP);
+							cpFOutPlan.setFType(cpLogicalFType);
+							cpFOutPlan.setCpFoutType(cpLogicalFType);
+							cpFOutPlan.setFoutMaterializationAccounted(true);
+							fOutFedPlanVariants.addFedPlan(cpFOutPlan);
+						}
 
 				if (FederatedPlannerTrace.shouldTrace(hop)) {
-					String childBreakdown = formatDpChildBreakdown(
-							lOutfOutChildHops, childCumulativeCost, childForwardingCostToCP,
-							childForwardingCostToFED, childForwardingCostFOutToFED,
-							lOUTOnlyinputHops, lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED,
-							fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
-							fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED);
-					FederatedPlannerTrace.log(hop, "DP-Candidate", String.format(Locale.ROOT,
-							"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] selfModel[base=%.6f,fedCompute=%.6f,fedOverhead=%.6f,singleWorkerPenalty=%.6f,computeWeight=%.6f,networkWeight=%.6f,multiplicity=%.6f,placementWeight=%.6f] boundary[upload=%.6f,download=%.6f,trAcquire=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s children=%s",
-							formatSelectedBits(selectedBits), childCostCPExec, childCostFEDExec,
-							cpSelfCost, fedSelfCost,
-							baseSelfCost, fedComputeCost, effectiveFedOverhead, singleWorkerFedPenalty,
-							hopCommon.getComputeWeight(), hopNetworkWeight, hopCommon.getMultiplicity(), hopPlacementWeight,
-							cpUploadCost, resultDownloadCost, tReadAcquireCost,
+						String childBreakdown = formatDpChildBreakdown(
+								lOutfOutChildHops, childCumulativeCost, childForwardingCostToCP,
+								childForwardingCostToFED, childForwardingCostFOutToFED,
+								lOUTOnlyinputHops, lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED,
+								fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+								fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED);
+							FederatedPlannerTrace.log(hop, "DP-Candidate", String.format(Locale.ROOT,
+									"bits=%s childCost[CP=%.6f,FED=%.6f] self[CP=%.6f,FED=%.6f] selfModel[base=%.6f,fedCompute=%.6f,nativeAggUnaryFedCompute=%.6f,fedOverhead=%.6f,fedInstructionLatency=%.6f,singleWorkerPenalty=%.6f,computeWeight=%.6f,networkWeight=%.6f,multiplicity=%.6f,placementWeight=%.6f,mixedStage=%s,mixedInputPrep=%.6f,mixedPartialDownload=%.6f,mixedCoordinatorLocal=%.6f,mixedComputeFloor=%.6f] boundary[upload=%.6f,download=%.6f,trAcquire=%.6f] allow[cpl=%s,cpf=%s,fedl=%s,fedf=%s] reasonFedInputs=%s costs[cpl=%.6f,cpf=%.6f,fedl=%.6f,fedf=%.6f] derivedFedFout=%s children=%s",
+									formatSelectedBits(selectedBits), childCostCPExec, childCostFEDExec,
+									cpSelfCost, fedSelfCost,
+									baseSelfCost, fedComputeCost, nativeAggUnaryFedComputeCost,
+									effectiveFedOverhead, fedInstructionLatencyCost,
+								singleWorkerFedPenalty,
+								hopCommon.getComputeWeight(), hopNetworkWeight, hopCommon.getMultiplicity(), hopPlacementWeight,
+								mixedFedLocalCost.getLabel(), mixedFedLocalCost.getInputPreparationCost(),
+								mixedFedLocalCost.getPartialResultDownloadCost(),
+								mixedFedLocalCost.getCoordinatorLocalCost(),
+								mixedFedLocalCost.getFederatedComputeFloor(),
+								cpUploadCost, resultDownloadCost, tReadAcquireCost,
 							allowCpLoutCandidate, allowCpFoutCandidate, allowFedLoutCandidate, allowFedFoutCandidate,
 							canSatisfyFedInputs, cpLoutCost, cpFoutCost, fedLoutCost, fedFoutCost, derivedFedFout,
 							childBreakdown));
@@ -1083,8 +1115,11 @@ public class FederatedPlannerDpCostEnumerator {
 		if (!hasLocalTransientWriteSourcePlan && hasFederatedSourcePlan && dataOp.getDim1() > 0
 				&& dataOp.getDim2() > 0) {
 			double hopPlacementWeight = placementTransferWeight(hopCommon);
+			double localMaterializationWeight =
+				FederatedPlannerDpCostEstimator.computeStableFederatedInputLocalMaterializationWeight(
+					dataOp, hopPlacementWeight, true);
 			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(dataOp);
-			loutAcquireCost = hopPlacementWeight
+			loutAcquireCost = localMaterializationWeight
 					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
 							outputMemEstimate, foutFType, numOfWorkers);
 		}
@@ -2008,11 +2043,13 @@ public class FederatedPlannerDpCostEnumerator {
 			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 					transferMem, uploadType, numOfWorkers);
 			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
-		} else if (parentIsFed && childOut == FederatedOutput.FOUT && childPlan.getExecType() == ExecType.CP) {
-			FType uploadType = childPlan.getCpFoutTypeOrFType();
-			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
-					childPlan.getHopRef(), parentPlan.getHopRef(), uploadType, numOfWorkers);
-			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
+			} else if (parentIsFed && childOut == FederatedOutput.FOUT && childPlan.getExecType() == ExecType.CP) {
+				if (childPlan.isFoutMaterializationAccounted())
+					return 0.0;
+				FType uploadType = childPlan.getCpFoutTypeOrFType();
+				double uploadCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
+						childPlan.getHopRef(), parentPlan.getHopRef(), uploadType, numOfWorkers);
+				return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
 		} else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
 			double downloadCost;
 			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childPlan.getHopRef())) {

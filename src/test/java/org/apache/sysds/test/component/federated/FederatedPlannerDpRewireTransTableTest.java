@@ -33,19 +33,28 @@ import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp1;
+import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.DataIdentifier;
 import org.apache.sysds.parser.FunctionStatement;
 import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -128,9 +137,49 @@ public class FederatedPlannerDpRewireTransTableTest {
 		assertEquals(bodyD, trailingOutputs.get(1));
 	}
 
+	@Test
+	public void testWhileLoopWeightAccountsForFloorDividedInductionBound() {
+		Map<String, List<Hop>> transTable = new HashMap<>();
+		transTable.put("it", List.of(transientScalarWrite("it", new LiteralOp(0L))));
+		transTable.put("max_iter", List.of(transientScalarWrite("max_iter", new LiteralOp(10L))));
+
+		DataOp predIt = transientScalarRead("it");
+		BinaryOp divided = new BinaryOp("it_div_2", DataType.SCALAR, ValueType.FP64,
+			OpOp2.DIV, predIt, new LiteralOp(2L));
+		UnaryOp castDivided = new UnaryOp("as_int_it_div_2", DataType.SCALAR,
+			ValueType.INT64, OpOp1.CAST_AS_INT, divided);
+		BinaryOp predicate = new BinaryOp("while_pred", DataType.SCALAR,
+			ValueType.BOOLEAN, OpOp2.LESS, castDivided, transientScalarRead("max_iter"));
+
+		DataOp bodyIt = transientScalarRead("it");
+		BinaryOp increment = new BinaryOp("it_plus_1", DataType.SCALAR, ValueType.INT64,
+			OpOp2.PLUS, bodyIt, new LiteralOp(1L));
+		StatementBlock body = new StatementBlock();
+		body.setHops(new ArrayList<>(List.of(transientScalarWrite("it", increment))));
+
+		WhileStatement whileStatement = new WhileStatement();
+		whileStatement.addStatementBlock(body);
+		WhileStatementBlock whileBlock = new WhileStatementBlock();
+		whileBlock.setPredicateHops(predicate);
+		whileBlock.addStatement(whileStatement);
+
+		assertEquals("floor-divided induction predicates should price all updates",
+			20.0, RewireConstants.estimateWhileLoopWeight(whileBlock, List.of(transTable)), 0.0);
+	}
+
 	private static DataOp transientRead(String name, long rows, long cols) {
 		return new DataOp(name, DataType.MATRIX, ValueType.FP64,
 			OpOpData.TRANSIENTREAD, null, rows, cols, rows * cols, BLOCKSIZE);
+	}
+
+	private static DataOp transientScalarRead(String name) {
+		return new DataOp(name, DataType.SCALAR, ValueType.INT64,
+			OpOpData.TRANSIENTREAD, null, 0, 0, 0, BLOCKSIZE);
+	}
+
+	private static DataOp transientScalarWrite(String name, Hop input) {
+		return new DataOp(name, DataType.SCALAR, ValueType.INT64, input,
+			OpOpData.TRANSIENTWRITE, null);
 	}
 
 	private static DataOp federatedRead(String name, long rows, long cols) {

@@ -350,10 +350,11 @@ public class FederatedPlannerDpMemoTable {
 			private double cumulativeCost; // Total cost = sum of selfCost + cumulativeCost of child plans
 			private final FedPlanVariants fedPlanVariants; // Reference to variant list
 			private final List<Pair<Long, FederatedOutput>> childFedPlans; // Child plan references
-			private ExecType execType;
-			private FType fType;
-			private FType cpFoutType;
-			private boolean derivedFedFout;
+				private ExecType execType;
+				private FType fType;
+				private FType cpFoutType;
+				private boolean derivedFedFout;
+				private boolean foutMaterializationAccounted;
 
 		public FedPlan(double cumulativeCost, FedPlanVariants fedPlanVariants,
 				List<Pair<Long, FederatedOutput>> childFedPlans) {
@@ -477,14 +478,22 @@ public class FederatedPlannerDpMemoTable {
 				return cpFoutType != null ? cpFoutType : fType;
 			}
 
-				public boolean isDerivedFedFout() {
-				return derivedFedFout;
-			}
+					public boolean isDerivedFedFout() {
+					return derivedFedFout;
+				}
 
-			public void setDerivedFedFout(boolean derivedFedFout) {
-				this.derivedFedFout = derivedFedFout;
+				public void setDerivedFedFout(boolean derivedFedFout) {
+					this.derivedFedFout = derivedFedFout;
+				}
+
+				public boolean isFoutMaterializationAccounted() {
+					return foutMaterializationAccounted;
+				}
+
+				public void setFoutMaterializationAccounted(boolean foutMaterializationAccounted) {
+					this.foutMaterializationAccounted = foutMaterializationAccounted;
+				}
 			}
-		}
 
 	/**
 	 * Represents a collection of federated execution plan variants for a specific

@@ -20,9 +20,11 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.ArrayDeque;
+import java.util.AbstractMap;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -76,12 +78,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
-		FederatedPlannerUtils.clearFedInitVars();
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
 			prog, memoTable, FederatedPlannerTrace.isEnabled());
 
 		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
+		Map<Long, ConflictEntry> rewriteConflictCheckMap =
+			collectConflictsSingleBFS(memoTable, optimalPlan, outputDecisions);
 		Set<Long> visitedPlanHops = new HashSet<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 
@@ -91,7 +95,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, optimalPlan, memoTable);
 				continue;
 			}
-				rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap);
+					rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+						rewriteConflictCheckMap, true);
 		}
 
 		// Also rewrite additional non-clone roots that may not be reachable from the
@@ -109,8 +114,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				(lPlan == null) ? fPlan :
 				(fPlan == null) ? lPlan :
 				(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
-				if (seed != null)
-					rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap);
+					if (seed != null)
+						rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+							rewriteConflictCheckMap, true);
 			}
 
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
@@ -124,6 +130,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			function, memoTable, FederatedPlannerTrace.isEnabled());
 
 		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
+		Map<Long, ConflictEntry> rewriteConflictCheckMap =
+			collectConflictsSingleBFS(memoTable, optimalPlan, outputDecisions);
 		Set<Long> visitedPlanHops = new HashSet<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 
@@ -133,7 +141,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, optimalPlan, memoTable);
 				continue;
 			}
-				rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap);
+					rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+						rewriteConflictCheckMap, true);
 		}
 
 		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
@@ -147,8 +156,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				(lPlan == null) ? fPlan :
 				(fPlan == null) ? lPlan :
 				(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
-				if (seed != null)
-					rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap);
+					if (seed != null)
+						rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+							rewriteConflictCheckMap, true);
 			}
 
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
@@ -160,6 +170,27 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Set<Long> visitedPlanHops,
 		Map<Long, FType> fTypeMap) {
 
+		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, null);
+	}
+
+	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
+		FederatedPlannerDpMemoTable memoTable,
+		Map<Long, FederatedOutput> outputDecisions,
+		Set<Long> visitedPlanHops,
+		Map<Long, FType> fTypeMap,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap) {
+
+		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, rewriteConflictCheckMap, false);
+	}
+
+	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
+		FederatedPlannerDpMemoTable memoTable,
+		Map<Long, FederatedOutput> outputDecisions,
+		Set<Long> visitedPlanHops,
+		Map<Long, FType> fTypeMap,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap,
+		boolean allowOutputDecisionOverride) {
+
 		long planHopId = plan.getHopRef().getHopID();
 		if (visitedPlanHops != null && !visitedPlanHops.add(planHopId))
 			return;
@@ -168,7 +199,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedOutput desiredOut = outputDecisions.getOrDefault(origHopId, plan.getFedOutType());
 
 		FederatedPlannerDpMemoTable.FedPlan effectivePlan = selectRewritePlanVariant(
-			memoTable, planHopId, desiredOut, plan.getFedOutType(), plan, outputDecisions);
+			memoTable, planHopId, desiredOut, plan.getFedOutType(), plan, outputDecisions,
+			rewriteConflictCheckMap, allowOutputDecisionOverride);
 
 		if (FederatedPlannerTrace.shouldTrace(memoTable.resolveOriginalHop(planHopId))) {
 			FederatedPlannerTrace.log(memoTable.resolveOriginalHop(planHopId), "DP-Rewrite-Plan",
@@ -183,14 +215,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		for (Pair<Long, FederatedOutput> childFedPlanPair : effectivePlan.getChildFedPlans()) {
 			long childHopID = childFedPlanPair.getKey();
 			long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
-			FederatedOutput childDesiredOut = outputDecisions.getOrDefault(childOrigHopID, childFedPlanPair.getValue());
-				FederatedPlannerDpMemoTable.FedPlan childPlan = selectRewritePlanVariant(
-					memoTable, childHopID, childDesiredOut, childFedPlanPair.getValue(), null, outputDecisions);
+					FederatedOutput childDesiredOut = outputDecisions.getOrDefault(childOrigHopID, childFedPlanPair.getValue());
+						FederatedPlannerDpMemoTable.FedPlan childPlan = selectRewritePlanVariant(
+							memoTable, childHopID, childDesiredOut, childFedPlanPair.getValue(), null, outputDecisions,
+							rewriteConflictCheckMap, false);
 				if (childPlan == null) {
 					FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, effectivePlan, memoTable);
 					continue;
 				}
-				rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap);
+					rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+						rewriteConflictCheckMap, false);
 			}
 
 			Hop hopRef = effectivePlan.getHopRef();
@@ -202,21 +236,32 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (execType == null)
 				throw new DMLRuntimeException("ExecType is null in FedPlan for hop " + planHopId + " / " + hopRef.getOpString());
 			FederatedOutput outType = effectivePlan.getFedOutType();
+			boolean applyStateToTargetHop = shouldApplyRewriteStateToTargetHop(
+				memoTable, planHopId, hopRef, targetHop, execType, outType);
 
 			effectivePlan.setForcedExecType(execType);
-			if (targetHop != hopRef)
+			if (targetHop != hopRef && applyStateToTargetHop)
 				targetHop.setForcedExecType(execType);
 
 			effectivePlan.setFederatedOutput(outType);
-			if (targetHop != hopRef)
+			if (targetHop != hopRef && applyStateToTargetHop)
 				targetHop.setFederatedOutput(outType);
 
 		boolean derivedFedFout = execType == ExecType.FED
 			&& outType == FederatedOutput.FOUT
 			&& effectivePlan.isDerivedFedFout();
 			effectivePlan.setFederatedOutputDerived(derivedFedFout);
-			if (targetHop != hopRef)
+			if (targetHop != hopRef && applyStateToTargetHop)
 				targetHop.setFederatedOutputDerived(derivedFedFout);
+			if (!applyStateToTargetHop && FederatedPlannerTrace.shouldTrace(targetHop)) {
+				FederatedPlannerTrace.log(targetHop, "DP-Rewrite-SkipVirtualCloneTargetState",
+					String.format(Locale.ROOT,
+						"planHop=%d targetHop=%d cloneExec=%s cloneOut=%s existing=%s",
+						planHopId, targetHop.getHopID(), execType, outType,
+						formatPlannerRecompileState(FederatedPlannerUtils.getPlannerRecompileState(targetHop))));
+			}
+			registerPlannerRecompileState(
+				hopRef, applyStateToTargetHop ? targetHop : null, execType, outType);
 
 		FType fType = effectivePlan.getFType();
 		FType forwardingFType = effectivePlan.getCpFoutTypeOrFType();
@@ -233,24 +278,73 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				fTypeMap.remove(origHopId);
 		}
 
+	private static boolean shouldApplyRewriteStateToTargetHop(
+		FederatedPlannerDpMemoTable memoTable,
+		long planHopId,
+		Hop hopRef,
+		Hop targetHop,
+		ExecType execType,
+		FederatedOutput outType) {
+
+		if (targetHop == null || targetHop == hopRef)
+			return true;
+		if (memoTable == null || !memoTable.isVirtualClone(planHopId))
+			return true;
+		FederatedPlannerUtils.PlannerRecompileState existing =
+			FederatedPlannerUtils.getPlannerRecompileState(targetHop);
+		if (existing == null)
+			return true;
+		return existing.getExecType() == execType && existing.getFederatedOutput() == outType;
+	}
+
+	private static String formatPlannerRecompileState(
+		FederatedPlannerUtils.PlannerRecompileState state) {
+		if (state == null)
+			return "null";
+		return state.getExecType() + "/" + state.getFederatedOutput();
+	}
+
+	private static void registerPlannerRecompileState(
+		Hop hopRef, Hop targetHop, ExecType execType, FederatedOutput outType) {
+		if (execType == null || outType == null)
+			return;
+		if (hopRef != null)
+			FederatedPlannerUtils.registerPlannerRecompileState(hopRef, execType, outType);
+		if (targetHop != null && targetHop != hopRef)
+			FederatedPlannerUtils.registerPlannerRecompileState(targetHop, execType, outType);
+	}
+
 	private static FederatedPlannerDpMemoTable.FedPlan selectRewritePlanVariant(
 		FederatedPlannerDpMemoTable memoTable,
 		long hopID,
 		FederatedOutput desiredOut,
 		FederatedOutput inheritedOut,
 		FederatedPlannerDpMemoTable.FedPlan fallbackPlan,
-		Map<Long, FederatedOutput> outputDecisions) {
+		Map<Long, FederatedOutput> outputDecisions,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap,
+		boolean allowOutputDecisionOverride) {
 
 		if (memoTable == null)
 			return fallbackPlan;
 
 		FederatedPlannerDpMemoTable.FedPlan selected = null;
+		// The output-decision map is the DP global cost/state choice. Honor it
+		// before inherited-edge fallback when an executable child-compatible
+		// variant already exists; otherwise keep the inherited edge below to
+		// preserve a valid parent->child forest.
+		if (allowOutputDecisionOverride && desiredOut != null && desiredOut != inheritedOut) {
+			selected = findStrictCompatiblePlanVariant(memoTable, hopID, desiredOut, outputDecisions);
+			if (selected != null)
+				return selectLoopAwareCloneFamilyRewritePlan(
+					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
+		}
 		if (inheritedOut != null)
 			selected = selectCompatiblePlanVariant(memoTable, hopID, inheritedOut, outputDecisions);
 		if (selected == null && desiredOut != null && desiredOut != inheritedOut)
 			selected = selectCompatiblePlanVariant(memoTable, hopID, desiredOut, outputDecisions);
 		if (selected != null)
-			return selected;
+			return selectLoopAwareCloneFamilyRewritePlan(
+				memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
 
 		// Rewrite must preserve an executable parent->child forest even when the
 		// global decision map is temporarily inconsistent. Prefer the inherited
@@ -259,24 +353,243 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (inheritedOut != null) {
 			selected = memoTable.getFedPlanAfterPrune(hopID, inheritedOut);
 			if (selected != null)
-				return selected;
+				return selectLoopAwareCloneFamilyRewritePlan(
+					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
 		}
 		if (desiredOut != null && desiredOut != inheritedOut) {
 			selected = memoTable.getFedPlanAfterPrune(hopID, desiredOut);
 			if (selected != null)
-				return selected;
+				return selectLoopAwareCloneFamilyRewritePlan(
+					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
 		}
 
 		if (fallbackPlan != null)
-			return fallbackPlan;
+			return selectLoopAwareCloneFamilyRewritePlan(
+				memoTable, hopID, fallbackPlan, outputDecisions, rewriteConflictCheckMap);
 
 		FederatedPlannerDpMemoTable.FedPlan lPlan =
 			memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
 		FederatedPlannerDpMemoTable.FedPlan fPlan =
 			memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
-		return (lPlan == null) ? fPlan :
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan = (lPlan == null) ? fPlan :
 			(fPlan == null) ? lPlan :
 			(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
+		return selectLoopAwareCloneFamilyRewritePlan(
+			memoTable, hopID, selectedPlan, outputDecisions, rewriteConflictCheckMap);
+	}
+
+	private static FederatedPlannerDpMemoTable.FedPlan selectLoopAwareCloneFamilyRewritePlan(
+		FederatedPlannerDpMemoTable memoTable,
+		long hopID,
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap) {
+
+		if (memoTable == null || selectedPlan == null || rewriteConflictCheckMap == null
+			|| memoTable.isVirtualClone(hopID)) {
+			return selectedPlan;
+		}
+
+		long origHopID = memoTable.resolveOriginalHopId(hopID);
+		ConflictEntry entry = rewriteConflictCheckMap.get(origHopID);
+		if (entry == null || entry.memberHopIDs == null || entry.memberHopIDs.isEmpty())
+			return selectedPlan;
+
+		LinkedHashSet<Long> familyMemberIDs = new LinkedHashSet<>();
+		boolean hasVirtualClone = false;
+		for (long memberHopID : selectDecisionMembers(entry.memberHopIDs, memoTable)) {
+			if (memoTable.resolveOriginalHopId(memberHopID) != origHopID)
+				continue;
+			familyMemberIDs.add(memberHopID);
+			hasVirtualClone |= memoTable.isVirtualClone(memberHopID);
+		}
+		familyMemberIDs.add(hopID);
+		if (!hasVirtualClone || familyMemberIDs.size() <= 1)
+			return selectedPlan;
+
+		FederatedPlannerDpMemoTable.FedPlanVariants variants =
+			memoTable.getFedPlanVariants(Pair.of(hopID, selectedPlan.getFedOutType()));
+		if (variants == null || variants.isEmpty())
+			return selectedPlan;
+
+		double selectedFamilyCost = computeCloneFamilyRewriteCost(
+			memoTable, familyMemberIDs, selectedPlan, outputDecisions);
+		FederatedPlannerDpMemoTable.FedPlan bestPlan = selectedPlan;
+		double bestFamilyCost = selectedFamilyCost;
+
+		for (FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
+			if (candidate == null)
+				continue;
+			if (outputDecisions != null && !outputDecisions.isEmpty()
+				&& !isCompatibleWithChildDecisions(memoTable, candidate, outputDecisions))
+				continue;
+			double familyCost = computeCloneFamilyRewriteCost(
+				memoTable, familyMemberIDs, candidate, outputDecisions);
+			if (Double.isFinite(familyCost) && (!Double.isFinite(bestFamilyCost)
+				|| familyCost + 1e-9 < bestFamilyCost)) {
+				bestPlan = candidate;
+				bestFamilyCost = familyCost;
+			}
+		}
+
+		Hop hopRef = memoTable.resolveOriginalHop(hopID);
+		if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+			FederatedPlannerTrace.log(hopRef, "DP-Rewrite-CloneFamily", String.format(Locale.ROOT,
+				"members=%s selectedExec=%s selectedOut=%s selectedCost=%.6f selectedFamilyCost=%.6f "
+					+ "effectiveExec=%s effectiveOut=%s effectiveCost=%.6f effectiveFamilyCost=%.6f changed=%s",
+				familyMemberIDs,
+				selectedPlan.getExecType(), selectedPlan.getFedOutType(), selectedPlan.getCumulativeCost(),
+				selectedFamilyCost,
+				bestPlan.getExecType(), bestPlan.getFedOutType(), bestPlan.getCumulativeCost(),
+				bestFamilyCost,
+				bestPlan != selectedPlan));
+		}
+
+		applyCloneFamilyRewriteStateToMembers(
+			memoTable, familyMemberIDs, bestPlan, outputDecisions);
+
+		return bestPlan;
+	}
+
+	private static void applyCloneFamilyRewriteStateToMembers(
+		FederatedPlannerDpMemoTable memoTable,
+		Set<Long> familyMemberIDs,
+		FederatedPlannerDpMemoTable.FedPlan selectedFamilyPlan,
+		Map<Long, FederatedOutput> outputDecisions) {
+
+		if (memoTable == null || familyMemberIDs == null || familyMemberIDs.isEmpty()
+			|| selectedFamilyPlan == null)
+			return;
+
+		for (long memberHopID : familyMemberIDs) {
+			FederatedPlannerDpMemoTable.FedPlan memberPlan = selectCloneFamilyMemberPlan(
+				memoTable, memberHopID, selectedFamilyPlan, outputDecisions);
+			if (memberPlan == null || memberPlan.getHopRef() == null)
+				continue;
+
+			ExecType execType = memberPlan.getExecType();
+			FederatedOutput outType = memberPlan.getFedOutType();
+			if (execType == null || outType == null)
+				continue;
+
+			Hop memberHop = memberPlan.getHopRef();
+			memberHop.setForcedExecType(execType);
+			memberHop.setFederatedOutput(outType);
+			memberHop.setFederatedOutputDerived(
+				execType == ExecType.FED && outType == FederatedOutput.FOUT && memberPlan.isDerivedFedFout());
+			FederatedPlannerUtils.registerPlannerRecompileState(memberHop, execType, outType);
+
+			if (FederatedPlannerTrace.shouldTrace(memoTable.resolveOriginalHop(memberHopID))) {
+				FederatedPlannerTrace.log(memoTable.resolveOriginalHop(memberHopID),
+					"DP-Rewrite-CloneFamilyMemberState", String.format(Locale.ROOT,
+						"member=%d virtual=%s exec=%s out=%s cost=%.6f loop=%s",
+						memberHopID, memoTable.isVirtualClone(memberHopID), execType, outType,
+						memberPlan.getCumulativeCost(), formatLoopContext(memberPlan.getLoopContext())));
+			}
+		}
+	}
+
+	private static double computeCloneFamilyRewriteCost(
+		FederatedPlannerDpMemoTable memoTable,
+		Set<Long> familyMemberIDs,
+		FederatedPlannerDpMemoTable.FedPlan referencePlan,
+		Map<Long, FederatedOutput> outputDecisions) {
+
+		if (memoTable == null || familyMemberIDs == null || familyMemberIDs.isEmpty() || referencePlan == null)
+			return Double.POSITIVE_INFINITY;
+
+		double familyCost = 0.0;
+		int matched = 0;
+		for (long memberHopID : familyMemberIDs) {
+			FederatedPlannerDpMemoTable.FedPlan memberPlan = selectCloneFamilyMemberPlan(
+				memoTable, memberHopID, referencePlan, outputDecisions);
+			if (memberPlan == null)
+				return Double.POSITIVE_INFINITY;
+			// A FedPlan cumulative cost already represents the concrete candidate variant,
+			// including the child-edge transfer/local-access terms chosen by DP candidate
+			// enumeration. Clone-family rewrite compares the total execution cost of all
+			// original/virtual family members, not a single parent-edge use of a member.
+			// Therefore, do not divide by parent count here and do not add a separate
+			// decision-map mixed-edge surcharge: the former underweights loop clone families,
+			// while the latter charges FED/FOUT -> CP-local edges a second time.
+			familyCost += memberPlan.getCumulativeCost();
+			matched++;
+		}
+		return matched > 0 ? familyCost : Double.POSITIVE_INFINITY;
+	}
+
+	private static FederatedPlannerDpMemoTable.FedPlan selectCloneFamilyMemberPlan(
+		FederatedPlannerDpMemoTable memoTable,
+		long memberHopID,
+		FederatedPlannerDpMemoTable.FedPlan referencePlan,
+		Map<Long, FederatedOutput> outputDecisions) {
+
+		FederatedPlannerDpMemoTable.FedPlanVariants variants =
+			memoTable.getFedPlanVariants(Pair.of(memberHopID, referencePlan.getFedOutType()));
+		if (variants == null || variants.isEmpty())
+			return null;
+
+		FederatedPlannerDpMemoTable.FedPlan bestSameExec = null;
+		for (FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
+			if (!isCloneFamilyRewriteCandidate(memoTable, candidate, referencePlan, outputDecisions))
+				continue;
+			if (hasSameChildOutputSignature(memoTable, referencePlan, candidate))
+				return candidate;
+			if (bestSameExec == null)
+				bestSameExec = candidate;
+		}
+		if (bestSameExec != null)
+			return bestSameExec;
+
+		for (FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
+			if (candidate == null || candidate.getExecType() != referencePlan.getExecType())
+				continue;
+			return candidate;
+		}
+		return null;
+	}
+
+	private static boolean isCloneFamilyRewriteCandidate(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan candidate,
+		FederatedPlannerDpMemoTable.FedPlan referencePlan,
+		Map<Long, FederatedOutput> outputDecisions) {
+
+		if (candidate == null || referencePlan == null || candidate.getExecType() != referencePlan.getExecType())
+			return false;
+		if (outputDecisions != null && !outputDecisions.isEmpty()
+			&& !isCompatibleWithChildDecisions(memoTable, candidate, outputDecisions))
+			return false;
+		return true;
+	}
+
+	private static boolean hasSameChildOutputSignature(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan referencePlan,
+		FederatedPlannerDpMemoTable.FedPlan candidate) {
+
+		return buildChildOutputSignature(memoTable, referencePlan)
+			.equals(buildChildOutputSignature(memoTable, candidate));
+	}
+
+	private static Map<Long, FederatedOutput> buildChildOutputSignature(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan plan) {
+
+		LinkedHashMap<Long, FederatedOutput> signature = new LinkedHashMap<>();
+		if (memoTable == null || plan == null || plan.getChildFedPlans() == null)
+			return signature;
+		for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+			if (childEdge == null)
+				continue;
+			long childOrigHopID = memoTable.resolveOriginalHopId(childEdge.getKey());
+			FederatedOutput previousOut = signature.get(childOrigHopID);
+			if (previousOut != null && previousOut != childEdge.getValue())
+				signature.put(childOrigHopID, null);
+			else if (!signature.containsKey(childOrigHopID))
+				signature.put(childOrigHopID, childEdge.getValue());
+		}
+		return signature;
 	}
 
 	private static Map<Long, FederatedOutput> computeOutputDecisions(
@@ -296,6 +609,38 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable, rootPlan, baseDecisions, lockedDecisions, false);
 	}
 
+	private static Map<Long, FederatedOutput> simulateOutputDecisionsWithLocksCached(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan rootPlan,
+		Map<Long, FederatedOutput> baseDecisions,
+		Map<Long, FederatedOutput> lockedDecisions,
+		SimulationDecisionCache simulationDecisionCache) {
+
+		if (simulationDecisionCache == null || FederatedPlannerTrace.isEnabled())
+			return simulateOutputDecisionsWithLocks(memoTable, rootPlan, baseDecisions, lockedDecisions);
+
+		SimulationDecisionKey key = new SimulationDecisionKey(baseDecisions, lockedDecisions);
+		Map<Long, FederatedOutput> cached = simulationDecisionCache.get(key);
+		if (cached != null)
+			return new HashMap<>(cached);
+
+		Map<Long, FederatedOutput> computed =
+			simulateOutputDecisionsWithLocks(memoTable, rootPlan, baseDecisions, lockedDecisions);
+		simulationDecisionCache.put(key, computed);
+		return computed;
+	}
+
+	private static Map<Long, FederatedOutput> buildTentativeDecisionSnapshot(
+		Map<Long, FederatedOutput> currentDecisions,
+		Map<Long, FederatedOutput> nextDecisions) {
+
+		if (currentDecisions == null || currentDecisions.isEmpty())
+			return nextDecisions != null ? nextDecisions : Collections.emptyMap();
+		if (nextDecisions == null || nextDecisions.isEmpty())
+			return currentDecisions;
+		return new OverlayDecisionMap(currentDecisions, nextDecisions);
+	}
+
 	private static Map<Long, FederatedOutput> computeOutputDecisionsInternal(
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
@@ -312,7 +657,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return decisions;
 
 		final int numWorkers = Math.max(1, memoTable.getNumWorkers());
-		final int maxIters = 4; // bounded fixed-point to account for parent exec-type changes after decisions
+		// Rewrite resolves parent/child output mismatches with inherited edge-aware
+		// variant selection. A second pass is required when the first pass changes
+		// output states that can expose new parent/child costs for the next decision
+		// refresh. Keep non-refining callers single-pass.
+		final int maxIters = allowTransientFamilyRefine ? 2 : 1;
+		ParentVariantDeltaCache parentVariantDeltaCache = new ParentVariantDeltaCache();
+		TransientReadParentsCache transientReadParentsCache = new TransientReadParentsCache();
+		SimulationDecisionCache simulationDecisionCache = new SimulationDecisionCache();
+		DecisionMapScoreCache decisionMapScoreCache = new DecisionMapScoreCache(memoTable, rootPlan);
 
 		Map<Long, ConflictEntry> conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan, decisions);
 		for (int iter = 0; iter < maxIters; iter++) {
@@ -341,83 +694,112 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 				boolean isTransientWrite = hopRef instanceof DataOp
 					&& ((DataOp) hopRef).getOp() == Types.OpOpData.TRANSIENTWRITE;
-				if (lockedChoice != null) {
-					nextDecisions.put(hopID, lockedChoice);
-					if (ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION && isTransientWrite) {
-						for (long tReadHopID : collectTransientReadParents(memoTable, hopID, conflictCheckMap))
-							nextDecisions.putIfAbsent(tReadHopID, lockedChoice);
-					}
-					continue;
+					if (lockedChoice != null) {
+						nextDecisions.put(hopID, lockedChoice);
+						if (ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION && isTransientWrite) {
+							for (long tReadHopID : collectTransientReadParents(
+								memoTable, hopID, conflictCheckMap, transientReadParentsCache))
+								nextDecisions.putIfAbsent(tReadHopID, lockedChoice);
+						}
+						continue;
 				}
 
 					if (isTransientWrite) {
-						Map<Long, FederatedOutput> tentativeDecisions = new HashMap<>(decisions);
-						tentativeDecisions.putAll(nextDecisions);
+						Map<Long, FederatedOutput> tentativeDecisions = null;
 						FederatedOutput chosen;
-						if (entry.canChooseLOUT && entry.canChooseFOUT) {
-							chosen = resolveTransientWriteConflict(
-								memoTable, hopID, entry, conflictCheckMap, tentativeDecisions, numWorkers);
+							if (entry.canChooseLOUT && entry.canChooseFOUT) {
+								tentativeDecisions = buildTentativeDecisionSnapshot(decisions, nextDecisions);
+								chosen = resolveTransientWriteConflict(
+									memoTable, hopID, entry, conflictCheckMap, tentativeDecisions, numWorkers,
+									parentVariantDeltaCache, transientReadParentsCache);
+							}
+						else if (entry.seenLOUT && !entry.seenFOUT) {
+							chosen = entry.canChooseLOUT
+								? FederatedOutput.LOUT
+								: (entry.canChooseFOUT ? FederatedOutput.FOUT : null);
 						}
-					else if (entry.seenLOUT && !entry.seenFOUT) {
-						chosen = entry.canChooseLOUT
-							? FederatedOutput.LOUT
-							: (entry.canChooseFOUT ? FederatedOutput.FOUT : null);
-					}
-					else if (!entry.seenLOUT && entry.seenFOUT) {
-						chosen = entry.canChooseFOUT
-							? FederatedOutput.FOUT
-							: (entry.canChooseLOUT ? FederatedOutput.LOUT : null);
-					}
-						else {
-							chosen = resolveTransientWriteConflict(
-								memoTable, hopID, entry, conflictCheckMap, tentativeDecisions, numWorkers);
+						else if (!entry.seenLOUT && entry.seenFOUT) {
+							chosen = entry.canChooseFOUT
+								? FederatedOutput.FOUT
+								: (entry.canChooseLOUT ? FederatedOutput.LOUT : null);
+							}
+								else {
+									tentativeDecisions = buildTentativeDecisionSnapshot(decisions, nextDecisions);
+									chosen = resolveTransientWriteConflict(
+										memoTable, hopID, entry, conflictCheckMap, tentativeDecisions, numWorkers,
+										parentVariantDeltaCache, transientReadParentsCache);
+							}
+						if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine) {
+							FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Chosen",
+								"iter=" + iter + " chosen=" + chosen);
 						}
-					if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine) {
-						FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Chosen",
-							"iter=" + iter + " chosen=" + chosen);
+							if (chosen != null) {
+								nextDecisions.put(hopID, chosen);
+								for (long tReadHopID : collectTransientReadParents(
+									memoTable, hopID, conflictCheckMap, transientReadParentsCache))
+									nextDecisions.put(tReadHopID, chosen);
+							}
+						continue;
 					}
-					if (chosen != null) {
-						nextDecisions.put(hopID, chosen);
-						for (long tReadHopID : collectTransientReadParents(memoTable, hopID, conflictCheckMap))
-							nextDecisions.put(tReadHopID, chosen);
-					}
-					continue;
-				}
 
 					FederatedOutput chosen;
-					Map<Long, FederatedOutput> tentativeDecisions = new HashMap<>(decisions);
-					tentativeDecisions.putAll(nextDecisions);
+					Map<Long, FederatedOutput> tentativeDecisions = null;
 					boolean forceTransientNeighborhoodReeval =
 						ENABLE_FORCED_TRANSIENT_NEIGHBORHOOD_REEVAL
 							&& entry.canChooseLOUT && entry.canChooseFOUT
 							&& isTransientBoundaryNeighborhood(memoTable, hopID, entry);
-				boolean forceCompatibleVariantReeval =
-					entry.canChooseLOUT && entry.canChooseFOUT && !decisions.isEmpty()
-						&& requiresCompatibleVariantReevaluation(
-							memoTable, hopID,
-							entry.seenFOUT && !entry.seenLOUT ? FederatedOutput.FOUT : FederatedOutput.LOUT,
-							decisions);
-				boolean forceSeenOnlyReeval = forceTransientNeighborhoodReeval || forceCompatibleVariantReeval;
-				if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine
-					&& forceCompatibleVariantReeval) {
-					FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Reeval",
-						"iter=" + iter + " reason=compatible_variant_shift_or_alt_output_cheaper");
-				}
-					if (entry.seenLOUT && !entry.seenFOUT) {
-						chosen = forceSeenOnlyReeval
-							? resolveOneHopConflict(memoTable, hopID, entry, tentativeDecisions, numWorkers)
-							: (entry.canChooseLOUT ? FederatedOutput.LOUT
-								: (entry.canChooseFOUT ? FederatedOutput.FOUT : null));
+					FederatedOutput observedOnlyOut =
+						entry.seenFOUT && !entry.seenLOUT ? FederatedOutput.FOUT :
+						entry.seenLOUT && !entry.seenFOUT ? FederatedOutput.LOUT : null;
+					boolean forceCompatibleVariantReeval =
+						entry.canChooseLOUT && entry.canChooseFOUT && !decisions.isEmpty()
+							&& requiresCompatibleVariantReevaluation(
+								memoTable, hopID,
+								observedOnlyOut != null ? observedOnlyOut : FederatedOutput.LOUT,
+								decisions);
+					boolean forceCheaperAlternativeReeval = false;
+					if (entry.canChooseLOUT && entry.canChooseFOUT && observedOnlyOut != null) {
+						tentativeDecisions = buildTentativeDecisionSnapshot(decisions, nextDecisions);
+						forceCheaperAlternativeReeval = hasCheaperAlternativeObservedChoice(
+							memoTable, hopID, entry, observedOnlyOut, tentativeDecisions);
 					}
-					else if (!entry.seenLOUT && entry.seenFOUT) {
-						chosen = forceSeenOnlyReeval
-							? resolveOneHopConflict(memoTable, hopID, entry, tentativeDecisions, numWorkers)
-							: (entry.canChooseFOUT ? FederatedOutput.FOUT
-								: (entry.canChooseLOUT ? FederatedOutput.LOUT : null));
+					boolean forceSeenOnlyReeval = forceTransientNeighborhoodReeval
+						|| forceCompatibleVariantReeval || forceCheaperAlternativeReeval;
+					if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine
+						&& (forceCompatibleVariantReeval || forceCheaperAlternativeReeval)) {
+						FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Reeval",
+							"iter=" + iter
+								+ " reason="
+								+ (forceCheaperAlternativeReeval ? "cheaper_alternative_output"
+									: "compatible_variant_shift_or_alt_output_cheaper"));
 					}
-					else {
-						chosen = resolveOneHopConflict(memoTable, hopID, entry, tentativeDecisions, numWorkers);
-					}
+						if (entry.seenLOUT && !entry.seenFOUT) {
+							chosen = forceSeenOnlyReeval
+								? resolveOneHopConflict(
+									memoTable, hopID, entry,
+									tentativeDecisions != null ? tentativeDecisions
+										: buildTentativeDecisionSnapshot(decisions, nextDecisions),
+									numWorkers, conflictCheckMap, parentVariantDeltaCache)
+								: (entry.canChooseLOUT ? FederatedOutput.LOUT
+									: (entry.canChooseFOUT ? FederatedOutput.FOUT : null));
+						}
+						else if (!entry.seenLOUT && entry.seenFOUT) {
+							chosen = forceSeenOnlyReeval
+								? resolveOneHopConflict(
+									memoTable, hopID, entry,
+									tentativeDecisions != null ? tentativeDecisions
+										: buildTentativeDecisionSnapshot(decisions, nextDecisions),
+									numWorkers, conflictCheckMap, parentVariantDeltaCache)
+								: (entry.canChooseFOUT ? FederatedOutput.FOUT
+									: (entry.canChooseLOUT ? FederatedOutput.LOUT : null));
+						}
+						else {
+							if (tentativeDecisions == null)
+								tentativeDecisions = buildTentativeDecisionSnapshot(decisions, nextDecisions);
+							chosen = resolveOneHopConflict(
+								memoTable, hopID, entry, tentativeDecisions, numWorkers, conflictCheckMap,
+								parentVariantDeltaCache);
+						}
 
 				if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine) {
 					FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Chosen",
@@ -428,17 +810,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					nextDecisions.put(hopID, chosen);
 			}
 
-			if (allowTransientFamilyRefine) {
-				nextDecisions = refineTransientFamilyDecisions(
-					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter);
-				// Rewrite now resolves parent/child output mismatches with inherited edge-aware
-				// variant selection. Applying an eager global "repair" here over-localizes
-				// unrelated transient chains (e.g., logreg w2 wan_light 271/357) because a
+					if (allowTransientFamilyRefine) {
+					nextDecisions = refineTransientFamilyDecisions(
+							memoTable, rootPlan, conflictCheckMap, nextDecisions, iter,
+							simulationDecisionCache, decisionMapScoreCache);
+					nextDecisions = refineRequiredOutputClosureDecisions(
+						memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, decisionMapScoreCache);
+					// Rewrite now resolves parent/child output mismatches with inherited edge-aware
+					// variant selection. Applying an eager global "repair" here over-localizes
+					// unrelated transient chains (e.g., logreg w2 wan_light 271/357) because a
 				// single incompatible downstream family can force older, still-beneficial FOUT
 				// decisions to LOUT before rewrite has a chance to pick a consistent forest.
 				// Keep the decision map cost-driven and let rewrite enforce executable
 				// compatibility locally.
-				logDecisionMapScoreBreakdown(memoTable, rootPlan, conflictCheckMap, decisions, nextDecisions, iter);
+				logDecisionMapScoreBreakdown(
+					memoTable, rootPlan, conflictCheckMap, decisions, nextDecisions, iter, decisionMapScoreCache);
 			}
 
 			if (nextDecisions.equals(decisions)) {
@@ -450,15 +836,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			conflictCheckMap = collectConflictsSingleBFS(memoTable, rootPlan, decisions);
 		}
 
-		return decisions;
-	}
+			return decisions;
+		}
 
-	private static Map<Long, FederatedOutput> refineTransientFamilyDecisions(
+	private static Map<Long, FederatedOutput> refineRequiredOutputClosureDecisions(
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> nextDecisions,
-		int iter) {
+		int iter,
+		DecisionMapScoreCache scoreCache) {
 
 		if (memoTable == null || rootPlan == null || conflictCheckMap == null || conflictCheckMap.isEmpty()
 			|| nextDecisions == null || nextDecisions.isEmpty())
@@ -466,7 +853,426 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		Map<Long, FederatedOutput> refinedDecisions = new HashMap<>(nextDecisions);
 		DecisionMapScoreBreakdown currentScore =
-			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions);
+			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
+		final int numWorkers = Math.max(1, memoTable.getNumWorkers());
+
+		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+			long hopID = e.getKey();
+			ConflictEntry entry = e.getValue();
+			if (entry == null || !entry.canChooseFOUT)
+				continue;
+
+			FederatedOutput chosen = refinedDecisions.get(hopID);
+			if (chosen != FederatedOutput.FOUT)
+				continue;
+
+			Map<Long, FederatedOutput> candidateDecisions = new HashMap<>(refinedDecisions);
+			LinkedHashSet<Long> closureHopIDs = new LinkedHashSet<>();
+			applyRequiredOutputDecisionClosure(
+				memoTable, hopID, chosen, conflictCheckMap,
+				candidateDecisions, closureHopIDs, new HashSet<>());
+
+			if (closureHopIDs.isEmpty() || candidateDecisions.equals(refinedDecisions))
+				continue;
+
+			DecisionMapScoreBreakdown candidateScore =
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidateDecisions, scoreCache);
+			boolean keepClosure =
+				Double.isFinite(candidateScore.totalCost)
+					&& candidateScore.missingRootCount == 0
+					&& (currentScore.missingRootCount > 0
+						|| candidateScore.totalCost + 1e-9 < currentScore.totalCost);
+
+			Hop hopRef = memoTable.resolveOriginalHop(hopID);
+			if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+				FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure-Selected", String.format(Locale.ROOT,
+					"iter=%d chosen=%s closure=%s currentTotal=%.6f closureTotal=%.6f "
+						+ "currentMissing=%d closureMissing=%d apply=%s",
+					iter, chosen, closureHopIDs,
+					currentScore.totalCost, candidateScore.totalCost,
+					currentScore.missingRootCount, candidateScore.missingRootCount,
+					keepClosure));
+			}
+
+			if (keepClosure) {
+				refinedDecisions = candidateDecisions;
+				currentScore = candidateScore;
+				continue;
+			}
+
+			if (entry.canChooseLOUT) {
+				Map<Long, FederatedOutput> loutDecisions = new HashMap<>(refinedDecisions);
+				LinkedHashSet<Long> loutClosureHopIDs = new LinkedHashSet<>();
+				applyRequiredOutputDecisionClosure(
+					memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
+					loutDecisions, loutClosureHopIDs, new HashSet<>());
+				applyDirectChildOutputDecisionClosure(
+					memoTable, hopID, FederatedOutput.LOUT, conflictCheckMap,
+					loutDecisions, loutClosureHopIDs);
+				DecisionMapScoreBreakdown loutScore =
+					computeDecisionMapScoreBreakdown(memoTable, rootPlan, loutDecisions, scoreCache);
+				boolean keepLout =
+					Double.isFinite(loutScore.totalCost)
+						&& loutScore.missingRootCount == 0
+						&& (!Double.isFinite(candidateScore.totalCost)
+							|| candidateScore.missingRootCount != 0
+							|| loutScore.totalCost + 1e-9 < candidateScore.totalCost);
+
+				if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+					FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure-Demote", String.format(Locale.ROOT,
+						"iter=%d chosen=%s closure=%s loutClosure=%s closureTotal=%.6f loutTotal=%.6f "
+							+ "closureMissing=%d loutMissing=%d apply=%s",
+						iter, chosen, closureHopIDs, loutClosureHopIDs,
+						candidateScore.totalCost, loutScore.totalCost,
+						candidateScore.missingRootCount, loutScore.missingRootCount, keepLout));
+				}
+
+				if (keepLout) {
+					refinedDecisions = loutDecisions;
+					currentScore = loutScore;
+					continue;
+				}
+			}
+
+			if (Double.isFinite(candidateScore.totalCost) && candidateScore.missingRootCount == 0) {
+				refinedDecisions = candidateDecisions;
+				currentScore = candidateScore;
+			}
+		}
+
+		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+			long hopID = e.getKey();
+			ConflictEntry entry = e.getValue();
+			if (entry == null || !entry.canChooseLOUT || !entry.canChooseFOUT)
+				continue;
+
+			FederatedOutput chosen = refinedDecisions.get(hopID);
+			if (chosen == null)
+				continue;
+			FederatedOutput alternative =
+				chosen == FederatedOutput.FOUT ? FederatedOutput.LOUT : FederatedOutput.FOUT;
+			if (!canChooseOutput(entry, alternative))
+				continue;
+
+			Map<Long, FederatedOutput> candidateDecisions = new HashMap<>(refinedDecisions);
+			LinkedHashSet<Long> closureHopIDs = new LinkedHashSet<>();
+			applyRequiredOutputDecisionClosure(
+				memoTable, hopID, alternative, conflictCheckMap,
+				candidateDecisions, closureHopIDs, new HashSet<>());
+			applyDirectChildOutputDecisionClosure(
+				memoTable, hopID, alternative, conflictCheckMap,
+				candidateDecisions, closureHopIDs);
+
+			if (closureHopIDs.isEmpty() || candidateDecisions.equals(refinedDecisions))
+				continue;
+
+			DecisionMapScoreBreakdown candidateScore =
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, candidateDecisions, scoreCache);
+				boolean transientTiePrefersAlternative =
+					Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9
+						&& shouldPreferTransientWriteAlternativeOnClosureTie(
+							memoTable, hopID, entry, conflictCheckMap,
+							refinedDecisions, alternative, numWorkers);
+				boolean directChildTiePrefersAlternative =
+					Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9
+						&& shouldPreferDirectChildAlternativeOnClosureTie(
+							memoTable, hopID, conflictCheckMap,
+							refinedDecisions, candidateDecisions, alternative, numWorkers);
+				boolean keepAlternative =
+					Double.isFinite(candidateScore.totalCost)
+						&& candidateScore.missingRootCount == 0
+						&& (candidateScore.totalCost + 1e-9 < currentScore.totalCost
+							|| transientTiePrefersAlternative
+							|| directChildTiePrefersAlternative);
+
+			Hop hopRef = memoTable.resolveOriginalHop(hopID);
+			if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+					FederatedPlannerTrace.log(hopRef, "DP-RequiredOutputClosure", String.format(Locale.ROOT,
+						"iter=%d chosen=%s alternative=%s closure=%s currentTotal=%.6f altTotal=%.6f "
+							+ "currentMissing=%d altMissing=%d transientTiePrefersAlt=%s directChildTiePrefersAlt=%s "
+							+ "apply=%s",
+						iter, chosen, alternative, closureHopIDs,
+						currentScore.totalCost, candidateScore.totalCost,
+						currentScore.missingRootCount, candidateScore.missingRootCount,
+						transientTiePrefersAlternative, directChildTiePrefersAlternative, keepAlternative));
+				}
+
+			if (keepAlternative) {
+				refinedDecisions = candidateDecisions;
+				currentScore = candidateScore;
+			}
+		}
+
+		return refinedDecisions;
+	}
+
+	private static void applyDirectChildOutputDecisionClosure(
+		FederatedPlannerDpMemoTable memoTable,
+		long concreteHopID,
+		FederatedOutput desiredOut,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> decisions,
+		LinkedHashSet<Long> closureHopIDs) {
+
+		if (memoTable == null || desiredOut == null || conflictCheckMap == null
+			|| decisions == null || closureHopIDs == null)
+			return;
+
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan =
+			findStrictCompatiblePlanVariant(memoTable, concreteHopID, desiredOut, decisions);
+		if (selectedPlan == null)
+			selectedPlan = selectRequiredOutputClosurePlanVariant(memoTable, concreteHopID, desiredOut, conflictCheckMap);
+		if (selectedPlan == null)
+			selectedPlan = selectCompatiblePlanVariant(memoTable, concreteHopID, desiredOut, decisions);
+		if (selectedPlan == null)
+			selectedPlan = memoTable.getFedPlanAfterPrune(concreteHopID, desiredOut);
+		if (selectedPlan == null || selectedPlan.getChildFedPlans() == null)
+			return;
+
+		for (Pair<Long, FederatedOutput> childEdge : selectedPlan.getChildFedPlans()) {
+			if (childEdge == null || childEdge.getValue() == null)
+				continue;
+			long childOrigHopID = memoTable.resolveOriginalHopId(childEdge.getKey());
+			ConflictEntry childEntry = conflictCheckMap.get(childOrigHopID);
+			if (childEntry == null || !canChooseOutput(childEntry, childEdge.getValue()))
+				continue;
+			decisions.put(childOrigHopID, childEdge.getValue());
+			closureHopIDs.add(childOrigHopID);
+		}
+	}
+
+	private static boolean shouldPreferDirectChildAlternativeOnClosureTie(
+		FederatedPlannerDpMemoTable memoTable,
+		long concreteHopID,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> refinedDecisions,
+		Map<Long, FederatedOutput> candidateDecisions,
+		FederatedOutput alternative,
+		int numWorkers) {
+
+		if (memoTable == null || alternative == null || conflictCheckMap == null
+			|| refinedDecisions == null || candidateDecisions == null)
+			return false;
+
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan =
+			findStrictCompatiblePlanVariant(memoTable, concreteHopID, alternative, candidateDecisions);
+		if (selectedPlan == null)
+			selectedPlan = selectRequiredOutputClosurePlanVariant(memoTable, concreteHopID, alternative, conflictCheckMap);
+		if (selectedPlan == null)
+			selectedPlan = selectCompatiblePlanVariant(memoTable, concreteHopID, alternative, candidateDecisions);
+		if (selectedPlan == null)
+			selectedPlan = memoTable.getFedPlanAfterPrune(concreteHopID, alternative);
+		if (selectedPlan == null || selectedPlan.getChildFedPlans() == null)
+			return false;
+
+			for (Pair<Long, FederatedOutput> childEdge : selectedPlan.getChildFedPlans()) {
+				if (childEdge == null || childEdge.getValue() == null)
+					continue;
+				long childOrigHopID = memoTable.resolveOriginalHopId(childEdge.getKey());
+				FederatedOutput currentChildOut = refinedDecisions.get(childOrigHopID);
+				if (currentChildOut == childEdge.getValue())
+					continue;
+				ConflictEntry childEntry = conflictCheckMap.get(childOrigHopID);
+				if (childEntry == null || !canChooseOutput(childEntry, childEdge.getValue()))
+					continue;
+				FederatedOutput childPreferred = resolveOneHopConflict(
+					memoTable, childOrigHopID, childEntry, candidateDecisions, numWorkers, conflictCheckMap);
+				if (childPreferred == childEdge.getValue())
+					return true;
+			}
+			return false;
+		}
+
+		private static boolean shouldPreferTransientWriteAlternativeOnClosureTie(
+		FederatedPlannerDpMemoTable memoTable,
+		long hopID,
+		ConflictEntry entry,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> refinedDecisions,
+		FederatedOutput alternative,
+		int numWorkers) {
+
+		if (memoTable == null || entry == null || alternative == null)
+			return false;
+		Hop hopRef = memoTable.resolveOriginalHop(hopID);
+		if (!(hopRef instanceof DataOp)
+			|| ((DataOp) hopRef).getOp() != Types.OpOpData.TRANSIENTWRITE)
+			return false;
+			if (!canChooseOutput(entry, alternative))
+				return false;
+			if (hasConflictingTransientReadDecision(
+				memoTable, hopID, conflictCheckMap, refinedDecisions, alternative)) {
+				return false;
+			}
+
+			Map<Long, FederatedOutput> tentativeDecisions = new HashMap<>();
+			if (refinedDecisions != null)
+				tentativeDecisions.putAll(refinedDecisions);
+		tentativeDecisions.put(hopID, alternative);
+			FederatedOutput transientChoice = resolveTransientWriteConflict(
+				memoTable, hopID, entry, conflictCheckMap, tentativeDecisions, numWorkers);
+			return transientChoice == alternative;
+		}
+
+		private static boolean hasConflictingTransientReadDecision(
+			FederatedPlannerDpMemoTable memoTable,
+			long tWriteHopID,
+			Map<Long, ConflictEntry> conflictCheckMap,
+			Map<Long, FederatedOutput> refinedDecisions,
+			FederatedOutput tWriteAlternative) {
+
+			if (memoTable == null || refinedDecisions == null || tWriteAlternative == null)
+				return false;
+			for (long tReadHopID : collectTransientReadParents(memoTable, tWriteHopID, conflictCheckMap)) {
+				long tReadOrigHopID = memoTable.resolveOriginalHopId(tReadHopID);
+				FederatedOutput tReadDecision = refinedDecisions.get(tReadOrigHopID);
+				if (tReadDecision != null && tReadDecision != tWriteAlternative)
+					return true;
+			}
+			return false;
+		}
+
+		private static void applyRequiredOutputDecisionClosure(
+			FederatedPlannerDpMemoTable memoTable,
+		long concreteHopID,
+		FederatedOutput desiredOut,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> decisions,
+		LinkedHashSet<Long> closureHopIDs,
+		Set<String> visitedStates) {
+
+		if (memoTable == null || desiredOut == null || conflictCheckMap == null
+			|| decisions == null || closureHopIDs == null || visitedStates == null)
+			return;
+
+		String stateKey = concreteHopID + "|" + desiredOut;
+		if (!visitedStates.add(stateKey))
+			return;
+
+		long origHopID = memoTable.resolveOriginalHopId(concreteHopID);
+		ConflictEntry entry = conflictCheckMap.get(origHopID);
+		if (entry != null && canChooseOutput(entry, desiredOut)) {
+			decisions.put(origHopID, desiredOut);
+			closureHopIDs.add(origHopID);
+		}
+
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan =
+			findStrictCompatiblePlanVariant(memoTable, concreteHopID, desiredOut, decisions);
+		if (selectedPlan == null)
+			selectedPlan = selectRequiredOutputClosurePlanVariant(memoTable, concreteHopID, desiredOut, conflictCheckMap);
+		if (selectedPlan == null)
+			selectedPlan = selectCompatiblePlanVariant(memoTable, concreteHopID, desiredOut, decisions);
+		if (selectedPlan == null)
+			selectedPlan = memoTable.getFedPlanAfterPrune(concreteHopID, desiredOut);
+		if (selectedPlan == null || selectedPlan.getChildFedPlans() == null)
+			return;
+
+		for (Pair<Long, FederatedOutput> childEdge : selectedPlan.getChildFedPlans()) {
+			if (childEdge == null || childEdge.getValue() == null)
+				continue;
+			if (!shouldPropagateRequiredChildOutput(desiredOut, childEdge.getValue()))
+				continue;
+			long childOrigHopID = memoTable.resolveOriginalHopId(childEdge.getKey());
+			ConflictEntry childEntry = conflictCheckMap.get(childOrigHopID);
+			if (childEntry == null || !canChooseOutput(childEntry, childEdge.getValue()))
+				continue;
+			decisions.put(childOrigHopID, childEdge.getValue());
+			closureHopIDs.add(childOrigHopID);
+			applyRequiredOutputDecisionClosure(
+				memoTable, childEdge.getKey(), childEdge.getValue(), conflictCheckMap,
+				decisions, closureHopIDs, visitedStates);
+			}
+		}
+
+		private static FederatedPlannerDpMemoTable.FedPlan selectRequiredOutputClosurePlanVariant(
+			FederatedPlannerDpMemoTable memoTable,
+			long hopID,
+			FederatedOutput desiredOut,
+			Map<Long, ConflictEntry> conflictCheckMap) {
+
+			if (memoTable == null || desiredOut == null)
+				return null;
+			FederatedPlannerDpMemoTable.FedPlanVariants variants =
+				memoTable.getFedPlanVariants(Pair.of(hopID, desiredOut));
+			if (variants == null || variants.isEmpty())
+				return null;
+
+			for (FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
+				if (isRequiredOutputClosureFeasible(
+					memoTable, candidate, desiredOut, conflictCheckMap, new HashSet<>()))
+					return candidate;
+			}
+			return null;
+		}
+
+		private static boolean isRequiredOutputClosureFeasible(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan plan,
+			FederatedOutput desiredOut,
+			Map<Long, ConflictEntry> conflictCheckMap,
+			Set<String> visitedStates) {
+
+			if (memoTable == null || plan == null || desiredOut == null)
+				return false;
+			String stateKey =
+				(plan.getHopRef() != null ? plan.getHopRef().getHopID() : -1L) + "|" + desiredOut;
+			if (!visitedStates.add(stateKey))
+				return true;
+			if (plan.getChildFedPlans() == null)
+				return true;
+
+			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+				if (childEdge == null || childEdge.getValue() == null)
+					continue;
+				if (!shouldPropagateRequiredChildOutput(desiredOut, childEdge.getValue()))
+					continue;
+				long childOrigHopID = memoTable.resolveOriginalHopId(childEdge.getKey());
+				ConflictEntry childEntry = conflictCheckMap != null ? conflictCheckMap.get(childOrigHopID) : null;
+				if (childEntry != null && !canChooseOutput(childEntry, childEdge.getValue()))
+					return false;
+				if (childEntry == null
+					&& memoTable.getFedPlanAfterPrune(childEdge.getKey(), childEdge.getValue()) == null)
+					return false;
+				FederatedPlannerDpMemoTable.FedPlan childPlan =
+					selectRequiredOutputClosurePlanVariant(
+						memoTable, childEdge.getKey(), childEdge.getValue(), conflictCheckMap);
+				if (childPlan == null)
+					childPlan = memoTable.getFedPlanAfterPrune(childEdge.getKey(), childEdge.getValue());
+				if (childPlan == null || !isRequiredOutputClosureFeasible(
+					memoTable, childPlan, childEdge.getValue(), conflictCheckMap, visitedStates))
+					return false;
+			}
+			return true;
+		}
+
+		private static boolean shouldPropagateRequiredChildOutput(
+			FederatedOutput parentDesiredOut,
+			FederatedOutput childOut) {
+			return parentDesiredOut == FederatedOutput.FOUT && childOut == FederatedOutput.FOUT;
+		}
+
+		private static boolean canChooseOutput(ConflictEntry entry, FederatedOutput out) {
+			if (entry == null || out == null)
+				return false;
+		return out == FederatedOutput.FOUT ? entry.canChooseFOUT : entry.canChooseLOUT;
+	}
+
+	private static Map<Long, FederatedOutput> refineTransientFamilyDecisions(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> nextDecisions,
+		int iter,
+		SimulationDecisionCache simulationDecisionCache,
+		DecisionMapScoreCache scoreCache) {
+
+		if (memoTable == null || rootPlan == null || conflictCheckMap == null || conflictCheckMap.isEmpty()
+			|| nextDecisions == null || nextDecisions.isEmpty())
+			return nextDecisions;
+
+		Map<Long, FederatedOutput> refinedDecisions = new HashMap<>(nextDecisions);
+		DecisionMapScoreBreakdown currentScore =
+			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
 		Map<Long, LinkedHashSet<Long>> parentGraph = buildConflictParentGraph(memoTable, conflictCheckMap);
 
 		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
@@ -492,12 +1298,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION) {
 				for (long tReadHopID : collectTransientReadParents(memoTable, hopID, conflictCheckMap))
 					lockedAlternativeDecisions.put(tReadHopID, alternative);
-			}
-			Map<Long, FederatedOutput> simulatedAlternativeDecisions =
-				simulateOutputDecisionsWithLocks(
-					memoTable, rootPlan, refinedDecisions, lockedAlternativeDecisions);
+				}
+				Map<Long, FederatedOutput> simulatedAlternativeDecisions =
+					simulateOutputDecisionsWithLocksCached(
+						memoTable, rootPlan, refinedDecisions, lockedAlternativeDecisions, simulationDecisionCache);
 			DecisionMapScoreBreakdown simulatedAlternativeScore =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, simulatedAlternativeDecisions);
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, simulatedAlternativeDecisions, scoreCache);
 			boolean keepSimulatedAlternative =
 				Double.isFinite(simulatedAlternativeScore.totalCost)
 					&& simulatedAlternativeScore.missingRootCount == 0
@@ -555,7 +1361,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				}
 				if (normalizedChanged > 0) {
 					DecisionMapScoreBreakdown normalizedScore =
-						computeDecisionMapScoreBreakdown(memoTable, rootPlan, normalizedDecisions);
+						computeDecisionMapScoreBreakdown(memoTable, rootPlan, normalizedDecisions, scoreCache);
 					boolean rawPrefersFout =
 						familyHasCheaperRawAlternative(memoTable, familyHopIDs, FederatedOutput.FOUT);
 					boolean keepNormalizedFout =
@@ -627,7 +1433,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 
 			DecisionMapScoreBreakdown altScore =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, altDecisions);
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, altDecisions, scoreCache);
 			boolean rawPrefersAlternative =
 				alternative == FederatedOutput.FOUT
 					&& familyHasCheaperRawAlternative(memoTable, altFamilyHopIDs, alternative);
@@ -644,7 +1450,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					bundleAltDecisions = new HashMap<>(refinedDecisions);
 					for (long bundleHopID : feasibleBundleHopIDs)
 						bundleAltDecisions.put(bundleHopID, FederatedOutput.FOUT);
-					bundleAltScore = computeDecisionMapScoreBreakdown(memoTable, rootPlan, bundleAltDecisions);
+					bundleAltScore = computeDecisionMapScoreBreakdown(
+						memoTable, rootPlan, bundleAltDecisions, scoreCache);
 					double relPenalty = Math.abs(currentScore.totalCost) > 1e-9
 						? (bundleAltScore.totalCost - currentScore.totalCost) / Math.abs(currentScore.totalCost)
 						: Double.POSITIVE_INFINITY;
@@ -676,7 +1483,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					Double.isFinite(candidateScore.totalCost)
 						&& candidateScore.missingRootCount == 0
 						&& (candidateScore.totalCost + 1e-9 < currentScore.totalCost
-							|| rawPrefersAlternative
+							|| (rawPrefersAlternative
+								&& Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9)
 							|| (applyBundle && keepFoutOnNearFamilyTie));
 			if (FederatedPlannerTrace.shouldTrace(hopRef)) {
 				FederatedPlannerTrace.log(hopRef, "DP-TransientFamilyRefine", String.format(Locale.ROOT,
@@ -718,7 +1526,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> currentDecisions,
 		Map<Long, FederatedOutput> nextDecisions,
-		int iter) {
+		int iter,
+		DecisionMapScoreCache scoreCache) {
 
 		if (memoTable == null || rootPlan == null || conflictCheckMap == null || conflictCheckMap.isEmpty())
 			return;
@@ -733,9 +1542,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return;
 
 		DecisionMapScoreBreakdown currentScore =
-			computeDecisionMapScoreBreakdown(memoTable, rootPlan, currentDecisions);
+			computeDecisionMapScoreBreakdown(memoTable, rootPlan, currentDecisions, scoreCache);
 		DecisionMapScoreBreakdown nextScore =
-			computeDecisionMapScoreBreakdown(memoTable, rootPlan, nextDecisions);
+			computeDecisionMapScoreBreakdown(memoTable, rootPlan, nextDecisions, scoreCache);
 
 		for (Hop traceHop : traceTargets) {
 			FederatedPlannerTrace.log(traceHop, "DP-DecisionMap-Score", String.format(Locale.ROOT,
@@ -768,7 +1577,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		logTransientAlternativeScores(memoTable, rootPlan, conflictCheckMap, nextDecisions, nextScore, iter);
+		logTransientAlternativeScores(
+			memoTable, rootPlan, conflictCheckMap, nextDecisions, nextScore, iter, scoreCache);
+	}
+
+	private static DecisionMapScoreBreakdown computeDecisionMapScoreBreakdown(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan rootPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		DecisionMapScoreCache scoreCache) {
+
+		if (scoreCache != null)
+			return scoreCache.get(outputDecisions);
+		return computeDecisionMapScoreBreakdown(memoTable, rootPlan, outputDecisions);
 	}
 
 	private static DecisionMapScoreBreakdown computeDecisionMapScoreBreakdown(
@@ -796,26 +1617,362 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			additionalRootHopIDs.add(rootHopID);
 		}
 
-		for (Map.Entry<Long, FederatedPlannerDpMemoTable.FedPlan> entry : selectedRootPlans.entrySet()) {
-			long rootHopID = entry.getKey();
-			breakdown.addContribution(entry.getValue(), rootHopID, additionalRootHopIDs.contains(rootHopID),
-				memoTable, selectedRootPlans, outputDecisions);
+			for (Map.Entry<Long, FederatedPlannerDpMemoTable.FedPlan> entry : selectedRootPlans.entrySet()) {
+				long rootHopID = entry.getKey();
+				breakdown.addContribution(entry.getValue(), rootHopID, additionalRootHopIDs.contains(rootHopID),
+					memoTable, selectedRootPlans, outputDecisions);
+			}
+			double transientLocalCost =
+				computeDecisionMapTransientReadLoutMaterializationCost(memoTable, rootPlan, outputDecisions);
+			double mixedFoutToCpLocalEdgeCost =
+				computeDecisionMapMixedFoutToCpLocalEdgeCost(memoTable, rootPlan, outputDecisions);
+			double cloneFamilyOverridePenalty =
+				computeDecisionMapCloneFamilyOutputOverridePenalty(memoTable, rootPlan, outputDecisions);
+			breakdown.totalCost += transientLocalCost + mixedFoutToCpLocalEdgeCost + cloneFamilyOverridePenalty;
+			breakdown.additionalRootCost += transientLocalCost + mixedFoutToCpLocalEdgeCost
+				+ cloneFamilyOverridePenalty;
+			breakdown.virtualAdditionalRootCost += cloneFamilyOverridePenalty;
+
+			return breakdown;
 		}
 
-		return breakdown;
-	}
+		private static double computeDecisionMapCloneFamilyOutputOverridePenalty(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan,
+			Map<Long, FederatedOutput> outputDecisions) {
+
+			if (memoTable == null || rootPlan == null || outputDecisions == null || outputDecisions.isEmpty())
+				return 0.0;
+
+			Map<Long, ConflictEntry> conflictCheckMap =
+				collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
+			if (conflictCheckMap.isEmpty())
+				return 0.0;
+
+			double penalty = 0.0;
+			for (Map.Entry<Long, FederatedOutput> decision : outputDecisions.entrySet()) {
+				if (decision == null || decision.getValue() == null)
+					continue;
+				long hopID = memoTable.resolveOriginalHopId(decision.getKey());
+				ConflictEntry entry = conflictCheckMap.get(hopID);
+				if (!hasVirtualCloneDecisionMember(memoTable, entry))
+					continue;
+
+				FederatedOutput chosenOut = decision.getValue();
+				if (!canChooseOutput(entry, chosenOut))
+					continue;
+				FederatedOutput alternativeOut =
+					chosenOut == FederatedOutput.FOUT ? FederatedOutput.LOUT : FederatedOutput.FOUT;
+				if (!canChooseOutput(entry, alternativeOut))
+					continue;
+
+				ParentVariantDeltaCache parentVariantDeltaCache = new ParentVariantDeltaCache();
+				double chosenCost = computeOneHopConflictAdditionalCost(
+					memoTable, hopID, entry, chosenOut, outputDecisions, conflictCheckMap,
+					parentVariantDeltaCache);
+				double alternativeCost = computeOneHopConflictAdditionalCost(
+					memoTable, hopID, entry, alternativeOut, outputDecisions, conflictCheckMap,
+					parentVariantDeltaCache);
+				if (!Double.isFinite(chosenCost) || !Double.isFinite(alternativeCost)
+					|| chosenCost <= alternativeCost + 1e-9) {
+					continue;
+				}
+
+				double decisionPenalty = chosenCost - alternativeCost;
+				penalty += decisionPenalty;
+				Hop hopRef = memoTable.resolveOriginalHop(hopID);
+				if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+					FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-CloneFamilyOverridePenalty",
+						String.format(Locale.ROOT,
+							"chosen=%s chosenCost=%.6f alternative=%s alternativeCost=%.6f penalty=%.6f members=%s",
+							chosenOut, chosenCost, alternativeOut, alternativeCost, decisionPenalty,
+							entry.memberHopIDs));
+				}
+			}
+			return penalty;
+		}
+
+		private static boolean hasVirtualCloneDecisionMember(
+			FederatedPlannerDpMemoTable memoTable,
+			ConflictEntry entry) {
+
+			if (memoTable == null || entry == null || entry.memberHopIDs == null
+				|| entry.memberHopIDs.size() <= 1) {
+				return false;
+			}
+			for (long memberHopID : selectDecisionMembers(entry.memberHopIDs, memoTable)) {
+				if (memoTable.isVirtualClone(memberHopID))
+					return true;
+			}
+			return false;
+		}
+
+		private static double computeOneHopConflictAdditionalCost(
+			FederatedPlannerDpMemoTable memoTable,
+			long hopID,
+			ConflictEntry entry,
+			FederatedOutput targetOut,
+			Map<Long, FederatedOutput> tentativeDecisions,
+			Map<Long, ConflictEntry> conflictCheckMap,
+			ParentVariantDeltaCache parentVariantDeltaCache) {
+
+			if (memoTable == null || entry == null || targetOut == null)
+				return Double.POSITIVE_INFINITY;
+			if (!canChooseOutput(entry, targetOut))
+				return Double.POSITIVE_INFINITY;
+
+			Set<Long> decisionMembers = selectDecisionMembers(entry.memberHopIDs, memoTable);
+			double cost = computeCompatiblePlanSelectionDelta(
+				memoTable, hopID, entry, decisionMembers, targetOut, tentativeDecisions, conflictCheckMap);
+			if (!Double.isFinite(cost))
+				return Double.POSITIVE_INFINITY;
+
+			Set<String> seenCostEdges = new LinkedHashSet<>();
+			int numWorkers = Math.max(1, memoTable.getNumWorkers());
+			for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
+				if (parentPlan == null || parentPlan.getChildFedPlans() == null)
+					continue;
+				ExecType parentExec = parentPlan.getExecType();
+				boolean parentIsFed = parentExec == ExecType.FED;
+				for (Pair<Long, FederatedOutput> edge : parentPlan.getChildFedPlans()) {
+					if (edge == null || memoTable.resolveOriginalHopId(edge.getKey()) != hopID)
+						continue;
+					long childHopID = edge.getKey();
+					if (decisionMembers != null && !decisionMembers.isEmpty()
+						&& !decisionMembers.contains(childHopID))
+						continue;
+					FederatedOutput originalOut = edge.getValue();
+					if (originalOut == targetOut)
+						continue;
+					String edgeKey = buildConflictCostEdgeKey(
+						memoTable, parentPlan, childHopID, originalOut);
+					if (!seenCostEdges.add(edgeKey))
+						continue;
+					double delta = computeSwitchEdgeCostDelta(
+						memoTable, childHopID, originalOut, targetOut, parentPlan, parentIsFed, numWorkers,
+						conflictCheckMap, parentVariantDeltaCache);
+					if (!Double.isFinite(delta))
+						return Double.POSITIVE_INFINITY;
+					cost += delta;
+				}
+			}
+			return cost;
+		}
+
+		private static double computeDecisionMapTransientReadLoutMaterializationCost(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan,
+			Map<Long, FederatedOutput> outputDecisions) {
+
+			if (memoTable == null || rootPlan == null || outputDecisions == null || outputDecisions.isEmpty())
+				return 0.0;
+			double cost = 0.0;
+			Map<Long, ConflictEntry> conflictCheckMap =
+				collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
+			LinkedHashSet<String> chargedMembers = new LinkedHashSet<>();
+			for (Map.Entry<Long, FederatedOutput> decision : outputDecisions.entrySet()) {
+				if (decision == null || decision.getValue() != FederatedOutput.LOUT)
+					continue;
+				long hopID = decision.getKey();
+				long origHopID = memoTable.resolveOriginalHopId(hopID);
+				Hop hopRef = memoTable.resolveOriginalHop(origHopID);
+				if (!(hopRef instanceof DataOp)
+					|| ((DataOp) hopRef).getOp() != Types.OpOpData.TRANSIENTREAD
+					|| hopRef.getDataType() == null || !hopRef.getDataType().isMatrix()) {
+					continue;
+				}
+				LinkedHashSet<Long> memberHopIDs = new LinkedHashSet<>();
+				ConflictEntry conflictEntry = conflictCheckMap.get(origHopID);
+				if (conflictEntry != null && conflictEntry.memberHopIDs != null)
+					memberHopIDs.addAll(selectDecisionMembers(conflictEntry.memberHopIDs, memoTable));
+				if (memberHopIDs.isEmpty())
+					memberHopIDs.add(origHopID);
+				for (long memberHopID : memberHopIDs) {
+					String memberKey = origHopID + "|" + memberHopID;
+					if (!chargedMembers.add(memberKey))
+						continue;
+					FederatedPlannerDpMemoTable.FedPlan lOutPlan =
+						memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.LOUT);
+					FederatedPlannerDpMemoTable.FedPlan fOutPlan =
+						memoTable.getFedPlanAfterPrune(memberHopID, FederatedOutput.FOUT);
+					double unitCost = computeTransientReadLoutMaterializationCostForPlan(
+						lOutPlan, fOutPlan, memoTable.getNumWorkers());
+					double multiplicity = computeTransientReadLoutMaterializationMultiplicity(lOutPlan);
+					double memberCost = unitCost * multiplicity;
+					if (memberCost > 0.0) {
+						cost += memberCost;
+						if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+							FederatedPlannerTrace.log(hopRef, "DP-TransientLoutMaterialization",
+								String.format(Locale.ROOT,
+									"scoreCost=%.6f member=%d memberOrig=%d multiplicity=%.6f unitCost=%.6f",
+									memberCost, memberHopID, origHopID, multiplicity, unitCost));
+						}
+					}
+				}
+			}
+			return cost;
+		}
+
+		private static double computeDecisionMapMixedFoutToCpLocalEdgeCost(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan,
+			Map<Long, FederatedOutput> outputDecisions) {
+
+			if (memoTable == null || rootPlan == null || outputDecisions == null || outputDecisions.isEmpty())
+				return 0.0;
+			double cost = 0.0;
+			int numWorkers = Math.max(1, memoTable.getNumWorkers());
+			Map<Long, ConflictEntry> conflictCheckMap =
+				collectConflictsSingleBFS(memoTable, rootPlan, outputDecisions);
+			LinkedHashSet<String> chargedEdges = new LinkedHashSet<>();
+			for (Map.Entry<Long, FederatedOutput> decision : outputDecisions.entrySet()) {
+				if (decision == null || decision.getValue() == null)
+					continue;
+				long parentOrigHopID = memoTable.resolveOriginalHopId(decision.getKey());
+				LinkedHashSet<Long> parentMemberHopIDs = new LinkedHashSet<>();
+				ConflictEntry conflictEntry = conflictCheckMap.get(parentOrigHopID);
+				if (conflictEntry != null && conflictEntry.memberHopIDs != null)
+					parentMemberHopIDs.addAll(selectDecisionMembers(conflictEntry.memberHopIDs, memoTable));
+				if (parentMemberHopIDs.isEmpty())
+					parentMemberHopIDs.add(parentOrigHopID);
+
+				for (long parentHopID : parentMemberHopIDs) {
+					FederatedPlannerDpMemoTable.FedPlan parentPlan =
+						selectCompatiblePlanVariant(memoTable, parentHopID, decision.getValue(), outputDecisions);
+					if (parentPlan == null)
+						parentPlan = memoTable.getFedPlanAfterPrune(parentHopID, decision.getValue());
+					cost += computeDecisionMapMixedFoutToCpLocalEdgeCostForParentPlan(
+						memoTable, parentPlan, outputDecisions, numWorkers, chargedEdges);
+				}
+			}
+			return cost;
+		}
+
+		private static double computeDecisionMapMixedFoutToCpLocalEdgeCostForParentPlan(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan,
+			Map<Long, FederatedOutput> outputDecisions,
+			int numWorkers,
+			Set<String> chargedEdges) {
+
+			if (memoTable == null || parentPlan == null || parentPlan.getExecType() != ExecType.CP
+				|| parentPlan.getChildFedPlans() == null || parentPlan.getChildFedPlans().isEmpty())
+				return 0.0;
+			Hop parentHop = parentPlan.getHopRef();
+			if (parentHop == null || parentHop instanceof DataOp
+				|| parentHop.getDataType() == null || !parentHop.getDataType().isMatrix())
+				return 0.0;
+
+			double cost = 0.0;
+			long parentOrigHopID = memoTable.resolveOriginalHopId(parentHop.getHopID());
+			for (Pair<Long, FederatedOutput> childEdge : parentPlan.getChildFedPlans()) {
+				if (childEdge == null || childEdge.getValue() != FederatedOutput.FOUT)
+					continue;
+				FederatedPlannerDpMemoTable.FedPlan childPlan =
+					selectCompatiblePlanVariant(memoTable, childEdge.getKey(), childEdge.getValue(), outputDecisions);
+				if (childPlan == null)
+					childPlan = memoTable.getFedPlanAfterPrune(childEdge.getKey(), childEdge.getValue());
+				if (!isDecisionMapFedFoutMatrixProducer(childPlan))
+					continue;
+				Hop childHop = childPlan.getHopRef();
+				String edgeKey = parentHop.getHopID() + "|" + parentOrigHopID + "|"
+					+ childPlan.getHopID() + "|" + memoTable.resolveOriginalHopId(childPlan.getHopID())
+					+ "|" + childEdge.getValue();
+				if (chargedEdges != null && !chargedEdges.add(edgeKey))
+					continue;
+				double downloadCost = computeDecisionMapFoutToCpDownloadCost(childPlan, childHop, numWorkers);
+				double edgeCost = FederatedPlannerDpCostEstimator.computeParentChildFoutToCpDownloadShare(
+					parentHop, downloadCost, childPlan, parentPlan, memoTable);
+				if (Double.isFinite(edgeCost) && edgeCost > 0.0) {
+					cost += edgeCost;
+					if (FederatedPlannerTrace.shouldTrace(parentHop) || FederatedPlannerTrace.shouldTrace(childHop)) {
+						FederatedPlannerTrace.log(parentHop, "DP-DecisionMap-MixedFoutCpLocalEdge",
+							String.format(Locale.ROOT,
+								"scoreCost=%.6f parentHop=%d parentOrig=%d childHop=%d childOrig=%d "
+									+ "parentExec=%s parentOut=%s childExec=%s childOut=%s",
+								edgeCost,
+								parentHop.getHopID(), parentOrigHopID,
+								childPlan.getHopID(), memoTable.resolveOriginalHopId(childPlan.getHopID()),
+								parentPlan.getExecType(), parentPlan.getFedOutType(),
+								childPlan.getExecType(), childPlan.getFedOutType()));
+					}
+				}
+			}
+			return cost;
+		}
+
+		private static boolean isDecisionMapFedFoutMatrixProducer(
+			FederatedPlannerDpMemoTable.FedPlan childPlan) {
+			if (childPlan == null || childPlan.getExecType() != ExecType.FED
+				|| childPlan.getFedOutType() != FederatedOutput.FOUT)
+				return false;
+			Hop childHop = childPlan.getHopRef();
+			return childHop != null && childHop.getDataType() != null && childHop.getDataType().isMatrix();
+		}
+
+		private static double computeDecisionMapFoutToCpDownloadCost(
+			FederatedPlannerDpMemoTable.FedPlan childPlan,
+			Hop childHop,
+			int numWorkers) {
+
+			if (childPlan == null || childHop == null)
+				return 0.0;
+			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop))
+				return 0.0;
+			if (childPlan.getExecType() == ExecType.CP)
+				return 0.0;
+			return FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
+				FederatedCostModel.getEffectiveOutputMemEstimate(childHop),
+				childPlan.getFType(), numWorkers);
+		}
+
+		private static double computeTransientReadLoutMaterializationMultiplicity(
+			FederatedPlannerDpMemoTable.FedPlan lOutPlan) {
+
+			if (lOutPlan == null)
+				return 1.0;
+			double multiplicity = lOutPlan.getMultiplicity();
+			return Double.isFinite(multiplicity) && multiplicity > 0.0 ? multiplicity : 1.0;
+		}
+
+		private static double computeTransientReadLoutMaterializationCostForPlan(
+			FederatedPlannerDpMemoTable.FedPlan lOutPlan,
+			FederatedPlannerDpMemoTable.FedPlan fOutPlan,
+			int numWorkers) {
+
+			if (lOutPlan == null || fOutPlan == null || !isTransientReadPlan(lOutPlan)
+				|| lOutPlan.getFedOutType() != FederatedOutput.LOUT)
+				return 0.0;
+			double memEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(lOutPlan.getHopRef());
+			if (memEstimate <= 0.0)
+				memEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(lOutPlan.getHopRef());
+			if (memEstimate <= 0.0)
+				return 0.0;
+			FType transferType = lOutPlan.getCpFoutTypeOrFType();
+			if (transferType == null)
+				transferType = fOutPlan.getCpFoutTypeOrFType();
+			double cost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
+				memEstimate, transferType, numWorkers);
+			return Double.isFinite(cost) && cost > 0.0 ? cost : 0.0;
+		}
 
 	private static double computeDecisionMapRootContributionCost(
 		FederatedPlannerDpMemoTable.FedPlan plan,
 		boolean additionalRoot,
 		FederatedPlannerDpMemoTable memoTable,
 		Map<Long, FederatedPlannerDpMemoTable.FedPlan> selectedRootPlans,
-		Map<Long, FederatedOutput> outputDecisions) {
+		Map<Long, FederatedOutput> outputDecisions,
+		IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan, Double> compatibleChildAdjustmentCache) {
 
 		if (plan == null)
 			return Double.NaN;
 
-		double cost = plan.getCumulativeCost();
+		IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan, Double> adjustmentCache =
+			compatibleChildAdjustmentCache != null ? compatibleChildAdjustmentCache : new IdentityHashMap<>();
+		double cost = plan.getCumulativeCost()
+			+ computeDecisionMapCompatibleChildVariantAdjustment(
+					memoTable, plan, outputDecisions,
+					Collections.newSetFromMap(new IdentityHashMap<>()), adjustmentCache);
 		if (!additionalRoot || memoTable == null || selectedRootPlans == null || selectedRootPlans.isEmpty()
 			|| plan.getChildFedPlans() == null || plan.getChildFedPlans().isEmpty()) {
 			return cost;
@@ -843,6 +2000,73 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		return Math.max(0.0, cost);
+	}
+
+	private static double computeDecisionMapCompatibleChildVariantAdjustment(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		Map<Long, FederatedOutput> outputDecisions) {
+
+		return computeDecisionMapCompatibleChildVariantAdjustment(
+			memoTable, parentPlan, outputDecisions,
+			Collections.newSetFromMap(new IdentityHashMap<>()), new IdentityHashMap<>());
+	}
+
+	private static double computeDecisionMapCompatibleChildVariantAdjustment(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		Set<FederatedPlannerDpMemoTable.FedPlan> activePlans,
+		IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan, Double> adjustmentCache) {
+
+		if (memoTable == null || parentPlan == null || outputDecisions == null || outputDecisions.isEmpty()
+			|| parentPlan.getChildFedPlans() == null || parentPlan.getChildFedPlans().isEmpty()
+			|| activePlans == null || adjustmentCache == null)
+			return 0.0;
+
+		Double cachedAdjustment = adjustmentCache.get(parentPlan);
+		if (cachedAdjustment != null)
+			return cachedAdjustment;
+		if (!activePlans.add(parentPlan))
+			return 0.0;
+
+		double adjustment = 0.0;
+		boolean parentIsFed = parentPlan.getExecType() == ExecType.FED;
+		int numWorkers = Math.max(1, memoTable.getNumWorkers());
+
+		for (Pair<Long, FederatedOutput> childEdge : parentPlan.getChildFedPlans()) {
+			if (childEdge == null || childEdge.getValue() == null)
+				continue;
+
+			FederatedPlannerDpMemoTable.FedPlan baseChildPlan =
+				memoTable.getFedPlanAfterPrune(childEdge.getKey(), childEdge.getValue());
+			FederatedPlannerDpMemoTable.FedPlan compatibleChildPlan =
+				findStrictCompatiblePlanVariant(
+					memoTable, childEdge.getKey(), childEdge.getValue(), outputDecisions);
+			if (baseChildPlan == null)
+				continue;
+			if (compatibleChildPlan == null)
+				compatibleChildPlan = baseChildPlan;
+
+			double compatibleNestedAdjustment = computeDecisionMapCompatibleChildVariantAdjustment(
+				memoTable, compatibleChildPlan, outputDecisions, activePlans, adjustmentCache);
+			double baseShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
+				baseChildPlan.getCumulativeCost(), baseChildPlan);
+			double compatibleShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
+				compatibleChildPlan.getCumulativeCost() + compatibleNestedAdjustment, compatibleChildPlan);
+			double baseForwarding = computeParentChildForwardingCostShareWithoutTrace(
+				parentIsFed, childEdge.getValue(), baseChildPlan, parentPlan, numWorkers);
+			double compatibleForwarding = computeParentChildForwardingCostShareWithoutTrace(
+				parentIsFed, childEdge.getValue(), compatibleChildPlan, parentPlan, numWorkers);
+			double childAdjustment = (compatibleShare + compatibleForwarding) - (baseShare + baseForwarding);
+			if (Math.abs(childAdjustment) <= 1e-12)
+				continue;
+			adjustment += childAdjustment;
+		}
+
+		activePlans.remove(parentPlan);
+		adjustmentCache.put(parentPlan, adjustment);
+		return adjustment;
 	}
 
 	private static boolean isTransientReadPlan(FederatedPlannerDpMemoTable.FedPlan plan) {
@@ -901,7 +2125,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> nextDecisions,
 		DecisionMapScoreBreakdown nextScore,
-		int iter) {
+		int iter,
+		DecisionMapScoreCache scoreCache) {
 
 		if (memoTable == null || rootPlan == null || conflictCheckMap == null || nextDecisions == null)
 			return;
@@ -929,7 +2154,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				altDecisions.put(tReadHopID, alternative);
 
 			DecisionMapScoreBreakdown altScore =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, altDecisions);
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, altDecisions, scoreCache);
 			FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-AltScore", String.format(Locale.ROOT,
 				"iter=%d chosen=%s chosenTotal=%.6f alt=%s altTotal=%.6f "
 					+ "chosenAdditional=%.6f altAdditional=%.6f chosenVirtual=%.6f altVirtual=%.6f",
@@ -962,7 +2187,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		logTransientBundleAlternativeScores(memoTable, rootPlan, conflictCheckMap, nextDecisions, nextScore, iter);
+		logTransientBundleAlternativeScores(
+			memoTable, rootPlan, conflictCheckMap, nextDecisions, nextScore, iter, scoreCache);
 	}
 
 	private static void logTransientBundleAlternativeScores(
@@ -971,7 +2197,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> nextDecisions,
 		DecisionMapScoreBreakdown nextScore,
-		int iter) {
+		int iter,
+		DecisionMapScoreCache scoreCache) {
 
 		if (memoTable == null || rootPlan == null || conflictCheckMap == null || nextDecisions == null)
 			return;
@@ -1021,7 +2248,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					changed++;
 			}
 			DecisionMapScoreBreakdown altScore =
-				computeDecisionMapScoreBreakdown(memoTable, rootPlan, altDecisions);
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, altDecisions, scoreCache);
 			boolean logAllRoots = Math.abs(altScore.totalCost - nextScore.totalCost) > 1e-9;
 			FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-BundleScore", String.format(Locale.ROOT,
 				"iter=%d chosen=%s alt=%s bundleSize=%d changed=%d skipped=%d chosenTotal=%.6f altTotal=%.6f "
@@ -1064,7 +2291,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						familyChanged++;
 				}
 				DecisionMapScoreBreakdown familyAltScore =
-					computeDecisionMapScoreBreakdown(memoTable, rootPlan, familyAltDecisions);
+					computeDecisionMapScoreBreakdown(memoTable, rootPlan, familyAltDecisions, scoreCache);
 				boolean logFamilyRoots = Math.abs(familyAltScore.totalCost - nextScore.totalCost) > 1e-9;
 				FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-FamilyScore", String.format(Locale.ROOT,
 					"iter=%d chosen=%s alt=%s familySize=%d changed=%d skipped=%d chosenTotal=%.6f altTotal=%.6f "
@@ -1642,9 +2869,24 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable, long tWriteOrigHopID,
 		Map<Long, ConflictEntry> conflictCheckMap) {
 
+		return collectTransientReadParents(memoTable, tWriteOrigHopID, conflictCheckMap, null);
+	}
+
+	private static LinkedHashSet<Long> collectTransientReadParents(
+		FederatedPlannerDpMemoTable memoTable, long tWriteOrigHopID,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		TransientReadParentsCache transientReadParentsCache) {
+
 		LinkedHashSet<Long> tReadHopIDs = new LinkedHashSet<>();
 		if (memoTable == null || conflictCheckMap == null || conflictCheckMap.isEmpty())
 			return tReadHopIDs;
+		TransientReadParentsKey cacheKey = null;
+		if (transientReadParentsCache != null) {
+			cacheKey = new TransientReadParentsKey(conflictCheckMap, tWriteOrigHopID);
+			LinkedHashSet<Long> cached = transientReadParentsCache.get(cacheKey);
+			if (cached != null)
+				return cached;
+		}
 
 		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
 			long hopID = e.getKey();
@@ -1693,14 +2935,40 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				tReadHopIDs.add(hopID);
 		}
 
-		return tReadHopIDs;
-	}
+			if (cacheKey != null)
+				transientReadParentsCache.put(cacheKey, tReadHopIDs);
+			return tReadHopIDs;
+		}
 
 	private static FederatedOutput resolveTransientWriteConflict(
 		FederatedPlannerDpMemoTable memoTable, long tWriteHopID, ConflictEntry tWriteEntry,
 		Map<Long, ConflictEntry> conflictCheckMap,
 		Map<Long, FederatedOutput> tentativeDecisions,
 		int numWorkers) {
+
+		return resolveTransientWriteConflict(
+			memoTable, tWriteHopID, tWriteEntry, conflictCheckMap, tentativeDecisions, numWorkers, null);
+	}
+
+	private static FederatedOutput resolveTransientWriteConflict(
+		FederatedPlannerDpMemoTable memoTable, long tWriteHopID, ConflictEntry tWriteEntry,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> tentativeDecisions,
+		int numWorkers,
+		ParentVariantDeltaCache parentVariantDeltaCache) {
+
+		return resolveTransientWriteConflict(
+			memoTable, tWriteHopID, tWriteEntry, conflictCheckMap, tentativeDecisions, numWorkers,
+			parentVariantDeltaCache, null);
+	}
+
+	private static FederatedOutput resolveTransientWriteConflict(
+		FederatedPlannerDpMemoTable memoTable, long tWriteHopID, ConflictEntry tWriteEntry,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> tentativeDecisions,
+		int numWorkers,
+		ParentVariantDeltaCache parentVariantDeltaCache,
+		TransientReadParentsCache transientReadParentsCache) {
 
 		if (memoTable == null || tWriteEntry == null)
 			return null;
@@ -1712,10 +2980,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (!canChooseLOUT && !canChooseFOUT)
 			return null;
 
-		LinkedHashSet<Long> tReadHopIDs = collectTransientReadParents(memoTable, tWriteHopID, conflictCheckMap);
+		LinkedHashSet<Long> tReadHopIDs = collectTransientReadParents(
+			memoTable, tWriteHopID, conflictCheckMap, transientReadParentsCache);
 		if (tReadHopIDs.isEmpty()) {
 			// Fallback to generic per-hop resolution.
-			return resolveOneHopConflict(memoTable, tWriteHopID, tWriteEntry, tentativeDecisions, numWorkers);
+			return resolveOneHopConflict(
+				memoTable, tWriteHopID, tWriteEntry, tentativeDecisions, numWorkers, conflictCheckMap,
+				parentVariantDeltaCache);
 		}
 
 		double lOutAdditionalCost = canChooseLOUT ? 0.0 : Double.POSITIVE_INFINITY;
@@ -1728,10 +2999,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		// download). Therefore, estimate costs by switching the placements of the
 		// TRANSIENTREAD hops (and their consumer edges), not by charging a download on
 		// the TW->TR edge (which would disappear if TR switches to FED/FOUT).
-		for (long tReadHopID : tReadHopIDs) {
-			ConflictEntry tReadEntry = conflictCheckMap.get(tReadHopID);
-			if (tReadEntry == null || tReadEntry.parents == null || tReadEntry.parents.isEmpty())
-				continue;
+			for (long tReadHopID : tReadHopIDs) {
+				ConflictEntry tReadEntry = conflictCheckMap.get(tReadHopID);
+				if (tReadEntry == null || tReadEntry.parents == null || tReadEntry.parents.isEmpty())
+					continue;
 
 			// If any TRead clone lacks a variant, restrict feasible choice.
 			boolean tReadCanLOUT = tReadEntry.canChooseLOUT;
@@ -1740,11 +3011,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				lOutAdditionalCost = Double.POSITIVE_INFINITY;
 			if (!tReadCanFOUT)
 				fOutAdditionalCost = Double.POSITIVE_INFINITY;
-			if (!Double.isFinite(lOutAdditionalCost) && !Double.isFinite(fOutAdditionalCost))
-				return null;
+				if (!Double.isFinite(lOutAdditionalCost) && !Double.isFinite(fOutAdditionalCost))
+					return null;
 
-			Set<String> seenCostEdges = new LinkedHashSet<>();
-			for (FederatedPlannerDpMemoTable.FedPlan consumerPlan : tReadEntry.parents) {
+				Set<String> seenCostEdges = new LinkedHashSet<>();
+				for (FederatedPlannerDpMemoTable.FedPlan consumerPlan : tReadEntry.parents) {
 				if (consumerPlan == null)
 					continue;
 				boolean consumerIsFed = consumerPlan.getExecType() == ExecType.FED;
@@ -1758,35 +3029,39 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						continue;
 					FederatedOutput originalOut = edge.getValue();
 
-					if (tReadCanLOUT && canChooseLOUT && originalOut != FederatedOutput.LOUT) {
-						lOutAdditionalCost += computeSwitchEdgeCostDelta(
-							memoTable, childHopID, originalOut, FederatedOutput.LOUT,
-							consumerPlan, consumerIsFed, numWorkers);
-					}
-					if (tReadCanFOUT && canChooseFOUT && originalOut != FederatedOutput.FOUT) {
-						fOutAdditionalCost += computeSwitchEdgeCostDelta(
-							memoTable, childHopID, originalOut, FederatedOutput.FOUT,
-							consumerPlan, consumerIsFed, numWorkers);
-					}
-					}
+						if (tReadCanLOUT && canChooseLOUT && originalOut != FederatedOutput.LOUT) {
+							lOutAdditionalCost += computeSwitchEdgeCostDelta(
+								memoTable, childHopID, originalOut, FederatedOutput.LOUT,
+								consumerPlan, consumerIsFed, numWorkers, conflictCheckMap,
+								parentVariantDeltaCache);
+						}
+						if (tReadCanFOUT && canChooseFOUT && originalOut != FederatedOutput.FOUT) {
+							fOutAdditionalCost += computeSwitchEdgeCostDelta(
+								memoTable, childHopID, originalOut, FederatedOutput.FOUT,
+								consumerPlan, consumerIsFed, numWorkers, conflictCheckMap,
+								parentVariantDeltaCache);
+						}
 				}
-		}
+			}
+			}
 
 		FederatedOutput currentOut = tWriteEntry.seenFOUT && !tWriteEntry.seenLOUT ? FederatedOutput.FOUT :
 			(tWriteEntry.seenLOUT && !tWriteEntry.seenFOUT ? FederatedOutput.LOUT : null);
 		if (currentOut != null) {
 			double producerDeltaToLOUT = 0.0;
 			double producerDeltaToFOUT = 0.0;
-			if (canChooseLOUT && currentOut != FederatedOutput.LOUT) {
-				producerDeltaToLOUT = computeTransientWriteProducerDelta(
-					memoTable, tWriteEntry, currentOut, FederatedOutput.LOUT, numWorkers);
-				lOutAdditionalCost += producerDeltaToLOUT;
-			}
-			if (canChooseFOUT && currentOut != FederatedOutput.FOUT) {
-				producerDeltaToFOUT = computeTransientWriteProducerDelta(
-					memoTable, tWriteEntry, currentOut, FederatedOutput.FOUT, numWorkers);
-				fOutAdditionalCost += producerDeltaToFOUT;
-			}
+				if (canChooseLOUT && currentOut != FederatedOutput.LOUT) {
+					producerDeltaToLOUT = computeTransientWriteProducerDelta(
+						memoTable, tWriteEntry, currentOut, FederatedOutput.LOUT, numWorkers, conflictCheckMap,
+						parentVariantDeltaCache);
+					lOutAdditionalCost += producerDeltaToLOUT;
+				}
+				if (canChooseFOUT && currentOut != FederatedOutput.FOUT) {
+					producerDeltaToFOUT = computeTransientWriteProducerDelta(
+						memoTable, tWriteEntry, currentOut, FederatedOutput.FOUT, numWorkers, conflictCheckMap,
+						parentVariantDeltaCache);
+					fOutAdditionalCost += producerDeltaToFOUT;
+				}
 			if (trace) {
 				FederatedPlannerTrace.log(hopRef, "DP-TransientInputDelta", String.format(Locale.ROOT,
 					"current=%s deltaToLOUT=%.6f deltaToFOUT=%.6f",
@@ -1805,12 +3080,31 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				"tReads=%d lOutAdditional=%.6f fOutAdditional=%.6f chosen=%s",
 				tReadHopIDs.size(), lOutAdditionalCost, fOutAdditionalCost, chosen));
 		}
-		return chosen;
+			return chosen;
+		}
+
+		private static double computeTransientWriteProducerDelta(
+			FederatedPlannerDpMemoTable memoTable, ConflictEntry tWriteEntry,
+		FederatedOutput fromOut, FederatedOutput toOut, int numWorkers) {
+
+		return computeTransientWriteProducerDelta(
+			memoTable, tWriteEntry, fromOut, toOut, numWorkers, null);
 	}
 
 	private static double computeTransientWriteProducerDelta(
 		FederatedPlannerDpMemoTable memoTable, ConflictEntry tWriteEntry,
-		FederatedOutput fromOut, FederatedOutput toOut, int numWorkers) {
+		FederatedOutput fromOut, FederatedOutput toOut, int numWorkers,
+		Map<Long, ConflictEntry> conflictCheckMap) {
+
+		return computeTransientWriteProducerDelta(
+			memoTable, tWriteEntry, fromOut, toOut, numWorkers, conflictCheckMap, null);
+	}
+
+	private static double computeTransientWriteProducerDelta(
+		FederatedPlannerDpMemoTable memoTable, ConflictEntry tWriteEntry,
+		FederatedOutput fromOut, FederatedOutput toOut, int numWorkers,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		ParentVariantDeltaCache parentVariantDeltaCache) {
 
 		if (memoTable == null || tWriteEntry == null || fromOut == toOut)
 			return 0.0;
@@ -1846,9 +3140,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					continue;
 					delta += computeSwitchEdgeCostDelta(
 						memoTable, fromEdge.getKey(), fromEdge.getValue(), toEdge.getValue(),
-						fromPlan, fromPlan.getExecType() == ExecType.FED, numWorkers);
+						fromPlan, fromPlan.getExecType() == ExecType.FED, numWorkers, conflictCheckMap,
+						parentVariantDeltaCache);
 				}
-			}
+		}
 
 		return delta;
 	}
@@ -1929,6 +3224,33 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (compatibleAlternativePlan.getCumulativeCost() + 1e-9 < compatibleObservedPlan.getCumulativeCost())
 			return true;
 		return false;
+	}
+
+	private static boolean hasCheaperAlternativeObservedChoice(
+		FederatedPlannerDpMemoTable memoTable,
+		long hopID,
+		ConflictEntry entry,
+		FederatedOutput observedOut,
+		Map<Long, FederatedOutput> tentativeDecisions) {
+
+		if (memoTable == null || entry == null || observedOut == null)
+			return false;
+		FederatedOutput alternativeOut = observedOut == FederatedOutput.FOUT
+			? FederatedOutput.LOUT
+			: FederatedOutput.FOUT;
+		boolean canChooseAlternative = alternativeOut == FederatedOutput.FOUT
+			? entry.canChooseFOUT
+			: entry.canChooseLOUT;
+		if (!canChooseAlternative)
+			return false;
+
+		Set<Long> decisionMembers = selectDecisionMembers(entry.memberHopIDs, memoTable);
+		double observedDelta = computeCompatiblePlanSelectionDelta(
+			memoTable, hopID, entry, decisionMembers, observedOut, tentativeDecisions, null);
+		double alternativeDelta = computeCompatiblePlanSelectionDelta(
+			memoTable, hopID, entry, decisionMembers, alternativeOut, tentativeDecisions, null);
+		return Double.isFinite(alternativeDelta)
+			&& alternativeDelta + 1e-9 < observedDelta;
 	}
 
 	private static boolean isTransientBoundaryHop(Hop hopRef) {
@@ -2123,6 +3445,25 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable, long hopID, ConflictEntry entry,
 		Map<Long, FederatedOutput> tentativeDecisions, int numWorkers) {
 
+		return resolveOneHopConflict(
+			memoTable, hopID, entry, tentativeDecisions, numWorkers, null);
+	}
+
+	private static FederatedOutput resolveOneHopConflict(
+		FederatedPlannerDpMemoTable memoTable, long hopID, ConflictEntry entry,
+		Map<Long, FederatedOutput> tentativeDecisions, int numWorkers,
+		Map<Long, ConflictEntry> conflictCheckMap) {
+
+		return resolveOneHopConflict(
+			memoTable, hopID, entry, tentativeDecisions, numWorkers, conflictCheckMap, null);
+	}
+
+	private static FederatedOutput resolveOneHopConflict(
+		FederatedPlannerDpMemoTable memoTable, long hopID, ConflictEntry entry,
+		Map<Long, FederatedOutput> tentativeDecisions, int numWorkers,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		ParentVariantDeltaCache parentVariantDeltaCache) {
+
 		final boolean canChooseLOUT = entry.canChooseLOUT;
 		final boolean canChooseFOUT = entry.canChooseFOUT;
 		if (!canChooseLOUT && !canChooseFOUT)
@@ -2134,14 +3475,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		int edgeLogs = 0;
 		Set<Long> decisionMembers = selectDecisionMembers(entry.memberHopIDs, memoTable);
 
-		double lOutAdditionalCost = canChooseLOUT
-			? computeCompatiblePlanSelectionDelta(
-				memoTable, hopID, entry, decisionMembers, FederatedOutput.LOUT, tentativeDecisions)
-			: Double.POSITIVE_INFINITY;
-		double fOutAdditionalCost = canChooseFOUT
-			? computeCompatiblePlanSelectionDelta(
-				memoTable, hopID, entry, decisionMembers, FederatedOutput.FOUT, tentativeDecisions)
-			: Double.POSITIVE_INFINITY;
+			double lOutAdditionalCost = canChooseLOUT
+				? computeCompatiblePlanSelectionDelta(
+					memoTable, hopID, entry, decisionMembers, FederatedOutput.LOUT,
+					tentativeDecisions, conflictCheckMap)
+				: Double.POSITIVE_INFINITY;
+			double fOutAdditionalCost = canChooseFOUT
+				? computeCompatiblePlanSelectionDelta(
+					memoTable, hopID, entry, decisionMembers, FederatedOutput.FOUT,
+					tentativeDecisions, conflictCheckMap)
+				: Double.POSITIVE_INFINITY;
 		Set<String> seenCostEdges = new LinkedHashSet<>();
 		for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
 			ExecType parentExec = parentPlan.getExecType();
@@ -2160,16 +3503,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						continue;
 					FederatedOutput originalOut = edge.getValue();
 
-				double dL = (canChooseLOUT && originalOut != FederatedOutput.LOUT)
-					? computeSwitchEdgeCostDelta(
-						memoTable, childHopID, originalOut, FederatedOutput.LOUT,
-						parentPlan, parentIsFed, numWorkers)
-					: 0.0;
-				double dF = (canChooseFOUT && originalOut != FederatedOutput.FOUT)
-					? computeSwitchEdgeCostDelta(
-						memoTable, childHopID, originalOut, FederatedOutput.FOUT,
-						parentPlan, parentIsFed, numWorkers)
-					: 0.0;
+						double dL = (canChooseLOUT && originalOut != FederatedOutput.LOUT)
+							? computeSwitchEdgeCostDelta(
+								memoTable, childHopID, originalOut, FederatedOutput.LOUT,
+								parentPlan, parentIsFed, numWorkers, conflictCheckMap,
+								parentVariantDeltaCache)
+							: 0.0;
+						double dF = (canChooseFOUT && originalOut != FederatedOutput.FOUT)
+							? computeSwitchEdgeCostDelta(
+								memoTable, childHopID, originalOut, FederatedOutput.FOUT,
+								parentPlan, parentIsFed, numWorkers, conflictCheckMap,
+								parentVariantDeltaCache)
+							: 0.0;
 
 				if (trace && edgeLogs < maxEdgeLogs) {
 					FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Edge", String.format(Locale.ROOT,
@@ -2205,9 +3550,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		long hopID,
 		ConflictEntry entry,
-		Set<Long> decisionMembers,
-		FederatedOutput targetOut,
-		Map<Long, FederatedOutput> tentativeDecisions) {
+			Set<Long> decisionMembers,
+			FederatedOutput targetOut,
+			Map<Long, FederatedOutput> tentativeDecisions,
+			Map<Long, ConflictEntry> conflictCheckMap) {
 
 		if (memoTable == null || entry == null || targetOut == null)
 			return 0.0;
@@ -2224,15 +3570,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 
 			long memberHopID = e.getKey();
-			FederatedPlannerDpMemoTable.FedPlan currentPlan =
-				selectCompatiblePlanVariant(memoTable, memberHopID, currentOut, tentativeDecisions);
-			if (currentPlan == null)
-				currentPlan = memoTable.getFedPlanAfterPrune(memberHopID, currentOut);
+				FederatedPlannerDpMemoTable.FedPlan currentPlan =
+					selectOutputDecisionCostPlanVariant(
+						memoTable, memberHopID, currentOut, tentativeDecisions, conflictCheckMap);
+				if (currentPlan == null)
+					currentPlan = memoTable.getFedPlanAfterPrune(memberHopID, currentOut);
 
-			FederatedPlannerDpMemoTable.FedPlan targetPlan =
-				selectCompatiblePlanVariant(memoTable, memberHopID, targetOut, tentativeDecisions);
-			if (targetPlan == null)
-				targetPlan = memoTable.getFedPlanAfterPrune(memberHopID, targetOut);
+				FederatedPlannerDpMemoTable.FedPlan targetPlan =
+					selectOutputDecisionCostPlanVariant(
+						memoTable, memberHopID, targetOut, tentativeDecisions, conflictCheckMap);
+				if (targetPlan == null)
+					targetPlan = memoTable.getFedPlanAfterPrune(memberHopID, targetOut);
 
 			if (currentPlan == null || targetPlan == null)
 				return Double.POSITIVE_INFINITY;
@@ -2254,10 +3602,30 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			delta += memberDelta;
 		}
 
-		return delta;
-	}
+			return delta;
+		}
 
-	private static Map<Long, FederatedOutput> collectObservedMemberOutputs(
+		private static FederatedPlannerDpMemoTable.FedPlan selectOutputDecisionCostPlanVariant(
+			FederatedPlannerDpMemoTable memoTable,
+			long hopID,
+			FederatedOutput targetOut,
+			Map<Long, FederatedOutput> tentativeDecisions,
+			Map<Long, ConflictEntry> conflictCheckMap) {
+
+			if (targetOut == FederatedOutput.FOUT) {
+				FederatedPlannerDpMemoTable.FedPlan compatiblePlan =
+					findStrictCompatiblePlanVariant(memoTable, hopID, targetOut, tentativeDecisions);
+				if (compatiblePlan != null)
+					return compatiblePlan;
+				FederatedPlannerDpMemoTable.FedPlan requiredClosurePlan =
+					selectRequiredOutputClosurePlanVariant(memoTable, hopID, targetOut, conflictCheckMap);
+				if (requiredClosurePlan != null)
+					return requiredClosurePlan;
+			}
+			return selectCompatiblePlanVariant(memoTable, hopID, targetOut, tentativeDecisions);
+		}
+
+		private static Map<Long, FederatedOutput> collectObservedMemberOutputs(
 		FederatedPlannerDpMemoTable memoTable,
 		long hopID,
 		ConflictEntry entry,
@@ -2298,6 +3666,30 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan parentPlan,
 		boolean parentIsFed, int numWorkers) {
 
+		return computeSwitchEdgeCostDelta(
+			memoTable, childHopID, fromOut, toOut, parentPlan, parentIsFed, numWorkers, null);
+	}
+
+	private static double computeSwitchEdgeCostDelta(
+		FederatedPlannerDpMemoTable memoTable, long childHopID,
+		FederatedOutput fromOut, FederatedOutput toOut,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		boolean parentIsFed, int numWorkers,
+		Map<Long, ConflictEntry> conflictCheckMap) {
+
+		return computeSwitchEdgeCostDelta(
+			memoTable, childHopID, fromOut, toOut, parentPlan, parentIsFed, numWorkers,
+			conflictCheckMap, null);
+	}
+
+	private static double computeSwitchEdgeCostDelta(
+		FederatedPlannerDpMemoTable memoTable, long childHopID,
+		FederatedOutput fromOut, FederatedOutput toOut,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		boolean parentIsFed, int numWorkers,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		ParentVariantDeltaCache parentVariantDeltaCache) {
+
 		Hop childHopRef = memoTable != null ? memoTable.resolveOriginalHop(childHopID) : null;
 		boolean trace = FederatedPlannerTrace.shouldTrace(childHopRef);
 
@@ -2326,7 +3718,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		double childForwardingDelta =
 			(toCumulativeShare - fromCumulativeShare) + (toForwardingShare - fromForwardingShare);
 		double parentVariantDelta = computeParentVariantSwitchDelta(
-			memoTable, parentPlan, childHopID, toOut);
+			memoTable, parentPlan, childHopID, toOut, conflictCheckMap, numWorkers,
+			parentVariantDeltaCache);
 		if (Double.isFinite(parentVariantDelta)) {
 			if (trace) {
 				FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantDelta", String.format(Locale.ROOT,
@@ -2364,12 +3757,53 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		long childHopID,
 		FederatedOutput desiredChildOut) {
 
+		return computeParentVariantSwitchDelta(
+			memoTable, parentPlan, childHopID, desiredChildOut, null, 1);
+	}
+
+	private static double computeParentVariantSwitchDelta(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		long childHopID,
+		FederatedOutput desiredChildOut,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		int numWorkers) {
+
+		return computeParentVariantSwitchDelta(
+			memoTable, parentPlan, childHopID, desiredChildOut, conflictCheckMap, numWorkers, null);
+	}
+
+	private static double computeParentVariantSwitchDelta(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		long childHopID,
+		FederatedOutput desiredChildOut,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		int numWorkers,
+		ParentVariantDeltaCache parentVariantDeltaCache) {
+
 		if (memoTable == null || parentPlan == null || parentPlan.getHopRef() == null)
 			return Double.NaN;
 		Hop childHopRef = memoTable.resolveOriginalHop(childHopID);
 		boolean trace = FederatedPlannerTrace.shouldTrace(childHopRef);
 
 		long parentHopID = parentPlan.getHopRef().getHopID();
+		FederatedOutput downstreamDemandOut =
+			resolveObservedDownstreamOutputDemand(memoTable, parentHopID, conflictCheckMap);
+
+		// Parent/child relationships can involve cloned hop IDs across loop contexts.
+		// Match edges by original hop id (not by concrete clone id) so that we can
+		// correctly find compatible parent variants even when the parent references a
+		// different clone of the same logical child hop.
+		final long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
+		ParentVariantDeltaKey cacheKey = null;
+		if (!trace && parentVariantDeltaCache != null) {
+			cacheKey = new ParentVariantDeltaKey(
+				parentPlan, childOrigHopID, desiredChildOut, downstreamDemandOut, numWorkers);
+			Double cachedDelta = parentVariantDeltaCache.get(cacheKey);
+			if (cachedDelta != null)
+				return cachedDelta;
+		}
 		// Consider parent variants across *both* output representations.
 		//
 		// When the output-decision phase switches a child edge (LOUT<->FOUT), the cheapest
@@ -2381,23 +3815,20 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable.getFedPlanVariants(Pair.of(parentHopID, FederatedOutput.LOUT));
 		FederatedPlannerDpMemoTable.FedPlanVariants variantsFOUT =
 			memoTable.getFedPlanVariants(Pair.of(parentHopID, FederatedOutput.FOUT));
-		if ((variantsLOUT == null || variantsLOUT.isEmpty()) && (variantsFOUT == null || variantsFOUT.isEmpty()))
+		if ((variantsLOUT == null || variantsLOUT.isEmpty()) && (variantsFOUT == null || variantsFOUT.isEmpty())) {
+			if (cacheKey != null)
+				parentVariantDeltaCache.put(cacheKey, Double.NaN);
 			return Double.NaN;
-
-		// Parent/child relationships can involve cloned hop IDs across loop contexts.
-		// Match edges by original hop id (not by concrete clone id) so that we can
-		// correctly find compatible parent variants even when the parent references a
-		// different clone of the same logical child hop.
-		final long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
+		}
 		long currentEdgeHopId = -1L;
 		FederatedOutput currentEdgeOut = null;
 		if (trace) {
 			int variantCountLOUT = variantsLOUT != null ? variantsLOUT.getFedPlanVariants().size() : 0;
 			int variantCountFOUT = variantsFOUT != null ? variantsFOUT.getFedPlanVariants().size() : 0;
 			FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantSearch", String.format(Locale.ROOT,
-				"parentHop=%d parentExec=%s parentOut=%s parentCost=%.6f childHop=%d childOrig=%d desiredOut=%s variantsLOUT=%d variantsFOUT=%d",
+				"parentHop=%d parentExec=%s parentOut=%s parentCost=%.6f childHop=%d childOrig=%d desiredOut=%s downstreamDemandOut=%s variantsLOUT=%d variantsFOUT=%d",
 				parentHopID, parentPlan.getExecType(), parentPlan.getFedOutType(), parentPlan.getCumulativeCost(),
-				childHopID, childOrigHopID, desiredChildOut, variantCountLOUT, variantCountFOUT));
+				childHopID, childOrigHopID, desiredChildOut, downstreamDemandOut, variantCountLOUT, variantCountFOUT));
 		}
 
 		boolean parentReferencesChild = false;
@@ -2410,9 +3841,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				currentEdgeHopId = edge.getKey();
 				currentEdgeOut = edge.getValue();
 			}
-		}
-		if (!parentReferencesChild)
-			return Double.NaN;
+			}
+			if (!parentReferencesChild) {
+				if (cacheKey != null)
+					parentVariantDeltaCache.put(cacheKey, Double.NaN);
+				return Double.NaN;
+			}
 
 		double bestDelta = Double.POSITIVE_INFINITY;
 		int candidateLogs = 0;
@@ -2423,6 +3857,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 			for (FederatedPlannerDpMemoTable.FedPlan cand : variants.getFedPlanVariants()) {
 				if (cand == null)
+					continue;
+				if (downstreamDemandOut != null && cand.getFedOutType() != downstreamDemandOut)
 					continue;
 				if (cand.getChildFedPlans() == null || cand.getChildFedPlans().isEmpty())
 					continue;
@@ -2446,36 +3882,112 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					referencedChildVariants++;
 				if (ok)
 					matchingDesiredVariants++;
-					double rawDelta = cand.getCumulativeCost() - parentPlan.getCumulativeCost();
-					double childShareAdjustment = computeTransientReadChildShareAdjustment(
-						memoTable, parentPlan, currentEdgeHopId, currentEdgeOut, matchedEdgeHopId, matchedEdgeOut);
-					double adjustedDelta = rawDelta - childShareAdjustment;
-					if (trace && candidateLogs < 6 && referencesChild) {
-						FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantCandidate", String.format(Locale.ROOT,
-							"parentHop=%d candExec=%s candOut=%s candCost=%.6f edgeHop=%d edgeOrig=%d matchDesired=%s delta=%.6f rawDelta=%.6f childShareAdj=%.6f",
-							parentHopID, cand.getExecType(), cand.getFedOutType(), cand.getCumulativeCost(),
-							matchedEdgeHopId, childOrigHopID, ok, adjustedDelta, rawDelta, childShareAdjustment));
-						candidateLogs++;
-					}
+				double rawDelta = cand.getCumulativeCost() - parentPlan.getCumulativeCost();
+				double childShareAdjustment = computeTransientReadChildShareAdjustment(
+					memoTable, parentPlan, currentEdgeHopId, currentEdgeOut, matchedEdgeHopId, matchedEdgeOut,
+					parentVariantDeltaCache != null ? parentVariantDeltaCache.transientReadPlanShareCache : null);
+				double downstreamForwardingDelta = computeParentVariantDownstreamForwardingDelta(
+					memoTable, parentPlan, cand, conflictCheckMap, numWorkers);
+				double adjustedDelta = rawDelta - childShareAdjustment + downstreamForwardingDelta;
+				if (trace && candidateLogs < 6 && referencesChild) {
+					FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantCandidate", String.format(Locale.ROOT,
+						"parentHop=%d candExec=%s candOut=%s candCost=%.6f edgeHop=%d edgeOrig=%d matchDesired=%s delta=%.6f rawDelta=%.6f childShareAdj=%.6f downstreamForwardingDelta=%.6f",
+						parentHopID, cand.getExecType(), cand.getFedOutType(), cand.getCumulativeCost(),
+						matchedEdgeHopId, childOrigHopID, ok, adjustedDelta, rawDelta,
+						childShareAdjustment, downstreamForwardingDelta));
+					candidateLogs++;
+				}
 				if (!ok)
 					continue;
 				bestDelta = Math.min(bestDelta, adjustedDelta);
-				}
 			}
-
-		if (!Double.isFinite(bestDelta)) {
-			if (trace) {
-				FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantResult", String.format(Locale.ROOT,
-					"parentHop=%d result=no_compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d",
-					parentHopID, referencedChildVariants, matchingDesiredVariants));
-			}
-			return Double.NaN;
 		}
+
+			if (!Double.isFinite(bestDelta)) {
+				if (trace) {
+					FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantResult", String.format(Locale.ROOT,
+						"parentHop=%d result=no_compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d",
+						parentHopID, referencedChildVariants, matchingDesiredVariants));
+				}
+				if (cacheKey != null)
+					parentVariantDeltaCache.put(cacheKey, Double.NaN);
+				return Double.NaN;
+			}
 		double delta = bestDelta;
 		if (trace) {
-			FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantResult", String.format(Locale.ROOT,
-				"parentHop=%d result=compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d bestDelta=%.6f",
-				parentHopID, referencedChildVariants, matchingDesiredVariants, delta));
+				FederatedPlannerTrace.log(childHopRef, "DP-ParentVariantResult", String.format(Locale.ROOT,
+					"parentHop=%d result=compatible_variant referencedChildVariants=%d matchingDesiredVariants=%d bestDelta=%.6f",
+					parentHopID, referencedChildVariants, matchingDesiredVariants, delta));
+			}
+			if (cacheKey != null)
+				parentVariantDeltaCache.put(cacheKey, delta);
+			return delta;
+		}
+
+	private static FederatedOutput resolveObservedDownstreamOutputDemand(
+		FederatedPlannerDpMemoTable memoTable,
+		long parentHopID,
+		Map<Long, ConflictEntry> conflictCheckMap) {
+
+		if (memoTable == null || conflictCheckMap == null || conflictCheckMap.isEmpty())
+			return null;
+		ConflictEntry parentEntry = conflictCheckMap.get(memoTable.resolveOriginalHopId(parentHopID));
+		if (parentEntry == null)
+			return null;
+		if (parentEntry.seenFOUT && !parentEntry.seenLOUT)
+			return FederatedOutput.FOUT;
+		// A FOUT-only downstream observation is a hard requirement for this local
+		// edge: switching the parent to LOUT would make the already-selected
+		// downstream FED/FOUT chain incompatible unless that downstream chain is
+		// explicitly re-costed.
+		//
+		// A LOUT-only observation is different. If the parent has a feasible FOUT
+		// variant, LOUT is just the currently observed local state, not a semantic
+		// demand. Treating it as hard filters out joint FOUT parent-chain variants
+		// before cost comparison and under-models coordinator materialization/acquire
+		// in local chains. Keep LOUT hard only when FOUT is not feasible.
+		if (parentEntry.seenLOUT && !parentEntry.seenFOUT && !parentEntry.canChooseFOUT)
+			return FederatedOutput.LOUT;
+		return null;
+	}
+
+	private static double computeParentVariantDownstreamForwardingDelta(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan fromParentPlan,
+		FederatedPlannerDpMemoTable.FedPlan candidateParentPlan,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		int numWorkers) {
+
+		if (memoTable == null || fromParentPlan == null || candidateParentPlan == null
+			|| fromParentPlan.getHopRef() == null || conflictCheckMap == null || conflictCheckMap.isEmpty()) {
+			return 0.0;
+		}
+
+		long parentOrigHopID = memoTable.resolveOriginalHopId(fromParentPlan.getHopRef().getHopID());
+		ConflictEntry parentEntry = conflictCheckMap.get(parentOrigHopID);
+		if (parentEntry == null || parentEntry.parents == null || parentEntry.parents.isEmpty())
+			return 0.0;
+
+		double delta = 0.0;
+		Set<String> seenCostEdges = new LinkedHashSet<>();
+		for (FederatedPlannerDpMemoTable.FedPlan downstreamPlan : parentEntry.parents) {
+			if (downstreamPlan == null || downstreamPlan.getChildFedPlans() == null)
+				continue;
+			boolean downstreamIsFed = downstreamPlan.getExecType() == ExecType.FED;
+			for (Pair<Long, FederatedOutput> edge : downstreamPlan.getChildFedPlans()) {
+				if (edge == null || memoTable.resolveOriginalHopId(edge.getKey()) != parentOrigHopID)
+					continue;
+				if (candidateParentPlan.getFedOutType() != edge.getValue())
+					continue;
+				String edgeKey = buildConflictCostEdgeKey(memoTable, downstreamPlan, edge.getKey(), edge.getValue());
+				if (!seenCostEdges.add(edgeKey))
+					continue;
+				double fromForwardingShare = computeParentChildForwardingCostShare(
+					downstreamIsFed, edge.getValue(), fromParentPlan, downstreamPlan, numWorkers);
+				double candidateForwardingShare = computeParentChildForwardingCostShare(
+					downstreamIsFed, edge.getValue(), candidateParentPlan, downstreamPlan, numWorkers);
+				delta += candidateForwardingShare - fromForwardingShare;
+			}
 		}
 		return delta;
 	}
@@ -2486,7 +3998,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		long currentChildHopID,
 		FederatedOutput currentChildOut,
 		long candidateChildHopID,
-		FederatedOutput candidateChildOut) {
+		FederatedOutput candidateChildOut,
+		TransientReadPlanShareCache transientReadPlanShareCache) {
 
 		if (memoTable == null || currentChildHopID < 0 || candidateChildHopID < 0
 			|| currentChildOut == null || candidateChildOut == null) {
@@ -2510,22 +4023,33 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (currentChildPlan == null || candidateChildPlan == null)
 			return 0.0;
 
-		double currentShare = computeTransientReadPlanShareForParent(currentChildPlan, memoTable);
-		double candidateShare = computeTransientReadPlanShareForParent(candidateChildPlan, memoTable);
+		double currentShare = computeTransientReadPlanShareForParent(
+			currentChildPlan, memoTable, transientReadPlanShareCache);
+		double candidateShare = computeTransientReadPlanShareForParent(
+			candidateChildPlan, memoTable, transientReadPlanShareCache);
 		return candidateShare - currentShare;
 	}
 
 	private static double computeTransientReadPlanShareForParent(
 		FederatedPlannerDpMemoTable.FedPlan childPlan,
-		FederatedPlannerDpMemoTable memoTable) {
+		FederatedPlannerDpMemoTable memoTable,
+		TransientReadPlanShareCache transientReadPlanShareCache) {
 
 		if (childPlan == null)
 			return 0.0;
-		return childPlan.getFedOutType() == FederatedOutput.FOUT
+		if (transientReadPlanShareCache != null && !FederatedPlannerTrace.isEnabled()) {
+			Double cached = transientReadPlanShareCache.get(childPlan);
+			if (cached != null)
+				return cached;
+		}
+		double share = childPlan.getFedOutType() == FederatedOutput.FOUT
 			? FederatedPlannerDpCostEstimator.computeStableTransientReadFoutCumulativeShareForParent(
 				childPlan, memoTable)
 			: FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
 				childPlan.getCumulativeCost(), childPlan);
+		if (transientReadPlanShareCache != null && !FederatedPlannerTrace.isEnabled())
+			transientReadPlanShareCache.put(childPlan, share);
+		return share;
 	}
 
 	private static double computeParentChildForwardingCostShare(
@@ -2533,6 +4057,27 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan childPlan,
 		FederatedPlannerDpMemoTable.FedPlan parentPlan,
 		int numWorkers) {
+
+		return computeParentChildForwardingCostShare(
+			parentIsFed, childOut, childPlan, parentPlan, numWorkers, true);
+	}
+
+	private static double computeParentChildForwardingCostShareWithoutTrace(
+		boolean parentIsFed, FederatedOutput childOut,
+		FederatedPlannerDpMemoTable.FedPlan childPlan,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		int numWorkers) {
+
+		return computeParentChildForwardingCostShare(
+			parentIsFed, childOut, childPlan, parentPlan, numWorkers, false);
+	}
+
+	private static double computeParentChildForwardingCostShare(
+		boolean parentIsFed, FederatedOutput childOut,
+		FederatedPlannerDpMemoTable.FedPlan childPlan,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		int numWorkers,
+		boolean traceBoundaryShare) {
 
 		if (childPlan == null || parentPlan == null)
 			return 0.0;
@@ -2545,14 +4090,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
 				transferMem, uploadType, numWorkers);
 			uploadCost += FederatedCostModel.computeLocalToFedForwardingPenalty(uploadType, numWorkers);
-			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
+			return computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan, traceBoundaryShare);
 		}
-		else if (parentIsFed && childOut == FederatedOutput.FOUT && childPlan.getExecType() == ExecType.CP) {
-			FType uploadType = childPlan.getCpFoutTypeOrFType();
-			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
-				childPlan.getHopRef(), parentPlan.getHopRef(), uploadType, numWorkers);
-			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
-		}
+			else if (parentIsFed && childOut == FederatedOutput.FOUT && childPlan.getExecType() == ExecType.CP) {
+				if (childPlan.isFoutMaterializationAccounted())
+					return 0.0;
+				FType uploadType = childPlan.getCpFoutTypeOrFType();
+				double uploadCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
+					childPlan.getHopRef(), parentPlan.getHopRef(), uploadType, numWorkers);
+				return computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan, traceBoundaryShare);
+			}
 		else if (parentIsFed && childOut == FederatedOutput.FOUT
 			&& isDirectFederatedInputToTransientReadBoundary(childPlan, parentPlan)) {
 			return 0.0;
@@ -2568,7 +4115,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childPlan.getHopRef());
 			double refedCost = FederatedPlannerDpCostEstimator.computeRefedNetworkCost(
 				transferMem, childPlan.getFType(), numWorkers);
-			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(refedCost, childPlan, parentPlan);
+			return computeForwardingCostShareForParent(refedCost, childPlan, parentPlan, traceBoundaryShare);
 		}
 		else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
 			double downloadCost;
@@ -2600,6 +4147,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return false;
 		}
 		return ((DataOp) parentPlan.getHopRef()).getOp() == Types.OpOpData.TRANSIENTWRITE;
+	}
+
+	private static double computeForwardingCostShareForParent(
+		double totalCost,
+		FederatedPlannerDpMemoTable.FedPlan childPlan,
+		FederatedPlannerDpMemoTable.FedPlan parentPlan,
+		boolean traceBoundaryShare) {
+
+		return traceBoundaryShare
+			? FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(totalCost, childPlan, parentPlan)
+			: FederatedPlannerDpCostEstimator.computeForwardingCostShareForParentWithoutTrace(
+				totalCost, childPlan, parentPlan);
 	}
 
 	private static boolean isDirectFederatedInputToTransientReadBoundary(
@@ -2670,6 +4229,253 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return op == Types.OpOpData.TRANSIENTREAD || op == Types.OpOpData.TRANSIENTWRITE;
 	}
 
+	private static final class ParentVariantDeltaCache {
+		private final Map<ParentVariantDeltaKey, Double> values = new HashMap<>();
+		private final TransientReadPlanShareCache transientReadPlanShareCache =
+			new TransientReadPlanShareCache();
+
+		Double get(ParentVariantDeltaKey key) {
+			return values.get(key);
+		}
+
+		void put(ParentVariantDeltaKey key, double value) {
+			values.put(key, value);
+		}
+	}
+
+	private static final class TransientReadPlanShareCache {
+		private final Map<FederatedPlannerDpMemoTable.FedPlan, Double> values =
+			new IdentityHashMap<>();
+
+		Double get(FederatedPlannerDpMemoTable.FedPlan plan) {
+			return values.get(plan);
+		}
+
+		void put(FederatedPlannerDpMemoTable.FedPlan plan, double value) {
+			values.put(plan, value);
+		}
+	}
+
+	private static final class ParentVariantDeltaKey {
+		final FederatedPlannerDpMemoTable.FedPlan parentPlan;
+		final long childOrigHopID;
+		final FederatedOutput desiredChildOut;
+		final FederatedOutput downstreamDemandOut;
+		final int numWorkers;
+		final int hash;
+
+		ParentVariantDeltaKey(
+			FederatedPlannerDpMemoTable.FedPlan parentPlan,
+			long childOrigHopID,
+			FederatedOutput desiredChildOut,
+			FederatedOutput downstreamDemandOut,
+			int numWorkers) {
+			this.parentPlan = parentPlan;
+			this.childOrigHopID = childOrigHopID;
+			this.desiredChildOut = desiredChildOut;
+			this.downstreamDemandOut = downstreamDemandOut;
+			this.numWorkers = numWorkers;
+			this.hash = Objects.hash(
+				System.identityHashCode(parentPlan), childOrigHopID, desiredChildOut, downstreamDemandOut, numWorkers);
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof ParentVariantDeltaKey))
+				return false;
+			ParentVariantDeltaKey that = (ParentVariantDeltaKey) obj;
+			return this.parentPlan == that.parentPlan
+				&& this.childOrigHopID == that.childOrigHopID
+				&& this.desiredChildOut == that.desiredChildOut
+				&& this.downstreamDemandOut == that.downstreamDemandOut
+				&& this.numWorkers == that.numWorkers;
+		}
+
+		@Override
+		public int hashCode() {
+			return hash;
+		}
+	}
+
+	private static final class TransientReadParentsCache {
+		private final Map<TransientReadParentsKey, LinkedHashSet<Long>> values = new HashMap<>();
+
+		LinkedHashSet<Long> get(TransientReadParentsKey key) {
+			return values.get(key);
+		}
+
+		void put(TransientReadParentsKey key, LinkedHashSet<Long> value) {
+			values.put(key, value);
+		}
+	}
+
+	private static final class TransientReadParentsKey {
+		final Map<Long, ConflictEntry> conflictCheckMap;
+		final long tWriteOrigHopID;
+		final int hash;
+
+		TransientReadParentsKey(Map<Long, ConflictEntry> conflictCheckMap, long tWriteOrigHopID) {
+			this.conflictCheckMap = conflictCheckMap;
+			this.tWriteOrigHopID = tWriteOrigHopID;
+			this.hash = 31 * System.identityHashCode(conflictCheckMap) + Long.hashCode(tWriteOrigHopID);
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof TransientReadParentsKey))
+				return false;
+			TransientReadParentsKey that = (TransientReadParentsKey) obj;
+			return this.conflictCheckMap == that.conflictCheckMap
+				&& this.tWriteOrigHopID == that.tWriteOrigHopID;
+		}
+
+		@Override
+		public int hashCode() {
+			return hash;
+		}
+	}
+
+	private static final class SimulationDecisionCache {
+		private final Map<SimulationDecisionKey, Map<Long, FederatedOutput>> values = new HashMap<>();
+
+		Map<Long, FederatedOutput> get(SimulationDecisionKey key) {
+			return values.get(key);
+		}
+
+		void put(SimulationDecisionKey key, Map<Long, FederatedOutput> value) {
+			values.put(key, value != null ? value : Collections.emptyMap());
+		}
+	}
+
+	private static final class SimulationDecisionKey {
+		final Map<Long, FederatedOutput> baseDecisions;
+		final Map<Long, FederatedOutput> lockedDecisions;
+		final int hash;
+
+		SimulationDecisionKey(
+			Map<Long, FederatedOutput> baseDecisions,
+			Map<Long, FederatedOutput> lockedDecisions) {
+			this.baseDecisions = baseDecisions != null ? new HashMap<>(baseDecisions) : Collections.emptyMap();
+			this.lockedDecisions = lockedDecisions != null ? new HashMap<>(lockedDecisions) : Collections.emptyMap();
+			this.hash = 31 * this.baseDecisions.hashCode() + this.lockedDecisions.hashCode();
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof SimulationDecisionKey))
+				return false;
+			SimulationDecisionKey that = (SimulationDecisionKey) obj;
+			return Objects.equals(this.baseDecisions, that.baseDecisions)
+				&& Objects.equals(this.lockedDecisions, that.lockedDecisions);
+		}
+
+		@Override
+		public int hashCode() {
+			return hash;
+		}
+	}
+
+	private static final class DecisionMapScoreCache {
+		private final FederatedPlannerDpMemoTable memoTable;
+		private final FederatedPlannerDpMemoTable.FedPlan rootPlan;
+		private final Map<DecisionMapScoreKey, DecisionMapScoreBreakdown> values = new HashMap<>();
+
+		DecisionMapScoreCache(
+			FederatedPlannerDpMemoTable memoTable,
+			FederatedPlannerDpMemoTable.FedPlan rootPlan) {
+			this.memoTable = memoTable;
+			this.rootPlan = rootPlan;
+		}
+
+		DecisionMapScoreBreakdown get(Map<Long, FederatedOutput> outputDecisions) {
+			DecisionMapScoreKey key = new DecisionMapScoreKey(outputDecisions);
+			DecisionMapScoreBreakdown cached = values.get(key);
+			if (cached != null)
+				return cached;
+			DecisionMapScoreBreakdown computed =
+				computeDecisionMapScoreBreakdown(memoTable, rootPlan, key.outputDecisions);
+			values.put(key, computed);
+			return computed;
+		}
+	}
+
+	private static final class DecisionMapScoreKey {
+		final Map<Long, FederatedOutput> outputDecisions;
+		final int hash;
+
+		DecisionMapScoreKey(Map<Long, FederatedOutput> outputDecisions) {
+			this.outputDecisions = outputDecisions != null ? new HashMap<>(outputDecisions) : Collections.emptyMap();
+			this.hash = this.outputDecisions.hashCode();
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj)
+				return true;
+			if (!(obj instanceof DecisionMapScoreKey))
+				return false;
+			DecisionMapScoreKey that = (DecisionMapScoreKey) obj;
+			return Objects.equals(this.outputDecisions, that.outputDecisions);
+		}
+
+		@Override
+		public int hashCode() {
+			return hash;
+		}
+	}
+
+	private static final class OverlayDecisionMap extends AbstractMap<Long, FederatedOutput> {
+		private final Map<Long, FederatedOutput> baseDecisions;
+		private final Map<Long, FederatedOutput> overlayDecisions;
+
+		OverlayDecisionMap(
+			Map<Long, FederatedOutput> baseDecisions,
+			Map<Long, FederatedOutput> overlayDecisions) {
+			this.baseDecisions = baseDecisions != null ? baseDecisions : Collections.emptyMap();
+			this.overlayDecisions = overlayDecisions != null ? overlayDecisions : Collections.emptyMap();
+		}
+
+		@Override
+		public FederatedOutput get(Object key) {
+			return overlayDecisions.containsKey(key) ? overlayDecisions.get(key) : baseDecisions.get(key);
+		}
+
+		@Override
+		public boolean containsKey(Object key) {
+			return overlayDecisions.containsKey(key) || baseDecisions.containsKey(key);
+		}
+
+		@Override
+		public boolean isEmpty() {
+			return baseDecisions.isEmpty() && overlayDecisions.isEmpty();
+		}
+
+		@Override
+		public int size() {
+			if (baseDecisions.isEmpty())
+				return overlayDecisions.size();
+			if (overlayDecisions.isEmpty())
+				return baseDecisions.size();
+			LinkedHashSet<Long> keys = new LinkedHashSet<>(baseDecisions.keySet());
+			keys.addAll(overlayDecisions.keySet());
+			return keys.size();
+		}
+
+		@Override
+		public Set<Map.Entry<Long, FederatedOutput>> entrySet() {
+			LinkedHashMap<Long, FederatedOutput> merged = new LinkedHashMap<>();
+			merged.putAll(baseDecisions);
+			merged.putAll(overlayDecisions);
+			return Collections.unmodifiableMap(merged).entrySet();
+		}
+	}
+
 	private static final class HopStampState {
 		final Hop hop;
 		final ExecType forcedExecType;
@@ -2691,6 +4497,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		double virtualAdditionalRootCost;
 		int missingRootCount;
 		final LinkedHashMap<String, RootContribution> rootContributions = new LinkedHashMap<>();
+		final IdentityHashMap<FederatedPlannerDpMemoTable.FedPlan, Double> compatibleChildAdjustmentCache =
+			new IdentityHashMap<>();
 
 		void addContribution(FederatedPlannerDpMemoTable.FedPlan plan, long rootHopID, boolean additionalRoot,
 			FederatedPlannerDpMemoTable memoTable,
@@ -2711,7 +4519,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 
 			double cost = computeDecisionMapRootContributionCost(
-				plan, additionalRoot, memoTable, selectedRootPlans, outputDecisions);
+				plan, additionalRoot, memoTable, selectedRootPlans, outputDecisions, compatibleChildAdjustmentCache);
 			totalCost += cost;
 			if (additionalRoot) {
 				additionalRootCost += cost;

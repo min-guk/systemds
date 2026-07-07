@@ -647,7 +647,7 @@ public class FederatedPlannerDpRewireTransTable {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
-			double loopWeight = RewireConstants.estimateWhileLoopWeight(wsb);
+			double loopWeight = RewireConstants.estimateWhileLoopWeight(wsb, newOuterTransTableList);
 			double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
 			boolean allowUnroll = unrollCtx != null && loopCtx == null
 					&& unrollDepth < maxUnrollDepth && iter1Factor > 0.0;
