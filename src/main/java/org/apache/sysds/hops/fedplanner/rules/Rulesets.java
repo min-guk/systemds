@@ -60,6 +60,8 @@ public final class Rulesets {
   private static final String ATTR_MAP_MARGIN = "map.margin";
   private static final String SCALAR_LOUT_DETAIL = "scalar output → LOUT";
   private static final String WDIVMM_ALIGN_DETAIL = "output dims derive from U/V; partition misalignment risk";
+  private static final String WDIVMM_NATIVE_X_AXIS_DETAIL =
+      "federated WDivMM runtime supports ROW/COL partitioned X only";
   private static final String FED_WRITE_DETAIL = "federated write target";
   private static final String ATTR_SPOOF_TEMPLATE = "spoof.template";
   private static final String ATTR_SPOOF_CELL_TYPE = "spoof.cellType";
@@ -368,6 +370,20 @@ public final class Rulesets {
         .fout(true, axis)
         .reason(reason)
         .build();
+  }
+
+  private static OpCaps cpFoutCaps(OpSig sig, FType axis, ReasonCode reason, String detail) {
+    Objects.requireNonNull(sig, "sig");
+    OpCaps.Builder builder = OpCaps.newBuilder()
+        .category(sig.category())
+        .opcode(sig.opcode())
+        .exec(ExecType.CP)
+        .placement(FederatedOutput.FOUT)
+        .fout(true, axis)
+        .reason(reason);
+    if (detail != null && !detail.isBlank())
+      builder.detail(detail);
+    return builder.build();
   }
 
   private static OpCaps fedLocalCaps(OpSig sig, ReasonCode reason) {
@@ -1126,6 +1142,12 @@ public final class Rulesets {
       Integer baseType = parseBaseType(attrValue(sig, ATTR_WDIVMM_BASE_TYPE));
       if (baseType == null)
         return cpCaps(sig, ReasonCode.OPCODE_UNSUPPORTED);
+
+      if (x == FType.FULL)
+        return cpFoutCaps(sig, x, ReasonCode.UNSUPPORTED_ALIGNMENT_OR_TOPOLOGY,
+            WDIVMM_NATIVE_X_AXIS_DETAIL);
+      if (x == FType.PART)
+        return cpCaps(sig, ReasonCode.PARTITION_FORBIDDEN);
 
       Guard.Result guard = Guard.eval(sig);
       if (isBasicBaseType(baseType))

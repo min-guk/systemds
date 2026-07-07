@@ -23,11 +23,14 @@ import java.util.List;
 
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.IndexingOp;
 import org.apache.sysds.hops.QuaternaryOp;
+import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -115,6 +118,8 @@ public final class ExecPlacementPolicy {
 						decision.allowFED_FOUT = true;
 					else
 						decision.allowFED_LOUT = true;
+					if (supportsForcedLocalFederatedOutput(hop))
+						decision.allowFED_LOUT = true;
 				}
 				if (allowCpFout(hop, fType))
 					decision.allowCP_FOUT = true;
@@ -183,6 +188,16 @@ public final class ExecPlacementPolicy {
 		}
 
 		return decision;
+	}
+
+	private static boolean supportsForcedLocalFederatedOutput(Hop hop) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (hop instanceof IndexingOp)
+			return true;
+		if (hop instanceof ReorgOp && ((ReorgOp) hop).getOp() == Types.ReOrgOp.TRANS)
+			return true;
+		return hop instanceof BinaryOp;
 	}
 
 	private static boolean isMultiReturnBuiltinHop(Hop hop) {

@@ -20,30 +20,101 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.AggOp;
+import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
+import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.IndexingOp;
+import org.apache.sysds.hops.NaryOp;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
 public final class FederatedCostModel {
+	public static final class MixedFedLocalCost {
+		private static final MixedFedLocalCost NONE =
+			new MixedFedLocalCost("none", 0.0, 0.0, 0.0, 0.0);
+
+		private final String label;
+		private final double inputPreparationCost;
+		private final double partialResultDownloadCost;
+		private final double coordinatorLocalCost;
+		private final double federatedComputeFloor;
+
+		private MixedFedLocalCost(String label, double inputPreparationCost,
+				double partialResultDownloadCost, double coordinatorLocalCost,
+				double federatedComputeFloor) {
+			this.label = label;
+			this.inputPreparationCost = sanitizeCost(inputPreparationCost);
+			this.partialResultDownloadCost = sanitizeCost(partialResultDownloadCost);
+			this.coordinatorLocalCost = sanitizeCost(coordinatorLocalCost);
+			this.federatedComputeFloor = sanitizeCost(federatedComputeFloor);
+		}
+
+		public static MixedFedLocalCost none() {
+			return NONE;
+		}
+
+		public String getLabel() {
+			return label;
+		}
+
+		public double getInputPreparationCost() {
+			return inputPreparationCost;
+		}
+
+		public double getPartialResultDownloadCost() {
+			return partialResultDownloadCost;
+		}
+
+		public double getCoordinatorLocalCost() {
+			return coordinatorLocalCost;
+		}
+
+		public double getFederatedComputeFloor() {
+			return federatedComputeFloor;
+		}
+
+		public double getCoordinatorPhaseCost() {
+			return partialResultDownloadCost + coordinatorLocalCost;
+		}
+
+		public boolean hasCoordinatorPhase() {
+			return getCoordinatorPhaseCost() > 0.0;
+		}
+
+		public boolean hasInputPreparation() {
+			return inputPreparationCost > 0.0;
+		}
+
+		public boolean hasFederatedComputeFloor() {
+			return federatedComputeFloor > 0.0;
+		}
+	}
+
 	private static final String ENV_MBS_MEMORY_BANDWIDTH = "SYSDS_FED_COST_MEM_BW";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH = "SYSDS_FED_COST_NET_BW";
 	private static final String ENV_MBS_NETWORK_BANDWIDTH_C2W = "SYSDS_FED_COST_NET_BW_C2W";
@@ -147,22 +218,26 @@ public final class FederatedCostModel {
 		// utility class
 	}
 
+	private static double sanitizeCost(double cost) {
+		return Double.isFinite(cost) && cost > 0.0 ? cost : 0.0;
+	}
+
 	/**
 	 * Estimated per-operation coordination overhead for executing a federated instruction
 	 * across multiple workers.
 	 *
 	 * <p>This helper is intentionally <b>control-plane only</b> (RPC framing / Netty bookkeeping).
-	 * Boundary upload/download costs already account for network latency and payload transfer,
-	 * so adding a full latency term here would double-count and over-penalize FED execution
-	 * in iterative workloads (e.g., lm/pca under WAN profiles).</p>
+	 * The configured value comes from the measured local-to-federated dispatch/control path for
+	 * one logical federated instruction, so ordinary per-op coordination must not multiply it by
+	 * worker fanout again. Boundary upload/download helpers separately model payload fan-in/fan-out
+	 * and any extra worker-side transfer latency.</p>
 	 *
 	 * @param numWorkers number of federated workers participating in the operation
 	 * @return estimated control-only coordination overhead in milliseconds
 	 */
 	public static double computeFedCoordinationCost(int numWorkers) {
-		final int fanout = Math.max(1, numWorkers);
 		final double ctrl = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		return fanout * ctrl;
+		return ctrl;
 	}
 
 	/**
@@ -186,6 +261,657 @@ public final class FederatedCostModel {
 		if (((ReorgOp) hop).getOp() != ReOrgOp.TRANS)
 			return false;
 		return logicalFType == FType.FULL || logicalFType == FType.BROADCAST;
+	}
+
+	public static boolean requiresFederatedWdivmmLocalAggregation(Hop hop, FType logicalFType) {
+		if (!(hop instanceof QuaternaryOp))
+			return false;
+		QuaternaryOp quaternaryOp = (QuaternaryOp) hop;
+		if (quaternaryOp.getOp() != OpOp4.WDIVMM)
+			return false;
+
+		int baseType = quaternaryOp.getBaseType();
+		boolean isLeftWdivmm = baseType == 1 || baseType == 3;
+		boolean isRightWdivmm = baseType == 2 || baseType == 4;
+		return (isLeftWdivmm && logicalFType == FType.ROW)
+			|| (isRightWdivmm && logicalFType == FType.COL);
+	}
+
+	/**
+	 * Runtime-aware FED compute cost for the legal WDivMM local-aggregation path.
+	 *
+	 * <p>The generic DP model divides FED self cost by worker count because most
+	 * partition-preserving FED instructions produce partitioned outputs and their
+	 * compute/memory work scales with the selected input partition.  Left WDivMM over
+	 * ROW X and right WDivMM over COL X are different: each worker returns a full
+	 * partial result through {@code GET_VAR}, and the coordinator waits for and
+	 * aggregates these full partials.  Applying the generic linear speedup to the
+	 * whole HOP self cost therefore under-prices this runtime path, especially in
+	 * looped ALS factor updates.  Keep the legal FED candidate open, but compare it
+	 * with the unscaled self-cost floor used by the coordinator alternative.</p>
+	 */
+	public static double adjustFederatedComputeCostForWdivmmLocalAggregation(Hop hop,
+			FType logicalFType, double baseSelfCost, double defaultFederatedComputeCost) {
+		if (!requiresFederatedWdivmmLocalAggregation(hop, logicalFType))
+			return defaultFederatedComputeCost;
+		return Math.max(defaultFederatedComputeCost, baseSelfCost);
+	}
+
+	/**
+	 * FED self-cost scaling predicate shared by DP and MinST.
+	 *
+	 * <p>The generic static model divides a hop's self compute cost by worker count
+	 * for FED execution.  That is reasonable for arithmetic-heavy, partition-preserving
+	 * worker computation.  It is not a valid speedup assumption for operations where
+	 * runtime time is dominated by per-worker control, slicing/reindexing, representation
+	 * changes, or redundant fully-broadcast inputs.  Keep the FED candidate open, but
+	 * compare it against the unscaled self-cost floor for these runtime families.</p>
+	 */
+	public static boolean shouldUseUnscaledFederatedComputeCost(Hop hop, boolean broadcastOnlyFedCompute) {
+		if (broadcastOnlyFedCompute)
+			return true;
+		if (hop instanceof BinaryOp)
+			return true;
+		if (isElementwiseTernaryOp(hop))
+			return true;
+		if (hop instanceof NaryOp && ((NaryOp) hop).getOp().isCellOp())
+			return true;
+		if (hop instanceof IndexingOp)
+			return true;
+		return hop instanceof ReorgOp && ((ReorgOp) hop).getOp() == ReOrgOp.TRANS;
+	}
+
+	private static boolean isElementwiseTernaryOp(Hop hop) {
+		if (!(hop instanceof TernaryOp))
+			return false;
+		OpOp3 op = ((TernaryOp) hop).getOp();
+		return op == OpOp3.PLUS_MULT
+			|| op == OpOp3.MINUS_MULT
+			|| op == OpOp3.IFELSE
+			|| op == OpOp3.MAP;
+	}
+
+	public static double computeFederatedComputeCost(Hop hop, double baseSelfCost,
+			int numWorkers, boolean broadcastOnlyFedCompute) {
+		if (shouldUseUnscaledFederatedComputeCost(hop, broadcastOnlyFedCompute))
+			return baseSelfCost;
+		return baseSelfCost / Math.max(1, numWorkers);
+	}
+
+	/**
+	 * Runtime-stage cost for native FED aggregate-unary outputs whose result keeps
+	 * the input federation layout.
+	 *
+	 * <p>{@code AggregateUnaryFEDInstruction.processFederatedOutput} has two
+	 * different runtime paths. Opposite-axis ROW/COL aggregates collect worker
+	 * partials through {@code GET_VAR} and consolidate locally. Axis-preserving
+	 * ROW/COL aggregates, and replicated FULL/BROADCAST inputs, keep the reduced
+	 * matrix federated and only derive a new mapping. The planner must therefore
+	 * not price these native FED/FOUT candidates as identical to a CP aggregate
+	 * over a local full-input materialization.</p>
+	 *
+	 * <p>This helper does not close any candidate; it only gives DP and MinST a
+	 * shared reduced-output cost for the runtime-supported native FED output path.
+	 * Scalar aggregates are excluded because runtime cannot represent scalar
+	 * outputs as federated variables.</p>
+	 */
+	public static double computeNativeFederatedAggregateUnaryCost(Hop hop,
+			FType logicalFType, double defaultFederatedComputeCost) {
+		if (!isNativeFederatedAggregateUnaryOutput(hop, logicalFType))
+			return defaultFederatedComputeCost;
+
+		AggUnaryOp aggregateUnary = (AggUnaryOp) hop;
+		double outputMemEstimate = estimateAggregateUnaryResultMemEstimate(aggregateUnary,
+			getEffectiveOutputMemEstimate(hop));
+		double outputCells = estimateAggregateUnaryResultCellCount(aggregateUnary, outputMemEstimate);
+		double outputComputeCost = outputCells > 0.0
+				? (outputCells / getComputeFlopsPerSec(hop)) * TO_MS
+				: 0.0;
+		double outputAccessCost = computeMemoryAccessCost(outputMemEstimate);
+		double reducedOutputCost = Math.max(outputComputeCost, outputAccessCost) + outputAccessCost;
+		if (reducedOutputCost <= 0.0)
+			return defaultFederatedComputeCost;
+		return Math.min(defaultFederatedComputeCost, reducedOutputCost);
+	}
+
+	public static boolean isNativeFederatedAggregateUnaryOutput(Hop hop, FType logicalFType) {
+		if (!(hop instanceof AggUnaryOp))
+			return false;
+		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return false;
+		if (logicalFType == FType.FULL || logicalFType == FType.BROADCAST)
+			return true;
+		AggUnaryOp aggregateUnary = (AggUnaryOp) hop;
+		if (aggregateUnary.getDirection() == null)
+			return false;
+		return (logicalFType == FType.ROW && aggregateUnary.getDirection().isRow())
+			|| (logicalFType == FType.COL && aggregateUnary.getDirection().isCol());
+	}
+
+	/**
+	 * Runtime-stage result fan-in cost for native {@code AggregateUnaryFEDInstruction}
+	 * plans that produce a local result ({@code FED/LOUT}).
+	 *
+	 * <p>The generic FED/LOUT boundary model describes an explicit materialization of
+	 * a federated matrix at the coordinator and includes an extra worker fan-in
+	 * control/latency term. Native aggregate-unary LOUT is different: the reduced
+	 * result is returned as part of the federated aggregate instruction response.
+	 * The per-instruction control path is already represented by
+	 * {@link #computeFedCoordinationCost(int)}, so this helper charges only the
+	 * reduced result payload needed by the aggregate semantics. This keeps all
+	 * candidates open while avoiding a double-counted matrix-boundary download.</p>
+	 */
+	public static double computeNativeFederatedAggregateUnaryLoutResultCost(Hop hop,
+			FType logicalFType, double outputMemEstimate, int numWorkers,
+			double genericResultDownloadCost) {
+		if (!(hop instanceof AggUnaryOp))
+			return genericResultDownloadCost;
+		AggUnaryOp aggregateUnary = (AggUnaryOp) hop;
+		double resultMemEstimate = estimateAggregateUnaryResultMemEstimate(
+			aggregateUnary, outputMemEstimate);
+		if (resultMemEstimate <= 0.0)
+			resultMemEstimate = getInjectedDefaultMemEstimatePerCell(hop);
+
+		double reducedResultPayloadCost = computeAggregateUnaryPartialResultDownloadCost(
+			aggregateUnary, logicalFType, resultMemEstimate, numWorkers);
+		return reducedResultPayloadCost > 0.0
+			? reducedResultPayloadCost
+			: genericResultDownloadCost;
+	}
+
+	private static double estimateNativeAggregateUnaryPayloadFanIn(AggUnaryOp aggregate,
+			FType logicalFType, int numWorkers) {
+		if (aggregate == null || logicalFType == FType.FULL || logicalFType == FType.BROADCAST)
+			return 1.0;
+		Direction direction = aggregate.getDirection();
+		if (direction == null)
+			return Math.max(1, numWorkers);
+		if ((logicalFType == FType.ROW && direction.isRow())
+			|| (logicalFType == FType.COL && direction.isCol())) {
+			return 1.0;
+		}
+		return Math.max(1, numWorkers);
+	}
+
+	/**
+	 * Runtime-stage cost for native FED indexing/slicing.
+	 *
+	 * <p>{@code rightIndex} in native FED execution slices the worker-resident
+	 * federated object.  It is not the same compute stage as a CP rightIndex over a
+	 * fully materialized local input.  The generic unscaled FED floor remains useful
+	 * to avoid giving slicing a blanket worker-count speedup, but the arithmetic/
+	 * memory term itself should be bounded by the selected slice/output payload. The
+	 * separate control-path model still charges fanout and loop multiplicity, so LAN
+	 * can keep cheap native {@code fed_rightIndex} while WAN/high-control cases can
+	 * still choose CP/LOUT by cost.</p>
+	 *
+	 * <p>This helper keeps all candidates open and is shared by DP and MinST. It is
+	 * based only on operation semantics and static size estimates, not workload,
+	 * worker-count, row-id, or hop-id rules.</p>
+	 */
+	public static double computeNativeFederatedIndexingCost(Hop hop,
+			FType logicalFType, double defaultFederatedComputeCost) {
+		if (!(hop instanceof IndexingOp))
+			return defaultFederatedComputeCost;
+		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return defaultFederatedComputeCost;
+		if (logicalFType == null)
+			return defaultFederatedComputeCost;
+
+		double sliceCost = computeIndexingSlicePayloadCost(hop);
+		if (sliceCost <= 0.0)
+			return defaultFederatedComputeCost;
+		return Math.min(defaultFederatedComputeCost, sliceCost);
+	}
+
+	/**
+	 * Runtime-stage cost for CP/local indexing/slicing.
+	 *
+	 * <p>Once a federated input is materialized locally, a CP {@code rightIndex}
+	 * does not repeatedly scan the full source matrix for every slice.  Its local
+	 * arithmetic/memory term is bounded by the selected slice/output payload; the
+	 * one-time FOUT-to-local materialization remains modeled by the planner's
+	 * boundary/result edges.  This mirrors the native FED indexing helper without
+	 * closing any FED candidate, so DP and MinST compare the same staged operation
+	 * semantics on both sides.</p>
+	 */
+	public static double computeLocalIndexingCostWithFallback(Hop hop, double defaultLocalCost) {
+		if (!(hop instanceof IndexingOp))
+			return defaultLocalCost;
+		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return defaultLocalCost;
+		double sliceCost = computeIndexingSlicePayloadCost(hop);
+		if (sliceCost <= 0.0)
+			return defaultLocalCost;
+		if (defaultLocalCost <= 0.0)
+			return sliceCost;
+		return Math.min(defaultLocalCost, sliceCost);
+	}
+
+	private static double computeIndexingSlicePayloadCost(Hop hop) {
+		double sliceMemEstimate = getEffectiveOutputMemEstimate(hop);
+		double indexingBound = getIndexingUploadBound(hop);
+		if (indexingBound > 0.0)
+			sliceMemEstimate = sliceMemEstimate > 0.0
+				? Math.min(sliceMemEstimate, indexingBound)
+				: indexingBound;
+		if (sliceMemEstimate <= 0.0)
+			return 0.0;
+
+		double outputCells = estimateLogicalCellCount(hop, sliceMemEstimate);
+		double outputComputeCost = outputCells > 0.0
+				? (outputCells / getComputeFlopsPerSec(hop)) * TO_MS
+				: 0.0;
+		double outputAccessCost = computeMemoryAccessCost(sliceMemEstimate);
+		return Math.max(outputComputeCost, outputAccessCost) + outputAccessCost;
+	}
+
+	/**
+	 * Control-path latency floor for FED instructions whose runtime is dominated by
+	 * worker fanout/scheduling instead of arithmetic-heavy partitioned compute.
+	 *
+	 * <p>The ordinary FED compute model can legitimately divide arithmetic-heavy,
+	 * partition-preserving operators by worker count.  For slicing, transpose, cell
+	 * operations, and fully-broadcast-only FED compute, that linear speedup is not
+	 * enough: each logical FED instruction still has to be dispatched to the worker
+	 * set even when the payload is tiny.  Runtime traces for these families show the
+	 * missing term as repeated small {@code fed_rightIndex}, {@code fed_r'}, and
+	 * cell-op instructions.  Keep the candidates open.  When an explicitly calibrated
+	 * local-to-FED control cost is configured, the generic coordination term already
+	 * accounts for one logical instruction dispatch; native FED indexing still needs
+	 * the remaining worker fanout because a slice request is issued against each
+	 * participating federated partition.</p>
+	 */
+	public static double computeControlDominatedFederatedInstructionCost(Hop hop,
+			FType logicalFType, double execWeight, int numWorkers, boolean broadcastOnlyFedCompute) {
+		if (hop == null || hop instanceof DataOp)
+			return 0.0;
+		if (!shouldUseUnscaledFederatedComputeCost(hop, broadcastOnlyFedCompute))
+			return 0.0;
+		if (isMappingPreservingFederatedTranspose(hop, logicalFType))
+			return 0.0;
+		double fanout = Math.max(1, numWorkers);
+		double boundedWeight = Math.max(1.0, execWeight);
+		if (LOCAL_TO_FED_CTRL_OVERHEAD_MS > 0.0)
+			return hop instanceof IndexingOp
+				? boundedWeight * Math.max(0, fanout - 1) * LOCAL_TO_FED_CTRL_OVERHEAD_MS
+				: 0.0;
+		return boundedWeight * fanout * MBS_NETWORK_LATENCY * TO_MS;
+	}
+
+	/**
+	 * Shared runtime-stage model for FED instructions that do more than ordinary
+	 * partition-preserving worker compute.
+	 *
+	 * <p>Some FED instructions execute a worker-side request and then perform a
+	 * coordinator/local phase such as {@code GET_VAR} fan-in plus final aggregation
+	 * or input {@code broadcastSliced}.  Those stages must be estimated explicitly
+	 * instead of being folded into a generic {@code selfCost / workers} term.</p>
+	 */
+	public static MixedFedLocalCost computeMixedFedLocalCost(Hop hop, List<Hop> inputHops,
+			List<FType> inputFTypes, FType logicalFType, double baseSelfCost,
+			double outputMemEstimate, int numWorkers) {
+		if (requiresFederatedAggUnaryLocalAggregation(hop)) {
+			return computeAggregateUnaryLocalAggregationCost("agg-unary-local-aggregation",
+				(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, 0.0);
+		}
+		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType)) {
+			double inputPreparationCost =
+				computeWdivmmInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
+			return computePartialAggregationCost("wdivmm-local-aggregation",
+				hop, outputMemEstimate, numWorkers, inputPreparationCost, baseSelfCost);
+		}
+		if (requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes)) {
+			double inputPreparationCost =
+				computeAggBinaryRowLeftInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
+			return new MixedFedLocalCost("aggbinary-rowleft-input-prep",
+				inputPreparationCost, 0.0, 0.0, 0.0);
+		}
+		if (requiresFederatedAggBinaryAddAggregation(hop, inputFTypes)) {
+			double inputPreparationCost =
+				computeAggBinarySlicedInputBroadcastCost(hop, inputHops, inputFTypes, numWorkers);
+			return computePartialAggregationCost("aggbinary-add-aggregation",
+				hop, outputMemEstimate, numWorkers, inputPreparationCost, 0.0);
+		}
+		return MixedFedLocalCost.none();
+	}
+
+	/**
+	 * Runtime-stage model for {@code AggregateUnaryFEDInstruction} when the selected
+	 * planner state is {@code FED/LOUT}.
+	 *
+	 * <p>The runtime does not first materialize the full federated input at the
+	 * coordinator. It sends the aggregate instruction to the workers, retrieves one
+	 * reduced partial result per participating worker through {@code GET_VAR}, and
+	 * performs the final aggregate/bind locally. Therefore the cost must be based on
+	 * the aggregate result shape (scalar, row vector, or column vector), not on a
+	 * stale matrix-boundary estimate inherited from the input hop.</p>
+	 */
+	public static boolean requiresFederatedAggUnaryLocalAggregation(Hop hop) {
+		return hop instanceof AggUnaryOp;
+	}
+
+	public static double computeAggregateUnaryLocalAggregationCost(Hop hop, FType logicalFType,
+			double outputMemEstimate, int numWorkers) {
+		if (!(hop instanceof AggUnaryOp))
+			return 0.0;
+		return computeAggregateUnaryLocalAggregationCost("agg-unary-local-aggregation",
+			(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, 0.0)
+			.getCoordinatorPhaseCost();
+	}
+
+	/**
+	 * Runtime input-preparation model for {@code AggregateBinaryFEDInstruction}'s
+	 * ROW-left branch.
+	 *
+	 * <p>When the left input is ROW/PART federated, runtime executes the matrix
+	 * multiply on the left input's workers.  The right input is reused directly only
+	 * when it is already represented as a compatible BROADCAST federated object;
+	 * otherwise the runtime sends/refederates it to the left input's worker map
+	 * before the {@code ba+*} call.  This applies to both FED/FOUT and FED/LOUT
+	 * choices; FED/LOUT then separately pays the ordinary result download/bind
+	 * cost.  Keep the FED candidate open and charge the runtime-defined preparation
+	 * work instead of hard-closing the branch.</p>
+	 */
+	public static boolean requiresFederatedAggBinaryRowLeftInputPreparation(Hop hop,
+			List<FType> inputFTypes) {
+		if (!(hop instanceof AggBinaryOp))
+			return false;
+		AggBinaryOp aggBinaryOp = (AggBinaryOp) hop;
+		if (!aggBinaryOp.isMatrixMultiply())
+			return false;
+		FType left = typeAt(inputFTypes, 0);
+		if (!isStrictRowPartition(left))
+			return false;
+		FType right = typeAt(inputFTypes, 1);
+		return right != FType.BROADCAST;
+	}
+
+	public static double computeAggBinaryRowLeftInputPreparationCost(Hop hop,
+			List<Hop> inputHops, List<FType> inputFTypes, int numWorkers) {
+		if (!requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes))
+			return 0.0;
+		return computeFullBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+	}
+
+	private static MixedFedLocalCost computePartialAggregationCost(String label, Hop hop,
+			double outputMemEstimate, int numWorkers, double inputPreparationCost,
+			double federatedComputeFloor) {
+		double partialResultMem = outputMemEstimate > 0.0 ? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
+		if (partialResultMem <= 0.0)
+			partialResultMem = getEffectiveUploadMemEstimate(hop);
+		if (partialResultMem <= 0.0)
+			return new MixedFedLocalCost(label, inputPreparationCost, 0.0, 0.0, federatedComputeFloor);
+
+		int fanIn = Math.max(1, numWorkers);
+		double partialDownloadCost = computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
+		double coordinatorAggregationCost = computeCoordinatorAggregationCost(hop, partialResultMem, fanIn);
+		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
+			coordinatorAggregationCost, federatedComputeFloor);
+	}
+
+	private static MixedFedLocalCost computeAggregateUnaryLocalAggregationCost(String label,
+			AggUnaryOp aggregateUnary, FType logicalFType, double outputMemEstimate,
+			int numWorkers, double inputPreparationCost) {
+		double partialResultMem = estimateAggregateUnaryResultMemEstimate(
+			aggregateUnary, outputMemEstimate);
+		if (partialResultMem <= 0.0)
+			partialResultMem = getEffectiveOutputMemEstimate(aggregateUnary);
+		if (partialResultMem <= 0.0)
+			partialResultMem = getInjectedDefaultMemEstimatePerCell(aggregateUnary);
+
+		int workers = Math.max(1, numWorkers);
+		double partialDownloadCost = computeAggregateUnaryPartialResultDownloadCost(
+			aggregateUnary, logicalFType, partialResultMem, workers);
+		double coordinatorAggregationCost = computeAggregateUnaryCoordinatorAggregationCost(
+			aggregateUnary, partialResultMem, workers);
+		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
+			coordinatorAggregationCost, 0.0);
+	}
+
+	private static double computeAggregateUnaryPartialResultDownloadCost(AggUnaryOp aggregateUnary,
+			FType logicalFType, double partialResultMem, int numWorkers) {
+		if (partialResultMem <= 0.0)
+			return 0.0;
+		double payloadFanIn = estimateNativeAggregateUnaryPayloadFanIn(
+			aggregateUnary, logicalFType, Math.max(1, numWorkers));
+		return computeDownloadPayloadCost(partialResultMem * Math.max(1.0, payloadFanIn));
+	}
+
+	private static double computeAggregateUnaryCoordinatorAggregationCost(AggUnaryOp aggregateUnary,
+			double partialResultMem, int fanIn) {
+		int workers = Math.max(1, fanIn);
+		if (workers <= 1)
+			return computeMemoryAccessCost(partialResultMem);
+
+		double outputCells = estimateAggregateUnaryResultCellCount(aggregateUnary, partialResultMem);
+		double aggregateFlops = Math.max(0, workers - 1) * Math.max(0.0, outputCells);
+		double aggregateComputeCost = (aggregateFlops / getComputeFlopsPerSec(aggregateUnary)) * TO_MS;
+		double aggregateReadCost = computeMemoryAccessCost(partialResultMem * workers);
+		double aggregateWriteCost = computeMemoryAccessCost(partialResultMem);
+		return Math.max(aggregateComputeCost, aggregateReadCost) + aggregateWriteCost;
+	}
+
+	/**
+	 * Cost of the legal WDivMM FED/LOUT runtime path that materializes full partial
+	 * worker results at the coordinator.
+	 *
+	 * <p>{@code QuaternaryWDivMMFEDInstruction} executes left WDivMM over ROW X and
+	 * right WDivMM over COL X by issuing a federated compute request, collecting a
+	 * full partial result from every worker via {@code GET_VAR}, and aggregating
+	 * those matrices locally. This is not an unplannable case and must not close the
+	 * FED candidate. It is also not the same as an ordinary ROW/COL result download:
+	 * the payload is one full partial result per worker, followed by coordinator
+	 * aggregation work.</p>
+	 */
+	public static double computeWdivmmLocalAggregationCost(Hop hop, FType logicalFType,
+			double outputMemEstimate, int numWorkers) {
+		return computeMixedFedLocalCost(hop, null, null, logicalFType, 0.0,
+			outputMemEstimate, numWorkers).getCoordinatorPhaseCost();
+	}
+
+	/**
+	 * Cost of {@code QuaternaryWDivMMFEDInstruction} input preparation before the
+	 * federated WDivMM compute request.
+	 *
+	 * <p>This keeps legal FED candidates open. It only charges runtime-defined data
+	 * movement required by the selected input states:</p>
+	 * <ul>
+	 *   <li>ROW-partitioned X: U is reused only when already ROW-aligned; otherwise
+	 *       it is {@code broadcastSliced}. V is broadcast as a full matrix.</li>
+	 *   <li>COL-partitioned X: U is broadcast as a full matrix. V is reused only
+	 *       when already COL-aligned; otherwise it is {@code broadcastSliced}.</li>
+	 *   <li>Matrix fourth inputs (MULT_MINUS_4 variants) are sliced to X's map when
+	 *       not already FULL-aligned.</li>
+	 * </ul>
+	 */
+	public static double computeWdivmmInputPreparationCost(Hop hop, List<Hop> inputHops,
+			List<FType> inputFTypes, int numWorkers) {
+		if (!(hop instanceof QuaternaryOp))
+			return 0.0;
+		QuaternaryOp quaternaryOp = (QuaternaryOp) hop;
+		if (quaternaryOp.getOp() != OpOp4.WDIVMM)
+			return 0.0;
+
+		FType xType = typeAt(inputFTypes, 0);
+		double cost = 0.0;
+		if (isStrictRowPartition(xType)) {
+			FType uType = typeAt(inputFTypes, 1);
+			if (!isStrictRowPartition(uType))
+				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 2), numWorkers);
+		}
+		else if (xType == FType.COL) {
+			cost += computeFullBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+			FType vType = typeAt(inputFTypes, 2);
+			if (vType != FType.COL)
+				cost += computeSlicedBroadcastInputCost(inputHopAt(inputHops, 2), numWorkers);
+		}
+		else {
+			return 0.0;
+		}
+
+		Hop fourth = inputHopAt(inputHops, 3);
+		if (fourth != null && fourth.getDataType() != null && fourth.getDataType().isMatrix()) {
+			FType fourthType = typeAt(inputFTypes, 3);
+			if (fourthType != FType.FULL)
+				cost += computeSlicedBroadcastInputCost(fourth, numWorkers);
+		}
+		return cost;
+	}
+
+	public static boolean requiresFederatedAggBinaryAddAggregation(Hop hop, List<FType> inputFTypes) {
+		if (!(hop instanceof AggBinaryOp))
+			return false;
+		AggBinaryOp aggBinaryOp = (AggBinaryOp) hop;
+		if (!aggBinaryOp.isMatrixMultiply())
+			return false;
+
+		FType left = typeAt(inputFTypes, 0);
+		FType right = typeAt(inputFTypes, 1);
+		if (left == null && right == null)
+			return false;
+
+		// Runtime AggregateBinaryFEDInstruction has local-aggregation-by-add branches for:
+		//  - FULL/BROADCAST/local/COL left x ROW right (sliced broadcast + GET_VAR + aggAdd), and
+		//  - COL left x local/BROADCAST right (sliced broadcast + GET_VAR + aggAdd).
+		// ROW-left matrix multiplication materializes local output by binding row partitions,
+		// which is already represented by the ordinary ROW/COL download fan-in model.
+		if (right == FType.ROW && !isStrictRowPartition(left))
+			return true;
+		return left == FType.COL;
+	}
+
+	public static double computeAggBinaryAddAggregationCost(Hop hop, List<FType> inputFTypes,
+			double outputMemEstimate, int numWorkers) {
+		return computeMixedFedLocalCost(hop, null, inputFTypes, null, 0.0,
+			outputMemEstimate, numWorkers).getCoordinatorPhaseCost();
+	}
+
+	/**
+	 * Cost of AggregateBinaryFEDInstruction input preparation paths that cannot
+	 * consume the child federation maps directly and therefore issue
+	 * {@code FederationMap.broadcastSliced(...)} before the federated matrix
+	 * multiply.
+	 *
+	 * <p>This keeps the FED candidate open. It only charges the runtime-defined
+	 * payload movement needed to present the selected child state to the chosen
+	 * federated execution branch:</p>
+	 * <ul>
+		 *   <li>{@code local left x ROW right}: slice/broadcast the left operand
+		 *       according to the right ROW map.  FULL/BROADCAST logical left inputs
+		 *       already carry a federated full/replicated state, so the model does not
+		 *       add a coordinator local-to-federated upload term for them.  COL-left x
+		 *       ROW-right is the aligned COL_T runtime branch once the planner has
+		 *       admitted both inputs as compatible federated inputs, so it should not
+		 *       pay this sliced-input preparation term.</li>
+	 *   <li>{@code COL left x local/BROADCAST right}: slice/broadcast the right
+	 *       operand according to the left COL map.</li>
+	 * </ul>
+	 *
+		 * <p>ROW-left matrix multiplication can consume/broadcast the right side without
+		 * this repartition penalty; COL-left x ROW-right is handled by the aligned
+		 * runtime branch and is therefore not charged here.</p>
+	 */
+	public static double computeAggBinarySlicedInputBroadcastCost(Hop hop, List<Hop> inputHops,
+			List<FType> inputFTypes, int numWorkers) {
+		if (!(hop instanceof AggBinaryOp))
+			return 0.0;
+		AggBinaryOp aggBinaryOp = (AggBinaryOp) hop;
+		if (!aggBinaryOp.isMatrixMultiply())
+			return 0.0;
+		if (aggBinaryOp.checkTransposeSelf() != null
+				&& aggBinaryOp.checkTransposeSelf() != org.apache.sysds.lops.MMTSJ.MMTSJType.NONE)
+			return 0.0;
+
+		FType left = typeAt(inputFTypes, 0);
+		FType right = typeAt(inputFTypes, 1);
+		if (left == null && right == null)
+			return 0.0;
+
+		if (right == FType.ROW && !isStrictRowPartition(left)) {
+			if (left == FType.COL)
+				return 0.0;
+			if (isFederatedFullOrBroadcast(left))
+				return 0.0;
+			return computeSlicedBroadcastInputCost(inputHopAt(inputHops, 0), numWorkers);
+		}
+		if (left == FType.COL)
+			return computeSlicedBroadcastInputCost(inputHopAt(inputHops, 1), numWorkers);
+		return 0.0;
+	}
+
+	private static boolean isFederatedFullOrBroadcast(FType type) {
+		return type == FType.FULL || type == FType.BROADCAST;
+	}
+
+	private static Hop inputHopAt(List<Hop> inputHops, int index) {
+		if (inputHops == null || index < 0 || index >= inputHops.size())
+			return null;
+		return inputHops.get(index);
+	}
+
+	private static double computeSlicedBroadcastInputCost(Hop inputHop, int numWorkers) {
+		double memEstimate = getEffectiveOutputMemEstimate(inputHop);
+		if (memEstimate <= 0.0)
+			memEstimate = getEffectiveUploadMemEstimate(inputHop);
+		if (memEstimate <= 0.0)
+			memEstimate = getEffectiveInputMemEstimate(inputHop);
+		if (memEstimate <= 0.0)
+			return 0.0;
+
+		// broadcastSliced over ROW/COL maps sends disjoint slices whose total payload
+		// is approximately the input size. Add fan-out latency/control overhead without
+		// multiplying the payload as a full BROADCAST would.
+		return computeUploadNetworkCost(memEstimate, FType.ROW, numWorkers)
+			+ computeLocalToFedForwardingPenalty(FType.ROW, numWorkers);
+	}
+
+	private static double computeFullBroadcastInputCost(Hop inputHop, int numWorkers) {
+		double memEstimate = getEffectiveOutputMemEstimate(inputHop);
+		if (memEstimate <= 0.0)
+			memEstimate = getEffectiveUploadMemEstimate(inputHop);
+		if (memEstimate <= 0.0)
+			memEstimate = getEffectiveInputMemEstimate(inputHop);
+		if (memEstimate <= 0.0)
+			return 0.0;
+		return computeUploadNetworkCost(memEstimate, FType.BROADCAST, numWorkers)
+			+ computeLocalToFedForwardingPenalty(FType.BROADCAST, numWorkers);
+	}
+
+	private static FType typeAt(List<FType> types, int index) {
+		if (types == null || index < 0 || index >= types.size())
+			return null;
+		return types.get(index);
+	}
+
+	private static boolean isStrictRowPartition(FType type) {
+		return type == FType.ROW || type == FType.PART;
+	}
+
+	private static double computeReplicatedWorkerResultDownloadCost(double memSizePerWorker, int fanIn) {
+		int workers = Math.max(1, fanIn);
+		double payloadMem = memSizePerWorker * workers;
+		double baseCost = computeDirectionalNetworkCost(payloadMem,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+		if (workers <= 1)
+			return baseCost;
+		double latencyPenaltyMs = (workers - 1) * MBS_NETWORK_LATENCY * TO_MS;
+		double controlPenaltyMs = (workers - 1) * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+		return baseCost + latencyPenaltyMs + controlPenaltyMs;
+	}
+
+	private static double computeCoordinatorAggregationCost(Hop hop, double partialResultMem, int fanIn) {
+		int workers = Math.max(1, fanIn);
+		if (workers <= 1)
+			return computeMemoryAccessCost(partialResultMem);
+
+		double outputCells = estimateLogicalCellCount(hop, partialResultMem);
+		double aggregateFlops = Math.max(0, workers - 1) * Math.max(0.0, outputCells);
+		double aggregateComputeCost = (aggregateFlops / getComputeFlopsPerSec(hop)) * TO_MS;
+		double aggregateReadCost = computeMemoryAccessCost(partialResultMem * workers);
+		double aggregateWriteCost = computeMemoryAccessCost(partialResultMem);
+		return Math.max(aggregateComputeCost, aggregateReadCost) + aggregateWriteCost;
 	}
 
 	/**
@@ -328,6 +1054,46 @@ public final class FederatedCostModel {
 		return 0.0;
 	}
 
+	private static double estimateAggregateUnaryResultMemEstimate(AggUnaryOp aggregateUnary,
+			double fallbackMemEstimate) {
+		double resultCells = estimateAggregateUnaryResultCellCount(aggregateUnary, fallbackMemEstimate);
+		if (resultCells > 0.0)
+			return resultCells * getInjectedDefaultMemEstimatePerCell(aggregateUnary);
+		if (fallbackMemEstimate > 0.0)
+			return fallbackMemEstimate;
+		return getEffectiveOutputMemEstimate(aggregateUnary);
+	}
+
+	private static double estimateAggregateUnaryResultCellCount(AggUnaryOp aggregateUnary,
+			double fallbackMemEstimate) {
+		if (aggregateUnary == null)
+			return 0.0;
+		if (aggregateUnary.getDataType() != null && aggregateUnary.getDataType().isScalar())
+			return 1.0;
+
+		Direction direction = aggregateUnary.getDirection();
+		if (direction != null) {
+			if (direction.isRowCol())
+				return 1.0;
+			if (direction.isRow()) {
+				long rows = aggregateUnary.getDim1();
+				if (rows <= 0 && aggregateUnary.getInput() != null && !aggregateUnary.getInput().isEmpty())
+					rows = aggregateUnary.getInput().get(0).getDim1();
+				if (rows > 0)
+					return rows;
+			}
+			if (direction.isCol()) {
+				long cols = aggregateUnary.getDim2();
+				if (cols <= 0 && aggregateUnary.getInput() != null && !aggregateUnary.getInput().isEmpty())
+					cols = aggregateUnary.getInput().get(0).getDim2();
+				if (cols > 0)
+					return cols;
+			}
+		}
+
+		return estimateLogicalCellCount(aggregateUnary, fallbackMemEstimate);
+	}
+
 	public static double computeOpCostWithFallback(Hop hop) {
 		if (hop == null) {
 			return 0.0;
@@ -395,6 +1161,9 @@ public final class FederatedCostModel {
 		if (hop == null) {
 			return 0.0;
 		}
+		double semanticOutputMemEstimate = getSemanticSparseAssignmentMemEstimate(hop);
+		if (semanticOutputMemEstimate > 0.0)
+			return semanticOutputMemEstimate;
 		double multiReturnFunctionOutputMemEstimate = getMultiReturnFunctionOutputMemEstimate(hop);
 		if (multiReturnFunctionOutputMemEstimate > 0.0)
 			return multiReturnFunctionOutputMemEstimate;
@@ -444,6 +1213,146 @@ public final class FederatedCostModel {
 		return clampUnknownDimOutputMemEstimate(hop, outputMemEstimate, inputMemEstimate);
 	}
 
+	/**
+	 * Estimate sparse payloads for row-wise arg-min assignment matrices.
+	 *
+	 * <p>The kmeans-style idiom {@code P = D <= rowMins(D); P = P / rowSums(P)}
+	 * creates an assignment matrix whose non-zero payload is driven by the number
+	 * of chosen minima per row, not by {@code nrow(D) * ncol(D)}. The generic HOP
+	 * stats conservatively keep {@code nnz=-1} for the comparison/division chain,
+	 * which makes local-to-FED materialization of {@code P} or {@code t(P)} look
+	 * dense and can incorrectly price the legal mixed FED/local aggregate-binary
+	 * path out of the search space.  This is a semantic cost-state estimate only:
+	 * it keeps all candidates open and does not key on workload, worker count, row
+	 * id, or hop id.</p>
+	 *
+	 * <p>Exact tie counts are data-dependent and unavailable at static planning
+	 * time.  For a row-min assignment indicator, the stable planning estimate is
+	 * one selected cell per row, with the runtime still free to materialize extra
+	 * tie cells when the data contains ties.</p>
+	 */
+	private static double getSemanticSparseAssignmentMemEstimate(Hop hop) {
+		SparseAssignmentShape shape = getSemanticSparseAssignmentShape(hop);
+		if (shape == null)
+			return 0.0;
+		double sparsity = Math.min(1.0, shape.nnz / (double) shape.rows / (double) shape.cols);
+		return OptimizerUtils.estimateSizeExactSparsity(shape.rows, shape.cols, sparsity, hop.getDataType());
+	}
+
+	private static double getSemanticSparseAssignmentSerializedMemEstimate(Hop hop) {
+		SparseAssignmentShape shape = getSemanticSparseAssignmentShape(hop);
+		if (shape == null)
+			return 0.0;
+		return MatrixBlock.estimateSizeOnDisk(shape.rows, shape.cols, shape.nnz);
+	}
+
+	private static SparseAssignmentShape getSemanticSparseAssignmentShape(Hop hop) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return null;
+		if (isTranspose(hop)) {
+			SparseAssignmentShape inputShape = getSemanticSparseAssignmentShape(hop.getInput(0));
+			return inputShape == null ? null : inputShape.transposeLike(hop);
+		}
+		if (!isNormalizedRowArgMinAssignment(hop) && !isRowArgMinIndicator(hop))
+			return null;
+
+		Hop source = getRowArgMinSourceMatrix(hop);
+		if (source == null || source.getDim1() <= 0 || source.getDim2() <= 0)
+			return null;
+		long rows = hop.getDim1() > 0 ? hop.getDim1() : source.getDim1();
+		long cols = hop.getDim2() > 0 ? hop.getDim2() : source.getDim2();
+		if (rows <= 0 || cols <= 0)
+			return null;
+		long nnz = Math.min(rows * cols, Math.max(1, source.getDim1()));
+		return new SparseAssignmentShape(rows, cols, nnz);
+	}
+
+	private static final class SparseAssignmentShape {
+		private final long rows;
+		private final long cols;
+		private final long nnz;
+
+		private SparseAssignmentShape(long rows, long cols, long nnz) {
+			this.rows = rows;
+			this.cols = cols;
+			this.nnz = nnz;
+		}
+
+		private SparseAssignmentShape transposeLike(Hop hop) {
+			long transposedRows = hop.getDim1() > 0 ? hop.getDim1() : cols;
+			long transposedCols = hop.getDim2() > 0 ? hop.getDim2() : rows;
+			return new SparseAssignmentShape(transposedRows, transposedCols, nnz);
+		}
+	}
+
+	private static boolean isNormalizedRowArgMinAssignment(Hop hop) {
+		if (!(hop instanceof BinaryOp) || ((BinaryOp) hop).getOp() != OpOp2.DIV)
+			return false;
+		Hop numerator = hop.getInput(0);
+		Hop denominator = hop.getInput(1);
+		return isRowArgMinIndicator(numerator) && isRowSumOf(denominator, numerator);
+	}
+
+	private static boolean isRowArgMinIndicator(Hop hop) {
+		if (!(hop instanceof BinaryOp))
+			return false;
+		BinaryOp binaryOp = (BinaryOp) hop;
+		if (binaryOp.getOp() == OpOp2.LESSEQUAL)
+			return isRowMinOf(binaryOp.getInput(1), binaryOp.getInput(0));
+		if (binaryOp.getOp() == OpOp2.GREATEREQUAL)
+			return isRowMinOf(binaryOp.getInput(0), binaryOp.getInput(1));
+		if (binaryOp.getOp() == OpOp2.EQUAL)
+			return isRowMinOf(binaryOp.getInput(0), binaryOp.getInput(1))
+				|| isRowMinOf(binaryOp.getInput(1), binaryOp.getInput(0));
+		return false;
+	}
+
+	private static Hop getRowArgMinSourceMatrix(Hop hop) {
+		if (hop == null)
+			return null;
+		if (isTranspose(hop))
+			return getRowArgMinSourceMatrix(hop.getInput(0));
+		if (isNormalizedRowArgMinAssignment(hop))
+			return getRowArgMinSourceMatrix(hop.getInput(0));
+		if (!(hop instanceof BinaryOp))
+			return null;
+		BinaryOp binaryOp = (BinaryOp) hop;
+		if (binaryOp.getOp() == OpOp2.LESSEQUAL && isRowMinOf(binaryOp.getInput(1), binaryOp.getInput(0)))
+			return binaryOp.getInput(0);
+		if (binaryOp.getOp() == OpOp2.GREATEREQUAL && isRowMinOf(binaryOp.getInput(0), binaryOp.getInput(1)))
+			return binaryOp.getInput(1);
+		if (binaryOp.getOp() == OpOp2.EQUAL) {
+			if (isRowMinOf(binaryOp.getInput(1), binaryOp.getInput(0)))
+				return binaryOp.getInput(0);
+			if (isRowMinOf(binaryOp.getInput(0), binaryOp.getInput(1)))
+				return binaryOp.getInput(1);
+		}
+		return null;
+	}
+
+	private static boolean isRowMinOf(Hop aggregateHop, Hop sourceHop) {
+		if (!(aggregateHop instanceof AggUnaryOp) || sourceHop == null)
+			return false;
+		AggUnaryOp aggregate = (AggUnaryOp) aggregateHop;
+		return aggregate.getOp() == AggOp.MIN
+			&& aggregate.getDirection() == Direction.Row
+			&& aggregate.getInput(0) == sourceHop;
+	}
+
+	private static boolean isRowSumOf(Hop aggregateHop, Hop sourceHop) {
+		if (!(aggregateHop instanceof AggUnaryOp) || sourceHop == null)
+			return false;
+		AggUnaryOp aggregate = (AggUnaryOp) aggregateHop;
+		return aggregate.getOp() == AggOp.SUM
+			&& aggregate.getDirection() == Direction.Row
+			&& aggregate.getInput(0) == sourceHop;
+	}
+
+	private static boolean isTranspose(Hop hop) {
+		return hop instanceof ReorgOp && ((ReorgOp) hop).getOp() == ReOrgOp.TRANS
+			&& hop.getInput() != null && !hop.getInput().isEmpty();
+	}
+
 	public static double getEffectiveTransientReadSourceMemEstimate(Hop transientReadHop, Hop sourceHop) {
 		double readerMemEstimate = getEffectiveOutputMemEstimate(transientReadHop);
 		if (!(transientReadHop instanceof DataOp)
@@ -479,6 +1388,10 @@ public final class FederatedCostModel {
 	public static double getEffectiveUploadMemEstimate(Hop hop) {
 		if (hop == null)
 			return 0.0;
+
+		double serializedSparseAssignmentMem = getSemanticSparseAssignmentSerializedMemEstimate(hop);
+		if (serializedSparseAssignmentMem > 0.0)
+			return serializedSparseAssignmentMem;
 
 		double rawOutputMemEstimate = hop.getOutputMemEstimate();
 		double outputMemEstimate = getEffectiveOutputMemEstimate(hop);
@@ -827,6 +1740,20 @@ public final class FederatedCostModel {
 		if (memSize <= 0)
 			return 0.0;
 		return computeDirectionalNetworkCost(memSize, MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
+	}
+
+	private static double computeDownloadPayloadCost(double memSize) {
+		if (memSize <= 0)
+			return 0.0;
+		double effectiveBw = (MBS_NETWORK_BANDWIDTH_W2C > 0.0) ? MBS_NETWORK_BANDWIDTH_W2C : MBS_NETWORK_BANDWIDTH;
+		double payloadMb = memSize / (1024 * 1024);
+		double payloadSec = payloadMb / effectiveBw;
+		double effectiveSerdesBw = (MBS_NETWORK_SERDES_BANDWIDTH_W2C > 0.0)
+			? MBS_NETWORK_SERDES_BANDWIDTH_W2C
+			: 0.0;
+		if (effectiveSerdesBw > 0.0)
+			payloadSec += payloadMb / effectiveSerdesBw;
+		return payloadSec * TO_MS;
 	}
 
 	public static double computeDownloadNetworkCost(double memSize, FType fType, int numWorkers) {

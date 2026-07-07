@@ -29,13 +29,16 @@ import org.junit.Test;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
@@ -45,6 +48,7 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
+import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -55,6 +59,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 
 public class FederatedCostModelFallbackTest {
 	private static final double UNKNOWN_DIM_SENTINEL_BYTES = 8d * 1024 * 1024 * 1024;
@@ -103,6 +108,48 @@ public class FederatedCostModelFallbackTest {
 
 		double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
 		Assert.assertTrue("Fallback op cost should be positive when injected mem is available", opCost > 0.0);
+	}
+
+	@Test
+	public void testRowArgMinAssignmentUsesSparsePayloadEstimate() {
+		TestMatrixHop distances = new TestMatrixHop("D", 50000, 50,
+			50000d * 50d * OptimizerUtils.DOUBLE_SIZE,
+			50000d * 50d * OptimizerUtils.DOUBLE_SIZE);
+		distances.setNnz(distances.getDim1() * distances.getDim2());
+		AggUnaryOp rowMin = new AggUnaryOp("minD", DataType.MATRIX, ValueType.FP64,
+			AggOp.MIN, Direction.Row, distances);
+		BinaryOp mask = new BinaryOp("Pmask", DataType.MATRIX, ValueType.BOOLEAN,
+			OpOp2.LESSEQUAL, distances, rowMin);
+		AggUnaryOp rowSums = new AggUnaryOp("rowSumsP", DataType.MATRIX, ValueType.FP64,
+			AggOp.SUM, Direction.Row, mask);
+		BinaryOp normalized = new BinaryOp("P", DataType.MATRIX, ValueType.FP64,
+			OpOp2.DIV, mask, rowSums);
+		ReorgOp transposed = new ReorgOp("tP", DataType.MATRIX, ValueType.FP64,
+			ReOrgOp.TRANS, normalized);
+
+		double dense = OptimizerUtils.estimateSizeExactSparsity(50000, 50, 1.0, DataType.MATRIX);
+		double expectedAssignment = OptimizerUtils.estimateSizeExactSparsity(50000, 50, 1.0 / 50.0,
+			DataType.MATRIX);
+		double expectedTransposedAssignment = OptimizerUtils.estimateSizeExactSparsity(50, 50000, 1.0 / 50.0,
+			DataType.MATRIX);
+
+		Assert.assertEquals("Raw row-argmin mask should use row-count payload estimate",
+			expectedAssignment, FederatedCostModel.getEffectiveOutputMemEstimate(mask), 0.0);
+		Assert.assertEquals("Normalized row-argmin assignment should preserve mask sparsity",
+			expectedAssignment, FederatedCostModel.getEffectiveOutputMemEstimate(normalized), 0.0);
+		Assert.assertEquals("Transposed assignment payload should preserve sparse materialization size",
+			expectedTransposedAssignment, FederatedCostModel.getEffectiveOutputMemEstimate(transposed), 0.0);
+		Assert.assertTrue("Assignment payload estimate must stay below dense fallback",
+			FederatedCostModel.getEffectiveOutputMemEstimate(transposed) < dense);
+
+		double expectedSerializedMask = MatrixBlock.estimateSizeOnDisk(50000, 50, 50000);
+		double expectedSerializedTransposed = MatrixBlock.estimateSizeOnDisk(50, 50000, 50000);
+		Assert.assertEquals("Raw row-argmin upload should use serialized sparse payload",
+			expectedSerializedMask, FederatedCostModel.getEffectiveUploadMemEstimate(mask), 0.0);
+		Assert.assertEquals("Normalized row-argmin upload should use serialized sparse payload",
+			expectedSerializedMask, FederatedCostModel.getEffectiveUploadMemEstimate(normalized), 0.0);
+		Assert.assertEquals("Transposed assignment upload should use serialized sparse payload",
+			expectedSerializedTransposed, FederatedCostModel.getEffectiveUploadMemEstimate(transposed), 0.0);
 	}
 
 	@Test
@@ -687,6 +734,82 @@ public class FederatedCostModelFallbackTest {
 			Assert.assertTrue("Repeated single-worker DML FunctionOp calls may pay a bounded boundary penalty, but"
 				+ " the cost must stay well below the old hard blocker regime",
 				penalty > 0.0 && penalty < 1e6);
+	}
+
+	@Test
+	public void testFedCoordinationCostDoesNotDoubleCountCalibratedControlPath() throws Exception {
+		TestMatrixHop left = new TestMatrixHop("ctrlLeft", 1000, 10, 1024 * 1024, 1024 * 1024);
+		TestMatrixHop right = new TestMatrixHop("ctrlRight", 1000, 10, 1024 * 1024, 1024 * 1024);
+		BinaryOp binary = new BinaryOp("ctrlPlus", DataType.MATRIX, ValueType.FP64,
+			OpOp2.PLUS, left, right);
+
+		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
+		double latencySec = getFederatedCostModelConstant("MBS_NETWORK_LATENCY");
+		double toMs = getFederatedCostModelConstant("TO_MS");
+		double execWeight = 7.0;
+		int workers = 4;
+
+		double perInstructionCoordination = FederatedCostModel.computeFedCoordinationCost(workers);
+		double controlDominatedTopup = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+			binary, FType.ROW, execWeight, workers, false);
+		double totalControlCost = execWeight * perInstructionCoordination + controlDominatedTopup;
+
+		double expected = ctrlMs > 0.0
+			? execWeight * ctrlMs
+			: execWeight * workers * latencySec * toMs;
+		Assert.assertEquals("A calibrated local-to-FED control value is already per logical dispatch;"
+			+ " it must not be multiplied by worker fanout and then charged again as latency",
+			expected, totalControlCost, 1e-9);
+	}
+
+	@Test
+	public void testElementwiseTernaryFederatedComputeUsesUnscaledFloor() {
+		TestMatrixHop left = new TestMatrixHop("ternaryLeft", 2100, 2100,
+			32 * 1024 * 1024, 32 * 1024 * 1024);
+		TestMatrixHop right = new TestMatrixHop("ternaryRight", 2100, 2100,
+			32 * 1024 * 1024, 32 * 1024 * 1024);
+		LiteralOp scalar = new LiteralOp(1.00002);
+		TernaryOp minusMult = new TernaryOp("minusMult", DataType.MATRIX, ValueType.FP64,
+			OpOp3.MINUS_MULT, left, scalar, right);
+		minusMult.setDim1(2100);
+		minusMult.setDim2(2100);
+		minusMult.setNnz(-1);
+
+		double baseSelfCost = 100.0;
+		double fedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+			minusMult, baseSelfCost, 4, false);
+		double controlFloor = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+			minusMult, FType.ROW, 1.0, 4, false);
+
+		Assert.assertEquals("Elementwise ternary FED compute is a per-worker cell-op stage and must not"
+			+ " receive generic linear worker speedup",
+			baseSelfCost, fedComputeCost, 0.0);
+		Assert.assertTrue("Elementwise ternary FED instructions should carry a positive control/latency floor",
+			controlFloor > 0.0);
+	}
+
+	@Test
+	public void testIndexingControlDominatedCostAddsCalibratedWorkerFanout() throws Exception {
+		TestMatrixHop input = new TestMatrixHop("idxInput", 50000, 2100,
+			16 * 1024 * 1024, 16 * 1024 * 1024);
+		IndexingOp slice = createUnknownDimIndexingHop("rightIndex",
+			input, new LiteralOp(50000), new LiteralOp(2100), false, false, 1024 * 1024);
+
+		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
+		double latencySec = getFederatedCostModelConstant("MBS_NETWORK_LATENCY");
+		double toMs = getFederatedCostModelConstant("TO_MS");
+		double execWeight = 7.0;
+		int workers = 4;
+
+		double controlDominatedTopup = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+			slice, FType.ROW, execWeight, workers, false);
+		double expected = ctrlMs > 0.0
+			? execWeight * (workers - 1) * ctrlMs
+			: execWeight * workers * latencySec * toMs;
+
+		Assert.assertEquals("Native FED indexing dispatches the slice request to every participating worker;"
+			+ " calibrated coordination covers one logical dispatch, so indexing pays the remaining fanout",
+			expected, controlDominatedTopup, 1e-9);
 	}
 
 	@Test

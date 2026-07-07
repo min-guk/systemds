@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.sysds.common.Types;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
@@ -163,6 +164,9 @@ public final class OracleUtils {
 			Map<Long, List<Hop>> rewireTable, int numWorkers) {
 		if (logicalFType == null)
 			return null;
+		FType aggBinarySharedAxis = preferAggBinarySharedDimensionFType(hop, rewireTable, numWorkers);
+		if (aggBinarySharedAxis != null)
+			return aggBinarySharedAxis;
 		if (FederatedPlannerUtils.isScalarLikeMatrix(hop))
 			return FType.BROADCAST;
 		if (logicalFType == FType.BROADCAST)
@@ -184,6 +188,75 @@ public final class OracleUtils {
 				return FType.BROADCAST;
 		}
 		return logicalFType;
+	}
+
+	private static FType preferAggBinarySharedDimensionFType(Hop hop,
+			Map<Long, List<Hop>> rewireTable, int numWorkers) {
+		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
+			return null;
+		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
+		if (consumerRefs == null || consumerRefs.isEmpty())
+			return null;
+		long targetId = hop.getHopID();
+		for (ConsumerRef ref : consumerRefs) {
+			if (ref == null || !(ref.consumer instanceof AggBinaryOp))
+				continue;
+			AggBinaryOp agg = (AggBinaryOp) ref.consumer;
+			if (!agg.isMatrixMultiply())
+				continue;
+			List<Hop> inputs = agg.getInput();
+			if (inputs == null || inputs.size() < 2)
+				continue;
+			long proxyId = ref.inputHop != null ? ref.inputHop.getHopID() : -1;
+			int targetIndex = findConsumerInputIndex(inputs, targetId, proxyId);
+			if (targetIndex < 0 || targetIndex > 1)
+				continue;
+			Hop other = inputs.get(targetIndex == 0 ? 1 : 0);
+			FType otherType = inferKnownFederatedAxis(other);
+			FType preferred = null;
+			long preferredAxisLen = -1;
+			if (targetIndex == 0 && otherType == FType.ROW
+					&& dimensionsMatch(hop.getDim2(), other != null ? other.getDim1() : -1)) {
+				preferred = FType.COL;
+				preferredAxisLen = hop.getDim2();
+			}
+			else if (targetIndex == 1 && otherType == FType.COL
+					&& dimensionsMatch(hop.getDim1(), other != null ? other.getDim2() : -1)) {
+				preferred = FType.ROW;
+				preferredAxisLen = hop.getDim1();
+			}
+			if (preferred != null) {
+				if (numWorkers > 1 && preferredAxisLen > 0 && preferredAxisLen < numWorkers)
+					return FType.BROADCAST;
+				return preferred;
+			}
+		}
+		return null;
+	}
+
+	private static int findConsumerInputIndex(List<Hop> inputs, long targetId, long proxyId) {
+		for (int i = 0; i < inputs.size(); i++) {
+			Hop input = inputs.get(i);
+			if (input == null)
+				continue;
+			long inputId = input.getHopID();
+			if (inputId == targetId || (proxyId >= 0 && inputId == proxyId))
+				return i;
+		}
+		return -1;
+	}
+
+	private static FType inferKnownFederatedAxis(Hop hop) {
+		FType axis = inferFedInitType(hop);
+		if (axis == null && hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
+			axis = FederatedPlannerUtils.deriveFedInitFType((DataOp) hop);
+		}
+		return axis;
+	}
+
+	private static boolean dimensionsMatch(long left, long right) {
+		return left > 0 && right > 0 && left == right;
 	}
 
 	public static FType inferFallbackFType(Hop hop, List<FType> alignedInputFTypes,
