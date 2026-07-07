@@ -250,13 +250,10 @@ public class FederatedPlanMinSTGraph {
 					* FederatedCostModel.computeFedCoordinationCost(numOfWorkers);
 		}
 		fedOverhead = FederatedCostModel.adjustFedCoordinationCost(hop, vertex.getDataType(), fedOverhead);
-			// DP parity: conservatively model FED compute scaling for elementwise BinaryOps.
-			// For many small elementwise operations, real-world speedups are far from linear in
-			// the number of workers due to per-site overheads and representation effects.
-			// DP therefore avoids dividing BinaryOp compute cost by numWorkers; keep MinST aligned.
-			// Additional DP parity: If all matrix inputs are BROADCAST (fully replicated),
-			// runtime executes the operation redundantly on every worker; do not assume
-			// any compute speedup from worker parallelism in this case.
+			// DP parity: use the shared runtime-stage predicate for FED compute scaling.
+			// Binary/Nary cell ops, slicing, transpose, and fully broadcast-only inputs are
+			// not arithmetic-heavy partition-preserving compute in practice, so the static
+			// model must not grant them a blanket linear worker speedup.
 			boolean hasMatrixInputForFedCompute = false;
 			boolean hasNonBroadcastMatrixInputForFedCompute = false;
 			if (hop != null && hop.getInput() != null) {
@@ -272,29 +269,43 @@ public class FederatedPlanMinSTGraph {
 					}
 				}
 			}
-			boolean broadcastOnlyFedCompute = hasMatrixInputForFedCompute
-					&& !hasNonBroadcastMatrixInputForFedCompute;
-			double fedComputeCost = (vertex.getHopRef() instanceof BinaryOp || broadcastOnlyFedCompute)
-					? cpCost
-					: cpCost / Math.max(1, numOfWorkers);
+				boolean broadcastOnlyFedCompute = hasMatrixInputForFedCompute
+						&& !hasNonBroadcastMatrixInputForFedCompute;
+				double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+						vertex.getHopRef(), cpCost, numOfWorkers, broadcastOnlyFedCompute);
+				double fedComputeCost = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+						vertex.getHopRef(), vertex.getDataType(), defaultFedComputeCost);
+				fedComputeCost = FederatedCostModel.computeNativeFederatedIndexingCost(
+						vertex.getHopRef(), vertex.getDataType(), fedComputeCost);
+				double fedInstructionLatencyCost = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+						vertex.getHopRef(), vertex.getDataType(), vertex.getOpWeight(),
+						numOfWorkers, broadcastOnlyFedCompute);
+			double fedInputPreparationCost = vertex.getFedInputPreparationCostWithWeight();
 			double fedCost = fedComputeCost + fedOverhead
+					+ fedInstructionLatencyCost
+					+ fedInputPreparationCost
 					+ FederatedCostModel.computeSingleWorkerFedExecPenalty(
 							hop, vertex.getOpWeight(), numOfWorkers);
 
-		if (!acL && !acF)
-			cpCost = HARD_INF;
-		if (!afL && !afF)
-			fedCost = HARD_INF;
+			// Capability legality must dominate ordinary hard-ish conversion penalties.
+			// Some graph edges already include HARD_INF plus finite network cost; using the
+			// stronger HARD_CONSTRAINT tier for impossible CP/FED execution sides prevents
+			// max-flow ties from selecting placements that ExecPlacementCaps disallows.
+			if (!acL && !acF)
+				cpCost = HARD_CONSTRAINT;
+			if (!afL && !afF)
+				fedCost = HARD_CONSTRAINT;
 
 		addCap(leafedSource, cId, cpCost);
 		addCap(cId, rootLocalSink, fedCost);
 
-		if (FederatedPlannerTrace.shouldTrace(vertex.getHopRef())) {
-			FederatedPlannerTrace.log(vertex.getHopRef(), "MinST-VertexCost", String.format(
-					"weights(op=%.6f, net=%.6f) unaryCP=%.6f unaryFED=%.6f caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s]",
-					vertex.getOpWeight(), vertex.getNetworkWeight(), cpCost, fedCost,
-					caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT));
-		}
+			if (FederatedPlannerTrace.shouldTrace(vertex.getHopRef())) {
+				FederatedPlannerTrace.log(vertex.getHopRef(), "MinST-VertexCost", String.format(
+						"weights(op=%.6f, net=%.6f) unaryCP=%.6f unaryFED=%.6f fedCompute=%.6f fedInstructionLatency=%.6f fedInputPrep=%.6f caps=[CP_LOUT=%s,CP_FOUT=%s,FED_LOUT=%s,FED_FOUT=%s]",
+						vertex.getOpWeight(), vertex.getNetworkWeight(), cpCost, fedCost,
+						fedComputeCost, fedInstructionLatencyCost, fedInputPreparationCost,
+						caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT));
+			}
 	}
 
 	public void addExecPlacementResultEdge(Vertex vertex) {
@@ -325,23 +336,29 @@ public class FederatedPlanMinSTGraph {
 		// Hop-local placement conversion follows the hop's own execution frequency.
 		double uploadCost = vertex.getOpWeight() * vertex.getCpUploadCostWithoutWeight();
 		double downloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
-		// Download is paid by the intrinsic FED/LOUT combination in the C/P graph.
-		addCap(cId, pId, downloadCost);
 		if (vertex.isDerivedFedFout()) {
-			// Derived FED/FOUT: FOUT is produced via refed from a local intermediate, so upload depends only on placement.
+			// Derived FED/FOUT is not a native worker-side FOUT result. It is produced as
+			// FED/LOUT first and then refed from the local materialization. Therefore any
+			// FED execution of this vertex must pay the FED->local materialization cost,
+			// and any FOUT placement must pay the local->federated upload cost. Encoding
+			// the download only as C->P would charge FED/LOUT but miss FED/FOUT because
+			// C and P are both on the source side for FED/FOUT.
+			addCap(cId, rootLocalSink, downloadCost);
 			addCap(pId, rootLocalSink, uploadCost);
 			if (FederatedPlannerTrace.shouldTrace(hop)) {
 				FederatedPlannerTrace.log(hop, "MinST-ResultEdge", String.format(
-						"derivedFED_FOUT edge p->t upload=%.6f, c->p download=%.6f",
-						uploadCost, downloadCost));
+						"derivedFED_FOUT edge c->t materialize=%.6f, p->t upload=%.6f",
+						downloadCost, uploadCost));
 			}
 			return;
 		}
+		// Download is paid by the intrinsic native FED/LOUT combination in the C/P graph.
+		addCap(cId, pId, downloadCost);
 		addCap(pId, cId, uploadCost);
 		if (FederatedPlannerTrace.shouldTrace(hop)) {
 			FederatedPlannerTrace.log(hop, "MinST-ResultEdge", String.format(
 					"native edge p->c upload=%.6f, c->p download=%.6f",
-					uploadCost, downloadCost));
+						uploadCost, downloadCost));
 		}
 	}
 
@@ -413,8 +430,15 @@ public class FederatedPlanMinSTGraph {
 		}
 		double uploadWeighted = forwardingWeight * uploadCost;
 
-		// If a parent executes in CP, the child must have a local materialization (either natively or via download).
-		addRequiredLocalInputEdge(parentHopID, childHopID);
+		// If a parent executes in CP, the child usually must have a local materialization
+		// (either natively or via download).  A concrete-source TRANSIENTREAD is the
+		// exception: the TRead is an alias/materialization boundary over a FED source,
+		// so CP/LOUT on the alias must be costed by the TRead's own shared download
+		// edge, not by forcing the underlying FEDERATED source itself to become local.
+		boolean skipRequiredLocalInputEdge =
+				shouldUseAliasMaterializationForLocalTransientRead(parentVertex, childVertex);
+		if (!skipRequiredLocalInputEdge)
+			addRequiredLocalInputEdge(parentHopID, childHopID);
 		// Cost-model policy: matrix inputs can require local->federated boundary transfer
 		// whenever the parent executes FED, regardless of OPTIONAL/REQUIRED classification.
 		// Upload hints are still used by rewire/materialization policy, but they no longer
@@ -461,6 +485,25 @@ public class FederatedPlanMinSTGraph {
 					parentHopID, childHopID, requiresFederatedInput, forwardingWeight,
 					childVertex.getCpUploadCostWithoutWeight(), forwardingPenalty, uploadWeighted, uploadConversionType));
 		}
+	}
+
+	private boolean shouldUseAliasMaterializationForLocalTransientRead(Vertex parentVertex, Vertex childVertex) {
+		if (parentVertex == null || childVertex == null)
+			return false;
+		if (!parentVertex.isStableFederatedInputRead())
+			return false;
+		Hop parentHop = parentVertex.getHopRef();
+		if (!(parentHop instanceof DataOp)
+				|| ((DataOp) parentHop).getOp() != Types.OpOpData.TRANSIENTREAD)
+			return false;
+		Hop childHop = childVertex.getHopRef();
+		if (!(childHop instanceof DataOp))
+			return false;
+		DataOp childDataOp = (DataOp) childHop;
+		if (childDataOp.getOp() == Types.OpOpData.FEDERATED)
+			return true;
+		return childDataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+				&& childVertex.isStableFederatedInputRead();
 	}
 
 	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
@@ -679,7 +722,8 @@ public class FederatedPlanMinSTGraph {
 		if (dataOp.getOp() != Types.OpOpData.TRANSIENTREAD)
 			return false;
 		String name = dataOp.getName();
-		return name != null && FederatedPlannerUtils.isFedInitVar(name);
+		return vertex.isStableFederatedInputRead()
+			|| (name != null && FederatedPlannerUtils.isFedInitVar(name));
 	}
 
 	private double computeExplicitTransientReadFamilyLocalMaterializationCost(Vertex vertex, double baseDownload) {
@@ -1640,11 +1684,17 @@ public class FederatedPlanMinSTGraph {
 				}
 			}
 		}
-		boolean broadcastOnlyFedCompute = hasMatrixInputForFedCompute && !hasNonBroadcastMatrixInputForFedCompute;
-		double fedComputeCost = (hop instanceof BinaryOp || broadcastOnlyFedCompute)
-				? cpCost
-				: cpCost / Math.max(1, numOfWorkers);
+			boolean broadcastOnlyFedCompute = hasMatrixInputForFedCompute && !hasNonBroadcastMatrixInputForFedCompute;
+			double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
+					hop, cpCost, numOfWorkers, broadcastOnlyFedCompute);
+			double fedComputeCost = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+					hop, vertex.getDataType(), defaultFedComputeCost);
+			fedComputeCost = FederatedCostModel.computeNativeFederatedIndexingCost(
+					hop, vertex.getDataType(), fedComputeCost);
+			double fedInstructionLatencyCost = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+					hop, vertex.getDataType(), vertex.getOpWeight(), numOfWorkers, broadcastOnlyFedCompute);
 		return fedComputeCost + fedOverhead
+				+ fedInstructionLatencyCost
 				+ FederatedCostModel.computeSingleWorkerFedExecPenalty(
 						hop, vertex.getOpWeight(), numOfWorkers);
 	}
@@ -1971,7 +2021,9 @@ public class FederatedPlanMinSTGraph {
 		private double uploadCostWithoutWeight_;
 		private double cpUploadCostWithoutWeight_;
 		private double downloadCostWithoutWeight_;
+		private double fedInputPreparationCostWithWeight_;
 		private double sourceOutputMemEstimateOverride_ = -1.0;
+		private boolean stableFederatedInputRead_ = false;
 
 		private double opWeight; // Weight used to calculate cost based on hop execution frequency
 		private double networkWeight; // Weight used to calculate cost based on hop execution frequency
@@ -2040,8 +2092,16 @@ public class FederatedPlanMinSTGraph {
 			return downloadCostWithoutWeight_;
 		}
 
+		public double getFedInputPreparationCostWithWeight() {
+			return fedInputPreparationCostWithWeight_;
+		}
+
 		public double getSourceOutputMemEstimateOverride() {
 			return sourceOutputMemEstimateOverride_;
+		}
+
+		public boolean isStableFederatedInputRead() {
+			return stableFederatedInputRead_;
 		}
 
 		public double getOpWeight() {
@@ -2054,6 +2114,10 @@ public class FederatedPlanMinSTGraph {
 
 		public void setSourceOutputMemEstimateOverride(double sourceOutputMemEstimateOverride) {
 			sourceOutputMemEstimateOverride_ = sourceOutputMemEstimateOverride;
+		}
+
+		public void setStableFederatedInputRead(boolean stableFederatedInputRead) {
+			stableFederatedInputRead_ = stableFederatedInputRead;
 		}
 
 		public List<Pair<Long, Double>> getLoopContext() {
@@ -2080,6 +2144,13 @@ public class FederatedPlanMinSTGraph {
 
 		public void setCpUploadCostWithoutWeight(double cpUploadCostWithoutWeight) {
 			this.cpUploadCostWithoutWeight_ = cpUploadCostWithoutWeight;
+		}
+
+		public void setFedInputPreparationCostWithWeight(double fedInputPreparationCostWithWeight) {
+			this.fedInputPreparationCostWithWeight_ =
+				Double.isFinite(fedInputPreparationCostWithWeight) && fedInputPreparationCostWithWeight > 0.0
+					? fedInputPreparationCostWithWeight
+					: 0.0;
 		}
 
 		public void setTransientWriteHopId(Long transientWriteHopId) {

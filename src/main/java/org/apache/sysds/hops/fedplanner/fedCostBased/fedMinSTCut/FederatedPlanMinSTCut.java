@@ -90,7 +90,7 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 public class FederatedPlanMinSTCut extends AFederatedPlanner {
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
-		FederatedPlannerUtils.clearFedInitVars();
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		Map<Long, List<Hop>> rewireTable = new HashMap<>();
 		Set<Hop> progRootHopSet = new HashSet<>();
 		Set<Long> unRefTwriteSet = new HashSet<>();

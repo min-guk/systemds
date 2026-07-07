@@ -311,7 +311,7 @@ public class FederatedPlanMinSTCostEstimator {
 				: -1.0);
 
 		vertex.setNumParents(estimateNumParents(hop, rewireTable));
-		computeVertexCost(vertex, graph.getNumOfWorkers());
+		computeVertexCost(vertex, graph.getNumOfWorkers(), graph);
 
 		ExecPlacementCaps caps = vertex.getCaps();
 		boolean acL = caps.allowCP_LOUT;
@@ -434,6 +434,10 @@ public class FederatedPlanMinSTCostEstimator {
 	}
 
 	public static void computeVertexCost(Vertex vertex, int numOfWorkers) {
+		computeVertexCost(vertex, numOfWorkers, null);
+	}
+
+	public static void computeVertexCost(Vertex vertex, int numOfWorkers, FederatedPlanMinSTGraph graph) {
 		Hop hop = vertex.getHopRef();
 		double opCostWithWeight = 0;
 		double uploadCostWithoutWeight = 0;
@@ -472,29 +476,64 @@ public class FederatedPlanMinSTCostEstimator {
 			} else {
 				double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
 				opCostWithWeight = vertex.getOpWeight() * opCost;
-					uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-							uploadMemEstimate, vertex.getDataType(), numOfWorkers);
-					cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
-							uploadMemEstimate, cpFoutType, numOfWorkers);
+				uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+						uploadMemEstimate, vertex.getDataType(), numOfWorkers);
+				cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
+						uploadMemEstimate, cpFoutType, numOfWorkers);
 				downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
 						uploadMemEstimate);
 			}
 			vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
 			vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
+			vertex.setFedInputPreparationCostWithWeight(0.0);
 			return;
 		}
 
-		double opCost = FederatedCostModel.computeOpCostWithFallback(hop);
+		double opCost = FederatedCostModel.computeLocalIndexingCostWithFallback(
+				hop, FederatedCostModel.computeOpCostWithFallback(hop));
 		opCostWithWeight = vertex.getOpWeight() * opCost;
 		uploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
 				uploadMemEstimate, vertex.getDataType(), numOfWorkers);
 		cpUploadCostWithoutWeight = FederatedCostModel.computeUploadNetworkCost(
 				uploadMemEstimate, cpFoutType, numOfWorkers);
-		downloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(
-				uploadMemEstimate);
+		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
+				FederatedCostModel.computeMixedFedLocalCost(
+						hop, collectVertexInputHops(hop),
+						collectVertexInputFTypes(hop, graph), vertex.getDataType(),
+						opCost, outputMemEstimate, numOfWorkers);
+		double genericDownloadCostWithoutWeight = FederatedCostModel.computeDownloadNetworkCost(uploadMemEstimate);
+		double nativeAggUnaryDownloadCostWithoutWeight =
+				FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
+						hop, vertex.getDataType(), outputMemEstimate, numOfWorkers,
+						genericDownloadCostWithoutWeight);
+		downloadCostWithoutWeight = mixedFedLocalCost.hasCoordinatorPhase()
+				? mixedFedLocalCost.getCoordinatorPhaseCost()
+				: nativeAggUnaryDownloadCostWithoutWeight;
+		double fedInputPreparationCostWithWeight =
+				vertex.getOpWeight() * mixedFedLocalCost.getInputPreparationCost();
 
 		vertex.setCost(opCostWithWeight, uploadCostWithoutWeight, downloadCostWithoutWeight);
 		vertex.setCpUploadCostWithoutWeight(cpUploadCostWithoutWeight);
+		vertex.setFedInputPreparationCostWithWeight(fedInputPreparationCostWithWeight);
+	}
+
+	private static List<Hop> collectVertexInputHops(Hop hop) {
+		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
+			return Collections.emptyList();
+		return new ArrayList<>(hop.getInput());
+	}
+
+	private static List<FType> collectVertexInputFTypes(Hop hop, FederatedPlanMinSTGraph graph) {
+		if (hop == null || hop.getInput() == null || hop.getInput().isEmpty())
+			return Collections.emptyList();
+		List<FType> inputFTypes = new ArrayList<>(hop.getInput().size());
+		for (Hop input : hop.getInput()) {
+			Vertex inputVertex = (graph != null && input != null)
+					? graph.getVertex(input.getHopID())
+					: null;
+			inputFTypes.add(inputVertex != null ? inputVertex.getDataType() : null);
+		}
+		return inputFTypes;
 	}
 
 	private static int estimateNumParents(Hop hop, Map<Long, List<Hop>> rewireTable) {

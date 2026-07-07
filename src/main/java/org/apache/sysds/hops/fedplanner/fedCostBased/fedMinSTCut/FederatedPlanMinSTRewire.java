@@ -438,7 +438,7 @@ public class FederatedPlanMinSTRewire {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
-			double loopWeight = RewireConstants.estimateWhileLoopWeight(wsb);
+			double loopWeight = RewireConstants.estimateWhileLoopWeight(wsb, newOuterTransTableList);
 			double iter1Factor = Math.max(loopWeight - 1.0, 0.0);
 			double outerWeight = networkWeight;
 			LoopAnalysisContext loopCtx = null;
@@ -951,15 +951,9 @@ public class FederatedPlanMinSTRewire {
 					boolean fTypeMismatch = false;
 					ExecPlacementCaps resolvedCaps = null;
 					Long transientWriteHopId = null;
-					boolean hasFedInitChild = false;
-					boolean hasLocalSource = false;
 					for (Hop childHop : filteredChildHops) {
 						if (childHop == null) {
 							continue;
-						}
-						if (childHop instanceof DataOp
-								&& ((DataOp) childHop).getOp() == Types.OpOpData.FEDERATED) {
-							hasFedInitChild = true;
 						}
 						// Propagate FType/caps from all mapped sources (not only TW).
 						// This is critical for function arguments where the mapped source can be a FEDERATED
@@ -976,8 +970,6 @@ public class FederatedPlanMinSTRewire {
 						Vertex childVertex = graph.getVertex(childHop.getHopID());
 						if (childVertex != null && childVertex.getCaps() != null) {
 							ExecPlacementCaps childCaps = childVertex.getCaps();
-							if (childCaps.allowCP_LOUT || childCaps.allowFED_LOUT)
-								hasLocalSource = true;
 							if (resolvedCaps == null) {
 								resolvedCaps = new ExecPlacementCaps(childCaps);
 							} else {
@@ -1013,6 +1005,8 @@ public class FederatedPlanMinSTRewire {
 						}
 						resolvedFType = inferred;
 					}
+					boolean stableConcreteTransientReadSource =
+							hasStableConcreteFederatedSourceForTransientRead((DataOp) hop, filteredChildHops);
 					boolean hasConcreteTransientReadSource = FederatedPlannerUtils
 							.hasConcreteFederatedSourceForTransientRead((DataOp) hop, filteredChildHops);
 					if (!hasConcreteTransientReadSource
@@ -1029,21 +1023,24 @@ public class FederatedPlanMinSTRewire {
 						OpCaps policyCaps = OpCaps.allow(ExecType.FED, FederatedOutput.FOUT).build();
 						caps = buildExecPlacementCaps(hop, privacy, fType, policyCaps, fTypeMap);
 					}
+					if (caps != null && hasConcreteTransientReadSource && privacy != Privacy.PRIVATE) {
+						// A TRANSIENTREAD backed by a concrete federated source is an alias over that
+						// source, not the source itself.  The planner must compare both legal states:
+						// keeping the alias federated (FED/FOUT) and locally materializing it on the
+						// coordinator (CP/LOUT) with the graph's shared download/materialization cost.
+						// Do not open the local materialization competitor for strict PRIVATE inputs.
+						caps.allowCP_LOUT = true;
+					}
 					if (caps != null && !hasConcreteTransientReadSource) {
 						caps.allowFED_LOUT = false;
 						caps.allowFED_FOUT = false;
 					}
-					if (hasFedInitChild && !hasLocalSource && caps != null) {
-						// A TRead that is directly backed by a FED init should not assume a local value
-						// without an explicit download/copy path.
-						caps.allowCP_LOUT = false;
-					}
-
 					privacyConstraintMap.put(hop.getHopID(), privacy);
 					fTypeMap.put(hop.getHopID(), fType);
 
 					Vertex v = new Vertex(hop, privacy, fType, caps);
 					v.setTransientWriteHopId(transientWriteHopId);
+					v.setStableFederatedInputRead(stableConcreteTransientReadSource);
 					return v;
 				} else {
 					// 5) 기타 DataOp (PREAD, PWRITE 등): privacy만, FType은 Oracle에 맡김
@@ -1389,17 +1386,18 @@ public class FederatedPlanMinSTRewire {
 
 	private static boolean shouldEnableFederatedAlternativeFallback(Hop hop,
 			ExecPlacementCaps federatedAlternativeCaps, FType cpFoutType, int numWorkersEstimate) {
-		// Keep indexing chains on strict feasibility: planner-only FED fallback here tends to
-		// create unnecessary CP->FOUT/rightIndex materialization paths.
-		if (hop instanceof IndexingOp)
-			return false;
 		if (federatedAlternativeCaps == null)
 			return false;
 		if (!(federatedAlternativeCaps.allowFED_LOUT || federatedAlternativeCaps.allowFED_FOUT))
 			return false;
 		// Candidate expansion should be driven by feasibility (Oracle + FedInput checks) and then
-		// evaluated by the shared cost model, rather than applying planner-specific WAN/worker
-		// thresholds that can over-prune FED alternatives and force expensive CP downloads.
+		// evaluated by the shared cost model.  The federated alternative is produced only after
+		// deriveFederatedAlternativeDecision re-runs the Oracle with promoted input FTypes and
+		// verifies FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(...), so keeping it
+		// open is a capability/state correction, not a workload/worker/hop-specific override.
+		// In particular, rightIndex may have a legal native FED/FOUT path when its required
+		// child is already planned as ROW/COL FOUT; closing all IndexingOp alternatives here
+		// prevents MinST from comparing that path against local materialization costs.
 		return true;
 	}
 
@@ -1566,6 +1564,25 @@ public class FederatedPlanMinSTRewire {
 			Hop writeInput = sourceHop.getInput().get(0);
 			FType writeInputFType = (fTypeMap != null) ? fTypeMap.get(writeInput.getHopID()) : null;
 			if (writeInputFType != null)
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean hasStableConcreteFederatedSourceForTransientRead(DataOp transientRead,
+			List<Hop> sourceHops) {
+		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD)
+			return false;
+		if (sourceHops == null || sourceHops.isEmpty())
+			return FederatedPlannerUtils.hasConcreteFederatedSourceVar(transientRead.getName());
+		for (Hop sourceHop : sourceHops) {
+			if (!(sourceHop instanceof DataOp))
+				continue;
+			DataOp sourceDataOp = (DataOp) sourceHop;
+			if (sourceDataOp.getOp() == Types.OpOpData.FEDERATED)
+				return true;
+			if (sourceDataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+					&& FederatedPlannerUtils.hasConcreteFederatedSourceVar(sourceDataOp.getName()))
 				return true;
 		}
 		return false;
