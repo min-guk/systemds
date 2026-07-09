@@ -72,6 +72,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
@@ -141,7 +142,7 @@ import org.apache.sysds.utils.Explain.ExplainType;
  */
 public class Recompiler {
 	protected static final Log LOG =  LogFactory.getLog(Recompiler.class.getName());
-	private static final boolean LOG_RECOMPILE_NEW_HOPS = true;
+	private static final boolean LOG_RECOMPILE_NEW_HOPS = FederatedPlannerTrace.isEnabled();
 
 	//Max threshold for in-memory reblock of text input [in bytes]
 	//reason: single-threaded text read at 20MB/s, 1GB input -> 50s (should exploit parallelism)

@@ -548,6 +548,15 @@ public class FederatedPlannerUtils {
 		String op = hop.getOpString();
 		if (op == null || op.isEmpty())
 			return null;
+		// Recompile-state signatures are only safe when they carry a real DML
+		// source anchor. Some rewrite-generated hops (notably runtime-created
+		// q(wdivmm) nodes) have the synthetic 0:0:0:0 position. Treating that
+		// position as stable lets one planned decision leak into unrelated
+		// runtime-created hops with the same class/op. HopID and deep-copy restore
+		// still preserve exact cloned planner decisions; only source-position
+		// fallback is disabled for synthetic anchors.
+		if (hop.getBeginLine() <= 0)
+			return null;
 		return hop.getClass().getName() + "|" + op + "|" + hop.getBeginLine() + ":"
 			+ hop.getBeginColumn() + ":" + hop.getEndLine() + ":" + hop.getEndColumn();
 	}

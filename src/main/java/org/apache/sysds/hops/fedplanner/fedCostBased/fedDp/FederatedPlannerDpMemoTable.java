@@ -501,7 +501,7 @@ public class FederatedPlannerDpMemoTable {
 	 * This class contains cost information and references to the associated plans.
 	 * It uses HopCommon to store common properties and costs related to the Hop.
 	 */
-	public static class FedPlanVariants {
+		public static class FedPlanVariants {
 		/**
 		 * Maximum number of plan variants to retain per output type (LOUT/FOUT) after pruning.
 		 *
@@ -517,6 +517,7 @@ public class FederatedPlannerDpMemoTable {
 		 * at least one CP and one FED variant remain available for conflict resolution.</p>
 		 */
 		private static final int MAX_PRUNED_VARIANTS_PER_OUTPUT = 8;
+		private static final int MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS = 4;
 
 		protected HopCommon hopCommon; // Common properties and costs for the Hop
 		private final FederatedOutput fedOutType; // Output type (FOUT/LOUT)
@@ -572,6 +573,12 @@ public class FederatedPlannerDpMemoTable {
 			}
 
 			// Keep the top-K cheapest variants, plus ensure one CP and one FED remain.
+			// Also retain a small bounded set of CP variants with the broadest FED/FOUT
+			// child signatures. These variants can look expensive before global output
+			// decisions are known because their FOUT->CP materialization edges are charged
+			// locally; selected-plan rewrite may later prove that the same stable
+			// federated-origin value was already materialized by another CP consumer.
+			// Dropping these variants here makes that cost/state correction impossible.
 			LinkedHashSet<FedPlan> kept = new LinkedHashSet<>();
 			int cap = Math.max(2, MAX_PRUNED_VARIANTS_PER_OUTPUT);
 			for (FedPlan plan : _fedPlanVariants) {
@@ -583,11 +590,98 @@ public class FederatedPlannerDpMemoTable {
 				kept.add(bestCP);
 			if (bestFED != null)
 				kept.add(bestFED);
+			for (FedPlan plan : selectMaterializationSensitiveCpVariants(_fedPlanVariants))
+				kept.add(plan);
 
 			_fedPlanVariants.clear();
 			_fedPlanVariants.addAll(kept);
 			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
 			return true;
+		}
+
+		private static List<FedPlan> selectMaterializationSensitiveCpVariants(List<FedPlan> variants) {
+			if (variants == null || variants.isEmpty())
+				return Collections.emptyList();
+			List<FedPlan> candidates = new ArrayList<>();
+			Set<String> seenSignatures = new LinkedHashSet<>();
+			for (FedPlan plan : variants) {
+				if (plan == null || plan.getExecType() != ExecType.CP)
+					continue;
+				int foutChildCount = countFoutChildren(plan);
+				if (foutChildCount <= 0)
+					continue;
+				String signature = buildFoutChildSignature(plan);
+				if (!seenSignatures.add(signature))
+					continue;
+				candidates.add(plan);
+			}
+			if (candidates.isEmpty())
+				return Collections.emptyList();
+			candidates.sort((a, b) -> {
+				int cmp = Double.compare(estimateFoutChildMemEstimate(b), estimateFoutChildMemEstimate(a));
+				if (cmp != 0)
+					return cmp;
+				cmp = Integer.compare(countFoutChildren(b), countFoutChildren(a));
+				if (cmp != 0)
+					return cmp;
+				return Double.compare(a.getCumulativeCost(), b.getCumulativeCost());
+			});
+			if (candidates.size() <= MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS)
+				return candidates;
+			return new ArrayList<>(candidates.subList(0, MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS));
+		}
+
+		private static int countFoutChildren(FedPlan plan) {
+			if (plan == null || plan.getChildFedPlans() == null)
+				return 0;
+			int count = 0;
+			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+				if (childEdge != null && childEdge.getValue() == FederatedOutput.FOUT)
+					count++;
+			}
+			return count;
+		}
+
+		private static double estimateFoutChildMemEstimate(FedPlan plan) {
+			if (plan == null || plan.getChildFedPlans() == null)
+				return 0.0;
+			double total = 0.0;
+			Hop parentHop = plan.getHopRef();
+			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+				if (childEdge == null || childEdge.getValue() != FederatedOutput.FOUT)
+					continue;
+				Hop childHop = findInputByHopID(parentHop, childEdge.getKey());
+				if (childHop == null)
+					continue;
+				double mem = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
+				if (Double.isFinite(mem) && mem > 0.0)
+					total += mem;
+			}
+			return total;
+		}
+
+		private static Hop findInputByHopID(Hop parentHop, long childHopID) {
+			if (parentHop == null || parentHop.getInput() == null)
+				return null;
+			for (Hop input : parentHop.getInput()) {
+				if (input != null && input.getHopID() == childHopID)
+					return input;
+			}
+			return null;
+		}
+
+		private static String buildFoutChildSignature(FedPlan plan) {
+			if (plan == null || plan.getChildFedPlans() == null)
+				return "";
+			StringBuilder sb = new StringBuilder();
+			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+				if (childEdge == null || childEdge.getValue() != FederatedOutput.FOUT)
+					continue;
+				if (sb.length() > 0)
+					sb.append(',');
+				sb.append(childEdge.getKey());
+			}
+			return sb.toString();
 		}
 	}
 

@@ -555,11 +555,17 @@ public final class FederatedCostModel {
 			return computeAggregateUnaryLocalAggregationCost("agg-unary-local-aggregation",
 				(AggUnaryOp) hop, logicalFType, outputMemEstimate, numWorkers, 0.0);
 		}
+		double wdivmmInputPreparationCost =
+			computeWdivmmInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
 		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType)) {
-			double inputPreparationCost =
-				computeWdivmmInputPreparationCost(hop, inputHops, inputFTypes, numWorkers);
 			return computePartialAggregationCost("wdivmm-local-aggregation",
-				hop, outputMemEstimate, numWorkers, inputPreparationCost, baseSelfCost);
+				hop, outputMemEstimate, numWorkers, wdivmmInputPreparationCost, baseSelfCost);
+		}
+		if (wdivmmInputPreparationCost > 0.0) {
+			double outputStageCost =
+				computeWdivmmNativeOutputStageCost(hop, logicalFType, outputMemEstimate, numWorkers);
+			return new MixedFedLocalCost("wdivmm-input-preparation",
+				wdivmmInputPreparationCost + outputStageCost, 0.0, 0.0, baseSelfCost);
 		}
 		if (requiresFederatedAggBinaryRowLeftInputPreparation(hop, inputFTypes)) {
 			double inputPreparationCost =
@@ -646,8 +652,9 @@ public final class FederatedCostModel {
 		int fanIn = Math.max(1, numWorkers);
 		double partialDownloadCost = computeReplicatedWorkerResultDownloadCost(partialResultMem, fanIn);
 		double coordinatorAggregationCost = computeCoordinatorAggregationCost(hop, partialResultMem, fanIn);
+		double cleanupControlCost = computeLocalAggregationCleanupControlCost(fanIn);
 		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
-			coordinatorAggregationCost, federatedComputeFloor);
+			coordinatorAggregationCost + cleanupControlCost, federatedComputeFloor);
 	}
 
 	private static MixedFedLocalCost computeAggregateUnaryLocalAggregationCost(String label,
@@ -665,8 +672,9 @@ public final class FederatedCostModel {
 			aggregateUnary, logicalFType, partialResultMem, workers);
 		double coordinatorAggregationCost = computeAggregateUnaryCoordinatorAggregationCost(
 			aggregateUnary, partialResultMem, workers);
+		double cleanupControlCost = computeLocalAggregationCleanupControlCost(workers);
 		return new MixedFedLocalCost(label, inputPreparationCost, partialDownloadCost,
-			coordinatorAggregationCost, 0.0);
+			coordinatorAggregationCost + cleanupControlCost, 0.0);
 	}
 
 	private static double computeAggregateUnaryPartialResultDownloadCost(AggUnaryOp aggregateUnary,
@@ -708,6 +716,36 @@ public final class FederatedCostModel {
 			double outputMemEstimate, int numWorkers) {
 		return computeMixedFedLocalCost(hop, null, null, logicalFType, 0.0,
 			outputMemEstimate, numWorkers).getCoordinatorPhaseCost();
+	}
+
+	private static double computeWdivmmNativeOutputStageCost(Hop hop, FType logicalFType,
+			double outputMemEstimate, int numWorkers) {
+		if (!(hop instanceof QuaternaryOp))
+			return 0.0;
+		QuaternaryOp quaternaryOp = (QuaternaryOp) hop;
+		if (quaternaryOp.getOp() != OpOp4.WDIVMM)
+			return 0.0;
+		if (requiresFederatedWdivmmLocalAggregation(hop, logicalFType))
+			return 0.0;
+
+		double resultMem = outputMemEstimate > 0.0 ? outputMemEstimate : getEffectiveOutputMemEstimate(hop);
+		if (resultMem <= 0.0)
+			resultMem = getEffectiveUploadMemEstimate(hop);
+		if (resultMem <= 0.0)
+			return 0.0;
+
+		// Native QuaternaryWDivMMFEDInstruction produces a federated runtime object for
+		// BASIC/LEFT/RIGHT cases that do not take the explicit local-aggregation
+		// GET_VAR path.  When the DP plan later needs both a coordinator-local
+		// consumer and a federated continuation, runtime pays a real result
+		// materialization/refederation stage (observed as WDIVMM plus FED->FOUT
+		// materialization work), not just the worker compute request.  Model that
+		// stage from result size and federation topology instead of closing the legal
+		// FED candidate or keying on workloads/rows/hop ids.
+		FType resultType = logicalFType != null ? logicalFType : FType.FULL;
+		return computeDownloadNetworkCost(resultMem, resultType, numWorkers)
+			+ computeUploadNetworkCost(resultMem, resultType, numWorkers)
+			+ computeLocalToFedForwardingPenalty(resultType, numWorkers);
 	}
 
 	/**
@@ -901,6 +939,20 @@ public final class FederatedCostModel {
 		return baseCost + latencyPenaltyMs + controlPenaltyMs;
 	}
 
+	private static double computeLocalAggregationCleanupControlCost(int fanIn) {
+		int workers = Math.max(1, fanIn);
+		if (workers <= 1)
+			return 0.0;
+		// Local-aggregation FED instructions do not end at GET_VAR. Runtime also
+		// sends a cleanup request for the worker-side temporary output produced by the
+		// federated compute request (for example QuaternaryWDivMMFEDInstruction and
+		// AggregateBinaryFEDInstruction.aggregateLocally). The payload is negligible,
+		// but the request is a separate worker fan-out stage after the partial-result
+		// GET_VAR, so charge its control/latency cost explicitly instead of hiding it
+		// in the generic FED compute term or closing the legal FED candidate.
+		return computeLocalToFedForwardingPenalty(FType.BROADCAST, workers);
+	}
+
 	private static double computeCoordinatorAggregationCost(Hop hop, double partialResultMem, int fanIn) {
 		int workers = Math.max(1, fanIn);
 		if (workers <= 1)
@@ -987,6 +1039,11 @@ public final class FederatedCostModel {
 		double inputMemEstimate = getEffectiveInputMemEstimate(currentHop);
 		double outputMemEstimate = getEffectiveOutputMemEstimate(currentHop);
 		double computeCost = ComputeCost.getHOPComputeCost(currentHop);
+		if (currentHop instanceof QuaternaryOp
+				&& ((QuaternaryOp) currentHop).getOp() == OpOp4.WDIVMM) {
+			computeCost = Math.max(computeCost,
+				estimateWdivmmRankAwareComputeFloor((QuaternaryOp) currentHop));
+		}
 		if (isDmlFunctionOp(currentHop)) {
 			computeCost = Math.max(computeCost,
 				estimateDmlFunctionOpComputeFloor((FunctionOp) currentHop, inputMemEstimate, outputMemEstimate));
@@ -999,6 +1056,45 @@ public final class FederatedCostModel {
 		// 1) Computation and input access can overlap (take max)
 		// 2) Output access must wait for both (add)
 		return Math.max(computeTime, inputAccessCost) + outputAccessCost;
+	}
+
+	private static double estimateWdivmmRankAwareComputeFloor(QuaternaryOp hop) {
+		if (hop == null || hop.getOp() != OpOp4.WDIVMM || hop.getInput() == null
+				|| hop.getInput().isEmpty())
+			return 0.0;
+
+		Hop weights = hop.getInput().get(0);
+		double weightCells = estimateLogicalCellCount(weights, getEffectiveOutputMemEstimate(weights));
+		double rank = estimateWdivmmRank(hop);
+		if (weightCells <= 0.0 || rank <= 1.0)
+			return 0.0;
+
+		// Runtime WDivMM kernels do not only touch each weighted input cell once.  For
+		// BASIC/LEFT/RIGHT variants every active weight cell participates in a
+		// rank-width U/V factor interaction (dot product plus output contribution).
+		// The generic HOP compute model charges roughly a constant four flops per
+		// weighted cell, which is suitable only for rank=1 and underestimates ALS
+		// factor-update WDivMM by about the factor rank.  Keep this as a floor for the
+		// FedPlanner cost model instead of closing legal FED candidates.
+		return 4.0 * rank * weightCells;
+	}
+
+	private static double estimateWdivmmRank(QuaternaryOp hop) {
+		if (hop == null || hop.getInput() == null)
+			return 1.0;
+		List<Hop> inputs = hop.getInput();
+		if (inputs.size() > 1) {
+			long uRank = inputs.get(1).getDim2();
+			if (uRank > 0)
+				return uRank;
+		}
+		if (inputs.size() > 2) {
+			long vRank = inputs.get(2).getDim2();
+			if (vRank > 0)
+				return vRank;
+		}
+		long outputCols = hop.getDim2();
+		return outputCols > 0 ? outputCols : 1.0;
 	}
 
 	private static double getComputeFlopsPerSec(Hop hop) {
@@ -1757,10 +1853,12 @@ public final class FederatedCostModel {
 	}
 
 	public static double computeDownloadNetworkCost(double memSize, FType fType, int numWorkers) {
-		double baseCost = computeDownloadNetworkCost(memSize);
+		if (memSize <= 0)
+			return 0.0;
+		int fanIn = estimateDownloadFanIn(fType, numWorkers);
+		double baseCost = computeDownloadNetworkCost(estimateParallelDownloadPayload(memSize, fanIn));
 		if (baseCost <= 0.0)
 			return baseCost;
-		int fanIn = estimateDownloadFanIn(fType, numWorkers);
 		if (fanIn <= 1)
 			return baseCost;
 		double latencyPenaltyMs = (fanIn - 1) * MBS_NETWORK_LATENCY * TO_MS;
@@ -1828,6 +1926,21 @@ public final class FederatedCostModel {
 		if (fType == FType.FULL || fType == FType.BROADCAST)
 			return 1;
 		return workers;
+	}
+
+	private static double estimateParallelDownloadPayload(double totalMemSize, int fanIn) {
+		if (totalMemSize <= 0.0)
+			return 0.0;
+		if (fanIn <= 1)
+			return totalMemSize;
+		// ROW/COL/PART federated matrices are materialized by collecting disjoint
+		// partitions from multiple workers. The logical matrix size is the sum of
+		// those partitions, but the runtime issues the worker requests together; the
+		// wall-clock payload term is therefore bounded by the largest worker partition
+		// plus fan-in latency/control, not by serializing the full logical matrix
+		// through one link. This keeps CP materialization legal and costed instead of
+		// over-pricing it into an artificial FED/LOUT choice.
+		return totalMemSize / fanIn;
 	}
 
 

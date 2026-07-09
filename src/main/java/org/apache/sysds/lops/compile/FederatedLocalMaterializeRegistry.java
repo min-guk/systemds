@@ -73,10 +73,16 @@ public final class FederatedLocalMaterializeRegistry {
 	}
 
 	public static Map<Long, LocalMaterializeSpec> snapshot(long sbId) {
+		Map<Long, LocalMaterializeSpec> defaults = LOCAL_MATERIALIZE.get(-1L);
 		Map<Long, LocalMaterializeSpec> entries = LOCAL_MATERIALIZE.get(sbId);
-		if (entries == null || entries.isEmpty())
+		if ((defaults == null || defaults.isEmpty()) && (entries == null || entries.isEmpty()))
 			return Collections.emptyMap();
-		return Collections.unmodifiableMap(new HashMap<>(entries));
+		Map<Long, LocalMaterializeSpec> snapshot = new HashMap<>();
+		if (defaults != null)
+			snapshot.putAll(defaults);
+		if (entries != null)
+			snapshot.putAll(entries);
+		return Collections.unmodifiableMap(snapshot);
 	}
 
 	public static final class LocalMaterializeSpec {
