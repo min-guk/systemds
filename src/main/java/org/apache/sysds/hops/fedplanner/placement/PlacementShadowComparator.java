@@ -16,8 +16,8 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-	import java.util.Map;
-	import java.util.TreeMap;
+import java.util.Map;
+import java.util.TreeMap;
 
 /** Observational normalized comparison; it never selects or repairs a plan. */
 public final class PlacementShadowComparator {

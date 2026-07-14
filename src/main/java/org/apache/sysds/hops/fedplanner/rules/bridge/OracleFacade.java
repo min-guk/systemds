@@ -64,7 +64,9 @@ import org.apache.sysds.parser.DataExpression;
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
  */
 public final class OracleFacade {
-	public record DecisionEvidence(RulesApi.OpCaps caps, boolean shapeDependent) { }
+	public record DecisionEvidence(RulesApi.OpCaps caps, RulesApi.ShapeProof shapeProof) {
+		public boolean shapeDependent() { return !shapeProof.requiredFacts().isEmpty(); }
+	}
   private static final String ATTR_DIRECTION = "direction";
   private static final String ATTR_AGG_OP = "aggOp";
   private static final String ATTR_Q_TYPE = "q.type";
@@ -124,7 +126,7 @@ public final class OracleFacade {
     logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
     RulesApi.OpCaps caps = oracle.decide(sig, mapped, effectiveHint);
     logOracleResult(hop, caps);
-	return new DecisionEvidence(caps, effectiveHint.wasConsulted());
+	return new DecisionEvidence(caps, effectiveHint.proof());
   }
 
   public List<RulesApi.OpCaps> exploreAll(

@@ -58,8 +58,6 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 
 /** Finite mutation-free construction of the planner-neutral shadow graph. */
 public final class NeutralPlacementGraphBuilder {
-	private static final List<FType> INPUT_FTYPES = Collections.unmodifiableList(
-		Arrays.asList(FType.ROW, FType.COL, FType.FULL, FType.BROADCAST, FType.PART));
 	private final OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 
 	public List<String> selectedProjection(DMLProgram program) {
@@ -106,6 +104,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<String,List<ValueVersionKey>> definitions = new java.util.TreeMap<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
+		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
@@ -141,7 +140,9 @@ public final class NeutralPlacementGraphBuilder {
 					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
 				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
 			}
-			nodes.add(buildNode(hop, key, value, anchors));
+			Node node = buildNode(hop, key, value, anchors, inputDomains(hop, nodesByHop));
+			nodes.add(node);
+			nodesByHop.put(hop, node);
 		}
 		Set<Constraint> constraints = new java.util.TreeSet<>();
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
@@ -173,13 +174,14 @@ public final class NeutralPlacementGraphBuilder {
 		return PlacementGraphFingerprint.sha256(String.join("\n", rows));
 	}
 
-	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors) {
+	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
+		List<List<FType>> inputDomains) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
 		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 		legal.add(cp);
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
-		for(List<FType> inputs : inputCombinations(hop.getInput().size())) {
+		for(List<FType> inputs : inputCombinations(inputDomains)) {
 			OpCaps caps;
 			boolean shapeDependent;
 			try {
@@ -195,7 +197,8 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			FType outType = caps.foutFType().orElse(firstFType(inputs));
 			PlacementState state = new PlacementState(caps.exec(), caps.placement(), outType, shapeDependent);
-			String detail = caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
+			String detail = "inputs=" + inputEvidence(inputs) + "|proof=" + evidence.shapeProof()
+				+ '|' + caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
 			else if(transientAccess && !isLegalTransient(state))
@@ -203,7 +206,7 @@ public final class NeutralPlacementGraphBuilder {
 			else if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
-			else if(hasUnknownShape(hop) && state.shapeDependent())
+			else if(!evidence.shapeProof().missingRequiredFacts().isEmpty())
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNKNOWN_METADATA, detail));
 			else if(caps.exec() == ExecType.FED)
 				legal.add(state);
@@ -276,23 +279,52 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record InputUse(CompiledHopKey consumer, int position, String scope) { }
 
-	private static List<List<FType>> inputCombinations(int arity) {
-		if(arity == 0) return List.of(List.of());
+	private static List<List<FType>> inputDomains(Hop hop, Map<Hop,Node> nodesByHop) {
+		List<List<FType>> domains = new ArrayList<>();
+		for(Hop input : hop.getInput()) {
+			Set<FType> types = new LinkedHashSet<>();
+			Node predecessor = nodesByHop.get(input);
+			if(predecessor != null) {
+				predecessor.legalAlternatives().forEach(state -> { if(state.fType() != null) types.add(state.fType()); });
+				predecessor.exclusions().forEach(exclusion -> {
+					if(exclusion.state().fType() != null) types.add(exclusion.state().fType());
+				});
+			}
+			if(types.isEmpty()) domains.add(Collections.singletonList(null));
+			else {
+				List<FType> sorted = new ArrayList<>(types);
+				sorted.sort(java.util.Comparator.comparing(Enum::name));
+				domains.add(Collections.unmodifiableList(sorted));
+			}
+		}
+		return domains;
+	}
+
+	private static List<List<FType>> inputCombinations(List<List<FType>> domains) {
+		if(domains.isEmpty()) return List.of(List.of());
 		List<List<FType>> result = new ArrayList<>();
-		enumerateInputCombinations(arity, new ArrayList<>(), result);
+		enumerateInputCombinations(domains, new ArrayList<>(), result);
 		return result;
 	}
-	private static void enumerateInputCombinations(int arity, List<FType> prefix, List<List<FType>> result) {
-		if(prefix.size() == arity) { result.add(List.copyOf(prefix)); return; }
-		for(FType type : INPUT_FTYPES) {
+	private static void enumerateInputCombinations(List<List<FType>> domains, List<FType> prefix,
+		List<List<FType>> result) {
+		if(prefix.size() == domains.size()) {
+			result.add(Collections.unmodifiableList(new ArrayList<>(prefix)));
+			return;
+		}
+		for(FType type : domains.get(prefix.size())) {
 			prefix.add(type);
-			enumerateInputCombinations(arity, prefix, result);
+			enumerateInputCombinations(domains, prefix, result);
 			prefix.remove(prefix.size() - 1);
 		}
 	}
+	private static String inputEvidence(List<FType> inputs) {
+		List<String> evidence = new ArrayList<>();
+		for(int i = 0; i < inputs.size(); i++) evidence.add(i + ":" + String.valueOf(inputs.get(i)));
+		return String.join(",", evidence);
+	}
 
 	private static FType firstFType(List<FType> values) { return values.isEmpty() ? null : values.get(0); }
-	private static boolean hasUnknownShape(Hop h) { return h.getDim1() < 0 || h.getDim2() < 0; }
 	private static boolean requiresRecompileMetadata(Hop h) { return h.requiresRecompile(); }
 	private static boolean isLegalTransient(PlacementState s) {
 		return (s.execType() == ExecType.CP && s.output() == FederatedOutput.LOUT)
