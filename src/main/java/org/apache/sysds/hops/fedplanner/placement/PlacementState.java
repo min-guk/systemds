@@ -22,8 +22,8 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.Objects;
 
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.Hop.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
  * Planner-neutral execution and output-placement alternative.

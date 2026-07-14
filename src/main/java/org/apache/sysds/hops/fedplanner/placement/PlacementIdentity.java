@@ -47,7 +47,7 @@ public final class PlacementIdentity {
 		public ControlRegionKey {
 			programFingerprint = requireText(programFingerprint, "programFingerprint");
 			functionNamespace = requireText(functionNamespace, "functionNamespace");
-			regionPath = sortedStrings(regionPath, "regionPath");
+			regionPath = immutableStrings(regionPath, "regionPath");
 			callSitePath = requireText(callSitePath, "callSitePath");
 			recompileContext = requireText(recompileContext, "recompileContext");
 		}
@@ -242,6 +242,14 @@ public final class PlacementIdentity {
 		Collections.sort(copy);
 		if(hasDuplicates(copy))
 			throw new IllegalArgumentException(name + " contains duplicates");
+		return List.copyOf(copy);
+	}
+
+	private static List<String> immutableStrings(Collection<String> values, String name) {
+		Objects.requireNonNull(values, name);
+		List<String> copy = new ArrayList<>(values.size());
+		for(String value : values)
+			copy.add(requireText(value, name + " entry"));
 		return List.copyOf(copy);
 	}
 

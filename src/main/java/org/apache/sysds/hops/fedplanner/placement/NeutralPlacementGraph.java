@@ -262,6 +262,7 @@ public final class NeutralPlacementGraph {
 
 	private void validateReferences() {
 		Set<ValueVersionKey> valueVersions = new LinkedHashSet<>();
+		Set<RelocationActionKey> relocationKeys = new LinkedHashSet<>();
 		for(Node node : nodes)
 			valueVersions.add(node.valueVersion());
 		for(Constraint constraint : constraints) {
@@ -270,6 +271,8 @@ public final class NeutralPlacementGraph {
 		}
 		for(RelocationAction action : relocationActions) {
 			RelocationActionKey key = action.key();
+			if(!relocationKeys.add(key))
+				throw new IllegalArgumentException("Duplicate relocation action key: " + key);
 			if(!valueVersions.contains(key.sourceValueVersion()))
 				throw new IllegalArgumentException("Relocation source value is absent from graph");
 			for(CompiledHopKey consumer : key.compatibleConsumers())
