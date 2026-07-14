@@ -71,7 +71,8 @@ public final class NeutralPlacementGraph {
 		UNKNOWN_METADATA,
 		CONSTRAINT_CONFLICT,
 		NO_FEDERATED_INPUT,
-		RUNTIME_UNSUPPORTED
+		RUNTIME_UNSUPPORTED,
+		RULE_ERROR
 	}
 
 	public record Exclusion(PlacementState state, ReasonCode reasonCode, String detail)
@@ -213,6 +214,35 @@ public final class NeutralPlacementGraph {
 		return immutableSortedStrings(normalized);
 	}
 
+	public List<String> normalizedValueVersions() {
+		List<String> normalized = new ArrayList<>(nodes.size());
+		for(Node node : nodes)
+			normalized.add(fields(node.key().normalizedSignature(),
+				node.valueVersion().normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedProvenance() {
+		List<String> normalized = new ArrayList<>(nodes.size());
+		for(Node node : nodes)
+			normalized.add(fields(node.key().normalizedSignature(),
+				node.key().canonicalSourceOrigin(), node.key().controlRegion().normalizedSignature(),
+				node.valueVersion().normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedAnchors() {
+		List<String> normalized = new ArrayList<>();
+		for(Node node : nodes)
+			for(DurableAnchorKey anchor : node.anchors())
+				normalized.add(fields("NODE", node.key().normalizedSignature(),
+					anchor.normalizedSignature()));
+		for(RelocationAction action : relocationActions)
+			normalized.add(fields("RELOCATION", action.key().normalizedSignature(),
+				action.key().durableAnchor().normalizedSignature()));
+		return immutableSortedStrings(normalized);
+	}
+
 	public List<String> normalizedConstraints() {
 		List<String> normalized = new ArrayList<>(constraints.size());
 		for(Constraint constraint : constraints)
@@ -260,6 +290,9 @@ public final class NeutralPlacementGraph {
 	public String normalizedSignature() {
 		return section("CANDIDATES", normalizedCandidateUniverse())
 			+ section("IDENTITIES", normalizedIdentities())
+			+ section("VALUE_VERSIONS", normalizedValueVersions())
+			+ section("PROVENANCE", normalizedProvenance())
+			+ section("ANCHORS", normalizedAnchors())
 			+ section("CONSTRAINTS", normalizedConstraints())
 			+ section("EXCLUSIONS", normalizedExclusions())
 			+ section("RELOCATIONS", normalizedRelocationActions())
