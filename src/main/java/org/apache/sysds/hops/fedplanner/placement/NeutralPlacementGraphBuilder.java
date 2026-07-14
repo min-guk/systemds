@@ -1,4 +1,16 @@
-/* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements.
+ * See the NOTICE file distributed with this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License
+ * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and limitations under the License.
+ */
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
@@ -14,6 +26,7 @@ import java.util.Set;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
@@ -38,21 +51,24 @@ public final class NeutralPlacementGraphBuilder {
 
 	public NeutralPlacementGraph build(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
-		List<Hop> hops = PlacementGraphFingerprint.orderedHops(program);
-		String programId = structuralFingerprint(hops);
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
+		String programId = structuralFingerprint(occurrences);
 		List<Node> nodes = new ArrayList<>();
 		Map<String,Integer> versions = new java.util.TreeMap<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
-		for(int ordinal = 0; ordinal < hops.size(); ordinal++) {
-			Hop hop = hops.get(ordinal);
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
+			Hop hop = occurrence.hop();
 			String context = requiresRecompileMetadata(hop) ? "recompile" : "compiled";
-			ControlRegionKey region = new ControlRegionKey(programId, "compiled", List.of("hop-dag"),
-				"compiled-root", context);
-			CompiledHopKey key = new CompiledHopKey(programId, "compiled", "compiled-root", context, region,
+			ControlRegionKey region = new ControlRegionKey(programId, occurrence.namespace(),
+				Arrays.asList(occurrence.path().split("/")), occurrence.path(), context);
+			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
 				"ordinal-" + ordinal + "-hop-" + hop.getHopID(), PlacementGraphFingerprint.structuralKey(hop));
 			String variable = lexicalVariable(hop, ordinal);
 			int version = isTransientWrite(hop) ? versions.merge(variable, 1, Integer::sum) : versions.getOrDefault(variable, 0);
-			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE : VersionKind.ORDINARY;
+			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
+				: occurrence.path().contains("loop-") ? VersionKind.LOOP_HEAD_PHI
+				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind, List.of());
 			values.put(hop, value);
 			nodes.add(buildNode(hop, key, value));
@@ -66,7 +82,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
-		Set<Exclusion> excluded = new LinkedHashSet<>();
+		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
 		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 		legal.add(cp);
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
@@ -74,7 +90,8 @@ public final class NeutralPlacementGraphBuilder {
 			OpCaps caps;
 			try { caps = oracle.decide(hop, inputs); }
 			catch(Throwable t) {
-				excluded.add(new Exclusion(cp, ReasonCode.RUNTIME_UNSUPPORTED,
+				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
+				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RUNTIME_UNSUPPORTED,
 					"RULE_ERROR:" + t.getClass().getSimpleName()));
 				continue;
 			}
@@ -83,20 +100,20 @@ public final class NeutralPlacementGraphBuilder {
 				caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT);
 			String detail = caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
-				excluded.add(new Exclusion(state, ReasonCode.RUNTIME_UNSUPPORTED, detail));
+				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RUNTIME_UNSUPPORTED, detail));
 			else if(transientAccess && !isLegalTransient(state))
-				excluded.add(new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
+				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
 			else if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
-				excluded.add(new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
+				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
 			else if(hasUnknownShape(hop) && state.shapeDependent())
-				excluded.add(new Exclusion(state, ReasonCode.UNKNOWN_METADATA, detail));
+				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNKNOWN_METADATA, detail));
 			else if(caps.exec() == ExecType.FED)
 				legal.add(state);
 		}
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
-		return new Node(key, nodeKind(hop), value, true, new ArrayList<>(legal), new ArrayList<>(excluded), List.of());
+		return new Node(key, nodeKind(hop), value, true, new ArrayList<>(legal), new ArrayList<>(excluded.values()), List.of());
 	}
 
 	private static List<List<FType>> inputCombinations(int arity) {
@@ -121,11 +138,13 @@ public final class NeutralPlacementGraphBuilder {
 	private static NodeKind nodeKind(Hop h) {
 		if(isTransientRead(h)) return NodeKind.TRANSIENT_READ;
 		if(isTransientWrite(h)) return NodeKind.TRANSIENT_WRITE;
+		if(h instanceof FunctionOp) return NodeKind.FUNCTION_CALL;
 		return NodeKind.OPERATION;
 	}
-	private static String structuralFingerprint(List<Hop> hops) {
+	private static String structuralFingerprint(List<PlacementGraphFingerprint.HopOccurrence> hops) {
 		List<String> rows = new ArrayList<>();
-		for(Hop h : hops) rows.add(PlacementGraphFingerprint.structuralKey(h));
+		for(PlacementGraphFingerprint.HopOccurrence h : hops)
+			rows.add(h.namespace() + '|' + h.path() + '|' + PlacementGraphFingerprint.structuralKey(h.hop()));
 		Collections.sort(rows);
 		return PlacementGraphFingerprint.sha256(String.join("\n", rows));
 	}
