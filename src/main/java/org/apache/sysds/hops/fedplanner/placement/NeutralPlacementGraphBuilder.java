@@ -48,6 +48,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.DecisionEvidence;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -73,9 +74,25 @@ public final class NeutralPlacementGraphBuilder {
 		return Collections.unmodifiableList(selected);
 	}
 
+	public List<String> selectedMembershipViolations(DMLProgram program, NeutralPlacementGraph graph) {
+		List<String> violations = new ArrayList<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
+			Hop hop = occurrence.hop();
+			if(hop.getExecType() == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
+			Node node = graph.nodes().stream().filter(n -> n.key().callSitePath().equals(occurrence.path())
+				&& n.key().canonicalSourceOrigin().equals(PlacementGraphFingerprint.structuralKey(hop))).findFirst().orElse(null);
+			boolean member = node != null && node.legalAlternatives().stream().anyMatch(s ->
+				s.execType() == hop.getExecType() && s.output() == hop.getFederatedOutput());
+			if(!member) violations.add(occurrence.namespace() + '|' + occurrence.path() + '|'
+				+ PlacementGraphFingerprint.structuralKey(hop) + '|' + hop.getExecType() + '/' + hop.getFederatedOutput());
+		}
+		Collections.sort(violations);
+		return Collections.unmodifiableList(violations);
+	}
+
 	public NeutralPlacementGraph build(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
-		String registryBefore = registrySentinel();
+		String registryBefore = registrySentinel(program);
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
 		List<Node> nodes = new ArrayList<>();
@@ -90,16 +107,20 @@ public final class NeutralPlacementGraphBuilder {
 			ControlRegionKey region = new ControlRegionKey(programId, occurrence.namespace(),
 				Arrays.asList(occurrence.path().split("/")), occurrence.path(), context);
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
-				"ordinal-" + ordinal + "-hop-" + hop.getHopID(), PlacementGraphFingerprint.structuralKey(hop));
+				"ordinal-" + ordinal, PlacementGraphFingerprint.structuralKey(hop));
 			String variable = lexicalVariable(hop, ordinal);
 			int version = isTransientWrite(hop) ? versions.merge(variable, 1, Integer::sum) : versions.getOrDefault(variable, 0);
 			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
 				: occurrence.path().contains("loop-") ? VersionKind.LOOP_HEAD_PHI
 				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
-			List<String> predecessors = new ArrayList<>();
-			for(Hop input : hop.getInput()) if(values.containsKey(input))
-				predecessors.add(values.get(input).normalizedSignature());
-			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind, predecessors);
+			List<String> predecessorEdges = new ArrayList<>();
+			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
+				Hop input = hop.getInput(inputPosition);
+				if(values.containsKey(input)) predecessorEdges.add("input-" + inputPosition + ':'
+					+ values.get(input).normalizedSignature());
+			}
+			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
+				predecessorEdges);
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
@@ -123,14 +144,23 @@ public final class NeutralPlacementGraphBuilder {
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
-		if(!registryBefore.equals(registrySentinel()))
+		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return graph;
 	}
 
-	private static String registrySentinel() {
-		return FederatedRefedRegistry.isEmpty() + "/" + FederatedFoutMaterializeRegistry.isEmpty()
-			+ "/" + FederatedLocalMaterializeRegistry.isEmpty();
+	private static String registrySentinel(DMLProgram program) {
+		List<String> rows = new ArrayList<>();
+		for(long sbId : PlacementGraphFingerprint.statementBlockIds(program)) {
+			FederatedRefedRegistry.snapshot(sbId).forEach((hop, spec) -> rows.add("R|" + sbId + '|' + hop + '|'
+				+ spec.getAnchorHopId() + '|' + spec.getAnchorKey()));
+			FederatedFoutMaterializeRegistry.snapshot(sbId).forEach((hop, spec) -> rows.add("F|" + sbId + '|' + hop
+				+ '|' + spec.getAnchorHopId() + '|' + spec.getFTypeHint() + '|' + spec.getAnchorLabel() + '|' + spec.getAnchorKey()));
+			FederatedLocalMaterializeRegistry.snapshotScopes(sbId).forEach((scope, entries) -> entries.forEach((hop, spec) ->
+				rows.add("L|" + scope + '|' + hop + '|' + spec.getConsumerHopIds() + '|' + spec.getFTypeHint() + '|' + spec.getReason())));
+		}
+		Collections.sort(rows);
+		return PlacementGraphFingerprint.sha256(String.join("\n", rows));
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors) {
@@ -141,7 +171,12 @@ public final class NeutralPlacementGraphBuilder {
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		for(List<FType> inputs : inputCombinations(hop.getInput().size())) {
 			OpCaps caps;
-			try { caps = oracle.decide(hop, inputs); }
+			boolean shapeDependent;
+			try {
+				DecisionEvidence evidence = oracle.decideWithEvidence(hop, inputs, null);
+				caps = evidence.caps();
+				shapeDependent = evidence.shapeDependent();
+			}
 			catch(Throwable t) {
 				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
 				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RULE_ERROR,
@@ -149,8 +184,7 @@ public final class NeutralPlacementGraphBuilder {
 				continue;
 			}
 			FType outType = caps.foutFType().orElse(firstFType(inputs));
-			PlacementState state = new PlacementState(caps.exec(), caps.placement(), outType,
-				caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT);
+			PlacementState state = new PlacementState(caps.exec(), caps.placement(), outType, shapeDependent);
 			String detail = caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RULE_ERROR, detail));

@@ -172,6 +172,7 @@ public final class RulesApi {
     private final long colsA;
     private final long rowsB;
     private final long colsB;
+	private boolean consulted;
 
     public ShapeHint(long rows, long cols, int blockSize) {
       this(rows, cols, blockSize, Optional.<Boolean>empty(), -1, -1, -1, -1);
@@ -199,16 +200,17 @@ public final class RulesApi {
       this.colsB = colsB;
     }
 
-    public long rows() { return rows; }
-    public long cols() { return cols; }
-    public int blockSize() { return blockSize; }
-    public Optional<Boolean> fullSinglePartition() { return fullSinglePartition; }
-    public long rowsA() { return rowsA; }
-    public long colsA() { return colsA; }
-    public long rowsB() { return rowsB; }
-    public long colsB() { return colsB; }
-    public boolean rowsKnown() { return rowsA >= 0 && rowsB >= 0; }
-    public boolean colsKnown() { return colsA >= 0 && colsB >= 0; }
+    public long rows() { consulted = true; return rows; }
+    public long cols() { consulted = true; return cols; }
+    public int blockSize() { consulted = true; return blockSize; }
+    public Optional<Boolean> fullSinglePartition() { consulted = true; return fullSinglePartition; }
+    public long rowsA() { consulted = true; return rowsA; }
+    public long colsA() { consulted = true; return colsA; }
+    public long rowsB() { consulted = true; return rowsB; }
+    public long colsB() { consulted = true; return colsB; }
+    public boolean rowsKnown() { consulted = true; return rowsA >= 0 && rowsB >= 0; }
+    public boolean colsKnown() { consulted = true; return colsA >= 0 && colsB >= 0; }
+	public boolean wasConsulted() { return consulted; }
 
     @Override public String toString() {
       return "ShapeHint{"

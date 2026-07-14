@@ -64,6 +64,7 @@ import org.apache.sysds.parser.DataExpression;
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
  */
 public final class OracleFacade {
+	public record DecisionEvidence(RulesApi.OpCaps caps, boolean shapeDependent) { }
   private static final String ATTR_DIRECTION = "direction";
   private static final String ATTR_AGG_OP = "aggOp";
   private static final String ATTR_Q_TYPE = "q.type";
@@ -110,6 +111,10 @@ public final class OracleFacade {
   }
 
   public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
+	return decideWithEvidence(hop, inFTypes, hint).caps();
+  }
+
+	public DecisionEvidence decideWithEvidence(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
     Objects.requireNonNull(hop, "hop");
     OpSig sig = buildSignature(hop);
     List<FType> mapped = mapFederatedTypes(hop, inFTypes);
@@ -119,7 +124,7 @@ public final class OracleFacade {
     logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
     RulesApi.OpCaps caps = oracle.decide(sig, mapped, effectiveHint);
     logOracleResult(hop, caps);
-    return caps;
+	return new DecisionEvidence(caps, effectiveHint.wasConsulted());
   }
 
   public List<RulesApi.OpCaps> exploreAll(
