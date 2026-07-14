@@ -62,6 +62,7 @@ public class BuilderOracleTest {
 	private static void verify(String id) {
 		Graph graph = BuilderOracleFixtures.fixture(id);
 		Assert.assertFalse(id + " must have a finite candidate universe", graph.nodes().isEmpty());
+		Assert.assertFalse(id + " must have at least one bounded legal assignment", graph.legalAssignments().isEmpty());
 		switch (id) {
 			case "B-01":
 				Assert.assertEquals("X#1", graph.node("write@10").valueVersion);
@@ -134,8 +135,9 @@ public class BuilderOracleTest {
 				Assert.assertEquals(1, count(graph, ConstraintKind.DISTINCT_CONTEXT));
 				break;
 			case "B-18":
-				Assert.assertEquals(2, count(graph, ConstraintKind.CONJUNCTIVE));
-				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("phi")));
+				Assert.assertEquals(4, count(graph, ConstraintKind.CONJUNCTIVE));
+				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("phi-local-fed")));
+				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("phi-fed-local")));
 				break;
 			case "B-19":
 				Assert.assertEquals(2, count(graph, ConstraintKind.CONJUNCTIVE));

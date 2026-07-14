@@ -158,9 +158,14 @@ public final class BuilderOracleFixtures {
 	}
 
 	private static Graph loopPhi() {
-		return new Builder().node("entry", Kind.OP, CP).node("backedge", Kind.OP, FF)
-			.node("phi", Kind.PHI, CP, FF).constraint(ConstraintKind.CONJUNCTIVE, "entry", "phi")
-			.constraint(ConstraintKind.CONJUNCTIVE, "backedge", "phi").build();
+		return new Builder().node("local-entry", Kind.OP, CP).node("fed-backedge", Kind.OP, FF)
+			.node("phi-local-fed", Kind.PHI, CP, FF)
+			.node("fed-entry", Kind.OP, FF).node("local-backedge", Kind.OP, CP)
+			.node("phi-fed-local", Kind.PHI, CP, FF)
+			.constraint(ConstraintKind.CONJUNCTIVE, "local-entry", "phi-local-fed")
+			.constraint(ConstraintKind.CONJUNCTIVE, "fed-backedge", "phi-local-fed")
+			.constraint(ConstraintKind.CONJUNCTIVE, "fed-entry", "phi-fed-local")
+			.constraint(ConstraintKind.CONJUNCTIVE, "local-backedge", "phi-fed-local").build();
 	}
 
 	private static Graph nonConstantBranch() {

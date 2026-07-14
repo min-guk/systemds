@@ -188,6 +188,14 @@ public final class BuilderOracle {
 		public Collection<Node> nodes() { return nodes.values(); }
 		public List<Constraint> constraints() { return constraints; }
 		public Map<String, Relocation> relocations() { return relocations; }
+		public Set<String> legalAssignments() {
+			List<Node> active = new ArrayList<>();
+			for (Node node : nodes.values())
+				if (!node.candidates.isEmpty()) active.add(node);
+			Set<String> assignments = new LinkedHashSet<>();
+			enumerate(active, 0, new LinkedHashMap<String, Placement>(), assignments);
+			return assignments;
+		}
 
 		public Set<String> normalizedCandidateUniverse() {
 			Set<String> out = new LinkedHashSet<>();
@@ -198,6 +206,41 @@ public final class BuilderOracle {
 					out.add(node.id + "=" + placement.signature());
 			}
 			return out;
+		}
+
+		private void enumerate(List<Node> active, int index, Map<String, Placement> assignment,
+			Set<String> assignments) {
+			if (index == active.size()) {
+				if (satisfiesConstraints(assignment)) assignments.add(normalize(assignment));
+				return;
+			}
+			Node node = active.get(index);
+			List<Placement> candidates = new ArrayList<>(node.candidates);
+			Collections.sort(candidates);
+			for (Placement candidate : candidates) {
+				assignment.put(node.id, candidate);
+				enumerate(active, index + 1, assignment, assignments);
+			}
+			assignment.remove(node.id);
+		}
+
+		private boolean satisfiesConstraints(Map<String, Placement> assignment) {
+			for (Constraint constraint : constraints) {
+				Placement left = assignment.get(constraint.left);
+				Placement right = assignment.get(constraint.right);
+				if (left == null || right == null) continue;
+				if (constraint.kind == ConstraintKind.SAME_PLACEMENT && !left.equals(right)) return false;
+				if (constraint.kind == ConstraintKind.SAME_FTYPE && left.fType != right.fType) return false;
+			}
+			return true;
+		}
+
+		private static String normalize(Map<String, Placement> assignment) {
+			List<String> entries = new ArrayList<>();
+			for (Map.Entry<String, Placement> entry : assignment.entrySet())
+				entries.add(entry.getKey() + "=" + entry.getValue().signature());
+			Collections.sort(entries);
+			return String.join(";", entries);
 		}
 	}
 
