@@ -107,17 +107,20 @@ public final class NeutralPlacementGraphBuilder {
 			ControlRegionKey region = new ControlRegionKey(programId, occurrence.namespace(),
 				Arrays.asList(occurrence.path().split("/")), occurrence.path(), context);
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
-				"ordinal-" + ordinal + "-hop-" + hop.getHopID(), PlacementGraphFingerprint.structuralKey(hop));
+				"ordinal-" + ordinal, PlacementGraphFingerprint.structuralKey(hop));
 			String variable = lexicalVariable(hop, ordinal);
 			int version = isTransientWrite(hop) ? versions.merge(variable, 1, Integer::sum) : versions.getOrDefault(variable, 0);
 			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
 				: occurrence.path().contains("loop-") ? VersionKind.LOOP_HEAD_PHI
 				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
-			Set<String> predecessorSet = new java.util.TreeSet<>();
-			for(Hop input : hop.getInput()) if(values.containsKey(input))
-				predecessorSet.add(values.get(input).normalizedSignature());
+			List<String> predecessorEdges = new ArrayList<>();
+			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
+				Hop input = hop.getInput(inputPosition);
+				if(values.containsKey(input)) predecessorEdges.add("input-" + inputPosition + ':'
+					+ values.get(input).normalizedSignature());
+			}
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
-				new ArrayList<>(predecessorSet));
+				predecessorEdges);
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
