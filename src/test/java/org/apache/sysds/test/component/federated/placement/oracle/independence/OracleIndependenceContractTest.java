@@ -53,14 +53,14 @@ public class OracleIndependenceContractTest {
 	private static final Path BUILDER_ROOT = ORACLE_ROOT.resolve("builder");
 	private static final Path SELECTOR_ROOT = ORACLE_ROOT.resolve("selector");
 
-	private static final Pattern IMPORT = Pattern.compile("(?m)^\s*import\s+(?:static\s+)?([^;]+);");
+	private static final Pattern IMPORT = Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?([^;]+);");
 	private static final Pattern PRODUCTION_ORACLE_IMPORT = Pattern.compile(
-		"^org\.apache\.sysds\.hops\.fedplanner\..*(?:builder|selector).*$",
+		"^org\\.apache\\.sysds\\.hops\\.fedplanner\\..*(?:builder|selector).*$",
 		Pattern.CASE_INSENSITIVE);
 	private static final Pattern FALLBACK_SUCCESS_IDENTIFIER = Pattern.compile(
-		"(?i)\b(?:(?:timeout|state_?cap|greedy|approx(?:imate)?|fallback)[a-z0-9_]*(?:success|succeed|exact)"
+		"(?i)\\b(?:(?:timeout|state_?cap|greedy|approx(?:imate)?|fallback)[a-z0-9_]*(?:success|succeed|exact)"
 			+ "|(?:success|succeed|exact)[a-z0-9_]*(?:timeout|state_?cap|greedy|approx(?:imate)?|fallback)"
-			+ "|greedy_?fallback|approximate_?fallback)\b");
+			+ "|greedy_?fallback|approximate_?fallback)\\b");
 
 	@Test
 	public void oraclePackagesStayIndependentAndProductionFree() throws IOException {
