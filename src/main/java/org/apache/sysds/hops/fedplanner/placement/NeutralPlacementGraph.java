@@ -84,7 +84,7 @@ public final class NeutralPlacementGraph {
 		}
 
 		public String normalizedSignature() {
-			return state.normalizedSignature() + "=" + reasonCode.name() + "=" + token(detail);
+			return fields(state.normalizedSignature(), reasonCode.name(), detail);
 		}
 
 		@Override
@@ -116,8 +116,8 @@ public final class NeutralPlacementGraph {
 		}
 
 		public String normalizedIdentity() {
-			return key.normalizedSignature() + "=" + kind.name() + "="
-				+ valueVersion.normalizedSignature() + "=" + emittedWork + "=" + signatures(anchors);
+			return fields(key.normalizedSignature(), kind.name(), valueVersion.normalizedSignature(),
+				Boolean.toString(emittedWork), anchorSignatures(anchors));
 		}
 
 		@Override
@@ -136,7 +136,7 @@ public final class NeutralPlacementGraph {
 		}
 
 		public String normalizedSignature() {
-			return kind.name() + "=" + left.normalizedSignature() + "->" + right.normalizedSignature();
+			return fields(kind.name(), left.normalizedSignature(), right.normalizedSignature());
 		}
 
 		@Override
@@ -202,7 +202,7 @@ public final class NeutralPlacementGraph {
 		List<String> normalized = new ArrayList<>();
 		for(Node node : nodes)
 			for(PlacementState state : node.legalAlternatives())
-				normalized.add(node.key().normalizedSignature() + "=" + state.normalizedSignature());
+				normalized.add(fields(node.key().normalizedSignature(), state.normalizedSignature()));
 		return immutableSortedStrings(normalized);
 	}
 
@@ -224,7 +224,7 @@ public final class NeutralPlacementGraph {
 		List<String> normalized = new ArrayList<>();
 		for(Node node : nodes)
 			for(Exclusion exclusion : node.exclusions())
-				normalized.add(node.key().normalizedSignature() + "=" + exclusion.normalizedSignature());
+				normalized.add(fields(node.key().normalizedSignature(), exclusion.normalizedSignature()));
 		return immutableSortedStrings(normalized);
 	}
 
@@ -243,6 +243,20 @@ public final class NeutralPlacementGraph {
 		return immutableSortedStrings(normalized);
 	}
 
+	/**
+	 * Exhaustively enumerates legal assignments for bounded shadow fixtures.
+	 * Production callers should compare the normalized graph surfaces instead.
+	 */
+	public List<String> normalizedLegalAssignments() {
+		List<Node> active = new ArrayList<>();
+		for(Node node : nodes)
+			if(!node.legalAlternatives().isEmpty())
+				active.add(node);
+		List<String> assignments = new ArrayList<>();
+		enumerateAssignments(active, 0, new LinkedHashMap<>(), assignments);
+		return immutableSortedStrings(assignments);
+	}
+
 	public String normalizedSignature() {
 		return section("CANDIDATES", normalizedCandidateUniverse())
 			+ section("IDENTITIES", normalizedIdentities())
@@ -250,6 +264,48 @@ public final class NeutralPlacementGraph {
 			+ section("EXCLUSIONS", normalizedExclusions())
 			+ section("RELOCATIONS", normalizedRelocationActions())
 			+ section("OBLIGATIONS", normalizedObligations());
+	}
+
+	public String normalizedSignatureWithLegalAssignments() {
+		return normalizedSignature() + section("LEGAL_ASSIGNMENTS", normalizedLegalAssignments());
+	}
+
+	private void enumerateAssignments(List<Node> active, int index,
+		Map<CompiledHopKey, PlacementState> assignment, List<String> assignments) {
+		if(index == active.size()) {
+			if(satisfiesAssignmentConstraints(assignment))
+				assignments.add(normalizeAssignment(assignment));
+			return;
+		}
+		Node node = active.get(index);
+		for(PlacementState state : node.legalAlternatives()) {
+			assignment.put(node.key(), state);
+			enumerateAssignments(active, index + 1, assignment, assignments);
+		}
+		assignment.remove(node.key());
+	}
+
+	private boolean satisfiesAssignmentConstraints(Map<CompiledHopKey, PlacementState> assignment) {
+		for(Constraint constraint : constraints) {
+			PlacementState left = assignment.get(constraint.left());
+			PlacementState right = assignment.get(constraint.right());
+			if(left == null || right == null)
+				continue;
+			if(constraint.kind() == ConstraintKind.SAME_PLACEMENT && !left.equals(right))
+				return false;
+			if(constraint.kind() == ConstraintKind.SAME_FTYPE
+				&& !Objects.equals(left.fType(), right.fType()))
+				return false;
+		}
+		return true;
+	}
+
+	private static String normalizeAssignment(Map<CompiledHopKey, PlacementState> assignment) {
+		List<String> entries = new ArrayList<>(assignment.size());
+		for(Map.Entry<CompiledHopKey, PlacementState> entry : assignment.entrySet())
+			entries.add(fields(entry.getKey().normalizedSignature(),
+				entry.getValue().normalizedSignature()));
+		return signatures(entries);
 	}
 
 	private static Map<CompiledHopKey, Node> indexNodes(List<Node> nodes) {
@@ -309,15 +365,29 @@ public final class NeutralPlacementGraph {
 		return List.copyOf(copy);
 	}
 
-	private static String signatures(Collection<DurableAnchorKey> anchors) {
+	private static String anchorSignatures(Collection<DurableAnchorKey> anchors) {
 		List<String> normalized = new ArrayList<>(anchors.size());
 		for(DurableAnchorKey anchor : anchors)
 			normalized.add(anchor.normalizedSignature());
-		return String.join(",", normalized);
+		return signatures(normalized);
 	}
 
 	private static String section(String name, List<String> values) {
-		return name + "[" + String.join(";", values) + "]\n";
+		return name + "[" + signatures(values) + "]\n";
+	}
+
+	private static String fields(String... values) {
+		List<String> encoded = new ArrayList<>(values.length);
+		for(String value : values)
+			encoded.add(token(value));
+		return String.join("|", encoded);
+	}
+
+	private static String signatures(Collection<String> values) {
+		List<String> encoded = new ArrayList<>(values.size());
+		for(String value : values)
+			encoded.add(token(value));
+		return String.join(",", encoded);
 	}
 
 	private static String token(String value) {
