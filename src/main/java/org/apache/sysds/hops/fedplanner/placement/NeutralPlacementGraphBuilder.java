@@ -97,6 +97,7 @@ public final class NeutralPlacementGraphBuilder {
 		String programId = structuralFingerprint(occurrences);
 		List<Node> nodes = new ArrayList<>();
 		Map<String,Integer> versions = new java.util.TreeMap<>();
+		Map<String,List<ValueVersionKey>> definitions = new java.util.TreeMap<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
@@ -110,17 +111,20 @@ public final class NeutralPlacementGraphBuilder {
 				"ordinal-" + ordinal, PlacementGraphFingerprint.structuralKey(hop));
 			String variable = lexicalVariable(hop, ordinal);
 			int version = isTransientWrite(hop) ? versions.merge(variable, 1, Integer::sum) : versions.getOrDefault(variable, 0);
-			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
-				: occurrence.path().contains("loop-") ? VersionKind.LOOP_HEAD_PHI
-				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
+			VersionKind versionKind = versionKind(hop, occurrence, context, definitions.get(variable));
 			List<String> predecessorEdges = new ArrayList<>();
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
 				Hop input = hop.getInput(inputPosition);
 				if(values.containsKey(input)) predecessorEdges.add("input-" + inputPosition + ':'
 					+ values.get(input).normalizedSignature());
 			}
+			if(isTransientRead(hop) && definitions.containsKey(variable))
+				for(ValueVersionKey definition : definitions.get(variable))
+					predecessorEdges.add("definition:" + definition.normalizedSignature());
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
 				predecessorEdges);
+			if(isTransientWrite(hop) || isFunctionOutput(hop))
+				definitions.computeIfAbsent(variable, k -> new ArrayList<>()).add(value);
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
@@ -205,7 +209,7 @@ public final class NeutralPlacementGraphBuilder {
 			excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNSUPPORTED_ANCHOR,
 				"Federated source lacks literal durable worker/range provenance"));
 		}
-		return new Node(key, nodeKind(hop), value, true, new ArrayList<>(legal),
+		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
 	}
 
@@ -290,12 +294,30 @@ public final class NeutralPlacementGraphBuilder {
 	}
 	private static boolean isTransientRead(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.TRANSIENTREAD; }
 	private static boolean isTransientWrite(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.TRANSIENTWRITE; }
+	private static boolean isFunctionOutput(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.FUNCTIONOUTPUT; }
+	private static VersionKind versionKind(Hop hop, PlacementGraphFingerprint.HopOccurrence occurrence,
+		String context, List<ValueVersionKey> priorDefinitions) {
+		if(context.equals("recompile")) return VersionKind.CLONE_RECOMPILE;
+		if(isFunctionOutput(hop)) return VersionKind.FUNCTION_OUTPUT;
+		if(isTransientRead(hop) && !"main".equals(occurrence.namespace())
+			&& (priorDefinitions == null || priorDefinitions.isEmpty())) return VersionKind.FUNCTION_INPUT;
+		if(occurrence.path().contains("loop-") && isTransientWrite(hop)) return VersionKind.LOOP_BACKEDGE;
+		if(occurrence.path().contains("loop-") && isTransientRead(hop)) return VersionKind.LOOP_HEAD_PHI;
+		if(isTransientRead(hop) && priorDefinitions != null && priorDefinitions.size() > 1)
+			return VersionKind.BRANCH_JOIN_PHI;
+		return VersionKind.ORDINARY;
+	}
 	private static String lexicalVariable(Hop h, int ordinal) {
 		return h instanceof DataOp && h.getName() != null && !h.getName().isBlank() ? h.getName() : "value-" + ordinal;
 	}
-	private static NodeKind nodeKind(Hop h) {
+	private static NodeKind nodeKind(Hop h, ValueVersionKey value) {
+		if(value.versionKind() == VersionKind.FUNCTION_INPUT) return NodeKind.FUNCTION_INPUT;
+		if(value.versionKind() == VersionKind.LOOP_HEAD_PHI || value.versionKind() == VersionKind.LOOP_BACKEDGE)
+			return NodeKind.LOOP_PHI;
+		if(value.versionKind() == VersionKind.BRANCH_JOIN_PHI) return NodeKind.BRANCH_JOIN;
 		if(isTransientRead(h)) return NodeKind.TRANSIENT_READ;
 		if(isTransientWrite(h)) return NodeKind.TRANSIENT_WRITE;
+		if(isFunctionOutput(h)) return NodeKind.FUNCTION_OUTPUT;
 		if(h instanceof FunctionOp) return NodeKind.FUNCTION_CALL;
 		return NodeKind.OPERATION;
 	}
