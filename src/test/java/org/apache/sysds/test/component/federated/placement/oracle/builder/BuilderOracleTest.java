@@ -213,15 +213,18 @@ public class BuilderOracleTest {
 			Graph graph = BuilderOracleFixtures.fixture(id);
 			Assert.assertFalse(id + " must retain at least one legal assignment", graph.legalAssignments().isEmpty());
 			for (String assignment : graph.legalAssignments()) {
-				Assert.assertFalse(id + " must not retain an incompatible federated join: " + assignment,
-					assignment.contains("join=FED/FOUT") || assignment.contains("f.body=FED/FOUT")
-						|| assignment.contains("phi-local-fed=FED/FOUT")
-						|| assignment.contains("phi-fed-local=FED/FOUT")
-						|| assignment.contains("branch-join=FED/FOUT")
-						|| assignment.contains("backedge=FED/FOUT")
-						|| assignment.contains("loop-entry=FED/FOUT"));
+				for (String node : Arrays.asList("join", "f.body", "phi-local-fed", "phi-fed-local",
+					"branch-join", "backedge", "loop-entry"))
+					Assert.assertFalse(id + " must not retain an incompatible federated join: " + assignment,
+						selects(assignment, node, "FED/FOUT"));
 			}
 		}
+	}
+
+	private static boolean selects(String assignment, String node, String placementPrefix) {
+		for (String entry : assignment.split(";"))
+			if (entry.startsWith(node + "=" + placementPrefix)) return true;
+		return false;
 	}
 
 	@Test
