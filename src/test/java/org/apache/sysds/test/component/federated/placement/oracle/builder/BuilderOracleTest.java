@@ -36,6 +36,14 @@ import org.apache.sysds.test.component.federated.placement.oracle.builder.Builde
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Reason;
 
 public class BuilderOracleTest {
+	@Test
+	public void fixtureCorpusIsExactlyB01ThroughB22() {
+		Assert.assertEquals(Arrays.asList(
+			"B-01", "B-02", "B-03", "B-04", "B-05", "B-06", "B-07", "B-08", "B-09", "B-10", "B-11",
+			"B-12", "B-13", "B-14", "B-15", "B-16", "B-17", "B-18", "B-19", "B-20", "B-21", "B-22"),
+			BuilderOracleFixtures.ids());
+	}
+
 	@Test public void testB01SequentialWrites() { verify("B-01"); }
 	@Test public void testB02EqualBranchWrites() { verify("B-02"); }
 	@Test public void testB03DivergentBranchWrites() { verify("B-03"); }
@@ -76,6 +84,8 @@ public class BuilderOracleTest {
 			case "B-03":
 				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("join")));
 				Assert.assertEquals(2, count(graph, ConstraintKind.CONJUNCTIVE));
+				Assert.assertEquals(graph.normalizedCandidateUniverse(),
+					BuilderOracleFixtures.divergentBranchWritesReversed().normalizedCandidateUniverse());
 				break;
 			case "B-04":
 				Assert.assertTrue(graph.node("untaken").candidates().isEmpty());
@@ -109,6 +119,7 @@ public class BuilderOracleTest {
 			case "B-11":
 				Assert.assertTrue(signatures(graph.node("upload")).contains("CP/FOUT/ROW"));
 				Assert.assertEquals("fed:X", graph.relocations().values().iterator().next().anchor);
+				Assert.assertEquals(set("consumer#1"), graph.relocations().values().iterator().next().obligations());
 				break;
 			case "B-12":
 				Assert.assertEquals(set("CP/LOUT"), signatures(graph.node("upload")));

@@ -19,6 +19,10 @@
 
 package org.apache.sysds.test.component.federated.placement.oracle.builder;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Builder;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.ConstraintKind;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.FType;
@@ -28,11 +32,16 @@ import org.apache.sysds.test.component.federated.placement.oracle.builder.Builde
 
 /** Declarative B-01..B-22 corpus for the independent builder oracle. */
 public final class BuilderOracleFixtures {
+	private static final List<String> IDS = Collections.unmodifiableList(Arrays.asList(
+		"B-01", "B-02", "B-03", "B-04", "B-05", "B-06", "B-07", "B-08", "B-09", "B-10", "B-11",
+		"B-12", "B-13", "B-14", "B-15", "B-16", "B-17", "B-18", "B-19", "B-20", "B-21", "B-22"));
 	private static final Placement CP = Placement.cpLout();
 	private static final Placement CPF = Placement.cpFout(FType.ROW);
 	private static final Placement FL = Placement.fedLout(FType.ROW);
 	private static final Placement FF = Placement.fedFout(FType.ROW);
 	private static final Placement FB = Placement.fedFout(FType.BROADCAST);
+
+	public static List<String> ids() { return IDS; }
 
 	public static Graph fixture(String id) {
 		switch (id) {
@@ -80,6 +89,12 @@ public final class BuilderOracleFixtures {
 		return new Builder().node("then", Kind.TWRITE, FF).node("else", Kind.TWRITE, CP)
 			.node("join", Kind.JOIN, CP, FF).constraint(ConstraintKind.CONJUNCTIVE, "then", "join")
 			.constraint(ConstraintKind.CONJUNCTIVE, "else", "join").build();
+	}
+
+	static Graph divergentBranchWritesReversed() {
+		return new Builder().node("else", Kind.TWRITE, CP).node("then", Kind.TWRITE, FF)
+			.node("join", Kind.JOIN, CP, FF).constraint(ConstraintKind.CONJUNCTIVE, "else", "join")
+			.constraint(ConstraintKind.CONJUNCTIVE, "then", "join").build();
 	}
 
 	private static Graph constantBranch() {
