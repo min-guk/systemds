@@ -16,20 +16,25 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+	import java.util.Map;
+	import java.util.TreeMap;
 
 /** Observational normalized comparison; it never selects or repairs a plan. */
 public final class PlacementShadowComparator {
 	public record Diff(List<String> candidates, List<String> exclusions, List<String> constraints,
-		List<String> identities, List<String> relocations, List<String> obligations,
+		List<String> identities, List<String> valueVersions, List<String> provenance, List<String> anchors,
+		List<String> relocations, List<String> obligations,
 		List<String> legalAssignments, boolean normalizedSignatureEqual) {
 		public Diff {
 			candidates = immutable(candidates); exclusions = immutable(exclusions);
 			constraints = immutable(constraints); identities = immutable(identities);
+			valueVersions = immutable(valueVersions); provenance = immutable(provenance); anchors = immutable(anchors);
 			relocations = immutable(relocations); obligations = immutable(obligations);
 			legalAssignments = immutable(legalAssignments);
 		}
 		public boolean isEmpty() { return candidates.isEmpty() && exclusions.isEmpty() && constraints.isEmpty()
-			&& identities.isEmpty() && relocations.isEmpty() && obligations.isEmpty()
+			&& identities.isEmpty() && valueVersions.isEmpty() && provenance.isEmpty() && anchors.isEmpty()
+			&& relocations.isEmpty() && obligations.isEmpty()
 			&& legalAssignments.isEmpty() && normalizedSignatureEqual; }
 	}
 
@@ -46,6 +51,9 @@ public final class PlacementShadowComparator {
 			delta(expected.normalizedExclusions(), actual.normalizedExclusions()),
 			delta(expected.normalizedConstraints(), actual.normalizedConstraints()),
 			delta(expected.normalizedIdentities(), actual.normalizedIdentities()),
+			delta(expected.normalizedValueVersions(), actual.normalizedValueVersions()),
+			delta(expected.normalizedProvenance(), actual.normalizedProvenance()),
+			delta(expected.normalizedAnchors(), actual.normalizedAnchors()),
 			delta(expected.normalizedRelocationActions(), actual.normalizedRelocationActions()),
 			delta(expected.normalizedObligations(), actual.normalizedObligations()),
 			boundedAssignments ? delta(expected.normalizedLegalAssignments(), actual.normalizedLegalAssignments()) : List.of(),
@@ -54,8 +62,13 @@ public final class PlacementShadowComparator {
 
 	private static List<String> delta(List<String> left, List<String> right) {
 		List<String> result = new ArrayList<>();
-		for(String value : left) if(!right.contains(value)) result.add("-" + value);
-		for(String value : right) if(!left.contains(value)) result.add("+" + value);
+		Map<String,Integer> counts = new TreeMap<>();
+		for(String value : left) counts.merge(value, 1, Integer::sum);
+		for(String value : right) counts.merge(value, -1, Integer::sum);
+		for(Map.Entry<String,Integer> entry : counts.entrySet()) {
+			for(int i = 0; i < entry.getValue(); i++) result.add("-" + entry.getKey());
+			for(int i = 0; i > entry.getValue(); i--) result.add("+" + entry.getKey());
+		}
 		return result;
 	}
 	private static List<String> immutable(List<String> values) {
