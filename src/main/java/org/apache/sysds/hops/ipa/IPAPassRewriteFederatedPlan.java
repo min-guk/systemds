@@ -23,6 +23,7 @@ import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
+import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.utils.Statistics;
@@ -68,6 +69,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 
 	private void generatePlan(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes, String splanner){
 		FederatedRefedRegistry.clear();
+		PlacementShadowCoordinator.Session shadow = PlacementShadowCoordinator.begin(prog);
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
 			FederatedPlanner.valueOf(splanner.toUpperCase()) :
 			FederatedPlanner.COMPILE_FED_HEURISTIC;
@@ -75,6 +77,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 		// run planner rewrite with forced federated exec types
 		long tFedPlanner = System.nanoTime();
 		planner.getPlanner().rewriteProgram(prog, fgraph, fcallSizes);
+		shadow.observe(prog);
 		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 	}
 }
