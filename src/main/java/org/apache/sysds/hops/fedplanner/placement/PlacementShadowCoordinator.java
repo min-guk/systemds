@@ -23,31 +23,44 @@ public final class PlacementShadowCoordinator {
 	private PlacementShadowCoordinator() { }
 
 	public static Session begin(DMLProgram program) {
-		try { return new Session(new NeutralPlacementGraphBuilder().build(program), null); }
+		try {
+			NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+			return new Session(builder.build(program), builder.selectedProjection(program), null);
+		}
 		catch(Throwable t) {
 			LOG.warn("Neutral placement shadow analysis failed without affecting planner selection", t);
-			return new Session(null, t);
+			return new Session(null, java.util.List.of(), t);
 		}
 	}
 
 	public static final class Session {
 		private final NeutralPlacementGraph baseline;
+		private final java.util.List<String> selectedBefore;
 		private final Throwable failure;
-		private Session(NeutralPlacementGraph baseline, Throwable failure) { this.baseline = baseline; this.failure = failure; }
+		private Session(NeutralPlacementGraph baseline, java.util.List<String> selectedBefore, Throwable failure) {
+			this.baseline = baseline; this.selectedBefore = selectedBefore; this.failure = failure;
+		}
 		public NeutralPlacementGraph graph() { return baseline; }
 		public Throwable failure() { return failure; }
-		public PlacementShadowComparator.Diff observe(DMLProgram program) {
-			if(baseline == null) return null;
+		public Observation observe(DMLProgram program) {
+			if(baseline == null) return new Observation(null, selectedBefore, java.util.List.of(), failure);
 			try {
+				NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
 				PlacementShadowComparator.Diff diff = new PlacementShadowComparator().compareProductionSurfaces(
-					baseline, new NeutralPlacementGraphBuilder().build(program));
+					baseline, builder.build(program));
+				java.util.List<String> selectedAfter = builder.selectedProjection(program);
 				if(!diff.isEmpty()) LOG.debug("Neutral placement shadow observed normalized differences: " + diff);
-				return diff;
+				return new Observation(diff, selectedBefore, selectedAfter, null);
 			}
 			catch(Throwable t) {
 				LOG.warn("Neutral placement shadow comparison failed without affecting planner selection", t);
-				return null;
+				return new Observation(null, selectedBefore, java.util.List.of(), t);
 			}
 		}
+	}
+
+	public record Observation(PlacementShadowComparator.Diff graphDiff, java.util.List<String> selectedBefore,
+		java.util.List<String> selectedAfter, Throwable failure) {
+		public boolean successful() { return failure == null && graphDiff != null; }
 	}
 }

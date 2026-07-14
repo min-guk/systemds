@@ -120,7 +120,7 @@ public final class PlacementGraphFingerprint {
 
 	static String structuralKey(Hop h) {
 		return String.valueOf(h.getFilename()) + ':' + h.getBeginLine() + ':' + h.getBeginColumn() + ':'
-			+ h.getClass().getName() + ':' + h.getOpString() + ':' + h.getName() + ':' + h.getHopID();
+			+ h.getClass().getName() + ':' + h.getOpString() + ':' + h.getName();
 	}
 
 	static String sha256(String text) {

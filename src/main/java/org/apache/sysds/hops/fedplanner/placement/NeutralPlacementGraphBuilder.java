@@ -52,6 +52,8 @@ import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 
 /** Finite mutation-free construction of the planner-neutral shadow graph. */
 public final class NeutralPlacementGraphBuilder {
@@ -59,16 +61,28 @@ public final class NeutralPlacementGraphBuilder {
 		Arrays.asList(FType.ROW, FType.COL, FType.FULL, FType.BROADCAST, FType.PART));
 	private final OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 
+	public List<String> selectedProjection(DMLProgram program) {
+		List<String> selected = new ArrayList<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
+			Hop hop = occurrence.hop();
+			selected.add(occurrence.namespace() + '|' + occurrence.path() + '|'
+				+ PlacementGraphFingerprint.structuralKey(hop) + '|'
+				+ String.valueOf(hop.getExecType()) + '/' + String.valueOf(hop.getFederatedOutput()));
+		}
+		Collections.sort(selected);
+		return Collections.unmodifiableList(selected);
+	}
+
 	public NeutralPlacementGraph build(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
-		boolean registryEmptyBefore = FederatedRefedRegistry.isEmpty();
+		String registryBefore = registrySentinel();
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
 		List<Node> nodes = new ArrayList<>();
 		Map<String,Integer> versions = new java.util.TreeMap<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
-		List<DurableAnchorKey> durableAnchors = new ArrayList<>();
+		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			Hop hop = occurrence.hop();
@@ -82,11 +96,20 @@ public final class NeutralPlacementGraphBuilder {
 			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
 				: occurrence.path().contains("loop-") ? VersionKind.LOOP_HEAD_PHI
 				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
-			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind, List.of());
+			List<String> predecessors = new ArrayList<>();
+			for(Hop input : hop.getInput()) if(values.containsKey(input))
+				predecessors.add(values.get(input).normalizedSignature());
+			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind, predecessors);
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
-			durableAnchors.addAll(anchors);
+			if(!anchors.isEmpty()) anchorProvenance.put(hop, anchors.get(0));
+			else {
+				Set<DurableAnchorKey> inherited = new java.util.TreeSet<>();
+				for(Hop input : hop.getInput())
+					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
+				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
+			}
 			nodes.add(buildNode(hop, key, value, anchors));
 		}
 		List<Constraint> constraints = new ArrayList<>();
@@ -95,14 +118,19 @@ public final class NeutralPlacementGraphBuilder {
 			for(Hop input : occurrence.hop().getInput())
 				if(keys.containsKey(input)) constraints.add(new Constraint(ConstraintKind.DOMINATES, keys.get(input), consumer));
 		}
-		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, durableAnchors);
+		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, anchorProvenance);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
-		if(registryEmptyBefore != FederatedRefedRegistry.isEmpty())
+		if(!registryBefore.equals(registrySentinel()))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return graph;
+	}
+
+	private static String registrySentinel() {
+		return FederatedRefedRegistry.isEmpty() + "/" + FederatedFoutMaterializeRegistry.isEmpty()
+			+ "/" + FederatedLocalMaterializeRegistry.isEmpty();
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors) {
@@ -174,19 +202,22 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, Map<Hop,CompiledHopKey> keys,
-		Map<Hop,ValueVersionKey> values, List<DurableAnchorKey> anchors) {
-		if(anchors.isEmpty()) return List.of();
-		DurableAnchorKey anchor = anchors.stream().sorted().findFirst().orElseThrow();
+		Map<Hop,ValueVersionKey> values, Map<Hop,DurableAnchorKey> anchorProvenance) {
 		Map<ValueVersionKey,List<InputUse>> uses = new java.util.TreeMap<>();
+		Map<ValueVersionKey,DurableAnchorKey> valueAnchors = new java.util.TreeMap<>();
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences)
 			for(int i = 0; i < occurrence.hop().getInput().size(); i++) {
 				Hop input = occurrence.hop().getInput(i);
-				if(values.containsKey(input)) uses.computeIfAbsent(values.get(input), k -> new ArrayList<>())
-					.add(new InputUse(keys.get(occurrence.hop()), i, occurrence.path()));
+				if(values.containsKey(input) && anchorProvenance.containsKey(input)) {
+					uses.computeIfAbsent(values.get(input), k -> new ArrayList<>())
+						.add(new InputUse(keys.get(occurrence.hop()), i, occurrence.path()));
+					valueAnchors.put(values.get(input), anchorProvenance.get(input));
+				}
 			}
 		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
-		PlacementState target = new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false);
 		for(Map.Entry<ValueVersionKey,List<InputUse>> entry : uses.entrySet()) {
+			DurableAnchorKey anchor = valueAnchors.get(entry.getKey());
+			PlacementState target = new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false);
 			List<CompiledHopKey> consumers = new ArrayList<>();
 			for(InputUse use : entry.getValue()) consumers.add(use.consumer());
 			RelocationActionKey key = new RelocationActionKey(entry.getKey(), target, anchor,
@@ -204,8 +235,16 @@ public final class NeutralPlacementGraphBuilder {
 	private static List<List<FType>> inputCombinations(int arity) {
 		if(arity == 0) return List.of(List.of());
 		List<List<FType>> result = new ArrayList<>();
-		for(FType type : INPUT_FTYPES) result.add(new ArrayList<>(Collections.nCopies(arity, type)));
+		enumerateInputCombinations(arity, new ArrayList<>(), result);
 		return result;
+	}
+	private static void enumerateInputCombinations(int arity, List<FType> prefix, List<List<FType>> result) {
+		if(prefix.size() == arity) { result.add(List.copyOf(prefix)); return; }
+		for(FType type : INPUT_FTYPES) {
+			prefix.add(type);
+			enumerateInputCombinations(arity, prefix, result);
+			prefix.remove(prefix.size() - 1);
+		}
 	}
 
 	private static FType firstFType(List<FType> values) { return values.isEmpty() ? null : values.get(0); }
