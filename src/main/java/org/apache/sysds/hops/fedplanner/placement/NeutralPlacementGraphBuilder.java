@@ -144,7 +144,7 @@ public final class NeutralPlacementGraphBuilder {
 			try { caps = oracle.decide(hop, inputs); }
 			catch(Throwable t) {
 				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
-				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RUNTIME_UNSUPPORTED,
+				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RULE_ERROR,
 					"RULE_ERROR:" + t.getClass().getSimpleName()));
 				continue;
 			}
@@ -153,7 +153,7 @@ public final class NeutralPlacementGraphBuilder {
 				caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT);
 			String detail = caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
-				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RUNTIME_UNSUPPORTED, detail));
+				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
 			else if(transientAccess && !isLegalTransient(state))
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
 			else if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP

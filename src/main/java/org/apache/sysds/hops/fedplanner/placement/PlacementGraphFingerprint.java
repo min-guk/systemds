@@ -114,7 +114,10 @@ public final class PlacementGraphFingerprint {
 		List<HopOccurrence> out, Set<Hop> seen) {
 		if(!seen.add(hop)) return;
 		for(Hop input : hop.getInput()) walkHop(input, path, namespace, rows, out, seen);
-		rows.add(path + '|' + structuralKey(hop) + '|' + hop.getExecType() + '|' + hop.getFederatedOutput());
+		List<String> inputs = new ArrayList<>();
+		for(int i = 0; i < hop.getInput().size(); i++) inputs.add(i + ":" + structuralKey(hop.getInput(i)));
+		rows.add(path + '|' + structuralKey(hop) + '|' + String.join(",", inputs) + '|'
+			+ hop.getExecType() + '|' + hop.getForcedExecType() + '|' + hop.getFederatedOutput());
 		if(out != null) out.add(new HopOccurrence(hop, path, namespace));
 	}
 
