@@ -560,7 +560,7 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testMappingPreservingFederatedTransposeSkipsCoordinationCost() {
+	public void testOnlyFullFederatedTransposeSkipsCoordinationCost() {
 		TestMatrixHop input = new TestMatrixHop("fedTransposeInput", 10, 4,
 			32 * 1024 * 1024, 32 * 1024 * 1024);
 		ReorgOp transpose = HopRewriteUtils.createTranspose(input);
@@ -569,12 +569,14 @@ public class FederatedCostModelFallbackTest {
 
 		Assert.assertTrue("FULL federated transpose should be recognized as mapping-preserving",
 			FederatedCostModel.isMappingPreservingFederatedTranspose(transpose, FType.FULL));
-		Assert.assertTrue("BROADCAST federated transpose should be recognized as mapping-preserving",
+		Assert.assertFalse("BROADCAST output alone does not prove that transpose avoids worker execution",
 			FederatedCostModel.isMappingPreservingFederatedTranspose(transpose, FType.BROADCAST));
 		Assert.assertFalse("ROW-partitioned transpose should not use the mapping-preserving shortcut",
 			FederatedCostModel.isMappingPreservingFederatedTranspose(transpose, FType.ROW));
 		Assert.assertEquals("Mapping-preserving federated transpose should not pay a generic FED coordination term",
 			0.0, FederatedCostModel.adjustFedCoordinationCost(transpose, FType.FULL, 123.0), 1e-9);
+		Assert.assertEquals("BROADCAST transpose must retain coordination without input-layout proof",
+			123.0, FederatedCostModel.adjustFedCoordinationCost(transpose, FType.BROADCAST, 123.0), 1e-9);
 		Assert.assertEquals("Non-mapping-preserving reorgs must keep their FED coordination term",
 			123.0, FederatedCostModel.adjustFedCoordinationCost(transpose, FType.ROW, 123.0), 1e-9);
 	}
@@ -893,15 +895,32 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
+	public void testLocalToFedForwardingPenaltyChargesOnlyAdditionalWorkerStages() throws Exception {
+		int workers = 4;
+		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
+			* getFederatedCostModelConstant("TO_MS");
+		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
+		double expectedAdditionalStages = (workers - 1) * (latencyMs + ctrlMs);
+
+		Assert.assertEquals("The base upload already includes one latency/control stage; the forwarding penalty"
+			+ " must charge only the remaining worker stages",
+			expectedAdditionalStages,
+			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, workers), 1e-9);
+	}
+
+	@Test
 	public void testDownloadNetworkCostScalesWithWorkerFanInForPartitionedLayouts() {
 		double memSize = 32 * 1024 * 1024;
 		double singleWorker = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.ROW, 1);
 		double fourWorkerRow = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.ROW, 4);
+		double fourWorkerParallelPayload = FederatedCostModel.computeDownloadNetworkCost(memSize / 4);
 		double fourWorkerFull = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.FULL, 4);
 		double fourWorkerBroadcast = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.BROADCAST, 4);
 
 		Assert.assertTrue("Partitioned downloads should include worker fan-in latency/control overhead",
-			fourWorkerRow > singleWorker);
+			fourWorkerRow > fourWorkerParallelPayload);
+		Assert.assertTrue("Parallel partition collection should not serialize the full logical payload",
+			fourWorkerRow < singleWorker);
 		Assert.assertEquals("Single-source FULL downloads should not pay multi-worker fan-in overhead",
 			FederatedCostModel.computeDownloadNetworkCost(memSize), fourWorkerFull, 1e-9);
 		Assert.assertEquals("Replicated BROADCAST downloads materialize one local copy and should not pay full fan-in",

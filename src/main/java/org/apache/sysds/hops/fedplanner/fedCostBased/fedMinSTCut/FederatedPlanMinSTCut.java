@@ -175,8 +175,11 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			if (vertex == null || vertex.getHopRef() == null || entry.getValue() == null)
 				continue;
 			Hop hop = vertex.getHopRef();
-			hop.setForcedExecType(entry.getValue().getLeft());
-			hop.setFederatedOutput(entry.getValue().getRight());
+			ExecType exec = entry.getValue().getLeft();
+			FederatedOutput out = entry.getValue().getRight();
+			hop.setForcedExecType(exec);
+			hop.setFederatedOutput(out);
+			FederatedPlannerUtils.registerPlannerRecompileState(hop, exec, out);
 		}
 	}
 

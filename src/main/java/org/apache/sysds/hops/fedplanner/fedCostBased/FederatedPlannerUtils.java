@@ -879,7 +879,6 @@ public class FederatedPlannerUtils {
 		boolean hasMappedSources = sourceHops != null && !sourceHops.isEmpty();
 		if (!hasMappedSources)
 			return hasConcreteFederatedSourceVar(transientRead.getName());
-		boolean sawTransientWriteBoundary = false;
 		for (Hop source : sourceHops) {
 			if (source == null)
 				continue;
@@ -887,10 +886,8 @@ public class FederatedPlannerUtils {
 				DataOp dataSource = (DataOp) source;
 				if (dataSource.getOp() == Types.OpOpData.FEDERATED)
 					return true;
-				if (dataSource.getOp() == Types.OpOpData.TRANSIENTWRITE) {
-					sawTransientWriteBoundary = true;
+				if (dataSource.getOp() == Types.OpOpData.TRANSIENTWRITE)
 					continue;
-				}
 				if (dataSource.getOp() == Types.OpOpData.TRANSIENTREAD
 						&& hasConcreteFederatedSourceVar(dataSource.getName()))
 					return true;
@@ -898,7 +895,7 @@ public class FederatedPlannerUtils {
 			if (hasConcreteFederatedSourceHop(source, new HashSet<>()))
 				return true;
 		}
-		return !sawTransientWriteBoundary && hasConcreteFederatedSourceVar(transientRead.getName());
+		return false;
 	}
 
 	public static Hop getPreferredMultiReturnFunctionOutputSourceForTransientRead(DataOp transientRead,

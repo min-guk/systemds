@@ -132,9 +132,16 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 			FederatedRequest fr1 = FederationUtils.callInstruction(instString, output,
 				new CPOperand[]{input1, input2},
 				new long[]{mo1.getFedMapping().getID(), mo2.getFedMapping().getID()}, true);
-			if ( _fedOut.isForcedFederated() )
-				writeInfoLog(mo1, mo2);
-			aggregateLocally(mo1.getFedMapping(), true, ec, fr1);
+			if (_fedOut.isForcedFederated() && haveCompleteCoLocatedInputs(mo1, mo2)) {
+				Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr1);
+				setOutputFedMapping(mo1.getFedMapping(), mo1, mo2,
+					firstNonZeros(ffr), fr1.getID(), ec);
+			}
+			else {
+				if (_fedOut.isForcedFederated())
+					writeInfoLog(mo1, mo2);
+				aggregateLocally(mo1.getFedMapping(), true, ec, fr1);
+			}
 		}
 		// SPECIAL CASE: broadcast-left x row-federated-right should slice/broadcast the left input
 		// according to the RHS row partitions and aggregate by addition. Broadcasting the federated
@@ -574,6 +581,41 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 		java.util.Arrays.sort(as);
 		java.util.Arrays.sort(bs);
 		return java.util.Arrays.equals(as, bs);
+	}
+
+	private static boolean haveCompleteCoLocatedInputs(MatrixLineagePair left, MatrixLineagePair right) {
+		return left != null && right != null && left.isFederated() && right.isFederated()
+			&& isSameWorkerPool(left.getFedMapping(), right.getFedMapping())
+			&& everyRangeCoversInput(left) && everyRangeCoversInput(right);
+	}
+
+	private static boolean everyRangeCoversInput(MatrixLineagePair input) {
+		if (input.getFedMapping() == null || input.getFedMapping().getSize() == 0)
+			return false;
+		for (org.apache.sysds.runtime.controlprogram.federated.FederatedRange range :
+				input.getFedMapping().getFederatedRanges()) {
+			if (range == null)
+				return false;
+			long[] begin = range.getBeginDims();
+			long[] end = range.getEndDims();
+			if (begin == null || end == null || begin.length < 2 || end.length < 2
+				|| begin[0] != 0 || begin[1] != 0
+				|| end[0] != input.getNumRows() || end[1] != input.getNumColumns())
+				return false;
+		}
+		return true;
+	}
+
+	private static long firstNonZeros(Future<FederatedResponse>[] responses) {
+		if (responses == null || responses.length == 0)
+			return -1;
+		try {
+			Object[] data = responses[0].get().getData();
+			return data != null && data.length > 0 && data[0] instanceof Long ? (Long) data[0] : -1;
+		}
+		catch (Exception ex) {
+			throw new DMLRuntimeException(ex);
+		}
 	}
 
 	private static String workerAddressKey(InetSocketAddress address) {

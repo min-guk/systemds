@@ -45,6 +45,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
@@ -328,6 +329,39 @@ public class FederatedPlanMinSTCostEstimator {
 			graph.forbidFOUTUnary(pId);
 		}
 
+		Set<Long> exactTWriteChildIds = collectTransientWriteChildIds(hop, rewireTable);
+		Set<Long> tWriteChildIds = exactTWriteChildIds;
+		boolean useByNameFallback = shouldUseByNameTransientWriteFallback(hop, rewireTable);
+		if (tWriteChildIds.isEmpty() && useByNameFallback) {
+			tWriteChildIds = collectTransientWriteByName(hop, graph);
+		}
+		else if (tWriteChildIds.isEmpty() && FederatedPlannerTrace.shouldTrace(hop)) {
+			FederatedPlannerTrace.log(hop, "MinST-TRTW-ByNameSkip",
+				"reason=explicit-concrete-source directSources="
+					+ summarizeDirectSourceIds(rewireTable.get(hopID)));
+		}
+		if (!tWriteChildIds.isEmpty()) {
+			if (vertex.getTransientWriteHopId() == null) {
+				vertex.setTransientWriteHopId(tWriteChildIds.iterator().next());
+			}
+			for (Long twHopId : tWriteChildIds) {
+				if (twHopId == null) {
+					continue;
+				}
+				Vertex twVertex = graph.getVertex(twHopId);
+				if (twVertex == null) {
+					continue;
+				}
+				// Register consistency before installing reader costs. Only direct rewire
+				// provenance proves that the linked CP/LOUT branch is producer-local;
+				// conservative same-name fallback retains the materialization charge.
+				if (exactTWriteChildIds.contains(twHopId))
+					graph.addExactTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
+				else
+					graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
+			}
+		}
+
 		graph.setVertexCost(vertex);
 
 		if (!acF && afF) {
@@ -346,25 +380,6 @@ public class FederatedPlanMinSTCostEstimator {
 			}
 		}
 
-		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, rewireTable);
-		if (tWriteChildIds.isEmpty()) {
-			tWriteChildIds = collectTransientWriteByName(hop, graph);
-		}
-		if (!tWriteChildIds.isEmpty()) {
-			if (vertex.getTransientWriteHopId() == null) {
-				vertex.setTransientWriteHopId(tWriteChildIds.iterator().next());
-			}
-			for (Long twHopId : tWriteChildIds) {
-				if (twHopId == null) {
-					continue;
-				}
-				Vertex twVertex = graph.getVertex(twHopId);
-				if (twVertex == null) {
-					continue;
-				}
-				graph.addTransReadWriteConsistencyEdges(twVertex, twHopId, vertex, hopID);
-			}
-		}
 		for (int i = 0; i < childHops.size(); i++) {
 			Hop childHop = childHops.get(i);
 			if (childHop == null)
@@ -506,9 +521,13 @@ public class FederatedPlanMinSTCostEstimator {
 				FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
 						hop, vertex.getDataType(), outputMemEstimate, numOfWorkers,
 						genericDownloadCostWithoutWeight);
+		double nativeResultDownloadCostWithoutWeight =
+				FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+						hop, vertex.getDataType(), outputMemEstimate, numOfWorkers,
+						nativeAggUnaryDownloadCostWithoutWeight);
 		downloadCostWithoutWeight = mixedFedLocalCost.hasCoordinatorPhase()
 				? mixedFedLocalCost.getCoordinatorPhaseCost()
-				: nativeAggUnaryDownloadCostWithoutWeight;
+				: nativeResultDownloadCostWithoutWeight;
 		double fedInputPreparationCostWithWeight =
 				vertex.getOpWeight() * mixedFedLocalCost.getInputPreparationCost();
 
@@ -611,6 +630,39 @@ public class FederatedPlanMinSTCostEstimator {
 		for (Hop dominatingHop : dominating)
 			dominatingIds.add(dominatingHop.getHopID());
 		return dominatingIds.isEmpty() ? preferred : dominatingIds;
+	}
+
+	private static boolean shouldUseByNameTransientWriteFallback(Hop hop,
+			Map<Long, List<Hop>> rewireTable) {
+		if (!(hop instanceof DataOp)
+				|| ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| rewireTable == null)
+			return true;
+		List<Hop> directSources = rewireTable.get(hop.getHopID());
+		if (directSources == null || directSources.isEmpty())
+			return true;
+		for (Hop directSource : directSources) {
+			if (directSource instanceof DataOp
+					&& ((DataOp) directSource).getOp() == Types.OpOpData.TRANSIENTWRITE)
+				return true;
+		}
+		return !FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(
+			(DataOp) hop, directSources);
+	}
+
+	private static String summarizeDirectSourceIds(List<Hop> directSources) {
+		if (directSources == null || directSources.isEmpty())
+			return "[]";
+		StringBuilder summary = new StringBuilder("[");
+		for (Hop directSource : directSources) {
+			if (summary.length() > 1)
+				summary.append(',');
+			if (directSource == null)
+				summary.append("null");
+			else
+				summary.append(directSource.getHopID()).append(':').append(directSource.getName());
+		}
+		return summary.append(']').toString();
 	}
 
 	private static Set<Long> collectTransientWriteByName(Hop hop, FederatedPlanMinSTGraph graph) {

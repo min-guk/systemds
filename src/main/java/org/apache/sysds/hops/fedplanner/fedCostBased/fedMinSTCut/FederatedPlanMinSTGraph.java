@@ -148,10 +148,15 @@ public class FederatedPlanMinSTGraph {
 			DefaultWeightedEdge.class);
 	// Track TR/TW consistency edges to avoid duplicates.
 	private final Set<Pair<Long, Long>> trConsistencyAdded = new HashSet<>();
+	// Track the subset backed by direct rewire provenance. By-name fallback may
+	// enforce placement consistency, but cannot prove the local branch is already
+	// materialized at the producer.
+	private final Set<Pair<Long, Long>> exactTrConsistencyAdded = new HashSet<>();
 	// Track TW/input placement consistency edges to avoid duplicates.
 	private final Set<Pair<Long, Long>> twInputPlacementConsistencyAdded = new HashSet<>();
 	// Track required local-input constraints (child must have local output if parent executes CP).
 	private final Set<Pair<Long, Long>> requiredLocalInputAdded = new HashSet<>();
+	// Track AggBinary RHS boundaries whose FED/FOUT lowering materializes and refederates the input.
 	// Track parent-child edges where local->federated forwarding was assumed via refed in rewire.
 	private final Set<Pair<Long, Long>> parentChildUploadHintAdded = new HashSet<>();
 	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
@@ -221,12 +226,12 @@ public class FederatedPlanMinSTGraph {
 		boolean afL = caps.allowFED_LOUT;
 		boolean afF = caps.allowFED_FOUT;
 
-		double cpCost = vertex.getOpCostWithWeight();
+		double baseOpCost = vertex.getOpCostWithWeight();
+		double cpCost = baseOpCost;
 		// DP/MinST parity: choosing CP-local for a concrete federated TRANSIENTREAD
 		// must pay federated->local materialization (runtime acquire_read path).
-		// Stable fed-init TReads can reuse one local buffer across loop iterations
-		// and multiple CP parents, so charge the amortized shared materialization
-		// cost instead of the full loop-weighted download at each consumer.
+		// The graph vertex shares this cost across parents in one occurrence, while
+		// opWeight preserves distinct recompiled/runtime occurrences.
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 			if (caps.allowCP_LOUT && caps.allowFED_FOUT
 					&& hop.getDim1() > 0 && hop.getDim2() > 0) {
@@ -272,7 +277,7 @@ public class FederatedPlanMinSTGraph {
 				boolean broadcastOnlyFedCompute = hasMatrixInputForFedCompute
 						&& !hasNonBroadcastMatrixInputForFedCompute;
 				double defaultFedComputeCost = FederatedCostModel.computeFederatedComputeCost(
-						vertex.getHopRef(), cpCost, numOfWorkers, broadcastOnlyFedCompute);
+						vertex.getHopRef(), baseOpCost, numOfWorkers, broadcastOnlyFedCompute);
 				double fedComputeCost = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
 						vertex.getHopRef(), vertex.getDataType(), defaultFedComputeCost);
 				fedComputeCost = FederatedCostModel.computeNativeFederatedIndexingCost(
@@ -317,13 +322,9 @@ public class FederatedPlanMinSTGraph {
 		long pId = FederatedPlanMinSTPlanner.placementId(hopId);
 		if (hop instanceof DataOp &&
 				((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			// DP parity: a stable federated-input TRead (fed-init var) can materialize
-			// once and share the local buffer across loop iterations / CP parents. The
-			// MinST graph already shares this edge globally across all parents, so do not
-			// multiply the FED->CP download by the hop execution frequency again.
-			//
-			// For ordinary TReads we still charge the loop-weighted download, because the
-			// local materialization may legitimately happen per execution.
+			// The single graph edge shares a materialization among parents in one runtime
+			// occurrence. Recompiled occurrences remain represented by opWeight and must
+			// not collapse into one process-global cache entry.
 			double trDownloadCost = computeTransientReadDownloadEdgeCost(vertex);
 			addCap(cId, pId, trDownloadCost);
 			if (FederatedPlannerTrace.shouldTrace(hop)) {
@@ -334,7 +335,13 @@ public class FederatedPlanMinSTGraph {
 			return;
 		}
 		// Hop-local placement conversion follows the hop's own execution frequency.
-		double uploadCost = vertex.getOpWeight() * vertex.getCpUploadCostWithoutWeight();
+		// The base upload owns the first PUT latency/control stage. CP/FOUT still
+		// materializes the local result at every worker, so include the remaining
+		// fan-out stages just as the equivalent CP/LOUT -> FED boundary does.
+		FType cpFoutType = getAdjustedCpFoutType(vertex);
+		double uploadUnitCost = vertex.getCpUploadCostWithoutWeight()
+				+ FederatedCostModel.computeLocalToFedForwardingPenalty(cpFoutType, numOfWorkers);
+		double uploadCost = vertex.getOpWeight() * uploadUnitCost;
 		double downloadCost = vertex.getOpWeight() * vertex.getDownloadCostWithoutWeight();
 		if (vertex.isDerivedFedFout()) {
 			// Derived FED/FOUT is not a native worker-side FOUT result. It is produced as
@@ -422,13 +429,15 @@ public class FederatedPlanMinSTGraph {
 								+ childHopID + " (" + childOp + "): " + originalUploadCost + " -> " + uploadCost);
 			}
 		}
-		double forwardingPenalty = 0.0;
-		if (!(Double.isNaN(uploadCost) || uploadCost <= 0.0)) {
-			forwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
-					uploadConversionType, numOfWorkers);
-			uploadCost += forwardingPenalty;
-		}
-		double uploadWeighted = forwardingWeight * uploadCost;
+		// The base upload cost includes the first PUT transfer/control stage. A
+		// partitioned or broadcast CP result still needs the remaining worker fanout
+		// stages before the parent FED instruction can execute. The parent FED unary
+		// term owns the EXEC dispatch, not these additional PUT requests, so charge
+		// the existing forwarding penalty at this U boundary (matching DP and
+		// loop-carry costing).
+		double forwardingPenalty =
+			FederatedCostModel.computeLocalToFedForwardingPenalty(uploadConversionType, numOfWorkers);
+		double uploadWeighted = forwardingWeight * (uploadCost + forwardingPenalty);
 
 		// If a parent executes in CP, the child usually must have a local materialization
 		// (either natively or via download).  A concrete-source TRANSIENTREAD is the
@@ -437,7 +446,24 @@ public class FederatedPlanMinSTGraph {
 		// edge, not by forcing the underlying FEDERATED source itself to become local.
 		boolean skipRequiredLocalInputEdge =
 				shouldUseAliasMaterializationForLocalTransientRead(parentVertex, childVertex);
-		if (!skipRequiredLocalInputEdge)
+		if (hasSharedTransientReadLocalMaterialization(childVertex)) {
+			// A stable direct read or an exact TWrite-backed read can retain its
+			// FED/FOUT primary representation while sharing one selected local
+			// materialization among CP consumers. Exact consistency still ties the
+			// TWrite and TRead primary placement; D is an additional representation.
+			double downloadCost = computeTransientReadSharedDMaterializationCost(childVertex);
+			double baseDownloadCost = childVertex.getDownloadCostWithoutWeight();
+			if (hasSharedStableTransientReadLocalMaterialization(childVertex)
+					&& Double.isFinite(baseDownloadCost) && baseDownloadCost > 0.0)
+				addCap(leafedSource, parentC, forwardingWeight * baseDownloadCost);
+			recordEffectiveDemand(childHopID, EffectiveDemandSide.LOCAL, parentHopID,
+				hasExactTransientReadLocalMaterialization(childVertex)
+					? "exact-tread-shared-local" : "stable-tread-shared-local",
+				downloadCost, childVertex.getDataType());
+			addParentChildHyperEdge(parentC, childP, HyperEdgeDirection.DOWNLOAD,
+				childVertex.getDataType(), downloadCost);
+		}
+		else if (!skipRequiredLocalInputEdge)
 			addRequiredLocalInputEdge(parentHopID, childHopID);
 		// Cost-model policy: matrix inputs can require local->federated boundary transfer
 		// whenever the parent executes FED, regardless of OPTIONAL/REQUIRED classification.
@@ -506,6 +532,36 @@ public class FederatedPlanMinSTGraph {
 				&& childVertex.isStableFederatedInputRead();
 	}
 
+	private static boolean hasSharedStableTransientReadLocalMaterialization(Vertex vertex) {
+		if (vertex == null || !vertex.isStableFederatedInputRead()
+				|| vertex.getTransientWriteHopId() != null || vertex.getCaps() == null)
+			return false;
+		Hop hop = vertex.getHopRef();
+		return hop instanceof DataOp
+				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD
+				&& vertex.getCaps().allowCP_LOUT
+				&& vertex.getCaps().allowFED_FOUT;
+	}
+
+	private boolean hasExactTransientReadLocalMaterialization(Vertex vertex) {
+		if (vertex == null || vertex.getCaps() == null)
+			return false;
+		Hop hop = vertex.getHopRef();
+		if (!(hop instanceof DataOp)
+				|| ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD
+				|| !vertex.getCaps().allowCP_LOUT
+				|| !vertex.getCaps().allowFED_FOUT)
+			return false;
+		Long transientWriteHopId = vertex.getTransientWriteHopId();
+		return transientWriteHopId != null
+			&& exactTrConsistencyAdded.contains(Pair.of(transientWriteHopId, vertex.getHopID()));
+	}
+
+	private boolean hasSharedTransientReadLocalMaterialization(Vertex vertex) {
+		return hasSharedStableTransientReadLocalMaterialization(vertex)
+			|| hasExactTransientReadLocalMaterialization(vertex);
+	}
+
 	public void addLoopCarryEdge(long endWriterHopId, long frontReaderHopId, double weight) {
 		if (weight <= 0.0 || endWriterHopId < 0 || frontReaderHopId < 0)
 			return;
@@ -528,25 +584,30 @@ public class FederatedPlanMinSTGraph {
 		addCap(writerP, readerC, downloadWeighted);
 	}
 
-		public void addTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
-			// TR/TW hard-constraint helper for enforcing:
-			//   <TW-LOUT, TR-CP/LOUT>  and  <TW-FOUT, TR-FED/FOUT>
-			// In our min-cut encoding this corresponds to placing TW.P, TR.C, and TR.P on the same side.
-			if (!trConsistencyAdded.add(Pair.of(twId, trId)))
-				return;
-			long twP = FederatedPlanMinSTPlanner.placementId(twId);
-			long trC = FederatedPlanMinSTPlanner.computeId(trId);
-			long trP = FederatedPlanMinSTPlanner.placementId(trId);
-			addXorEdge(twP, trC, HARD_CONSTRAINT);
-			addXorEdge(twP, trP, HARD_CONSTRAINT);
-			Hop traceHop = (tw != null && FederatedPlannerTrace.shouldTrace(tw.getHopRef()))
-					? tw.getHopRef()
-					: ((tr != null) ? tr.getHopRef() : null);
-			if (FederatedPlannerTrace.shouldTrace(traceHop)) {
-				FederatedPlannerTrace.log(traceHop, "MinST-TRTW-Consistency", String.format(
-						"tw=%d tr=%d twP=%d trC=%d trP=%d", twId, trId, twP, trC, trP));
-			}
+	public void addExactTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
+		exactTrConsistencyAdded.add(Pair.of(twId, trId));
+		addTransReadWriteConsistencyEdges(tw, twId, tr, trId);
+	}
+
+	public void addTransReadWriteConsistencyEdges(Vertex tw, long twId, Vertex tr, long trId) {
+		// TR/TW hard-constraint helper for enforcing:
+		//   <TW-LOUT, TR-CP/LOUT>  and  <TW-FOUT, TR-FED/FOUT>
+		// In our min-cut encoding this corresponds to placing TW.P, TR.C, and TR.P on the same side.
+		if (!trConsistencyAdded.add(Pair.of(twId, trId)))
+			return;
+		long twP = FederatedPlanMinSTPlanner.placementId(twId);
+		long trC = FederatedPlanMinSTPlanner.computeId(trId);
+		long trP = FederatedPlanMinSTPlanner.placementId(trId);
+		addXorEdge(twP, trC, HARD_CONSTRAINT);
+		addXorEdge(twP, trP, HARD_CONSTRAINT);
+		Hop traceHop = (tw != null && FederatedPlannerTrace.shouldTrace(tw.getHopRef()))
+			? tw.getHopRef()
+			: ((tr != null) ? tr.getHopRef() : null);
+		if (FederatedPlannerTrace.shouldTrace(traceHop)) {
+			FederatedPlannerTrace.log(traceHop, "MinST-TRTW-Consistency", String.format(
+				"tw=%d tr=%d twP=%d trC=%d trP=%d", twId, trId, twP, trC, trP));
 		}
+	}
 
 	public void addTransWriteInputPlacementConsistencyEdge(long twId, long inputHopId) {
 		if (twId < 0 || inputHopId < 0)
@@ -688,13 +749,29 @@ public class FederatedPlanMinSTGraph {
 			return explicitProducerSharedCost;
 		if (!shouldReuseTransientReadDownload(vertex))
 			return vertex.getOpWeight() * baseDownload;
-		double opWeight = Math.max(1.0, vertex.getOpWeight());
-		double networkWeight = vertex.getNetworkWeight();
-		if (Double.isNaN(networkWeight) || networkWeight <= 0.0)
-			networkWeight = 1.0;
-		double reuseShare = Math.min(1.0, networkWeight / opWeight);
-		int numParents = Math.max(1, vertex.getNumParents());
-		return baseDownload * reuseShare / numParents;
+		// A stable direct federated value can be consumed more often than it is
+		// refreshed. Charge the proven source/network frequency rather than every
+		// compute occurrence, while retaining a conservative op-weight fallback.
+		double refreshWeight = vertex.getNetworkWeight();
+		if (!Double.isFinite(refreshWeight) || refreshWeight <= 0.0)
+			refreshWeight = vertex.getOpWeight();
+		if (Double.isFinite(vertex.getOpWeight()) && vertex.getOpWeight() > 0.0)
+			refreshWeight = Math.min(refreshWeight, vertex.getOpWeight());
+		return Math.max(1.0, refreshWeight) * baseDownload;
+	}
+
+	private double computeTransientReadSharedDMaterializationCost(Vertex vertex) {
+		if (!hasExactTransientReadLocalMaterialization(vertex))
+			return computeTransientReadLocalMaterializationCost(vertex);
+		double baseDownload = vertex.getDownloadCostWithoutWeight();
+		if (!Double.isFinite(baseDownload) || baseDownload <= 0.0)
+			return 0.0;
+		double refreshWeight = vertex.getNetworkWeight();
+		if (!Double.isFinite(refreshWeight) || refreshWeight <= 0.0)
+			refreshWeight = vertex.getOpWeight();
+		if (Double.isFinite(vertex.getOpWeight()) && vertex.getOpWeight() > 0.0)
+			refreshWeight = Math.min(refreshWeight, vertex.getOpWeight());
+		return Math.max(1.0, refreshWeight) * baseDownload;
 	}
 
 	private double computeTransientReadDownloadEdgeCost(Vertex vertex) {
@@ -714,6 +791,11 @@ public class FederatedPlanMinSTGraph {
 
 	private static boolean shouldReuseTransientReadDownload(Vertex vertex) {
 		if (vertex == null)
+			return false;
+		// An unpartitioned FULL source is lowered through CP-local acquire/materialization
+		// for each recompiled runtime occurrence. Unlike a partitioned federated value,
+		// it cannot retain a reusable partition mapping across those local consumers.
+		if (vertex.getDataType() == FType.FULL)
 			return false;
 		Hop hop = vertex.getHopRef();
 		if (!(hop instanceof DataOp))
@@ -736,14 +818,39 @@ public class FederatedPlanMinSTGraph {
 		String hopName = hop.getName();
 		if (hopName == null || hopName.isEmpty())
 			return Double.NaN;
-		Vertex transientWriteVertex = memoTable.get(transientWriteHopId);
-		boolean localProducerFamily = transientWriteVertex != null
-			&& transientWriteVertex.getCaps() != null
-			&& transientWriteVertex.getCaps().allowCP_LOUT;
-		if (localProducerFamily)
+		// The hard TR/TW relation permits only producer-LOUT + reader-CP/LOUT or
+		// producer-FOUT + reader-FED/FOUT. Therefore the linked reader's local
+		// branch consumes an already-local producer value and cannot own a
+		// federated-to-local download. Capability alone is deliberately insufficient;
+		// the exact registered relation is the state proof.
+		if (exactTrConsistencyAdded.contains(Pair.of(transientWriteHopId, vertex.getHopID())))
 			return 0.0;
-		if (!shouldReuseTransientReadDownload(vertex))
-			return Double.NaN;
+		Vertex transientWriteVertex = memoTable.get(transientWriteHopId);
+		ExecPlacementCaps producerCaps = transientWriteVertex != null
+			? transientWriteVertex.getCaps() : null;
+		// A legal CP/LOUT alternative is not proof that the producer will be
+		// selected local.  Suppress the read-side materialization only when every
+		// legal producer output is LOUT; otherwise the cut must retain the shared
+		// download charge for the FED/FOUT alternative.
+		boolean producerOutputFixedToLout = producerCaps != null
+			&& (producerCaps.allowCP_LOUT || producerCaps.allowFED_LOUT)
+			&& !producerCaps.allowCP_FOUT
+			&& !producerCaps.allowFED_FOUT;
+		if (producerOutputFixedToLout)
+			return 0.0;
+		if (!shouldReuseTransientReadDownload(vertex)) {
+			// A linked transient-read value remains reusable until its producer family
+			// writes a new value.  networkWeight already removes inner-loop reuse from
+			// the read's execution frequency, whereas opWeight counts every consumer
+			// execution.  Charging opWeight here can therefore multiply one physical
+			// materialization by nested-loop reuse (for example 300 reads of 30 writes).
+			double refreshWeight = vertex.getNetworkWeight();
+			if (!Double.isFinite(refreshWeight) || refreshWeight <= 0.0)
+				refreshWeight = vertex.getOpWeight();
+			if (Double.isFinite(vertex.getOpWeight()) && vertex.getOpWeight() > 0.0)
+				refreshWeight = Math.min(refreshWeight, vertex.getOpWeight());
+			return Math.max(1.0, refreshWeight) * baseDownload;
+		}
 
 		int sharedConsumerCount = 0;
 		for (Vertex siblingVertex : memoTable.values()) {
@@ -1076,9 +1183,9 @@ public class FederatedPlanMinSTGraph {
 				outSelection.put(hopID, out);
 			}
 
-			// U/D obligations are pre-cut graph terms. Do not silently reverse C/P or
-			// placement decisions after the cut; downstream validation and selected
-			// obligation registration must either satisfy the selected plan or fail.
+			// Normalize coupled capability, transient, and FOUT-chain decisions before
+			// registering the materialization obligations consumed by Lop lowering.
+			repairSelectionFixpoint(execSelection, outSelection);
 			computeSelectedObligations(execSelection, outSelection);
 			Map<Long, FType> finalFTypeMap = buildSelectedFTypeMap(execSelection, outSelection);
 
@@ -1358,15 +1465,6 @@ public class FederatedPlanMinSTGraph {
 
 				ExecType exec = execSelection.getOrDefault(hopId, ExecType.CP);
 				FederatedOutput out = outSelection.getOrDefault(hopId, FederatedOutput.LOUT);
-				// CP/FOUT propagation exists to materialize an upstream local placement for a
-				// selected downstream FOUT chain. If the current selection already exposes a
-				// federated output, the chain is preserved and we must not rewrite a raw FED/FOUT
-				// decision down to CP/FOUT. Doing so can pull iterative federated kernels (for
-				// example kmeans under 1 worker) into slow CP elementwise loops even though the
-				// original FOUT path is already valid and cheaper at runtime.
-				if (out == FederatedOutput.FOUT)
-					continue;
-
 				// MinST parity-follow: if the raw cut already selected FED/LOUT, and a
 				// selected downstream FOUT chain makes FOUT desirable, prefer promoting the
 				// existing federated path to FED/FOUT instead of rewriting it to CP/FOUT.
@@ -1377,7 +1475,7 @@ public class FederatedPlanMinSTGraph {
 				FType promotedFedType = vertex.getDataType() != null
 						? vertex.getDataType()
 						: adjustedType != null ? adjustedType : FType.BROADCAST;
-				if (exec == ExecType.FED && caps.allowFED_FOUT) {
+				if (exec == ExecType.FED && caps.allowFED_FOUT && !vertex.isDerivedFedFout()) {
 					Map<Long, FType> promotedFedFTypeMap = new HashMap<>(selectedFTypeMap);
 					promotedFedFTypeMap.put(hopId, promotedFedType);
 					if (findSelectedFoutConsumerOpportunity(
@@ -1396,6 +1494,39 @@ public class FederatedPlanMinSTGraph {
 						continue;
 					}
 				}
+
+				// A CP/FOUT node can stay local and upload its result, but that is needlessly
+				// expensive when the node is already on a native FED/FOUT input chain and the
+				// estimated upload exceeds native federated execution. Keep this promotion
+				// deliberately bounded: derived/refed inputs are materialization anchors, not
+				// evidence that downstream execution should continue federated.
+				if (exec == ExecType.CP && out == FederatedOutput.FOUT
+						&& shouldPromoteCpfoutToNativeFedFout(
+								vertex, selectedFTypeMap, execSelection, outSelection)) {
+					execSelection.put(hopId, ExecType.FED);
+					outSelection.put(hopId, FederatedOutput.FOUT);
+					selectedFTypeMap.put(hopId, promotedFedType);
+					changed = true;
+					changedAny = true;
+					if (FederatedPlannerTrace.shouldTrace(hop)) {
+						FederatedPlannerTrace.log(hop, "MinST-CpFout-Repair",
+								"promote " + hopId
+										+ " from CP/FOUT to native FED/FOUT because upload exceeds federated execution");
+					}
+					continue;
+				}
+
+				// Derived FED output is already materialized locally by definition. Do not
+				// turn a raw FED/LOUT choice into CP/FOUT merely to propagate placement;
+				// doing so converts the derived materialization boundary into a new refed
+				// execution anchor and lets the repair cascade beyond that boundary.
+				if (exec == ExecType.FED && vertex.isDerivedFedFout())
+					continue;
+
+				// Preserve an existing FOUT decision unless the bounded native promotion above
+				// applies. In particular, do not rewrite FED/FOUT down to CP/FOUT.
+				if (out == FederatedOutput.FOUT)
+					continue;
 
 				if (adjustedType == null)
 					continue;
@@ -1419,6 +1550,55 @@ public class FederatedPlanMinSTGraph {
 		}
 		while (changed && iter < 4);
 		return changedAny;
+	}
+
+	private boolean shouldPromoteCpfoutToNativeFedFout(Vertex vertex,
+			Map<Long, FType> selectedFTypeMap, Map<Long, ExecType> execSelection,
+			Map<Long, FederatedOutput> outSelection) {
+		if (vertex == null || vertex.getHopRef() == null || vertex.getCaps() == null)
+			return false;
+		ExecPlacementCaps caps = vertex.getCaps();
+		if (!caps.allowFED_FOUT || caps.fedFoutMode != ExecPlacementCaps.FedFoutMode.NATIVE)
+			return false;
+		Hop hop = vertex.getHopRef();
+		if (!hasOnlyNativeFederatedFoutMatrixInputs(hop, execSelection, outSelection))
+			return false;
+
+		FType promotedFedType = vertex.getDataType();
+		if (promotedFedType == null)
+			return false;
+		Map<Long, FType> promotedFTypeMap = new HashMap<>(selectedFTypeMap);
+		promotedFTypeMap.put(vertex.getHopID(), promotedFedType);
+		if (!FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(hop, promotedFTypeMap))
+			return false;
+
+		double weightedUploadCost = computeWeightedCpfoutUploadCost(
+				vertex, getAdjustedCpFoutType(vertex), 1.0);
+		double federatedUnaryCost = computeEstimatedFederatedUnaryCost(vertex);
+		return weightedUploadCost > 0.0 && federatedUnaryCost > 0.0
+				&& weightedUploadCost > federatedUnaryCost;
+	}
+
+	private boolean hasOnlyNativeFederatedFoutMatrixInputs(Hop hop,
+			Map<Long, ExecType> execSelection, Map<Long, FederatedOutput> outSelection) {
+		if (hop == null || hop.getInput() == null)
+			return false;
+		boolean hasMatrixInput = false;
+		for (Hop input : hop.getInput()) {
+			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			hasMatrixInput = true;
+			Vertex inputVertex = memoTable.get(input.getHopID());
+			if (inputVertex == null || inputVertex.isDerivedFedFout()
+					|| inputVertex.getCaps() == null
+					|| inputVertex.getCaps().fedFoutMode != ExecPlacementCaps.FedFoutMode.NATIVE
+					|| execSelection.getOrDefault(input.getHopID(), ExecType.CP) != ExecType.FED
+					|| outSelection.getOrDefault(input.getHopID(), FederatedOutput.LOUT)
+							!= FederatedOutput.FOUT) {
+				return false;
+			}
+		}
+		return hasMatrixInput;
 	}
 
 	private FType getAdjustedCpFoutType(Vertex vertex) {

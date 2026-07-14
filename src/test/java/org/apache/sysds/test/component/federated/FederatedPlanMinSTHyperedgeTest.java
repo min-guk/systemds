@@ -30,11 +30,15 @@ import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
+import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
@@ -132,6 +136,34 @@ public class FederatedPlanMinSTHyperedgeTest {
 			computeCutCost(g, setOf(cId, pId)), 1e-9);
 		Assert.assertEquals("FED/LOUT should pay exactly one intrinsic materialization/download", downloadCost,
 			computeCutCost(g, setOf(cId)), 1e-9);
+	}
+
+	@Test
+	public void testRepeatedCpfoutIntrinsicUploadIncludesRemainingFanoutControl() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(4);
+		double occurrences = 3.0;
+		double uploadCost = 5.0;
+
+		DataOp left = new DataOp("XcpfoutFanout", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
+		DataOp right = new DataOp("YcpfoutFanout", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
+		Hop hop = HopRewriteUtils.createBinary(left, right, OpOp2.MINUS);
+		Vertex vertex = new Vertex(hop, Privacy.PUBLIC, FType.ROW, FType.ROW, new ExecPlacementCaps());
+		vertex.setMetadata(occurrences, occurrences, Collections.emptyList());
+		vertex.setCost(0.0, uploadCost, 0.0);
+		graph.addVertex(vertex);
+		graph.addExecPlacementResultEdge(vertex);
+
+		double remainingFanoutControl =
+			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
+		Assert.assertTrue("Regression setup requires a non-zero remaining worker fan-out charge",
+			remainingFanoutControl > 0.0);
+		Assert.assertEquals(
+			"Repeated CP/FOUT refed must charge the base PUT plus every remaining worker fan-out stage",
+			occurrences * (uploadCost + remainingFanoutControl),
+			computeCutCost(graph.getGraph(), setOf(placementId(hop.getHopID()))), 1e-9);
 	}
 
 	@Test
@@ -291,6 +323,34 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
+	public void testParentChildUploadIncludesRemainingFanoutControlBoundary() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(4);
+		double uploadCost = 8.0;
+
+		DataOp childHop = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
+		Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		child.setMetadata(1.0, 1.0, Collections.emptyList());
+		child.setCost(0.0, uploadCost, 0.0);
+		graph.addVertex(child);
+
+		Vertex parent = createVertex(new LiteralOp(31L));
+		graph.addVertex(parent);
+		graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
+
+		long parentC = computeId(parent.getHopID());
+		Assert.assertTrue("The standalone forwarding penalty must be non-zero for this regression setup",
+			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4) > 0.0);
+		double forwardingPenalty =
+			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
+		Assert.assertEquals(
+			"Parent-child U boundary must include the remaining PUT fanout control stages",
+			uploadCost + forwardingPenalty,
+			computeCutCostWithHardClosure(graph.getGraph(), setOf(parentC)), 1e-9);
+	}
+
+	@Test
 	public void testParentChildEdgeDoesNotCreateDownloadHyperedge() {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		double uploadCost = 9.0;
@@ -428,6 +488,178 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
+	public void testStableTransientReadRetainsFedSourceWithSharedLocalMaterialization() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+
+		DataOp tRead = new DataOp("X_stable_mixed", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 100, 1000L * 100L, 1000);
+		ExecPlacementCaps readCaps = new ExecPlacementCaps();
+		readCaps.allowCP_FOUT = false;
+		readCaps.allowFED_LOUT = false;
+		Vertex read = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, readCaps);
+		read.setMetadata(1.0, 1.0, Collections.emptyList());
+		read.setStableFederatedInputRead(true);
+		read.setCost(0.0, 100.0, 4.0);
+		graph.addVertex(read);
+		graph.setVertexCost(read);
+		graph.addExecPlacementResultEdge(read);
+		graph.forbidCombinationCP_FOUT(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+		graph.forbidCombinationFED_LOUT(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+
+		Hop fedConsumerHop = HopRewriteUtils.createBinary(tRead, new LiteralOp(1.0), OpOp2.PLUS);
+		ExecPlacementCaps fedCaps = new ExecPlacementCaps();
+		fedCaps.allowCP_LOUT = false;
+		fedCaps.allowCP_FOUT = false;
+		Vertex fedConsumer = new Vertex(fedConsumerHop, Privacy.PUBLIC, FType.ROW, fedCaps);
+		fedConsumer.setMetadata(1.0, 1.0, Collections.emptyList());
+		fedConsumer.setCost(0.0, 0.0, 0.0);
+		graph.addVertex(fedConsumer);
+		graph.setVertexCost(fedConsumer);
+		graph.addParentChildNetEdge(read, read.getHopID(), fedConsumer, fedConsumer.getHopID(), true);
+
+		Hop localConsumerHop = HopRewriteUtils.createBinary(tRead, new LiteralOp(2.0), OpOp2.PLUS);
+		ExecPlacementCaps localCaps = new ExecPlacementCaps();
+		localCaps.allowFED_LOUT = false;
+		localCaps.allowFED_FOUT = false;
+		Vertex localConsumer = new Vertex(localConsumerHop, Privacy.PUBLIC, FType.ROW, localCaps);
+		localConsumer.setMetadata(1.0, 1.0, Collections.emptyList());
+		localConsumer.setCost(0.0, 0.0, 0.0);
+		graph.addVertex(localConsumer);
+		graph.setVertexCost(localConsumer);
+		graph.addParentChildNetEdge(read, read.getHopID(), localConsumer, localConsumer.getHopID(), true);
+
+		graph.getOptimalPlan();
+
+		Assert.assertEquals("Stable source should retain its federated mapping for FED consumers",
+			ExecType.FED, tRead.getForcedExecType());
+		Assert.assertEquals(FederatedOutput.FOUT, tRead.getFederatedOutput());
+		Assert.assertEquals(ExecType.FED, fedConsumerHop.getForcedExecType());
+		Assert.assertEquals(ExecType.CP, localConsumerHop.getForcedExecType());
+		Assert.assertEquals("The local consumer should share one D materialization",
+			1, graph.getSelectedObligations().size());
+		FederatedPlanMinSTGraph.SelectedObligation obligation = graph.getSelectedObligations().get(0);
+		Assert.assertEquals(FederatedPlanMinSTGraph.ObligationKind.D, obligation.getKind());
+		Assert.assertEquals(read.getHopID(), obligation.getChildHopId());
+		Assert.assertEquals(Collections.singletonList(localConsumer.getHopID()), obligation.getConsumerHopIds());
+	}
+
+	@Test
+	public void testExactTransientFamilyRetainsFoutWithSelectiveLocalMaterialization() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+
+		DataOp writeInput = new DataOp("X_exact_source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 100, 1000L * 100L, 1000);
+		ExecPlacementCaps sourceCaps = new ExecPlacementCaps();
+		sourceCaps.allowCP_LOUT = false;
+		sourceCaps.allowCP_FOUT = false;
+		sourceCaps.allowFED_LOUT = false;
+		Vertex source = new Vertex(writeInput, Privacy.PUBLIC, FType.ROW, sourceCaps);
+		source.setMetadata(1.0, 1.0, Collections.emptyList());
+		source.setCost(0.0, 0.0, 0.0);
+		graph.addVertex(source);
+		graph.setVertexCost(source);
+		DataOp tWrite = new DataOp("X_exact_mixed", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		ExecPlacementCaps writeCaps = new ExecPlacementCaps();
+		writeCaps.allowCP_FOUT = false;
+		writeCaps.allowFED_LOUT = false;
+		Vertex writer = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, writeCaps);
+		writer.setMetadata(1.0, 1.0, Collections.emptyList());
+		writer.setCost(100.0, 100.0, 4.0);
+		graph.addVertex(writer);
+		graph.setVertexCost(writer);
+		graph.addExecPlacementResultEdge(writer);
+		graph.forbidCombinationCP_FOUT(computeId(tWrite.getHopID()), placementId(tWrite.getHopID()));
+		graph.forbidCombinationFED_LOUT(computeId(tWrite.getHopID()), placementId(tWrite.getHopID()));
+		graph.addParentChildNetEdge(source, source.getHopID(), writer, writer.getHopID(), true);
+
+		DataOp tRead = new DataOp("X_exact_mixed", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 100, 1000L * 100L, 1000);
+		ExecPlacementCaps readCaps = new ExecPlacementCaps();
+		readCaps.allowCP_FOUT = false;
+		readCaps.allowFED_LOUT = false;
+		Vertex reader = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, readCaps);
+		reader.setMetadata(1.0, 1.0, Collections.emptyList());
+		reader.setTransientWriteHopId(tWrite.getHopID());
+		reader.setCost(0.0, 100.0, 4.0);
+		graph.addVertex(reader);
+		graph.setVertexCost(reader);
+		graph.addExecPlacementResultEdge(reader);
+		graph.forbidCombinationCP_FOUT(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+		graph.forbidCombinationFED_LOUT(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+		graph.addExactTransReadWriteConsistencyEdges(writer, writer.getHopID(), reader, reader.getHopID());
+
+		Hop fedConsumerHop = HopRewriteUtils.createBinary(tRead, new LiteralOp(1.0), OpOp2.PLUS);
+		ExecPlacementCaps fedCaps = new ExecPlacementCaps();
+		fedCaps.allowCP_LOUT = false;
+		fedCaps.allowCP_FOUT = false;
+		Vertex fedConsumer = new Vertex(fedConsumerHop, Privacy.PUBLIC, FType.ROW, fedCaps);
+		fedConsumer.setMetadata(1.0, 1.0, Collections.emptyList());
+		fedConsumer.setCost(0.0, 0.0, 0.0);
+		graph.addVertex(fedConsumer);
+		graph.setVertexCost(fedConsumer);
+		graph.addParentChildNetEdge(reader, reader.getHopID(), fedConsumer, fedConsumer.getHopID(), true);
+
+		Hop localConsumerHop = HopRewriteUtils.createBinary(tRead, new LiteralOp(2.0), OpOp2.PLUS);
+		ExecPlacementCaps localCaps = new ExecPlacementCaps();
+		localCaps.allowFED_LOUT = false;
+		localCaps.allowFED_FOUT = false;
+		Vertex localConsumer = new Vertex(localConsumerHop, Privacy.PUBLIC, FType.ROW, localCaps);
+		localConsumer.setMetadata(1.0, 1.0, Collections.emptyList());
+		localConsumer.setCost(0.0, 0.0, 0.0);
+		graph.addVertex(localConsumer);
+		graph.setVertexCost(localConsumer);
+		graph.addParentChildNetEdge(reader, reader.getHopID(), localConsumer, localConsumer.getHopID(), true);
+		DefaultWeightedEdge requiredLocalEdge = graph.getGraph().getEdge(
+			placementId(reader.getHopID()), computeId(localConsumer.getHopID()));
+		Assert.assertTrue("Exact local demand must use finite D instead of a hard primary-placement edge",
+			requiredLocalEdge == null || graph.getGraph().getEdgeWeight(requiredLocalEdge) < 1.0e12);
+
+		graph.getOptimalPlan();
+
+		Assert.assertEquals("Exact family should retain FED/FOUT primary execution",
+			ExecType.FED, tWrite.getForcedExecType());
+		Assert.assertEquals(FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		Assert.assertEquals(ExecType.FED, tRead.getForcedExecType());
+		Assert.assertEquals(FederatedOutput.FOUT, tRead.getFederatedOutput());
+		Assert.assertEquals(ExecType.FED, fedConsumerHop.getForcedExecType());
+		Assert.assertEquals(ExecType.CP, localConsumerHop.getForcedExecType());
+		Assert.assertEquals("The exact family should share one D materialization",
+			1, graph.getSelectedObligations().size());
+		FederatedPlanMinSTGraph.SelectedObligation obligation = graph.getSelectedObligations().get(0);
+		Assert.assertEquals(FederatedPlanMinSTGraph.ObligationKind.D, obligation.getKind());
+		Assert.assertEquals(reader.getHopID(), obligation.getChildHopId());
+		Assert.assertEquals(Collections.singletonList(localConsumer.getHopID()), obligation.getConsumerHopIds());
+	}
+
+	@Test
+	public void testStableTransientReadCpConsumerPaysRepeatedLocalAcquireBoundary() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		DataOp tRead = new DataOp("X_stable_cp_acquire", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 100, 1000L * 100L, 1000);
+		Vertex read = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		read.setMetadata(1.0, 1.0, Collections.emptyList());
+		read.setStableFederatedInputRead(true);
+		read.setCost(0.0, 100.0, 7.0);
+		graph.addVertex(read);
+
+		Hop parentHop = HopRewriteUtils.createBinary(tRead, new LiteralOp(1.0), OpOp2.PLUS);
+		Vertex parent = new Vertex(parentHop, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		parent.setMetadata(60.0, 60.0, Collections.emptyList());
+		parent.setCost(5.0, 0.0, 0.0);
+		graph.addVertex(parent);
+		graph.setVertexCost(parent);
+		graph.addParentChildNetEdge(read, read.getHopID(), parent, parent.getHopID(), true);
+
+		DefaultWeightedEdge cpUnary = graph.getGraph().getEdge(-1L, computeId(parent.getHopID()));
+		Assert.assertNotNull(cpUnary);
+		Assert.assertEquals("Each CP parent occurrence must acquire the stable federated value locally",
+			5.0 + 60.0 * 7.0, graph.getGraph().getEdgeWeight(cpUnary), 1e-9);
+	}
+
+	@Test
 	public void testSelectedUObligationSkipsNonMatrixChild() {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		graph.setNumOfWorkers(2);
@@ -493,7 +725,84 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
-	public void testFedInitTransientReadDownloadEdgeIsSharedAcrossLoopIterations() {
+	public void testTransientWriteByNameFallbackDefersToDirectConcreteSource() throws Exception {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(1);
+		DataOp federatedSource = new DataOp("X_fed", DataType.MATRIX, ValueType.FP64,
+			OpOpData.FEDERATED, "X_fed", 10, 10, 100, 1000);
+		DataOp writeInput = new DataOp("writeInput", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 10, 10, 100, 1000);
+		DataOp tWrite = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		DataOp stableInputRead = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 10, 10, 100, 1000);
+		DataOp producedRead = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 10, 10, 100, 1000);
+		DataOp ambiguousRead = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 10, 10, 100, 1000);
+
+		// Mirror the fresh Docker shape: cloned function-body write position 68,
+		// stable caller input at 84, and the direct post-write read at 110.
+		tWrite.setBeginLine(68);
+		stableInputRead.setBeginLine(84);
+		stableInputRead.setFilename("scripts/builtin/pca.dml");
+		producedRead.setBeginLine(110);
+		producedRead.setFilename("scripts/builtin/pca.dml");
+
+		Vertex sourceVertex = new Vertex(federatedSource, Privacy.PUBLIC, FType.ROW,
+			new ExecPlacementCaps());
+		Vertex twVertex = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		Vertex stableVertex = new Vertex(stableInputRead, Privacy.PUBLIC, FType.ROW,
+			new ExecPlacementCaps());
+		Vertex producedVertex = new Vertex(producedRead, Privacy.PUBLIC, FType.ROW,
+			new ExecPlacementCaps());
+		Vertex ambiguousVertex = new Vertex(ambiguousRead, Privacy.PUBLIC, FType.ROW,
+			new ExecPlacementCaps());
+		for (Vertex vertex : new Vertex[] {
+			sourceVertex, twVertex, stableVertex, producedVertex, ambiguousVertex}) {
+			vertex.setMetadata(1.0, 1.0, Collections.emptyList());
+			graph.addVertex(vertex);
+		}
+		stableVertex.setStableFederatedInputRead(true);
+
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		rewireTable.put(stableInputRead.getHopID(), Collections.singletonList(federatedSource));
+		rewireTable.put(producedRead.getHopID(), Collections.singletonList(tWrite));
+
+		Method estimateHop = FederatedPlanMinSTCostEstimator.class.getDeclaredMethod(
+			"estimateHop", Hop.class, FederatedPlanMinSTGraph.class, Map.class);
+		estimateHop.setAccessible(true);
+		estimateHop.invoke(null, stableInputRead, graph, rewireTable);
+		estimateHop.invoke(null, producedRead, graph, rewireTable);
+		estimateHop.invoke(null, ambiguousRead, graph, rewireTable);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long twP = placementId(tWrite.getHopID());
+		long stableC = computeId(stableInputRead.getHopID());
+		long stableP = placementId(stableInputRead.getHopID());
+		Assert.assertNull("A direct concrete source must suppress graph-wide same-name TW fallback",
+			g.getEdge(twP, stableC));
+		Assert.assertNull("The stable source read must not be assigned to the fallback TW family",
+			stableVertex.getTransientWriteHopId());
+		Assert.assertNull("The fallback TW must not constrain stable-read placement",
+			g.getEdge(twP, stableP));
+
+		long producedC = computeId(producedRead.getHopID());
+		long producedP = placementId(producedRead.getHopID());
+		Assert.assertNotNull("A directly mapped transient write must constrain its read compute choice",
+			g.getEdge(twP, producedC));
+		Assert.assertNotNull("A directly mapped transient write must constrain its read placement",
+			g.getEdge(twP, producedP));
+		Assert.assertEquals("The directly mapped read must retain its transient producer family",
+			Long.valueOf(tWrite.getHopID()), producedVertex.getTransientWriteHopId());
+
+		long ambiguousC = computeId(ambiguousRead.getHopID());
+		Assert.assertNotNull("Missing direct provenance must preserve conservative same-name fallback",
+			g.getEdge(twP, ambiguousC));
+	}
+
+	@Test
+	public void testFedInitTransientReadDownloadEdgePreservesRecompiledLoopOccurrences() {
 		FederatedPlannerUtils.registerFedInitVar("X");
 		try {
 			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
@@ -511,12 +820,370 @@ public class FederatedPlanMinSTHyperedgeTest {
 			long trP = placementId(tRead.getHopID());
 			DefaultWeightedEdge downloadEdge = g.getEdge(trC, trP);
 			Assert.assertNotNull("Fed-init TransientRead should add FED/LOUT materialization edge", downloadEdge);
-			Assert.assertEquals("Fed-init TransientRead download should be shared across loop iterations",
-				7.0, g.getEdgeWeight(downloadEdge), 1e-9);
+			Assert.assertEquals("Recompiled loop occurrences must each retain the stable-input materialization cost",
+				60.0 * 7.0, g.getEdgeWeight(downloadEdge), 1e-9);
 		}
 		finally {
 			FederatedPlannerUtils.clearFedInitVars();
 		}
+	}
+
+	@Test
+	public void testStableTransientReadMaterializationUsesSourceRefreshFrequency() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+		DataOp tRead = new DataOp("X_stable_refresh", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100000, 1050, 100000L * 1050L, 1000);
+		ExecPlacementCaps caps = new ExecPlacementCaps();
+		caps.allowCP_FOUT = false;
+		caps.allowFED_LOUT = false;
+		Vertex vertex = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, caps);
+		// The same immutable federated source is consumed sixty times, but its
+		// network/source value is established once and shared by three parents.
+		vertex.setMetadata(60.0, 1.0, Collections.emptyList());
+		vertex.setNumParents(3);
+		vertex.setStableFederatedInputRead(true);
+		double baseOpCost = 5.0;
+		double materializationCost = 7.0;
+		vertex.setCost(baseOpCost, 0.0, materializationCost);
+
+		graph.addVertex(vertex);
+		graph.setVertexCost(vertex);
+		graph.addExecPlacementResultEdge(vertex);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long compute = computeId(tRead.getHopID());
+		long placement = placementId(tRead.getHopID());
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, compute);
+		DefaultWeightedEdge downloadEdge = g.getEdge(compute, placement);
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		Assert.assertEquals("Stable transient-read CP materialization must follow source refresh frequency",
+			baseOpCost + materializationCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("Stable transient-read result conversion must follow source refresh frequency",
+			materializationCost, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testStableFullTransientReadPreservesRuntimeOccurrences() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		DataOp tRead = new DataOp("X_stable_full", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100000, 1050, 100000L * 1050L, 1000);
+		ExecPlacementCaps caps = new ExecPlacementCaps();
+		caps.allowCP_FOUT = false;
+		caps.allowFED_LOUT = false;
+		Vertex vertex = new Vertex(tRead, Privacy.PUBLIC, FType.FULL, caps);
+		vertex.setMetadata(60.0, 1.0, Collections.emptyList());
+		vertex.setStableFederatedInputRead(true);
+		double baseOpCost = 5.0;
+		double materializationCost = 7.0;
+		vertex.setCost(baseOpCost, 0.0, materializationCost);
+
+		graph.addVertex(vertex);
+		graph.setVertexCost(vertex);
+		graph.addExecPlacementResultEdge(vertex);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long compute = computeId(tRead.getHopID());
+		long placement = placementId(tRead.getHopID());
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, compute);
+		DefaultWeightedEdge downloadEdge = g.getEdge(compute, placement);
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		double expectedOccurrenceCost = 60.0 * materializationCost;
+		Assert.assertEquals("A FULL stable source must preserve each runtime local materialization occurrence",
+			baseOpCost + expectedOccurrenceCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("A FULL stable source result conversion must preserve runtime occurrences",
+			expectedOccurrenceCost, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testStableFedInputTransientReadSharesOneOccurrenceAcrossParents() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+		DataOp tRead = new DataOp("X_global_materialization", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 100000, 1050, 100000L * 1050L, 1000);
+		ExecPlacementCaps caps = new ExecPlacementCaps();
+		caps.allowCP_FOUT = false;
+		caps.allowFED_LOUT = false;
+		Vertex vertex = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, caps);
+		vertex.setMetadata(1.0, 1.0, Collections.emptyList());
+		vertex.setNumParents(3);
+		vertex.setStableFederatedInputRead(true);
+		double baseOpCost = 5.0;
+		double fullDownloadCost = 7.0;
+		vertex.setCost(baseOpCost, 0.0, fullDownloadCost);
+
+		graph.addVertex(vertex);
+		graph.setVertexCost(vertex);
+		graph.addExecPlacementResultEdge(vertex);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long compute = computeId(tRead.getHopID());
+		long placement = placementId(tRead.getHopID());
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, compute);
+		DefaultWeightedEdge downloadEdge = g.getEdge(compute, placement);
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		Assert.assertEquals("One runtime occurrence may share one CP-local materialization across parents",
+			baseOpCost + fullDownloadCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("One runtime occurrence may share one FED/LOUT materialization across parents",
+			fullDownloadCost, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testTransientReadProducerCapabilityDoesNotMakeLocalMaterializationFree() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		DataOp writeInput = new DataOp("X_source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		DataOp tWrite = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		ExecPlacementCaps producerCaps = new ExecPlacementCaps();
+		producerCaps.allowCP_FOUT = false;
+		producerCaps.allowFED_LOUT = false;
+		Vertex producer = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, producerCaps);
+		producer.setMetadata(1.0, 1.0, Collections.emptyList());
+		graph.addVertex(producer);
+
+		DataOp tRead = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		ExecPlacementCaps readCaps = new ExecPlacementCaps();
+		readCaps.allowCP_FOUT = false;
+		readCaps.allowFED_LOUT = false;
+		Vertex reader = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, readCaps);
+		reader.setMetadata(1.0, 1.0, Collections.emptyList());
+		reader.setStableFederatedInputRead(true);
+		reader.setTransientWriteHopId(tWrite.getHopID());
+		double baseOpCost = 5.0;
+		double materializationCost = 7.0;
+		reader.setCost(baseOpCost, 0.0, materializationCost);
+		graph.addVertex(reader);
+		graph.setVertexCost(reader);
+		graph.addExecPlacementResultEdge(reader);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, computeId(tRead.getHopID()));
+		DefaultWeightedEdge downloadEdge = g.getEdge(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		Assert.assertEquals("A producer's CP/LOUT capability is not proof that the producer is locally selected",
+			baseOpCost + materializationCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("An ambiguous CP/LOUT-or-FED/FOUT producer must retain the reusable download charge",
+			materializationCost, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testStateLinkedTransientReadLocalBranchExcludesFederatedDownload() throws Exception {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+		DataOp writeInput = new DataOp("X_linked_source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		DataOp tWrite = new DataOp("X_linked", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		ExecPlacementCaps producerCaps = new ExecPlacementCaps();
+		producerCaps.allowCP_FOUT = false;
+		producerCaps.allowFED_LOUT = false;
+		Vertex producer = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, producerCaps);
+		producer.setMetadata(1.0, 1.0, Collections.emptyList());
+		graph.addVertex(producer);
+
+		DataOp tRead = new DataOp("X_linked", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		ExecPlacementCaps readCaps = new ExecPlacementCaps();
+		readCaps.allowCP_FOUT = false;
+		readCaps.allowFED_LOUT = false;
+		Vertex reader = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, readCaps);
+		reader.setMetadata(10.0, 2.0, Collections.emptyList());
+		graph.addVertex(reader);
+
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		rewireTable.put(tRead.getHopID(), Collections.singletonList(tWrite));
+		Method estimateHop = FederatedPlanMinSTCostEstimator.class.getDeclaredMethod(
+			"estimateHop", Hop.class, FederatedPlanMinSTGraph.class, Map.class);
+		estimateHop.setAccessible(true);
+		estimateHop.invoke(null, tRead, graph, rewireTable);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long twP = placementId(tWrite.getHopID());
+		long trC = computeId(tRead.getHopID());
+		long trP = placementId(tRead.getHopID());
+		Assert.assertNotNull("The concrete producer must constrain reader compute state", g.getEdge(twP, trC));
+		Assert.assertNotNull("The concrete producer must constrain reader output state", g.getEdge(twP, trP));
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, trC);
+		DefaultWeightedEdge downloadEdge = g.getEdge(trC, trP);
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		Assert.assertEquals("A state-linked local producer/read pair cannot incur a federated download",
+			0.0, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("The linked result edge must contain only the FED/LOUT legality constraint, not download cost",
+			1.0e15, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testByNameTransientWriteFallbackDoesNotSuppressTransientReadDownloadCost() throws Exception {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+		DataOp writeInput = new DataOp("X_fallback_source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		DataOp tWrite = new DataOp("X_fallback_cost", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		Vertex producer = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		producer.setMetadata(1.0, 1.0, Collections.emptyList());
+		graph.addVertex(producer);
+
+		DataOp tRead = new DataOp("X_fallback_cost", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		Vertex reader = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+		reader.setMetadata(1.0, 1.0, Collections.emptyList());
+		graph.addVertex(reader);
+
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		Method estimateHop = FederatedPlanMinSTCostEstimator.class.getDeclaredMethod(
+			"estimateHop", Hop.class, FederatedPlanMinSTGraph.class, Map.class);
+		estimateHop.setAccessible(true);
+		estimateHop.invoke(null, tRead, graph, rewireTable);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long twP = placementId(tWrite.getHopID());
+		long trC = computeId(tRead.getHopID());
+		long trP = placementId(tRead.getHopID());
+		Assert.assertNotNull("By-name fallback must retain hard TW/TR compute consistency",
+			g.getEdge(twP, trC));
+		Assert.assertNotNull("By-name fallback must retain hard TW/TR placement consistency",
+			g.getEdge(twP, trP));
+		Assert.assertEquals("Fallback consistency should retain the producer family marker",
+			Long.valueOf(tWrite.getHopID()), reader.getTransientWriteHopId());
+
+		double downloadCost = reader.getDownloadCostWithoutWeight();
+		Assert.assertTrue("Regression setup must have a non-zero materialization cost", downloadCost > 0.0);
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, trC);
+		DefaultWeightedEdge downloadEdge = g.getEdge(trC, trP);
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		Assert.assertEquals("By-name fallback is not exact provenance; local execution must retain download cost",
+			reader.getOpCostWithWeight() + downloadCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("By-name fallback is not exact provenance; LOUT conversion must retain download cost",
+			downloadCost, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testTransientReadFamilyMaterializationUsesProducerRefreshFrequency() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		DataOp writeInput = new DataOp("X_refresh_source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		DataOp tWrite = new DataOp("X_refresh", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		ExecPlacementCaps producerCaps = new ExecPlacementCaps();
+		producerCaps.allowCP_FOUT = false;
+		producerCaps.allowFED_LOUT = false;
+		Vertex producer = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, producerCaps);
+		producer.setMetadata(2.0, 2.0, Collections.emptyList());
+		graph.addVertex(producer);
+
+		DataOp tRead = new DataOp("X_refresh", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		ExecPlacementCaps readCaps = new ExecPlacementCaps();
+		readCaps.allowCP_FOUT = false;
+		readCaps.allowFED_LOUT = false;
+		Vertex reader = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, readCaps);
+		// The value is consumed ten times but refreshed only twice. A local buffer
+		// can be reused until the linked transient-write family produces a new value.
+		reader.setMetadata(10.0, 2.0, Collections.emptyList());
+		reader.setTransientWriteHopId(tWrite.getHopID());
+		double baseOpCost = 5.0;
+		double materializationCost = 7.0;
+		reader.setCost(baseOpCost, 0.0, materializationCost);
+		graph.addVertex(reader);
+		graph.setVertexCost(reader);
+		graph.addExecPlacementResultEdge(reader);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, computeId(tRead.getHopID()));
+		DefaultWeightedEdge downloadEdge = g.getEdge(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		double expectedRefreshCost = 2.0 * materializationCost;
+		Assert.assertEquals("A linked transient-read family should materialize once per producer refresh",
+			baseOpCost + expectedRefreshCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("The FED/LOUT conversion should use the same producer refresh frequency",
+			expectedRefreshCost, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testTransientReadFixedLocalProducerKeepsLocalMaterializationFree() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		DataOp writeInput = new DataOp("X_local_source", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		DataOp tWrite = new DataOp("X_local", DataType.MATRIX, ValueType.FP64,
+			writeInput, OpOpData.TRANSIENTWRITE, null);
+		ExecPlacementCaps producerCaps = new ExecPlacementCaps();
+		producerCaps.allowCP_FOUT = false;
+		producerCaps.allowFED_LOUT = false;
+		producerCaps.allowFED_FOUT = false;
+		Vertex producer = new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, producerCaps);
+		producer.setMetadata(1.0, 1.0, Collections.emptyList());
+		graph.addVertex(producer);
+
+		DataOp tRead = new DataOp("X_local", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		ExecPlacementCaps readCaps = new ExecPlacementCaps();
+		readCaps.allowCP_FOUT = false;
+		readCaps.allowFED_LOUT = false;
+		Vertex reader = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, readCaps);
+		reader.setMetadata(1.0, 1.0, Collections.emptyList());
+		reader.setStableFederatedInputRead(true);
+		reader.setTransientWriteHopId(tWrite.getHopID());
+		double baseOpCost = 5.0;
+		reader.setCost(baseOpCost, 0.0, 7.0);
+		graph.addVertex(reader);
+		graph.setVertexCost(reader);
+		graph.addExecPlacementResultEdge(reader);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, computeId(tRead.getHopID()));
+		DefaultWeightedEdge downloadEdge = g.getEdge(computeId(tRead.getHopID()), placementId(tRead.getHopID()));
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(downloadEdge);
+		Assert.assertEquals("A producer constrained to CP/LOUT needs no federated-to-local materialization",
+			baseOpCost, g.getEdgeWeight(cpUnary), 1e-9);
+		Assert.assertEquals("A producer constrained to CP/LOUT keeps the result conversion edge free",
+			0.0, g.getEdgeWeight(downloadEdge), 1e-9);
+	}
+
+	@Test
+	public void testSetVertexCostDoesNotChargeStableTransientReadLocalMaterializationToFedCompute() {
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		int numWorkers = 4;
+		graph.setNumOfWorkers(numWorkers);
+
+		DataOp tRead = new DataOp("X_stable_vertex_cost", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, null, 1000, 1000, 1000L * 1000L, 1000);
+		ExecPlacementCaps caps = new ExecPlacementCaps();
+		caps.allowCP_FOUT = false;
+		caps.allowFED_LOUT = false;
+		Vertex vertex = new Vertex(tRead, Privacy.PUBLIC, FType.ROW, caps);
+		vertex.setMetadata(1.0, 1.0, Collections.emptyList());
+		vertex.setStableFederatedInputRead(true);
+		double baseOpCost = 100.0;
+		double localMaterializationCost = 80.0;
+		vertex.setCost(baseOpCost, 0.0, localMaterializationCost);
+
+		graph.addVertex(vertex);
+		graph.setVertexCost(vertex);
+
+		Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+		long compute = computeId(tRead.getHopID());
+		DefaultWeightedEdge cpUnary = g.getEdge(-1L, compute);
+		DefaultWeightedEdge fedUnary = g.getEdge(compute, -2L);
+		Assert.assertNotNull(cpUnary);
+		Assert.assertNotNull(fedUnary);
+		Assert.assertEquals("CP unary must include the stable transient-read local materialization",
+			baseOpCost + localMaterializationCost, g.getEdgeWeight(cpUnary), 1e-9);
+		double expectedFedCompute = FederatedCostModel.computeFederatedComputeCost(
+			tRead, baseOpCost, numWorkers, false);
+		Assert.assertEquals("FED unary compute must derive from the base operation cost, not the CP-only"
+			+ " transient-read local materialization",
+			expectedFedCompute, g.getEdgeWeight(fedUnary), 1e-9);
 	}
 
 	@Test
@@ -609,6 +1276,53 @@ public class FederatedPlanMinSTHyperedgeTest {
 			g.getEdge(parentC, childP));
 		Assert.assertTrue("Parent-child shared U hyperedge should use fallback mem estimate",
 			computeCutCostWithHardClosure(g, setOf(parentC)) > 0.0);
+	}
+
+	@Test
+	public void testLeftTransposeRewriteKeepsFoutRhsFederatedUnderLoutParent() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.COMPRESSED_LINALG, "false");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			DataOp x = new DataOp("X", DataType.MATRIX, ValueType.FP64,
+				OpOpData.TRANSIENTREAD, null, 100000, 100, 100000L * 100L, 1000);
+			Hop tX = HopRewriteUtils.createTranspose(x);
+			DataOp y = new DataOp("Y", DataType.MATRIX, ValueType.FP64,
+				OpOpData.TRANSIENTREAD, null, 100000, 2, 100000L * 2L, 1000);
+			AggBinaryOp parentHop = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
+				OpOp2.MULT, AggOp.SUM, tX, y);
+
+			Vertex child = new Vertex(y, Privacy.PUBLIC, FType.ROW, new ExecPlacementCaps());
+			child.setMetadata(1.0, 1.0, Collections.emptyList());
+			double uploadCost = 8.0;
+			double downloadCost = 5.0;
+			child.setCost(0.0, uploadCost, downloadCost);
+			graph.addVertex(child);
+
+			Vertex parent = new Vertex(parentHop, Privacy.PUBLIC, FType.COL, new ExecPlacementCaps());
+			parent.setMetadata(1.0, 1.0, Collections.emptyList());
+			graph.addVertex(parent);
+			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
+
+			Graph<Long, DefaultWeightedEdge> g = graph.getGraph();
+			long parentC = computeId(parent.getHopID());
+			long parentP = placementId(parent.getHopID());
+			long childP = placementId(child.getHopID());
+			Assert.assertEquals("A local RHS should pay the existing upload boundary",
+				uploadCost, computeCutCostWithHardClosure(g, setOf(parentC)), 1e-9);
+			Assert.assertEquals("A FED/LOUT parent keeps the rewritten FOUT RHS transpose federated",
+				0.0,
+				computeCutCostWithHardClosure(g, setOf(parentC, childP)), 1e-9);
+			Assert.assertEquals("A FED/FOUT parent keeps the rewritten RHS federated and must not pay materialize/refed",
+				0.0, computeCutCostWithHardClosure(g, setOf(parentC, parentP, childP)), 1e-9);
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
 	}
 
 	@Test

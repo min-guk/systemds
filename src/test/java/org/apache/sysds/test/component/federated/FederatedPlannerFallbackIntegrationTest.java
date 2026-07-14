@@ -437,6 +437,68 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpOutputDecisionStableTransientFoutToFedSkipsRefed() throws Exception {
+		String transientName = "XstableOutputDecision";
+		try {
+			DataOp fedInput = federatedRead("XstableOutputDecisionSource", ROWS, COLS);
+			UnaryOp producer = new UnaryOp("stableOutputDecisionProducer",
+				DataType.MATRIX, ValueType.FP64, OpOp1.EXP, fedInput);
+			DataOp tWrite = HopRewriteUtils.createTransientWrite(transientName, producer);
+			DataOp tRead = transientRead(transientName, ROWS, COLS);
+			UnaryOp fedParent = new UnaryOp("stableOutputDecisionFedParent",
+				DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, tRead);
+
+			Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+			HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+			HopCommon producerCommon = registerHopCommon(hopCommonTable, producer);
+			HopCommon tWriteCommon = registerHopCommon(hopCommonTable, tWrite);
+			HopCommon tReadCommon = registerHopCommon(hopCommonTable, tRead);
+			HopCommon fedParentCommon = registerHopCommon(hopCommonTable, fedParent);
+
+			FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+			addCustomPlan(memoTable, fedInputCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+			addPlanWithChildren(memoTable, producerCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 2.0,
+				List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, tWriteCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 3.0,
+				List.of(Pair.of(producer.getHopID(), FederatedOutput.FOUT)));
+			FedPlan tReadPlan = addPlanWithChildren(memoTable, tReadCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 4.0,
+				List.of(Pair.of(tWrite.getHopID(), FederatedOutput.FOUT)));
+			FedPlan fedParentPlan = addPlanWithChildren(memoTable, fedParentCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 5.0,
+				List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
+			memoTable.registerHopRefs(hopCommonTable);
+
+			double stableForwardingShare = invokeDpPlannerForwardingShareWithMemo(
+				memoTable, true, FederatedOutput.FOUT, tReadPlan, fedParentPlan, 3);
+			assertEquals("Output-decision reconciliation must match base DP costing for a stable"
+				+ " TWrite-backed FED/FOUT transient read consumed by a FED parent",
+				0.0, stableForwardingShare, 1e-9);
+
+			DataOp reboundRead = transientRead("XnonStableOutputDecision", ROWS, COLS);
+			UnaryOp reboundParent = new UnaryOp("nonStableOutputDecisionFedParent",
+				DataType.MATRIX, ValueType.FP64, OpOp1.LOG, reboundRead);
+			HopCommon reboundReadCommon = registerHopCommon(hopCommonTable, reboundRead);
+			HopCommon reboundParentCommon = registerHopCommon(hopCommonTable, reboundParent);
+			FedPlan reboundReadPlan = addCustomPlan(memoTable, reboundReadCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+			FedPlan reboundParentPlan = addPlanWithChildren(memoTable, reboundParentCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.ROW, 2.0,
+				List.of(Pair.of(reboundRead.getHopID(), FederatedOutput.FOUT)));
+			double reboundForwardingShare = invokeDpPlannerForwardingShareWithMemo(
+				memoTable, true, FederatedOutput.FOUT, reboundReadPlan, reboundParentPlan, 3);
+			assertTrue("A non-stable transient rebinding must retain a positive refed charge",
+				reboundForwardingShare > 0.0);
+		}
+		finally {
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
 	public void testDpChildCostBuffersChargeTransientFoutToFedShare() throws Exception {
 		DataOp child = transientWrite("Xtmp", ROWS, COLS);
 		DataOp parent = transientRead("Xtmp", ROWS, COLS);
@@ -558,6 +620,111 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals("Expected one FOUT-only FED forwarding entry", 1, fOUTOnlychildForwardingCostToFED.size());
 		assertEquals("Stable federated producer -> TRANSIENTWRITE alias should not pay extra base DP"
 			+ " FOUT->FED refed share", 0.0, fOUTOnlychildForwardingCostToFED.get(0), 1e-9);
+	}
+
+	@Test
+	public void testDpTransientWriteFoutToCpChargesFullLocalMaterialization() throws Exception {
+		long rows = 10_000L;
+		long cols = 1_000L;
+		DataOp source = transientRead("XfullTWriteMaterializationSource", rows, cols);
+		UnaryOp producer = new UnaryOp("fullTWriteMaterializationProducer",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, source);
+		producer.setDim1(rows);
+		producer.setDim2(cols);
+
+		DataOp tWrite = transientWrite("XfullTWriteMaterialization", rows, cols);
+		tWrite.getInput().add(producer);
+		producer.getParent().add(tWrite);
+		UnaryOp sibling1 = new UnaryOp("fullTWriteMaterializationSibling1",
+			DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, producer);
+		UnaryOp sibling2 = new UnaryOp("fullTWriteMaterializationSibling2",
+			DataType.MATRIX, ValueType.FP64, OpOp1.LOG, producer);
+		UnaryOp sibling3 = new UnaryOp("fullTWriteMaterializationSibling3",
+			DataType.MATRIX, ValueType.FP64, OpOp1.ABS, producer);
+		producer.getParent().add(sibling1);
+		producer.getParent().add(sibling2);
+		producer.getParent().add(sibling3);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon producerCommon = new HopCommon(producer, 1.0, 1.0, 1.0, 4, List.of());
+		HopCommon tWriteCommon = registerHopCommon(hopCommonTable, tWrite);
+		hopCommonTable.put(producer.getHopID(), producerCommon);
+		registerHopCommon(hopCommonTable, sibling1);
+		registerHopCommon(hopCommonTable, sibling2);
+		registerHopCommon(hopCommonTable, sibling3);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, producerCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 10.0);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		List<Hop> bothOutInputs = new ArrayList<>();
+		double[][] childCumulativeCost = new double[1][2];
+		double[] childForwardingCostToCP = new double[1];
+		double[] childForwardingCostToFED = new double[1];
+		double[] childForwardingCostFOutToFED = new double[1];
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(producer));
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		int numWorkers = 3;
+		FederatedPlannerDpCostEstimator.getChildCosts(tWriteCommon, memoTable, hopCommonTable, bothOutInputs,
+			childCumulativeCost, childForwardingCostToCP, childForwardingCostToFED,
+			childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildCumulativeCost,
+			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, numWorkers);
+
+		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
+		double fullDownload = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(producer), FType.ROW, numWorkers);
+		assertTrue(fullDownload > 0.0);
+		assertEquals("A CP TRANSIENTWRITE is the sole local-materialization obligation and must pay"
+			+ " the full FED/FOUT download rather than one generic producer-parent share",
+			fullDownload, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+	}
+
+	@Test
+	public void testDpTransientWriteFoutToCpPreservesMaterializationOccurrences() throws Exception {
+		long rows = 10_000L;
+		long cols = 1_000L;
+		DataOp source = transientRead("XweightedTWriteMaterializationSource", rows, cols);
+		UnaryOp producer = new UnaryOp("weightedTWriteMaterializationProducer",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, source);
+		producer.setDim1(rows);
+		producer.setDim2(cols);
+		DataOp tWrite = transientWrite("XweightedTWriteMaterialization", rows, cols);
+		tWrite.getInput().add(producer);
+		producer.getParent().add(tWrite);
+
+		double occurrences = 4.0;
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon producerCommon = new HopCommon(
+			producer, occurrences, occurrences, 1.0, 4, List.of());
+		HopCommon tWriteCommon = new HopCommon(
+			tWrite, occurrences, occurrences, 1.0, 1, List.of());
+		hopCommonTable.put(producer.getHopID(), producerCommon);
+		hopCommonTable.put(tWrite.getHopID(), tWriteCommon);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		FedPlan producerPlan = addCustomPlan(memoTable, producerCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 10.0);
+		FedPlan tWritePlan = addPlanWithChildren(memoTable, tWriteCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 20.0,
+			List.of(Pair.of(producer.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		int numWorkers = 3;
+		double forwardingCost = invokeDpPlannerForwardingShare(
+			false, FederatedOutput.FOUT, producerPlan, tWritePlan, numWorkers);
+		double unitDownload = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(producer), FType.ROW, numWorkers);
+		assertEquals("Removing generic parent sharing must preserve the number of producer/parent"
+			+ " materialization occurrences",
+			unitDownload * occurrences, forwardingCost, 1e-9);
 	}
 
 	@Test
@@ -719,6 +886,46 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals("Expected one FOUT-only FED forwarding entry", 1, fOUTOnlychildForwardingCostToFED.size());
 		assertTrue("Non-transient CP/FOUT child consumed by FED parent should add positive base DP FOUT->FED share",
 			fOUTOnlychildForwardingCostToFED.get(0) > 0.0);
+	}
+
+	@Test
+	public void testDpChildCostBuffersDoNotReuploadMaterializedCpfoutToFedParent() throws Exception {
+		DataOp localInput = transientRead("XmaterializedCpfout", ROWS, COLS);
+		UnaryOp child = new UnaryOp("materializedCpfout", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, localInput);
+		UnaryOp parent = new UnaryOp("fedParentOfMaterializedCpfout",
+			DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, child);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		FedPlan childPlan = addCustomPlan(memoTable, childCommon,
+			FederatedOutput.FOUT, ExecType.CP, FType.FULL, 10.0);
+		childPlan.setFoutMaterializationAccounted(true);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		List<Hop> bothOutInputs = new ArrayList<>();
+		double[][] childCumulativeCost = new double[1][2];
+		double[] childForwardingCostToCP = new double[1];
+		double[] childForwardingCostToFED = new double[1];
+		double[] childForwardingCostFOutToFED = new double[1];
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(child));
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		FederatedPlannerDpCostEstimator.getChildCosts(parentCommon, memoTable, bothOutInputs,
+			childCumulativeCost, childForwardingCostToCP, childForwardingCostToFED,
+			childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildCumulativeCost,
+			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, 1);
+
+		assertEquals("CP/FOUT already materialized by the child must be consumed directly by a FED parent",
+			0.0, fOUTOnlychildForwardingCostToFED.get(0), 1e-9);
 	}
 
 	@Test
@@ -930,7 +1137,58 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpStableTransientReadFoutToCpDownloadCapsLoopMaterialization() throws Exception {
+	public void testDpStableFederatedInputDoesNotShareLocalMaterializationWithFedSibling() throws Exception {
+		DataOp fedInput = federatedRead("XmixedParentMaterialization", ROWS, COLS);
+		UnaryOp currentCpParent = new UnaryOp("currentLocalConsumer", DataType.MATRIX,
+			ValueType.FP64, OpOp1.SQRT, fedInput);
+		UnaryOp siblingFedParent = new UnaryOp("siblingFederatedConsumer", DataType.MATRIX,
+			ValueType.FP64, OpOp1.EXP, fedInput);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = new HopCommon(fedInput, 1.0, 1.0, 1.0, 2, List.of());
+		HopCommon currentParentCommon = new HopCommon(currentCpParent, 1.0, 1.0, 1.0, 1, List.of());
+		HopCommon siblingParentCommon = new HopCommon(siblingFedParent, 1.0, 1.0, 1.0, 1, List.of());
+		hopCommonTable.put(fedInput.getHopID(), childCommon);
+		hopCommonTable.put(currentCpParent.getHopID(), currentParentCommon);
+		hopCommonTable.put(siblingFedParent.getHopID(), siblingParentCommon);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.FULL, 10.0);
+		addPlanWithChildren(memoTable, siblingParentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.FULL, 20.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		List<Hop> bothOutInputs = new ArrayList<>();
+		double[][] childCumulativeCost = new double[1][2];
+		double[] childForwardingCostToCP = new double[1];
+		double[] childForwardingCostToFED = new double[1];
+		double[] childForwardingCostFOutToFED = new double[1];
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(fedInput));
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		FederatedPlannerDpCostEstimator.getChildCosts(currentParentCommon, memoTable, hopCommonTable,
+			bothOutInputs, childCumulativeCost, childForwardingCostToCP, childForwardingCostToFED,
+			childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildCumulativeCost,
+			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, 1);
+
+		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
+		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(fedInput), FType.FULL, 1);
+		assertEquals("A FED sibling consumes the federated representation and must not dilute the one"
+				+ " physical FOUT-to-CP materialization required by the local parent",
+			downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+	}
+
+	@Test
+	public void testDpStableTransientReadFoutToCpPreservesLoopMaterializationOccurrences() throws Exception {
 		DataOp fedInput = federatedRead("XloopMatSource", ROWS, COLS);
 		DataOp tRead = transientRead("XloopMat", ROWS, COLS);
 		UnaryOp currentCpParent = new UnaryOp("loopCpParent", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, tRead);
@@ -947,7 +1205,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0);
-		addPlanWithChildren(memoTable, tReadCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0,
+		FedPlan tReadPlan = addPlanWithChildren(memoTable, tReadCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0,
 			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
 		memoTable.registerHopRefs(hopCommonTable);
 
@@ -973,9 +1232,17 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
 		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
 			FederatedCostModel.getEffectiveOutputMemEstimate(tRead), FType.ROW, 1);
-		assertEquals("Stable federated-input TRANSIENTREAD local materialization should be charged once,"
-				+ " not once per loop/clone placement occurrence",
-				downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+		assertEquals("Stable federated-input TRANSIENTREAD local materialization must retain one"
+				+ " boundary transfer per recompiled runtime occurrence",
+				4.5 * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+		FedPlan cpParentPlan = addPlanWithChildren(memoTable, parentCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
+		assertEquals("Clone-family rewrite scoring must preserve the same occurrence-weighted"
+				+ " FOUT-to-CP materialization cost",
+			4.5 * downloadCost,
+			invokeDpPlannerForwardingShareWithMemo(
+				memoTable, false, FederatedOutput.FOUT, tReadPlan, cpParentPlan, 1), 1e-9);
 	}
 
 	@Test
@@ -1026,10 +1293,10 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
 		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
 			FederatedCostModel.getEffectiveOutputMemEstimate(tRead), FType.ROW, 1);
-		assertEquals("Repeated CP-local AggBinary over a stable FED/FOUT input should charge"
-				+ " the first materialization transfer only; cached local MatrixObject access is"
-				+ " not a boundary transfer and is not added on this edge",
-			downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+		assertEquals("Repeated CP-local AggBinary over a stable FED/FOUT input must retain"
+				+ " each runtime materialization occurrence; cached local access within an"
+				+ " occurrence is still not added on this edge",
+			demand * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
 	}
 
 	@Test
@@ -1079,10 +1346,10 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
 		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
 			FederatedCostModel.getEffectiveOutputMemEstimate(tRead), FType.ROW, 1);
-		assertEquals("Repeated CP-local AggUnary over a stable FED/FOUT input should charge"
-				+ " the first materialization transfer only; cached local MatrixObject access is"
-				+ " not a boundary transfer and is not added on this edge",
-			downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+		assertEquals("Repeated CP-local AggUnary over a stable FED/FOUT input must retain"
+				+ " each runtime materialization occurrence; cached local access within an"
+				+ " occurrence is still not added on this edge",
+			demand * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
 	}
 
 	@Test
@@ -1142,6 +1409,58 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedCostModel.getEffectiveOutputMemEstimate(computedFout), FType.ROW, 1);
 		assertEquals("Repeated CP-local BinaryOp over a computed FED/FOUT input should charge per-demand"
 				+ " boundary transfer only; cached local MatrixObject access is not a boundary transfer",
+			demand * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+	}
+
+	@Test
+	public void testDpRepeatedComputedFoutToCpUsesComputeOccurrencesWhenNetworkWeightIsAmortized()
+		throws Exception {
+		DataOp input = transientRead("XamortizedComputedBoundary", ROWS, COLS);
+		UnaryOp computedFout = new UnaryOp("amortizedComputedFout", DataType.MATRIX,
+			ValueType.FP64, OpOp1.EXP, input);
+		BinaryOp repeatedBinary = new BinaryOp("amortizedComputedConsumer", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, computedFout, transientRead("YamortizedComputedBoundary", ROWS, COLS));
+		computedFout.getParent().add(repeatedBinary);
+
+		double demand = 9.0;
+		List<Pair<Long, Double>> loopContext = List.of(Pair.of(99L, demand));
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon computedCommon = new HopCommon(computedFout,
+			1.0, 1.0 / demand, demand, 1, loopContext);
+		HopCommon parentCommon = new HopCommon(repeatedBinary,
+			1.0, 1.0, demand, 1, loopContext);
+		hopCommonTable.put(computedFout.getHopID(), computedCommon);
+		hopCommonTable.put(repeatedBinary.getHopID(), parentCommon);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, computedCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		List<Hop> bothOutInputs = new ArrayList<>();
+		double[][] childCumulativeCost = new double[1][2];
+		double[] childForwardingCostToCP = new double[1];
+		double[] childForwardingCostToFED = new double[1];
+		double[] childForwardingCostFOutToFED = new double[1];
+		List<Hop> lOUTOnlyinputHops = new ArrayList<>();
+		List<Double> lOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> lOUTOnlychildForwardingCostToFED = new ArrayList<>();
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(computedFout));
+		List<Double> fOUTOnlychildCumulativeCost = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToCP = new ArrayList<>();
+		List<Double> fOUTOnlychildForwardingCostToFED = new ArrayList<>();
+
+		FederatedPlannerDpCostEstimator.getChildCosts(parentCommon, memoTable, hopCommonTable, bothOutInputs,
+			childCumulativeCost, childForwardingCostToCP, childForwardingCostToFED,
+			childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildCumulativeCost,
+			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
+			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, 1);
+
+		assertEquals(1, fOUTOnlychildForwardingCostToCP.size());
+		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(computedFout), FType.ROW, 1);
+		assertEquals("A computed FED/FOUT result consumed locally in the same repeated context must"
+				+ " retain its compute occurrence count even when its networkWeight was amortized",
 			demand * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
 	}
 
@@ -1274,8 +1593,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
 			FederatedCostModel.getEffectiveOutputMemEstimate(laterRead), FType.ROW, 2);
 		assertEquals("A later looped CP WDIVMM over the same stable FED/FOUT input must not"
-				+ " replace the first materialization transfer with an unselected sibling cache hint",
-			downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+				+ " collapse runtime materialization occurrences into an unselected sibling cache hint",
+			demand * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
 	}
 
 	@Test
@@ -1342,9 +1661,9 @@ public class FederatedPlannerFallbackIntegrationTest {
 		double downloadCost = FederatedCostModel.computeDownloadNetworkCost(
 			FederatedCostModel.getEffectiveOutputMemEstimate(laterRead), FType.ROW, 1);
 		assertEquals("A later source-ordered CP consumer of the same stable federated input must"
-			+ " keep the first materialization transfer unless selected-plan resolution proves it"
-			+ " was already paid",
-			downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
+			+ " keep its runtime materialization occurrences unless selected-plan resolution proves"
+			+ " same-scope reuse",
+			4.5 * downloadCost, fOUTOnlychildForwardingCostToCP.get(0), 1e-9);
 	}
 
 	@Test
@@ -1624,6 +1943,55 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpDecisionMapChargesReachableNonDecisionFoutToCpLocalEdge() throws Exception {
+		DataOp fedInput = federatedRead("XreachableDecisionMap", ROWS, COLS);
+		UnaryOp computedFout = new UnaryOp("reachable_computed_decision_map",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, fedInput);
+		computedFout.setDim1(ROWS);
+		computedFout.setDim2(COLS);
+		computedFout.setNnz(ROWS * COLS);
+		DataOp localInput = transientRead("YreachableDecisionMap", ROWS, COLS);
+		BinaryOp localConsumer = new BinaryOp("reachable_local_consumer_decision_map",
+			DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, computedFout, localInput);
+		localConsumer.setDim1(ROWS);
+		localConsumer.setDim2(COLS);
+		localConsumer.setNnz(ROWS * COLS);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+		HopCommon computedCommon = registerHopCommon(hopCommonTable, computedFout);
+		HopCommon localInputCommon = registerHopCommon(hopCommonTable, localInput);
+		HopCommon localConsumerCommon = registerHopCommon(hopCommonTable, localConsumer);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0);
+		addPlanWithChildren(memoTable, computedCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 10.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		addCustomPlan(memoTable, localInputCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0);
+		addPlanWithChildren(memoTable, localConsumerCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(
+				Pair.of(computedFout.getHopID(), FederatedOutput.FOUT),
+				Pair.of(localInput.getHopID(), FederatedOutput.LOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(localConsumer.getHopID(), FederatedOutput.LOUT)));
+
+		memoTable.registerHopRefs(hopCommonTable);
+		Map<Long, FederatedOutput> outputDecisions = new HashMap<>();
+		outputDecisions.put(computedFout.getHopID(), FederatedOutput.FOUT);
+
+		double totalCost = invokeComputeDecisionMapTotalCost(memoTable, dummyRootPlan, outputDecisions);
+		double unitDownload = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(computedFout), FType.ROW, 1);
+
+		assertEquals("Decision-map scoring must inspect the complete selected root graph, including a CP parent"
+			+ " that has no independent LOUT/FOUT decision, and charge its FED/FOUT child materialization",
+			unitDownload, totalCost, 1e-9);
+	}
+
+	@Test
 	public void testDpDecisionMapChargesComputedFoutToCpLocalEdgeCost() throws Exception {
 		DataOp fedInput = federatedRead("XcomputedDecisionMap", ROWS, COLS);
 		UnaryOp computedFout = new UnaryOp("computed_decision_map", DataType.MATRIX, ValueType.FP64,
@@ -1883,6 +2251,65 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpCloneFamilyRewriteRestoresFullMaterializationWhenSiblingIsFinalFed() throws Exception {
+		DataOp fedInput = federatedRead("XfinalFedSiblingMaterialization", 10000, 1000);
+		UnaryOp producer = new UnaryOp("final_fed_sibling_producer", DataType.MATRIX, ValueType.FP64,
+			OpOp1.EXP, fedInput);
+		producer.setDim1(10000);
+		producer.setDim2(1000);
+		producer.setNnz(10000 * 1000);
+		UnaryOp localParent = new UnaryOp("final_fed_sibling_local_parent", DataType.MATRIX,
+			ValueType.FP64, OpOp1.SQRT, producer);
+		UnaryOp fedSibling = new UnaryOp("final_fed_sibling_fed_parent", DataType.MATRIX,
+			ValueType.FP64, OpOp1.LOG, producer);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+		HopCommon producerCommon = new HopCommon(producer, 1.0, 1.0, 1.0, 2, List.of());
+		hopCommonTable.put(producer.getHopID(), producerCommon);
+		HopCommon localParentCommon = registerHopCommon(hopCommonTable, localParent);
+		HopCommon fedSiblingCommon = registerHopCommon(hopCommonTable, fedSibling);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0);
+		addPlanWithChildren(memoTable, producerCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		double unitDownload = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(producer), FType.ROW, 1);
+		FedPlan localParentPlan = addPlanWithChildren(memoTable, localParentCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0 + unitDownload / 2.0,
+			List.of(Pair.of(producer.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, fedSiblingCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 2.0,
+			List.of(Pair.of(producer.getHopID(), FederatedOutput.FOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(
+				Pair.of(localParent.getHopID(), FederatedOutput.LOUT),
+				Pair.of(fedSibling.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		fedSibling.setForcedExecType(ExecType.FED);
+		fedSibling.setFederatedOutput(FederatedOutput.FOUT);
+		Map<Long, FederatedOutput> outputDecisions = new HashMap<>();
+		outputDecisions.put(producer.getHopID(), FederatedOutput.FOUT);
+		outputDecisions.put(localParent.getHopID(), FederatedOutput.LOUT);
+		outputDecisions.put(fedSibling.getHopID(), FederatedOutput.FOUT);
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(
+			memoTable, dummyRootPlan, outputDecisions);
+
+		double familyCost = invokeComputeCloneFamilyRewriteCostWithConflictMap(memoTable,
+			new LinkedHashSet<>(List.of(localParent.getHopID())), localParentPlan,
+			outputDecisions, conflictMap);
+
+		assertEquals("A sibling finalized as FED/FOUT does not share the local materialization;"
+				+ " rewrite scoring must restore the half transfer omitted by structural candidate sharing",
+			1.0 + unitDownload, familyCost, 1e-9);
+	}
+
+	@Test
 	public void testDpCloneFamilyRewriteUsesFullMemberCostNotParentShare() throws Exception {
 		DataOp origParent = transientRead("XorigCloneFamilyFullCost", ROWS, COLS);
 		DataOp cloneParent = transientRead("XcloneCloneFamilyFullCost", ROWS, COLS);
@@ -1911,7 +2338,88 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpCloneFamilyRewriteCreditsSelectedStableFoutToCpMaterialization() throws Exception {
+	public void testDpCloneFamilyRewriteKeepsMaterializationWithoutSelectedAmbientCache() throws Exception {
+		DataOp fedInput = federatedRead("XfamilyMaterializationSource", 10000, 1000);
+		DataOp origRead = transientRead("XfamilyMaterialization", 10000, 1000);
+		DataOp cloneRead = transientRead("XfamilyMaterialization", 10000, 1000);
+		origRead.getInput().add(fedInput);
+		cloneRead.getInput().add(fedInput);
+		fedInput.getParent().add(origRead);
+		fedInput.getParent().add(cloneRead);
+
+		UnaryOp origParent = new UnaryOp("orig_family_materializer", DataType.MATRIX, ValueType.FP64,
+			OpOp1.SQRT, origRead);
+		UnaryOp cloneParent = new UnaryOp("clone_family_materializer", DataType.MATRIX, ValueType.FP64,
+			OpOp1.SQRT, cloneRead);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+		origRead.getParent().add(origParent);
+		cloneRead.getParent().add(cloneParent);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+		HopCommon origReadCommon = registerHopCommon(hopCommonTable, origRead);
+		HopCommon cloneReadCommon = new HopCommon(cloneRead, 1.0, 2.0, 2.0, 1,
+			List.of(Pair.of(777L, 2.0)));
+		hopCommonTable.put(cloneRead.getHopID(), cloneReadCommon);
+		HopCommon origParentCommon = registerHopCommon(hopCommonTable, origParent);
+		HopCommon cloneParentCommon = new HopCommon(cloneParent, 1.0, 2.0, 2.0, 1,
+			List.of(Pair.of(777L, 2.0)));
+		hopCommonTable.put(cloneParent.getHopID(), cloneParentCommon);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0);
+		addPlanWithChildren(memoTable, origReadCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, cloneReadCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+
+		double unitDownload = FederatedCostModel.computeDownloadNetworkCost(
+			FederatedCostModel.getEffectiveOutputMemEstimate(origRead), FType.ROW, 1);
+		FedPlan origParentPlan = addPlanWithChildren(memoTable, origParentCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 10.0 + unitDownload,
+			List.of(Pair.of(origRead.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, cloneParentCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 20.0 + unitDownload,
+			List.of(Pair.of(cloneRead.getHopID(), FederatedOutput.FOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 0.0, List.of(
+				Pair.of(origParent.getHopID(), FederatedOutput.LOUT),
+				Pair.of(cloneParent.getHopID(), FederatedOutput.LOUT)));
+
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(Map.of(
+			cloneRead.getHopID(), origRead.getHopID(),
+			cloneParent.getHopID(), origParent.getHopID()));
+
+		Map<Long, FederatedOutput> outputDecisions = new HashMap<>();
+		outputDecisions.put(fedInput.getHopID(), FederatedOutput.FOUT);
+		outputDecisions.put(origRead.getHopID(), FederatedOutput.FOUT);
+		outputDecisions.put(origParent.getHopID(), FederatedOutput.LOUT);
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(memoTable, dummyRootPlan, outputDecisions);
+
+		double familyCost = invokeComputeCloneFamilyRewriteCostWithConflictMap(memoTable,
+			new LinkedHashSet<>(List.of(origParent.getHopID(), cloneParent.getHopID())),
+			origParentPlan, outputDecisions, conflictMap);
+
+		assertEquals("Clone-family members must retain their concrete FOUT-to-CP materialization costs"
+				+ " when no independently selected ambient CP materializer proves a reusable cache",
+			30.0 + (2.0 * unitDownload), familyCost, 1e-9);
+	}
+
+	@Test
+	public void testDpStableFederatedInputMaterializationPreservesPlacementOccurrences() throws Exception {
+		DataOp stableRead = transientRead("XstableOccurrenceWeight", 10000, 1000);
+
+		double weight = invokeComputeStableFederatedInputLocalMaterializationWeight(
+			stableRead, 60.0, true);
+
+		assertEquals("Recompiled stable-input occurrences must not collapse to one global materialization",
+			60.0, weight, 1e-9);
+	}
+
+	@Test
+	public void testDpCloneFamilyRewriteCreditsOnlyConcreteSelectedStableFoutToCpOccurrence() throws Exception {
 		DataOp fedInput = federatedRead("XsharedMaterializationSource", 10000, 1000);
 		DataOp ambientRead = transientRead("XsharedMaterialization", 10000, 1000);
 		DataOp origRead = transientRead("XsharedMaterialization", 10000, 1000);
@@ -1994,9 +2502,9 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		assertEquals("Raw clone-family cost should include both concrete FOUT->CP materialization edges",
 			30.0 + (2.0 * unitDownload), rawFamilyCost, 1e-9);
-		assertEquals("A selected ambient CP materializer of the same stable federated-origin value should make"
-				+ " clone-family FOUT->CP materialization edges cached in the selected-plan scope",
-			30.0, creditedFamilyCost, 1e-9);
+		assertEquals("A selected concrete ambient materializer may credit the concrete family occurrence,"
+				+ " but not a virtual clone without matching executable-scope provenance",
+			30.0 + unitDownload, creditedFamilyCost, 1e-9);
 	}
 
 	@Test
@@ -2320,6 +2828,32 @@ public class FederatedPlannerFallbackIntegrationTest {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
 	}
 
+	@Test
+	public void testMinSTRestoreRegistersPlannerRecompileState() throws Exception {
+		FederatedPlannerUtils.clearPlannerRecompileStates();
+		try {
+			UnaryOp planned = new UnaryOp("minst_recompile_state", DataType.MATRIX, ValueType.FP64,
+				OpOp1.EXP, transientRead("XminstRecompileState", ROWS, COLS));
+			planned.setBeginLine(2311);
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			graph.addVertex(new Vertex(planned, Privacy.PRIVATE_AGGREGATE,
+				FType.ROW, FType.ROW, allowAllCaps()));
+			Map<Long, Pair<ExecType, FederatedOutput>> decisions = new HashMap<>();
+			decisions.put(planned.getHopID(), Pair.of(ExecType.FED, FederatedOutput.FOUT));
+
+			invokeRestoreMinstPlanDecisions(decisions, graph);
+
+			FederatedPlannerUtils.PlannerRecompileState state =
+				FederatedPlannerUtils.getPlannerRecompileState(planned);
+			assertNotNull("MinST final decisions must be available when Recompiler clones the planned hop", state);
+			assertEquals(ExecType.FED, state.getExecType());
+			assertEquals(FederatedOutput.FOUT, state.getFederatedOutput());
+		}
+		finally {
+			FederatedPlannerUtils.clearPlannerRecompileStates();
+		}
+	}
+
 
 	@Test
 	public void testDpTransientFamilyDecisionMembersExcludeConsumerParents() throws Exception {
@@ -2424,6 +2958,594 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals("A TRead clone must not independently override its TWrite producer representation"
 			+ " merely because the read-only FOUT variant is cheaper in isolation",
 			FederatedOutput.LOUT, decisions.get(tRead.getHopID()));
+	}
+
+	@Test
+	public void testDpDecisionMapBestSelectionRejectsHigherScoredCandidate() throws Exception {
+		DataOp fedInput = federatedRead("XscoreRefineInput", ROWS, COLS);
+		UnaryOp target = HopRewriteUtils.createUnary(fedInput, OpOp1.EXP);
+		target.setDim1(ROWS);
+		target.setDim2(COLS);
+		DataOp tWrite = HopRewriteUtils.createTransientWrite("XscoreRefine", target);
+		DataOp tRead = transientRead("XscoreRefine", ROWS, COLS);
+		UnaryOp localConsumer = HopRewriteUtils.createUnary(tRead, OpOp1.LOG);
+		localConsumer.setDim1(ROWS);
+		localConsumer.setDim2(COLS);
+		UnaryOp fedConsumer = HopRewriteUtils.createUnary(target, OpOp1.SQRT);
+		fedConsumer.setDim1(ROWS);
+		fedConsumer.setDim2(COLS);
+		DataOp scoredRoot = transientRead("ScoreMapRoot", ROWS, COLS);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+		HopCommon targetCommon = registerHopCommon(hopCommonTable, target);
+		HopCommon tWriteCommon = registerHopCommon(hopCommonTable, tWrite);
+		HopCommon tReadCommon = registerHopCommon(hopCommonTable, tRead);
+		HopCommon localConsumerCommon = registerHopCommon(hopCommonTable, localConsumer);
+		HopCommon fedConsumerCommon = registerHopCommon(hopCommonTable, fedConsumer);
+		HopCommon scoredRootCommon = registerHopCommon(hopCommonTable, scoredRoot);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addSinglePlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
+		addPlanWithChildren(memoTable, targetCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 10.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, targetCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, tWriteCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 10.0,
+			List.of(Pair.of(target.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, tWriteCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+			List.of(Pair.of(target.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, tReadCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 10.0,
+			List.of(Pair.of(tWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, tReadCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+			List.of(Pair.of(tWrite.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, localConsumerCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, localConsumerCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 20.0,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, fedConsumerCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(target.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, fedConsumerCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1000.0,
+			List.of(Pair.of(target.getHopID(), FederatedOutput.LOUT)));
+		addCustomPlan(memoTable, scoredRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1000.0);
+		addCustomPlan(memoTable, scoredRootCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		FedPlan rootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0, List.of());
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerAdditionalRootHopIDs(List.of(localConsumer, fedConsumer, scoredRoot));
+
+		Map<Long, FederatedOutput> initialDecisions = new HashMap<>();
+		initialDecisions.put(target.getHopID(), FederatedOutput.FOUT);
+		initialDecisions.put(tWrite.getHopID(), FederatedOutput.FOUT);
+		initialDecisions.put(tRead.getHopID(), FederatedOutput.FOUT);
+		initialDecisions.put(scoredRoot.getHopID(), FederatedOutput.FOUT);
+		double initialScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, initialDecisions);
+
+		Map<Long, FederatedOutput> refinedDecisions = invokeComputeOutputDecisionsInternal(
+			memoTable, rootPlan, initialDecisions, new HashMap<>(), true);
+		double refinedScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, refinedDecisions);
+		assertTrue("The ordinary refinement path should preserve the lower seeded map in this fixture",
+			refinedScore <= initialScore + 1e-9);
+
+		Map<Long, FederatedOutput> worseDecisions = new HashMap<>();
+		worseDecisions.put(target.getHopID(), FederatedOutput.LOUT);
+		worseDecisions.put(tWrite.getHopID(), FederatedOutput.LOUT);
+		worseDecisions.put(tRead.getHopID(), FederatedOutput.LOUT);
+		worseDecisions.put(scoredRoot.getHopID(), FederatedOutput.LOUT);
+		double worseScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, worseDecisions);
+		assertTrue("The candidate fixture must be globally more expensive than the incumbent: incumbent="
+				+ initialScore + ", candidate=" + worseScore,
+			worseScore > initialScore + 1e-9);
+
+		Map<Long, FederatedOutput> selected = invokeSelectLowerCostDecisionMap(
+			memoTable, rootPlan, initialDecisions, worseDecisions);
+		assertEquals("A later refinement candidate must not replace a lower-scored valid decision map",
+			initialDecisions, selected);
+	}
+
+	@Test
+	public void testDpMultiWriteTransientVariableUsesOneExecutableRepresentation() throws Exception {
+		DataOp firstWrite = transientWrite("PmultiWriteFamily", ROWS, COLS);
+		DataOp laterWrite = transientWrite("PmultiWriteFamily", ROWS, COLS);
+		DataOp unusedVariantWrite = transientWrite("PmultiWriteFamily", ROWS, COLS);
+		DataOp originalRead = transientRead("PmultiWriteFamily", ROWS, COLS);
+		DataOp cloneRead = transientRead("PmultiWriteFamily", ROWS, COLS);
+		UnaryOp originalParent = new UnaryOp("multi_write_parent_orig",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, originalRead);
+		UnaryOp cloneParent = new UnaryOp("multi_write_parent_clone",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, cloneRead);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon firstWriteCommon = registerHopCommon(hopCommonTable, firstWrite);
+		HopCommon laterWriteCommon = registerHopCommon(hopCommonTable, laterWrite);
+		HopCommon unusedVariantWriteCommon = registerHopCommon(hopCommonTable, unusedVariantWrite);
+		HopCommon originalReadCommon = registerHopCommon(hopCommonTable, originalRead);
+		HopCommon cloneReadCommon = new HopCommon(cloneRead, 1.0, 2.0, 2.0, 1,
+			List.of(Pair.of(777L, 2.0)));
+		hopCommonTable.put(cloneRead.getHopID(), cloneReadCommon);
+		HopCommon originalParentCommon = registerHopCommon(hopCommonTable, originalParent);
+		HopCommon cloneParentCommon = new HopCommon(cloneParent, 1.0, 2.0, 2.0, 1,
+			List.of(Pair.of(777L, 2.0)));
+		hopCommonTable.put(cloneParent.getHopID(), cloneParentCommon);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, firstWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
+		addCustomPlan(memoTable, firstWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		addCustomPlan(memoTable, laterWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, laterWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 5.0);
+		addCustomPlan(memoTable, unusedVariantWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, unusedVariantWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 500.0);
+		addPlanWithChildren(memoTable, originalReadCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(firstWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, originalReadCommon, FederatedOutput.FOUT,
+			ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(firstWrite.getHopID(), FederatedOutput.FOUT)));
+		FedPlanVariants originalReadFoutVariants = memoTable.getFedPlanVariants(
+			Pair.of(originalRead.getHopID(), FederatedOutput.FOUT));
+		FedPlan unusedOriginalReadFoutVariant = new FedPlan(10.0, originalReadFoutVariants,
+			List.of(Pair.of(unusedVariantWrite.getHopID(), FederatedOutput.FOUT)));
+		unusedOriginalReadFoutVariant.setExecType(ExecType.FED);
+		unusedOriginalReadFoutVariant.setFType(FType.ROW);
+		originalReadFoutVariants.addFedPlan(unusedOriginalReadFoutVariant);
+		addPlanWithChildren(memoTable, cloneReadCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(laterWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, cloneReadCommon, FederatedOutput.FOUT,
+			ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(laterWrite.getHopID(), FederatedOutput.FOUT)));
+
+		FedPlanVariants originalParentVariants = new FedPlanVariants(originalParentCommon, FederatedOutput.LOUT);
+		FedPlan originalParentFoutChild = new FedPlan(0.0, originalParentVariants,
+			List.of(Pair.of(originalRead.getHopID(), FederatedOutput.FOUT)));
+		originalParentFoutChild.setExecType(ExecType.CP);
+		originalParentFoutChild.setFType(FType.ROW);
+		originalParentVariants.addFedPlan(originalParentFoutChild);
+		FedPlan originalParentLoutChild = new FedPlan(100.0, originalParentVariants,
+			List.of(Pair.of(originalRead.getHopID(), FederatedOutput.LOUT)));
+		originalParentLoutChild.setExecType(ExecType.CP);
+		originalParentLoutChild.setFType(FType.ROW);
+		originalParentVariants.addFedPlan(originalParentLoutChild);
+		memoTable.addFedPlanVariants(originalParent.getHopID(), FederatedOutput.LOUT, originalParentVariants);
+
+		FedPlanVariants cloneParentVariants = new FedPlanVariants(cloneParentCommon, FederatedOutput.LOUT);
+		FedPlan cloneParentFoutChild = new FedPlan(0.0, cloneParentVariants,
+			List.of(Pair.of(cloneRead.getHopID(), FederatedOutput.FOUT)));
+		cloneParentFoutChild.setExecType(ExecType.CP);
+		cloneParentFoutChild.setFType(FType.ROW);
+		cloneParentVariants.addFedPlan(cloneParentFoutChild);
+		FedPlan cloneParentLoutChild = new FedPlan(100.0, cloneParentVariants,
+			List.of(Pair.of(cloneRead.getHopID(), FederatedOutput.LOUT)));
+		cloneParentLoutChild.setExecType(ExecType.CP);
+		cloneParentLoutChild.setFType(FType.ROW);
+		cloneParentVariants.addFedPlan(cloneParentLoutChild);
+		memoTable.addFedPlanVariants(cloneParent.getHopID(), FederatedOutput.LOUT, cloneParentVariants);
+
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0, List.of());
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(Map.of(
+			cloneRead.getHopID(), originalRead.getHopID(),
+			cloneParent.getHopID(), originalParent.getHopID()));
+		memoTable.registerAdditionalRootHopIDs(List.of(originalParent, cloneParent));
+
+		Map<Long, FederatedOutput> decisions = invokeComputeOutputDecisions(memoTable, dummyRootPlan);
+
+		assertEquals("The FED read path makes one consistent all-FOUT transient family cheaper",
+			FederatedOutput.FOUT, decisions.get(originalRead.getHopID()));
+		assertEquals("The initial write must use the executable read-family representation",
+			FederatedOutput.FOUT, decisions.get(firstWrite.getHopID()));
+		assertEquals("A later write to the same transient variable must not silently localize the"
+			+ " runtime value consumed by the executable FED read family",
+			FederatedOutput.FOUT, decisions.get(laterWrite.getHopID()));
+	}
+
+	@Test
+	public void testDpMultiWriteNormalizationRefreshesTraversalAfterDecisionChange() throws Exception {
+		DataOp firstWrite = transientWrite("PmultiWriteRefresh", ROWS, COLS);
+		DataOp laterWrite = transientWrite("PmultiWriteRefresh", ROWS, COLS);
+		DataOp originalRead = transientRead("PmultiWriteRefresh", ROWS, COLS);
+		DataOp cloneRead = transientRead("PmultiWriteRefresh", ROWS, COLS);
+		UnaryOp originalParent = new UnaryOp("multi_write_refresh_parent_orig",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, originalRead);
+		UnaryOp cloneParent = new UnaryOp("multi_write_refresh_parent_clone",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, cloneRead);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon firstWriteCommon = registerHopCommon(hopCommonTable, firstWrite);
+		HopCommon laterWriteCommon = registerHopCommon(hopCommonTable, laterWrite);
+		HopCommon originalReadCommon = registerHopCommon(hopCommonTable, originalRead);
+		HopCommon cloneReadCommon = new HopCommon(cloneRead, 1.0, 2.0, 2.0, 1,
+			List.of(Pair.of(778L, 2.0)));
+		hopCommonTable.put(cloneRead.getHopID(), cloneReadCommon);
+		HopCommon originalParentCommon = registerHopCommon(hopCommonTable, originalParent);
+		HopCommon cloneParentCommon = new HopCommon(cloneParent, 1.0, 2.0, 2.0, 1,
+			List.of(Pair.of(778L, 2.0)));
+		hopCommonTable.put(cloneParent.getHopID(), cloneParentCommon);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, firstWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
+		addCustomPlan(memoTable, firstWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		addCustomPlan(memoTable, laterWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, laterWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 5.0);
+		addPlanWithChildren(memoTable, originalReadCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(firstWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, originalReadCommon, FederatedOutput.FOUT,
+			ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(firstWrite.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, cloneReadCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(laterWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, cloneReadCommon, FederatedOutput.FOUT,
+			ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(laterWrite.getHopID(), FederatedOutput.FOUT)));
+
+		FedPlanVariants originalParentVariants = new FedPlanVariants(originalParentCommon, FederatedOutput.LOUT);
+		FedPlan originalParentFoutChild = new FedPlan(0.0, originalParentVariants,
+			List.of(Pair.of(originalRead.getHopID(), FederatedOutput.FOUT)));
+		originalParentFoutChild.setExecType(ExecType.CP);
+		originalParentFoutChild.setFType(FType.ROW);
+		originalParentVariants.addFedPlan(originalParentFoutChild);
+		FedPlan originalParentLoutChild = new FedPlan(100.0, originalParentVariants,
+			List.of(Pair.of(originalRead.getHopID(), FederatedOutput.LOUT)));
+		originalParentLoutChild.setExecType(ExecType.CP);
+		originalParentLoutChild.setFType(FType.ROW);
+		originalParentVariants.addFedPlan(originalParentLoutChild);
+		memoTable.addFedPlanVariants(originalParent.getHopID(), FederatedOutput.LOUT, originalParentVariants);
+
+		FedPlanVariants cloneParentVariants = new FedPlanVariants(cloneParentCommon, FederatedOutput.LOUT);
+		FedPlan cloneParentFoutChild = new FedPlan(0.0, cloneParentVariants,
+			List.of(Pair.of(cloneRead.getHopID(), FederatedOutput.FOUT)));
+		cloneParentFoutChild.setExecType(ExecType.CP);
+		cloneParentFoutChild.setFType(FType.ROW);
+		cloneParentVariants.addFedPlan(cloneParentFoutChild);
+		FedPlan cloneParentLoutChild = new FedPlan(100.0, cloneParentVariants,
+			List.of(Pair.of(cloneRead.getHopID(), FederatedOutput.LOUT)));
+		cloneParentLoutChild.setExecType(ExecType.CP);
+		cloneParentLoutChild.setFType(FType.ROW);
+		cloneParentVariants.addFedPlan(cloneParentLoutChild);
+		memoTable.addFedPlanVariants(cloneParent.getHopID(), FederatedOutput.LOUT, cloneParentVariants);
+
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0, List.of());
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(Map.of(
+			cloneRead.getHopID(), originalRead.getHopID(),
+			cloneParent.getHopID(), originalParent.getHopID()));
+		memoTable.registerAdditionalRootHopIDs(List.of(originalParent, cloneParent));
+
+		Map<Long, FederatedOutput> staleLoutDecisions = new HashMap<>();
+		staleLoutDecisions.put(firstWrite.getHopID(), FederatedOutput.LOUT);
+		staleLoutDecisions.put(laterWrite.getHopID(), FederatedOutput.LOUT);
+		staleLoutDecisions.put(originalRead.getHopID(), FederatedOutput.LOUT);
+		staleLoutDecisions.put(originalParent.getHopID(), FederatedOutput.LOUT);
+		Map<Long, ?> staleConflictMap = invokeCollectConflictsSingleBfs(
+			memoTable, dummyRootPlan, staleLoutDecisions);
+
+		Map<Long, FederatedOutput> changedDecisions = new HashMap<>(staleLoutDecisions);
+		changedDecisions.put(firstWrite.getHopID(), FederatedOutput.FOUT);
+		changedDecisions.put(originalRead.getHopID(), FederatedOutput.FOUT);
+		Map<Long, FederatedOutput> normalized = invokeNormalizeMultiWriteTransientVariableFamilies(
+			memoTable, dummyRootPlan, staleConflictMap, changedDecisions);
+
+		assertEquals("Normalization must rediscover the concrete FOUT producer family after an earlier"
+			+ " LOUT traversal becomes stale", FederatedOutput.FOUT, normalized.get(originalRead.getHopID()));
+		assertEquals(FederatedOutput.FOUT, normalized.get(firstWrite.getHopID()));
+		assertEquals("The later loop write must join the refreshed executable family",
+			FederatedOutput.FOUT, normalized.get(laterWrite.getHopID()));
+	}
+
+	@Test
+	public void testDpMultiWriteProducerDiscoveryUsesConcreteVariantPerOutput() throws Exception {
+		DataOp loutWrite = transientWrite("PtargetSpecificFamily", ROWS, COLS);
+		DataOp foutWrite = transientWrite("PtargetSpecificFamily", ROWS, COLS);
+		DataOp unusedFoutVariantWrite = transientWrite("PtargetSpecificFamily", ROWS, COLS);
+		DataOp tRead = transientRead("PtargetSpecificFamily", ROWS, COLS);
+		UnaryOp parent = new UnaryOp("target_specific_parent",
+			DataType.MATRIX, ValueType.FP64, OpOp1.EXP, tRead);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon loutWriteCommon = registerHopCommon(hopCommonTable, loutWrite);
+		HopCommon foutWriteCommon = registerHopCommon(hopCommonTable, foutWrite);
+		HopCommon unusedWriteCommon = registerHopCommon(hopCommonTable, unusedFoutVariantWrite);
+		HopCommon tReadCommon = registerHopCommon(hopCommonTable, tRead);
+		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, loutWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, loutWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 2.0);
+		addCustomPlan(memoTable, foutWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 2.0);
+		addCustomPlan(memoTable, foutWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		addCustomPlan(memoTable, unusedWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, unusedWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		addPlanWithChildren(memoTable, tReadCommon, FederatedOutput.LOUT,
+			ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(loutWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, tReadCommon, FederatedOutput.FOUT,
+			ExecType.FED, FType.ROW, 0.0,
+			List.of(Pair.of(foutWrite.getHopID(), FederatedOutput.FOUT)));
+		FedPlanVariants tReadFoutVariants = memoTable.getFedPlanVariants(
+			Pair.of(tRead.getHopID(), FederatedOutput.FOUT));
+		FedPlan unusedFoutVariant = new FedPlan(10.0, tReadFoutVariants,
+			List.of(Pair.of(unusedFoutVariantWrite.getHopID(), FederatedOutput.FOUT)));
+		unusedFoutVariant.setExecType(ExecType.FED);
+		unusedFoutVariant.setFType(FType.ROW);
+		tReadFoutVariants.addFedPlan(unusedFoutVariant);
+		FedPlan parentPlan = addPlanWithChildren(memoTable, parentCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(parent.getHopID(), FederatedOutput.LOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		Map<Long, FederatedOutput> decisions = new HashMap<>();
+		decisions.put(loutWrite.getHopID(), FederatedOutput.LOUT);
+		decisions.put(foutWrite.getHopID(), FederatedOutput.FOUT);
+		decisions.put(unusedFoutVariantWrite.getHopID(), FederatedOutput.LOUT);
+		decisions.put(tRead.getHopID(), FederatedOutput.FOUT);
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(memoTable, dummyRootPlan, decisions);
+		Object tReadEntry = conflictMap.get(tRead.getHopID());
+		assertNotNull(tReadEntry);
+		assertFalse("The LOUT-only producer is intentionally absent from the current FOUT traversal",
+			conflictMap.containsKey(loutWrite.getHopID()));
+		Map<Long, FederatedOutput> loutTraversalDecisions = new HashMap<>(decisions);
+		loutTraversalDecisions.put(tRead.getHopID(), FederatedOutput.LOUT);
+		Map<Long, ?> loutConflictMap = invokeCollectConflictsSingleBfs(
+			memoTable, dummyRootPlan, loutTraversalDecisions);
+		assertTrue("Rebuilding the candidate traversal must expose the alternate-output producer",
+			loutConflictMap.containsKey(loutWrite.getHopID()));
+
+		LinkedHashSet<Long> loutProducers = invokeCollectSelectedTransientReadProducerHopIDs(
+			memoTable, tReadEntry, FederatedOutput.LOUT, decisions, "PtargetSpecificFamily");
+		LinkedHashSet<Long> foutProducers = invokeCollectSelectedTransientReadProducerHopIDs(
+			memoTable, tReadEntry, FederatedOutput.FOUT, decisions, "PtargetSpecificFamily");
+
+		assertEquals(new LinkedHashSet<>(List.of(loutWrite.getHopID())), loutProducers);
+		assertEquals("FOUT producer discovery must use the selected compatible variant and ignore"
+			+ " an unselected same-output variant",
+			new LinkedHashSet<>(List.of(foutWrite.getHopID())), foutProducers);
+		assertEquals(FederatedOutput.LOUT, parentPlan.getFedOutType());
+	}
+
+	@Test
+	public void testDpTransientFamilyRefineEvaluatesCheaperContextBundleBeyondFamilyTie()
+		throws Exception {
+		final long rows = 8;
+		final long cols = 8;
+		DataOp fedInput = federatedRead("XbundleInput", rows, cols);
+		DataOp tWrite = HopRewriteUtils.createTransientWrite("Xbundle", fedInput);
+		DataOp tRead = transientRead("Xbundle", rows, cols);
+		UnaryOp consumer = HopRewriteUtils.createUnary(tRead, OpOp1.EXP);
+		consumer.setDim1(rows);
+		consumer.setDim2(cols);
+		UnaryOp root = HopRewriteUtils.createUnary(consumer, OpOp1.LOG);
+		root.setDim1(rows);
+		root.setDim2(cols);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+		HopCommon tWriteCommon = registerHopCommon(hopCommonTable, tWrite);
+		HopCommon tReadCommon = registerHopCommon(hopCommonTable, tRead);
+		HopCommon consumerCommon = registerHopCommon(hopCommonTable, consumer);
+		HopCommon rootCommon = registerHopCommon(hopCommonTable, root);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addSinglePlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
+		addPlanWithChildren(memoTable, tWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, tWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 120.0,
+			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, tReadCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0,
+			List.of(Pair.of(tWrite.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, tReadCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 120.0,
+			List.of(Pair.of(tWrite.getHopID(), FederatedOutput.FOUT)));
+
+		FedPlanVariants consumerLoutVariants =
+			new FedPlanVariants(consumerCommon, FederatedOutput.LOUT);
+		FedPlan consumerLocal = new FedPlan(100.0, consumerLoutVariants,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.LOUT)));
+		consumerLocal.setExecType(ExecType.CP);
+		consumerLocal.setFType(FType.ROW);
+		consumerLoutVariants.addFedPlan(consumerLocal);
+		FedPlan consumerLocalFromFout = new FedPlan(600.0, consumerLoutVariants,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
+		consumerLocalFromFout.setExecType(ExecType.CP);
+		consumerLocalFromFout.setFType(FType.ROW);
+		consumerLoutVariants.addFedPlan(consumerLocalFromFout);
+		memoTable.addFedPlanVariants(consumer.getHopID(), FederatedOutput.LOUT, consumerLoutVariants);
+
+		FedPlanVariants consumerFoutVariants =
+			new FedPlanVariants(consumerCommon, FederatedOutput.FOUT);
+		FedPlan consumerFoutFromLocal = new FedPlan(250.0, consumerFoutVariants,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.LOUT)));
+		consumerFoutFromLocal.setExecType(ExecType.FED);
+		consumerFoutFromLocal.setFType(FType.ROW);
+		consumerFoutVariants.addFedPlan(consumerFoutFromLocal);
+		FedPlan consumerFout = new FedPlan(40.0, consumerFoutVariants,
+			List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
+		consumerFout.setExecType(ExecType.FED);
+		consumerFout.setFType(FType.ROW);
+		consumerFoutVariants.addFedPlan(consumerFout);
+		memoTable.addFedPlanVariants(consumer.getHopID(), FederatedOutput.FOUT, consumerFoutVariants);
+
+		FedPlanVariants rootLoutVariants = new FedPlanVariants(rootCommon, FederatedOutput.LOUT);
+		FedPlan rootPlan = new FedPlan(100.0, rootLoutVariants,
+			List.of(Pair.of(consumer.getHopID(), FederatedOutput.LOUT)));
+		rootPlan.setExecType(ExecType.CP);
+		rootPlan.setFType(FType.ROW);
+		rootLoutVariants.addFedPlan(rootPlan);
+		FedPlan rootLocalFromFout = new FedPlan(250.0, rootLoutVariants,
+			List.of(Pair.of(consumer.getHopID(), FederatedOutput.FOUT)));
+		rootLocalFromFout.setExecType(ExecType.CP);
+		rootLocalFromFout.setFType(FType.ROW);
+		rootLoutVariants.addFedPlan(rootLocalFromFout);
+		memoTable.addFedPlanVariants(root.getHopID(), FederatedOutput.LOUT, rootLoutVariants);
+
+		FedPlanVariants rootFoutVariants = new FedPlanVariants(rootCommon, FederatedOutput.FOUT);
+		FedPlan rootFoutFromLocal = new FedPlan(250.0, rootFoutVariants,
+			List.of(Pair.of(consumer.getHopID(), FederatedOutput.LOUT)));
+		rootFoutFromLocal.setExecType(ExecType.FED);
+		rootFoutFromLocal.setFType(FType.ROW);
+		rootFoutVariants.addFedPlan(rootFoutFromLocal);
+		FedPlan rootFout = new FedPlan(40.0, rootFoutVariants,
+			List.of(Pair.of(consumer.getHopID(), FederatedOutput.FOUT)));
+		rootFout.setExecType(ExecType.FED);
+		rootFout.setFType(FType.ROW);
+		rootFoutVariants.addFedPlan(rootFout);
+		memoTable.addFedPlanVariants(root.getHopID(), FederatedOutput.FOUT, rootFoutVariants);
+		memoTable.registerHopRefs(hopCommonTable);
+
+		Map<Long, FederatedOutput> localDecisions = new HashMap<>();
+		localDecisions.put(tWrite.getHopID(), FederatedOutput.LOUT);
+		localDecisions.put(tRead.getHopID(), FederatedOutput.LOUT);
+		localDecisions.put(consumer.getHopID(), FederatedOutput.LOUT);
+		localDecisions.put(root.getHopID(), FederatedOutput.LOUT);
+
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(memoTable, rootPlan, localDecisions);
+		invokeRefreshConflictChoiceFeasibility(conflictMap, memoTable);
+
+		Map<Long, FederatedOutput> familyOnlyFout = new HashMap<>(localDecisions);
+		familyOnlyFout.put(tWrite.getHopID(), FederatedOutput.FOUT);
+		familyOnlyFout.put(tRead.getHopID(), FederatedOutput.FOUT);
+		Map<Long, FederatedOutput> contextBundleFout = new HashMap<>(familyOnlyFout);
+		contextBundleFout.put(consumer.getHopID(), FederatedOutput.FOUT);
+		contextBundleFout.put(root.getHopID(), FederatedOutput.FOUT);
+
+		double localScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, localDecisions);
+		double familyOnlyScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, familyOnlyFout);
+		double bundleScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, contextBundleFout);
+		assertTrue("The fixture must make the isolated transient-family switch more expensive:"
+			+ " local=" + localScore + ", family=" + familyOnlyScore + ", bundle=" + bundleScore,
+			familyOnlyScore > localScore + 1e-9);
+		assertTrue("The fixture must make the contextually consistent FOUT bundle cheaper:"
+			+ " local=" + localScore + ", family=" + familyOnlyScore + ", bundle=" + bundleScore,
+			bundleScore + 1e-9 < localScore);
+
+		Map<Long, FederatedOutput> refined = invokeRefineTransientFamilyDecisions(
+			memoTable, rootPlan, conflictMap, localDecisions);
+
+		assertEquals("A cheaper contextually feasible bundle must be evaluated even when the"
+			+ " transient-family-only alternative is not an exact tie",
+			FederatedOutput.FOUT, refined.get(tWrite.getHopID()));
+		assertEquals(FederatedOutput.FOUT, refined.get(tRead.getHopID()));
+		assertEquals(FederatedOutput.FOUT, refined.get(consumer.getHopID()));
+		double refinedScore = invokeComputeDecisionMapTotalCost(memoTable, rootPlan, refined);
+		assertTrue("The accepted context bundle must improve the complete root-plan score:"
+			+ " local=" + localScore + ", refined=" + refinedScore,
+			refinedScore + 1e-9 < localScore);
+	}
+
+	@Test
+	public void testDpContextualTransientBundleCarriesProvenFedSourceAcrossChainedFamily()
+		throws Exception {
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			DataOp fedInput = federatedRead("X_chain_input", ROWS, COLS);
+			DataOp firstWrite = HopRewriteUtils.createTransientWrite("X_chain", fedInput);
+			DataOp firstRead = transientRead("X_chain", ROWS, COLS);
+			FederatedPlannerUtils.registerFedInitVar("X_chain", FType.ROW);
+			UnaryOp firstConsumer = HopRewriteUtils.createUnary(firstRead, OpOp1.EXP);
+			firstConsumer.setDim1(ROWS);
+			firstConsumer.setDim2(COLS);
+			DataOp secondWrite = HopRewriteUtils.createTransientWrite("X_chain_reduced", firstConsumer);
+			DataOp secondRead = transientRead("X_chain_reduced", ROWS, COLS);
+			UnaryOp secondConsumer = HopRewriteUtils.createUnary(secondRead, OpOp1.ABS);
+			secondConsumer.setDim1(ROWS);
+			secondConsumer.setDim2(COLS);
+			UnaryOp root = HopRewriteUtils.createUnary(secondConsumer, OpOp1.SQRT);
+			root.setDim1(ROWS);
+			root.setDim2(COLS);
+
+			Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+			HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
+			HopCommon firstWriteCommon = registerHopCommon(hopCommonTable, firstWrite);
+			HopCommon firstReadCommon = registerHopCommon(hopCommonTable, firstRead);
+			HopCommon firstConsumerCommon = registerHopCommon(hopCommonTable, firstConsumer);
+			HopCommon secondWriteCommon = registerHopCommon(hopCommonTable, secondWrite);
+			HopCommon secondReadCommon = registerHopCommon(hopCommonTable, secondRead);
+			HopCommon secondConsumerCommon = registerHopCommon(hopCommonTable, secondConsumer);
+			HopCommon rootCommon = registerHopCommon(hopCommonTable, root);
+
+			FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+			addPlanWithChildren(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+				List.of());
+			addPlanWithChildren(memoTable, firstWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 2.0,
+				List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, firstWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 2.1,
+				List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, firstReadCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 3.0,
+				List.of(Pair.of(firstWrite.getHopID(), FederatedOutput.LOUT)));
+			addPlanWithChildren(memoTable, firstReadCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 3.1,
+				List.of(Pair.of(firstWrite.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, firstConsumerCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 4.0,
+				List.of(Pair.of(firstRead.getHopID(), FederatedOutput.LOUT)));
+			addPlanWithChildren(memoTable, firstConsumerCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 4.1,
+				List.of(Pair.of(firstRead.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, secondWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 5.0,
+				List.of(Pair.of(firstConsumer.getHopID(), FederatedOutput.LOUT)));
+			addPlanWithChildren(memoTable, secondWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 5.1,
+				List.of(Pair.of(firstConsumer.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, secondReadCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 6.0,
+				List.of(Pair.of(secondWrite.getHopID(), FederatedOutput.LOUT)));
+			addPlanWithChildren(memoTable, secondReadCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 6.1,
+				List.of(Pair.of(secondWrite.getHopID(), FederatedOutput.FOUT)));
+			addPlanWithChildren(memoTable, secondConsumerCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 7.0,
+				List.of(Pair.of(secondRead.getHopID(), FederatedOutput.LOUT)));
+			addPlanWithChildren(memoTable, secondConsumerCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 7.1,
+				List.of(Pair.of(secondRead.getHopID(), FederatedOutput.FOUT)));
+			FedPlan rootPlan = addPlanWithChildren(memoTable, rootCommon, FederatedOutput.LOUT, ExecType.CP,
+				FType.ROW, 8.0, List.of(Pair.of(secondConsumer.getHopID(), FederatedOutput.LOUT)));
+			memoTable.registerHopRefs(hopCommonTable);
+
+			Map<Long, FederatedOutput> outputDecisions = new HashMap<>();
+			for (Hop hop : List.of(firstWrite, firstRead, firstConsumer, secondWrite, secondRead, secondConsumer))
+				outputDecisions.put(hop.getHopID(), FederatedOutput.LOUT);
+			Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(memoTable, rootPlan, outputDecisions);
+			invokeRefreshConflictChoiceFeasibility(conflictMap, memoTable);
+			Map<Long, LinkedHashSet<Long>> parentGraph = invokeBuildConflictParentGraph(memoTable, conflictMap);
+			LinkedHashSet<Long> familyHopIDs = invokeCollectTransientFamilyDecisionHopIDs(
+				memoTable, firstWrite.getHopID(), conflictMap, parentGraph);
+			LinkedHashSet<Long> bundleHopIDs = new LinkedHashSet<>(familyHopIDs);
+			bundleHopIDs.add(firstConsumer.getHopID());
+			bundleHopIDs.add(secondWrite.getHopID());
+			bundleHopIDs.add(secondRead.getHopID());
+			bundleHopIDs.add(secondConsumer.getHopID());
+
+			LinkedHashSet<Long> feasibleBundleHopIDs = invokeCollectContextuallyFeasibleTransientBundleHopIDs(
+				memoTable, rootPlan, outputDecisions, conflictMap, familyHopIDs, bundleHopIDs);
+
+			assertTrue(feasibleBundleHopIDs.contains(firstConsumer.getHopID()));
+			assertTrue(feasibleBundleHopIDs.contains(secondWrite.getHopID()));
+			assertTrue("A selected FED/FOUT transient write backed by a contextually proven FOUT producer"
+				+ " must be a concrete source for its matching transient read",
+				feasibleBundleHopIDs.contains(secondRead.getHopID()));
+			assertTrue(feasibleBundleHopIDs.contains(secondConsumer.getHopID()));
+		}
+		finally {
+			FederatedPlannerUtils.clearFedInitVars();
+		}
 	}
 
 	@Test
@@ -2719,6 +3841,266 @@ public class FederatedPlannerFallbackIntegrationTest {
 				+ " when a same-output parent FOUT variant can preserve that child state",
 			FederatedOutput.LOUT, decisions.get(child.getHopID()));
 		assertEquals(FederatedOutput.FOUT, decisions.get(parent.getHopID()));
+	}
+
+	@Test
+	public void testDpRequiredOutputClosureTerminatesOnFoutCycle() throws Exception {
+		DataOp left = transientRead("XclosureCycleLeft", ROWS, COLS);
+		DataOp right = transientRead("XclosureCycleRight", ROWS, COLS);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon leftCommon = registerHopCommon(hopCommonTable, left);
+		HopCommon rightCommon = registerHopCommon(hopCommonTable, right);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		FedPlan leftPlan = addPlanWithChildren(memoTable, leftCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+			List.of(Pair.of(right.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, rightCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+			List.of(Pair.of(left.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		FedPlan selected = invokeSelectRequiredOutputClosurePlanVariant(
+			memoTable, left.getHopID(), FederatedOutput.FOUT, Map.of());
+
+		assertEquals("FOUT closure search must reuse its active state across recursive plan selection",
+			leftPlan, selected);
+	}
+
+	@Test
+	public void testDpParentVariantSwitchExcludesComputedChildShareAlreadyPricedByOutputDecision()
+		throws Exception {
+		DataOp input = transientRead("XcomputedChildShare", ROWS, COLS);
+		UnaryOp child = new UnaryOp("computedChildShare", DataType.MATRIX, ValueType.FP64,
+			OpOp1.EXP, input);
+		child.setDim1(ROWS);
+		child.setDim2(COLS);
+		child.setNnz(ROWS * COLS);
+		UnaryOp parent = new UnaryOp("parentComputedChildShare", DataType.MATRIX, ValueType.FP64,
+			OpOp1.LOG, child);
+		parent.setDim1(ROWS);
+		parent.setDim2(COLS);
+		parent.setNnz(ROWS * COLS);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
+		addCustomPlan(memoTable, childCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 20.0);
+		FedPlan currentParent = addPlanWithChildren(memoTable, parentCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 110.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, parentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 35.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		double delta = invokeDpParentVariantSwitchDelta(
+			memoTable, currentParent, child.getHopID(), FederatedOutput.FOUT);
+
+		assertEquals("Parent-variant reconciliation must compare only the parent's remaining"
+				+ " cost after the computed child's LOUT-to-FOUT share was already priced by"
+				+ " the output-decision member delta",
+			5.0, delta, 1e-9);
+	}
+
+	@Test
+	public void testDpParentVariantSwitchExcludesOverlappingDirectParentChildShare()
+		throws Exception {
+		DataOp input = transientRead("XoverlappingParentShare", ROWS, COLS);
+		UnaryOp child = new UnaryOp("overlappingParentChild", DataType.MATRIX, ValueType.FP64,
+			OpOp1.EXP, input);
+		child.setDim1(ROWS);
+		child.setDim2(COLS);
+		child.setNnz(ROWS * COLS);
+		UnaryOp intermediateParent = new UnaryOp("intermediateOverlappingParent",
+			DataType.MATRIX, ValueType.FP64, OpOp1.LOG, child);
+		intermediateParent.setDim1(ROWS);
+		intermediateParent.setDim2(COLS);
+		intermediateParent.setNnz(ROWS * COLS);
+		BinaryOp outerParent = new BinaryOp("outerOverlappingParent", DataType.MATRIX,
+			ValueType.FP64, OpOp2.PLUS, child, intermediateParent);
+		outerParent.setDim1(ROWS);
+		outerParent.setDim2(COLS);
+		outerParent.setNnz(ROWS * COLS);
+		LiteralOp dummyRoot = new LiteralOp(1L);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon intermediateCommon = registerHopCommon(hopCommonTable, intermediateParent);
+		HopCommon outerCommon = registerHopCommon(hopCommonTable, outerParent);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
+		addCustomPlan(memoTable, childCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 20.0);
+		addPlanWithChildren(memoTable, intermediateCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 110.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, intermediateCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 35.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		FedPlan currentOuter = addPlanWithChildren(memoTable, outerCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 220.0,
+			List.of(
+				Pair.of(child.getHopID(), FederatedOutput.LOUT),
+				Pair.of(intermediateParent.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, outerCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 70.0,
+			List.of(
+				Pair.of(child.getHopID(), FederatedOutput.FOUT),
+				Pair.of(intermediateParent.getHopID(), FederatedOutput.FOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(outerParent.getHopID(), FederatedOutput.LOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(
+			memoTable, dummyRootPlan, new HashMap<>());
+		invokeRefreshConflictChoiceFeasibility(conflictMap, memoTable);
+		double delta = invokeDpPlannerSwitchEdgeCostDeltaWithConflicts(
+			memoTable, child.getHopID(), FederatedOutput.LOUT, FederatedOutput.FOUT,
+			currentOuter, false, 1, conflictMap);
+
+		assertEquals("A parent variant must not retain the cumulative representation shift"
+				+ " of a sibling that is itself another direct parent of the same child;"
+				+ " that intermediate parent is priced on its own conflict edge",
+			5.0, delta, 1e-9);
+	}
+
+	@Test
+	public void testDpParentVariantSwitchDoesNotChargeCloneOnlyDownstreamEdgeToOriginalMember()
+		throws Exception {
+		DataOp child = transientRead("XoriginalMemberDownstream", 10000, 10000);
+		UnaryOp originalParent = new UnaryOp("originalParentDownstream", DataType.MATRIX,
+			ValueType.FP64, OpOp1.EXP, child);
+		originalParent.setDim1(10000);
+		originalParent.setDim2(10000);
+		UnaryOp cloneParent = new UnaryOp("cloneParentDownstream", DataType.MATRIX,
+			ValueType.FP64, OpOp1.EXP, child);
+		cloneParent.setDim1(10000);
+		cloneParent.setDim2(10000);
+		UnaryOp originalDownstream = new UnaryOp("originalDownstream", DataType.MATRIX,
+			ValueType.FP64, OpOp1.LOG, originalParent);
+		UnaryOp cloneDownstream = new UnaryOp("cloneDownstream", DataType.MATRIX,
+			ValueType.FP64, OpOp1.LOG, cloneParent);
+		DataOp dummyRoot = transientRead("RootOriginalMemberDownstream", 1, 1);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon originalParentCommon = registerHopCommon(hopCommonTable, originalParent);
+		HopCommon cloneParentCommon = new HopCommon(cloneParent, 1.0, 1.0, 59.0, 1,
+			List.of(Pair.of(999L, 59.0)));
+		hopCommonTable.put(cloneParent.getHopID(), cloneParentCommon);
+		HopCommon originalDownstreamCommon = registerHopCommon(hopCommonTable, originalDownstream);
+		HopCommon cloneDownstreamCommon = new HopCommon(cloneDownstream, 1.0, 1.0, 59.0, 1,
+			List.of(Pair.of(999L, 59.0)));
+		hopCommonTable.put(cloneDownstream.getHopID(), cloneDownstreamCommon);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		FedPlan originalFedParent = addPlanWithChildren(memoTable, originalParentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 100.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		FedPlan originalCpParent = addPlanWithChildren(memoTable, originalParentCommon,
+			FederatedOutput.FOUT, ExecType.CP, FType.ROW, 105.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, cloneParentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 5900.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		FedPlan originalDownstreamPlan = addPlanWithChildren(memoTable, originalDownstreamCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 110.0,
+			List.of(Pair.of(originalParent.getHopID(), FederatedOutput.FOUT)));
+		addPlanWithChildren(memoTable, cloneDownstreamCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 6490.0,
+			List.of(Pair.of(cloneParent.getHopID(), FederatedOutput.FOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(originalDownstream.getHopID(), FederatedOutput.FOUT),
+				Pair.of(cloneDownstream.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(Map.of(
+			cloneParent.getHopID(), originalParent.getHopID(),
+			cloneDownstream.getHopID(), originalDownstream.getHopID()));
+
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(memoTable, dummyRootPlan, new HashMap<>());
+		invokeRefreshConflictChoiceFeasibility(conflictMap, memoTable);
+		double originalForwarding = invokeDpPlannerForwardingShare(
+			true, FederatedOutput.FOUT, originalCpParent, originalDownstreamPlan, 1);
+		double delta = invokeDpPlannerSwitchEdgeCostDeltaWithConflicts(
+			memoTable, child.getHopID(), FederatedOutput.FOUT, FederatedOutput.LOUT,
+			originalFedParent, true, 1, conflictMap);
+
+		assertEquals("An original member's parent-variant delta must include its own concrete"
+			+ " downstream edge once, without borrowing a clone-only downstream edge from the"
+			+ " same logical family", 5.0 + originalForwarding, delta, 1e-9);
+	}
+
+	@Test
+	public void testDpParentVariantSwitchUsesLogicalDownstreamEdgeWhenConcreteCloneEdgeIsAbsent()
+		throws Exception {
+		DataOp child = transientRead("XlogicalDownstreamFallback", 10000, 10000);
+		UnaryOp originalParent = new UnaryOp("originalLogicalParent", DataType.MATRIX,
+			ValueType.FP64, OpOp1.EXP, child);
+		UnaryOp cloneParent = new UnaryOp("cloneLogicalParent", DataType.MATRIX,
+			ValueType.FP64, OpOp1.EXP, child);
+		UnaryOp downstream = new UnaryOp("logicalDownstream", DataType.MATRIX,
+			ValueType.FP64, OpOp1.LOG, originalParent);
+		DataOp dummyRoot = transientRead("RootLogicalDownstreamFallback", 1, 1);
+		for (UnaryOp hop : List.of(originalParent, cloneParent, downstream)) {
+			hop.setDim1(10000);
+			hop.setDim2(10000);
+		}
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon originalParentCommon = registerHopCommon(hopCommonTable, originalParent);
+		HopCommon cloneParentCommon = registerHopCommon(hopCommonTable, cloneParent);
+		HopCommon downstreamCommon = registerHopCommon(hopCommonTable, downstream);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		addPlanWithChildren(memoTable, originalParentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 100.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		FedPlan cloneFedParent = addPlanWithChildren(memoTable, cloneParentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 100.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		FedPlan cloneCpParent = addPlanWithChildren(memoTable, cloneParentCommon,
+			FederatedOutput.FOUT, ExecType.CP, FType.ROW, 105.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.LOUT)));
+		FedPlan downstreamPlan = addPlanWithChildren(memoTable, downstreamCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 110.0,
+			List.of(Pair.of(originalParent.getHopID(), FederatedOutput.FOUT)));
+		FedPlan dummyRootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(downstream.getHopID(), FederatedOutput.FOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+		memoTable.registerCloneMapping(Map.of(cloneParent.getHopID(), originalParent.getHopID()));
+
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(
+			memoTable, dummyRootPlan, new HashMap<>());
+		invokeRefreshConflictChoiceFeasibility(conflictMap, memoTable);
+		double forwardingShare = invokeDpPlannerForwardingShare(
+			true, FederatedOutput.FOUT, cloneCpParent, downstreamPlan, 1);
+		double delta = invokeDpPlannerSwitchEdgeCostDeltaWithConflicts(
+			memoTable, child.getHopID(), FederatedOutput.FOUT, FederatedOutput.LOUT,
+			cloneFedParent, true, 1, conflictMap);
+
+		assertEquals("A virtual clone candidate must inherit the selected logical-family"
+				+ " downstream demand when no concrete clone edge is present",
+			5.0 + forwardingShare, delta, 1e-9);
 	}
 
 	@Test
@@ -3318,6 +4700,63 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testAggBinaryFullLeftUsesRuntimeBindInsteadOfReplicatedPartialAdd() {
+		DataOp left = federatedRead("XaggBinaryFullBindPlan", ROWS, COLS);
+		DataOp right = transientRead("YaggBinaryFullBindPlan", COLS, 2);
+		AggBinaryOp ba = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, left, right);
+
+		assertFalse("Runtime treats FULL as row-capable and routes FULL-left matrix multiply through"
+			+ " the left-row bind path, not replicated-partial aggAdd",
+			FederatedCostModel.requiresFederatedAggBinaryAddAggregation(ba,
+				Arrays.asList(FType.FULL, FType.ROW)));
+		assertEquals("FULL-left bind must not receive replicated-partial coordinator aggregation cost",
+			0.0, FederatedCostModel.computeAggBinaryAddAggregationCost(ba,
+				Arrays.asList(FType.FULL, FType.ROW), ROWS * 2.0 * OptimizerUtils.DOUBLE_SIZE, 1), 0.0);
+	}
+
+	@Test
+	public void testAggBinaryLocalResultDoesNotRepeatLogicalInstructionFixedOverhead() throws Exception {
+		DataOp left = federatedRead("XaggBinarySingleControlPlan", ROWS, COLS);
+		DataOp right = transientRead("YaggBinarySingleControlPlan", COLS, 2);
+		AggBinaryOp ba = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, left, right);
+		double resultMem = ROWS * 2.0 * OptimizerUtils.DOUBLE_SIZE;
+
+		FederatedCostModel.MixedFedLocalCost runtimeStages =
+			FederatedCostModel.computeMixedFedLocalCost(ba, Arrays.asList(left, right),
+				Arrays.asList(FType.BROADCAST, FType.ROW), FType.ROW,
+				100.0, resultMem, 1);
+		Method payloadCostMethod = FederatedCostModel.class.getDeclaredMethod(
+			"computeDownloadPayloadCost", double.class);
+		payloadCostMethod.setAccessible(true);
+		double payloadOnlyCost = (double) payloadCostMethod.invoke(null, resultMem);
+
+		assertEquals("The FED unary owns the first logical instruction control stage; AggregateBinary"
+			+ " local-result retrieval must add payload only for the first worker",
+			payloadOnlyCost, runtimeStages.getPartialResultDownloadCost(), 1e-9);
+	}
+
+	@Test
+	public void testAggBinaryColLeftFederatedRightSkipsRepeatedSlicedBroadcastPreparation() {
+		DataOp left = federatedRead("XaggBinaryColLeftPlan", ROWS, COLS);
+		DataOp right = transientRead("YaggBinaryFederatedRightPlan", COLS, 2);
+		AggBinaryOp ba = new AggBinaryOp("ba", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, left, right);
+
+		assertEquals("COL-left x FULL-right already has a remote full representation, so the cost model"
+			+ " must not charge the same sliced upload on every repeated execution",
+			0.0, FederatedCostModel.computeAggBinarySlicedInputBroadcastCost(ba,
+				Arrays.asList(left, right), Arrays.asList(FType.COL, FType.FULL), 4), 0.0);
+		assertEquals("COL-left x BROADCAST-right already has a remote replicated representation",
+			0.0, FederatedCostModel.computeAggBinarySlicedInputBroadcastCost(ba,
+				Arrays.asList(left, right), Arrays.asList(FType.COL, FType.BROADCAST), 4), 0.0);
+		assertTrue("COL-left x local-right still requires sliced input preparation",
+			FederatedCostModel.computeAggBinarySlicedInputBroadcastCost(ba,
+				Arrays.asList(left, right), Arrays.asList(FType.COL, null), 4) > 0.0);
+	}
+
+	@Test
 	public void testAxisPreservingAggregateUnaryUsesReducedNativeFedCostOnlyWhenRuntimeKeepsFederatedOutput() {
 		DataOp rowInput = federatedRead("XrowAggUnaryCost", ROWS, COLS);
 		AggUnaryOp rowAggregate = new AggUnaryOp("rowSumsSq", DataType.MATRIX, ValueType.FP64,
@@ -3637,7 +5076,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testMinSTFedInitTransientReadCpCostUsesSharedDownload() throws Exception {
+	public void testMinSTFedInitTransientReadCpCostPreservesRuntimeOccurrences() throws Exception {
 		FederatedPlannerUtils.clearFedInitVars();
 		try {
 			FederatedPlannerUtils.registerFedInitVar("X");
@@ -3677,12 +5116,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 				long pId = (fedInitRead.getHopID() << 2) | 1L;
 				double cpUnaryCost = (double) getEdgeWeightOrZero.invoke(graph, leafedSource, cId);
 				double localMaterialization = (double) getEdgeWeightOrZero.invoke(graph, cId, pId);
-			double expectedSharedDownload = 100.0 / 30.0 / 2.0;
+				double expectedRuntimeDownloads = 3000.0;
 
-			assertEquals("Stable fed-init TRead should pay one shared local materialization cost",
-				expectedSharedDownload, cpUnaryCost, 1e-9);
-			assertEquals("Stable fed-init TRead result edge should use the same amortized local materialization cost",
-				expectedSharedDownload, localMaterialization, 1e-9);
+			assertEquals("A stable fed-init TRead must preserve runtime materialization occurrences",
+				expectedRuntimeDownloads, cpUnaryCost, 1e-9);
+			assertEquals("The stable fed-init TRead result edge must preserve runtime occurrences",
+				expectedRuntimeDownloads, localMaterialization, 1e-9);
 		}
 		finally {
 			FederatedPlannerUtils.clearFedInitVars();
@@ -3775,12 +5214,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertFalse("TRead legality must continue to forbid FED/LOUT", tReadVertex.getCaps().allowFED_LOUT);
 		assertTrue("Concrete FED source TRead must keep FED/FOUT available",
 			tReadVertex.getCaps().allowFED_FOUT);
-		assertTrue("Concrete FED source TRead must be marked as stable for shared local materialization",
+		assertTrue("Concrete FED source TRead must be marked stable for within-occurrence sharing",
 			tReadVertex.isStableFederatedInputRead());
 	}
 
 	@Test
-	public void testMinSTConcreteFederatedSourceTransientReadCpCostUsesSharedDownload() throws Exception {
+	public void testMinSTConcreteFederatedSourceTransientReadCpCostPreservesRuntimeOccurrences() throws Exception {
 		DataOp federatedSource = new DataOp("Y_fed", DataType.MATRIX, ValueType.FP64,
 			OpOpData.FEDERATED, "Y_fed", ROWS, COLS, ROWS * COLS, BLOCKSIZE);
 		DataOp tRead = transientRead("Y", ROWS, COLS);
@@ -3833,12 +5272,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 		long pId = (tRead.getHopID() << 2) | 1L;
 		double cpUnaryCost = (double) getEdgeWeightOrZero.invoke(graph, leafedSource, cId);
 		double localMaterialization = (double) getEdgeWeightOrZero.invoke(graph, cId, pId);
-		double expectedSharedDownload = 100.0 / 30.0 / 2.0;
+		double expectedRuntimeDownloads = 3000.0;
 
-		assertEquals("Concrete FED source TRead should pay one shared local materialization cost",
-			expectedSharedDownload, cpUnaryCost, 1e-9);
-		assertEquals("Concrete FED source TRead result edge should use the same amortized local materialization cost",
-			expectedSharedDownload, localMaterialization, 1e-9);
+		assertEquals("Concrete FED source TRead CP cost must preserve runtime materialization occurrences",
+			expectedRuntimeDownloads, cpUnaryCost, 1e-9);
+		assertEquals("Concrete FED source TRead result edge must preserve runtime occurrences",
+			expectedRuntimeDownloads, localMaterialization, 1e-9);
 
 		graph.addParentChildNetEdge(sourceVertex, federatedSource.getHopID(), tReadVertex, tRead.getHopID(), false);
 		long sourcePId = (federatedSource.getHopID() << 2) | 1L;
@@ -3939,6 +5378,49 @@ public class FederatedPlannerFallbackIntegrationTest {
 			assertEquals(List.of(202L), snapshot.get(102L).getConsumerHopIds());
 			assertEquals("Default entries should remain visible to other statement blocks",
 				List.of(201L), FederatedLocalMaterializeRegistry.snapshot(8L).get(101L).getConsumerHopIds());
+		}
+		finally {
+			FederatedLocalMaterializeRegistry.clear();
+		}
+	}
+
+	@Test
+	public void testDpLocalMaterializeRegistrationDoesNotRestampFinalFedConsumer() throws Exception {
+		FederatedLocalMaterializeRegistry.clear();
+		try {
+			DataOp producer = federatedRead("XfinalFedMaterializeProducer", ROWS, COLS);
+			producer.setExecType(ExecType.FED);
+			producer.setForcedExecType(ExecType.FED);
+			producer.setFederatedOutput(FederatedOutput.FOUT);
+			UnaryOp finalFedConsumer = new UnaryOp("finalFedConsumer", DataType.MATRIX,
+				ValueType.FP64, OpOp1.SQRT, producer);
+			finalFedConsumer.setExecType(ExecType.FED);
+			finalFedConsumer.setForcedExecType(ExecType.FED);
+			finalFedConsumer.setFederatedOutput(FederatedOutput.LOUT);
+
+			Class<?> requestClass = Class.forName(
+				FederatedPlannerDpFedCostBased.class.getName() + "$LocalMaterializeRequest");
+			java.lang.reflect.Constructor<?> constructor =
+				requestClass.getDeclaredConstructor(long.class, Hop.class);
+			constructor.setAccessible(true);
+			Object request = constructor.newInstance(producer.getHopID(), producer);
+			Method addConsumer = requestClass.getDeclaredMethod("addConsumer",
+				long.class, Hop.class, FederatedOutput.class, FType.class);
+			addConsumer.setAccessible(true);
+			addConsumer.invoke(request, finalFedConsumer.getHopID(), finalFedConsumer,
+				FederatedOutput.LOUT, FType.ROW);
+
+			Map<Long, Object> requests = new LinkedHashMap<>();
+			requests.put(producer.getHopID(), request);
+			Method register = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+				"registerDpLocalMaterializeRequests", Map.class);
+			register.setAccessible(true);
+			register.invoke(null, requests);
+
+			assertTrue("A finalized FED consumer must invalidate a stale CP-local materialization request",
+				FederatedLocalMaterializeRegistry.snapshot(-1L).isEmpty());
+			assertEquals("Registration must not overwrite the finalized FED execution state",
+				ExecType.FED, finalFedConsumer.getForcedExecType());
 		}
 		finally {
 			FederatedLocalMaterializeRegistry.clear();
@@ -4328,6 +5810,89 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testMinSTRepairPromotesCpfoutWhenAllMatrixInputsAreNativeFedFout() throws Exception {
+		DataOp fedInput = federatedRead("Xnative", ROWS, COLS);
+		BinaryOp candidate = new BinaryOp("nativeMul", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, fedInput, new LiteralOp(2L));
+		candidate.setDim1(ROWS);
+		candidate.setDim2(COLS);
+		BinaryOp terminal = new BinaryOp("nativePlus", DataType.MATRIX, ValueType.FP64,
+			OpOp2.PLUS, candidate, new LiteralOp(1L));
+		terminal.setDim1(ROWS);
+		terminal.setDim2(COLS);
+
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+		graph.addVertex(new Vertex(fedInput, Privacy.PUBLIC, FType.ROW, FType.ROW, allowAllCaps()));
+		Vertex candidateVertex = new Vertex(candidate, Privacy.PRIVATE_AGGREGATE,
+			FType.ROW, FType.ROW, allowAllCaps());
+		candidateVertex.setMetadata(1.0, 1.0, List.of());
+		candidateVertex.setCost(1.0, 100.0, 100.0);
+		graph.addVertex(candidateVertex);
+		Vertex terminalVertex = new Vertex(terminal, Privacy.PRIVATE_AGGREGATE,
+			FType.ROW, FType.ROW, allowAllCaps());
+		terminalVertex.setMetadata(1.0, 1.0, List.of());
+		terminalVertex.setCost(1.0, 100.0, 100.0);
+		graph.addVertex(terminalVertex);
+
+		Map<Long, ExecType> execSelection = new HashMap<>();
+		Map<Long, FederatedOutput> outSelection = new HashMap<>();
+		execSelection.put(fedInput.getHopID(), ExecType.FED);
+		outSelection.put(fedInput.getHopID(), FederatedOutput.FOUT);
+		execSelection.put(candidate.getHopID(), ExecType.CP);
+		outSelection.put(candidate.getHopID(), FederatedOutput.FOUT);
+		execSelection.put(terminal.getHopID(), ExecType.CP);
+		outSelection.put(terminal.getHopID(), FederatedOutput.LOUT);
+
+		invokeRepairSelectionFixpoint(graph, execSelection, outSelection);
+
+		assertEquals("A selected CP/FOUT node should use native FED/FOUT when its matrix inputs are native FOUT",
+			ExecType.FED, execSelection.get(candidate.getHopID()));
+		assertEquals(FederatedOutput.FOUT, outSelection.get(candidate.getHopID()));
+	}
+
+	@Test
+	public void testMinSTRepairDoesNotPromoteDerivedFedLoutThroughFoutChain() throws Exception {
+		DataOp fedInput = federatedRead("Xderived", ROWS, COLS);
+		BinaryOp derived = new BinaryOp("derivedMul", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, fedInput, new LiteralOp(2L));
+		derived.setDim1(ROWS);
+		derived.setDim2(COLS);
+		BinaryOp consumer = new BinaryOp("derivedPlus", DataType.MATRIX, ValueType.FP64,
+			OpOp2.PLUS, derived, new LiteralOp(1L));
+		consumer.setDim1(ROWS);
+		consumer.setDim2(COLS);
+
+		FederatedPlanMinSTGraph.ExecPlacementCaps derivedCaps = allowAllCaps();
+		derivedCaps.fedFoutMode = FederatedPlanMinSTGraph.ExecPlacementCaps.FedFoutMode.DERIVED_REFED;
+		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+		graph.setNumOfWorkers(2);
+		graph.addVertex(new Vertex(fedInput, Privacy.PUBLIC, FType.ROW, FType.ROW, allowAllCaps()));
+		Vertex derivedVertex = new Vertex(derived, Privacy.PRIVATE_AGGREGATE,
+			FType.ROW, FType.ROW, derivedCaps);
+		derivedVertex.setMetadata(1.0, 1.0, List.of());
+		derivedVertex.setCost(1.0, 100.0, 100.0);
+		graph.addVertex(derivedVertex);
+		graph.addVertex(new Vertex(consumer, Privacy.PRIVATE_AGGREGATE,
+			FType.ROW, FType.ROW, allowAllCaps()));
+
+		Map<Long, ExecType> execSelection = new HashMap<>();
+		Map<Long, FederatedOutput> outSelection = new HashMap<>();
+		execSelection.put(fedInput.getHopID(), ExecType.FED);
+		outSelection.put(fedInput.getHopID(), FederatedOutput.FOUT);
+		execSelection.put(derived.getHopID(), ExecType.FED);
+		outSelection.put(derived.getHopID(), FederatedOutput.LOUT);
+		execSelection.put(consumer.getHopID(), ExecType.CP);
+		outSelection.put(consumer.getHopID(), FederatedOutput.FOUT);
+
+		invokeRepairSelectionFixpoint(graph, execSelection, outSelection);
+
+		assertEquals(ExecType.FED, execSelection.get(derived.getHopID()));
+		assertEquals("Derived FED/LOUT must not become a refed propagation anchor",
+			FederatedOutput.LOUT, outSelection.get(derived.getHopID()));
+	}
+
+	@Test
 	public void testResolveTransReadChildrenPrefersDominatingTransientWriteOverStaleOuterMapping() {
 		DataOp staleFedSource = federatedRead("X", ROWS, COLS);
 		DataOp dominatingTWrite = HopRewriteUtils.createTransientWrite("X", transientRead("Xin", ROWS, COLS));
@@ -4578,6 +6143,22 @@ public class FederatedPlannerFallbackIntegrationTest {
 			int.class);
 		method.setAccessible(true);
 		return (double) method.invoke(null, parentIsFed, childOut, childPlan, parentPlan, numWorkers);
+	}
+
+	private static double invokeDpPlannerForwardingShareWithMemo(
+			FederatedPlannerDpMemoTable memoTable,
+			boolean parentIsFed, FederatedOutput childOut,
+			FedPlan childPlan, FedPlan parentPlan, int numWorkers) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"computeParentChildForwardingCostShare",
+			FederatedPlannerDpMemoTable.class,
+			boolean.class, FederatedOutput.class,
+			FederatedPlannerDpMemoTable.FedPlan.class,
+			FederatedPlannerDpMemoTable.FedPlan.class,
+			int.class);
+		method.setAccessible(true);
+		return (double) method.invoke(
+			null, memoTable, parentIsFed, childOut, childPlan, parentPlan, numWorkers);
 	}
 
 	private static double invokeDpEnumeratorForwardingShare(
@@ -4877,6 +6458,78 @@ public class FederatedPlannerFallbackIntegrationTest {
 			null, memoTable, rootPlan, initialDecisions, lockedDecisions, allowTransientFamilyRefine);
 	}
 
+	@SuppressWarnings("unchecked")
+	private static Map<Long, FederatedOutput> invokeNormalizeMultiWriteTransientVariableFamilies(
+			FederatedPlannerDpMemoTable memoTable,
+			FedPlan rootPlan,
+			Map<Long, ?> conflictCheckMap,
+			Map<Long, FederatedOutput> decisions) throws Exception {
+		Class<?> conflictEntryClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$ConflictEntry");
+		Class<?> simulationCacheClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$SimulationDecisionCache");
+		Class<?> scoreCacheClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$DecisionMapScoreCache");
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"normalizeMultiWriteTransientVariableFamilies",
+			FederatedPlannerDpMemoTable.class,
+			FederatedPlannerDpMemoTable.FedPlan.class,
+			Map.class,
+			Map.class,
+			Map.class,
+			int.class,
+			simulationCacheClass,
+			scoreCacheClass);
+		method.setAccessible(true);
+		return (Map<Long, FederatedOutput>) method.invoke(
+			null, memoTable, rootPlan, conflictCheckMap, decisions, Map.of(), 1, null, null);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Long, FederatedOutput> invokeRefineTransientFamilyDecisions(
+			FederatedPlannerDpMemoTable memoTable,
+			FedPlan rootPlan,
+			Map<Long, ?> conflictCheckMap,
+			Map<Long, FederatedOutput> decisions) throws Exception {
+		Class<?> simulationCacheClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$SimulationDecisionCache");
+		Class<?> scoreCacheClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$DecisionMapScoreCache");
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"refineTransientFamilyDecisions",
+			FederatedPlannerDpMemoTable.class,
+			FederatedPlannerDpMemoTable.FedPlan.class,
+			Map.class,
+			Map.class,
+			int.class,
+			simulationCacheClass,
+			scoreCacheClass);
+		method.setAccessible(true);
+		return (Map<Long, FederatedOutput>) method.invoke(
+			null, memoTable, rootPlan, conflictCheckMap, decisions, 1, null, null);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static LinkedHashSet<Long> invokeCollectSelectedTransientReadProducerHopIDs(
+			FederatedPlannerDpMemoTable memoTable,
+			Object conflictEntry,
+			FederatedOutput selectedReadOut,
+			Map<Long, FederatedOutput> outputDecisions,
+			String transientVarName) throws Exception {
+		Class<?> conflictEntryClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$ConflictEntry");
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"collectSelectedTransientReadProducerHopIDs",
+			FederatedPlannerDpMemoTable.class,
+			conflictEntryClass,
+			FederatedOutput.class,
+			Map.class,
+			String.class);
+		method.setAccessible(true);
+		return (LinkedHashSet<Long>) method.invoke(
+			null, memoTable, conflictEntry, selectedReadOut, outputDecisions, transientVarName);
+	}
+
 	private static void invokeApplyRequiredOutputDecisionClosure(
 			FederatedPlannerDpMemoTable memoTable,
 			long hopID,
@@ -4898,6 +6551,21 @@ public class FederatedPlannerFallbackIntegrationTest {
 			closureHopIDs, new HashSet<String>());
 	}
 
+	private static FedPlan invokeSelectRequiredOutputClosurePlanVariant(
+			FederatedPlannerDpMemoTable memoTable,
+			long hopID,
+			FederatedOutput desiredOut,
+			Map<Long, ?> conflictMap) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"selectRequiredOutputClosurePlanVariant",
+			FederatedPlannerDpMemoTable.class,
+			long.class,
+			FederatedOutput.class,
+			Map.class);
+		method.setAccessible(true);
+		return (FedPlan) method.invoke(null, memoTable, hopID, desiredOut, conflictMap);
+	}
+
 	private static double invokeComputeDecisionMapTotalCost(
 			FederatedPlannerDpMemoTable memoTable,
 			FedPlan rootPlan,
@@ -4912,6 +6580,26 @@ public class FederatedPlannerFallbackIntegrationTest {
 		Field totalCostField = breakdown.getClass().getDeclaredField("totalCost");
 		totalCostField.setAccessible(true);
 		return totalCostField.getDouble(breakdown);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Long, FederatedOutput> invokeSelectLowerCostDecisionMap(
+			FederatedPlannerDpMemoTable memoTable,
+			FedPlan rootPlan,
+			Map<Long, FederatedOutput> incumbent,
+			Map<Long, FederatedOutput> candidate) throws Exception {
+		Class<?> scoreCacheClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$DecisionMapScoreCache");
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"selectLowerCostDecisionMap",
+			FederatedPlannerDpMemoTable.class,
+			FederatedPlannerDpMemoTable.FedPlan.class,
+			Map.class,
+			Map.class,
+			scoreCacheClass);
+		method.setAccessible(true);
+		return (Map<Long, FederatedOutput>) method.invoke(
+			null, memoTable, rootPlan, incumbent, candidate, null);
 	}
 
 	private static double invokeComputeCloneFamilyRewriteCost(
@@ -4944,6 +6632,15 @@ public class FederatedPlannerFallbackIntegrationTest {
 			Map.class);
 		method.setAccessible(true);
 		return (Double) method.invoke(null, memoTable, familyMemberIDs, referencePlan, outputDecisions, conflictMap);
+	}
+
+	private static double invokeComputeStableFederatedInputLocalMaterializationWeight(
+			Hop hop, double placementWeight, boolean hasConcreteTransientReadSource) throws Exception {
+		Method method = FederatedPlannerDpCostEstimator.class.getDeclaredMethod(
+			"computeStableFederatedInputLocalMaterializationWeight",
+			Hop.class, double.class, boolean.class);
+		method.setAccessible(true);
+		return (Double) method.invoke(null, hop, placementWeight, hasConcreteTransientReadSource);
 	}
 
 	private static void invokeRefreshConflictChoiceFeasibility(
@@ -5015,6 +6712,15 @@ public class FederatedPlannerFallbackIntegrationTest {
 			"repairSelectionFixpoint", Map.class, Map.class);
 		method.setAccessible(true);
 		method.invoke(graph, execSelection, outSelection);
+	}
+
+	private static void invokeRestoreMinstPlanDecisions(
+			Map<Long, Pair<ExecType, FederatedOutput>> decisions,
+			FederatedPlanMinSTGraph graph) throws Exception {
+		Method method = org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut.class
+			.getDeclaredMethod("restoreMinstPlanDecisions", Map.class, FederatedPlanMinSTGraph.class);
+		method.setAccessible(true);
+		method.invoke(null, decisions, graph);
 	}
 
 	private static double computeMinSTCutCost(FederatedPlanMinSTGraph graph, long... sourceNodes) {

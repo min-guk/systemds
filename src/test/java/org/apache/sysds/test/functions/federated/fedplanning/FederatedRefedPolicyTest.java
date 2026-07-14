@@ -37,6 +37,7 @@ import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
@@ -49,6 +50,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.FederatedRefed;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.compile.Dag;
@@ -499,18 +501,119 @@ public class FederatedRefedPolicyTest {
 		AggBinaryOp fedParent = HopRewriteUtils.createMatrixMultiply(fedMatrix, localVector);
 		fedParent.setForcedExecType(ExecType.FED);
 		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+		DataOp localTail = createLocalMatrix("tail", 1, 10);
+		AggBinaryOp fedConsumer = HopRewriteUtils.createMatrixMultiply(fedParent, localTail);
+		fedConsumer.setForcedExecType(ExecType.FED);
+		fedConsumer.setFederatedOutput(FederatedOutput.FOUT);
 
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
 		fTypeMap.put(localVector.getHopID(), FType.BROADCAST);
+		fTypeMap.put(fedParent.getHopID(), FType.ROW);
+		fTypeMap.put(localTail.getHopID(), FType.BROADCAST);
 
-		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent), true, fTypeMap, -1);
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedConsumer), true, fTypeMap, -1);
+		assertEquals("A native ROW-fed AggBinary vector result required as FOUT must not be demoted",
+			FederatedOutput.FOUT, fedParent.getFederatedOutput());
 		assertEquals("Expected optional BROADCAST vector input to remain local",
 			FederatedOutput.LOUT, localVector.getFederatedOutput());
 		assertTrue("Expected no refed entry for optional BROADCAST vector input",
 			!FederatedRefedRegistry.snapshot(-1).containsKey(localVector.getHopID()));
 		assertTrue("Expected no fed_fout materialization for optional BROADCAST vector input",
 			!FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(localVector.getHopID()));
+	}
+
+	@Test
+	public void testNativeAggBinaryFoutVectorSurvivesTransientWriteDemand() {
+		DataOp fedMatrix = createFederatedInput("XnativeVector", 100, 10);
+		DataOp localVector = createLocalMatrix("vNativeVector", 10, 1);
+		localVector.setForcedExecType(ExecType.CP);
+		localVector.setFederatedOutput(FederatedOutput.LOUT);
+
+		AggBinaryOp fedProduct = HopRewriteUtils.createMatrixMultiply(fedMatrix, localVector);
+		fedProduct.setDim1(100);
+		fedProduct.setDim2(1);
+		fedProduct.setForcedExecType(ExecType.FED);
+		fedProduct.setFederatedOutput(FederatedOutput.FOUT);
+		DataOp tWrite = HopRewriteUtils.createTransientWrite("YnativeVector", fedProduct);
+		tWrite.setDim1(100);
+		tWrite.setDim2(1);
+		tWrite.setForcedExecType(ExecType.FED);
+		tWrite.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(fedMatrix.getHopID(), FType.ROW);
+		fTypeMap.put(fedProduct.getHopID(), FType.ROW);
+		fTypeMap.put(tWrite.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(tWrite), true, fTypeMap, -1);
+
+		assertEquals("A planner-authorized native AggBinary FOUT must survive when a transient write"
+				+ " requires the federated representation",
+			FederatedOutput.FOUT, fedProduct.getFederatedOutput());
+		assertEquals("The transient write must retain the same federated representation",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+	}
+
+	@Test
+	public void testNativeReplicatedAggBinaryFoutSurvivesTransientWriteDemand() {
+		DataOp left = createFederatedInput("LnativeReplicated", 10, 10);
+		DataOp right = createFederatedInput("RnativeReplicated", 10, 10);
+		AggBinaryOp product = HopRewriteUtils.createMatrixMultiply(left, right);
+		product.setDim1(10);
+		product.setDim2(10);
+		product.setForcedExecType(ExecType.FED);
+		product.setFederatedOutput(FederatedOutput.FOUT);
+		DataOp tWrite = HopRewriteUtils.createTransientWrite("YnativeReplicated", product);
+		tWrite.setDim1(10);
+		tWrite.setDim2(10);
+		tWrite.setForcedExecType(ExecType.FED);
+		tWrite.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(left.getHopID(), FType.BROADCAST);
+		fTypeMap.put(right.getHopID(), FType.BROADCAST);
+		fTypeMap.put(product.getHopID(), FType.BROADCAST);
+		fTypeMap.put(tWrite.getHopID(), FType.BROADCAST);
+
+		FederatedRefedPolicy.registerFromHops(Arrays.asList(tWrite), true, fTypeMap, -1);
+
+		assertEquals("A native replicated AggBinary FOUT must survive when a transient write"
+				+ " requires the federated representation",
+			FederatedOutput.FOUT, product.getFederatedOutput());
+		assertEquals("The transient write must retain the same replicated representation",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+	}
+
+	@Test
+	public void testLeftTransposeRewriteKeepsFoutRhsTransposeFederatedUnderLoutParent() {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig testConfig = new DMLConfig(oldConfig);
+		testConfig.setTextValue(DMLConfig.COMPRESSED_LINALG, "false");
+		ConfigurationManager.setGlobalConfig(testConfig);
+		ConfigurationManager.setLocalConfig(testConfig);
+		try {
+			DataOp x = createFederatedInput("X", 100000, 100);
+			Hop tX = HopRewriteUtils.createTranspose(x);
+			tX.setForcedExecType(ExecType.FED);
+			tX.setFederatedOutput(FederatedOutput.FOUT);
+			DataOp y = createFederatedInput("Y", 100000, 2);
+			AggBinaryOp parent = HopRewriteUtils.createMatrixMultiply(tX, y);
+			parent.setForcedExecType(ExecType.FED);
+			parent.setFederatedOutput(FederatedOutput.LOUT);
+
+			assertTrue("Expected the FED left-transpose rewrite fixture to be applicable",
+				parent.usesLeftTransposeRewrite(ExecType.FED));
+			Lop outerTranspose = parent.constructLops();
+			Lop innerMultiply = outerTranspose.getInputs().get(0);
+			Lop rhsTranspose = innerMultiply.getInputs().get(0);
+			assertEquals("The rewritten RHS transpose must preserve its FOUT input representation",
+				FederatedOutput.FOUT, rhsTranspose.getFederatedOutput());
+		}
+		finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
 	}
 
 	@Test
@@ -758,6 +861,42 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testRuntimeSignatureWithoutTypeRegistersCompleteConservativeAnchorKey() {
+		DataOp local = createLocalMatrix("local", 10, 10);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("X", "worker1:8001/data/X;|");
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(local)), true,
+			new HashMap<>(), -1L, runtimeSignatures, new HashMap<>());
+
+		assertEquals("A runtime worker-pool signature without an FType must not be registered as an"
+				+ " incomplete literal fed_refed anchor",
+			"worker1:8001/data/X;||FULL", FederatedPlannerUtils.getFedAnchorKey("X"));
+	}
+
+	@Test
+	public void testDerivedFederatedHopWithoutTypeBuildsCompleteConservativeAnchorKey() throws Exception {
+		String signature = "worker1:8001/data/X;|";
+		FederatedPlannerUtils.registerFedInitVar("X", null, signature);
+		DataOp source = createFederatedInput("X", 10, 10);
+		UnaryOp derived = HopRewriteUtils.createUnary(source, OpOp1.EXP);
+		derived.setDim1(10);
+		derived.setDim2(10);
+		derived.setForcedExecType(ExecType.FED);
+		derived.setFederatedOutput(FederatedOutput.FOUT);
+
+		java.lang.reflect.Method buildAnchorKey = FederatedRefedPolicy.class.getDeclaredMethod(
+			"buildAnchorKey", Hop.class, Map.class, Set.class);
+		buildAnchorKey.setAccessible(true);
+		Object anchorKey = buildAnchorKey.invoke(null, derived, new HashMap<>(), new java.util.HashSet<Long>());
+		java.lang.reflect.Field value = anchorKey.getClass().getDeclaredField("value");
+		value.setAccessible(true);
+
+		assertEquals("A derived federated hop must not bypass runtime anchor-key normalization",
+			"worker1:8001/data/X;||FULL", value.get(anchorKey));
+	}
+
+	@Test
 	public void testRuntimeSignaturesOverrideStaleTransientReadAnchorKey() {
 		DataOp tRead = createLocalMatrix("X", 3000, 50);
 		tRead.setForcedExecType(ExecType.FED);
@@ -942,6 +1081,146 @@ public class FederatedRefedPolicyTest {
 			refedSnapshot.containsKey(tRead.getHopID()));
 		assertEquals("Expected FED parent to remain FED after satisfying required transient-read input",
 			ExecType.FED, fedParent.getForcedExecType());
+	}
+
+	@Test
+	public void testRuntimeRecompilePreservesReachableLocalMaterializeObligation() {
+		DataOp producer = createFederatedInput("A", 10, 10);
+		UnaryOp consumer = HopRewriteUtils.createUnary(producer, OpOp1.SQRT);
+		consumer.setDim1(10);
+		consumer.setDim2(10);
+		consumer.setForcedExecType(ExecType.CP);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+
+		FederatedLocalMaterializeRegistry.register(-1L, producer.getHopID(),
+			Arrays.asList(consumer.getHopID()), "ROW", "test-preserve");
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(producer.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("A", "worker1:8001/data/A;|0,10;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("A", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(consumer)), true,
+			fTypeMap, 42L, runtimeSignatures, runtimeTypes);
+
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> snapshot =
+			FederatedLocalMaterializeRegistry.snapshot(42L);
+		assertTrue("Expected runtime recompile to preserve reachable local-materialize producer",
+			snapshot.containsKey(producer.getHopID()));
+		assertEquals("Expected reachable consumer to remain registered",
+			Arrays.asList(consumer.getHopID()), snapshot.get(producer.getHopID()).getConsumerHopIds());
+	}
+
+	@Test
+	public void testRuntimeRecompilePrunesUnreachableLocalMaterializeConsumers() {
+		DataOp producer = createFederatedInput("A", 10, 10);
+		UnaryOp consumer = HopRewriteUtils.createUnary(producer, OpOp1.SQRT);
+		consumer.setDim1(10);
+		consumer.setDim2(10);
+		consumer.setForcedExecType(ExecType.CP);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+
+		FederatedLocalMaterializeRegistry.register(-1L, producer.getHopID(),
+			Arrays.asList(consumer.getHopID(), 999999L), "ROW", "test-prune");
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(producer.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("A", "worker1:8001/data/A;|0,10;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("A", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(consumer)), true,
+			fTypeMap, 42L, runtimeSignatures, runtimeTypes);
+
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> snapshot =
+			FederatedLocalMaterializeRegistry.snapshot(42L);
+		assertTrue("Expected producer obligation to survive with a reachable consumer",
+			snapshot.containsKey(producer.getHopID()));
+		assertEquals("Expected unreachable consumer to be pruned",
+			Arrays.asList(consumer.getHopID()), snapshot.get(producer.getHopID()).getConsumerHopIds());
+	}
+
+	@Test
+	public void testRuntimeRecompilePreservesDefaultLocalMaterializeScopeForLaterLowering() {
+		DataOp producer = createFederatedInput("A", 10, 10);
+		UnaryOp consumer = HopRewriteUtils.createUnary(producer, OpOp1.SQRT);
+		consumer.setDim1(10);
+		consumer.setDim2(10);
+		consumer.setForcedExecType(ExecType.CP);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+
+		FederatedLocalMaterializeRegistry.register(-1L, producer.getHopID(),
+			Arrays.asList(consumer.getHopID()), "ROW", "test-preserve-default-scope");
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(producer.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("A", "worker1:8001/data/A;|0,10;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("A", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(consumer)), true,
+			fTypeMap, 42L, runtimeSignatures, runtimeTypes);
+
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> currentBlockSnapshot =
+			FederatedLocalMaterializeRegistry.snapshot(42L);
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> laterBlockSnapshot =
+			FederatedLocalMaterializeRegistry.snapshot(43L);
+		assertTrue("Expected current runtime block to see the preserved default obligation",
+			currentBlockSnapshot.containsKey(producer.getHopID()));
+		assertTrue("Expected later loop/body lowering to still see the default obligation",
+			laterBlockSnapshot.containsKey(producer.getHopID()));
+		assertEquals("Expected default obligation consumers to remain reachable-only",
+			Arrays.asList(consumer.getHopID()), laterBlockSnapshot.get(producer.getHopID()).getConsumerHopIds());
+	}
+
+	@Test
+	public void testRuntimeRecompileKeepsDefaultLocalMaterializeAcrossUnrelatedBlock() {
+		DataOp producer = createFederatedInput("A", 10, 10);
+		UnaryOp consumer = HopRewriteUtils.createUnary(producer, OpOp1.SQRT);
+		consumer.setDim1(10);
+		consumer.setDim2(10);
+		consumer.setForcedExecType(ExecType.CP);
+		consumer.setFederatedOutput(FederatedOutput.LOUT);
+		FederatedLocalMaterializeRegistry.register(-1L, producer.getHopID(),
+			Arrays.asList(consumer.getHopID()), "ROW", "test-unrelated-block-preserve");
+
+		DataOp unrelatedInput = createLocalMatrix("B", 10, 10);
+		UnaryOp unrelatedConsumer = HopRewriteUtils.createUnary(unrelatedInput, OpOp1.LOG);
+		unrelatedConsumer.setDim1(10);
+		unrelatedConsumer.setDim2(10);
+		unrelatedConsumer.setForcedExecType(ExecType.CP);
+		unrelatedConsumer.setFederatedOutput(FederatedOutput.LOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(producer.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("A", "worker1:8001/data/A;|0,10;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("A", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(unrelatedConsumer)),
+			true, fTypeMap, 42L, runtimeSignatures, runtimeTypes);
+
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> laterBlockSnapshot =
+			FederatedLocalMaterializeRegistry.snapshot(43L);
+		assertTrue("Expected unrelated runtime recompile not to drop default local-materialize obligation",
+			laterBlockSnapshot.containsKey(producer.getHopID()));
+
+		Lop consumerLop = consumer.constructLops();
+		Dag<Lop> dag = new Dag<>();
+		consumerLop.addToDag(dag);
+		boolean hasPrefetch = false;
+		for (Instruction inst : dag.getJobs(null, ConfigurationManager.getDMLConfig())) {
+			if (inst.getInstructionString().contains("prefetch")) {
+				hasPrefetch = true;
+				break;
+			}
+		}
+		assertTrue("Expected later lowering to insert CP prefetch from preserved default obligation", hasPrefetch);
 	}
 
 	@Test

@@ -408,7 +408,9 @@ public class Dag<N extends Lop>
 	 * @return true if given input needs to be prefetched before lop
 	 */
 	private boolean inputNeedsPrefetch(Lop input, Lop lop){
-		return input.prefetchActivated() && lop.getExecType() != ExecType.FED
+		boolean explicitPrefetch = lop instanceof UnaryCP
+			&& OpOp1.PREFETCH.toString().equals(((UnaryCP) lop).getOpCode());
+		return !explicitPrefetch && input.prefetchActivated() && lop.getExecType() != ExecType.FED
 			&& input.getFederatedOutput().isForcedFederated();
 	}
 

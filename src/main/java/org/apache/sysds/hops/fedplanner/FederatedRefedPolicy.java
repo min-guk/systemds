@@ -322,6 +322,12 @@ public final class FederatedRefedPolicy {
 			java.util.Map<String, FType> runtimeTypes,
 			AnchorSelection fallbackAnchor, boolean conditionalContext,
 			List<Hop> scopeHops) {
+			// In the recompiler path we get the authoritative runtime federation state (signatures/types)
+			// from the current symbol table. Treat a provided (even empty) runtimeSignatures map as
+			// authoritative and reset variable anchor keys to avoid staleness across recompilations.
+			boolean runtimeContext = (runtimeSignatures != null);
+			Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preservedLocalMaterialize =
+				snapshotRuntimeLocalMaterialize(clearRegistry, runtimeContext, sbId);
 			if (clearRegistry)
 				FederatedRefedRegistry.clear();
 			if (clearRegistry)
@@ -330,10 +336,6 @@ public final class FederatedRefedPolicy {
 				FederatedLocalMaterializeRegistry.clear();
 			if (clearRegistry)
 				clearCpfoutAnchorCache();
-			// In the recompiler path we get the authoritative runtime federation state (signatures/types)
-			// from the current symbol table. Treat a provided (even empty) runtimeSignatures map as
-			// authoritative and reset variable anchor keys to avoid staleness across recompilations.
-			boolean runtimeContext = (runtimeSignatures != null);
 			if (clearRegistry && runtimeContext)
 				FederatedPlannerUtils.clearFedAnchorKeys();
 			if (roots == null || roots.isEmpty())
@@ -362,6 +364,7 @@ public final class FederatedRefedPolicy {
 			}
 
 			List<Hop> all = collectAllHops(roots);
+			restoreReachableRuntimeLocalMaterialize(preservedLocalMaterialize, all);
 			if (all != null && !all.isEmpty()) {
 				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
 				java.util.Map<Long, Long> hopSbIds = HOP_SBID_CACHE.get();
@@ -566,7 +569,7 @@ public final class FederatedRefedPolicy {
 					exec = ExecType.CP;
 				if (shouldDemoteAggBinaryFedFout(hop, exec, fTypeMap)) {
 					logPlannerRefedEvent("RefedAggBinaryFoutDemote", hop,
-						"reason=scalar_or_replicated_vector_output inputs=" + describeInputs(hop));
+						"reason=replicated_inputs_without_transient_fout_demand inputs=" + describeInputs(hop));
 					hop.setFederatedOutput(FederatedOutput.LOUT);
 				}
 				boolean localOutput = exec == ExecType.CP
@@ -746,6 +749,61 @@ public final class FederatedRefedPolicy {
 		finally {
 			if (runtimeContext)
 				LOCAL_TR_VARS.remove();
+		}
+	}
+
+	private static Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>>
+		snapshotRuntimeLocalMaterialize(boolean clearRegistry, boolean runtimeContext, long sbId) {
+		if (!clearRegistry || !runtimeContext || FederatedLocalMaterializeRegistry.isEmpty())
+			return Collections.emptyMap();
+		return new HashMap<>(FederatedLocalMaterializeRegistry.snapshotScopes(sbId));
+	}
+
+	private static void restoreReachableRuntimeLocalMaterialize(
+			Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preserved,
+			List<Hop> hops) {
+		if (preserved == null || preserved.isEmpty() || hops == null || hops.isEmpty())
+			return;
+
+		Set<Long> reachableHopIds = new HashSet<>();
+		for (Hop hop : hops) {
+			if (hop != null)
+				reachableHopIds.add(hop.getHopID());
+		}
+		if (reachableHopIds.isEmpty())
+			return;
+
+		for (Map.Entry<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> scopeEntry :
+				preserved.entrySet()) {
+			Long preservedSbId = scopeEntry.getKey();
+			Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> entries = scopeEntry.getValue();
+			if (preservedSbId == null || entries == null || entries.isEmpty())
+				continue;
+			for (Map.Entry<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> entry : entries.entrySet()) {
+				Long producerHopId = entry.getKey();
+				FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = entry.getValue();
+				if (producerHopId == null || spec == null)
+					continue;
+				boolean producerReachable = reachableHopIds.contains(producerHopId);
+				if (!producerReachable && preservedSbId == -1L) {
+					FederatedLocalMaterializeRegistry.register(-1L, producerHopId,
+						spec.getConsumerHopIds(), spec.getFTypeHint(), spec.getReason());
+					continue;
+				}
+				if (!producerReachable)
+					continue;
+				List<Long> reachableConsumers = new ArrayList<>();
+				for (Long consumerHopId : spec.getConsumerHopIds()) {
+					if (consumerHopId != null && reachableHopIds.contains(consumerHopId))
+						reachableConsumers.add(consumerHopId);
+				}
+				if (!reachableConsumers.isEmpty())
+					FederatedLocalMaterializeRegistry.register(preservedSbId, producerHopId,
+						reachableConsumers, spec.getFTypeHint(), spec.getReason());
+				else if (preservedSbId == -1L)
+					FederatedLocalMaterializeRegistry.register(-1L, producerHopId,
+						spec.getConsumerHopIds(), spec.getFTypeHint(), spec.getReason());
+			}
 		}
 	}
 
@@ -3190,8 +3248,8 @@ public final class FederatedRefedPolicy {
 			return false;
 		if (exec != ExecType.FED || hop.getFederatedOutput() != FederatedOutput.FOUT)
 			return false;
-		if (hop.dimsKnown() && (hop.getDim1() == 1 || hop.getDim2() == 1))
-			return true;
+		if (hasFederatedTransientWriteConsumer(hop))
+			return false;
 		List<Hop> inputs = hop.getInput();
 		if (inputs == null || inputs.size() < 2)
 			return false;
@@ -3206,6 +3264,19 @@ public final class FederatedRefedPolicy {
 		boolean leftReplicated = (left == FType.FULL || left == FType.BROADCAST);
 		boolean rightReplicated = (right == FType.FULL || right == FType.BROADCAST);
 		return leftReplicated && rightReplicated;
+	}
+
+	private static boolean hasFederatedTransientWriteConsumer(Hop hop) {
+		if (hop == null || hop.getParent() == null)
+			return false;
+		for (Hop parent : hop.getParent()) {
+			if (!(parent instanceof DataOp))
+				continue;
+			DataOp dataOp = (DataOp) parent;
+			if (dataOp.getOp() == OpOpData.TRANSIENTWRITE && dataOp.hasFederatedOutput())
+				return true;
+		}
+		return false;
 	}
 
 	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
@@ -3988,6 +4059,8 @@ public final class FederatedRefedPolicy {
 		String sig = signature;
 		if (fType != null)
 			sig = sig + "|" + fType.name();
+		else if (getFTypeFromAnchorKey(sig) == null)
+			sig = sig + "|" + FType.FULL.name();
 		return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
 	}
 
@@ -5156,9 +5229,7 @@ public final class FederatedRefedPolicy {
 		String sig = findFedInitSignature(hop);
 		if (sig != null) {
 			FType fType = getKnownFType(hop, fTypeMap);
-			if (fType != null)
-				sig = sig + "|" + fType.name();
-			return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
+			return buildAnchorKeyFromSignature(sig, fType);
 		}
 		AnchorKey inputKey = null;
 		List<Hop> inputs = hop.getInput();

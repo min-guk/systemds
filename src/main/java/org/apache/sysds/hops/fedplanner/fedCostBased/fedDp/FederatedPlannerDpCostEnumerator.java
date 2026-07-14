@@ -757,6 +757,10 @@ public class FederatedPlannerDpCostEnumerator {
 								FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
 										hop, oracleLogicalFType, outputMemEstimate, numOfWorkers,
 										genericResultDownloadCost);
+						double nativeResultDownloadCost =
+								FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+										hop, oracleLogicalFType, outputMemEstimate, numOfWorkers,
+										nativeAggUnaryResultDownloadCost);
 						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
 								FederatedCostModel.computeMixedFedLocalCost(
 										hop, collectedHops, collectedFTypes, oracleLogicalFType,
@@ -775,7 +779,7 @@ public class FederatedPlannerDpCostEnumerator {
 						double resultDownloadCost = hopPlacementWeight
 								* (mixedFedLocalCost.hasCoordinatorPhase()
 										? mixedCoordinatorPhaseCost
-										: nativeAggUnaryResultDownloadCost);
+										: nativeResultDownloadCost);
 					double inputPreparationCost = hopPlacementWeight
 							* mixedFedLocalCost.getInputPreparationCost();
 				double effectiveFedOverhead = FederatedCostModel.adjustFedCoordinationCost(

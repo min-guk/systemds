@@ -85,6 +85,21 @@ public final class FederatedLocalMaterializeRegistry {
 		return Collections.unmodifiableMap(snapshot);
 	}
 
+	public static Map<Long, Map<Long, LocalMaterializeSpec>> snapshotScopes(long sbId) {
+		Map<Long, Map<Long, LocalMaterializeSpec>> snapshot = new HashMap<>();
+		copyScope(snapshot, -1L);
+		if (sbId != -1L)
+			copyScope(snapshot, sbId);
+		return snapshot.isEmpty() ? Collections.emptyMap() : Collections.unmodifiableMap(snapshot);
+	}
+
+	private static void copyScope(Map<Long, Map<Long, LocalMaterializeSpec>> snapshot, long sbId) {
+		Map<Long, LocalMaterializeSpec> entries = LOCAL_MATERIALIZE.get(sbId);
+		if (entries == null || entries.isEmpty())
+			return;
+		snapshot.put(sbId, Collections.unmodifiableMap(new HashMap<>(entries)));
+	}
+
 	public static final class LocalMaterializeSpec {
 		private final List<Long> _consumerHopIds;
 		private final String _fTypeHint;

@@ -602,7 +602,7 @@ public class AggBinaryOp extends MultiThreadedHop {
 					h2.getInput().get(0).constructLops();
 			matmultCP = new MatMultCP(left, right, getDataType(), getValueType(), et, k, leftTrans, rightTrans);
 		} else {
-			if (isLeftTransposeRewriteApplicable(true)) {
+			if (usesLeftTransposeRewrite(et)) {
 				matmultCP = constructCPLopsMMWithLeftTransposeRewrite(et);
 			} else {
 				int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
@@ -615,6 +615,21 @@ public class AggBinaryOp extends MultiThreadedHop {
 
 		setLineNumbers(matmultCP);
 		setLops(matmultCP);
+	}
+
+	/**
+	 * Returns whether the current CP/FED Lop construction lowers this matrix multiply through
+	 * {@code t(X) %*% Y -> t(t(Y) %*% X)}. This query is shared with planner cost models so
+	 * they account for the same materialization boundaries introduced during Lop construction.
+	 *
+	 * @param et execution type selected for the matrix multiply
+	 * @return true if the left-transpose rewrite will be used
+	 */
+	public boolean usesLeftTransposeRewrite(ExecType et) {
+		String cla = ConfigurationManager.getDMLConfig().getTextValue("sysds.compressed.linalg");
+		return (et == ExecType.CP || et == ExecType.FED)
+			&& !cla.equals("true") && !cla.equals("cost")
+			&& isLeftTransposeRewriteApplicable(true);
 	}
 
 	private Lop constructCPLopsMMWithLeftTransposeRewrite(ExecType et) {
@@ -645,7 +660,7 @@ public class AggBinaryOp extends MultiThreadedHop {
 		tY.getOutputParameters().setDimensions(tYRows, tYCols, getBlocksize(), Y.getNnz());
 		setLineNumbers(tY);
 		if (Y.hasFederatedOutput())
-			updateLopFedOut(tY);
+			tY.setFederatedOutput(Y.getFederatedOutput());
 
 		//Construct X lops for matrix multiplication
 		Lop xLop = isXTransposed ? actualX.constructLops() : X.constructLops();
