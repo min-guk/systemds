@@ -137,7 +137,7 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			nodes.add(buildNode(hop, key, value, anchors));
 		}
-		List<Constraint> constraints = new ArrayList<>();
+		Set<Constraint> constraints = new java.util.TreeSet<>();
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
 			CompiledHopKey consumer = keys.get(occurrence.hop());
 			for(Hop input : occurrence.hop().getInput())
