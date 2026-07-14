@@ -92,7 +92,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	public NeutralPlacementGraph build(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
-		String registryBefore = registrySentinel();
+		String registryBefore = registrySentinel(program);
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
 		List<Node> nodes = new ArrayList<>();
@@ -144,14 +144,23 @@ public final class NeutralPlacementGraphBuilder {
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
-		if(!registryBefore.equals(registrySentinel()))
+		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return graph;
 	}
 
-	private static String registrySentinel() {
-		return FederatedRefedRegistry.isEmpty() + "/" + FederatedFoutMaterializeRegistry.isEmpty()
-			+ "/" + FederatedLocalMaterializeRegistry.isEmpty();
+	private static String registrySentinel(DMLProgram program) {
+		List<String> rows = new ArrayList<>();
+		for(long sbId : PlacementGraphFingerprint.statementBlockIds(program)) {
+			FederatedRefedRegistry.snapshot(sbId).forEach((hop, spec) -> rows.add("R|" + sbId + '|' + hop + '|'
+				+ spec.getAnchorHopId() + '|' + spec.getAnchorKey()));
+			FederatedFoutMaterializeRegistry.snapshot(sbId).forEach((hop, spec) -> rows.add("F|" + sbId + '|' + hop
+				+ '|' + spec.getAnchorHopId() + '|' + spec.getFTypeHint() + '|' + spec.getAnchorLabel() + '|' + spec.getAnchorKey()));
+			FederatedLocalMaterializeRegistry.snapshotScopes(sbId).forEach((scope, entries) -> entries.forEach((hop, spec) ->
+				rows.add("L|" + scope + '|' + hop + '|' + spec.getConsumerHopIds() + '|' + spec.getFTypeHint() + '|' + spec.getReason())));
+		}
+		Collections.sort(rows);
+		return PlacementGraphFingerprint.sha256(String.join("\n", rows));
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors) {

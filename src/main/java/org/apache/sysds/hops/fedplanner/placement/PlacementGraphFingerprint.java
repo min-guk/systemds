@@ -60,6 +60,28 @@ public final class PlacementGraphFingerprint {
 		return result;
 	}
 
+	static List<Long> statementBlockIds(DMLProgram program) {
+		List<Long> ids = new ArrayList<>();
+		collectBlockIds(program.getStatementBlocks(), ids);
+		for(FunctionStatementBlock block : program.getNamedNSFunctionStatementBlocks().values())
+			collectBlockIds(List.of(block), ids);
+		Collections.sort(ids);
+		return ids;
+	}
+
+	private static void collectBlockIds(List<StatementBlock> blocks, List<Long> ids) {
+		for(StatementBlock sb : blocks) {
+			ids.add(sb.getSBID());
+			if(sb instanceof FunctionStatementBlock) collectBlockIds(((FunctionStatement) sb.getStatement(0)).getBody(), ids);
+			else if(sb instanceof WhileStatementBlock) collectBlockIds(((WhileStatement) sb.getStatement(0)).getBody(), ids);
+			else if(sb instanceof ForStatementBlock) collectBlockIds(((ForStatement) sb.getStatement(0)).getBody(), ids);
+			else if(sb instanceof IfStatementBlock) {
+				IfStatement stmt = (IfStatement) sb.getStatement(0);
+				collectBlockIds(stmt.getIfBody(), ids); collectBlockIds(stmt.getElseBody(), ids);
+			}
+		}
+	}
+
 	private static void walkBlocks(List<StatementBlock> blocks, String path, List<String> rows) {
 		walkBlocks(blocks, path, rows, null);
 	}
