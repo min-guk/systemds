@@ -28,20 +28,30 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 
 /** Finite mutation-free construction of the planner-neutral shadow graph. */
 public final class NeutralPlacementGraphBuilder {
@@ -51,11 +61,14 @@ public final class NeutralPlacementGraphBuilder {
 
 	public NeutralPlacementGraph build(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
+		boolean registryEmptyBefore = FederatedRefedRegistry.isEmpty();
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
 		List<Node> nodes = new ArrayList<>();
 		Map<String,Integer> versions = new java.util.TreeMap<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
+		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
+		List<DurableAnchorKey> durableAnchors = new ArrayList<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			Hop hop = occurrence.hop();
@@ -71,16 +84,28 @@ public final class NeutralPlacementGraphBuilder {
 				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind, List.of());
 			values.put(hop, value);
-			nodes.add(buildNode(hop, key, value));
+			keys.put(hop, key);
+			List<DurableAnchorKey> anchors = durableAnchor(hop);
+			durableAnchors.addAll(anchors);
+			nodes.add(buildNode(hop, key, value, anchors));
 		}
-		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, List.of(), List.of());
+		List<Constraint> constraints = new ArrayList<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
+			CompiledHopKey consumer = keys.get(occurrence.hop());
+			for(Hop input : occurrence.hop().getInput())
+				if(keys.containsKey(input)) constraints.add(new Constraint(ConstraintKind.DOMINATES, keys.get(input), consumer));
+		}
+		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, durableAnchors);
+		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
+		if(registryEmptyBefore != FederatedRefedRegistry.isEmpty())
+			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return graph;
 	}
 
-	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value) {
+	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
 		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
@@ -113,8 +138,68 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
-		return new Node(key, nodeKind(hop), value, true, new ArrayList<>(legal), new ArrayList<>(excluded.values()), List.of());
+		if(hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED && anchors.isEmpty()) {
+			PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.OTHER, true);
+			excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNSUPPORTED_ANCHOR,
+				"Federated source lacks literal durable worker/range provenance"));
+		}
+		return new Node(key, nodeKind(hop), value, true, new ArrayList<>(legal),
+			new ArrayList<>(excluded.values()), anchors);
 	}
+
+	private static List<DurableAnchorKey> durableAnchor(Hop hop) {
+		if(!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.FEDERATED) return List.of();
+		DataOp data = (DataOp) hop;
+		int addressIndex = data.getParameterIndex(DataExpression.FED_ADDRESSES);
+		int rangeIndex = data.getParameterIndex(DataExpression.FED_RANGES);
+		if(addressIndex < 0 || rangeIndex < 0) return List.of();
+		List<Hop> addresses = data.getInput(addressIndex).getInput();
+		List<Hop> ranges = data.getInput(rangeIndex).getInput();
+		if(addresses.isEmpty() || ranges.size() != addresses.size() * 2) return List.of();
+		List<AnchorPartition> partitions = new ArrayList<>();
+		for(int i = 0; i < addresses.size(); i++) {
+			if(!(addresses.get(i) instanceof LiteralOp)) return List.of();
+			Hop begin = ranges.get(2 * i), end = ranges.get(2 * i + 1);
+			if(begin.getInput().size() < 2 || end.getInput().size() < 2
+				|| !(begin.getInput(0) instanceof LiteralOp) || !(begin.getInput(1) instanceof LiteralOp)
+				|| !(end.getInput(0) instanceof LiteralOp) || !(end.getInput(1) instanceof LiteralOp)) return List.of();
+			partitions.add(new AnchorPartition(((LiteralOp) addresses.get(i)).getStringValue(),
+				List.of(((LiteralOp) begin.getInput(0)).getLongValue(), ((LiteralOp) begin.getInput(1)).getLongValue()),
+				List.of(((LiteralOp) end.getInput(0)).getLongValue(), ((LiteralOp) end.getInput(1)).getLongValue())));
+		}
+		FType type = FederatedPlannerUtils.deriveFedInitFType(data);
+		if(type == null || type == FType.PART || type == FType.OTHER) return List.of();
+		return List.of(new DurableAnchorKey("fed-init:" + data.getName(), type, partitions));
+	}
+
+	private static List<NeutralPlacementGraph.RelocationAction> relocations(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, Map<Hop,CompiledHopKey> keys,
+		Map<Hop,ValueVersionKey> values, List<DurableAnchorKey> anchors) {
+		if(anchors.isEmpty()) return List.of();
+		DurableAnchorKey anchor = anchors.stream().sorted().findFirst().orElseThrow();
+		Map<ValueVersionKey,List<InputUse>> uses = new java.util.TreeMap<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences)
+			for(int i = 0; i < occurrence.hop().getInput().size(); i++) {
+				Hop input = occurrence.hop().getInput(i);
+				if(values.containsKey(input)) uses.computeIfAbsent(values.get(input), k -> new ArrayList<>())
+					.add(new InputUse(keys.get(occurrence.hop()), i, occurrence.path()));
+			}
+		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
+		PlacementState target = new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false);
+		for(Map.Entry<ValueVersionKey,List<InputUse>> entry : uses.entrySet()) {
+			List<CompiledHopKey> consumers = new ArrayList<>();
+			for(InputUse use : entry.getValue()) consumers.add(use.consumer());
+			RelocationActionKey key = new RelocationActionKey(entry.getKey(), target, anchor,
+				entry.getValue().get(0).scope(), consumers);
+			List<ObligationKey> obligations = new ArrayList<>();
+			for(InputUse use : entry.getValue()) obligations.add(new ObligationKey(use.consumer(), use.position(),
+				entry.getKey(), target, key, use.scope()));
+			result.add(new NeutralPlacementGraph.RelocationAction(key, obligations));
+		}
+		return result;
+	}
+
+	private record InputUse(CompiledHopKey consumer, int position, String scope) { }
 
 	private static List<List<FType>> inputCombinations(int arity) {
 		if(arity == 0) return List.of(List.of());

@@ -39,7 +39,7 @@ public final class PlacementShadowCoordinator {
 		public PlacementShadowComparator.Diff observe(DMLProgram program) {
 			if(baseline == null) return null;
 			try {
-				PlacementShadowComparator.Diff diff = new PlacementShadowComparator().compare(
+				PlacementShadowComparator.Diff diff = new PlacementShadowComparator().compareProductionSurfaces(
 					baseline, new NeutralPlacementGraphBuilder().build(program));
 				if(!diff.isEmpty()) LOG.debug("Neutral placement shadow observed normalized differences: " + diff);
 				return diff;

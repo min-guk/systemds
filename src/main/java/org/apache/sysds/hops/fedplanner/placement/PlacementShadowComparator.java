@@ -20,23 +20,36 @@ import java.util.List;
 /** Observational normalized comparison; it never selects or repairs a plan. */
 public final class PlacementShadowComparator {
 	public record Diff(List<String> candidates, List<String> exclusions, List<String> constraints,
-		List<String> identities, List<String> relocations, List<String> obligations) {
+		List<String> identities, List<String> relocations, List<String> obligations,
+		List<String> legalAssignments, boolean normalizedSignatureEqual) {
 		public Diff {
 			candidates = immutable(candidates); exclusions = immutable(exclusions);
 			constraints = immutable(constraints); identities = immutable(identities);
 			relocations = immutable(relocations); obligations = immutable(obligations);
+			legalAssignments = immutable(legalAssignments);
 		}
 		public boolean isEmpty() { return candidates.isEmpty() && exclusions.isEmpty() && constraints.isEmpty()
-			&& identities.isEmpty() && relocations.isEmpty() && obligations.isEmpty(); }
+			&& identities.isEmpty() && relocations.isEmpty() && obligations.isEmpty()
+			&& legalAssignments.isEmpty() && normalizedSignatureEqual; }
 	}
 
 	public Diff compare(NeutralPlacementGraph expected, NeutralPlacementGraph actual) {
+		return compare(expected, actual, true);
+	}
+
+	public Diff compareProductionSurfaces(NeutralPlacementGraph expected, NeutralPlacementGraph actual) {
+		return compare(expected, actual, false);
+	}
+
+	private Diff compare(NeutralPlacementGraph expected, NeutralPlacementGraph actual, boolean boundedAssignments) {
 		return new Diff(delta(expected.normalizedCandidateUniverse(), actual.normalizedCandidateUniverse()),
 			delta(expected.normalizedExclusions(), actual.normalizedExclusions()),
 			delta(expected.normalizedConstraints(), actual.normalizedConstraints()),
 			delta(expected.normalizedIdentities(), actual.normalizedIdentities()),
 			delta(expected.normalizedRelocationActions(), actual.normalizedRelocationActions()),
-			delta(expected.normalizedObligations(), actual.normalizedObligations()));
+			delta(expected.normalizedObligations(), actual.normalizedObligations()),
+			boundedAssignments ? delta(expected.normalizedLegalAssignments(), actual.normalizedLegalAssignments()) : List.of(),
+			expected.normalizedSignature().equals(actual.normalizedSignature()));
 	}
 
 	private static List<String> delta(List<String> left, List<String> right) {
