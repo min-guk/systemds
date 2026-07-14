@@ -73,6 +73,22 @@ public final class NeutralPlacementGraphBuilder {
 		return Collections.unmodifiableList(selected);
 	}
 
+	public List<String> selectedMembershipViolations(DMLProgram program, NeutralPlacementGraph graph) {
+		List<String> violations = new ArrayList<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
+			Hop hop = occurrence.hop();
+			if(hop.getExecType() == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
+			Node node = graph.nodes().stream().filter(n -> n.key().callSitePath().equals(occurrence.path())
+				&& n.key().canonicalSourceOrigin().equals(PlacementGraphFingerprint.structuralKey(hop))).findFirst().orElse(null);
+			boolean member = node != null && node.legalAlternatives().stream().anyMatch(s ->
+				s.execType() == hop.getExecType() && s.output() == hop.getFederatedOutput());
+			if(!member) violations.add(occurrence.namespace() + '|' + occurrence.path() + '|'
+				+ PlacementGraphFingerprint.structuralKey(hop) + '|' + hop.getExecType() + '/' + hop.getFederatedOutput());
+		}
+		Collections.sort(violations);
+		return Collections.unmodifiableList(violations);
+	}
+
 	public NeutralPlacementGraph build(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
 		String registryBefore = registrySentinel();
@@ -96,10 +112,11 @@ public final class NeutralPlacementGraphBuilder {
 			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
 				: occurrence.path().contains("loop-") ? VersionKind.LOOP_HEAD_PHI
 				: occurrence.path().contains("branch-") ? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
-			List<String> predecessors = new ArrayList<>();
+			Set<String> predecessorSet = new java.util.TreeSet<>();
 			for(Hop input : hop.getInput()) if(values.containsKey(input))
-				predecessors.add(values.get(input).normalizedSignature());
-			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind, predecessors);
+				predecessorSet.add(values.get(input).normalizedSignature());
+			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
+				new ArrayList<>(predecessorSet));
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
