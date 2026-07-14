@@ -38,6 +38,7 @@ public final class BuilderOracleFixtures {
 	private static final Placement CP = Placement.cpLout();
 	private static final Placement CPF = Placement.cpFout(FType.ROW);
 	private static final Placement FL = Placement.fedLout(FType.ROW);
+	private static final Placement FLS = Placement.fedLoutShapeIndependent(FType.ROW);
 	private static final Placement FF = Placement.fedFout(FType.ROW);
 	private static final Placement FB = Placement.fedFout(FType.BROADCAST);
 
@@ -200,7 +201,7 @@ public final class BuilderOracleFixtures {
 	}
 
 	private static Graph unknownMetadata() {
-		return new Builder().node("unknown", Kind.OP, CP, FF, FB).unknownMetadata("unknown").build();
+		return new Builder().node("unknown", Kind.OP, CP, FLS, FF, FB).unknownMetadata("unknown").build();
 	}
 
 	private static Graph sharedMaterialization() {

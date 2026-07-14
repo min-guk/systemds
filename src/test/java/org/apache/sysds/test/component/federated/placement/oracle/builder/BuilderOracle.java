@@ -249,7 +249,7 @@ public final class BuilderOracle {
 				if (left == null || right == null) continue;
 				if (constraint.kind == ConstraintKind.SAME_PLACEMENT && !left.equals(right)) return false;
 				if (constraint.kind == ConstraintKind.SAME_FTYPE && left.fType != right.fType) return false;
-				if (constraint.kind == ConstraintKind.CONJUNCTIVE && !conjunctivelyCompatible(left, right))
+				if (constraint.kind == ConstraintKind.CONJUNCTIVE && !Builder.conjunctivelyCompatible(left, right))
 					return false;
 			}
 			return true;
