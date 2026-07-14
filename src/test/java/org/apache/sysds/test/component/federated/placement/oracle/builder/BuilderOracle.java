@@ -50,7 +50,8 @@ public final class BuilderOracle {
 		UNSUPPORTED_OPERATION_SHAPE,
 		ILLEGAL_TRANSIENT_PLACEMENT,
 		RECOMPILE_CP_FOUT,
-		UNKNOWN_METADATA
+		UNKNOWN_METADATA,
+		UNSATISFIED_CONJUNCTIVE_INPUT
 	}
 
 	public static final class Placement implements Comparable<Placement> {
@@ -69,6 +70,9 @@ public final class BuilderOracle {
 		public static Placement cpLout() { return new Placement(Exec.CP, Output.LOUT, null, false); }
 		public static Placement cpFout(FType type) { return new Placement(Exec.CP, Output.FOUT, type, true); }
 		public static Placement fedLout(FType type) { return new Placement(Exec.FED, Output.LOUT, type, true); }
+		public static Placement fedLoutShapeIndependent(FType type) {
+			return new Placement(Exec.FED, Output.LOUT, type, false);
+		}
 		public static Placement fedFout(FType type) { return new Placement(Exec.FED, Output.FOUT, type, true); }
 
 		@Override
@@ -101,6 +105,7 @@ public final class BuilderOracle {
 		public final String originId;
 		public final String contextId;
 		public final boolean emittedWork;
+		public final boolean reachable;
 		private final Set<Placement> candidates;
 		private final Map<Placement, Reason> exclusions;
 
@@ -111,6 +116,7 @@ public final class BuilderOracle {
 			originId = spec.originId;
 			contextId = spec.contextId;
 			emittedWork = spec.emittedWork;
+			reachable = spec.reachable;
 			candidates = new LinkedHashSet<>(spec.candidates);
 			exclusions = new LinkedHashMap<>();
 		}
@@ -169,6 +175,11 @@ public final class BuilderOracle {
 			this.anchor = anchor;
 		}
 
+		private Relocation(Relocation that) {
+			this(that.id, that.source, that.anchor);
+			obligations.addAll(that.obligations);
+		}
+
 		public Set<String> obligations() { return Collections.unmodifiableSet(obligations); }
 	}
 
@@ -181,7 +192,10 @@ public final class BuilderOracle {
 			Map<String, Relocation> relocations) {
 			this.nodes = Collections.unmodifiableMap(nodes);
 			this.constraints = Collections.unmodifiableList(constraints);
-			this.relocations = Collections.unmodifiableMap(relocations);
+			Map<String, Relocation> relocationCopy = new LinkedHashMap<>();
+			for (Map.Entry<String, Relocation> entry : relocations.entrySet())
+				relocationCopy.put(entry.getKey(), new Relocation(entry.getValue()));
+			this.relocations = Collections.unmodifiableMap(relocationCopy);
 		}
 
 		public Node node(String id) { return nodes.get(id); }
@@ -190,8 +204,12 @@ public final class BuilderOracle {
 		public Map<String, Relocation> relocations() { return relocations; }
 		public Set<String> legalAssignments() {
 			List<Node> active = new ArrayList<>();
-			for (Node node : nodes.values())
-				if (!node.candidates.isEmpty()) active.add(node);
+			for (Node node : nodes.values()) {
+				if (node.candidates.isEmpty()) {
+					if (node.reachable) return Collections.emptySet();
+				}
+				else active.add(node);
+			}
 			Set<String> assignments = new LinkedHashSet<>();
 			enumerate(active, 0, new LinkedHashMap<String, Placement>(), assignments);
 			return assignments;
@@ -231,6 +249,8 @@ public final class BuilderOracle {
 				if (left == null || right == null) continue;
 				if (constraint.kind == ConstraintKind.SAME_PLACEMENT && !left.equals(right)) return false;
 				if (constraint.kind == ConstraintKind.SAME_FTYPE && left.fType != right.fType) return false;
+				if (constraint.kind == ConstraintKind.CONJUNCTIVE && !conjunctivelyCompatible(left, right))
+					return false;
 			}
 			return true;
 		}
@@ -346,6 +366,8 @@ public final class BuilderOracle {
 					changed = retainCompatible(left, right, false) | retainCompatible(right, left, false);
 				else if (constraint.kind == ConstraintKind.SAME_FTYPE)
 					changed = retainCompatible(left, right, true) | retainCompatible(right, left, true);
+				else if (constraint.kind == ConstraintKind.CONJUNCTIVE)
+					changed = retainConjunctivelyCompatible(right, left);
 				if (changed)
 					work.addAll(constraints);
 			}
@@ -364,6 +386,25 @@ public final class BuilderOracle {
 				}
 			}
 			return changed;
+		}
+
+		private static boolean retainConjunctivelyCompatible(Node target, Node predecessor) {
+			boolean changed = false;
+			for (Placement candidate : new ArrayList<>(target.candidates)) {
+				boolean match = false;
+				for (Placement input : predecessor.candidates)
+					match |= conjunctivelyCompatible(input, candidate);
+				if (!match) {
+					exclude(target, candidate, Reason.UNSATISFIED_CONJUNCTIVE_INPUT);
+					changed = true;
+				}
+			}
+			return changed;
+		}
+
+		private static boolean conjunctivelyCompatible(Placement predecessor, Placement target) {
+			return target.output != Output.FOUT || (predecessor.output == Output.FOUT
+				&& predecessor.fType == target.fType);
 		}
 
 		private static void exclude(Node node, Placement placement, Reason reason) {
