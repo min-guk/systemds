@@ -48,6 +48,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.DecisionEvidence;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -158,7 +159,12 @@ public final class NeutralPlacementGraphBuilder {
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		for(List<FType> inputs : inputCombinations(hop.getInput().size())) {
 			OpCaps caps;
-			try { caps = oracle.decide(hop, inputs); }
+			boolean shapeDependent;
+			try {
+				DecisionEvidence evidence = oracle.decideWithEvidence(hop, inputs, null);
+				caps = evidence.caps();
+				shapeDependent = evidence.shapeDependent();
+			}
 			catch(Throwable t) {
 				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
 				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RULE_ERROR,
@@ -166,8 +172,7 @@ public final class NeutralPlacementGraphBuilder {
 				continue;
 			}
 			FType outType = caps.foutFType().orElse(firstFType(inputs));
-			PlacementState state = new PlacementState(caps.exec(), caps.placement(), outType,
-				caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT);
+			PlacementState state = new PlacementState(caps.exec(), caps.placement(), outType, shapeDependent);
 			String detail = caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
