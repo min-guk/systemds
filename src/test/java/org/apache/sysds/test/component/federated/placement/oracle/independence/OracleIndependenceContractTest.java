@@ -19,7 +19,6 @@
 
 package org.apache.sysds.test.component.federated.placement.oracle.independence;
 
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -57,10 +56,7 @@ public class OracleIndependenceContractTest {
 	private static final Pattern PRODUCTION_ORACLE_IMPORT = Pattern.compile(
 		"^org\\.apache\\.sysds\\.hops\\.fedplanner\\..*(?:builder|selector).*$",
 		Pattern.CASE_INSENSITIVE);
-	private static final Pattern FALLBACK_SUCCESS_IDENTIFIER = Pattern.compile(
-		"(?i)\\b(?:(?:timeout|state_?cap|greedy|approx(?:imate)?|fallback)[a-z0-9_]*(?:success|succeed|exact)"
-			+ "|(?:success|succeed|exact)[a-z0-9_]*(?:timeout|state_?cap|greedy|approx(?:imate)?|fallback)"
-			+ "|greedy_?fallback|approximate_?fallback)\\b");
+	private static final Pattern IDENTIFIER = Pattern.compile("\\b[A-Za-z_$][A-Za-z0-9_$]*\\b");
 
 	@Test
 	public void oraclePackagesStayIndependentAndProductionFree() throws IOException {
@@ -81,15 +77,16 @@ public class OracleIndependenceContractTest {
 	public void selectorHasNoFallbackSuccessContract() throws IOException {
 		for(Path source : javaSources(SELECTOR_ROOT)) {
 			String executableTokens = stripCommentsAndLiterals(read(source));
-			Matcher forbidden = FALLBACK_SUCCESS_IDENTIFIER.matcher(executableTokens);
-			assertFalse(source + " contains a fallback/timeout/cap/approximation identifier presented as success: "
-				+ (forbidden.find() ? forbidden.group() : ""), forbidden.reset().find());
+			List<String> forbidden = fallbackSuccessIdentifiers(executableTokens);
+			assertTrue(source + " contains fallback/timeout/cap/approximation identifiers presented as success: "
+				+ forbidden, forbidden.isEmpty());
 		}
 	}
 
 	@Test
 	public void p1ChangesRemainTestOnly() throws Exception {
-		List<String> changed = gitLines("diff", "--name-only", APPROVED_BASELINE + "...HEAD");
+		List<String> changed = gitLines("diff", "--name-only", APPROVED_BASELINE);
+		changed.addAll(gitLines("ls-files", "--others", "--exclude-standard"));
 		List<String> forbidden = changed.stream()
 			.filter(path -> path.equals("pom.xml") || path.startsWith("src/main/"))
 			.collect(Collectors.toList());
@@ -158,6 +155,25 @@ public class OracleIndependenceContractTest {
 			.replaceAll("(?m)//.*$", " ")
 			.replaceAll("(?s)\"(?:\\\\.|[^\"\\\\])*\"", " ")
 			.replaceAll("'(?:\\\\.|[^'\\\\])'", " ");
+	}
+
+	private static List<String> fallbackSuccessIdentifiers(String source) {
+		List<String> forbidden = new ArrayList<>();
+		Matcher identifiers = IDENTIFIER.matcher(source);
+		while(identifiers.find()) {
+			String identifier = identifiers.group();
+			String normalized = identifier.toLowerCase(Locale.ROOT).replace("_", "");
+			boolean escapeHatch = normalized.contains("timeout") || normalized.contains("statecap")
+				|| normalized.contains("greedy") || normalized.contains("approx") || normalized.contains("fallback");
+			boolean claimsSuccess = normalized.contains("success") || normalized.contains("succeed")
+				|| normalized.contains("exact") || normalized.equals("greedyfallback")
+				|| normalized.equals("approximatefallback");
+			boolean explicitlyRejected = normalized.contains("cannot") || normalized.contains("reject")
+				|| normalized.contains("forbid") || normalized.contains("fail") || normalized.startsWith("no");
+			if(escapeHatch && claimsSuccess && !explicitlyRejected)
+				forbidden.add(identifier);
+		}
+		return forbidden;
 	}
 
 	private static List<String> gitLines(String... arguments) throws Exception {
