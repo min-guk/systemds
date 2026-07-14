@@ -205,4 +205,54 @@ public class BuilderOracleTest {
 			}
 		}
 	}
+
+	@Test
+	public void conjunctiveConstraintsRestrictBranchCallAndLoopAssignments() {
+		for (String id : Arrays.asList("B-03", "B-17", "B-18", "B-19", "B-20")) {
+			Graph graph = BuilderOracleFixtures.fixture(id);
+			Assert.assertFalse(id + " must retain at least one legal assignment", graph.legalAssignments().isEmpty());
+			for (String assignment : graph.legalAssignments()) {
+				Assert.assertFalse(id + " must not retain an incompatible federated join: " + assignment,
+					assignment.contains("join=FED/FOUT") || assignment.contains("f.body=FED/FOUT")
+						|| assignment.contains("phi-local-fed=FED/FOUT")
+						|| assignment.contains("phi-fed-local=FED/FOUT")
+						|| assignment.contains("branch-join=FED/FOUT")
+						|| assignment.contains("backedge=FED/FOUT")
+						|| assignment.contains("loop-entry=FED/FOUT"));
+			}
+		}
+	}
+
+	@Test
+	public void reachableNodeWithoutCandidatesMakesGraphUnsatisfiable() {
+		Graph graph = new BuilderOracle.Builder().node("reachable-empty", Kind.OP).build();
+		Assert.assertTrue("a reachable empty candidate set must make the graph unsatisfiable",
+			graph.legalAssignments().isEmpty());
+	}
+
+	@Test
+	public void builtGraphRelocationsAreDeeplyImmutable() {
+		BuilderOracle.Builder builder = new BuilderOracle.Builder()
+			.node("source", Kind.OP, Placement.cpLout())
+			.relocation("mat", "source", "fed:X", "consumer#1");
+		Graph graph = builder.build();
+
+		builder.relocation("mat", "source", "fed:X", "consumer#2");
+		Assert.assertEquals(set("consumer#1"), graph.relocations().get("mat").obligations());
+		try {
+			graph.relocations().get("mat").obligations().add("consumer#3");
+			Assert.fail("built relocation obligations must be immutable");
+		}
+		catch (UnsupportedOperationException expected) {
+			// expected
+		}
+	}
+
+	@Test
+	public void unknownMetadataRetainsShapeIndependentFederatedState() {
+		Graph graph = BuilderOracleFixtures.fixture("B-21");
+		Assert.assertTrue(signatures(graph.node("unknown")).contains("FED/LOUT/ROW"));
+		Assert.assertFalse(signatures(graph.node("unknown")).contains("FED/FOUT/ROW"));
+		Assert.assertFalse(signatures(graph.node("unknown")).contains("FED/FOUT/BROADCAST"));
+	}
 }
