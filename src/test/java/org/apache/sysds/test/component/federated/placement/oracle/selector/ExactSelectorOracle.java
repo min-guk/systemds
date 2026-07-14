@@ -267,6 +267,7 @@ public final class ExactSelectorOracle {
 				if (!graph.isLegal(current)) {
 					pruned++;
 					return;
+				}
 				Score candidateScore = score(current);
 				if (bestScore == null || candidateScore.compareTo(bestScore) > 0) {
 					bestScore = candidateScore;
