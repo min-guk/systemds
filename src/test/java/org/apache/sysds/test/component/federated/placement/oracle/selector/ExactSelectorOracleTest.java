@@ -32,7 +32,9 @@ import org.apache.sysds.test.component.federated.placement.oracle.selector.Exact
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExactSelectorOracle.Result;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExactSelectorOracle.Score;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExactSelectorOracle.TerminationReason;
+import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Builder;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Choice;
+import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Execution;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Node;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Output;
 import org.junit.Test;
@@ -107,6 +109,26 @@ public class ExactSelectorOracleTest {
 			graphCount++;
 		}
 		assertEquals(15, graphCount);
+	}
+
+	@Test
+	public void stableResultIsIndependentOfNodeAndChoiceInsertionOrder() {
+		Choice alpha = Choice.of("alpha", Execution.FED, Output.LOUT);
+		Choice omega = Choice.of("omega", Execution.FED, Output.LOUT);
+		ExplicitSelectorGraph forward = new Builder("order", 17)
+			.addNode(Node.of("a", alpha, omega))
+			.addNode(Node.of("b", alpha, omega))
+			.build();
+		ExplicitSelectorGraph reversed = new Builder("order", 17)
+			.addNode(Node.of("b", omega, alpha))
+			.addNode(Node.of("a", omega, alpha))
+			.build();
+
+		Result forwardResult = ExactSelectorOracle.select(forward, Policy.FED_ALL);
+		Result reversedResult = ExactSelectorOracle.select(reversed, Policy.FED_ALL);
+		assertEquals(forwardResult.getScore(), reversedResult.getScore());
+		assertEquals(forwardResult.getCertificate().getAssignmentHash(),
+			reversedResult.getCertificate().getAssignmentHash());
 	}
 
 	@Test
