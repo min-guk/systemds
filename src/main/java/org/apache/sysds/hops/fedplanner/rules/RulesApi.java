@@ -172,7 +172,7 @@ public final class RulesApi {
     private final long colsA;
     private final long rowsB;
     private final long colsB;
-	private boolean consulted;
+	private final Map<String,String> consultedFacts = new java.util.TreeMap<>();
 
     public ShapeHint(long rows, long cols, int blockSize) {
       this(rows, cols, blockSize, Optional.<Boolean>empty(), -1, -1, -1, -1);
@@ -200,17 +200,30 @@ public final class RulesApi {
       this.colsB = colsB;
     }
 
-    public long rows() { consulted = true; return rows; }
-    public long cols() { consulted = true; return cols; }
-    public int blockSize() { consulted = true; return blockSize; }
-    public Optional<Boolean> fullSinglePartition() { consulted = true; return fullSinglePartition; }
-    public long rowsA() { consulted = true; return rowsA; }
-    public long colsA() { consulted = true; return colsA; }
-    public long rowsB() { consulted = true; return rowsB; }
-    public long colsB() { consulted = true; return colsB; }
-    public boolean rowsKnown() { consulted = true; return rowsA >= 0 && rowsB >= 0; }
-    public boolean colsKnown() { consulted = true; return colsA >= 0 && colsB >= 0; }
-	public boolean wasConsulted() { return consulted; }
+    public long rows() { record("rows", rows); return rows; }
+    public long cols() { record("cols", cols); return cols; }
+    public int blockSize() { record("blockSize", blockSize); return blockSize; }
+    public Optional<Boolean> fullSinglePartition() {
+      consultedFacts.put("fullSinglePartition", fullSinglePartition.map(String::valueOf).orElse("UNKNOWN"));
+      return fullSinglePartition;
+    }
+    public long rowsA() { record("rowsA", rowsA); return rowsA; }
+    public long colsA() { record("colsA", colsA); return colsA; }
+    public long rowsB() { record("rowsB", rowsB); return rowsB; }
+    public long colsB() { record("colsB", colsB); return colsB; }
+    public boolean rowsKnown() { record("rowsA", rowsA); record("rowsB", rowsB); return rowsA >= 0 && rowsB >= 0; }
+    public boolean colsKnown() { record("colsA", colsA); record("colsB", colsB); return colsA >= 0 && colsB >= 0; }
+	public boolean wasConsulted() { return !consultedFacts.isEmpty(); }
+	public ShapeProof proof() {
+	  Set<String> required = Collections.unmodifiableSet(new java.util.TreeSet<>(consultedFacts.keySet()));
+	  Set<String> missing = new java.util.TreeSet<>();
+	  consultedFacts.forEach((name, value) -> { if("UNKNOWN".equals(value)) missing.add(name); });
+	  return new ShapeProof(Collections.unmodifiableMap(new java.util.TreeMap<>(consultedFacts)), required,
+	    Collections.unmodifiableSet(missing));
+	}
+	private void record(String name, long value) {
+	  consultedFacts.put(name, value < 0 ? "UNKNOWN" : String.valueOf(value));
+	}
 
     @Override public String toString() {
       return "ShapeHint{"
@@ -224,6 +237,15 @@ public final class RulesApi {
           + ", colsB=" + colsB
           + '}';
     }
+  }
+
+  /** Immutable proof of the exact shape facts consulted by the selected rule. */
+  public record ShapeProof(Map<String,String> consultedFacts, Set<String> requiredFacts, Set<String> missingRequiredFacts) {
+	public ShapeProof {
+	  consultedFacts = Collections.unmodifiableMap(new java.util.TreeMap<>(consultedFacts));
+	  requiredFacts = Collections.unmodifiableSet(new java.util.TreeSet<>(requiredFacts));
+	  missingRequiredFacts = Collections.unmodifiableSet(new java.util.TreeSet<>(missingRequiredFacts));
+	}
   }
 
   // Simple FType propagation payload used by inference/testing helpers
