@@ -30,6 +30,7 @@ import org.apache.sysds.test.component.federated.placement.oracle.builder.Builde
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.ConstraintKind;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Exec;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Graph;
+import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Kind;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Node;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Output;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Placement;
