@@ -30,6 +30,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Test-only semantic oracle for the candidate universe emitted by a future
@@ -212,18 +213,52 @@ public final class BuilderOracle {
 			}
 			Set<String> assignments = new LinkedHashSet<>();
 			enumerate(active, 0, new LinkedHashMap<String, Placement>(), assignments);
-			return assignments;
+			return sortedSet(assignments);
 		}
 
 		public Set<String> normalizedCandidateUniverse() {
-			Set<String> out = new LinkedHashSet<>();
+			Set<String> out = new TreeSet<>();
 			for (Node node : nodes.values()) {
 				List<Placement> sorted = new ArrayList<>(node.candidates);
 				Collections.sort(sorted);
 				for (Placement placement : sorted)
 					out.add(node.id + "=" + placement.signature());
 			}
-			return out;
+			return Collections.unmodifiableSet(out);
+		}
+
+		public Set<String> normalizedConstraints() {
+			Set<String> out = new TreeSet<>();
+			for (Constraint constraint : constraints)
+				out.add(constraint.signature());
+			return Collections.unmodifiableSet(out);
+		}
+
+		public Set<String> normalizedIdentities() {
+			Set<String> out = new TreeSet<>();
+			for (Node node : nodes.values())
+				out.add(node.id + "=" + node.kind + "|" + node.valueVersion + "|" + node.originId + "|"
+					+ node.contextId + "|emitted=" + node.emittedWork + "|reachable=" + node.reachable);
+			return Collections.unmodifiableSet(out);
+		}
+
+		public Set<String> normalizedExclusions() {
+			Set<String> out = new TreeSet<>();
+			for (Node node : nodes.values())
+				for (Map.Entry<Placement, Reason> exclusion : node.exclusions.entrySet())
+					out.add(node.id + "=" + exclusion.getKey().signature() + "!" + exclusion.getValue());
+			return Collections.unmodifiableSet(out);
+		}
+
+		public Set<String> normalizedRelocations() {
+			Set<String> out = new TreeSet<>();
+			for (Relocation relocation : relocations.values()) {
+				List<String> obligations = new ArrayList<>(relocation.obligations);
+				Collections.sort(obligations);
+				out.add(relocation.id + "=" + relocation.source + "@" + relocation.anchor + "->"
+					+ String.join(",", obligations));
+			}
+			return Collections.unmodifiableSet(out);
 		}
 
 		private void enumerate(List<Node> active, int index, Map<String, Placement> assignment,
@@ -261,6 +296,10 @@ public final class BuilderOracle {
 				entries.add(entry.getKey() + "=" + entry.getValue().signature());
 			Collections.sort(entries);
 			return String.join(";", entries);
+		}
+
+		private static Set<String> sortedSet(Collection<String> values) {
+			return Collections.unmodifiableSet(new TreeSet<>(values));
 		}
 	}
 
