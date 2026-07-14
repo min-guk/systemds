@@ -36,6 +36,26 @@ public final class PlacementShadowComparator {
 			&& identities.isEmpty() && valueVersions.isEmpty() && provenance.isEmpty() && anchors.isEmpty()
 			&& relocations.isEmpty() && obligations.isEmpty()
 			&& legalAssignments.isEmpty() && normalizedSignatureEqual; }
+		public List<String> normalizedEvidence() {
+			List<String> evidence = new ArrayList<>();
+			addEvidence(evidence, "candidates", candidates);
+			addEvidence(evidence, "exclusions", exclusions);
+			addEvidence(evidence, "constraints", constraints);
+			addEvidence(evidence, "identities", identities);
+			addEvidence(evidence, "valueVersions", valueVersions);
+			addEvidence(evidence, "provenance", provenance);
+			addEvidence(evidence, "anchors", anchors);
+			addEvidence(evidence, "relocations", relocations);
+			addEvidence(evidence, "obligations", obligations);
+			addEvidence(evidence, "legalAssignments", legalAssignments);
+			if(!normalizedSignatureEqual)
+				evidence.add("graph.normalizedSignatureEqual=false");
+			return Collections.unmodifiableList(evidence);
+		}
+		private static void addEvidence(List<String> evidence, String surface, List<String> diff) {
+			if(!diff.isEmpty())
+				evidence.add("graph." + surface + "=" + diff);
+		}
 	}
 
 	public Diff compare(NeutralPlacementGraph expected, NeutralPlacementGraph actual) {

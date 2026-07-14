@@ -77,7 +77,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 		// run planner rewrite with forced federated exec types
 		long tFedPlanner = System.nanoTime();
 		planner.getPlanner().rewriteProgram(prog, fgraph, fcallSizes);
-		shadow.observe(prog);
+		PlacementShadowCoordinator.record(shadow.observe(prog));
 		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 	}
 }
