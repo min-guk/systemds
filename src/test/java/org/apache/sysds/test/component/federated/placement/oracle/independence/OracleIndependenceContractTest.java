@@ -131,7 +131,7 @@ public class OracleIndependenceContractTest {
 
 	private static void assertJavaSourcesExist(Path root, String label) throws IOException {
 		assertTrue("Missing " + label + " oracle package: " + root, Files.isDirectory(root));
-		assertFalse("No Java sources in " + label + " oracle package: " + root, javaSources(root).isEmpty());
+		assertTrue("No Java sources in " + label + " oracle package: " + root, !javaSources(root).isEmpty());
 	}
 
 	private static List<Path> javaSources(Path root) throws IOException {
