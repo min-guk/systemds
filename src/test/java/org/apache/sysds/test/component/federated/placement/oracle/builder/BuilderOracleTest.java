@@ -21,6 +21,7 @@ package org.apache.sysds.test.component.federated.placement.oracle.builder;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import org.junit.Assert;
@@ -258,5 +259,26 @@ public class BuilderOracleTest {
 		Assert.assertTrue(signatures(graph.node("unknown")).contains("FED/LOUT/ROW"));
 		Assert.assertFalse(signatures(graph.node("unknown")).contains("FED/FOUT/ROW"));
 		Assert.assertFalse(signatures(graph.node("unknown")).contains("FED/FOUT/BROADCAST"));
+	}
+
+	@Test
+	public void normalizedDifferentialSurfacesAreDeterministicAndComplete() {
+		Graph unknown = BuilderOracleFixtures.fixture("B-21");
+		Assert.assertTrue(unknown.normalizedExclusions()
+			.contains("unknown=FED/FOUT/ROW!UNKNOWN_METADATA"));
+		Assert.assertTrue(unknown.normalizedExclusions()
+			.contains("unknown=FED/FOUT/BROADCAST!UNKNOWN_METADATA"));
+		Assert.assertTrue(unknown.normalizedIdentities().iterator().next().contains("reachable=true"));
+
+		Graph shared = BuilderOracleFixtures.fixture("B-22");
+		Assert.assertEquals(set("mat:source:fed:X=source@fed:X->consumer#1,consumer#2"),
+			shared.normalizedRelocations());
+		Assert.assertEquals(set("CONJUNCTIVE:else->join", "CONJUNCTIVE:then->join"),
+			BuilderOracleFixtures.fixture("B-03").normalizedConstraints());
+
+		List<String> assignments = new java.util.ArrayList<>(shared.legalAssignments());
+		List<String> sorted = new java.util.ArrayList<>(assignments);
+		java.util.Collections.sort(sorted);
+		Assert.assertEquals(sorted, assignments);
 	}
 }
