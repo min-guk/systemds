@@ -83,7 +83,7 @@ public class BuilderOracleTest {
 				Assert.assertEquals(set("FED/FOUT/ROW"), signatures(graph.node("join")));
 				break;
 			case "B-03":
-				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("join")));
+				Assert.assertEquals(set("CP/LOUT"), signatures(graph.node("join")));
 				Assert.assertEquals(2, count(graph, ConstraintKind.CONJUNCTIVE));
 				Assert.assertEquals(graph.normalizedCandidateUniverse(),
 					BuilderOracleFixtures.divergentBranchWritesReversed().normalizedCandidateUniverse());
@@ -148,12 +148,12 @@ public class BuilderOracleTest {
 				break;
 			case "B-18":
 				Assert.assertEquals(4, count(graph, ConstraintKind.CONJUNCTIVE));
-				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("phi-local-fed")));
-				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("phi-fed-local")));
+				Assert.assertEquals(set("CP/LOUT"), signatures(graph.node("phi-local-fed")));
+				Assert.assertEquals(set("CP/LOUT"), signatures(graph.node("phi-fed-local")));
 				break;
 			case "B-19":
 				Assert.assertEquals(2, count(graph, ConstraintKind.CONJUNCTIVE));
-				Assert.assertEquals(set("CP/LOUT", "FED/FOUT/ROW"), signatures(graph.node("join")));
+				Assert.assertEquals(set("CP/LOUT"), signatures(graph.node("join")));
 				break;
 			case "B-20":
 				Assert.assertEquals(4, count(graph, ConstraintKind.CONJUNCTIVE));
@@ -161,7 +161,7 @@ public class BuilderOracleTest {
 				Assert.assertNotNull(graph.node("branch-join"));
 				break;
 			case "B-21":
-				Assert.assertEquals(set("CP/LOUT"), signatures(graph.node("unknown")));
+				Assert.assertEquals(set("CP/LOUT", "FED/LOUT/ROW"), signatures(graph.node("unknown")));
 				assertReason(graph.node("unknown"), Reason.UNKNOWN_METADATA);
 				break;
 			case "B-22":

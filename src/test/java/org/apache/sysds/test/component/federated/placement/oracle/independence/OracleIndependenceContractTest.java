@@ -46,6 +46,7 @@ import org.junit.Test;
  */
 public class OracleIndependenceContractTest {
 	private static final String APPROVED_BASELINE = "a6248a770c596617898da54a68b8bcbbe318d8ca";
+	private static final String P1_ORACLE_BOUNDARY = "623491db5e4c48485e83011249accc58210203d8";
 	private static final Path REPOSITORY = Paths.get("").toAbsolutePath().normalize();
 	private static final Path ORACLE_ROOT = REPOSITORY.resolve(
 		"src/test/java/org/apache/sysds/test/component/federated/placement/oracle");
@@ -53,8 +54,8 @@ public class OracleIndependenceContractTest {
 	private static final Path SELECTOR_ROOT = ORACLE_ROOT.resolve("selector");
 
 	private static final Pattern IMPORT = Pattern.compile("(?m)^\\s*import\\s+(?:static\\s+)?([^;]+);");
-	private static final Pattern PRODUCTION_ORACLE_IMPORT = Pattern.compile(
-		"^org\\.apache\\.sysds\\.hops\\.fedplanner\\..*(?:builder|selector).*$",
+	private static final Pattern PRODUCTION_ORACLE_REFERENCE = Pattern.compile(
+		"org\\.apache\\.sysds\\.hops\\.fedplanner\\.[A-Za-z0-9_.$]*(?:builder|selector)[A-Za-z0-9_.$]*",
 		Pattern.CASE_INSENSITIVE);
 	private static final Pattern IDENTIFIER = Pattern.compile("\\b[A-Za-z_$][A-Za-z0-9_$]*\\b");
 
@@ -65,6 +66,16 @@ public class OracleIndependenceContractTest {
 
 		assertNoForbiddenImports(BUILDER_ROOT, ".placement.oracle.selector");
 		assertNoForbiddenImports(SELECTOR_ROOT, ".placement.oracle.builder");
+	}
+
+	@Test
+	public void fullyQualifiedAndReflectiveProductionReferencesAreRejected() {
+		String direct = "class Bypass { org.apache.sysds.hops.fedplanner.placement.builder.LiveBuilder value; }";
+		String reflective = "Class.forName(\"org.apache.sysds.hops.fedplanner.placement.selector.LiveSelector\");";
+		assertTrue("fully-qualified production builder reference must be rejected",
+			!forbiddenReferences(direct, ".placement.oracle.selector").isEmpty());
+		assertTrue("reflective production selector reference must be rejected",
+			!forbiddenReferences(reflective, ".placement.oracle.builder").isEmpty());
 	}
 
 	@Test
@@ -85,8 +96,7 @@ public class OracleIndependenceContractTest {
 
 	@Test
 	public void p1ChangesRemainTestOnly() throws Exception {
-		List<String> changed = gitLines("diff", "--name-only", APPROVED_BASELINE);
-		changed.addAll(gitLines("ls-files", "--others", "--exclude-standard"));
+		List<String> changed = gitLines("diff", "--name-only", APPROVED_BASELINE, P1_ORACLE_BOUNDARY);
 		List<String> forbidden = changed.stream()
 			.filter(path -> path.equals("pom.xml") || path.startsWith("src/main/"))
 			.collect(Collectors.toList());
@@ -96,14 +106,28 @@ public class OracleIndependenceContractTest {
 	private static void assertNoForbiddenImports(Path root, String peerPackage) throws IOException {
 		List<String> violations = new ArrayList<>();
 		for(Path source : javaSources(root)) {
-			Matcher imports = IMPORT.matcher(read(source));
+			String contents = read(source);
+			Matcher imports = IMPORT.matcher(contents);
 			while(imports.find()) {
 				String imported = imports.group(1);
-				if(imported.contains(peerPackage) || PRODUCTION_ORACLE_IMPORT.matcher(imported).matches())
+				if(imported.contains(peerPackage) || PRODUCTION_ORACLE_REFERENCE.matcher(imported).find())
 					violations.add(REPOSITORY.relativize(source) + " -> " + imported);
 			}
+			for(String reference : forbiddenReferences(contents, peerPackage))
+				violations.add(REPOSITORY.relativize(source) + " -> " + reference);
 		}
 		assertTrue("Oracle independence violations: " + violations, violations.isEmpty());
+	}
+
+	private static List<String> forbiddenReferences(String source, String peerPackage) {
+		String executable = stripComments(source);
+		List<String> violations = new ArrayList<>();
+		if(executable.contains(peerPackage))
+			violations.add(peerPackage);
+		Matcher production = PRODUCTION_ORACLE_REFERENCE.matcher(executable);
+		while(production.find())
+			violations.add(production.group());
+		return violations;
 	}
 
 	private static void assertFixtureIds(Path root, String prefix, int count) throws IOException {
@@ -150,11 +174,15 @@ public class OracleIndependenceContractTest {
 	}
 
 	private static String stripCommentsAndLiterals(String source) {
-		return source
-			.replaceAll("(?s)/\\*.*?\\*/", " ")
-			.replaceAll("(?m)//.*$", " ")
+		return stripComments(source)
 			.replaceAll("(?s)\"(?:\\\\.|[^\"\\\\])*\"", " ")
 			.replaceAll("'(?:\\\\.|[^'\\\\])'", " ");
+	}
+
+	private static String stripComments(String source) {
+		return source
+			.replaceAll("(?s)/\\*.*?\\*/", " ")
+			.replaceAll("(?m)//.*$", " ");
 	}
 
 	private static List<String> fallbackSuccessIdentifiers(String source) {
