@@ -66,9 +66,10 @@ public final class NeutralPlacementGraphBuilder {
 		List<String> selected = new ArrayList<>();
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
 			Hop hop = occurrence.hop();
+			ExecType selectedExec = selectedExecType(hop);
 			selected.add(occurrence.namespace() + '|' + occurrence.path() + '|'
 				+ PlacementGraphFingerprint.structuralKey(hop) + '|'
-				+ String.valueOf(hop.getExecType()) + '/' + String.valueOf(hop.getFederatedOutput()));
+				+ String.valueOf(selectedExec) + '/' + String.valueOf(hop.getFederatedOutput()));
 		}
 		Collections.sort(selected);
 		return Collections.unmodifiableList(selected);
@@ -78,16 +79,21 @@ public final class NeutralPlacementGraphBuilder {
 		List<String> violations = new ArrayList<>();
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
 			Hop hop = occurrence.hop();
-			if(hop.getExecType() == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
+			ExecType selectedExec = selectedExecType(hop);
+			if(selectedExec == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
 			Node node = graph.nodes().stream().filter(n -> n.key().callSitePath().equals(occurrence.path())
 				&& n.key().canonicalSourceOrigin().equals(PlacementGraphFingerprint.structuralKey(hop))).findFirst().orElse(null);
 			boolean member = node != null && node.legalAlternatives().stream().anyMatch(s ->
-				s.execType() == hop.getExecType() && s.output() == hop.getFederatedOutput());
+				s.execType() == selectedExec && s.output() == hop.getFederatedOutput());
 			if(!member) violations.add(occurrence.namespace() + '|' + occurrence.path() + '|'
-				+ PlacementGraphFingerprint.structuralKey(hop) + '|' + hop.getExecType() + '/' + hop.getFederatedOutput());
+				+ PlacementGraphFingerprint.structuralKey(hop) + '|' + selectedExec + '/' + hop.getFederatedOutput());
 		}
 		Collections.sort(violations);
 		return Collections.unmodifiableList(violations);
+	}
+
+	private static ExecType selectedExecType(Hop hop) {
+		return hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
 	}
 
 	public NeutralPlacementGraph build(DMLProgram program) {

@@ -61,15 +61,16 @@ public final class PlacementGraphFingerprint {
 	}
 
 	static List<Long> statementBlockIds(DMLProgram program) {
-		List<Long> ids = new ArrayList<>();
+		Set<Long> ids = new java.util.TreeSet<>();
+		// Registries use the default scope for entries created outside an assigned statement block.
+		ids.add(-1L);
 		collectBlockIds(program.getStatementBlocks(), ids);
 		for(FunctionStatementBlock block : program.getNamedNSFunctionStatementBlocks().values())
 			collectBlockIds(List.of(block), ids);
-		Collections.sort(ids);
-		return ids;
+		return new ArrayList<>(ids);
 	}
 
-	private static void collectBlockIds(List<StatementBlock> blocks, List<Long> ids) {
+	private static void collectBlockIds(List<StatementBlock> blocks, Set<Long> ids) {
 		for(StatementBlock sb : blocks) {
 			ids.add(sb.getSBID());
 			if(sb instanceof FunctionStatementBlock) collectBlockIds(((FunctionStatement) sb.getStatement(0)).getBody(), ids);
@@ -138,8 +139,13 @@ public final class PlacementGraphFingerprint {
 		for(Hop input : hop.getInput()) walkHop(input, path, namespace, rows, out, seen);
 		List<String> inputs = new ArrayList<>();
 		for(int i = 0; i < hop.getInput().size(); i++) inputs.add(i + ":" + structuralKey(hop.getInput(i)));
+		List<String> parents = new ArrayList<>();
+		for(Hop parent : hop.getParent()) parents.add(structuralKey(parent));
+		Collections.sort(parents);
 		rows.add(path + '|' + structuralKey(hop) + '|' + String.join(",", inputs) + '|'
-			+ hop.getExecType() + '|' + hop.getForcedExecType() + '|' + hop.getFederatedOutput());
+			+ String.join(",", parents) + '|' + hop.getExecType() + '|' + hop.getForcedExecType() + '|'
+			+ hop.getFederatedOutput() + '|' + hop.isFederatedOutputDerived() + '|'
+			+ hop.requiresRecompile() + '|' + hop.isVisited());
 		if(out != null) out.add(new HopOccurrence(hop, path, namespace));
 	}
 
