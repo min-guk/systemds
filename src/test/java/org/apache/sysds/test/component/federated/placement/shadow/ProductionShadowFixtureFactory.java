@@ -69,15 +69,15 @@ public final class ProductionShadowFixtureFactory {
 				"print(sum(X));");
 			case "B-07": return functionProgram(false, false);
 			case "B-08": return functionProgram(true, false);
-			case "B-09": return lines("X=read(\"unknown-X\");", "i=1;", "while(i<=2){X=X+1;i=i+1;}",
+			case "B-09": return lines("X=matrix(1,2,2);", "i=1;", "while(i<=2){X=X+1;i=i+1;}",
 				"print(sum(X));");
 			case "B-10": return lines("A=matrix(1,2,2);", "S=A+1;", "R1=S*2;", "R2=S*3;",
 				"print(sum(R1)+sum(R2));");
 			case "B-11": return lines(federatedRow(), "Y=X+1;", "print(sum(Y));");
 			case "B-12": return lines("X=matrix(1,4,2);", "Y=X+1;", "print(sum(Y));");
 			case "B-13": return lines(federatedPart(), "Y=X+1;", "print(sum(Y));");
-			case "B-14": return lines("X=read(\"private-X\");", "Y=X+1;", "print(sum(Y));");
-			case "B-15": return lines("X=matrix(1,2,3);", "Y=matrix(1,4,2);", "Z=X%*%Y;", "print(sum(Z));");
+			case "B-14": return lines("X=matrix(1,2,2);", "Y=X+1;", "print(sum(Y));");
+			case "B-15": return lines("X=matrix(1,2,3);", "Y=matrix(1,3,4);", "Z=X%*%Y;", "print(sum(Z));");
 			case "B-16": return lines("X=matrix(1,2,2);", "Y=X+1;", "print(sum(Y));");
 			case "B-17": return functionProgram(false, true);
 			case "B-18": return lines("X=matrix(1,2,2);", "i=1;", "while(i<=2){if(sum(X)>0){X=X+1;}else{X=matrix(0,2,2);}i=i+1;}",
@@ -85,7 +85,8 @@ public final class ProductionShadowFixtureFactory {
 			case "B-19": return branch("X=A+1", "X=matrix(0,2,2)");
 			case "B-20": return lines("A=matrix(1,2,2);", "X=A;", "i=1;",
 				"while(i<=2){if(sum(X)>0){X=X+1;}else{X=X-1;}i=i+1;}", "print(sum(X));");
-			case "B-21": return lines("X=read(\"unknown-X\");", "Y=rowSums(X);", "print(sum(Y));");
+			case "B-21": return lines("f=function(matrix[double] X) return (matrix[double] Y){Y=rowSums(X);}",
+				"A=matrix(1,2,2);", "Y=f(A);", "print(sum(Y));");
 			case "B-22": return lines(federatedRow(), "S=matrix(1,4,2);", "Y1=X+S;", "Y2=X-S;",
 				"print(sum(Y1)+sum(Y2));");
 			default: throw new IllegalArgumentException("Unknown production shadow fixture " + id);
