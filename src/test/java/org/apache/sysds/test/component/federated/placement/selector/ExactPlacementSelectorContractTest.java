@@ -44,7 +44,7 @@ public class ExactPlacementSelectorContractTest {
 			Assert.assertEquals(fixture.id(), expected.getScore().getFoutCount(), actual.score().foutCount());
 			Assert.assertEquals(fixture.id(), expected.getScore().getRelocationCount(),
 				actual.score().distinctRelocationCount());
-			Assert.assertEquals(fixture.id(), semanticOracleAssignment(expected.getAssignment()),
+			Assert.assertEquals(fixture.id(), semanticOracleAssignment(fixture, expected.getAssignment()),
 				semanticProductionAssignment(actual.assignment()));
 			Assert.assertEquals(fixture.id(), oracleRelocations(expected.getAssignment()),
 				productionRelocations(actual.selectedRelocations()));
@@ -111,24 +111,30 @@ public class ExactPlacementSelectorContractTest {
 			oracle.getCertificate().getGeneratorSizeClass());
 		Assert.assertEquals(fixture.id(), fixture.seed(), oracle.getCertificate().getSeed());
 		Assert.assertEquals(fixture.id(), certificate.componentCount(), certificate.componentBounds().size());
-		long componentNodes = certificate.componentBounds().stream()
-			.mapToLong(bound -> readLong(bound, "graphNodeCount", "nodeCount")).sum();
-		Assert.assertEquals(fixture.id(), graph.nodes().size(), componentNodes);
-		for(Object bound : certificate.componentBounds()) {
-			Assert.assertFalse(fixture.id(), readText(bound, "componentIdentity", "identity").isBlank());
-			Assert.assertTrue(fixture.id(), readLong(bound, "graphNodeCount", "nodeCount") > 0);
-			Assert.assertTrue(fixture.id(), readLong(bound, "graphEdgeCount", "edgeCount") >= 0);
-			Assert.assertFalse(fixture.id(), readText(bound, "derivation", "boundDerivation").isBlank());
-			Object upper = invoke(bound, "upperBound", "boundScore");
-			Assert.assertTrue(fixture.id(), upper instanceof PlacementScore);
+		List<IndependentComponent> expectedComponents = independentComponents(graph);
+		Assert.assertEquals(fixture.id(), expectedComponents.size(), certificate.componentBounds().size());
+		for(IndependentComponent expected : expectedComponents) {
+			Object bound = certificate.componentBounds().stream().filter(value -> expected.identity().equals(
+				readText(value, "componentIdentity", "identity"))).findFirst().orElseThrow();
+			Assert.assertEquals(fixture.id(), expected.nodes(), readStringSet(bound,
+				"normalizedNodeSet", "nodeIdentities", "nodes"));
+			Assert.assertEquals(fixture.id(), expected.nodes().size(), readLong(bound, "graphNodeCount", "nodeCount"));
+			Assert.assertEquals(fixture.id(), expected.edgeCount(), readLong(bound, "graphEdgeCount", "edgeCount"));
+			Assert.assertEquals(fixture.id(), expected.upperBound(), invoke(bound, "upperBound", "boundScore"));
+			Assert.assertEquals(fixture.id(), expected.derivation(),
+				readText(bound, "derivation", "boundDerivation"));
 		}
+		Assert.assertEquals(fixture.id(), independentAssignmentUniverseSize(graph),
+			certificate.exploredCount() + certificate.prunedCount());
 		Assert.assertTrue(fixture.id(), List.of("EXHAUSTED", "TIGHT_BOUND_EQUALITY")
 			.contains(certificate.terminationReason().name()));
+		Assert.assertEquals(fixture.id(), certificate.incumbentScore(), certificate.finalUpperBound());
 	}
 
-	private static String semanticOracleAssignment(Map<String,Choice> assignment) {
+	private static String semanticOracleAssignment(Case fixture, Map<String,Choice> assignment) {
 		List<String> entries = new ArrayList<>();
-		assignment.forEach((node, choice) -> entries.add(node + '=' + choice.getId()));
+		assignment.forEach((node, choice) -> entries.add(node + '='
+			+ IsomorphicSelectorContractFixtures.productionChoice(fixture.id(), node, choice.getId())));
 		Collections.sort(entries);
 		return String.join("|", entries);
 	}
@@ -164,6 +170,10 @@ public class ExactPlacementSelectorContractTest {
 	}
 
 	private static int componentCount(NeutralPlacementGraph graph) {
+		return independentComponents(graph).size();
+	}
+
+	private static List<IndependentComponent> independentComponents(NeutralPlacementGraph graph) {
 		Map<CompiledHopKey,Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
 		for(Node node : graph.nodes())
 			adjacency.put(node.key(), new LinkedHashSet<>());
@@ -178,20 +188,69 @@ public class ExactPlacementSelectorContractTest {
 				connect(adjacency, source, consumer);
 		});
 		Set<CompiledHopKey> visited = new HashSet<>();
-		int components = 0;
+		List<IndependentComponent> components = new ArrayList<>();
 		for(CompiledHopKey node : adjacency.keySet()) {
 			if(!visited.add(node))
 				continue;
-			components++;
+			Set<CompiledHopKey> members = new LinkedHashSet<>();
 			Deque<CompiledHopKey> pending = new ArrayDeque<>();
 			pending.add(node);
-			while(!pending.isEmpty())
-				for(CompiledHopKey adjacent : adjacency.get(pending.removeFirst()))
+			while(!pending.isEmpty()) {
+				CompiledHopKey current = pending.removeFirst();
+				members.add(current);
+				for(CompiledHopKey adjacent : adjacency.get(current))
 					if(visited.add(adjacent))
 						pending.add(adjacent);
+			}
+			Set<String> normalizedNodes = new java.util.TreeSet<>();
+			members.forEach(value -> normalizedNodes.add(value.normalizedSignature()));
+			Set<String> edges = independentComponentEdges(graph, members, valueOwners);
+			int maxFed = 0;
+			int maxFout = 0;
+			for(Node graphNode : graph.nodes())
+				if(members.contains(graphNode.key())) {
+					if(graphNode.emittedWork() && graphNode.legalAlternatives().stream()
+						.anyMatch(state -> state.execType() == org.apache.sysds.common.Types.ExecType.FED))
+						maxFed++;
+					if(graphNode.legalAlternatives().stream().anyMatch(state -> state.output() ==
+						org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT))
+						maxFout++;
+				}
+			String nodeSignature = String.join("|", normalizedNodes);
+			String identity = sha256(nodeSignature);
+			String derivation = "nodewise-admissible:maxFed=" + maxFed + ",maxFout=" + maxFout
+				+ ",minRelocations=0,nodes=" + nodeSignature;
+			components.add(new IndependentComponent(identity, Set.copyOf(normalizedNodes), edges.size(),
+				new PlacementScore(maxFed, maxFout, 0, nodeSignature), derivation));
 		}
-		return components;
+		components.sort(java.util.Comparator.comparing(IndependentComponent::identity));
+		return List.copyOf(components);
 	}
+
+	private static Set<String> independentComponentEdges(NeutralPlacementGraph graph, Set<CompiledHopKey> members,
+		Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey,CompiledHopKey> owners) {
+		Set<String> edges = new java.util.TreeSet<>();
+		graph.constraints().stream().filter(value -> members.contains(value.left()) && members.contains(value.right()))
+			.forEach(value -> edges.add("constraint:" + value.normalizedSignature()));
+		graph.relocationActions().forEach(action -> {
+			CompiledHopKey source = owners.get(action.key().sourceValueVersion());
+			for(CompiledHopKey consumer : action.key().compatibleConsumers())
+				if(members.contains(source) && members.contains(consumer))
+					edges.add("relocation:" + source.normalizedSignature() + "->" + consumer.normalizedSignature()
+						+ ':' + action.key().normalizedSignature());
+		});
+		return edges;
+	}
+
+	private static long independentAssignmentUniverseSize(NeutralPlacementGraph graph) {
+		long result = 1;
+		for(Node node : graph.nodes())
+			result = Math.multiplyExact(result, node.legalAlternatives().size());
+		return result;
+	}
+
+	private record IndependentComponent(String identity, Set<String> nodes, long edgeCount,
+		PlacementScore upperBound, String derivation) { }
 
 	private static void connect(Map<CompiledHopKey,Set<CompiledHopKey>> adjacency,
 		CompiledHopKey left, CompiledHopKey right) {
@@ -216,6 +275,16 @@ public class ExactPlacementSelectorContractTest {
 
 	private static String readText(Object value, String... accessors) {
 		return String.valueOf(invoke(value, accessors));
+	}
+
+	private static Set<String> readStringSet(Object value, String... accessors) {
+		Object result = invoke(value, accessors);
+		if(!(result instanceof Iterable<?>))
+			throw new AssertionError("component node set is not iterable: " + result);
+		Set<String> normalized = new java.util.TreeSet<>();
+		for(Object entry : (Iterable<?>) result)
+			normalized.add(String.valueOf(entry));
+		return Set.copyOf(normalized);
 	}
 
 	private static Object invoke(Object value, String... accessors) {

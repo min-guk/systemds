@@ -30,7 +30,7 @@ public class IsomorphicSelectorContractFixturesTest {
 		for(Case fixture : IsomorphicSelectorContractFixtures.all()) {
 			List<Candidate> neutral = neutralCandidates(fixture.production());
 			List<String> neutralUniverse = neutral.stream().map(Candidate::semanticAssignment).sorted().toList();
-			Assert.assertEquals(fixture.id(), fixture.oracle().normalizedLegalAssignments(), neutralUniverse);
+			Assert.assertEquals(fixture.id(), authoritativeUniverse(fixture), neutralUniverse);
 			long dependencyEdges = fixture.production().constraints().stream()
 				.filter(constraint -> constraint.kind() == ConstraintKind.DOMINATES).count();
 			Assert.assertEquals(fixture.id(), fixture.oracle().getEdgeCount(), dependencyEdges);
@@ -38,7 +38,7 @@ public class IsomorphicSelectorContractFixturesTest {
 			ExactSelectorOracle.Result expected = ExactSelectorOracle.select(fixture.oracle(),
 				ExactSelectorOracle.Policy.FED_ALL);
 			Candidate actual = neutral.stream().max(Candidate::compareTo).orElseThrow();
-			Assert.assertEquals(fixture.id(), semanticOracleAssignment(expected.getAssignment()),
+			Assert.assertEquals(fixture.id(), semanticOracleAssignment(fixture, expected.getAssignment()),
 				actual.semanticAssignment());
 			Assert.assertEquals(fixture.id(), oracleRelocations(expected.getAssignment()), actual.relocations());
 			Assert.assertEquals(fixture.id(), expected.getScore().getFedCount(), actual.fed());
@@ -72,6 +72,13 @@ public class IsomorphicSelectorContractFixturesTest {
 		for(NeutralPlacementGraph.Constraint constraint : graph.constraints()) {
 			PlacementState left = assignment.get(constraint.left());
 			PlacementState right = assignment.get(constraint.right());
+			if(constraint.evidence().startsWith("forbid-pair:")) {
+				String[] forbidden = constraint.evidence().substring("forbid-pair:".length()).split("=>", 2);
+				if(left.normalizedSignature().equals(forbidden[0])
+					&& right.normalizedSignature().equals(forbidden[1]))
+					return false;
+				continue;
+			}
 			if(constraint.kind() == ConstraintKind.SAME_PLACEMENT && !left.equals(right))
 				return false;
 			if(constraint.kind() == ConstraintKind.SAME_FTYPE && !Objects.equals(left.fType(), right.fType()))
@@ -107,9 +114,23 @@ public class IsomorphicSelectorContractFixturesTest {
 		return new Candidate(fed, fout, Set.copyOf(relocations), String.join("|", entries));
 	}
 
-	private static String semanticOracleAssignment(Map<String,Choice> assignment) {
+	private static List<String> authoritativeUniverse(Case fixture) {
+		return fixture.oracle().normalizedLegalAssignments().stream().map(assignment -> {
+			List<String> entries = new ArrayList<>();
+			for(String entry : assignment.split("\\|")) {
+				String[] fields = entry.split("=", 2);
+				entries.add(fields[0] + '=' + IsomorphicSelectorContractFixtures.productionChoice(
+					fixture.id(), fields[0], fields[1]));
+			}
+			Collections.sort(entries);
+			return String.join("|", entries);
+		}).sorted().toList();
+	}
+
+	private static String semanticOracleAssignment(Case fixture, Map<String,Choice> assignment) {
 		List<String> entries = new ArrayList<>();
-		assignment.forEach((node, choice) -> entries.add(node + '=' + choice.getId()));
+		assignment.forEach((node, choice) -> entries.add(node + '='
+			+ IsomorphicSelectorContractFixtures.productionChoice(fixture.id(), node, choice.getId())));
 		Collections.sort(entries);
 		return String.join("|", entries);
 	}
