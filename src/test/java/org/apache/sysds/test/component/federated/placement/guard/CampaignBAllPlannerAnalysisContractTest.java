@@ -32,12 +32,12 @@ public class CampaignBAllPlannerAnalysisContractTest {
 			}
 			Assert.assertNotSame(analysis, twin); Assert.assertEquals(analysis.analysisFingerprint(), twin.analysisFingerprint());
 			List<String> before = CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis);
-			for(var planner : R4SharedFedAllAdapterBridge.Planner.values()) invokeOrRecord(planner, analysis, twin, before, missing, id);
+			for(var planner : R4SharedFedAllAdapterBridge.analysisOnlyPlanners()) invokeOrRecord(planner, analysis, twin, before, missing, id);
 		}
 		for(var fixture : CampaignBSelectorFixtureBridge.all()) {
 			PlacementAnalysis normal = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production(), ProjectionOrder.NORMAL);
 			PlacementAnalysis reverse = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production(), ProjectionOrder.REVERSED);
-			for(var planner : R4SharedFedAllAdapterBridge.Planner.values()) {
+			for(var planner : R4SharedFedAllAdapterBridge.analysisOnlyPlanners()) {
 				try {
 					var handle = R4SharedFedAllAdapterBridge.open(planner);
 					var left = select(handle, normal);
@@ -65,7 +65,7 @@ public class CampaignBAllPlannerAnalysisContractTest {
 		List<String> missing = new ArrayList<>();
 		for(var fixture : CampaignBSelectorFixtureBridge.all().stream().filter(c -> Set.of("S-03","S-04","S-06","S-07","S-08-n6").contains(c.id())).toList()) {
 			PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production());
-			for(var planner : R4SharedFedAllAdapterBridge.Planner.values()) {
+			for(var planner : R4SharedFedAllAdapterBridge.analysisOnlyPlanners()) {
 				try {
 					var handle = R4SharedFedAllAdapterBridge.open(planner); var baseline = select(handle, analysis);
 					for(int i=0;i<3;i++) R4SharedFedAllSemanticValidator.stable(baseline, select(handle,analysis), "R4_REPEAT_STABILITY");

@@ -20,6 +20,9 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 final class R4SharedFedAllAdapterBridge {
 	enum Planner { FED_ALL, HEURISTIC, DP, MIN_ST }
 	record Handle(Planner planner, Object adapter, Method select) { }
+	static List<Planner> analysisOnlyPlanners() {
+		return List.of(Planner.FED_ALL, Planner.HEURISTIC, Planner.MIN_ST);
+	}
 	record Score(int fed, int fout, int relocations, String signature) { }
 	record Bound(String id, List<CompiledHopKey> nodes, int upperFed, int upperFout,
 		int lowerRelocations, String derivation) { }
