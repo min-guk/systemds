@@ -184,6 +184,13 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);",
 			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections); returnValue(analysis);");
 		Assert.assertEquals(List.of(), constructionViolations(returnIdentifier, validShadow()));
+
+		String javaIdentifierPrefixes = validBuilder().replace(
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);",
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
+				+ " throw$Metric.record(); throw_Logger.warn(); throw0(); throwé(); throw\u0301();"
+				+ " return$Value(analysis); return_Value(analysis); return2(analysis); returné(analysis); return\u0301(analysis);");
+		Assert.assertEquals(List.of(), constructionViolations(javaIdentifierPrefixes, validShadow()));
 	}
 
 	private static List<String> constructionViolations(String builderSource, String shadowSource) {
@@ -270,7 +277,30 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	private static String protectControlKeywords(String source) {
-		return source.replaceAll("\\bthrow\\b", "throw@").replaceAll("\\breturn\\b", "return@");
+		return protectKeyword(protectKeyword(source, "throw"), "return");
+	}
+
+	private static String protectKeyword(String source, String keyword) {
+		StringBuilder protectedSource = new StringBuilder(source.length() + 8);
+		for(int i = 0; i < source.length();) {
+			if(source.startsWith(keyword, i) && isIdentifierBoundary(source, i, keyword.length())) {
+				protectedSource.append(keyword).append('@');
+				i += keyword.length();
+			}
+			else {
+				int codePoint = source.codePointAt(i);
+				protectedSource.appendCodePoint(codePoint);
+				i += Character.charCount(codePoint);
+			}
+		}
+		return protectedSource.toString();
+	}
+
+	private static boolean isIdentifierBoundary(String source, int start, int length) {
+		int end = start + length;
+		boolean leftBoundary = start == 0 || !Character.isJavaIdentifierPart(source.codePointBefore(start));
+		boolean rightBoundary = end == source.length() || !Character.isJavaIdentifierPart(source.codePointAt(end));
+		return leftBoundary && rightBoundary;
 	}
 
 	private static int braceDepth(String source, int end) {
