@@ -102,6 +102,7 @@ public final class PlacementGraphFingerprint {
 			roots.add(((ForStatementBlock) sb).getIncrementHops());
 		}
 		roots.removeIf(java.util.Objects::isNull);
+		roots.sort(java.util.Comparator.comparing(PlacementGraphFingerprint::semanticStructuralKey));
 		Set<Hop> seen = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int i = 0; i < roots.size(); i++)
 			walkHop(roots.get(i), path, namespace, sb, List.of(path), "root-" + i, rows, out, seen);
@@ -143,7 +144,8 @@ public final class PlacementGraphFingerprint {
 	}
 
 	private static String normalizeCompilerCounters(String value) {
-		return value == null ? "" : value.replaceAll("parsertemp[0-9]+", "compiler-temp")
+		return value == null ? "" : value.replaceFirst("^[0-9]+_", "compiler-id_")
+			.replaceAll("parsertemp[0-9]+", "compiler-temp")
 			.replaceAll("__(tmp|pred)[0-9]+", "__$1");
 	}
 

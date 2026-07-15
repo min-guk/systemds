@@ -44,6 +44,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKe
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -102,6 +103,45 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static ExecType selectedExecType(Hop hop) {
 		return hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
+	}
+
+	public PlacementAnalysis buildAnalysis(DMLProgram program) {
+		NeutralPlacementGraph graph = build(program);
+		Map<CompiledHopKey,Hop> origins = projectConcreteOrigins(program, graph);
+		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
+		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
+			CompiledHopKey key = graph.nodes().get(ordinal).key();
+			Hop hop = origins.get(key);
+			if(hop == null)
+				throw new IllegalStateException("Neutral placement node has no compiled Hop origin: " + key);
+			projections.add(new HopOccurrenceProjection(key, hop, ordinal, key.normalizedSignature()));
+		}
+		return new PlacementAnalysis(graph, projections);
+	}
+
+	private static Map<CompiledHopKey,Hop> projectConcreteOrigins(DMLProgram program, NeutralPlacementGraph graph) {
+		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
+		Map<String,Hop> callsByContext = new java.util.HashMap<>();
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
+			CompiledHopKey key = graph.nodes().stream().map(Node::key)
+				.filter(candidate -> candidate.callSitePath().equals(occurrence.path())
+					&& candidate.emittedHopInstance().equals(occurrence.topology())
+					&& candidate.canonicalSourceOrigin()
+						.equals(PlacementGraphFingerprint.semanticStructuralKey(occurrence.hop())))
+				.findFirst().orElseThrow(() -> new IllegalStateException(
+					"Compiled Hop occurrence is absent from neutral placement graph"));
+			origins.put(key, occurrence.hop());
+			if(occurrence.hop() instanceof FunctionOp)
+				callsByContext.put("callsite:" + key.normalizedSignature(), occurrence.hop());
+		}
+		for(Node node : graph.nodes()) {
+			if(origins.containsKey(node.key()))
+				continue;
+			Hop call = callsByContext.get(node.key().recompileContext());
+			if(call != null && node.key().canonicalSourceOrigin().startsWith("function-boundary:"))
+				origins.put(node.key(), call);
+		}
+		return Collections.unmodifiableMap(origins);
 	}
 
 	public NeutralPlacementGraph build(DMLProgram program) {
