@@ -40,15 +40,16 @@ public final class PlacementGraphFingerprint {
 
 	public static String capture(DMLProgram program) {
 		List<String> rows = new ArrayList<>();
-		walkBlocks(program.getStatementBlocks(), "main", rows);
+		walkBlocks(program.getStatementBlocks(), "main", rows, null, "main");
 		program.getNamedNSFunctionStatementBlocks().entrySet().stream()
 			.sorted(java.util.Map.Entry.comparingByKey())
-			.forEach(e -> walkBlock(e.getValue(), "function/" + e.getKey(), rows));
+			.forEach(e -> walkBlock(e.getValue(), "function/" + e.getKey(), rows, null, e.getKey()));
 		Collections.sort(rows);
 		return sha256(String.join("\n", rows));
 	}
 
-	static record HopOccurrence(Hop hop, String path, String namespace) { }
+	static record HopOccurrence(Hop hop, String path, String namespace, StatementBlock block,
+		List<String> regionPath, String topology) { }
 
 	static List<HopOccurrence> orderedOccurrences(DMLProgram program) {
 		List<HopOccurrence> result = new ArrayList<>();
@@ -83,26 +84,10 @@ public final class PlacementGraphFingerprint {
 		}
 	}
 
-	private static void walkBlocks(List<StatementBlock> blocks, String path, List<String> rows) {
-		walkBlocks(blocks, path, rows, null);
-	}
-
-	private static void walkBlocks(List<StatementBlock> blocks, String path, List<String> rows, List<HopOccurrence> out) {
-		walkBlocks(blocks, path, rows, out, path.startsWith("function/") ? path.substring(9) : "main");
-	}
-
 	private static void walkBlocks(List<StatementBlock> blocks, String path, List<String> rows,
 		List<HopOccurrence> out, String namespace) {
 		for(int i = 0; blocks != null && i < blocks.size(); i++)
 			walkBlock(blocks.get(i), path + "/" + i, rows, out, namespace);
-	}
-
-	private static void walkBlock(StatementBlock sb, String path, List<String> rows) {
-		walkBlock(sb, path, rows, null);
-	}
-
-	private static void walkBlock(StatementBlock sb, String path, List<String> rows, List<HopOccurrence> out) {
-		walkBlock(sb, path, rows, out, path.startsWith("function/") ? path.substring(9).split("/")[0] : "main");
 	}
 
 	private static void walkBlock(StatementBlock sb, String path, List<String> rows,
@@ -117,9 +102,9 @@ public final class PlacementGraphFingerprint {
 			roots.add(((ForStatementBlock) sb).getIncrementHops());
 		}
 		roots.removeIf(java.util.Objects::isNull);
-		roots.sort(java.util.Comparator.comparing(PlacementGraphFingerprint::structuralKey));
 		Set<Hop> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(Hop root : roots) walkHop(root, path, namespace, rows, out, seen);
+		for(int i = 0; i < roots.size(); i++)
+			walkHop(roots.get(i), path, namespace, sb, List.of(path), "root-" + i, rows, out, seen);
 		if(sb instanceof FunctionStatementBlock)
 			walkBlocks(((FunctionStatement) sb.getStatement(0)).getBody(), path + "/body", rows, out, namespace);
 		else if(sb instanceof WhileStatementBlock)
@@ -133,20 +118,29 @@ public final class PlacementGraphFingerprint {
 		}
 	}
 
-	private static void walkHop(Hop hop, String path, String namespace, List<String> rows,
-		List<HopOccurrence> out, Set<Hop> seen) {
+	private static void walkHop(Hop hop, String path, String namespace, StatementBlock block,
+		List<String> regionPath, String topology, List<String> rows, List<HopOccurrence> out, Set<Hop> seen) {
 		if(!seen.add(hop)) return;
-		for(Hop input : hop.getInput()) walkHop(input, path, namespace, rows, out, seen);
+		for(int i = 0; i < hop.getInput().size(); i++)
+			walkHop(hop.getInput(i), path, namespace, block, regionPath, topology + "/input-" + i, rows, out, seen);
 		List<String> inputs = new ArrayList<>();
 		for(int i = 0; i < hop.getInput().size(); i++) inputs.add(i + ":" + structuralKey(hop.getInput(i)));
 		List<String> parents = new ArrayList<>();
 		for(Hop parent : hop.getParent()) parents.add(structuralKey(parent));
 		Collections.sort(parents);
-		rows.add(path + '|' + structuralKey(hop) + '|' + String.join(",", inputs) + '|'
+		rows.add(path + '|' + topology + '|' + structuralKey(hop) + '|' + String.join(",", inputs) + '|'
 			+ String.join(",", parents) + '|' + hop.getExecType() + '|' + hop.getForcedExecType() + '|'
 			+ hop.getFederatedOutput() + '|' + hop.isFederatedOutputDerived() + '|'
 			+ hop.requiresRecompile() + '|' + hop.isVisited());
-		if(out != null) out.add(new HopOccurrence(hop, path, namespace));
+		if(out != null) out.add(new HopOccurrence(hop, path, namespace, block, regionPath, topology));
+	}
+
+	static String semanticStructuralKey(Hop h) {
+		String name = h.getName() == null ? "" : h.getName()
+			.replaceAll("parsertemp[0-9]+", "compiler-temp")
+			.replaceAll("__(tmp|pred)[0-9]+", "__$1");
+		return String.valueOf(h.getFilename()) + ':' + h.getBeginLine() + ':' + h.getBeginColumn() + ':'
+			+ h.getClass().getName() + ':' + h.getOpString() + ':' + name;
 	}
 
 	static String structuralKey(Hop h) {

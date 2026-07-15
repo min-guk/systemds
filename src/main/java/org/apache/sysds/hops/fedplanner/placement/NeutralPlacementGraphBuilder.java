@@ -14,7 +14,6 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.IdentityHashMap;
@@ -51,6 +50,15 @@ import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.DecisionEvidence;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DataExpression;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.ForStatement;
+import org.apache.sysds.parser.ForStatementBlock;
+import org.apache.sysds.parser.IfStatement;
+import org.apache.sysds.parser.IfStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -99,9 +107,8 @@ public final class NeutralPlacementGraphBuilder {
 		String registryBefore = registrySentinel(program);
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
+		CfgAnalysis cfg = analyzeCfg(program, occurrences);
 		List<Node> nodes = new ArrayList<>();
-		Map<String,Integer> versions = new java.util.TreeMap<>();
-		Map<String,List<ValueVersionKey>> definitions = new java.util.TreeMap<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
@@ -111,27 +118,21 @@ public final class NeutralPlacementGraphBuilder {
 			Hop hop = occurrence.hop();
 			String context = requiresRecompileMetadata(hop) ? "recompile" : "compiled";
 			ControlRegionKey region = new ControlRegionKey(programId, occurrence.namespace(),
-				Arrays.asList(occurrence.path().split("/")), occurrence.path(), context);
+				occurrence.regionPath(), occurrence.path(), context);
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
-				"ordinal-" + ordinal, PlacementGraphFingerprint.structuralKey(hop));
+				occurrence.topology(), PlacementGraphFingerprint.semanticStructuralKey(hop));
 			String variable = lexicalVariable(hop, ordinal);
-			String scopedVariable = occurrence.namespace() + '\u0000' + variable;
-			int version = isTransientWrite(hop) ? versions.merge(scopedVariable, 1, Integer::sum)
-				: versions.getOrDefault(scopedVariable, 0);
-			VersionKind versionKind = versionKind(hop, occurrence, context, definitions.get(scopedVariable));
+			int version = cfg.definitionOrdinals().get(ordinal);
+			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
+				: cfg.versionKinds().get(ordinal);
 			List<String> predecessorEdges = new ArrayList<>();
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
 				Hop input = hop.getInput(inputPosition);
 				if(values.containsKey(input)) predecessorEdges.add("input-" + inputPosition + ':'
 					+ values.get(input).normalizedSignature());
 			}
-			if(isTransientRead(hop) && definitions.containsKey(scopedVariable))
-				for(ValueVersionKey definition : definitions.get(scopedVariable))
-					predecessorEdges.add("definition:" + definition.normalizedSignature());
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
 				predecessorEdges);
-			if(isTransientWrite(hop) || isFunctionOutput(hop))
-				definitions.computeIfAbsent(scopedVariable, k -> new ArrayList<>()).add(value);
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
@@ -150,7 +151,7 @@ public final class NeutralPlacementGraphBuilder {
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch before CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
-		nodes = closeCfgValueVersions(occurrences, nodes, values);
+		nodes = closeCfgValueVersions(occurrences, nodes, values, cfg);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
@@ -167,8 +168,9 @@ public final class NeutralPlacementGraphBuilder {
 					keys.get(input), consumer, inputPosition, "data-input"));
 			}
 		}
-		addCfgConstraints(occurrences, nodes, keys, constraints);
+		addCfgConstraints(occurrences, nodes, keys, constraints, cfg);
 		constraints.addAll(functionExpansion.constraints());
+		addStableOriginConstraints(nodes, constraints);
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, anchorProvenance);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		String after = PlacementGraphFingerprint.capture(program);
@@ -178,6 +180,135 @@ public final class NeutralPlacementGraphBuilder {
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return graph;
 	}
+
+	private static CfgAnalysis analyzeCfg(DMLProgram program,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences) {
+		Map<StatementBlock,Set<StatementBlock>> predecessors = new IdentityHashMap<>();
+		Set<StatementBlock> loopHeaders = Collections.newSetFromMap(new IdentityHashMap<>());
+		connectSequence(program.getStatementBlocks(), Set.of(), predecessors, loopHeaders);
+		for(FunctionStatementBlock function : program.getNamedNSFunctionStatementBlocks().values())
+			connectSequence(List.of(function), Set.of(), predecessors, loopHeaders);
+		Map<StatementBlock,List<Integer>> byBlock = new IdentityHashMap<>();
+		for(int i = 0; i < occurrences.size(); i++)
+			byBlock.computeIfAbsent(occurrences.get(i).block(), k -> new ArrayList<>()).add(i);
+		Map<String,Integer> counters = new java.util.TreeMap<>();
+		List<Integer> ordinals = new ArrayList<>(occurrences.size());
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
+			String variable = occurrence.namespace() + '\u0000' + lexicalVariable(occurrence.hop(), ordinals.size());
+			ordinals.add(isDefinition(occurrence.hop()) ? counters.merge(variable, 1, Integer::sum)
+				: counters.getOrDefault(variable, 0));
+		}
+		Map<StatementBlock,Map<String,Set<Integer>>> out = new IdentityHashMap<>();
+		boolean changed;
+		do {
+			changed = false;
+			for(StatementBlock block : predecessors.keySet()) {
+				Map<String,Set<Integer>> state = new java.util.TreeMap<>();
+				for(StatementBlock predecessor : predecessors.get(block))
+					mergeDefinitions(state, out.get(predecessor));
+				transfer(state, byBlock.getOrDefault(block, List.of()), occurrences);
+				if(!state.equals(out.get(block))) {
+					out.put(block, state);
+					changed = true;
+				}
+			}
+		} while(changed);
+		List<Set<Integer>> reaching = new ArrayList<>(occurrences.size());
+		for(int i = 0; i < occurrences.size(); i++) reaching.add(Set.of());
+		for(Map.Entry<StatementBlock,List<Integer>> entry : byBlock.entrySet()) {
+			Map<String,Set<Integer>> state = new java.util.TreeMap<>();
+			for(StatementBlock predecessor : predecessors.getOrDefault(entry.getKey(), Set.of()))
+				mergeDefinitions(state, out.get(predecessor));
+			for(int index : entry.getValue()) {
+				PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(index);
+				String variable = occurrence.namespace() + '\u0000' + lexicalVariable(occurrence.hop(), index);
+				if(isTransientRead(occurrence.hop()))
+					reaching.set(index, Collections.unmodifiableSet(new java.util.TreeSet<>(
+						state.getOrDefault(variable, Set.of()))));
+				if(isDefinition(occurrence.hop())) state.put(variable, Set.of(index));
+			}
+		}
+		List<VersionKind> kinds = new ArrayList<>(occurrences.size());
+		for(int i = 0; i < occurrences.size(); i++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(i);
+			VersionKind kind = VersionKind.ORDINARY;
+			if(isTransientRead(occurrence.hop()) && reaching.get(i).size() > 1)
+				kind = loopHeaders.contains(occurrence.block()) ? VersionKind.LOOP_HEAD_PHI
+					: predecessors.getOrDefault(occurrence.block(), Set.of()).size() > 1
+						? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
+			else if(isDefinition(occurrence.hop()) && isLoopLatch(occurrence.block(), predecessors, loopHeaders))
+				kind = VersionKind.LOOP_BACKEDGE;
+			kinds.add(kind);
+		}
+		return new CfgAnalysis(Collections.unmodifiableList(ordinals), Collections.unmodifiableList(kinds),
+			Collections.unmodifiableList(reaching));
+	}
+
+	private static Set<StatementBlock> connectSequence(List<StatementBlock> blocks, Set<StatementBlock> incoming,
+		Map<StatementBlock,Set<StatementBlock>> predecessors, Set<StatementBlock> loopHeaders) {
+		Set<StatementBlock> exits = new LinkedHashSet<>(incoming);
+		for(StatementBlock block : blocks == null ? List.<StatementBlock>of() : blocks) {
+			predecessors.computeIfAbsent(block, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(exits);
+			if(block instanceof IfStatementBlock) {
+				IfStatement statement = (IfStatement) block.getStatement(0);
+				Set<StatementBlock> thenExits = connectSequence(statement.getIfBody(), Set.of(block), predecessors, loopHeaders);
+				Set<StatementBlock> elseExits = connectSequence(statement.getElseBody(), Set.of(block), predecessors, loopHeaders);
+				exits = new LinkedHashSet<>();
+				exits.addAll(thenExits.isEmpty() ? Set.of(block) : thenExits);
+				exits.addAll(elseExits.isEmpty() ? Set.of(block) : elseExits);
+			}
+			else if(block instanceof WhileStatementBlock) {
+				loopHeaders.add(block);
+				WhileStatement statement = (WhileStatement) block.getStatement(0);
+				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders);
+				predecessors.get(block).addAll(bodyExits);
+				exits = new LinkedHashSet<>(Set.of(block));
+			}
+			else if(block instanceof ForStatementBlock) {
+				loopHeaders.add(block);
+				ForStatement statement = (ForStatement) block.getStatement(0);
+				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders);
+				predecessors.get(block).addAll(bodyExits);
+				exits = new LinkedHashSet<>(Set.of(block));
+			}
+			else if(block instanceof FunctionStatementBlock) {
+				FunctionStatement statement = (FunctionStatement) block.getStatement(0);
+				exits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders);
+			}
+			else exits = new LinkedHashSet<>(Set.of(block));
+		}
+		return exits;
+	}
+
+	private static void transfer(Map<String,Set<Integer>> state, List<Integer> indices,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences) {
+		for(int index : indices) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(index);
+			if(isDefinition(occurrence.hop())) state.put(occurrence.namespace() + '\u0000'
+				+ lexicalVariable(occurrence.hop(), index), Set.of(index));
+		}
+	}
+
+	private static void mergeDefinitions(Map<String,Set<Integer>> target, Map<String,Set<Integer>> source) {
+		if(source == null) return;
+		for(Map.Entry<String,Set<Integer>> entry : source.entrySet()) {
+			Set<Integer> merged = new java.util.TreeSet<>(target.getOrDefault(entry.getKey(), Set.of()));
+			merged.addAll(entry.getValue());
+			target.put(entry.getKey(), Collections.unmodifiableSet(merged));
+		}
+	}
+
+	private static boolean isLoopLatch(StatementBlock block,
+		Map<StatementBlock,Set<StatementBlock>> predecessors, Set<StatementBlock> loopHeaders) {
+		for(StatementBlock header : loopHeaders)
+			if(predecessors.getOrDefault(header, Set.of()).contains(block)) return true;
+		return false;
+	}
+
+	private static boolean isDefinition(Hop hop) { return isTransientWrite(hop) || isFunctionOutput(hop); }
+
+	private record CfgAnalysis(List<Integer> definitionOrdinals, List<VersionKind> versionKinds,
+		List<Set<Integer>> reachingDefinitions) { }
 
 	private static String registrySentinel(DMLProgram program) {
 		List<String> rows = new ArrayList<>();
@@ -194,34 +325,15 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static List<Node> closeCfgValueVersions(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
-		List<Node> nodes, Map<Hop,ValueVersionKey> values) {
+		List<Node> nodes, Map<Hop,ValueVersionKey> values, CfgAnalysis cfg) {
 		List<Node> closed = new ArrayList<>(nodes.size());
 		for(int i = 0; i < occurrences.size(); i++) {
 			Node node = nodes.get(i);
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(i);
 			ValueVersionKey value = node.valueVersion();
 			Set<String> predecessors = new java.util.TreeSet<>(value.predecessorVersions());
-			if(value.versionKind() == VersionKind.BRANCH_JOIN_PHI
-				|| value.versionKind() == VersionKind.LOOP_HEAD_PHI) {
-				for(int j = 0; j < occurrences.size(); j++) {
-					if(i == j) continue;
-					Node candidate = nodes.get(j);
-					PlacementGraphFingerprint.HopOccurrence candidateOccurrence = occurrences.get(j);
-					if(occurrence.namespace().equals(candidateOccurrence.namespace())
-						&& value.lexicalVariable().equals(candidate.valueVersion().lexicalVariable())
-						&& (candidate.kind() == NodeKind.TRANSIENT_WRITE
-							|| candidate.valueVersion().versionKind() == VersionKind.LOOP_BACKEDGE))
-						predecessors.add("cfg-definition:" + valueReference(candidate.valueVersion()));
-				}
-			}
-			if(value.versionKind() == VersionKind.FUNCTION_INPUT
-				|| value.versionKind() == VersionKind.FUNCTION_OUTPUT) {
-				for(int j = 0; j < occurrences.size(); j++) {
-					Hop candidate = occurrences.get(j).hop();
-					if(candidate instanceof FunctionOp && functionMatches((FunctionOp) candidate, occurrence.namespace()))
-						predecessors.add("callsite:" + nodes.get(j).key().normalizedSignature());
-				}
-			}
+			for(int definition : cfg.reachingDefinitions().get(i))
+				predecessors.add("cfg-definition:" + valueReference(nodes.get(definition).valueVersion()));
 			ValueVersionKey closedValue = new ValueVersionKey(value.programFingerprint(), value.lexicalVariable(),
 				value.definingControlRegion(), value.definitionOrdinal(), value.versionKind(),
 				new ArrayList<>(predecessors));
@@ -271,34 +383,6 @@ public final class NeutralPlacementGraphBuilder {
 					"function-result:" + outputNames[outputPosition]));
 			}
 		}
-		for(int i = 0; i < occurrences.size(); i++) {
-			Node template = nodes.get(i);
-			if(template.kind() != NodeKind.FUNCTION_INPUT && template.kind() != NodeKind.FUNCTION_OUTPUT)
-				continue;
-			PlacementGraphFingerprint.HopOccurrence boundary = occurrences.get(i);
-			for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
-				Hop hop = occurrences.get(callIndex).hop();
-				if(!(hop instanceof FunctionOp) || !functionMatches((FunctionOp) hop, boundary.namespace()))
-					continue;
-				Node call = nodes.get(callIndex);
-				String callPath = call.key().callSitePath() + "->" + boundary.namespace();
-				String context = "callsite:" + call.key().normalizedSignature();
-				ControlRegionKey region = new ControlRegionKey(template.key().programFingerprint(), boundary.namespace(),
-					List.of(call.key().callSitePath(), boundary.path()), callPath, context);
-				CompiledHopKey key = new CompiledHopKey(template.key().programFingerprint(), boundary.namespace(), callPath,
-					context, region, template.key().emittedHopInstance() + "@" + callIndex,
-					template.key().canonicalSourceOrigin());
-				Set<String> predecessors = new java.util.TreeSet<>(template.valueVersion().predecessorVersions());
-				predecessors.add("callsite:" + call.key().normalizedSignature());
-				ValueVersionKey value = new ValueVersionKey(template.valueVersion().programFingerprint(),
-					template.valueVersion().lexicalVariable(), region, template.valueVersion().definitionOrdinal(),
-					template.valueVersion().versionKind(), new ArrayList<>(predecessors));
-				expanded.add(new Node(key, template.kind(), value, template.emittedWork(),
-					template.legalAlternatives(), template.exclusions(), template.anchors()));
-				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, call.key(), key, -1,
-					"function-callsite:" + boundary.namespace()));
-			}
-		}
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints));
 	}
@@ -329,23 +413,14 @@ public final class NeutralPlacementGraphBuilder {
 	private record FunctionExpansion(List<Node> nodes, List<Constraint> constraints) { }
 
 	private static void addCfgConstraints(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
-		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints) {
+		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints, CfgAnalysis cfg) {
 		for(int i = 0; i < occurrences.size(); i++) {
 			Node target = nodes.get(i);
-			PlacementGraphFingerprint.HopOccurrence targetOccurrence = occurrences.get(i);
 			if(target.valueVersion().versionKind() == VersionKind.BRANCH_JOIN_PHI
 				|| target.valueVersion().versionKind() == VersionKind.LOOP_HEAD_PHI) {
-				for(int j = 0; j < occurrences.size(); j++) {
-					if(i == j) continue;
-					Node predecessor = nodes.get(j);
-					PlacementGraphFingerprint.HopOccurrence predecessorOccurrence = occurrences.get(j);
-					if(targetOccurrence.namespace().equals(predecessorOccurrence.namespace())
-						&& target.valueVersion().lexicalVariable().equals(predecessor.valueVersion().lexicalVariable())
-						&& (predecessor.kind() == NodeKind.TRANSIENT_WRITE
-							|| predecessor.valueVersion().versionKind() == VersionKind.LOOP_BACKEDGE))
-						constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, predecessor.key(), target.key(),
-							-1, target.valueVersion().versionKind().name()));
-				}
+				for(int definition : cfg.reachingDefinitions().get(i))
+					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, nodes.get(definition).key(), target.key(),
+						-1, target.valueVersion().versionKind().name()));
 			}
 		}
 		for(int i = 0; i < occurrences.size(); i++) {
@@ -359,6 +434,19 @@ public final class NeutralPlacementGraphBuilder {
 							-1, left.getFunctionKey()));
 				}
 			}
+		}
+	}
+
+	private static void addStableOriginConstraints(List<Node> nodes, Set<Constraint> constraints) {
+		for(Node clone : nodes) {
+			if(clone.kind() != NodeKind.CLONE) continue;
+			List<Node> origins = new ArrayList<>();
+			for(Node candidate : nodes)
+				if(candidate.kind() != NodeKind.CLONE && candidate.key().canonicalSourceOrigin()
+					.equals(clone.key().canonicalSourceOrigin())) origins.add(candidate);
+			if(origins.size() == 1)
+				constraints.add(new Constraint(ConstraintKind.SAME_ORIGIN, origins.get(0).key(), clone.key(),
+					-1, "stable-origin"));
 		}
 	}
 
@@ -579,18 +667,6 @@ public final class NeutralPlacementGraphBuilder {
 	private static boolean isTransientRead(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.TRANSIENTREAD; }
 	private static boolean isTransientWrite(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.TRANSIENTWRITE; }
 	private static boolean isFunctionOutput(Hop h) { return h instanceof DataOp && ((DataOp) h).getOp() == OpOpData.FUNCTIONOUTPUT; }
-	private static VersionKind versionKind(Hop hop, PlacementGraphFingerprint.HopOccurrence occurrence,
-		String context, List<ValueVersionKey> priorDefinitions) {
-		if(context.equals("recompile")) return VersionKind.CLONE_RECOMPILE;
-		if(isFunctionOutput(hop)) return VersionKind.FUNCTION_OUTPUT;
-		if(isTransientRead(hop) && !"main".equals(occurrence.namespace())
-			&& (priorDefinitions == null || priorDefinitions.isEmpty())) return VersionKind.FUNCTION_INPUT;
-		if(occurrence.path().contains("loop-") && isTransientWrite(hop)) return VersionKind.LOOP_BACKEDGE;
-		if(occurrence.path().contains("loop-") && isTransientRead(hop)) return VersionKind.LOOP_HEAD_PHI;
-		if(isTransientRead(hop) && priorDefinitions != null && priorDefinitions.size() > 1)
-			return VersionKind.BRANCH_JOIN_PHI;
-		return VersionKind.ORDINARY;
-	}
 	private static String lexicalVariable(Hop h, int ordinal) {
 		return h instanceof DataOp && h.getName() != null && !h.getName().isBlank() ? h.getName() : "value-" + ordinal;
 	}
@@ -602,14 +678,15 @@ public final class NeutralPlacementGraphBuilder {
 		if(value.versionKind() == VersionKind.BRANCH_JOIN_PHI) return NodeKind.BRANCH_JOIN;
 		if(isTransientRead(h)) return NodeKind.TRANSIENT_READ;
 		if(isTransientWrite(h)) return NodeKind.TRANSIENT_WRITE;
-		if(isFunctionOutput(h)) return NodeKind.FUNCTION_OUTPUT;
+		if(isFunctionOutput(h)) return NodeKind.TRANSIENT_WRITE;
 		if(h instanceof FunctionOp) return NodeKind.FUNCTION_CALL;
 		return NodeKind.OPERATION;
 	}
 	private static String structuralFingerprint(List<PlacementGraphFingerprint.HopOccurrence> hops) {
 		List<String> rows = new ArrayList<>();
 		for(PlacementGraphFingerprint.HopOccurrence h : hops)
-			rows.add(h.namespace() + '|' + h.path() + '|' + PlacementGraphFingerprint.structuralKey(h.hop()));
+			rows.add(h.namespace() + '|' + h.path() + '|' + h.topology() + '|'
+				+ PlacementGraphFingerprint.semanticStructuralKey(h.hop()));
 		Collections.sort(rows);
 		return PlacementGraphFingerprint.sha256(String.join("\n", rows));
 	}

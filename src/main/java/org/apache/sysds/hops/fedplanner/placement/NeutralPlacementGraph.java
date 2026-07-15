@@ -57,7 +57,8 @@ public final class NeutralPlacementGraph {
 		SAME_FTYPE,
 		DOMINATES,
 		CONJUNCTIVE,
-		DISTINCT_CONTEXT
+		DISTINCT_CONTEXT,
+		SAME_ORIGIN
 	}
 
 	public enum ReasonCode {
