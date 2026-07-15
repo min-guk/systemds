@@ -10,12 +10,14 @@ import java.util.Set;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.LegacyDpOfflineSelectedCapture;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.R4ExactPrivateCostDpFixtures;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.R4ExactPrivateCostMinstFixtures;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.jgrapht.Graph;
@@ -24,8 +26,21 @@ import org.junit.Assert;
 
 /** Exact producer-bound all-22 input gate. */
 final class CampaignBFrozenCostFixtureBridge {
-	record RoleAlias(String literalKey,String role,CompiledHopKey compiledKey,long producerHopId) { }
-	sealed interface CostSelectionInput permits DpMemoInput,MinstGraphInput,FullPathInput {
+	sealed interface EvidenceRole permits RoleAlias,PlanReceiptRole,AnalysisReceiptRole,GraphExclusionRole { }
+	record RoleAlias(String literalKey,String role,CompiledHopKey compiledKey,long producerHopId) implements EvidenceRole { }
+	record PlanReceiptRole(FedPlan rootPlan) implements EvidenceRole { public PlanReceiptRole { if(rootPlan==null)throw new IllegalArgumentException("rootPlan"); } }
+	record AnalysisReceiptRole(PlacementAnalysis analysis) implements EvidenceRole { public AnalysisReceiptRole { if(analysis==null)throw new IllegalArgumentException("analysis"); } }
+	record GraphExclusionRole(DpPlacementAdapter.GraphExclusionReceipt receipt) implements EvidenceRole {
+		public GraphExclusionRole { if(receipt==null)throw new IllegalArgumentException("receipt"); }
+	}
+	sealed interface FullPathReceipt permits RetainedPlanReceipt,ExistingCertificateReceipt { }
+	record RetainedPlanReceipt(LegacyDpOfflineSelectedCapture.RetainedFullPath retained) implements FullPathReceipt {
+		public RetainedPlanReceipt { if(retained==null)throw new IllegalArgumentException("retained"); }
+	}
+	record ExistingCertificateReceipt(FullPathCertificate certificate) implements FullPathReceipt {
+		public ExistingCertificateReceipt { if(certificate==null)throw new IllegalArgumentException("certificate"); }
+	}
+	sealed interface CostSelectionInput permits DpMemoInput,MinstGraphInput,FullPathInput,GraphExclusionInput {
 		R4CostAdapterBridge.Planner planner(); String fixtureId(); PlacementAnalysis analysis();
 		List<RoleAlias> aliases(); String inputFingerprint(); Object producer();
 	}
@@ -40,7 +55,7 @@ final class CampaignBFrozenCostFixtureBridge {
 		List<String> selectedStates,List<String> selectedPlans,List<String> registrySnapshots,String semanticFacts,String nodeKind,
 		List<String> caps,String reason) { }
 	record DpMemoInput(String fixtureId,PlacementAnalysis analysis,FederatedPlannerDpMemoTable memo,Hop root,
-		List<FedPlan> enumeratedPlans,FedPlan selectedPlan,List<RoleAlias> aliases,String inputFingerprint)
+		List<FedPlan> enumeratedPlans,FedPlan selectedPlan,String tiePolicy,List<RoleAlias> aliases,String inputFingerprint)
 		implements CostSelectionInput {
 		public R4CostAdapterBridge.Planner planner(){return R4CostAdapterBridge.Planner.DP;}
 		public Object producer(){return memo;}
@@ -53,7 +68,20 @@ final class CampaignBFrozenCostFixtureBridge {
 		public Object producer(){return graph;}
 	}
 	record FullPathInput(R4CostAdapterBridge.Planner planner,String fixtureId,PlacementAnalysis analysis,
-		List<RoleAlias> aliases,FullPathCertificate certificate,String inputFingerprint) implements CostSelectionInput {
+		List<RoleAlias> aliases,FullPathReceipt certificate,String inputFingerprint) implements CostSelectionInput {
+		public Object producer(){return analysis;}
+	}
+	record GraphExclusionInput(String fixtureId,String sourceFixture,long seed,PlacementAnalysis analysis,
+		DpPlacementAdapter.Result result,DpPlacementAdapter.GraphExclusionReceipt receipt,String inputFingerprint)
+		implements CostSelectionInput {
+		public GraphExclusionInput {
+			if(fixtureId==null||sourceFixture==null||analysis==null||result==null||receipt==null||inputFingerprint==null)
+				throw new IllegalArgumentException("Graph exclusion input fields must be non-null");
+			if(result.analysis()!=analysis||result.producer()!=analysis||result.certificateReceipts().stream().noneMatch(x->x==receipt))
+				throw new IllegalArgumentException("Graph exclusion input identity differs");
+		}
+		public R4CostAdapterBridge.Planner planner(){return R4CostAdapterBridge.Planner.DP;}
+		public List<RoleAlias> aliases(){return List.of();}
 		public Object producer(){return analysis;}
 	}
 	record Arm(String name,String bFixture,DMLProgram program,PlacementAnalysis analysis,
@@ -76,17 +104,17 @@ final class CampaignBFrozenCostFixtureBridge {
 		for(var f:R4ExactPrivateCostDpFixtures.all()) if(f.id().equals(id)) inputs.add(dp(f));
 		for(var f:R4ExactPrivateCostMinstFixtures.all()) if(f.id().equals(id)) inputs.add(minst(f));
 		if(id.equals("C2-DP-04-ANCHOR-CONTRAST")) {
-			Arm concrete;
-			Arm missing;
-			try{concrete=arm("CONCRETE_ANCHOR","B-11");missing=arm("MISSING_ANCHOR","B-12");}
-			catch(Exception x){throw new AssertionError("R4_DP04_ARM_BUILD",x);}
-			arms.add(concrete);arms.add(missing);
-			try{inputs.add(dpArm(id+":CONCRETE",concrete,expected,true));}
+			Arm owner;
+			try{owner=arm("ANCHOR_CONTRAST_OWNER","B-01");}
+			catch(Exception x){throw new AssertionError("R4_DP04_OWNER_BUILD",x);}
+			arms.add(owner);
+			try{inputs.add(dpAnchor(id+":CONCRETE",owner,true));}
 			catch(Exception x){throw new AssertionError("R4_DP04_CONCRETE_PRODUCER",x);}
-			try{inputs.add(dpArm(id+":MISSING",missing,expected,false));}
+			try{inputs.add(dpAnchor(id+":MISSING",owner,false));}
 			catch(Exception x){throw new AssertionError("R4_DP04_MISSING_PRODUCER",x);}
 		}
-		else if(inputs.isEmpty()) { Arm a=arm("FULL_PATH",FULL_PATH.get(id));arms.add(a);inputs.add(full(planner,id,a,expected)); }
+		else if(inputs.isEmpty()) { Arm a=arm("FULL_PATH",FULL_PATH.get(id));arms.add(a);
+			inputs.add(id.equals("C2-DP-08-UNKNOWN-METADATA")?graphExclusion(id,a):full(planner,id,a,expected)); }
 		Map<String,String> pre=Map.of("inputCount",String.valueOf(inputs.size()),"armCount",String.valueOf(arms.size()),
 			"producerKinds",inputs.stream().map(x->x.producer().getClass().getName()).toList().toString());
 		String digest=CampaignBContractProbe.sha256(expected.planner()+'|'+id+'|'+inputs.stream()
@@ -115,27 +143,14 @@ final class CampaignBFrozenCostFixtureBridge {
 
 	private static DpMemoInput dp(R4ExactPrivateCostDpFixtures.Fixture f)throws Exception{
 		List<RoleAlias> aliases=aliases(f.analysis(),f.literalAliases(),f.namedRoles());
-		return new DpMemoInput(f.id(),f.analysis(),f.memo(),f.root(),List.copyOf(f.enumeratedPlans()),f.selectedPlan(),aliases,
-			CampaignBContractProbe.sha256(f.id()+"|"+f.analysis().analysisFingerprint()+"|"+stableAliases(aliases)+"|DP_MEMO"));
+		String tiePolicy=f.facts().getOrDefault("tieRule","NONE");
+		return new DpMemoInput(f.id(),f.analysis(),f.memo(),f.root(),List.copyOf(f.enumeratedPlans()),f.selectedPlan(),tiePolicy,aliases,
+			CampaignBContractProbe.sha256(f.id()+"|"+f.analysis().analysisFingerprint()+"|"+stableAliases(aliases)+"|"+tiePolicy+"|DP_MEMO"));
 	}
-	private static DpMemoInput dpArm(String id,Arm arm,CampaignBLiteralAuthority.Expected expected,
-		boolean concreteAnchor)throws Exception{
-		Map<String,Hop> literalHops=new LinkedHashMap<>();
-		List<String> literalKeys=expected.assignments().isEmpty()?expected.rows().stream()
-			.map(r->r.fields().get("key")).filter(java.util.Objects::nonNull).distinct().toList():
-			expected.assignments().keySet().stream().toList();
-		for(String literal:literalKeys) {
-			var exact=arm.analysis().occurrences().stream().filter(o->o.key().normalizedSignature().equals(literal)).toList();
-			var structural=arm.analysis().occurrences().stream().filter(o->concreteAnchor?
-				(o.hop().getClass().getName().endsWith("BinaryOp")&&o.hop().getOpString().equals("b(+)")):
-				(o.hop().getClass().getName().endsWith("DataGenOp")&&o.hop().getOpString().equals("dg(rand)"))).toList();
-			if(exact.size()>1||exact.isEmpty()&&structural.size()!=1)throw new AssertionError("R4_DP04_TYPED_ROLE_BIJECTION|arm="+
-				arm.name()+"|literal="+literal+"|exact="+exact.size()+"|structural="+structural.size());
-			var occurrence=exact.isEmpty()?structural.get(0):exact.get(0);
-			literalHops.put(literal,occurrence.hop());
-		}
-		Hop root=literalHops.values().iterator().next();
-		return dp(R4ExactPrivateCostDpFixtures.anchorContrast(id,arm.analysis(),root,literalHops,concreteAnchor));
+	private static DpMemoInput dpAnchor(String id,Arm arm,boolean concreteAnchor)throws Exception{
+		var owner=arm.analysis().occurrences().get(1);
+		return dp(R4ExactPrivateCostDpFixtures.anchorContrast(id,arm.analysis(),owner.hop(),
+			Map.of(owner.key().normalizedSignature(),owner.hop()),concreteAnchor));
 	}
 	private static MinstGraphInput minst(R4ExactPrivateCostMinstFixtures.Fixture f)throws Exception{
 		List<RoleAlias> aliases=aliases(f.analysis(),f.literalAliases(),f.namedRoles());
@@ -145,6 +160,15 @@ final class CampaignBFrozenCostFixtureBridge {
 	}
 	private static FullPathInput full(R4CostAdapterBridge.Planner planner,String id,Arm arm,
 		CampaignBLiteralAuthority.Expected expected){
+		if(planner==R4CostAdapterBridge.Planner.DP){
+			try{
+				var retained=LegacyDpOfflineSelectedCapture.captureFullPath(id,arm.bFixture(),arm.program(),arm.analysis());
+				validateRetained(arm.analysis(),retained);
+				List<RoleAlias> liveAliases=arm.analysis().occurrences().stream().map(o->new RoleAlias(
+					o.key().normalizedSignature(),"compiled",o.key(),o.hop().getHopID())).toList();
+				return new FullPathInput(planner,id,arm.analysis(),liveAliases,new RetainedPlanReceipt(retained),arm.fingerprint());
+			}catch(AssertionError e){throw e;}catch(Exception e){throw new AssertionError("R4_DP_FULL_RETAINED_CAPTURE|"+id,e);}
+		}
 		List<RoleAlias> aliases=new ArrayList<>();Set<String> literals=new LinkedHashSet<>(expected.assignments().keySet());
 		expected.rows().stream().map(r->r.fields().get("key")).filter(java.util.Objects::nonNull).forEach(literals::add);
 		for(String literal:literals){var match=arm.analysis().occurrences().stream().filter(x->x.key().normalizedSignature().equals(literal)).findFirst();
@@ -158,7 +182,56 @@ final class CampaignBFrozenCostFixtureBridge {
 		var cert=new FullPathCertificate(-1L,id,arm.analysis().analysisFingerprint(),Double.doubleToLongBits(roots.isEmpty()?0d:roots.get(0).getOutputMemEstimate()),"DOUBLE_HEX","EXACT_BITS",
 			occurrences,children,occurrences,conflicts,occurrences,states,states,List.of(),arm.analysis().analysisFingerprint(),
 			arm.analysis().occurrences().get(0).hop().getClass().getName(),arm.analysis().occurrences().stream().map(o->o.hop().getClass().getSimpleName()+":"+o.hop().getOpString()).sorted().toList(),"ANALYSIS_CERTIFICATE");
-		return new FullPathInput(planner,id,arm.analysis(),List.copyOf(aliases),cert,arm.fingerprint());
+		return new FullPathInput(planner,id,arm.analysis(),List.copyOf(aliases),new ExistingCertificateReceipt(cert),arm.fingerprint());
+	}
+	private static GraphExclusionInput graphExclusion(String id,Arm arm){
+		var result=new DpPlacementAdapter().select(arm.analysis());
+		var reasonOnly=result.certificateReceipts().stream().filter(receipt->receipt.exclusion().reasonCode()==
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode.UNKNOWN_METADATA).toList();
+		if(reasonOnly.size()<=1)throw new AssertionError("R4_DP08_REASON_ONLY_AMBIGUITY|matches="+reasonOnly.size());
+		var receipt=selectGraphExclusion(reasonOnly);
+		if(receipt.node().kind()!=org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE)
+			throw new AssertionError("R4_DP08_NODE_KIND|"+receipt.node().kind());
+		if(arm.analysis().graph().nodes().stream().flatMap(node->node.legalAlternatives().stream()).noneMatch(state->
+			state.execType()==org.apache.sysds.common.Types.ExecType.FED&&!state.shapeDependent()))
+			throw new AssertionError("R4_DP08_SHAPE_INDEPENDENT_FED_ALTERNATIVE_MISSING");
+		return new GraphExclusionInput(id,arm.bFixture(),-1L,arm.analysis(),result,receipt,arm.fingerprint());
+	}
+	static DpPlacementAdapter.GraphExclusionReceipt selectGraphExclusion(
+		List<DpPlacementAdapter.GraphExclusionReceipt> receipts){
+		var matches=receipts.stream().filter(receipt->receipt.exclusion().reasonCode()==
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode.UNKNOWN_METADATA
+			&&receipt.exclusion().state().execType()==org.apache.sysds.common.Types.ExecType.FED
+			&&receipt.exclusion().state().shapeDependent()).toList();
+		if(matches.size()!=1)throw new AssertionError("R4_DP08_GRAPH_EXCLUSION_BIJECTION|matches="+matches.size());
+		return matches.get(0);
+	}
+	private static void validateRetained(PlacementAnalysis analysis,LegacyDpOfflineSelectedCapture.RetainedFullPath retained){
+		if(retained.rootPlan()==null||retained.rootHops().isEmpty())throw new AssertionError("R4_DP_RETAINED_ROOT_EMPTY");
+		if(retained.memo()==null)throw new AssertionError("R4_DP_RETAINED_MEMO_NULL");
+		if(retained.rootPlan().getChildFedPlans().size()!=retained.rootChildPlanReceipts().size()
+			||retained.rootHops().size()!=retained.rootChildPlanReceipts().size())
+			throw new AssertionError("R4_DP_RETAINED_ROOT_CARDINALITY");
+		Set<Hop> roots=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		Set<FedPlan> rootPlans=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		for(int i=0;i<retained.rootChildPlanReceipts().size();i++){
+			FedPlan selected=retained.rootChildPlanReceipts().get(i);Hop root=retained.rootHops().get(i);
+			if(selected==null||root==null)throw new AssertionError("R4_DP_RETAINED_ROOT_NULL");
+			if(!rootPlans.add(selected)||!roots.add(root))throw new AssertionError("R4_DP_RETAINED_ROOT_DUPLICATE");
+			if(retained.memo().getFedPlanAfterPrune(retained.rootPlan().getChildFedPlans().get(i))!=selected
+				||selected.getHopRef()!=root)throw new AssertionError("R4_DP_RETAINED_ROOT_REACHABILITY|index="+i);
+		}
+		if(retained.selectedPlanEdges().size()!=retained.selectedPlanReceipts().size())
+			throw new AssertionError("R4_DP_RETAINED_SELECTED_CARDINALITY");
+		Set<FedPlan> selectedPlans=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		for(int i=0;i<retained.selectedPlanReceipts().size();i++){
+			var edge=retained.selectedPlanEdges().get(i);FedPlan selected=retained.selectedPlanReceipts().get(i);
+			if(selected==null||selected.getHopRef()==null)throw new AssertionError("R4_DP_RETAINED_SELECTED_NULL");
+			if(!selectedPlans.add(selected))throw new AssertionError("R4_DP_RETAINED_SELECTED_DUPLICATE");
+			var variants=retained.memo().getFedPlanVariants(edge);
+			if(variants==null||variants.getFedPlanVariants().stream().noneMatch(plan->plan==selected))
+				throw new AssertionError("R4_DP_RETAINED_SELECTED_REACHABILITY|index="+i);
+		}
 	}
 	private static CutCertificate cutCertificate(Graph<Long,DefaultWeightedEdge> graph,List<RoleAlias> aliases){
 		var solver=new org.jgrapht.alg.flow.PushRelabelMFImpl<Long,DefaultWeightedEdge>(graph);solver.calculateMinCut(-1L,-2L);

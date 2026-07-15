@@ -15,10 +15,11 @@ public class CampaignBR4CostSelfTest {
 		for(var e:groups){CampaignBFrozenCostFixtureBridge.Fixture a,b;try{a=CampaignBFrozenCostFixtureBridge.fresh(e);b=CampaignBFrozenCostFixtureBridge.fresh(e);}
 			catch(Exception x){throw new AssertionError("R4_RECIPE_BUILD|"+e.planner()+"|"+e.fixture(),x);}
 			Assert.assertEquals(a.planner()+"|"+a.id(),a.digest(),b.digest());Assert.assertTrue(digests.add(a.planner()+'|'+a.id()+'|'+a.digest()));
-			if(a.id().equals("C2-DP-04-ANCHOR-CONTRAST")){dual++;Assert.assertEquals(Set.of("B-11","B-12"),a.arms().stream().map(CampaignBFrozenCostFixtureBridge.Arm::bFixture).collect(java.util.stream.Collectors.toSet()));
+			if(a.id().equals("C2-DP-04-ANCHOR-CONTRAST")){dual++;Assert.assertEquals(Set.of("B-01"),a.arms().stream().map(CampaignBFrozenCostFixtureBridge.Arm::bFixture).collect(java.util.stream.Collectors.toSet()));
 				Assert.assertEquals(2,a.inputs().size());Assert.assertTrue(a.inputs().stream().allMatch(x->x instanceof CampaignBFrozenCostFixtureBridge.DpMemoInput));
 				var concrete=(CampaignBFrozenCostFixtureBridge.DpMemoInput)a.inputs().get(0);var missing=(CampaignBFrozenCostFixtureBridge.DpMemoInput)a.inputs().get(1);
-				Assert.assertNotSame(concrete.analysis(),missing.analysis());Assert.assertNotSame(concrete.memo(),missing.memo());Assert.assertNotSame(concrete.root(),missing.root());
+				Assert.assertSame(concrete.analysis(),missing.analysis());Assert.assertNotSame(concrete.memo(),missing.memo());Assert.assertSame(concrete.root(),missing.root());
+				Assert.assertEquals(concrete.aliases().get(0).compiledKey(),missing.aliases().get(0).compiledKey());Assert.assertNotEquals(concrete.inputFingerprint(),missing.inputFingerprint());
 				Assert.assertSame(concrete.root(),concrete.analysis().hop(concrete.aliases().get(0).compiledKey()).orElseThrow());
 				Assert.assertSame(missing.root(),missing.analysis().hop(missing.aliases().get(0).compiledKey()).orElseThrow());
 				Assert.assertEquals("FOUT",concrete.selectedPlan().getFedOutType().name());Assert.assertEquals("LOUT",missing.selectedPlan().getFedOutType().name());}
@@ -59,10 +60,15 @@ public class CampaignBR4CostSelfTest {
 		var groups=CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest")));
 		int checked=0;var kinds=R4CostAdapterBridge.EvidenceKind.values();
 		for(var expected:groups){
-			var input=CampaignBFrozenCostFixtureBridge.fresh(expected).input();var role=input.aliases().get(0);
+			var input=CampaignBFrozenCostFixtureBridge.fresh(expected).input();
 			for(var row:expected.rows())for(String field:row.fields().keySet()){
 				var coordinate=new R4CostAdapterBridge.FieldCoordinate(row.digest(),row.kind(),field);
-				var corrupt=new R4CostAdapterBridge.TypedEvidence(kinds[checked%kinds.length],new Object(),role,coordinate,R4CostAdapterBridge.ReceiptField.ANALYSIS,new Object());
+				var corrupt=input instanceof CampaignBFrozenCostFixtureBridge.GraphExclusionInput graph?
+					new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,new Object(),
+						new CampaignBFrozenCostFixtureBridge.GraphExclusionRole(graph.receipt()),coordinate,
+						R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,graph.receipt()):
+					new R4CostAdapterBridge.TypedEvidence(kinds[checked%kinds.length],new Object(),input.aliases().get(0),coordinate,
+						R4CostAdapterBridge.ReceiptField.ANALYSIS,new Object());
 				CampaignBLiteralAuthority.expect("R4_TYPED_PRODUCER_IDENTITY",()->R4CostTypedExtractor.derive(expected,input,List.of(corrupt)));checked++;
 			}
 		}
@@ -128,7 +134,11 @@ public class CampaignBR4CostSelfTest {
 					if(req.dp04Arm()!=null&&!input.fixtureId().endsWith(':'+req.dp04Arm()))continue;
 					int ordinal=java.util.stream.IntStream.range(0,expected.rows().size()).filter(i->expected.rows().get(i).kind().equals(row.kind())&&expected.rows().get(i).digest().equals(row.digest())).findFirst().orElseThrow();
 					ordinal=(int)expected.rows().subList(0,ordinal).stream().filter(r->r.kind().equals(row.kind())).count();
-					Object receipt=receipt(input,req.receiptField(),row.kind(),field,ordinal);var role=receipt instanceof CampaignBFrozenCostFixtureBridge.RepairCertificate r?r.role():
+					Object receipt=receipt(input,req.receiptField(),row.kind(),field,ordinal);var role=receipt instanceof org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.GraphExclusionReceipt r?
+						new CampaignBFrozenCostFixtureBridge.GraphExclusionRole(r):
+						receipt instanceof CampaignBFrozenCostFixtureBridge.RetainedPlanReceipt r?
+						new CampaignBFrozenCostFixtureBridge.PlanReceiptRole(r.retained().rootPlan()):
+						receipt instanceof CampaignBFrozenCostFixtureBridge.RepairCertificate r?r.role():
 						receipt instanceof CampaignBFrozenCostFixtureBridge.RegistryCertificate r?r.producer():
 						receipt instanceof org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.SelectedObligation o?
 							input.aliases().stream().filter(a->a.producerHopId()==o.getChildHopId()).findFirst().orElseThrow():input.aliases().get(0);
@@ -139,6 +149,103 @@ public class CampaignBR4CostSelfTest {
 			try{var actual=R4CostTypedExtractor.extract(expected,List.copyOf(selections));Assert.assertEquals(expected.facts().size(),actual.facts().size());}
 			catch(RuntimeException x){throw new AssertionError("R4_POSITIVE_COORDINATE|"+expected.fixture(),x);}
 		}
+	}
+	@Test public void allDpCoordinatesAreTestBuiltFromExactLiveReceipts()throws Exception{
+		for(var expected:CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(
+			CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
+			.filter(e->e.planner().equals("DP")).toList()){
+			var fixture=CampaignBFrozenCostFixtureBridge.fresh(expected);
+			List<R4CostAdapterBridge.Selection> selections=new java.util.ArrayList<>();
+			for(var input:fixture.inputs()){
+				var live=selection(input,List.of());
+				var evidence=R4CostTypedExtractor.testEvidence(expected,live);
+				Assert.assertFalse(evidence.isEmpty());
+				Assert.assertTrue(evidence.stream().allMatch(e->e.producer()==live.producer()));
+				selections.add(live);
+			}
+			Assert.assertEquals(expected.facts(),R4CostTypedExtractor.extract(expected,List.copyOf(selections)).facts());
+		}
+	}
+	@Test public void dpGraphExclusionReceiptsPreserveExactIdentityAndDoNotMutate()throws Exception{
+		var expected=CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(
+			CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
+			.filter(e->e.fixture().equals("C2-DP-08-UNKNOWN-METADATA")&&e.planner().equals("DP")).findFirst().orElseThrow();
+		var input=(CampaignBFrozenCostFixtureBridge.GraphExclusionInput)CampaignBFrozenCostFixtureBridge.fresh(expected).input();
+		String before=input.analysis().graph().normalizedSignature();
+		var selected=R4CostAdapterBridge.select(input);
+		Assert.assertSame(input.analysis(),selected.analysis());Assert.assertSame(input.analysis(),selected.producer());
+		Assert.assertEquals(input.result().certificateReceipts().size(),selected.certificateReceipts().size());
+		for(int i=0;i<selected.certificateReceipts().size();i++)
+			Assert.assertSame(input.result().certificateReceipts().get(i),selected.certificateReceipts().get(i));
+		Assert.assertTrue(selected.certificateReceipts().stream().anyMatch(receipt->receipt==input.receipt()));
+		Assert.assertEquals(before,input.analysis().graph().normalizedSignature());
+		long reasonOnly=input.result().certificateReceipts().stream().filter(receipt->receipt.exclusion().reasonCode()==
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode.UNKNOWN_METADATA).count();
+		Assert.assertTrue(reasonOnly>1);
+		Assert.assertEquals(1,input.result().certificateReceipts().stream().filter(receipt->
+			receipt.exclusion().reasonCode()==org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode.UNKNOWN_METADATA
+			&&receipt.exclusion().state().execType()==org.apache.sysds.common.Types.ExecType.FED
+			&&receipt.exclusion().state().shapeDependent()).count());
+		Assert.assertTrue(input.analysis().graph().nodes().stream().flatMap(node->node.legalAlternatives().stream()).anyMatch(state->
+			state.execType()==org.apache.sysds.common.Types.ExecType.FED&&!state.shapeDependent()));
+	}
+	@Test public void copiedGraphExclusionReceiptComponentsAreRejected()throws Exception{
+		var expected=CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(
+			CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
+			.filter(e->e.fixture().equals("C2-DP-08-UNKNOWN-METADATA")&&e.planner().equals("DP")).findFirst().orElseThrow();
+		var input=(CampaignBFrozenCostFixtureBridge.GraphExclusionInput)CampaignBFrozenCostFixtureBridge.fresh(expected).input();var exact=input.receipt();
+		var copiedOccurrence=new org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection(
+			exact.occurrence().key(),exact.occurrence().hop(),exact.occurrence().normalizedOrdinal(),exact.occurrence().normalizedSignature());
+		Assert.assertThrows(IllegalArgumentException.class,()->new org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.GraphExclusionReceipt(
+			input.analysis(),copiedOccurrence,exact.node(),exact.exclusion()));
+		var copiedNode=new org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node(exact.node().key(),exact.node().kind(),
+			exact.node().valueVersion(),exact.node().emittedWork(),exact.node().legalAlternatives(),exact.node().exclusions(),exact.node().anchors());
+		Assert.assertThrows(IllegalArgumentException.class,()->new org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.GraphExclusionReceipt(
+			input.analysis(),exact.occurrence(),copiedNode,exact.exclusion()));
+		var copiedExclusion=new org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion(exact.exclusion().state(),
+			exact.exclusion().reasonCode(),exact.exclusion().detail());
+		Assert.assertThrows(IllegalArgumentException.class,()->new org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.GraphExclusionReceipt(
+			input.analysis(),exact.occurrence(),exact.node(),copiedExclusion));
+		var reordered=new java.util.ArrayList<>(input.result().certificateReceipts());java.util.Collections.reverse(reordered);
+		Assert.assertThrows(IllegalArgumentException.class,()->new org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Result(
+			input.analysis(),reordered,input.analysis().analysisFingerprint()));
+		Assert.assertThrows(AssertionError.class,()->CampaignBFrozenCostFixtureBridge.selectGraphExclusion(List.of()));
+		Assert.assertThrows(AssertionError.class,()->CampaignBFrozenCostFixtureBridge.selectGraphExclusion(List.of(exact,exact)));
+	}
+	@Test public void copiedForeignAndSubstitutedGraphExclusionRolesAreRejected()throws Exception{
+		var expected=CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(
+			CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
+			.filter(e->e.fixture().equals("C2-DP-08-UNKNOWN-METADATA")&&e.planner().equals("DP")).findFirst().orElseThrow();
+		var input=(CampaignBFrozenCostFixtureBridge.GraphExclusionInput)CampaignBFrozenCostFixtureBridge.fresh(expected).input();var exact=input.receipt();
+		var coordinate=new R4CostAdapterBridge.FieldCoordinate("receipt-test","NEUTRAL_GRAPH_EXCLUSION","reason");
+		var exactEvidence=new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,input.producer(),
+			new CampaignBFrozenCostFixtureBridge.GraphExclusionRole(exact),coordinate,R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,exact);
+		R4CostTypedExtractor.validateGraphExclusionEvidence(input,exactEvidence);
+		var copiedReceipt=new org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.GraphExclusionReceipt(
+			input.analysis(),exact.occurrence(),exact.node(),exact.exclusion());
+		var copied=new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,input.producer(),
+			new CampaignBFrozenCostFixtureBridge.GraphExclusionRole(copiedReceipt),coordinate,R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,copiedReceipt);
+		Assert.assertThrows(AssertionError.class,()->R4CostTypedExtractor.validateGraphExclusionEvidence(input,copied));
+		var foreign=(CampaignBFrozenCostFixtureBridge.GraphExclusionInput)CampaignBFrozenCostFixtureBridge.fresh(expected).input();
+		Assert.assertEquals(input.analysis().analysisFingerprint(),foreign.analysis().analysisFingerprint());Assert.assertNotSame(input.analysis(),foreign.analysis());
+		var foreignEvidence=new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,foreign.producer(),
+			new CampaignBFrozenCostFixtureBridge.GraphExclusionRole(foreign.receipt()),coordinate,R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,foreign.receipt());
+		Assert.assertThrows(AssertionError.class,()->R4CostTypedExtractor.validateGraphExclusionEvidence(input,foreignEvidence));
+		var retainedExpected=CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(
+			CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
+			.filter(e->e.fixture().equals("C2-DP-05-SHARED-DIAMOND")&&e.planner().equals("DP")).findFirst().orElseThrow();
+		var retained=(CampaignBFrozenCostFixtureBridge.RetainedPlanReceipt)
+			((CampaignBFrozenCostFixtureBridge.FullPathInput)CampaignBFrozenCostFixtureBridge.fresh(retainedExpected).input()).certificate();
+		var planRole=new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,input.producer(),
+			new CampaignBFrozenCostFixtureBridge.PlanReceiptRole(retained.retained().rootPlan()),coordinate,
+			R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,exact);
+		Assert.assertThrows(AssertionError.class,()->R4CostTypedExtractor.validateGraphExclusionEvidence(input,planRole));
+		var analysisRole=new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,input.producer(),
+			new CampaignBFrozenCostFixtureBridge.AnalysisReceiptRole(input.analysis()),coordinate,R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,exact);
+		Assert.assertThrows(AssertionError.class,()->R4CostTypedExtractor.validateGraphExclusionEvidence(input,analysisRole));
+		var nullRole=new R4CostAdapterBridge.TypedEvidence(R4CostAdapterBridge.EvidenceKind.GRAPH_EXCLUSION,input.producer(),null,
+			coordinate,R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION,exact);
+		Assert.assertThrows(AssertionError.class,()->R4CostTypedExtractor.validateGraphExclusionEvidence(input,nullRole));
 	}
 	@Test public void correctMinstObligationWithWrongChildRoleIsRejected()throws Exception{
 		var expected=CampaignBLiteralAuthority.group(CampaignBLiteralAuthority.parse(CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
@@ -169,17 +276,22 @@ public class CampaignBR4CostSelfTest {
 		if(input instanceof CampaignBFrozenCostFixtureBridge.DpMemoInput d)return new R4CostAdapterBridge.Selection(input,d.analysis(),d.memo(),d.root(),d.selectedPlan(),d.enumeratedPlans(),List.of(),List.of(),List.of(),d.analysis().analysisFingerprint(),evidence);
 		if(input instanceof CampaignBFrozenCostFixtureBridge.MinstGraphInput m){List<Object> certs=new java.util.ArrayList<>();certs.add(m.cutCertificate());certs.addAll(m.cutCertificate().edges());certs.addAll(m.repairCertificates());certs.addAll(m.registryCertificates());
 			return new R4CostAdapterBridge.Selection(input,m.analysis(),m.graph(),null,null,List.of(),m.selectedObligations(),m.registryReceipts(),List.copyOf(certs),m.analysis().analysisFingerprint(),evidence);}
+		if(input instanceof CampaignBFrozenCostFixtureBridge.GraphExclusionInput graph)return new R4CostAdapterBridge.Selection(input,input.analysis(),input.analysis(),null,null,List.of(),List.of(),List.of(),graph.result().certificateReceipts(),input.analysis().analysisFingerprint(),evidence);
 		var f=(CampaignBFrozenCostFixtureBridge.FullPathInput)input;return new R4CostAdapterBridge.Selection(input,input.analysis(),input.analysis(),null,null,List.of(),List.of(),List.of(),List.of(f.certificate()),input.analysis().analysisFingerprint(),evidence);
 	}
 	private static Object receipt(CampaignBFrozenCostFixtureBridge.CostSelectionInput input,R4CostAdapterBridge.ReceiptField field,String rowKind,String fieldName,int ordinal){
 		if(input instanceof CampaignBFrozenCostFixtureBridge.DpMemoInput d)return switch(field){case ANALYSIS->d.analysis();case DP_MEMO->d.memo();case DP_ROOT->d.root();case DP_SELECTED->d.selectedPlan();
 			case DP_ENUMERATED->{if(fieldName.equals("rank0Cost"))yield d.enumeratedPlans().get(0);if(fieldName.equals("rank1Cost"))yield d.enumeratedPlans().get(d.enumeratedPlans().size()-1);
+				if(fieldName.equals("cp")||fieldName.equals("fed")){var exec=fieldName.equals("cp")?org.apache.sysds.common.Types.ExecType.CP:org.apache.sysds.common.Types.ExecType.FED;
+					var matches=d.enumeratedPlans().stream().filter(p->p.getExecType()==exec).toList();if(matches.size()!=1)throw new AssertionError("R4_DP_EXEC_VARIANT_BIJECTION|fixture="+d.fixtureId()+"|exec="+exec+"|matches="+matches.size());yield matches.get(0);}
 				String output=fieldName.equals("lout")||fieldName.equals("cp")?"LOUT":"FOUT";yield d.enumeratedPlans().stream().filter(p->p.getFedOutType().name().equals(output)).findFirst().orElseThrow();}default->throw new AssertionError(field);};
 		if(input instanceof CampaignBFrozenCostFixtureBridge.MinstGraphInput m)return switch(field){case ANALYSIS->m.analysis();case MINST_GRAPH->m.graph();case MINST_CUT_CERTIFICATE->m.cutCertificate();case MINST_CUT_EDGE->m.cutCertificate().edges().get(ordinal);case MINST_REPAIR->m.repairCertificates().get(ordinal);
 			case MINST_OBLIGATION->{var producer=registryCertificate(m,rowKind).producer();yield m.selectedObligations().stream()
 				.map(org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.SelectedObligation.class::cast)
 				.filter(o->o.getChildHopId()==producer.producerHopId()).findFirst().orElseThrow();}
-			case MINST_REGISTRY->registryCertificate(m,rowKind);default->throw new AssertionError(field);};
+				case MINST_REGISTRY->registryCertificate(m,rowKind);default->throw new AssertionError(field);};
+		if(input instanceof CampaignBFrozenCostFixtureBridge.GraphExclusionInput graph){
+			if(field!=R4CostAdapterBridge.ReceiptField.GRAPH_EXCLUSION)throw new AssertionError(field);return graph.receipt();}
 		var full=(CampaignBFrozenCostFixtureBridge.FullPathInput)input;if(field==R4CostAdapterBridge.ReceiptField.ANALYSIS)return input.analysis();if(field==R4CostAdapterBridge.ReceiptField.FULL_CERTIFICATE)return full.certificate();throw new AssertionError(field);
 	}
 	private static CampaignBFrozenCostFixtureBridge.RegistryCertificate registryCertificate(

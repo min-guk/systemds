@@ -12,17 +12,19 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 /** Reflection-only boundary whose authority is exact producer identity, never supplied strings. */
 final class R4CostAdapterBridge {
 	enum Planner { DP, MIN_ST }
-	enum EvidenceKind { DP_MEMO,MINST_CUT,SELECTED_PLAN,SELECTED_CERTIFICATE,REGISTRY_SNAPSHOT,PLACEMENT_ANALYSIS }
+	enum EvidenceKind { DP_MEMO,MINST_CUT,SELECTED_PLAN,SELECTED_CERTIFICATE,REGISTRY_SNAPSHOT,PLACEMENT_ANALYSIS,GRAPH_EXCLUSION }
 	enum ReceiptField { ANALYSIS,DP_MEMO,DP_ROOT,DP_SELECTED,DP_ENUMERATED,MINST_GRAPH,MINST_CUT_EDGE,
-		MINST_CUT_CERTIFICATE,MINST_REPAIR,MINST_OBLIGATION,MINST_REGISTRY,FULL_CERTIFICATE }
+		MINST_CUT_CERTIFICATE,MINST_REPAIR,MINST_OBLIGATION,MINST_REGISTRY,FULL_CERTIFICATE,GRAPH_EXCLUSION }
 	record FieldCoordinate(String rowDigest,String rowKind,String fieldName) { }
-	record TypedEvidence(EvidenceKind kind,Object producer,CampaignBFrozenCostFixtureBridge.RoleAlias role,
+	record TypedEvidence(EvidenceKind kind,Object producer,CampaignBFrozenCostFixtureBridge.EvidenceRole role,
 		FieldCoordinate coordinate,ReceiptField receiptField,Object receipt) { }
 	record Selection(CampaignBFrozenCostFixtureBridge.CostSelectionInput input,PlacementAnalysis analysis,
 		Object producer,Hop root,Object selectedReceipt,List<?> orderedReceipts,List<?> obligationReceipts,
 		List<?> registryReceipts,List<?> certificateReceipts,String analysisFingerprint,List<TypedEvidence> evidence) { }
 
 	static Selection select(CampaignBFrozenCostFixtureBridge.CostSelectionInput input){
+		if(input instanceof CampaignBFrozenCostFixtureBridge.GraphExclusionInput graph)try{return normalize(input,graph.result());}
+		catch(ReflectiveOperationException e){throw new AssertionError("CAMPAIGN_B_REFLECTION_CONTRACT_BROKEN|planner="+input.planner()+"|cause="+e.getClass().getName());}
 		String simple=input.planner()==Planner.DP?"DpPlacementAdapter":"MinStPlacementAdapter";
 		String name="org.apache.sysds.hops.fedplanner.placement.adapter."+simple;
 		try{
@@ -56,8 +58,12 @@ final class R4CostAdapterBridge {
 			if(!sameObjects(obligations,m.selectedObligations())||!sameObjects(registries,m.registryReceipts()))
 				throw new AssertionError("R4_TYPED_PRODUCER_IDENTITY|fixture="+input.fixtureId()+"|receipt=MINST");
 		}
-		else certificates=objects(r,"certificateReceipts");
-		List<TypedEvidence> evidence=new ArrayList<>();for(Object h:(Iterable<?>)get(r,"typedEvidence")){
+		else {certificates=objects(r,"certificateReceipts");
+			if(input instanceof CampaignBFrozenCostFixtureBridge.GraphExclusionInput graph&&
+				(!sameObjects(certificates,graph.result().certificateReceipts())||certificates.stream().noneMatch(x->x==graph.receipt())))
+				throw new AssertionError("R4_TYPED_PRODUCER_IDENTITY|fixture="+input.fixtureId()+"|receipt=GRAPH_EXCLUSION");}
+		List<TypedEvidence> evidence=new ArrayList<>();
+		if(input.planner()==Planner.MIN_ST)for(Object h:(Iterable<?>)get(r,"typedEvidence")){
 			EvidenceKind kind=EvidenceKind.valueOf(String.valueOf(get(h,"kind")));
 			FieldCoordinate coordinate=new FieldCoordinate(str(h,"rowDigest"),str(h,"rowKind"),str(h,"fieldName"));
 			ReceiptField receiptField=ReceiptField.valueOf(String.valueOf(get(h,"receiptField")));

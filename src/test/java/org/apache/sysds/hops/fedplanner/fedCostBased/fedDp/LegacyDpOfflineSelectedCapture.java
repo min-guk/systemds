@@ -29,7 +29,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -39,6 +41,27 @@ import org.apache.sysds.test.component.federated.placement.shadow.ProductionShad
 
 /** Exact-base, offline observation of retained DP root and stable variant selection. */
 public final class LegacyDpOfflineSelectedCapture {
+	/** Typed receipt from the exact retained DP enumerate/rewrite path. */
+	public record RetainedFullPath(String rowId,String fixture,FederatedPlannerDpMemoTable memo,FedPlan rootPlan,
+		List<FedPlan> rootChildPlanReceipts,List<Hop> rootHops,List<Pair<Long,FederatedOutput>> selectedPlanEdges,
+		List<FedPlan> selectedPlanReceipts,long seed,double rootObjective,String floatNormalization,
+		String floatTolerance,List<String> rootChildren,int decisionCount,int conflictCount,int rewrittenCount,
+		List<String> selectedStates,List<String> selectedPlans,String semanticFacts,List<String> registrySnapshots) {
+		public RetainedFullPath {
+			if(memo==null)throw new IllegalArgumentException("memo");
+			if(rootPlan==null)throw new IllegalArgumentException("rootPlan");
+			rootChildPlanReceipts=List.copyOf(rootChildPlanReceipts);rootHops=List.copyOf(rootHops);
+			selectedPlanEdges=List.copyOf(selectedPlanEdges);selectedPlanReceipts=List.copyOf(selectedPlanReceipts);
+			rootChildren=List.copyOf(rootChildren);selectedStates=List.copyOf(selectedStates);
+			selectedPlans=List.copyOf(selectedPlans);registrySnapshots=List.copyOf(registrySnapshots);
+		}
+		String serialize(){return rowId+"|DP_FULL_OFFLINE_SELECTION|evidence=ACTUAL_RETAINED"
+			+"|seed="+seed+"|fixture="+fixture+"|rootObjective="+observedHex(rootObjective)
+			+"|observedFloatNormalization="+floatNormalization+"|observedFloatTolerance="+floatTolerance
+			+"|rootChildren="+rootChildren+"|decisionCount="+decisionCount+"|conflictCount="+conflictCount
+			+"|rewrittenCount="+rewrittenCount+"|selectedStates="+selectedStates+"|selectedPlans="+selectedPlans
+			+"|semanticFacts="+semanticFacts+"|registrySnapshots="+registrySnapshots;}
+	}
 	public static List<String> capture() throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		DMLProgram program = ProductionShadowFixtureFactory.compile("B-01");
@@ -60,10 +83,26 @@ public final class LegacyDpOfflineSelectedCapture {
 		rows.add(captureCompiledFixture("C2-X-09-BRANCH-JOIN", "B-02"));
 		rows.add(captureCompiledFixture("C2-X-10-FUNCTION-CALLSITE", "B-07"));
 		rows.add(captureCompiledFixture("C2-X-11-CLONE-RECOMPILE", "B-09"));
-		rows.add("C2-DP-08-UNKNOWN-METADATA|UNSUPPORTED_STRUCTURAL|seed=-1|fixture=B-21"
-			+ "|nodeKind=FEDERATED_FUNCTION_INPUT|emittedWork=true|caps=UNRESOLVED"
-			+ "|reason=UNKNOWN_FINITE_COST|evidence=OFFLINE_PRE_SOLVER_CLASSIFICATION");
+		rows.add(captureGraphExclusion());
 		return rows;
+	}
+	private static String captureGraphExclusion() throws Exception {
+		DMLProgram program=ProductionShadowFixtureFactory.compile("B-21");
+		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		var result=new DpPlacementAdapter().select(analysis);
+		var matches=result.certificateReceipts().stream().filter(receipt->
+			receipt.exclusion().reasonCode()==ReasonCode.UNKNOWN_METADATA
+			&&receipt.exclusion().state().execType()==ExecType.FED
+			&&receipt.exclusion().state().shapeDependent()).toList();
+		if(matches.size()!=1)throw new IllegalStateException("DP08_GRAPH_EXCLUSION_BIJECTION matches="+matches.size());
+		var receipt=matches.get(0);
+		boolean retainedFedAlternative=analysis.graph().nodes().stream().flatMap(node->node.legalAlternatives().stream())
+			.anyMatch(state->state.execType()==ExecType.FED&&!state.shapeDependent());
+		if(!retainedFedAlternative)throw new IllegalStateException("DP08_SHAPE_INDEPENDENT_FED_ALTERNATIVE_MISSING");
+		return "C2-DP-08-UNKNOWN-METADATA|NEUTRAL_GRAPH_EXCLUSION|seed=-1|fixture=B-21"
+			+"|nodeKind="+receipt.node().kind()+"|emittedWork="+receipt.node().emittedWork()
+			+"|excludedState="+receipt.exclusion().state().normalizedSignature()
+			+"|reason="+receipt.exclusion().reasonCode();
 	}
 
 	private static String anchorContrast(Hop hop, String key) throws Exception {
@@ -92,8 +131,12 @@ public final class LegacyDpOfflineSelectedCapture {
 		return fullPath(rowId, fixture, program, analysis);
 	}
 
+	private static String fullPath(String rowId,String fixture,DMLProgram program,PlacementAnalysis analysis)throws Exception {
+		return captureFullPath(rowId,fixture,program,analysis).serialize();
+	}
+
 	@SuppressWarnings({"unchecked", "rawtypes"})
-	private static String fullPath(String rowId, String fixture, DMLProgram program,
+	public static RetainedFullPath captureFullPath(String rowId, String fixture, DMLProgram program,
 		PlacementAnalysis analysis) throws Exception {
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
 		FedPlan root = FederatedPlannerDpCostEnumerator.enumerateProgram(program, memo, false);
@@ -118,8 +161,12 @@ public final class LegacyDpOfflineSelectedCapture {
 		localRegister.invoke(null, localRequests);
 		List<String> registries = registrySnapshots(analysis);
 		List<String> childSignature = new ArrayList<>();
+		List<FedPlan> rootChildPlanReceipts = new ArrayList<>();
+		List<Hop> rootHops = new ArrayList<>();
 		for(Pair<Long,FederatedOutput> child : root.getChildFedPlans()) {
 			FedPlan selected = memo.getFedPlanAfterPrune(child);
+			rootChildPlanReceipts.add(selected);
+			rootHops.add(selected.getHopRef());
 			long originalId = memo.resolveOriginalHopId(child.getLeft());
 			String key = analysis.occurrences().stream().filter(o -> o.hop().getHopID() == originalId)
 				.map(o -> o.key().normalizedSignature()).findFirst().orElseThrow(() ->
@@ -139,6 +186,8 @@ public final class LegacyDpOfflineSelectedCapture {
 		}
 		selectedStates.sort(String::compareTo);
 		List<String> selectedPlans = new ArrayList<>();
+		List<Pair<Long,FederatedOutput>> selectedPlanEdges = new ArrayList<>();
+		List<FedPlan> selectedPlanReceipts = new ArrayList<>();
 		Method selector = method("selectRewritePlanVariant", 8);
 		for(Map.Entry<Long,FederatedOutput> decision : decisions.entrySet()) {
 			long id = decision.getKey();
@@ -146,6 +195,8 @@ public final class LegacyDpOfflineSelectedCapture {
 			if(fallback == null) continue;
 			FedPlan selected = (FedPlan) selector.invoke(null, memo, id, decision.getValue(), decision.getValue(),
 				fallback, decisions, conflicts, true);
+			selectedPlanEdges.add(Pair.of(id, decision.getValue()));
+			selectedPlanReceipts.add(selected);
 			long originalId = memo.resolveOriginalHopId(id);
 			String key = analysis.occurrences().stream().filter(o -> o.hop().getHopID() == originalId)
 				.map(o -> o.key().normalizedSignature()).findFirst().orElseThrow(() ->
@@ -160,14 +211,10 @@ public final class LegacyDpOfflineSelectedCapture {
 				+ ",fType=" + selected.getFType() + "}");
 		}
 		selectedPlans.sort(String::compareTo);
-		return rowId + "|DP_FULL_OFFLINE_SELECTION|evidence=ACTUAL_RETAINED"
-			+ "|seed=-1|fixture=" + fixture + "|rootObjective=" + observedHex(root.getCumulativeCost())
-			+ "|observedFloatNormalization=DECIMAL_SIGNIFICANT_12_HALF_EVEN"
-			+ "|observedFloatTolerance=0x1.0p-38_RELATIVE"
-			+ "|rootChildren=" + childSignature + "|decisionCount=" + decisions.size()
-			+ "|conflictCount=" + conflicts.size() + "|rewrittenCount=" + visited.size()
-			+ "|selectedStates=" + selectedStates + "|selectedPlans=" + selectedPlans
-			+ "|semanticFacts=" + semanticFacts(rowId, analysis) + "|registrySnapshots=" + registries;
+		return new RetainedFullPath(rowId,fixture,memo,root,rootChildPlanReceipts,rootHops,selectedPlanEdges,
+			selectedPlanReceipts,-1L,root.getCumulativeCost(),
+			"DECIMAL_SIGNIFICANT_12_HALF_EVEN","0x1.0p-38_RELATIVE",childSignature,decisions.size(),conflicts.size(),
+			visited.size(),selectedStates,selectedPlans,semanticFacts(rowId,analysis),registries);
 	}
 
 	private static String observedHex(double value) {
@@ -177,6 +224,7 @@ public final class LegacyDpOfflineSelectedCapture {
 			.round(new MathContext(12, RoundingMode.HALF_EVEN)).doubleValue();
 		return Double.toHexString(normalized);
 	}
+	public static String formatObservedHex(double value) { return observedHex(value); }
 
 	private static List<String> registrySnapshots(PlacementAnalysis analysis) {
 		Map<Long,String> keys = new HashMap<>();

@@ -46,13 +46,13 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 
 	private static String capture() throws Exception {
 		String spec = resource(SPEC);
-		assertEquals("82f846c08535124a18ef4ead9ebf1db92da1cf67d40cb1b727c1417997770cab",
+		assertEquals("b8e8847b8368f8e558be5bd6bed93848470eeab33c72f5b81b7df63ee5144469",
 			sha256(spec));
 		List<String> rows = new ArrayList<>();
 		rows.add("SCHEMA|g004b-c2-offline-selected-plan-v1");
 		rows.add("BASE|" + BASE);
 		rows.add("SPEC_SHA256|" + sha256(spec));
-		rows.add("EVIDENCE|ACTUAL_RETAINED|EXACT_PRIVATE_REPLAY|SYNTHETIC_SELECTOR_FIXTURE|UNSUPPORTED_STRUCTURAL");
+		rows.add("EVIDENCE|ACTUAL_RETAINED|EXACT_PRIVATE_REPLAY|SYNTHETIC_SELECTOR_FIXTURE|NEUTRAL_GRAPH_EXCLUSION");
 		for(String row : LegacyDpOfflineSelectedCapture.capture()) rows.add(tagPlanner(row, "DP"));
 		for(String row : LegacyMinstOfflineSelectedCapture.capture()) rows.add(tagPlanner(row, "MINST"));
 		Set<String> observed = new LinkedHashSet<>();
