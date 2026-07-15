@@ -115,17 +115,29 @@ public class CampaignBDpAggregateProducerContractTest {
 
 	@Test public void foreignAndCopiedProducerIdentitiesRejectBeforeApplication() throws Exception {
 		ProducerCase producer=producerCase(0x1.0p3,0x1.0p3); ExactHandle handle=newExactHandle("CAMPAIGN_B_DP_NEGATIVE_API_MISSING");
-		PlacementAnalysis foreign=new NeutralPlacementGraphBuilder().buildAnalysis(producer.program());
 		MemoSnapshot before=snapshot(producer);
-		expectReject(handle,foreign,producer.memo(),producer.aggregate(),"foreign analysis"); assertSnapshotSame(before,snapshot(producer));
-		expectReject(handle,producer.analysis(),new FederatedPlannerDpMemoTable(),producer.aggregate(),"foreign memo"); assertSnapshotSame(before,snapshot(producer));
+		PlacementAnalysis twin=new NeutralPlacementGraphBuilder().buildAnalysis(producer.program());
+		Object twinSelection=invoke(handle.method(),handle.adapter(),twin,producer.memo(),producer.aggregate());
+		Assert.assertSame("same-program twin analysis receipt",twin,call(twinSelection,"analysis"));
+		Assert.assertSame(producer.memo(),call(twinSelection,"memo"));
+		Assert.assertSame(producer.aggregate(),call(twinSelection,"legacyOptimalPlan"));
+		assertSnapshotSame(before,snapshot(producer));
+		DMLProgram directForeignProgram=ProductionShadowFixtureFactory.compile("B-02");
+		PlacementAnalysis directForeign=new NeutralPlacementGraphBuilder().buildAnalysis(directForeignProgram);
+		ProgramSnapshot directForeignProgramBefore=snapshotProgram(directForeignProgram); AnalysisSnapshot directForeignBefore=snapshotAnalysis(directForeign);
+		expectReject(handle,directForeign,producer.memo(),producer.aggregate(),"foreign-program analysis");
+		assertProgramSnapshotSame(directForeignProgramBefore,snapshotProgram(directForeignProgram)); assertAnalysisSnapshotSame(directForeignBefore,snapshotAnalysis(directForeign)); assertSnapshotSame(before,snapshot(producer));
+		FederatedPlannerDpMemoTable foreignMemo=new FederatedPlannerDpMemoTable(); MemoSnapshot foreignMemoBefore=snapshot(foreignMemo,producer.aggregate(),producer.analysis());
+		expectReject(handle,producer.analysis(),foreignMemo,producer.aggregate(),"foreign memo"); assertSnapshotSame(foreignMemoBefore,snapshot(foreignMemo,producer.aggregate(),producer.analysis())); assertSnapshotSame(before,snapshot(producer));
 		FedPlan copy=new FedPlan(producer.aggregate().getCumulativeCost(),null,List.copyOf(producer.aggregate().getChildFedPlans()));
-		expectReject(handle,producer.analysis(),producer.memo(),copy,"copied aggregate"); assertSnapshotSame(before,snapshot(producer));
+		AggregateSnapshot copyBefore=snapshotAggregate(copy); expectReject(handle,producer.analysis(),producer.memo(),copy,"copied aggregate"); assertAggregateSnapshotSame(copyBefore,snapshotAggregate(copy)); assertSnapshotSame(before,snapshot(producer));
 		DMLProgram foreignProgram=ProductionShadowFixtureFactory.compile("B-02"); PlacementAnalysis foreignProgramAnalysis=new NeutralPlacementGraphBuilder().buildAnalysis(foreignProgram);
 		ProgramSnapshot programBefore=snapshotProgram(producer.program()); Object planner=new FederatedPlannerDpFedCostBased();
+		ProgramSnapshot foreignProgramBefore=snapshotProgram(foreignProgram); AnalysisSnapshot foreignAnalysisBefore=snapshotAnalysis(foreignProgramAnalysis);
 		Method supplied=requireMethod(planner.getClass(),"rewriteProgram","CAMPAIGN_B_DP_NEGATIVE_SUPPLIED_ANALYSIS_API_MISSING",DMLProgram.class,FunctionCallGraph.class,FunctionCallSizeInfo.class,PlacementAnalysis.class);
 		try{invoke(supplied,planner,producer.program(),new FunctionCallGraph(producer.program()),null,foreignProgramAnalysis);Assert.fail("accepted foreign program analysis");}
 		catch(IllegalArgumentException expected){} assertProgramSnapshotSame(programBefore,snapshotProgram(producer.program()));
+		assertProgramSnapshotSame(foreignProgramBefore,snapshotProgram(foreignProgram)); assertAnalysisSnapshotSame(foreignAnalysisBefore,snapshotAnalysis(foreignProgramAnalysis));
 	}
 
 	@Test public void sameAdapterSequentialAndBarrierConcurrentCallsAreIdentityStable() throws Exception {
@@ -144,6 +156,14 @@ public class CampaignBDpAggregateProducerContractTest {
 		FedPlan aggregate,FedPlan lout,FedPlan fout,FedPlan selected,Hop root) { }
 	private record HopState(Hop hop,long hopId,ExecType exec,FederatedOutput output,List<Long> inputIds) { }
 	private record ProgramSnapshot(List<HopState> states) { }
+	private record AnalysisSnapshot(PlacementAnalysis analysis,String fingerprint,
+		List<PlacementAnalysis.HopOccurrenceProjection> occurrences,List<HopState> hopStates) { }
+	private record AggregateSnapshot(FedPlan aggregate,long costBits,List<Pair<Long,FederatedOutput>> edges) { }
+	private record EffectiveIdentity(FedPlan plan,Hop hop,long hopId) {
+		private boolean matches(FedPlan candidatePlan,Hop candidateHop,long candidateHopId) {
+			return plan==candidatePlan&&hop==candidateHop&&hopId==candidateHopId;
+		}
+	}
 	private record MemoSnapshot(List<Pair<Long,FederatedOutput>> memoKeys,List<FedPlanVariants> variants,
 		List<List<FedPlan>> variantPlans,List<List<Pair<Long,FederatedOutput>>> planEdges,List<Long> costBits,List<Pair<Long,FederatedOutput>> edges,
 		List<Long> additionalRoots,String fingerprint,List<PlacementAnalysis.HopOccurrenceProjection> occurrences,
@@ -227,22 +247,45 @@ public class CampaignBDpAggregateProducerContractTest {
 		List<Hop> aggregateHops=aggregatePlans.stream().map(FedPlan::getHopRef).toList();List<?> exactHops=(List<?>)call(exact,"selectedRootHops");assertImmutable(exactHops,"live.selectedRootHops");assertIdentityList(aggregateHops,exactHops,"selectedRootHops");
 		Assert.assertEquals(Double.doubleToRawLongBits(aggregate.getCumulativeCost()),((Number)call(exact,"objectiveCostBits")).longValue());
 		validateTies((List<?>)call(exact,"tieReceipts"),memo,edges); validateExclusions((List<?>)call(exact,"graphExclusionReceipts"),analysis);
-		List<FedPlan> expected=new ArrayList<>(aggregatePlans); List<Boolean> additional=new ArrayList<>(); List<Long> expectedIds=new ArrayList<>();
-		for(int i=0;i<aggregatePlans.size();i++){additional.add(false);expectedIds.add(edges.get(i).getLeft());}
-		int nonVirtualAdditional=0;
+		List<FedPlan> additionalPlans=new ArrayList<>(); List<Long> additionalIds=new ArrayList<>();
 		for(long id:memo.getAdditionalRootHopIDs()) { if(memo.isVirtualClone(id))continue; FedPlan l=memo.getFedPlanAfterPrune(id,FederatedOutput.LOUT),f=memo.getFedPlanAfterPrune(id,FederatedOutput.FOUT);
 			FedPlan seed=l==null?f:f==null?l:l.getCumulativeCost()<=f.getCumulativeCost()?l:f; Assert.assertNotNull("non-virtual additional root has no selected seed id="+id,seed);
-			nonVirtualAdditional++;expected.add(seed);additional.add(true);expectedIds.add(id); }
-		Assert.assertTrue("fixture must apply at least one non-virtual additional root",nonVirtualAdditional>0);
+			additionalPlans.add(seed);additionalIds.add(id); }
+		Assert.assertFalse("fixture must invoke at least one non-virtual additional root",additionalPlans.isEmpty());
+		List<FedPlan> expected=new ArrayList<>(aggregatePlans); List<Boolean> additional=new ArrayList<>(); List<Long> expectedIds=new ArrayList<>();
+		List<EffectiveIdentity> effectiveTuples=new ArrayList<>(); Set<FedPlan> effectivePlans=Collections.newSetFromMap(new IdentityHashMap<>()); Set<Hop> effectiveHops=Collections.newSetFromMap(new IdentityHashMap<>()); Set<Long> effectiveIds=new java.util.HashSet<>();
+		for(int i=0;i<aggregatePlans.size();i++){FedPlan plan=aggregatePlans.get(i);long id=edges.get(i).getLeft();Hop hop=memo.resolveOriginalHop(id);Assert.assertNotNull("aggregate Hop resolution id="+id,hop);
+			Assert.assertSame("aggregate associated Hop",plan.getHopRef(),hop); Assert.assertEquals("aggregate associated Hop ID",hop.getHopID(),id);
+			Assert.assertTrue("duplicate aggregate plan identity",effectivePlans.add(plan)); Assert.assertTrue("duplicate aggregate Hop identity",effectiveHops.add(hop)); Assert.assertTrue("duplicate aggregate Hop ID",effectiveIds.add(id));
+			effectiveTuples.add(new EffectiveIdentity(plan,hop,id));
+			additional.add(false);expectedIds.add(id);}
+		List<String> expectedDispositions=new ArrayList<>(); int appliedAdditional=0,alreadyVisited=0;
+		for(int i=0;i<additionalPlans.size();i++){FedPlan plan=additionalPlans.get(i);long id=additionalIds.get(i);Hop hop=memo.resolveOriginalHop(id);Assert.assertNotNull("additional Hop resolution id="+id,hop);
+			Assert.assertSame("additional associated Hop",plan.getHopRef(),hop); Assert.assertEquals("additional associated Hop ID",hop.getHopID(),id);
+			boolean exactTupleSeen=effectiveTuples.stream().anyMatch(tuple->tuple.matches(plan,hop,id));
+			boolean componentCollision=effectivePlans.contains(plan)||effectiveHops.contains(hop)||effectiveIds.contains(id);
+			Assert.assertFalse("recombined/partial additional-root identity overlap id="+id,!exactTupleSeen&&componentCollision);
+			if(exactTupleSeen){expectedDispositions.add("ALREADY_VISITED");alreadyVisited++;}
+			else{expectedDispositions.add("APPLIED");appliedAdditional++;Assert.assertTrue(effectivePlans.add(plan));Assert.assertTrue(effectiveHops.add(hop));Assert.assertTrue(effectiveIds.add(id));effectiveTuples.add(new EffectiveIdentity(plan,hop,id));expected.add(plan);additional.add(true);expectedIds.add(id);}}
+		List<?> invocations=(List<?>)call(receipt,"additionalRootInvocations"); assertImmutable(invocations,"additionalRootInvocations");
+		Assert.assertEquals("non-virtual additional invocation count",additionalPlans.size(),invocations.size());
+		for(int i=0;i<invocations.size();i++) { Object invocation=invocations.get(i); FedPlan plan=additionalPlans.get(i); long id=additionalIds.get(i);
+			Assert.assertEquals("AdditionalRootInvocationReceipt",invocation.getClass().getSimpleName());
+			Assert.assertEquals(i,((Number)call(invocation,"ordinal")).intValue()); Assert.assertEquals(id,((Number)call(invocation,"hopId")).longValue());
+			Assert.assertEquals(plan.getFedOutType(),call(invocation,"output")); Assert.assertSame(plan,call(invocation,"plan")); Assert.assertSame(plan.getHopRef(),call(invocation,"hop"));
+			Object dispositionValue=call(invocation,"disposition"); Assert.assertEquals("AdditionalRootDisposition",dispositionValue.getClass().getSimpleName());
+			String disposition=String.valueOf(dispositionValue);
+			Assert.assertEquals("independent additional-root disposition",expectedDispositions.get(i),disposition); }
 		List<?> applied=(List<?>)call(receipt,"appliedPlans"); assertImmutable(applied,"appliedPlans"); Assert.assertEquals(expected.size(),applied.size()); Assert.assertFalse(applied.isEmpty());
 		Set<FedPlan> uniquePlans=Collections.newSetFromMap(new IdentityHashMap<>());Set<Hop> uniqueHops=Collections.newSetFromMap(new IdentityHashMap<>());Set<Long> uniqueIds=new java.util.HashSet<>();int observedAdditional=0;
 		for(int i=0;i<expected.size();i++) { Object item=applied.get(i); FedPlan plan=expected.get(i); Hop hop=plan.getHopRef(); long id=expectedIds.get(i); Assert.assertEquals(i,((Number)call(item,"ordinal")).intValue());
 			Assert.assertEquals(additional.get(i),call(item,"additionalRoot"));if(additional.get(i))observedAdditional++;Assert.assertSame(plan,call(item,"plan"));Assert.assertSame(hop,call(item,"hop"));
 			Assert.assertEquals(id,((Number)call(item,"hopId")).longValue());Assert.assertEquals(id,hop.getHopID());Assert.assertEquals(plan.getFedOutType(),call(item,"output"));
 			Assert.assertTrue("duplicate exact plan application",uniquePlans.add(plan));Assert.assertTrue("duplicate exact Hop application",uniqueHops.add(hop));Assert.assertTrue("duplicate Hop ID application",uniqueIds.add(id));}
-		Assert.assertEquals("non-virtual additional receipt count",nonVirtualAdditional,observedAdditional);
+		Assert.assertEquals("effective additional application count",appliedAdditional,observedAdditional);
 		Object counters=call(receipt,"counters"); assertCount(counters,"enumerationCount",1); assertCount(counters,"exactSelectionCount",1); assertCount(counters,"applicationPhaseCount",1);
-		assertCount(counters,"appliedPlanCount",applied.size()); for(String zero:List.of("internalAnalysisBuildCount","oldOverloadCount","reenumerationCount","repairCount","fallbackCount","doubleApplicationCount"))assertCount(counters,zero,0);
+		assertCount(counters,"appliedPlanCount",applied.size()); assertCount(counters,"additionalRootInvocationCount",invocations.size()); assertCount(counters,"additionalRootNoOpCount",alreadyVisited);
+		for(String zero:List.of("internalAnalysisBuildCount","oldOverloadCount","reenumerationCount","repairCount","fallbackCount","doubleApplicationCount"))assertCount(counters,zero,0);
 		ProgramSnapshot after=snapshotProgram(program); assertPlacementMutationsAccounted(before,after,expected,memo);
 	}
 	private static void validateTies(List<?> ties,FederatedPlannerDpMemoTable memo,List<Pair<Long,FederatedOutput>> edges)throws Exception {
@@ -256,19 +299,20 @@ public class CampaignBDpAggregateProducerContractTest {
 	private static void validateExclusions(List<?> actual,PlacementAnalysis analysis)throws Exception {assertImmutable(actual,"graphExclusionReceipts");var expected=new DpPlacementAdapter().select(analysis).certificateReceipts();Assert.assertEquals(expected.size(),actual.size());
 		for(int i=0;i<expected.size();i++){Assert.assertSame(expected.get(i).occurrence(),call(actual.get(i),"occurrence"));Assert.assertSame(expected.get(i).node(),call(actual.get(i),"node"));Assert.assertSame(expected.get(i).exclusion(),call(actual.get(i),"exclusion"));}}
 	private static void assertCount(Object counters,String name,int expected)throws Exception{Assert.assertEquals(name,expected,((Number)call(counters,name)).intValue());}
-	@SuppressWarnings("unchecked") private static MemoSnapshot snapshot(ProducerCase p) {
+	private static MemoSnapshot snapshot(ProducerCase p) { return snapshot(p.memo(),p.aggregate(),p.analysis()); }
+	@SuppressWarnings("unchecked") private static MemoSnapshot snapshot(FederatedPlannerDpMemoTable memo,FedPlan aggregate,PlacementAnalysis analysis) {
 		try {
 			Field field=FederatedPlannerDpMemoTable.class.getDeclaredField("hopMemoTable"); field.setAccessible(true);
-			var table=(java.util.Map<Pair<Long,FederatedOutput>,FedPlanVariants>)field.get(p.memo());
+			var table=(java.util.Map<Pair<Long,FederatedOutput>,FedPlanVariants>)field.get(memo);
 			List<Pair<Long,FederatedOutput>> keys=new ArrayList<>(table.keySet()); List<FedPlanVariants> variants=new ArrayList<>();
 			List<List<FedPlan>> plans=new ArrayList<>(); List<List<Pair<Long,FederatedOutput>>> planEdges=new ArrayList<>(); List<Long> bits=new ArrayList<>();
 			for(Pair<Long,FederatedOutput> key:keys) { FedPlanVariants value=table.get(key); variants.add(value);
 				List<FedPlan> raw=value.getFedPlanVariants(); plans.add(List.copyOf(raw));
 				for(FedPlan plan:raw) { bits.add(Double.doubleToRawLongBits(plan.getCumulativeCost())); planEdges.add(List.copyOf(plan.getChildFedPlans())); } }
 			return new MemoSnapshot(List.copyOf(keys),List.copyOf(variants),List.copyOf(plans),List.copyOf(planEdges),List.copyOf(bits),
-				List.copyOf(p.aggregate().getChildFedPlans()),List.copyOf(p.memo().getAdditionalRootHopIDs()),
-				p.analysis().analysisFingerprint(),List.copyOf(p.analysis().occurrences()),snapshotHops(
-					p.analysis().occurrences().stream().map(PlacementAnalysis.HopOccurrenceProjection::hop).toList()).states());
+				List.copyOf(aggregate.getChildFedPlans()),List.copyOf(memo.getAdditionalRootHopIDs()),
+				analysis.analysisFingerprint(),List.copyOf(analysis.occurrences()),snapshotHops(
+					analysis.occurrences().stream().map(PlacementAnalysis.HopOccurrenceProjection::hop).toList()).states());
 		}
 		catch(ReflectiveOperationException e) { throw new AssertionError(e); }
 	}
@@ -282,7 +326,19 @@ public class CampaignBDpAggregateProducerContractTest {
 		for(int i=0;i<before.variants().size();i++) { Assert.assertSame(before.variants().get(i),after.variants().get(i));
 			Assert.assertEquals(before.variantPlans().get(i).size(),after.variantPlans().get(i).size());
 			for(int j=0;j<before.variantPlans().get(i).size();j++) Assert.assertSame(before.variantPlans().get(i).get(j),after.variantPlans().get(i).get(j)); }
-	}
+		}
+	private static AnalysisSnapshot snapshotAnalysis(PlacementAnalysis analysis) { return new AnalysisSnapshot(analysis,
+		analysis.analysisFingerprint(),List.copyOf(analysis.occurrences()),snapshotHops(
+			analysis.occurrences().stream().map(PlacementAnalysis.HopOccurrenceProjection::hop).toList()).states()); }
+	private static void assertAnalysisSnapshotSame(AnalysisSnapshot before,AnalysisSnapshot after) {
+		Assert.assertSame(before.analysis(),after.analysis()); Assert.assertEquals(before.fingerprint(),after.fingerprint());
+		Assert.assertEquals(before.occurrences().size(),after.occurrences().size());
+		for(int i=0;i<before.occurrences().size();i++){Assert.assertSame(before.occurrences().get(i),after.occurrences().get(i));Assert.assertSame(before.occurrences().get(i).hop(),after.occurrences().get(i).hop());}
+		assertProgramSnapshotSame(new ProgramSnapshot(before.hopStates()),new ProgramSnapshot(after.hopStates())); }
+	private static AggregateSnapshot snapshotAggregate(FedPlan aggregate) { return new AggregateSnapshot(aggregate,
+		Double.doubleToRawLongBits(aggregate.getCumulativeCost()),List.copyOf(aggregate.getChildFedPlans())); }
+	private static void assertAggregateSnapshotSame(AggregateSnapshot before,AggregateSnapshot after) {
+		Assert.assertSame(before.aggregate(),after.aggregate()); Assert.assertEquals(before.costBits(),after.costBits()); assertIdentityList(before.edges(),after.edges(),"copiedAggregateEdges"); }
 	private static void assertSameExact(Object left,Object right)throws Exception {
 		for(String field:List.of("analysis","memo","legacyOptimalPlan"))Assert.assertSame(call(left,field),call(right,field));
 		Assert.assertEquals(call(left,"objectiveCostBits"),call(right,"objectiveCostBits"));Assert.assertEquals(call(left,"analysisFingerprint"),call(right,"analysisFingerprint"));
