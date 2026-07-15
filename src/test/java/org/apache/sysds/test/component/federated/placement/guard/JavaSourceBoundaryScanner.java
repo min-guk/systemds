@@ -29,6 +29,31 @@ final class JavaSourceBoundaryScanner {
 		return List.copyOf(violations);
 	}
 
+	static String codeOnly(String source) {
+		return lex(source).code();
+	}
+
+	static String methodBody(String source, String methodName, String parameterToken) {
+		String code = codeOnly(source);
+		Pattern declaration = Pattern.compile("\\b" + Pattern.quote(methodName)
+			+ "\\s*\\(([^)]*)\\)\\s*(?:throws\\s+[^\\{]+)?\\{");
+		Matcher matcher = declaration.matcher(code);
+		while(matcher.find()) {
+			if(!matcher.group(1).contains(parameterToken))
+				continue;
+			int openingBrace = matcher.end() - 1;
+			int depth = 1;
+			for(int i = openingBrace + 1; i < code.length(); i++) {
+				char current = code.charAt(i);
+				if(current == '{') depth++;
+				else if(current == '}' && --depth == 0)
+					return code.substring(openingBrace + 1, i);
+			}
+			throw new IllegalArgumentException("Unclosed method body: " + methodName);
+		}
+		throw new IllegalArgumentException("Method not found: " + methodName + '(' + parameterToken + ')');
+	}
+
 	private static LexedSource lex(String source) {
 		StringBuilder code = new StringBuilder(source.length());
 		List<StringLiteral> strings = new ArrayList<>();
