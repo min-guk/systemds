@@ -27,6 +27,8 @@ public class PlacementFoundationArchitectureGuardTest {
 	private static final Path PLACEMENT = PRODUCTION.resolve("placement");
 	private static final Path ORACLE = ROOT.resolve(
 		"src/test/java/org/apache/sysds/test/component/federated/placement/oracle");
+	private static final String ORACLE_PREFIX = "org.apache.sysds.test.component.federated.placement.oracle";
+	private static final String PRODUCTION_PREFIX = "org.apache.sysds.hops.fedplanner.placement";
 
 	@Test
 	public void builderExposesOneObservableAnalysisUniverseAndLegacyParity() throws Exception {
@@ -67,10 +69,10 @@ public class PlacementFoundationArchitectureGuardTest {
 	public void productionAndIndependentOracleCannotImportEachOther() throws IOException {
 		List<String> violations = new ArrayList<>();
 		for(Path source : javaSources(PLACEMENT))
-			if(read(source).contains("org.apache.sysds.test.component.federated.placement.oracle"))
+			if(!JavaSourceBoundaryScanner.forbiddenReferences(read(source), ORACLE_PREFIX).isEmpty())
 				violations.add(relative(source) + ": production imports test oracle");
 		for(Path source : javaSources(ORACLE))
-			if(read(source).contains("org.apache.sysds.hops.fedplanner.placement"))
+			if(!JavaSourceBoundaryScanner.forbiddenReferences(read(source), PRODUCTION_PREFIX).isEmpty())
 				violations.add(relative(source) + ": independent oracle imports production placement");
 		Assert.assertTrue("oracle independence violations: " + violations, violations.isEmpty());
 	}
