@@ -36,6 +36,7 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.parser.DMLProgram;
@@ -75,6 +76,7 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 	@Test
 	public void loopPhiContainsOnlyEntryAndLatchLineage() throws Exception {
 		NeutralPlacementGraph graph = build("i=1;while(i<3){T=i+1;i=T;}print(i);");
+		assertLoopDefinitionKinds(graph, "i");
 		List<Node> predicates = readsFeeding(graph, "__pred", "i");
 		Assert.assertEquals("expected exactly one predicate TRead i", 1, predicates.size());
 		Node predicate = predicates.get(0);
@@ -92,6 +94,34 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 		Assert.assertFalse("body-local/compiler values must not become loop-carried: " + loopHeads,
 			loopHeads.stream().anyMatch(n -> "T".equals(n.valueVersion().lexicalVariable())
 				|| n.valueVersion().lexicalVariable().startsWith("__pred")));
+	}
+
+	@Test
+	public void forLoopMarksOnlyTheBodyExitDefinitionAsBackedge() throws Exception {
+		NeutralPlacementGraph graph = build("X=1;for(i in 1:3){X=X+1;}print(X);");
+		assertLoopDefinitionKinds(graph, "X");
+	}
+
+	@Test
+	public void multiReachingLoopReadsHaveCompleteTypedConstraints() throws Exception {
+		NeutralPlacementGraph graph = build("i=1;while(i<3){T=i+1;i=T;}print(i);");
+		List<Node> reads = reads(graph, "i").stream()
+			.filter(n -> distinctCfgDefinitions(n).size() > 1).collect(Collectors.toList());
+		Assert.assertTrue("fixture must expose body/head/post-loop multi-reaching reads", reads.size() >= 3);
+		for(Node read : reads) {
+			long typed = graph.constraints().stream().filter(c -> c.kind() == ConstraintKind.CONJUNCTIVE
+				&& c.right().equals(read.key())).map(c -> c.left()).distinct().count();
+			Assert.assertEquals("missing typed CFG constraints for " + read.key().normalizedSignature(),
+				distinctCfgDefinitions(read).size(), typed);
+		}
+	}
+
+	@Test
+	public void unchangedVariableAcrossBranchDoesNotCreateBranchPhi() throws Exception {
+		NeutralPlacementGraph graph = build("i=1;while(i<3){if(i>0){T=1;}else{T=2;}i=i+1;}print(i);");
+		Assert.assertFalse("unchanged i across the nested branch must not become a branch phi: "
+			+ graph.normalizedIdentities(), graph.nodes().stream().anyMatch(n -> "i".equals(
+				n.valueVersion().lexicalVariable()) && n.valueVersion().versionKind() == VersionKind.BRANCH_JOIN_PHI));
 	}
 
 	@Test
@@ -159,6 +189,17 @@ public class NeutralPlacementGraphExactCfgIdentityTest {
 		return graph.nodes().stream().filter(n -> n.kind() == NodeKind.TRANSIENT_READ
 			|| n.kind() == NodeKind.BRANCH_JOIN || n.kind() == NodeKind.LOOP_PHI)
 			.filter(n -> variable.equals(n.valueVersion().lexicalVariable())).collect(Collectors.toList());
+	}
+
+	private static void assertLoopDefinitionKinds(NeutralPlacementGraph graph, String variable) {
+		List<Node> definitions = graph.nodes().stream().filter(n -> variable.equals(n.valueVersion().lexicalVariable())
+			&& n.valueVersion().definitionOrdinal() > 0 && (n.kind() == NodeKind.TRANSIENT_WRITE
+				|| n.valueVersion().versionKind() == VersionKind.LOOP_BACKEDGE)).collect(Collectors.toList());
+		Map<Integer,VersionKind> kinds = definitions.stream().collect(Collectors.toMap(
+			n -> n.valueVersion().definitionOrdinal(), n -> n.valueVersion().versionKind(), (a, b) -> a));
+		Assert.assertEquals("fixture must expose entry and latch definitions: " + kinds, Set.of(1, 2), kinds.keySet());
+		Assert.assertEquals("preheader/entry definition is not a backedge", VersionKind.ORDINARY, kinds.get(1));
+		Assert.assertEquals("actual body-exit definition is the backedge", VersionKind.LOOP_BACKEDGE, kinds.get(2));
 	}
 
 	private static List<String> definitionPredecessors(Node node) {

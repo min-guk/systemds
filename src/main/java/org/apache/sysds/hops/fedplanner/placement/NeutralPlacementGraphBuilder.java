@@ -16,6 +16,7 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -73,8 +74,8 @@ public final class NeutralPlacementGraphBuilder {
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
 			Hop hop = occurrence.hop();
 			ExecType selectedExec = selectedExecType(hop);
-			selected.add(occurrence.namespace() + '|' + occurrence.path() + '|'
-				+ PlacementGraphFingerprint.structuralKey(hop) + '|'
+			selected.add(occurrence.namespace() + '|' + occurrence.path() + '|' + occurrence.topology() + '|'
+				+ PlacementGraphFingerprint.semanticStructuralKey(hop) + '|'
 				+ String.valueOf(selectedExec) + '/' + String.valueOf(hop.getFederatedOutput()));
 		}
 		Collections.sort(selected);
@@ -88,11 +89,13 @@ public final class NeutralPlacementGraphBuilder {
 			ExecType selectedExec = selectedExecType(hop);
 			if(selectedExec == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
 			Node node = graph.nodes().stream().filter(n -> n.key().callSitePath().equals(occurrence.path())
-				&& n.key().canonicalSourceOrigin().equals(PlacementGraphFingerprint.structuralKey(hop))).findFirst().orElse(null);
+				&& n.key().emittedHopInstance().equals(occurrence.topology())
+				&& n.key().canonicalSourceOrigin().equals(PlacementGraphFingerprint.semanticStructuralKey(hop))).findFirst().orElse(null);
 			boolean member = node != null && node.legalAlternatives().stream().anyMatch(s ->
 				s.execType() == selectedExec && s.output() == hop.getFederatedOutput());
 			if(!member) violations.add(occurrence.namespace() + '|' + occurrence.path() + '|'
-				+ PlacementGraphFingerprint.structuralKey(hop) + '|' + selectedExec + '/' + hop.getFederatedOutput());
+				+ occurrence.topology() + '|'
+				+ PlacementGraphFingerprint.semanticStructuralKey(hop) + '|' + selectedExec + '/' + hop.getFederatedOutput());
 		}
 		Collections.sort(violations);
 		return Collections.unmodifiableList(violations);
@@ -185,9 +188,10 @@ public final class NeutralPlacementGraphBuilder {
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences) {
 		Map<StatementBlock,Set<StatementBlock>> predecessors = new IdentityHashMap<>();
 		Set<StatementBlock> loopHeaders = Collections.newSetFromMap(new IdentityHashMap<>());
-		connectSequence(program.getStatementBlocks(), Set.of(), predecessors, loopHeaders);
+		Set<StatementBlock> loopLatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		connectSequence(program.getStatementBlocks(), Set.of(), predecessors, loopHeaders, loopLatches);
 		for(FunctionStatementBlock function : program.getNamedNSFunctionStatementBlocks().values())
-			connectSequence(List.of(function), Set.of(), predecessors, loopHeaders);
+			connectSequence(List.of(function), Set.of(), predecessors, loopHeaders, loopLatches);
 		Map<StatementBlock,List<Integer>> byBlock = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++)
 			byBlock.computeIfAbsent(occurrences.get(i).block(), k -> new ArrayList<>()).add(i);
@@ -234,9 +238,9 @@ public final class NeutralPlacementGraphBuilder {
 			VersionKind kind = VersionKind.ORDINARY;
 			if(isTransientRead(occurrence.hop()) && reaching.get(i).size() > 1)
 				kind = loopHeaders.contains(occurrence.block()) ? VersionKind.LOOP_HEAD_PHI
-					: predecessors.getOrDefault(occurrence.block(), Set.of()).size() > 1
+					: branchDefinitionsDiffer(occurrence, predecessors, out)
 						? VersionKind.BRANCH_JOIN_PHI : VersionKind.ORDINARY;
-			else if(isDefinition(occurrence.hop()) && isLoopLatch(occurrence.block(), predecessors, loopHeaders))
+			else if(isDefinition(occurrence.hop()) && loopLatches.contains(occurrence.block()))
 				kind = VersionKind.LOOP_BACKEDGE;
 			kinds.add(kind);
 		}
@@ -245,14 +249,17 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static Set<StatementBlock> connectSequence(List<StatementBlock> blocks, Set<StatementBlock> incoming,
-		Map<StatementBlock,Set<StatementBlock>> predecessors, Set<StatementBlock> loopHeaders) {
+		Map<StatementBlock,Set<StatementBlock>> predecessors, Set<StatementBlock> loopHeaders,
+		Set<StatementBlock> loopLatches) {
 		Set<StatementBlock> exits = new LinkedHashSet<>(incoming);
 		for(StatementBlock block : blocks == null ? List.<StatementBlock>of() : blocks) {
 			predecessors.computeIfAbsent(block, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(exits);
 			if(block instanceof IfStatementBlock) {
 				IfStatement statement = (IfStatement) block.getStatement(0);
-				Set<StatementBlock> thenExits = connectSequence(statement.getIfBody(), Set.of(block), predecessors, loopHeaders);
-				Set<StatementBlock> elseExits = connectSequence(statement.getElseBody(), Set.of(block), predecessors, loopHeaders);
+				Set<StatementBlock> thenExits = connectSequence(statement.getIfBody(), Set.of(block), predecessors,
+					loopHeaders, loopLatches);
+				Set<StatementBlock> elseExits = connectSequence(statement.getElseBody(), Set.of(block), predecessors,
+					loopHeaders, loopLatches);
 				exits = new LinkedHashSet<>();
 				exits.addAll(thenExits.isEmpty() ? Set.of(block) : thenExits);
 				exits.addAll(elseExits.isEmpty() ? Set.of(block) : elseExits);
@@ -260,20 +267,24 @@ public final class NeutralPlacementGraphBuilder {
 			else if(block instanceof WhileStatementBlock) {
 				loopHeaders.add(block);
 				WhileStatement statement = (WhileStatement) block.getStatement(0);
-				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders);
+				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors,
+					loopHeaders, loopLatches);
 				predecessors.get(block).addAll(bodyExits);
+				bodyExits.stream().filter(exit -> exit != block).forEach(loopLatches::add);
 				exits = new LinkedHashSet<>(Set.of(block));
 			}
 			else if(block instanceof ForStatementBlock) {
 				loopHeaders.add(block);
 				ForStatement statement = (ForStatement) block.getStatement(0);
-				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders);
+				Set<StatementBlock> bodyExits = connectSequence(statement.getBody(), Set.of(block), predecessors,
+					loopHeaders, loopLatches);
 				predecessors.get(block).addAll(bodyExits);
+				bodyExits.stream().filter(exit -> exit != block).forEach(loopLatches::add);
 				exits = new LinkedHashSet<>(Set.of(block));
 			}
 			else if(block instanceof FunctionStatementBlock) {
 				FunctionStatement statement = (FunctionStatement) block.getStatement(0);
-				exits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders);
+				exits = connectSequence(statement.getBody(), Set.of(block), predecessors, loopHeaders, loopLatches);
 			}
 			else exits = new LinkedHashSet<>(Set.of(block));
 		}
@@ -298,11 +309,16 @@ public final class NeutralPlacementGraphBuilder {
 		}
 	}
 
-	private static boolean isLoopLatch(StatementBlock block,
-		Map<StatementBlock,Set<StatementBlock>> predecessors, Set<StatementBlock> loopHeaders) {
-		for(StatementBlock header : loopHeaders)
-			if(predecessors.getOrDefault(header, Set.of()).contains(block)) return true;
-		return false;
+	private static boolean branchDefinitionsDiffer(PlacementGraphFingerprint.HopOccurrence occurrence,
+		Map<StatementBlock,Set<StatementBlock>> predecessors,
+		Map<StatementBlock,Map<String,Set<Integer>>> out) {
+		Set<StatementBlock> incoming = predecessors.getOrDefault(occurrence.block(), Set.of());
+		if(incoming.size() < 2) return false;
+		String variable = occurrence.namespace() + '\u0000' + lexicalVariable(occurrence.hop(), -1);
+		Set<Set<Integer>> branchOut = new HashSet<>();
+		for(StatementBlock predecessor : incoming)
+			branchOut.add(out.getOrDefault(predecessor, Map.of()).getOrDefault(variable, Set.of()));
+		return branchOut.size() > 1;
 	}
 
 	private static boolean isDefinition(Hop hop) { return isTransientWrite(hop) || isFunctionOutput(hop); }
@@ -416,8 +432,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints, CfgAnalysis cfg) {
 		for(int i = 0; i < occurrences.size(); i++) {
 			Node target = nodes.get(i);
-			if(target.valueVersion().versionKind() == VersionKind.BRANCH_JOIN_PHI
-				|| target.valueVersion().versionKind() == VersionKind.LOOP_HEAD_PHI) {
+			if(isTransientRead(occurrences.get(i).hop()) && cfg.reachingDefinitions().get(i).size() > 1) {
 				for(int definition : cfg.reachingDefinitions().get(i))
 					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, nodes.get(definition).key(), target.key(),
 						-1, target.valueVersion().versionKind().name()));

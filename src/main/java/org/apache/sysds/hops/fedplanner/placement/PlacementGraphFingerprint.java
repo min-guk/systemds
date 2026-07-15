@@ -136,11 +136,15 @@ public final class PlacementGraphFingerprint {
 	}
 
 	static String semanticStructuralKey(Hop h) {
-		String name = h.getName() == null ? "" : h.getName()
-			.replaceAll("parsertemp[0-9]+", "compiler-temp")
-			.replaceAll("__(tmp|pred)[0-9]+", "__$1");
+		String name = normalizeCompilerCounters(h.getName());
+		String op = normalizeCompilerCounters(h.getOpString());
 		return String.valueOf(h.getFilename()) + ':' + h.getBeginLine() + ':' + h.getBeginColumn() + ':'
-			+ h.getClass().getName() + ':' + h.getOpString() + ':' + name;
+			+ h.getClass().getName() + ':' + op + ':' + name;
+	}
+
+	private static String normalizeCompilerCounters(String value) {
+		return value == null ? "" : value.replaceAll("parsertemp[0-9]+", "compiler-temp")
+			.replaceAll("__(tmp|pred)[0-9]+", "__$1");
 	}
 
 	static String structuralKey(Hop h) {

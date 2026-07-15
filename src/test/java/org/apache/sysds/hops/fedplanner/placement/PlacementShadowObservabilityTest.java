@@ -26,6 +26,14 @@ import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator.Observation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator.ObservationReason;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.After;
@@ -126,6 +134,30 @@ public class PlacementShadowObservabilityTest {
 			"src/main/java/org/apache/sysds/hops/ipa/IPAPassRewriteFederatedPlan.java"));
 		Assert.assertTrue("IPA must consume and record the returned shadow observation",
 			source.contains("PlacementShadowCoordinator.record(shadow.observe(prog));"));
+	}
+
+	@Test
+	public void selectedSurfacesUseCounterNeutralSemanticKeys() {
+		DMLProgram first = selectedTempProgram("parsertemp1");
+		DMLProgram second = selectedTempProgram("parsertemp99");
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		NeutralPlacementGraph firstGraph = builder.build(first);
+		NeutralPlacementGraph secondGraph = builder.build(second);
+		Assert.assertEquals(builder.selectedProjection(first), builder.selectedProjection(second));
+		Assert.assertEquals(List.of(), builder.selectedMembershipViolations(first, firstGraph));
+		Assert.assertEquals(List.of(), builder.selectedMembershipViolations(second, secondGraph));
+	}
+
+	private static DMLProgram selectedTempProgram(String name) {
+		DMLProgram program = new DMLProgram();
+		DataOp write = new DataOp(name, DataType.SCALAR, ValueType.INT64, new LiteralOp(1L),
+			OpOpData.TRANSIENTWRITE, name);
+		write.setForcedExecType(ExecType.CP);
+		write.setFederatedOutput(FederatedOutput.LOUT);
+		StatementBlock block = new StatementBlock();
+		block.setHops(new ArrayList<>(List.of(write)));
+		program.setStatementBlocks(new ArrayList<>(List.of(block)));
+		return program;
 	}
 
 	private static Observation observe(DMLProgram program, SequenceAnalysis analysis) {
