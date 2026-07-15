@@ -167,6 +167,23 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
 				+ " if(condition) return analysis;");
 		assertBothSentinelsRejected(earlySuccess);
+
+		String parenthesizedEarlySuccess = validBuilder().replace(
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);",
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
+				+ " if(condition) return(analysis);");
+		assertBothSentinelsRejected(parenthesizedEarlySuccess);
+
+		String parenthesizedThrow = validBuilder().replace("throw failure;", "throw(new Failure());");
+		Assert.assertEquals(List.of(), constructionViolations(parenthesizedThrow, validShadow()));
+
+		String capturedParenthesizedThrow = capturedAfter.replace("throw failure;", "throw(new Failure());");
+		Assert.assertEquals(List.of(), constructionViolations(capturedParenthesizedThrow, validShadow()));
+
+		String returnIdentifier = validBuilder().replace(
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);",
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections); returnValue(analysis);");
+		Assert.assertEquals(List.of(), constructionViolations(returnIdentifier, validShadow()));
 	}
 
 	private static List<String> constructionViolations(String builderSource, String shadowSource) {
@@ -253,7 +270,7 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	private static String protectControlKeywords(String source) {
-		return source.replaceAll("\\bthrow\\s+", "throw@").replaceAll("\\breturn\\s+", "return@");
+		return source.replaceAll("\\bthrow\\b", "throw@").replaceAll("\\breturn\\b", "return@");
 	}
 
 	private static int braceDepth(String source, int end) {
