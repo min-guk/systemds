@@ -85,11 +85,14 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 					violations.add("BROADCAST_UNSAFE_" + kind);
 			}
 			catch(AssertionError safelyRejected) {
-				String message = String.valueOf(safelyRejected.getMessage());
 				boolean typedMissingHop = kind == R4HeuristicMetadataFixtureBridge.BroadcastCase.MISSING_HOP
-					&& message.startsWith("HEURISTIC_POLICY_SAFETY_REJECTION|reason=MISSING_HOP_PROJECTION");
+					&& safelyRejected instanceof R4Heuristic2AdapterBridge.TypedPolicySafetyRejection
+					&& ((R4Heuristic2AdapterBridge.TypedPolicySafetyRejection)safelyRejected).causeType().equals(
+						"org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPolicySafetyException")
+					&& ((R4Heuristic2AdapterBridge.TypedPolicySafetyRejection)safelyRejected).stableCode().equals(
+						"HEURISTIC_POLICY_SAFETY_REJECTION|reason=MISSING_HOP_PROJECTION");
 				if(!typedMissingHop)
-					violations.add("BROADCAST_UNTYPED_FAILURE_" + kind + '|' + message);
+					violations.add("BROADCAST_UNTYPED_FAILURE_" + kind + '|' + safelyRejected.getMessage());
 			}
 			R4Heuristic2Probe.unchanged(before, unsafe.snapshot());
 		}
@@ -108,6 +111,12 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 		var values = new ArrayList<>(scenario.contributions().keySet());
 		var forward = new java.util.LinkedHashSet<>(values);
 		java.util.Collections.reverse(values); var reverse = new java.util.LinkedHashSet<>(values);
+		List<String> forwardOrder = R4Heuristic2AdapterBridge.invocationOrder(forward);
+		List<String> reverseOrder = R4Heuristic2AdapterBridge.invocationOrder(reverse);
+		Assert.assertNotEquals("MULTI_MARKER_INVOCATION_ORDERS_MUST_DIFFER", forwardOrder, reverseOrder);
+		List<String> expectedReverseOrder = new ArrayList<>(forwardOrder);
+		java.util.Collections.reverse(expectedReverseOrder);
+		Assert.assertEquals("MULTI_MARKER_INVOCATION_ORDER_REVERSED", expectedReverseOrder, reverseOrder);
 		var before = R4Heuristic2Probe.snapshot(fixture.program(), fixture.analysis());
 		R4Heuristic2AdapterBridge.Selection selected;
 		try { selected = R4Heuristic2AdapterBridge.select(fixture.analysis(), forward); }
