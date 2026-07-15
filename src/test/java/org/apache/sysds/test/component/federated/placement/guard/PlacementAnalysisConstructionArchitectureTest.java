@@ -33,17 +33,19 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	public void validForwardDelegationFixturePassesWithoutLiteralOrCommentSpoofing() {
 		String builder = "class Builder {"
 			+ " NeutralPlacementGraph build(DMLProgram program) {"
-			+ "   String fake = \"return build(program); projectConcreteOrigins\";"
+			+ "   String fake = \"return build(program); projectConcreteOrigins; "
+			+ "PlacementGraphFingerprint.orderedOccurrences(program)\";"
 			+ "   return buildAnalysis(program).graph(); }"
 			+ " PlacementAnalysis buildAnalysis(DMLProgram program) {"
 			+ "   String before = PlacementGraphFingerprint.capture(program);"
 			+ "   String registryBefore = registrySentinel(program);"
 			+ "   var occurrences = PlacementGraphFingerprint.orderedOccurrences(program);"
 			+ "   PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
-			+ "   String after = PlacementGraphFingerprint.capture(program);"
+			+ "   if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;"
 			+ "   if(!registryBefore.equals(registrySentinel(program))) throw failure;"
 			+ "   return analysis; }"
-			+ " // PlacementAnalysis buildAnalysis(DMLProgram program) { return build(program); }"
+			+ " // PlacementAnalysis buildAnalysis(DMLProgram program) {"
+			+ " PlacementGraphFingerprint.orderedOccurrences(program); return build(program); }"
 			+ "}";
 		String shadow = shadowCalling("new NeutralPlacementGraphBuilder().buildAnalysis(program).graph()");
 		Assert.assertEquals(List.of(), constructionViolations(builder, shadow));
@@ -57,6 +59,12 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		Assert.assertTrue(constructionViolations(reverse, validShadow()).contains("legacy build is not a forward delegate"));
 		Assert.assertTrue(constructionViolations(reverse, validShadow()).contains("buildAnalysis calls legacy build"));
 
+		String extraLegacy = validBuilder().replace("return buildAnalysis(program).graph();",
+			"var extra = " + ORDERED_OCCURRENCES + "; return buildAnalysis(program).graph();");
+		List<String> extraLegacyViolations = constructionViolations(extraLegacy, validShadow());
+		Assert.assertTrue(extraLegacyViolations.contains("builder must perform exactly one ordered occurrence pass"));
+		Assert.assertTrue(extraLegacyViolations.contains("legacy build must not traverse ordered occurrences"));
+
 		String duplicate = validBuilder().replace("PlacementAnalysis analysis =",
 			"var duplicate = " + ORDERED_OCCURRENCES + "; PlacementAnalysis analysis =");
 		Assert.assertTrue(constructionViolations(duplicate, validShadow()).contains(
@@ -65,10 +73,13 @@ public class PlacementAnalysisConstructionArchitectureTest {
 
 	@Test
 	public void postHocOriginMatchingAndEarlySentinelFixturesAreRejected() {
-		String postHoc = validBuilder().replace("PlacementAnalysis analysis =",
-			"var projectConcreteOrigins = graph.nodes().stream().map(Node::key)"
+		String postHoc = insertBeforeClassEnd(validBuilder(),
+			" Map projectConcreteOrigins(DMLProgram program, Graph graph) {"
+				+ " return graph.nodes().stream().map(Node::key)"
 				+ ".filter(key -> key.callSitePath().equals(path) && key.emittedHopInstance().equals(topology)"
-				+ " && key.canonicalSourceOrigin().equals(source)); PlacementAnalysis analysis =");
+				+ " && key.canonicalSourceOrigin().equals(source)); }")
+			.replace("PlacementAnalysis analysis =",
+				"var origins = projectConcreteOrigins(program, graph); PlacementAnalysis analysis =");
 		List<String> matching = constructionViolations(postHoc, validShadow());
 		Assert.assertTrue(matching.contains("post-hoc origin projection helper is forbidden"));
 		Assert.assertTrue(matching.contains("post-hoc path/topology/source matching is forbidden"));
@@ -77,7 +88,32 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			.replace("PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);", "")
 			.replace("return analysis;", "return new PlacementAnalysis(graph, projections);");
 		Assert.assertTrue(constructionViolations(early, validShadow()).contains(
-			"mutation sentinels do not enclose PlacementAnalysis construction"));
+			"Hop mutation sentinel does not enclose and compare the analysis construction"));
+	}
+
+	@Test
+	public void unrelatedDiagnosticMatcherPassesButIncompleteSentinelsFail() {
+		String diagnostic = insertBeforeClassEnd(validBuilder(),
+			" List diagnostic(Graph graph) { return graph.nodes().stream().map(Node::key)"
+				+ ".filter(key -> key.callSitePath().equals(path) && key.emittedHopInstance().equals(topology)"
+				+ " && key.canonicalSourceOrigin().equals(source)).toList(); }");
+		Assert.assertEquals(List.of(), constructionViolations(diagnostic, validShadow()));
+
+		String afterOnly = validBuilder()
+			.replace("String before = PlacementGraphFingerprint.capture(program);", "")
+			.replace("String registryBefore = registrySentinel(program);", "")
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"PlacementGraphFingerprint.capture(program);")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"registrySentinel(program);");
+		assertBothSentinelsRejected(afterOnly);
+
+		String unusedBefore = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"PlacementGraphFingerprint.capture(program);")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"registrySentinel(program);");
+		assertBothSentinelsRejected(unusedBefore);
 	}
 
 	private static List<String> constructionViolations(String builderSource, String shadowSource) {
@@ -89,19 +125,23 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			violations.add("legacy build is not a forward delegate");
 		if(Pattern.compile("(?<![A-Za-z0-9_$])build\\s*\\(\\s*program\\s*\\)").matcher(analysis).find())
 			violations.add("buildAnalysis calls legacy build");
+		if(count(compact(builderCode), compact(ORDERED_OCCURRENCES)) != 1)
+			violations.add("builder must perform exactly one ordered occurrence pass");
+		if(count(compact(build), compact(ORDERED_OCCURRENCES)) != 0)
+			violations.add("legacy build must not traverse ordered occurrences");
 		if(count(compact(analysis), compact(ORDERED_OCCURRENCES)) != 1)
 			violations.add("buildAnalysis must perform exactly one ordered occurrence pass");
 		if(builderCode.matches("(?s).*\\bprojectConcreteOrigins\\b.*"))
 			violations.add("post-hoc origin projection helper is forbidden");
-		if(builderCode.matches("(?s).*graph\\s*\\.\\s*nodes\\s*\\(\\)\\s*\\.\\s*stream\\s*\\(\\)"
-			+ ".{0,1200}callSitePath\\s*\\(\\).{0,1200}emittedHopInstance\\s*\\(\\)"
-			+ ".{0,1200}canonicalSourceOrigin\\s*\\(\\).*"))
+		String originProjection = optionalMethodBody(builderSource, "projectConcreteOrigins", "DMLProgram");
+		if(originProjection.matches("(?s).*graph\\s*\\.\\s*nodes\\s*\\(\\)\\s*\\.\\s*stream\\s*\\(\\)"
+			+ ".*callSitePath\\s*\\(\\).*emittedHopInstance\\s*\\(\\).*canonicalSourceOrigin\\s*\\(\\).*"))
 			violations.add("post-hoc path/topology/source matching is forbidden");
 		int construction = analysisConstructionPosition(analysis);
-		int finalHopSentinel = analysis.lastIndexOf("PlacementGraphFingerprint.capture(program)");
-		int finalRegistrySentinel = analysis.lastIndexOf("registrySentinel(program)");
-		if(construction < 0 || finalHopSentinel < construction || finalRegistrySentinel < construction)
-			violations.add("mutation sentinels do not enclose PlacementAnalysis construction");
+		if(!sentinelEncloses(analysis, "PlacementGraphFingerprint.capture(program)", construction))
+			violations.add("Hop mutation sentinel does not enclose and compare the analysis construction");
+		if(!sentinelEncloses(analysis, "registrySentinel(program)", construction))
+			violations.add("registry mutation sentinel does not enclose and compare the analysis construction");
 		String shadowBuild = JavaSourceBoundaryScanner.methodBody(shadowSource, "build", "DMLProgram");
 		if(!compact(shadowBuild).contains("buildAnalysis(program).graph()")
 			|| Pattern.compile("(?<![A-Za-z0-9_$])build\\s*\\(\\s*program\\s*\\)").matcher(shadowBuild).find())
@@ -110,11 +150,53 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	private static int analysisConstructionPosition(String analysisBody) {
-		int position = analysisBody.indexOf("new PlacementAnalysis");
-		Matcher assignment = Pattern.compile("\\bPlacementAnalysis\\s+[A-Za-z_$][A-Za-z0-9_$]*\\s*=")
-			.matcher(analysisBody);
+		String compactBody = compact(analysisBody);
+		int position = compactBody.indexOf("newPlacementAnalysis");
+		Matcher assignment = Pattern.compile("\\bPlacementAnalysis[A-Za-z_$][A-Za-z0-9_$]*=")
+			.matcher(compactBody);
 		while(assignment.find()) position = Math.max(position, assignment.start());
 		return position;
+	}
+
+	private static boolean sentinelEncloses(String analysisBody, String sentinelCall, int construction) {
+		String body = compact(analysisBody);
+		String call = compact(sentinelCall);
+		int firstSemanticStep = body.indexOf(compact(ORDERED_OCCURRENCES));
+		if(construction < 0 || firstSemanticStep < 0)
+			return false;
+		Matcher assignments = Pattern.compile("(?:final)?(?:String|var)([A-Za-z_$][A-Za-z0-9_$]*)="
+			+ Pattern.quote(call) + ";").matcher(body);
+		List<Snapshot> snapshots = new ArrayList<>();
+		while(assignments.find()) snapshots.add(new Snapshot(assignments.group(1), assignments.start()));
+		for(Snapshot before : snapshots) {
+			if(before.position() >= firstSemanticStep)
+				continue;
+			String directForward = before.name() + ".equals(" + call + ")";
+			String directReverse = call + ".equals(" + before.name() + ")";
+			if(after(body, directForward, construction) || after(body, directReverse, construction))
+				return true;
+			for(Snapshot after : snapshots) {
+				if(after.position() <= construction)
+					continue;
+				if(after(body, before.name() + ".equals(" + after.name() + ")", construction)
+					|| after(body, after.name() + ".equals(" + before.name() + ")", construction))
+					return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean after(String source, String token, int position) {
+		return source.indexOf(token, position + 1) > position;
+	}
+
+	private static String optionalMethodBody(String source, String methodName, String parameterToken) {
+		try {
+			return JavaSourceBoundaryScanner.methodBody(source, methodName, parameterToken);
+		}
+		catch(IllegalArgumentException ignored) {
+			return "";
+		}
 	}
 
 	private static String validBuilder() {
@@ -125,9 +207,21 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			+ " String registryBefore = registrySentinel(program);"
 			+ " var occurrences = " + ORDERED_OCCURRENCES + ';'
 			+ " PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
-			+ " String after = PlacementGraphFingerprint.capture(program);"
+			+ " if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;"
 			+ " if(!registryBefore.equals(registrySentinel(program))) throw failure;"
 			+ " return analysis; } }";
+	}
+
+	private static void assertBothSentinelsRejected(String builder) {
+		List<String> violations = constructionViolations(builder, validShadow());
+		Assert.assertTrue(violations.contains(
+			"Hop mutation sentinel does not enclose and compare the analysis construction"));
+		Assert.assertTrue(violations.contains(
+			"registry mutation sentinel does not enclose and compare the analysis construction"));
+	}
+
+	private static String insertBeforeClassEnd(String source, String method) {
+		return source.substring(0, source.length() - 1) + method + '}';
 	}
 
 	private static String validShadow() {
@@ -152,4 +246,6 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	private static String read(Path path) throws Exception {
 		return Files.readString(path, StandardCharsets.UTF_8);
 	}
+
+	private record Snapshot(String name, int position) { }
 }
