@@ -10,6 +10,7 @@ import java.util.Set;
 
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.ForStatement;
@@ -52,9 +53,48 @@ public class PlacementAnalysisOriginProjectionTest {
 			Assert.assertEquals(fixture + " concrete Hop/context multiplicity", expectedMultiplicity,
 				actualMultiplicity);
 			Assert.assertEquals(fixture, analysis.graph().nodes().size(), analysis.occurrences().size());
-			Assert.assertTrue(fixture + " did not retain synthetic multi-key contexts",
-				actualMultiplicity.values().stream().anyMatch(count -> count > 1));
 		}
+	}
+
+	@Test
+	public void oneConcreteHopReusedAcrossTwoIndependentContextsProjectsToTwoKeys() {
+		LiteralOp shared = new LiteralOp(7L);
+		DMLProgram program = sharedHopAcrossStatementBlocks(shared);
+		List<Hop> independentOccurrences = plainTopLevelOccurrences(program);
+		Assert.assertEquals("fixture must reuse the exact same Hop identity in two statement-block contexts", 2,
+			independentOccurrences.stream().filter(hop -> hop == shared).count());
+		Assert.assertNotSame("fixture contexts must be distinct statement blocks",
+			program.getStatementBlocks().get(0), program.getStatementBlocks().get(1));
+
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		Map<Hop,Integer> expected = new IdentityHashMap<>();
+		independentOccurrences.forEach(hop -> expected.merge(hop, 1, Integer::sum));
+		Map<Hop,Integer> actual = new IdentityHashMap<>();
+		analysis.occurrences().forEach(projection -> actual.merge(projection.hop(), 1, Integer::sum));
+		Assert.assertEquals("exact independent occurrence identity/multiplicity", expected, actual);
+		Assert.assertEquals("shared Hop must project through two distinct compiled keys", 2,
+			analysis.occurrences().stream().filter(value -> value.hop() == shared)
+				.map(HopOccurrenceProjection::key).distinct().count());
+	}
+
+	private static DMLProgram sharedHopAcrossStatementBlocks(Hop shared) {
+		StatementBlock first = new StatementBlock();
+		first.setHops(new ArrayList<>(List.of(shared)));
+		StatementBlock second = new StatementBlock();
+		second.setHops(new ArrayList<>(List.of(shared)));
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(List.of(first, second)));
+		return program;
+	}
+
+	private static List<Hop> plainTopLevelOccurrences(DMLProgram program) {
+		List<Hop> result = new ArrayList<>();
+		for(StatementBlock block : program.getStatementBlocks()) {
+			Set<Hop> contextSeen = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(Hop root : block.getHops())
+				walkHop(root, result, contextSeen);
+		}
+		return result;
 	}
 
 	private static void assertIndependentFunctionBoundary(String fixture, HopOccurrenceProjection projection) {
