@@ -167,6 +167,8 @@ public class FederatedPlanMinSTGraph {
 	private final List<SelectedObligation> selectedObligations = new ArrayList<>();
 	private int numOfWorkers = 0;
 	private long nextAuxNodeId = auxNodeBase;
+	private boolean concreteAnchorCapabilityApplied = false;
+	private boolean concreteFederatedAnchorAvailable = true;
 
 	{
 		graph.addVertex(leafedSource);
@@ -704,7 +706,8 @@ public class FederatedPlanMinSTGraph {
 			}
 			if (!activeFedConsumers.isEmpty()
 					&& childExec == ExecType.CP
-					&& childOut == FederatedOutput.LOUT) {
+					&& childOut == FederatedOutput.LOUT
+					&& concreteFederatedAnchorAvailable) {
 				FType fType = childVertex.getCpFoutDataType();
 				if (fType == null)
 					fType = childVertex.getDataType();
@@ -1163,6 +1166,7 @@ public class FederatedPlanMinSTGraph {
 	}
 
 		public void getOptimalPlan() {
+			applyConcreteAnchorCapabilityGate();
 			PushRelabelMFImpl<Long, DefaultWeightedEdge> algo = new PushRelabelMFImpl<>(graph);
 			algo.calculateMinCut(leafedSource, rootLocalSink);
 
@@ -1203,6 +1207,75 @@ public class FederatedPlanMinSTGraph {
 				logFinalSelectedDecision(vertex, sourceSide, exec, out, finalFTypeMap.get(hopID), derivedSelected);
 			}
 		}
+
+	private void applyConcreteAnchorCapabilityGate() {
+		if (concreteAnchorCapabilityApplied)
+			return;
+		concreteAnchorCapabilityApplied = true;
+		concreteFederatedAnchorAvailable = hasConcreteFederatedAnchor();
+		if (concreteFederatedAnchorAvailable)
+			return;
+
+		// CP/FOUT and U are runtime relocation capabilities, not merely costed
+		// alternatives. Without a concrete FederationMap anchor they cannot be
+		// emitted, so exclude them before the cut instead of discovering the missing
+		// capability during registration. P->C excludes only CP/FOUT; native
+		// FED/FOUT remains available when the operation itself can produce it.
+		for (Vertex vertex : memoTable.values()) {
+			if (vertex == null || vertex.getCaps() == null || !vertex.getCaps().allowCP_FOUT)
+				continue;
+			vertex.getCaps().allowCP_FOUT = false;
+			long hopId = vertex.getHopID();
+			addCap(FederatedPlanMinSTPlanner.placementId(hopId),
+				FederatedPlanMinSTPlanner.computeId(hopId), HARD_CONSTRAINT);
+			if (FederatedPlannerTrace.shouldTrace(vertex.getHopRef()))
+				FederatedPlannerTrace.log(vertex.getHopRef(), "MinST-CapabilityGate",
+					"exclude CP/FOUT: no concrete federated anchor");
+		}
+
+		// A selected upload hyperedge represents CP/LOUT plus an additional
+		// federated representation for one or more FED consumers. Harden precisely
+		// that cut state when no anchor exists; other parent/child placements remain
+		// cost-comparable.
+		for (Map.Entry<HyperEdgeKey, HyperEdgeGroup> entry : parentChildHyperEdges.entrySet()) {
+			HyperEdgeKey key = entry.getKey();
+			if (key.direction != HyperEdgeDirection.UPLOAD)
+				continue;
+			addParentChildGroupCostEdge(entry.getValue(), key.childPlacementId,
+				HyperEdgeDirection.UPLOAD, HARD_CONSTRAINT);
+		}
+	}
+
+	private boolean hasConcreteFederatedAnchor() {
+		String uniqueFedInitVar = FederatedPlannerUtils.getUniqueFedInitVarName();
+		if (FederatedPlannerUtils.hasConcreteFederatedSourceVar(uniqueFedInitVar))
+			return true;
+		Set<Long> visited = new HashSet<>();
+		for (Vertex vertex : memoTable.values()) {
+			if (vertex != null && hasConcreteFederatedAnchor(vertex.getHopRef(), visited))
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean hasConcreteFederatedAnchor(Hop hop, Set<Long> visited) {
+		if (hop == null || !visited.add(hop.getHopID()))
+			return false;
+		if (hop instanceof DataOp) {
+			DataOp dataOp = (DataOp) hop;
+			if (dataOp.getOp() == Types.OpOpData.FEDERATED)
+				return true;
+			if (dataOp.getOp() == Types.OpOpData.TRANSIENTREAD
+					&& FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(dataOp, null))
+				return true;
+		}
+		if (hop.getInput() != null) {
+			for (Hop input : hop.getInput())
+				if (hasConcreteFederatedAnchor(input, visited))
+					return true;
+		}
+		return false;
+	}
 
 	private void repairSelectionFixpoint(Map<Long, ExecType> execSelection,
 			Map<Long, FederatedOutput> outSelection) {

@@ -54,7 +54,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMi
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.jgrapht.Graph;
 import org.jgrapht.graph.DefaultWeightedEdge;
 
@@ -392,53 +394,81 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
-	public void testSelectedUObligationExtractedForCpLoutChildWithFedConsumers() {
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		graph.setNumOfWorkers(2);
+	public void testSelectedUObligationExtractedForCpLoutChildWithFedConsumers() throws Exception {
+		FederatedPlannerUtils.registerFedInitVar("X_anchor", FType.ROW,
+			"localhost:1234/X1@0:0-50:100;localhost:1235/X2@50:0-100:100");
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		try {
+			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
+			graph.setNumOfWorkers(2);
 
-		DataOp childHop = new DataOp("X_u_obligation", DataType.MATRIX, ValueType.FP64,
+			DataOp childHop = new DataOp("X_u_obligation", DataType.MATRIX, ValueType.FP64,
 			OpOpData.TRANSIENTREAD, null, 100, 100, 100L * 100L, 1000);
-		ExecPlacementCaps childCaps = new ExecPlacementCaps();
-		childCaps.allowFED_LOUT = false;
-		childCaps.allowFED_FOUT = false;
-		Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, childCaps);
-		child.setMetadata(1.0, 1.0, Collections.emptyList());
-		child.setCost(0.0, 6.0, 4.0);
-		graph.addVertex(child);
-		graph.setVertexCost(child);
-		graph.addExecPlacementResultEdge(child);
+			ExecPlacementCaps childCaps = new ExecPlacementCaps();
+			childCaps.allowFED_LOUT = false;
+			childCaps.allowFED_FOUT = false;
+			Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, childCaps);
+			child.setMetadata(1.0, 1.0, Collections.emptyList());
+			child.setCost(0.0, 6.0, 4.0);
+			graph.addVertex(child);
+			graph.setVertexCost(child);
+			graph.addExecPlacementResultEdge(child);
 
-		ExecPlacementCaps fedParentCaps = new ExecPlacementCaps();
-		fedParentCaps.allowCP_LOUT = false;
-		fedParentCaps.allowCP_FOUT = false;
-		Vertex parent = new Vertex(new LiteralOp(21L), Privacy.PUBLIC, FType.FULL, fedParentCaps);
-		parent.setMetadata(1.0, 1.0, Collections.emptyList());
-		parent.setCost(100.0, 0.0, 0.0);
-		graph.addVertex(parent);
-		graph.setVertexCost(parent);
-		graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
+			ExecPlacementCaps fedParentCaps = new ExecPlacementCaps();
+			fedParentCaps.allowCP_LOUT = false;
+			fedParentCaps.allowCP_FOUT = false;
+			Vertex parent = new Vertex(new LiteralOp(21L), Privacy.PUBLIC, FType.FULL, fedParentCaps);
+			parent.setMetadata(1.0, 1.0, Collections.emptyList());
+			parent.setCost(100.0, 0.0, 0.0);
+			graph.addVertex(parent);
+			graph.setVertexCost(parent);
+			graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
 
-		ExecPlacementCaps localParentCaps = new ExecPlacementCaps();
-		localParentCaps.allowFED_LOUT = false;
-		localParentCaps.allowFED_FOUT = false;
-		Vertex localParent = new Vertex(new LiteralOp(22L), Privacy.PUBLIC, FType.FULL, localParentCaps);
-		localParent.setMetadata(1.0, 1.0, Collections.emptyList());
-		localParent.setCost(0.0, 0.0, 0.0);
-		graph.addVertex(localParent);
-		graph.setVertexCost(localParent);
-		graph.addRequiredLocalInputEdge(localParent.getHopID(), child.getHopID());
+			ExecPlacementCaps localParentCaps = new ExecPlacementCaps();
+			localParentCaps.allowFED_LOUT = false;
+			localParentCaps.allowFED_FOUT = false;
+			Vertex localParent = new Vertex(new LiteralOp(22L), Privacy.PUBLIC, FType.FULL, localParentCaps);
+			localParent.setMetadata(1.0, 1.0, Collections.emptyList());
+			localParent.setCost(0.0, 0.0, 0.0);
+			graph.addVertex(localParent);
+			graph.setVertexCost(localParent);
+			graph.addRequiredLocalInputEdge(localParent.getHopID(), child.getHopID());
 
-		graph.getOptimalPlan();
+			long childP = placementId(child.getHopID());
+			double expectedUploadPrice = 6.0
+				+ FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 2);
+			boolean pricedUpload = graph.getGraph().edgeSet().stream().anyMatch(edge ->
+				graph.getGraph().getEdgeTarget(edge).equals(childP)
+					&& graph.getGraph().getEdgeSource(edge) < -2L
+					&& approxEqual(graph.getGraph().getEdgeWeight(edge), expectedUploadPrice));
+			Assert.assertTrue("Anchor-backed U must retain its finite upload price", pricedUpload);
 
-		Assert.assertEquals("Expected one selected U obligation",
+			graph.getOptimalPlan();
+
+			Assert.assertEquals("Expected one selected U obligation",
 			1, graph.getSelectedObligations().size());
-		FederatedPlanMinSTGraph.SelectedObligation obligation = graph.getSelectedObligations().get(0);
-		Assert.assertEquals(FederatedPlanMinSTGraph.ObligationKind.U, obligation.getKind());
-		Assert.assertEquals(child.getHopID(), obligation.getChildHopId());
-		Assert.assertTrue(obligation.getConsumerHopIds().contains(parent.getHopID()));
-		Assert.assertEquals("Child remains primary local; U is an extra obligation, not a C/P flip",
+			FederatedPlanMinSTGraph.SelectedObligation obligation = graph.getSelectedObligations().get(0);
+			Assert.assertEquals(FederatedPlanMinSTGraph.ObligationKind.U, obligation.getKind());
+			Assert.assertEquals(child.getHopID(), obligation.getChildHopId());
+			Assert.assertTrue(obligation.getConsumerHopIds().contains(parent.getHopID()));
+			Assert.assertEquals("Child remains primary local; U is an extra obligation, not a C/P flip",
 			FederatedOutput.LOUT, childHop.getFederatedOutput());
-		Assert.assertEquals(ExecType.CP, childHop.getForcedExecType());
+			Assert.assertEquals(ExecType.CP, childHop.getForcedExecType());
+
+			Method register = FederatedPlanMinSTCut.class.getDeclaredMethod(
+				"registerMinstSelectedObligations", FederatedPlanMinSTGraph.class, Map.class);
+			register.setAccessible(true);
+			register.invoke(null, graph, new HashMap<Long, FType>());
+			Assert.assertTrue("Planner-selected U must register without runtime fallback",
+				FederatedFoutMaterializeRegistry.snapshot(-1L).containsKey(child.getHopID())
+					|| FederatedRefedRegistry.snapshot(-1L).containsKey(child.getHopID()));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
 	}
 
 	@Test
