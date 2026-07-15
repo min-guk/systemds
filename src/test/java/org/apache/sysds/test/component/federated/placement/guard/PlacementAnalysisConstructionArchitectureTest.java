@@ -154,6 +154,19 @@ public class PlacementAnalysisConstructionArchitectureTest {
 			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
 				"if(false && !registryBefore.equals(registrySentinel(program))) throw failure;");
 		assertBothSentinelsRejected(unreachable);
+
+		String throwIdentifiers = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"if(!before.equals(PlacementGraphFingerprint.capture(program))) throwMetric.record();")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"if(!registryBefore.equals(registrySentinel(program))) throwLogger.warn();");
+		assertBothSentinelsRejected(throwIdentifiers);
+
+		String earlySuccess = validBuilder().replace(
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);",
+			"PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);"
+				+ " if(condition) return analysis;");
+		assertBothSentinelsRejected(earlySuccess);
 	}
 
 	private static List<String> constructionViolations(String builderSource, String shadowSource) {
@@ -199,7 +212,7 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	private static boolean sentinelEncloses(String analysisBody, String sentinelCall, int construction) {
-		String body = compact(analysisBody);
+		String body = compact(protectControlKeywords(analysisBody));
 		String call = compact(sentinelCall);
 		int firstSemanticStep = body.indexOf(compact(ORDERED_OCCURRENCES));
 		if(construction < 0 || firstSemanticStep < 0)
@@ -228,14 +241,19 @@ public class PlacementAnalysisConstructionArchitectureTest {
 	}
 
 	private static boolean enforcesMismatch(String source, String equality, int construction) {
-		Matcher enforcing = Pattern.compile("if\\(!" + Pattern.quote(equality) + "\\)\\{?throw[^;]+;")
+		Matcher enforcing = Pattern.compile("if\\(!" + Pattern.quote(equality) + "\\)\\{?throw@[^;]+;")
 			.matcher(source);
-		int finalReturn = source.lastIndexOf("return");
+		int finalReturn = source.lastIndexOf("return@");
 		while(enforcing.find())
 			if(enforcing.start() > construction && enforcing.end() <= finalReturn
-				&& braceDepth(source, enforcing.start()) == 0)
+				&& braceDepth(source, enforcing.start()) == 0
+				&& source.indexOf("return@", construction + 1) >= enforcing.start())
 				return true;
 		return false;
+	}
+
+	private static String protectControlKeywords(String source) {
+		return source.replaceAll("\\bthrow\\s+", "throw@").replaceAll("\\breturn\\s+", "return@");
 	}
 
 	private static int braceDepth(String source, int end) {
