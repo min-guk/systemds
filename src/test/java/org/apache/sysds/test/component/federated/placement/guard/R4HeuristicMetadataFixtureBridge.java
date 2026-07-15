@@ -20,6 +20,7 @@
 package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -32,6 +33,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -46,6 +48,12 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Typed adversarial fixture transformations around the public Heuristic adapter seam. */
 final class R4HeuristicMetadataFixtureBridge {
+	enum BroadcastCase { UNKNOWN, UNSUPPORTED, NON_MATRIX, MISSING_HOP, SAFE_MATRIX }
+	record MarkerContribution(ValueVersionKey marker, CompiledHopKey markerKey,
+		Set<CompiledHopKey> descendants, Set<String> candidateKeys, List<String> exclusions) { }
+	record MultiMarkerScenario(CampaignBProvenanceFixtureBridge.Fixture fixture,
+		LinkedHashMap<ValueVersionKey, MarkerContribution> contributions,
+		CompiledHopKey independent, String independentFedFout) { }
 	record Scenario(CampaignBProvenanceFixtureBridge.Fixture fixture, PlacementAnalysis analysis,
 		CompiledHopKey target, PlacementState targetState, Set<ValueVersionKey> markers) {
 		R4Heuristic2Probe.Snapshot snapshot() {
@@ -68,11 +76,15 @@ final class R4HeuristicMetadataFixtureBridge {
 		Hop hop = fixture.analysis().hop(proof.provenNode()).orElseThrow();
 		hop.setDim1(rows);
 		hop.setDim2(cols);
-		PlacementAnalysis analysis = replace(fixture.analysis(), Map.of());
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(fixture.program());
 		return new Scenario(fixture, analysis, proof.provenNode(), proof.state(), Set.of(fixture.marker()));
 	}
 
 	static Scenario broadcast(boolean unsafeMetadata) throws Exception {
+		return broadcast(unsafeMetadata ? BroadcastCase.UNKNOWN : BroadcastCase.SAFE_MATRIX);
+	}
+
+	static Scenario broadcast(BroadcastCase kind) throws Exception {
 		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-09-INDEPENDENT-ANCHOR-RELEASE");
 		var proof = fixture.candidateProofs().values().stream().findFirst().orElseThrow();
 		DurableAnchorKey broadcast = new DurableAnchorKey("broadcast-safe", FType.BROADCAST,
@@ -86,14 +98,66 @@ final class R4HeuristicMetadataFixtureBridge {
 		}
 		PlacementState state = targetState(fixture.analysis().graph().node(proof.provenNode()).orElseThrow(),
 			broadcast);
-		if(unsafeMetadata) {
+		if(kind == BroadcastCase.UNKNOWN || kind == BroadcastCase.UNSUPPORTED) {
 			Node target = replacements.getOrDefault(proof.provenNode(),
 				fixture.analysis().graph().node(proof.provenNode()).orElseThrow());
 			replacements.put(target.key(), withExclusion(target,
-				new Exclusion(state, ReasonCode.UNKNOWN_METADATA, "missingRequiredFacts=rank")));
+				new Exclusion(state, kind == BroadcastCase.UNKNOWN ? ReasonCode.UNKNOWN_METADATA :
+					ReasonCode.UNSUPPORTED_OPERATION_SHAPE, "missingRequiredFacts=rank")));
 		}
 		PlacementAnalysis analysis = replace(fixture.analysis(), replacements);
+		if(kind == BroadcastCase.NON_MATRIX)
+			analysis = replaceHop(analysis, proof.provenNode(), new org.apache.sysds.hops.LiteralOp(7L));
+		else if(kind == BroadcastCase.MISSING_HOP)
+			analysis = withoutHop(analysis, proof.provenNode());
 		return new Scenario(fixture, analysis, proof.provenNode(), state, Set.of(fixture.marker()));
+	}
+
+	static MultiMarkerScenario multiMarker() throws Exception {
+		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-09-INDEPENDENT-ANCHOR-RELEASE");
+		DurableAnchorKey anchor = fixture.candidateProofs().values().iterator().next().anchor();
+		Node first = fixture.analysis().graph().node(fixture.markerKey()).orElseThrow();
+		Node second = fixture.candidateProofs().values().stream().map(p ->
+			fixture.analysis().graph().node(p.provenNode()).orElseThrow())
+			.filter(n -> !n.valueVersion().equals(first.valueVersion()))
+			.min(java.util.Comparator.comparingInt(n -> closure(fixture.analysis().graph(),
+				Set.of(n.valueVersion())).size())).orElseThrow();
+		List<Node> markerNodes = List.of(first, second);
+		LinkedHashMap<ValueVersionKey, MarkerContribution> result = new LinkedHashMap<>();
+		Map<CompiledHopKey, ValueVersionKey> owners = new LinkedHashMap<>();
+		for(Node markerNode : markerNodes) {
+			Set<CompiledHopKey> descendants = closure(fixture.analysis().graph(), Set.of(markerNode.valueVersion()));
+			for(CompiledHopKey key : descendants) {
+				Node old = fixture.analysis().graph().node(key).orElseThrow();
+				if(CampaignBProvenanceFixtureBridge.candidateProof(fixture.analysis(), old, anchor,
+					markerNode.key()).isPresent()) {
+					ValueVersionKey owner = owners.get(key);
+					if(owner == null || descendants.size() < closure(fixture.analysis().graph(), Set.of(owner)).size())
+						owners.put(key, markerNode.valueVersion());
+				}
+			}
+		}
+		for(Node markerNode : markerNodes) {
+			Set<CompiledHopKey> descendants = closure(fixture.analysis().graph(), Set.of(markerNode.valueVersion()));
+			Set<String> keys = new LinkedHashSet<>(); List<String> exclusions = new ArrayList<>();
+			for(var entry : owners.entrySet()) if(entry.getValue().equals(markerNode.valueVersion())) {
+				var proof = CampaignBProvenanceFixtureBridge.candidateProof(fixture.analysis(),
+					fixture.analysis().graph().node(entry.getKey()).orElseThrow(), anchor, markerNode.key()).orElseThrow();
+				keys.add(proof.candidate()); exclusions.add("NO_REFED|" + proof.candidate() + "|proof="
+					+ CampaignBProvenanceFixtureBridge.proofSignature(proof) + "|marker="
+					+ markerNode.valueVersion().normalizedSignature());
+			}
+			if(keys.isEmpty()) throw new AssertionError("MULTI_MARKER_FIXTURE_EMPTY|marker="
+				+ markerNode.valueVersion().normalizedSignature());
+			result.put(markerNode.valueVersion(), new MarkerContribution(markerNode.valueVersion(), markerNode.key(),
+				descendants, Set.copyOf(keys), exclusions.stream().sorted().toList()));
+		}
+		Set<CompiledHopKey> union = new LinkedHashSet<>(); result.values().forEach(c -> union.addAll(c.descendants()));
+		CompiledHopKey independent = fixture.roles().get("Y_INDEPENDENT");
+		if(independent == null || union.contains(independent)) throw new AssertionError("MULTI_MARKER_NO_INDEPENDENT");
+		String fed = fixture.baseAlternatives().get(independent.normalizedSignature()).stream()
+			.filter(x -> x.contains("FED") && x.contains("FOUT")).findFirst().orElseThrow();
+		return new MultiMarkerScenario(fixture, result, independent, fed);
 	}
 
 	static Scenario noProvableCandidate() throws Exception {
@@ -117,6 +181,14 @@ final class R4HeuristicMetadataFixtureBridge {
 
 	static CampaignBProvenanceFixtureBridge.Fixture twoMarkerFixture() throws Exception {
 		return CampaignBProvenanceFixtureBridge.fresh("H-10-SAME-SHAPE-DISTINCT-ANCHORS");
+	}
+
+	static Set<String> exclusionKeys(R4Heuristic2AdapterBridge.Selection selection) {
+		Set<String> result = new LinkedHashSet<>();
+		for(String exclusion : selection.exclusions())
+			if(exclusion.startsWith("NO_REFED|"))
+				result.add(exclusion.substring("NO_REFED|".length(), exclusion.indexOf("|proof=")));
+		return Set.copyOf(result);
 	}
 
 	static Set<ValueVersionKey> twoMarkers(CampaignBProvenanceFixtureBridge.Fixture fixture) {
@@ -198,6 +270,24 @@ final class R4HeuristicMetadataFixtureBridge {
 			PlacementAnalysis.class.getDeclaredConstructor(NeutralPlacementGraph.class, List.class);
 		constructor.setAccessible(true);
 		return constructor.newInstance(graph, source.occurrences());
+	}
+
+	private static PlacementAnalysis replaceHop(PlacementAnalysis source, CompiledHopKey key, Hop hop)
+		throws Exception {
+		List<PlacementAnalysis.HopOccurrenceProjection> occurrences = source.occurrences().stream()
+			.map(o -> o.key().equals(key) ? new PlacementAnalysis.HopOccurrenceProjection(o.key(), hop,
+				o.normalizedOrdinal(), o.normalizedSignature()) : o).toList();
+		Constructor<PlacementAnalysis> constructor = PlacementAnalysis.class
+			.getDeclaredConstructor(NeutralPlacementGraph.class, List.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(source.graph(), occurrences);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static PlacementAnalysis withoutHop(PlacementAnalysis source, CompiledHopKey key) throws Exception {
+		Field field = PlacementAnalysis.class.getDeclaredField("hopsByKey"); field.setAccessible(true);
+		Map<CompiledHopKey, Hop> hops = new LinkedHashMap<>((Map<CompiledHopKey, Hop>)field.get(source));
+		hops.remove(key); field.set(source, Map.copyOf(hops)); return source;
 	}
 
 	private R4HeuristicMetadataFixtureBridge() {
