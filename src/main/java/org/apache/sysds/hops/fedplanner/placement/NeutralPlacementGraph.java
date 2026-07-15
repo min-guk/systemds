@@ -127,17 +127,25 @@ public final class NeutralPlacementGraph {
 		}
 	}
 
-	public record Constraint(ConstraintKind kind, CompiledHopKey left, CompiledHopKey right)
+	public record Constraint(ConstraintKind kind, CompiledHopKey left, CompiledHopKey right,
+		int inputPosition, String evidence)
 		implements Comparable<Constraint> {
+		public Constraint(ConstraintKind kind, CompiledHopKey left, CompiledHopKey right) {
+			this(kind, left, right, -1, "structural");
+		}
 
 		public Constraint {
 			Objects.requireNonNull(kind, "kind");
 			Objects.requireNonNull(left, "left");
 			Objects.requireNonNull(right, "right");
+			if(inputPosition < -1)
+				throw new IllegalArgumentException("inputPosition must be -1 or non-negative");
+			evidence = evidence == null ? "" : evidence;
 		}
 
 		public String normalizedSignature() {
-			return fields(kind.name(), left.normalizedSignature(), right.normalizedSignature());
+			return fields(kind.name(), left.normalizedSignature(), right.normalizedSignature(),
+				Integer.toString(inputPosition), evidence);
 		}
 
 		@Override
@@ -328,6 +336,11 @@ public final class NeutralPlacementGraph {
 				return false;
 			if(constraint.kind() == ConstraintKind.SAME_FTYPE
 				&& !Objects.equals(left.fType(), right.fType()))
+				return false;
+			if(constraint.kind() == ConstraintKind.CONJUNCTIVE && right.output() ==
+				org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& (left.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					|| !Objects.equals(left.fType(), right.fType())))
 				return false;
 		}
 		return true;

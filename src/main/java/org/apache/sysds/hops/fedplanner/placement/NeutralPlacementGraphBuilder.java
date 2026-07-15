@@ -115,21 +115,23 @@ public final class NeutralPlacementGraphBuilder {
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
 				"ordinal-" + ordinal, PlacementGraphFingerprint.structuralKey(hop));
 			String variable = lexicalVariable(hop, ordinal);
-			int version = isTransientWrite(hop) ? versions.merge(variable, 1, Integer::sum) : versions.getOrDefault(variable, 0);
-			VersionKind versionKind = versionKind(hop, occurrence, context, definitions.get(variable));
+			String scopedVariable = occurrence.namespace() + '\u0000' + variable;
+			int version = isTransientWrite(hop) ? versions.merge(scopedVariable, 1, Integer::sum)
+				: versions.getOrDefault(scopedVariable, 0);
+			VersionKind versionKind = versionKind(hop, occurrence, context, definitions.get(scopedVariable));
 			List<String> predecessorEdges = new ArrayList<>();
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
 				Hop input = hop.getInput(inputPosition);
 				if(values.containsKey(input)) predecessorEdges.add("input-" + inputPosition + ':'
 					+ values.get(input).normalizedSignature());
 			}
-			if(isTransientRead(hop) && definitions.containsKey(variable))
-				for(ValueVersionKey definition : definitions.get(variable))
+			if(isTransientRead(hop) && definitions.containsKey(scopedVariable))
+				for(ValueVersionKey definition : definitions.get(scopedVariable))
 					predecessorEdges.add("definition:" + definition.normalizedSignature());
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
 				predecessorEdges);
 			if(isTransientWrite(hop) || isFunctionOutput(hop))
-				definitions.computeIfAbsent(variable, k -> new ArrayList<>()).add(value);
+				definitions.computeIfAbsent(scopedVariable, k -> new ArrayList<>()).add(value);
 			values.put(hop, value);
 			keys.put(hop, key);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
@@ -140,16 +142,33 @@ public final class NeutralPlacementGraphBuilder {
 					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
 				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
 			}
-			Node node = buildNode(hop, key, value, anchors, inputDomains(hop, nodesByHop));
+			Node node = buildNode(hop, key, value, anchors,
+				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind));
 			nodes.add(node);
 			nodesByHop.put(hop, node);
 		}
+		if(nodes.size() != occurrences.size())
+			throw new IllegalStateException("occurrence/node mismatch before CFG closure: "
+				+ occurrences.size() + '/' + nodes.size());
+		nodes = closeCfgValueVersions(occurrences, nodes, values);
+		if(nodes.size() != occurrences.size())
+			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
+				+ occurrences.size() + '/' + nodes.size());
+		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes);
+		nodes = functionExpansion.nodes();
+		nodesByHop.clear();
+		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
 		Set<Constraint> constraints = new java.util.TreeSet<>();
 		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
 			CompiledHopKey consumer = keys.get(occurrence.hop());
-			for(Hop input : occurrence.hop().getInput())
-				if(keys.containsKey(input)) constraints.add(new Constraint(ConstraintKind.DOMINATES, keys.get(input), consumer));
+			for(int inputPosition = 0; inputPosition < occurrence.hop().getInput().size(); inputPosition++) {
+				Hop input = occurrence.hop().getInput(inputPosition);
+				if(keys.containsKey(input)) constraints.add(new Constraint(ConstraintKind.DOMINATES,
+					keys.get(input), consumer, inputPosition, "data-input"));
+			}
 		}
+		addCfgConstraints(occurrences, nodes, keys, constraints);
+		constraints.addAll(functionExpansion.constraints());
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, anchorProvenance);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		String after = PlacementGraphFingerprint.capture(program);
@@ -174,6 +193,185 @@ public final class NeutralPlacementGraphBuilder {
 		return PlacementGraphFingerprint.sha256(String.join("\n", rows));
 	}
 
+	private static List<Node> closeCfgValueVersions(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		List<Node> nodes, Map<Hop,ValueVersionKey> values) {
+		List<Node> closed = new ArrayList<>(nodes.size());
+		for(int i = 0; i < occurrences.size(); i++) {
+			Node node = nodes.get(i);
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(i);
+			ValueVersionKey value = node.valueVersion();
+			Set<String> predecessors = new java.util.TreeSet<>(value.predecessorVersions());
+			if(value.versionKind() == VersionKind.BRANCH_JOIN_PHI
+				|| value.versionKind() == VersionKind.LOOP_HEAD_PHI) {
+				for(int j = 0; j < occurrences.size(); j++) {
+					if(i == j) continue;
+					Node candidate = nodes.get(j);
+					PlacementGraphFingerprint.HopOccurrence candidateOccurrence = occurrences.get(j);
+					if(occurrence.namespace().equals(candidateOccurrence.namespace())
+						&& value.lexicalVariable().equals(candidate.valueVersion().lexicalVariable())
+						&& (candidate.kind() == NodeKind.TRANSIENT_WRITE
+							|| candidate.valueVersion().versionKind() == VersionKind.LOOP_BACKEDGE))
+						predecessors.add("cfg-definition:" + valueReference(candidate.valueVersion()));
+				}
+			}
+			if(value.versionKind() == VersionKind.FUNCTION_INPUT
+				|| value.versionKind() == VersionKind.FUNCTION_OUTPUT) {
+				for(int j = 0; j < occurrences.size(); j++) {
+					Hop candidate = occurrences.get(j).hop();
+					if(candidate instanceof FunctionOp && functionMatches((FunctionOp) candidate, occurrence.namespace()))
+						predecessors.add("callsite:" + nodes.get(j).key().normalizedSignature());
+				}
+			}
+			ValueVersionKey closedValue = new ValueVersionKey(value.programFingerprint(), value.lexicalVariable(),
+				value.definingControlRegion(), value.definitionOrdinal(), value.versionKind(),
+				new ArrayList<>(predecessors));
+			Node closedNode = new Node(node.key(), node.kind(), closedValue, node.emittedWork(),
+				node.legalAlternatives(), node.exclusions(), node.anchors());
+			closed.add(closedNode);
+			values.put(occurrence.hop(), closedValue);
+		}
+		return closed;
+	}
+
+	private static FunctionExpansion expandFunctionBoundaryContexts(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes) {
+		List<Node> expanded = new ArrayList<>(nodes);
+		List<Constraint> constraints = new ArrayList<>();
+		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
+		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
+		for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
+			Hop hop = occurrences.get(callIndex).hop();
+			if(!(hop instanceof FunctionOp)) continue;
+			FunctionOp callOp = (FunctionOp) hop;
+			Node call = nodes.get(callIndex);
+			String functionKey = callOp.getFunctionKey();
+			String[] inputNames = callOp.getInputVariableNames();
+			for(int inputPosition = 0; inputPosition < inputNames.length; inputPosition++) {
+				Node argument = inputPosition < callOp.getInput().size()
+					? nodesByHop.get(callOp.getInput(inputPosition)) : null;
+				List<PlacementState> alternatives = argument == null ? List.of(
+					new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false))
+					: transientAlternatives(argument.legalAlternatives());
+				Node input = functionBoundaryNode(call, functionKey, inputNames[inputPosition], callIndex,
+					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives);
+				expanded.add(input);
+				constraints.add(new Constraint(ConstraintKind.DOMINATES, call.key(), input.key(), inputPosition,
+					"function-callsite-control"));
+				if(argument != null)
+					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, argument.key(), input.key(), inputPosition,
+						"function-argument:" + inputNames[inputPosition]));
+			}
+			String[] outputNames = callOp.getOutputVariableNames();
+			for(int outputPosition = 0; outputPosition < outputNames.length; outputPosition++) {
+				Node output = functionBoundaryNode(call, functionKey, outputNames[outputPosition], callIndex,
+					outputPosition, VersionKind.FUNCTION_OUTPUT, NodeKind.FUNCTION_OUTPUT,
+					transientAlternatives(call.legalAlternatives()));
+				expanded.add(output);
+				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, call.key(), output.key(), outputPosition,
+					"function-result:" + outputNames[outputPosition]));
+			}
+		}
+		for(int i = 0; i < occurrences.size(); i++) {
+			Node template = nodes.get(i);
+			if(template.kind() != NodeKind.FUNCTION_INPUT && template.kind() != NodeKind.FUNCTION_OUTPUT)
+				continue;
+			PlacementGraphFingerprint.HopOccurrence boundary = occurrences.get(i);
+			for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
+				Hop hop = occurrences.get(callIndex).hop();
+				if(!(hop instanceof FunctionOp) || !functionMatches((FunctionOp) hop, boundary.namespace()))
+					continue;
+				Node call = nodes.get(callIndex);
+				String callPath = call.key().callSitePath() + "->" + boundary.namespace();
+				String context = "callsite:" + call.key().normalizedSignature();
+				ControlRegionKey region = new ControlRegionKey(template.key().programFingerprint(), boundary.namespace(),
+					List.of(call.key().callSitePath(), boundary.path()), callPath, context);
+				CompiledHopKey key = new CompiledHopKey(template.key().programFingerprint(), boundary.namespace(), callPath,
+					context, region, template.key().emittedHopInstance() + "@" + callIndex,
+					template.key().canonicalSourceOrigin());
+				Set<String> predecessors = new java.util.TreeSet<>(template.valueVersion().predecessorVersions());
+				predecessors.add("callsite:" + call.key().normalizedSignature());
+				ValueVersionKey value = new ValueVersionKey(template.valueVersion().programFingerprint(),
+					template.valueVersion().lexicalVariable(), region, template.valueVersion().definitionOrdinal(),
+					template.valueVersion().versionKind(), new ArrayList<>(predecessors));
+				expanded.add(new Node(key, template.kind(), value, template.emittedWork(),
+					template.legalAlternatives(), template.exclusions(), template.anchors()));
+				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, call.key(), key, -1,
+					"function-callsite:" + boundary.namespace()));
+			}
+		}
+		return new FunctionExpansion(Collections.unmodifiableList(expanded),
+			Collections.unmodifiableList(constraints));
+	}
+
+	private static Node functionBoundaryNode(Node call, String functionKey, String variable, int callIndex,
+		int position, VersionKind versionKind, NodeKind nodeKind, List<PlacementState> alternatives) {
+		String boundary = versionKind == VersionKind.FUNCTION_INPUT ? "input" : "output";
+		String callPath = call.key().callSitePath() + "->" + functionKey + '/' + boundary + '-' + position;
+		String context = "callsite:" + call.key().normalizedSignature();
+		ControlRegionKey region = new ControlRegionKey(call.key().programFingerprint(), functionKey,
+			List.of(call.key().callSitePath(), boundary + '-' + position), callPath, context);
+		CompiledHopKey key = new CompiledHopKey(call.key().programFingerprint(), functionKey, callPath, context,
+			region, boundary + '-' + callIndex + '-' + position,
+			"function-boundary:" + functionKey + ':' + boundary + ':' + variable);
+		ValueVersionKey value = new ValueVersionKey(call.key().programFingerprint(), variable, region, position,
+			versionKind, List.of("callsite:" + call.key().normalizedSignature()));
+		return new Node(key, nodeKind, value, true, alternatives, List.of(), List.of());
+	}
+
+	private static List<PlacementState> transientAlternatives(List<PlacementState> alternatives) {
+		Set<PlacementState> result = new java.util.TreeSet<>();
+		result.add(new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false));
+		for(PlacementState state : alternatives)
+			if(isLegalTransient(state)) result.add(state);
+		return Collections.unmodifiableList(new ArrayList<>(result));
+	}
+
+	private record FunctionExpansion(List<Node> nodes, List<Constraint> constraints) { }
+
+	private static void addCfgConstraints(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints) {
+		for(int i = 0; i < occurrences.size(); i++) {
+			Node target = nodes.get(i);
+			PlacementGraphFingerprint.HopOccurrence targetOccurrence = occurrences.get(i);
+			if(target.valueVersion().versionKind() == VersionKind.BRANCH_JOIN_PHI
+				|| target.valueVersion().versionKind() == VersionKind.LOOP_HEAD_PHI) {
+				for(int j = 0; j < occurrences.size(); j++) {
+					if(i == j) continue;
+					Node predecessor = nodes.get(j);
+					PlacementGraphFingerprint.HopOccurrence predecessorOccurrence = occurrences.get(j);
+					if(targetOccurrence.namespace().equals(predecessorOccurrence.namespace())
+						&& target.valueVersion().lexicalVariable().equals(predecessor.valueVersion().lexicalVariable())
+						&& (predecessor.kind() == NodeKind.TRANSIENT_WRITE
+							|| predecessor.valueVersion().versionKind() == VersionKind.LOOP_BACKEDGE))
+						constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, predecessor.key(), target.key(),
+							-1, target.valueVersion().versionKind().name()));
+				}
+			}
+		}
+		for(int i = 0; i < occurrences.size(); i++) {
+			if(!(occurrences.get(i).hop() instanceof FunctionOp)) continue;
+			FunctionOp left = (FunctionOp) occurrences.get(i).hop();
+			for(int j = i + 1; j < occurrences.size(); j++) {
+				if(occurrences.get(j).hop() instanceof FunctionOp) {
+					FunctionOp right = (FunctionOp) occurrences.get(j).hop();
+					if(left.getFunctionKey().equals(right.getFunctionKey()))
+						constraints.add(new Constraint(ConstraintKind.DISTINCT_CONTEXT, keys.get(left), keys.get(right),
+							-1, left.getFunctionKey()));
+				}
+			}
+		}
+	}
+
+	private static boolean functionMatches(FunctionOp call, String namespace) {
+		return namespace.equals(call.getFunctionName()) || namespace.endsWith("::" + call.getFunctionName())
+			|| namespace.endsWith("/" + call.getFunctionName());
+	}
+
+	private static String valueReference(ValueVersionKey value) {
+		return value.lexicalVariable() + '#' + value.definitionOrdinal() + '@'
+			+ value.definingControlRegion().callSitePath() + ':' + value.versionKind();
+	}
+
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
 		List<List<FType>> inputDomains) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
@@ -183,9 +381,10 @@ public final class NeutralPlacementGraphBuilder {
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		for(List<FType> inputs : inputCombinations(inputDomains)) {
 			OpCaps caps;
+			DecisionEvidence evidence;
 			boolean shapeDependent;
 			try {
-				DecisionEvidence evidence = oracle.decideWithEvidence(hop, inputs, null);
+				evidence = oracle.decideWithEvidence(hop, inputs, null);
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
 			}
@@ -218,6 +417,10 @@ public final class NeutralPlacementGraphBuilder {
 			excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNSUPPORTED_ANCHOR,
 				"Federated source lacks literal durable worker/range provenance"));
 		}
+		else if(hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED) {
+			DurableAnchorKey anchor = anchors.get(0);
+			legal.add(new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false));
+		}
 		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
 	}
@@ -243,8 +446,22 @@ public final class NeutralPlacementGraphBuilder {
 				List.of(((LiteralOp) end.getInput(0)).getLongValue(), ((LiteralOp) end.getInput(1)).getLongValue())));
 		}
 		FType type = FederatedPlannerUtils.deriveFedInitFType(data);
+		if(type == null || type == FType.PART || type == FType.OTHER)
+			type = deriveAnchorFType(partitions);
 		if(type == null || type == FType.PART || type == FType.OTHER) return List.of();
 		return List.of(new DurableAnchorKey("fed-init:" + data.getName(), type, partitions));
+	}
+
+	private static FType deriveAnchorFType(List<AnchorPartition> partitions) {
+		if(partitions.isEmpty()) return null;
+		long maxRow = partitions.stream().mapToLong(p -> p.end().get(0)).max().orElse(-1);
+		long maxCol = partitions.stream().mapToLong(p -> p.end().get(1)).max().orElse(-1);
+		boolean spansRows = partitions.stream().allMatch(p -> p.begin().get(0) == 0 && p.end().get(0) == maxRow);
+		boolean spansCols = partitions.stream().allMatch(p -> p.begin().get(1) == 0 && p.end().get(1) == maxCol);
+		if(spansRows && spansCols) return partitions.size() == 1 ? FType.FULL : FType.BROADCAST;
+		if(spansCols) return FType.ROW;
+		if(spansRows) return FType.COL;
+		return FType.OTHER;
 	}
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
@@ -265,8 +482,9 @@ public final class NeutralPlacementGraphBuilder {
 		for(Map.Entry<ValueVersionKey,List<InputUse>> entry : uses.entrySet()) {
 			DurableAnchorKey anchor = valueAnchors.get(entry.getKey());
 			PlacementState target = new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false);
-			List<CompiledHopKey> consumers = new ArrayList<>();
-			for(InputUse use : entry.getValue()) consumers.add(use.consumer());
+			Set<CompiledHopKey> consumerSet = new java.util.TreeSet<>();
+			for(InputUse use : entry.getValue()) consumerSet.add(use.consumer());
+			List<CompiledHopKey> consumers = new ArrayList<>(consumerSet);
 			RelocationActionKey key = new RelocationActionKey(entry.getKey(), target, anchor,
 				entry.getValue().get(0).scope(), consumers);
 			List<ObligationKey> obligations = new ArrayList<>();
@@ -279,21 +497,49 @@ public final class NeutralPlacementGraphBuilder {
 
 	private record InputUse(CompiledHopKey consumer, int position, String scope) { }
 
-	private static List<List<FType>> inputDomains(Hop hop, Map<Hop,Node> nodesByHop) {
+	private static List<List<FType>> inputDomains(Hop hop, Map<Hop,Node> nodesByHop,
+		PlacementGraphFingerprint.HopOccurrence occurrence,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, VersionKind versionKind) {
+		if(versionKind == VersionKind.FUNCTION_INPUT) {
+			Set<FType> callTypes = new LinkedHashSet<>();
+			boolean local = false;
+			for(PlacementGraphFingerprint.HopOccurrence candidate : occurrences) {
+				if(!(candidate.hop() instanceof FunctionOp)
+					|| !functionMatches((FunctionOp) candidate.hop(), occurrence.namespace()))
+					continue;
+				FunctionOp call = (FunctionOp) candidate.hop();
+				String[] names = call.getInputVariableNames();
+				for(int i = 0; i < names.length && i < call.getInput().size(); i++) {
+					if(!names[i].equals(lexicalVariable(hop, -1))) continue;
+					Node argument = nodesByHop.get(call.getInput(i));
+					if(argument == null) continue;
+					for(PlacementState state : argument.legalAlternatives()) {
+						if(state.fType() == null) local = true;
+						else callTypes.add(state.fType());
+					}
+				}
+			}
+			List<FType> domain = new ArrayList<>(callTypes);
+			domain.sort(java.util.Comparator.comparing(Enum::name));
+			if(local || domain.isEmpty()) domain.add(0, null);
+			return List.of(Collections.unmodifiableList(domain));
+		}
 		List<List<FType>> domains = new ArrayList<>();
 		for(Hop input : hop.getInput()) {
 			Set<FType> types = new LinkedHashSet<>();
+			boolean local = false;
 			Node predecessor = nodesByHop.get(input);
 			if(predecessor != null) {
-				predecessor.legalAlternatives().forEach(state -> { if(state.fType() != null) types.add(state.fType()); });
-				predecessor.exclusions().forEach(exclusion -> {
-					if(exclusion.state().fType() != null) types.add(exclusion.state().fType());
-				});
+				for(PlacementState state : predecessor.legalAlternatives()) {
+					if(state.fType() == null) local = true;
+					else types.add(state.fType());
+				}
 			}
 			if(types.isEmpty()) domains.add(Collections.singletonList(null));
 			else {
 				List<FType> sorted = new ArrayList<>(types);
 				sorted.sort(java.util.Comparator.comparing(Enum::name));
+				if(local) sorted.add(0, null);
 				domains.add(Collections.unmodifiableList(sorted));
 			}
 		}
@@ -349,6 +595,7 @@ public final class NeutralPlacementGraphBuilder {
 		return h instanceof DataOp && h.getName() != null && !h.getName().isBlank() ? h.getName() : "value-" + ordinal;
 	}
 	private static NodeKind nodeKind(Hop h, ValueVersionKey value) {
+		if(value.versionKind() == VersionKind.CLONE_RECOMPILE) return NodeKind.CLONE;
 		if(value.versionKind() == VersionKind.FUNCTION_INPUT) return NodeKind.FUNCTION_INPUT;
 		if(value.versionKind() == VersionKind.LOOP_HEAD_PHI || value.versionKind() == VersionKind.LOOP_BACKEDGE)
 			return NodeKind.LOOP_PHI;
