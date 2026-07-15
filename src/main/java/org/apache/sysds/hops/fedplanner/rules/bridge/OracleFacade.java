@@ -64,6 +64,13 @@ import org.apache.sysds.parser.DataExpression;
  * Bridge that exposes the rule oracle via canonicalized {@link OpSig} inputs.
  */
 public final class OracleFacade {
+	public record NodeShape(DataType dataType, long rows, long cols) { }
+
+	/** Canonical rules-boundary capture of immutable compiled-Hop shape metadata. */
+	public static NodeShape nodeShape(Hop hop) {
+		Objects.requireNonNull(hop, "hop");
+		return new NodeShape(hop.getDataType(), hop.getDim1(), hop.getDim2());
+	}
 	public record DecisionEvidence(RulesApi.OpCaps caps, RulesApi.ShapeProof shapeProof) {
 		public boolean shapeDependent() { return !shapeProof.requiredFacts().isEmpty(); }
 	}

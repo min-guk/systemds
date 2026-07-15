@@ -19,11 +19,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
+	public record NodeShapeFact(DataType dataType, long rows, long cols) {
+		public NodeShapeFact { Objects.requireNonNull(dataType, "dataType"); }
+		public boolean knownPositiveMatrix() { return dataType == DataType.MATRIX && rows > 0 && cols > 0; }
+	}
 	/** Stable association between a neutral graph key and its concrete compiled Hop origin. */
 	public record HopOccurrenceProjection(CompiledHopKey key, Hop hop, int normalizedOrdinal,
 		String normalizedSignature) {
@@ -40,6 +46,7 @@ public final class PlacementAnalysis {
 	private final NeutralPlacementGraph graph;
 	private final List<HopOccurrenceProjection> occurrences;
 	private final Map<CompiledHopKey, Hop> hopsByKey;
+	private final Map<CompiledHopKey, NodeShapeFact> shapeFacts;
 	private final String analysisFingerprint;
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences) {
@@ -52,6 +59,12 @@ public final class PlacementAnalysis {
 		if(indexed.size() != graph.nodes().size())
 			throw new IllegalArgumentException("Projection does not cover the neutral placement graph");
 		hopsByKey = Map.copyOf(indexed);
+		Map<CompiledHopKey, NodeShapeFact> shapes = new LinkedHashMap<>();
+		for(var entry : indexed.entrySet()) {
+			var shape = OracleFacade.nodeShape(entry.getValue());
+			shapes.put(entry.getKey(), new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols()));
+		}
+		shapeFacts = Map.copyOf(shapes);
 		List<String> projectionSignatures = this.occurrences.stream()
 			.map(HopOccurrenceProjection::normalizedSignature).collect(java.util.stream.Collectors.toList());
 		analysisFingerprint = PlacementGraphFingerprint.sha256(graph.normalizedSignature() + '\n'
@@ -68,6 +81,10 @@ public final class PlacementAnalysis {
 
 	public Optional<Hop> hop(CompiledHopKey key) {
 		return Optional.ofNullable(hopsByKey.get(Objects.requireNonNull(key, "key")));
+	}
+
+	public Optional<NodeShapeFact> shapeFact(CompiledHopKey key) {
+		return Optional.ofNullable(shapeFacts.get(Objects.requireNonNull(key, "key")));
 	}
 
 	public String analysisFingerprint() {

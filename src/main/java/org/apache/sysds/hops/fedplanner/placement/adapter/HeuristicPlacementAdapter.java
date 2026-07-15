@@ -11,6 +11,7 @@ import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -20,7 +21,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
-import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -48,17 +48,15 @@ public final class HeuristicPlacementAdapter {
 	public Result select(PlacementAnalysis analysis, Set<ValueVersionKey> demotionMarkers) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(demotionMarkers, "demotionMarkers");
-		if(demotionMarkers.isEmpty())
-			throw new IllegalArgumentException("Heuristic selection requires a provenance marker");
 		NeutralPlacementGraph base = analysis.graph();
-		Set<CompiledHopKey> markerKeys = markerKeys(base, demotionMarkers);
-		Set<CompiledHopKey> descendants = closure(base, markerKeys);
+		List<CompiledHopKey> markerKeys = markerKeys(base, demotionMarkers);
+		Set<CompiledHopKey> descendants = new LinkedHashSet<>();
+		for(CompiledHopKey marker : markerKeys) descendants.addAll(closure(base, Set.of(marker)));
 		Set<ValueVersionKey> descendantValues = new LinkedHashSet<>();
 		for(Node node : base.nodes())
 			if(descendants.contains(node.key())) descendantValues.add(node.valueVersion());
-		DurableAnchorKey policyAnchor = policyAnchor(base, markerKeys);
-		List<String> candidates = candidateUniverse(base);
-		List<String> exclusions = policyExclusions(analysis, descendants, markerKeys, policyAnchor);
+		List<String> exclusions = policyExclusions(analysis, markerKeys);
+		List<String> candidates = candidateUniverse(base, exclusions);
 		List<NeutralPlacementGraph.RelocationAction> legalRelocations = base.relocationActions().stream()
 			.filter(action -> !descendantValues.contains(action.key().sourceValueVersion())).toList();
 		NeutralPlacementGraph filtered = new NeutralPlacementGraph(base.nodes(), base.constraints(), legalRelocations);
@@ -86,24 +84,35 @@ public final class HeuristicPlacementAdapter {
 			"policy", "NO_REFED_POLICY_V1", "markerCount", Integer.toString(markerKeys.size()),
 			"descendantCount", Integer.toString(descendants.size()), "search", "EXHAUSTIVE",
 			"shapeProof", "NEUTRAL_EXCLUSIONS_PLUS_DURABLE_ANCHOR_GEOMETRY")));
-		String assignmentHash = assignmentHash(assignment);
+		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
+			: assignmentHash(assignment);
 		String policyFingerprint = sha256("NO_REFED_POLICY_V1|" + analysis.analysisFingerprint() + '|'
 			+ markerSignature(demotionMarkers) + '|' + candidates + '|' + exclusions);
 		String incumbent = selection.score().normalizedSignature();
+		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
+			relocations.size(), incumbent);
+		List<Bound> boundComponents = componentBounds(base);
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
 			assignmentHash, candidates.size(), candidates.size(), 0, List.of("complete"), incumbent,
-			incumbent, "EXHAUSTED", false);
+			incumbent, "EXHAUSTED", false, sha256(base.normalizedSignature()), score, score,
+			boundComponents, base.nodes().size(), base.constraints().size(), boundComponents.size(),
+			"complete-cartesian-enumeration-with-partial-legality-pruning");
 		Result partial = new Result(analysis, analysis.analysisFingerprint(), assignment, candidates, exclusions,
 			relocations, obligations, anchors, List.of(), List.of(), List.of(), objective, ties, relationships,
-			boundaries, clones, structural, facts, certificate, "");
+			boundaries, clones, structural, facts, certificate, score, "");
 		return partial.withNormalizedPlanFingerprint(planFingerprint(partial));
 	}
 
-	private static Set<CompiledHopKey> markerKeys(NeutralPlacementGraph graph, Set<ValueVersionKey> markers) {
-		Set<CompiledHopKey> keys = new LinkedHashSet<>();
-		for(Node node : graph.nodes()) if(markers.contains(node.valueVersion())) keys.add(node.key());
+	private static List<CompiledHopKey> markerKeys(NeutralPlacementGraph graph, Set<ValueVersionKey> markers) {
+		List<CompiledHopKey> keys = new ArrayList<>();
+		for(ValueVersionKey marker : markers.stream().sorted().toList()) {
+			List<CompiledHopKey> matches = graph.nodes().stream().filter(n -> n.valueVersion().equals(marker))
+				.map(Node::key).toList();
+			if(matches.size() != 1) throw new IllegalArgumentException("Unknown or ambiguous demotion marker");
+			keys.add(matches.get(0));
+		}
 		if(keys.size() != markers.size()) throw new IllegalArgumentException("Unknown or ambiguous demotion marker");
-		return Set.copyOf(keys);
+		return List.copyOf(keys);
 	}
 
 	private static Set<CompiledHopKey> closure(NeutralPlacementGraph graph, Set<CompiledHopKey> starts) {
@@ -132,23 +141,24 @@ public final class HeuristicPlacementAdapter {
 		}).orElseThrow(() -> new IllegalArgumentException("Missing provenance anchor"));
 	}
 
-	private static List<String> policyExclusions(PlacementAnalysis analysis, Set<CompiledHopKey> descendants,
-		Set<CompiledHopKey> markerKeys, DurableAnchorKey anchor) {
-		if(markerKeys.size() != 1) throw new IllegalArgumentException("One marker is required per exact policy view");
-		CompiledHopKey marker = markerKeys.iterator().next();
-		ValueVersionKey markerValue = analysis.graph().node(marker).orElseThrow().valueVersion();
+	private static List<String> policyExclusions(PlacementAnalysis analysis, List<CompiledHopKey> markerKeys) {
 		List<String> exclusions = new ArrayList<>();
-		for(Node node : analysis.graph().nodes()) {
-			String proof = candidateProof(analysis, node, anchor, marker, descendants);
-			if(proof != null) exclusions.add("NO_REFED|" + node.key().normalizedSignature() + '='
-				+ proof.substring(0, proof.indexOf('|')) + "|proof=" + proof.substring(proof.indexOf('|') + 1)
-				+ "|marker=" + markerValue.normalizedSignature());
+		for(CompiledHopKey marker : markerKeys) {
+			Set<CompiledHopKey> descendants = closure(analysis.graph(), Set.of(marker));
+			DurableAnchorKey anchor = policyAnchor(analysis.graph(), Set.of(marker));
+			ValueVersionKey markerValue = analysis.graph().node(marker).orElseThrow().valueVersion();
+			for(Node node : analysis.graph().nodes()) {
+				String proof = candidateProof(analysis, node, anchor, marker, descendants);
+				if(proof != null) exclusions.add("NO_REFED|" + node.key().normalizedSignature() + '='
+					+ proof.substring(0, proof.indexOf('|')) + "|proof=" + proof.substring(proof.indexOf('|') + 1)
+					+ "|marker=" + markerValue.normalizedSignature());
+			}
 		}
 		Collections.sort(exclusions);
-		if(exclusions.isEmpty()) throw new IllegalStateException("Heuristic policy exclusion is vacuous");
 		return List.copyOf(exclusions);
 	}
-	private static List<String> candidateUniverse(NeutralPlacementGraph graph) {
+	private static List<String> candidateUniverse(NeutralPlacementGraph graph, List<String> policyExclusions) {
+		if(policyExclusions.isEmpty()) return graph.normalizedCandidateUniverse();
 		List<String> candidates = new ArrayList<>();
 		for(Node node : graph.nodes())
 			for(PlacementState state : node.legalAlternatives())
@@ -161,16 +171,17 @@ public final class HeuristicPlacementAdapter {
 		CompiledHopKey marker, Set<CompiledHopKey> descendants) {
 		// Anchor extents are useful only after the neutral graph has positively ruled out unknown or
 		// unsupported node metadata.  They never substitute for missing node-shape evidence.
-		if(!descendants.contains(node.key()) || !node.emittedWork() || !node.anchors().isEmpty()
-			|| node.exclusions().stream().anyMatch(HeuristicPlacementAdapter::hasUnsupportedShapeMetadata)
-			|| !concreteAnchor(anchor) || selfOrVariableAnchor(anchor, node) || !supported(anchor.fType())) return null;
-		Hop hop = analysis.hop(node.key()).orElse(null);
-		long[] shape = compatibleShape(hop, anchor);
+		if(!descendants.contains(node.key()) || !node.emittedWork() || !node.anchors().isEmpty()) return null;
+		if(analysis.hop(node.key()).isEmpty()) throw new HeuristicPolicySafetyException();
+		if(!concreteAnchor(anchor) || selfOrVariableAnchor(anchor, node) || !supported(anchor.fType())) return null;
+		long[] shape = compatibleShape(analysis.shapeFact(node.key()).orElse(null), anchor);
 		if(shape == null) return null;
 		boolean boundary = node.kind() == NodeKind.TRANSIENT_READ || node.kind() == NodeKind.TRANSIENT_WRITE
 			|| "recompile".equals(node.key().recompileContext());
 		PlacementState state = new PlacementState(boundary ? ExecType.FED : ExecType.CP,
 			FederatedOutput.FOUT, anchor.fType(), anchor.fType() != FType.BROADCAST);
+		if(node.exclusions().stream().anyMatch(exclusion -> exclusion.state().equals(state)
+			&& hasUnsupportedShapeMetadata(exclusion))) return null;
 		RelocationActionKey relocation = new RelocationActionKey(node.valueVersion(), state, anchor,
 			node.key().controlRegion().normalizedSignature(), List.of(node.key()));
 		ObligationKey obligation = new ObligationKey(node.key(), 0, node.valueVersion(), state, relocation,
@@ -185,9 +196,8 @@ public final class HeuristicPlacementAdapter {
 		return state.normalizedSignature() + '|' + signature;
 	}
 	private static boolean hasUnsupportedShapeMetadata(NeutralPlacementGraph.Exclusion exclusion) {
-		if(exclusion.reasonCode() == ReasonCode.UNSUPPORTED_OPERATION_SHAPE) return true;
-		return exclusion.reasonCode() == ReasonCode.UNKNOWN_METADATA
-			&& (exclusion.detail().contains("rows=UNKNOWN") || exclusion.detail().contains("cols=UNKNOWN"));
+		return exclusion.reasonCode() == ReasonCode.UNSUPPORTED_OPERATION_SHAPE
+			|| exclusion.reasonCode() == ReasonCode.UNKNOWN_METADATA;
 	}
 
 	private static boolean supported(FType type) {
@@ -208,28 +218,47 @@ public final class HeuristicPlacementAdapter {
 		}
 		return true;
 	}
-	private static long[] compatibleShape(Hop hop, DurableAnchorKey anchor) {
-		if(anchor.fType() == FType.BROADCAST) return new long[] {-1, -1};
-		if(hop == null || hop.getDataType() != DataType.MATRIX) return null;
-		long rows = anchor.partitions().stream().mapToLong(p -> p.end().get(0)).max().orElse(-1);
-		long cols = anchor.partitions().stream().mapToLong(p -> p.end().get(1)).max().orElse(-1);
+	private static long[] compatibleShape(PlacementAnalysis.NodeShapeFact shape, DurableAnchorKey anchor) {
+		if(shape == null || !shape.knownPositiveMatrix()) return null;
+		long rows = shape.rows(), cols = shape.cols();
 		return validGeometry(anchor, rows, cols) ? new long[] {rows, cols} : null;
 	}
 	private static boolean validGeometry(DurableAnchorKey anchor, long rows, long cols) {
 		if(!concreteAnchor(anchor)) return false;
 		List<long[]> spans = new ArrayList<>();
+		List<long[]> broadcastRectangles = new ArrayList<>();
 		for(var p : anchor.partitions()) {
 			long r0=p.begin().get(0), c0=p.begin().get(1), r1=p.end().get(0), c1=p.end().get(1);
 			if(r0<0 || c0<0 || r1<=r0 || c1<=c0 || r1>rows || c1>cols) return false;
 			if(anchor.fType()==FType.ROW) { if(c0!=0 || c1!=cols) return false; spans.add(new long[]{r0,r1}); }
 			else if(anchor.fType()==FType.COL) { if(r0!=0 || r1!=rows) return false; spans.add(new long[]{c0,c1}); }
 			else if(anchor.fType()==FType.FULL) { if(r0!=0 || c0!=0 || r1!=rows || c1!=cols) return false; }
+			else if(anchor.fType()==FType.BROADCAST) broadcastRectangles.add(new long[]{r0,c0,r1,c1});
 			else return false;
 		}
+		if(anchor.fType()==FType.BROADCAST) return completeNonOverlappingCover(broadcastRectangles, rows, cols);
 		if(anchor.fType()==FType.FULL) return true;
 		spans.sort(java.util.Comparator.comparingLong(x->x[0])); long cursor=0;
 		for(long[] span:spans) { if(span[0]!=cursor) return false; cursor=span[1]; }
 		return cursor==(anchor.fType()==FType.ROW?rows:cols);
+	}
+	private static boolean completeNonOverlappingCover(List<long[]> rectangles, long rows, long cols) {
+		try {
+			long covered = 0;
+			for(int i=0; i<rectangles.size(); i++) {
+				long[] current = rectangles.get(i);
+				covered = Math.addExact(covered, Math.multiplyExact(current[2]-current[0], current[3]-current[1]));
+				for(int j=0; j<i; j++) {
+					long[] prior = rectangles.get(j);
+					if(Math.max(current[0], prior[0]) < Math.min(current[2], prior[2])
+						&& Math.max(current[1], prior[1]) < Math.min(current[3], prior[3])) return false;
+				}
+			}
+			return covered == Math.multiplyExact(rows, cols);
+		}
+		catch(ArithmeticException overflow) {
+			return false;
+		}
 	}
 
 	private static boolean isTransient(NeutralPlacementGraph graph, CompiledHopKey key) {
@@ -252,11 +281,50 @@ public final class HeuristicPlacementAdapter {
 		return Collections.unmodifiableMap(result);
 	}
 	private static String markerSignature(Set<ValueVersionKey> markers) {
-		return markers.stream().map(ValueVersionKey::normalizedSignature).sorted().findFirst().orElseThrow();
+		return String.join(",", markers.stream().map(ValueVersionKey::normalizedSignature).sorted().toList());
 	}
 	private static String assignmentHash(Map<CompiledHopKey, PlacementState> assignment) {
 		Map<String,String> normalized = new TreeMap<>(); assignment.forEach((k,v)->normalized.put(k.normalizedSignature(),v.normalizedSignature()));
 		return sha256(normalized.toString());
+	}
+	private static String commonAssignmentHash(Map<CompiledHopKey, PlacementState> assignment) {
+		List<String> lines = assignment.entrySet().stream().map(entry -> entry.getKey().normalizedSignature()
+			+ '=' + entry.getValue().normalizedSignature()).sorted().toList();
+		return sha256(String.join("\n", lines));
+	}
+	private static List<Bound> componentBounds(NeutralPlacementGraph graph) {
+		Map<CompiledHopKey, Set<CompiledHopKey>> adjacency = new TreeMap<>();
+		for(Node node : graph.nodes()) adjacency.put(node.key(), new LinkedHashSet<>());
+		for(var constraint : graph.constraints()) {
+			adjacency.get(constraint.left()).add(constraint.right());
+			adjacency.get(constraint.right()).add(constraint.left());
+		}
+		Set<CompiledHopKey> seen = new LinkedHashSet<>();
+		List<Bound> bounds = new ArrayList<>();
+		for(CompiledHopKey start : adjacency.keySet()) {
+			if(!seen.add(start)) continue;
+			ArrayDeque<CompiledHopKey> pending = new ArrayDeque<>();
+			List<CompiledHopKey> nodes = new ArrayList<>();
+			pending.add(start);
+			while(!pending.isEmpty()) {
+				CompiledHopKey key = pending.removeFirst();
+				nodes.add(key);
+				for(CompiledHopKey neighbor : adjacency.get(key))
+					if(seen.add(neighbor)) pending.addLast(neighbor);
+			}
+			nodes.sort(Comparator.naturalOrder());
+			int upperFed = 0, upperFout = 0;
+			for(CompiledHopKey key : nodes) {
+				List<PlacementState> states = graph.node(key).orElseThrow().legalAlternatives();
+				if(states.stream().anyMatch(state -> state.execType() == ExecType.FED)) upperFed++;
+				if(states.stream().anyMatch(state -> state.output() == FederatedOutput.FOUT)) upperFout++;
+			}
+			String id = Integer.toHexString(nodes.stream().map(CompiledHopKey::normalizedSignature)
+				.toList().hashCode());
+			bounds.add(new Bound(id, nodes, upperFed, upperFout, 0, "independent-component-envelope"));
+		}
+		bounds.sort(Comparator.comparing(Bound::componentId));
+		return List.copyOf(bounds);
 	}
 	private static String planFingerprint(Result r) {
 		Map<String,String> assignment = new TreeMap<>(); r.assignment().forEach((k,v)->assignment.put(k.normalizedSignature(),v.normalizedSignature()));
@@ -281,10 +349,26 @@ public final class HeuristicPlacementAdapter {
 		catch(Exception e) { throw new IllegalStateException("JVM must provide SHA-256", e); }
 	}
 
+	public record Score(int fedCount, int foutCount, int relocationCount, String normalizedSignature) {
+		public Score { Objects.requireNonNull(normalizedSignature, "normalizedSignature"); }
+	}
+	public record Bound(String componentId, List<CompiledHopKey> nodeKeys, int upperFed, int upperFout,
+		int lowerRelocations, String derivation) {
+		public Bound {
+			nodeKeys = List.copyOf(nodeKeys);
+			Objects.requireNonNull(componentId, "componentId");
+			Objects.requireNonNull(derivation, "derivation");
+		}
+	}
 	public record Certificate(String baseGraphFingerprint, String policyViewFingerprint, String assignmentHash,
 		long legalUniverseSize, long exploredCount, long prunedCount, List<String> bounds,
-		String incumbentSignature, String finalUpperBoundSignature, String terminationReason, boolean fallbackUsed) {
-		public Certificate { bounds=List.copyOf(bounds); }
+		String incumbentSignature, String finalUpperBoundSignature, String terminationReason, boolean fallbackUsed,
+		String graphFingerprint, Score incumbentScore, Score finalUpperBound, List<Bound> boundComponents,
+		int graphNodeCount, int graphConstraintCount, int graphComponentCount, String boundDerivation) {
+		public Certificate {
+			bounds=List.copyOf(bounds);
+			boundComponents=List.copyOf(boundComponents);
+		}
 	}
 	public record Result(PlacementAnalysis analysis, String analysisFingerprint,
 		Map<CompiledHopKey,PlacementState> assignment, List<String> filteredCandidateUniverse,
@@ -293,8 +377,8 @@ public final class HeuristicPlacementAdapter {
 		List<String> registryRefed, List<String> registryFoutMaterialize, List<String> registryLocalMaterialize,
 		List<String> objectiveComponents, List<String> orderedTieBreaks, List<String> transientRelationships,
 		List<String> controlBoundaryFacts, List<String> cloneRecompileMultiplicities,
-		List<String> structuralExclusions, Map<String,String> plannerFacts, Certificate certificate,
-		String normalizedPlanFingerprint) {
+		List<String> structuralExclusions, Map<String,String> plannerFacts, Certificate certificate, Score score,
+		String normalizedPlanFingerprint) implements NormalizedPlannerResult {
 		public Result {
 			assignment=immutableAssignment(assignment); filteredCandidateUniverse=List.copyOf(filteredCandidateUniverse);
 			policyExclusions=List.copyOf(policyExclusions); selectedRelocations=List.copyOf(selectedRelocations);
@@ -309,6 +393,9 @@ public final class HeuristicPlacementAdapter {
 			filteredCandidateUniverse,policyExclusions,selectedRelocations,selectedObligations,durableAnchors,
 			registryRefed,registryFoutMaterialize,registryLocalMaterialize,objectiveComponents,orderedTieBreaks,
 			transientRelationships,controlBoundaryFacts,cloneRecompileMultiplicities,structuralExclusions,
-			plannerFacts,certificate,value); }
+			plannerFacts,certificate,score,value); }
+		@Override public String plannerId() { return "FED_HEURISTIC"; }
+		@Override public Map<CompiledHopKey, PlacementState> selectedStates() { return assignment; }
+		@Override public String objectiveCertificate() { return certificate.toString(); }
 	}
 }
