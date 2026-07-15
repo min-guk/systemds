@@ -19,82 +19,34 @@
 
 package org.apache.sysds.hops.fedplanner.fedHeuristic;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Set;
 
-import org.apache.sysds.hops.AggBinaryOp;
-import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
-public class FederatedPlannerFedHeuristic extends FederatedPlannerFedAll {
-	private final Map<Long, FType> heuristicFallbackFTypes = new HashMap<>();
+/** Heuristic policy owner; plan application remains a separate, explicitly authorized phase. */
+public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
+	private final HeuristicPlacementAdapter adapter = new HeuristicPlacementAdapter();
+
+	public HeuristicPlacementAdapter.Result select(PlacementAnalysis analysis, Set<ValueVersionKey> markers) {
+		return adapter.select(analysis, markers);
+	}
 
 	@Override
 	public void rewriteProgram(org.apache.sysds.parser.DMLProgram prog,
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph,
 		org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes) {
-		heuristicFallbackFTypes.clear();
-		FederatedRefedPolicy.clearHeuristicDemotedHops();
-		super.rewriteProgram(prog, fgraph, fcallSizes);
+		throw new UnsupportedOperationException(
+			"FedHeuristic requires a supplied placement analysis before plan application");
 	}
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
-		heuristicFallbackFTypes.clear();
-		FederatedRefedPolicy.clearHeuristicDemotedHops();
-		super.rewriteFunctionDynamic(function, funcArgs);
-	}
-
-	@Override
-	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops) {
-		FType inferred = super.getFederatedOut(hop, fedHops); // FedAll
-		FType ret = applyHeuristics(hop, inferred);
-		recordHeuristicFallback(hop, inferred, ret);
-		return ret;
-	}
-
-	@Override
-	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops,
-		Map<Long, java.util.List<Hop>> rewireTable) {
-		FType inferred = super.getFederatedOut(hop, fedHops, rewireTable); // FedAll
-		FType ret = applyHeuristics(hop, inferred);
-		recordHeuristicFallback(hop, inferred, ret);
-		return ret;
-	}
-
-	@Override
-	protected FType getPropagatedFType(Hop hop, FType outFType) {
-		return outFType;
-	}
-
-	private void recordHeuristicFallback(Hop hop, FType inferred, FType ret) {
-		if( hop == null )
-			return;
-		if( ret == null && inferred != null ) {
-			heuristicFallbackFTypes.put(hop.getHopID(), inferred);
-			FederatedRefedPolicy.markHeuristicDemotedHop(hop.getHopID());
-		}
-		else {
-			heuristicFallbackFTypes.remove(hop.getHopID());
-			FederatedRefedPolicy.unmarkHeuristicDemotedHop(hop.getHopID());
-		}
-	}
-
-	private static FType applyHeuristics(Hop hop, FType ret) {
-		
-		//apply operator-specific heuristics
-		if( hop instanceof AggBinaryOp) {
-			if( (ret == FType.ROW && hop.getDim2()==1) 
-				|| (ret == FType.COL && hop.getDim1()==1) )
-			{
-				ret = null; //get local vectors
-			}
-		}
-		
-		return ret;
+		throw new UnsupportedOperationException(
+			"FedHeuristic requires a supplied placement analysis before plan application");
 	}
 }

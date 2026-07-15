@@ -16,12 +16,7 @@
  */
 package org.apache.sysds.hops.fedplanner.fedAll;
 
-import java.util.List;
-import java.util.Map;
-
-import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -36,17 +31,6 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 
 	public FedAllPlacementAdapter.Result select(PlacementAnalysis analysis) {
 		return adapter.select(analysis);
-	}
-
-	/** Temporary compatibility surface; the authorized Heuristic adapter stage removes it. */
-	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops,
-		Map<Long, List<Hop>> rewireTable) {
-		return super.getFederatedOut(hop, fedHops);
-	}
-
-	/** Temporary compatibility surface; the authorized Heuristic adapter stage removes it. */
-	protected FType getPropagatedFType(Hop hop, FType outFType) {
-		return outFType;
 	}
 
 	@Override
