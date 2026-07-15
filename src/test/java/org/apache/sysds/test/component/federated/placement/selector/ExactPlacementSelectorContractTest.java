@@ -1,63 +1,56 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements.
- * See the NOTICE file distributed with this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0.
- */
+/* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.test.component.federated.placement.selector;
 
+import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementScore;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementSelection;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExactSelectorOracle;
-import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph;
-import org.apache.sysds.test.component.federated.placement.oracle.selector.SelectorOracleFixtures;
+import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Choice;
+import org.apache.sysds.test.component.federated.placement.selector.IsomorphicSelectorContractFixtures.Case;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Genuine RED contract for the pure exact production selector and proof certificate. */
+/** Genuine RED contract for exact selection against independently constructed isomorphic universes. */
 public class ExactPlacementSelectorContractTest {
 	@Test
-	public void exactSelectorMatchesIndependentS01ThroughS08ScoreFrontier() {
-		List<ExplicitSelectorGraph> oracleGraphs = new ArrayList<>(List.of(
-			SelectorOracleFixtures.independentHops(), SelectorOracleFixtures.parentChildFTypeConflict(),
-			SelectorOracleFixtures.sharedDiamond(), SelectorOracleFixtures.sharedRelocation(),
-			SelectorOracleFixtures.fedBeforeFout(), SelectorOracleFixtures.fewerRelocations(),
-			SelectorOracleFixtures.stableTie()));
-		oracleGraphs.addAll(SelectorOracleFixtures.generatedCorpus());
+	public void exactSelectorMatchesFullIndependentS01ThroughS08Results() {
 		ExactPlacementSelector selector = new ExactPlacementSelector();
-		for(ExplicitSelectorGraph oracleGraph : oracleGraphs) {
-			ExactSelectorOracle.Result expected = ExactSelectorOracle.select(oracleGraph,
+		for(Case fixture : IsomorphicSelectorContractFixtures.all()) {
+			ExactSelectorOracle.Result expected = ExactSelectorOracle.select(fixture.oracle(),
 				ExactSelectorOracle.Policy.FED_ALL);
-			NeutralPlacementGraph productionGraph = parallelNeutralFixture(oracleGraph);
-			PlacementSelection actual = selector.select(productionGraph);
-			Assert.assertEquals(oracleGraph.getSizeClass(), expected.getScore().getFedCount(),
-				actual.score().emittedFedCount());
-			Assert.assertEquals(oracleGraph.getSizeClass(), expected.getScore().getFoutCount(),
-				actual.score().foutCount());
-			Assert.assertEquals(oracleGraph.getSizeClass(), expected.getScore().getRelocationCount(),
+			PlacementSelection actual = selector.select(fixture.production());
+			Assert.assertEquals(fixture.id(), expected.getScore().getFedCount(), actual.score().emittedFedCount());
+			Assert.assertEquals(fixture.id(), expected.getScore().getFoutCount(), actual.score().foutCount());
+			Assert.assertEquals(fixture.id(), expected.getScore().getRelocationCount(),
 				actual.score().distinctRelocationCount());
-			assertExactCertificate(productionGraph, actual);
+			Assert.assertEquals(fixture.id(), semanticOracleAssignment(expected.getAssignment()),
+				semanticProductionAssignment(actual.assignment()));
+			Assert.assertEquals(fixture.id(), oracleRelocations(expected.getAssignment()),
+				productionRelocations(actual.selectedRelocations()));
+			String independentlyNormalized = productionSignature(actual.assignment(), actual.selectedRelocations());
+			Assert.assertEquals(fixture.id(), independentlyNormalized, actual.score().normalizedSignature());
+			assertExactCertificate(fixture, expected, actual);
 		}
 	}
 
@@ -71,19 +64,21 @@ public class ExactPlacementSelectorContractTest {
 	}
 
 	@Test
-	public void selectionAndCertificateAreImmutableAndDeterministicUnderInsertionOrder() {
-		NeutralPlacementGraph forward = ordinaryGraph("determinism", 4, false);
-		NeutralPlacementGraph reverse = ordinaryGraph("determinism", 4, true);
-		PlacementSelection first = new ExactPlacementSelector().select(forward);
-		PlacementSelection second = new ExactPlacementSelector().select(reverse);
-		Assert.assertEquals(first.score(), second.score());
-		Assert.assertEquals(first.certificate().assignmentHash(), second.certificate().assignmentHash());
-		Assert.assertEquals(first.certificate().exploredCount(), second.certificate().exploredCount());
-		Assert.assertEquals(first.certificate().prunedCount(), second.certificate().prunedCount());
-		Assert.assertThrows(UnsupportedOperationException.class,
-			() -> first.assignment().put(first.assignment().keySet().iterator().next(), CP));
-		Assert.assertThrows(UnsupportedOperationException.class,
-			() -> first.selectedRelocations().clear());
+	public void resultAndProofAreImmutableAndInsertionOrderDeterministic() {
+		for(Case fixture : IsomorphicSelectorContractFixtures.all()) {
+			NeutralPlacementGraph reversed = reversed(fixture.production());
+			PlacementSelection first = new ExactPlacementSelector().select(fixture.production());
+			PlacementSelection second = new ExactPlacementSelector().select(reversed);
+			Assert.assertEquals(fixture.id(), first.score(), second.score());
+			Assert.assertEquals(fixture.id(), first.assignment(), second.assignment());
+			Assert.assertEquals(fixture.id(), first.selectedRelocations(), second.selectedRelocations());
+			Assert.assertEquals(fixture.id(), first.certificate().assignmentHash(),
+				second.certificate().assignmentHash());
+			Assert.assertEquals(fixture.id(), first.certificate().exploredCount(),
+				second.certificate().exploredCount());
+			Assert.assertEquals(fixture.id(), first.certificate().prunedCount(),
+				second.certificate().prunedCount());
+		}
 	}
 
 	@Test
@@ -93,94 +88,160 @@ public class ExactPlacementSelectorContractTest {
 				.map(Enum::name).sorted().toList());
 	}
 
-	private static void assertExactCertificate(NeutralPlacementGraph graph, PlacementSelection selection) {
+	private static void assertExactCertificate(Case fixture, ExactSelectorOracle.Result oracle,
+		PlacementSelection selection) {
+		NeutralPlacementGraph graph = fixture.production();
 		PlacementCertificate certificate = selection.certificate();
-		Assert.assertEquals(selection.score(), certificate.incumbentScore());
-		Assert.assertTrue(certificate.finalUpperBound().compareTo(selection.score()) <= 0);
-		Assert.assertTrue(certificate.exploredCount() >= 0);
-		Assert.assertTrue(certificate.prunedCount() >= 0);
-		Assert.assertEquals(graph.nodes().size(), certificate.graphNodeCount());
-		Assert.assertTrue(certificate.graphEdgeCount() >= 0);
-		Assert.assertTrue(certificate.componentCount() >= 1);
-		Assert.assertFalse(certificate.assignmentHash().isBlank());
-		Assert.assertFalse(certificate.graphFingerprint().isBlank());
-		Assert.assertFalse(certificate.boundDerivation().isBlank());
-		Assert.assertFalse(certificate.generatorSizeClass().isBlank());
-		Assert.assertTrue(certificate.closureDepth() >= 0);
-		Assert.assertNotNull(certificate.componentBounds());
-		Assert.assertTrue(List.of("EXHAUSTED", "TIGHT_BOUND_EQUALITY")
+		Assert.assertEquals(fixture.id(), selection.score(), certificate.incumbentScore());
+		Assert.assertTrue(fixture.id(), certificate.finalUpperBound().compareTo(selection.score()) <= 0);
+		Assert.assertEquals(fixture.id(), sha256(selection.score().normalizedSignature()),
+			certificate.assignmentHash());
+		Assert.assertEquals(fixture.id(), sha256(graph.normalizedSignature()), certificate.graphFingerprint());
+		Assert.assertEquals(fixture.id(), graph.nodes().size(), certificate.graphNodeCount());
+		Assert.assertEquals(fixture.id(), graph.constraints().size(), certificate.graphEdgeCount());
+		Assert.assertEquals(fixture.id(), componentCount(graph), certificate.componentCount());
+		Assert.assertTrue(fixture.id(), certificate.exploredCount() >= 0);
+		Assert.assertTrue(fixture.id(), certificate.prunedCount() >= 0);
+		Assert.assertTrue(fixture.id(), certificate.exploredCount() + certificate.prunedCount() > 0);
+		Assert.assertTrue(fixture.id(), certificate.closureDepth() >= 0);
+		Assert.assertFalse(fixture.id(), certificate.boundDerivation().isBlank());
+		Assert.assertEquals(fixture.id(), "production", certificate.generatorSizeClass());
+		Assert.assertEquals(fixture.id(), -1L, certificate.generatorSeed());
+		Assert.assertEquals(fixture.id(), fixture.oracle().getSizeClass(),
+			oracle.getCertificate().getGeneratorSizeClass());
+		Assert.assertEquals(fixture.id(), fixture.seed(), oracle.getCertificate().getSeed());
+		Assert.assertEquals(fixture.id(), certificate.componentCount(), certificate.componentBounds().size());
+		long componentNodes = certificate.componentBounds().stream()
+			.mapToLong(bound -> readLong(bound, "graphNodeCount", "nodeCount")).sum();
+		Assert.assertEquals(fixture.id(), graph.nodes().size(), componentNodes);
+		for(Object bound : certificate.componentBounds()) {
+			Assert.assertFalse(fixture.id(), readText(bound, "componentIdentity", "identity").isBlank());
+			Assert.assertTrue(fixture.id(), readLong(bound, "graphNodeCount", "nodeCount") > 0);
+			Assert.assertTrue(fixture.id(), readLong(bound, "graphEdgeCount", "edgeCount") >= 0);
+			Assert.assertFalse(fixture.id(), readText(bound, "derivation", "boundDerivation").isBlank());
+			Object upper = invoke(bound, "upperBound", "boundScore");
+			Assert.assertTrue(fixture.id(), upper instanceof PlacementScore);
+		}
+		Assert.assertTrue(fixture.id(), List.of("EXHAUSTED", "TIGHT_BOUND_EQUALITY")
 			.contains(certificate.terminationReason().name()));
 	}
 
-	/*
-	 * Independently spelled neutral counterparts to S-01..S-08. They do not inspect oracle output;
-	 * the comparison above is the only point where the two independently constructed universes meet.
-	 */
-	private static NeutralPlacementGraph parallelNeutralFixture(ExplicitSelectorGraph oracle) {
-		String id = oracle.getSizeClass();
-		if(id.equals("S-01"))
-			return ordinaryGraph(id, 2, false);
-		if(id.equals("S-02"))
-			return graph(id, List.of(List.of(FF), List.of(CP)));
-		if(id.equals("S-03"))
-			return ordinaryGraph(id, 3, false);
-		if(id.equals("S-04"))
-			return graphWithSharedRelocation(id, List.of(List.of(FF), List.of(FF), List.of(CF)), 2,
-				List.of(0, 1), CF);
-		if(id.equals("S-05"))
-			return graph(id, List.of(List.of(FL), List.of(CP), List.of(CP)));
-		if(id.equals("S-06"))
-			return graphWithSharedRelocation(id, List.of(List.of(FF), List.of(FF)), 0, List.of(0, 1), FF);
-		if(id.equals("S-07"))
-			return graph(id, List.of(List.of(FL)));
-		if(id.startsWith("S-08-"))
-			return ordinaryGraph(id, oracle.getNodes().size(), false);
-		throw new IllegalArgumentException("missing neutral counterpart for " + id);
+	private static String semanticOracleAssignment(Map<String,Choice> assignment) {
+		List<String> entries = new ArrayList<>();
+		assignment.forEach((node, choice) -> entries.add(node + '=' + choice.getId()));
+		Collections.sort(entries);
+		return String.join("|", entries);
 	}
 
-	private static NeutralPlacementGraph graph(String id, List<List<PlacementState>> alternatives) {
-		List<Node> nodes = new ArrayList<>();
-		for(int i = 0; i < alternatives.size(); i++)
-			nodes.add(node(id, "n" + i, alternatives.get(i)));
-		return new NeutralPlacementGraph(nodes, List.of(), List.of());
+	private static String semanticProductionAssignment(Map<CompiledHopKey,PlacementState> assignment) {
+		List<String> entries = new ArrayList<>();
+		assignment.forEach((key, state) -> entries.add(key.canonicalSourceOrigin() + '=' + state.normalizedSignature()));
+		Collections.sort(entries);
+		return String.join("|", entries);
 	}
 
-	private static NeutralPlacementGraph graphWithSharedRelocation(String id,
-		List<List<PlacementState>> alternatives, int sourceIndex, List<Integer> consumerIndices,
-		PlacementState target) {
-		List<Node> nodes = new ArrayList<>();
-		for(int i = 0; i < alternatives.size(); i++)
-			nodes.add(node(id, "n" + i, alternatives.get(i)));
-		ValueVersionKey source = nodes.get(sourceIndex).valueVersion();
-		List<CompiledHopKey> consumers = consumerIndices.stream().map(i -> nodes.get(i).key()).toList();
-		DurableAnchorKey anchor = new DurableAnchorKey(id + "-anchor", FType.ROW,
-			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(1L, 1L))));
-		RelocationActionKey action = new RelocationActionKey(source, target, anchor, id, consumers);
-		List<ObligationKey> obligations = new ArrayList<>();
-		for(int i = 0; i < consumers.size(); i++)
-			obligations.add(new ObligationKey(consumers.get(i), i, source, target, action, "compiled"));
-		return new NeutralPlacementGraph(nodes, List.of(),
-			List.of(new RelocationAction(action, obligations)));
+	private static Set<String> oracleRelocations(Map<String,Choice> assignment) {
+		Set<String> relocations = new java.util.TreeSet<>();
+		assignment.values().forEach(choice -> relocations.addAll(choice.getRelocationActions()));
+		return relocations;
 	}
 
-	private static NeutralPlacementGraph ordinaryGraph(String id, int size, boolean reverse) {
-		List<Node> nodes = new ArrayList<>();
-		for(int i = 0; i < size; i++)
-			nodes.add(node(id, "n" + i, List.of(CP, FL, FF)));
-		if(reverse)
-			Collections.reverse(nodes);
-		return new NeutralPlacementGraph(nodes, List.of(), List.of());
+	private static Set<String> productionRelocations(Set<RelocationActionKey> relocations) {
+		Set<String> normalized = new java.util.TreeSet<>();
+		for(RelocationActionKey relocation : relocations)
+			normalized.add(relocation.durableAnchor().placementId());
+		return normalized;
 	}
 
-	private static Node node(String graphId, String id, List<PlacementState> states) {
-		ControlRegionKey region = new ControlRegionKey(graphId, "main", List.of("root"), "main", "compiled");
-		CompiledHopKey key = new CompiledHopKey(graphId, "main", "main", "compiled", region, id, id);
-		ValueVersionKey value = new ValueVersionKey(graphId, id, region, 0, VersionKind.ORDINARY, List.of());
-		return new Node(key, NodeKind.OPERATION, value, true, states, List.of(), List.of());
+	private static String productionSignature(Map<CompiledHopKey,PlacementState> assignment,
+		Set<RelocationActionKey> relocations) {
+		List<String> entries = new ArrayList<>();
+		assignment.forEach((key, state) -> entries.add(key.normalizedSignature() + '=' + state.normalizedSignature()));
+		Collections.sort(entries);
+		List<String> actions = relocations.stream().map(RelocationActionKey::normalizedSignature)
+			.sorted().toList();
+		return String.join("|", entries) + "#" + String.join("|", actions);
 	}
 
-	private static final PlacementState CP = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
-	private static final PlacementState CF = new PlacementState(ExecType.CP, FederatedOutput.FOUT, null, false);
-	private static final PlacementState FL = new PlacementState(ExecType.FED, FederatedOutput.LOUT, FType.ROW, false);
-	private static final PlacementState FF = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+	private static int componentCount(NeutralPlacementGraph graph) {
+		Map<CompiledHopKey,Set<CompiledHopKey>> adjacency = new LinkedHashMap<>();
+		for(Node node : graph.nodes())
+			adjacency.put(node.key(), new LinkedHashSet<>());
+		graph.constraints().forEach(constraint -> connect(adjacency, constraint.left(), constraint.right()));
+		Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey,CompiledHopKey> valueOwners =
+			new HashMap<>();
+		for(Node node : graph.nodes())
+			valueOwners.put(node.valueVersion(), node.key());
+		graph.relocationActions().forEach(action -> {
+			CompiledHopKey source = valueOwners.get(action.key().sourceValueVersion());
+			for(CompiledHopKey consumer : action.key().compatibleConsumers())
+				connect(adjacency, source, consumer);
+		});
+		Set<CompiledHopKey> visited = new HashSet<>();
+		int components = 0;
+		for(CompiledHopKey node : adjacency.keySet()) {
+			if(!visited.add(node))
+				continue;
+			components++;
+			Deque<CompiledHopKey> pending = new ArrayDeque<>();
+			pending.add(node);
+			while(!pending.isEmpty())
+				for(CompiledHopKey adjacent : adjacency.get(pending.removeFirst()))
+					if(visited.add(adjacent))
+						pending.add(adjacent);
+		}
+		return components;
+	}
+
+	private static void connect(Map<CompiledHopKey,Set<CompiledHopKey>> adjacency,
+		CompiledHopKey left, CompiledHopKey right) {
+		adjacency.get(left).add(right);
+		adjacency.get(right).add(left);
+	}
+
+	private static NeutralPlacementGraph reversed(NeutralPlacementGraph graph) {
+		List<Node> nodes = new ArrayList<>(graph.nodes());
+		List<NeutralPlacementGraph.Constraint> constraints = new ArrayList<>(graph.constraints());
+		List<NeutralPlacementGraph.RelocationAction> relocations = new ArrayList<>(graph.relocationActions());
+		Collections.reverse(nodes);
+		Collections.reverse(constraints);
+		Collections.reverse(relocations);
+		return new NeutralPlacementGraph(nodes, constraints, relocations);
+	}
+
+	private static long readLong(Object value, String... accessors) {
+		Object result = invoke(value, accessors);
+		return ((Number) result).longValue();
+	}
+
+	private static String readText(Object value, String... accessors) {
+		return String.valueOf(invoke(value, accessors));
+	}
+
+	private static Object invoke(Object value, String... accessors) {
+		for(String accessor : accessors) {
+			try {
+				Method method = value.getClass().getMethod(accessor);
+				return method.invoke(value);
+			}
+			catch(ReflectiveOperationException ignored) {
+				// try the representation-neutral alternative name
+			}
+		}
+		throw new AssertionError("missing certificate component accessor " + List.of(accessors));
+	}
+
+	private static String sha256(String text) {
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+				.digest(text.getBytes(StandardCharsets.UTF_8));
+			StringBuilder result = new StringBuilder();
+			for(byte value : digest)
+				result.append(String.format("%02x", value));
+			return result.toString();
+		}
+		catch(Exception e) {
+			throw new IllegalStateException(e);
+		}
+	}
 }

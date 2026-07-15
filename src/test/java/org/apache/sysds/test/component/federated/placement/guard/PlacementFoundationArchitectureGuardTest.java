@@ -11,6 +11,12 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -23,14 +29,21 @@ public class PlacementFoundationArchitectureGuardTest {
 		"src/test/java/org/apache/sysds/test/component/federated/placement/oracle");
 
 	@Test
-	public void builderHasOneAnalysisUniverseAndLegacyBuildDelegatesToIt() throws IOException {
-		String builder = read(PLACEMENT.resolve("NeutralPlacementGraphBuilder.java"));
-		Assert.assertTrue("missing production analysis entry point", builder.contains("buildAnalysis("));
-		Assert.assertTrue("legacy build must delegate to the single analysis path",
-			builder.matches("(?s).*NeutralPlacementGraph\\s+build\\s*\\([^)]*\\)\\s*\\{[^}]*buildAnalysis\\([^)]*\\)\\.graph\\(\\).*"));
-		Assert.assertEquals("only the production builder may construct the semantic graph", 1,
-			javaSources(PRODUCTION).stream().filter(path -> !path.getFileName().toString().equals("NeutralPlacementGraph.java"))
-				.mapToInt(path -> occurrences(uncheckedRead(path), "new NeutralPlacementGraph(")).sum());
+	public void builderExposesOneObservableAnalysisUniverseAndLegacyParity() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-22");
+		String before = PlacementGraphFingerprint.capture(program);
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		PlacementAnalysis analysis = builder.buildAnalysis(program);
+		Assert.assertSame(analysis.graph(), analysis.graph());
+		Assert.assertEquals(analysis.graph().normalizedSignature(), builder.build(program).normalizedSignature());
+		Assert.assertEquals(before, PlacementGraphFingerprint.capture(program));
+		List<String> entryPoints = Stream.of(NeutralPlacementGraphBuilder.class.getDeclaredMethods())
+			.filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
+			.filter(method -> method.getReturnType() == NeutralPlacementGraph.class
+				|| method.getReturnType() == PlacementAnalysis.class)
+			.map(method -> method.getName() + ':' + method.getReturnType().getSimpleName()).sorted()
+			.collect(Collectors.toList());
+		Assert.assertEquals(List.of("build:NeutralPlacementGraph", "buildAnalysis:PlacementAnalysis"), entryPoints);
 	}
 
 	@Test
@@ -73,18 +86,6 @@ public class PlacementFoundationArchitectureGuardTest {
 
 	private static String read(Path path) throws IOException {
 		return Files.readString(path, StandardCharsets.UTF_8);
-	}
-
-	private static String uncheckedRead(Path path) {
-		try { return read(path); }
-		catch(IOException e) { throw new IllegalStateException(e); }
-	}
-
-	private static int occurrences(String text, String token) {
-		int count = 0;
-		for(int i = 0; (i = text.indexOf(token, i)) >= 0; i += token.length())
-			count++;
-		return count;
 	}
 
 	private static String relative(Path path) {

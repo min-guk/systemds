@@ -265,6 +265,40 @@ public final class ExplicitSelectorGraph {
 		return components;
 	}
 
+	/** Normalized complete legal universe for cross-model fixture-isomorphism tests only. */
+	public List<String> normalizedLegalAssignments() {
+		List<String> result = new ArrayList<>();
+		enumerateLegalAssignments(0, new LinkedHashMap<>(), result);
+		Collections.sort(result);
+		return Collections.unmodifiableList(result);
+	}
+
+	private void enumerateLegalAssignments(int index, Map<String,Choice> assignment, List<String> result) {
+		if(index == nodes.size()) {
+			for(Constraint constraint : constraints)
+				if(!constraint.isSatisfied(assignment))
+					return;
+			List<String> entries = new ArrayList<>();
+			assignment.forEach((node, choice) -> entries.add(node + '=' + choice.getId()));
+			Collections.sort(entries);
+			result.add(String.join("|", entries));
+			return;
+		}
+		Node node = nodes.get(index);
+		for(Choice choice : node.getChoices()) {
+			assignment.put(node.getId(), choice);
+			boolean feasible = true;
+			for(Constraint constraint : constraints)
+				if(!constraint.canStillBeSatisfied(assignment)) {
+					feasible = false;
+					break;
+				}
+			if(feasible)
+				enumerateLegalAssignments(index + 1, assignment, result);
+		}
+		assignment.remove(node.getId());
+	}
+
 	public boolean canStillBeLegal(Map<String, Choice> partialAssignment) {
 		for (Constraint constraint : constraints) {
 			if (!constraint.canStillBeSatisfied(partialAssignment))

@@ -5,18 +5,29 @@
  */
 package org.apache.sysds.test.component.federated.placement.core;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -65,6 +76,41 @@ public class PlacementAnalysisContractTest {
 	}
 
 	@Test
+	public void genuineRootOrderPerturbationDoesNotCreateASecondUniverse() throws Exception {
+		String fixture = "two-root-compiled-hop";
+		DMLProgram forward = twoRootProgram(false);
+		DMLProgram reversed = twoRootProgram(true);
+		List<String> forwardRoots = rootNames(forward);
+		List<String> reversedRoots = rootNames(reversed);
+		Collections.reverse(forwardRoots);
+		Assert.assertEquals(fixture + " did not reverse the actual compiled root list", forwardRoots, reversedRoots);
+		PlacementAnalysis left = new NeutralPlacementGraphBuilder().buildAnalysis(forward);
+		PlacementAnalysis right = new NeutralPlacementGraphBuilder().buildAnalysis(reversed);
+		Assert.assertEquals(fixture, left.analysisFingerprint(), right.analysisFingerprint());
+		Assert.assertEquals(fixture, signatures(left), signatures(right));
+	}
+
+	@Test
+	public void allThreeFederatedRegistriesRemainByteForByteUnchanged() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+		try {
+			FederatedRefedRegistry.register(99001L, 11L, 101L, "anchor:row");
+			FederatedFoutMaterializeRegistry.register(99001L, 12L, 102L, "ROW", "row-anchor", "anchor:row");
+			FederatedLocalMaterializeRegistry.register(99001L, 13L, List.of(14L, 15L), "ROW", "sentinel");
+			String before = registryFingerprint();
+			new NeutralPlacementGraphBuilder().buildAnalysis(ProductionShadowFixtureFactory.compile("B-22"));
+			Assert.assertEquals(before, registryFingerprint());
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
+		}
+	}
+
+	@Test
 	public void projectionIsImmutableAndEveryEntryReferencesAConcreteCompiledHop() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildAnalysis(ProductionShadowFixtureFactory.compile("B-21"));
@@ -90,5 +136,38 @@ public class PlacementAnalysisContractTest {
 	private static List<String> signatures(PlacementAnalysis analysis) {
 		return analysis.occurrences().stream().map(HopOccurrenceProjection::normalizedSignature)
 			.collect(Collectors.toList());
+	}
+
+	private static DMLProgram twoRootProgram(boolean reverse) {
+		List<Hop> roots = new ArrayList<>(List.of(transientWrite("A", 1L), transientWrite("B", 2L)));
+		if(reverse)
+			Collections.reverse(roots);
+		StatementBlock block = new StatementBlock();
+		block.setHops(new ArrayList<>(roots));
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(List.of(block)));
+		return program;
+	}
+
+	private static DataOp transientWrite(String variable, long value) {
+		LiteralOp input = new LiteralOp(value);
+		return new DataOp(variable, DataType.SCALAR, ValueType.INT64, input, OpOpData.TRANSIENTWRITE, variable);
+	}
+
+	private static List<String> rootNames(DMLProgram program) {
+		return program.getStatementBlocks().get(0).getHops().stream().map(Hop::getName)
+			.collect(Collectors.toCollection(ArrayList::new));
+	}
+
+	private static String registryFingerprint() throws Exception {
+		return registryMap(FederatedRefedRegistry.class, "REFED_ANCHORS") + '|'
+			+ registryMap(FederatedFoutMaterializeRegistry.class, "MATERIALIZE_ANCHORS") + '|'
+			+ registryMap(FederatedLocalMaterializeRegistry.class, "LOCAL_MATERIALIZE");
+	}
+
+	private static String registryMap(Class<?> registry, String fieldName) throws Exception {
+		Field field = registry.getDeclaredField(fieldName);
+		field.setAccessible(true);
+		return registry.getSimpleName() + '=' + String.valueOf(field.get(null));
 	}
 }
