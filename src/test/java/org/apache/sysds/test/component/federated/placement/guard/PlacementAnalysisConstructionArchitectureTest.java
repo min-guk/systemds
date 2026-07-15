@@ -116,6 +116,46 @@ public class PlacementAnalysisConstructionArchitectureTest {
 		assertBothSentinelsRejected(unusedBefore);
 	}
 
+	@Test
+	public void capturedAfterThrowShapePassesButNonEnforcingComparisonsFail() {
+		String capturedAfter = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"String after = PlacementGraphFingerprint.capture(program);"
+					+ " if(!after.equals(before)) throw failure;")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"String registryAfter = registrySentinel(program);"
+					+ " if(!registryBefore.equals(registryAfter)) throw failure;");
+		Assert.assertEquals(List.of(), constructionViolations(capturedAfter, validShadow()));
+
+		String ignored = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"boolean hopSame = before.equals(PlacementGraphFingerprint.capture(program));")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"boolean registrySame = registryBefore.equals(registrySentinel(program));");
+		assertBothSentinelsRejected(ignored);
+
+		String loggingOnly = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"LOG.info(before.equals(PlacementGraphFingerprint.capture(program)));")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"metrics.record(registryBefore.equals(registrySentinel(program)));");
+		assertBothSentinelsRejected(loggingOnly);
+
+		String assertOnly = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"assert before.equals(PlacementGraphFingerprint.capture(program));")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"assert registryBefore.equals(registrySentinel(program));");
+		assertBothSentinelsRejected(assertOnly);
+
+		String unreachable = validBuilder()
+			.replace("if(!before.equals(PlacementGraphFingerprint.capture(program))) throw failure;",
+				"if(false && !before.equals(PlacementGraphFingerprint.capture(program))) throw failure;")
+			.replace("if(!registryBefore.equals(registrySentinel(program))) throw failure;",
+				"if(false && !registryBefore.equals(registrySentinel(program))) throw failure;");
+		assertBothSentinelsRejected(unreachable);
+	}
+
 	private static List<String> constructionViolations(String builderSource, String shadowSource) {
 		String builderCode = JavaSourceBoundaryScanner.codeOnly(builderSource);
 		String build = JavaSourceBoundaryScanner.methodBody(builderSource, "build", "DMLProgram");
@@ -173,21 +213,38 @@ public class PlacementAnalysisConstructionArchitectureTest {
 				continue;
 			String directForward = before.name() + ".equals(" + call + ")";
 			String directReverse = call + ".equals(" + before.name() + ")";
-			if(after(body, directForward, construction) || after(body, directReverse, construction))
+			if(enforcesMismatch(body, directForward, construction)
+				|| enforcesMismatch(body, directReverse, construction))
 				return true;
 			for(Snapshot after : snapshots) {
 				if(after.position() <= construction)
 					continue;
-				if(after(body, before.name() + ".equals(" + after.name() + ")", construction)
-					|| after(body, after.name() + ".equals(" + before.name() + ")", construction))
+				if(enforcesMismatch(body, before.name() + ".equals(" + after.name() + ")", construction)
+					|| enforcesMismatch(body, after.name() + ".equals(" + before.name() + ")", construction))
 					return true;
 			}
 		}
 		return false;
 	}
 
-	private static boolean after(String source, String token, int position) {
-		return source.indexOf(token, position + 1) > position;
+	private static boolean enforcesMismatch(String source, String equality, int construction) {
+		Matcher enforcing = Pattern.compile("if\\(!" + Pattern.quote(equality) + "\\)\\{?throw[^;]+;")
+			.matcher(source);
+		int finalReturn = source.lastIndexOf("return");
+		while(enforcing.find())
+			if(enforcing.start() > construction && enforcing.end() <= finalReturn
+				&& braceDepth(source, enforcing.start()) == 0)
+				return true;
+		return false;
+	}
+
+	private static int braceDepth(String source, int end) {
+		int depth = 0;
+		for(int i = 0; i < end; i++) {
+			if(source.charAt(i) == '{') depth++;
+			else if(source.charAt(i) == '}') depth--;
+		}
+		return depth;
 	}
 
 	private static String optionalMethodBody(String source, String methodName, String parameterToken) {
