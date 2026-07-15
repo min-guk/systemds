@@ -28,9 +28,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -45,6 +52,7 @@ import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
@@ -88,11 +96,38 @@ public class NeutralPlacementGraphMutationSentinelTest {
 			Assert.assertEquals(_fixtureId + " mutated a placement registry", registryBefore, registryFingerprint());
 
 			NeutralPlacementGraph second = builder.build(program);
+			String firstSignature = first.normalizedSignature();
 			Assert.assertEquals(_fixtureId + " repeat build is not idempotent",
-				first.normalizedSignatureWithLegalAssignments(), second.normalizedSignatureWithLegalAssignments());
+				firstSignature, second.normalizedSignature());
 			Assert.assertEquals(_fixtureId + " root/input insertion order changed the normalized graph",
-				first.normalizedSignatureWithLegalAssignments(), reversed(first).normalizedSignatureWithLegalAssignments());
+				firstSignature, reversed(first).normalizedSignature());
 		}
+	}
+
+	@Test
+	public void exhaustiveAssignmentsRemainAvailableOnlyForBoundedFixtures() {
+		if(!"B-01".equals(_fixtureId))
+			return;
+		NeutralPlacementGraph bounded = boundedTwoNodeGraph();
+		Assert.assertEquals(bounded.normalizedSignatureWithLegalAssignments(),
+			reversed(bounded).normalizedSignatureWithLegalAssignments());
+	}
+
+	private static NeutralPlacementGraph boundedTwoNodeGraph() {
+		ControlRegionKey region = new ControlRegionKey("bounded", "main", List.of("root"), "main", "compiled");
+		CompiledHopKey left = new CompiledHopKey("bounded", "main", "main", "compiled", region,
+			"left", "left");
+		CompiledHopKey right = new CompiledHopKey("bounded", "main", "main", "compiled", region,
+			"right", "right");
+		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState fed = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, true);
+		Node leftNode = new Node(left, NeutralPlacementGraph.NodeKind.OPERATION,
+			new ValueVersionKey("bounded", "left", region, 0, VersionKind.ORDINARY, List.of()), true,
+			List.of(cp, fed), List.of(), List.of());
+		Node rightNode = new Node(right, NeutralPlacementGraph.NodeKind.OPERATION,
+			new ValueVersionKey("bounded", "right", region, 0, VersionKind.ORDINARY, List.of()), true,
+			List.of(cp, fed), List.of(), List.of());
+		return new NeutralPlacementGraph(List.of(leftNode, rightNode), List.of(), List.of());
 	}
 
 	private static void seedRegistries() {

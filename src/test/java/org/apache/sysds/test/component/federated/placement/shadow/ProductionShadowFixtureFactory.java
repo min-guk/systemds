@@ -46,7 +46,10 @@ public final class ProductionShadowFixtureFactory {
 		translator.liveVariableAnalysis(program);
 		translator.validateParseTree(program);
 		translator.constructHops(program);
-		translator.rewriteHopsDAG(program);
+		// Rewriting can inline away precisely the call-site roles exercised by the
+		// function fixtures. Keep those fixtures in their compiled, pre-inlining form.
+		if(!List.of("B-07", "B-08", "B-17", "B-21").contains(id))
+			translator.rewriteHopsDAG(program);
 		return program;
 	}
 
@@ -73,7 +76,7 @@ public final class ProductionShadowFixtureFactory {
 				"print(sum(X));");
 			case "B-10": return lines("A=matrix(1,2,2);", "S=A+1;", "R1=S*2;", "R2=S*3;",
 				"print(sum(R1)+sum(R2));");
-			case "B-11": return lines(federatedRow(), "Y=X+1;", "print(sum(Y));");
+			case "B-11": return lines(federatedRow("X"), "Y=X+1;", "print(sum(Y));");
 			case "B-12": return lines("X=matrix(1,4,2);", "Y=X+1;", "print(sum(Y));");
 			case "B-13": return lines(federatedPart(), "Y=X+1;", "print(sum(Y));");
 			case "B-14": return lines("X=matrix(1,2,2);", "Y=X+1;", "print(sum(Y));");
@@ -86,8 +89,8 @@ public final class ProductionShadowFixtureFactory {
 			case "B-20": return lines("A=matrix(1,2,2);", "X=A;", "i=1;",
 				"while(i<=2){if(sum(X)>0){X=X+1;}else{X=X-1;}i=i+1;}", "print(sum(X));");
 			case "B-21": return lines("f=function(matrix[double] X) return (matrix[double] Y){Y=rowSums(X);}",
-				"A=matrix(1,2,2);", "Y=f(A);", "print(sum(Y));");
-			case "B-22": return lines(federatedRow(), "S=matrix(1,4,2);", "Y1=X+S;", "Y2=X-S;",
+				federatedRow("A"), "Z=sum(A);", "Y=f(A);", "print(Z+sum(Y));");
+			case "B-22": return lines(federatedRow("X"), "S=matrix(1,4,2);", "Y1=X+S;", "Y2=X-S;",
 				"print(sum(Y1)+sum(Y2));");
 			default: throw new IllegalArgumentException("Unknown production shadow fixture " + id);
 		}
@@ -105,8 +108,8 @@ public final class ProductionShadowFixtureFactory {
 			"X=matrix(1,2,2);", tail);
 	}
 
-	private static String federatedRow() {
-		return "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+	private static String federatedRow(String variable) {
+		return variable + "=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
 			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));";
 	}
 

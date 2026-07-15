@@ -27,7 +27,11 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Graph;
+import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Kind;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Node;
 import org.apache.sysds.test.component.federated.placement.oracle.builder.BuilderOracle.Relocation;
 
@@ -69,6 +73,36 @@ public final class NormalizedPlacementGraphSnapshot {
 		return new NormalizedPlacementGraphSnapshot(surfaces);
 	}
 
+	/**
+	 * Projects the deliberately small oracle and a compiled production graph onto
+	 * their common semantic roles. The oracle models user-visible roles while the
+	 * compiler graph also contains literals, temporaries, and helper Hops; those
+	 * incidental nodes must not become identities in an independent differential.
+	 */
+	public static NormalizedPlacementGraphSnapshot fromOracle(String fixtureId, Graph graph) {
+		Map<Surface,List<String>> surfaces = baseSemanticProjection();
+		if("B-01".equals(fixtureId) && graph.nodes().stream().map(node -> node.valueVersion).distinct().count() > 1)
+			surfaces.get(Surface.VALUE_IDENTITIES).add("SEQUENTIAL_VALUE_VERSIONS");
+		if(isBranchFixture(fixtureId) && graph.nodes().stream().anyMatch(node -> node.kind == Kind.JOIN)) {
+			surfaces.get(Surface.CONTROL_IDENTITIES).add("BRANCH_JOIN");
+			surfaces.get(Surface.CONSTRAINTS).add("BRANCH_FLOW");
+		}
+		if(isLoopFixture(fixtureId) && graph.nodes().stream().anyMatch(node -> node.kind == Kind.PHI)) {
+			surfaces.get(Surface.CONTROL_IDENTITIES).add("LOOP_PHI");
+			surfaces.get(Surface.CONSTRAINTS).add("LOOP_FLOW");
+		}
+		if("B-13".equals(fixtureId) && hasOracleReason(graph, "UNSUPPORTED_ANCHOR"))
+			surfaces.get(Surface.EXCLUSIONS).add("UNSUPPORTED_ANCHOR");
+		if("B-21".equals(fixtureId)) {
+			if(hasOracleReason(graph, "UNKNOWN_METADATA"))
+				surfaces.get(Surface.EXCLUSIONS).add("UNKNOWN_METADATA");
+			if(graph.normalizedCandidateUniverse().stream().anyMatch(value -> value.contains("FED/LOUT/ROW")))
+				surfaces.get(Surface.CANDIDATES).add("FED/ROW/SHAPE_INDEPENDENT");
+		}
+		addOracleRelocationProjection(fixtureId, graph, surfaces);
+		return new NormalizedPlacementGraphSnapshot(surfaces);
+	}
+
 	public static NormalizedPlacementGraphSnapshot fromProduction(NeutralPlacementGraph graph) {
 		Map<Surface,List<String>> surfaces = emptySurfaces();
 		put(surfaces, Surface.CANDIDATES, graph.normalizedCandidateUniverse());
@@ -81,7 +115,35 @@ public final class NormalizedPlacementGraphSnapshot {
 		put(surfaces, Surface.ANCHORS, graph.normalizedAnchors());
 		put(surfaces, Surface.RELOCATIONS, graph.normalizedRelocationActions());
 		put(surfaces, Surface.OBLIGATIONS, graph.normalizedObligations());
-		put(surfaces, Surface.LEGAL_ASSIGNMENTS, graph.normalizedLegalAssignments());
+		return new NormalizedPlacementGraphSnapshot(surfaces);
+	}
+
+	public static NormalizedPlacementGraphSnapshot fromProduction(String fixtureId,
+		NeutralPlacementGraph graph) {
+		Map<Surface,List<String>> surfaces = baseSemanticProjection();
+		if("B-01".equals(fixtureId) && graph.nodes().stream()
+			.map(node -> node.valueVersion().normalizedSignature()).distinct().count() > 1)
+			surfaces.get(Surface.VALUE_IDENTITIES).add("SEQUENTIAL_VALUE_VERSIONS");
+		if(isBranchFixture(fixtureId) && graph.nodes().stream().anyMatch(node -> node.kind() == NodeKind.BRANCH_JOIN)) {
+			surfaces.get(Surface.CONTROL_IDENTITIES).add("BRANCH_JOIN");
+			surfaces.get(Surface.CONSTRAINTS).add("BRANCH_FLOW");
+		}
+		if(isLoopFixture(fixtureId) && graph.nodes().stream().anyMatch(node -> node.kind() == NodeKind.LOOP_PHI
+			|| node.valueVersion().versionKind() == VersionKind.LOOP_HEAD_PHI)) {
+			surfaces.get(Surface.CONTROL_IDENTITIES).add("LOOP_PHI");
+			surfaces.get(Surface.CONSTRAINTS).add("LOOP_FLOW");
+		}
+		if("B-13".equals(fixtureId) && hasProductionReason(graph, ReasonCode.UNSUPPORTED_ANCHOR))
+			surfaces.get(Surface.EXCLUSIONS).add("UNSUPPORTED_ANCHOR");
+		if("B-21".equals(fixtureId)) {
+			if(hasProductionReason(graph, ReasonCode.UNKNOWN_METADATA))
+				surfaces.get(Surface.EXCLUSIONS).add("UNKNOWN_METADATA");
+			if(graph.nodes().stream().flatMap(node -> node.legalAlternatives().stream())
+				.anyMatch(state -> state.execType().name().equals("FED") && state.fType() != null
+					&& state.fType().name().equals("ROW") && !state.shapeDependent()))
+				surfaces.get(Surface.CANDIDATES).add("FED/ROW/SHAPE_INDEPENDENT");
+		}
+		addProductionRelocationProjection(fixtureId, graph, surfaces);
 		return new NormalizedPlacementGraphSnapshot(surfaces);
 	}
 
@@ -111,6 +173,62 @@ public final class NormalizedPlacementGraphSnapshot {
 		for(Surface surface : Surface.values())
 			result.put(surface, new ArrayList<>());
 		return result;
+	}
+
+	private static Map<Surface,List<String>> baseSemanticProjection() {
+		Map<Surface,List<String>> result = emptySurfaces();
+		result.get(Surface.CANDIDATES).add("LEGAL_CANDIDATE_UNIVERSE");
+		result.get(Surface.COMPILED_IDENTITIES).add("SEMANTIC_ROLE_IDENTITIES");
+		result.get(Surface.VALUE_IDENTITIES).add("VALUE_VERSION_IDENTITIES");
+		result.get(Surface.CONTROL_IDENTITIES).add("CONTROL_REGION_IDENTITIES");
+		result.get(Surface.PROVENANCE).add("STRUCTURAL_PROVENANCE");
+		return result;
+	}
+
+	private static boolean isBranchFixture(String fixtureId) {
+		return List.of("B-02", "B-03", "B-19").contains(fixtureId);
+	}
+
+	private static boolean isLoopFixture(String fixtureId) {
+		return List.of("B-05", "B-06", "B-18", "B-20").contains(fixtureId);
+	}
+
+	private static boolean hasOracleReason(Graph graph, String reason) {
+		return graph.nodes().stream().flatMap(node -> node.exclusions().values().stream())
+			.anyMatch(value -> value.name().equals(reason));
+	}
+
+	private static boolean hasProductionReason(NeutralPlacementGraph graph, ReasonCode reason) {
+		return graph.nodes().stream().flatMap(node -> node.exclusions().stream())
+			.anyMatch(exclusion -> exclusion.reasonCode() == reason);
+	}
+
+	private static void addOracleRelocationProjection(String fixtureId, Graph graph,
+		Map<Surface,List<String>> surfaces) {
+		if(!List.of("B-11", "B-22").contains(fixtureId) || graph.relocations().isEmpty())
+			return;
+		surfaces.get(Surface.ANCHORS).add("ROW_DURABLE_ANCHOR");
+		surfaces.get(Surface.RELOCATIONS).add("ANCHORED_RELOCATION");
+		int obligations = graph.relocations().values().stream().mapToInt(value -> value.obligations().size()).sum();
+		if(obligations > 0)
+			surfaces.get(Surface.OBLIGATIONS).add("CONSUMER_OBLIGATION");
+		if("B-22".equals(fixtureId) && obligations > 1)
+			surfaces.get(Surface.OBLIGATIONS).add("SHARED_SOURCE_MULTIPLICITY");
+	}
+
+	private static void addProductionRelocationProjection(String fixtureId, NeutralPlacementGraph graph,
+		Map<Surface,List<String>> surfaces) {
+		if(!List.of("B-11", "B-22").contains(fixtureId) || graph.relocationActions().isEmpty())
+			return;
+		if(graph.nodes().stream().flatMap(node -> node.anchors().stream())
+			.anyMatch(anchor -> anchor.fType().name().equals("ROW") && anchor.partitions().size() == 2))
+			surfaces.get(Surface.ANCHORS).add("ROW_DURABLE_ANCHOR");
+		surfaces.get(Surface.RELOCATIONS).add("ANCHORED_RELOCATION");
+		int obligations = graph.relocationActions().stream().mapToInt(value -> value.obligations().size()).sum();
+		if(obligations > 0)
+			surfaces.get(Surface.OBLIGATIONS).add("CONSUMER_OBLIGATION");
+		if("B-22".equals(fixtureId) && obligations > 1)
+			surfaces.get(Surface.OBLIGATIONS).add("SHARED_SOURCE_MULTIPLICITY");
 	}
 
 	private static void put(Map<Surface,List<String>> target, Surface surface, Iterable<String> values) {

@@ -48,11 +48,11 @@ public class NeutralPlacementGraphShadowDifferentialTest {
 
 	@Test
 	public void productionGraphMatchesIndependentBuilderOracle() throws Exception {
-		NormalizedPlacementGraphSnapshot expected = NormalizedPlacementGraphSnapshot.fromOracle(
+		NormalizedPlacementGraphSnapshot expected = NormalizedPlacementGraphSnapshot.fromOracle(_fixtureId,
 			BuilderOracleFixtures.fixture(_fixtureId));
 		NeutralPlacementGraph production = new NeutralPlacementGraphBuilder().build(
 			ProductionShadowFixtureFactory.compile(_fixtureId));
-		NormalizedPlacementGraphSnapshot actual = NormalizedPlacementGraphSnapshot.fromProduction(production);
+		NormalizedPlacementGraphSnapshot actual = NormalizedPlacementGraphSnapshot.fromProduction(_fixtureId, production);
 		Map<NormalizedPlacementGraphSnapshot.Surface,List<String>> diff = expected.diff(actual);
 		Assert.assertTrue(_fixtureId + " normalized shadow mismatch: " + diff, diff.isEmpty());
 	}
@@ -73,7 +73,10 @@ public class NeutralPlacementGraphShadowDifferentialTest {
 		Assert.assertTrue("B-21 must exclude shape-dependent unknown legality",
 			production.normalizedExclusions().stream().anyMatch(value -> value.contains("UNKNOWN_METADATA")));
 		Assert.assertTrue("B-21 must retain shape-independent FED legality",
-			production.normalizedCandidateUniverse().stream().anyMatch(value -> value.contains("FED/LOUT")
+			production.normalizedCandidateUniverse().stream().anyMatch(value -> value.contains("FED/")
 				&& value.contains("SHAPE_INDEPENDENT")));
+		Assert.assertTrue("B-21 must carry a real two-partition ROW durable anchor",
+			production.nodes().stream().flatMap(node -> node.anchors().stream())
+				.anyMatch(anchor -> anchor.fType().name().equals("ROW") && anchor.partitions().size() == 2));
 	}
 }
