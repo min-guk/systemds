@@ -31,7 +31,7 @@ public final class PlacementShadowCoordinator {
 	private static final ShadowAnalysis PRODUCTION_ANALYSIS = new ShadowAnalysis() {
 		@Override
 		public NeutralPlacementGraph build(DMLProgram program) {
-			return new NeutralPlacementGraphBuilder().build(program);
+			return new NeutralPlacementGraphBuilder().buildAnalysis(program).graph();
 		}
 
 		@Override

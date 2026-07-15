@@ -70,12 +70,15 @@ public final class NeutralPlacementGraphBuilder {
 	private final OracleFacade oracle = new OracleFacade(RulesCore.RulesModule.createDefaultRegistry());
 
 	public List<String> selectedProjection(DMLProgram program) {
+		PlacementAnalysis analysis = buildAnalysis(program);
 		List<String> selected = new ArrayList<>();
-		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
+		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
+			Node node = analysis.graph().node(occurrence.key()).orElseThrow();
+			if(node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT) continue;
 			Hop hop = occurrence.hop();
 			ExecType selectedExec = selectedExecType(hop);
-			selected.add(occurrence.namespace() + '|' + occurrence.path() + '|' + occurrence.topology() + '|'
-				+ PlacementGraphFingerprint.semanticStructuralKey(hop) + '|'
+			selected.add(occurrence.key().functionNamespace() + '|' + occurrence.key().callSitePath() + '|'
+				+ occurrence.key().emittedHopInstance() + '|' + occurrence.key().canonicalSourceOrigin() + '|'
 				+ String.valueOf(selectedExec) + '/' + String.valueOf(hop.getFederatedOutput()));
 		}
 		Collections.sort(selected);
@@ -83,19 +86,20 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	public List<String> selectedMembershipViolations(DMLProgram program, NeutralPlacementGraph graph) {
+		PlacementAnalysis analysis = buildAnalysis(program);
 		List<String> violations = new ArrayList<>();
-		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
+		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
+			Node projected = analysis.graph().node(occurrence.key()).orElseThrow();
+			if(projected.kind() == NodeKind.FUNCTION_INPUT || projected.kind() == NodeKind.FUNCTION_OUTPUT) continue;
 			Hop hop = occurrence.hop();
 			ExecType selectedExec = selectedExecType(hop);
 			if(selectedExec == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
-			Node node = graph.nodes().stream().filter(n -> n.key().callSitePath().equals(occurrence.path())
-				&& n.key().emittedHopInstance().equals(occurrence.topology())
-				&& n.key().canonicalSourceOrigin().equals(PlacementGraphFingerprint.semanticStructuralKey(hop))).findFirst().orElse(null);
+			Node node = graph.node(occurrence.key()).orElse(null);
 			boolean member = node != null && node.legalAlternatives().stream().anyMatch(s ->
 				s.execType() == selectedExec && s.output() == hop.getFederatedOutput());
-			if(!member) violations.add(occurrence.namespace() + '|' + occurrence.path() + '|'
-				+ occurrence.topology() + '|'
-				+ PlacementGraphFingerprint.semanticStructuralKey(hop) + '|' + selectedExec + '/' + hop.getFederatedOutput());
+			if(!member) violations.add(occurrence.key().functionNamespace() + '|' + occurrence.key().callSitePath() + '|'
+				+ occurrence.key().emittedHopInstance() + '|' + occurrence.key().canonicalSourceOrigin() + '|'
+				+ selectedExec + '/' + hop.getFederatedOutput());
 		}
 		Collections.sort(violations);
 		return Collections.unmodifiableList(violations);
@@ -105,46 +109,11 @@ public final class NeutralPlacementGraphBuilder {
 		return hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
 	}
 
-	public PlacementAnalysis buildAnalysis(DMLProgram program) {
-		NeutralPlacementGraph graph = build(program);
-		Map<CompiledHopKey,Hop> origins = projectConcreteOrigins(program, graph);
-		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
-		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
-			CompiledHopKey key = graph.nodes().get(ordinal).key();
-			Hop hop = origins.get(key);
-			if(hop == null)
-				throw new IllegalStateException("Neutral placement node has no compiled Hop origin: " + key);
-			projections.add(new HopOccurrenceProjection(key, hop, ordinal, key.normalizedSignature()));
-		}
-		return new PlacementAnalysis(graph, projections);
-	}
-
-	private static Map<CompiledHopKey,Hop> projectConcreteOrigins(DMLProgram program, NeutralPlacementGraph graph) {
-		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
-		Map<String,Hop> callsByContext = new java.util.HashMap<>();
-		for(PlacementGraphFingerprint.HopOccurrence occurrence : PlacementGraphFingerprint.orderedOccurrences(program)) {
-			CompiledHopKey key = graph.nodes().stream().map(Node::key)
-				.filter(candidate -> candidate.callSitePath().equals(occurrence.path())
-					&& candidate.emittedHopInstance().equals(occurrence.topology())
-					&& candidate.canonicalSourceOrigin()
-						.equals(PlacementGraphFingerprint.semanticStructuralKey(occurrence.hop())))
-				.findFirst().orElseThrow(() -> new IllegalStateException(
-					"Compiled Hop occurrence is absent from neutral placement graph"));
-			origins.put(key, occurrence.hop());
-			if(occurrence.hop() instanceof FunctionOp)
-				callsByContext.put("callsite:" + key.normalizedSignature(), occurrence.hop());
-		}
-		for(Node node : graph.nodes()) {
-			if(origins.containsKey(node.key()))
-				continue;
-			Hop call = callsByContext.get(node.key().recompileContext());
-			if(call != null && node.key().canonicalSourceOrigin().startsWith("function-boundary:"))
-				origins.put(node.key(), call);
-		}
-		return Collections.unmodifiableMap(origins);
-	}
-
 	public NeutralPlacementGraph build(DMLProgram program) {
+		return buildAnalysis(program).graph();
+	}
+
+	public PlacementAnalysis buildAnalysis(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
 		String registryBefore = registrySentinel(program);
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
@@ -155,6 +124,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
+		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			Hop hop = occurrence.hop();
@@ -163,6 +133,7 @@ public final class NeutralPlacementGraphBuilder {
 				occurrence.regionPath(), occurrence.path(), context);
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
 				occurrence.topology(), PlacementGraphFingerprint.semanticStructuralKey(hop));
+			origins.put(key, hop);
 			String variable = lexicalVariable(hop, ordinal);
 			int version = cfg.definitionOrdinals().get(ordinal);
 			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
@@ -197,8 +168,9 @@ public final class NeutralPlacementGraphBuilder {
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
-		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes);
+		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes, origins);
 		nodes = functionExpansion.nodes();
+		origins = functionExpansion.origins();
 		nodesByHop.clear();
 		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
 		Set<Constraint> constraints = new java.util.TreeSet<>();
@@ -215,12 +187,21 @@ public final class NeutralPlacementGraphBuilder {
 		addStableOriginConstraints(nodes, constraints);
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, anchorProvenance);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
+		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
+		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
+			CompiledHopKey key = graph.nodes().get(ordinal).key();
+			Hop hop = origins.get(key);
+			if(hop == null)
+				throw new IllegalStateException("Neutral placement node has no compiled Hop origin: " + key);
+			projections.add(new HopOccurrenceProjection(key, hop, ordinal, key.normalizedSignature()));
+		}
+		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
 		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
-		return graph;
+		return analysis;
 	}
 
 	private static CfgAnalysis analyzeCfg(DMLProgram program,
@@ -401,9 +382,11 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static FunctionExpansion expandFunctionBoundaryContexts(
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes) {
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+		Map<CompiledHopKey,Hop> origins) {
 		List<Node> expanded = new ArrayList<>(nodes);
 		List<Constraint> constraints = new ArrayList<>();
+		Map<CompiledHopKey,Hop> expandedOrigins = new java.util.LinkedHashMap<>(origins);
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
 		for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
@@ -422,6 +405,7 @@ public final class NeutralPlacementGraphBuilder {
 				Node input = functionBoundaryNode(call, functionKey, inputNames[inputPosition], callIndex,
 					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives);
 				expanded.add(input);
+				expandedOrigins.put(input.key(), callOp);
 				constraints.add(new Constraint(ConstraintKind.DOMINATES, call.key(), input.key(), inputPosition,
 					"function-callsite-control"));
 				if(argument != null)
@@ -434,12 +418,13 @@ public final class NeutralPlacementGraphBuilder {
 					outputPosition, VersionKind.FUNCTION_OUTPUT, NodeKind.FUNCTION_OUTPUT,
 					transientAlternatives(call.legalAlternatives()));
 				expanded.add(output);
+				expandedOrigins.put(output.key(), callOp);
 				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, call.key(), output.key(), outputPosition,
 					"function-result:" + outputNames[outputPosition]));
 			}
 		}
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
-			Collections.unmodifiableList(constraints));
+			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins));
 	}
 
 	private static Node functionBoundaryNode(Node call, String functionKey, String variable, int callIndex,
@@ -465,7 +450,8 @@ public final class NeutralPlacementGraphBuilder {
 		return Collections.unmodifiableList(new ArrayList<>(result));
 	}
 
-	private record FunctionExpansion(List<Node> nodes, List<Constraint> constraints) { }
+	private record FunctionExpansion(List<Node> nodes, List<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins) { }
 
 	private static void addCfgConstraints(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
 		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints, CfgAnalysis cfg) {
