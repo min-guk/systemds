@@ -23,7 +23,9 @@ import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -219,8 +221,9 @@ public class VariableRulesTest {
 
     for (Scenario scenario : scenarios) {
       OpSig sig = sig(scenario.opcode, scenario.category, scenario.attrs, scenario.inputKinds);
-      OpCaps caps = scenario.rule.caps(sig, scenario.inFTypes, null);
       String msg = "scenario=" + scenario.name;
+      assertTrue(msg + " must be reachable through supports", scenario.rule.supports(sig));
+      OpCaps caps = scenario.rule.caps(sig, scenario.inFTypes, null);
 
       assertEquals(msg, scenario.exec, caps.exec());
       assertEquals(msg, scenario.placement, caps.placement());
@@ -274,7 +277,7 @@ public class VariableRulesTest {
       this.category = category;
       this.attrs = Map.copyOf(attrs);
       this.inputKinds = Arrays.copyOf(inputKinds, inputKinds.length);
-      this.inFTypes = List.copyOf(inFTypes);
+      this.inFTypes = Collections.unmodifiableList(new ArrayList<>(inFTypes));
       this.exec = exec;
       this.placement = placement;
       this.fout = fout;

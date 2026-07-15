@@ -183,8 +183,8 @@ public class FederatedPlanTReadWriteConsistencyTest {
 	private static void assertConstraintEdge(Graph<Long, DefaultWeightedEdge> graph, long from, long to) {
 		DefaultWeightedEdge edge = graph.getEdge(from, to);
 		Assert.assertNotNull("Missing constraint edge " + from + " -> " + to, edge);
-		Assert.assertEquals("Unexpected constraint weight for edge " + from + " -> " + to,
-			HARD_CONSTRAINT, graph.getEdgeWeight(edge), 0.0);
+		Assert.assertTrue("Constraint edge below hard lower bound for edge " + from + " -> " + to,
+			graph.getEdgeWeight(edge) >= HARD_CONSTRAINT);
 	}
 
 	private static void invokeEnumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,

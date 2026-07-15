@@ -87,11 +87,15 @@ public class RulesetsUnaryTest {
   }
 
   @Test
-  public void ucumProfileOnlyRow() {
-    OpSig sig = OpSig.of("ucummin", ucumRule.category(), Map.of(), InputKind.MATRIX);
+  public void ucumProfileAllowsColExceptForUcumkpm() {
     List<List<FType>> candidates = List.of(List.of(FType.ROW, FType.COL, FType.PART));
-    List<FType> outs = ucumRule.profile(sig, candidates, UNKNOWN_SHAPE).outputs();
-    assertEquals(List.of(FType.ROW), outs);
+    OpSig ucumSig = OpSig.of("ucummin", ucumRule.category(), Map.of(), InputKind.MATRIX);
+    OpSig ucumkpmSig = OpSig.of("ucumk+*", ucumRule.category(), Map.of(), InputKind.MATRIX);
+
+    assertEquals(List.of(FType.ROW, FType.COL),
+        ucumRule.profile(ucumSig, candidates, UNKNOWN_SHAPE).outputs());
+    assertEquals(List.of(FType.ROW),
+        ucumRule.profile(ucumkpmSig, candidates, UNKNOWN_SHAPE).outputs());
   }
 
   private void runScenarios(List<Scenario> scenarios) {
