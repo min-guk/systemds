@@ -124,27 +124,16 @@ final class R4HeuristicMetadataFixtureBridge {
 				Set.of(n.valueVersion())).size())).orElseThrow();
 		List<Node> markerNodes = List.of(first, second);
 		LinkedHashMap<ValueVersionKey, MarkerContribution> result = new LinkedHashMap<>();
-		Map<CompiledHopKey, ValueVersionKey> owners = new LinkedHashMap<>();
-		for(Node markerNode : markerNodes) {
-			Set<CompiledHopKey> descendants = closure(fixture.analysis().graph(), Set.of(markerNode.valueVersion()));
-			for(CompiledHopKey key : descendants) {
-				Node old = fixture.analysis().graph().node(key).orElseThrow();
-				if(CampaignBProvenanceFixtureBridge.candidateProof(fixture.analysis(), old, anchor,
-					markerNode.key()).isPresent()) {
-					ValueVersionKey owner = owners.get(key);
-					if(owner == null || descendants.size() < closure(fixture.analysis().graph(), Set.of(owner)).size())
-						owners.put(key, markerNode.valueVersion());
-				}
-			}
-		}
 		for(Node markerNode : markerNodes) {
 			Set<CompiledHopKey> descendants = closure(fixture.analysis().graph(), Set.of(markerNode.valueVersion()));
 			Set<String> keys = new LinkedHashSet<>(); List<String> exclusions = new ArrayList<>();
-			for(var entry : owners.entrySet()) if(entry.getValue().equals(markerNode.valueVersion())) {
+			for(CompiledHopKey descendant : descendants) {
 				var proof = CampaignBProvenanceFixtureBridge.candidateProof(fixture.analysis(),
-					fixture.analysis().graph().node(entry.getKey()).orElseThrow(), anchor, markerNode.key()).orElseThrow();
-				keys.add(proof.candidate()); exclusions.add("NO_REFED|" + proof.candidate() + "|proof="
-					+ CampaignBProvenanceFixtureBridge.proofSignature(proof) + "|marker="
+					fixture.analysis().graph().node(descendant).orElseThrow(), anchor, markerNode.key());
+				if(proof.isEmpty())
+					continue;
+				keys.add(proof.get().candidate()); exclusions.add("NO_REFED|" + proof.get().candidate() + "|proof="
+					+ CampaignBProvenanceFixtureBridge.proofSignature(proof.get()) + "|marker="
 					+ markerNode.valueVersion().normalizedSignature());
 			}
 			if(keys.isEmpty()) throw new AssertionError("MULTI_MARKER_FIXTURE_EMPTY|marker="

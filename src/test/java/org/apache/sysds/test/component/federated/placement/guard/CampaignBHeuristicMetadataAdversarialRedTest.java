@@ -85,7 +85,11 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 					violations.add("BROADCAST_UNSAFE_" + kind);
 			}
 			catch(AssertionError safelyRejected) {
-				// Rejection is safe; the RED signal is an unsafe synthesized candidate, never reflection itself.
+				String message = String.valueOf(safelyRejected.getMessage());
+				boolean typedMissingHop = kind == R4HeuristicMetadataFixtureBridge.BroadcastCase.MISSING_HOP
+					&& message.startsWith("HEURISTIC_POLICY_SAFETY_REJECTION|reason=MISSING_HOP_PROJECTION");
+				if(!typedMissingHop)
+					violations.add("BROADCAST_UNTYPED_FAILURE_" + kind + '|' + message);
 			}
 			R4Heuristic2Probe.unchanged(before, unsafe.snapshot());
 		}
@@ -117,6 +121,9 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 			Assert.assertTrue("MULTI_MARKER_ATTRIBUTION_MISSING|marker=" + contribution.marker(),
 				selected.exclusions().containsAll(contribution.exclusions()));
 		}
+		expectedExclusions.sort(String::compareTo);
+		Assert.assertEquals("MULTI_MARKER_EXACT_ATTRIBUTED_EXCLUSIONS", expectedExclusions,
+			selected.exclusions());
 		Assert.assertEquals("MULTI_MARKER_EXACT_UNION", Set.copyOf(expectedKeys),
 			R4HeuristicMetadataFixtureBridge.exclusionKeys(selected));
 		String independent = scenario.independent().normalizedSignature();
@@ -130,6 +137,8 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 		Assert.assertEquals("MULTI_MARKER_REVERSED_CANDIDATES", selected.candidates(), reversed.candidates());
 		Assert.assertEquals("MULTI_MARKER_REVERSED_EXCLUSIONS", selected.exclusions(), reversed.exclusions());
 		Assert.assertEquals("MULTI_MARKER_REVERSED_ASSIGNMENT", selected.assignments(), reversed.assignments());
+		Assert.assertEquals("MULTI_MARKER_REVERSED_POLICY_FINGERPRINT",
+			selected.certificate().policyViewFingerprint(), reversed.certificate().policyViewFingerprint());
 		Assert.assertEquals("MULTI_MARKER_REVERSED_CERTIFICATE", selected.certificate(), reversed.certificate());
 		Assert.assertEquals("MULTI_MARKER_REVERSED_PLAN", selected.planFingerprint(), reversed.planFingerprint());
 		R4Heuristic2Probe.unchanged(before, R4Heuristic2Probe.snapshot(fixture.program(), fixture.analysis()));
@@ -153,8 +162,13 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 			selection.certificate().termination());
 		Assert.assertEquals("EMPTY_POLICY_UNIVERSE_COUNT", selection.candidates().size(),
 			selection.certificate().universe());
-		Assert.assertTrue("EMPTY_POLICY_NO_REPAIR_FACT", selection.plannerFacts().entrySet().stream()
-			.noneMatch(e -> (e.getKey() + e.getValue()).toLowerCase().matches(".*(repair|fallback).*true.*")));
+		Assert.assertEquals("EMPTY_POLICY_EXPLORED_COUNT", selection.candidates().size(),
+			selection.certificate().explored());
+		Assert.assertEquals("EMPTY_POLICY_PRUNED_COUNT", 0L, selection.certificate().pruned());
+		Assert.assertTrue("EMPTY_POLICY_NO_REPAIR_FALLBACK_FACT_KEY", selection.plannerFacts().keySet().stream()
+			.map(String::toLowerCase).noneMatch(x -> x.contains("repair") || x.contains("fallback")));
+		Assert.assertTrue("EMPTY_POLICY_NO_REPAIR_FALLBACK_FACT_VALUE", selection.plannerFacts().values().stream()
+			.map(String::toLowerCase).noneMatch(x -> x.contains("repair") || x.contains("fallback")));
 		R4Heuristic2Probe.unchanged(before, scenario.snapshot());
 	}
 
