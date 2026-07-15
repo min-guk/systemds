@@ -62,6 +62,8 @@ public final class Rulesets {
   private static final String WDIVMM_ALIGN_DETAIL = "output dims derive from U/V; partition misalignment risk";
   private static final String WDIVMM_NATIVE_X_AXIS_DETAIL =
       "federated WDivMM runtime supports ROW/COL partitioned X only";
+  private static final String WSLOSS_X_AXIS_ONLY_DETAIL =
+      "federated WSLoss runtime supports ROW/COL partitioned X only";
   private static final String FED_WRITE_DETAIL = "federated write target";
   private static final String ATTR_SPOOF_TEMPLATE = "spoof.template";
   private static final String ATTR_SPOOF_CELL_TYPE = "spoof.cellType";
@@ -766,7 +768,17 @@ public final class Rulesets {
         return scalarCaps(sig, ExecType.CP, ReasonCode.BROADCAST_CONSTRAINT);
       if (!isFederatedLike(x))
         return scalarCaps(sig, ExecType.CP, ReasonCode.NO_FED_INPUT);
-      return scalarCaps(sig, ExecType.CP, ReasonCode.MISSING_FED_INSTRUCTION);
+      // QuaternaryWSLossFEDInstruction rejects non-axis X mappings at runtime.
+      if (x == FType.FULL || x == FType.PART)
+        return OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.CP)
+            .placement(FederatedOutput.LOUT)
+            .reason(ReasonCode.PARTITION_FORBIDDEN)
+            .detail(WSLOSS_X_AXIS_ONLY_DETAIL)
+            .build();
+      return scalarCaps(sig, ExecType.FED, ReasonCode.OK);
     }
   }
 
