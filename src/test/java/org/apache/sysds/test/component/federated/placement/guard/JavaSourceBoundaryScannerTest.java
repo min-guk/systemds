@@ -37,6 +37,28 @@ public class JavaSourceBoundaryScannerTest {
 	}
 
 	@Test
+	public void commentMarkersInsideLiteralsCannotHideLaterExecutableViolations() {
+		Assert.assertFalse(JavaSourceBoundaryScanner.forbiddenReferences(
+			"String harmless = \"//\"; Class.forName(\"" + PREFIX + ".Bad\");", PREFIX).isEmpty());
+		Assert.assertFalse(JavaSourceBoundaryScanner.forbiddenReferences(
+			"String start = \"/*\"; " + PREFIX + ".Bad value; String end = \"*/\";",
+			PREFIX).isEmpty());
+		Assert.assertFalse(JavaSourceBoundaryScanner.forbiddenReferences(
+			"String harmless = \"/* not a comment */\"; loader.loadClass(\"" + PREFIX + ".Bad\");",
+			PREFIX).isEmpty());
+	}
+
+	@Test
+	public void escapesCharsAndQuoteMarkersPreserveLexicalState() {
+		Assert.assertTrue(JavaSourceBoundaryScanner.forbiddenReferences(
+			"String harmless = \"escaped \\\" // \\\\ /*\"; char slash = '/'; /* \" ignored */",
+			PREFIX).isEmpty());
+		Assert.assertFalse(JavaSourceBoundaryScanner.forbiddenReferences(
+			"String harmless = \"escaped \\\" // \\\\ /*\"; char quote = '\\\''; "
+				+ PREFIX + ".Bad value;", PREFIX).isEmpty());
+	}
+
+	@Test
 	public void currentOracleTreePassesIncludingItsNegativeTestLiterals() throws Exception {
 		Path root = Paths.get("").toAbsolutePath().normalize();
 		Path oracle = root.resolve("src/test/java/org/apache/sysds/test/component/federated/placement/oracle");
