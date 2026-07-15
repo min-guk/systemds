@@ -24,9 +24,11 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 public interface PlacementPlannerAdapter<R extends NormalizedPlannerResult> {
 	R select(PlannerPlacementContext context);
 
-	default R select(PlacementAnalysis analysis) {
+	default NormalizedPlannerResult select(PlacementAnalysis analysis) {
 		PlannerPlacementContext context = PlannerPlacementContext.of(analysis);
 		R result = Objects.requireNonNull(select(context), "planner result");
+		if(result.analysis() != context.analysis())
+			throw new IllegalStateException("planner result analysis identity does not match supplied analysis");
 		if(!context.analysisFingerprint().equals(result.analysisFingerprint()))
 			throw new IllegalStateException("planner result fingerprint does not match supplied analysis");
 		Objects.requireNonNull(result.plannerId(), "plannerId");
@@ -34,6 +36,6 @@ public interface PlacementPlannerAdapter<R extends NormalizedPlannerResult> {
 		Objects.requireNonNull(result.selectedRelocations(), "selectedRelocations");
 		Objects.requireNonNull(result.objectiveCertificate(), "objectiveCertificate");
 		Objects.requireNonNull(result.normalizedPlanFingerprint(), "normalizedPlanFingerprint");
-		return result;
+		return ImmutableNormalizedPlannerResult.of(context, result);
 	}
 }

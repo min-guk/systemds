@@ -22,9 +22,11 @@ import java.util.List;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 
 /** Read-only common projection of a planner-specific selection result. */
 public interface NormalizedPlannerResult {
+	PlacementAnalysis analysis();
 	String plannerId();
 
 	String analysisFingerprint();
