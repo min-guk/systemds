@@ -33,6 +33,7 @@ public class CampaignBAllPlannerAnalysisContractTest {
 			Assert.assertNotSame(analysis, twin); Assert.assertEquals(analysis.analysisFingerprint(), twin.analysisFingerprint());
 			List<String> before = CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis);
 			for(var planner : R4SharedFedAllAdapterBridge.analysisOnlyPlanners()) invokeOrRecord(planner, analysis, twin, before, missing, id);
+			invokeMinStOrRecord(analysis, twin, before, missing, id);
 		}
 		for(var fixture : CampaignBSelectorFixtureBridge.all()) {
 			PlacementAnalysis normal = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production(), ProjectionOrder.NORMAL);
@@ -47,6 +48,13 @@ public class CampaignBAllPlannerAnalysisContractTest {
 				}
 				catch(AssertionError e) { recordMissing(missing, fixture.id(), e); }
 			}
+			try {
+				var handle = MinStAnalysisContractBridge.open();
+				var left = MinStAnalysisContractBridge.select(handle, normal);
+				var right = MinStAnalysisContractBridge.select(handle, reverse);
+				MinStAnalysisContractBridge.stable(left, right, "R4_MINST_ORDER_STABILITY|" + fixture.id());
+			}
+			catch(AssertionError e) { recordMissing(missing, fixture.id(), e); }
 		}
 		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING", List.of(), missing);
 	}
@@ -78,6 +86,20 @@ public class CampaignBAllPlannerAnalysisContractTest {
 				}
 				catch(AssertionError e) { recordMissing(missing,fixture.id(),e); }
 			}
+			try {
+				var handle = MinStAnalysisContractBridge.open();
+				var baseline = MinStAnalysisContractBridge.select(handle, analysis);
+				for(int i=0;i<3;i++) MinStAnalysisContractBridge.stable(baseline,
+					MinStAnalysisContractBridge.select(handle, analysis), "R4_MINST_REPEAT_STABILITY");
+				CountDownLatch ready=new CountDownLatch(8), start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(8);
+				List<Future<MinStAnalysisContractBridge.Selection>> futures=new ArrayList<>();
+				for(int i=0;i<8;i++) futures.add(pool.submit(() -> {ready.countDown();start.await();
+					return MinStAnalysisContractBridge.select(handle,analysis);}));
+				ready.await(); start.countDown();
+				for(var f:futures) MinStAnalysisContractBridge.stable(baseline,f.get(),"R4_MINST_CONCURRENCY_STABILITY");
+				pool.shutdownNow();
+			}
+			catch(AssertionError e) { recordMissing(missing,fixture.id(),e); }
 		}
 		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING",List.of(),missing);
 	}
@@ -98,6 +120,19 @@ public class CampaignBAllPlannerAnalysisContractTest {
 			long count=CampaignBPlacementAnalysisFixtureBridge.constructionCount(); var handle=R4SharedFedAllAdapterBridge.open(planner);
 			var selected=select(handle,analysis); R4SharedFedAllSemanticValidator.shared(analysis,selected);
 			Assert.assertNotSame(twin,selected.analysis()); Assert.assertEquals(count,CampaignBPlacementAnalysisFixtureBridge.constructionCount());
+			Assert.assertEquals(before,CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis));
+		}
+		catch(AssertionError e) {recordMissing(missing,id,e);}
+	}
+	private static void invokeMinStOrRecord(PlacementAnalysis analysis,PlacementAnalysis twin,List<String> before,
+		List<String> missing,String id) {
+		try {
+			long count=CampaignBPlacementAnalysisFixtureBridge.constructionCount();
+			if(id.equals("B-01")) MinStAnalysisContractBridge.verifyFixture(analysis);
+			var handle=MinStAnalysisContractBridge.open(); var selected=MinStAnalysisContractBridge.select(handle,analysis);
+			Assert.assertSame(analysis,selected.analysis()); Assert.assertFalse(selected.receipts().isEmpty());
+			Assert.assertFalse(selected.obligations().isEmpty()); MinStAnalysisContractBridge.rejectForeign(handle,analysis,twin);
+			Assert.assertEquals(count,CampaignBPlacementAnalysisFixtureBridge.constructionCount());
 			Assert.assertEquals(before,CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis));
 		}
 		catch(AssertionError e) {recordMissing(missing,id,e);}
