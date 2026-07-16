@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -151,6 +152,23 @@ public class CampaignBDpAggregateProducerContractTest {
 		assertSnapshotSame(before,snapshot(producer));
 	}
 
+	@Test public void missingExecutableAssociationRejectsBeforeApplication() throws Exception {
+		DMLProgram program=ProductionShadowFixtureFactory.compile("B-01");
+		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);Hop root=analysis.occurrences().get(0).hop();
+		FederatedPlannerDpMemoTable memo=new FederatedPlannerDpMemoTable();
+		add(memo,root,FederatedOutput.LOUT,ExecType.CP,0x1.0p3,false);
+		Method owner=FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",Set.class,FederatedPlannerDpMemoTable.class);
+		owner.setAccessible(true);LinkedHashSet<Hop> roots=new LinkedHashSet<>();roots.add(root);
+		FedPlan aggregate=(FedPlan)owner.invoke(null,roots,memo);FedPlan selected=memo.getFedPlanAfterPrune(aggregate.getChildFedPlans().get(0));
+		Assert.assertNotNull("adversary selected plan",selected);Assert.assertNull("adversary unexpectedly registered executable Hop",memo.resolveOriginalHop(root.getHopID()));
+		MemoSnapshot memoBefore=snapshot(memo,aggregate,analysis);ProgramSnapshot programBefore=snapshotProgram(program);
+		AnalysisSnapshot analysisBefore=snapshotAnalysis(analysis);AggregateSnapshot aggregateBefore=snapshotAggregate(aggregate);PlanSnapshot planBefore=snapshotPlan(selected);
+		ExactHandle handle=newExactHandle("CAMPAIGN_B_DP_MISSING_EXECUTABLE_API_MISSING");
+		expectReject(handle,analysis,memo,aggregate,"missing executable association");
+		assertSnapshotSame(memoBefore,snapshot(memo,aggregate,analysis));assertProgramSnapshotSame(programBefore,snapshotProgram(program));
+		assertAnalysisSnapshotSame(analysisBefore,snapshotAnalysis(analysis));assertAggregateSnapshotSame(aggregateBefore,snapshotAggregate(aggregate));assertPlanSnapshotSame(planBefore,snapshotPlan(selected));
+	}
+
 	private record ExactHandle(Object adapter,Method method) { }
 	private record ProducerCase(DMLProgram program,PlacementAnalysis analysis,FederatedPlannerDpMemoTable memo,
 		FedPlan aggregate,FedPlan lout,FedPlan fout,FedPlan selected,Hop root) { }
@@ -159,6 +177,8 @@ public class CampaignBDpAggregateProducerContractTest {
 	private record AnalysisSnapshot(PlacementAnalysis analysis,String fingerprint,
 		List<PlacementAnalysis.HopOccurrenceProjection> occurrences,List<HopState> hopStates) { }
 	private record AggregateSnapshot(FedPlan aggregate,long costBits,List<Pair<Long,FederatedOutput>> edges) { }
+	private record PlanSnapshot(FedPlan plan,Hop planningHop,long planningHopId,FederatedOutput output,
+		ExecType exec,FType fType,long costBits,List<Pair<Long,FederatedOutput>> edges) { }
 	private record PlanningIdentity(FedPlan plan,Hop planningHop,long planningHopId) {
 		private boolean matches(FedPlan candidatePlan,Hop candidatePlanningHop,long candidatePlanningHopId) {
 			return plan==candidatePlan&&planningHop==candidatePlanningHop&&planningHopId==candidatePlanningHopId;
@@ -198,9 +218,13 @@ public class CampaignBDpAggregateProducerContractTest {
 		return new ProducerCase(program,analysis,memo,aggregate,lout,fout,selected,root);
 	}
 	private static FedPlan add(FederatedPlannerDpMemoTable memo,Hop root,FederatedOutput output,ExecType exec,double cost) {
+		return add(memo,root,output,exec,cost,true);
+	}
+	private static FedPlan add(FederatedPlannerDpMemoTable memo,Hop root,FederatedOutput output,ExecType exec,double cost,boolean registerExecutable) {
 		HopCommon common=new HopCommon(root,1,1,1,1,List.of());common.setSelfCost(0x1.0p-4);common.setForwardingCost(0x1.0p-3);
 		FedPlanVariants variants=new FedPlanVariants(common,output);FedPlan plan=new FedPlan(cost,variants,List.of());
 		plan.setExecType(exec);plan.setFType(FType.ROW);variants.addFedPlan(plan);variants.pruneFedPlans();
+		if(registerExecutable)memo.registerHopRefs(Map.of(root.getHopID(),common));
 		memo.addFedPlanVariants(root.getHopID(),output,variants);return memo.getFedPlanAfterPrune(root.getHopID(),output);
 	}
 	private static Object invokeExact(ExactHandle handle,ProducerCase producer) throws Exception {
@@ -349,6 +373,10 @@ public class CampaignBDpAggregateProducerContractTest {
 		Double.doubleToRawLongBits(aggregate.getCumulativeCost()),List.copyOf(aggregate.getChildFedPlans())); }
 	private static void assertAggregateSnapshotSame(AggregateSnapshot before,AggregateSnapshot after) {
 		Assert.assertSame(before.aggregate(),after.aggregate()); Assert.assertEquals(before.costBits(),after.costBits()); assertIdentityList(before.edges(),after.edges(),"copiedAggregateEdges"); }
+	private static PlanSnapshot snapshotPlan(FedPlan plan) { return new PlanSnapshot(plan,plan.getHopRef(),plan.getHopID(),
+		plan.getFedOutType(),plan.getExecType(),plan.getFType(),Double.doubleToRawLongBits(plan.getCumulativeCost()),List.copyOf(plan.getChildFedPlans())); }
+	private static void assertPlanSnapshotSame(PlanSnapshot before,PlanSnapshot after) { Assert.assertSame(before.plan(),after.plan());Assert.assertSame(before.planningHop(),after.planningHop());
+		Assert.assertEquals(before.planningHopId(),after.planningHopId());Assert.assertEquals(before.output(),after.output());Assert.assertEquals(before.exec(),after.exec());Assert.assertEquals(before.fType(),after.fType());Assert.assertEquals(before.costBits(),after.costBits());assertIdentityList(before.edges(),after.edges(),"selectedPlanEdges"); }
 	private static void assertSameExact(Object left,Object right)throws Exception {
 		for(String field:List.of("analysis","memo","legacyOptimalPlan"))Assert.assertSame(call(left,field),call(right,field));
 		Assert.assertEquals(call(left,"objectiveCostBits"),call(right,"objectiveCostBits"));Assert.assertEquals(call(left,"analysisFingerprint"),call(right,"analysisFingerprint"));
