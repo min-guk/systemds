@@ -28,6 +28,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Deque;
 import java.util.Set;
+import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
@@ -80,7 +82,10 @@ import org.apache.sysds.hops.ipa.InterProceduralAnalysis;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.compile.Dag;
@@ -283,6 +288,12 @@ public class DMLTranslator
 
 	public void rewriteHopsDAG(DMLProgram dmlp) 
 	{
+		rewriteHopsDAG(dmlp, receipt -> { });
+	}
+
+	public void rewriteHopsDAG(DMLProgram dmlp,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
+		Objects.requireNonNull(receiptConsumer, "receiptConsumer");
 		//apply hop rewrites (static rewrites)
 		ProgramRewriter rewriter = new ProgramRewriter(true, false);
 		rewriter.rewriteProgramHopDAGs(dmlp, false); //rewrite and merge
@@ -321,10 +332,11 @@ public class DMLTranslator
 
 		// Run federated planning after rewrites/mem estimates (and HOPS codegen)
 		// so cost estimation can use refreshed output memory sizes.
-		runFederatedPlannerAfterRewrite(dmlp);
+		runFederatedPlannerAfterRewrite(dmlp, receiptConsumer);
 	}
 
-	private static void runFederatedPlannerAfterRewrite(DMLProgram dmlp) {
+	private static void runFederatedPlannerAfterRewrite(DMLProgram dmlp,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
 		String planner = ConfigurationManager.getDMLConfig()
 			.getTextValue(DMLConfig.FEDERATED_PLANNER);
 		if( !(OptimizerUtils.FEDERATED_COMPILATION
@@ -337,14 +349,19 @@ public class DMLTranslator
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(dmlp);
 		// fcallSizes are not recomputed here; planner uses null when unavailable.
 		long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
-		fedPlanner.getPlanner().rewriteProgram(dmlp, fgraph, null);
+		AFederatedPlanner.PlannerInvocationReceipt receipt =
+			fedPlanner.getPlanner().rewriteProgram(dmlp, fgraph, null, analysis);
+		if(receipt.analysis() != analysis)
+			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
 		if( DMLScript.STATISTICS )
 			Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 		registerFedInitVarsFromProgram(dmlp);
 		FederatedPlannerUtils.clearFedRmvarProtectedVars();
 		registerFedRmvarProtectedVarsFromProgram(dmlp);
+		receiptConsumer.accept(receipt);
 	}
 
 	private static void registerFedInitVarsFromProgram(DMLProgram dmlp) {

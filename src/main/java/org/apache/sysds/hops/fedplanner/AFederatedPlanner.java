@@ -20,6 +20,7 @@
 package org.apache.sysds.hops.fedplanner;
 
 import java.util.Map;
+import java.util.Objects;
 
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.AggOp;
@@ -31,6 +32,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -41,6 +43,16 @@ import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
 public abstract class AFederatedPlanner {
+	public interface PlannerInvocationReceipt {
+		PlacementAnalysis analysis();
+	}
+
+	public record SuppliedAnalysisReceipt(PlacementAnalysis analysis) implements PlannerInvocationReceipt {
+		public SuppliedAnalysisReceipt {
+			Objects.requireNonNull(analysis, "analysis");
+		}
+	}
+
 	/**
 	 * Selects a federated execution plan for the given program
 	 * by setting the forced execution type.
@@ -51,6 +63,13 @@ public abstract class AFederatedPlanner {
 	 */
 	public abstract void rewriteProgram( DMLProgram prog,
 		FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes );
+
+	public PlannerInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
+		rewriteProgram(prog, fgraph, fcallSizes);
+		return new SuppliedAnalysisReceipt(analysis);
+	}
 	
 	/**
 	 * Selects a federated execution plan for the given function, taking into account

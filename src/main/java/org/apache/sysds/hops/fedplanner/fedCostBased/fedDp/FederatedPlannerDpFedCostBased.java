@@ -49,11 +49,21 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.ForStatement;
+import org.apache.sysds.parser.ForStatementBlock;
+import org.apache.sysds.parser.FunctionStatement;
 import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.IfStatement;
+import org.apache.sysds.parser.IfStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -68,6 +78,117 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  * consistently.</p>
  */
 public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
+	public record AppliedPlanReceipt(int ordinal, boolean additionalRoot, long planningHopId,
+		FederatedOutput output, FederatedPlannerDpMemoTable.FedPlan plan, Hop planningHop,
+		long executableHopId, Hop executableHop) {
+		public AppliedPlanReceipt {
+			Objects.requireNonNull(output, "output");
+			Objects.requireNonNull(plan, "plan");
+			Objects.requireNonNull(planningHop, "planningHop");
+			Objects.requireNonNull(executableHop, "executableHop");
+			if(ordinal < 0 || plan.getHopRef() != planningHop || plan.getHopID() != planningHopId
+				|| planningHop.getHopID() != planningHopId || plan.getFedOutType() != output)
+				throw new IllegalArgumentException("Applied plan identity differs");
+			if(executableHop.getHopID() != executableHopId)
+				throw new IllegalArgumentException("Applied executable identity differs");
+		}
+	}
+
+	public enum AdditionalRootDisposition { APPLIED, ALREADY_VISITED }
+
+	public record AdditionalRootInvocationReceipt(int ordinal, long planningHopId, FederatedOutput output,
+		FederatedPlannerDpMemoTable.FedPlan plan, Hop planningHop, long executableHopId,
+		Hop executableHop, AdditionalRootDisposition disposition) {
+		public AdditionalRootInvocationReceipt {
+			Objects.requireNonNull(output, "output");
+			Objects.requireNonNull(plan, "plan");
+			Objects.requireNonNull(planningHop, "planningHop");
+			Objects.requireNonNull(executableHop, "executableHop");
+			Objects.requireNonNull(disposition, "disposition");
+			if(ordinal < 0 || plan.getHopRef() != planningHop || plan.getHopID() != planningHopId
+				|| planningHop.getHopID() != planningHopId || plan.getFedOutType() != output)
+				throw new IllegalArgumentException("Additional-root invocation identity differs");
+			if(executableHop.getHopID() != executableHopId)
+				throw new IllegalArgumentException("Additional-root executable identity differs");
+		}
+	}
+
+	public record InvocationCounters(int enumerationCount, int exactSelectionCount,
+		int applicationPhaseCount, int appliedPlanCount, int additionalRootInvocationCount,
+		int additionalRootNoOpCount, int internalAnalysisBuildCount,
+		int oldOverloadCount, int reenumerationCount, int repairCount, int fallbackCount,
+		int doubleApplicationCount) { }
+
+	public record DpInvocationReceipt(PlacementAnalysis analysis, FederatedPlannerDpMemoTable memo,
+		FederatedPlannerDpMemoTable.FedPlan legacyOptimalPlan, DpPlacementAdapter.ExactSelection exactSelection,
+		List<AppliedPlanReceipt> appliedPlans, List<AdditionalRootInvocationReceipt> additionalRootInvocations,
+		InvocationCounters counters,
+		String analysisFingerprintBefore, String analysisFingerprintAfter)
+		implements AFederatedPlanner.PlannerInvocationReceipt {
+		public DpInvocationReceipt {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(memo, "memo");
+			Objects.requireNonNull(legacyOptimalPlan, "legacyOptimalPlan");
+			Objects.requireNonNull(exactSelection, "exactSelection");
+			Objects.requireNonNull(counters, "counters");
+			appliedPlans = List.copyOf(appliedPlans);
+			additionalRootInvocations = List.copyOf(additionalRootInvocations);
+			if(analysis != exactSelection.analysis() || memo != exactSelection.memo()
+				|| legacyOptimalPlan != exactSelection.legacyOptimalPlan())
+				throw new IllegalArgumentException("DP receipt producer identities differ");
+			if(!analysis.analysisFingerprint().equals(analysisFingerprintBefore)
+				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter))
+				throw new IllegalArgumentException("Supplied analysis changed during planning");
+			Set<FederatedPlannerDpMemoTable.FedPlan> plans = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<Hop> planningHops = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<Long> planningIds = new HashSet<>();
+			for(int i = 0; i < appliedPlans.size(); i++) {
+				AppliedPlanReceipt applied = appliedPlans.get(i);
+				if(applied.ordinal() != i || !plans.add(applied.plan()) || !planningHops.add(applied.planningHop())
+					|| !planningIds.add(applied.planningHopId()))
+					throw new IllegalArgumentException("Applied plan order or identity is duplicated at ordinal=" + i
+						+ " planningHopId=" + applied.planningHopId() + " additional=" + applied.additionalRoot()
+						+ " sequence=" + appliedPlans.stream().map(value -> value.planningHopId() + ":" + value.additionalRoot()).toList());
+				if(i < exactSelection.selectedRootPlans().size()) {
+					if(applied.additionalRoot() || applied.plan() != exactSelection.selectedRootPlans().get(i)
+						|| applied.planningHopId() != exactSelection.aggregateChildEdges().get(i).getLeft())
+						throw new IllegalArgumentException("Aggregate application receipt differs");
+				}
+				else if(!applied.additionalRoot())
+					throw new IllegalArgumentException("Additional-root application receipt is unmarked");
+			}
+			int expectedAppliedOrdinal = exactSelection.selectedRootPlans().size();
+			int noOps = 0;
+			for(int i = 0; i < additionalRootInvocations.size(); i++) {
+				AdditionalRootInvocationReceipt invocation = additionalRootInvocations.get(i);
+				if(invocation.ordinal() != i)
+					throw new IllegalArgumentException("Additional-root invocation order differs");
+				if(invocation.disposition() == AdditionalRootDisposition.APPLIED) {
+					if(expectedAppliedOrdinal >= appliedPlans.size())
+						throw new IllegalArgumentException("Applied additional root is missing");
+					AppliedPlanReceipt applied = appliedPlans.get(expectedAppliedOrdinal++);
+					if(!applied.additionalRoot() || applied.plan() != invocation.plan()
+						|| applied.planningHop() != invocation.planningHop()
+						|| applied.planningHopId() != invocation.planningHopId()
+						|| applied.executableHop() != invocation.executableHop()
+						|| applied.executableHopId() != invocation.executableHopId()
+						|| applied.output() != invocation.output())
+						throw new IllegalArgumentException("Applied additional-root receipt differs");
+				}
+				else noOps++;
+			}
+			if(expectedAppliedOrdinal != appliedPlans.size())
+				throw new IllegalArgumentException("Unexpected effective additional application");
+			if(counters.enumerationCount() != 1 || counters.exactSelectionCount() != 1
+				|| counters.applicationPhaseCount() != 1 || counters.appliedPlanCount() != appliedPlans.size()
+				|| counters.additionalRootInvocationCount() != additionalRootInvocations.size()
+				|| counters.additionalRootNoOpCount() != noOps
+				|| counters.internalAnalysisBuildCount() != 0 || counters.oldOverloadCount() != 0
+				|| counters.reenumerationCount() != 0 || counters.repairCount() != 0
+				|| counters.fallbackCount() != 0 || counters.doubleApplicationCount() != 0)
+				throw new IllegalArgumentException("DP invocation counters differ");
+		}
+	}
 	private static final int MAX_ENUM_INPUTS = 20; // guard against 2^n blowups and shift overflow
 	// Candidate 1: isolate the near-tie transient FOUT bundle widening heuristic
 	// without disabling seed/refine, locked transient propagation, or genuinely
@@ -126,6 +247,132 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 		registerDpLocalMaterializeRequests(localMaterializeRequests);
+	}
+
+	@Override
+	public DpInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
+		Objects.requireNonNull(prog, "prog");
+		Objects.requireNonNull(analysis, "analysis");
+		validateSuppliedAnalysis(prog, analysis);
+		String fingerprintBefore = analysis.analysisFingerprint();
+
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
+			prog, memoTable, FederatedPlannerTrace.isEnabled());
+		DpPlacementAdapter.ExactSelection exactSelection =
+			new DpPlacementAdapter().selectExact(analysis, memoTable, optimalPlan);
+
+		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
+		Map<Long, ConflictEntry> rewriteConflictCheckMap =
+			collectConflictsSingleBFS(memoTable, optimalPlan, outputDecisions);
+		Set<Long> visitedPlanHops = new HashSet<>();
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		Map<Long, LocalMaterializeRequest> localMaterializeRequests = new LinkedHashMap<>();
+		List<AppliedPlanReceipt> appliedPlans = new ArrayList<>();
+		List<AdditionalRootInvocationReceipt> additionalRootInvocations = new ArrayList<>();
+
+		for(int i = 0; i < exactSelection.selectedRootPlans().size(); i++) {
+			FederatedPlannerDpMemoTable.FedPlan childPlan = exactSelection.selectedRootPlans().get(i);
+			Pair<Long, FederatedOutput> edge = exactSelection.aggregateChildEdges().get(i);
+			long planningHopId = edge.getLeft();
+			long executableHopId = memoTable.resolveOriginalHopId(planningHopId);
+			Hop executableHop = Objects.requireNonNull(memoTable.resolveOriginalHop(planningHopId),
+				"aggregate.executableHop");
+			appliedPlans.add(new AppliedPlanReceipt(appliedPlans.size(), false, edge.getLeft(),
+				edge.getRight(), childPlan, childPlan.getHopRef(), executableHopId, executableHop));
+			rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+				rewriteConflictCheckMap, true, localMaterializeRequests);
+		}
+
+		for(long rootHopID : memoTable.getAdditionalRootHopIDs()) {
+			if(memoTable.isVirtualClone(rootHopID))
+				continue;
+			FederatedPlannerDpMemoTable.FedPlan lPlan =
+				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan fPlan =
+				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.FOUT);
+			FederatedPlannerDpMemoTable.FedPlan seed = lPlan == null ? fPlan : fPlan == null ? lPlan
+				: lPlan.getCumulativeCost() <= fPlan.getCumulativeCost() ? lPlan : fPlan;
+			if(seed == null)
+				throw new IllegalArgumentException("Additional root has no selected seed: " + rootHopID);
+			Hop seedHop = Objects.requireNonNull(seed.getHopRef(), "additionalRoot.seedHop");
+			if(seed.getHopID() != rootHopID || seedHop.getHopID() != rootHopID)
+				throw new IllegalArgumentException("Additional root seed identity differs: " + rootHopID);
+			long executableHopId = memoTable.resolveOriginalHopId(rootHopID);
+			Hop executableHop = Objects.requireNonNull(memoTable.resolveOriginalHop(rootHopID),
+				"additionalRoot.executableHop");
+			boolean alreadyVisited = visitedPlanHops.contains(rootHopID);
+			rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+				rewriteConflictCheckMap, true, localMaterializeRequests);
+			AdditionalRootDisposition disposition = alreadyVisited
+				? AdditionalRootDisposition.ALREADY_VISITED : AdditionalRootDisposition.APPLIED;
+			additionalRootInvocations.add(new AdditionalRootInvocationReceipt(
+				additionalRootInvocations.size(), rootHopID, seed.getFedOutType(), seed, seedHop,
+				executableHopId, executableHop, disposition));
+			if(disposition == AdditionalRootDisposition.APPLIED)
+				appliedPlans.add(new AppliedPlanReceipt(appliedPlans.size(), true, rootHopID,
+					seed.getFedOutType(), seed, seedHop, executableHopId, executableHop));
+		}
+
+		applyDeferredOutputDecisionStates(
+			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
+		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
+		registerDpLocalMaterializeRequests(localMaterializeRequests);
+		int noOps = (int) additionalRootInvocations.stream()
+			.filter(invocation -> invocation.disposition() == AdditionalRootDisposition.ALREADY_VISITED).count();
+		InvocationCounters counters = new InvocationCounters(1, 1, 1, appliedPlans.size(),
+			additionalRootInvocations.size(), noOps, 0, 0, 0, 0, 0, 0);
+		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, appliedPlans,
+			additionalRootInvocations, counters,
+			fingerprintBefore, analysis.analysisFingerprint());
+	}
+
+	private static void validateSuppliedAnalysis(DMLProgram prog, PlacementAnalysis analysis) {
+		Set<Hop> programHops = Collections.newSetFromMap(new IdentityHashMap<>());
+		List<Hop> roots = new ArrayList<>();
+		for(StatementBlock block : prog.getStatementBlocks())
+			collectProgramRoots(block, roots);
+		for(String namespace : prog.getNamespaces().keySet())
+			for(FunctionStatementBlock function : prog.getFunctionStatementBlocks(namespace).values())
+				collectProgramRoots(function, roots);
+		Queue<Hop> queue = new ArrayDeque<>(roots);
+		while(!queue.isEmpty()) {
+			Hop hop = queue.remove();
+			if(hop == null || !programHops.add(hop)) continue;
+			queue.addAll(hop.getInput());
+		}
+		if(analysis.occurrences().isEmpty()
+			|| analysis.occurrences().stream().anyMatch(occurrence -> !programHops.contains(occurrence.hop())))
+			throw new IllegalArgumentException("Placement analysis is foreign to the supplied program");
+	}
+
+	private static void collectProgramRoots(StatementBlock block, List<Hop> roots) {
+		if(block == null) return;
+		if(block instanceof IfStatementBlock ifBlock) {
+			IfStatement statement = (IfStatement) ifBlock.getStatement(0);
+			roots.add(ifBlock.getPredicateHops());
+			for(StatementBlock child : statement.getIfBody()) collectProgramRoots(child, roots);
+			for(StatementBlock child : statement.getElseBody()) collectProgramRoots(child, roots);
+		}
+		else if(block instanceof ForStatementBlock forBlock) {
+			ForStatement statement = (ForStatement) forBlock.getStatement(0);
+			roots.add(forBlock.getFromHops()); roots.add(forBlock.getToHops());
+			if(forBlock.getIncrementHops() != null) roots.add(forBlock.getIncrementHops());
+			for(StatementBlock child : statement.getBody()) collectProgramRoots(child, roots);
+		}
+		else if(block instanceof WhileStatementBlock whileBlock) {
+			WhileStatement statement = (WhileStatement) whileBlock.getStatement(0);
+			roots.add(whileBlock.getPredicateHops());
+			for(StatementBlock child : statement.getBody()) collectProgramRoots(child, roots);
+		}
+		else if(block instanceof FunctionStatementBlock functionBlock) {
+			FunctionStatement statement = (FunctionStatement) functionBlock.getStatement(0);
+			for(StatementBlock child : statement.getBody()) collectProgramRoots(child, roots);
+		}
+		else if(block.getHops() != null)
+			roots.addAll(block.getHops());
 	}
 
 	@Override

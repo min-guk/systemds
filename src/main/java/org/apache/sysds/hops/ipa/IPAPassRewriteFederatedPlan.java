@@ -19,10 +19,16 @@
 
 package org.apache.sysds.hops.ipa;
 
+import java.util.Objects;
+import java.util.function.Consumer;
+
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.OptimizerUtils;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
@@ -61,23 +67,35 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 	 */
 	@Override
 	public boolean rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
+		return rewriteProgram(prog, fgraph, fcallSizes, receipt -> { });
+	}
+
+	public boolean rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
+		Objects.requireNonNull(receiptConsumer, "receiptConsumer");
 		String splanner = ConfigurationManager.getDMLConfig()
 			.getTextValue(DMLConfig.FEDERATED_PLANNER);
-		generatePlan(prog, fgraph, fcallSizes, splanner);
+		generatePlan(prog, fgraph, fcallSizes, splanner, receiptConsumer);
 		return false;
 	}
 
-	private void generatePlan(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes, String splanner){
+	private void generatePlan(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes, String splanner,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
 		FederatedRefedRegistry.clear();
 		PlacementShadowCoordinator.Session shadow = PlacementShadowCoordinator.begin(prog);
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
 			FederatedPlanner.valueOf(splanner.toUpperCase()) :
 			FederatedPlanner.COMPILE_FED_HEURISTIC;
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(prog);
 
 		// run planner rewrite with forced federated exec types
 		long tFedPlanner = System.nanoTime();
-		planner.getPlanner().rewriteProgram(prog, fgraph, fcallSizes);
+		AFederatedPlanner.PlannerInvocationReceipt receipt =
+			planner.getPlanner().rewriteProgram(prog, fgraph, fcallSizes, analysis);
+		if(receipt.analysis() != analysis)
+			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
 		PlacementShadowCoordinator.record(shadow.observe(prog));
 		Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
+		receiptConsumer.accept(receipt);
 	}
 }
