@@ -32,30 +32,50 @@ final class MinStAnalysisContractBridge {
 	private static final long SOURCE = -1L;
 	private static final long SINK = -2L;
 	private static final String ADAPTER = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter";
+	private static final String INPUT = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput";
 
-	record Handle(Object adapter, Method selectExact) { }
+	record Handle(Object adapter, Method bindInput, Method selectExact) { }
 	record Selection(PlacementAnalysis analysis, long objectiveBits, List<String> sourcePartition,
 		List<String> receipts, List<String> obligations, String analysisFingerprint) { }
-	private record Invocation(PlacementAnalysis analysis, FederatedPlanMinSTGraph graph,
+	record Invocation(PlacementAnalysis analysis, FederatedPlanMinSTGraph graph,
 		long objectiveBits, List<Long> sourcePartition, List<PlacementAnalysis.HopOccurrenceProjection> occurrences,
 		List<SelectedObligation> obligations) { }
+	record Prepared(Invocation input, Object ownerBound) { }
 
 	static Handle open() {
 		try {
-			Class<?> type = Class.forName(ADAPTER);
-			return new Handle(type.getConstructor().newInstance(),
-				type.getMethod("selectExact", PlacementAnalysis.class, FederatedPlanMinSTGraph.class));
+			Class<?> inputType = Class.forName(INPUT);
+			Method bindInput = inputType.getMethod("bind", PlacementAnalysis.class, FederatedPlanMinSTGraph.class);
+			Class<?> adapterType = Class.forName(ADAPTER);
+			return new Handle(adapterType.getConstructor().newInstance(), bindInput,
+				adapterType.getMethod("selectExact", PlacementAnalysis.class, inputType));
 		}
 		catch(ReflectiveOperationException e) {
-			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + ADAPTER
-				+ ".selectExact(PlacementAnalysis,FederatedPlanMinSTGraph)");
+			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + INPUT
+				+ ".bind(PlacementAnalysis,FederatedPlanMinSTGraph)->" + ADAPTER
+				+ ".selectExact(PlacementAnalysis,MinStPlacementInput)");
 		}
 	}
 
 	static Selection select(Handle handle, PlacementAnalysis analysis) {
-		Invocation input = selectedInput(analysis);
+		return select(handle, prepare(handle, analysis), analysis);
+	}
+
+	static Prepared prepare(Handle handle, PlacementAnalysis owner) {
+		Invocation input = selectedInput(owner);
 		try {
-			return normalize(input, handle.selectExact().invoke(handle.adapter(), analysis, input.graph()));
+			Object ownerBound = handle.bindInput().invoke(null, owner, input.graph());
+			if(ownerBound == null) throw new AssertionError("R4_MINST_OWNER_BOUND_INPUT_NULL");
+			return new Prepared(input, ownerBound);
+		}
+		catch(InvocationTargetException e) { throw contract("bind", e.getCause()); }
+		catch(ReflectiveOperationException | RuntimeException e) { throw contract("bind", e); }
+	}
+
+	static Selection select(Handle handle, Prepared prepared, PlacementAnalysis requested) {
+		try {
+			return normalize(prepared.input(), handle.selectExact().invoke(
+				handle.adapter(), requested, prepared.ownerBound()));
 		}
 		catch(InvocationTargetException e) { throw contract("invoke", e.getCause()); }
 		catch(ReflectiveOperationException | RuntimeException e) { throw contract("invoke", e); }
@@ -68,12 +88,14 @@ final class MinStAnalysisContractBridge {
 	}
 
 	static void rejectForeign(Handle handle, PlacementAnalysis owner, PlacementAnalysis foreign) {
-		Invocation input = selectedInput(owner);
+		Prepared prepared = prepare(handle, owner);
+		Invocation input = prepared.input();
+		select(handle, prepared, owner);
 		List<String> ownerBefore = analysisSnapshot(owner);
 		List<String> foreignBefore = analysisSnapshot(foreign);
 		List<String> graphBefore = graphSnapshot(input.graph());
 		try {
-			handle.selectExact().invoke(handle.adapter(), foreign, input.graph());
+			handle.selectExact().invoke(handle.adapter(), foreign, prepared.ownerBound());
 			throw new AssertionError("R4_MINST_FOREIGN_ANALYSIS_ACCEPTED");
 		}
 		catch(InvocationTargetException e) {

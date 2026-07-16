@@ -86,21 +86,25 @@ public class CampaignBAllPlannerAnalysisContractTest {
 				}
 				catch(AssertionError e) { recordMissing(missing,fixture.id(),e); }
 			}
-			try {
-				var handle = MinStAnalysisContractBridge.open();
-				var baseline = MinStAnalysisContractBridge.select(handle, analysis);
-				for(int i=0;i<3;i++) MinStAnalysisContractBridge.stable(baseline,
-					MinStAnalysisContractBridge.select(handle, analysis), "R4_MINST_REPEAT_STABILITY");
-				CountDownLatch ready=new CountDownLatch(8), start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(8);
-				List<Future<MinStAnalysisContractBridge.Selection>> futures=new ArrayList<>();
-				for(int i=0;i<8;i++) futures.add(pool.submit(() -> {ready.countDown();start.await();
-					return MinStAnalysisContractBridge.select(handle,analysis);}));
-				ready.await(); start.countDown();
-				for(var f:futures) MinStAnalysisContractBridge.stable(baseline,f.get(),"R4_MINST_CONCURRENCY_STABILITY");
-				pool.shutdownNow();
-			}
-			catch(AssertionError e) { recordMissing(missing,fixture.id(),e); }
 		}
+		try {
+			PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.build(
+				ProductionShadowFixtureFactory.compile("B-01"));
+			MinStAnalysisContractBridge.verifyFixture(analysis);
+			var handle = MinStAnalysisContractBridge.open();
+			var prepared = MinStAnalysisContractBridge.prepare(handle, analysis);
+			var baseline = MinStAnalysisContractBridge.select(handle, prepared, analysis);
+			for(int i=0;i<3;i++) MinStAnalysisContractBridge.stable(baseline,
+				MinStAnalysisContractBridge.select(handle, prepared, analysis), "R4_MINST_REPEAT_STABILITY");
+			CountDownLatch ready=new CountDownLatch(8), start=new CountDownLatch(1); var pool=Executors.newFixedThreadPool(8);
+			List<Future<MinStAnalysisContractBridge.Selection>> futures=new ArrayList<>();
+			for(int i=0;i<8;i++) futures.add(pool.submit(() -> {ready.countDown();start.await();
+				return MinStAnalysisContractBridge.select(handle,prepared,analysis);}));
+			ready.await(); start.countDown();
+			for(var f:futures) MinStAnalysisContractBridge.stable(baseline,f.get(),"R4_MINST_CONCURRENCY_STABILITY");
+			pool.shutdownNow();
+		}
+		catch(AssertionError e) { recordMissing(missing,"B-01",e); }
 		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING",List.of(),missing);
 	}
 
