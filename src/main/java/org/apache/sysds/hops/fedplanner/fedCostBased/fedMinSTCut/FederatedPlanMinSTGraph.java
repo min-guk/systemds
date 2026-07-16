@@ -165,6 +165,9 @@ public class FederatedPlanMinSTGraph {
 	private final Map<Long, List<EffectiveDemandRecord>> effectiveDemandIndex = new HashMap<>();
 	private final Map<HyperEdgeKey, HyperEdgeGroup> parentChildHyperEdges = new HashMap<>();
 	private final List<SelectedObligation> selectedObligations = new ArrayList<>();
+	private boolean selectedPlanSnapshotAvailable = false;
+	private long selectedCutObjectiveBits;
+	private List<Long> selectedSourcePartitionNodeIds = Collections.emptyList();
 	private int numOfWorkers = 0;
 	private long nextAuxNodeId = auxNodeBase;
 	private boolean concreteAnchorCapabilityApplied = false;
@@ -681,6 +684,20 @@ public class FederatedPlanMinSTGraph {
 		return Collections.unmodifiableList(selectedObligations);
 	}
 
+	/** Raw objective bits captured by the existing MinST solve. */
+	public long getSelectedCutObjectiveBits() {
+		if (!selectedPlanSnapshotAvailable)
+			throw new IllegalStateException("MinST graph has no selected-plan snapshot");
+		return selectedCutObjectiveBits;
+	}
+
+	/** Deterministically ordered source partition captured by the existing MinST solve. */
+	public List<Long> getSelectedSourcePartitionNodeIds() {
+		if (!selectedPlanSnapshotAvailable)
+			throw new IllegalStateException("MinST graph has no selected-plan snapshot");
+		return selectedSourcePartitionNodeIds;
+	}
+
 	private void computeSelectedObligations(Map<Long, ExecType> execSelection,
 			Map<Long, FederatedOutput> outSelection) {
 		selectedObligations.clear();
@@ -1171,6 +1188,8 @@ public class FederatedPlanMinSTGraph {
 			algo.calculateMinCut(leafedSource, rootLocalSink);
 
 			Set<Long> sourceSide = algo.getSourcePartition(); // S
+			long cutObjectiveBits = Double.doubleToRawLongBits(algo.getCutCapacity());
+			List<Long> sourcePartitionNodeIds = sourceSide.stream().sorted().toList();
 			FederatedPlannerTrace.logGlobal("MinST-Cut",
 					"sourcePartitionSize=" + sourceSide.size() + ", totalGraphVertices=" + graph.vertexSet().size());
 
@@ -1206,6 +1225,9 @@ public class FederatedPlanMinSTGraph {
 				logSelectedDecision(vertex, sourceSide);
 				logFinalSelectedDecision(vertex, sourceSide, exec, out, finalFTypeMap.get(hopID), derivedSelected);
 			}
+			selectedCutObjectiveBits = cutObjectiveBits;
+			selectedSourcePartitionNodeIds = List.copyOf(sourcePartitionNodeIds);
+			selectedPlanSnapshotAvailable = true;
 		}
 
 	private void applyConcreteAnchorCapabilityGate() {
