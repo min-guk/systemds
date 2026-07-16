@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +46,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -195,7 +197,15 @@ public final class NeutralPlacementGraphBuilder {
 				throw new IllegalStateException("Neutral placement node has no compiled Hop origin: " + key);
 			projections.add(new HopOccurrenceProjection(key, hop, ordinal, key.normalizedSignature()));
 		}
-		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections);
+		var factsByKey = new LinkedHashMap<CompiledHopKey, NodeShapeFact>();
+		Set<CompiledHopKey> expectedKeys = new LinkedHashSet<>();
+		for(HopOccurrenceProjection projection : projections) {
+			var shape = OracleFacade.nodeShape(projection.hop());
+			expectedKeys.add(projection.key());
+			factsByKey.put(projection.key(), new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols()));
+		}
+		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
+		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");

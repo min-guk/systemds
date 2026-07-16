@@ -22,7 +22,7 @@ import java.util.Optional;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.parser.DMLProgram;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
@@ -46,11 +46,14 @@ public final class PlacementAnalysis {
 	private final NeutralPlacementGraph graph;
 	private final List<HopOccurrenceProjection> occurrences;
 	private final Map<CompiledHopKey, Hop> hopsByKey;
-	private final Map<CompiledHopKey, NodeShapeFact> shapeFacts;
+	private final PlacementShapeFacts shapeFacts;
 	private final String analysisFingerprint;
+	private final DMLProgram programOwner;
 
-	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences) {
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		DMLProgram programOwner, PlacementShapeFacts shapeFacts) {
 		this.graph = Objects.requireNonNull(graph, "graph");
+		this.programOwner = programOwner;
 		this.occurrences = List.copyOf(occurrences);
 		Map<CompiledHopKey, Hop> indexed = new LinkedHashMap<>();
 		for(HopOccurrenceProjection occurrence : this.occurrences)
@@ -58,13 +61,10 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Duplicate compiled Hop projection key: " + occurrence.key());
 		if(indexed.size() != graph.nodes().size())
 			throw new IllegalArgumentException("Projection does not cover the neutral placement graph");
+		this.shapeFacts = Objects.requireNonNull(shapeFacts, "shapeFacts");
+		if(!shapeFacts.keys().equals(indexed.keySet()))
+			throw new IllegalArgumentException("Shape facts do not exactly cover indexed placement projections");
 		hopsByKey = Map.copyOf(indexed);
-		Map<CompiledHopKey, NodeShapeFact> shapes = new LinkedHashMap<>();
-		for(var entry : indexed.entrySet()) {
-			var shape = OracleFacade.nodeShape(entry.getValue());
-			shapes.put(entry.getKey(), new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols()));
-		}
-		shapeFacts = Map.copyOf(shapes);
 		List<String> projectionSignatures = this.occurrences.stream()
 			.map(HopOccurrenceProjection::normalizedSignature).collect(java.util.stream.Collectors.toList());
 		analysisFingerprint = PlacementGraphFingerprint.sha256(graph.normalizedSignature() + '\n'
@@ -84,10 +84,15 @@ public final class PlacementAnalysis {
 	}
 
 	public Optional<NodeShapeFact> shapeFact(CompiledHopKey key) {
-		return Optional.ofNullable(shapeFacts.get(Objects.requireNonNull(key, "key")));
+		return shapeFacts.shapeFact(key);
 	}
 
 	public String analysisFingerprint() {
 		return analysisFingerprint;
+	}
+
+	public void assertProgramOwner(DMLProgram program) {
+		if(program == null || program != programOwner)
+			throw new IllegalArgumentException("Placement analysis is foreign to the supplied program");
 	}
 }
