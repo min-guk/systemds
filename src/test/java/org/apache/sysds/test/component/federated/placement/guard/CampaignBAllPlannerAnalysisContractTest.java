@@ -4,6 +4,7 @@ package org.apache.sysds.test.component.federated.placement.guard;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -22,6 +23,8 @@ import org.junit.Test;
 public class CampaignBAllPlannerAnalysisContractTest {
 	@Test public void allFourAdaptersConsumeExactSuppliedAnalysisAcrossActualBAndS() throws Exception {
 		List<String> missing = new ArrayList<>();
+		int minStApplicable = 0, minStSkipped = 0, minStTotal = 0;
+		Map<String,Integer> minStSkipReasons = new java.util.TreeMap<>();
 		for(String id : ProductionShadowFixtureFactory.ids()) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
 			PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.build(program);
@@ -33,7 +36,18 @@ public class CampaignBAllPlannerAnalysisContractTest {
 			Assert.assertNotSame(analysis, twin); Assert.assertEquals(analysis.analysisFingerprint(), twin.analysisFingerprint());
 			List<String> before = CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis);
 			for(var planner : R4SharedFedAllAdapterBridge.analysisOnlyPlanners()) invokeOrRecord(planner, analysis, twin, before, missing, id);
-			invokeMinStOrRecord(analysis, twin, before, missing, id);
+			var applicability = MinStAnalysisContractBridge.applicability(analysis);
+			Assert.assertEquals("R4_MINST_TWIN_APPLICABILITY|" + id, applicability,
+				MinStAnalysisContractBridge.applicability(twin));
+			minStTotal++;
+			if(applicability.applicable()) {
+				minStApplicable++;
+				invokeMinStOrRecord(analysis, twin, before, missing, id);
+			}
+			else {
+				minStSkipped++;
+				minStSkipReasons.merge(applicability.reason(), 1, Integer::sum);
+			}
 		}
 		for(var fixture : CampaignBSelectorFixtureBridge.all()) {
 			PlacementAnalysis normal = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production(), ProjectionOrder.NORMAL);
@@ -48,14 +62,34 @@ public class CampaignBAllPlannerAnalysisContractTest {
 				}
 				catch(AssertionError e) { recordMissing(missing, fixture.id(), e); }
 			}
-			try {
-				var handle = MinStAnalysisContractBridge.open();
-				var left = MinStAnalysisContractBridge.select(handle, normal);
-				var right = MinStAnalysisContractBridge.select(handle, reverse);
-				MinStAnalysisContractBridge.stable(left, right, "R4_MINST_ORDER_STABILITY|" + fixture.id());
+			var applicability = MinStAnalysisContractBridge.applicability(normal);
+			Assert.assertEquals("R4_MINST_ORDER_APPLICABILITY|" + fixture.id(), applicability,
+				MinStAnalysisContractBridge.applicability(reverse));
+			minStTotal++;
+			if(applicability.applicable()) {
+				minStApplicable++;
+				try {
+					var handle = MinStAnalysisContractBridge.open();
+					var left = MinStAnalysisContractBridge.select(handle, normal);
+					var right = MinStAnalysisContractBridge.select(handle, reverse);
+					Assert.assertFalse("R4_MINST_RECEIPTS_EMPTY|" + fixture.id(), left.receipts().isEmpty());
+					Assert.assertFalse("R4_MINST_OBLIGATIONS_EMPTY|" + fixture.id(), left.obligations().isEmpty());
+					MinStAnalysisContractBridge.stable(left, right, "R4_MINST_ORDER_STABILITY|" + fixture.id());
+				}
+				catch(AssertionError e) { recordMissing(missing, fixture.id(), e); }
 			}
-			catch(AssertionError e) { recordMissing(missing, fixture.id(), e); }
+			else {
+				minStSkipped++;
+				minStSkipReasons.merge(applicability.reason(), 1, Integer::sum);
+			}
 		}
+		Assert.assertEquals("R4_MINST_ACCOUNTING", ProductionShadowFixtureFactory.ids().size()
+			+ CampaignBSelectorFixtureBridge.all().size(), minStTotal);
+		Assert.assertEquals("R4_MINST_ACCOUNTING_SPLIT", minStTotal, minStApplicable + minStSkipped);
+		Assert.assertTrue("R4_MINST_NO_APPLICABLE", minStApplicable > 0);
+		Assert.assertTrue("R4_MINST_NO_SKIPPED", minStSkipped > 0);
+		Assert.assertEquals("R4_MINST_SKIP_REASON_ACCOUNTING", minStSkipped,
+			minStSkipReasons.values().stream().mapToInt(Integer::intValue).sum());
 		Assert.assertEquals("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING", List.of(), missing);
 	}
 
@@ -67,6 +101,8 @@ public class CampaignBAllPlannerAnalysisContractTest {
 		boolean distinct = groups.values().stream().anyMatch(v -> v.size() > 1 && v.stream().map(p -> p.key())
 			.distinct().count() == v.size());
 		Assert.assertTrue("R4_SAME_HOP_CONTEXT|B-17", distinct);
+		Assert.assertTrue("R4_MINST_B17_APPLICABLE", MinStAnalysisContractBridge.applicability(analysis).applicable());
+		MinStAnalysisContractBridge.verifyFixture(analysis);
 	}
 
 	@Test public void sameAdapterRepeatedAndStartBarrierConcurrentCallsAreStable() throws Exception {

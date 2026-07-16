@@ -41,6 +41,27 @@ final class MinStAnalysisContractBridge {
 		long objectiveBits, List<Long> sourcePartition, List<PlacementAnalysis.HopOccurrenceProjection> occurrences,
 		List<SelectedObligation> obligations) { }
 	record Prepared(Invocation input, Object ownerBound) { }
+	record Applicability(boolean applicable, String reason) {
+		Applicability {
+			if(reason == null || reason.isBlank()) throw new IllegalArgumentException("reason");
+		}
+	}
+
+	static Applicability applicability(PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
+		List<PlacementAnalysis.HopOccurrenceProjection> occurrences = analysis.occurrences().stream()
+			.sorted(Comparator.comparing(PlacementAnalysis.HopOccurrenceProjection::key)).toList();
+		PlacementAnalysis.HopOccurrenceProjection matrix = occurrences.stream()
+			.filter(occurrence -> occurrence.hop().getDataType() != null
+				&& occurrence.hop().getDataType().isMatrix()
+				&& analysis.shapeFact(occurrence.key()).map(fact -> fact.dataType().isMatrix()).orElse(false))
+			.findFirst().orElse(null);
+		if(matrix == null) return new Applicability(false, "NO_MATRIX_OCCURRENCE");
+		boolean distinctConsumer = occurrences.stream().anyMatch(occurrence -> occurrence.hop() != matrix.hop()
+			&& occurrence.hop().getHopID() != matrix.hop().getHopID());
+		if(!distinctConsumer) return new Applicability(false, "NO_DISTINCT_CONSUMER");
+		return new Applicability(true, "MATRIX_AND_DISTINCT_CONSUMER");
+	}
 
 	static Handle open() {
 		try {
@@ -82,6 +103,9 @@ final class MinStAnalysisContractBridge {
 	}
 
 	static void verifyFixture(PlacementAnalysis analysis) {
+		Applicability applicability = applicability(analysis);
+		if(!applicability.applicable())
+			throw new AssertionError("R4_MINST_FIXTURE_NOT_APPLICABLE|" + applicability.reason());
 		Invocation input = selectedInput(analysis);
 		if(input.sourcePartition().isEmpty() || input.occurrences().isEmpty() || input.obligations().isEmpty())
 			throw new AssertionError("R4_MINST_FIXTURE_VACUOUS");
