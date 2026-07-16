@@ -91,7 +91,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 		// run planner rewrite with forced federated exec types
 		long tFedPlanner = System.nanoTime();
 		AFederatedPlanner.PlannerInvocationReceipt receipt =
-			planner.getPlanner().rewriteProgram(prog, fgraph, fcallSizes, analysis);
+			FederatedPlannerFactory.create(planner).rewriteProgram(prog, fgraph, fcallSizes, analysis);
 		if(receipt.analysis() != analysis)
 			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
 		PlacementShadowCoordinator.record(shadow.observe(prog));

@@ -19,12 +19,6 @@
 
 package org.apache.sysds.hops.fedplanner;
 
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
-import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAllMaxFedFoutSinglePass;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut;
-import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
-
 public class FTypes
 {
 	public enum FederatedPlanner {
@@ -35,24 +29,6 @@ public class FTypes
 		COMPILE_FED_HEURISTIC,
 		COMPILE_COST_BASED,
 		COMPILE_MIN_ST_CUT;
-		public AFederatedPlanner getPlanner() {
-			switch( this ) {
-				case COMPILE_FED_ALL:
-					return new FederatedPlannerFedAll();
-				case COMPILE_FED_ALL_MAX_FED_FOUT_SINGLE_PASS:
-					return new FederatedPlannerFedAllMaxFedFoutSinglePass();
-				case COMPILE_FED_HEURISTIC:
-					return new FederatedPlannerFedHeuristic();
-				case COMPILE_COST_BASED:
-					return new FederatedPlannerDpFedCostBased();
-				case COMPILE_MIN_ST_CUT:
-					return new FederatedPlanMinSTCut();
-				case NONE:
-				case RUNTIME:
-				default:
-					return null;
-			}
-		}
 		public boolean isCompiled() {
 			return this != NONE && this != RUNTIME;
 		}

@@ -78,6 +78,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.codegen.SpoofCompiler;
 import org.apache.sysds.hops.codegen.SpoofCompiler.IntegrationType;
 import org.apache.sysds.hops.codegen.SpoofCompiler.PlanCachePolicy;
+import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
 import org.apache.sysds.hops.ipa.InterProceduralAnalysis;
 import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -353,7 +354,7 @@ public class DMLTranslator
 		// fcallSizes are not recomputed here; planner uses null when unavailable.
 		long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		AFederatedPlanner.PlannerInvocationReceipt receipt =
-			fedPlanner.getPlanner().rewriteProgram(dmlp, fgraph, null, analysis);
+			FederatedPlannerFactory.create(fedPlanner).rewriteProgram(dmlp, fgraph, null, analysis);
 		if(receipt.analysis() != analysis)
 			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
 		if( DMLScript.STATISTICS )
