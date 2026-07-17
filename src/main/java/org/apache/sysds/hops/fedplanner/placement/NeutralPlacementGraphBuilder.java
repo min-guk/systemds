@@ -46,6 +46,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
@@ -205,13 +206,23 @@ public final class NeutralPlacementGraphBuilder {
 			factsByKey.put(projection.key(), new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols()));
 		}
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
-		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts);
+		String analysisFingerprint = analysisFingerprint(graph, projections);
+		HeuristicPolicyFacts heuristicPolicyFacts = new HeuristicPolicyFacts(List.of());
+		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts,
+			analysisFingerprint, heuristicPolicyFacts);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
 		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return analysis;
+	}
+
+	static String analysisFingerprint(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences) {
+		List<String> projectionSignatures = occurrences.stream()
+			.map(HopOccurrenceProjection::normalizedSignature).sorted().toList();
+		return PlacementGraphFingerprint.sha256(graph.normalizedSignature() + '\n'
+			+ String.join("\n", projectionSignatures));
 	}
 
 	private static CfgAnalysis analyzeCfg(DMLProgram program,
