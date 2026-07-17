@@ -71,6 +71,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -98,6 +101,96 @@ public class FederatedPlannerDpCostEstimator {
 	// Track upload-cost fallback warnings to avoid log spam (one per child hop).
 	private static final Set<Long> parentChildUploadCostFallbackLogged =
 			Collections.newSetFromMap(new ConcurrentHashMap<>());
+
+	public record EstimatorRequest(PlacementAnalysis analysis, HopOccurrenceProjection occurrence,
+		FederatedPlannerDpMemoTable memo, FederatedPlannerDpMemoTable.FedPlan plan) {
+		public EstimatorRequest {
+			if (analysis == null || occurrence == null || memo == null || plan == null)
+				throw new IllegalArgumentException("Estimator request fields must not be null");
+		}
+	}
+
+	public record ChildCostReceipt(HopOccurrenceProjection occurrence, CompiledHopKey key,
+		FederatedPlannerDpMemoTable.FedPlan plan, FederatedOutput output, long cumulativeCostBits,
+		long forwardingCostBits) {
+		public ChildCostReceipt {
+			if (occurrence == null || key == null || plan == null || output == null)
+				throw new IllegalArgumentException("Child cost receipt fields must not be null");
+		}
+	}
+
+	public record EstimatorReceipt(PlacementAnalysis analysis, HopOccurrenceProjection occurrence,
+		CompiledHopKey key, FederatedPlannerDpMemoTable memo, FederatedPlannerDpMemoTable.FedPlan plan,
+		long selfCostBits, long forwardingCostBits, long cumulativeCostBits,
+		List<ChildCostReceipt> childCosts) {
+		public EstimatorReceipt {
+			if (analysis == null || occurrence == null || key == null || memo == null || plan == null
+				|| childCosts == null)
+				throw new IllegalArgumentException("Estimator receipt fields must not be null");
+			childCosts = List.copyOf(childCosts);
+		}
+	}
+
+	public static EstimatorReceipt estimateExact(EstimatorRequest request) {
+		if (request == null)
+			throw new IllegalArgumentException("Estimator request must not be null");
+
+		PlacementAnalysis analysis = request.analysis();
+		HopOccurrenceProjection occurrence = request.occurrence();
+		FederatedPlannerDpMemoTable memo = request.memo();
+		FederatedPlannerDpMemoTable.FedPlan plan = request.plan();
+		if (memo.analysis() != analysis
+			|| analysis.occurrences().stream().noneMatch(candidate -> candidate == occurrence)
+			|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
+			throw new IllegalArgumentException("Estimator request is not owned by the supplied analysis");
+		if (memo.resolveExecutableHop(occurrence) != occurrence.hop() || plan.getHopRef() != occurrence.hop())
+			throw new IllegalArgumentException("Estimator plan does not bind the supplied occurrence");
+
+		FederatedPlannerDpMemoTable.FedPlanVariants variants = memo.getFedPlanVariants(
+			Pair.of(plan.getHopID(), plan.getFedOutType()));
+		if (!retainsExactPlan(variants, plan))
+			throw new IllegalArgumentException("Estimator plan is not retained by the supplied memo");
+
+		List<Pair<Long, FederatedOutput>> childEdges = plan.getChildFedPlans();
+		if (childEdges == null)
+			throw new IllegalArgumentException("Estimator child edges must not be null");
+		List<ChildCostReceipt> childCosts = new ArrayList<>();
+		for (Pair<Long, FederatedOutput> childEdge : childEdges) {
+			if (childEdge == null || childEdge.getLeft() == null || childEdge.getRight() == null)
+				throw new IllegalArgumentException("Estimator child edge is incomplete");
+			FederatedPlannerDpMemoTable.FedPlan childPlan = memo.getFedPlanAfterPrune(
+				childEdge.getLeft(), childEdge.getRight());
+			if (childPlan == null || childPlan.getHopID() != childEdge.getLeft()
+				|| childPlan.getFedOutType() != childEdge.getRight())
+				throw new IllegalArgumentException("Estimator child plan is missing from the supplied memo");
+
+			HopOccurrenceProjection childOccurrence = exactOccurrenceForHop(analysis, childPlan.getHopRef());
+			FederatedPlannerDpMemoTable.FedPlanVariants childVariants = memo.getFedPlanVariants(childEdge);
+			if (!retainsExactPlan(childVariants, childPlan))
+				throw new IllegalArgumentException("Estimator child plan is not retained by the supplied memo");
+			childCosts.add(new ChildCostReceipt(childOccurrence, childOccurrence.key(), childPlan,
+				childEdge.getRight(), Double.doubleToRawLongBits(childPlan.getCumulativeCost()),
+				Double.doubleToRawLongBits(childPlan.getForwardingCost())));
+		}
+
+		return new EstimatorReceipt(analysis, occurrence, occurrence.key(), memo, plan,
+			Double.doubleToRawLongBits(plan.getSelfCost()),
+			Double.doubleToRawLongBits(plan.getForwardingCost()),
+			Double.doubleToRawLongBits(plan.getCumulativeCost()), List.copyOf(childCosts));
+	}
+
+	private static boolean retainsExactPlan(FederatedPlannerDpMemoTable.FedPlanVariants variants,
+		FederatedPlannerDpMemoTable.FedPlan plan) {
+		return variants != null && variants.getFedPlanVariants().stream().anyMatch(candidate -> candidate == plan);
+	}
+
+	private static HopOccurrenceProjection exactOccurrenceForHop(PlacementAnalysis analysis, Hop hop) {
+		for (HopOccurrenceProjection occurrence : analysis.occurrences()) {
+			if (occurrence.hop() == hop && analysis.hop(occurrence.key()).orElse(null) == hop)
+				return occurrence;
+		}
+		throw new IllegalArgumentException("Estimator child Hop is foreign to the supplied analysis");
+	}
 
 	/**
 	 * Retrieves the cumulative and forwarding costs of the child hops and stores
