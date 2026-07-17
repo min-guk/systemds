@@ -289,6 +289,7 @@ public class DMLTranslator
 
 	public void rewriteHopsDAG(DMLProgram dmlp) 
 	{
+		dmlp.requirePlacementAnalysisUnboundForHopRewrite();
 		//apply hop rewrites (static rewrites)
 		ProgramRewriter rewriter = new ProgramRewriter(true, false);
 		rewriter.rewriteProgramHopDAGs(dmlp, false); //rewrite and merge
