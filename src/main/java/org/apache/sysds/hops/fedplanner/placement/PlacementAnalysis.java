@@ -148,5 +148,6 @@ public final class PlacementAnalysis {
 	public void assertProgramOwner(DMLProgram program) {
 		if(program == null || program != programOwner)
 			throw new IllegalArgumentException("Placement analysis is foreign to the supplied program");
+		program.requirePlacementAnalysisAuthority(this);
 	}
 }
