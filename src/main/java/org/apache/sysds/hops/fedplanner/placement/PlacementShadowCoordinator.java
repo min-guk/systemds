@@ -54,10 +54,10 @@ public final class PlacementShadowCoordinator {
 		return begin(program, PRODUCTION_ANALYSIS);
 	}
 
-	public static Session begin(DMLProgram program, PlacementAnalysis authoritative) {
-		Objects.requireNonNull(authoritative, "authoritative").assertProgramOwner(program);
+	public static Session begin(DMLProgram program, PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis").assertProgramOwner(program);
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
-		ShadowAnalysis analysis = new ShadowAnalysis() {
+		ShadowAnalysis shadowAnalysis = new ShadowAnalysis() {
 			@Override public NeutralPlacementGraph build(DMLProgram ignored) { return builder.build(program); }
 			@Override public List<String> selectedProjection(DMLProgram ignored) { return builder.selectedProjection(program); }
 			@Override public List<String> selectedMembershipViolations(DMLProgram ignored, NeutralPlacementGraph graph) {
@@ -65,7 +65,7 @@ public final class PlacementShadowCoordinator {
 			}
 		};
 		try {
-			return new Session(authoritative.graph(), analysis.selectedProjection(program), null, analysis);
+			return new Session(analysis.graph(), shadowAnalysis.selectedProjection(program), null, shadowAnalysis);
 		}
 		catch(Throwable failure) {
 			return new Session(null, List.of(), Failure.of("begin", failure), PRODUCTION_ANALYSIS);
