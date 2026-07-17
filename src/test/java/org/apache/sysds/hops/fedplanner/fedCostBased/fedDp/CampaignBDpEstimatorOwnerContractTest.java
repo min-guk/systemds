@@ -37,6 +37,7 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		Assert.assertSame("receipt analysis owner", fixture.analysis(), receipt.analysis());
 		Assert.assertSame("receipt occurrence owner", fixture.root(), receipt.occurrence());
 		Assert.assertSame("receipt occurrence key", fixture.root().key(), receipt.key());
+		Assert.assertSame("receipt memo owner", graph.memo(), receipt.memo());
 		Assert.assertSame("receipt exact plan", graph.rootPlan(), receipt.plan());
 		Assert.assertEquals("self cost raw bits", bits(0x1.0p-4), receipt.selfCostBits());
 		Assert.assertEquals("forwarding cost raw bits", bits(0x1.0p-3), receipt.forwardingCostBits());
@@ -62,6 +63,14 @@ public class CampaignBDpEstimatorOwnerContractTest {
 			.findFirst().orElseThrow();
 		expectReject(() -> FederatedPlannerDpCostEstimator.estimateExact(
 			new EstimatorRequest(copied, copiedOccurrence, graph.memo(), graph.rootPlan())));
+		assertSnapshotSame(before, snapshot(owner, graph));
+
+		FederatedPlannerDpMemoTable alternateMemo = new FederatedPlannerDpMemoTable(owner.analysis());
+		List<MemoPresence> alternatePresenceBefore = snapshotMemoPresence(owner.analysis(), alternateMemo);
+		expectReject(() -> FederatedPlannerDpCostEstimator.estimateExact(
+			new EstimatorRequest(owner.analysis(), owner.root(), alternateMemo, graph.rootPlan())));
+		Assert.assertEquals("alternate memo presence changed after rejection", alternatePresenceBefore,
+			snapshotMemoPresence(owner.analysis(), alternateMemo));
 		assertSnapshotSame(before, snapshot(owner, graph));
 
 		FedPlan copiedHopCommonPlan = plan(owner.root().hop(), FederatedOutput.FOUT, ExecType.FED,
