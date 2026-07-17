@@ -130,7 +130,7 @@ public class CampaignBDpAggregateProducerContractTest {
 		finally{pool.shutdownNow();ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,oldPlanner);}
 		Object winner=call(receipts.get(0),"analysis");Assert.assertNotNull("CAMPAIGN_B_DP_CAS_WINNER_MISSING",winner);
 		for(Object racingReceipt:receipts)Assert.assertSame("CAMPAIGN_B_DP_CAS_LOSER_PUBLISHED",winner,call(racingReceipt,"analysis"));
-		Field authority=DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");authority.setAccessible(true);
+		Field authority=CampaignBDpSharedAnalysisOwnerContractTest.requiredAuthorityField();authority.setAccessible(true);
 		Assert.assertSame("CAMPAIGN_B_DP_CAS_CELL_NOT_WINNER",winner,((AtomicReference<?>)authority.get(racingProgram)).get());
 	}
 
