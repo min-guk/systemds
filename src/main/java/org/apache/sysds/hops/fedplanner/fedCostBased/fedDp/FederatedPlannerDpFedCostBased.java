@@ -202,7 +202,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable(analysis);
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
 			prog, memoTable, FederatedPlannerTrace.isEnabled());
 
@@ -258,7 +258,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		String fingerprintBefore = analysis.analysisFingerprint();
 
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable(analysis);
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
 			prog, memoTable, FederatedPlannerTrace.isEnabled());
 		DpPlacementAdapter.ExactSelection exactSelection =
