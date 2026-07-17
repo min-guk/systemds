@@ -62,18 +62,19 @@ public class CampaignBDpEstimatorOwnerContractTest {
 			.findFirst().orElseThrow();
 		expectReject(() -> FederatedPlannerDpCostEstimator.estimateExact(
 			new EstimatorRequest(copied, copiedOccurrence, graph.memo(), graph.rootPlan())));
+		assertSnapshotSame(before, snapshot(owner, graph));
 
 		FedPlan copiedHopCommonPlan = plan(owner.root().hop(), FederatedOutput.FOUT, ExecType.FED,
 			0x1.8p2, 0x1.0p-4, 0x1.0p-3, graph.rootPlan().getChildFedPlans());
 		expectReject(() -> FederatedPlannerDpCostEstimator.estimateExact(
 			new EstimatorRequest(owner.analysis(), owner.root(), graph.memo(), copiedHopCommonPlan)));
+		assertSnapshotSame(before, snapshot(owner, graph));
 
 		Fixture foreign = fixture("B-02");
 		FedPlan foreignPlan = plan(foreign.root().hop(), FederatedOutput.FOUT, ExecType.FED,
 			0x1.8p2, 0x1.0p-4, 0x1.0p-3, List.of());
 		expectReject(() -> FederatedPlannerDpCostEstimator.estimateExact(
 			new EstimatorRequest(foreign.analysis(), foreign.root(), graph.memo(), foreignPlan)));
-
 		assertSnapshotSame(before, snapshot(owner, graph));
 	}
 
@@ -144,25 +145,59 @@ public class CampaignBDpEstimatorOwnerContractTest {
 	}
 
 	private static Snapshot snapshot(Fixture fixture, PlanGraph graph) {
+		List<PlanSnapshot> plans = new java.util.ArrayList<>();
+		plans.add(snapshotPlan(graph.rootPlan()));
+		graph.childPlans().stream().map(CampaignBDpEstimatorOwnerContractTest::snapshotPlan).forEach(plans::add);
+		List<MemoEntrySnapshot> memoEntries = new java.util.ArrayList<>();
+		memoEntries.add(snapshotMemoEntry(graph.memo(), fixture.root(), graph.rootPlan()));
+		for(int i = 0; i < fixture.children().size(); i++)
+			memoEntries.add(snapshotMemoEntry(graph.memo(), fixture.children().get(i), graph.childPlans().get(i)));
 		return new Snapshot(fixture.analysis(), fixture.analysis().analysisFingerprint(),
-			List.copyOf(fixture.analysis().occurrences()), graph.rootPlan(),
-			bits(graph.rootPlan().getSelfCost()), bits(graph.rootPlan().getForwardingCost()),
-			bits(graph.rootPlan().getCumulativeCost()), graph.rootPlan().getExecType(), graph.rootPlan().getFType(),
-			List.copyOf(graph.rootPlan().getChildFedPlans()), List.copyOf(graph.childPlans()));
+			List.copyOf(fixture.analysis().occurrences()), List.copyOf(plans), List.copyOf(memoEntries));
+	}
+
+	private static PlanSnapshot snapshotPlan(FedPlan plan) {
+		return new PlanSnapshot(plan, bits(plan.getCumulativeCost()), bits(plan.getSelfCost()),
+			bits(plan.getForwardingCost()), plan.getExecType(), plan.getFType(),
+			List.copyOf(plan.getChildFedPlans()));
+	}
+
+	private static MemoEntrySnapshot snapshotMemoEntry(FederatedPlannerDpMemoTable memo,
+		HopOccurrenceProjection occurrence, FedPlan plan) {
+		FedPlanVariants variants = memo.getFedPlanVariants(Pair.of(occurrence.hop().getHopID(), plan.getFedOutType()));
+		return new MemoEntrySnapshot(occurrence, plan.getFedOutType(), variants,
+			List.copyOf(variants.getFedPlanVariants()), memo.getFedPlanAfterPrune(occurrence, plan.getFedOutType()));
 	}
 
 	private static void assertSnapshotSame(Snapshot expected, Snapshot actual) {
 		Assert.assertSame(expected.analysis(), actual.analysis());
 		Assert.assertEquals(expected.fingerprint(), actual.fingerprint());
 		assertIdentityList(expected.occurrences(), actual.occurrences());
-		Assert.assertSame(expected.rootPlan(), actual.rootPlan());
+		Assert.assertEquals(expected.plans().size(), actual.plans().size());
+		for(int i = 0; i < expected.plans().size(); i++)
+			assertPlanSnapshotSame(expected.plans().get(i), actual.plans().get(i));
+		Assert.assertEquals(expected.memoEntries().size(), actual.memoEntries().size());
+		for(int i = 0; i < expected.memoEntries().size(); i++)
+			assertMemoEntrySnapshotSame(expected.memoEntries().get(i), actual.memoEntries().get(i));
+	}
+
+	private static void assertPlanSnapshotSame(PlanSnapshot expected, PlanSnapshot actual) {
+		Assert.assertSame(expected.plan(), actual.plan());
+		Assert.assertEquals(expected.cumulativeBits(), actual.cumulativeBits());
 		Assert.assertEquals(expected.selfBits(), actual.selfBits());
 		Assert.assertEquals(expected.forwardingBits(), actual.forwardingBits());
-		Assert.assertEquals(expected.cumulativeBits(), actual.cumulativeBits());
 		Assert.assertSame(expected.execType(), actual.execType());
 		Assert.assertSame(expected.fType(), actual.fType());
 		Assert.assertEquals(expected.childEdges(), actual.childEdges());
-		assertIdentityList(expected.childPlans(), actual.childPlans());
+		assertIdentityList(expected.childEdges(), actual.childEdges());
+	}
+
+	private static void assertMemoEntrySnapshotSame(MemoEntrySnapshot expected, MemoEntrySnapshot actual) {
+		Assert.assertSame(expected.occurrence(), actual.occurrence());
+		Assert.assertSame(expected.output(), actual.output());
+		Assert.assertSame(expected.variants(), actual.variants());
+		assertIdentityList(expected.variantOrder(), actual.variantOrder());
+		Assert.assertSame(expected.selectedPlan(), actual.selectedPlan());
 	}
 
 	private static void assertIdentityList(List<?> expected, List<?> actual) {
@@ -198,8 +233,11 @@ public class CampaignBDpEstimatorOwnerContractTest {
 	private record Fixture(DMLProgram program, PlacementAnalysis analysis, HopOccurrenceProjection root,
 		List<HopOccurrenceProjection> children) { }
 	private record PlanGraph(FederatedPlannerDpMemoTable memo, FedPlan rootPlan, List<FedPlan> childPlans) { }
+	private record PlanSnapshot(FedPlan plan, long cumulativeBits, long selfBits, long forwardingBits,
+		ExecType execType, FType fType, List<Pair<Long, FederatedOutput>> childEdges) { }
+	private record MemoEntrySnapshot(HopOccurrenceProjection occurrence, FederatedOutput output,
+		FedPlanVariants variants, List<FedPlan> variantOrder, FedPlan selectedPlan) { }
 	private record Snapshot(PlacementAnalysis analysis, String fingerprint,
-		List<HopOccurrenceProjection> occurrences, FedPlan rootPlan, long selfBits, long forwardingBits,
-		long cumulativeBits, ExecType execType, FType fType, List<Pair<Long, FederatedOutput>> childEdges,
-		List<FedPlan> childPlans) { }
+		List<HopOccurrenceProjection> occurrences, List<PlanSnapshot> plans,
+		List<MemoEntrySnapshot> memoEntries) { }
 }
