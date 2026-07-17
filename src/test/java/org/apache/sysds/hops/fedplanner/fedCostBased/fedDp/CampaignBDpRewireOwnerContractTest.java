@@ -54,6 +54,7 @@ public class CampaignBDpRewireOwnerContractTest {
 		assertIdentityList(real.fixture().analysis().occurrences(), receipt.orderedOccurrences(), "occurrences");
 		Assert.assertEquals(real.fixture().analysis().graph().normalizedIdentities(),
 			receipt.orderedNormalizedIdentities());
+		Assert.assertEquals("exact B-09 clone claim multiplicity", 1, claims.cloneAssociations().size());
 		Assert.assertEquals(1, receipt.cloneReceipts().size());
 		Assert.assertSame("exact request association", claims.cloneAssociations().get(0),
 			receipt.cloneReceipts().get(0));
