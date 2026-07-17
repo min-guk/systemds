@@ -5,13 +5,18 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
@@ -29,6 +34,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
+import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
+import org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -236,6 +243,27 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertFalse("CAMPAIGN_B_DP_BIND_MUST_NOT_BE_PUBLIC", Modifier.isPublic(bind.getModifiers()));
 		Assert.assertFalse("CAMPAIGN_B_DP_BIND_MUST_NOT_BE_PROTECTED", Modifier.isProtected(bind.getModifiers()));
 		Assert.assertEquals("CAMPAIGN_B_DP_BIND_MUST_ACCEPT_NO_CANDIDATE", 0, bind.getParameterCount());
+		List<Method> bindSurfaces = Arrays.stream(DMLProgram.class.getDeclaredMethods())
+			.filter(method -> method.getName().toLowerCase().matches(".*(bind|install|set).*placement.*analysis.*"))
+			.toList();
+		Assert.assertEquals("CAMPAIGN_B_DP_CANDIDATE_BIND_SURFACE_COUNT", List.of(bind), bindSurfaces);
+		for(Method method : DMLProgram.class.getDeclaredMethods())
+			Assert.assertFalse("CAMPAIGN_B_DP_CANDIDATE_AUTHORITY_PARAMETER|" + method,
+				Arrays.asList(method.getParameterTypes()).contains(PlacementAnalysis.class)
+					&& !method.getName().equals("requirePlacementAnalysisAuthority"));
+		List<Field> placementFields = Arrays.stream(DMLProgram.class.getDeclaredFields())
+			.filter(field -> field.getGenericType().getTypeName().contains("PlacementAnalysis")
+				|| field.getName().toLowerCase().contains("placementanalysis"))
+			.toList();
+		Assert.assertEquals("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_FIELD", List.of(cell), placementFields);
+		List<Method> authorityMethods = Arrays.stream(DMLProgram.class.getDeclaredMethods())
+			.filter(method -> method.getReturnType() == PlacementAnalysis.class
+				|| Arrays.asList(method.getParameterTypes()).contains(PlacementAnalysis.class))
+			.toList();
+		Assert.assertEquals("CAMPAIGN_B_DP_ALTERNATE_NULLABLE_AUTHORITY_SURFACE", 3, authorityMethods.size());
+		Assert.assertEquals("CAMPAIGN_B_DP_AUTHORITY_METHOD_NAMES",
+			List.of("bindPlacementAnalysisAtFinalHopBoundary", "requirePlacementAnalysisAuthority"),
+			authorityMethods.stream().map(Method::getName).distinct().sorted().toList());
 
 		String programSource = Files.readString(DML_PROGRAM);
 		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_BUILD_DETACHED_CANDIDATE",
@@ -276,10 +304,11 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		String program = Files.readString(DML_PROGRAM);
 		String builder = Files.readString(GRAPH_BUILDER);
 		String analysis = Files.readString(PLACEMENT_ANALYSIS);
-		Assert.assertEquals("CAMPAIGN_B_DP_BIND_CALL_SITE_COUNT", 1,
-			countProductionOccurrences(".bindPlacementAnalysisAtFinalHopBoundary()"));
+		String cleanTranslator = stripCommentsAndStrings(translator);
+		Assert.assertEquals("CAMPAIGN_B_DP_BIND_CALL_SITE_COUNT", 2,
+			countProductionPattern("\\bbindPlacementAnalysisAtFinalHopBoundary\\s*\\("));
 		Assert.assertEquals("CAMPAIGN_B_DP_TRANSLATOR_BIND_CALL_SITE_COUNT", 1,
-			countOccurrences(translator, ".bindPlacementAnalysisAtFinalHopBoundary()"));
+			countPattern(cleanTranslator, "\\.bindPlacementAnalysisAtFinalHopBoundary\\s*\\("));
 		int finalBoundary = translator.indexOf("runFederatedPlannerAtFinalHopBoundary");
 		int bind = translator.indexOf(".bindPlacementAnalysisAtFinalHopBoundary()", finalBoundary);
 		int clear = translator.indexOf("FederatedRefedRegistry.clear()", finalBoundary);
@@ -288,6 +317,16 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_PRECEDE_REGISTRY_CLEAR", clear > bind);
 		Assert.assertTrue("CAMPAIGN_B_DP_CONSTRUCT_LOPS_MUST_ENTER_FINAL_BOUNDARY",
 			translator.indexOf("runFederatedPlannerAtFinalHopBoundary", translator.indexOf("constructLops(DMLProgram")) >= 0);
+		String boundaryBody = methodBody(cleanTranslator, "runFederatedPlannerAtFinalHopBoundary");
+		int constructStart = cleanTranslator.indexOf("constructLops(DMLProgram");
+		int statementConstruct = cleanTranslator.indexOf("constructLops(StatementBlock", constructStart);
+		Assert.assertTrue("CAMPAIGN_B_DP_PROGRAM_CONSTRUCT_BOUNDARY_MISSING",
+			constructStart >= 0 && statementConstruct > constructStart);
+		String constructBody = cleanTranslator.substring(constructStart, statementConstruct);
+		Assert.assertEquals("CAMPAIGN_B_DP_BIND_OUTSIDE_FINAL_BOUNDARY", 1,
+			countPattern(boundaryBody, "\\.bindPlacementAnalysisAtFinalHopBoundary\\s*\\("));
+		Assert.assertEquals("CAMPAIGN_B_DP_CONSTRUCT_MUST_CALL_BOUNDARY_ONCE", 1,
+			countPattern(constructBody, "\\brunFederatedPlannerAtFinalHopBoundary\\s*\\("));
 		Assert.assertTrue("CAMPAIGN_B_DP_UNBOUND_REWRITE_GUARD_MISSING",
 			translator.contains("requirePlacementAnalysisUnboundForHopRewrite"));
 		Assert.assertTrue("CAMPAIGN_B_DP_DETACHED_BUILDER_MISSING", builder.contains("buildDetachedAnalysis"));
@@ -297,6 +336,77 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertTrue("CAMPAIGN_B_DP_COMMON_CANONICAL_ASSERT_MISSING",
 			analysis.contains("requirePlacementAnalysisAuthority(this)"));
 		Assert.assertFalse("CAMPAIGN_B_DP_AUTHORITY_CLEAR_API_FORBIDDEN", program.contains("clearPlacementAnalysis"));
+	}
+
+	@Test
+	public void everyDetachedSeamPreservesUnboundAuthorityAndRunState() throws Exception {
+		Field cell = DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-05");
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		PlacementAnalysis detached = builder.buildAnalysis(program);
+		Hop sentinel = detached.occurrences().stream().map(HopOccurrenceProjection::hop)
+			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst().orElseThrow();
+		seedRunState(sentinel);
+		ProgramSnapshot before = snapshotProgram(program, detached);
+		RunStateSnapshot runBefore = snapshotRunState(sentinel);
+		try {
+			Assert.assertNull(authorityValue(cell, program));
+			invokeOptional(builder, "buildDetachedAnalysis", new Class<?>[] {DMLProgram.class}, program);
+			Assert.assertNull(authorityValue(cell, program));
+			builder.build(program); Assert.assertNull(authorityValue(cell, program));
+			builder.selectedProjection(program); Assert.assertNull(authorityValue(cell, program));
+			builder.selectedMembershipViolations(program, detached.graph());
+			Assert.assertNull(authorityValue(cell, program));
+			Class<?> coordinator = Class.forName("org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator");
+			Object legacy = coordinator.getMethod("begin", DMLProgram.class).invoke(null, program);
+			Assert.assertNull(authorityValue(cell, program));
+			legacy.getClass().getMethod("observe", DMLProgram.class).invoke(legacy, program);
+			Assert.assertNull(authorityValue(cell, program));
+			Class<?> seam = Class.forName(coordinator.getName() + "$ShadowAnalysis");
+			Object injected = Proxy.newProxyInstance(seam.getClassLoader(), new Class<?>[] {seam}, (proxy, method, args) ->
+				switch(method.getName()) {
+					case "build" -> builder.build(program);
+					case "selectedProjection" -> builder.selectedProjection(program);
+					case "selectedMembershipViolations" -> builder.selectedMembershipViolations(program, detached.graph());
+					default -> throw new AssertionError(method);
+				});
+			Method beginInjected = coordinator.getDeclaredMethod("begin", DMLProgram.class, seam);
+			beginInjected.setAccessible(true); beginInjected.invoke(null, program, injected);
+			Assert.assertNull(authorityValue(cell, program));
+			assertProgramSame(before, snapshotProgram(program, detached));
+			assertRunStateSame(runBefore, snapshotRunState(sentinel));
+		}
+		finally { clearRunState(); }
+	}
+
+	@Test
+	public void callableIpaRejectsUnboundBeforeEverySentinel() throws Exception {
+		Field cell = DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-05");
+		PlacementAnalysis detached = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		Hop sentinel = detached.occurrences().stream().map(HopOccurrenceProjection::hop)
+			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst().orElseThrow();
+		seedRunState(sentinel);
+		ProgramSnapshot before = snapshotProgram(program, detached); RunStateSnapshot runBefore = snapshotRunState(sentinel);
+		AtomicInteger receipts = new AtomicInteger(); Object shadowBefore = shadowLastRecorded();
+		try {
+			Method ipa = IPAPassRewriteFederatedPlan.class.getMethod("rewriteProgram", DMLProgram.class,
+				FunctionCallGraph.class, FunctionCallSizeInfo.class, Consumer.class);
+			try {
+				ipa.invoke(new IPAPassRewriteFederatedPlan(), program, new FunctionCallGraph(program), null,
+					(Consumer<Object>) receipt -> receipts.incrementAndGet());
+				Assert.fail("CAMPAIGN_B_DP_IPA_ACCEPTED_UNBOUND_PROGRAM");
+			}
+			catch(InvocationTargetException expected) {
+				Assert.assertTrue("CAMPAIGN_B_DP_IPA_UNBOUND_WRONG_FAILURE",
+					expected.getCause() instanceof IllegalStateException);
+			}
+			Assert.assertNull(authorityValue(cell, program)); Assert.assertEquals(0, receipts.get());
+			Assert.assertSame(shadowBefore, shadowLastRecorded());
+			assertProgramSame(before, snapshotProgram(program, detached));
+			assertRunStateSame(runBefore, snapshotRunState(sentinel));
+		}
+		finally { clearRunState(); }
 	}
 
 	@Test
@@ -341,13 +451,37 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Object session = begin.invoke(null, owner.program(), owner.analysis());
 		Assert.assertSame("CAMPAIGN_B_DP_SHADOW_DID_NOT_REUSE_A1_GRAPH", owner.analysis().graph(),
 			session.getClass().getMethod("graph").invoke(session));
+		Field cell = DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");
+		Hop sentinel = owner.analysis().occurrences().stream().map(HopOccurrenceProjection::hop)
+			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst().orElseThrow();
+		seedRunState(sentinel); RunStateSnapshot runBefore = snapshotRunState(sentinel);
+		ProgramSnapshot ownerBefore = snapshotProgram(owner.program(), owner.analysis()); Object shadowBefore = shadowLastRecorded();
 		try {
-			begin.invoke(null, owner.program(), detached);
-			Assert.fail("CAMPAIGN_B_DP_SHADOW_ACCEPTED_DETACHED_A2");
+			expectShadowReject(begin, owner.program(), detached, IllegalArgumentException.class,
+				"CAMPAIGN_B_DP_SHADOW_ACCEPTED_DETACHED_A2");
+			Assert.assertSame(owner.analysis(), authorityValue(cell, owner.program()));
+			DMLProgram unbound = ProductionShadowFixtureFactory.compile("B-01");
+			PlacementAnalysis unboundAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(unbound);
+			expectShadowReject(begin, unbound, unboundAnalysis, IllegalArgumentException.class,
+				"CAMPAIGN_B_DP_SHADOW_ACCEPTED_UNBOUND");
+			Assert.assertNull(authorityValue(cell, unbound));
+			DMLProgram foreignProgram = ProductionShadowFixtureFactory.compile("B-02");
+			PlacementAnalysis foreign = new NeutralPlacementGraphBuilder().buildAnalysis(foreignProgram);
+			expectShadowReject(begin, owner.program(), foreign, IllegalArgumentException.class,
+				"CAMPAIGN_B_DP_SHADOW_ACCEPTED_FOREIGN");
+			Assert.assertSame(owner.analysis(), authorityValue(cell, owner.program()));
+			Assert.assertNull(authorityValue(cell, foreignProgram));
+			assertProgramSame(ownerBefore, snapshotProgram(owner.program(), owner.analysis()));
+			assertRunStateSame(runBefore, snapshotRunState(sentinel)); Assert.assertSame(shadowBefore, shadowLastRecorded());
 		}
+		finally { clearRunState(); }
+	}
+
+	private static void expectShadowReject(Method begin, DMLProgram program, PlacementAnalysis analysis,
+		Class<? extends Throwable> type, String code) throws Exception {
+		try { begin.invoke(null, program, analysis); Assert.fail(code); }
 		catch(InvocationTargetException expected) {
-			Assert.assertTrue("CAMPAIGN_B_DP_SHADOW_A2_WRONG_FAILURE",
-				expected.getCause() instanceof IllegalArgumentException);
+			Assert.assertTrue(code + "|cause=" + expected.getCause(), type.isInstance(expected.getCause()));
 		}
 	}
 
@@ -356,11 +490,20 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		return ((AtomicReference<?>) cell.get(program)).get();
 	}
 
-	private static int countProductionOccurrences(String token) throws Exception {
+	private static Object shadowLastRecorded() throws Exception {
+		return Class.forName("org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator")
+			.getMethod("lastRecordedObservation").invoke(null);
+	}
+
+	private static Object invokeOptional(Object target, String name, Class<?>[] types, Object... args) throws Exception {
+		return target.getClass().getMethod(name, types).invoke(target, args);
+	}
+
+	private static int countProductionPattern(String regex) throws Exception {
 		try(var files = Files.walk(Path.of("src/main/java"))) {
 			return files.filter(path -> path.toString().endsWith(".java")).mapToInt(path -> {
 				try {
-					return countOccurrences(Files.readString(path), token);
+					return countPattern(stripCommentsAndStrings(Files.readString(path)), regex);
 				}
 				catch(Exception e) {
 					throw new AssertionError("Unable to inspect " + path, e);
@@ -369,11 +512,25 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		}
 	}
 
-	private static int countOccurrences(String source, String token) {
-		int count = 0;
-		for(int at = source.indexOf(token); at >= 0; at = source.indexOf(token, at + token.length()))
-			count++;
+	private static int countPattern(String source, String regex) {
+		int count = 0; Matcher matcher = Pattern.compile(regex).matcher(source);
+		while(matcher.find()) count++;
 		return count;
+	}
+
+	private static String methodBody(String source, String name) {
+		Matcher method = Pattern.compile("\\b" + Pattern.quote(name) + "\\s*\\([^;{}]*\\)\\s*\\{").matcher(source);
+		if(!method.find()) throw new AssertionError("CAMPAIGN_B_DP_METHOD_BODY_MISSING|" + name);
+		int open = source.indexOf('{', method.start()), depth = 1;
+		for(int i = open + 1; i < source.length(); i++) {
+			if(source.charAt(i) == '{') depth++;
+			else if(source.charAt(i) == '}' && --depth == 0) return source.substring(open + 1, i);
+		}
+		throw new AssertionError("CAMPAIGN_B_DP_METHOD_BODY_UNCLOSED|" + name);
+	}
+
+	private static String stripCommentsAndStrings(String source) {
+		return source.replaceAll("(?s)/\\*.*?\\*/|//[^\\r\\n]*|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'", " ");
 	}
 
 	private static void assertOrdered(String source, String first, String second, String code) {

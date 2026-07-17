@@ -118,6 +118,20 @@ public class CampaignBDpAggregateProducerContractTest {
 		Assert.assertEquals("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_RECEIPT_COUNT",1,repeatedDeliveries.get());
 		Assert.assertSame("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_OWNER_CHANGED",call(first,"analysis"),
 			call(repeated.get(),"analysis"));
+		DMLProgram racingProgram=ProductionShadowFixtureFactory.compile("B-05");
+		CountDownLatch ready=new CountDownLatch(4),start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(4);
+		List<Future<Object>> racing=new ArrayList<>();
+		String oldPlanner=ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,"compile_cost_based");
+		for(int i=0;i<4;i++) racing.add(pool.submit(()->{ready.countDown();start.await();AtomicReference<Object> value=new AtomicReference<>();
+			invoke(entry,new DMLTranslator(racingProgram),racingProgram,
+				(Consumer<Object>)candidate->{Assert.assertTrue(value.compareAndSet(null,candidate));});return value.get();}));
+		List<Object> receipts=new ArrayList<>();try{ready.await();start.countDown();for(Future<Object> future:racing)receipts.add(future.get());}
+		finally{pool.shutdownNow();ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,oldPlanner);}
+		Object winner=call(receipts.get(0),"analysis");Assert.assertNotNull("CAMPAIGN_B_DP_CAS_WINNER_MISSING",winner);
+		for(Object racingReceipt:receipts)Assert.assertSame("CAMPAIGN_B_DP_CAS_LOSER_PUBLISHED",winner,call(racingReceipt,"analysis"));
+		Field authority=DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");authority.setAccessible(true);
+		Assert.assertSame("CAMPAIGN_B_DP_CAS_CELL_NOT_WINNER",winner,((AtomicReference<?>)authority.get(racingProgram)).get());
 	}
 
 	@Test public void equalCostProducerReceiptRetainsLoutIdentityAndRawBits() throws Exception {
