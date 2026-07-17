@@ -49,6 +49,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		"a6286fe39edad061225405023d707c676429bb6707fa84c852628db1185c57ab";
 	private static final String TOKEN_SCANNER_SHA =
 		"a80bb1b061b07743fa283631097a2966a9cf946f54bf53468ead9bfab5ac33c3";
+	// Sole-verifier artifact authority; the test freezes its source machinery separately below.
 	private static final String DIRECT_DP_CLOSURE_EVIDENCE_SHA =
 		"8dcaf54c5993865315cc0c2e565ab766adffc159fb0c74eb911ee8bc07c0ac27";
 	private static final String FROZEN_DIRECT_DP_CLOSURE =
