@@ -24,6 +24,7 @@ This handoff is read-only. It does not edit source/tests, run Maven again, chang
 - Command: the 16-class command recorded verbatim in `/tmp/g011-worker4-baseline-report.md`.
 - Result: **266 tests / 3 failures / 0 errors / 0 skipped**; 263 pass.
 - Evidence root: `/tmp/g011-worker4-baseline-20260717T100434Z`.
+- Baseline report: `/tmp/g011-worker4-baseline-report.md`, SHA-256 `665cd6981bed7427ae057b31b76569ba56d8fd18c7a906633ca22663d55b3451`.
 - Maven log SHA-256: `3f3aa6c48b00dc5fb25044e1e52fa943c3e7e926d49e59199bce23c6c9975bea`.
 - Surefire totals SHA-256: `7d0d04f08576dba342605c55d7497dd4e32b50f6eeda0e5d230255d478996036`.
 - XML manifest SHA-256: `27bef05083689d1e509fb01b4ace95fe5f4d0ec6ab94c26d8f2c464fff245b1e`.
@@ -42,6 +43,12 @@ This handoff is read-only. It does not edit source/tests, run Maven again, chang
 3. `FederatedPlannerFallbackIntegrationTest#testFedAllCpfoutChain`
    - Current failure: expected FOUT on Z, got NONE.
    - FedAll/out-of-scope for G011. Freeze the exact signature and do not repair it in DP work. Any change is a regression unless separately authorized by the FedAll owner.
+
+### Slice acceptance versus baseline-existing REDs
+
+- A DP owner slice is accepted only when it introduces **zero new failures**, keeps `FederatedPlannerFallbackIntegrationTest#testFedAllCpfoutChain` byte/signature-identical, and either keeps `FederatedPlanCostEnumeratorTest#testFederatedPlanCostEnumerator7` identical or resolves it through its separately documented owner/oracle RED-first repair.
+- The architecture RED must shrink only by the exact direct-helper closure delta predicted for the slice. MinST 261 remains unrelated baseline debt.
+- Therefore a Maven exit code of 1 is not by itself slice failure or success: compare exact test identities, assertion payloads, closure multiset, and raw evidence hashes against this baseline.
 
 ## Zero-difference locks that remain authoritative
 
@@ -127,4 +134,3 @@ G011 P3C DP implementation closes only when all are true:
 - **Remaining bugs:** DP closure 149; foreign supplied-analysis focused-test failure; missing executable Runtime fallback-zero proof. The FedAll FOUT/NONE failure is separate out-of-scope debt.
 - **Potential regression risk:** value equality can hide changed identity, raw bits, insertion/tie order, candidate sets, clone mapping, or counters. Detect using public exact receipt snapshots plus owner contracts and the focused Maven suite after every slice.
 - **Decision basis:** fix planner/neutral ownership and missing observation contracts; do not weaken Runtime, oracle, legality, TRead/TWrite, recompile, or architecture guards.
-
