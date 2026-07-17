@@ -335,26 +335,28 @@ public class DMLTranslator
 		if( !(OptimizerUtils.FEDERATED_COMPILATION
 			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
 			return;
-		PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
+		synchronized(dmlp) {
+			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
 
-		org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
-		org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
-			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
-				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
-				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
-		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
-		// fcallSizes are not recomputed here; planner uses null when unavailable.
-		long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
-		AFederatedPlanner.PlannerInvocationReceipt receipt =
-			FederatedPlannerFactory.create(fedPlanner).rewriteProgram(dmlp, fgraph, null, analysis);
-		if(receipt.analysis() != analysis)
-			throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
-		if( DMLScript.STATISTICS )
-			Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
-		registerFedInitVarsFromProgram(dmlp);
-		FederatedPlannerUtils.clearFedRmvarProtectedVars();
-		registerFedRmvarProtectedVarsFromProgram(dmlp);
-		receiptConsumer.accept(receipt);
+			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
+			org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
+				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
+					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
+					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
+			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
+			// fcallSizes are not recomputed here; planner uses null when unavailable.
+			long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
+			AFederatedPlanner.PlannerInvocationReceipt receipt =
+				FederatedPlannerFactory.create(fedPlanner).rewriteProgram(dmlp, fgraph, null, analysis);
+			if(receipt.analysis() != analysis)
+				throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+			if( DMLScript.STATISTICS )
+				Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
+			registerFedInitVarsFromProgram(dmlp);
+			FederatedPlannerUtils.clearFedRmvarProtectedVars();
+			registerFedRmvarProtectedVarsFromProgram(dmlp);
+			receiptConsumer.accept(receipt);
+		}
 	}
 
 	private static void registerFedInitVarsFromProgram(DMLProgram dmlp) {
