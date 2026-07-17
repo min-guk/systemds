@@ -74,29 +74,48 @@ public class CampaignBDpAggregateProducerContractTest {
 	}
 
 	@Test public void translatorObservableConsumerOverloadIsExplicit() {
-		requireMethod(DMLTranslator.class,"rewriteHopsDAG","CAMPAIGN_B_DP_DML_OBSERVABLE_OVERLOAD_MISSING",
+		assertMethodAbsent(DMLTranslator.class,"rewriteHopsDAG",
+			"CAMPAIGN_B_DP_EARLY_REWRITE_RECEIPT_OVERLOAD_REMAINS",DMLProgram.class,Consumer.class);
+		requireMethod(DMLTranslator.class,"constructLops","CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_OVERLOAD_MISSING",
 			DMLProgram.class,Consumer.class);
 	}
 
 	@Test public void realIpaEntryPublishesOneCompleteDpReceipt() throws Exception {
+		Method finalBoundary=requireMethod(DMLTranslator.class,"constructLops",
+			"CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_OVERLOAD_MISSING",DMLProgram.class,Consumer.class);
 		Method entry=requireMethod(IPAPassRewriteFederatedPlan.class,"rewriteProgram",
 			"CAMPAIGN_B_DP_IPA_EXECUTABLE_RECEIPT_MISSING",DMLProgram.class,FunctionCallGraph.class,
 			FunctionCallSizeInfo.class,Consumer.class);
-		DMLProgram program=ProductionShadowFixtureFactory.compile("B-05"); ProgramSnapshot before=snapshotProgram(program);
+		DMLProgram program=ProductionShadowFixtureFactory.compile("B-05");
+		AtomicReference<Object> boundaryReceipt=new AtomicReference<>(); AtomicInteger boundaryDeliveries=new AtomicInteger();
+		withDpPlanner(() -> invoke(finalBoundary,new DMLTranslator(program),program,
+			(Consumer<Object>)value->{Assert.assertTrue(boundaryReceipt.compareAndSet(null,value));boundaryDeliveries.incrementAndGet();}));
+		Assert.assertEquals("final-boundary receipt delivery",1,boundaryDeliveries.get());
+		PlacementAnalysis authority=(PlacementAnalysis)call(boundaryReceipt.get(),"analysis");
+		ProgramSnapshot before=snapshotProgram(program);
 		AtomicReference<Object> receipt=new AtomicReference<>(); AtomicInteger deliveries=new AtomicInteger();
 		withDpPlanner(() -> invoke(entry,new IPAPassRewriteFederatedPlan(),program,new FunctionCallGraph(program),null,
 			(Consumer<Object>)value->{Assert.assertTrue(receipt.compareAndSet(null,value));deliveries.incrementAndGet();}));
-		Assert.assertEquals("IPA receipt delivery",1,deliveries.get()); validateInvocation(program,before,receipt.get());
+		Assert.assertEquals("IPA receipt delivery",1,deliveries.get());
+		Assert.assertSame("CAMPAIGN_B_DP_IPA_REPLACED_FINAL_BOUNDARY_OWNER",authority,call(receipt.get(),"analysis"));
+		validateInvocation(program,before,receipt.get());
 	}
 
 	@Test public void realTranslatorEntryPublishesOneCompleteDpReceipt() throws Exception {
-		Method entry=requireMethod(DMLTranslator.class,"rewriteHopsDAG",
-			"CAMPAIGN_B_DP_DML_EXECUTABLE_RECEIPT_MISSING",DMLProgram.class,Consumer.class);
+		Method entry=requireMethod(DMLTranslator.class,"constructLops",
+			"CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_OVERLOAD_MISSING",DMLProgram.class,Consumer.class);
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-05"); ProgramSnapshot before=snapshotProgram(program);
 		AtomicReference<Object> receipt=new AtomicReference<>(); AtomicInteger deliveries=new AtomicInteger();
 		withDpPlanner(() -> invoke(entry,new DMLTranslator(program),program,
 			(Consumer<Object>)value->{Assert.assertTrue(receipt.compareAndSet(null,value));deliveries.incrementAndGet();}));
-		Assert.assertEquals("DML receipt delivery",1,deliveries.get()); validateInvocation(program,before,receipt.get());
+		Assert.assertEquals("CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_COUNT",1,deliveries.get());
+		Object first=receipt.get(); validateInvocation(program,before,first);
+		AtomicReference<Object> repeated=new AtomicReference<>(); AtomicInteger repeatedDeliveries=new AtomicInteger();
+		withDpPlanner(() -> invoke(entry,new DMLTranslator(program),program,
+			(Consumer<Object>)value->{Assert.assertTrue(repeated.compareAndSet(null,value));repeatedDeliveries.incrementAndGet();}));
+		Assert.assertEquals("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_RECEIPT_COUNT",1,repeatedDeliveries.get());
+		Assert.assertSame("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_OWNER_CHANGED",call(first,"analysis"),
+			call(repeated.get(),"analysis"));
 	}
 
 	@Test public void equalCostProducerReceiptRetainsLoutIdentityAndRawBits() throws Exception {
@@ -204,6 +223,10 @@ public class CampaignBDpAggregateProducerContractTest {
 	}
 	private static Method requireMethod(Class<?> owner,String name,String code,Class<?>...parameters) {
 		try{return owner.getMethod(name,parameters);}catch(NoSuchMethodException e){throw new AssertionError(code+"|member="+owner.getName()+'.'+name);}
+	}
+	private static void assertMethodAbsent(Class<?> owner,String name,String code,Class<?>...parameters) {
+		try{owner.getMethod(name,parameters);throw new AssertionError(code+"|member="+owner.getName()+'.'+name);}
+		catch(NoSuchMethodException expected){}
 	}
 
 	private static ProducerCase producerCase(Double loutCost,Double foutCost) throws Exception {

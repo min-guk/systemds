@@ -1,12 +1,19 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.AppliedPlanReceipt;
@@ -22,6 +29,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenc
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.MaterializeSpec;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -37,6 +45,22 @@ import org.junit.Test;
 public class CampaignBDpSharedAnalysisOwnerContractTest {
 	private static final Path DP_ROOT = Path.of(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
+	private static final Path DML_PROGRAM = Path.of("src/main/java/org/apache/sysds/parser/DMLProgram.java");
+	private static final Path DML_TRANSLATOR = Path.of("src/main/java/org/apache/sysds/parser/DMLTranslator.java");
+	private static final Path GRAPH_BUILDER = Path.of(
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java");
+	private static final Path PLACEMENT_ANALYSIS = Path.of(
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java");
+	private static final Path IPA_PASS = Path.of(
+		"src/main/java/org/apache/sysds/hops/ipa/IPAPassRewriteFederatedPlan.java");
+	private static final Path SHADOW_COORDINATOR = Path.of(
+		"src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementShadowCoordinator.java");
+	private static final Path DML_SCRIPT = Path.of("src/main/java/org/apache/sysds/api/DMLScript.java");
+	private static final Path JMLC_CONNECTION = Path.of("src/main/java/org/apache/sysds/api/jmlc/Connection.java");
+	private static final Path ML_CONTEXT_EXECUTOR = Path.of(
+		"src/main/java/org/apache/sysds/api/mlcontext/ScriptExecutor.java");
+	private static final Path RESOURCE_COMPILER = Path.of(
+		"src/main/java/org/apache/sysds/resource/ResourceCompiler.java");
 	private static final Path ARCHITECTURE_GUARD = Path.of(
 		"src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBArchitectureGuardTest.java");
 	private static final Path OWNERSHIP_CLOSURE = Path.of(
@@ -182,14 +206,163 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			source.contains("private static void collectProgramRoots"));
 	}
 
+	@Test
+	public void concreteProgramAuthorityIsPrivateFinalAndNonPoisonable() throws Exception {
+		Field cell;
+		try {
+			cell = DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");
+		}
+		catch(NoSuchFieldException missing) {
+			throw new AssertionError("CAMPAIGN_B_DP_CONCRETE_AUTHORITY_CELL_MISSING", missing);
+		}
+		Assert.assertSame("CAMPAIGN_B_DP_AUTHORITY_CELL_RAW_TYPE", AtomicReference.class, cell.getType());
+		Assert.assertEquals("CAMPAIGN_B_DP_AUTHORITY_CELL_GENERIC_TYPE",
+			"java.util.concurrent.atomic.AtomicReference<org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis>",
+			cell.getGenericType().getTypeName());
+		Assert.assertTrue("CAMPAIGN_B_DP_AUTHORITY_CELL_NOT_PRIVATE", Modifier.isPrivate(cell.getModifiers()));
+		Assert.assertTrue("CAMPAIGN_B_DP_AUTHORITY_CELL_NOT_FINAL", Modifier.isFinal(cell.getModifiers()));
+		Assert.assertTrue("CAMPAIGN_B_DP_ANALYSIS_MUST_BE_FINAL",
+			Modifier.isFinal(PlacementAnalysis.class.getModifiers()));
+
+		Method bind;
+		try {
+			bind = DMLProgram.class.getDeclaredMethod("bindPlacementAnalysisAtFinalHopBoundary");
+		}
+		catch(NoSuchMethodException missing) {
+			throw new AssertionError("CAMPAIGN_B_DP_FINAL_BOUNDARY_BIND_MISSING", missing);
+		}
+		Assert.assertSame(PlacementAnalysis.class, bind.getReturnType());
+		Assert.assertFalse("CAMPAIGN_B_DP_BIND_MUST_NOT_BE_PUBLIC", Modifier.isPublic(bind.getModifiers()));
+		Assert.assertFalse("CAMPAIGN_B_DP_BIND_MUST_NOT_BE_PROTECTED", Modifier.isProtected(bind.getModifiers()));
+		Assert.assertEquals("CAMPAIGN_B_DP_BIND_MUST_ACCEPT_NO_CANDIDATE", 0, bind.getParameterCount());
+
+		String programSource = Files.readString(DML_PROGRAM);
+		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_BUILD_DETACHED_CANDIDATE",
+			programSource.contains("buildDetachedAnalysis(this)"));
+		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_CAS",
+			programSource.contains("_placementAnalysisAuthority.compareAndSet(null, candidate)"));
+		Assert.assertTrue("CAMPAIGN_B_DP_CAS_MUST_RETURN_WINNER",
+			programSource.indexOf("_placementAnalysisAuthority.get()",
+				programSource.indexOf("compareAndSet(null, candidate)")) > 0);
+		for(String forbidden : List.of("AtomicReference<Object>", "PlacementAnalysisAuthorityMarker",
+			"clearPlacementAnalysisAuthority", "rebindPlacementAnalysisAuthority",
+			"installPlacementAnalysisAuthority(", "Class.forName("))
+			Assert.assertFalse("CAMPAIGN_B_DP_POISONABLE_AUTHORITY_TOKEN|" + forbidden,
+				programSource.contains(forbidden));
+		Assert.assertFalse("CAMPAIGN_B_DP_CAS_LOSER_ESCAPES", programSource.contains("return candidate;"));
+	}
+
+	@Test
+	public void finalBoundaryIsSoleInstallerAndDetachedApisCannotRebind() throws Exception {
+		String translator = Files.readString(DML_TRANSLATOR);
+		String program = Files.readString(DML_PROGRAM);
+		String builder = Files.readString(GRAPH_BUILDER);
+		String analysis = Files.readString(PLACEMENT_ANALYSIS);
+		Assert.assertEquals("CAMPAIGN_B_DP_BIND_CALL_SITE_COUNT", 1,
+			countProductionOccurrences(".bindPlacementAnalysisAtFinalHopBoundary()"));
+		Assert.assertEquals("CAMPAIGN_B_DP_TRANSLATOR_BIND_CALL_SITE_COUNT", 1,
+			countOccurrences(translator, ".bindPlacementAnalysisAtFinalHopBoundary()"));
+		int finalBoundary = translator.indexOf("runFederatedPlannerAtFinalHopBoundary");
+		int bind = translator.indexOf(".bindPlacementAnalysisAtFinalHopBoundary()", finalBoundary);
+		int clear = translator.indexOf("FederatedRefedRegistry.clear()", finalBoundary);
+		Assert.assertTrue("CAMPAIGN_B_DP_BIND_NOT_IN_PRIVATE_FINAL_BOUNDARY",
+			finalBoundary >= 0 && translator.lastIndexOf("private", finalBoundary) >= 0 && bind > finalBoundary);
+		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_PRECEDE_REGISTRY_CLEAR", clear > bind);
+		Assert.assertTrue("CAMPAIGN_B_DP_CONSTRUCT_LOPS_MUST_ENTER_FINAL_BOUNDARY",
+			translator.indexOf("runFederatedPlannerAtFinalHopBoundary", translator.indexOf("constructLops(DMLProgram")) >= 0);
+		Assert.assertTrue("CAMPAIGN_B_DP_UNBOUND_REWRITE_GUARD_MISSING",
+			translator.contains("requirePlacementAnalysisUnboundForHopRewrite"));
+		Assert.assertTrue("CAMPAIGN_B_DP_DETACHED_BUILDER_MISSING", builder.contains("buildDetachedAnalysis"));
+		Assert.assertTrue("CAMPAIGN_B_DP_BUILD_ANALYSIS_MUST_DELEGATE_DETACHED",
+			builder.indexOf("buildDetachedAnalysis(program)", builder.indexOf("buildAnalysis(DMLProgram")) >= 0);
+		Assert.assertFalse("CAMPAIGN_B_DP_BUILDER_MUST_NOT_BIND", builder.contains("bindPlacementAnalysisAtFinalHopBoundary"));
+		Assert.assertTrue("CAMPAIGN_B_DP_COMMON_CANONICAL_ASSERT_MISSING",
+			analysis.contains("requirePlacementAnalysisAuthority(this)"));
+		Assert.assertFalse("CAMPAIGN_B_DP_AUTHORITY_CLEAR_API_FORBIDDEN", program.contains("clearPlacementAnalysis"));
+	}
+
+	@Test
+	public void supportedFrontendsIpaAndShadowPreserveFinalBoundaryOwner() throws Exception {
+		assertOrdered(Files.readString(DML_SCRIPT), "rewriteHopsDAG(prog)", "constructLops(prog)",
+			"CAMPAIGN_B_DP_CLI_FINAL_BOUNDARY_ORDER");
+		assertOrdered(Files.readString(JMLC_CONNECTION), "rewriteHopsDAG(prog)", "constructLops(prog)",
+			"CAMPAIGN_B_DP_JMLC_FINAL_BOUNDARY_ORDER");
+		assertOrdered(Files.readString(ML_CONTEXT_EXECUTOR), "rewritePersistentReadsAndWrites()", "constructLops()",
+			"CAMPAIGN_B_DP_MLCONTEXT_FINAL_BOUNDARY_ORDER");
+		assertOrdered(Files.readString(RESOURCE_COMPILER), "rewriteHopsDAG(dmlProgram)",
+			"constructLops(dmlProgram)", "CAMPAIGN_B_DP_RESOURCE_FINAL_BOUNDARY_ORDER");
+
+		String ipa = Files.readString(IPA_PASS);
+		int entry = ipa.indexOf("rewriteProgram(DMLProgram");
+		int require = ipa.indexOf("requireAuthoritativeAnalysis", entry);
+		int clear = ipa.indexOf("FederatedRefedRegistry.clear()", entry);
+		int shadowBegin = ipa.indexOf("PlacementShadowCoordinator.begin(prog, analysis)", entry);
+		Assert.assertTrue("CAMPAIGN_B_DP_IPA_UNBOUND_CHECK_AFTER_CLEAR",
+			entry >= 0 && require > entry && clear > require && shadowBegin > clear);
+		String shadow = Files.readString(SHADOW_COORDINATOR);
+		Assert.assertTrue("CAMPAIGN_B_DP_SHADOW_A1_BEGIN_MISSING",
+			shadow.contains("begin(DMLProgram program, PlacementAnalysis analysis)"));
+		Assert.assertTrue("CAMPAIGN_B_DP_SHADOW_MUST_REUSE_A1_GRAPH", shadow.contains("analysis.graph()"));
+		Assert.assertFalse("CAMPAIGN_B_DP_SHADOW_MUST_NOT_BIND", shadow.contains("bindPlacementAnalysisAtFinalHopBoundary"));
+	}
+
+	private static int countProductionOccurrences(String token) throws Exception {
+		try(var files = Files.walk(Path.of("src/main/java"))) {
+			return files.filter(path -> path.toString().endsWith(".java")).mapToInt(path -> {
+				try {
+					return countOccurrences(Files.readString(path), token);
+				}
+				catch(Exception e) {
+					throw new AssertionError("Unable to inspect " + path, e);
+				}
+			}).sum();
+		}
+	}
+
+	private static int countOccurrences(String source, String token) {
+		int count = 0;
+		for(int at = source.indexOf(token); at >= 0; at = source.indexOf(token, at + token.length()))
+			count++;
+		return count;
+	}
+
+	private static void assertOrdered(String source, String first, String second, String code) {
+		int left = source.indexOf(first), right = source.indexOf(second, left + Math.max(0, first.length()));
+		Assert.assertTrue(code + "|first=" + first + "|second=" + second, left >= 0 && right > left);
+	}
+
 	private static Fixture fixture(String id) {
 		try {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
-			return new Fixture(program, new NeutralPlacementGraphBuilder().buildAnalysis(program));
+			return new Fixture(program, finalBoundaryOwnerOrDetached(program));
 		}
 		catch(Exception e) {
 			throw new AssertionError("Unable to compile DP shared-analysis fixture " + id, e);
 		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static PlacementAnalysis finalBoundaryOwnerOrDetached(DMLProgram program) throws Exception {
+		Method boundary;
+		try {
+			boundary = DMLTranslator.class.getMethod("constructLops", DMLProgram.class, Consumer.class);
+		}
+		catch(NoSuchMethodException prePatch) {
+			return new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		}
+		String oldPlanner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		AtomicReference<Object> receipt = new AtomicReference<>();
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			boundary.invoke(new DMLTranslator(program), program,
+				(Consumer<Object>) value -> Assert.assertTrue("multiple final-boundary receipts",
+					receipt.compareAndSet(null, value)));
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, oldPlanner);
+		}
+		Assert.assertNotNull("CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_MISSING", receipt.get());
+		return (PlacementAnalysis) receipt.get().getClass().getMethod("analysis").invoke(receipt.get());
 	}
 
 	private static AnalysisSnapshot snapshotAnalysis(PlacementAnalysis analysis) {
