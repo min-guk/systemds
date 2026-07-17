@@ -1,0 +1,1 @@
+Execute the approved unified FedPlanner production-preprocessing migration exactly as specified by /home/mchoi/.omx/plans/prd-unified-fedplanner-placement-graph-v2.md and /home/mchoi/.omx/plans/test-spec-unified-fedplanner-placement-graph-v2.md, preserving the durable handoff constraints and completing all P0-P7 gates.
