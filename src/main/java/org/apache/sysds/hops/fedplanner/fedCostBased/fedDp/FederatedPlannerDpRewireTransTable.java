@@ -68,6 +68,14 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -95,6 +103,110 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 public class FederatedPlannerDpRewireTransTable {
 	private static final String FUNCTION_HIDDEN_ROOTS_KEY = "\u0000fedplanner_hidden_roots";
 	private static final int MAX_UNROLL_DEPTH = 1;
+
+	public record RewireRequest(PlacementAnalysis analysis, DMLProgram program,
+		List<HopOccurrenceProjection> occurrences, List<CloneReceipt> cloneAssociations,
+		List<HopOccurrenceProjection> additionalRoots) { }
+
+	public record CloneReceipt(HopOccurrenceProjection originOccurrence,
+		HopOccurrenceProjection cloneOccurrence, Node originNode, Node cloneNode,
+		Constraint sameOrigin, Exclusion recompileCpFoutExclusion) { }
+
+	public record RewireReceipt(PlacementAnalysis analysis, DMLProgram program,
+		String analysisFingerprint, List<HopOccurrenceProjection> orderedOccurrences,
+		List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> orderedAdditionalRoots,
+		Map<Long, Long> cloneToOrig, List<String> orderedNormalizedIdentities) {
+		public RewireReceipt {
+			orderedOccurrences = List.copyOf(orderedOccurrences);
+			cloneReceipts = List.copyOf(cloneReceipts);
+			orderedAdditionalRoots = List.copyOf(orderedAdditionalRoots);
+			cloneToOrig = Collections.unmodifiableMap(new LinkedHashMap<>(cloneToOrig));
+			orderedNormalizedIdentities = List.copyOf(orderedNormalizedIdentities);
+		}
+	}
+
+	public static RewireReceipt inspectExact(RewireRequest request) {
+		if (request == null || request.analysis() == null || request.program() == null
+			|| request.occurrences() == null || request.cloneAssociations() == null
+			|| request.additionalRoots() == null)
+			throw new IllegalArgumentException("Rewire request fields must not be null");
+
+		PlacementAnalysis analysis = request.analysis();
+		analysis.assertProgramOwner(request.program());
+		List<HopOccurrenceProjection> ownedOccurrences = analysis.occurrences();
+		if (request.occurrences() != ownedOccurrences)
+			throw new IllegalArgumentException("Rewire occurrences are not the analysis-owned carrier");
+		for (int i = 0; i < ownedOccurrences.size(); i++) {
+			HopOccurrenceProjection occurrence = request.occurrences().get(i);
+			if (occurrence == null || occurrence != ownedOccurrences.get(i)
+				|| occurrence.normalizedOrdinal() != i
+				|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop()
+				|| analysis.graph().node(occurrence.key()).isEmpty())
+				throw new IllegalArgumentException("Rewire occurrence ownership or order differs");
+		}
+		if (!request.additionalRoots().isEmpty())
+			throw new IllegalArgumentException("Neutral rewire inspection accepts no additional-root claims");
+
+		List<Node> ownedClones = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.CLONE).toList();
+		if (request.cloneAssociations().size() != ownedClones.size())
+			throw new IllegalArgumentException("Rewire clone association multiplicity differs");
+
+		List<CloneReceipt> cloneReceipts = new ArrayList<>(ownedClones.size());
+		Map<Long, Long> cloneToOrig = new LinkedHashMap<>();
+		for (int i = 0; i < ownedClones.size(); i++) {
+			Node clone = ownedClones.get(i);
+			CloneReceipt claim = request.cloneAssociations().get(i);
+			if (claim == null || claim.originOccurrence() == null || claim.cloneOccurrence() == null
+				|| claim.originNode() == null || claim.cloneNode() == null || claim.sameOrigin() == null
+				|| claim.recompileCpFoutExclusion() == null)
+				throw new IllegalArgumentException("Rewire clone association fields must not be null");
+			if (claim.cloneNode() != clone
+				|| analysis.graph().node(clone.key()).orElse(null) != clone
+				|| exactOccurrence(analysis, clone) != claim.cloneOccurrence())
+				throw new IllegalArgumentException("Rewire clone is not owned by the analysis");
+
+			List<Constraint> associations = analysis.graph().constraints().stream()
+				.filter(candidate -> candidate.kind() == ConstraintKind.SAME_ORIGIN)
+				.filter(candidate -> candidate.right().equals(clone.key())).toList();
+			if (associations.size() != 1 || associations.get(0) != claim.sameOrigin())
+				throw new IllegalArgumentException("Rewire SAME_ORIGIN association identity or multiplicity differs");
+			Constraint association = associations.get(0);
+			Node origin = analysis.graph().node(association.left()).orElse(null);
+			if (origin == null || origin.kind() == NodeKind.CLONE || claim.originNode() != origin
+				|| exactOccurrence(analysis, origin) != claim.originOccurrence()
+				|| !association.left().equals(origin.key()) || !association.right().equals(clone.key())
+				|| !origin.key().canonicalSourceOrigin().equals(clone.key().canonicalSourceOrigin()))
+				throw new IllegalArgumentException("Rewire clone/original association differs");
+
+			List<Exclusion> exclusions = clone.exclusions().stream()
+				.filter(candidate -> candidate.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).toList();
+			if (exclusions.size() != 1 || exclusions.get(0) != claim.recompileCpFoutExclusion())
+				throw new IllegalArgumentException("Rewire recompile exclusion identity or multiplicity differs");
+			cloneReceipts.add(claim);
+			if (cloneToOrig.put(claim.cloneOccurrence().hop().getHopID(),
+				claim.originOccurrence().hop().getHopID()) != null)
+				throw new IllegalArgumentException("Duplicate rewire clone association");
+		}
+
+		return new RewireReceipt(analysis, request.program(), analysis.analysisFingerprint(),
+			ownedOccurrences, cloneReceipts, List.of(), cloneToOrig,
+			analysis.graph().normalizedIdentities());
+	}
+
+	private static HopOccurrenceProjection exactOccurrence(PlacementAnalysis analysis, Node node) {
+		HopOccurrenceProjection match = null;
+		for (HopOccurrenceProjection occurrence : analysis.occurrences()) {
+			if (!occurrence.key().equals(node.key()))
+				continue;
+			if (match != null || analysis.hop(node.key()).orElse(null) != occurrence.hop())
+				throw new IllegalArgumentException("Rewire node occurrence multiplicity differs");
+			match = occurrence;
+		}
+		if (match == null)
+			throw new IllegalArgumentException("Rewire node has no analysis-owned occurrence");
+		return match;
+	}
 
 	public static class UnrollContext {
 		private final Map<Long, Long> cloneToOrig = new HashMap<>();
