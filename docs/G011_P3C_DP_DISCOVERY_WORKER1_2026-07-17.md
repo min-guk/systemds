@@ -147,6 +147,13 @@ Worker-1 did not run Maven, by explicit campaign ownership (`worker-4 alone may 
 - N/A by explicit ownership — Maven/test-suite/e2e execution belongs to worker-4; no source behavior changed here.
 - N/A — Java linter/typecheck of production is not relevant to a documentation-only discovery artifact; the exact helper itself was freshly compiled.
 
+## Subagent integration evidence
+
+- Subagents spawned: 3 — `/root/ownership_map`, `/root/regression_locks`, `/root/failure_plan`.
+- Required task model policy: `gpt-5.6-terra`; the collaboration API exposed no model argument, so the installed team/runtime model resolution was used.
+- Serial searches before spawn: 2 tool calls (worker protocol/inbox, then context/task claim); the probes were spawned before broad repository inspection.
+- Findings integrated: exact 34-unit owner/edge graph and 149-item matrix; existing/missing zero-difference locks; failure path, focused-test handoff, and ordered owner-slice mini-plan.
+
 ## Problem record
 
 - **Status:** ongoing design debt; discovery complete.
