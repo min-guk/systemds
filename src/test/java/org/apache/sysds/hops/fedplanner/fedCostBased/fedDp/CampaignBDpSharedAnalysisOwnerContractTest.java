@@ -2,6 +2,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
@@ -246,10 +247,27 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 				programSource.indexOf("compareAndSet(null, candidate)")) > 0);
 		for(String forbidden : List.of("AtomicReference<Object>", "PlacementAnalysisAuthorityMarker",
 			"clearPlacementAnalysisAuthority", "rebindPlacementAnalysisAuthority",
-			"installPlacementAnalysisAuthority(", "Class.forName("))
+			"installPlacementAnalysisAuthority(", "Object _placementAnalysisAuthority",
+			"AtomicReference _placementAnalysisAuthority", "_placementAnalysisAuthority.clear",
+			"java.lang.reflect", "Class.forName("))
 			Assert.assertFalse("CAMPAIGN_B_DP_POISONABLE_AUTHORITY_TOKEN|" + forbidden,
 				programSource.contains(forbidden));
 		Assert.assertFalse("CAMPAIGN_B_DP_CAS_LOSER_ESCAPES", programSource.contains("return candidate;"));
+
+		DMLProgram unbound = ProductionShadowFixtureFactory.compile("B-01");
+		Assert.assertNull("CAMPAIGN_B_DP_FRESH_PROGRAM_ALREADY_BOUND", authorityValue(cell, unbound));
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		builder.buildAnalysis(unbound);
+		Assert.assertNull("CAMPAIGN_B_DP_BUILD_ANALYSIS_BOUND_PROGRAM", authorityValue(cell, unbound));
+		Method detached = NeutralPlacementGraphBuilder.class.getMethod("buildDetachedAnalysis", DMLProgram.class);
+		detached.invoke(builder, unbound);
+		Assert.assertNull("CAMPAIGN_B_DP_DETACHED_ANALYSIS_BOUND_PROGRAM", authorityValue(cell, unbound));
+		Fixture bound = fixture("B-01");
+		Assert.assertSame("CAMPAIGN_B_DP_FINAL_BOUNDARY_CELL_OWNER", bound.analysis(),
+			authorityValue(cell, bound.program()));
+		builder.buildAnalysis(bound.program());
+		Assert.assertSame("CAMPAIGN_B_DP_DETACHED_BUILD_REBOUND_OWNER", bound.analysis(),
+			authorityValue(cell, bound.program()));
 	}
 
 	@Test
@@ -304,6 +322,38 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			shadow.contains("begin(DMLProgram program, PlacementAnalysis analysis)"));
 		Assert.assertTrue("CAMPAIGN_B_DP_SHADOW_MUST_REUSE_A1_GRAPH", shadow.contains("analysis.graph()"));
 		Assert.assertFalse("CAMPAIGN_B_DP_SHADOW_MUST_NOT_BIND", shadow.contains("bindPlacementAnalysisAtFinalHopBoundary"));
+	}
+
+	@Test
+	public void shadowBeginUsesExactA1GraphAndRejectsDetachedA2() throws Exception {
+		Fixture owner = fixture("B-05");
+		PlacementAnalysis detached = new NeutralPlacementGraphBuilder().buildAnalysis(owner.program());
+		Assert.assertNotSame(owner.analysis(), detached);
+		Class<?> coordinator = Class.forName(
+			"org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator");
+		Method begin;
+		try {
+			begin = coordinator.getMethod("begin", DMLProgram.class, PlacementAnalysis.class);
+		}
+		catch(NoSuchMethodException missing) {
+			throw new AssertionError("CAMPAIGN_B_DP_SHADOW_A1_BEGIN_MISSING", missing);
+		}
+		Object session = begin.invoke(null, owner.program(), owner.analysis());
+		Assert.assertSame("CAMPAIGN_B_DP_SHADOW_DID_NOT_REUSE_A1_GRAPH", owner.analysis().graph(),
+			session.getClass().getMethod("graph").invoke(session));
+		try {
+			begin.invoke(null, owner.program(), detached);
+			Assert.fail("CAMPAIGN_B_DP_SHADOW_ACCEPTED_DETACHED_A2");
+		}
+		catch(InvocationTargetException expected) {
+			Assert.assertTrue("CAMPAIGN_B_DP_SHADOW_A2_WRONG_FAILURE",
+				expected.getCause() instanceof IllegalArgumentException);
+		}
+	}
+
+	private static Object authorityValue(Field cell, DMLProgram program) throws Exception {
+		cell.setAccessible(true);
+		return ((AtomicReference<?>) cell.get(program)).get();
 	}
 
 	private static int countProductionOccurrences(String token) throws Exception {
