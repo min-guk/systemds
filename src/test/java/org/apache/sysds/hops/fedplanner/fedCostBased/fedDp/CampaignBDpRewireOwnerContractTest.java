@@ -341,27 +341,32 @@ public class CampaignBDpRewireOwnerContractTest {
 		for(Node node : analysis.graph().nodes())
 			for(Exclusion exclusion : node.exclusions())
 				exclusions.add(new OwnedExclusion(node, exclusion));
+		FedPlan aggregate = receipt.legacyOptimalPlan();
+		AggregateState aggregateState = snapshotAggregate(aggregate);
+		List<FedPlan> selectedRootPlans = List.copyOf(receipt.exactSelection().selectedRootPlans());
 		List<MemoCoordinateState> memoCoordinates = memoCoordinates(analysis, receipt.memo(),
-			receipt.legacyOptimalPlan());
+			aggregateState.childEdgeSnapshot(), selectedRootPlans);
 		return new Snapshot(analysis, real.fixture().program(), PlacementGraphFingerprint.capture(real.fixture().program()),
 			analysis.analysisFingerprint(), List.copyOf(occurrences), List.copyOf(hops), analysis.graph().nodes(),
 			analysis.graph().constraints(), List.copyOf(exclusions), receipt, receipt.memo(),
-			receipt.legacyOptimalPlan(), snapshotPlan(receipt.legacyOptimalPlan()), receipt.exactSelection(),
+			aggregate, aggregateState, receipt.exactSelection(),
 			List.copyOf(receipt.exactSelection().aggregateChildEdges()),
-			List.copyOf(receipt.exactSelection().selectedRootPlans()),
+			selectedRootPlans,
 			List.copyOf(receipt.exactSelection().selectedRootHops()), List.copyOf(receipt.appliedPlans()),
 			List.copyOf(receipt.additionalRootInvocations()), receipt.counters(), memoCoordinates,
 			List.copyOf(receipt.memo().getAdditionalRootHopIDs()));
 	}
 
 	private static List<MemoCoordinateState> memoCoordinates(PlacementAnalysis analysis,
-		FederatedPlannerDpMemoTable memo, FedPlan aggregate) {
+		FederatedPlannerDpMemoTable memo, List<Pair<Long, FederatedOutput>> aggregateEdges,
+		List<FedPlan> selectedRootPlans) {
 		Set<Long> ids = new LinkedHashSet<>();
 		analysis.occurrences().forEach(item -> ids.add(item.hop().getHopID()));
 		ids.addAll(memo.getAdditionalRootHopIDs());
+		aggregateEdges.forEach(edge -> ids.add(edge.getLeft()));
 		Set<FedPlan> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 		ArrayDeque<FedPlan> queue = new ArrayDeque<>();
-		queue.add(aggregate);
+		queue.addAll(selectedRootPlans);
 		while(!queue.isEmpty()) {
 			FedPlan plan = queue.removeFirst();
 			if(!seen.add(plan)) continue;
@@ -389,6 +394,12 @@ public class CampaignBDpRewireOwnerContractTest {
 	private static HopState snapshotHop(Hop hop) {
 		return new HopState(hop, hop.getHopID(), hop.getForcedExecType(), hop.getFederatedOutput(),
 			hop.requiresRecompile(), List.copyOf(hop.getInput()), List.copyOf(hop.getParent()));
+	}
+
+	private static AggregateState snapshotAggregate(FedPlan aggregate) {
+		List<Pair<Long, FederatedOutput>> childEdgeCarrier = aggregate.getChildFedPlans();
+		return new AggregateState(aggregate, childEdgeCarrier,
+			Double.doubleToRawLongBits(aggregate.getCumulativeCost()), List.copyOf(childEdgeCarrier));
 	}
 
 	private static PlanState snapshotPlan(FedPlan plan) {
@@ -423,8 +434,8 @@ public class CampaignBDpRewireOwnerContractTest {
 		Assert.assertSame(expected.receipt(), actual.receipt());
 		Assert.assertSame(expected.memo(), actual.memo());
 		Assert.assertSame(expected.aggregate(), actual.aggregate());
-		assertPlanSame(expected.aggregateState(), actual.aggregateState());
 		Assert.assertSame(expected.exactSelection(), actual.exactSelection());
+		assertAggregateSame(expected, actual);
 		assertIdentityList(expected.aggregateEdges(), actual.aggregateEdges(), "aggregate edges");
 		assertIdentityList(expected.selectedRootPlans(), actual.selectedRootPlans(), "selected root plans");
 		assertIdentityList(expected.selectedRootHops(), actual.selectedRootHops(), "selected root Hops");
@@ -436,6 +447,25 @@ public class CampaignBDpRewireOwnerContractTest {
 		for(int i = 0; i < expected.memoCoordinates().size(); i++)
 			assertMemoSame(expected.memoCoordinates().get(i), actual.memoCoordinates().get(i));
 		Assert.assertEquals(expected.additionalRootIds(), actual.additionalRootIds());
+	}
+
+	private static void assertAggregateSame(Snapshot expected, Snapshot actual) {
+		Assert.assertSame(expected.aggregate(), expected.aggregateState().aggregate());
+		Assert.assertSame(actual.aggregate(), actual.aggregateState().aggregate());
+		Assert.assertSame(expected.aggregate(), expected.exactSelection().legacyOptimalPlan());
+		Assert.assertSame(actual.aggregate(), actual.exactSelection().legacyOptimalPlan());
+		Assert.assertSame(expected.aggregateState().childEdgeCarrier(), actual.aggregateState().childEdgeCarrier());
+		Assert.assertEquals(expected.aggregateState().cumulativeBits(), actual.aggregateState().cumulativeBits());
+		assertIdentityList(expected.aggregateState().childEdgeSnapshot(),
+			actual.aggregateState().childEdgeSnapshot(), "aggregate carrier edges");
+		assertIdentityList(expected.aggregateState().childEdgeSnapshot(), expected.aggregateEdges(),
+			"expected exact-selection edge copy");
+		assertIdentityList(actual.aggregateState().childEdgeSnapshot(), actual.aggregateEdges(),
+			"actual exact-selection edge copy");
+		for(FedPlan selected : expected.selectedRootPlans())
+			Assert.assertNotSame("synthetic aggregate is not a selected concrete plan", expected.aggregate(), selected);
+		for(FedPlan selected : actual.selectedRootPlans())
+			Assert.assertNotSame("synthetic aggregate is not a selected concrete plan", actual.aggregate(), selected);
 	}
 
 	private static void assertHopSame(HopState expected, HopState actual) {
@@ -499,6 +529,8 @@ public class CampaignBDpRewireOwnerContractTest {
 	private record HopState(Hop hop, long hopId, org.apache.sysds.common.Types.ExecType execType,
 		FederatedOutput output, boolean requiresRecompile, List<Hop> inputs, List<Hop> parents) { }
 	private record OwnedExclusion(Node owner, Exclusion exclusion) { }
+	private record AggregateState(FedPlan aggregate, List<Pair<Long, FederatedOutput>> childEdgeCarrier,
+		long cumulativeBits, List<Pair<Long, FederatedOutput>> childEdgeSnapshot) { }
 	private record PlanState(FedPlan plan, Hop hop, long cumulativeBits, long selfBits, long forwardingBits,
 		org.apache.sysds.common.Types.ExecType execType, org.apache.sysds.hops.fedplanner.FTypes.FType fType,
 		List<Pair<Long, FederatedOutput>> childEdges) { }
@@ -507,7 +539,7 @@ public class CampaignBDpRewireOwnerContractTest {
 	private record Snapshot(PlacementAnalysis analysis, DMLProgram program, String programFingerprint,
 		String analysisFingerprint, List<OccurrenceState> occurrences, List<HopState> hops, List<Node> nodes,
 		List<Constraint> constraints, List<OwnedExclusion> exclusions, DpInvocationReceipt receipt,
-		FederatedPlannerDpMemoTable memo, FedPlan aggregate, PlanState aggregateState,
+		FederatedPlannerDpMemoTable memo, FedPlan aggregate, AggregateState aggregateState,
 		ExactSelection exactSelection, List<Pair<Long, FederatedOutput>> aggregateEdges,
 		List<FedPlan> selectedRootPlans, List<Hop> selectedRootHops, List<AppliedPlanReceipt> appliedPlans,
 		List<AdditionalRootInvocationReceipt> additionalRootInvocations, InvocationCounters counters,
