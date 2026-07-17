@@ -16,3 +16,20 @@
 - **Potential regression risk**: Stable sorting can preserve value equality while changing object identity, or copied same-program projections can be accepted through key equality. Detect with the contract's `assertSame` checks and negative lookups.
 - **Decision basis**: Fix the planner memo ownership boundary; do not weaken runtime, oracle, TRead/TWrite, recompile, or candidate legality rules.
 - **Applied principles/constraints**: RED-first; one owner at a time; no runtime fallback; protected Runtime/lops/FedAll/Heuristic/MinST/shared-cost surfaces remain untouched.
+
+## Issue 2: DP estimator has no typed placement-analysis owner seam
+
+- **Status**: In progress (compile-time RED contract added; production implementation intentionally deferred)
+- **Environment/conditions**: G011 P3C DP Slice 3, `CampaignBDpEstimatorOwnerContractTest`; static verification only, with Maven reserved for the separately assigned verification owner.
+- **Reproduction**: Compile the dedicated JUnit class after the exclusive estimator production owner implements the typed seam. The current RED references the missing `EstimatorRequest`, `EstimatorReceipt`, `ChildCostReceipt`, and `estimateExact` API directly.
+- **Observed symptom**: `FederatedPlannerDpCostEstimator` accepts mutable `HopCommon`, raw Hop lists/maps, and cost buffers without an exact `PlacementAnalysis` occurrence/key plus `FedPlan` owner boundary. Its results therefore cannot directly prove producer identity, ordered child evidence, or mutation freedom.
+- **Root cause**: Estimator arithmetic/share helpers predate the immutable placement analysis and still expose analysis-free inputs and mutable output buffers.
+- **Resolution summary**: Added a direct, non-reflective compile-time RED requiring an analysis/memo/occurrence/exact-plan request and an immutable typed receipt. The contract freezes hexadecimal self, forwarding, ordered child cumulative/forwarding, and cumulative raw bits; rejects copied/foreign occurrences and copied/foreign `HopCommon` plans; and snapshots analysis, plan identity, costs, child edges/order, exec type, and FType before and after success/rejection.
+- **Modified files**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBDpEstimatorOwnerContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-17.md`
+- **Verification**: Static scope/diff checks, `git diff --check`, forbidden reflection/Object-erasure scan, and direct typed-symbol scan. Maven is intentionally not run in this RED-only task.
+- **Remaining issues**: The exclusive production owner must implement the seam in `FederatedPlannerDpCostEstimator.java` only, make the RED GREEN, and preserve the frozen candidate set, selected identities, raw bits, child order, counters, and the three baseline failure signatures. `FederatedCostModel.java` remains separately authorized Slice 3b work only.
+- **Potential regression risk**: A receipt could preserve numeric equality while accepting a copied `HopCommon`, reorder equal child evidence, canonicalize NaN/negative-zero bits, or mutate the selected plan. Detect through `assertSame`, `Double.doubleToRawLongBits`, ordered receipt assertions, and before/after snapshots.
+- **Decision basis**: Add a planner-estimator ownership boundary over already-proven facts; do not weaken runtime/oracle legality or move shared cost-model behavior into this slice.
+- **Applied principles/constraints**: RED-first; estimator single-file production ownership; no runtime fallback; no candidate closing; no Runtime/lops/FedAll/Heuristic/MinST/enumerator/root/rewire/shared-cost edits; TRead/TWrite and recompile rules unchanged.
