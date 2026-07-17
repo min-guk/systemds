@@ -16,6 +16,8 @@
  */
 package org.apache.sysds.hops.fedplanner.fedAll;
 
+import java.util.Objects;
+
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
@@ -29,8 +31,49 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 public class FederatedPlannerFedAll extends AFederatedPlanner {
 	private final FedAllPlacementAdapter adapter = new FedAllPlacementAdapter();
 
+	public record InvocationCounters(int selectionCount, int internalAnalysisBuildCount,
+		int legacyRouteCount, int repairCount, int fallbackCount, int mutationCount,
+		int applicationCount, int doubleApplicationCount) {
+		public InvocationCounters {
+			if(selectionCount != 1 || internalAnalysisBuildCount != 0 || legacyRouteCount != 0
+				|| repairCount != 0 || fallbackCount != 0 || mutationCount != 0
+				|| applicationCount != 0 || doubleApplicationCount != 0)
+				throw new IllegalArgumentException("FedAll selection receipt counters differ");
+		}
+	}
+
+	public record FedAllInvocationReceipt(PlacementAnalysis analysis, FedAllPlacementAdapter.Result result,
+		InvocationCounters counters, String analysisFingerprintBefore, String analysisFingerprintAfter)
+		implements AFederatedPlanner.PlannerInvocationReceipt {
+		public FedAllInvocationReceipt {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(result, "result");
+			Objects.requireNonNull(counters, "counters");
+			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
+			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
+			if(result.analysis() != analysis)
+				throw new IllegalArgumentException("FedAll receipt producer identity differs");
+			if(!analysis.analysisFingerprint().equals(analysisFingerprintBefore)
+				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter)
+				|| !analysisFingerprintBefore.equals(result.analysisFingerprint()))
+				throw new IllegalArgumentException("Supplied analysis changed during FedAll selection");
+		}
+	}
+
 	public FedAllPlacementAdapter.Result select(PlacementAnalysis analysis) {
 		return adapter.select(analysis);
+	}
+
+	@Override
+	public FedAllInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
+		analysis.assertProgramOwner(prog);
+		String fingerprintBefore = analysis.analysisFingerprint();
+		FedAllPlacementAdapter.Result result = select(analysis);
+		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 0, 0);
+		return new FedAllInvocationReceipt(analysis, result, counters,
+			fingerprintBefore, analysis.analysisFingerprint());
 	}
 
 	@Override
