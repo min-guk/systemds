@@ -124,7 +124,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	public PlacementAnalysis requireAuthoritativeAnalysis(DMLProgram program) {
 		PlacementAnalysis analysis = program.requirePlacementAnalysisAuthority();
-		analysis.assertProgramOwner(program);
+		analysis.assertCanonicalProgramAuthority(program);
 		return analysis;
 	}
 

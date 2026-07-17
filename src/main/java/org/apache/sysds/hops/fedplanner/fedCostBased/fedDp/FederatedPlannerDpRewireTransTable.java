@@ -132,7 +132,7 @@ public class FederatedPlannerDpRewireTransTable {
 			throw new IllegalArgumentException("Rewire request fields must not be null");
 
 		PlacementAnalysis analysis = request.analysis();
-		analysis.assertProgramOwner(request.program());
+		analysis.assertCanonicalProgramAuthority(request.program());
 		List<HopOccurrenceProjection> ownedOccurrences = analysis.occurrences();
 		if (request.occurrences() != ownedOccurrences)
 			throw new IllegalArgumentException("Rewire occurrences are not the analysis-owned carrier");
