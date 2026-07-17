@@ -1,21 +1,33 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.security.MessageDigest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.AppliedPlanReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.InvocationCounters;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileState;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.MaterializeSpec;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.LocalMaterializeSpec;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry.AnchorSpec;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -25,6 +37,29 @@ import org.junit.Test;
 public class CampaignBDpSharedAnalysisOwnerContractTest {
 	private static final Path DP_ROOT = Path.of(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
+	private static final Path ARCHITECTURE_GUARD = Path.of(
+		"src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBArchitectureGuardTest.java");
+	private static final Path OWNERSHIP_CLOSURE = Path.of(
+		"src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBPlannerOwnershipClosure.java");
+	private static final Path TOKEN_SCANNER = Path.of(
+		"src/test/java/org/apache/sysds/test/component/federated/placement/guard/JavaSourceTokenScanner.java");
+	private static final String ARCHITECTURE_GUARD_SHA =
+		"8263e06a82f9f17823a1d281a5ab5f2932887ef17b950a7f5bcccaec8ea6fa90";
+	private static final String OWNERSHIP_CLOSURE_SHA =
+		"a6286fe39edad061225405023d707c676429bb6707fa84c852628db1185c57ab";
+	private static final String TOKEN_SCANNER_SHA =
+		"a80bb1b061b07743fa283631097a2966a9cf946f54bf53468ead9bfab5ac33c3";
+	private static final String DIRECT_DP_CLOSURE_EVIDENCE_SHA =
+		"8dcaf54c5993865315cc0c2e565ab766adffc159fb0c74eb911ee8bc07c0ac27";
+	private static final int FROZEN_DP_UNITS = 34;
+	private static final int FROZEN_DP_VIOLATIONS = 140;
+	private static final int PREDICTED_H1_DP_VIOLATIONS = 139;
+	private static final String SENTINEL_VAR = "__campaign_b_dp_owner_sentinel";
+	private static final String SENTINEL_SIGNATURE = "fed://campaign-b/dp-owner";
+	private static final String SENTINEL_ANCHOR = SENTINEL_SIGNATURE + "|ROW";
+	private static final long SENTINEL_SCOPE = -911L;
+	private static final long SENTINEL_HOP = -912L;
+	private static final long SENTINEL_ANCHOR_HOP = -913L;
 
 	@Test
 	public void exactBuilderOwnerFlowsThroughMemoAdapterAndInvocationReceipt() {
@@ -76,29 +111,50 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	}
 
 	@Test
-	public void independentlyCompiledSameSourceOwnerRejectsBeforeResetEnumerationOrApplication() {
+	public void secondAnalysisBuildForSameProgramRejectsBeforeEveryObservableMutation() {
 		Fixture owner = fixture("B-05");
-		Fixture copied = fixture("B-05");
-		Assert.assertNotSame(owner.program(), copied.program());
-		Assert.assertNotSame(owner.analysis(), copied.analysis());
+		PlacementAnalysis copied = new NeutralPlacementGraphBuilder().buildAnalysis(owner.program());
+		Assert.assertNotSame(owner.analysis(), copied);
+		Assert.assertSame(owner.program(), owner.analysis().programOwner());
+		Assert.assertSame(owner.program(), copied.programOwner());
+		assertSameHopOrigins(owner.analysis(), copied);
 		ProgramSnapshot ownerBefore = snapshotProgram(owner.program(), owner.analysis());
-		ProgramSnapshot copiedBefore = snapshotProgram(copied.program(), copied.analysis());
+		AnalysisSnapshot copiedBefore = snapshotAnalysis(copied);
+		Hop recompileSentinel = owner.analysis().occurrences().stream().map(HopOccurrenceProjection::hop)
+			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst()
+			.orElseThrow(() -> new AssertionError("fixture has no source-owned recompile sentinel Hop"));
 
+		seedRunState(recompileSentinel);
+		RunStateSnapshot runStateBefore = snapshotRunState(recompileSentinel);
 		try {
-			new FederatedPlannerDpFedCostBased().rewriteProgram(owner.program(),
-				new FunctionCallGraph(owner.program()), null, copied.analysis());
-			Assert.fail("independently compiled same-source analysis became a second DP owner");
+			DpInvocationReceipt accepted = new FederatedPlannerDpFedCostBased().rewriteProgram(owner.program(),
+				new FunctionCallGraph(owner.program()), null, copied);
+			RunStateSnapshot afterAcceptance = snapshotRunState(recompileSentinel);
+			Assert.fail("same-program second analysis was accepted as a DP owner; counters=" + accepted.counters()
+				+ " runStatePreserved=" + runStateBefore.sameIdentities(afterAcceptance));
 		}
 		catch(IllegalArgumentException expected) {
-			Assert.assertEquals("Placement analysis is foreign to the supplied program", expected.getMessage());
+			assertProgramSame(ownerBefore, snapshotProgram(owner.program(), owner.analysis()));
+			assertAnalysisSame(copiedBefore, snapshotAnalysis(copied));
+			assertRunStateSame(runStateBefore, snapshotRunState(recompileSentinel));
 		}
-
-		assertProgramSame(ownerBefore, snapshotProgram(owner.program(), owner.analysis()));
-		assertProgramSame(copiedBefore, snapshotProgram(copied.program(), copied.analysis()));
+		finally {
+			clearRunState();
+		}
 	}
 
 	@Test
 	public void typedRootUsesExactOwnerBoundaryWithoutDuplicateProgramWalk() throws Exception {
+		Assert.assertEquals("architecture guard authority changed", ARCHITECTURE_GUARD_SHA,
+			sha256(ARCHITECTURE_GUARD));
+		Assert.assertEquals("complete ownership-closure authority changed", OWNERSHIP_CLOSURE_SHA,
+			sha256(OWNERSHIP_CLOSURE));
+		Assert.assertEquals("Java source token scanner authority changed", TOKEN_SCANNER_SHA,
+			sha256(TOKEN_SCANNER));
+		Assert.assertEquals("H1 prediction must remove exactly one violation", FROZEN_DP_VIOLATIONS - 1,
+			PREDICTED_H1_DP_VIOLATIONS);
+		Assert.assertEquals("H1 must preserve the complete DP closure unit count", 34, FROZEN_DP_UNITS);
+		Assert.assertEquals("frozen direct-closure evidence SHA", 64, DIRECT_DP_CLOSURE_EVIDENCE_SHA.length());
 		String source = Files.readString(DP_ROOT);
 		String typedSignature = "public DpInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,";
 		int typedStart = source.indexOf(typedSignature);
@@ -134,6 +190,80 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		return new AnalysisSnapshot(analysis, analysis.graph(), analysis.analysisFingerprint(),
 			List.copyOf(analysis.occurrences()), analysis.occurrences().stream()
 				.map(OccurrenceSnapshot::new).toList());
+	}
+
+	private static void assertSameHopOrigins(PlacementAnalysis owner, PlacementAnalysis copied) {
+		Assert.assertEquals(owner.occurrences().size(), copied.occurrences().size());
+		for(int i = 0; i < owner.occurrences().size(); i++) {
+			HopOccurrenceProjection left = owner.occurrences().get(i), right = copied.occurrences().get(i);
+			Assert.assertSame("same-program Hop origin " + i, left.hop(), right.hop());
+			Assert.assertEquals("same-program compiled key " + i, left.key(), right.key());
+			Assert.assertEquals("same-program normalized ordinal " + i,
+				left.normalizedOrdinal(), right.normalizedOrdinal());
+			Assert.assertEquals("same-program normalized signature " + i,
+				left.normalizedSignature(), right.normalizedSignature());
+		}
+	}
+
+	private static void seedRunState(Hop recompileSentinel) {
+		clearRunState();
+		FederatedPlannerUtils.registerFedInitVar(SENTINEL_VAR, FType.ROW, SENTINEL_SIGNATURE);
+		FederatedPlannerUtils.registerFedAnchorKey(SENTINEL_VAR, SENTINEL_ANCHOR);
+		FederatedPlannerUtils.registerPlannerRecompileState(recompileSentinel, ExecType.CP, FederatedOutput.LOUT);
+		FederatedRefedRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_ANCHOR_HOP, SENTINEL_ANCHOR);
+		FederatedFoutMaterializeRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_ANCHOR_HOP,
+			FType.ROW.name(), SENTINEL_VAR, SENTINEL_ANCHOR);
+		FederatedLocalMaterializeRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP,
+			List.of(SENTINEL_ANCHOR_HOP), FType.ROW.name(), "campaign-b-dp-owner-sentinel");
+	}
+
+	private static RunStateSnapshot snapshotRunState(Hop recompileSentinel) {
+		String recompileSignature = FederatedPlannerUtils.plannerRecompileSignature(recompileSentinel);
+		return new RunStateSnapshot(FederatedPlannerUtils.isFedInitVar(SENTINEL_VAR),
+			FederatedPlannerUtils.getFedInitFType(SENTINEL_VAR),
+			FederatedPlannerUtils.getFedInitSignature(SENTINEL_VAR),
+			FederatedPlannerUtils.getFedAnchorKey(SENTINEL_VAR), recompileSignature,
+			FederatedPlannerUtils.getPlannerRecompileState(recompileSignature),
+			FederatedRefedRegistry.snapshot(SENTINEL_SCOPE),
+			FederatedFoutMaterializeRegistry.snapshot(SENTINEL_SCOPE),
+			FederatedLocalMaterializeRegistry.snapshotScopes(SENTINEL_SCOPE));
+	}
+
+	private static void clearRunState() {
+		FederatedPlannerUtils.removeFedAnchorKey(SENTINEL_VAR);
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+	}
+
+	private static void assertRunStateSame(RunStateSnapshot expected, RunStateSnapshot actual) {
+		Assert.assertEquals("fed-init sentinel changed", expected.fedInit(), actual.fedInit());
+		Assert.assertSame("fed-init FType changed", expected.fedInitType(), actual.fedInitType());
+		Assert.assertEquals("fed-init signature changed", expected.fedInitSignature(), actual.fedInitSignature());
+		Assert.assertEquals("fed anchor changed", expected.anchorKey(), actual.anchorKey());
+		Assert.assertEquals("recompile signature changed", expected.recompileSignature(), actual.recompileSignature());
+		Assert.assertSame("recompile state changed", expected.recompileState(), actual.recompileState());
+		assertRegistrySame(expected.refed(), actual.refed(), "refed registry");
+		assertRegistrySame(expected.fout(), actual.fout(), "FOUT registry");
+		Assert.assertEquals("local-materialize scopes changed", expected.local().keySet(), actual.local().keySet());
+		for(long scope : expected.local().keySet())
+			assertRegistrySame(expected.local().get(scope), actual.local().get(scope),
+				"local-materialize registry scope " + scope);
+	}
+
+	private static void assertRegistrySame(Map<?, ?> expected, Map<?, ?> actual, String label) {
+		Assert.assertEquals(label + " keys", expected.keySet(), actual.keySet());
+		for(Object key : expected.keySet())
+			Assert.assertSame(label + " value " + key, expected.get(key), actual.get(key));
+	}
+
+	private static String sha256(Path path) throws Exception {
+		byte[] digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path));
+		StringBuilder value = new StringBuilder(digest.length * 2);
+		for(byte item : digest)
+			value.append(String.format("%02x", item & 0xff));
+		return value.toString();
 	}
 
 	private static ProgramSnapshot snapshotProgram(DMLProgram program, PlacementAnalysis analysis) {
@@ -215,4 +345,15 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	}
 	private record ProgramSnapshot(DMLProgram program, String fingerprint, AnalysisSnapshot analysis,
 		List<HopSnapshot> hops) { }
+	private record RunStateSnapshot(boolean fedInit, FType fedInitType, String fedInitSignature, String anchorKey,
+		String recompileSignature, PlannerRecompileState recompileState, Map<Long, AnchorSpec> refed,
+		Map<Long, MaterializeSpec> fout, Map<Long, Map<Long, LocalMaterializeSpec>> local) {
+		private boolean sameIdentities(RunStateSnapshot that) {
+			return fedInit == that.fedInit && fedInitType == that.fedInitType
+				&& java.util.Objects.equals(fedInitSignature, that.fedInitSignature)
+				&& java.util.Objects.equals(anchorKey, that.anchorKey)
+				&& recompileState == that.recompileState && refed.equals(that.refed)
+				&& fout.equals(that.fout) && local.equals(that.local);
+		}
+	}
 }
