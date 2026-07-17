@@ -202,7 +202,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable(analysis);
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
 			prog, memoTable, FederatedPlannerTrace.isEnabled());
 
