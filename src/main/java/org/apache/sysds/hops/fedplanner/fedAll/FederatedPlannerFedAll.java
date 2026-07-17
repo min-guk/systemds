@@ -68,7 +68,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	public FedAllInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
 		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
 		Objects.requireNonNull(analysis, "analysis");
-		analysis.assertProgramOwner(prog);
+		analysis.assertCanonicalProgramAuthority(prog);
 		String fingerprintBefore = analysis.analysisFingerprint();
 		FedAllPlacementAdapter.Result result = select(analysis);
 		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 0, 0);
