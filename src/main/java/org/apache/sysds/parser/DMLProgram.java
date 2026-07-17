@@ -24,7 +24,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.runtime.controlprogram.Program;
 
 public class DMLProgram 
@@ -36,6 +39,7 @@ public class DMLProgram
 	private ArrayList<StatementBlock> _blocks;
 	private Map<String, FunctionDictionary<FunctionStatementBlock>> _namespaces;
 	private boolean _containsRemoteParfor;
+	private final AtomicReference<PlacementAnalysis> _placementAnalysisAuthority = new AtomicReference<>();
 	
 	public DMLProgram(){
 		_blocks = new ArrayList<>();
@@ -46,6 +50,33 @@ public class DMLProgram
 	public DMLProgram(String namespace) {
 		this();
 		createNamespace(namespace);
+	}
+
+	PlacementAnalysis bindPlacementAnalysisAtFinalHopBoundary() {
+		PlacementAnalysis current = _placementAnalysisAuthority.get();
+		if(current == null) {
+			PlacementAnalysis candidate = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(this);
+			_placementAnalysisAuthority.compareAndSet(null, candidate);
+			current = _placementAnalysisAuthority.get();
+		}
+		return current;
+	}
+
+	public PlacementAnalysis requirePlacementAnalysisAuthority() {
+		PlacementAnalysis current = _placementAnalysisAuthority.get();
+		if(current == null)
+			throw new IllegalStateException("Program has no authoritative placement analysis");
+		return current;
+	}
+
+	public void requirePlacementAnalysisAuthority(PlacementAnalysis candidate) {
+		if(candidate == null || _placementAnalysisAuthority.get() != candidate)
+			throw new IllegalArgumentException("Placement analysis is not the canonical program owner");
+	}
+
+	void requirePlacementAnalysisUnboundForHopRewrite() {
+		if(_placementAnalysisAuthority.get() != null)
+			throw new IllegalStateException("Compiled Hop structure cannot be rewritten after placement authority binding");
 	}
 	
 	public Map<String,FunctionDictionary<FunctionStatementBlock>> getNamespaces(){

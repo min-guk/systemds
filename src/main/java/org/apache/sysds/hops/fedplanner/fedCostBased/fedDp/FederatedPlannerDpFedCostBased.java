@@ -330,49 +330,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private static void validateSuppliedAnalysis(DMLProgram prog, PlacementAnalysis analysis) {
-		Set<Hop> programHops = Collections.newSetFromMap(new IdentityHashMap<>());
-		List<Hop> roots = new ArrayList<>();
-		for(StatementBlock block : prog.getStatementBlocks())
-			collectProgramRoots(block, roots);
-		for(String namespace : prog.getNamespaces().keySet())
-			for(FunctionStatementBlock function : prog.getFunctionStatementBlocks(namespace).values())
-				collectProgramRoots(function, roots);
-		Queue<Hop> queue = new ArrayDeque<>(roots);
-		while(!queue.isEmpty()) {
-			Hop hop = queue.remove();
-			if(hop == null || !programHops.add(hop)) continue;
-			queue.addAll(hop.getInput());
-		}
-		if(analysis.occurrences().isEmpty()
-			|| analysis.occurrences().stream().anyMatch(occurrence -> !programHops.contains(occurrence.hop())))
-			throw new IllegalArgumentException("Placement analysis is foreign to the supplied program");
-	}
-
-	private static void collectProgramRoots(StatementBlock block, List<Hop> roots) {
-		if(block == null) return;
-		if(block instanceof IfStatementBlock ifBlock) {
-			IfStatement statement = (IfStatement) ifBlock.getStatement(0);
-			roots.add(ifBlock.getPredicateHops());
-			for(StatementBlock child : statement.getIfBody()) collectProgramRoots(child, roots);
-			for(StatementBlock child : statement.getElseBody()) collectProgramRoots(child, roots);
-		}
-		else if(block instanceof ForStatementBlock forBlock) {
-			ForStatement statement = (ForStatement) forBlock.getStatement(0);
-			roots.add(forBlock.getFromHops()); roots.add(forBlock.getToHops());
-			if(forBlock.getIncrementHops() != null) roots.add(forBlock.getIncrementHops());
-			for(StatementBlock child : statement.getBody()) collectProgramRoots(child, roots);
-		}
-		else if(block instanceof WhileStatementBlock whileBlock) {
-			WhileStatement statement = (WhileStatement) whileBlock.getStatement(0);
-			roots.add(whileBlock.getPredicateHops());
-			for(StatementBlock child : statement.getBody()) collectProgramRoots(child, roots);
-		}
-		else if(block instanceof FunctionStatementBlock functionBlock) {
-			FunctionStatement statement = (FunctionStatement) functionBlock.getStatement(0);
-			for(StatementBlock child : statement.getBody()) collectProgramRoots(child, roots);
-		}
-		else if(block.getHops() != null)
-			roots.addAll(block.getHops());
+		analysis.assertProgramOwner(prog);
+		prog.requirePlacementAnalysisAuthority(analysis);
 	}
 
 	@Override
