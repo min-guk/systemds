@@ -56,10 +56,11 @@ public final class HeuristicPlacementAdapter {
 		for(Node node : base.nodes())
 			if(descendants.contains(node.key())) descendantValues.add(node.valueVersion());
 		List<String> exclusions = policyExclusions(analysis, markerKeys);
-		List<String> candidates = candidateUniverse(base, exclusions);
 		List<NeutralPlacementGraph.RelocationAction> legalRelocations = base.relocationActions().stream()
 			.filter(action -> !descendantValues.contains(action.key().sourceValueVersion())).toList();
-		NeutralPlacementGraph filtered = new NeutralPlacementGraph(base.nodes(), base.constraints(), legalRelocations);
+		NeutralPlacementGraph filtered = new NeutralPlacementGraph(
+			filteredNodes(analysis, markerKeys, exclusions), base.constraints(), legalRelocations);
+		List<String> candidates = filtered.normalizedCandidateUniverse();
 		PlacementSelection selection = new ExactPlacementSelector().select(filtered);
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
 		validateProjection(analysis, filtered, assignment);
@@ -91,13 +92,13 @@ public final class HeuristicPlacementAdapter {
 		String incumbent = selection.score().normalizedSignature();
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
 			relocations.size(), incumbent);
-		List<Bound> boundComponents = componentBounds(base);
+		List<Bound> boundComponents = componentBounds(filtered);
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
 			assignmentHash, candidates.size(), candidates.size(), 0, List.of("complete"), incumbent,
-			incumbent, "EXHAUSTED", false, sha256(base.normalizedSignature()), score, score,
-			boundComponents, base.nodes().size(), base.constraints().size(), boundComponents.size(),
+			incumbent, "EXHAUSTED", false, sha256(filtered.normalizedSignature()), score, score,
+			boundComponents, filtered.nodes().size(), filtered.constraints().size(), boundComponents.size(),
 			"complete-cartesian-enumeration-with-partial-legality-pruning");
-		Result partial = new Result(analysis, analysis.analysisFingerprint(), assignment, candidates, exclusions,
+		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment, candidates, exclusions,
 			relocations, obligations, anchors, List.of(), List.of(), List.of(), objective, ties, relationships,
 			boundaries, clones, structural, facts, certificate, score, "");
 		return partial.withNormalizedPlanFingerprint(planFingerprint(partial));
@@ -143,32 +144,70 @@ public final class HeuristicPlacementAdapter {
 
 	private static List<String> policyExclusions(PlacementAnalysis analysis, List<CompiledHopKey> markerKeys) {
 		List<String> exclusions = new ArrayList<>();
+		Set<CompiledHopKey> typedMarkers = analysis.heuristicPolicyFacts().demotions().stream()
+			.map(fact -> fact.producer()).collect(java.util.stream.Collectors.toSet());
 		for(CompiledHopKey marker : markerKeys) {
 			Set<CompiledHopKey> descendants = closure(analysis.graph(), Set.of(marker));
 			DurableAnchorKey anchor = policyAnchor(analysis.graph(), Set.of(marker));
 			ValueVersionKey markerValue = analysis.graph().node(marker).orElseThrow().valueVersion();
 			for(Node node : analysis.graph().nodes()) {
-				String proof = candidateProof(analysis, node, anchor, marker, descendants);
-				if(proof != null) exclusions.add("NO_REFED|" + node.key().normalizedSignature() + '='
-					+ proof.substring(0, proof.indexOf('|')) + "|proof=" + proof.substring(proof.indexOf('|') + 1)
-					+ "|marker=" + markerValue.normalizedSignature());
+				addPolicyExclusion(exclusions, node, markerValue,
+					candidateProof(analysis, node, anchor, marker, descendants, null), false);
+				if(typedMarkers.contains(marker))
+					for(PlacementState state : node.legalAlternatives())
+						if(state.output() == FederatedOutput.FOUT)
+							addPolicyExclusion(exclusions, node, markerValue,
+								candidateProof(analysis, node, anchor, marker, descendants, state), true);
 			}
 		}
-		Collections.sort(exclusions);
-		return List.copyOf(exclusions);
+		return exclusions.stream().distinct().sorted().toList();
 	}
-	private static List<String> candidateUniverse(NeutralPlacementGraph graph, List<String> policyExclusions) {
-		if(policyExclusions.isEmpty()) return graph.normalizedCandidateUniverse();
-		List<String> candidates = new ArrayList<>();
-		for(Node node : graph.nodes())
-			for(PlacementState state : node.legalAlternatives())
-				candidates.add(node.key().normalizedSignature() + '=' + state.normalizedSignature());
-		Collections.sort(candidates);
-		return List.copyOf(candidates);
+
+	private static void addPolicyExclusion(List<String> exclusions, Node node, ValueVersionKey markerValue,
+		String proof, boolean graphNormalizedCandidate) {
+		if(proof == null) return;
+		String state = proof.substring(0, proof.indexOf('|'));
+		String candidate = graphNormalizedCandidate ? normalizedCandidate(node.key().normalizedSignature(), state)
+			: node.key().normalizedSignature() + '=' + state;
+		exclusions.add("NO_REFED|" + candidate + "|proof=" + proof.substring(proof.indexOf('|') + 1)
+			+ "|marker=" + markerValue.normalizedSignature());
+	}
+
+	private static String normalizedCandidate(String key, String state) {
+		return key.length() + ":" + key + '|' + state.length() + ":" + state;
+	}
+
+	private static List<Node> filteredNodes(PlacementAnalysis analysis, List<CompiledHopKey> markerKeys,
+		List<String> policyExclusions) {
+		Set<String> removedCandidates = new LinkedHashSet<>();
+		for(String exclusion : policyExclusions) {
+			int proof = exclusion.indexOf("|proof=");
+			if(!exclusion.startsWith("NO_REFED|") || proof < 0)
+				throw new HeuristicPolicySafetyException();
+			removedCandidates.add(exclusion.substring("NO_REFED|".length(), proof));
+		}
+		Set<CompiledHopKey> typedMarkers = new LinkedHashSet<>();
+		for(var fact : analysis.heuristicPolicyFacts().demotions())
+			if(markerKeys.contains(fact.producer())) typedMarkers.add(fact.producer());
+		List<Node> nodes = new ArrayList<>(analysis.graph().nodes().size());
+		for(Node node : analysis.graph().nodes()) {
+			List<PlacementState> legal = node.legalAlternatives().stream().filter(state ->
+				!removedCandidates.contains(node.key().normalizedSignature() + '=' + state.normalizedSignature())
+					&& !removedCandidates.contains(normalizedCandidate(node.key().normalizedSignature(),
+						state.normalizedSignature()))).toList();
+			if(typedMarkers.contains(node.key()))
+				legal = legal.stream().filter(state -> state.execType() == ExecType.FED
+					&& state.output() == FederatedOutput.LOUT && state.fType() != null
+					&& state.shapeDependent()).toList();
+			if(node.emittedWork() && legal.isEmpty()) throw new HeuristicPolicySafetyException();
+			nodes.add(new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
+				legal, node.exclusions(), node.anchors()));
+		}
+		return List.copyOf(nodes);
 	}
 
 	private static String candidateProof(PlacementAnalysis analysis, Node node, DurableAnchorKey anchor,
-		CompiledHopKey marker, Set<CompiledHopKey> descendants) {
+		CompiledHopKey marker, Set<CompiledHopKey> descendants, PlacementState requestedState) {
 		// Anchor extents are useful only after the neutral graph has positively ruled out unknown or
 		// unsupported node metadata.  They never substitute for missing node-shape evidence.
 		if(!descendants.contains(node.key()) || !node.emittedWork() || !node.anchors().isEmpty()) return null;
@@ -178,8 +217,9 @@ public final class HeuristicPlacementAdapter {
 		if(shape == null) return null;
 		boolean boundary = node.kind() == NodeKind.TRANSIENT_READ || node.kind() == NodeKind.TRANSIENT_WRITE
 			|| "recompile".equals(node.key().recompileContext());
-		PlacementState state = new PlacementState(boundary ? ExecType.FED : ExecType.CP,
-			FederatedOutput.FOUT, anchor.fType(), anchor.fType() != FType.BROADCAST);
+		PlacementState state = requestedState == null ? new PlacementState(boundary ? ExecType.FED : ExecType.CP,
+			FederatedOutput.FOUT, anchor.fType(), anchor.fType() != FType.BROADCAST) : requestedState;
+		if(state.output() != FederatedOutput.FOUT || state.fType() != anchor.fType()) return null;
 		if(node.exclusions().stream().anyMatch(exclusion -> exclusion.state().equals(state)
 			&& hasUnsupportedShapeMetadata(exclusion))) return null;
 		RelocationActionKey relocation = new RelocationActionKey(node.valueVersion(), state, anchor,
@@ -267,7 +307,9 @@ public final class HeuristicPlacementAdapter {
 	}
 	private static void validateProjection(PlacementAnalysis analysis, NeutralPlacementGraph graph,
 		Map<CompiledHopKey, PlacementState> assignment) {
-		if(assignment.size() != graph.nodes().size()) throw new IllegalStateException("Incomplete Heuristic assignment");
+		Set<CompiledHopKey> decisionKeys = graph.decisionNodes().stream().map(Node::key)
+			.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+		if(!assignment.keySet().equals(decisionKeys)) throw new IllegalStateException("Incomplete Heuristic assignment");
 		for(var entry : assignment.entrySet()) {
 			if(!graph.node(entry.getKey()).orElseThrow().legalAlternatives().contains(entry.getValue()))
 				throw new IllegalStateException("State outside filtered universe");
@@ -371,7 +413,8 @@ public final class HeuristicPlacementAdapter {
 		}
 	}
 	public record Result(PlacementAnalysis analysis, String analysisFingerprint,
-		Map<CompiledHopKey,PlacementState> assignment, List<String> filteredCandidateUniverse,
+		NeutralPlacementGraph selectorGraph, Map<CompiledHopKey,PlacementState> assignment,
+		List<String> filteredCandidateUniverse,
 		List<String> policyExclusions, List<RelocationActionKey> selectedRelocations,
 		List<ObligationKey> selectedObligations, List<DurableAnchorKey> durableAnchors,
 		List<String> registryRefed, List<String> registryFoutMaterialize, List<String> registryLocalMaterialize,
@@ -389,7 +432,7 @@ public final class HeuristicPlacementAdapter {
 			controlBoundaryFacts=List.copyOf(controlBoundaryFacts); cloneRecompileMultiplicities=List.copyOf(cloneRecompileMultiplicities);
 			structuralExclusions=List.copyOf(structuralExclusions); plannerFacts=Collections.unmodifiableMap(new TreeMap<>(plannerFacts));
 		}
-		Result withNormalizedPlanFingerprint(String value) { return new Result(analysis,analysisFingerprint,assignment,
+		Result withNormalizedPlanFingerprint(String value) { return new Result(analysis,analysisFingerprint,selectorGraph,assignment,
 			filteredCandidateUniverse,policyExclusions,selectedRelocations,selectedObligations,durableAnchors,
 			registryRefed,registryFoutMaterialize,registryLocalMaterialize,objectiveComponents,orderedTieBreaks,
 			transientRelationships,controlBoundaryFacts,cloneRecompileMultiplicities,structuralExclusions,

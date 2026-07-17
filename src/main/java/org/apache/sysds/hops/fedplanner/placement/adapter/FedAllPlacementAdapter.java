@@ -77,7 +77,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 
 	private static void validateProjection(PlacementAnalysis analysis, PlacementSelection selection) {
 		Set<CompiledHopKey> graphKeys = new LinkedHashSet<>();
-		for(Node node : analysis.graph().nodes()) graphKeys.add(node.key());
+		for(Node node : analysis.graph().decisionNodes()) graphKeys.add(node.key());
 		if(!selection.assignment().keySet().equals(graphKeys))
 			throw new IllegalStateException("FedAll selector did not return a total graph assignment");
 		for(Map.Entry<CompiledHopKey, PlacementState> entry : selection.assignment().entrySet()) {
@@ -231,7 +231,7 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 	}
 
 	private static SearchCounts searchCounts(NeutralPlacementGraph graph) {
-		List<Node> nodes = new ArrayList<>(graph.nodes());
+		List<Node> nodes = new ArrayList<>(graph.decisionNodes());
 		Collections.sort(nodes);
 		long[] counts = new long[2];
 		countSearch(graph, nodes, 0, new LinkedHashMap<>(), counts);

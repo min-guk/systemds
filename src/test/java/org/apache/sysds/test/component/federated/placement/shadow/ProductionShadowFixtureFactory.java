@@ -27,6 +27,12 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.Hop;
 
 /** Independently compiled production inputs for the B-01..B-22 shadow corpus. */
 public final class ProductionShadowFixtureFactory {
@@ -50,7 +56,28 @@ public final class ProductionShadowFixtureFactory {
 		// function fixtures. Keep those fixtures in their compiled, pre-inlining form.
 		if(!List.of("B-07", "B-08", "B-17", "B-21").contains(id))
 			translator.rewriteHopsDAG(program);
+		if("B-09".equals(id))
+			addExplicitRecompileClone(program);
 		return program;
+	}
+
+	private static void addExplicitRecompileClone(DMLProgram program) {
+		DataOp origin = write("X", matrixInput(1));
+		DataOp clone = write("X", matrixInput(1));
+		clone.setRequiresRecompile();
+		origin.setDim1(2); origin.setDim2(2); clone.setDim1(2); clone.setDim2(2);
+		StatementBlock block = new StatementBlock();
+		block.setHops(new java.util.ArrayList<Hop>(List.of(origin)));
+		program.getStatementBlocks().add(block);
+		StatementBlock cloneBlock = new StatementBlock();
+		cloneBlock.setHops(new java.util.ArrayList<Hop>(List.of(clone)));
+		program.getStatementBlocks().add(cloneBlock);
+	}
+	private static Hop matrixInput(int value) { return new DataOp("M" + value, DataType.MATRIX, ValueType.FP64,
+		OpOpData.TRANSIENTREAD, "M" + value, 4, 2, -1, -1); }
+	private static DataOp write(String variable, Hop input) {
+		DataOp out = new DataOp(variable, input.getDataType(), input.getValueType(), input,
+			OpOpData.TRANSIENTWRITE, variable); out.setDim1(input.getDim1()); out.setDim2(input.getDim2()); return out;
 	}
 
 	public static Map<String, String> scripts() {

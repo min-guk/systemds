@@ -50,6 +50,19 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 
 	public static long constructionCount() { return CONSTRUCTIONS.get(); }
 
+	/** Reorders only the immutable occurrence projection while retaining the exact owner, graph, and policy facts. */
+	public static PlacementAnalysis withProjectionOrder(PlacementAnalysis source,
+		org.apache.sysds.parser.DMLProgram programOwner, ProjectionOrder order) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(programOwner, "programOwner");
+		Objects.requireNonNull(order, "order");
+		CONSTRUCTIONS.incrementAndGet();
+		List<HopOccurrenceProjection> projections = new ArrayList<>(source.occurrences());
+		if(order == ProjectionOrder.REVERSED) Collections.reverse(projections);
+		return new PlacementAnalysis(source.graph(), projections, programOwner,
+			copiedShapeFacts(source, projections), source.analysisFingerprint(), source.heuristicPolicyFacts());
+	}
+
 	/** Returns an exact immutable occurrence prefix retaining source graph objects. */
 	public static PlacementAnalysis prefix(PlacementAnalysis source, int occurrenceCount) {
 		Objects.requireNonNull(source, "source");

@@ -25,6 +25,7 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
@@ -45,6 +46,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKe
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
@@ -128,6 +130,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
 		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
+		Map<Hop,NodeShapeFact> factsByHop = new IdentityHashMap<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			Hop hop = occurrence.hop();
@@ -137,6 +140,9 @@ public final class NeutralPlacementGraphBuilder {
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
 				occurrence.topology(), PlacementGraphFingerprint.semanticStructuralKey(hop));
 			origins.put(key, hop);
+			var shape = OracleFacade.nodeShape(hop);
+			NodeShapeFact shapeFact = new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols());
+			factsByHop.put(hop, shapeFact);
 			String variable = lexicalVariable(hop, ordinal);
 			int version = cfg.definitionOrdinals().get(ordinal);
 			VersionKind versionKind = context.equals("recompile") ? VersionKind.CLONE_RECOMPILE
@@ -159,7 +165,7 @@ public final class NeutralPlacementGraphBuilder {
 					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
 				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
 			}
-			Node node = buildNode(hop, key, value, anchors,
+			Node node = buildNode(hop, key, value, anchors, shapeFact,
 				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind));
 			nodes.add(node);
 			nodesByHop.put(hop, node);
@@ -168,6 +174,7 @@ public final class NeutralPlacementGraphBuilder {
 			throw new IllegalStateException("occurrence/node mismatch before CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
 		nodes = closeCfgValueVersions(occurrences, nodes, values, cfg);
+		nodes = classifyOrphanFunctionBodies(occurrences, nodes);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
@@ -198,16 +205,18 @@ public final class NeutralPlacementGraphBuilder {
 				throw new IllegalStateException("Neutral placement node has no compiled Hop origin: " + key);
 			projections.add(new HopOccurrenceProjection(key, hop, ordinal, key.normalizedSignature()));
 		}
-		var factsByKey = new LinkedHashMap<CompiledHopKey, NodeShapeFact>();
 		Set<CompiledHopKey> expectedKeys = new LinkedHashSet<>();
+		var factsByKey = new LinkedHashMap<CompiledHopKey, NodeShapeFact>();
 		for(HopOccurrenceProjection projection : projections) {
-			var shape = OracleFacade.nodeShape(projection.hop());
 			expectedKeys.add(projection.key());
-			factsByKey.put(projection.key(), new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols()));
+			NodeShapeFact shapeFact = factsByHop.get(projection.hop());
+			if(shapeFact == null)
+				throw new IllegalStateException("Placement projection has no builder-owned shape fact: " + projection.key());
+			factsByKey.put(projection.key(), shapeFact);
 		}
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections);
-		HeuristicPolicyFacts heuristicPolicyFacts = new HeuristicPolicyFacts(List.of());
+		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts);
 		String after = PlacementGraphFingerprint.capture(program);
@@ -216,6 +225,29 @@ public final class NeutralPlacementGraphBuilder {
 		if(!registryBefore.equals(registrySentinel(program)))
 			throw new IllegalStateException("Neutral placement analysis mutated federated refed state");
 		return analysis;
+	}
+
+	private static HeuristicPolicyFacts heuristicPolicyFacts(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts) {
+		List<HeuristicPolicyFact> demotions = new ArrayList<>();
+		for(HopOccurrenceProjection projection : projections) {
+			Hop hop = projection.hop();
+			Node node = graph.node(projection.key()).orElseThrow();
+			NodeShapeFact shape = shapeFacts.shapeFact(projection.key()).orElseThrow();
+			boolean exactLocalAlternative = node.legalAlternatives().stream().anyMatch(state ->
+				state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT && state.shapeDependent()
+					&& isAggregateBinaryVectorInput(hop, shape, state.fType()));
+			if(exactLocalAlternative)
+				demotions.add(new HeuristicPolicyFact(projection.key(), node.valueVersion()));
+		}
+		return new HeuristicPolicyFacts(demotions);
+	}
+
+	private static boolean isAggregateBinaryVectorInput(Hop hop, NodeShapeFact shape, FType inputType) {
+		if(!(hop instanceof AggBinaryOp) || !shape.knownPositiveMatrix())
+			return false;
+		return inputType == FType.ROW && shape.cols() == 1
+			|| inputType == FType.COL && shape.rows() == 1;
 	}
 
 	static String analysisFingerprint(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences) {
@@ -447,6 +479,19 @@ public final class NeutralPlacementGraphBuilder {
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins));
 	}
+	private static List<Node> classifyOrphanFunctionBodies(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		List<Node> nodes) {
+		List<Node> result = new ArrayList<>(nodes);
+		for(int i = 0; i < occurrences.size(); i++) {
+			var o = occurrences.get(i);
+			if(o.namespace() == null || o.namespace().isBlank() || o.namespace().equals("main") || !o.path().startsWith("function/")
+				|| occurrences.stream().anyMatch(x -> x.hop() instanceof FunctionOp && functionMatches((FunctionOp)x.hop(), o.namespace()))) continue;
+			Node n = nodes.get(i);
+			result.set(i, new Node(n.key(), NodeKind.FUNCTION_BODY_NON_EMITTED, n.valueVersion(), false, List.of(),
+				List.of(new Exclusion(new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false), ReasonCode.NON_EMITTED_FUNCTION_BODY_CONTEXT, "orphan-function-body")), List.of()));
+		}
+		return result;
+	}
 
 	private static Node functionBoundaryNode(Node call, String functionKey, String variable, int callIndex,
 		int position, VersionKind versionKind, NodeKind nodeKind, List<PlacementState> alternatives) {
@@ -522,11 +567,15 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
-		List<List<FType>> inputDomains) {
+		NodeShapeFact shape, List<List<FType>> inputDomains) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
 		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 		legal.add(cp);
+		if(key.recompileContext().equals("recompile")) {
+			PlacementState forbidden = new PlacementState(ExecType.CP, FederatedOutput.FOUT, null, false);
+			excluded.putIfAbsent(forbidden, new Exclusion(forbidden, ReasonCode.RECOMPILE_CP_FOUT, "recompile-context forbids CP/FOUT"));
+		}
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		for(List<FType> inputs : inputCombinations(inputDomains)) {
 			OpCaps caps;
@@ -549,15 +598,19 @@ public final class NeutralPlacementGraphBuilder {
 				+ '|' + caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
-			else if(transientAccess && !isLegalTransient(state))
-				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
 			else if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
+			else if(transientAccess && !isLegalTransient(state))
+				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
 			else if(!evidence.shapeProof().missingRequiredFacts().isEmpty())
 				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNKNOWN_METADATA, detail));
-			else if(caps.exec() == ExecType.FED)
+			else if(caps.exec() == ExecType.FED) {
 				legal.add(state);
+				for(FType inputType : inputs)
+					if(isAggregateBinaryVectorInput(hop, shape, inputType))
+						legal.add(new PlacementState(ExecType.FED, FederatedOutput.LOUT, inputType, true));
+			}
 		}
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));

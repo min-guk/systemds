@@ -28,8 +28,7 @@ final class R4SharedFedAllSemanticValidator {
 
 	static void shared(PlacementAnalysis supplied, Selection actual) {
 		require(actual.analysis() == supplied, "R4_ANALYSIS_IDENTITY");
-		Set<CompiledHopKey> keys = supplied.graph().nodes().stream().map(NeutralPlacementGraph.Node::key)
-			.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+		Set<CompiledHopKey> keys = decisionKeys(supplied.graph());
 		require(actual.assignment().keySet().equals(keys), "R4_ASSIGNMENT_KEYS");
 		for(var e : actual.assignment().entrySet()) require(supplied.graph().node(e.getKey()).orElseThrow()
 			.legalAlternatives().contains(e.getValue()), "R4_ASSIGNMENT_STATE|" + e.getKey().normalizedSignature());
@@ -39,14 +38,27 @@ final class R4SharedFedAllSemanticValidator {
 		for(RelocationActionKey key : actual.relocations()) {
 			NeutralPlacementGraph.RelocationAction action = graphActions.get(key);
 			require(action != null, "R4_RELOCATION_KEY|foreign");
+			boolean active = false;
 			for(var obligation : action.obligations()) {
-				require(keys.contains(obligation.consumer()), "R4_RELOCATION_OBLIGATION|consumer");
+				require(supplied.graph().node(obligation.consumer()).isPresent(), "R4_RELOCATION_OBLIGATION|consumer");
 				require(key.equals(obligation.relocationAction()), "R4_RELOCATION_OBLIGATION|key");
+				active |= keys.contains(obligation.consumer());
 			}
+			require(active, "R4_RELOCATION_OBLIGATION|trace-only");
 		}
 		require(actual.certificate().graphFingerprint().equals(R4SharedFedAllAdapterBridge.graphHash(supplied)), "R4_GRAPH_HASH");
 		require(actual.certificate().assignmentHash().equals(R4SharedFedAllAdapterBridge.assignmentHash(actual.assignment())), "R4_ASSIGNMENT_HASH");
 		require(!actual.certificate().fallbackUsed(), "R4_FALLBACK");
+	}
+
+	static Set<CompiledHopKey> decisionKeys(NeutralPlacementGraph graph) {
+		Set<CompiledHopKey> keys = new LinkedHashSet<>();
+		for(var node : graph.nodes()) {
+			require(node.emittedWork() == !node.legalAlternatives().isEmpty(), "R4_NODE_POLARITY");
+			if(node.emittedWork() && !node.legalAlternatives().isEmpty())
+				keys.add(node.key());
+		}
+		return Set.copyOf(keys);
 	}
 
 	static void fedAll(Expected expected, Selection actual) {

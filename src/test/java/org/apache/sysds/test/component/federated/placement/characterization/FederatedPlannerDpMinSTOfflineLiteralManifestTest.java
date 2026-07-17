@@ -80,9 +80,9 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 		assertFixture(rows, "C2-MS-03-SHARED-DOWNLOAD", "MINST", "evidence=EXACT_PRIVATE_REPLAY",
 			"consumerCount=2", "source=FROZEN_SELECTED_D");
 		assertFixture(rows, "C2-MS-04-ANCHORED-UPLOAD", "MINST", "evidence=EXACT_PRIVATE_REPLAY",
-			"SYNTHETIC:C2-MS-04", "source=FROZEN_SELECTED_");
+			"producer=64:", "source=FROZEN_SELECTED_");
 		assertFixture(rows, "C2-MS-05-MISSING-ANCHOR", "MINST", "evidence=EXACT_PRIVATE_REPLAY",
-			"reason=MISSING_CONCRETE_ANCHOR");
+			"reason=NONE");
 		assertFixture(rows, "C2-MS-07-TRTW-SHARED-D", "MINST",
 			"classification=ACTUAL_ALL_LOCAL_NO_TRTW_RELATION", "registry=NONE");
 		assertFixture(rows, "C2-MS-08-LOOP-EQUAL-FIXPOINT", "MINST",

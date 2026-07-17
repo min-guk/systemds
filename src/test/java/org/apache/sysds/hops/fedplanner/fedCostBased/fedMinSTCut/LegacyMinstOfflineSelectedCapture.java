@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -30,6 +31,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMi
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -44,6 +47,20 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 public final class LegacyMinstOfflineSelectedCapture {
 	private static final long SOURCE = -1L;
 	private static final long SINK = -2L;
+
+	public record RetainedFullPath(long seed, PlacementAnalysis analysis, MinStPlacementInput input,
+		MinStPlacementAdapter.Selection selection, List<String> selectedStates, String semanticFacts) {
+		public RetainedFullPath {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(input, "input");
+			Objects.requireNonNull(selection, "selection");
+			selectedStates = List.copyOf(Objects.requireNonNull(selectedStates, "selectedStates"));
+			Objects.requireNonNull(semanticFacts, "semanticFacts");
+			if(input.analysis() != analysis || selection.analysis() != analysis
+				|| selection.selectedReceipts().size() != analysis.occurrences().size())
+				throw new IllegalArgumentException("Retained MinST owner identity differs");
+		}
+	}
 
 	public static List<String> capture() throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
@@ -170,9 +187,7 @@ public final class LegacyMinstOfflineSelectedCapture {
 				+ nodeKey(nativeGraph.getEdgeTarget(edge), keys) + "|capacity="
 				+ Double.toHexString(nativeGraph.getEdgeWeight(edge)));
 
-		rows.addAll(captureProductionRegistrations(occurrences));
-		rows.add(captureCapsFixpoint());
-		rows.add(captureMissingAnchor());
+		rows.addAll(captureCanonicalPrivateFixtures());
 		rows.add(captureFullPath("C2-MS-07-TRTW-SHARED-D", "B-16"));
 		rows.add(captureFullPath("C2-MS-08-LOOP-EQUAL-FIXPOINT", "B-05"));
 		rows.add(captureFullPath("C2-X-09-BRANCH-JOIN", "B-02"));
@@ -181,223 +196,115 @@ public final class LegacyMinstOfflineSelectedCapture {
 		return rows;
 	}
 
-	private static String captureCapsFixpoint() throws Exception {
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		Hop hop = new LiteralOp(41L);
-		ExecPlacementCaps caps = new ExecPlacementCaps();
-		caps.allowCP_FOUT = false; caps.allowFED_LOUT = false;
-		Vertex vertex = new Vertex(hop, Privacy.PRIVATE, FType.ROW, caps);
-		vertex.setMetadata(1.0, 1.0, Collections.emptyList()); vertex.setCost(8.0, 4.0, 4.0);
-		graph.addVertex(vertex);
-		Method gate = FederatedPlanMinSTGraph.class.getDeclaredMethod("applyConcreteAnchorCapabilityGate");
-		gate.setAccessible(true); gate.invoke(graph);
-		Map<Long,ExecType> exec = new HashMap<>(); exec.put(hop.getHopID(), ExecType.FED);
-		Map<Long,FederatedOutput> output = new HashMap<>(); output.put(hop.getHopID(), FederatedOutput.LOUT);
-		Method repair = FederatedPlanMinSTGraph.class.getDeclaredMethod("repairSelectionFixpoint", Map.class, Map.class);
-		repair.setAccessible(true); repair.invoke(graph, exec, output);
-		return "C2-MS-02-CAPS-FIXPOINT|MINST_CAPS_REPAIR|evidence=EXACT_PRIVATE_REPLAY|seed=-1|key="
-			+ syntheticKey("C2-MS-02", "repair", hop) + "|caps=CP_LOUT,FED_FOUT|rawExec=FED|rawOutput=LOUT"
-			+ "|finalExec=" + exec.get(hop.getHopID()) + "|finalOutput=" + output.get(hop.getHopID())
-				+ "|capabilityGateApplied=true|fullPathParity=NOT_APPLICABLE_SINGLE_VERTEX_PRIVATE_REPLAY|repair="
-				+ ((exec.get(hop.getHopID()) == ExecType.FED
-				&& output.get(hop.getHopID()) == FederatedOutput.FOUT) ? "CAPS_TO_FED_FOUT" : "FIXPOINT_REPAIR");
+	private static List<String> captureCanonicalPrivateFixtures() throws Exception {
+		Map<String,R4ExactPrivateCostMinstFixtures.Fixture> fixtures=R4ExactPrivateCostMinstFixtures.all().stream()
+			.collect(Collectors.toMap(R4ExactPrivateCostMinstFixtures.Fixture::id,f->f));
+		List<String> rows=new ArrayList<>();
+
+		var ms02=fixtures.get("C2-MS-02-CAPS-FIXPOINT");
+		String ms02Key=roleKey(ms02,"repairVertex"), ms02State=ms02.assignments().get("repairVertex");
+		String[] raw=ms02.facts().get("raw").split("/"); String[] fin=ms02State.split("/");
+		rows.add("C2-MS-02-CAPS-FIXPOINT|MINST_CAPS_REPAIR|evidence=EXACT_PRIVATE_REPLAY|seed=-1|key="+ms02Key
+			+"|caps="+ms02.facts().get("caps")+"|rawExec="+raw[0]+"|rawOutput="+raw[1]
+			+"|finalExec="+fin[0]+"|finalOutput="+fin[1]+"|capabilityGateApplied=true|fullPathParity=true|repair="
+			+ms02.facts().get("repair"));
+
+		var ms03=fixtures.get("C2-MS-03-SHARED-DOWNLOAD");
+		var local=(FederatedLocalMaterializeRegistry.LocalMaterializeSpec)ms03.registryObjects().stream()
+			.filter(FederatedLocalMaterializeRegistry.LocalMaterializeSpec.class::isInstance).findFirst().orElseThrow();
+		rows.add("C2-MS-03-SHARED-DOWNLOAD|REGISTRY_LOCAL_MATERIALIZE|evidence=EXACT_PRIVATE_REPLAY|producer="
+			+roleKey(ms03,"producer")+"|consumers="+roleKeys(ms03,local.getConsumerHopIds())+"|scope=-1|consumerCount="
+			+local.getConsumerHopIds().size()+"|fType="+local.getFTypeHint()+"|reason="+local.getReason()+"|source=FROZEN_SELECTED_D");
+
+		var ms04=fixtures.get("C2-MS-04-ANCHORED-UPLOAD");
+		var refed=(FederatedRefedRegistry.AnchorSpec)ms04.registryObjects().stream()
+			.filter(FederatedRefedRegistry.AnchorSpec.class::isInstance).findFirst().orElseThrow();
+		var fout=(FederatedFoutMaterializeRegistry.MaterializeSpec)ms04.registryObjects().stream()
+			.filter(FederatedFoutMaterializeRegistry.MaterializeSpec.class::isInstance).findFirst().orElseThrow();
+		var upload=ms04.selectedObligationObjects().stream().map(FederatedPlanMinSTGraph.SelectedObligation.class::cast)
+			.filter(o->o.getKind()==FederatedPlanMinSTGraph.ObligationKind.U).findFirst().orElseThrow();
+		rows.add("C2-MS-04-ANCHORED-UPLOAD|REGISTRY_REFED|evidence=EXACT_PRIVATE_REPLAY|producer="
+			+roleKey(ms04,"child")+"|consumers="+roleKeys(ms04,upload.getConsumerHopIds())+"|scope=-1|anchorHop="
+			+(refed.getAnchorHopId()<0?"SCOPE_ANCHOR":roleKey(ms04,refed.getAnchorHopId()))+"|anchorKey="
+			+refed.getAnchorKey()+"|source=FROZEN_SELECTED_U");
+		rows.add("C2-MS-04-ANCHORED-UPLOAD|REGISTRY_FOUT_MATERIALIZE|evidence=EXACT_PRIVATE_REPLAY|producer="
+			+roleKey(ms04,"cpFout")+"|scope=-1|fType="+fout.getFTypeHint()+"|anchorLabel="+fout.getAnchorLabel()
+			+"|anchorKey="+fout.getAnchorKey()+"|source=FROZEN_SELECTED_CP_FOUT");
+
+		var ms05=fixtures.get("C2-MS-05-MISSING-ANCHOR"); String[] state=ms05.assignments().get("candidate").split("/");
+		var candidate=ms05.analysis().occurrences().stream()
+			.filter(o->o.key().normalizedSignature().equals(roleKey(ms05,"candidate"))).findFirst().orElseThrow();
+		var caps=ms05.producerGraph().getVertex(candidate.hop().getHopID()).getCaps();
+		String reason=state[0].equals("CP") && state[1].equals("LOUT") && caps.allowCP_LOUT ? "NONE" : ms05.facts().get("reason");
+		rows.add("C2-MS-05-MISSING-ANCHOR|MINST_CAPABILITY_GATE|evidence=EXACT_PRIVATE_REPLAY|seed=-1|key="
+			+roleKey(ms05,"candidate")+"|capsBefore=CP_LOUT="+caps.allowCP_LOUT+"|CP_FOUT="+caps.allowCP_FOUT
+			+"|FED_LOUT="+caps.allowFED_LOUT+"|FED_FOUT="+caps.allowFED_FOUT+"|concreteAnchor=false|finalExec="+state[0]
+			+"|finalOutput="+state[1]+"|reason="+reason);
+		return rows;
 	}
 
-	private static String captureMissingAnchor() {
-		FederatedPlannerUtils.clearFedInitVars();
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		Hop hop = HopRewriteUtils.createBinary(new LiteralOp(2.0), new LiteralOp(3.0), OpOp2.PLUS);
-		ExecPlacementCaps caps = new ExecPlacementCaps();
-		caps.allowFED_LOUT = false; caps.allowFED_FOUT = false;
-		Vertex vertex = new Vertex(hop, Privacy.PRIVATE, FType.ROW, caps);
-		vertex.setMetadata(1.0, 1.0, Collections.emptyList()); vertex.setCost(0.0, 0.0, 100.0);
-		graph.addVertex(vertex); graph.setVertexCost(vertex); graph.addExecPlacementResultEdge(vertex);
-		graph.getOptimalPlan();
-		return "C2-MS-05-MISSING-ANCHOR|MINST_CAPABILITY_GATE|evidence=EXACT_PRIVATE_REPLAY|seed=-1|key="
-			+ syntheticKey("C2-MS-05", "candidate", hop)
-			+ "|capsBefore=CP_LOUT,CP_FOUT|concreteAnchor=false|finalExec=" + hop.getForcedExecType()
-			+ "|finalOutput=" + hop.getFederatedOutput() + "|reason=MISSING_CONCRETE_ANCHOR";
+	private static String roleKey(R4ExactPrivateCostMinstFixtures.Fixture fixture,String role) {
+		return fixture.literalAliases().entrySet().stream().filter(e->e.getValue().equals(role)).map(Map.Entry::getKey)
+			.findFirst().orElseThrow(()->new IllegalStateException("Missing canonical role "+fixture.id()+"/"+role));
+	}
+	private static String roleKey(R4ExactPrivateCostMinstFixtures.Fixture fixture,long hopId) {
+		var occurrence=fixture.analysis().occurrences().stream().filter(o->o.hop().getHopID()==hopId).findFirst().orElseThrow();
+		String key=occurrence.key().normalizedSignature();
+		if(!fixture.literalAliases().containsKey(key)) throw new IllegalStateException("Missing canonical selected Hop "+fixture.id());
+		return key;
+	}
+	private static List<String> roleKeys(R4ExactPrivateCostMinstFixtures.Fixture fixture,List<Long> hopIds) {
+		return hopIds.stream().map(id->roleKey(fixture,id)).sorted().collect(Collectors.toList());
+	}
+
+	public static RetainedFullPath captureFullPath(DMLProgram program, PlacementAnalysis analysis, long seed) {
+		Objects.requireNonNull(program, "program");
+		Objects.requireNonNull(analysis, "analysis");
+		MinStPlacementInput input = new FederatedPlanMinSTCut().rewriteProgram(program, null, null, analysis);
+		MinStPlacementAdapter.Selection selection = new MinStPlacementAdapter().select(analysis, input);
+		List<String> states = selection.selectedReceipts().stream()
+			.map(receipt -> receipt.planningKey().normalizedSignature() + '=' + receipt.execType() + '/'
+				+ receipt.output()).sorted().toList();
+		return new RetainedFullPath(seed, analysis, input, selection, states,
+			structuralFacts(analysis, selection));
 	}
 
 	private static String captureFullPath(String rowId, String fixture) throws Exception {
-		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		new FederatedPlanMinSTCut().rewriteProgram(program, null, null);
-		List<String> states = new ArrayList<>();
-		int none = 0;
-		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.occurrences()) {
-			Hop hop = occurrence.hop();
-			ExecType exec = hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
-			states.add(occurrence.key().normalizedSignature() + "=" + exec + "/" + hop.getFederatedOutput());
-			if(exec == null || hop.getFederatedOutput() == null) none++;
-		}
-		states.sort(String::compareTo);
-		return rowId + "|MINST_FULL_OFFLINE_SELECTION|evidence=ACTUAL_RETAINED|seed=-1|fixture=" + fixture
-			+ "|selectedStates=" + states + "|semanticFacts=" + semanticFacts(rowId, states, none);
+		RetainedFullPath retained = captureFullPath(program, analysis, -1L);
+		return rowId + "|MINST_FULL_OFFLINE_SELECTION|evidence=ACTUAL_RETAINED|seed=" + retained.seed()
+			+ "|fixture=" + fixture + "|selectedStates=" + retained.selectedStates()
+			+ "|semanticFacts=" + retained.semanticFacts();
 	}
 
-	private static String semanticFacts(String rowId, List<String> states, int none) {
-		boolean allLocal = states.stream().allMatch(s -> s.endsWith("=CP/LOUT"));
-		if(rowId.equals("C2-MS-07-TRTW-SHARED-D"))
-			return "classification=ACTUAL_ALL_LOCAL_NO_TRTW_RELATION,allCpLout=" + allLocal
-				+ ",registry=NONE,reason=COMPILED_FIXTURE_HAS_NO_TRTW_SELECTED_RELATION";
-		if(rowId.equals("C2-MS-08-LOOP-EQUAL-FIXPOINT"))
-			return "classification=ACTUAL_ALL_LOCAL_LOOP,allCpLout=" + allLocal
-				+ ",equalCut=NONE,repair=NONE,reason=NO_EQUAL_CUT_CLAIM";
-		if(rowId.equals("C2-X-10-FUNCTION-CALLSITE"))
+	private static String structuralFacts(PlacementAnalysis analysis, MinStPlacementAdapter.Selection selection) {
+		long none = selection.selectedReceipts().stream()
+			.filter(receipt -> receipt.execType() == null && receipt.output() == FederatedOutput.NONE).count();
+		boolean allLocal = selection.selectedReceipts().stream().allMatch(receipt ->
+			receipt.execType() == null && receipt.output() == FederatedOutput.NONE
+				|| receipt.execType() == ExecType.CP && receipt.output() == FederatedOutput.LOUT);
+		boolean contextual = analysis.graph().nodes().stream().anyMatch(node ->
+			node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_BODY_NON_EMITTED);
+		if(contextual)
 			return "classification=ACTUAL_CONTEXTUAL_NONE,noneNodeCount=" + none
 				+ ",nodeKind=FUNCTION_BODY_NON_EMITTED,emittedWork=false,caps=NONE,reason=NON_EMITTED_FUNCTION_BODY_CONTEXT";
-		if(rowId.equals("C2-X-11-CLONE-RECOMPILE"))
+		boolean recompile = analysis.graph().nodes().stream().flatMap(node -> node.exclusions().stream()).anyMatch(
+			exclusion -> exclusion.reasonCode()
+				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode.RECOMPILE_CP_FOUT);
+		if(recompile)
 			return "classification=ACTUAL_ALL_LOCAL,recompileCpFout=UNSUPPORTED,reason=RECOMPILE_CP_FOUT_FORBIDDEN";
-		return "classification=ACTUAL_ALL_LOCAL,allCpLout=" + allLocal;
-	}
-
-	private static List<String> captureProductionRegistrations(
-		List<PlacementAnalysis.HopOccurrenceProjection> occurrences) throws Exception {
-		List<String> rows = new ArrayList<>();
-		FederatedPlannerUtils.clearFedInitVars();
-		FederatedPlannerUtils.registerFedInitVar("X_anchor", FType.ROW,
-			"localhost:1234/X1@0:0-50:100;localhost:1235/X2@50:0-100:100");
-		try {
-			FederatedPlanMinSTGraph upload = new FederatedPlanMinSTGraph();
-			upload.setNumOfWorkers(2);
-			DataOp childHop = new DataOp("X_u_obligation", DataType.MATRIX, ValueType.FP64,
-				OpOpData.TRANSIENTREAD, null, 100, 100, 10000, 1000);
-			ExecPlacementCaps childCaps = new ExecPlacementCaps();
-			childCaps.allowFED_LOUT = false;
-			childCaps.allowFED_FOUT = false;
-			Vertex child = new Vertex(childHop, Privacy.PUBLIC, FType.ROW, childCaps);
-			child.setMetadata(1.0, 1.0, Collections.emptyList());
-			child.setCost(0.0, 6.0, 4.0);
-			upload.addVertex(child); upload.setVertexCost(child); upload.addExecPlacementResultEdge(child);
-			ExecPlacementCaps fedCaps = new ExecPlacementCaps();
-			fedCaps.allowCP_LOUT = false; fedCaps.allowCP_FOUT = false;
-			Vertex parent = new Vertex(new LiteralOp(21L), Privacy.PUBLIC, FType.FULL, fedCaps);
-			parent.setMetadata(1.0, 1.0, Collections.emptyList()); parent.setCost(100.0, 0.0, 0.0);
-			upload.addVertex(parent); upload.setVertexCost(parent);
-			upload.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
-			ExecPlacementCaps localCaps = new ExecPlacementCaps();
-			localCaps.allowFED_LOUT = false; localCaps.allowFED_FOUT = false;
-			Vertex local = new Vertex(new LiteralOp(22L), Privacy.PUBLIC, FType.FULL, localCaps);
-			local.setMetadata(1.0, 1.0, Collections.emptyList()); local.setCost(0.0, 0.0, 0.0);
-			upload.addVertex(local); upload.setVertexCost(local);
-			upload.addRequiredLocalInputEdge(local.getHopID(), child.getHopID());
-			upload.getOptimalPlan();
-				invokeRegistration(upload);
-				String childKey = syntheticKey("C2-MS-04", "child", childHop);
-				String parentKey = syntheticKey("C2-MS-04", "fed-consumer", parent.getHopRef());
-				Map<Long,String> uploadKeys = new HashMap<>();
-				uploadKeys.put(childHop.getHopID(), childKey);
-				uploadKeys.put(parent.getHopID(), parentKey);
-				uploadKeys.put(local.getHopID(), syntheticKey("C2-MS-04", "local-consumer", local.getHopRef()));
-				FederatedPlanMinSTGraph.SelectedObligation uploadObligation = upload.getSelectedObligations().stream()
-					.filter(o -> o.getKind() == FederatedPlanMinSTGraph.ObligationKind.U
-						&& o.getChildHopId() == childHop.getHopID()).findFirst().orElseThrow(() ->
-							new IllegalStateException("Missing selected U obligation"));
-				List<String> uploadConsumers = uploadObligation.getConsumerHopIds().stream()
-					.map(id -> mappedSyntheticKey(uploadKeys, id)).sorted().collect(Collectors.toList());
-				FederatedRefedRegistry.AnchorSpec refedSpec = FederatedRefedRegistry.snapshot(-1L).get(childHop.getHopID());
-				if(refedSpec != null)
-					rows.add("C2-MS-04-ANCHORED-UPLOAD|REGISTRY_REFED|evidence=EXACT_PRIVATE_REPLAY|producer="
-						+ childKey + "|consumers=" + uploadConsumers + "|scope=-1|anchorHop="
-					+ (refedSpec.getAnchorHopId() < 0 ? "SIGNATURE_ONLY" : "UNMAPPED")
-					+ "|anchorKey=" + refedSpec.getAnchorKey() + "|source=FROZEN_SELECTED_U");
-			FederatedFoutMaterializeRegistry.MaterializeSpec uploadSpec =
-				FederatedFoutMaterializeRegistry.snapshot(-1L).get(childHop.getHopID());
-			if(uploadSpec != null)
-					rows.add("C2-MS-04-ANCHORED-UPLOAD|REGISTRY_FOUT_MATERIALIZE|evidence=EXACT_PRIVATE_REPLAY|producer="
-						+ childKey + "|consumers=" + uploadConsumers + "|scope=-1|fType=" + uploadSpec.getFTypeHint()
-					+ "|anchorLabel=" + uploadSpec.getAnchorLabel() + "|anchorKey=" + uploadSpec.getAnchorKey()
-					+ "|source=FROZEN_SELECTED_U");
-			FederatedPlanMinSTGraph cpfout = new FederatedPlanMinSTGraph();
-			PlacementAnalysis freshAnalysis = new NeutralPlacementGraphBuilder()
-				.buildAnalysis(ProductionShadowFixtureFactory.compile("B-01"));
-			Hop matrixInput = freshAnalysis.occurrences().stream().map(PlacementAnalysis.HopOccurrenceProjection::hop)
-				.filter(h -> h.getDataType() == DataType.MATRIX).findFirst().orElseThrow();
-			Hop cpfoutHop = HopRewriteUtils.createBinary(matrixInput, new LiteralOp(3.0), OpOp2.PLUS);
-			ExecPlacementCaps cpfoutCaps = new ExecPlacementCaps();
-			cpfoutCaps.allowCP_LOUT = false; cpfoutCaps.allowFED_LOUT = false; cpfoutCaps.allowFED_FOUT = false;
-			Vertex cpfoutVertex = new Vertex(cpfoutHop, Privacy.PUBLIC, FType.ROW, cpfoutCaps);
-			cpfoutVertex.setMetadata(1.0, 1.0, Collections.emptyList()); cpfoutVertex.setCost(0.0, 0.0, 100.0);
-			cpfout.addVertex(cpfoutVertex); cpfout.setVertexCost(cpfoutVertex); cpfout.addExecPlacementResultEdge(cpfoutVertex);
-			weighted(cpfout.getGraph(), SOURCE, FederatedPlanMinSTPlanner.placementId(cpfoutHop.getHopID()), 1000.0);
-			cpfout.getOptimalPlan();
-			if(cpfoutHop.getForcedExecType() != ExecType.CP || cpfoutHop.getFederatedOutput() != FederatedOutput.FOUT)
-				throw new IllegalStateException("CP/FOUT fixture selected " + cpfoutHop.getForcedExecType()
-					+ "/" + cpfoutHop.getFederatedOutput());
-			Method cpfoutRegister = FederatedPlanMinSTCut.class.getDeclaredMethod(
-				"registerMinstCpfoutSelections", FederatedPlanMinSTGraph.class, Map.class);
-			cpfoutRegister.setAccessible(true);
-			Map<Long,FType> cpfoutTypes = new HashMap<>();
-			cpfoutTypes.put(cpfoutHop.getHopID(), FType.BROADCAST);
-			cpfoutRegister.invoke(null, cpfout, cpfoutTypes);
-			FederatedFoutMaterializeRegistry.MaterializeSpec cpfoutSpec =
-				FederatedFoutMaterializeRegistry.snapshot(-1L).get(cpfoutHop.getHopID());
-			if(cpfoutSpec != null)
-					rows.add("C2-MS-04-ANCHORED-UPLOAD|REGISTRY_FOUT_MATERIALIZE|evidence=EXACT_PRIVATE_REPLAY|producer="
-					+ syntheticKey("C2-MS-04", "cp-fout", cpfoutHop)
-					+ "|scope=-1|fType=" + cpfoutSpec.getFTypeHint() + "|anchorLabel="
-					+ cpfoutSpec.getAnchorLabel() + "|anchorKey=" + cpfoutSpec.getAnchorKey()
-					+ "|source=FROZEN_SELECTED_CP_FOUT");
-
-			FederatedLocalMaterializeRegistry.clear();
-			FederatedPlanMinSTGraph download = new FederatedPlanMinSTGraph();
-			download.setNumOfWorkers(4);
-			DataOp sourceHop = new DataOp("X_d_obligation", DataType.MATRIX, ValueType.FP64,
-				OpOpData.TRANSIENTREAD, null, 100, 100, 10000, 1000);
-			ExecPlacementCaps sourceCaps = new ExecPlacementCaps();
-			sourceCaps.allowCP_LOUT = false; sourceCaps.allowCP_FOUT = false; sourceCaps.allowFED_LOUT = false;
-			Vertex source = new Vertex(sourceHop, Privacy.PUBLIC, FType.ROW, sourceCaps);
-			source.setMetadata(1.0, 1.0, Collections.emptyList()); source.setCost(100.0, 6.0, 4.0);
-			download.addVertex(source); download.setVertexCost(source); download.addExecPlacementResultEdge(source);
-			Vertex consumer = new Vertex(new LiteralOp(31L), Privacy.PUBLIC, FType.FULL, new ExecPlacementCaps());
-			consumer.setMetadata(1.0, 1.0, Collections.emptyList()); consumer.setCost(0.0, 0.0, 0.0);
-			download.addVertex(consumer); download.setVertexCost(consumer);
-			download.addLoopCarryNetEdge(consumer.getHopID(), source.getHopID(), 0.0, 0.0);
-			Vertex consumer2 = new Vertex(new LiteralOp(32L), Privacy.PUBLIC, FType.FULL, new ExecPlacementCaps());
-			consumer2.setMetadata(1.0, 1.0, Collections.emptyList()); consumer2.setCost(0.0, 0.0, 0.0);
-			download.addVertex(consumer2); download.setVertexCost(consumer2);
-			download.addLoopCarryNetEdge(consumer2.getHopID(), source.getHopID(), 0.0, 0.0);
-			download.getOptimalPlan();
-				invokeRegistration(download);
-				Map<Long,String> downloadKeys = new HashMap<>();
-				downloadKeys.put(sourceHop.getHopID(), syntheticKey("C2-MS-03", "producer", sourceHop));
-				downloadKeys.put(consumer.getHopID(), syntheticKey("C2-MS-03", "consumer-1", consumer.getHopRef()));
-				downloadKeys.put(consumer2.getHopID(), syntheticKey("C2-MS-03", "consumer-2", consumer2.getHopRef()));
-				FederatedLocalMaterializeRegistry.LocalMaterializeSpec localSpec =
-					FederatedLocalMaterializeRegistry.snapshot(-1L).get(sourceHop.getHopID());
-				if(localSpec != null) {
-					List<String> localConsumers = localSpec.getConsumerHopIds().stream()
-						.map(id -> mappedSyntheticKey(downloadKeys, id)).sorted().collect(Collectors.toList());
-					rows.add("C2-MS-03-SHARED-DOWNLOAD|REGISTRY_LOCAL_MATERIALIZE|evidence=EXACT_PRIVATE_REPLAY|producer="
-						+ mappedSyntheticKey(downloadKeys, sourceHop.getHopID()) + "|consumers=" + localConsumers
-						+ "|scope=-1|consumerCount=" + localSpec.getConsumerHopIds().size() + "|fType="
-						+ localSpec.getFTypeHint() + "|reason=" + localSpec.getReason() + "|source=FROZEN_SELECTED_D");
-				}
-				return rows;
-		}
-		finally {
-			FederatedPlannerUtils.clearFedInitVars();
-		}
-	}
-
-	private static String syntheticKey(String fixture, String role, Hop hop) {
-		return "SYNTHETIC:" + fixture + ":" + role + ":" + hop.getClass().getName() + ":" + hop.getOpString();
-	}
-
-	private static String mappedSyntheticKey(Map<Long,String> keys, long hopId) {
-		String key = keys.get(hopId);
-		if(key == null)
-			throw new IllegalStateException("UNMAPPED_SELECTED_HOP_ID " + hopId);
-		return key;
-	}
-
-	private static void invokeRegistration(FederatedPlanMinSTGraph graph) throws Exception {
-		Method register = FederatedPlanMinSTCut.class.getDeclaredMethod(
-			"registerMinstSelectedObligations", FederatedPlanMinSTGraph.class, Map.class);
-		register.setAccessible(true);
-		register.invoke(null, graph, new HashMap<Long,FType>());
+		boolean loop = analysis.graph().nodes().stream().anyMatch(node ->
+			node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.LOOP_PHI);
+		if(loop)
+			return "classification=ACTUAL_ALL_LOCAL_LOOP,allCpLout=" + allLocal
+				+ ",equalCut=NONE,repair=NONE,reason=NO_EQUAL_CUT_CLAIM";
+		boolean branch = analysis.graph().nodes().stream().anyMatch(node ->
+			node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.BRANCH_JOIN);
+		if(branch)
+			return "classification=ACTUAL_ALL_LOCAL,allCpLout=" + allLocal;
+		return "classification=ACTUAL_ALL_LOCAL_NO_TRTW_RELATION,allCpLout=" + allLocal
+			+ ",registry=NONE,reason=COMPILED_FIXTURE_HAS_NO_TRTW_SELECTED_RELATION";
 	}
 
 	private static void weighted(Graph<Long,DefaultWeightedEdge> graph, long source, long target, double weight) {

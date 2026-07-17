@@ -19,12 +19,19 @@
 
 package org.apache.sysds.hops.fedplanner.fedHeuristic;
 
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
+import org.apache.sysds.hops.ipa.FunctionCallGraph;
+import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
+import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
@@ -32,14 +39,61 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 	private final HeuristicPlacementAdapter adapter = new HeuristicPlacementAdapter();
 
+	public record InvocationCounters(int selectionCount, int internalAnalysisBuildCount,
+		int legacyRouteCount, int repairCount, int fallbackCount, int mutationCount,
+		int applicationCount, int doubleApplicationCount) {
+		public InvocationCounters {
+			if(selectionCount != 1 || internalAnalysisBuildCount != 0 || legacyRouteCount != 0
+				|| repairCount != 0 || fallbackCount != 0 || mutationCount != 0
+				|| applicationCount != 0 || doubleApplicationCount != 0)
+				throw new IllegalArgumentException("FedHeuristic selection receipt counters differ");
+		}
+	}
+
+	public record HeuristicInvocationReceipt(PlacementAnalysis analysis, HeuristicPolicyFacts policyFacts,
+		Set<ValueVersionKey> markers, HeuristicPlacementAdapter.Result result, InvocationCounters counters,
+		String analysisFingerprintBefore, String analysisFingerprintAfter)
+		implements AFederatedPlanner.PlannerInvocationReceipt {
+		public HeuristicInvocationReceipt {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(policyFacts, "policyFacts");
+			Objects.requireNonNull(markers, "markers");
+			Objects.requireNonNull(result, "result");
+			Objects.requireNonNull(counters, "counters");
+			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
+			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
+			if(policyFacts != analysis.heuristicPolicyFacts())
+				throw new IllegalArgumentException("FedHeuristic policy facts identity differs");
+			if(result.analysis() != analysis)
+				throw new IllegalArgumentException("FedHeuristic receipt producer identity differs");
+			if(!analysis.analysisFingerprint().equals(analysisFingerprintBefore)
+				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter)
+				|| !analysisFingerprintBefore.equals(result.analysisFingerprint()))
+				throw new IllegalArgumentException("Supplied analysis changed during FedHeuristic selection");
+		}
+	}
+
 	public HeuristicPlacementAdapter.Result select(PlacementAnalysis analysis, Set<ValueVersionKey> markers) {
 		return adapter.select(analysis, markers);
 	}
 
 	@Override
-	public void rewriteProgram(org.apache.sysds.parser.DMLProgram prog,
-		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph,
-		org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes) {
+	public HeuristicInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
+		analysis.assertProgramOwner(prog);
+		HeuristicPolicyFacts policyFacts = analysis.heuristicPolicyFacts();
+		Set<ValueVersionKey> markers = Collections.unmodifiableSet(new LinkedHashSet<>(
+			policyFacts.demotions().stream().map(fact -> fact.valueVersion()).toList()));
+		String fingerprintBefore = analysis.analysisFingerprint();
+		HeuristicPlacementAdapter.Result result = select(analysis, markers);
+		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 0, 0);
+		return new HeuristicInvocationReceipt(analysis, policyFacts, markers, result, counters,
+			fingerprintBefore, analysis.analysisFingerprint());
+	}
+
+	@Override
+	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
 		throw new UnsupportedOperationException(
 			"FedHeuristic requires a supplied placement analysis before plan application");
 	}

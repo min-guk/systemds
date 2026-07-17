@@ -33,8 +33,9 @@ final class MinStAnalysisContractBridge {
 	private static final long SINK = -2L;
 	private static final String ADAPTER = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter";
 	private static final String INPUT = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput";
+	private static final String CUT = "org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut";
 
-	record Handle(Object adapter, Method bindInput, Method selectExact) { }
+	record Handle(Object adapter, Method bindPlacementInput, Method select) { }
 	record Selection(PlacementAnalysis analysis, long objectiveBits, List<String> sourcePartition,
 		List<String> receipts, List<String> obligations, String analysisFingerprint) { }
 	record Invocation(PlacementAnalysis analysis, FederatedPlanMinSTGraph graph,
@@ -66,15 +67,16 @@ final class MinStAnalysisContractBridge {
 	static Handle open() {
 		try {
 			Class<?> inputType = Class.forName(INPUT);
-			Method bindInput = inputType.getMethod("bind", PlacementAnalysis.class, FederatedPlanMinSTGraph.class);
+			Method bindInput = Class.forName(CUT).getMethod("bindPlacementInput",
+				PlacementAnalysis.class, FederatedPlanMinSTGraph.class);
 			Class<?> adapterType = Class.forName(ADAPTER);
 			return new Handle(adapterType.getConstructor().newInstance(), bindInput,
-				adapterType.getMethod("selectExact", PlacementAnalysis.class, inputType));
+				adapterType.getMethod("select", PlacementAnalysis.class, inputType));
 		}
 		catch(ReflectiveOperationException e) {
-			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + INPUT
-				+ ".bind(PlacementAnalysis,FederatedPlanMinSTGraph)->" + ADAPTER
-				+ ".selectExact(PlacementAnalysis,MinStPlacementInput)");
+			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + CUT
+				+ ".bindPlacementInput(PlacementAnalysis,FederatedPlanMinSTGraph)->" + ADAPTER
+				+ ".select(PlacementAnalysis,MinStPlacementInput)");
 		}
 	}
 
@@ -85,7 +87,7 @@ final class MinStAnalysisContractBridge {
 	static Prepared prepare(Handle handle, PlacementAnalysis owner) {
 		Invocation input = selectedInput(owner);
 		try {
-			Object ownerBound = handle.bindInput().invoke(null, owner, input.graph());
+			Object ownerBound = handle.bindPlacementInput().invoke(null, owner, input.graph());
 			if(ownerBound == null) throw new AssertionError("R4_MINST_OWNER_BOUND_INPUT_NULL");
 			return new Prepared(input, ownerBound);
 		}
@@ -95,7 +97,7 @@ final class MinStAnalysisContractBridge {
 
 	static Selection select(Handle handle, Prepared prepared, PlacementAnalysis requested) {
 		try {
-			return normalize(prepared.input(), handle.selectExact().invoke(
+			return normalize(prepared, handle.select().invoke(
 				handle.adapter(), requested, prepared.ownerBound()));
 		}
 		catch(InvocationTargetException e) { throw contract("invoke", e.getCause()); }
@@ -119,7 +121,7 @@ final class MinStAnalysisContractBridge {
 		List<String> foreignBefore = analysisSnapshot(foreign);
 		List<String> graphBefore = graphSnapshot(input.graph());
 		try {
-			handle.selectExact().invoke(handle.adapter(), foreign, prepared.ownerBound());
+			handle.select().invoke(handle.adapter(), foreign, prepared.ownerBound());
 			throw new AssertionError("R4_MINST_FOREIGN_ANALYSIS_ACCEPTED");
 		}
 		catch(InvocationTargetException e) {
@@ -181,9 +183,11 @@ final class MinStAnalysisContractBridge {
 			List.copyOf(source), occurrences, obligations);
 	}
 
-	private static Selection normalize(Invocation input, Object raw) throws ReflectiveOperationException {
+	private static Selection normalize(Prepared prepared, Object raw) throws ReflectiveOperationException {
+		Invocation input=prepared.input();
 		if(raw == null) throw new AssertionError("R4_MINST_RESULT_NULL");
-		if(call(raw, "analysis") != input.analysis() || call(raw, "producer") != input.graph())
+		if(call(raw, "analysis") != input.analysis()
+			|| call(raw, "producer") != call(prepared.ownerBound(), "producerReceipt"))
 			throw new AssertionError("R4_MINST_PRODUCER_IDENTITY");
 		String fingerprint = String.valueOf(call(raw, "analysisFingerprint"));
 		if(!fingerprint.equals(input.analysis().analysisFingerprint())) throw new AssertionError("R4_MINST_ANALYSIS_FINGERPRINT");
@@ -193,29 +197,43 @@ final class MinStAnalysisContractBridge {
 		List<Long> source = sourceRaw.stream().map(v -> ((Number)v).longValue()).toList();
 		if(!source.equals(input.sourcePartition())) throw new AssertionError("R4_MINST_SOURCE_PARTITION");
 		List<?> receiptRaw = (List<?>)call(raw, "selectedReceipts"); assertImmutable(receiptRaw, "selectedReceipts");
-		if(receiptRaw.size() != input.occurrences().size()) throw new AssertionError("R4_MINST_SELECTED_ORDER");
+		List<?> boundRaw=(List<?>)call(prepared.ownerBound(),"occurrenceReceipts");
+		if(receiptRaw.size() != boundRaw.size()) throw new AssertionError("R4_MINST_SELECTED_ORDER");
 		List<String> receipts = new ArrayList<>(); Map<Long,List<CompiledHopKey>> keysByHop = keysByHop(input.occurrences());
 		for(int i=0; i<receiptRaw.size(); i++) {
-			Object receipt = receiptRaw.get(i); var occurrence = input.occurrences().get(i);
+			Object receipt = receiptRaw.get(i), bound=boundRaw.get(i);
 			CompiledHopKey key = (CompiledHopKey)call(receipt, "planningKey");
 			Hop planningHop = (Hop)call(receipt, "planningHop"); long planningHopId = number(receipt, "planningHopId");
 			Hop executableHop = (Hop)call(receipt, "executableHop"); long executableHopId = number(receipt, "executableHopId");
 			ExecType exec = (ExecType)call(receipt, "execType");
 			FederatedOutput output = (FederatedOutput)call(receipt, "output");
-			if(key != occurrence.key() || planningHop != occurrence.hop() || planningHopId != occurrence.hop().getHopID()
-				|| executableHop != occurrence.hop() || executableHopId != occurrence.hop().getHopID())
+			if(!key.equals(call(bound,"planningKey"))||planningHop!=call(bound,"planningHop")
+				||planningHopId!=number(bound,"planningHopId")||executableHop!=call(bound,"executableHop")
+				||executableHopId!=number(bound,"executableHopId"))
 				throw new AssertionError("R4_MINST_PLANNING_EXECUTABLE_IDENTITY");
-			ExecType selectedExec = occurrence.hop().getForcedExecType() != null
-				? occurrence.hop().getForcedExecType() : occurrence.hop().getExecType();
-			if(exec != selectedExec || output != occurrence.hop().getFederatedOutput())
+			if(exec!=call(bound,"execType")||output!=call(bound,"output"))
 				throw new AssertionError("R4_MINST_SELECTED_STATE");
 			receipts.add(key.normalizedSignature() + '=' + exec + '/' + output);
 		}
 		List<?> obligationRaw = (List<?>)call(raw, "selectedObligations"); assertImmutable(obligationRaw, "selectedObligations");
-		if(!sameObjects(obligationRaw, input.obligations())) throw new AssertionError("R4_MINST_OBLIGATION_IDENTITY");
+		if(obligationRaw.size()!=input.obligations().size()) throw new AssertionError("R4_MINST_OBLIGATION_IDENTITY");
+		for(int i=0;i<obligationRaw.size();i++)assertGenericObligation(obligationRaw.get(i),input.obligations().get(i));
 		List<String> obligations = input.obligations().stream().map(o -> obligation(o, keysByHop)).toList();
 		return new Selection(input.analysis(), objectiveBits, normalizeSource(source, keysByHop),
 			List.copyOf(receipts), List.copyOf(obligations), fingerprint);
+	}
+
+	private static void assertGenericObligation(Object actual, SelectedObligation expected)
+		throws ReflectiveOperationException {
+		if(!String.valueOf(call(actual,"kind")).equals(expected.getKind().name())
+			||number(actual,"childHopId")!=expected.getChildHopId()
+			||number(actual,"originalHopId")!=expected.getOriginalHopId()
+			||!call(actual,"consumerHopIds").equals(expected.getConsumerHopIds())
+			||call(actual,"fType")!=expected.getFType()
+			||!call(actual,"capability").equals(expected.hasCapability())
+			||!String.valueOf(call(actual,"capabilityReason")).equals(expected.getCapabilityReason())
+			||!String.valueOf(call(actual,"reason")).equals(expected.getReason()))
+			throw new AssertionError("R4_MINST_OBLIGATION_IDENTITY");
 	}
 
 	private static Map<Long,List<CompiledHopKey>> keysByHop(List<PlacementAnalysis.HopOccurrenceProjection> occurrences) {

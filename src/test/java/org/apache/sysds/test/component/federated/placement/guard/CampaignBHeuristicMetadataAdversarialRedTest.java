@@ -145,9 +145,15 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 			selected.exclusions());
 		Assert.assertEquals("MULTI_MARKER_EXACT_UNION", Set.copyOf(expectedKeys),
 			R4HeuristicMetadataFixtureBridge.exclusionKeys(selected));
+		Assert.assertEquals("MULTI_MARKER_RESULT_SELECTOR_CANDIDATES", selected.selectorCandidates(),
+			selected.candidates());
+		for(var assignment : selected.assignments().entrySet())
+			Assert.assertTrue("MULTI_MARKER_ASSIGNMENT_OUTSIDE_SELECTOR|assignment=" + assignment,
+				selected.selectorCandidates().contains(R4Heuristic2SemanticValidator.candidate(
+					assignment.getKey(), assignment.getValue())));
 		String independent = scenario.independent().normalizedSignature();
-		Assert.assertTrue("MULTI_MARKER_INDEPENDENT_FED_CANDIDATE", selected.candidates().contains(independent
-			+ '=' + scenario.independentFedFout()));
+		Assert.assertTrue("MULTI_MARKER_INDEPENDENT_FED_CANDIDATE", selected.candidates().contains(
+			R4Heuristic2SemanticValidator.candidate(independent, scenario.independentFedFout())));
 		Assert.assertEquals("MULTI_MARKER_INDEPENDENT_SELECTED_FED", scenario.independentFedFout(),
 			selected.assignments().get(independent));
 		Assert.assertTrue("MULTI_MARKER_CROSS_ANCHOR_LAUNDERING", selected.exclusions().stream()
@@ -174,6 +180,8 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 			List.of(), selection.exclusions());
 		Assert.assertEquals("EMPTY_POLICY_CANDIDATE_UNIVERSE_UNCHANGED",
 			scenario.analysis().graph().normalizedCandidateUniverse(), selection.candidates());
+		Assert.assertEquals("EMPTY_POLICY_RESULT_SELECTOR_CANDIDATES", selection.selectorCandidates(),
+			selection.candidates());
 		Assert.assertEquals("EMPTY_POLICY_NO_RELOCATIONS", List.of(), selection.relocations());
 		Assert.assertEquals("EMPTY_POLICY_NO_OBLIGATIONS", List.of(), selection.obligations());
 		Assert.assertFalse("safe empty policy view cannot enable fallback", selection.certificate().fallback());

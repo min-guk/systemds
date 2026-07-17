@@ -49,6 +49,7 @@ public final class NeutralPlacementGraph {
 		FUNCTION_INPUT,
 		FUNCTION_OUTPUT,
 		CLONE,
+		FUNCTION_BODY_NON_EMITTED,
 		ROOT
 	}
 
@@ -73,7 +74,8 @@ public final class NeutralPlacementGraph {
 		CONSTRAINT_CONFLICT,
 		NO_FEDERATED_INPUT,
 		RUNTIME_UNSUPPORTED,
-		RULE_ERROR
+		RULE_ERROR,
+		NON_EMITTED_FUNCTION_BODY_CONTEXT
 	}
 
 	public record Exclusion(PlacementState state, ReasonCode reasonCode, String detail)
@@ -106,6 +108,8 @@ public final class NeutralPlacementGraph {
 			legalAlternatives = sorted(legalAlternatives, "legalAlternatives");
 			exclusions = sorted(exclusions, "exclusions");
 			anchors = sorted(anchors, "anchors");
+			if(emittedWork != !legalAlternatives.isEmpty())
+				throw new IllegalArgumentException("Node emitted-work polarity must match legal alternatives: " + key);
 			Set<PlacementState> excludedStates = new LinkedHashSet<>();
 			for(Exclusion exclusion : exclusions)
 				if(!excludedStates.add(exclusion.state()))
@@ -126,6 +130,9 @@ public final class NeutralPlacementGraph {
 		public int compareTo(Node that) {
 			return key.compareTo(that.key);
 		}
+	}
+	public List<Node> decisionNodes() {
+		return nodes().stream().filter(Node::emittedWork).filter(n -> !n.legalAlternatives().isEmpty()).toList();
 	}
 
 	public record Constraint(ConstraintKind kind, CompiledHopKey left, CompiledHopKey right,
@@ -287,10 +294,7 @@ public final class NeutralPlacementGraph {
 	 * Production callers should compare the normalized graph surfaces instead.
 	 */
 	public List<String> normalizedLegalAssignments() {
-		List<Node> active = new ArrayList<>();
-		for(Node node : nodes)
-			if(!node.legalAlternatives().isEmpty())
-				active.add(node);
+		List<Node> active = new ArrayList<>(decisionNodes());
 		List<String> assignments = new ArrayList<>();
 		enumerateAssignments(active, 0, new LinkedHashMap<>(), assignments);
 		return immutableSortedStrings(assignments);

@@ -62,7 +62,8 @@ public final class ExactPlacementSelector implements PlacementSelector {
 
 		private Search(NeutralPlacementGraph graph) {
 			this.graph = graph;
-			nodes = new ArrayList<>(graph.nodes());
+			validateRelocationSources(graph);
+			nodes = new ArrayList<>(graph.decisionNodes());
 			Collections.sort(nodes);
 			for(Node node : nodes)
 				if(node.legalAlternatives().isEmpty())
@@ -96,9 +97,18 @@ public final class ExactPlacementSelector implements PlacementSelector {
 
 	private static boolean isLegal(NeutralPlacementGraph graph,
 		Map<CompiledHopKey, PlacementState> assignment) {
-		if(assignment.size() != graph.nodes().size())
+		Set<CompiledHopKey> decisionKeys = new LinkedHashSet<>();
+		for(Node node : graph.decisionNodes()) decisionKeys.add(node.key());
+		if(!assignment.keySet().equals(decisionKeys))
 			return false;
 		for(Constraint constraint : graph.constraints()) {
+			boolean leftDecision = decisionKeys.contains(constraint.left());
+			boolean rightDecision = decisionKeys.contains(constraint.right());
+			if(!leftDecision || !rightDecision) {
+				if(graph.node(constraint.left()).isEmpty() || graph.node(constraint.right()).isEmpty())
+					return false;
+				continue;
+			}
 			PlacementState left = assignment.get(constraint.left());
 			PlacementState right = assignment.get(constraint.right());
 			if(left == null || right == null)
@@ -129,11 +139,11 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		Map<CompiledHopKey, PlacementState> assignment) {
 		int fed = 0;
 		int fout = 0;
-		for(Node node : graph.nodes()) {
+		for(Node node : graph.decisionNodes()) {
 			PlacementState state = assignment.get(node.key());
-			if(node.emittedWork() && state.execType() == ExecType.FED)
+			if(state.execType() == ExecType.FED)
 				fed++;
-			if(node.emittedWork() && state.output() == FederatedOutput.FOUT)
+			if(state.output() == FederatedOutput.FOUT)
 				fout++;
 		}
 		Set<RelocationActionKey> relocations = selectedRelocations(graph, assignment);
@@ -145,9 +155,23 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		Set<RelocationActionKey> selected = new TreeSet<>();
 		for(RelocationAction action : graph.relocationActions())
 			if(action.obligations().stream().anyMatch(obligation ->
-				obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))))
+				assignment.containsKey(obligation.consumer())
+					&& obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))))
 				selected.add(action.key());
 		return Collections.unmodifiableSet(new LinkedHashSet<>(selected));
+	}
+
+	private static void validateRelocationSources(NeutralPlacementGraph graph) {
+		Set<CompiledHopKey> decisionKeys = new LinkedHashSet<>();
+		Set<ValueVersionKey> decisionValues = new LinkedHashSet<>();
+		for(Node node : graph.decisionNodes()) {
+			decisionKeys.add(node.key());
+			decisionValues.add(node.valueVersion());
+		}
+		for(RelocationAction action : graph.relocationActions())
+			if(action.obligations().stream().anyMatch(o -> decisionKeys.contains(o.consumer()))
+				&& !decisionValues.contains(action.key().sourceValueVersion()))
+				throw new IllegalStateException("decision relocation source is trace-only");
 	}
 
 	private static String normalizedSignature(Map<CompiledHopKey, PlacementState> assignment,

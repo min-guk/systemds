@@ -34,6 +34,29 @@ import org.junit.Test;
 
 /** Pre-cutover contract for one immutable graph plus its total compiled-Hop projection. */
 public class PlacementAnalysisContractTest {
+	@Test public void functionBodySentinelsRemainRepresentedAcrossFixtures() throws Exception {
+		for(String fixture: List.of("B-07","B-08","B-17","B-21")) {
+			PlacementAnalysis a=new NeutralPlacementGraphBuilder().buildAnalysis(ProductionShadowFixtureFactory.compile(fixture));
+			var named=a.graph().nodes().stream().filter(n->!"main".equals(n.key().functionNamespace())&&n.key().callSitePath().startsWith("function/")).toList();
+			Assert.assertFalse(fixture+" lost named function occurrences",named.isEmpty());
+			for(var n:named) {
+				Assert.assertEquals(fixture, "FUNCTION_BODY_NON_EMITTED", n.kind().name());
+				Assert.assertFalse(fixture, n.emittedWork());
+				Assert.assertTrue(fixture, n.legalAlternatives().isEmpty());
+				Assert.assertTrue(fixture, n.exclusions().stream().anyMatch(
+					x -> "NON_EMITTED_FUNCTION_BODY_CONTEXT".equals(x.reasonCode().name())));
+			}
+			var main=a.graph().nodes().stream()
+				.filter(n->"main".equals(n.key().functionNamespace())).toList();
+			Assert.assertFalse(fixture+" lost main occurrences", main.isEmpty());
+			Assert.assertTrue(fixture+" main work became non-emitted",
+				main.stream().allMatch(n -> n.emittedWork()));
+			if("B-21".equals(fixture))
+				Assert.assertTrue("B-21 lost emitted UNKNOWN_METADATA sentinel",
+					main.stream().anyMatch(n -> n.emittedWork() && n.exclusions().stream().anyMatch(
+						x -> "UNKNOWN_METADATA".equals(x.reasonCode().name()))));
+		}
+	}
 	@Test
 	public void analysisOwnsOneGraphAndATotalStableProjection() throws Exception {
 		for(String fixture : List.of("B-01", "B-07", "B-17", "B-20", "B-21")) {

@@ -5,7 +5,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
@@ -15,11 +17,28 @@ import org.apache.sysds.test.component.federated.placement.guard.R4SharedFedAllA
 import org.apache.sysds.test.component.federated.placement.guard.R4SharedFedAllAdapterBridge.Score;
 import org.apache.sysds.test.component.federated.placement.guard.R4SharedFedAllAdapterBridge.Selection;
 import org.apache.sysds.test.component.federated.placement.selector.CampaignBSelectorFixtureBridge;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
 /** Complete-but-wrong controls prove every field gate rejects a full, legal-looking result. */
 public class R4SharedFedAllSemanticValidatorTest {
+	@Test public void traceAssignmentAndMissingDecisionAreCompleteButWrong() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(
+			ProductionShadowFixtureFactory.compile("B-07"));
+		Selection good = selection(analysis, List.of());
+		R4SharedFedAllSemanticValidator.shared(analysis, good);
+		Set<CompiledHopKey> decisions = R4SharedFedAllSemanticValidator.decisionKeys(analysis.graph());
+		CompiledHopKey trace = analysis.graph().nodes().stream().filter(n -> !n.emittedWork()).findFirst().orElseThrow().key();
+		Map<CompiledHopKey,PlacementState> withTrace = new LinkedHashMap<>(good.assignment());
+		withTrace.put(trace, good.assignment().values().iterator().next());
+		expect("R4_ASSIGNMENT_KEYS", () -> R4SharedFedAllSemanticValidator.shared(analysis,
+			new Selection(analysis, Map.copyOf(withTrace), good.relocations(), good.score(), good.certificate())));
+		Map<CompiledHopKey,PlacementState> missing = new LinkedHashMap<>(good.assignment());
+		missing.remove(decisions.iterator().next());
+		expect("R4_ASSIGNMENT_KEYS", () -> R4SharedFedAllSemanticValidator.shared(analysis,
+			new Selection(analysis, Map.copyOf(missing), good.relocations(), good.score(), good.certificate())));
+	}
 	@Test public void completeButWrongResultsFailAtTheirExactFields() {
 		var fixture = CampaignBSelectorFixtureBridge.all().stream().filter(c -> c.id().equals("S-04")).findFirst().orElseThrow();
 		PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(fixture.production());
@@ -58,6 +77,12 @@ public class R4SharedFedAllSemanticValidatorTest {
 		expect("R4_BOUND_DERIVATION", () -> R4SharedFedAllSemanticValidator.fedAll(expected,
 			withCertificate(good, certificate(good, good.certificate().graphFingerprint(), good.certificate().assignmentHash(), good.certificate().bounds(),
 				good.certificate().universe(), "copied-incumbent", "EXHAUSTED", false))));
+		expect("R4_GRAPH_COUNTS", () -> R4SharedFedAllSemanticValidator.fedAll(expected,
+			withCertificate(good, new Certificate(good.certificate().graphFingerprint(), good.certificate().assignmentHash(),
+				good.certificate().explored(), good.certificate().pruned(), good.certificate().universe(),
+				good.certificate().incumbent(), good.certificate().upperBound(), good.certificate().bounds(),
+				good.certificate().graphNodes() + 1, good.certificate().graphConstraints(),
+				good.certificate().graphComponents(), good.certificate().boundDerivation(), "EXHAUSTED", false))));
 		expect("R4_UNIVERSE", () -> R4SharedFedAllSemanticValidator.fedAll(expected,
 			withCertificate(good, certificate(good, good.certificate().graphFingerprint(), good.certificate().assignmentHash(), good.certificate().bounds(),
 				good.certificate().universe() + 1, good.certificate().boundDerivation(), "EXHAUSTED", false))));
@@ -82,7 +107,8 @@ public class R4SharedFedAllSemanticValidatorTest {
 
 	private static Selection selection(PlacementAnalysis analysis, List<RelocationActionKey> relocations) {
 		Map<CompiledHopKey,PlacementState> assignment = new LinkedHashMap<>();
-		analysis.graph().nodes().forEach(n -> assignment.put(n.key(), n.legalAlternatives().get(0)));
+		analysis.graph().nodes().stream().filter(n -> n.emittedWork() && !n.legalAlternatives().isEmpty())
+			.forEach(n -> assignment.put(n.key(), n.legalAlternatives().get(0)));
 		int fed = (int)assignment.values().stream().filter(s -> s.execType().name().equals("FED")).count();
 		int fout = (int)assignment.values().stream().filter(s -> s.output().name().equals("FOUT")).count();
 		Score score = new Score(fed, fout, relocations.size(), "correct-signature");

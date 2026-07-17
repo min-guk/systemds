@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge.ProjectionOrder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -19,11 +20,35 @@ import org.apache.sysds.test.component.federated.placement.guard.R4SharedFedAllA
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExactSelectorOracle;
 import org.apache.sysds.test.component.federated.placement.oracle.selector.ExplicitSelectorGraph.Choice;
 import org.apache.sysds.test.component.federated.placement.selector.CampaignBSelectorFixtureBridge;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
 /** Executable RED: FedAll result and every proof field equal independent exhaustive authority. */
 public class CampaignBFedAllExactAdapterContractTest {
+	@Test public void nonEmittedFunctionTraceNodesStayAuditableButOutsideFedAllDecisionProjection() throws Exception {
+		List<String> failures = new ArrayList<>();
+		for(String id : List.of("B-07", "B-08", "B-17", "B-21")) {
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(
+				ProductionShadowFixtureFactory.compile(id));
+			var decisionKeys = R4SharedFedAllSemanticValidator.decisionKeys(analysis.graph());
+			Assert.assertTrue(id + " must preserve trace nodes", analysis.graph().nodes().stream()
+				.anyMatch(n -> !n.emittedWork() && n.legalAlternatives().isEmpty()));
+			Assert.assertEquals(id, analysis.graph().nodes().size(), analysis.occurrences().size());
+			try {
+				var handle = R4SharedFedAllAdapterBridge.open(R4SharedFedAllAdapterBridge.Planner.FED_ALL);
+				var actual = R4SharedFedAllAdapterBridge.select(handle, analysis);
+				R4SharedFedAllSemanticValidator.shared(analysis, actual);
+				Assert.assertEquals(id, decisionKeys, actual.assignment().keySet());
+				Assert.assertEquals(id, analysis.graph().nodes().size(), actual.certificate().graphNodes());
+			}
+			catch(Throwable failure) {
+				failures.add("FEDALL_DECISION_PROJECTION_THROW|" + id + "|" + failure.getClass().getName()
+					+ "|" + failure.getMessage());
+			}
+		}
+		Assert.assertEquals("all four actual function fixtures must select", List.of(), failures);
+	}
 	@Test public void exactAssignmentScoreRelocationsHashesBoundsUniverseAndTerminationEqualOracle() throws Exception {
 		List<String> missing=new ArrayList<>();
 		for(var fixture:CampaignBSelectorFixtureBridge.all()) {

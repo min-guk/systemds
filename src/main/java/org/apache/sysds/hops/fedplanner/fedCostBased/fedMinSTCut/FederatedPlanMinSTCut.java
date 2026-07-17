@@ -23,10 +23,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
 import org.apache.commons.lang3.tuple.Pair;
@@ -55,6 +57,12 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ObligationReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.OccurrenceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ProducerReceipt;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
@@ -90,6 +98,19 @@ import org.jgrapht.graph.DefaultWeightedEdge;
 public class FederatedPlanMinSTCut extends AFederatedPlanner {
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
+		rewriteProgramInternal(prog, fgraph, fcallSizes, null);
+	}
+
+	@Override
+	public MinStPlacementInput rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
+		analysis.assertProgramOwner(prog);
+		return rewriteProgramInternal(prog, fgraph, fcallSizes, analysis);
+	}
+
+	private MinStPlacementInput rewriteProgramInternal(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		Map<Long, List<Hop>> rewireTable = new HashMap<>();
 		Set<Hop> progRootHopSet = new HashSet<>();
@@ -125,6 +146,41 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		MinStDiagnostics diagnostics = captureMinStDiagnostics(graph);
 		FederatedPlannerLogger.logOptimalPlanStructured(diagnostics);
 		FederatedPlannerLogger.logOptimalPlan(diagnostics, true);
+		if (analysis == null)
+			return null;
+		MinStPlacementInput input = bindPlacementInput(analysis, graph);
+		new MinStPlacementAdapter().select(analysis, input);
+		return input;
+	}
+
+	public static MinStPlacementInput bindPlacementInput(PlacementAnalysis analysis,
+		FederatedPlanMinSTGraph graph) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(graph, "graph");
+		List<OccurrenceReceipt> occurrences = new ArrayList<>();
+		for(var occurrence : analysis.occurrences()) {
+			Hop hop = analysis.hop(occurrence.key()).orElseThrow();
+			Vertex vertex = graph.getVertex(hop.getHopID());
+			boolean trace = analysis.graph().node(occurrence.key()).orElseThrow().kind()
+				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_BODY_NON_EMITTED;
+			if(vertex == null && !trace)
+				throw new IllegalArgumentException("MinST selected occurrence is missing: " + occurrence.key());
+			if(vertex != null && (vertex.getHopID() != hop.getHopID() || vertex.getHopRef() != hop))
+				throw new IllegalArgumentException("MinST selected occurrence is foreign: " + occurrence.key());
+			ExecType exec = trace ? null : (hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType());
+			FederatedOutput output = trace ? FederatedOutput.NONE : hop.getFederatedOutput();
+			if(!trace && (exec == null || output == null))
+				throw new IllegalArgumentException("Selected occurrence has incomplete executable state");
+			occurrences.add(new OccurrenceReceipt(occurrence.key(), hop, hop.getHopID(), hop, hop.getHopID(),
+				exec, output));
+		}
+		List<ObligationReceipt> obligations = graph.getSelectedObligations().stream().map(value ->
+			new ObligationReceipt(value.getKind().name(), value.getChildHopId(), value.getOriginalHopId(),
+				value.getDomainId(), value.getConsumerHopIds(), value.getFType(), value.hasCapability(),
+				value.getCapabilityReason(), value.getReason())).toList();
+		ProducerReceipt producer = new ProducerReceipt(analysis.analysisFingerprint(),
+			graph.getSelectedCutObjectiveBits(), graph.getSelectedSourcePartitionNodeIds());
+		return MinStPlacementInput.create(analysis, producer, occurrences, obligations);
 	}
 
 	@Override

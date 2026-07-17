@@ -5,93 +5,86 @@
  */
 package org.apache.sysds.hops.fedplanner.placement.adapter;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.SelectedObligation;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
-/** Immutable owner-provenance carrier for one already selected MinST graph. */
-public final class MinStPlacementInput {
-	static final class OccurrenceBinding {
-		final PlacementAnalysis.HopOccurrenceProjection occurrence;
-		final Vertex vertex;
-		final Hop hop;
-
-		OccurrenceBinding(PlacementAnalysis.HopOccurrenceProjection occurrence, Vertex vertex) {
-			this.occurrence = occurrence;
-			this.vertex = vertex;
-			this.hop = occurrence.hop();
+/** Immutable, graph-agnostic owner/provenance carrier for one already selected MinST result. */
+public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvocationReceipt {
+	public record ProducerReceipt(String analysisFingerprint, long cutObjectiveBits,
+		List<Long> sourcePartitionNodeIds) {
+		public ProducerReceipt {
+			analysisFingerprint = Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			sourcePartitionNodeIds = List.copyOf(sourcePartitionNodeIds);
+		}
+	}
+	public record OccurrenceReceipt(CompiledHopKey planningKey, Hop planningHop, long planningHopId,
+		Hop executableHop, long executableHopId, ExecType execType, FederatedOutput output) {
+		public OccurrenceReceipt {
+			Objects.requireNonNull(planningKey, "planningKey");
+			Objects.requireNonNull(planningHop, "planningHop");
+			Objects.requireNonNull(executableHop, "executableHop");
+			Objects.requireNonNull(output, "output");
+		}
+	}
+	public record ObligationReceipt(String kind, long childHopId, long originalHopId, String domainId,
+		List<Long> consumerHopIds, FType fType, boolean capability, String capabilityReason, String reason) {
+		public ObligationReceipt {
+			kind = Objects.requireNonNull(kind, "kind");
+			domainId = Objects.requireNonNull(domainId, "domainId");
+			consumerHopIds = List.copyOf(consumerHopIds);
+			capabilityReason = Objects.requireNonNull(capabilityReason, "capabilityReason");
+			reason = Objects.requireNonNull(reason, "reason");
 		}
 	}
 
 	private final PlacementAnalysis owner;
-	private final FederatedPlanMinSTGraph selectedGraph;
-	private final List<OccurrenceBinding> bindings;
-	private final long cutObjectiveBits;
-	private final List<Long> sourcePartitionNodeIds;
-	private final List<SelectedObligation> selectedObligations;
+	private final ProducerReceipt producer;
+	private final List<OccurrenceReceipt> occurrences;
+	private final List<ObligationReceipt> obligations;
 
-	private MinStPlacementInput(PlacementAnalysis owner, FederatedPlanMinSTGraph selectedGraph,
-		List<OccurrenceBinding> bindings, long cutObjectiveBits, List<Long> sourcePartitionNodeIds,
-		List<SelectedObligation> selectedObligations) {
-		this.owner = owner;
-		this.selectedGraph = selectedGraph;
-		this.bindings = List.copyOf(bindings);
-		this.cutObjectiveBits = cutObjectiveBits;
-		this.sourcePartitionNodeIds = List.copyOf(sourcePartitionNodeIds);
-		this.selectedObligations = List.copyOf(selectedObligations);
-	}
-
-	public static MinStPlacementInput bind(PlacementAnalysis owner, FederatedPlanMinSTGraph selectedGraph) {
-		Objects.requireNonNull(owner, "owner");
-		Objects.requireNonNull(selectedGraph, "selectedGraph");
-		List<OccurrenceBinding> bindings = new ArrayList<>();
-		for (PlacementAnalysis.HopOccurrenceProjection occurrence : owner.occurrences()) {
-			Hop ownedHop = owner.hop(occurrence.key()).orElseThrow(
-				() -> new IllegalArgumentException("Missing owner occurrence: " + occurrence.key()));
-			if (ownedHop != occurrence.hop())
-				throw new IllegalArgumentException("Stale owner occurrence: " + occurrence.key());
-			Vertex vertex = selectedGraph.getVertex(ownedHop.getHopID());
-			if (vertex == null || vertex.getHopID() != ownedHop.getHopID() || vertex.getHopRef() != ownedHop)
-				throw new IllegalArgumentException("MinST vertex is missing or foreign: " + occurrence.key());
-			bindings.add(new OccurrenceBinding(occurrence, vertex));
-		}
-		if (bindings.size() != owner.occurrences().size())
+	private MinStPlacementInput(PlacementAnalysis owner, ProducerReceipt producer,
+		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
+		this.owner = Objects.requireNonNull(owner, "owner");
+		this.producer = Objects.requireNonNull(producer, "producer");
+		this.occurrences = List.copyOf(occurrences);
+		this.obligations = List.copyOf(obligations);
+		if(this.occurrences.size() != owner.occurrences().size())
 			throw new IllegalArgumentException("Incomplete MinST occurrence binding");
-		return new MinStPlacementInput(owner, selectedGraph, bindings,
-			selectedGraph.getSelectedCutObjectiveBits(), selectedGraph.getSelectedSourcePartitionNodeIds(),
-			selectedGraph.getSelectedObligations());
 	}
 
-	PlacementAnalysis owner() { return owner; }
-	FederatedPlanMinSTGraph selectedGraph() { return selectedGraph; }
-	List<OccurrenceBinding> bindings() { return bindings; }
-	long cutObjectiveBits() { return cutObjectiveBits; }
-	List<Long> sourcePartitionNodeIds() { return sourcePartitionNodeIds; }
-	List<SelectedObligation> selectedObligations() { return selectedObligations; }
+	public static MinStPlacementInput create(PlacementAnalysis owner, ProducerReceipt producer,
+		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
+		return new MinStPlacementInput(owner, producer, occurrences, obligations);
+	}
+
+	@Override public PlacementAnalysis analysis() { return owner; }
+	public ProducerReceipt producerReceipt() { return producer; }
+	public List<OccurrenceReceipt> occurrenceReceipts() { return occurrences; }
+	public List<ObligationReceipt> obligationReceipts() { return obligations; }
 
 	void validateUnchanged() {
-		if (selectedGraph.getSelectedCutObjectiveBits() != cutObjectiveBits
-			|| !selectedGraph.getSelectedSourcePartitionNodeIds().equals(sourcePartitionNodeIds))
-			throw new IllegalArgumentException("MinST selected snapshot is stale");
-		List<SelectedObligation> current = selectedGraph.getSelectedObligations();
-		if (current.size() != selectedObligations.size())
-			throw new IllegalArgumentException("MinST obligation snapshot is stale");
-		for (int i = 0; i < current.size(); i++)
-			if (current.get(i) != selectedObligations.get(i))
-				throw new IllegalArgumentException("MinST obligation identity is stale");
-		for (OccurrenceBinding binding : bindings) {
-			Hop hop = owner.hop(binding.occurrence.key()).orElseThrow(
+		for(int i = 0; i < occurrences.size(); i++) {
+			OccurrenceReceipt receipt = occurrences.get(i);
+			PlacementAnalysis.HopOccurrenceProjection occurrence = owner.occurrences().get(i);
+			Hop hop = owner.hop(receipt.planningKey()).orElseThrow(
 				() -> new IllegalArgumentException("Owner occurrence disappeared"));
-			Vertex vertex = selectedGraph.getVertex(binding.hop.getHopID());
-			if (hop != binding.hop || vertex != binding.vertex || vertex.getHopRef() != binding.hop
-				|| vertex.getHopID() != binding.hop.getHopID())
-				throw new IllegalArgumentException("MinST occurrence binding is stale");
+			if(!receipt.planningKey().equals(occurrence.key()) || hop != occurrence.hop()
+				|| hop != receipt.planningHop() || hop != receipt.executableHop()
+				|| hop.getHopID() != receipt.planningHopId() || hop.getHopID() != receipt.executableHopId())
+				throw new IllegalArgumentException("Owner occurrence identity changed");
+			ExecType exec = receipt.execType() == null ? null
+				: (hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType());
+			FederatedOutput output = receipt.execType() == null ? FederatedOutput.NONE : hop.getFederatedOutput();
+			if(exec != receipt.execType() || output != receipt.output())
+				throw new IllegalArgumentException("MinST occurrence state is stale");
 		}
 	}
 }

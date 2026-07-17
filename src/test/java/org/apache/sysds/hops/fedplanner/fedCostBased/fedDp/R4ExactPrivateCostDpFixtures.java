@@ -30,7 +30,8 @@ public final class R4ExactPrivateCostDpFixtures {
 	public record Fixture(String id, Map<String,String> namedRoles, Map<String,String> literalAliases,
 		List<Alternative> alternatives, ExecType selectedExec, FederatedOutput selectedOutput,
 		double objective, Map<String,String> facts, PlacementAnalysis analysis,
-		FederatedPlannerDpMemoTable memo, Hop root, List<FedPlan> enumeratedPlans, FedPlan selectedPlan) { }
+		FederatedPlannerDpMemoTable memo, Hop root, HopCommon exactHopCommon,
+		List<FedPlan> enumeratedPlans, FedPlan selectedPlan, FedPlan aggregatePlan) { }
 
 	public static List<Fixture> all() throws Exception {
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-01");
@@ -46,19 +47,28 @@ public final class R4ExactPrivateCostDpFixtures {
 			fedLocalOutput(analysis,occurrences.get(2).hop(),occurrences.get(2).key().normalizedSignature()));
 	}
 
+	public static List<Fixture> ownerFixtures() throws Exception {
+		List<Fixture> fixtures = new java.util.ArrayList<>(all());
+		PlacementAnalysis analysis = fixtures.get(0).analysis();
+		var owner = analysis.occurrences().get(1);
+		Map<String,Hop> literal = Map.of(owner.key().normalizedSignature(), owner.hop());
+		fixtures.add(anchorContrast("C2-DP-04-ANCHOR-CONTRAST:CONCRETE", analysis, owner.hop(), literal, true));
+		fixtures.add(anchorContrast("C2-DP-04-ANCHOR-CONTRAST:MISSING", analysis, owner.hop(), literal, false));
+		return List.copyOf(fixtures);
+	}
+
 	public static Fixture anchorContrast(String id, PlacementAnalysis analysis, Hop root,
 		Map<String,Hop> literalHops, boolean concreteAnchor) throws Exception {
 		double lout = concreteAnchor ? 0x1.8p2 : 0x1.0p2;
 		double fout = concreteAnchor ? 0x1.0p2 : 0x1.8p2;
-		FedPlan l = plan(root, FederatedOutput.LOUT, ExecType.CP, lout, List.of());
-		FedPlan f = plan(root, FederatedOutput.FOUT, ExecType.CP, fout, List.of());
+		HopCommon common = common(root);
+		FedPlan l = plan(common, FederatedOutput.LOUT, ExecType.CP, lout, List.of());
+		FedPlan f = plan(common, FederatedOutput.FOUT, ExecType.CP, fout, List.of());
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.LOUT, variants(l));
-		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.FOUT, variants(f));
-		Method select = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",
-			Set.class, FederatedPlannerDpMemoTable.class);
-		select.setAccessible(true);
-		FedPlan rootSelection = (FedPlan) select.invoke(null, Set.of(root), memo);
+		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.LOUT, variants(common, l));
+		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.FOUT, variants(common, f));
+		registerRoot(memo, root, common);
+		FedPlan rootSelection = aggregate(root, memo);
 		FederatedOutput selectedOutput = rootSelection.getChildFedPlans().get(0).getRight();
 		FedPlan selected = memo.getFedPlanAfterPrune(root.getHopID(), selectedOutput);
 		Map<String,String> named = new LinkedHashMap<>();
@@ -76,20 +86,19 @@ public final class R4ExactPrivateCostDpFixtures {
 				new Alternative(ExecType.CP, FederatedOutput.FOUT, fout)),
 			ExecType.CP, selectedOutput, selected.getCumulativeCost(),
 			Map.of("anchorCapability", concreteAnchor ? "CONCRETE" : "MISSING", "tieRule", "LOUT_LE_FOUT"), analysis, memo, root,
-			List.copyOf(enumerated), selected);
+			common, List.copyOf(enumerated), selected, rootSelection);
 	}
 
 	private static Fixture root(String id,PlacementAnalysis analysis,Hop root,String key,double lout,double fout)
 		throws Exception {
-		FedPlan l = plan(root, FederatedOutput.LOUT, ExecType.CP, lout, List.of());
-		FedPlan f = plan(root, FederatedOutput.FOUT, ExecType.FED, fout, List.of());
+		HopCommon common = common(root);
+		FedPlan l = plan(common, FederatedOutput.LOUT, ExecType.CP, lout, List.of());
+		FedPlan f = plan(common, FederatedOutput.FOUT, ExecType.FED, fout, List.of());
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.LOUT, variants(l));
-		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.FOUT, variants(f));
-		Method select = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",
-			Set.class, FederatedPlannerDpMemoTable.class);
-		select.setAccessible(true);
-		FedPlan rootSelection = (FedPlan) select.invoke(null, Set.of(root), memo);
+		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.LOUT, variants(common, l));
+		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.FOUT, variants(common, f));
+		registerRoot(memo, root, common);
+		FedPlan rootSelection = aggregate(root, memo);
 		Pair<Long,FederatedOutput> edge = rootSelection.getChildFedPlans().get(0);
 		FedPlan selected = memo.getFedPlanAfterPrune(root.getHopID(), edge.getRight());
 		Map<String,String> roles = roles("root", root);
@@ -101,19 +110,22 @@ public final class R4ExactPrivateCostDpFixtures {
 			edge.getRight() == FederatedOutput.LOUT ? ExecType.CP : ExecType.FED, edge.getRight(),
 			selected.getCumulativeCost(), Map.of("tieRule", "LOUT_LE_FOUT",
 				"bitDistance", Long.toString(Math.abs(Double.doubleToLongBits(lout) - Double.doubleToLongBits(fout)))),
-			analysis,memo,root,enumerated,selected);
+			analysis,memo,root,common,enumerated,selected,rootSelection);
 	}
 
 	private static Fixture stableVariant(PlacementAnalysis analysis,Hop root,String key,Hop firstChild,Hop secondChild)
 		throws Exception {
-		FedPlan first = plan(root, FederatedOutput.FOUT, ExecType.CP, 0x1.4p2,
+		HopCommon common = common(root);
+		FedPlan first = plan(common, FederatedOutput.FOUT, ExecType.CP, 0x1.4p2,
 			List.of(Pair.of(firstChild.getHopID(), FederatedOutput.LOUT)));
-		FedPlan second = plan(root, FederatedOutput.FOUT, ExecType.CP, 0x1.4p2,
+		FedPlan second = plan(common, FederatedOutput.FOUT, ExecType.CP, 0x1.4p2,
 			List.of(Pair.of(secondChild.getHopID(), FederatedOutput.FOUT)));
-		FedPlanVariants variants = variants(first, second);
+		FedPlanVariants variants = variants(common, first, second);
 		variants.pruneFedPlans();
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
 		memo.addFedPlanVariants(root.getHopID(), FederatedOutput.FOUT, variants);
+		registerRoot(memo, root, common);
+		FedPlan aggregate = aggregate(root, memo);
 		FedPlan selected = memo.getFedPlanAfterPrune(root.getHopID(), FederatedOutput.FOUT);
 		Map<String,String> roles = new LinkedHashMap<>();
 		roles.putAll(roles("root", root)); roles.putAll(roles("childV1", firstChild));
@@ -124,15 +136,18 @@ public final class R4ExactPrivateCostDpFixtures {
 			FederatedOutput.FOUT, selected.getCumulativeCost(), Map.of("selectedInsertionOrdinal",
 				selected.getChildFedPlans().get(0).getRight() == FederatedOutput.LOUT ? "0" : "1",
 				"selectedChildOutput", selected.getChildFedPlans().get(0).getRight().name()),analysis,memo,root,
-			List.copyOf(variants.getFedPlanVariants()),selected);
+			common,List.copyOf(variants.getFedPlanVariants()),selected,aggregate);
 	}
 
 	private static Fixture fedLocalOutput(PlacementAnalysis analysis,Hop mm,String key) throws Exception {
-		FedPlan cp = plan(mm, FederatedOutput.LOUT, ExecType.CP, 0x1.8p3, List.of());
-		FedPlan fed = plan(mm, FederatedOutput.LOUT, ExecType.FED, 0x1.0p2, List.of());
-		FedPlanVariants candidates = variants(cp, fed); candidates.pruneFedPlans();
+		HopCommon common = common(mm);
+		FedPlan cp = plan(common, FederatedOutput.LOUT, ExecType.CP, 0x1.8p3, List.of());
+		FedPlan fed = plan(common, FederatedOutput.LOUT, ExecType.FED, 0x1.0p2, List.of());
+		FedPlanVariants candidates = variants(common, cp, fed); candidates.pruneFedPlans();
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
 		memo.addFedPlanVariants(mm.getHopID(), FederatedOutput.LOUT, candidates);
+		registerRoot(memo, mm, common);
+		FedPlan aggregate = aggregate(mm, memo);
 		FedPlan selected = memo.getFedPlanAfterPrune(mm.getHopID(), FederatedOutput.LOUT);
 		Map<String,String> roles=roles("mmRoot",mm);
 		return new Fixture("C2-DP-07-FED-LOCAL-OUTPUT",Map.copyOf(roles),Map.of(key,"mmRoot"),
@@ -140,7 +155,7 @@ public final class R4ExactPrivateCostDpFixtures {
 				new Alternative(ExecType.FED, FederatedOutput.LOUT, 0x1.0p2)), selected.getExecType(),
 			selected.getFedOutType(), selected.getCumulativeCost(), Map.of("runtimeOutputConstraint", "LOUT_ONLY",
 				"operandShape", "VECTOR_X_FEDERATED_MM"),analysis,memo,mm,
-			List.copyOf(candidates.getFedPlanVariants()),selected);
+			common,List.copyOf(candidates.getFedPlanVariants()),selected,aggregate);
 	}
 
 	private static Map<String,String> roles(String role, Hop hop) {
@@ -152,8 +167,8 @@ public final class R4ExactPrivateCostDpFixtures {
 			role);
 	}
 
-	private static FedPlanVariants variants(FedPlan... plans) {
-		FedPlanVariants variants = planVariants(plans[0].getHopRef(), plans[0].getFedOutType());
+	private static FedPlanVariants variants(HopCommon common, FedPlan... plans) {
+		FedPlanVariants variants = planVariants(common, plans[0].getFedOutType());
 		for(FedPlan plan : plans) {
 			FedPlan rebound = new FedPlan(plan.getCumulativeCost(), variants, plan.getChildFedPlans());
 			rebound.setExecType(plan.getExecType()); rebound.setFType(plan.getFType()); variants.addFedPlan(rebound);
@@ -161,17 +176,36 @@ public final class R4ExactPrivateCostDpFixtures {
 		return variants;
 	}
 
-	private static FedPlanVariants planVariants(Hop hop, FederatedOutput output) {
+	private static HopCommon common(Hop hop) {
 		HopCommon common = new HopCommon(hop, 1.0, 1.0, 1.0, 1, List.of());
 		common.setSelfCost(0x1.0p-4); common.setForwardingCost(0x1.0p-3);
+		return common;
+	}
+
+	private static FedPlanVariants planVariants(HopCommon common, FederatedOutput output) {
 		return new FedPlanVariants(common, output);
 	}
 
-	private static FedPlan plan(Hop hop, FederatedOutput output, ExecType exec, double cost,
+	private static FedPlan plan(HopCommon common, FederatedOutput output, ExecType exec, double cost,
 		List<Pair<Long,FederatedOutput>> children) {
-		FedPlanVariants variants = planVariants(hop, output);
+		FedPlanVariants variants = planVariants(common, output);
 		FedPlan plan = new FedPlan(cost, variants, children); plan.setExecType(exec); plan.setFType(FType.ROW);
 		return plan;
+	}
+
+	private static void registerRoot(FederatedPlannerDpMemoTable memo, Hop root, HopCommon common) {
+		if(common.getHopRef() != root)
+			throw new AssertionError("R4_DP_OWNER_COMMON_IDENTITY|root=" + root.getHopID());
+		memo.registerHopRefs(Map.of(root.getHopID(), common));
+		if(memo.resolveOriginalHop(root.getHopID()) != root)
+			throw new AssertionError("R4_DP_OWNER_REGISTRATION|root=" + root.getHopID());
+	}
+
+	private static FedPlan aggregate(Hop root, FederatedPlannerDpMemoTable memo) throws Exception {
+		Method select = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",
+			Set.class, FederatedPlannerDpMemoTable.class);
+		select.setAccessible(true);
+		return (FedPlan) select.invoke(null, Set.of(root), memo);
 	}
 
 	private R4ExactPrivateCostDpFixtures() { }

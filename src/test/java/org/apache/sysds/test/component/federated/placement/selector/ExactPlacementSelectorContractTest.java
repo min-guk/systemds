@@ -17,9 +17,19 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementCertificate;
@@ -33,6 +43,53 @@ import org.junit.Test;
 
 /** Genuine RED contract for exact selection against independently constructed isomorphic universes. */
 public class ExactPlacementSelectorContractTest {
+	private static final PlacementState CP = new PlacementState(
+		org.apache.sysds.common.Types.ExecType.CP,
+		org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT, null, false);
+
+	@Test
+	public void mixedDecisionAndTraceGraphSelectsOnlyDecisionKeysAndRetainsFullProof() {
+		NeutralPlacementGraph graph = mixedDecisionTraceGraph(false);
+		Set<CompiledHopKey> expected = expectedDecisionKeys(graph);
+		PlacementSelection actual;
+		try {
+			actual = new ExactPlacementSelector().select(graph);
+		}
+		catch(Throwable failure) {
+			Assert.fail("DECISION_NODE_SELECTOR_THROW|" + failure.getClass().getName() + "|" + failure.getMessage());
+			return;
+		}
+		Assert.assertEquals(expected, actual.assignment().keySet());
+		Assert.assertEquals(graph.nodes().size(), actual.certificate().graphNodeCount());
+		Assert.assertEquals(sha256(graph.normalizedSignature()), actual.certificate().graphFingerprint());
+		Assert.assertEquals(independentAssignmentUniverseSize(graph),
+			actual.certificate().exploredCount() + actual.certificate().prunedCount());
+		Assert.assertEquals("trace constraints remain auditable", 1, graph.constraints().size());
+		Assert.assertTrue("trace-only relocation must be placement-inactive", actual.selectedRelocations().isEmpty());
+	}
+
+	@Test
+	public void emittedNodeWithEmptyAlternativesIsStructurallyRejected() {
+		expectStructural("EMITTED_EMPTY", () -> node("bad-emitted", true, List.of()));
+	}
+
+	@Test
+	public void traceNodeWithNonemptyAlternativesIsStructurallyRejected() {
+		expectStructural("TRACE_NONEMPTY", () -> node("bad-trace", false, List.of(CP)));
+	}
+
+	@Test
+	public void activeDecisionObligationCannotBeSourcedOnlyByTraceNode() {
+		NeutralPlacementGraph graph = mixedDecisionTraceGraph(true);
+		try {
+			new ExactPlacementSelector().select(graph);
+			Assert.fail("EXPECTED_STRUCTURAL_REJECTION|TRACE_SOURCE_FOR_DECISION_OBLIGATION");
+		}
+		catch(IllegalStateException failure) {
+			Assert.assertEquals("decision relocation source is trace-only", failure.getMessage());
+			Assert.assertFalse(failure.getMessage().contains("selectable graph node has no legal alternatives"));
+		}
+	}
 	@Test
 	public void exactSelectorMatchesFullIndependentS01ThroughS08Results() {
 		ExactPlacementSelector selector = new ExactPlacementSelector();
@@ -244,9 +301,57 @@ public class ExactPlacementSelectorContractTest {
 
 	private static long independentAssignmentUniverseSize(NeutralPlacementGraph graph) {
 		long result = 1;
-		for(Node node : graph.nodes())
+		for(Node node : graph.nodes()) {
+			Assert.assertEquals("decision/trace polarity", node.emittedWork(), !node.legalAlternatives().isEmpty());
+			if(!node.emittedWork())
+				continue;
 			result = Math.multiplyExact(result, node.legalAlternatives().size());
+		}
 		return result;
+	}
+
+	private static Set<CompiledHopKey> expectedDecisionKeys(NeutralPlacementGraph graph) {
+		Set<CompiledHopKey> keys = new LinkedHashSet<>();
+		for(Node node : graph.nodes()) {
+			Assert.assertEquals("decision/trace polarity", node.emittedWork(), !node.legalAlternatives().isEmpty());
+			if(node.emittedWork() && !node.legalAlternatives().isEmpty())
+				keys.add(node.key());
+		}
+		return Set.copyOf(keys);
+	}
+
+	private static NeutralPlacementGraph mixedDecisionTraceGraph(boolean traceSourcesDecisionObligation) {
+		Node decision = node("decision", true, List.of(CP));
+		Node trace = node("trace", false, List.of());
+		CompiledHopKey consumer = traceSourcesDecisionObligation ? decision.key() : trace.key();
+		ValueVersionKey source = traceSourcesDecisionObligation ? trace.valueVersion() : decision.valueVersion();
+		DurableAnchorKey anchor = new DurableAnchorKey("decision-red-anchor",
+			org.apache.sysds.hops.fedplanner.FTypes.FType.ROW,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(1L, 1L))));
+		RelocationActionKey actionKey = new RelocationActionKey(source, CP, anchor, "decision-red-scope",
+			List.of(consumer));
+		ObligationKey obligation = new ObligationKey(consumer, 0, source, CP, actionKey, "decision-red-scope");
+		return new NeutralPlacementGraph(List.of(decision, trace),
+			List.of(new Constraint(ConstraintKind.SAME_PLACEMENT, decision.key(), trace.key())),
+			List.of(new RelocationAction(actionKey, List.of(obligation))));
+	}
+
+	private static Node node(String id, boolean emitted, List<PlacementState> alternatives) {
+		ControlRegionKey region = new ControlRegionKey("decision-red", "main", List.of(id), id, "compiled");
+		CompiledHopKey key = new CompiledHopKey("decision-red", "main", id, "compiled", region, id, id);
+		ValueVersionKey value = new ValueVersionKey("decision-red", id, region, 0, VersionKind.ORDINARY, List.of());
+		return new Node(key, NodeKind.OPERATION, value, emitted, alternatives, List.of(), List.of());
+	}
+
+	private static void expectStructural(String code, Runnable action) {
+		try {
+			action.run();
+			Assert.fail("EXPECTED_STRUCTURAL_REJECTION|" + code);
+		}
+		catch(IllegalArgumentException failure) {
+			Assert.assertFalse("structural rejection must differ from selector selectable-empty failure",
+				String.valueOf(failure.getMessage()).contains("selectable graph node has no legal alternatives"));
+		}
 	}
 
 	private record IndependentComponent(String identity, Set<String> nodes, long edgeCount,
