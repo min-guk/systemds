@@ -81,7 +81,7 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 	public HeuristicInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
 		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
 		Objects.requireNonNull(analysis, "analysis");
-		analysis.assertProgramOwner(prog);
+		analysis.assertCanonicalProgramAuthority(prog);
 		HeuristicPolicyFacts policyFacts = analysis.heuristicPolicyFacts();
 		Set<ValueVersionKey> markers = Collections.unmodifiableSet(new LinkedHashSet<>(
 			policyFacts.demotions().stream().map(fact -> fact.valueVersion()).toList()));

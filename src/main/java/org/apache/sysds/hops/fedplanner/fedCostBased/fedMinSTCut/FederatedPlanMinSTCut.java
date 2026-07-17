@@ -105,7 +105,7 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 	public MinStPlacementInput rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
 		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
 		Objects.requireNonNull(analysis, "analysis");
-		analysis.assertProgramOwner(prog);
+		analysis.assertCanonicalProgramAuthority(prog);
 		return rewriteProgramInternal(prog, fgraph, fcallSizes, analysis);
 	}
 

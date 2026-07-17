@@ -55,7 +55,7 @@ public final class PlacementShadowCoordinator {
 	}
 
 	public static Session begin(DMLProgram program, PlacementAnalysis analysis) {
-		Objects.requireNonNull(analysis, "analysis").assertProgramOwner(program);
+		Objects.requireNonNull(analysis, "analysis").assertCanonicalProgramAuthority(program);
 		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
 		ShadowAnalysis shadowAnalysis = new ShadowAnalysis() {
 			@Override public NeutralPlacementGraph build(DMLProgram ignored) { return builder.build(program); }
