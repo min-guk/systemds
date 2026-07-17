@@ -370,6 +370,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		PlacementAnalysis detached = builder.buildAnalysis(program);
 		Hop sentinel = detached.occurrences().stream().map(HopOccurrenceProjection::hop)
 			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst().orElseThrow();
+		FunctionCallGraph fgraph = new FunctionCallGraph(program);
 		seedRunState(sentinel);
 		ProgramSnapshot before = snapshotProgram(program, detached);
 		RunStateSnapshot runBefore = snapshotRunState(sentinel);
@@ -417,7 +418,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			Method ipa = IPAPassRewriteFederatedPlan.class.getMethod("rewriteProgram", DMLProgram.class,
 				FunctionCallGraph.class, FunctionCallSizeInfo.class, Consumer.class);
 			try {
-				ipa.invoke(new IPAPassRewriteFederatedPlan(), program, new FunctionCallGraph(program), null,
+				ipa.invoke(new IPAPassRewriteFederatedPlan(), program, fgraph, null,
 					(Consumer<Object>) receipt -> receipts.incrementAndGet());
 				Assert.fail("CAMPAIGN_B_DP_IPA_ACCEPTED_UNBOUND_PROGRAM");
 			}
