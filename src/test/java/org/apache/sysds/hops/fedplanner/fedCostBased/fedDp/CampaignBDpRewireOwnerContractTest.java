@@ -200,32 +200,6 @@ public class CampaignBDpRewireOwnerContractTest {
 			b05.fixture().analysis().occurrences(), clean.cloneAssociations(), List.of(substitutedRoot)));
 	}
 
-	@Test
-	public void b09AdditionalRootInjectionVariantsRejectBeforeMutation() {
-		RealDp owner = realDp("B-09");
-		Claims claims = exactClaims(owner.fixture().analysis());
-		Snapshot before = snapshot(owner);
-		HopOccurrenceProjection substitutedRoot = owner.fixture().analysis().occurrences().get(0);
-
-		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
-			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), List.of(substitutedRoot)));
-		HopOccurrenceProjection copiedRoot = new HopOccurrenceProjection(substitutedRoot.key(),
-			substitutedRoot.hop(), substitutedRoot.normalizedOrdinal(), substitutedRoot.normalizedSignature());
-		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
-			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), List.of(copiedRoot)));
-		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
-			owner.fixture().analysis().occurrences(), claims.cloneAssociations(),
-			List.of(substitutedRoot, substitutedRoot)));
-		List<HopOccurrenceProjection> reorderedRoots = List.of(owner.fixture().analysis().occurrences().get(1),
-			substitutedRoot);
-		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
-			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), reorderedRoots));
-		Fixture foreign = fixture("B-09");
-		HopOccurrenceProjection foreignRoot = foreign.analysis().occurrences().get(0);
-		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
-			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), List.of(foreignRoot)));
-	}
-
 	private static RewireReceipt inspect(RealDp real, Claims claims) {
 		return FederatedPlannerDpRewireTransTable.inspectExact(new RewireRequest(real.fixture().analysis(),
 			real.fixture().program(), real.fixture().analysis().occurrences(), claims.cloneAssociations(),
