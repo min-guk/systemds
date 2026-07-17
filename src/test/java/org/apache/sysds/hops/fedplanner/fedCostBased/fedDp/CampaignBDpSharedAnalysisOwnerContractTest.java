@@ -1,9 +1,9 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
-import java.security.MessageDigest;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 
@@ -51,6 +51,8 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		"a80bb1b061b07743fa283631097a2966a9cf946f54bf53468ead9bfab5ac33c3";
 	private static final String DIRECT_DP_CLOSURE_EVIDENCE_SHA =
 		"8dcaf54c5993865315cc0c2e565ab766adffc159fb0c74eb911ee8bc07c0ac27";
+	private static final String FROZEN_DIRECT_DP_CLOSURE =
+		"PLANNER=DP UNITS=34 VIOLATIONS=140 ADAPTER=DpPlacementAdapter POSITIVE_BOUNDARY=PASS";
 	private static final int FROZEN_DP_UNITS = 34;
 	private static final int FROZEN_DP_VIOLATIONS = 140;
 	private static final int PREDICTED_H1_DP_VIOLATIONS = 139;
@@ -115,8 +117,8 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Fixture owner = fixture("B-05");
 		PlacementAnalysis copied = new NeutralPlacementGraphBuilder().buildAnalysis(owner.program());
 		Assert.assertNotSame(owner.analysis(), copied);
-		Assert.assertSame(owner.program(), owner.analysis().programOwner());
-		Assert.assertSame(owner.program(), copied.programOwner());
+		owner.analysis().assertProgramOwner(owner.program());
+		copied.assertProgramOwner(owner.program());
 		assertSameHopOrigins(owner.analysis(), copied);
 		ProgramSnapshot ownerBefore = snapshotProgram(owner.program(), owner.analysis());
 		AnalysisSnapshot copiedBefore = snapshotAnalysis(copied);
@@ -154,6 +156,9 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertEquals("H1 prediction must remove exactly one violation", FROZEN_DP_VIOLATIONS - 1,
 			PREDICTED_H1_DP_VIOLATIONS);
 		Assert.assertEquals("H1 must preserve the complete DP closure unit count", 34, FROZEN_DP_UNITS);
+		Assert.assertEquals("complete frozen direct DP closure authority",
+			"PLANNER=DP UNITS=" + FROZEN_DP_UNITS + " VIOLATIONS=" + FROZEN_DP_VIOLATIONS
+				+ " ADAPTER=DpPlacementAdapter POSITIVE_BOUNDARY=PASS", FROZEN_DIRECT_DP_CLOSURE);
 		Assert.assertEquals("frozen direct-closure evidence SHA", 64, DIRECT_DP_CLOSURE_EVIDENCE_SHA.length());
 		String source = Files.readString(DP_ROOT);
 		String typedSignature = "public DpInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,";
