@@ -51,7 +51,7 @@ public class CampaignBDpRewireOwnerContractTest {
 		Assert.assertSame(real.fixture().analysis(), receipt.analysis());
 		Assert.assertSame(real.fixture().program(), receipt.program());
 		Assert.assertEquals(real.fixture().analysis().analysisFingerprint(), receipt.analysisFingerprint());
-		assertIdentityList(real.fixture().analysis().occurrences(), receipt.orderedOccurrences(), "occurrences");
+		assertIdentityList(real.fixture().analysis().occurrences(), receipt.occurrences(), "occurrences");
 		Assert.assertEquals(real.fixture().analysis().graph().normalizedIdentities(),
 			receipt.orderedNormalizedIdentities());
 		Assert.assertEquals("exact B-09 clone claim multiplicity", 1, claims.cloneAssociations().size());
@@ -64,7 +64,7 @@ public class CampaignBDpRewireOwnerContractTest {
 		Assert.assertTrue("neutral B-09 has no request-injectable legacy additional root",
 			receipt.orderedAdditionalRoots().isEmpty());
 		assertImmutable(receipt.cloneReceipts(), "clone receipts");
-		assertImmutable(receipt.orderedOccurrences(), "ordered occurrences");
+		assertImmutable(receipt.occurrences(), "ordered occurrences");
 		assertImmutable(receipt.orderedAdditionalRoots(), "additional roots");
 		assertImmutable(receipt.orderedNormalizedIdentities(), "normalized identities");
 		assertImmutable(receipt.cloneToOrig(), "clone/original map");
@@ -83,7 +83,7 @@ public class CampaignBDpRewireOwnerContractTest {
 		Assert.assertTrue(receipt.cloneReceipts().isEmpty());
 		Assert.assertTrue(receipt.cloneToOrig().isEmpty());
 		Assert.assertTrue(receipt.orderedAdditionalRoots().isEmpty());
-		assertIdentityList(real.fixture().analysis().occurrences(), receipt.orderedOccurrences(), "B-05 originals");
+		assertIdentityList(real.fixture().analysis().occurrences(), receipt.occurrences(), "B-05 originals");
 		Assert.assertFalse(real.fixture().analysis().graph().nodes().stream()
 			.anyMatch(node -> node.kind() == NodeKind.CLONE));
 		Assert.assertFalse(real.fixture().analysis().graph().nodes().stream()
