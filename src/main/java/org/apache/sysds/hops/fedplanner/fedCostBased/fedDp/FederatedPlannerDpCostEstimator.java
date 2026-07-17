@@ -151,8 +151,11 @@ public class FederatedPlannerDpCostEstimator {
 		if (!retainsExactPlan(variants, plan))
 			throw new IllegalArgumentException("Estimator plan is not retained by the supplied memo");
 
+		List<Pair<Long, FederatedOutput>> childEdges = plan.getChildFedPlans();
+		if (childEdges == null)
+			throw new IllegalArgumentException("Estimator child edges must not be null");
 		List<ChildCostReceipt> childCosts = new ArrayList<>();
-		for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+		for (Pair<Long, FederatedOutput> childEdge : childEdges) {
 			if (childEdge == null || childEdge.getLeft() == null || childEdge.getRight() == null)
 				throw new IllegalArgumentException("Estimator child edge is incomplete");
 			FederatedPlannerDpMemoTable.FedPlan childPlan = memo.getFedPlanAfterPrune(
@@ -182,17 +185,11 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	private static HopOccurrenceProjection exactOccurrenceForHop(PlacementAnalysis analysis, Hop hop) {
-		HopOccurrenceProjection match = null;
 		for (HopOccurrenceProjection occurrence : analysis.occurrences()) {
-			if (occurrence.hop() != hop)
-				continue;
-			if (match != null)
-				throw new IllegalArgumentException("Estimator child Hop has multiple analysis occurrences");
-			match = occurrence;
+			if (occurrence.hop() == hop && analysis.hop(occurrence.key()).orElse(null) == hop)
+				return occurrence;
 		}
-		if (match == null || analysis.hop(match.key()).orElse(null) != hop)
-			throw new IllegalArgumentException("Estimator child Hop is foreign to the supplied analysis");
-		return match;
+		throw new IllegalArgumentException("Estimator child Hop is foreign to the supplied analysis");
 	}
 
 	/**
