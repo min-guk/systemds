@@ -122,6 +122,12 @@ public final class NeutralPlacementGraphBuilder {
 		return buildDetachedAnalysis(program);
 	}
 
+	public PlacementAnalysis requireAuthoritativeAnalysis(DMLProgram program) {
+		PlacementAnalysis analysis = program.requirePlacementAnalysisAuthority();
+		analysis.assertProgramOwner(program);
+		return analysis;
+	}
+
 	public PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
 		String registryBefore = registrySentinel(program);

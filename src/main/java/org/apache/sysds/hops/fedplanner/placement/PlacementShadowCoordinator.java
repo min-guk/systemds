@@ -55,16 +55,16 @@ public final class PlacementShadowCoordinator {
 	}
 
 	public static Session begin(DMLProgram program, PlacementAnalysis authoritative) {
+		Objects.requireNonNull(authoritative, "authoritative").assertProgramOwner(program);
+		NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
+		ShadowAnalysis analysis = new ShadowAnalysis() {
+			@Override public NeutralPlacementGraph build(DMLProgram ignored) { return builder.build(program); }
+			@Override public List<String> selectedProjection(DMLProgram ignored) { return builder.selectedProjection(program); }
+			@Override public List<String> selectedMembershipViolations(DMLProgram ignored, NeutralPlacementGraph graph) {
+				return builder.selectedMembershipViolations(program, graph);
+			}
+		};
 		try {
-			Objects.requireNonNull(authoritative, "authoritative").assertProgramOwner(program);
-			NeutralPlacementGraphBuilder builder = new NeutralPlacementGraphBuilder();
-			ShadowAnalysis analysis = new ShadowAnalysis() {
-				@Override public NeutralPlacementGraph build(DMLProgram ignored) { return builder.build(program); }
-				@Override public List<String> selectedProjection(DMLProgram ignored) { return builder.selectedProjection(program); }
-				@Override public List<String> selectedMembershipViolations(DMLProgram ignored, NeutralPlacementGraph graph) {
-					return builder.selectedMembershipViolations(program, graph);
-				}
-			};
 			return new Session(authoritative.graph(), analysis.selectedProjection(program), null, analysis);
 		}
 		catch(Throwable failure) {

@@ -27,6 +27,7 @@ import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementShadowCoordinator;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -80,8 +81,7 @@ public class IPAPassRewriteFederatedPlan extends IPAPass {
 
 	private void generatePlan(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes, String splanner,
 		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
-		PlacementAnalysis analysis = prog.requirePlacementAnalysisAuthority();
-		analysis.assertProgramOwner(prog);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().requireAuthoritativeAnalysis(prog);
 		FederatedRefedRegistry.clear();
 		PlacementShadowCoordinator.Session shadow = PlacementShadowCoordinator.begin(prog, analysis);
 		FederatedPlanner planner = FederatedPlanner.isCompiled(splanner) ?
