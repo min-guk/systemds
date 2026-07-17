@@ -3,7 +3,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +18,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.CloneReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireRequest;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
@@ -128,19 +126,28 @@ public class CampaignBDpRewireOwnerContractTest {
 			new RewireRequest(owner.analysis(), owner.program(), reordered)), owner, plans, before);
 
 		Fixture foreign = fixture("B-05");
-		Snapshot foreignBefore = snapshot(foreign, planGraph(foreign));
+		PlanGraph foreignPlans = planGraph(foreign);
+		Snapshot foreignBefore = snapshot(foreign, foreignPlans);
 		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
 			new RewireRequest(foreign.analysis(), owner.program(), foreign.analysis().occurrences())),
 			owner, plans, before);
-		Assert.assertEquals("foreign analysis changed", foreignBefore.analysisFingerprint(),
-			foreign.analysis().analysisFingerprint());
+		assertSnapshotSame(foreignBefore, snapshot(foreign, foreignPlans));
 
 		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
 			new RewireRequest(owner.analysis(), foreign.program(), owner.analysis().occurrences())),
 			owner, plans, before);
+		assertSnapshotSame(foreignBefore, snapshot(foreign, foreignPlans));
 		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
 			new RewireRequest(owner.analysis(), owner.program(), foreign.analysis().occurrences())),
 			owner, plans, before);
+		assertSnapshotSame(foreignBefore, snapshot(foreign, foreignPlans));
+
+		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
+			new RewireRequest(null, owner.program(), owner.analysis().occurrences())), owner, plans, before);
+		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
+			new RewireRequest(owner.analysis(), null, owner.analysis().occurrences())), owner, plans, before);
+		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
+			new RewireRequest(owner.analysis(), owner.program(), null)), owner, plans, before);
 	}
 
 	private static Fixture fixture(String id) {
