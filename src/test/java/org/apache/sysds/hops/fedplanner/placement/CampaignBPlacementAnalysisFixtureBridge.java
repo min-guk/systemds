@@ -10,9 +10,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
 /** Test-owned analysis construction seam with a counter used to detect any visible rebuild. */
 public final class CampaignBPlacementAnalysisFixtureBridge {
@@ -137,6 +139,89 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		return new PlacementAnalysis(source.graph(), projections, null, shapeFacts);
 	}
 
+	public static PlacementAnalysis replaceGraph(PlacementAnalysis source, NeutralPlacementGraph graph) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(graph, "graph");
+		CONSTRUCTIONS.incrementAndGet();
+		return new PlacementAnalysis(graph, source.occurrences(), null,
+			copiedShapeFacts(source, source.occurrences()));
+	}
+
+	public static PlacementAnalysis replaceHop(PlacementAnalysis source, CompiledHopKey key, Hop hop) {
+		return replaceHop(source, key, hop, null);
+	}
+
+	public static PlacementAnalysis replaceHopAndShapeFact(PlacementAnalysis source, CompiledHopKey key, Hop hop,
+		NodeShapeFact shapeFact) {
+		Objects.requireNonNull(shapeFact, "shapeFact");
+		return replaceHop(source, key, hop, shapeFact);
+	}
+
+	private static PlacementAnalysis replaceHop(PlacementAnalysis source, CompiledHopKey key, Hop hop,
+		NodeShapeFact replacementShapeFact) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(key, "key");
+		Objects.requireNonNull(hop, "hop");
+		CONSTRUCTIONS.incrementAndGet();
+		boolean[] found = {false};
+		List<HopOccurrenceProjection> projections = source.occurrences().stream().map(occurrence -> {
+			if(!occurrence.key().equals(key))
+				return occurrence;
+			found[0] = true;
+			return new HopOccurrenceProjection(occurrence.key(), hop, occurrence.normalizedOrdinal(),
+				occurrence.normalizedSignature());
+		}).toList();
+		if(!found[0])
+			throw new AssertionError("R4_REPLACE_HOP_KEY_MISSING|key=" + key.normalizedSignature());
+		return new PlacementAnalysis(source.graph(), projections, null,
+			copiedShapeFacts(source, projections, key, replacementShapeFact));
+	}
+
+	public static PlacementAnalysis missingHopProjectionTrap(PlacementAnalysis source, CompiledHopKey key) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(key, "key");
+		CONSTRUCTIONS.incrementAndGet();
+		CompiledHopKey dummyKey = new CompiledHopKey(key.programFingerprint(), key.functionNamespace(),
+			key.callSitePath(), key.recompileContext(), key.controlRegion(),
+			key.emittedHopInstance() + "|missing-hop-trap", key.canonicalSourceOrigin() + "|missing-hop-trap");
+		List<HopOccurrenceProjection> projections = new ArrayList<>(source.occurrences().size());
+		Map<CompiledHopKey, NodeShapeFact> facts = new LinkedHashMap<>();
+		LinkedHashSet<CompiledHopKey> expectedKeys = new LinkedHashSet<>();
+		boolean replaced = false;
+		for(HopOccurrenceProjection occurrence : source.occurrences()) {
+			CompiledHopKey sourceKey = occurrence.key();
+			CompiledHopKey occurrenceKey = sourceKey;
+			NodeShapeFact shapeFact = source.shapeFact(sourceKey).orElseThrow(
+				() -> new IllegalArgumentException("Source analysis lacks shape fact for " + sourceKey));
+			if(occurrenceKey.equals(key)) {
+				if(replaced)
+					throw new AssertionError("R4_MISSING_HOP_KEY_DUPLICATE|key=" + key.normalizedSignature());
+				replaced = true;
+				occurrenceKey = dummyKey;
+				projections.add(new HopOccurrenceProjection(dummyKey, occurrence.hop(), occurrence.normalizedOrdinal(),
+					occurrence.normalizedSignature()));
+			}
+			else
+				projections.add(occurrence);
+			if(!expectedKeys.add(occurrenceKey))
+				throw new AssertionError("R4_MISSING_HOP_DUMMY_KEY_COLLISION|key=" + occurrenceKey.normalizedSignature());
+			facts.put(occurrenceKey, shapeFact);
+		}
+		if(!replaced)
+			throw new AssertionError("R4_MISSING_HOP_KEY_ABSENT_BEFORE_TRAP|key=" + key.normalizedSignature());
+		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(facts, expectedKeys);
+		PlacementAnalysis trap = new PlacementAnalysis(source.graph(), projections, null, shapeFacts);
+		if(trap.hop(key).isPresent())
+			throw new AssertionError("R4_MISSING_HOP_TRAP_NOT_ARMED|key=" + key.normalizedSignature());
+		if(trap.graph() != source.graph())
+			throw new AssertionError("R4_MISSING_HOP_TRAP_REPLACED_GRAPH|key=" + key.normalizedSignature());
+		if(trap.hop(dummyKey).isEmpty())
+			throw new AssertionError("R4_MISSING_HOP_TRAP_LOST_DUMMY|key=" + dummyKey.normalizedSignature());
+		if(source.hop(key).isEmpty())
+			throw new AssertionError("R4_MISSING_HOP_TRAP_MUTATED_SOURCE|key=" + key.normalizedSignature());
+		return trap;
+	}
+
 	private static PlacementShapeFacts syntheticShapeFacts(NeutralPlacementGraph graph,
 		List<HopOccurrenceProjection> projections) {
 		Map<PlacementIdentity.CompiledHopKey, NodeShapeFact> facts = new LinkedHashMap<>();
@@ -153,12 +238,19 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 
 	private static PlacementShapeFacts copiedShapeFacts(PlacementAnalysis source,
 		List<HopOccurrenceProjection> projections) {
+		return copiedShapeFacts(source, projections, null, null);
+	}
+
+	private static PlacementShapeFacts copiedShapeFacts(PlacementAnalysis source,
+		List<HopOccurrenceProjection> projections, CompiledHopKey replacementKey, NodeShapeFact replacementFact) {
 		Map<PlacementIdentity.CompiledHopKey, NodeShapeFact> facts = new LinkedHashMap<>();
 		LinkedHashSet<PlacementIdentity.CompiledHopKey> expectedKeys = new LinkedHashSet<>();
 		for(HopOccurrenceProjection projection : projections) {
 			expectedKeys.add(projection.key());
-			facts.put(projection.key(), source.shapeFact(projection.key()).orElseThrow(
-				() -> new IllegalArgumentException("Source analysis lacks shape fact for " + projection.key())));
+			NodeShapeFact fact = replacementKey != null && replacementKey.equals(projection.key()) ? replacementFact :
+				source.shapeFact(projection.key()).orElseThrow(
+					() -> new IllegalArgumentException("Source analysis lacks shape fact for " + projection.key()));
+			facts.put(projection.key(), fact);
 		}
 		return new PlacementShapeFacts(facts, expectedKeys);
 	}

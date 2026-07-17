@@ -76,8 +76,7 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 		List<String> violations = new ArrayList<>();
 		for(var kind : List.of(R4HeuristicMetadataFixtureBridge.BroadcastCase.UNKNOWN,
 			R4HeuristicMetadataFixtureBridge.BroadcastCase.UNSUPPORTED,
-			R4HeuristicMetadataFixtureBridge.BroadcastCase.NON_MATRIX,
-			R4HeuristicMetadataFixtureBridge.BroadcastCase.MISSING_HOP)) {
+			R4HeuristicMetadataFixtureBridge.BroadcastCase.NON_MATRIX)) {
 			var unsafe = R4HeuristicMetadataFixtureBridge.broadcast(kind); var before = unsafe.snapshot();
 			try {
 				var selected = R4Heuristic2AdapterBridge.select(unsafe.analysis(), unsafe.markers());
@@ -85,14 +84,7 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 					violations.add("BROADCAST_UNSAFE_" + kind);
 			}
 			catch(AssertionError safelyRejected) {
-				boolean typedMissingHop = kind == R4HeuristicMetadataFixtureBridge.BroadcastCase.MISSING_HOP
-					&& safelyRejected instanceof R4Heuristic2AdapterBridge.TypedPolicySafetyRejection
-					&& ((R4Heuristic2AdapterBridge.TypedPolicySafetyRejection)safelyRejected).causeType().equals(
-						"org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPolicySafetyException")
-					&& ((R4Heuristic2AdapterBridge.TypedPolicySafetyRejection)safelyRejected).stableCode().equals(
-						"HEURISTIC_POLICY_SAFETY_REJECTION|reason=MISSING_HOP_PROJECTION");
-				if(!typedMissingHop)
-					violations.add("BROADCAST_UNTYPED_FAILURE_" + kind + '|' + safelyRejected.getMessage());
+				violations.add("BROADCAST_UNTYPED_FAILURE_" + kind + '|' + safelyRejected.getMessage());
 			}
 			R4Heuristic2Probe.unchanged(before, unsafe.snapshot());
 		}
@@ -103,6 +95,24 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 			violations.add("BROADCAST_SAFE_MATRIX_REJECTED");
 		Assert.assertEquals("broadcast safety must be explicit and positive", List.of(), violations);
 		R4Heuristic2Probe.unchanged(safeBefore, safe.snapshot());
+	}
+
+	@Test
+	public void broadcastMissingHopProjectionFailsClosedWithTypedPolicyRejection() throws Exception {
+		var scenario = R4HeuristicMetadataFixtureBridge.broadcast(
+			R4HeuristicMetadataFixtureBridge.BroadcastCase.MISSING_HOP);
+		var before = scenario.snapshot();
+		try {
+			R4Heuristic2AdapterBridge.select(scenario.analysis(), scenario.markers());
+			Assert.fail("MISSING_HOP_PROJECTION must fail closed with typed policy rejection");
+		}
+		catch(R4Heuristic2AdapterBridge.TypedPolicySafetyRejection rejected) {
+			Assert.assertEquals("org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPolicySafetyException",
+				rejected.causeType());
+			Assert.assertEquals("HEURISTIC_POLICY_SAFETY_REJECTION|reason=MISSING_HOP_PROJECTION",
+				rejected.stableCode());
+		}
+		R4Heuristic2Probe.unchanged(before, scenario.snapshot());
 	}
 
 	@Test

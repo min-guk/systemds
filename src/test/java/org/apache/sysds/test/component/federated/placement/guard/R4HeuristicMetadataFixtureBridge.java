@@ -19,8 +19,6 @@
 
 package org.apache.sysds.test.component.federated.placement.guard;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,9 +27,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -107,9 +107,10 @@ final class R4HeuristicMetadataFixtureBridge {
 		}
 		PlacementAnalysis analysis = replace(fixture.analysis(), replacements);
 		if(kind == BroadcastCase.NON_MATRIX)
-			analysis = replaceHop(analysis, proof.provenNode(), new org.apache.sysds.hops.LiteralOp(7L));
+			analysis = CampaignBPlacementAnalysisFixtureBridge.replaceHopAndShapeFact(analysis, proof.provenNode(),
+				new org.apache.sysds.hops.LiteralOp(7L), new PlacementAnalysis.NodeShapeFact(DataType.SCALAR, -1, -1));
 		else if(kind == BroadcastCase.MISSING_HOP)
-			analysis = withoutHop(analysis, proof.provenNode());
+			analysis = CampaignBPlacementAnalysisFixtureBridge.missingHopProjectionTrap(analysis, proof.provenNode());
 		return new Scenario(fixture, analysis, proof.provenNode(), state, Set.of(fixture.marker()));
 	}
 
@@ -255,28 +256,7 @@ final class R4HeuristicMetadataFixtureBridge {
 			.map(n -> replacements.getOrDefault(n.key(), n)).toList();
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, source.graph().constraints(),
 			source.graph().relocationActions());
-		Constructor<PlacementAnalysis> constructor =
-			PlacementAnalysis.class.getDeclaredConstructor(NeutralPlacementGraph.class, List.class);
-		constructor.setAccessible(true);
-		return constructor.newInstance(graph, source.occurrences());
-	}
-
-	private static PlacementAnalysis replaceHop(PlacementAnalysis source, CompiledHopKey key, Hop hop)
-		throws Exception {
-		List<PlacementAnalysis.HopOccurrenceProjection> occurrences = source.occurrences().stream()
-			.map(o -> o.key().equals(key) ? new PlacementAnalysis.HopOccurrenceProjection(o.key(), hop,
-				o.normalizedOrdinal(), o.normalizedSignature()) : o).toList();
-		Constructor<PlacementAnalysis> constructor = PlacementAnalysis.class
-			.getDeclaredConstructor(NeutralPlacementGraph.class, List.class);
-		constructor.setAccessible(true);
-		return constructor.newInstance(source.graph(), occurrences);
-	}
-
-	@SuppressWarnings("unchecked")
-	private static PlacementAnalysis withoutHop(PlacementAnalysis source, CompiledHopKey key) throws Exception {
-		Field field = PlacementAnalysis.class.getDeclaredField("hopsByKey"); field.setAccessible(true);
-		Map<CompiledHopKey, Hop> hops = new LinkedHashMap<>((Map<CompiledHopKey, Hop>)field.get(source));
-		hops.remove(key); field.set(source, Map.copyOf(hops)); return source;
+		return CampaignBPlacementAnalysisFixtureBridge.replaceGraph(source, graph);
 	}
 
 	private R4HeuristicMetadataFixtureBridge() {
