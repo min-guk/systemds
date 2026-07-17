@@ -121,14 +121,6 @@ public final class PlacementAnalysis {
 		}
 	}
 
-	/** Package-owned compatibility seam for immutable projection fixtures. */
-	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
-		DMLProgram programOwner, PlacementShapeFacts shapeFacts) {
-		this(graph, occurrences, programOwner, shapeFacts,
-			NeutralPlacementGraphBuilder.analysisFingerprint(graph, occurrences),
-			new HeuristicPolicyFacts(List.of()));
-	}
-
 	public NeutralPlacementGraph graph() {
 		return graph;
 	}

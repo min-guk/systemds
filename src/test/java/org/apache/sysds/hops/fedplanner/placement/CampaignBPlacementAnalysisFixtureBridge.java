@@ -1,6 +1,9 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -12,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -40,7 +44,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		}
 		if(order == ProjectionOrder.REVERSED) Collections.reverse(projections);
 		PlacementShapeFacts shapeFacts = syntheticShapeFacts(graph, projections);
-		return new PlacementAnalysis(graph, projections, null, shapeFacts);
+		return new PlacementAnalysis(graph, projections, null, shapeFacts,
+			testFingerprint(graph, projections), new HeuristicPolicyFacts(List.of()));
 	}
 
 	public static long constructionCount() { return CONSTRUCTIONS.get(); }
@@ -97,7 +102,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 
 		NeutralPlacementGraph projected = new NeutralPlacementGraph(nodes, constraints, actions);
 		PlacementShapeFacts shapeFacts = copiedShapeFacts(source, projections);
-		PlacementAnalysis result = new PlacementAnalysis(projected, projections, null, shapeFacts);
+		PlacementAnalysis result = new PlacementAnalysis(projected, projections, null, shapeFacts,
+			testFingerprint(projected, projections), new HeuristicPolicyFacts(List.of()));
 		if(result.occurrences().size() != occurrenceCount || result.graph().nodes().size() != occurrenceCount)
 			throw new AssertionError("occurrenceCount prefix cardinality postcondition failed");
 		for(int i = 0; i < occurrenceCount; i++) {
@@ -136,15 +142,15 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		}
 		if(!duplicate) throw new AssertionError("R4_SAME_HOP_CONTEXT|no-repeated-B17-origin");
 		PlacementShapeFacts shapeFacts = copiedShapeFacts(source, projections);
-		return new PlacementAnalysis(source.graph(), projections, null, shapeFacts);
+		return new PlacementAnalysis(source.graph(), projections, null, shapeFacts,
+			testFingerprint(source.graph(), projections), new HeuristicPolicyFacts(List.of()));
 	}
 
 	public static PlacementAnalysis replaceGraph(PlacementAnalysis source, NeutralPlacementGraph graph) {
 		Objects.requireNonNull(source, "source");
 		Objects.requireNonNull(graph, "graph");
 		CONSTRUCTIONS.incrementAndGet();
-		return new PlacementAnalysis(graph, source.occurrences(), null,
-			copiedShapeFacts(source, source.occurrences()));
+		return analysis(graph, source.occurrences(), copiedShapeFacts(source, source.occurrences()));
 	}
 
 	public static PlacementAnalysis replaceHop(PlacementAnalysis source, CompiledHopKey key, Hop hop) {
@@ -173,7 +179,7 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		}).toList();
 		if(!found[0])
 			throw new AssertionError("R4_REPLACE_HOP_KEY_MISSING|key=" + key.normalizedSignature());
-		return new PlacementAnalysis(source.graph(), projections, null,
+		return analysis(source.graph(), projections,
 			copiedShapeFacts(source, projections, key, replacementShapeFact));
 	}
 
@@ -210,7 +216,7 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		if(!replaced)
 			throw new AssertionError("R4_MISSING_HOP_KEY_ABSENT_BEFORE_TRAP|key=" + key.normalizedSignature());
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(facts, expectedKeys);
-		PlacementAnalysis trap = new PlacementAnalysis(source.graph(), projections, null, shapeFacts);
+		PlacementAnalysis trap = analysis(source.graph(), projections, shapeFacts);
 		if(trap.hop(key).isPresent())
 			throw new AssertionError("R4_MISSING_HOP_TRAP_NOT_ARMED|key=" + key.normalizedSignature());
 		if(trap.graph() != source.graph())
@@ -253,6 +259,30 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 			facts.put(projection.key(), fact);
 		}
 		return new PlacementShapeFacts(facts, expectedKeys);
+	}
+
+	private static PlacementAnalysis analysis(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts) {
+		return new PlacementAnalysis(graph, projections, null, shapeFacts,
+			testFingerprint(graph, projections), new HeuristicPolicyFacts(List.of()));
+	}
+
+	private static String testFingerprint(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections) {
+		List<String> signatures = projections.stream()
+			.map(HopOccurrenceProjection::normalizedSignature).sorted().toList();
+		String canonical = graph.normalizedSignature() + '\n' + String.join("\n", signatures);
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+				.digest(canonical.getBytes(StandardCharsets.UTF_8));
+			StringBuilder fingerprint = new StringBuilder(digest.length * 2);
+			for(byte value : digest)
+				fingerprint.append(String.format("%02x", value));
+			return fingerprint.toString();
+		}
+		catch(NoSuchAlgorithmException e) {
+			throw new IllegalStateException("SHA-256 is unavailable", e);
+		}
 	}
 
 	public static List<String> fullSnapshot(PlacementAnalysis analysis) {

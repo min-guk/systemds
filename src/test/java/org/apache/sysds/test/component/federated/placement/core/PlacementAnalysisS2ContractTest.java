@@ -68,6 +68,8 @@ public class PlacementAnalysisS2ContractTest {
 		String builder = Files.readString(BUILDER);
 		Assert.assertFalse("selector-reachable PlacementAnalysis still owns fingerprint traversal/hash logic",
 			analysis.contains("PlacementGraphFingerprint"));
+		Assert.assertFalse("selector-reachable PlacementAnalysis still depends on the production graph builder",
+			analysis.contains("NeutralPlacementGraphBuilder"));
 		Assert.assertEquals("builder must compute the canonical graph/projection fingerprint exactly once", 1,
 			occurrences(builder, "graph.normalizedSignature()"));
 		Assert.assertTrue("builder does not supply its canonical fingerprint to PlacementAnalysis",
