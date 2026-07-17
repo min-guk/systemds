@@ -254,7 +254,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
 		Objects.requireNonNull(prog, "prog");
 		Objects.requireNonNull(analysis, "analysis");
-		validateSuppliedAnalysis(prog, analysis);
+		analysis.assertProgramOwner(prog);
+		prog.requirePlacementAnalysisAuthority(analysis);
 		String fingerprintBefore = analysis.analysisFingerprint();
 
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
@@ -327,11 +328,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, appliedPlans,
 			additionalRootInvocations, counters,
 			fingerprintBefore, analysis.analysisFingerprint());
-	}
-
-	private static void validateSuppliedAnalysis(DMLProgram prog, PlacementAnalysis analysis) {
-		analysis.assertProgramOwner(prog);
-		prog.requirePlacementAnalysisAuthority(analysis);
 	}
 
 	@Override
