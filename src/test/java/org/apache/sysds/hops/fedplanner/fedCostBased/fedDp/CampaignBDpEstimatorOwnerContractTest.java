@@ -153,7 +153,8 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		for(int i = 0; i < fixture.children().size(); i++)
 			memoEntries.add(snapshotMemoEntry(graph.memo(), fixture.children().get(i), graph.childPlans().get(i)));
 		return new Snapshot(fixture.analysis(), fixture.analysis().analysisFingerprint(),
-			List.copyOf(fixture.analysis().occurrences()), List.copyOf(plans), List.copyOf(memoEntries));
+			List.copyOf(fixture.analysis().occurrences()), List.copyOf(plans), List.copyOf(memoEntries),
+			snapshotMemoPresence(fixture.analysis(), graph.memo()));
 	}
 
 	private static PlanSnapshot snapshotPlan(FedPlan plan) {
@@ -169,6 +170,18 @@ public class CampaignBDpEstimatorOwnerContractTest {
 			List.copyOf(variants.getFedPlanVariants()), memo.getFedPlanAfterPrune(occurrence, plan.getFedOutType()));
 	}
 
+	private static List<MemoPresence> snapshotMemoPresence(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memo) {
+		java.util.LinkedHashSet<Long> analysisHopIds = new java.util.LinkedHashSet<>();
+		for(HopOccurrenceProjection occurrence : analysis.occurrences())
+			analysisHopIds.add(occurrence.hop().getHopID());
+		List<MemoPresence> presence = new java.util.ArrayList<>();
+		for(long hopId : analysisHopIds)
+			for(FederatedOutput output : FederatedOutput.values())
+				presence.add(new MemoPresence(hopId, output, memo.contains(hopId, output)));
+		return List.copyOf(presence);
+	}
+
 	private static void assertSnapshotSame(Snapshot expected, Snapshot actual) {
 		Assert.assertSame(expected.analysis(), actual.analysis());
 		Assert.assertEquals(expected.fingerprint(), actual.fingerprint());
@@ -179,6 +192,7 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		Assert.assertEquals(expected.memoEntries().size(), actual.memoEntries().size());
 		for(int i = 0; i < expected.memoEntries().size(); i++)
 			assertMemoEntrySnapshotSame(expected.memoEntries().get(i), actual.memoEntries().get(i));
+		Assert.assertEquals(expected.memoPresence(), actual.memoPresence());
 	}
 
 	private static void assertPlanSnapshotSame(PlanSnapshot expected, PlanSnapshot actual) {
@@ -237,7 +251,8 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		ExecType execType, FType fType, List<Pair<Long, FederatedOutput>> childEdges) { }
 	private record MemoEntrySnapshot(HopOccurrenceProjection occurrence, FederatedOutput output,
 		FedPlanVariants variants, List<FedPlan> variantOrder, FedPlan selectedPlan) { }
+	private record MemoPresence(long hopId, FederatedOutput output, boolean present) { }
 	private record Snapshot(PlacementAnalysis analysis, String fingerprint,
 		List<HopOccurrenceProjection> occurrences, List<PlanSnapshot> plans,
-		List<MemoEntrySnapshot> memoEntries) { }
+		List<MemoEntrySnapshot> memoEntries, List<MemoPresence> memoPresence) { }
 }
