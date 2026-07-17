@@ -91,9 +91,14 @@ public class CampaignBDpMemoOwnerContractTest {
 		HopOccurrenceProjection occurrence) { }
 
 	private static Fixture fixture(String id) {
-		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		return new Fixture(program, analysis, analysis.occurrences().get(0));
+		try {
+			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+			return new Fixture(program, analysis, analysis.occurrences().get(0));
+		}
+		catch(Exception e) {
+			throw new AssertionError("Unable to compile DP memo owner fixture " + id, e);
+		}
 	}
 
 	private static FedPlanVariants variants(Hop hop, FederatedOutput output) {
