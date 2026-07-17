@@ -15,7 +15,7 @@ Fresh non-Maven reproduction compiled the unchanged `JavaSourceTokenScanner` and
 PLANNER=DP UNITS=34 VIOLATIONS=149 ADAPTER=DpPlacementAdapter POSITIVE_BOUNDARY=PASS
 ```
 
-- Fresh raw evidence: `/tmp/g011-worker1-dp-closure-evidence.txt` (`sha256 24b90e7225355310c34206d5e75db09af11756b87b9baae0dbc5efbb6e026a2e`).
+- Fresh raw evidence: `/tmp/g011-worker1-dp-closure-evidence.txt` (`sha256 a4000143804d759fc8afc6bc41fa5e0d89e3f0fe0125ae8bb8542b09347a2df7`).
 - Independent subagent reproduction: `/tmp/g011-worker1-closure.tuoPwC/dp-closure.txt` (`sha256 06cc2390f761cc5f926897d994f3b5fd52fc609d4bd347b90dbb7bb8054f047e`).
 - Exact edge artifact: `/tmp/g011-worker1-closure.tuoPwC/dp-edges.txt` (`sha256 5ebad75d7c605bdd7bccb60843e301396e149515d4fe31b69a6cd9c19e241f2a`).
 - Guard/helper/scanner authority: `CampaignBArchitectureGuardTest.java:15-36`, `CampaignBPlannerOwnershipClosure.java:26-31,51-89`; helper/scanner hashes remain `a6286fe...` / `a80bb1b...`.
