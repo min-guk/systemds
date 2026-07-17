@@ -76,8 +76,10 @@ public class CampaignBDpAggregateProducerContractTest {
 	@Test public void translatorObservableConsumerOverloadIsExplicit() {
 		assertMethodAbsent(DMLTranslator.class,"rewriteHopsDAG",
 			"CAMPAIGN_B_DP_EARLY_REWRITE_RECEIPT_OVERLOAD_REMAINS",DMLProgram.class,Consumer.class);
-		requireMethod(DMLTranslator.class,"constructLops","CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_OVERLOAD_MISSING",
-			DMLProgram.class,Consumer.class);
+		Method finalBoundary=requireMethod(DMLTranslator.class,"constructLops",
+			"CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_OVERLOAD_MISSING",DMLProgram.class,Consumer.class);
+		Assert.assertSame("CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_RETURN_TYPE",void.class,
+			finalBoundary.getReturnType());
 	}
 
 	@Test public void realIpaEntryPublishesOneCompleteDpReceipt() throws Exception {
