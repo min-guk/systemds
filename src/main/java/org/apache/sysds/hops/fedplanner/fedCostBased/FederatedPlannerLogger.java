@@ -58,12 +58,10 @@ import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.jgrapht.Graph;
-import org.jgrapht.graph.DefaultWeightedEdge;
 
 /**
  * Unified utility class for logging federated planner information.
@@ -1212,317 +1210,134 @@ public class FederatedPlannerLogger {
 		}
 	}
 
-	/**
-	 * Logs the optimal plan determined by the FederatedPlanMinSTGraph.
-	 * This includes Hop ID, ExecType, FedOutputType, Privacy, FType, OpCost, and Network Costs.
-	 *
-	 * @param planGraph The FederatedPlanMinSTGraph after getOptimalPlan has been executed.
-	 */
-	public static void logOptimalPlan(FederatedPlanMinSTGraph planGraph) {
-		logOptimalPlan(planGraph, false);
+	/** Logs the MinST plan from its immutable, graph-free diagnostic projection. */
+	public static void logOptimalPlan(MinStDiagnostics diagnostics) {
+		logOptimalPlan(diagnostics, false);
 	}
 
-	public static void logOptimalPlanStructured(FederatedPlanMinSTGraph planGraph) {
-		if (!ENABLE_STDOUT_LOGS || planGraph == null)
+	public static void logOptimalPlanStructured(MinStDiagnostics diagnostics) {
+		if(!ENABLE_STDOUT_LOGS || diagnostics == null)
 			return;
-		Graph<Long, DefaultWeightedEdge> graph = planGraph.getGraph();
-		Map<Long, FederatedPlanMinSTGraph.Vertex> memoTable = planGraph.getMemoTable();
-		List<Long> hopIds = new ArrayList<>(memoTable.keySet());
-		Collections.sort(hopIds);
-		for (Long hopID : hopIds) {
-			FederatedPlanMinSTGraph.Vertex vertex = memoTable.get(hopID);
-			if (vertex == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			if (hop == null)
-				continue;
-			printMinstStructuredHop(planGraph, graph, memoTable, vertex, hop);
-		}
+		for(MinStDiagnostics.HopFacts facts : diagnostics.hopsInSortedIdOrder())
+			printMinstStructuredHop(facts);
 	}
 
-	/**
-	 * Logs the optimal plan with optional debug information.
-	 *
-	 * @param planGraph The FederatedPlanMinSTGraph after getOptimalPlan has been executed.
-	 * @param debug If true, prints additional debug information including all graph edges.
-	 */
-	public static void logOptimalPlan(FederatedPlanMinSTGraph planGraph, boolean debug) {
-		if (!ENABLE_STDOUT_LOGS)
+	public static void logOptimalPlan(MinStDiagnostics diagnostics, boolean debug) {
+		if(!ENABLE_STDOUT_LOGS || diagnostics == null)
 			return;
 		System.out.println("\n[Optimal Federated Plan]");
 		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
 		System.out.printf("%-7s | %-12s | %-20s | %-10s | %-13s | %-8s | %-9s | %-15s | %-15s | %-10s | %s%n",
 			"Hop ID", "Type", "OpCode", "ExecType", "FedOutputType", "Privacy", "FType", "ChildIDs", "ParentIDs", "OpCost", "Network Costs (Child -> Cost)");
 		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-
-		Graph<Long, DefaultWeightedEdge> graph = planGraph.getGraph();
-		Map<Long, FederatedPlanMinSTGraph.Vertex> memoTable = planGraph.getMemoTable();
-		for (FederatedPlanMinSTGraph.Vertex v : memoTable.values()) {
-			Hop hop = v.getHopRef();
-			ExecType exec = hop.getForcedExecType();
-			FederatedOutput out = hop.getFederatedOutput();
-			Privacy privacy = v.getPrivacy();
-			FType ftype = v.getDataType();
-			FederatedPlanMinSTGraph.ExecPlacementCaps caps = v.getCaps();
-
+		for(MinStDiagnostics.OptimalSummary summary : diagnostics.optimalSummariesInMemoOrder()) {
 			logInfoMessage(String.format(Locale.ROOT,
 				"[MinST Optimal] hop=%d (%s) exec=%s placement=%s privacy=%s ftype=%s caps=[CP_LOUT=%s, CP_FOUT=%s, FED_LOUT=%s, FED_FOUT=%s]",
-				hop.getHopID(), hop.getOpString(), exec, out, privacy, ftype,
-				caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT, caps.allowFED_FOUT));
+				summary.hopId(), summary.opString(), summary.forcedExecNameOrNull(), summary.outputNameOrNull(),
+				summary.privacyNameOrNull(), summary.fTypeNameOrNull(), summary.allowCpLout(),
+				summary.allowCpFout(), summary.allowFedLout(), summary.allowFedFout()));
 		}
-		long sourceId = -1L; // planGraph.leafedSource
-		long sinkId = -2L;   // planGraph.rootLocalSink
-
-		// Sort hop IDs for consistent output
-		List<Long> hopIds = new ArrayList<>(memoTable.keySet());
-		Collections.sort(hopIds);
-
-		for (Long hopID : hopIds) {
-			FederatedPlanMinSTGraph.Vertex vertex = memoTable.get(hopID);
-			if (vertex == null) continue;
-
-			Hop hop = vertex.getHopRef();
-			String hopType = hop.getClass().getSimpleName();
-			// Remove "Op" suffix from type
-			if (hopType.endsWith("Op")) {
-				hopType = hopType.substring(0, hopType.length() - 2);
-			}
-			if (hopType.length() > 12) {
-				hopType = hopType.substring(0, 12);
-			}
-
-			String opCode = hop.getOpString();
-			// Remove type name prefix from opCode if it exists
-			String typePrefix = hopType.toLowerCase();
-			if (opCode.toLowerCase().startsWith(typePrefix)) {
-				opCode = opCode.substring(typePrefix.length()).trim();
-			}
-			if (opCode.length() > 20) {
-				opCode = opCode.substring(0, 20);
-			}
-
-			// Get child IDs
-			StringBuilder childIDs = new StringBuilder();
-			if (hop.getInput() != null && !hop.getInput().isEmpty()) {
-				for (int i = 0; i < hop.getInput().size(); i++) {
-					if (i > 0) childIDs.append(",");
-					childIDs.append(hop.getInput().get(i).getHopID());
-				}
-			}
-			String childIDsStr = childIDs.length() > 0 ? childIDs.toString() : "-";
-			if (childIDsStr.length() > 15) {
-				childIDsStr = childIDsStr.substring(0, 15);
-			}
-
-			// Get parent IDs
-			StringBuilder parentIDs = new StringBuilder();
-			if (hop.getParent() != null && !hop.getParent().isEmpty()) {
-				for (int i = 0; i < hop.getParent().size(); i++) {
-					if (i > 0) parentIDs.append(",");
-					long parentID = hop.getParent().get(i).getHopID();
-					parentIDs.append(parentID);
-					// TODO: VERIFY - Debug missing parent hops
-					if (!memoTable.containsKey(parentID)) {
-						System.err.println("[WARN] Hop " + hopID + " has parent " + parentID + " which is NOT in memoTable!");
-					}
-				}
-			}
-			String parentIDsStr = parentIDs.length() > 0 ? parentIDs.toString() : "-";
-			if (parentIDsStr.length() > 15) {
-				parentIDsStr = parentIDsStr.substring(0, 15);
-			}
-
-			String execType = hop.getForcedExecType() != null ? hop.getForcedExecType().name() : "N/A";
-			String fedOut = hop.getFederatedOutput() != null ? hop.getFederatedOutput().name() : "N/A";
-			String privacy = vertex.getPrivacy() != null ? getPrivacyAbbreviation(vertex.getPrivacy().name()) : "N/A";
-			String fType = vertex.getDataType() != null ? vertex.getDataType().name() : "N/A";
-
-			// Determine OpCost based on ExecType
-			double opCost = 0;
-			if (hop.getForcedExecType() == ExecType.FED) {
-				DefaultWeightedEdge edge = graph.getEdge(hopID, sinkId);
-				if (edge != null) {
-					opCost = graph.getEdgeWeight(edge);
-				}
-			} else if (hop.getForcedExecType() == ExecType.CP) {
-				DefaultWeightedEdge edge = graph.getEdge(sourceId, hopID);
-				if (edge != null) {
-					opCost = graph.getEdgeWeight(edge);
-				}
-			}
-
-			// Get Network Costs with child hops
-			// Network cost occurs when there's an execution type mismatch between child and parent
-			StringBuilder networkCostsStr = new StringBuilder();
-			if (hop.getInput() != null && !hop.getInput().isEmpty()) {
-				for (Hop child : hop.getInput()) {
-					long childID = child.getHopID();
-					if (!memoTable.containsKey(childID)) continue;
-
-					ExecType childExecType = child.getForcedExecType();
-					ExecType parentExecType = hop.getForcedExecType();
-
-					double networkCost = 0;
-
-					// Network cost only occurs when there's a mismatch
-					// Case 1: Child=FED, Parent=CP -> edge from child to parent (child -> parent)
-					// Case 2: Child=CP, Parent=FED -> edge from parent to child (parent -> child)
-					if (childExecType == ExecType.FED && parentExecType == ExecType.CP) {
-						DefaultWeightedEdge edge = graph.getEdge(childID, hopID);
-						if (edge != null) {
-							networkCost = graph.getEdgeWeight(edge);
-						}
-					} else if (childExecType == ExecType.CP && parentExecType == ExecType.FED) {
-						DefaultWeightedEdge edge = graph.getEdge(hopID, childID);
-						if (edge != null) {
-							networkCost = graph.getEdgeWeight(edge);
-						}
-					}
-
-					if (networkCost > 0) {
-						if (networkCostsStr.length() > 0) networkCostsStr.append(", ");
-						networkCostsStr.append(String.format("%d -> %.1f", childID, networkCost));
-					}
-				}
-			}
-
+		for(MinStDiagnostics.HopFacts facts : diagnostics.hopsInSortedIdOrder()) {
+			for(Long parentId : facts.missingParentHopIds())
+				System.err.println("[WARN] Hop " + facts.hopId() + " has parent " + parentId
+					+ " which is NOT in memoTable!");
+			String hopType = formatHopType(facts.hopTypeSimpleName());
+			String opCode = formatOpCode(hopType, facts.opString());
+			String childIds = formatTabularIds(facts.childHopIds());
+			String parentIds = formatTabularIds(facts.parentHopIds());
+			String networkCosts = formatNetworkCosts(facts.positiveChildNetworkCostsInInputOrder());
 			System.out.printf("%-7d | %-12s | %-20s | %-10s | %-13s | %-8s | %-9s | %-15s | %-15s | %-10.1f | %s%n",
-				hopID, hopType, opCode, execType, fedOut, privacy, fType, childIDsStr, parentIDsStr, opCost, networkCostsStr.toString());
+				facts.hopId(), hopType, opCode, nullDisplay(facts.forcedExecNameOrNull(), "N/A"),
+				nullDisplay(facts.outputNameOrNull(), "N/A"),
+				facts.privacyNameOrNull() != null ? getPrivacyAbbreviation(facts.privacyNameOrNull()) : "N/A",
+				nullDisplay(facts.fTypeNameOrNull(), "N/A"), childIds, parentIds,
+				value(facts.tabularOpCostBits()), networkCosts);
 		}
 		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
 	}
 
-	private static void printMinstStructuredHop(FederatedPlanMinSTGraph planGraph,
-			Graph<Long, DefaultWeightedEdge> graph,
-			Map<Long, FederatedPlanMinSTGraph.Vertex> memoTable,
-			FederatedPlanMinSTGraph.Vertex vertex,
-			Hop hop) {
+	private static void printMinstStructuredHop(MinStDiagnostics.HopFacts facts) {
 		StringBuilder sb = new StringBuilder();
-		sb.append("[HopID]: ").append(hop.getHopID())
-			.append(", [Name]: ").append(hop.getOpString())
-			.append(", [DataType]: ").append(hop.getDataType());
-
-		ExecType execType = hop.getForcedExecType();
-		if (execType == null)
-			execType = hop.getExecType();
-		sb.append(", [ExecType]: ").append(execType != null ? execType : "null");
-		FederatedOutput fedOut = hop.getFederatedOutput();
-		sb.append(", [OutputType]: ").append(fedOut != null ? fedOut : "null");
-		FType fType = vertex.getDataType();
-		sb.append(", [FType]: ").append(fType != null ? fType : "null");
-
-		appendHopIds(sb, "ChildHopIDs", hop.getInput());
-		appendHopIds(sb, "ParentHopIDs", hop.getParent());
-
-		double selfCost = getMinstSelfCost(graph, hop.getHopID(), execType);
-		double networkCost = getMinstNetworkCost(graph, memoTable, vertex, hop, execType, fedOut);
-		double totalCost = selfCost + networkCost;
-		sb.append(", [CostInfo]: {TotalCost: ").append(String.format(Locale.ROOT, "%.1f", totalCost))
-			.append(", SelfCost: ").append(String.format(Locale.ROOT, "%.1f", selfCost))
-			.append(", NetworkCost: ").append(String.format(Locale.ROOT, "%.1f", networkCost))
-			.append(", ComputeWeight: ").append(String.format(Locale.ROOT, "%.1f", vertex.getOpWeight()))
+		sb.append("[HopID]: ").append(facts.hopId())
+			.append(", [Name]: ").append(facts.opString())
+			.append(", [DataType]: ").append(facts.dataTypeName())
+			.append(", [ExecType]: ").append(nullDisplay(facts.effectiveExecNameOrNull(), "null"))
+			.append(", [OutputType]: ").append(nullDisplay(facts.outputNameOrNull(), "null"))
+			.append(", [FType]: ").append(nullDisplay(facts.fTypeNameOrNull(), "null"));
+		appendHopIds(sb, "ChildHopIDs", facts.childHopIds());
+		appendHopIds(sb, "ParentHopIDs", facts.parentHopIds());
+		sb.append(", [CostInfo]: {TotalCost: ").append(String.format(Locale.ROOT, "%.1f", value(facts.totalCostBits())))
+			.append(", SelfCost: ").append(String.format(Locale.ROOT, "%.1f", value(facts.selfCostBits())))
+			.append(", NetworkCost: ").append(String.format(Locale.ROOT, "%.1f", value(facts.networkCostBits())))
+			.append(", ComputeWeight: ").append(String.format(Locale.ROOT, "%.1f", value(facts.computeWeightBits())))
 			.append("}");
-
-		double rawInputMemEstimate = hop.getInputMemEstimate();
-		double rawOutputMemEstimate = hop.getOutputMemEstimate();
-		double effectiveInputMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(hop);
-		double effectiveOutputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-		sb.append(", [MatrixInfo]: {Dimensions: (").append(hop.getDim1()).append("x").append(hop.getDim2())
-			.append("), Blocksize: ").append(hop.getBlocksize())
-			.append(", NNZ: ").append(hop.getNnz())
-			.append(", OutputMem: ").append(rawOutputMemEstimate);
-		if (Math.abs(effectiveOutputMemEstimate - rawOutputMemEstimate) > 1e-9)
-			sb.append(", EffectiveOutputMem: ").append(effectiveOutputMemEstimate);
-		if (Math.abs(effectiveInputMemEstimate - rawInputMemEstimate) > 1e-9)
-			sb.append(", EffectiveInputMem: ").append(effectiveInputMemEstimate);
-		if (hop.getUpdateType().isInPlace())
-			sb.append(", UpdateType: ").append(hop.getUpdateType().toString().toLowerCase());
+		double rawInputMem = value(facts.rawInputMemBits());
+		double rawOutputMem = value(facts.rawOutputMemBits());
+		double effectiveInputMem = value(facts.effectiveInputMemBits());
+		double effectiveOutputMem = value(facts.effectiveOutputMemBits());
+		sb.append(", [MatrixInfo]: {Dimensions: (").append(facts.rows()).append("x").append(facts.cols())
+			.append("), Blocksize: ").append(facts.blocksize()).append(", NNZ: ").append(facts.nnz())
+			.append(", OutputMem: ").append(rawOutputMem);
+		if(Math.abs(effectiveOutputMem - rawOutputMem) > 1e-9)
+			sb.append(", EffectiveOutputMem: ").append(effectiveOutputMem);
+		if(Math.abs(effectiveInputMem - rawInputMem) > 1e-9)
+			sb.append(", EffectiveInputMem: ").append(effectiveInputMem);
+		if(facts.inPlaceUpdateTypeOrNull() != null)
+			sb.append(", UpdateType: ").append(facts.inPlaceUpdateTypeOrNull());
 		sb.append("}");
 		System.out.println(sb);
 	}
 
-	private static void appendHopIds(StringBuilder sb, String label, List<Hop> hops) {
+	private static void appendHopIds(StringBuilder sb, String label, List<Long> hopIds) {
 		sb.append(", [").append(label).append("]: (");
-		boolean added = false;
-		if (hops != null && !hops.isEmpty()) {
-			for (Hop relatedHop : hops) {
-				if (relatedHop == null)
-					continue;
-				if (added)
-					sb.append(", ");
-				sb.append(relatedHop.getHopID());
-				added = true;
-			}
+		for(int i = 0; i < hopIds.size(); i++) {
+			if(i > 0)
+				sb.append(", ");
+			sb.append(hopIds.get(i));
 		}
 		sb.append(")");
 	}
 
-	private static double getMinstSelfCost(Graph<Long, DefaultWeightedEdge> graph, long hopID, ExecType execType) {
-		long cId = minstComputeId(hopID);
-		long sourceId = -1L;
-		long sinkId = -2L;
-		if (execType == ExecType.FED)
-			return getEdgeWeightOrZero(graph, cId, sinkId);
-		return getEdgeWeightOrZero(graph, sourceId, cId);
+	private static String formatHopType(String raw) {
+		String value = raw.endsWith("Op") ? raw.substring(0, raw.length() - 2) : raw;
+		return value.length() > 12 ? value.substring(0, 12) : value;
 	}
 
-	private static double getMinstNetworkCost(Graph<Long, DefaultWeightedEdge> graph,
-			Map<Long, FederatedPlanMinSTGraph.Vertex> memoTable,
-			FederatedPlanMinSTGraph.Vertex vertex, Hop hop,
-			ExecType execType, FederatedOutput fedOut) {
-		double networkCost = 0.0;
-		long hopID = hop.getHopID();
-		long cId = minstComputeId(hopID);
-		long pId = minstPlacementId(hopID);
-		long lId = minstLocalityId(hopID);
-		boolean derivedFedFout = vertex.isDerivedFedFout();
+	private static String formatOpCode(String hopType, String raw) {
+		String value = raw;
+		String typePrefix = hopType.toLowerCase();
+		if(value.toLowerCase().startsWith(typePrefix))
+			value = value.substring(typePrefix.length()).trim();
+		return value.length() > 20 ? value.substring(0, 20) : value;
+	}
 
-		if (fedOut == FederatedOutput.FOUT) {
-			if (derivedFedFout)
-				networkCost += getEdgeWeightOrZero(graph, pId, -2L);
-			else if (execType == ExecType.CP)
-				networkCost += getEdgeWeightOrZero(graph, pId, cId);
+	private static String formatTabularIds(List<Long> ids) {
+		StringBuilder value = new StringBuilder();
+		for(int i = 0; i < ids.size(); i++) {
+			if(i > 0)
+				value.append(",");
+			value.append(ids.get(i));
 		}
-		else if (execType == ExecType.FED) {
-			networkCost += getEdgeWeightOrZero(graph, cId, lId);
+		String result = value.length() == 0 ? "-" : value.toString();
+		return result.length() > 15 ? result.substring(0, 15) : result;
+	}
+
+	private static String formatNetworkCosts(List<MinStDiagnostics.ChildNetworkCost> costs) {
+		StringBuilder value = new StringBuilder();
+		for(MinStDiagnostics.ChildNetworkCost cost : costs) {
+			if(value.length() > 0)
+				value.append(", ");
+			value.append(String.format("%d -> %.1f", cost.childHopId(), value(cost.costBits())));
 		}
-
-		if (execType == ExecType.FED && !isDmlFunctionPlaceholder(hop) && hop.getInput() != null) {
-			for (Hop child : hop.getInput()) {
-				if (child == null || child.getDataType() == null || !child.getDataType().isMatrix())
-					continue;
-				FederatedPlanMinSTGraph.Vertex childVertex = memoTable.get(child.getHopID());
-				if (childVertex == null)
-					continue;
-				FederatedOutput childOut = child.getFederatedOutput();
-				if (childOut != FederatedOutput.FOUT) {
-					long childP = minstPlacementId(child.getHopID());
-					networkCost += getEdgeWeightOrZero(graph, cId, childP);
-				}
-			}
-		}
-		return networkCost;
+		return value.toString();
 	}
 
-	private static long minstComputeId(long hopId) {
-		return hopId << 2;
+	private static String nullDisplay(String value, String fallback) {
+		return value != null ? value : fallback;
 	}
 
-	private static long minstPlacementId(long hopId) {
-		return (hopId << 2) | 1;
+	private static double value(long bits) {
+		return Double.longBitsToDouble(bits);
 	}
 
-	private static long minstLocalityId(long hopId) {
-		return (hopId << 2) | 2;
-	}
-
-	private static boolean isDmlFunctionPlaceholder(Hop hop) {
-		return hop instanceof FunctionOp
-			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.DML;
-	}
-
-	private static double getEdgeWeightOrZero(Graph<Long, DefaultWeightedEdge> graph, long src, long dst) {
-		DefaultWeightedEdge edge = graph.getEdge(src, dst);
-		return edge != null ? graph.getEdgeWeight(edge) : 0.0;
-	}
 }

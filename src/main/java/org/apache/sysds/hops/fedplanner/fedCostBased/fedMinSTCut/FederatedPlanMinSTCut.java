@@ -122,8 +122,9 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		restoreMinstPlanDecisions(plannedExecOut, graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
-		FederatedPlannerLogger.logOptimalPlanStructured(graph);
-		FederatedPlannerLogger.logOptimalPlan(graph, true);
+		MinStDiagnostics diagnostics = captureMinStDiagnostics(graph);
+		FederatedPlannerLogger.logOptimalPlanStructured(diagnostics);
+		FederatedPlannerLogger.logOptimalPlan(diagnostics, true);
 	}
 
 	@Override
@@ -142,8 +143,9 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		restoreMinstPlanDecisions(plannedExecOut, graph);
 		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
 		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
-		FederatedPlannerLogger.logOptimalPlanStructured(graph);
-		FederatedPlannerLogger.logOptimalPlan(graph, true);
+		MinStDiagnostics diagnostics = captureMinStDiagnostics(graph);
+		FederatedPlannerLogger.logOptimalPlanStructured(diagnostics);
+		FederatedPlannerLogger.logOptimalPlan(diagnostics, true);
 	}
 
 	private static Map<Long, Pair<ExecType, FederatedOutput>> capturePlannedExecOutputs(
@@ -389,4 +391,161 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 			return false;
 		return FederatedPlannerUtils.isFedInitVar(name);
 	}
+	private static MinStDiagnostics captureMinStDiagnostics(FederatedPlanMinSTGraph planGraph) {
+		Map<Long, Vertex> memoTable = planGraph.getMemoTable();
+		Graph<Long, DefaultWeightedEdge> graph = planGraph.getGraph();
+		List<MinStDiagnostics.OptimalSummary> summaries = new ArrayList<>();
+		for(Vertex vertex : memoTable.values()) {
+			if(vertex == null || vertex.getHopRef() == null)
+				continue;
+			Hop hop = vertex.getHopRef();
+			ExecPlacementCaps caps = vertex.getCaps();
+			summaries.add(new MinStDiagnostics.OptimalSummary(hop.getHopID(), hop.getOpString(),
+				name(hop.getForcedExecType()), name(hop.getFederatedOutput()), name(vertex.getPrivacy()),
+				name(vertex.getDataType()), caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT,
+				caps.allowFED_FOUT));
+		}
+
+		List<Long> sortedHopIds = new ArrayList<>(memoTable.keySet());
+		Collections.sort(sortedHopIds);
+		List<MinStDiagnostics.HopFacts> hopFacts = new ArrayList<>();
+		for(Long hopId : sortedHopIds) {
+			Vertex vertex = memoTable.get(hopId);
+			if(vertex == null || vertex.getHopRef() == null)
+				continue;
+			Hop hop = vertex.getHopRef();
+			ExecType forcedExec = hop.getForcedExecType();
+			ExecType effectiveExec = forcedExec != null ? forcedExec : hop.getExecType();
+			FederatedOutput output = hop.getFederatedOutput();
+			double selfCost = getMinstSelfCost(graph, hopId, effectiveExec);
+			double networkCost = getMinstNetworkCost(graph, memoTable, vertex, hop, effectiveExec, output);
+			double tabularOpCost = getMinstTabularOpCost(graph, hopId, forcedExec);
+			List<Long> childIds = hopIds(hop.getInput());
+			List<Long> parentIds = hopIds(hop.getParent());
+			List<Long> missingParents = new ArrayList<>();
+			for(Long parentId : parentIds)
+				if(!memoTable.containsKey(parentId))
+					missingParents.add(parentId);
+			List<MinStDiagnostics.ChildNetworkCost> childCosts = getPositiveChildNetworkCosts(
+				graph, memoTable, hop, forcedExec);
+			double rawInputMem = hop.getInputMemEstimate();
+			double rawOutputMem = hop.getOutputMemEstimate();
+			double effectiveInputMem = FederatedCostModel.getEffectiveInputMemEstimate(hop);
+			double effectiveOutputMem = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+			String updateType = hop.getUpdateType().isInPlace()
+				? hop.getUpdateType().toString().toLowerCase() : null;
+			hopFacts.add(new MinStDiagnostics.HopFacts(hopId, hop.getClass().getSimpleName(),
+				hop.getOpString(), String.valueOf(hop.getDataType()), name(effectiveExec), name(forcedExec),
+				name(output), name(vertex.getPrivacy()), name(vertex.getDataType()), childIds, parentIds,
+				missingParents, bits(selfCost), bits(networkCost), bits(selfCost + networkCost),
+				bits(vertex.getOpWeight()), bits(tabularOpCost), childCosts, hop.getDim1(), hop.getDim2(),
+				hop.getBlocksize(), hop.getNnz(), bits(rawInputMem), bits(rawOutputMem),
+				bits(effectiveInputMem), bits(effectiveOutputMem), updateType));
+		}
+		return new MinStDiagnostics(planGraph.getSelectedCutObjectiveBits(),
+			planGraph.getSelectedSourcePartitionNodeIds(), summaries, hopFacts);
+	}
+
+	private static String name(Enum<?> value) {
+		return value != null ? value.name() : null;
+	}
+
+	private static long bits(double value) {
+		return Double.doubleToRawLongBits(value);
+	}
+
+	private static List<Long> hopIds(List<Hop> hops) {
+		List<Long> ids = new ArrayList<>();
+		if(hops != null)
+			for(Hop hop : hops)
+				if(hop != null)
+					ids.add(hop.getHopID());
+		return ids;
+	}
+
+	private static double getMinstSelfCost(Graph<Long, DefaultWeightedEdge> graph, long hopId,
+		ExecType execType) {
+		long computeId = minstComputeId(hopId);
+		return execType == ExecType.FED ? getEdgeWeightOrZero(graph, computeId, -2L)
+			: getEdgeWeightOrZero(graph, -1L, computeId);
+	}
+
+	private static double getMinstNetworkCost(Graph<Long, DefaultWeightedEdge> graph,
+		Map<Long, Vertex> memoTable, Vertex vertex, Hop hop, ExecType execType, FederatedOutput output) {
+		double networkCost = 0.0;
+		long computeId = minstComputeId(hop.getHopID());
+		long placementId = minstPlacementId(hop.getHopID());
+		long localityId = minstLocalityId(hop.getHopID());
+		if(output == FederatedOutput.FOUT) {
+			if(vertex.isDerivedFedFout())
+				networkCost += getEdgeWeightOrZero(graph, placementId, -2L);
+			else if(execType == ExecType.CP)
+				networkCost += getEdgeWeightOrZero(graph, placementId, computeId);
+		}
+		else if(execType == ExecType.FED)
+			networkCost += getEdgeWeightOrZero(graph, computeId, localityId);
+		if(execType == ExecType.FED && !isDmlFunctionPlaceholder(hop) && hop.getInput() != null) {
+			for(Hop child : hop.getInput()) {
+				if(child == null || child.getDataType() == null || !child.getDataType().isMatrix()
+					|| !memoTable.containsKey(child.getHopID()))
+					continue;
+				if(child.getFederatedOutput() != FederatedOutput.FOUT)
+					networkCost += getEdgeWeightOrZero(graph, computeId,
+						minstPlacementId(child.getHopID()));
+			}
+		}
+		return networkCost;
+	}
+
+	private static double getMinstTabularOpCost(Graph<Long, DefaultWeightedEdge> graph, long hopId,
+		ExecType forcedExec) {
+		if(forcedExec == ExecType.FED)
+			return getEdgeWeightOrZero(graph, hopId, -2L);
+		if(forcedExec == ExecType.CP)
+			return getEdgeWeightOrZero(graph, -1L, hopId);
+		return 0.0;
+	}
+
+	private static List<MinStDiagnostics.ChildNetworkCost> getPositiveChildNetworkCosts(
+		Graph<Long, DefaultWeightedEdge> graph, Map<Long, Vertex> memoTable, Hop hop, ExecType parentExec) {
+		List<MinStDiagnostics.ChildNetworkCost> costs = new ArrayList<>();
+		if(hop.getInput() == null)
+			return costs;
+		for(Hop child : hop.getInput()) {
+			if(child == null || !memoTable.containsKey(child.getHopID()))
+				continue;
+			double cost = 0.0;
+			ExecType childExec = child.getForcedExecType();
+			if(childExec == ExecType.FED && parentExec == ExecType.CP)
+				cost = getEdgeWeightOrZero(graph, child.getHopID(), hop.getHopID());
+			else if(childExec == ExecType.CP && parentExec == ExecType.FED)
+				cost = getEdgeWeightOrZero(graph, hop.getHopID(), child.getHopID());
+			if(cost > 0)
+				costs.add(new MinStDiagnostics.ChildNetworkCost(child.getHopID(), bits(cost)));
+		}
+		return costs;
+	}
+
+	private static long minstComputeId(long hopId) {
+		return hopId << 2;
+	}
+
+	private static long minstPlacementId(long hopId) {
+		return (hopId << 2) | 1;
+	}
+
+	private static long minstLocalityId(long hopId) {
+		return (hopId << 2) | 2;
+	}
+
+	private static boolean isDmlFunctionPlaceholder(Hop hop) {
+		return hop instanceof FunctionOp
+			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.DML;
+	}
+
+	private static double getEdgeWeightOrZero(Graph<Long, DefaultWeightedEdge> graph, long src, long dst) {
+		DefaultWeightedEdge edge = graph.getEdge(src, dst);
+		return edge != null ? graph.getEdgeWeight(edge) : 0.0;
+	}
+
 }
