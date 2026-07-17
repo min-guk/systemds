@@ -1,6 +1,7 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -9,12 +10,13 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.AdditionalRootInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.AppliedPlanReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.InvocationCounters;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.CloneReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireRequest;
@@ -28,6 +30,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ExactSelection;
+import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -37,224 +41,322 @@ import org.junit.Test;
 /** Compile-time RED for a direct, analysis-owned, mutation-free DP rewire projection. */
 public class CampaignBDpRewireOwnerContractTest {
 	@Test
-	public void b09ReturnsExactCloneOriginAndRecompileTopologyWithoutMutation() {
-		Fixture fixture = fixture("B-09");
-		PlanGraph plans = planGraph(fixture);
-		Snapshot before = snapshot(fixture, plans);
+	public void b09ReturnsOneExactCloneAssociationWithoutChangingTheRealDpReceipt() {
+		RealDp real = realDp("B-09");
+		Claims claims = exactClaims(real.fixture().analysis());
+		Snapshot before = snapshot(real);
 
-		RewireReceipt receipt = FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(fixture.analysis(), fixture.program(), fixture.analysis().occurrences()));
+		RewireReceipt receipt = inspect(real, claims);
 
-		Assert.assertSame("analysis owner", fixture.analysis(), receipt.analysis());
-		Assert.assertSame("program owner", fixture.program(), receipt.program());
-		Assert.assertEquals("analysis fingerprint", fixture.analysis().analysisFingerprint(),
-			receipt.analysisFingerprint());
-		assertIdentityList(fixture.analysis().occurrences(), receipt.orderedOccurrences(), "occurrences");
-		Assert.assertEquals("normalized identity order", fixture.analysis().graph().normalizedIdentities(),
+		Assert.assertSame(real.fixture().analysis(), receipt.analysis());
+		Assert.assertSame(real.fixture().program(), receipt.program());
+		Assert.assertEquals(real.fixture().analysis().analysisFingerprint(), receipt.analysisFingerprint());
+		assertIdentityList(real.fixture().analysis().occurrences(), receipt.orderedOccurrences(), "occurrences");
+		Assert.assertEquals(real.fixture().analysis().graph().normalizedIdentities(),
 			receipt.orderedNormalizedIdentities());
-
-		ExpectedClone expected = expectedClone(fixture.analysis());
-		Assert.assertEquals("B-09 clone receipt count", 1, receipt.cloneReceipts().size());
-		CloneReceipt clone = receipt.cloneReceipts().get(0);
-		Assert.assertSame("origin occurrence", expected.originOccurrence(), clone.originOccurrence());
-		Assert.assertSame("clone occurrence", expected.cloneOccurrence(), clone.cloneOccurrence());
-		Assert.assertSame("origin node", expected.originNode(), clone.originNode());
-		Assert.assertSame("clone node", expected.cloneNode(), clone.cloneNode());
-		Assert.assertSame("SAME_ORIGIN constraint", expected.sameOrigin(), clone.sameOrigin());
-		Assert.assertSame("RECOMPILE_CP_FOUT exclusion", expected.exclusion(),
-			clone.recompileCpFoutExclusion());
-		Assert.assertEquals("clone value version", "CLONE_RECOMPILE",
-			clone.cloneNode().valueVersion().versionKind().name());
-		Assert.assertEquals("clone recompile context", "recompile",
-			clone.cloneNode().key().recompileContext());
-		Assert.assertEquals("clone/original map size", 1, receipt.cloneToOrig().size());
-		Assert.assertEquals("clone/original Hop IDs", expected.originOccurrence().hop().getHopID(),
-			receipt.cloneToOrig().get(expected.cloneOccurrence().hop().getHopID()).longValue());
-		Assert.assertTrue("B-09 must not fabricate legacy-only additional roots",
+		Assert.assertEquals(1, receipt.cloneReceipts().size());
+		Assert.assertSame("exact request association", claims.cloneAssociations().get(0),
+			receipt.cloneReceipts().get(0));
+		assertClone(claims.cloneAssociations().get(0));
+		Assert.assertEquals(Map.of(claims.cloneAssociations().get(0).cloneOccurrence().hop().getHopID(),
+			claims.cloneAssociations().get(0).originOccurrence().hop().getHopID()), receipt.cloneToOrig());
+		Assert.assertTrue("neutral B-09 has no request-injectable legacy additional root",
 			receipt.orderedAdditionalRoots().isEmpty());
 		assertImmutable(receipt.cloneReceipts(), "clone receipts");
 		assertImmutable(receipt.orderedOccurrences(), "ordered occurrences");
 		assertImmutable(receipt.orderedAdditionalRoots(), "additional roots");
 		assertImmutable(receipt.orderedNormalizedIdentities(), "normalized identities");
 		assertImmutable(receipt.cloneToOrig(), "clone/original map");
-		assertSnapshotSame(before, snapshot(fixture, plans));
+		assertSnapshotSame(before, snapshot(real));
 	}
 
 	@Test
-	public void b05ReturnsNoCloneAndPreservesEveryOriginalIdentity() {
-		Fixture fixture = fixture("B-05");
-		PlanGraph plans = planGraph(fixture);
-		Snapshot before = snapshot(fixture, plans);
+	public void b05HasNoCloneClaimsAndPreservesTheRealDpReceipt() {
+		RealDp real = realDp("B-05");
+		Claims claims = exactClaims(real.fixture().analysis());
+		Snapshot before = snapshot(real);
 
-		RewireReceipt receipt = FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(fixture.analysis(), fixture.program(), fixture.analysis().occurrences()));
+		RewireReceipt receipt = inspect(real, claims);
 
-		Assert.assertSame(fixture.analysis(), receipt.analysis());
-		Assert.assertSame(fixture.program(), receipt.program());
-		assertIdentityList(fixture.analysis().occurrences(), receipt.orderedOccurrences(), "B-05 originals");
-		Assert.assertTrue("B-05 clone receipts", receipt.cloneReceipts().isEmpty());
-		Assert.assertTrue("B-05 clone map", receipt.cloneToOrig().isEmpty());
-		Assert.assertTrue("B-05 additional roots", receipt.orderedAdditionalRoots().isEmpty());
-		Assert.assertFalse("B-05 has clone node", fixture.analysis().graph().nodes().stream()
+		Assert.assertTrue(claims.cloneAssociations().isEmpty());
+		Assert.assertTrue(receipt.cloneReceipts().isEmpty());
+		Assert.assertTrue(receipt.cloneToOrig().isEmpty());
+		Assert.assertTrue(receipt.orderedAdditionalRoots().isEmpty());
+		assertIdentityList(real.fixture().analysis().occurrences(), receipt.orderedOccurrences(), "B-05 originals");
+		Assert.assertFalse(real.fixture().analysis().graph().nodes().stream()
 			.anyMatch(node -> node.kind() == NodeKind.CLONE));
-		Assert.assertFalse("B-05 has recompile exclusion", fixture.analysis().graph().nodes().stream()
+		Assert.assertFalse(real.fixture().analysis().graph().nodes().stream()
 			.flatMap(node -> node.exclusions().stream())
 			.anyMatch(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT));
-		assertSnapshotSame(before, snapshot(fixture, plans));
+		assertSnapshotSame(before, snapshot(real));
 	}
 
 	@Test
-	public void copiedForeignAndSubstitutedOwnersRejectBeforeMutation() {
-		Fixture owner = fixture("B-09");
-		PlanGraph plans = planGraph(owner);
-		Snapshot before = snapshot(owner, plans);
+	public void occurrenceAnalysisAndProgramSubstitutionsRejectBeforeMutation() {
+		RealDp owner = realDp("B-09");
+		Claims claims = exactClaims(owner.fixture().analysis());
+		Snapshot before = snapshot(owner);
 
-		List<HopOccurrenceProjection> copiedList = new ArrayList<>(owner.analysis().occurrences());
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), owner.program(), copiedList)), owner, plans, before);
-
-		List<HopOccurrenceProjection> copiedOccurrenceList = new ArrayList<>(owner.analysis().occurrences());
-		HopOccurrenceProjection original = copiedOccurrenceList.get(0);
-		copiedOccurrenceList.set(0, new HopOccurrenceProjection(original.key(), original.hop(),
-			original.normalizedOrdinal(), original.normalizedSignature()));
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), owner.program(), copiedOccurrenceList)), owner, plans, before);
-
-		List<HopOccurrenceProjection> reordered = new ArrayList<>(owner.analysis().occurrences());
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			new ArrayList<>(owner.fixture().analysis().occurrences()), claims.cloneAssociations(),
+			claims.additionalRoots()));
+		List<HopOccurrenceProjection> copiedOccurrence = new ArrayList<>(owner.fixture().analysis().occurrences());
+		HopOccurrenceProjection first = copiedOccurrence.get(0);
+		copiedOccurrence.set(0, new HopOccurrenceProjection(first.key(), first.hop(), first.normalizedOrdinal(),
+			first.normalizedSignature()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			copiedOccurrence, claims.cloneAssociations(), claims.additionalRoots()));
+		List<HopOccurrenceProjection> reordered = new ArrayList<>(owner.fixture().analysis().occurrences());
 		java.util.Collections.swap(reordered, 0, 1);
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), owner.program(), reordered)), owner, plans, before);
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			reordered, claims.cloneAssociations(), claims.additionalRoots()));
 
-		Fixture foreign = fixture("B-05");
-		PlanGraph foreignPlans = planGraph(foreign);
-		Snapshot foreignBefore = snapshot(foreign, foreignPlans);
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(foreign.analysis(), owner.program(), foreign.analysis().occurrences())),
-			owner, plans, before);
-		assertSnapshotSame(foreignBefore, snapshot(foreign, foreignPlans));
+		Fixture alternateSameFixture = fixture("B-09");
+		Claims alternateClaims = exactClaims(alternateSameFixture.analysis());
+		expectReject(owner, before, new RewireRequest(alternateSameFixture.analysis(), owner.fixture().program(),
+			alternateSameFixture.analysis().occurrences(), alternateClaims.cloneAssociations(),
+			alternateClaims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), alternateSameFixture.program(),
+			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), claims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			alternateSameFixture.analysis().occurrences(), alternateClaims.cloneAssociations(),
+			alternateClaims.additionalRoots()));
 
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), foreign.program(), owner.analysis().occurrences())),
-			owner, plans, before);
-		assertSnapshotSame(foreignBefore, snapshot(foreign, foreignPlans));
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), owner.program(), foreign.analysis().occurrences())),
-			owner, plans, before);
-		assertSnapshotSame(foreignBefore, snapshot(foreign, foreignPlans));
+		expectReject(owner, before, new RewireRequest(null, owner.fixture().program(),
+			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), claims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), null,
+			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), claims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(), null,
+			claims.cloneAssociations(), claims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			owner.fixture().analysis().occurrences(), null, claims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), null));
+	}
 
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(null, owner.program(), owner.analysis().occurrences())), owner, plans, before);
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), null, owner.analysis().occurrences())), owner, plans, before);
-		expectRejectAndUnchanged(() -> FederatedPlannerDpRewireTransTable.inspectExact(
-			new RewireRequest(owner.analysis(), owner.program(), null)), owner, plans, before);
+	@Test
+	public void copiedDetachedSwappedAndForeignAssociationsRejectBeforeMutation() {
+		RealDp owner = realDp("B-09");
+		Claims claims = exactClaims(owner.fixture().analysis());
+		CloneReceipt exact = claims.cloneAssociations().get(0);
+		Snapshot before = snapshot(owner);
+		Fixture foreign = fixture("B-09");
+		CloneReceipt foreignClaim = exactClaims(foreign.analysis()).cloneAssociations().get(0);
+
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			owner.fixture().analysis().occurrences(), List.of(), claims.additionalRoots()));
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			owner.fixture().analysis().occurrences(), List.of(exact, exact), claims.additionalRoots()));
+
+		Node detachedOrigin = copy(exact.originNode());
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), detachedOrigin, exact.cloneNode(), exact.sameOrigin(),
+			exact.recompileCpFoutExclusion()));
+		Node sameKeyCloneCopy = copy(exact.cloneNode());
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), exact.originNode(), sameKeyCloneCopy, exact.sameOrigin(),
+			exact.recompileCpFoutExclusion()));
+
+		Constraint copiedConstraint = copy(exact.sameOrigin());
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), exact.originNode(), exact.cloneNode(), copiedConstraint,
+			exact.recompileCpFoutExclusion()));
+		Constraint swappedConstraint = new Constraint(exact.sameOrigin().kind(), exact.sameOrigin().right(),
+			exact.sameOrigin().left(), exact.sameOrigin().inputPosition(), exact.sameOrigin().evidence());
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), exact.originNode(), exact.cloneNode(), swappedConstraint,
+			exact.recompileCpFoutExclusion()));
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), exact.originNode(), exact.cloneNode(), foreignClaim.sameOrigin(),
+			exact.recompileCpFoutExclusion()));
+
+		Exclusion copiedExclusion = copy(exact.recompileCpFoutExclusion());
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), exact.originNode(), exact.cloneNode(), exact.sameOrigin(), copiedExclusion));
+		expectAssociationReject(owner, before, claims, new CloneReceipt(exact.originOccurrence(),
+			exact.cloneOccurrence(), exact.originNode(), exact.cloneNode(), exact.sameOrigin(),
+			foreignClaim.recompileCpFoutExclusion()));
+
+		HopOccurrenceProjection wrongOrigin = owner.fixture().analysis().occurrences().stream()
+			.filter(item -> item != exact.originOccurrence() && item != exact.cloneOccurrence()).findFirst().orElseThrow();
+		Node wrongOriginNode = owner.fixture().analysis().graph().node(wrongOrigin.key()).orElseThrow();
+		expectAssociationReject(owner, before, claims, new CloneReceipt(wrongOrigin, exact.cloneOccurrence(),
+			wrongOriginNode, exact.cloneNode(), exact.sameOrigin(), exact.recompileCpFoutExclusion()));
+	}
+
+	@Test
+	public void b05ContaminationAndAdditionalRootInjectionRejectBeforeMutation() {
+		RealDp b05 = realDp("B-05");
+		Claims clean = exactClaims(b05.fixture().analysis());
+		Snapshot before = snapshot(b05);
+		Fixture b09 = fixture("B-09");
+		CloneReceipt b09Association = exactClaims(b09.analysis()).cloneAssociations().get(0);
+
+		expectReject(b05, before, new RewireRequest(b05.fixture().analysis(), b05.fixture().program(),
+			b05.fixture().analysis().occurrences(), List.of(b09Association), clean.additionalRoots()));
+		HopOccurrenceProjection substitutedRoot = b05.fixture().analysis().occurrences().get(0);
+		expectReject(b05, before, new RewireRequest(b05.fixture().analysis(), b05.fixture().program(),
+			b05.fixture().analysis().occurrences(), clean.cloneAssociations(), List.of(substitutedRoot)));
+	}
+
+	private static RewireReceipt inspect(RealDp real, Claims claims) {
+		return FederatedPlannerDpRewireTransTable.inspectExact(new RewireRequest(real.fixture().analysis(),
+			real.fixture().program(), real.fixture().analysis().occurrences(), claims.cloneAssociations(),
+			claims.additionalRoots()));
+	}
+
+	private static void expectAssociationReject(RealDp owner, Snapshot before, Claims claims,
+		CloneReceipt replacement) {
+		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
+			owner.fixture().analysis().occurrences(), List.of(replacement), claims.additionalRoots()));
+	}
+
+	private static void expectReject(RealDp owner, Snapshot before, RewireRequest request) {
+		try {
+			FederatedPlannerDpRewireTransTable.inspectExact(request);
+			Assert.fail("accepted copied, foreign, reordered, contaminated, or substituted rewire evidence");
+		}
+		catch(IllegalArgumentException expected) {
+			// Identity and association validation must finish before any owner mutation.
+		}
+		assertSnapshotSame(before, snapshot(owner));
+	}
+
+	private static Claims exactClaims(PlacementAnalysis analysis) {
+		List<Node> clones = analysis.graph().nodes().stream().filter(node -> node.kind() == NodeKind.CLONE).toList();
+		Assert.assertTrue("fixture has more than one clone", clones.size() <= 1);
+		if(clones.isEmpty())
+			return new Claims(List.of(), List.of());
+		Node clone = clones.get(0);
+		List<Constraint> associations = analysis.graph().constraints().stream()
+			.filter(item -> item.kind() == ConstraintKind.SAME_ORIGIN)
+			.filter(item -> item.left().equals(clone.key()) || item.right().equals(clone.key())).toList();
+		Assert.assertEquals("exact SAME_ORIGIN multiplicity", 1, associations.size());
+		Constraint association = associations.get(0);
+		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey originKey =
+			association.left().equals(clone.key()) ? association.right() : association.left();
+		Node origin = analysis.graph().node(originKey).orElseThrow();
+		Assert.assertEquals("canonical source origin", origin.key().canonicalSourceOrigin(),
+			clone.key().canonicalSourceOrigin());
+		List<Exclusion> exclusions = clone.exclusions().stream()
+			.filter(item -> item.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).toList();
+		Assert.assertEquals("exact clone-owned recompile exclusion multiplicity", 1, exclusions.size());
+		CloneReceipt claim = new CloneReceipt(occurrence(analysis, origin), occurrence(analysis, clone),
+			origin, clone, association, exclusions.get(0));
+		assertClone(claim);
+		return new Claims(List.of(claim), List.of());
+	}
+
+	private static void assertClone(CloneReceipt claim) {
+		Assert.assertEquals(NodeKind.CLONE, claim.cloneNode().kind());
+		Assert.assertEquals("CLONE_RECOMPILE", claim.cloneNode().valueVersion().versionKind().name());
+		Assert.assertEquals("recompile", claim.cloneNode().key().recompileContext());
+		Assert.assertEquals(ConstraintKind.SAME_ORIGIN, claim.sameOrigin().kind());
+		Assert.assertEquals(ReasonCode.RECOMPILE_CP_FOUT, claim.recompileCpFoutExclusion().reasonCode());
+		Assert.assertEquals(claim.originNode().key().canonicalSourceOrigin(),
+			claim.cloneNode().key().canonicalSourceOrigin());
+	}
+
+	private static HopOccurrenceProjection occurrence(PlacementAnalysis analysis, Node node) {
+		List<HopOccurrenceProjection> matches = analysis.occurrences().stream()
+			.filter(item -> item.key().equals(node.key())).toList();
+		Assert.assertEquals("exact occurrence multiplicity", 1, matches.size());
+		return matches.get(0);
+	}
+
+	private static Node copy(Node node) {
+		return new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(), node.legalAlternatives(),
+			node.exclusions(), node.anchors());
+	}
+
+	private static Constraint copy(Constraint constraint) {
+		return new Constraint(constraint.kind(), constraint.left(), constraint.right(), constraint.inputPosition(),
+			constraint.evidence());
+	}
+
+	private static Exclusion copy(Exclusion exclusion) {
+		return new Exclusion(exclusion.state(), exclusion.reasonCode(), exclusion.detail());
+	}
+
+	private static RealDp realDp(String id) {
+		Fixture fixture = fixture(id);
+		DpInvocationReceipt receipt = new FederatedPlannerDpFedCostBased().rewriteProgram(fixture.program(),
+			new FunctionCallGraph(fixture.program()), null, fixture.analysis());
+		Assert.assertSame(fixture.analysis(), receipt.analysis());
+		Assert.assertEquals(new InvocationCounters(1, 1, 1, receipt.appliedPlans().size(),
+			receipt.additionalRootInvocations().size(),
+			(int) receipt.additionalRootInvocations().stream()
+				.filter(item -> item.disposition() == FederatedPlannerDpFedCostBased.AdditionalRootDisposition.ALREADY_VISITED)
+				.count(), 0, 0, 0, 0, 0, 0), receipt.counters());
+		return new RealDp(fixture, receipt);
 	}
 
 	private static Fixture fixture(String id) {
 		try {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-			HopOccurrenceProjection root = analysis.occurrences().stream()
-				.filter(occurrence -> !occurrence.hop().getInput().isEmpty()).findFirst().orElseThrow();
-			Map<Hop, HopOccurrenceProjection> occurrenceByHop = new IdentityHashMap<>();
-			for(HopOccurrenceProjection occurrence : analysis.occurrences())
-				occurrenceByHop.put(occurrence.hop(), occurrence);
-			List<HopOccurrenceProjection> children = root.hop().getInput().stream().limit(2)
-				.map(occurrenceByHop::get).filter(java.util.Objects::nonNull).toList();
-			return new Fixture(program, analysis, root, children);
+			return new Fixture(program, analysis);
 		}
 		catch(Exception e) {
 			throw new AssertionError("Unable to compile DP rewire fixture " + id, e);
 		}
 	}
 
-	private static ExpectedClone expectedClone(PlacementAnalysis analysis) {
-		Node cloneNode = analysis.graph().nodes().stream().filter(node -> node.kind() == NodeKind.CLONE)
-			.findFirst().orElseThrow();
-		Constraint sameOrigin = analysis.graph().constraints().stream()
-			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_ORIGIN)
-			.filter(constraint -> constraint.left().equals(cloneNode.key())
-				|| constraint.right().equals(cloneNode.key())).findFirst().orElseThrow();
-		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey originKey =
-			sameOrigin.left().equals(cloneNode.key()) ? sameOrigin.right() : sameOrigin.left();
-		Node originNode = analysis.graph().node(originKey).orElseThrow();
-		HopOccurrenceProjection cloneOccurrence = occurrence(analysis, cloneNode);
-		HopOccurrenceProjection originOccurrence = occurrence(analysis, originNode);
-		Exclusion exclusion = cloneNode.exclusions().stream()
-			.filter(item -> item.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).findFirst().orElseThrow();
-		return new ExpectedClone(originOccurrence, cloneOccurrence, originNode, cloneNode, sameOrigin, exclusion);
-	}
-
-	private static HopOccurrenceProjection occurrence(PlacementAnalysis analysis, Node node) {
-		return analysis.occurrences().stream().filter(item -> item.key().equals(node.key())).findFirst().orElseThrow();
-	}
-
-	private static PlanGraph planGraph(Fixture fixture) {
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(fixture.analysis());
-		List<FedPlan> children = new ArrayList<>();
-		List<Pair<Long, FederatedOutput>> edges = new ArrayList<>();
-		for(int i = 0; i < fixture.children().size(); i++) {
-			HopOccurrenceProjection occurrence = fixture.children().get(i);
-			FederatedOutput output = i % 2 == 0 ? FederatedOutput.LOUT : FederatedOutput.FOUT;
-			FedPlan plan = plan(occurrence.hop(), output, output == FederatedOutput.FOUT ? ExecType.FED : ExecType.CP,
-				0x1.0p0 + i, 0x1.0p-5 + i * 0x1.0p-7, 0x1.0p-4 + i * 0x1.0p-6, List.of());
-			register(memo, occurrence, plan);
-			children.add(plan);
-			edges.add(Pair.of(occurrence.hop().getHopID(), output));
-		}
-		FedPlan root = plan(fixture.root().hop(), FederatedOutput.FOUT, ExecType.FED,
-			0x1.8p2, 0x1.0p-3, 0x1.8p-3, List.copyOf(edges));
-		register(memo, fixture.root(), root);
-		return new PlanGraph(memo, root, List.copyOf(children));
-	}
-
-	private static FedPlan plan(Hop hop, FederatedOutput output, ExecType execType, double cumulative,
-		double self, double forwarding, List<Pair<Long, FederatedOutput>> children) {
-		HopCommon common = new HopCommon(hop, 1, 1, 1, 1, List.of());
-		common.setSelfCost(self);
-		common.setForwardingCost(forwarding);
-		FedPlanVariants variants = new FedPlanVariants(common, output);
-		FedPlan plan = new FedPlan(cumulative, variants, children);
-		plan.setExecType(execType);
-		plan.setFType(FType.ROW);
-		variants.addFedPlan(plan);
-		return plan;
-	}
-
-	private static void register(FederatedPlannerDpMemoTable memo, HopOccurrenceProjection occurrence,
-		FedPlan plan) {
-		FedPlanVariants variants = new FedPlanVariants(
-			new HopCommon(occurrence.hop(), 1, 1, 1, 1, List.of()), plan.getFedOutType());
-		variants.getFedPlanVariants().add(plan);
-		memo.addFedPlanVariants(occurrence, plan.getFedOutType(), variants);
-	}
-
-	private static Snapshot snapshot(Fixture fixture, PlanGraph plans) {
-		List<OccurrenceState> occurrences = fixture.analysis().occurrences().stream()
+	private static Snapshot snapshot(RealDp real) {
+		PlacementAnalysis analysis = real.fixture().analysis();
+		DpInvocationReceipt receipt = real.receipt();
+		List<OccurrenceState> occurrences = analysis.occurrences().stream()
 			.map(item -> new OccurrenceState(item, item.key(), item.hop(), item.normalizedOrdinal(),
 				item.normalizedSignature())).toList();
-		List<HopState> hops = fixture.analysis().occurrences().stream().map(HopOccurrenceProjection::hop)
-			.distinct().map(CampaignBDpRewireOwnerContractTest::snapshotHop).toList();
+		List<HopState> hops = analysis.occurrences().stream().map(HopOccurrenceProjection::hop).distinct()
+			.map(CampaignBDpRewireOwnerContractTest::snapshotHop).toList();
 		List<OwnedExclusion> exclusions = new ArrayList<>();
-		for(Node node : fixture.analysis().graph().nodes())
+		for(Node node : analysis.graph().nodes())
 			for(Exclusion exclusion : node.exclusions())
 				exclusions.add(new OwnedExclusion(node, exclusion));
-		List<PlanState> planStates = new ArrayList<>();
-		planStates.add(snapshotPlan(plans.rootPlan()));
-		plans.childPlans().stream().map(CampaignBDpRewireOwnerContractTest::snapshotPlan).forEach(planStates::add);
-		List<MemoEntryState> memoEntries = new ArrayList<>();
-		memoEntries.add(snapshotMemo(plans.memo(), fixture.root(), plans.rootPlan()));
-		for(int i = 0; i < fixture.children().size(); i++)
-			memoEntries.add(snapshotMemo(plans.memo(), fixture.children().get(i), plans.childPlans().get(i)));
-		List<MemoPresence> presence = memoPresence(fixture.analysis(), plans.memo());
-		Counters counters = new Counters(occurrences.size(), fixture.analysis().graph().nodes().size(),
-			fixture.analysis().graph().constraints().size(), exclusions.size(),
-			(int) fixture.analysis().graph().nodes().stream().filter(node -> node.kind() == NodeKind.CLONE).count(),
-			(int) presence.stream().filter(MemoPresence::present).count(), planStates.size());
-		return new Snapshot(fixture.analysis(), fixture.program(), PlacementGraphFingerprint.capture(fixture.program()),
-			fixture.analysis().analysisFingerprint(), List.copyOf(occurrences), List.copyOf(hops),
-			fixture.analysis().graph().nodes(), fixture.analysis().graph().constraints(), List.copyOf(exclusions),
-			plans.memo(), List.copyOf(planStates), List.copyOf(memoEntries), presence, counters);
+		List<MemoCoordinateState> memoCoordinates = memoCoordinates(analysis, receipt.memo(),
+			receipt.legacyOptimalPlan());
+		return new Snapshot(analysis, real.fixture().program(), PlacementGraphFingerprint.capture(real.fixture().program()),
+			analysis.analysisFingerprint(), List.copyOf(occurrences), List.copyOf(hops), analysis.graph().nodes(),
+			analysis.graph().constraints(), List.copyOf(exclusions), receipt, receipt.memo(),
+			receipt.legacyOptimalPlan(), snapshotPlan(receipt.legacyOptimalPlan()), receipt.exactSelection(),
+			List.copyOf(receipt.exactSelection().aggregateChildEdges()),
+			List.copyOf(receipt.exactSelection().selectedRootPlans()),
+			List.copyOf(receipt.exactSelection().selectedRootHops()), List.copyOf(receipt.appliedPlans()),
+			List.copyOf(receipt.additionalRootInvocations()), receipt.counters(), memoCoordinates,
+			List.copyOf(receipt.memo().getAdditionalRootHopIDs()));
+	}
+
+	private static List<MemoCoordinateState> memoCoordinates(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memo, FedPlan aggregate) {
+		Set<Long> ids = new LinkedHashSet<>();
+		analysis.occurrences().forEach(item -> ids.add(item.hop().getHopID()));
+		ids.addAll(memo.getAdditionalRootHopIDs());
+		Set<FedPlan> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		ArrayDeque<FedPlan> queue = new ArrayDeque<>();
+		queue.add(aggregate);
+		while(!queue.isEmpty()) {
+			FedPlan plan = queue.removeFirst();
+			if(!seen.add(plan)) continue;
+			ids.add(plan.getHopID());
+			for(Pair<Long, FederatedOutput> edge : plan.getChildFedPlans()) {
+				ids.add(edge.getLeft());
+				FedPlan child = memo.getFedPlanAfterPrune(edge);
+				if(child != null) queue.add(child);
+			}
+		}
+		List<MemoCoordinateState> result = new ArrayList<>();
+		for(long id : ids)
+			for(FederatedOutput output : FederatedOutput.values()) {
+				boolean present = memo.contains(id, output);
+				FedPlanVariants variants = present ? memo.getFedPlanVariants(Pair.of(id, output)) : null;
+				List<PlanState> plans = variants == null ? List.of() : variants.getFedPlanVariants().stream()
+					.map(CampaignBDpRewireOwnerContractTest::snapshotPlan).toList();
+				result.add(new MemoCoordinateState(id, output, present, variants,
+					variants == null ? List.of() : List.copyOf(variants.getFedPlanVariants()),
+					memo.getFedPlanAfterPrune(id, output), plans));
+			}
+		return List.copyOf(result);
 	}
 
 	private static HopState snapshotHop(Hop hop) {
@@ -263,39 +365,9 @@ public class CampaignBDpRewireOwnerContractTest {
 	}
 
 	private static PlanState snapshotPlan(FedPlan plan) {
-		return new PlanState(plan, bits(plan.getCumulativeCost()), bits(plan.getSelfCost()),
-			bits(plan.getForwardingCost()), plan.getExecType(), plan.getFType(), List.copyOf(plan.getChildFedPlans()));
-	}
-
-	private static MemoEntryState snapshotMemo(FederatedPlannerDpMemoTable memo,
-		HopOccurrenceProjection occurrence, FedPlan plan) {
-		FedPlanVariants variants = memo.getFedPlanVariants(Pair.of(occurrence.hop().getHopID(),
-			plan.getFedOutType()));
-		return new MemoEntryState(occurrence, variants, List.copyOf(variants.getFedPlanVariants()),
-			memo.getFedPlanAfterPrune(occurrence, plan.getFedOutType()));
-	}
-
-	private static List<MemoPresence> memoPresence(PlacementAnalysis analysis,
-		FederatedPlannerDpMemoTable memo) {
-		Set<Long> ids = new LinkedHashSet<>();
-		analysis.occurrences().forEach(occurrence -> ids.add(occurrence.hop().getHopID()));
-		List<MemoPresence> result = new ArrayList<>();
-		for(long id : ids)
-			for(FederatedOutput output : FederatedOutput.values())
-				result.add(new MemoPresence(id, output, memo.contains(id, output)));
-		return List.copyOf(result);
-	}
-
-	private static void expectRejectAndUnchanged(Runnable action, Fixture fixture, PlanGraph plans,
-		Snapshot before) {
-		try {
-			action.run();
-			Assert.fail("accepted copied, foreign, reordered, or substituted rewire owner");
-		}
-		catch(IllegalArgumentException expected) {
-			// All ownership checks must complete before any topology or planner mutation.
-		}
-		assertSnapshotSame(before, snapshot(fixture, plans));
+		return new PlanState(plan, plan.getHopRef(), Double.doubleToRawLongBits(plan.getCumulativeCost()),
+			Double.doubleToRawLongBits(plan.getSelfCost()), Double.doubleToRawLongBits(plan.getForwardingCost()),
+			plan.getExecType(), plan.getFType(), List.copyOf(plan.getChildFedPlans()));
 	}
 
 	private static void assertSnapshotSame(Snapshot expected, Snapshot actual) {
@@ -313,16 +385,7 @@ public class CampaignBDpRewireOwnerContractTest {
 			Assert.assertEquals(left.signature(), right.signature());
 		}
 		Assert.assertEquals(expected.hops().size(), actual.hops().size());
-		for(int i = 0; i < expected.hops().size(); i++) {
-			HopState left = expected.hops().get(i), right = actual.hops().get(i);
-			Assert.assertSame(left.hop(), right.hop());
-			Assert.assertEquals(left.hopId(), right.hopId());
-			Assert.assertSame(left.execType(), right.execType());
-			Assert.assertSame(left.output(), right.output());
-			Assert.assertEquals(left.requiresRecompile(), right.requiresRecompile());
-			assertIdentityList(left.inputs(), right.inputs(), "Hop inputs");
-			assertIdentityList(left.parents(), right.parents(), "Hop parents");
-		}
+		for(int i = 0; i < expected.hops().size(); i++) assertHopSame(expected.hops().get(i), actual.hops().get(i));
 		assertIdentityList(expected.nodes(), actual.nodes(), "nodes");
 		assertIdentityList(expected.constraints(), actual.constraints(), "constraints");
 		Assert.assertEquals(expected.exclusions().size(), actual.exclusions().size());
@@ -330,24 +393,49 @@ public class CampaignBDpRewireOwnerContractTest {
 			Assert.assertSame(expected.exclusions().get(i).owner(), actual.exclusions().get(i).owner());
 			Assert.assertSame(expected.exclusions().get(i).exclusion(), actual.exclusions().get(i).exclusion());
 		}
+		Assert.assertSame(expected.receipt(), actual.receipt());
 		Assert.assertSame(expected.memo(), actual.memo());
+		Assert.assertSame(expected.aggregate(), actual.aggregate());
+		assertPlanSame(expected.aggregateState(), actual.aggregateState());
+		Assert.assertSame(expected.exactSelection(), actual.exactSelection());
+		assertIdentityList(expected.aggregateEdges(), actual.aggregateEdges(), "aggregate edges");
+		assertIdentityList(expected.selectedRootPlans(), actual.selectedRootPlans(), "selected root plans");
+		assertIdentityList(expected.selectedRootHops(), actual.selectedRootHops(), "selected root Hops");
+		assertIdentityList(expected.appliedPlans(), actual.appliedPlans(), "applied plan receipts");
+		assertIdentityList(expected.additionalRootInvocations(), actual.additionalRootInvocations(),
+			"additional-root invocation receipts");
+		Assert.assertEquals(expected.counters(), actual.counters());
+		Assert.assertEquals(expected.memoCoordinates().size(), actual.memoCoordinates().size());
+		for(int i = 0; i < expected.memoCoordinates().size(); i++)
+			assertMemoSame(expected.memoCoordinates().get(i), actual.memoCoordinates().get(i));
+		Assert.assertEquals(expected.additionalRootIds(), actual.additionalRootIds());
+	}
+
+	private static void assertHopSame(HopState expected, HopState actual) {
+		Assert.assertSame(expected.hop(), actual.hop());
+		Assert.assertEquals(expected.hopId(), actual.hopId());
+		Assert.assertSame(expected.execType(), actual.execType());
+		Assert.assertSame(expected.output(), actual.output());
+		Assert.assertEquals(expected.requiresRecompile(), actual.requiresRecompile());
+		assertIdentityList(expected.inputs(), actual.inputs(), "Hop inputs");
+		assertIdentityList(expected.parents(), actual.parents(), "Hop parents");
+	}
+
+	private static void assertMemoSame(MemoCoordinateState expected, MemoCoordinateState actual) {
+		Assert.assertEquals(expected.hopId(), actual.hopId());
+		Assert.assertSame(expected.output(), actual.output());
+		Assert.assertEquals(expected.present(), actual.present());
+		Assert.assertSame(expected.variants(), actual.variants());
+		assertIdentityList(expected.variantOrder(), actual.variantOrder(), "memo variant order");
+		Assert.assertSame(expected.selected(), actual.selected());
 		Assert.assertEquals(expected.plans().size(), actual.plans().size());
 		for(int i = 0; i < expected.plans().size(); i++)
 			assertPlanSame(expected.plans().get(i), actual.plans().get(i));
-		Assert.assertEquals(expected.memoEntries().size(), actual.memoEntries().size());
-		for(int i = 0; i < expected.memoEntries().size(); i++) {
-			MemoEntryState left = expected.memoEntries().get(i), right = actual.memoEntries().get(i);
-			Assert.assertSame(left.occurrence(), right.occurrence());
-			Assert.assertSame(left.variants(), right.variants());
-			assertIdentityList(left.variantOrder(), right.variantOrder(), "memo variant order");
-			Assert.assertSame(left.selected(), right.selected());
-		}
-		Assert.assertEquals(expected.memoPresence(), actual.memoPresence());
-		Assert.assertEquals(expected.counters(), actual.counters());
 	}
 
 	private static void assertPlanSame(PlanState expected, PlanState actual) {
 		Assert.assertSame(expected.plan(), actual.plan());
+		Assert.assertSame(expected.hop(), actual.hop());
 		Assert.assertEquals(expected.cumulativeBits(), actual.cumulativeBits());
 		Assert.assertEquals(expected.selfBits(), actual.selfBits());
 		Assert.assertEquals(expected.forwardingBits(), actual.forwardingBits());
@@ -365,52 +453,36 @@ public class CampaignBDpRewireOwnerContractTest {
 
 	@SuppressWarnings({"rawtypes", "unchecked"})
 	private static void assertImmutable(List<?> values, String label) {
-		try {
-			((List) values).add(null);
-			Assert.fail("mutable " + label);
-		}
-		catch(UnsupportedOperationException expected) {
-			// Receipt collections must preserve exact analysis order without writable aliases.
-		}
+		try { ((List) values).add(null); Assert.fail("mutable " + label); }
+		catch(UnsupportedOperationException expected) { }
 	}
 
 	@SuppressWarnings({"rawtypes", "unchecked"})
 	private static void assertImmutable(Map<?, ?> values, String label) {
-		try {
-			((Map) values).put(null, null);
-			Assert.fail("mutable " + label);
-		}
-		catch(UnsupportedOperationException expected) {
-			// Receipt maps must be immutable after all owner checks complete.
-		}
+		try { ((Map) values).put(null, null); Assert.fail("mutable " + label); }
+		catch(UnsupportedOperationException expected) { }
 	}
 
-	private static long bits(double value) {
-		return Double.doubleToRawLongBits(value);
-	}
-
-	private record Fixture(DMLProgram program, PlacementAnalysis analysis, HopOccurrenceProjection root,
-		List<HopOccurrenceProjection> children) { }
-	private record ExpectedClone(HopOccurrenceProjection originOccurrence,
-		HopOccurrenceProjection cloneOccurrence, Node originNode, Node cloneNode, Constraint sameOrigin,
-		Exclusion exclusion) { }
-	private record PlanGraph(FederatedPlannerDpMemoTable memo, FedPlan rootPlan, List<FedPlan> childPlans) { }
+	private record Fixture(DMLProgram program, PlacementAnalysis analysis) { }
+	private record RealDp(Fixture fixture, DpInvocationReceipt receipt) { }
+	private record Claims(List<CloneReceipt> cloneAssociations, List<HopOccurrenceProjection> additionalRoots) { }
 	private record OccurrenceState(HopOccurrenceProjection occurrence,
 		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey key, Hop hop, int ordinal,
 		String signature) { }
-	private record HopState(Hop hop, long hopId, ExecType execType, FederatedOutput output,
-		boolean requiresRecompile, List<Hop> inputs, List<Hop> parents) { }
+	private record HopState(Hop hop, long hopId, org.apache.sysds.common.Types.ExecType execType,
+		FederatedOutput output, boolean requiresRecompile, List<Hop> inputs, List<Hop> parents) { }
 	private record OwnedExclusion(Node owner, Exclusion exclusion) { }
-	private record PlanState(FedPlan plan, long cumulativeBits, long selfBits, long forwardingBits,
-		ExecType execType, FType fType, List<Pair<Long, FederatedOutput>> childEdges) { }
-	private record MemoEntryState(HopOccurrenceProjection occurrence, FedPlanVariants variants,
-		List<FedPlan> variantOrder, FedPlan selected) { }
-	private record MemoPresence(long hopId, FederatedOutput output, boolean present) { }
-	private record Counters(int occurrenceCount, int nodeCount, int constraintCount, int exclusionCount,
-		int cloneCount, int presentMemoCoordinateCount, int planCount) { }
+	private record PlanState(FedPlan plan, Hop hop, long cumulativeBits, long selfBits, long forwardingBits,
+		org.apache.sysds.common.Types.ExecType execType, org.apache.sysds.hops.fedplanner.FTypes.FType fType,
+		List<Pair<Long, FederatedOutput>> childEdges) { }
+	private record MemoCoordinateState(long hopId, FederatedOutput output, boolean present,
+		FedPlanVariants variants, List<FedPlan> variantOrder, FedPlan selected, List<PlanState> plans) { }
 	private record Snapshot(PlacementAnalysis analysis, DMLProgram program, String programFingerprint,
 		String analysisFingerprint, List<OccurrenceState> occurrences, List<HopState> hops, List<Node> nodes,
-		List<Constraint> constraints, List<OwnedExclusion> exclusions, FederatedPlannerDpMemoTable memo,
-		List<PlanState> plans, List<MemoEntryState> memoEntries, List<MemoPresence> memoPresence,
-		Counters counters) { }
+		List<Constraint> constraints, List<OwnedExclusion> exclusions, DpInvocationReceipt receipt,
+		FederatedPlannerDpMemoTable memo, FedPlan aggregate, PlanState aggregateState,
+		ExactSelection exactSelection, List<Pair<Long, FederatedOutput>> aggregateEdges,
+		List<FedPlan> selectedRootPlans, List<Hop> selectedRootHops, List<AppliedPlanReceipt> appliedPlans,
+		List<AdditionalRootInvocationReceipt> additionalRootInvocations, InvocationCounters counters,
+		List<MemoCoordinateState> memoCoordinates, List<Long> additionalRootIds) { }
 }
