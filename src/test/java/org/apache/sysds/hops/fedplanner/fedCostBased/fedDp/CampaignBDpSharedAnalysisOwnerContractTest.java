@@ -370,7 +370,6 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		PlacementAnalysis detached = builder.buildAnalysis(program);
 		Hop sentinel = detached.occurrences().stream().map(HopOccurrenceProjection::hop)
 			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst().orElseThrow();
-		FunctionCallGraph fgraph = new FunctionCallGraph(program);
 		seedRunState(sentinel);
 		ProgramSnapshot before = snapshotProgram(program, detached);
 		RunStateSnapshot runBefore = snapshotRunState(sentinel);
@@ -411,6 +410,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		PlacementAnalysis detached = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		Hop sentinel = detached.occurrences().stream().map(HopOccurrenceProjection::hop)
 			.filter(hop -> FederatedPlannerUtils.plannerRecompileSignature(hop) != null).findFirst().orElseThrow();
+		FunctionCallGraph fgraph = new FunctionCallGraph(program);
 		seedRunState(sentinel);
 		ProgramSnapshot before = snapshotProgram(program, detached); RunStateSnapshot runBefore = snapshotRunState(sentinel);
 		AtomicInteger receipts = new AtomicInteger(); Object shadowBefore = shadowLastRecorded();
