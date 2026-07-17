@@ -276,9 +276,17 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 
 		String programSource = Files.readString(DML_PROGRAM);
 		String authoritySurface = authoritySurface(stripCommentsAndStrings(programSource));
-		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_OBJECT", Pattern.compile("\\bObject\\b").matcher(authoritySurface).find());
-		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_MAP", Pattern.compile("\\b(?:Map|HashMap|IdentityHashMap)\\b").matcher(authoritySurface).find());
-		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_REFLECTION", Pattern.compile("\\b(?:Class|Method|Field|reflect|getClass|forName)\\b").matcher(authoritySurface).find());
+		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_OBJECT",
+			Pattern.compile("\\bObject\\b").matcher(authoritySurface).find());
+		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_MAP",
+			Pattern.compile("\\b(?:Map|HashMap|IdentityHashMap|ConcurrentHashMap)\\b").matcher(authoritySurface).find());
+		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_REFLECTION",
+			Pattern.compile("\\b(?:Class|Method|Field|Constructor|reflect|getClass|forName|loadClass|getDeclared\\w*|"
+				+ "getCanonicalName|getTypeName)\\b").matcher(authoritySurface).find());
+		Assert.assertFalse("CAMPAIGN_B_DP_ALTERNATE_AUTHORITY_MUTATOR",
+			Pattern.compile("(?i)\\b(?:get|set|install|clear|rebind)\\w*(?:authority|placement)|"
+				+ "\\b(?:authority|placement)\\w*(?:get|set|install|clear|rebind)\\b")
+				.matcher(authoritySurface).find());
 		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_BUILD_DETACHED_CANDIDATE",
 			programSource.contains("buildDetachedAnalysis(this)"));
 		Assert.assertTrue("CAMPAIGN_B_DP_BIND_MUST_CAS",
@@ -331,7 +339,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertTrue("CAMPAIGN_B_DP_CONSTRUCT_LOPS_MUST_ENTER_FINAL_BOUNDARY",
 			translator.indexOf("runFederatedPlannerAtFinalHopBoundary", translator.indexOf("constructLops(DMLProgram")) >= 0);
 		String boundaryMethod = methodDeclarationAndBody(cleanTranslator,
-			"private\\s+static\\s+void\\s+runFederatedPlannerAtFinalHopBoundary\\s*\\(");
+			"private\\s+static\\s+void\\s+runFederatedPlannerAtFinalHopBoundary\\s*\\([^)]*\\)");
 		Assert.assertTrue("CAMPAIGN_B_DP_FINAL_BOUNDARY_HELPER_NOT_PRIVATE",
 			boundaryMethod.stripLeading().startsWith("private static void runFederatedPlannerAtFinalHopBoundary"));
 		String constructBody = methodDeclarationAndBody(cleanTranslator,
@@ -341,7 +349,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertEquals("CAMPAIGN_B_DP_CONSTRUCT_MUST_CALL_BOUNDARY_ONCE", 1,
 			countPattern(constructBody, "\\brunFederatedPlannerAtFinalHopBoundary\\s*\\("));
 		Assert.assertEquals("CAMPAIGN_B_DP_BOUNDARY_CALL_OUTSIDE_CONSUMER_CONSTRUCT", 0,
-			countPattern(cleanTranslator.replace(constructBody, " "),
+			countPattern(cleanTranslator.replace(constructBody, " ").replace(boundaryMethod, " "),
 				"\\brunFederatedPlannerAtFinalHopBoundary\\s*\\("));
 		Assert.assertTrue("CAMPAIGN_B_DP_UNBOUND_REWRITE_GUARD_MISSING",
 			translator.contains("requirePlacementAnalysisUnboundForHopRewrite"));
@@ -510,7 +518,8 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		try {
 			Field field = DMLProgram.class.getDeclaredField("_placementAnalysisAuthority");
 			if(field.getType() != AtomicReference.class || !Modifier.isPrivate(field.getModifiers())
-				|| !Modifier.isFinal(field.getModifiers()))
+				|| !Modifier.isFinal(field.getModifiers()) || !field.getGenericType().getTypeName().equals(
+					"java.util.concurrent.atomic.AtomicReference<org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis>"))
 				throw new AssertionError("CAMPAIGN_B_DP_CONCRETE_AUTHORITY_CELL_MISSING|wrong-shape=" + field);
 			return field;
 		}
@@ -520,7 +529,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	}
 
 	private static boolean authorityNamed(String name) {
-		String lower = name.toLowerCase(); return lower.contains("authority") || lower.contains("placementanalysis");
+		String lower = name.toLowerCase(); return lower.contains("authority") || lower.contains("placement");
 	}
 
 	private static String methodShape(Method method) {
@@ -531,14 +540,17 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 
 	private static String authoritySurface(String source) {
 		StringBuilder surface = new StringBuilder();
-		for(String name : List.of("bindPlacementAnalysisAtFinalHopBoundary", "requirePlacementAnalysisAuthority",
-			"requirePlacementAnalysisUnboundForHopRewrite")) {
-			Matcher matcher = Pattern.compile("(?:public|protected|private|static|final|synchronized|\\s)+[^;{}]*\\b"
-				+ Pattern.quote(name) + "\\s*\\([^;{}]*\\)\\s*\\{").matcher(source);
-			while(matcher.find()) surface.append(methodDeclarationAndBody(source.substring(matcher.start()),
-				"[^;{}]*\\b" + Pattern.quote(name) + "\\s*\\(")).append('\n');
+		Matcher methods = Pattern.compile(
+			"(?:public|protected|private|static|final|synchronized|native|abstract|\\s)+"
+				+ "[\\w.$<>, ?\\[\\]]+\\s+(\\w+)\\s*\\([^;{}]*\\)\\s*(?:throws\\s+[^{}]+)?\\{")
+			.matcher(source);
+		while(methods.find()) {
+			String method = braceDelimited(source, methods.start(), source.indexOf('{', methods.start()));
+			if(authorityNamed(methods.group(1)) || method.contains("_placementAnalysisAuthority"))
+				surface.append(method).append('\n');
 		}
-		source.lines().filter(line -> line.contains("_placementAnalysisAuthority")).forEach(line -> surface.append(line).append('\n'));
+		source.lines().filter(line -> Pattern.compile("(?i)\\b[\\w<>?,. ]+\\s+\\w*(?:authority|placement)\\w*\\s*(?:=|;)")
+			.matcher(line).find()).forEach(line -> surface.append(line).append('\n'));
 		return surface.toString();
 	}
 
@@ -570,26 +582,19 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		return count;
 	}
 
-	private static String methodBody(String source, String name) {
-		Matcher method = Pattern.compile("\\b" + Pattern.quote(name) + "\\s*\\([^;{}]*\\)\\s*\\{").matcher(source);
-		if(!method.find()) throw new AssertionError("CAMPAIGN_B_DP_METHOD_BODY_MISSING|" + name);
-		int open = source.indexOf('{', method.start()), depth = 1;
-		for(int i = open + 1; i < source.length(); i++) {
-			if(source.charAt(i) == '{') depth++;
-			else if(source.charAt(i) == '}' && --depth == 0) return source.substring(open + 1, i);
-		}
-		throw new AssertionError("CAMPAIGN_B_DP_METHOD_BODY_UNCLOSED|" + name);
+	private static String methodDeclarationAndBody(String source, String declarationRegex) {
+		Matcher method = Pattern.compile(declarationRegex + "\\s*(?:throws\\s+[^{}]+)?\\{").matcher(source);
+		if(!method.find()) throw new AssertionError("CAMPAIGN_B_DP_METHOD_DECLARATION_MISSING|" + declarationRegex);
+		return braceDelimited(source, method.start(), source.indexOf('{', method.start()));
 	}
 
-	private static String methodDeclarationAndBody(String source, String declarationRegex) {
-		Matcher method = Pattern.compile(declarationRegex + "[^;{}]*\\)\\s*\\{").matcher(source);
-		if(!method.find()) throw new AssertionError("CAMPAIGN_B_DP_METHOD_DECLARATION_MISSING|" + declarationRegex);
-		int open = source.indexOf('{', method.start()), depth = 1;
+	private static String braceDelimited(String source, int start, int open) {
+		int depth = 1;
 		for(int i = open + 1; i < source.length(); i++) {
 			if(source.charAt(i) == '{') depth++;
-			else if(source.charAt(i) == '}' && --depth == 0) return source.substring(method.start(), i + 1);
+			else if(source.charAt(i) == '}' && --depth == 0) return source.substring(start, i + 1);
 		}
-		throw new AssertionError("CAMPAIGN_B_DP_METHOD_DECLARATION_UNCLOSED|" + declarationRegex);
+		throw new AssertionError("CAMPAIGN_B_DP_DELIMITED_BLOCK_UNCLOSED|start=" + start);
 	}
 
 	private static String stripCommentsAndStrings(String source) {
