@@ -289,12 +289,6 @@ public class DMLTranslator
 
 	public void rewriteHopsDAG(DMLProgram dmlp) 
 	{
-		rewriteHopsDAG(dmlp, receipt -> { });
-	}
-
-	public void rewriteHopsDAG(DMLProgram dmlp,
-		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
-		Objects.requireNonNull(receiptConsumer, "receiptConsumer");
 		//apply hop rewrites (static rewrites)
 		ProgramRewriter rewriter = new ProgramRewriter(true, false);
 		rewriter.rewriteProgramHopDAGs(dmlp, false); //rewrite and merge
@@ -331,18 +325,16 @@ public class DMLTranslator
 				codgenHopsDAG(dmlp);
 		}
 
-		// Run federated planning after rewrites/mem estimates (and HOPS codegen)
-		// so cost estimation can use refreshed output memory sizes.
-		runFederatedPlannerAfterRewrite(dmlp, receiptConsumer);
 	}
 
-	private static void runFederatedPlannerAfterRewrite(DMLProgram dmlp,
+	private static void runFederatedPlannerAtFinalHopBoundary(DMLProgram dmlp,
 		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
 		String planner = ConfigurationManager.getDMLConfig()
 			.getTextValue(DMLConfig.FEDERATED_PLANNER);
 		if( !(OptimizerUtils.FEDERATED_COMPILATION
 			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
 			return;
+		PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
 
 		org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
 		org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner fedPlanner =
@@ -350,7 +342,6 @@ public class DMLTranslator
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(dmlp);
 		// fcallSizes are not recomputed here; planner uses null when unavailable.
 		long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
 		AFederatedPlanner.PlannerInvocationReceipt receipt =
@@ -563,6 +554,13 @@ public class DMLTranslator
 	}
 
 	public void constructLops(DMLProgram dmlp) {
+		constructLops(dmlp, receipt -> { });
+	}
+
+	public void constructLops(DMLProgram dmlp,
+		Consumer<? super AFederatedPlanner.PlannerInvocationReceipt> receiptConsumer) {
+		Objects.requireNonNull(receiptConsumer, "receiptConsumer");
+		runFederatedPlannerAtFinalHopBoundary(dmlp, receiptConsumer);
 		// for each namespace, handle function program blocks
 		for( FunctionDictionary<FunctionStatementBlock> fdict : dmlp.getNamespaces().values() ) {
 			//handle optimized functions

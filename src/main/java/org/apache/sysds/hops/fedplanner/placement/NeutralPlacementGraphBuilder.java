@@ -119,6 +119,10 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	public PlacementAnalysis buildAnalysis(DMLProgram program) {
+		return buildDetachedAnalysis(program);
+	}
+
+	public PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
 		String registryBefore = registrySentinel(program);
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
