@@ -1,10 +1,13 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.Optional;
+
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.ObservationResult;
+import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.RegistrationFact;
 
 public final class AnchorProvenanceObserverFactory {
-	private static final AnchorProvenanceObserver UNAVAILABLE_OBSERVER =
+	private static final AnchorProvenanceObserver PROVENANCE_OBSERVER =
 		new AnchorProvenanceObserver() {
 			@Override
 			public ObservationResult observe(
@@ -16,8 +19,17 @@ public final class AnchorProvenanceObserverFactory {
 				if(!dataOp.isFederatedDataOp())
 					return ObservationResult.invalid(
 						"source DataOp is not a federated data operation");
-				return ObservationResult.unavailable(
-					"anchor provenance observation is not implemented");
+				try {
+					Optional<RegistrationFact> fact =
+						RegistrationFact.deriveAvailable(analysis, dataOp);
+					return fact
+						.map(ObservationResult::available)
+						.orElseGet(() -> ObservationResult.unavailable(
+							"matched source has no supported durable anchor"));
+				}
+				catch(IllegalArgumentException exception) {
+					return ObservationResult.invalid(exception.getMessage());
+				}
 			}
 		};
 
@@ -26,6 +38,6 @@ public final class AnchorProvenanceObserverFactory {
 	}
 
 	public static AnchorProvenanceObserver observer() {
-		return UNAVAILABLE_OBSERVER;
+		return PROVENANCE_OBSERVER;
 	}
 }
