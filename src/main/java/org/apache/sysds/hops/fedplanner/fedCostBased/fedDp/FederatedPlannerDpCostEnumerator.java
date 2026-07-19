@@ -1195,55 +1195,55 @@ public class FederatedPlannerDpCostEnumerator {
 		long variants = 1L << bothOutputs.size();
 		for(long variant = 0; variant < variants; variant++) {
 			List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
+			List<Hop> selectedChildHops = new ArrayList<>();
 			for(int bit = 0; bit < bothOutputs.size(); bit++)
 				appendMemoSupportedEdge(bothOutputs.get(bit),
 					(variant & (1L << bit)) == 0 ? FederatedOutput.LOUT : FederatedOutput.FOUT,
-					memoTable, planChilds);
+					memoTable, planChilds, selectedChildHops);
 			for(Hop child : loutOnly)
-				appendMemoSupportedEdge(child, FederatedOutput.LOUT, memoTable, planChilds);
+				appendMemoSupportedEdge(child, FederatedOutput.LOUT, memoTable, planChilds, selectedChildHops);
 			for(Hop child : foutOnly)
-				appendMemoSupportedEdge(child, FederatedOutput.FOUT, memoTable, planChilds);
-			captureConstructedChildSelection(parent, childHops, planChilds, memoTable, capture, variant);
+				appendMemoSupportedEdge(child, FederatedOutput.FOUT, memoTable, planChilds, selectedChildHops);
+			captureConstructedChildSelection(parent, planChilds, selectedChildHops, memoTable, capture, variant);
 		}
 	}
 
 	private static void appendMemoSupportedEdge(Hop child, FederatedOutput output,
-			FederatedPlannerDpMemoTable memoTable, List<Pair<Long, FederatedOutput>> planChilds) {
+			FederatedPlannerDpMemoTable memoTable, List<Pair<Long, FederatedOutput>> planChilds,
+			List<Hop> selectedChildHops) {
 		FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(child.getHopID(), output);
 		if(childPlan == null)
 			throw new DMLRuntimeException("Missing " + output + " federated plan for child hop "
 				+ child.getHopID());
 		planChilds.add(Pair.of(child.getHopID(), output));
+		selectedChildHops.add(child);
 	}
 
-	private static void captureConstructedChildSelection(Hop parent, List<Hop> availableChildren,
-			List<Pair<Long, FederatedOutput>> childEdges, FederatedPlannerDpMemoTable memoTable,
+	private static void captureConstructedChildSelection(Hop parent,
+			List<Pair<Long, FederatedOutput>> childEdges, List<Hop> selectedChildHops,
+			FederatedPlannerDpMemoTable memoTable,
 			EnumerationCapture capture, long variantOrdinal) {
 		List<Hop> collectedHops = new ArrayList<>();
 		List<FType> collectedFTypes = new ArrayList<>();
 		Map<Long, FType> fedInputTypeMap = new LinkedHashMap<>();
 		HopOccurrenceProjection parentOccurrence = findOccurrence(capture, parent);
-		for(Pair<Long, FederatedOutput> edge : childEdges) {
-			Set<Hop> exactMatches = Collections.newSetFromMap(new IdentityHashMap<>());
-			for(Hop candidate : availableChildren)
-				if(candidate.getHopID() == edge.getLeft() && capture.context.analysis().occurrences().stream()
-					.anyMatch(occurrence -> occurrence.hop() == candidate))
-					exactMatches.add(candidate);
-			if(exactMatches.isEmpty())
+		if(childEdges.size() != selectedChildHops.size())
 				throw new DpSemanticConstructionException(
 					DpPlacementAdapter.ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					capture.context.analysis().analysisFingerprint(), parentOccurrence.key(),
 					"UNMAPPABLE_OCCURRENCE");
-			if(exactMatches.size() != 1)
-				throw new DpSemanticConstructionException(
-					DpPlacementAdapter.ConstructionDisposition.DUPLICATE_OCCURRENCE,
-					capture.context.analysis().analysisFingerprint(), parentOccurrence.key(),
-					"DUPLICATE_OCCURRENCE");
-			Hop child = exactMatches.iterator().next();
+		for(int edgeIndex = 0; edgeIndex < childEdges.size(); edgeIndex++) {
+			Pair<Long, FederatedOutput> edge = childEdges.get(edgeIndex);
+			Hop child = Objects.requireNonNull(selectedChildHops.get(edgeIndex), "selected child hop");
 			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(edge);
 			if(childPlan == null)
 				throw new DMLRuntimeException("Missing " + edge.getRight() + " federated plan for child hop "
 					+ edge.getLeft());
+			if(child.getHopID() != edge.getLeft())
+				throw new DpSemanticConstructionException(
+					DpPlacementAdapter.ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					capture.context.analysis().analysisFingerprint(), parentOccurrence.key(),
+					"UNMAPPABLE_OCCURRENCE");
 			collectedHops.add(child);
 			if(edge.getRight() == FederatedOutput.FOUT) {
 				collectedFTypes.add(childPlan.getFType());
@@ -1298,6 +1298,19 @@ public class FederatedPlannerDpCostEnumerator {
 		if (tWriteChildIds.isEmpty()) {
 			return false;
 		}
+		List<Hop> tWriteChildHops = new ArrayList<>();
+		for(Long childId : tWriteChildIds) {
+			Hop selected = null;
+			for(Hop childHop : childHops)
+				if(childHop.getHopID() == childId) {
+					if(selected != null)
+						throw new DMLRuntimeException("Ambiguous transient-write child hop " + childId);
+					selected = childHop;
+				}
+			if(selected == null)
+				throw new DMLRuntimeException("Missing transient-write child hop " + childId);
+			tWriteChildHops.add(selected);
+		}
 
 		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
 
@@ -1309,10 +1322,13 @@ public class FederatedPlannerDpCostEnumerator {
 		double loutAcquireCost = 0.0;
 		boolean hasFederatedSourcePlan = false;
 		List<Pair<Long, FederatedOutput>> loutChilds = new ArrayList<>();
+		List<Hop> loutSelectedChildHops = new ArrayList<>();
 		List<Pair<Long, FederatedOutput>> foutChilds = new ArrayList<>();
+		List<Hop> foutSelectedChildHops = new ArrayList<>();
 		double foutCost = baseSelfCost;
 
-		for (Long childId : tWriteChildIds) {
+		for (int childIndex = 0; childIndex < tWriteChildHops.size(); childIndex++) {
+			Long childId = tWriteChildHops.get(childIndex).getHopID();
 			FederatedPlannerDpMemoTable.FedPlan loutPlan = memoTable.getFedPlanAfterPrune(childId,
 					FederatedOutput.LOUT);
 			if (loutPlan == null) {
@@ -1330,6 +1346,7 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 				loutCost += loutPlan.getCumulativeCostPerParents();
 				loutChilds.add(Pair.of(childId, FederatedOutput.LOUT));
+				loutSelectedChildHops.add(tWriteChildHops.get(childIndex));
 			}
 
 			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(childId,
@@ -1349,6 +1366,7 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 				foutCost += foutPlan.getCumulativeCostPerParents();
 				foutChilds.add(Pair.of(childId, FederatedOutput.FOUT));
+				foutSelectedChildHops.add(tWriteChildHops.get(childIndex));
 			}
 		}
 
@@ -1375,9 +1393,9 @@ public class FederatedPlannerDpCostEnumerator {
 
 		if(capture != null) {
 			if(allowLOUT)
-				captureConstructedChildSelection(dataOp, childHops, loutChilds, memoTable, capture, 0L);
+				captureConstructedChildSelection(dataOp, loutChilds, loutSelectedChildHops, memoTable, capture, 0L);
 			if(allowFOUT)
-				captureConstructedChildSelection(dataOp, childHops, foutChilds, memoTable, capture, 1L);
+				captureConstructedChildSelection(dataOp, foutChilds, foutSelectedChildHops, memoTable, capture, 1L);
 		}
 
 		if (allowLOUT) {
