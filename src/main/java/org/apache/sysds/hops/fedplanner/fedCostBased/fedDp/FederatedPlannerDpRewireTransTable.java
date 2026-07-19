@@ -393,17 +393,20 @@ public class FederatedPlannerDpRewireTransTable {
 					if(candidate != null)
 						carrierHops.add(candidate);
 
-		Set<Hop> occurrenceMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop candidate : carrierHops)
+			if(candidate == occurrence.hop())
+				return candidate;
+
+		Set<Hop> cloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop candidate : carrierHops) {
 			Long originalHopId = cloneToOriginal.get(candidate.getHopID());
-			if(candidate == occurrence.hop()
-				|| (originalHopId != null && originalHopId == occurrence.hop().getHopID()))
-				occurrenceMatches.add(candidate);
+			if(originalHopId != null && originalHopId == occurrence.hop().getHopID())
+				cloneMatches.add(candidate);
 		}
-		if(occurrenceMatches.size() != 1)
+		if(cloneMatches.size() != 1)
 			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
-				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + occurrenceMatches.size());
-		return occurrenceMatches.iterator().next();
+				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + cloneMatches.size());
+		return cloneMatches.iterator().next();
 	}
 
 	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
