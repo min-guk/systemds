@@ -7,20 +7,189 @@
 package org.apache.sysds.hops.fedplanner.placement.adapter;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Transparent identity receipts for exclusions already produced by the neutral placement graph. */
 public final class DpPlacementAdapter {
 	private static final long ABSENT_ARM_COST_BITS = Double.doubleToRawLongBits(Double.POSITIVE_INFINITY);
+
+	public enum MapEntryState {
+		ABSENT_LOCAL,
+		PRESENT_NULL,
+		PRESENT_ROW,
+		PRESENT_COL,
+		PRESENT_FULL,
+		PRESENT_BROADCAST,
+		PRESENT_PART,
+		PRESENT_OTHER
+	}
+
+	public enum OracleInputState {
+		ABSENT_LOCAL,
+		ROW,
+		COL,
+		FULL,
+		BROADCAST,
+		PART,
+		OTHER
+	}
+
+	public enum ConstructionDisposition {
+		AVAILABLE,
+		ANCHOR_METADATA_INCOMPLETE,
+		UNSUPPORTED_ANCHOR_METADATA,
+		FOREIGN_CONTEXT,
+		STALE_CONTEXT,
+		DUPLICATE_OCCURRENCE,
+		REORDERED_EDGE,
+		UNMAPPABLE_OCCURRENCE
+	}
+
+	public record NeutralEnumerationContext(PlacementAnalysis analysis,
+		RewireOccurrenceSnapshot rewireSnapshot, String analysisFingerprint) {
+		public NeutralEnumerationContext {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
+			Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			if(rewireSnapshot.analysis() != analysis)
+				throw new IllegalArgumentException("Rewire snapshot belongs to a different analysis");
+			if(!analysis.analysisFingerprint().equals(analysisFingerprint)
+				|| !analysisFingerprint.equals(rewireSnapshot.analysisFingerprint()))
+				throw new IllegalArgumentException("Analysis fingerprint differs");
+		}
+	}
+
+	public record CandidateMapEntry(CompiledHopKey occurrence, int edgePosition, boolean mapContainsKey,
+		FType rawFType, MapEntryState mapEntryState, OracleInputState oracleInputState) {
+		public CandidateMapEntry {
+			Objects.requireNonNull(occurrence, "occurrence");
+			Objects.requireNonNull(mapEntryState, "mapEntryState");
+			if(edgePosition < 0)
+				throw new IllegalArgumentException("edgePosition must be non-negative");
+			MapEntryState expectedMapState = mapState(mapContainsKey, rawFType);
+			OracleInputState expectedOracleState = oracleState(mapContainsKey, rawFType);
+			if(mapEntryState != expectedMapState || oracleInputState != expectedOracleState)
+				throw new IllegalArgumentException("Candidate map-entry projection differs");
+		}
+	}
+
+	public record CandidateOccurrenceSnapshot(NeutralEnumerationContext context,
+		CompiledHopKey parentOccurrence, List<CandidateMapEntry> rawEntries,
+		List<CandidateMapEntry> promotedEntries, List<OracleInputState> orderedOracleInputs,
+		ConstructionDisposition disposition, String reasonCode) {
+		public CandidateOccurrenceSnapshot {
+			Objects.requireNonNull(context, "context");
+			Objects.requireNonNull(parentOccurrence, "parentOccurrence");
+			rawEntries = List.copyOf(rawEntries);
+			promotedEntries = List.copyOf(promotedEntries);
+			orderedOracleInputs = List.copyOf(orderedOracleInputs);
+			Objects.requireNonNull(disposition, "disposition");
+			Objects.requireNonNull(reasonCode, "reasonCode");
+			if(disposition != ConstructionDisposition.AVAILABLE || !"AVAILABLE".equals(reasonCode))
+				throw new IllegalArgumentException("Non-available construction cannot publish a snapshot");
+			if(!ownsKey(context.analysis(), parentOccurrence))
+				throw new IllegalArgumentException("Parent occurrence is not owned by the analysis");
+			if(rawEntries.size() != promotedEntries.size() || promotedEntries.size() != orderedOracleInputs.size())
+				throw new IllegalArgumentException("Candidate entry counts differ");
+			for(int i = 0; i < rawEntries.size(); i++) {
+				CandidateMapEntry raw = rawEntries.get(i);
+				CandidateMapEntry promoted = promotedEntries.get(i);
+				if(raw.edgePosition() != i || promoted.edgePosition() != i || raw.occurrence() != promoted.occurrence())
+					throw new IllegalArgumentException("Candidate edge order or identity differs");
+				if(!ownsKey(context.analysis(), raw.occurrence()))
+					throw new IllegalArgumentException("Candidate occurrence is not owned by the analysis");
+				if(promoted.oracleInputState() != orderedOracleInputs.get(i))
+					throw new IllegalArgumentException("Ordered oracle projection differs");
+			}
+		}
+	}
+
+	public record PreSelectionSemanticBlock(NeutralEnumerationContext context,
+		List<CandidateOccurrenceSnapshot> candidateSnapshots, int rawCandidateCount,
+		int capturedCandidateCount, boolean zeroDifference) {
+		public PreSelectionSemanticBlock {
+			Objects.requireNonNull(context, "context");
+			candidateSnapshots = List.copyOf(candidateSnapshots);
+			if(rawCandidateCount < 0 || capturedCandidateCount < 0)
+				throw new IllegalArgumentException("Candidate counts must be non-negative");
+			if(rawCandidateCount != capturedCandidateCount || capturedCandidateCount != candidateSnapshots.size()
+				|| !zeroDifference)
+				throw new IllegalArgumentException("Successful candidate capture must be zero-difference");
+			for(CandidateOccurrenceSnapshot snapshot : candidateSnapshots)
+				if(snapshot.context() != context)
+					throw new IllegalArgumentException("Candidate snapshot belongs to a different context");
+		}
+	}
+
+	public record NormalizedCandidateInputs(CandidateOccurrenceSnapshot snapshot,
+		Map<Long, FType> effectiveNonNullFTypeMap, List<FType> effectiveCollectedFTypes,
+		List<Hop> exactCollectedHops) {
+		public NormalizedCandidateInputs {
+			Objects.requireNonNull(snapshot, "snapshot");
+			Objects.requireNonNull(effectiveNonNullFTypeMap, "effectiveNonNullFTypeMap");
+			LinkedHashMap<Long, FType> copiedMap = new LinkedHashMap<>();
+			for(Map.Entry<Long, FType> entry : effectiveNonNullFTypeMap.entrySet()) {
+				if(entry.getKey() == null || entry.getValue() == null)
+					throw new IllegalArgumentException("Effective FType map must contain only non-null entries");
+				copiedMap.put(entry.getKey(), entry.getValue());
+			}
+			effectiveNonNullFTypeMap = Collections.unmodifiableMap(copiedMap);
+			effectiveCollectedFTypes = Collections.unmodifiableList(new ArrayList<>(effectiveCollectedFTypes));
+			exactCollectedHops = List.copyOf(exactCollectedHops);
+			if(effectiveCollectedFTypes.size() != exactCollectedHops.size()
+				|| exactCollectedHops.size() != snapshot.promotedEntries().size())
+				throw new IllegalArgumentException("Normalized candidate carrier sizes differ");
+			for(int i = 0; i < exactCollectedHops.size(); i++) {
+				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
+				CandidateMapEntry promoted = snapshot.promotedEntries().get(i);
+				FType effective = effectiveCollectedFTypes.get(i);
+				if(hop.getHopID() != promoted.occurrence().hopId())
+					throw new IllegalArgumentException("Normalized Hop and occurrence differ");
+				if(effective != promoted.rawFType())
+					throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
+			}
+		}
+	}
+
+	public static final class DpSemanticConstructionException extends RuntimeException {
+		private static final long serialVersionUID = 1L;
+		private final ConstructionDisposition disposition;
+		private final String analysisFingerprint;
+		private final CompiledHopKey parentOccurrence;
+		private final String reasonCode;
+
+		public DpSemanticConstructionException(ConstructionDisposition disposition, String analysisFingerprint,
+			CompiledHopKey parentOccurrence, String reasonCode) {
+			super(reasonCode);
+			this.disposition = Objects.requireNonNull(disposition, "disposition");
+			this.analysisFingerprint = Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			this.parentOccurrence = Objects.requireNonNull(parentOccurrence, "parentOccurrence");
+			this.reasonCode = Objects.requireNonNull(reasonCode, "reasonCode");
+			if(disposition == ConstructionDisposition.AVAILABLE)
+				throw new IllegalArgumentException("AVAILABLE is not a construction failure");
+		}
+
+		public ConstructionDisposition disposition() { return disposition; }
+		public String analysisFingerprint() { return analysisFingerprint; }
+		public CompiledHopKey parentOccurrence() { return parentOccurrence; }
+		public String reasonCode() { return reasonCode; }
+	}
 
 	public enum TieDecision {
 		LOUT_ONLY, FOUT_ONLY, LOUT_LESS, LOUT_EQUAL, FOUT_LESS
