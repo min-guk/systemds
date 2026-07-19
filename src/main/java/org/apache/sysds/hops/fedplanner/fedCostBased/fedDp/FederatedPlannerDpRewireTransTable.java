@@ -390,39 +390,16 @@ public class FederatedPlannerDpRewireTransTable {
 					if(candidate != null)
 						carrierHops.add(candidate);
 
-		for(Hop candidate : carrierHops)
-			if(candidate == occurrence.hop())
-				return candidate;
-
-		Set<Hop> cloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<Hop> occurrenceMatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop candidate : carrierHops) {
 			Long originalHopId = cloneToOriginal.get(candidate.getHopID());
-			if(originalHopId != null && originalHopId == occurrence.hop().getHopID())
-				cloneMatches.add(candidate);
+			if(candidate == occurrence.hop()
+				|| (originalHopId != null && originalHopId == occurrence.hop().getHopID()))
+				occurrenceMatches.add(candidate);
 		}
-		if(cloneMatches.size() != 1)
-			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
-				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + cloneMatches.size());
-		return cloneMatches.iterator().next();
-	}
-
-	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
-		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode) {
-		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
-	}
-
-	private static DpSemanticConstructionException semanticFailureWithCause(PlacementAnalysis analysis,
-		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode,
-		IllegalArgumentException cause) {
-		DpSemanticConstructionException failure = semanticFailure(analysis, parent, disposition, reasonCode);
-		failure.initCause(cause);
-		return failure;
-	}
-
-	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
-		if(analysis.occurrences().isEmpty())
-			throw new IllegalStateException("Placement analysis has no occurrence for semantic failure evidence");
-		return analysis.occurrences().get(0);
+		if(occurrenceMatches.size() != 1)
+			throw new IllegalArgumentException("Production rewire occurrence must resolve exactly one concrete carrier");
+		return occurrenceMatches.iterator().next();
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
