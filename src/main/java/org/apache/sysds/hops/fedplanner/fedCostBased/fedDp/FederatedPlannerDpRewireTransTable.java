@@ -334,6 +334,7 @@ public class FederatedPlannerDpRewireTransTable {
 		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
 		Map<Long, HopOccurrenceProjection> exactByHopId = new LinkedHashMap<>();
 		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops = new IdentityHashMap<>();
+		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++) {
 			HopOccurrenceProjection occurrence = occurrences.get(i);
 			if(occurrence.normalizedOrdinal() != i)
@@ -344,16 +345,22 @@ public class FederatedPlannerDpRewireTransTable {
 					"REWIRE_OCCURRENCE_DETACHED");
 			if(exactByHop.put(occurrence.hop(), occurrence) != null
 				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
-				throw new IllegalArgumentException("Production rewire occurrence is duplicated or detached");
-			resolvedRewiredHops.put(occurrence,
-				resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable));
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_OCCURRENCE_DUPLICATED");
+			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
+				unrollContext.getCloneToOrig(), analysis);
+			resolvedRewiredHops.put(occurrence, resolved);
+			if(occurrenceByResolvedHop.put(resolved, occurrence) != null)
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_CARRIER_OCCURRENCE_DUPLICATED");
 		}
 
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
 		for(HopOccurrenceProjection parent : occurrences) {
 			Hop resolvedParent = resolvedRewiredHops.get(parent);
 			if(resolvedParent == null)
-				throw new IllegalArgumentException("Production rewire parent has no exact resolved carrier");
+				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_PARENT_UNMAPPABLE");
 			List<Hop> inputs = resolvedParent.getInput();
 			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
 				HopOccurrenceProjection child = occurrenceByResolvedHop.get(inputs.get(inputPosition));
@@ -417,19 +424,127 @@ public class FederatedPlannerDpRewireTransTable {
 
 	private static Hop resolveExactRewiredHop(HopOccurrenceProjection occurrence,
 		Map<Long, List<Hop>> rewireTable,
-		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable) {
-		Set<Hop> exactMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		Map<Long, Long> cloneToOriginal, PlacementAnalysis analysis) {
+		Set<Hop> carrierHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
-			if(common != null && common.getHopRef() == occurrence.hop())
-				exactMatches.add(common.getHopRef());
+			if(common != null && common.getHopRef() != null)
+				carrierHops.add(common.getHopRef());
 		for(List<Hop> rewired : rewireTable.values())
 			if(rewired != null)
 				for(Hop candidate : rewired)
-					if(candidate == occurrence.hop())
-						exactMatches.add(candidate);
-		if(exactMatches.size() != 1)
-			throw new IllegalArgumentException("Production rewire occurrence must resolve to exactly one concrete carrier");
-		return exactMatches.iterator().next();
+					if(candidate != null)
+						carrierHops.add(candidate);
+
+		for(Hop candidate : carrierHops)
+			if(candidate == occurrence.hop())
+				return candidate;
+
+		Set<Hop> mismatchedDirectCarriers = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop candidate : carrierHops)
+			if(candidate.getHopID() == occurrence.hop().getHopID())
+				mismatchedDirectCarriers.add(candidate);
+		if(!mismatchedDirectCarriers.isEmpty())
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_DIRECT_CARRIER_IDENTITY_MISMATCH_" + mismatchedDirectCarriers.size());
+
+		Set<Long> physicalReplacementClaims = new LinkedHashSet<>();
+		for(Map.Entry<Long, Long> mapping : cloneToOriginal.entrySet())
+			if(mapping.getKey() != null && mapping.getValue() != null
+				&& mapping.getValue() == occurrence.hop().getHopID())
+				physicalReplacementClaims.add(mapping.getKey());
+		// A semantic function-body Hop may be visited after rewire without having been
+		// replaced in this invocation. Preserve that exact analysis object as a deferred
+		// direct carrier; an explicit physical claim must still resolve uniquely below.
+		if(physicalReplacementClaims.isEmpty())
+			return occurrence.hop();
+
+		Set<Hop> cloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop candidate : carrierHops) {
+			Long originalHopId = cloneToOriginal.get(candidate.getHopID());
+			if(originalHopId != null && originalHopId == occurrence.hop().getHopID())
+				cloneMatches.add(candidate);
+		}
+		if(physicalReplacementClaims.size() != 1)
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_PHYSICAL_REPLACEMENT_CLAIM_MULTIPLICITY_" + physicalReplacementClaims.size());
+		if(cloneMatches.size() != 1)
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + cloneMatches.size());
+		return cloneMatches.iterator().next();
+	}
+
+	private static PhysicalCloneProjection exactPhysicalCloneMapping(Map<Long, Long> physicalCloneToOriginal,
+		Map<Long, List<Hop>> rewireTable,
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		Map<Long, HopOccurrenceProjection> exactByHopId, PlacementAnalysis analysis) {
+		Map<Long, Set<Hop>> carriersByHopId = new LinkedHashMap<>();
+		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
+			if(common != null && common.getHopRef() != null)
+				carriersByHopId.computeIfAbsent(common.getHopRef().getHopID(), ignored ->
+					Collections.newSetFromMap(new IdentityHashMap<>())).add(common.getHopRef());
+		for(List<Hop> rewired : rewireTable.values())
+			if(rewired != null)
+				for(Hop candidate : rewired)
+					if(candidate != null)
+						carriersByHopId.computeIfAbsent(candidate.getHopID(), ignored ->
+							Collections.newSetFromMap(new IdentityHashMap<>())).add(candidate);
+
+		List<Map.Entry<Long, Long>> ordered = new ArrayList<>(physicalCloneToOriginal.entrySet());
+		ordered.sort(Comparator.comparing(Map.Entry<Long, Long>::getKey,
+			Comparator.nullsFirst(Comparator.naturalOrder())));
+		Map<Long, Long> exact = new LinkedHashMap<>();
+		Map<Hop, HopOccurrenceProjection> occurrenceByCloneCarrier = new IdentityHashMap<>();
+		for(Map.Entry<Long, Long> mapping : ordered) {
+			Long cloneHopId = mapping.getKey();
+			Long originalHopId = mapping.getValue();
+			HopOccurrenceProjection original = originalHopId == null ? null : exactByHopId.get(originalHopId);
+			HopOccurrenceProjection failureOccurrence = original == null ? failureAnchor(analysis) : original;
+			if(cloneHopId == null || originalHopId == null)
+				throw semanticFailure(analysis, failureOccurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_PHYSICAL_CLONE_MAPPING_NULL");
+			if(original == null || analysis.hop(original.key()).orElse(null) != original.hop())
+				throw semanticFailure(analysis, failureOccurrence, ConstructionDisposition.FOREIGN_CONTEXT,
+					"REWIRE_PHYSICAL_CLONE_ORIGINAL_FOREIGN");
+			if(exactByHopId.containsKey(cloneHopId))
+				throw semanticFailure(analysis, original, ConstructionDisposition.STALE_CONTEXT,
+					"REWIRE_PHYSICAL_CLONE_IS_ANALYSIS_OCCURRENCE");
+			Set<Hop> cloneCarriers = carriersByHopId.getOrDefault(cloneHopId, Collections.emptySet());
+			if(cloneCarriers.size() != 1)
+				throw semanticFailure(analysis, original, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_PHYSICAL_CLONE_CARRIER_MULTIPLICITY_" + cloneCarriers.size());
+			Hop cloneCarrier = cloneCarriers.iterator().next();
+			if(cloneCarrier == original.hop())
+				throw semanticFailure(analysis, original, ConstructionDisposition.STALE_CONTEXT,
+					"REWIRE_PHYSICAL_CLONE_CARRIER_IS_ORIGINAL");
+			if(exact.put(cloneHopId, originalHopId) != null)
+				throw semanticFailure(analysis, original, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_PHYSICAL_CLONE_MAPPING_DUPLICATED");
+			if(occurrenceByCloneCarrier.put(cloneCarrier, original) != null)
+				throw semanticFailure(analysis, original, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_PHYSICAL_CLONE_CARRIER_DUPLICATED");
+		}
+		return new PhysicalCloneProjection(Collections.unmodifiableMap(exact),
+			Collections.unmodifiableMap(occurrenceByCloneCarrier));
+	}
+
+	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode) {
+		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
+	}
+
+	private static DpSemanticConstructionException semanticFailureWithCause(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode,
+		IllegalArgumentException cause) {
+		DpSemanticConstructionException failure = semanticFailure(analysis, parent, disposition, reasonCode);
+		failure.initCause(cause);
+		return failure;
+	}
+
+	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
+		if(analysis.occurrences().isEmpty())
+			throw new IllegalStateException("Placement analysis has no occurrence for semantic failure evidence");
+		return analysis.occurrences().get(0);
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
