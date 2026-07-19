@@ -406,25 +406,6 @@ public final class PlacementAnalysis {
 		List<CandidateRuleFact> candidateRuleFacts,
 		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
-		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
-			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
-			true);
-	}
-
-	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
-	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
-		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
-		HeuristicPolicyFacts heuristicPolicyFacts) {
-		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
-			List.of(), List.of(), List.of(), List.of(), true);
-	}
-
-	private PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
-		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
-		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
-		List<CandidateRuleFact> candidateRuleFacts,
-		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
-		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts, boolean coreConstructor) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
 		this.occurrences = List.copyOf(occurrences);
@@ -459,6 +440,14 @@ public final class PlacementAnalysis {
 			if(!producer.valueVersion().equals(fact.valueVersion()))
 				throw new IllegalArgumentException("Heuristic policy producer/value pair does not match the analysis graph");
 		}
+	}
+
+	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts) {
+		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
+			List.of(), List.of(), List.of(), List.of());
 	}
 
 	public NeutralPlacementGraph graph() {

@@ -191,8 +191,18 @@ public final class NeutralPlacementGraphBuilder {
 					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
 				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
 			}
-			captureConsumerProfileFacts(hop, key, candidateConsumerDomainKeys, candidateConsumerProfileFacts);
-			Node node = buildNode(hop, key, value, anchors, shapeFact,
+			List<NodeShapeFact> inputShapeFacts = new ArrayList<>(hop.getInput().size());
+			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
+				NodeShapeFact inputShapeFact = factsByHop.get(hop.getInput(inputPosition));
+				if(inputShapeFact == null)
+					throw new IllegalStateException("Candidate input has no builder-owned shape fact: "
+						+ key + " input " + inputPosition);
+				inputShapeFacts.add(inputShapeFact);
+			}
+			inputShapeFacts = List.copyOf(inputShapeFacts);
+			captureConsumerProfileFacts(hop, key, inputShapeFacts,
+				candidateConsumerDomainKeys, candidateConsumerProfileFacts);
+			Node node = buildNode(hop, key, value, anchors, shapeFact, inputShapeFacts,
 				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind),
 				candidateRuleDomainKeys, candidateRuleFacts);
 			nodes.add(node);
@@ -620,8 +630,8 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
-		NodeShapeFact shape, List<List<FType>> inputDomains, List<CandidateRuleKey> candidateRuleDomainKeys,
-		List<CandidateRuleFact> candidateRuleFacts) {
+		NodeShapeFact shape, List<NodeShapeFact> inputShapeFacts, List<List<FType>> inputDomains,
+		List<CandidateRuleKey> candidateRuleDomainKeys, List<CandidateRuleFact> candidateRuleFacts) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
 		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
@@ -640,7 +650,7 @@ public final class NeutralPlacementGraphBuilder {
 				evidence = oracle.decideWithEvidence(hop, inputs, null);
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
-				candidateRuleFacts.add(candidateRuleFact(hop, key, inputs, caps, evidence));
+				candidateRuleFacts.add(candidateRuleFact(hop, key, inputShapeFacts, inputs, caps, evidence));
 			}
 			catch(Throwable t) {
 				candidateRuleFacts.add(candidateRuleFailureFact(key, inputs, t));
@@ -685,8 +695,9 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private void captureConsumerProfileFacts(Hop consumer, CompiledHopKey consumerKey,
+		List<NodeShapeFact> inputShapeFacts,
 		List<CandidateConsumerProfileKey> domainKeys, List<CandidateConsumerProfileFact> facts) {
-		for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
+		for(int inputPosition = 0; inputPosition < inputShapeFacts.size(); inputPosition++) {
 			CandidateConsumerProfileKey key = new CandidateConsumerProfileKey(consumerKey, inputPosition);
 			domainKeys.add(key);
 			List<FType> allowed = new ArrayList<>();
@@ -694,7 +705,7 @@ public final class NeutralPlacementGraphBuilder {
 			for(FType candidate : PlacementCandidateRuleResolver.matrixFTypeCandidates()) {
 				try {
 					FTypeProfile profile = oracle.inferProfile(consumer,
-						consumerProfileInputDomains(consumer, inputPosition, candidate), null);
+						consumerProfileInputDomains(inputShapeFacts, inputPosition, candidate), null);
 					if(profile != null && profile.outputs() != null && !profile.outputs().isEmpty())
 						allowed.add(candidate);
 				}
@@ -710,14 +721,14 @@ public final class NeutralPlacementGraphBuilder {
 		}
 	}
 
-	private static List<List<FType>> consumerProfileInputDomains(Hop consumer, int targetPosition,
+	private static List<List<FType>> consumerProfileInputDomains(List<NodeShapeFact> inputShapeFacts,
+		int targetPosition,
 		FType targetCandidate) {
-		List<List<FType>> domains = new ArrayList<>(consumer.getInput().size());
-		for(int i = 0; i < consumer.getInput().size(); i++) {
-			Hop input = consumer.getInput(i);
+		List<List<FType>> domains = new ArrayList<>(inputShapeFacts.size());
+		for(int i = 0; i < inputShapeFacts.size(); i++) {
 			if(i == targetPosition)
 				domains.add(List.of(targetCandidate));
-			else if(input != null && input.getDataType() != null && input.getDataType().isMatrix())
+			else if(inputShapeFacts.get(i).dataType().isMatrix())
 				domains.add(PlacementCandidateRuleResolver.matrixFTypeCandidates());
 			else
 				domains.add(Collections.singletonList(null));
@@ -725,8 +736,8 @@ public final class NeutralPlacementGraphBuilder {
 		return Collections.unmodifiableList(domains);
 	}
 
-	private CandidateRuleFact candidateRuleFact(Hop hop, CompiledHopKey key, List<FType> inputs,
-		OpCaps caps, DecisionEvidence evidence) {
+	private CandidateRuleFact candidateRuleFact(Hop hop, CompiledHopKey key,
+		List<NodeShapeFact> inputShapeFacts, List<FType> inputs, OpCaps caps, DecisionEvidence evidence) {
 		List<CandidateRuleNote> notes = caps.notes().stream()
 			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
 		CandidateCapabilityFact capability = new CandidateCapabilityFact(caps.category(), caps.opcode(), caps.exec(),
@@ -742,7 +753,7 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		CandidateProfileFact profile;
 		try {
-			FTypeProfile inferred = oracle.inferProfile(hop, profileInputDomains(hop, inputs), null);
+			FTypeProfile inferred = oracle.inferProfile(hop, profileInputDomains(inputShapeFacts, inputs), null);
 			profile = new CandidateProfileFact(inferred == null ? List.of() : inferred.outputs(), "");
 		}
 		catch(Throwable t) {
@@ -762,13 +773,14 @@ public final class NeutralPlacementGraphBuilder {
 			new CandidateProfileFact(List.of(), failure), failure);
 	}
 
-	private static List<List<FType>> profileInputDomains(Hop hop, List<FType> inputs) {
-		List<List<FType>> domains = new ArrayList<>(hop.getInput().size());
-		for(int i = 0; i < hop.getInput().size(); i++) {
+	private static List<List<FType>> profileInputDomains(List<NodeShapeFact> inputShapeFacts,
+		List<FType> inputs) {
+		List<List<FType>> domains = new ArrayList<>(inputShapeFacts.size());
+		for(int i = 0; i < inputShapeFacts.size(); i++) {
 			FType known = i < inputs.size() ? inputs.get(i) : null;
 			if(known != null)
 				domains.add(List.of(known));
-			else if(hop.getInput(i).getDataType() != null && hop.getInput(i).getDataType().isMatrix())
+			else if(inputShapeFacts.get(i).dataType().isMatrix())
 				domains.add(PlacementCandidateRuleResolver.matrixFTypeCandidates());
 			else
 				domains.add(Collections.singletonList(null));
