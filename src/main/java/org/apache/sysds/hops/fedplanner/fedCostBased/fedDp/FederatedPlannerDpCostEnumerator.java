@@ -128,7 +128,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Objects.requireNonNull(parentOccurrence, "parentOccurrence");
 			planChilds = List.copyOf(planChilds);
 			collectedHops = List.copyOf(collectedHops);
-			collectedFTypes = List.copyOf(collectedFTypes);
+			collectedFTypes = Collections.unmodifiableList(new ArrayList<>(collectedFTypes));
 			fedInputTypeMap = Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap));
 		}
 	}
@@ -820,18 +820,16 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 
-				EffectiveCandidateInputs effectiveInputs;
-				if(capture == null) {
-					effectiveInputs = new EffectiveCandidateInputs(
-						collectedHops, collectedFTypes, fedInputTypeMap);
-				}
-				else {
-					NormalizedCandidateInputs normalizedCandidateInputs = DpPlacementAdapter.normalizeCandidateInputs(
+				NormalizedCandidateInputs normalizedCandidateInputs = capture == null ? null
+					: DpPlacementAdapter.normalizeCandidateInputs(
 						capture.context, findOccurrence(capture, hop),
 						planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
-					effectiveInputs = new EffectiveCandidateInputs(normalizedCandidateInputs.exactCollectedHops(),
+				EffectiveCandidateInputs effectiveInputs = normalizedCandidateInputs == null
+					? new EffectiveCandidateInputs(collectedHops, collectedFTypes, fedInputTypeMap)
+					: new EffectiveCandidateInputs(normalizedCandidateInputs.exactCollectedHops(),
 						normalizedCandidateInputs.effectiveCollectedFTypes(),
 						normalizedCandidateInputs.effectiveNonNullFTypeMap());
+				if(normalizedCandidateInputs != null) {
 					capture.capture(normalizedCandidateInputs.snapshot());
 					capture.observer.oracleEvaluated();
 				}
