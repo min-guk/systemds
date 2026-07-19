@@ -1484,6 +1484,15 @@ public class FederatedPlannerDpCostEnumerator {
 		return oracleLogicalFType;
 	}
 
+	private static HopOccurrenceProjection findOccurrence(EnumerationCapture capture, Hop hop) {
+		if(capture == null || hop == null)
+			throw new IllegalArgumentException("Missing supplied-analysis Hop occurrence");
+		for(HopOccurrenceProjection occurrence : capture.context.analysis().occurrences())
+			if(occurrence.hop() == hop)
+				return occurrence;
+		throw new IllegalArgumentException("Hop is not an exact supplied-analysis occurrence: " + hop.getHopID());
+	}
+
 	private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
 			try {
 				if (hop == null)
