@@ -79,6 +79,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCo
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -290,38 +292,51 @@ public class FederatedPlannerDpRewireTransTable {
 		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++) {
 			HopOccurrenceProjection occurrence = occurrences.get(i);
-			if(occurrence.normalizedOrdinal() != i
-				|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop()
-				|| exactByHop.put(occurrence.hop(), occurrence) != null
+			if(occurrence.normalizedOrdinal() != i)
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.REORDERED_EDGE,
+					"REWIRE_OCCURRENCE_ORDER_DIFFERS");
+			if(analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.STALE_CONTEXT,
+					"REWIRE_OCCURRENCE_DETACHED");
+			if(exactByHop.put(occurrence.hop(), occurrence) != null
 				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
-				throw new IllegalArgumentException("Production rewire occurrence is duplicated or detached");
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_OCCURRENCE_DUPLICATED");
 			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
-				unrollContext.getCloneToOrig());
+				unrollContext.getCloneToOrig(), analysis);
 			resolvedRewiredHops.put(occurrence, resolved);
 			if(occurrenceByResolvedHop.put(resolved, occurrence) != null)
-				throw new IllegalArgumentException("Concrete production rewire carrier maps to multiple occurrences");
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_CARRIER_OCCURRENCE_DUPLICATED");
 		}
 
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
 		for(HopOccurrenceProjection parent : occurrences) {
 			Hop resolvedParent = resolvedRewiredHops.get(parent);
 			if(resolvedParent == null)
-				throw new IllegalArgumentException("Production rewire parent has no exact resolved carrier");
+				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_PARENT_UNMAPPABLE");
 			List<Hop> inputs = resolvedParent.getInput();
 			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
 				HopOccurrenceProjection child = occurrenceByResolvedHop.get(inputs.get(inputPosition));
 				if(child == null)
-					throw new IllegalArgumentException("Production rewire child has no exact resolved occurrence");
+					throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_CHILD_UNMAPPABLE_AT_" + inputPosition);
 				consumerEdges.add(new RewireConsumerEdge(parent.key(), child.key(), inputPosition));
 			}
 		}
 
 		for(Map.Entry<Long, Set<Long>> entry : parentChildUploadHints.entrySet()) {
-			if(!exactByHopId.containsKey(entry.getKey()) || entry.getValue() == null)
+			HopOccurrenceProjection parent = exactByHopId.get(entry.getKey());
+			if(parent == null)
 				throw new IllegalArgumentException("Production upload-hint parent is not analysis-owned");
+			if(entry.getValue() == null)
+				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_UPLOAD_HINTS_MISSING");
 			for(Long childId : entry.getValue())
 				if(childId == null || !exactByHopId.containsKey(childId))
-					throw new IllegalArgumentException("Production upload-hint child is not analysis-owned");
+					throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_UPLOAD_HINT_CHILD_UNMAPPABLE");
 		}
 
 		List<CloneReceipt> cloneReceipts = exactCloneReceipts(analysis);
@@ -347,7 +362,7 @@ public class FederatedPlannerDpRewireTransTable {
 	private static Hop resolveExactRewiredHop(HopOccurrenceProjection occurrence,
 		Map<Long, List<Hop>> rewireTable,
 		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-		Map<Long, Long> cloneToOriginal) {
+		Map<Long, Long> cloneToOriginal, PlacementAnalysis analysis) {
 		Set<Hop> carrierHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
 			if(common != null && common.getHopRef() != null)
@@ -366,8 +381,14 @@ public class FederatedPlannerDpRewireTransTable {
 				occurrenceMatches.add(candidate);
 		}
 		if(occurrenceMatches.size() != 1)
-			throw new IllegalArgumentException("Production rewire occurrence must resolve exactly one concrete carrier");
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + occurrenceMatches.size());
 		return occurrenceMatches.iterator().next();
+	}
+
+	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode) {
+		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
