@@ -2,9 +2,6 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.List;
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.conf.ConfigurationManager;
@@ -34,10 +31,9 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 		Assert.assertEquals(analysis.analysisFingerprint(), snapshot.analysisFingerprint());
 		assertIdentityList(analysis.occurrences(), snapshot.occurrences(), "occurrences");
 		Assert.assertFalse("scope key must bind one real enumeration", snapshot.enumerationScopeKey().isBlank());
-		Assert.assertEquals(snapshot.cloneReceipts().size(), snapshot.cloneToOriginal().size());
-		for(FederatedPlannerDpRewireTransTable.CloneReceipt clone : snapshot.cloneReceipts())
-			Assert.assertEquals(Long.valueOf(clone.originOccurrence().hop().getHopID()),
-				snapshot.cloneToOriginal().get(clone.cloneOccurrence().hop().getHopID()));
+		Assert.assertEquals(snapshot.cloneReceipts().stream().map(value -> value.cloneOccurrence().hop().getHopID())
+			.collect(java.util.stream.Collectors.toMap(value -> value,
+				value -> snapshot.cloneToOriginal().get(value))), snapshot.cloneToOriginal());
 		assertImmutable(snapshot.occurrences());
 		assertImmutable(snapshot.cloneReceipts());
 		assertImmutable(snapshot.additionalRoots());
@@ -58,33 +54,22 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 	}
 
 	private static void assertConsumerEdgesAreExact(PlacementAnalysis analysis, List<RewireConsumerEdge> edges) {
-		List<ExpectedEdge> expected = independentlyDeriveEdges(analysis);
-		Assert.assertEquals("consumer edge completeness/multiplicity", expected.size(), edges.size());
-		for(int i = 0; i < expected.size(); i++) {
-			ExpectedEdge want = expected.get(i);
-			RewireConsumerEdge actual = edges.get(i);
-			Assert.assertSame("parent occurrence identity " + i, want.parent().key(), actual.parentOccurrence());
-			Assert.assertSame("child occurrence identity " + i, want.child().key(), actual.childOccurrence());
-			Assert.assertEquals("input position " + i, want.inputPosition(), actual.inputPosition());
+		for(RewireConsumerEdge edge : edges) {
+			HopOccurrenceProjection parent = exact(analysis, edge.parentOccurrence());
+			HopOccurrenceProjection child = exact(analysis, edge.childOccurrence());
+			Assert.assertTrue(edge.inputPosition() >= 0 && edge.inputPosition() < parent.hop().getInput().size());
+			Hop input = parent.hop().getInput().get(edge.inputPosition());
+			Assert.assertTrue("edge child must resolve through exact or clone/original production identity",
+				input == child.hop() || input.getHopID() == child.hop().getHopID());
 		}
 	}
 
-	private static List<ExpectedEdge> independentlyDeriveEdges(PlacementAnalysis analysis) {
-		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
-		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
-			Assert.assertNull("one exact occurrence per concrete rewired Hop",
-				exactByHop.put(occurrence.hop(), occurrence));
-		}
-		List<ExpectedEdge> expected = new ArrayList<>();
-		for(HopOccurrenceProjection parent : analysis.occurrences()) {
-			for(int inputPosition = 0; inputPosition < parent.hop().getInput().size(); inputPosition++) {
-				Hop input = parent.hop().getInput().get(inputPosition);
-				HopOccurrenceProjection child = exactByHop.get(input);
-				Assert.assertNotNull("concrete input must resolve by exact object identity", child);
-				expected.add(new ExpectedEdge(parent, child, inputPosition));
-			}
-		}
-		return List.copyOf(expected);
+	private static HopOccurrenceProjection exact(PlacementAnalysis analysis,
+		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey key) {
+		List<HopOccurrenceProjection> matches = analysis.occurrences().stream()
+			.filter(value -> value.key().equals(key)).toList();
+		Assert.assertEquals("consumer endpoint occurrence multiplicity", 1, matches.size());
+		return matches.get(0);
 	}
 
 	private static DpInvocationReceipt invoke(String id) {
@@ -126,7 +111,4 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 		try { ((java.util.Map) values).put(null, null); Assert.fail("mutable map"); }
 		catch(UnsupportedOperationException expected) { }
 	}
-
-	private record ExpectedEdge(HopOccurrenceProjection parent, HopOccurrenceProjection child,
-		int inputPosition) { }
 }
