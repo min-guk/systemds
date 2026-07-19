@@ -440,12 +440,34 @@ public class FederatedPlannerDpRewireTransTable {
 			if(candidate == occurrence.hop())
 				return candidate;
 
+		Set<Hop> mismatchedDirectCarriers = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop candidate : carrierHops)
+			if(candidate.getHopID() == occurrence.hop().getHopID())
+				mismatchedDirectCarriers.add(candidate);
+		if(!mismatchedDirectCarriers.isEmpty())
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_DIRECT_CARRIER_IDENTITY_MISMATCH_" + mismatchedDirectCarriers.size());
+
+		Set<Long> physicalReplacementClaims = new LinkedHashSet<>();
+		for(Map.Entry<Long, Long> mapping : cloneToOriginal.entrySet())
+			if(mapping.getKey() != null && mapping.getValue() != null
+				&& mapping.getValue() == occurrence.hop().getHopID())
+				physicalReplacementClaims.add(mapping.getKey());
+		// A semantic function-body Hop may be visited after rewire without having been
+		// replaced in this invocation. Preserve that exact analysis object as a deferred
+		// direct carrier; an explicit physical claim must still resolve uniquely below.
+		if(physicalReplacementClaims.isEmpty())
+			return occurrence.hop();
+
 		Set<Hop> cloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop candidate : carrierHops) {
 			Long originalHopId = cloneToOriginal.get(candidate.getHopID());
 			if(originalHopId != null && originalHopId == occurrence.hop().getHopID())
 				cloneMatches.add(candidate);
 		}
+		if(physicalReplacementClaims.size() != 1)
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_PHYSICAL_REPLACEMENT_CLAIM_MULTIPLICITY_" + physicalReplacementClaims.size());
 		if(cloneMatches.size() != 1)
 			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + cloneMatches.size());
