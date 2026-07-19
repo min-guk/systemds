@@ -66,7 +66,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
