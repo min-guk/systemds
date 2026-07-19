@@ -52,6 +52,8 @@ public class CampaignBG014NeutralSemanticBoundaryRedTest {
 				&& federatedLoop > localLoop && childCollectionEnd > federatedLoop);
 		Assert.assertTrue("G014_NEUTRAL_RAW_CAPTURE_EXACT_SEAM",
 			normalization > childCollectionEnd && oracle > normalization && feasibility > normalization);
+		Assert.assertFalse("G014_NEUTRAL_RAW_CAPTURE_NOT_FIRST_POST_LOOP_STATEMENT",
+			canonical.substring(childCollectionEnd, normalization).contains(";"));
 		Assert.assertTrue("G014_NEUTRAL_NORMALIZATION_PRECEDES_LEGACY_PROMOTION",
 			legacyPromotion < 0 || normalization < legacyPromotion);
 		Assert.assertTrue("G014_NEUTRAL_NORMALIZATION_PRECEDES_LEGACY_BACKFILL",

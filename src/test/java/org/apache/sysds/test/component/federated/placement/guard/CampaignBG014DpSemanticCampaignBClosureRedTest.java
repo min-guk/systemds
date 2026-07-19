@@ -27,14 +27,14 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 	@Test
 	public void applicableFixturesConsumeTheExactFrozenSemanticBlock() throws Exception {
 		for(String id : APPLICABLE)
-			assertConsumed(run(id));
+			assertConsumed(configuredRun(id));
 	}
 
 	@Test
 	public void repeatedAndFreshAnalysesNeverReuseOrFabricateSemanticEvidence() throws Exception {
-		Invocation first = run("B-09");
+		Invocation first = configuredRun("B-09");
 		Invocation second = rerun(first);
-		Invocation fresh = run("B-09");
+		Invocation fresh = configuredRun("B-09");
 		assertConsumed(first);
 		assertConsumed(second);
 		assertConsumed(fresh);
@@ -49,7 +49,7 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 		List<String> reverse = new ArrayList<>(APPLICABLE);
 		Collections.reverse(reverse);
 		for(String id : reverse)
-			assertConsumed(run(id));
+			assertConsumed(configuredRun(id));
 	}
 
 	@Test
@@ -57,7 +57,11 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 		CountDownLatch ready = new CountDownLatch(2);
 		CountDownLatch start = new CountDownLatch(1);
 		var pool = Executors.newFixedThreadPool(2);
+		String oldPlanner = org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+			.getTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER);
 		try {
+			org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+				.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 			List<Callable<Invocation>> work = List.of(
 				concurrentRun("B-05", ready, start), concurrentRun("B-09", ready, start));
 			var futures = work.stream().map(pool::submit).toList();
@@ -77,6 +81,8 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 		}
 		finally {
 			pool.shutdownNow();
+			org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+				.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER, oldPlanner);
 		}
 	}
 
@@ -132,24 +138,28 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 		};
 	}
 
-	private static Invocation run(String id) throws Exception {
-		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+	private static Invocation configuredRun(String id) throws Exception {
 		String oldPlanner = org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
 			.getTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER);
-		java.util.concurrent.atomic.AtomicReference<PlannerInvocationReceipt> finalBoundary =
-			new java.util.concurrent.atomic.AtomicReference<>();
 		try {
 			org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
 				.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
-			new org.apache.sysds.parser.DMLTranslator(program).constructLops(program, receipt -> {
-				if(!finalBoundary.compareAndSet(null, receipt))
-					throw new AssertionError("G014_FINAL_BOUNDARY_MULTIPLE_RECEIPTS|" + id);
-			});
+			return run(id);
 		}
 		finally {
 			org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
 				.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER, oldPlanner);
 		}
+	}
+
+	private static Invocation run(String id) throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+		java.util.concurrent.atomic.AtomicReference<PlannerInvocationReceipt> finalBoundary =
+			new java.util.concurrent.atomic.AtomicReference<>();
+		new org.apache.sysds.parser.DMLTranslator(program).constructLops(program, receipt -> {
+			if(!finalBoundary.compareAndSet(null, receipt))
+				throw new AssertionError("G014_FINAL_BOUNDARY_MULTIPLE_RECEIPTS|" + id);
+		});
 		Assert.assertNotNull("G014_FINAL_BOUNDARY_RECEIPT_MISSING|" + id, finalBoundary.get());
 		PlacementAnalysis analysis = finalBoundary.get().analysis();
 		analysis.assertCanonicalProgramAuthority(program);
