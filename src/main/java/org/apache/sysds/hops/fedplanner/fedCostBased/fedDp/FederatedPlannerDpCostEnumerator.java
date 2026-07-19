@@ -628,7 +628,7 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 		}
 
-		Set<Long> tWriteChildIds = collectTransientWriteChildIds(hop, childHops);
+		Set<Long> tWriteChildIds = collectHopIds(collectTransientWriteChildHops(hop, childHops));
 		final boolean enforceTReadConsistency = !tWriteChildIds.isEmpty();
 		final boolean isTransientReadHop = hop instanceof DataOp
 				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD;
@@ -1294,22 +1294,9 @@ public class FederatedPlannerDpCostEnumerator {
 			return false;
 		}
 
-		Set<Long> tWriteChildIds = collectTransientWriteChildIds(dataOp, childHops);
-		if (tWriteChildIds.isEmpty()) {
+		List<Hop> tWriteChildHops = collectTransientWriteChildHops(dataOp, childHops);
+		if (tWriteChildHops.isEmpty()) {
 			return false;
-		}
-		List<Hop> tWriteChildHops = new ArrayList<>();
-		for(Long childId : tWriteChildIds) {
-			Hop selected = null;
-			for(Hop childHop : childHops)
-				if(childHop.getHopID() == childId) {
-					if(selected != null)
-						throw new DMLRuntimeException("Ambiguous transient-write child hop " + childId);
-					selected = childHop;
-				}
-			if(selected == null)
-				throw new DMLRuntimeException("Missing transient-write child hop " + childId);
-			tWriteChildHops.add(selected);
 		}
 
 		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
@@ -1327,8 +1314,8 @@ public class FederatedPlannerDpCostEnumerator {
 		List<Hop> foutSelectedChildHops = new ArrayList<>();
 		double foutCost = baseSelfCost;
 
-		for (int childIndex = 0; childIndex < tWriteChildHops.size(); childIndex++) {
-			Long childId = tWriteChildHops.get(childIndex).getHopID();
+		for (Hop tWriteChildHop : tWriteChildHops) {
+			Long childId = tWriteChildHop.getHopID();
 			FederatedPlannerDpMemoTable.FedPlan loutPlan = memoTable.getFedPlanAfterPrune(childId,
 					FederatedOutput.LOUT);
 			if (loutPlan == null) {
@@ -1346,7 +1333,7 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 				loutCost += loutPlan.getCumulativeCostPerParents();
 				loutChilds.add(Pair.of(childId, FederatedOutput.LOUT));
-				loutSelectedChildHops.add(tWriteChildHops.get(childIndex));
+				loutSelectedChildHops.add(tWriteChildHop);
 			}
 
 			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(childId,
@@ -1366,7 +1353,7 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 				foutCost += foutPlan.getCumulativeCostPerParents();
 				foutChilds.add(Pair.of(childId, FederatedOutput.FOUT));
-				foutSelectedChildHops.add(tWriteChildHops.get(childIndex));
+				foutSelectedChildHops.add(tWriteChildHop);
 			}
 		}
 
@@ -1464,8 +1451,10 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 
-	private static Set<Long> collectTransientWriteChildIds(Hop hop, List<Hop> childHops) {
-		Set<Long> matches = new LinkedHashSet<>();
+	// Keep selection object-owned: distinct physical writes may share a Hop ID, so
+	// IDs are derived only after exact TRead capture no longer needs object identity.
+	private static List<Hop> collectTransientWriteChildHops(Hop hop, List<Hop> childHops) {
+		List<Hop> matches = new ArrayList<>();
 		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
 			return matches;
 		}
@@ -1473,49 +1462,36 @@ public class FederatedPlannerDpCostEnumerator {
 			return matches;
 		}
 		String hopName = hop.getName();
-		Set<Long> fallback = new LinkedHashSet<>();
+		List<Hop> fallback = new ArrayList<>();
 		for (Hop childHop : childHops) {
 			if (!(childHop instanceof DataOp)
 					|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTWRITE) {
 				continue;
 			}
-			fallback.add(childHop.getHopID());
+			fallback.add(childHop);
 			if (hopName != null && hopName.equals(childHop.getName())) {
-				matches.add(childHop.getHopID());
+				matches.add(childHop);
 			}
 		}
-		Set<Long> preferred = matches.isEmpty() ? fallback : matches;
-		Set<Long> dimCompatible = new LinkedHashSet<>();
-		for (Hop childHop : childHops) {
-			if (!(childHop instanceof DataOp)
-					|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTWRITE) {
-				continue;
-			}
-			if (!preferred.contains(childHop.getHopID())) {
-				continue;
-			}
+		List<Hop> preferredHops = matches.isEmpty() ? fallback : matches;
+		List<Hop> dimCompatible = new ArrayList<>();
+		for (Hop childHop : preferredHops) {
 			if (dimsCompatible(hop.getDim1(), hop.getDim2(), childHop.getDim1(), childHop.getDim2())) {
-				dimCompatible.add(childHop.getHopID());
+				dimCompatible.add(childHop);
 			}
 		}
 		if (!dimCompatible.isEmpty()) {
-			preferred = dimCompatible;
-		}
-		List<Hop> preferredHops = new ArrayList<>();
-		for (Hop childHop : childHops) {
-			if (!(childHop instanceof DataOp)
-					|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTWRITE)
-				continue;
-			if (preferred.contains(childHop.getHopID()))
-				preferredHops.add(childHop);
+			preferredHops = dimCompatible;
 		}
 		List<Hop> dominating = TransTableRewireUtils.preferDominatingTransientWrites(preferredHops, (DataOp) hop);
-		if (dominating == preferredHops)
-			return preferred;
-		Set<Long> dominatingIds = new LinkedHashSet<>();
-		for (Hop dominatingHop : dominating)
-			dominatingIds.add(dominatingHop.getHopID());
-		return dominatingIds.isEmpty() ? preferred : dominatingIds;
+		return dominating == null || dominating.isEmpty() ? preferredHops : dominating;
+	}
+
+	private static Set<Long> collectHopIds(List<Hop> hops) {
+		Set<Long> hopIds = new LinkedHashSet<>();
+		for (Hop hop : hops)
+			hopIds.add(hop.getHopID());
+		return hopIds;
 	}
 
 	private static boolean dimsCompatible(long d1a, long d2a, long d1b, long d2b) {
