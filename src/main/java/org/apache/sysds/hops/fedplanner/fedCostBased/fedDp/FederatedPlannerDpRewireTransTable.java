@@ -349,8 +349,10 @@ public class FederatedPlannerDpRewireTransTable {
 		List<CloneReceipt> cloneReceipts = exactCloneReceipts(analysis);
 		Map<Long, Long> cloneToOriginal = new LinkedHashMap<>();
 		for(CloneReceipt receipt : cloneReceipts)
-			cloneToOriginal.put(receipt.cloneOccurrence().hop().getHopID(),
-				receipt.originOccurrence().hop().getHopID());
+			if(cloneToOriginal.put(receipt.cloneOccurrence().hop().getHopID(),
+				receipt.originOccurrence().hop().getHopID()) != null)
+				throw semanticFailure(analysis, receipt.cloneOccurrence(),
+					ConstructionDisposition.DUPLICATE_OCCURRENCE, "REWIRE_CLONE_MAPPING_DUPLICATED");
 		if(!cloneToOriginal.equals(unrollContext.getCloneToOrig()))
 			throw semanticFailure(analysis, cloneReceipts.isEmpty() ? failureAnchor(analysis)
 				: cloneReceipts.get(0).cloneOccurrence(), ConstructionDisposition.STALE_CONTEXT,
@@ -365,8 +367,17 @@ public class FederatedPlannerDpRewireTransTable {
 			if(progRootHopSet.contains(resolvedRewiredHops.get(occurrence)) && seenRoots.add(occurrence))
 				additionalRoots.add(occurrence);
 
-		return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
-			cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, enumerationScopeKey);
+		if(enumerationScopeKey == null || enumerationScopeKey.isBlank())
+			throw semanticFailure(analysis, failureAnchor(analysis), ConstructionDisposition.STALE_CONTEXT,
+				"REWIRE_ENUMERATION_SCOPE_MISSING");
+		try {
+			return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
+				cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, enumerationScopeKey);
+		}
+		catch(IllegalArgumentException ex) {
+			throw semanticFailureWithCause(analysis, failureAnchor(analysis), ConstructionDisposition.STALE_CONTEXT,
+				"REWIRE_SNAPSHOT_INVARIANT_DIFFERS", ex);
+		}
 	}
 
 	private static Hop resolveExactRewiredHop(HopOccurrenceProjection occurrence,
@@ -399,6 +410,14 @@ public class FederatedPlannerDpRewireTransTable {
 	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
 		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode) {
 		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
+	}
+
+	private static DpSemanticConstructionException semanticFailureWithCause(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode,
+		IllegalArgumentException cause) {
+		DpSemanticConstructionException failure = semanticFailure(analysis, parent, disposition, reasonCode);
+		failure.initCause(cause);
+		return failure;
 	}
 
 	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
