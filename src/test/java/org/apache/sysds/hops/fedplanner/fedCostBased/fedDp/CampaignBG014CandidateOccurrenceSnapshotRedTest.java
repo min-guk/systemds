@@ -81,7 +81,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		Assert.assertEquals(block.rawCandidateCount(), block.capturedCandidateCount());
 		Assert.assertTrue("successful canonical enumeration is zero-difference", block.zeroDifference());
 		Assert.assertFalse("fixture must exercise candidate capture", block.candidateSnapshots().isEmpty());
-		assertRawCandidateOrder(invocation.analysis(), block.candidateSnapshots());
+		assertRawCandidateOrder(invocation, block.candidateSnapshots());
 		for(CandidateOccurrenceSnapshot snapshot : block.candidateSnapshots()) {
 			Assert.assertSame(block.context(), snapshot.context());
 			Assert.assertSame(ConstructionDisposition.AVAILABLE, snapshot.disposition());
@@ -106,30 +106,66 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		assertImmutable(block.candidateSnapshots());
 	}
 
-	private static void assertRawCandidateOrder(PlacementAnalysis analysis,
+	private static void assertRawCandidateOrder(DpInvocationReceipt invocation,
 		List<CandidateOccurrenceSnapshot> snapshots) {
-		Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey, Integer> occurrenceOrder =
-			new java.util.IdentityHashMap<>();
-		for(int i = 0; i < analysis.occurrences().size(); i++)
-			Assert.assertNull("duplicate exact occurrence key identity",
-				occurrenceOrder.put(analysis.occurrences().get(i).key(), i));
-		int previous = -1;
-		for(int rawOrdinal = 0; rawOrdinal < snapshots.size(); rawOrdinal++) {
-			CandidateOccurrenceSnapshot snapshot = snapshots.get(rawOrdinal);
-			Integer parentOrdinal = occurrenceOrder.get(snapshot.parentOccurrence());
-			Assert.assertNotNull("raw candidate parent is not the exact analysis-owned key", parentOrdinal);
-			Assert.assertTrue("raw candidate order regressed at ordinal " + rawOrdinal,
-				parentOrdinal >= previous);
-			previous = parentOrdinal;
+		List<ExpectedRawCandidate> expected = independentlyDeriveRawCandidates(invocation);
+		Assert.assertEquals("complete raw candidate sequence", expected.size(), snapshots.size());
+		for(int rawOrdinal = 0; rawOrdinal < expected.size(); rawOrdinal++) {
+			ExpectedRawCandidate want = expected.get(rawOrdinal);
+			CandidateOccurrenceSnapshot actual = snapshots.get(rawOrdinal);
+			Assert.assertSame("raw parent identity " + rawOrdinal, want.parent().key(), actual.parentOccurrence());
+			Assert.assertEquals("raw input multiplicity " + rawOrdinal, want.inputs().size(), actual.rawEntries().size());
+			for(int edge = 0; edge < want.inputs().size(); edge++) {
+				ExpectedRawInput input = want.inputs().get(edge);
+				CandidateMapEntry entry = actual.rawEntries().get(edge);
+				Assert.assertSame("raw child identity " + rawOrdinal + ':' + edge,
+					input.child().key(), entry.occurrence());
+				Assert.assertEquals(edge, entry.edgePosition());
+				Assert.assertEquals("raw output arm " + rawOrdinal + ':' + edge,
+					input.output() == FederatedOutput.FOUT, entry.mapContainsKey());
+			}
 		}
 	}
 
+	private static List<ExpectedRawCandidate> independentlyDeriveRawCandidates(DpInvocationReceipt invocation) {
+		Map<Hop, HopOccurrenceProjection> exact = new java.util.IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : invocation.analysis().occurrences())
+			Assert.assertNull("one occurrence per concrete candidate Hop", exact.put(occurrence.hop(), occurrence));
+		List<ExpectedRawCandidate> expected = new ArrayList<>();
+		for(HopOccurrenceProjection parent : invocation.analysis().occurrences()) {
+			List<HopOccurrenceProjection> both = new ArrayList<>();
+			List<HopOccurrenceProjection> loutOnly = new ArrayList<>();
+			List<HopOccurrenceProjection> foutOnly = new ArrayList<>();
+			for(Hop inputHop : parent.hop().getInput()) {
+				HopOccurrenceProjection child = exact.get(inputHop);
+				Assert.assertNotNull("raw input must resolve by exact object identity", child);
+				boolean hasLout = invocation.memo().contains(inputHop.getHopID(), FederatedOutput.LOUT);
+				boolean hasFout = invocation.memo().contains(inputHop.getHopID(), FederatedOutput.FOUT);
+				Assert.assertTrue("raw input has no output arm", hasLout || hasFout);
+				if(hasLout && hasFout) both.add(child);
+				else if(hasLout) loutOnly.add(child);
+				else foutOnly.add(child);
+			}
+			long variants = 1L << both.size();
+			for(long variant = 0; variant < variants; variant++) {
+				List<ExpectedRawInput> inputs = new ArrayList<>();
+				for(int bit = 0; bit < both.size(); bit++)
+					inputs.add(new ExpectedRawInput(both.get(bit),
+						(variant & (1L << bit)) == 0 ? FederatedOutput.LOUT : FederatedOutput.FOUT));
+				loutOnly.forEach(value -> inputs.add(new ExpectedRawInput(value, FederatedOutput.LOUT)));
+				foutOnly.forEach(value -> inputs.add(new ExpectedRawInput(value, FederatedOutput.FOUT)));
+				expected.add(new ExpectedRawCandidate(parent, List.copyOf(inputs)));
+			}
+		}
+		return List.copyOf(expected);
+	}
+
 	@Test
-	public void presentNullAndReorderedEdgesAbortBeforeAnyPlannerMutation() {
-		DpInvocationReceipt invocation = invoke("B-15");
+	public void presentNullAndReorderedEdgesAbortTheCanonicalInvocationBeforeAnyPublication() {
+		Fixture fixture = fixture("B-15");
+		DpInvocationReceipt invocation = fixture.receipt();
 		HopOccurrenceProjection parent = invocation.analysis().occurrences().stream()
 			.filter(value -> value.hop().getInput().size() >= 2).findFirst().orElseThrow();
-		NeutralEnumerationContext context = invocation.semanticConsumption().semanticBlock().context();
 		List<Hop> exactInputs = List.copyOf(parent.hop().getInput());
 		List<Pair<Long, FederatedOutput>> exactEdges = exactInputs.stream()
 			.map(value -> Pair.of(value.getHopID(), FederatedOutput.LOUT)).toList();
@@ -137,31 +173,55 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 		Map<Long, FType> presentNull = new LinkedHashMap<>();
 		presentNull.put(exactInputs.get(0).getHopID(), null);
-		assertTypedAbort(invocation, context, parent, exactEdges, exactInputs, localTypes, presentNull,
-			ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE);
+		assertCanonicalTypedAbort(fixture, parent, exactEdges, exactInputs, localTypes, presentNull,
+			ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE, "PRESENT_NULL");
 
 		List<Hop> reorderedInputs = new ArrayList<>(exactInputs);
 		java.util.Collections.swap(reorderedInputs, 0, 1);
-		assertTypedAbort(invocation, context, parent, exactEdges, reorderedInputs, localTypes, Map.of(),
-			ConstructionDisposition.REORDERED_EDGE);
+		assertCanonicalTypedAbort(fixture, parent, exactEdges, reorderedInputs, localTypes, Map.of(),
+			ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
 	}
 
-	private static void assertTypedAbort(DpInvocationReceipt invocation, NeutralEnumerationContext context,
+	private static void assertCanonicalTypedAbort(Fixture fixture,
 		HopOccurrenceProjection parent, List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
-		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap, ConstructionDisposition disposition) {
-		PlannerState before = snapshot(invocation);
+		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap, ConstructionDisposition disposition,
+		String reasonCode) {
+		DpInvocationReceipt setup = fixture.receipt();
+		PlacementAnalysis analysis = setup.analysis();
+		ProgramState before = snapshotProgram(fixture.program(), analysis);
+		TrackingMemo memo = new TrackingMemo(analysis);
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+		assertRegistriesEmpty(fixture.program());
+		CandidateNormalizationFixture negative = new CandidateNormalizationFixture(parent, planChilds,
+			collectedHops, collectedFTypes, fedInputTypeMap);
+		TrackingObserver observer = new TrackingObserver();
 		try {
-			new DpPlacementAdapter().normalizeCandidateInputs(context, parent, invocation.memo(), planChilds,
-				collectedHops, collectedFTypes, fedInputTypeMap);
-			Assert.fail("non-AVAILABLE construction returned instead of aborting: " + disposition);
+			DpInvocationReceipt published = new FederatedPlannerDpFedCostBased().rewriteProgram(fixture.program(),
+				new FunctionCallGraph(fixture.program()), null, analysis, memo, negative, observer);
+			Assert.fail("canonical negative invocation published terminal receipt " + published);
 		}
 		catch(DpSemanticConstructionException expected) {
+			Assert.assertSame("typed failure propagation identity", observer.failure(), expected);
 			Assert.assertSame(disposition, expected.disposition());
-			Assert.assertEquals(invocation.analysis().analysisFingerprint(), expected.analysisFingerprint());
+			Assert.assertEquals(reasonCode, expected.reasonCode());
+			Assert.assertEquals(analysis.analysisFingerprint(), expected.analysisFingerprint());
 			Assert.assertSame(parent.key(), expected.parentOccurrence());
-			Assert.assertFalse(expected.reasonCode().isBlank());
+			Assert.assertEquals(planChilds.size(), expected.edgeCount());
 		}
-		assertStateSame(before, snapshot(invocation));
+		Assert.assertTrue("negative canonical invocation mutated memo: " + memo.writeEvents(),
+			memo.writeEvents().isEmpty());
+		Assert.assertEquals(0, observer.resultCount());
+		Assert.assertEquals(0, observer.oracleCount());
+		Assert.assertEquals(0, observer.costCount());
+		Assert.assertEquals(0, observer.placementCount());
+		Assert.assertEquals(0, observer.candidateCount());
+		Assert.assertEquals(0, observer.repairCount());
+		Assert.assertEquals(0, observer.fallbackCount());
+		assertRegistriesEmpty(fixture.program());
+		assertProgramSame(before, snapshotProgram(fixture.program(), analysis));
+		Assert.assertSame("setup counters changed", setup.counters(), fixture.receipt().counters());
 	}
 
 	private static void assertFTypeProjection(FType type, CandidateMapEntry entry) {
