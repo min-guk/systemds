@@ -624,7 +624,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			boundary = DMLTranslator.class.getMethod("constructLops", DMLProgram.class, Consumer.class);
 		}
 		catch(NoSuchMethodException prePatch) {
-			return new NeutralPlacementGraphBuilder().buildAnalysis(program);
+			throw new AssertionError("CAMPAIGN_B_DP_FINAL_BOUNDARY_API_MISSING", prePatch);
 		}
 		String oldPlanner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 		AtomicReference<Object> receipt = new AtomicReference<>();

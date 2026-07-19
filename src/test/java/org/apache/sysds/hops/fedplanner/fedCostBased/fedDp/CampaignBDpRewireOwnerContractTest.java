@@ -321,7 +321,26 @@ public class CampaignBDpRewireOwnerContractTest {
 	private static Fixture fixture(String id) {
 		try {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
-			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+			String oldPlanner = org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+				.getTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER);
+			java.util.concurrent.atomic.AtomicReference<org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt> receipt =
+				new java.util.concurrent.atomic.AtomicReference<>();
+			try {
+				org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+					.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+				new org.apache.sysds.parser.DMLTranslator(program).constructLops(program, value -> {
+					if(!receipt.compareAndSet(null, value))
+						throw new AssertionError("CAMPAIGN_B_REWIRE_FINAL_BOUNDARY_MULTIPLE_RECEIPTS");
+				});
+			}
+			finally {
+				org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+					.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER, oldPlanner);
+			}
+			if(receipt.get() == null)
+				throw new AssertionError("CAMPAIGN_B_REWIRE_FINAL_BOUNDARY_RECEIPT_MISSING");
+			PlacementAnalysis analysis = receipt.get().analysis();
+			analysis.assertCanonicalProgramAuthority(program);
 			return new Fixture(program, analysis);
 		}
 		catch(Exception e) {
