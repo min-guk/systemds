@@ -286,6 +286,7 @@ public class FederatedPlannerDpRewireTransTable {
 		List<HopOccurrenceProjection> occurrences = analysis.occurrences();
 		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
 		Map<Long, HopOccurrenceProjection> exactByHopId = new LinkedHashMap<>();
+		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++) {
 			HopOccurrenceProjection occurrence = occurrences.get(i);
 			if(occurrence.normalizedOrdinal() != i
@@ -293,15 +294,16 @@ public class FederatedPlannerDpRewireTransTable {
 				|| exactByHop.put(occurrence.hop(), occurrence) != null
 				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
 				throw new IllegalArgumentException("Production rewire occurrence is duplicated or detached");
-			FederatedPlannerDpMemoTable.HopCommon common = hopCommonTable.get(occurrence.hop().getHopID());
-			if((common == null || common.getHopRef() != occurrence.hop())
-				&& !containsExactHop(rewireTable, occurrence.hop()))
-				throw new IllegalArgumentException("Production rewire carrier cannot resolve analysis occurrence");
+			resolvedRewiredHops.put(occurrence,
+				resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable));
 		}
 
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
 		for(HopOccurrenceProjection parent : occurrences) {
-			List<Hop> inputs = parent.hop().getInput();
+			Hop resolvedParent = resolvedRewiredHops.get(parent);
+			if(resolvedParent == null)
+				throw new IllegalArgumentException("Production rewire parent has no exact resolved carrier");
+			List<Hop> inputs = resolvedParent.getInput();
 			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
 				HopOccurrenceProjection child = exactByHop.get(inputs.get(inputPosition));
 				if(child == null)
@@ -338,13 +340,21 @@ public class FederatedPlannerDpRewireTransTable {
 			cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, enumerationScopeKey);
 	}
 
-	private static boolean containsExactHop(Map<Long, List<Hop>> rewireTable, Hop expected) {
+	private static Hop resolveExactRewiredHop(HopOccurrenceProjection occurrence,
+		Map<Long, List<Hop>> rewireTable,
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable) {
+		Set<Hop> exactMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
+			if(common != null && common.getHopRef() == occurrence.hop())
+				exactMatches.add(common.getHopRef());
 		for(List<Hop> rewired : rewireTable.values())
 			if(rewired != null)
 				for(Hop candidate : rewired)
-					if(candidate == expected)
-						return true;
-		return false;
+					if(candidate == occurrence.hop())
+						exactMatches.add(candidate);
+		if(exactMatches.size() != 1)
+			throw new IllegalArgumentException("Production rewire occurrence must resolve to exactly one concrete carrier");
+		return exactMatches.iterator().next();
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
