@@ -36,14 +36,28 @@ public class CampaignBG014NeutralSemanticBoundaryRedTest {
 	@Test
 	public void canonicalEnumeratorCapturesRawEntriesBeforePureNormalization() throws Exception {
 		String source = code(ENUMERATOR);
-		int rawCapture = source.indexOf("CandidateOccurrenceSnapshot");
-		int normalization = source.indexOf("normalizeCandidateInputs", rawCapture);
-		int oracle = source.indexOf("OracleUtils.decideWithOracle", normalization);
-		int feasibility = source.indexOf("canSatisfyFederatedInputsFromFTypes", normalization);
-		Assert.assertTrue("G014_NEUTRAL_RAW_CAPTURE_ORDER",
-			rawCapture >= 0 && normalization > rawCapture && oracle > normalization && feasibility > normalization);
+		String canonical = JavaSourceBoundaryScanner.methodBody(source, "enumerateHop", "parentChildUploadHints");
+		int candidateLoop = canonical.indexOf("for (long i = 0; i < enumerationLimit; i++)");
+		int bothLoop = canonical.indexOf("for (int j = 0; j < numBothOutInputs; j++)", candidateLoop);
+		int localLoop = canonical.indexOf("for (int j = 0; j < numLoutOnlyInputs; j++)", bothLoop);
+		int federatedLoop = canonical.indexOf("for (int j = 0; j < numFoutOnlyInputs; j++)", localLoop);
+		int childCollectionEnd = blockEnd(canonical, federatedLoop);
+		int normalization = canonical.indexOf("normalizeCandidateInputs(", childCollectionEnd);
+		int legacyPromotion = canonical.indexOf("promoteLocalFedInputHints(", childCollectionEnd);
+		int legacyBackfill = canonical.indexOf("backfillLocalOracleInputHints(", childCollectionEnd);
+		int oracle = canonical.indexOf("OracleUtils.decideWithOracle", childCollectionEnd);
+		int feasibility = canonical.indexOf("canSatisfyFederatedInputsFromFTypes", childCollectionEnd);
+		Assert.assertTrue("G014_NEUTRAL_EXACT_THREE_CHILD_LOOPS",
+			candidateLoop >= 0 && bothLoop > candidateLoop && localLoop > bothLoop
+				&& federatedLoop > localLoop && childCollectionEnd > federatedLoop);
+		Assert.assertTrue("G014_NEUTRAL_RAW_CAPTURE_EXACT_SEAM",
+			normalization > childCollectionEnd && oracle > normalization && feasibility > normalization);
+		Assert.assertTrue("G014_NEUTRAL_NORMALIZATION_PRECEDES_LEGACY_PROMOTION",
+			legacyPromotion < 0 || normalization < legacyPromotion);
+		Assert.assertTrue("G014_NEUTRAL_NORMALIZATION_PRECEDES_LEGACY_BACKFILL",
+			legacyBackfill < 0 || normalization < legacyBackfill);
 
-		String downstream = source.substring(normalization);
+		String downstream = canonical.substring(normalization);
 		Assert.assertTrue("G014_NEUTRAL_EFFECTIVE_FTYPE_LIST_REQUIRED",
 			downstream.contains("effectiveCollectedFTypes()"));
 		Assert.assertTrue("G014_NEUTRAL_EFFECTIVE_NON_NULL_MAP_REQUIRED",
@@ -90,5 +104,21 @@ public class CampaignBG014NeutralSemanticBoundaryRedTest {
 
 	private static String code(Path path) throws Exception {
 		return JavaSourceBoundaryScanner.codeOnly(Files.readString(path));
+	}
+
+	private static int blockEnd(String source, int loopStart) {
+		if(loopStart < 0)
+			return -1;
+		int openingBrace = source.indexOf('{', loopStart);
+		if(openingBrace < 0)
+			return -1;
+		int depth = 1;
+		for(int i = openingBrace + 1; i < source.length(); i++) {
+			if(source.charAt(i) == '{')
+				depth++;
+			else if(source.charAt(i) == '}' && --depth == 0)
+				return i + 1;
+		}
+		return -1;
 	}
 }
