@@ -13,6 +13,8 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,13 +22,315 @@ import java.util.Objects;
 import java.util.Optional;
 
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
 public final class PlacementAnalysis {
+	public enum InputPresence { ABSENT_LOCAL, PRESENT }
+
+	/** Neutral explicit absence/value state; present-null cannot be represented. */
+	public record CandidateInputState(InputPresence presence, FType fType) {
+		public CandidateInputState {
+			Objects.requireNonNull(presence, "presence");
+			if(presence == InputPresence.ABSENT_LOCAL && fType != null
+				|| presence == InputPresence.PRESENT && fType == null)
+				throw new IllegalArgumentException("Candidate input presence and FType differ");
+		}
+		public static CandidateInputState absentLocal() {
+			return new CandidateInputState(InputPresence.ABSENT_LOCAL, null);
+		}
+		public static CandidateInputState present(FType fType) {
+			return new CandidateInputState(InputPresence.PRESENT, Objects.requireNonNull(fType, "fType"));
+		}
+		public boolean present() { return presence == InputPresence.PRESENT; }
+	}
+
+	/** Exact analysis-owned parent plus edge-position-ordered candidate input states. */
+	public record CandidateRuleKey(CompiledHopKey parentOccurrence,
+		List<CandidateInputState> orderedInputs) {
+		public CandidateRuleKey {
+			Objects.requireNonNull(parentOccurrence, "parentOccurrence");
+			Objects.requireNonNull(orderedInputs, "orderedInputs");
+			for(int i = 0; i < orderedInputs.size(); i++)
+				Objects.requireNonNull(orderedInputs.get(i), "orderedInputs[" + i + "]");
+			orderedInputs = List.copyOf(orderedInputs);
+		}
+	}
+
+	public record CandidateConsumerProfileKey(CompiledHopKey consumerOccurrence, int inputPosition) {
+		public CandidateConsumerProfileKey {
+			Objects.requireNonNull(consumerOccurrence, "consumerOccurrence");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Consumer input position must be non-negative");
+		}
+	}
+
+	/** Explicit immutable original-occurrence candidate domain, frozen before synthetic boundary expansion. */
+	public static final class CandidateRuleDomain {
+		private final String analysisFingerprint;
+		private final List<CandidateRuleKey> orderedRuleKeys;
+		private final List<CandidateConsumerProfileKey> orderedConsumerKeys;
+		private final Map<CompiledHopKey,Boolean> parentsByIdentity;
+
+		public CandidateRuleDomain(String analysisFingerprint, List<CandidateRuleKey> ruleKeys,
+			List<CandidateConsumerProfileKey> consumerKeys) {
+			if(analysisFingerprint == null || analysisFingerprint.isBlank())
+				throw new IllegalArgumentException("Candidate domain fingerprint must not be blank");
+			this.analysisFingerprint = analysisFingerprint;
+			orderedRuleKeys = copyDistinctRuleKeys(ruleKeys);
+			orderedConsumerKeys = copyDistinctConsumerKeys(consumerKeys);
+			Map<CompiledHopKey,Boolean> parents = new IdentityHashMap<>();
+			for(CandidateRuleKey key : orderedRuleKeys)
+				parents.put(key.parentOccurrence(), Boolean.TRUE);
+			for(CandidateConsumerProfileKey key : orderedConsumerKeys)
+				if(!parents.containsKey(key.consumerOccurrence()))
+					throw new IllegalArgumentException("Consumer profile owner is outside the candidate domain");
+			parentsByIdentity = Collections.unmodifiableMap(parents);
+		}
+
+		public String analysisFingerprint() { return analysisFingerprint; }
+		public List<CandidateRuleKey> orderedRuleKeys() { return orderedRuleKeys; }
+		public List<CandidateConsumerProfileKey> orderedConsumerKeys() { return orderedConsumerKeys; }
+		public boolean containsExactParent(CompiledHopKey key) { return parentsByIdentity.containsKey(key); }
+
+		private static List<CandidateRuleKey> copyDistinctRuleKeys(List<CandidateRuleKey> source) {
+			Objects.requireNonNull(source, "ruleKeys");
+			List<CandidateRuleKey> copied = new java.util.ArrayList<>(source.size());
+			Map<CompiledHopKey,List<List<CandidateInputState>>> byParent = new IdentityHashMap<>();
+			for(CandidateRuleKey key : source) {
+				Objects.requireNonNull(key, "candidate rule domain key");
+				List<List<CandidateInputState>> inputs = byParent.computeIfAbsent(key.parentOccurrence(),
+					ignored -> new java.util.ArrayList<>());
+				if(inputs.contains(key.orderedInputs()))
+					throw new IllegalArgumentException("Duplicate candidate rule domain key");
+				inputs.add(key.orderedInputs());
+				copied.add(key);
+			}
+			return List.copyOf(copied);
+		}
+
+		private static List<CandidateConsumerProfileKey> copyDistinctConsumerKeys(
+			List<CandidateConsumerProfileKey> source) {
+			Objects.requireNonNull(source, "consumerKeys");
+			List<CandidateConsumerProfileKey> copied = new java.util.ArrayList<>(source.size());
+			Map<CompiledHopKey,java.util.Set<Integer>> byConsumer = new IdentityHashMap<>();
+			for(CandidateConsumerProfileKey key : source) {
+				Objects.requireNonNull(key, "candidate consumer domain key");
+				if(!byConsumer.computeIfAbsent(key.consumerOccurrence(), ignored -> new java.util.LinkedHashSet<>())
+					.add(key.inputPosition()))
+					throw new IllegalArgumentException("Duplicate candidate consumer profile domain key");
+				copied.add(key);
+			}
+			return List.copyOf(copied);
+		}
+	}
+
+	/** Immutable copy of one rule note; no mutable oracle capability object is retained. */
+	public record CandidateRuleNote(ReasonCode code, String message) {
+		public CandidateRuleNote {
+			Objects.requireNonNull(code, "code");
+			message = message == null ? "" : message;
+		}
+	}
+
+	/** Immutable primitive/enum projection of the exact rule capability result. */
+	public record CandidateCapabilityFact(OpCategory category, String opcode, ExecType nativeExec,
+		FederatedOutput nativeOutput, FType nativeFoutFType, ReasonCode reasonCode, String detail,
+		List<CandidateRuleNote> notes) {
+		public CandidateCapabilityFact {
+			Objects.requireNonNull(category, "category");
+			opcode = opcode == null ? "" : opcode;
+			Objects.requireNonNull(nativeExec, "nativeExec");
+			Objects.requireNonNull(nativeOutput, "nativeOutput");
+			Objects.requireNonNull(reasonCode, "reasonCode");
+			detail = detail == null ? "" : detail;
+			notes = List.copyOf(Objects.requireNonNull(notes, "notes"));
+		}
+	}
+
+	/** Immutable copy of the shape facts consulted by the exact capability rule. */
+	public record CandidateShapeProofFact(Map<String,String> consultedFacts, List<String> requiredFacts,
+		List<String> missingRequiredFacts) {
+		public CandidateShapeProofFact {
+			consultedFacts = Collections.unmodifiableMap(new java.util.TreeMap<>(
+				Objects.requireNonNull(consultedFacts, "consultedFacts")));
+			requiredFacts = Objects.requireNonNull(requiredFacts, "requiredFacts").stream()
+				.map(fact -> Objects.requireNonNull(fact, "required fact")).sorted().toList();
+			missingRequiredFacts = Objects.requireNonNull(missingRequiredFacts, "missingRequiredFacts").stream()
+				.map(fact -> Objects.requireNonNull(fact, "missing required fact")).sorted().toList();
+		}
+	}
+
+	/** Immutable producer-profile evidence obtained in the same canonical builder combination. */
+	public record CandidateProfileFact(List<FType> producerOutputs, String evaluationFailure) {
+		public CandidateProfileFact {
+			producerOutputs = List.copyOf(Objects.requireNonNull(producerOutputs, "producerOutputs"));
+			evaluationFailure = evaluationFailure == null ? "" : evaluationFailure;
+			if(!evaluationFailure.isEmpty() && !producerOutputs.isEmpty())
+				throw new IllegalArgumentException("Failed profile evaluation cannot publish outputs");
+		}
+		public boolean available() { return evaluationFailure.isEmpty(); }
+	}
+
+	public enum CandidateEvaluationStatus { AVAILABLE, RULE_ERROR, PROFILE_ERROR }
+
+	public record CandidateConsumerProfileFact(CandidateConsumerProfileKey key,
+		CandidateEvaluationStatus status, List<FType> allowedTargetTypes, String failureCode) {
+		public CandidateConsumerProfileFact {
+			Objects.requireNonNull(key, "key");
+			Objects.requireNonNull(status, "status");
+			allowedTargetTypes = List.copyOf(Objects.requireNonNull(allowedTargetTypes, "allowedTargetTypes"));
+			failureCode = failureCode == null ? "" : failureCode;
+			if(status == CandidateEvaluationStatus.RULE_ERROR
+				|| status == CandidateEvaluationStatus.AVAILABLE && !failureCode.isEmpty()
+				|| status == CandidateEvaluationStatus.PROFILE_ERROR
+					&& (failureCode.isEmpty() || !allowedTargetTypes.isEmpty()))
+				throw new IllegalArgumentException("Consumer profile status and evidence differ");
+		}
+	}
+
+	/** One exact immutable rule/profile fact captured by the canonical builder pass. */
+	public record CandidateRuleFact(CandidateRuleKey key, CandidateEvaluationStatus status,
+		CandidateCapabilityFact capability, CandidateShapeProofFact shapeProof, CandidateProfileFact profile,
+		String failureCode) {
+		public CandidateRuleFact {
+			Objects.requireNonNull(key, "key");
+			Objects.requireNonNull(status, "status");
+			Objects.requireNonNull(shapeProof, "shapeProof");
+			Objects.requireNonNull(profile, "profile");
+			failureCode = failureCode == null ? "" : failureCode;
+			if(status == CandidateEvaluationStatus.AVAILABLE
+					&& (capability == null || !profile.available() || !failureCode.isEmpty())
+				|| status == CandidateEvaluationStatus.RULE_ERROR
+					&& (profile.available() || failureCode.isEmpty())
+				|| status == CandidateEvaluationStatus.PROFILE_ERROR
+					&& (capability == null || profile.available() || failureCode.isEmpty()))
+				throw new IllegalArgumentException("Candidate rule status and evidence differ");
+		}
+	}
+
+	public enum CandidateLookupFailure {
+		FOREIGN_PARENT, NON_CANDIDATE_PARENT, MISSING_FACT, REORDERED_INPUTS, PRESENT_NULL
+	}
+
+	public static final class CandidateRuleLookupException extends IllegalArgumentException {
+		private static final long serialVersionUID = 1L;
+		private final CandidateLookupFailure failure;
+		public CandidateRuleLookupException(CandidateLookupFailure failure, String message) {
+			super(message);
+			this.failure = Objects.requireNonNull(failure, "failure");
+		}
+		public CandidateLookupFailure failure() { return failure; }
+	}
+
+	/** Ordered, deeply immutable exact-candidate fact universe. */
+	public static final class CandidateRuleFacts {
+		private final List<CandidateRuleFact> orderedFacts;
+		private final Map<CandidateRuleKey,CandidateRuleFact> factsByKey;
+		private final CandidateRuleDomain domain;
+
+		public CandidateRuleFacts(CandidateRuleDomain domain, List<CandidateRuleFact> facts) {
+			this.domain = Objects.requireNonNull(domain, "domain");
+			Objects.requireNonNull(facts, "facts");
+			if(facts.size() != domain.orderedRuleKeys().size())
+				throw new IllegalArgumentException("Candidate rule fact/domain multiplicity differs");
+			LinkedHashMap<CandidateRuleKey,CandidateRuleFact> indexed = new LinkedHashMap<>();
+			for(int i = 0; i < facts.size(); i++) {
+				CandidateRuleKey expected = domain.orderedRuleKeys().get(i);
+				CandidateRuleFact fact = facts.get(i);
+				Objects.requireNonNull(fact, "candidate rule fact");
+				if(fact.key().parentOccurrence() != expected.parentOccurrence()
+					|| !fact.key().orderedInputs().equals(expected.orderedInputs()))
+					throw new IllegalArgumentException("Candidate rule fact order/domain key differs");
+				if(indexed.putIfAbsent(fact.key(), fact) != null)
+					throw new IllegalArgumentException("Duplicate exact candidate rule fact: " + fact.key());
+			}
+			orderedFacts = List.copyOf(indexed.values());
+			factsByKey = Collections.unmodifiableMap(indexed);
+		}
+
+		public List<CandidateRuleFact> orderedFacts() { return orderedFacts; }
+
+		public CandidateRuleFact requireExact(CompiledHopKey parentOccurrence,
+			List<CandidateInputState> orderedInputs) {
+			if(parentOccurrence == null || !domain.containsExactParent(parentOccurrence))
+				throw new CandidateRuleLookupException(CandidateLookupFailure.NON_CANDIDATE_PARENT,
+					"Parent is foreign, copied, or outside the canonical candidate domain");
+			if(orderedInputs == null)
+				throw new CandidateRuleLookupException(CandidateLookupFailure.PRESENT_NULL,
+					"Candidate input vector is null");
+			for(CandidateInputState input : orderedInputs)
+				if(input == null)
+					throw new CandidateRuleLookupException(CandidateLookupFailure.PRESENT_NULL,
+						"Present-null cannot be a candidate input state");
+			CandidateRuleFact fact = factsByKey.get(new CandidateRuleKey(parentOccurrence, orderedInputs));
+			if(fact == null) {
+				boolean reordered = orderedFacts.stream().filter(candidate ->
+					candidate.key().parentOccurrence() == parentOccurrence
+						&& candidate.key().orderedInputs().size() == orderedInputs.size())
+					.anyMatch(candidate -> sameMultiplicity(candidate.key().orderedInputs(), orderedInputs));
+				throw new CandidateRuleLookupException(reordered ? CandidateLookupFailure.REORDERED_INPUTS
+					: CandidateLookupFailure.MISSING_FACT, "Exact candidate rule fact is missing");
+			}
+			if(fact.key().parentOccurrence() != parentOccurrence
+				|| !fact.key().orderedInputs().equals(orderedInputs))
+				throw new IllegalArgumentException("Candidate rule lookup identity or order differs");
+			return fact;
+		}
+
+		private static boolean sameMultiplicity(List<CandidateInputState> left, List<CandidateInputState> right) {
+			Map<CandidateInputState,Integer> counts = new LinkedHashMap<>();
+			for(CandidateInputState value : left) counts.merge(value, 1, Integer::sum);
+			for(CandidateInputState value : right) counts.merge(value, -1, Integer::sum);
+			return counts.values().stream().allMatch(count -> count == 0);
+		}
+	}
+
+	public static final class CandidateConsumerProfileFacts {
+		private final CandidateRuleDomain domain;
+		private final List<CandidateConsumerProfileFact> orderedFacts;
+		private final Map<CandidateConsumerProfileKey,CandidateConsumerProfileFact> factsByKey;
+
+		public CandidateConsumerProfileFacts(CandidateRuleDomain domain,
+			List<CandidateConsumerProfileFact> facts) {
+			this.domain = Objects.requireNonNull(domain, "domain");
+			Objects.requireNonNull(facts, "facts");
+			if(facts.size() != domain.orderedConsumerKeys().size())
+				throw new IllegalArgumentException("Consumer profile fact/domain multiplicity differs");
+			LinkedHashMap<CandidateConsumerProfileKey,CandidateConsumerProfileFact> indexed = new LinkedHashMap<>();
+			for(int i = 0; i < facts.size(); i++) {
+				CandidateConsumerProfileKey expected = domain.orderedConsumerKeys().get(i);
+				CandidateConsumerProfileFact fact = Objects.requireNonNull(facts.get(i), "consumer profile fact");
+				if(fact.key().consumerOccurrence() != expected.consumerOccurrence()
+					|| fact.key().inputPosition() != expected.inputPosition())
+					throw new IllegalArgumentException("Consumer profile fact order/domain key differs");
+				if(indexed.putIfAbsent(fact.key(), fact) != null)
+					throw new IllegalArgumentException("Duplicate consumer profile fact");
+			}
+			orderedFacts = List.copyOf(indexed.values());
+			factsByKey = Collections.unmodifiableMap(indexed);
+		}
+
+		public List<CandidateConsumerProfileFact> orderedFacts() { return orderedFacts; }
+		public CandidateConsumerProfileFact requireExact(CompiledHopKey consumer, int inputPosition) {
+			if(!domain.containsExactParent(consumer))
+				throw new CandidateRuleLookupException(CandidateLookupFailure.NON_CANDIDATE_PARENT,
+					"Consumer is outside the canonical candidate domain");
+			CandidateConsumerProfileFact fact = factsByKey.get(new CandidateConsumerProfileKey(consumer, inputPosition));
+			if(fact == null || fact.key().consumerOccurrence() != consumer)
+				throw new CandidateRuleLookupException(CandidateLookupFailure.MISSING_FACT,
+					"Exact consumer profile fact is missing");
+			return fact;
+		}
+	}
 	/** Exact producer/value pair for one immutable Heuristic demotion fact. */
 	public record HeuristicPolicyFact(CompiledHopKey producer, ValueVersionKey valueVersion)
 		implements Comparable<HeuristicPolicyFact> {
@@ -91,11 +395,36 @@ public final class PlacementAnalysis {
 	private final PlacementShapeFacts shapeFacts;
 	private final String analysisFingerprint;
 	private final HeuristicPolicyFacts heuristicPolicyFacts;
+	private final CandidateRuleDomain candidateRuleDomain;
+	private final CandidateRuleFacts candidateRuleFacts;
+	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
 	private final DMLProgram programOwner;
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
 		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
+		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
+			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
+			true);
+	}
+
+	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
 		HeuristicPolicyFacts heuristicPolicyFacts) {
+		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
+			List.of(), List.of(), List.of(), List.of(), true);
+	}
+
+	private PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts, boolean coreConstructor) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
 		this.occurrences = List.copyOf(occurrences);
@@ -113,6 +442,17 @@ public final class PlacementAnalysis {
 			throw new IllegalArgumentException("analysisFingerprint must not be blank");
 		this.analysisFingerprint = analysisFingerprint;
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
+		this.candidateRuleDomain = new CandidateRuleDomain(analysisFingerprint, candidateRuleDomainKeys,
+			candidateConsumerDomainKeys);
+		Map<CompiledHopKey,Boolean> analysisKeysByIdentity = new IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : this.occurrences)
+			analysisKeysByIdentity.put(occurrence.key(), Boolean.TRUE);
+		for(CandidateRuleKey key : this.candidateRuleDomain.orderedRuleKeys())
+			if(!analysisKeysByIdentity.containsKey(key.parentOccurrence()))
+				throw new IllegalArgumentException("Candidate domain parent is not analysis-owned");
+		this.candidateRuleFacts = new CandidateRuleFacts(this.candidateRuleDomain, candidateRuleFacts);
+		this.candidateConsumerProfileFacts = new CandidateConsumerProfileFacts(this.candidateRuleDomain,
+			candidateConsumerProfileFacts);
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
@@ -144,6 +484,10 @@ public final class PlacementAnalysis {
 	public HeuristicPolicyFacts heuristicPolicyFacts() {
 		return heuristicPolicyFacts;
 	}
+
+	public CandidateRuleDomain candidateRuleDomain() { return candidateRuleDomain; }
+	public CandidateRuleFacts candidateRuleFacts() { return candidateRuleFacts; }
+	public CandidateConsumerProfileFacts candidateConsumerProfileFacts() { return candidateConsumerProfileFacts; }
 
 	public void assertProgramOwner(DMLProgram program) {
 		if(program == null || program != programOwner)

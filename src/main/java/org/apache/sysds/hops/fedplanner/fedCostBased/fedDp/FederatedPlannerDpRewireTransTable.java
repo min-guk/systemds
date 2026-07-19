@@ -130,19 +130,41 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 	}
 
+	public record RewireTransientForwardEdge(CompiledHopKey writeOccurrence,
+		CompiledHopKey readOccurrence) {
+		public RewireTransientForwardEdge {
+			Objects.requireNonNull(writeOccurrence, "writeOccurrence");
+			Objects.requireNonNull(readOccurrence, "readOccurrence");
+		}
+	}
+
 	public record RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,
 		String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
+		List<HopOccurrenceProjection> candidateOccurrences,
 		List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
-		List<RewireConsumerEdge> consumerEdges, Map<Long, Long> cloneToOriginal,
+		List<RewireConsumerEdge> consumerEdges, List<RewireTransientForwardEdge> transientForwardEdges,
+		Map<Long, Long> cloneToOriginal,
 		Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, String enumerationScopeKey) {
+		public RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,
+			String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
+			List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
+			List<RewireConsumerEdge> consumerEdges, Map<Long, Long> cloneToOriginal,
+			Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, String enumerationScopeKey) {
+			this(analysis, program, analysisFingerprint, occurrences,
+				FederatedPlannerDpRewireTransTable.candidateOccurrences(analysis), cloneReceipts,
+				additionalRoots, consumerEdges, List.of(), cloneToOriginal, occurrenceByCarrier, enumerationScopeKey);
+		}
+
 		public RewireOccurrenceSnapshot {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(program, "program");
 			Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
 			Objects.requireNonNull(occurrences, "occurrences");
+			Objects.requireNonNull(candidateOccurrences, "candidateOccurrences");
 			Objects.requireNonNull(cloneReceipts, "cloneReceipts");
 			Objects.requireNonNull(additionalRoots, "additionalRoots");
 			Objects.requireNonNull(consumerEdges, "consumerEdges");
+			Objects.requireNonNull(transientForwardEdges, "transientForwardEdges");
 			Objects.requireNonNull(cloneToOriginal, "cloneToOriginal");
 			Objects.requireNonNull(occurrenceByCarrier, "occurrenceByCarrier");
 			if(enumerationScopeKey == null || enumerationScopeKey.isBlank())
@@ -156,7 +178,6 @@ public class FederatedPlannerDpRewireTransTable {
 				throw new IllegalArgumentException("Rewire occurrence multiplicity differs");
 			Set<HopOccurrenceProjection> ownedByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
 			Set<CompiledHopKey> ownedKeysByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
-			Set<Long> ownedHopIds = new LinkedHashSet<>();
 			for(int i = 0; i < occurrences.size(); i++) {
 				HopOccurrenceProjection occurrence = occurrences.get(i);
 				if(occurrence != ownedOccurrences.get(i) || occurrence.normalizedOrdinal() != i
@@ -164,16 +185,34 @@ public class FederatedPlannerDpRewireTransTable {
 					throw new IllegalArgumentException("Rewire occurrence ownership or order differs");
 				ownedByIdentity.add(occurrence);
 				ownedKeysByIdentity.add(occurrence.key());
-				if(!ownedHopIds.add(occurrence.hop().getHopID()))
-					throw new IllegalArgumentException("Rewire occurrence Hop ID is duplicated");
+			}
+			List<HopOccurrenceProjection> expectedCandidates =
+				FederatedPlannerDpRewireTransTable.candidateOccurrences(analysis);
+			if(candidateOccurrences.size() != expectedCandidates.size())
+				throw new IllegalArgumentException("Rewire candidate occurrence multiplicity differs");
+			Set<CompiledHopKey> candidateKeysByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<HopOccurrenceProjection> candidatesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<Long> candidateHopIds = new LinkedHashSet<>();
+			for(int i = 0; i < candidateOccurrences.size(); i++) {
+				HopOccurrenceProjection occurrence = candidateOccurrences.get(i);
+				if(occurrence != expectedCandidates.get(i) || !ownedByIdentity.contains(occurrence))
+					throw new IllegalArgumentException("Rewire candidate occurrence ownership or order differs");
+				candidateKeysByIdentity.add(occurrence.key());
+				candidatesByIdentity.add(occurrence);
+				if(!candidateHopIds.add(occurrence.hop().getHopID()))
+					throw new IllegalArgumentException("Rewire candidate Hop ID is duplicated");
 			}
 			for(HopOccurrenceProjection root : additionalRoots)
 				if(!ownedByIdentity.contains(root))
 					throw new IllegalArgumentException("Additional root is not analysis-owned");
 			for(RewireConsumerEdge edge : consumerEdges)
-				if(!ownedKeysByIdentity.contains(edge.parentOccurrence())
-					|| !ownedKeysByIdentity.contains(edge.childOccurrence()))
-					throw new IllegalArgumentException("Consumer edge endpoint is not analysis-owned");
+				if(!candidateKeysByIdentity.contains(edge.parentOccurrence())
+					|| !candidateKeysByIdentity.contains(edge.childOccurrence()))
+					throw new IllegalArgumentException("Consumer edge endpoint is not a candidate carrier");
+			for(RewireTransientForwardEdge edge : transientForwardEdges)
+				if(!candidateKeysByIdentity.contains(edge.writeOccurrence())
+					|| !candidateKeysByIdentity.contains(edge.readOccurrence()))
+					throw new IllegalArgumentException("Transient-forward endpoint is not a candidate carrier");
 
 			Set<Long> semanticCloneIds = new LinkedHashSet<>();
 			for(CloneReceipt receipt : cloneReceipts) {
@@ -186,9 +225,9 @@ public class FederatedPlannerDpRewireTransTable {
 			for(Map.Entry<Long, Long> physical : cloneToOriginal.entrySet()) {
 				if(physical.getKey() == null || physical.getValue() == null)
 					throw new IllegalArgumentException("Physical clone mapping contains a null entry");
-				if(ownedHopIds.contains(physical.getKey()))
+				if(candidateHopIds.contains(physical.getKey()))
 					throw new IllegalArgumentException("Physical clone key is an analysis occurrence");
-				if(!ownedHopIds.contains(physical.getValue()))
+				if(!candidateHopIds.contains(physical.getValue()))
 					throw new IllegalArgumentException("Physical clone original is not analysis-owned");
 			}
 
@@ -197,8 +236,8 @@ public class FederatedPlannerDpRewireTransTable {
 			for(Map.Entry<Hop, HopOccurrenceProjection> projected : occurrenceByCarrier.entrySet()) {
 				Hop carrier = projected.getKey();
 				HopOccurrenceProjection occurrence = projected.getValue();
-				if(carrier == null || occurrence == null || !ownedByIdentity.contains(occurrence))
-					throw new IllegalArgumentException("Carrier projection is not analysis-owned");
+				if(carrier == null || occurrence == null || !candidatesByIdentity.contains(occurrence))
+					throw new IllegalArgumentException("Carrier projection is not candidate-owned");
 				HopOccurrenceProjection previous = exactCarrierProjection.put(carrier, occurrence);
 				if(previous != null && previous != occurrence)
 					throw new IllegalArgumentException("Carrier identity projects to multiple occurrences");
@@ -209,16 +248,18 @@ public class FederatedPlannerDpRewireTransTable {
 					|| !projectedPhysicalCloneIds.add(carrier.getHopID()))
 					throw new IllegalArgumentException("Physical carrier projection differs");
 			}
-			for(HopOccurrenceProjection occurrence : occurrences)
+			for(HopOccurrenceProjection occurrence : candidateOccurrences)
 				if(exactCarrierProjection.get(occurrence.hop()) != occurrence)
 					throw new IllegalArgumentException("Direct analysis carrier projection is missing");
 			if(projectedPhysicalCloneIds.size() != cloneToOriginal.size())
 				throw new IllegalArgumentException("Physical carrier projection multiplicity differs");
 
 			occurrences = List.copyOf(occurrences);
+			candidateOccurrences = List.copyOf(candidateOccurrences);
 			cloneReceipts = List.copyOf(cloneReceipts);
 			additionalRoots = List.copyOf(additionalRoots);
 			consumerEdges = List.copyOf(consumerEdges);
+			transientForwardEdges = List.copyOf(transientForwardEdges);
 			cloneToOriginal = Collections.unmodifiableMap(new LinkedHashMap<>(cloneToOriginal));
 			occurrenceByCarrier = Collections.unmodifiableMap(exactCarrierProjection);
 		}
@@ -226,6 +267,22 @@ public class FederatedPlannerDpRewireTransTable {
 		public HopOccurrenceProjection projectExactCarrier(Hop carrier) {
 			return carrier == null ? null : occurrenceByCarrier.get(carrier);
 		}
+	}
+
+	private static List<HopOccurrenceProjection> candidateOccurrences(PlacementAnalysis analysis) {
+		Map<CompiledHopKey,HopOccurrenceProjection> projections = new IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : analysis.occurrences())
+			projections.put(occurrence.key(), occurrence);
+		List<HopOccurrenceProjection> candidates = new ArrayList<>();
+		Set<CompiledHopKey> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(PlacementAnalysis.CandidateRuleKey key : analysis.candidateRuleDomain().orderedRuleKeys()) {
+			if(!seen.add(key.parentOccurrence())) continue;
+			HopOccurrenceProjection occurrence = projections.get(key.parentOccurrence());
+			if(occurrence == null)
+				throw new IllegalArgumentException("Candidate domain parent has no exact analysis projection");
+			candidates.add(occurrence);
+		}
+		return List.copyOf(candidates);
 	}
 
 	public record RewireReceipt(PlacementAnalysis analysis, DMLProgram program,
@@ -331,13 +388,13 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 
 		List<HopOccurrenceProjection> occurrences = analysis.occurrences();
+		List<HopOccurrenceProjection> candidateOccurrences = candidateOccurrences(analysis);
 		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
 		Map<Long, HopOccurrenceProjection> exactByHopId = new LinkedHashMap<>();
 		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops = new IdentityHashMap<>();
 		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop = new IdentityHashMap<>();
-		for(int i = 0; i < occurrences.size(); i++) {
-			HopOccurrenceProjection occurrence = occurrences.get(i);
-			if(occurrence.normalizedOrdinal() != i)
+		for(HopOccurrenceProjection occurrence : candidateOccurrences) {
+			if(occurrences.get(occurrence.normalizedOrdinal()) != occurrence)
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.REORDERED_EDGE,
 					"REWIRE_OCCURRENCE_ORDER_DIFFERS");
 			if(analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
@@ -356,7 +413,7 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
-		for(HopOccurrenceProjection parent : occurrences) {
+		for(HopOccurrenceProjection parent : candidateOccurrences) {
 			Hop resolvedParent = resolvedRewiredHops.get(parent);
 			if(resolvedParent == null)
 				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
@@ -368,6 +425,20 @@ public class FederatedPlannerDpRewireTransTable {
 					throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 						"REWIRE_CHILD_UNMAPPABLE_AT_" + inputPosition);
 				consumerEdges.add(new RewireConsumerEdge(parent.key(), child.key(), inputPosition));
+			}
+		}
+		List<RewireTransientForwardEdge> transientForwardEdges = new ArrayList<>();
+		for(HopOccurrenceProjection write : candidateOccurrences) {
+			Hop resolvedWrite = resolvedRewiredHops.get(write);
+			if(!isTransientWrite(resolvedWrite)) continue;
+			List<Hop> forwardedReads = rewireTable.get(resolvedWrite.getHopID());
+			if(forwardedReads == null) continue;
+			for(Hop readCarrier : forwardedReads) {
+				HopOccurrenceProjection read = occurrenceByResolvedHop.get(readCarrier);
+				if(read == null || !isTransientRead(readCarrier))
+					throw semanticFailure(analysis, write, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_TRANSIENT_FORWARD_UNMAPPABLE");
+				transientForwardEdges.add(new RewireTransientForwardEdge(write.key(), read.key()));
 			}
 		}
 
@@ -393,7 +464,7 @@ public class FederatedPlannerDpRewireTransTable {
 			rewireTable, hopCommonTable, exactByHopId, analysis);
 		Map<Long, Long> cloneToOriginal = physicalClones.cloneToOriginal();
 		Map<Hop, HopOccurrenceProjection> occurrenceByRootCarrier = new IdentityHashMap<>();
-		for(HopOccurrenceProjection occurrence : occurrences)
+		for(HopOccurrenceProjection occurrence : candidateOccurrences)
 			putExactRootCarrier(occurrenceByRootCarrier, occurrence.hop(), occurrence, analysis);
 		for(Map.Entry<Hop, HopOccurrenceProjection> physical :
 			physicalClones.occurrenceByCloneCarrier().entrySet())
@@ -404,7 +475,7 @@ public class FederatedPlannerDpRewireTransTable {
 		appendExactRoots(unrollContext.getIter1Roots(), occurrenceByRootCarrier, additionalRoots, seenRoots, analysis);
 		appendExactRoots(unrollContext.getAdditionalRoots(), occurrenceByRootCarrier, additionalRoots, seenRoots,
 			analysis);
-		for(HopOccurrenceProjection occurrence : occurrences)
+		for(HopOccurrenceProjection occurrence : candidateOccurrences)
 			if(progRootHopSet.contains(resolvedRewiredHops.get(occurrence)) && seenRoots.add(occurrence))
 				additionalRoots.add(occurrence);
 
@@ -413,7 +484,8 @@ public class FederatedPlannerDpRewireTransTable {
 				"REWIRE_ENUMERATION_SCOPE_MISSING");
 		try {
 			return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
-				cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, occurrenceByRootCarrier,
+				candidateOccurrences, cloneReceipts, additionalRoots, consumerEdges, transientForwardEdges,
+				cloneToOriginal, occurrenceByRootCarrier,
 				enumerationScopeKey);
 		}
 		catch(IllegalArgumentException ex) {
@@ -472,6 +544,14 @@ public class FederatedPlannerDpRewireTransTable {
 			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + cloneMatches.size());
 		return cloneMatches.iterator().next();
+	}
+
+	private static boolean isTransientWrite(Hop hop) {
+		return hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTWRITE;
+	}
+
+	private static boolean isTransientRead(Hop hop) {
+		return hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD;
 	}
 
 	private static PhysicalCloneProjection exactPhysicalCloneMapping(Map<Long, Long> physicalCloneToOriginal,

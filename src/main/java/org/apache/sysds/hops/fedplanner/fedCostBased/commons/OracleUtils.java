@@ -38,6 +38,13 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleNote;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.InvocationEvidence;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.LegacyCharacterizationRequest;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.ProfileEvidence;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
@@ -95,56 +102,17 @@ public final class OracleUtils {
 			}
 		}
 
-		FType logicalFType = null;
-		if (caps != null && caps.foutFType().isPresent()) {
-			logicalFType = caps.foutFType().get();
-		}
-		if (logicalFType == null) {
-			logicalFType = inferFallbackFType(hop, alignedInputFTypes, oracleFacade, rewireTable);
-		}
-		if (FederatedPlannerUtils.isScalarLikeMatrix(hop)) {
-			logicalFType = FType.BROADCAST;
-		}
-		if (FederatedPlannerUtils.isVectorShape(hop)
-				&& !hasFederatedInput(alignedInputFTypes)) {
-			// Local vectors uploaded for FED consumption should default to BROADCAST to avoid
-			// invalid ROW/COL slicing against unrelated anchors.
-			logicalFType = FType.BROADCAST;
-		}
-		logicalFType = preferConcreteTransientReadSourceLayout(hop, alignedInputFTypes, logicalFType);
-		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
-				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
-			logicalFType = FType.BROADCAST;
-		}
+		ProfileEvidence profiles = caps != null && caps.foutFType().isPresent()
+			? new ProfileEvidence(Set.of(), Set.of(), false)
+			: profileEvidence(hop, alignedInputFTypes, oracleFacade, rewireTable);
+		FType logicalFType = PlacementCandidateRuleResolver.projectLegacyCharacterization(
+			new LegacyCharacterizationRequest(
+			candidateInputStates(alignedInputFTypes), copyCapability(caps), profiles,
+			invocationEvidence(hop, rewireTable, 0)));
 
 		return new OracleDecision(alignedInputFTypes, caps, logicalFType);
 	}
 
-	private static FType preferConcreteTransientReadSourceLayout(Hop hop, List<FType> alignedInputFTypes,
-			FType logicalFType) {
-		if (logicalFType != FType.BROADCAST || !(hop instanceof DataOp)
-				|| ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD
-				|| alignedInputFTypes == null || alignedInputFTypes.isEmpty()) {
-			return logicalFType;
-		}
-
-		FType concreteSourceType = null;
-		for (FType inputType : alignedInputFTypes) {
-			if (inputType == null)
-				continue;
-			if (inputType == FType.BROADCAST)
-				return logicalFType;
-			if (concreteSourceType == null)
-				concreteSourceType = inputType;
-			else if (concreteSourceType != inputType)
-				return logicalFType;
-		}
-
-		// Transient reads backed by a concrete mapped federated source should preserve that source
-		// layout instead of degrading to BROADCAST. Runtime refed reuses the source worker mapping,
-		// and forcing BROADCAST here suppresses valid FED/FOUT variants for downstream consumers.
-		return concreteSourceType != null ? concreteSourceType : logicalFType;
-	}
 
 	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,
 			Map<Long, List<Hop>> rewireTable) {
@@ -162,32 +130,10 @@ public final class OracleUtils {
 	 */
 	public static FType adjustCpFoutFTypeForConsumerAxisMismatch(Hop hop, FType logicalFType,
 			Map<Long, List<Hop>> rewireTable, int numWorkers) {
-		if (logicalFType == null)
+		if(logicalFType == null)
 			return null;
-		FType aggBinarySharedAxis = preferAggBinarySharedDimensionFType(hop, rewireTable, numWorkers);
-		if (aggBinarySharedAxis != null)
-			return aggBinarySharedAxis;
-		if (FederatedPlannerUtils.isScalarLikeMatrix(hop))
-			return FType.BROADCAST;
-		if (logicalFType == FType.BROADCAST)
-			return logicalFType;
-		FType vectorAxis = FederatedPlannerUtils.getVectorAxis(hop);
-		if (vectorAxis != null && hasConsumerAxisMismatch(hop, vectorAxis, rewireTable))
-			return FType.BROADCAST;
-		if ((logicalFType == FType.ROW || logicalFType == FType.COL)
-				&& hasConsumerAxisLengthMismatch(hop, logicalFType, rewireTable)) {
-			return FType.BROADCAST;
-		}
-
-		if (numWorkers > 1 && hop != null && hop.dimsKnown()) {
-			long rows = hop.getDim1();
-			long cols = hop.getDim2();
-			if (logicalFType == FType.ROW && rows > 0 && rows < numWorkers)
-				return FType.BROADCAST;
-			if (logicalFType == FType.COL && cols > 0 && cols < numWorkers)
-				return FType.BROADCAST;
-		}
-		return logicalFType;
+		return PlacementCandidateRuleResolver.projectConsumerSafeType(logicalFType,
+			invocationEvidence(hop, rewireTable, numWorkers));
 	}
 
 	private static FType preferAggBinarySharedDimensionFType(Hop hop,
@@ -261,50 +207,47 @@ public final class OracleUtils {
 
 	public static FType inferFallbackFType(Hop hop, List<FType> alignedInputFTypes,
 			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable) {
-		if (hop instanceof FunctionOp) {
-			FunctionOp.FunctionType type = ((FunctionOp) hop).getFunctionType();
-			if (type == FunctionOp.FunctionType.MULTIRETURN_BUILTIN) {
-				return null;
-			}
-		}
-		if (!isMatrixHop(hop)) {
-			return null;
-		}
+		ProfileEvidence profiles = profileEvidence(hop, alignedInputFTypes, oracleFacade, rewireTable);
+		return PlacementCandidateRuleResolver.projectLegacyCharacterization(new LegacyCharacterizationRequest(
+			candidateInputStates(alignedInputFTypes), null,
+			profiles, invocationEvidence(hop, rewireTable, 0)));
+	}
 
-		boolean preferBroadcast = FederatedPlannerUtils.isVectorShape(hop)
-				&& hasFederatedInput(alignedInputFTypes)
-				&& inferFedInitType(hop) == null;
+	private static ProfileEvidence profileEvidence(Hop hop, List<FType> alignedInputFTypes,
+		OracleFacade oracleFacade, Map<Long,List<Hop>> rewireTable) {
+		Set<FType> producer = inferFromProducer(hop, alignedInputFTypes, oracleFacade);
+		ConsumerConstraints consumer = inferFromConsumers(resolveConsumerRefs(hop, rewireTable), oracleFacade);
+		return new ProfileEvidence(producer, consumer.candidates, consumer.constrained);
+	}
 
-		List<ConsumerRef> consumerRefs = resolveConsumerRefs(hop, rewireTable);
-		Set<FType> producerCandidates = inferFromProducer(hop, alignedInputFTypes, oracleFacade);
-		ConsumerConstraints consumerConstraints = inferFromConsumers(consumerRefs, oracleFacade);
-		Set<FType> consumerCandidates = consumerConstraints.candidates;
-		Set<FType> merged = mergeCandidates(producerCandidates, consumerCandidates,
-				consumerConstraints.constrained);
+	private static CandidateCapabilityFact copyCapability(OpCaps caps) {
+		if(caps == null) return null;
+		List<CandidateRuleNote> notes = caps.notes().stream()
+			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
+		return new CandidateCapabilityFact(caps.category(), caps.opcode(), caps.exec(), caps.placement(),
+			caps.foutFType().orElse(null), caps.reason(), caps.detail().orElse(""), notes);
+	}
 
-		if (!merged.isEmpty()) {
-			if (preferBroadcast && merged.contains(FType.BROADCAST))
-				return FType.BROADCAST;
-			return pickPreferredAxis(merged, hop);
-		}
+	private static List<CandidateInputState> candidateInputStates(List<FType> inputTypes) {
+		List<CandidateInputState> states = new ArrayList<>(inputTypes.size());
+		for(FType inputType : inputTypes)
+			states.add(inputType == null ? CandidateInputState.absentLocal() : CandidateInputState.present(inputType));
+		return List.copyOf(states);
+	}
 
-		FederatedPlannerLogger.logWarnMessage(
-				"[FTypeFallback] No rule candidates for hop " + hop.getHopID()
-						+ " (" + hop.getOpString() + ") inputs=" + alignedInputFTypes
-						+ " producer=" + producerCandidates + " consumer=" + consumerCandidates
-						+ " consumerConstrained=" + consumerConstraints.constrained
-						+ " consumers=" + describeConsumerRefs(consumerRefs)
-						+ "; fallback to fed-init/input FTypes.");
-
-		FType fedInitType = inferFedInitType(hop);
-		if (fedInitType != null) {
-			return fedInitType;
-		}
-
-		Set<FType> inputCandidates = collectInputCandidates(alignedInputFTypes);
-		if (preferBroadcast && inputCandidates.contains(FType.BROADCAST))
-			return FType.BROADCAST;
-		return pickPreferredAxis(inputCandidates, hop);
+	private static InvocationEvidence invocationEvidence(Hop hop, Map<Long,List<Hop>> rewireTable,
+		int numWorkers) {
+		boolean multiReturn = hop instanceof FunctionOp
+			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN;
+		FType vectorAxis = FederatedPlannerUtils.getVectorAxis(hop);
+		return new InvocationEvidence(multiReturn, isMatrixHop(hop),
+			FederatedPlannerUtils.isScalarLikeMatrix(hop), FederatedPlannerUtils.isVectorShape(hop),
+			hop == null ? -1 : hop.getDim1(), hop == null ? -1 : hop.getDim2(), inferFedInitType(hop),
+			hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD,
+			vectorAxis != null && hasConsumerAxisMismatch(hop, vectorAxis, rewireTable),
+			hasConsumerAxisLengthMismatch(hop, FType.ROW, rewireTable),
+			hasConsumerAxisLengthMismatch(hop, FType.COL, rewireTable),
+			preferAggBinarySharedDimensionFType(hop, rewireTable, numWorkers), numWorkers);
 	}
 
 	private static Set<FType> inferFromProducer(Hop hop, List<FType> alignedInputFTypes,
@@ -388,24 +331,6 @@ public final class OracleUtils {
 		return scalar;
 	}
 
-	private static Set<FType> mergeCandidates(Set<FType> producer, Set<FType> consumer,
-			boolean consumerConstrained) {
-		if (consumerConstrained) {
-			if (consumer == null || consumer.isEmpty()) {
-				return Collections.emptySet();
-			}
-			if (producer == null || producer.isEmpty()) {
-				return new LinkedHashSet<>(consumer);
-			}
-			Set<FType> merged = new LinkedHashSet<>(producer);
-			merged.retainAll(consumer);
-			return merged;
-		}
-		if (producer == null || producer.isEmpty()) {
-			return (consumer == null) ? Collections.emptySet() : new LinkedHashSet<>(consumer);
-		}
-		return new LinkedHashSet<>(producer);
-	}
 
 	private static boolean hasConsumerAxisMismatch(Hop hop, FType vectorAxis, Map<Long, List<Hop>> rewireTable) {
 		if (hop == null || vectorAxis == null)
@@ -487,60 +412,8 @@ public final class OracleUtils {
 		return false;
 	}
 
-	private static boolean hasFederatedInput(List<FType> alignedInputFTypes) {
-		if (alignedInputFTypes == null || alignedInputFTypes.isEmpty())
-			return false;
-		for (FType fType : alignedInputFTypes) {
-			if (fType == null)
-				continue;
-			if (fType == FType.ROW || fType == FType.COL || fType == FType.PART
-					|| fType == FType.FULL || fType == FType.BROADCAST)
-				return true;
-		}
-		return false;
-	}
 
-	private static Set<FType> collectInputCandidates(List<FType> alignedInputFTypes) {
-		if (alignedInputFTypes == null || alignedInputFTypes.isEmpty()) {
-			return Collections.emptySet();
-		}
-		Set<FType> candidates = new LinkedHashSet<>();
-		for (FType fType : alignedInputFTypes) {
-			if (fType != null) {
-				candidates.add(fType);
-			}
-		}
-		return candidates;
-	}
 
-	private static FType pickPreferredAxis(Set<FType> candidates, Hop hop) {
-		if (candidates == null || candidates.isEmpty()) {
-			return null;
-		}
-		boolean hasRow = candidates.contains(FType.ROW);
-		boolean hasCol = candidates.contains(FType.COL);
-		if (hasRow || hasCol) {
-			long rows = hop != null ? hop.getDim1() : -1;
-			long cols = hop != null ? hop.getDim2() : -1;
-			if (rows == 1 && hasCol) {
-				return FType.COL;
-			}
-			if (cols == 1 && hasRow) {
-				return FType.ROW;
-			}
-			return hasRow ? FType.ROW : FType.COL;
-		}
-		if (candidates.contains(FType.FULL)) {
-			return FType.FULL;
-		}
-		if (candidates.contains(FType.PART)) {
-			return FType.PART;
-		}
-		if (candidates.contains(FType.BROADCAST)) {
-			return FType.BROADCAST;
-		}
-		return null;
-	}
 
 	private static FType inferFedInitType(Hop hop) {
 		if (!(hop instanceof DataOp)) {

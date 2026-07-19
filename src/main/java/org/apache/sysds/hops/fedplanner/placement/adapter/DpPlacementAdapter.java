@@ -14,15 +14,33 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types;
+import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireConsumerEdge;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedResolution;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedResolutionRequest;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.ConsumerEdgeEvidence;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.ConsumerNodeKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.InvocationEvidence;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.TransientForwardEvidence;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Transparent identity receipts for exclusions already produced by the neutral placement graph. */
@@ -103,7 +121,7 @@ public final class DpPlacementAdapter {
 			Objects.requireNonNull(reasonCode, "reasonCode");
 			if(disposition != ConstructionDisposition.AVAILABLE || !"AVAILABLE".equals(reasonCode))
 				throw new IllegalArgumentException("Non-available construction cannot publish a snapshot");
-			if(!ownsKey(context.analysis(), parentOccurrence))
+			if(!ownsCandidateKey(context.analysis(), parentOccurrence))
 				throw new IllegalArgumentException("Parent occurrence is not owned by the analysis");
 			if(rawEntries.size() != promotedEntries.size() || promotedEntries.size() != orderedOracleInputs.size())
 				throw new IllegalArgumentException("Candidate entry counts differ");
@@ -112,7 +130,7 @@ public final class DpPlacementAdapter {
 				CandidateMapEntry promoted = promotedEntries.get(i);
 				if(raw.edgePosition() != i || promoted.edgePosition() != i || raw.occurrence() != promoted.occurrence())
 					throw new IllegalArgumentException("Candidate edge order or identity differs");
-				if(!ownsKey(context.analysis(), raw.occurrence()))
+				if(!ownsCandidateKey(context.analysis(), raw.occurrence()))
 					throw new IllegalArgumentException("Candidate occurrence is not owned by the analysis");
 				if(promoted.oracleInputState() != orderedOracleInputs.get(i))
 					throw new IllegalArgumentException("Ordered oracle projection differs");
@@ -121,11 +139,18 @@ public final class DpPlacementAdapter {
 	}
 
 	public record PreSelectionSemanticBlock(NeutralEnumerationContext context,
-		List<CandidateOccurrenceSnapshot> candidateSnapshots, int rawCandidateCount,
+		List<CandidateOccurrenceSnapshot> candidateSnapshots,
+		List<CandidateDecisionReceipt> candidateDecisionReceipts, int rawCandidateCount,
 		int capturedCandidateCount, boolean zeroDifference) {
+		public PreSelectionSemanticBlock(NeutralEnumerationContext context,
+			List<CandidateOccurrenceSnapshot> candidateSnapshots, int rawCandidateCount,
+			int capturedCandidateCount, boolean zeroDifference) {
+			this(context, candidateSnapshots, List.of(), rawCandidateCount, capturedCandidateCount, zeroDifference);
+		}
 		public PreSelectionSemanticBlock {
 			Objects.requireNonNull(context, "context");
 			candidateSnapshots = List.copyOf(candidateSnapshots);
+			candidateDecisionReceipts = List.copyOf(candidateDecisionReceipts);
 			if(rawCandidateCount < 0 || capturedCandidateCount < 0)
 				throw new IllegalArgumentException("Candidate counts must be non-negative");
 			if(rawCandidateCount != capturedCandidateCount || capturedCandidateCount != candidateSnapshots.size()
@@ -134,6 +159,17 @@ public final class DpPlacementAdapter {
 			for(CandidateOccurrenceSnapshot snapshot : candidateSnapshots)
 				if(snapshot.context() != context)
 					throw new IllegalArgumentException("Candidate snapshot belongs to a different context");
+			if(!candidateDecisionReceipts.isEmpty()) {
+				if(candidateDecisionReceipts.size() != candidateSnapshots.size())
+					throw new IllegalArgumentException("Candidate decision receipt count differs");
+				for(int i = 0; i < candidateDecisionReceipts.size(); i++) {
+					CandidateDecisionReceipt receipt = candidateDecisionReceipts.get(i);
+					if(receipt.context() != context || receipt.candidateSnapshot() != candidateSnapshots.get(i)
+						|| receipt.variantOrdinal() != i
+						|| !receipt.orderedOracleInputs().equals(candidateSnapshots.get(i).orderedOracleInputs()))
+						throw new IllegalArgumentException("Candidate decision receipt order or identity differs");
+				}
+			}
 		}
 	}
 
@@ -165,6 +201,28 @@ public final class DpPlacementAdapter {
 				if(effective != promoted.rawFType())
 					throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
 			}
+		}
+	}
+
+	public record CandidateDecisionReceipt(NeutralEnumerationContext context,
+		CandidateOccurrenceSnapshot candidateSnapshot, long variantOrdinal,
+		List<OracleInputState> orderedOracleInputs, ExecType nativeExec,
+		FederatedOutput nativeOutput, FType nativeFoutFType, FType logicalFType,
+		ReasonCode reasonCode, ConstructionDisposition disposition,
+		boolean allowCPLOUT, boolean allowCPFOUT, boolean allowFEDLOUT, boolean allowFEDFOUT,
+		CandidateCapabilityFact capabilityFact) {
+		public CandidateDecisionReceipt {
+			Objects.requireNonNull(context, "context");
+			Objects.requireNonNull(candidateSnapshot, "candidateSnapshot");
+			orderedOracleInputs = List.copyOf(orderedOracleInputs);
+			Objects.requireNonNull(nativeExec, "nativeExec");
+			Objects.requireNonNull(nativeOutput, "nativeOutput");
+			Objects.requireNonNull(reasonCode, "reasonCode");
+			Objects.requireNonNull(disposition, "disposition");
+			Objects.requireNonNull(capabilityFact, "capabilityFact");
+			if(context != candidateSnapshot.context() || variantOrdinal < 0
+				|| !orderedOracleInputs.equals(candidateSnapshot.orderedOracleInputs()))
+				throw new IllegalArgumentException("Candidate decision receipt identity or order differs");
 		}
 	}
 
@@ -202,7 +260,8 @@ public final class DpPlacementAdapter {
 		Objects.requireNonNull(collectedFTypes, "collectedFTypes");
 		Objects.requireNonNull(fedInputTypeMap, "fedInputTypeMap");
 		Objects.requireNonNull(memo, "memo");
-		if(analysis.occurrences().stream().noneMatch(candidate -> candidate == parent))
+		if(analysis.occurrences().stream().noneMatch(candidate -> candidate == parent)
+			|| !analysis.candidateRuleDomain().containsExactParent(parent.key()))
 			throw failure(analysis, parent.key(), ConstructionDisposition.FOREIGN_CONTEXT, "FOREIGN_CONTEXT");
 		if(planChilds.size() != collectedHops.size() || collectedHops.size() != collectedFTypes.size())
 			throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
@@ -215,7 +274,8 @@ public final class DpPlacementAdapter {
 			if(edge.getLeft() != hop.getHopID())
 				throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
 			List<HopOccurrenceProjection> owned = analysis.occurrences().stream()
-				.filter(candidate -> candidate.hop() == hop).toList();
+				.filter(candidate -> candidate.hop() == hop
+					&& analysis.candidateRuleDomain().containsExactParent(candidate.key())).toList();
 			if(owned.isEmpty())
 				throw failure(analysis, parent.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					"UNMAPPABLE_OCCURRENCE");
@@ -284,6 +344,70 @@ public final class DpPlacementAdapter {
 		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
 	}
 
+	public static CandidateDecisionReceipt resolveCandidateDecision(NeutralEnumerationContext context,
+		NormalizedCandidateInputs normalizedCandidateInputs, long variantOrdinal) {
+		Objects.requireNonNull(context, "context");
+		Objects.requireNonNull(normalizedCandidateInputs, "normalizedCandidateInputs");
+		CandidateOccurrenceSnapshot snapshot = normalizedCandidateInputs.snapshot();
+		if(snapshot.context() != context)
+			throw failure(context.analysis(), snapshot.parentOccurrence(), ConstructionDisposition.FOREIGN_CONTEXT,
+				"CANDIDATE_CONTEXT_FOREIGN");
+		List<CandidateInputState> orderedInputs = new ArrayList<>(snapshot.orderedOracleInputs().size());
+		for(OracleInputState input : snapshot.orderedOracleInputs())
+			orderedInputs.add(input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
+				: CandidateInputState.present(FType.valueOf(input.name())));
+
+		List<ConsumerEdgeEvidence> consumerEdges = new ArrayList<>();
+		for(int i = 0; i < context.rewireSnapshot().consumerEdges().size(); i++) {
+			RewireConsumerEdge edge = context.rewireSnapshot().consumerEdges().get(i);
+			consumerEdges.add(new ConsumerEdgeEvidence(i, edge.parentOccurrence(), edge.childOccurrence(),
+				edge.inputPosition(), consumerKind(context.analysis(), edge.parentOccurrence())));
+		}
+		List<TransientForwardEvidence> forwards = new ArrayList<>();
+		for(int i = 0; i < context.rewireSnapshot().transientForwardEdges().size(); i++) {
+			RewireTransientForwardEdge edge = context.rewireSnapshot().transientForwardEdges().get(i);
+			forwards.add(new TransientForwardEvidence(i, edge.writeOccurrence(), edge.readOccurrence()));
+		}
+		Hop parentHop = context.analysis().hop(snapshot.parentOccurrence()).orElseThrow(() ->
+			failure(context.analysis(), snapshot.parentOccurrence(), ConstructionDisposition.STALE_CONTEXT,
+				"CANDIDATE_PARENT_STALE"));
+		InvocationEvidence projection = invocationEvidence(parentHop);
+		CapturedResolution resolved = PlacementCandidateRuleResolver.resolveCaptured(new CapturedResolutionRequest(
+			context.analysis(), context.analysisFingerprint(), snapshot.parentOccurrence(), orderedInputs,
+			new CapturedInvocationEvidence(projection, consumerEdges, forwards)));
+		CandidateCapabilityFact caps = resolved.fact().capability();
+		boolean cp = caps.nativeExec() == ExecType.CP;
+		boolean fed = caps.nativeExec() == ExecType.FED;
+		boolean lout = caps.nativeOutput() == FederatedOutput.LOUT;
+		boolean fout = caps.nativeOutput() == FederatedOutput.FOUT;
+		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
+			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
+			caps.reasonCode(), ConstructionDisposition.AVAILABLE, cp && lout, cp && fout, fed && lout, fed && fout,
+			caps);
+	}
+
+	private static InvocationEvidence invocationEvidence(Hop hop) {
+		boolean multiReturn = hop instanceof FunctionOp
+			&& ((FunctionOp)hop).getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN;
+		FType fedInitType = null;
+		if(hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.FEDERATED)
+			fedInitType = FederatedPlannerUtils.deriveFedInitFType((DataOp)hop);
+		return new InvocationEvidence(multiReturn, hop.getDataType() != null && hop.getDataType().isMatrix(),
+			FederatedPlannerUtils.isScalarLikeMatrix(hop), FederatedPlannerUtils.isVectorShape(hop),
+			hop.getDim1(), hop.getDim2(), fedInitType,
+			hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD,
+			false, false, false, null, 0);
+	}
+
+	private static ConsumerNodeKind consumerKind(PlacementAnalysis analysis, CompiledHopKey key) {
+		Hop hop = analysis.hop(key).orElseThrow(() -> new IllegalArgumentException("Consumer occurrence is stale"));
+		if(hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTWRITE)
+			return ConsumerNodeKind.TRANSIENT_WRITE;
+		if(hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD)
+			return ConsumerNodeKind.TRANSIENT_READ;
+		return ConsumerNodeKind.NORMAL;
+	}
+
 	private static void validateContextCandidateInputs(NeutralEnumerationContext context,
 		HopOccurrenceProjection parent, List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
 		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap, FederatedPlannerDpMemoTable memo) {
@@ -294,7 +418,8 @@ public final class DpPlacementAdapter {
 		Objects.requireNonNull(fedInputTypeMap, "fedInputTypeMap");
 		Objects.requireNonNull(memo, "memo");
 		PlacementAnalysis analysis = context.analysis();
-		if(analysis.occurrences().stream().noneMatch(candidate -> candidate == parent))
+		if(analysis.occurrences().stream().noneMatch(candidate -> candidate == parent)
+			|| !analysis.candidateRuleDomain().containsExactParent(parent.key()))
 			throw failure(analysis, parent.key(), ConstructionDisposition.FOREIGN_CONTEXT, "FOREIGN_CONTEXT");
 		if(planChilds.size() != collectedHops.size() || collectedHops.size() != collectedFTypes.size())
 			throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
@@ -338,8 +463,8 @@ public final class DpPlacementAdapter {
 		return type == null ? null : OracleInputState.valueOf(type.name());
 	}
 
-	private static boolean ownsKey(PlacementAnalysis analysis, CompiledHopKey key) {
-		return analysis.occurrences().stream().anyMatch(candidate -> candidate.key() == key);
+	private static boolean ownsCandidateKey(PlacementAnalysis analysis, CompiledHopKey key) {
+		return analysis.candidateRuleDomain().containsExactParent(key);
 	}
 
 	private static DpSemanticConstructionException failure(PlacementAnalysis analysis,

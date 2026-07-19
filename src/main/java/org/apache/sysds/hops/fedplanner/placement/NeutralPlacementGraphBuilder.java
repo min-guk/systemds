@@ -48,10 +48,21 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleNote;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade.DecisionEvidence;
@@ -142,6 +153,10 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
 		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
 		Map<Hop,NodeShapeFact> factsByHop = new IdentityHashMap<>();
+		List<CandidateRuleKey> candidateRuleDomainKeys = new ArrayList<>();
+		List<CandidateRuleFact> candidateRuleFacts = new ArrayList<>();
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys = new ArrayList<>();
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts = new ArrayList<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			Hop hop = occurrence.hop();
@@ -176,8 +191,10 @@ public final class NeutralPlacementGraphBuilder {
 					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
 				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
 			}
+			captureConsumerProfileFacts(hop, key, candidateConsumerDomainKeys, candidateConsumerProfileFacts);
 			Node node = buildNode(hop, key, value, anchors, shapeFact,
-				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind));
+				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind),
+				candidateRuleDomainKeys, candidateRuleFacts);
 			nodes.add(node);
 			nodesByHop.put(hop, node);
 		}
@@ -229,7 +246,8 @@ public final class NeutralPlacementGraphBuilder {
 		String analysisFingerprint = analysisFingerprint(graph, projections);
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts,
-			analysisFingerprint, heuristicPolicyFacts);
+			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
@@ -602,7 +620,8 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
-		NodeShapeFact shape, List<List<FType>> inputDomains) {
+		NodeShapeFact shape, List<List<FType>> inputDomains, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
 		PlacementState cp = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
@@ -613,6 +632,7 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		for(List<FType> inputs : inputCombinations(inputDomains)) {
+			candidateRuleDomainKeys.add(new CandidateRuleKey(key, candidateInputStates(inputs)));
 			OpCaps caps;
 			DecisionEvidence evidence;
 			boolean shapeDependent;
@@ -620,8 +640,10 @@ public final class NeutralPlacementGraphBuilder {
 				evidence = oracle.decideWithEvidence(hop, inputs, null);
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
+				candidateRuleFacts.add(candidateRuleFact(hop, key, inputs, caps, evidence));
 			}
 			catch(Throwable t) {
+				candidateRuleFacts.add(candidateRuleFailureFact(key, inputs, t));
 				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
 				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RULE_ERROR,
 					"RULE_ERROR:" + t.getClass().getSimpleName()));
@@ -660,6 +682,105 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
+	}
+
+	private void captureConsumerProfileFacts(Hop consumer, CompiledHopKey consumerKey,
+		List<CandidateConsumerProfileKey> domainKeys, List<CandidateConsumerProfileFact> facts) {
+		for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
+			CandidateConsumerProfileKey key = new CandidateConsumerProfileKey(consumerKey, inputPosition);
+			domainKeys.add(key);
+			List<FType> allowed = new ArrayList<>();
+			String failure = "";
+			for(FType candidate : PlacementCandidateRuleResolver.matrixFTypeCandidates()) {
+				try {
+					FTypeProfile profile = oracle.inferProfile(consumer,
+						consumerProfileInputDomains(consumer, inputPosition, candidate), null);
+					if(profile != null && profile.outputs() != null && !profile.outputs().isEmpty())
+						allowed.add(candidate);
+				}
+				catch(Throwable t) {
+					failure = "PROFILE_ERROR:" + t.getClass().getSimpleName();
+					allowed.clear();
+					break;
+				}
+			}
+			facts.add(new CandidateConsumerProfileFact(key, failure.isEmpty()
+				? CandidateEvaluationStatus.AVAILABLE : CandidateEvaluationStatus.PROFILE_ERROR,
+				allowed, failure));
+		}
+	}
+
+	private static List<List<FType>> consumerProfileInputDomains(Hop consumer, int targetPosition,
+		FType targetCandidate) {
+		List<List<FType>> domains = new ArrayList<>(consumer.getInput().size());
+		for(int i = 0; i < consumer.getInput().size(); i++) {
+			Hop input = consumer.getInput(i);
+			if(i == targetPosition)
+				domains.add(List.of(targetCandidate));
+			else if(input != null && input.getDataType() != null && input.getDataType().isMatrix())
+				domains.add(PlacementCandidateRuleResolver.matrixFTypeCandidates());
+			else
+				domains.add(Collections.singletonList(null));
+		}
+		return Collections.unmodifiableList(domains);
+	}
+
+	private CandidateRuleFact candidateRuleFact(Hop hop, CompiledHopKey key, List<FType> inputs,
+		OpCaps caps, DecisionEvidence evidence) {
+		List<CandidateRuleNote> notes = caps.notes().stream()
+			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
+		CandidateCapabilityFact capability = new CandidateCapabilityFact(caps.category(), caps.opcode(), caps.exec(),
+			caps.placement(), caps.foutFType().orElse(null), caps.reason(), caps.detail().orElse(""), notes);
+		var proof = evidence.shapeProof();
+		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(proof.consultedFacts(),
+			new ArrayList<>(proof.requiredFacts()), new ArrayList<>(proof.missingRequiredFacts()));
+		if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR) {
+			String failure = "RULE_ERROR" + caps.detail().map(detail -> ":" + detail).orElse("");
+			return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
+				CandidateEvaluationStatus.RULE_ERROR, capability, shapeProof,
+				new CandidateProfileFact(List.of(), failure), failure);
+		}
+		CandidateProfileFact profile;
+		try {
+			FTypeProfile inferred = oracle.inferProfile(hop, profileInputDomains(hop, inputs), null);
+			profile = new CandidateProfileFact(inferred == null ? List.of() : inferred.outputs(), "");
+		}
+		catch(Throwable t) {
+			profile = new CandidateProfileFact(List.of(), "PROFILE_ERROR:" + t.getClass().getSimpleName());
+		}
+		CandidateEvaluationStatus status = profile.available() ? CandidateEvaluationStatus.AVAILABLE
+			: CandidateEvaluationStatus.PROFILE_ERROR;
+		return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
+			status, capability, shapeProof, profile, profile.evaluationFailure());
+	}
+
+	private static CandidateRuleFact candidateRuleFailureFact(CompiledHopKey key, List<FType> inputs, Throwable t) {
+		String failure = "RULE_ERROR:" + t.getClass().getSimpleName();
+		return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
+			CandidateEvaluationStatus.RULE_ERROR, null,
+			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
+			new CandidateProfileFact(List.of(), failure), failure);
+	}
+
+	private static List<List<FType>> profileInputDomains(Hop hop, List<FType> inputs) {
+		List<List<FType>> domains = new ArrayList<>(hop.getInput().size());
+		for(int i = 0; i < hop.getInput().size(); i++) {
+			FType known = i < inputs.size() ? inputs.get(i) : null;
+			if(known != null)
+				domains.add(List.of(known));
+			else if(hop.getInput(i).getDataType() != null && hop.getInput(i).getDataType().isMatrix())
+				domains.add(PlacementCandidateRuleResolver.matrixFTypeCandidates());
+			else
+				domains.add(Collections.singletonList(null));
+		}
+		return Collections.unmodifiableList(domains);
+	}
+
+	private static List<CandidateInputState> candidateInputStates(List<FType> inputs) {
+		List<CandidateInputState> states = new ArrayList<>(inputs.size());
+		for(FType input : inputs)
+			states.add(input == null ? CandidateInputState.absentLocal() : CandidateInputState.present(input));
+		return Collections.unmodifiableList(states);
 	}
 
 	private static List<DurableAnchorKey> durableAnchor(Hop hop) {
