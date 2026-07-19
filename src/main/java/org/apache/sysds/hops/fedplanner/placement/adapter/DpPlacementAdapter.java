@@ -269,12 +269,11 @@ public final class DpPlacementAdapter {
 				if(collectedType != null && memoType != null && collectedType != memoType)
 					throw failure(context.analysis(), parent.key(),
 						ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA, "FTYPE_MISMATCH");
-				effectiveType = memoType != null ? memoType : collectedType;
+				effectiveType = memoType;
 				if(effectiveType != null)
 					effectiveMap.put(hop.getHopID(), effectiveType);
 			}
-			if(effectiveType != null)
-				effectiveCollectedFTypes.set(i, effectiveType);
+			effectiveCollectedFTypes.set(i, effectiveType);
 			CandidateMapEntry promoted = project(occurrence.key(), i, effectiveType != null, effectiveType);
 			promotedEntries.add(promoted);
 			orderedOracleInputs.add(promoted.oracleInputState());
