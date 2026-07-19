@@ -412,14 +412,6 @@ public class FederatedPlannerDpRewireTransTable {
 		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
 	}
 
-	private static DpSemanticConstructionException semanticFailureWithCause(PlacementAnalysis analysis,
-		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode,
-		IllegalArgumentException cause) {
-		DpSemanticConstructionException failure = semanticFailure(analysis, parent, disposition, reasonCode);
-		failure.initCause(cause);
-		return failure;
-	}
-
 	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
 		if(analysis.occurrences().isEmpty())
 			throw new IllegalStateException("Placement analysis has no occurrence for semantic failure evidence");
