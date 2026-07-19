@@ -27,6 +27,9 @@ import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceLifecycleCaptu
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.PlacementOwnedAnchorFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.MapEntryState;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.OracleInputState;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -122,6 +125,46 @@ public class AnchorProvenanceFullSpaceRedContractTest {
 			AnchorProvenanceObserverFactory.observer().acceptsFullSpaceFact(fact.withoutWorkerRangeMetadata()));
 		Assert.assertFalse("G014_FULLSPACE_REJECT_MUTABLE_CACHE_ONLY",
 			AnchorProvenanceObserverFactory.observer().acceptsFullSpaceFact(fact.fromMutableCpfoutCacheOnly()));
+	}
+
+	@Test
+	public void sliceBPreservesPresentNullAsASeparateRawMapFact() {
+		Assert.assertEquals("G014_SLICE_B_MAP_ENTRY_DOMAIN", List.of(
+			MapEntryState.ABSENT_LOCAL,
+			MapEntryState.PRESENT_NULL,
+			MapEntryState.PRESENT_ROW,
+			MapEntryState.PRESENT_COL,
+			MapEntryState.PRESENT_FULL,
+			MapEntryState.PRESENT_BROADCAST,
+			MapEntryState.PRESENT_PART,
+			MapEntryState.PRESENT_OTHER), List.of(MapEntryState.values()));
+		Assert.assertEquals("G014_SLICE_B_ORACLE_INPUT_DOMAIN", List.of(
+			OracleInputState.ABSENT_LOCAL,
+			OracleInputState.ROW,
+			OracleInputState.COL,
+			OracleInputState.FULL,
+			OracleInputState.BROADCAST,
+			OracleInputState.PART,
+			OracleInputState.OTHER), List.of(OracleInputState.values()));
+		Assert.assertFalse("G014_SLICE_B_PRESENT_NULL_NOT_ORACLE_ABSENCE",
+			java.util.Arrays.stream(OracleInputState.values()).anyMatch(state -> state.name().equals("PRESENT_NULL")));
+	}
+
+	@Test
+	public void sliceBConstructionDispositionsCannotAuthorizeCandidateSkipping() {
+		Assert.assertEquals("G014_SLICE_B_CONSTRUCTION_DISPOSITION_DOMAIN", List.of(
+			ConstructionDisposition.AVAILABLE,
+			ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE,
+			ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA,
+			ConstructionDisposition.FOREIGN_CONTEXT,
+			ConstructionDisposition.STALE_CONTEXT,
+			ConstructionDisposition.DUPLICATE_OCCURRENCE,
+			ConstructionDisposition.REORDERED_EDGE,
+			ConstructionDisposition.UNMAPPABLE_OCCURRENCE),
+			List.of(ConstructionDisposition.values()));
+		Assert.assertFalse("G014_SLICE_B_NO_SKIP_DISPOSITION",
+			java.util.Arrays.stream(ConstructionDisposition.values())
+				.anyMatch(state -> state.name().contains("SKIP") || state.name().contains("SHRINK")));
 	}
 
 	private static PlacementAnalysis analysis() {
