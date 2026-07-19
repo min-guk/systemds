@@ -306,24 +306,28 @@ public class FederatedPlannerDpRewireTransTable {
 					"REWIRE_OCCURRENCE_DETACHED");
 			if(exactByHop.put(occurrence.hop(), occurrence) != null
 				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
-				throw new IllegalArgumentException("Production rewire occurrence is duplicated or detached");
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_OCCURRENCE_DUPLICATED");
 			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
-				unrollContext.getCloneToOrig());
+				unrollContext.getCloneToOrig(), analysis);
 			resolvedRewiredHops.put(occurrence, resolved);
 			if(occurrenceByResolvedHop.put(resolved, occurrence) != null)
-				throw new IllegalArgumentException("Concrete production rewire carrier maps to multiple occurrences");
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_CARRIER_OCCURRENCE_DUPLICATED");
 		}
 
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
 		for(HopOccurrenceProjection parent : occurrences) {
 			Hop resolvedParent = resolvedRewiredHops.get(parent);
 			if(resolvedParent == null)
-				throw new IllegalArgumentException("Production rewire parent has no exact resolved carrier");
+				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_PARENT_UNMAPPABLE");
 			List<Hop> inputs = resolvedParent.getInput();
 			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
 				HopOccurrenceProjection child = occurrenceByResolvedHop.get(inputs.get(inputPosition));
 				if(child == null)
-					throw new IllegalArgumentException("Production rewire child has no exact resolved occurrence");
+					throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_CHILD_UNMAPPABLE_AT_" + inputPosition);
 				consumerEdges.add(new RewireConsumerEdge(parent.key(), child.key(), inputPosition));
 			}
 		}
@@ -379,7 +383,7 @@ public class FederatedPlannerDpRewireTransTable {
 	private static Hop resolveExactRewiredHop(HopOccurrenceProjection occurrence,
 		Map<Long, List<Hop>> rewireTable,
 		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-		Map<Long, Long> cloneToOriginal) {
+		Map<Long, Long> cloneToOriginal, PlacementAnalysis analysis) {
 		Set<Hop> carrierHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
 			if(common != null && common.getHopRef() != null)
@@ -398,8 +402,28 @@ public class FederatedPlannerDpRewireTransTable {
 				occurrenceMatches.add(candidate);
 		}
 		if(occurrenceMatches.size() != 1)
-			throw new IllegalArgumentException("Production rewire occurrence must resolve exactly one concrete carrier");
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + occurrenceMatches.size());
 		return occurrenceMatches.iterator().next();
+	}
+
+	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode) {
+		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
+	}
+
+	private static DpSemanticConstructionException semanticFailureWithCause(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode,
+		IllegalArgumentException cause) {
+		DpSemanticConstructionException failure = semanticFailure(analysis, parent, disposition, reasonCode);
+		failure.initCause(cause);
+		return failure;
+	}
+
+	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
+		if(analysis.occurrences().isEmpty())
+			throw new IllegalStateException("Placement analysis has no occurrence for semantic failure evidence");
+		return analysis.occurrences().get(0);
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
