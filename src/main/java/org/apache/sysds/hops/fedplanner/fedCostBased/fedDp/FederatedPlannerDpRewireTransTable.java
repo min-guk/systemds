@@ -283,7 +283,13 @@ public class FederatedPlannerDpRewireTransTable {
 		Objects.requireNonNull(parentChildUploadHints, "parentChildUploadHints");
 		Objects.requireNonNull(progRootHopSet, "progRootHopSet");
 		Objects.requireNonNull(unrollContext, "unrollContext");
-		analysis.assertCanonicalProgramAuthority(program);
+		try {
+			analysis.assertCanonicalProgramAuthority(program);
+		}
+		catch(IllegalArgumentException ex) {
+			throw semanticFailure(analysis, failureAnchor(analysis), ConstructionDisposition.FOREIGN_CONTEXT,
+				"REWIRE_PROGRAM_FOREIGN");
+		}
 
 		List<HopOccurrenceProjection> occurrences = analysis.occurrences();
 		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
@@ -329,7 +335,8 @@ public class FederatedPlannerDpRewireTransTable {
 		for(Map.Entry<Long, Set<Long>> entry : parentChildUploadHints.entrySet()) {
 			HopOccurrenceProjection parent = exactByHopId.get(entry.getKey());
 			if(parent == null)
-				throw new IllegalArgumentException("Production upload-hint parent is not analysis-owned");
+				throw semanticFailure(analysis, failureAnchor(analysis), ConstructionDisposition.FOREIGN_CONTEXT,
+					"REWIRE_UPLOAD_HINT_PARENT_FOREIGN");
 			if(entry.getValue() == null)
 				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					"REWIRE_UPLOAD_HINTS_MISSING");
@@ -345,14 +352,17 @@ public class FederatedPlannerDpRewireTransTable {
 			cloneToOriginal.put(receipt.cloneOccurrence().hop().getHopID(),
 				receipt.originOccurrence().hop().getHopID());
 		if(!cloneToOriginal.equals(unrollContext.getCloneToOrig()))
-			throw new IllegalArgumentException("Production clone mapping differs from the analysis-owned clone universe");
+			throw semanticFailure(analysis, cloneReceipts.isEmpty() ? failureAnchor(analysis)
+				: cloneReceipts.get(0).cloneOccurrence(), ConstructionDisposition.STALE_CONTEXT,
+				"REWIRE_CLONE_MAPPING_DIFFERS");
 
 		List<HopOccurrenceProjection> additionalRoots = new ArrayList<>();
 		Set<HopOccurrenceProjection> seenRoots = Collections.newSetFromMap(new IdentityHashMap<>());
-		appendExactRoots(unrollContext.getIter1Roots(), exactByHop, additionalRoots, seenRoots);
-		appendExactRoots(unrollContext.getAdditionalRoots(), exactByHop, additionalRoots, seenRoots);
+		appendExactRoots(unrollContext.getIter1Roots(), occurrenceByResolvedHop, additionalRoots, seenRoots, analysis);
+		appendExactRoots(unrollContext.getAdditionalRoots(), occurrenceByResolvedHop, additionalRoots, seenRoots,
+			analysis);
 		for(HopOccurrenceProjection occurrence : occurrences)
-			if(progRootHopSet.contains(occurrence.hop()) && seenRoots.add(occurrence))
+			if(progRootHopSet.contains(resolvedRewiredHops.get(occurrence)) && seenRoots.add(occurrence))
 				additionalRoots.add(occurrence);
 
 		return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
@@ -391,15 +401,22 @@ public class FederatedPlannerDpRewireTransTable {
 		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
 	}
 
+	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
+		if(analysis.occurrences().isEmpty())
+			throw new IllegalStateException("Placement analysis has no occurrence for semantic failure evidence");
+		return analysis.occurrences().get(0);
+	}
+
 	private static void appendExactRoots(List<Hop> roots,
-		Map<Hop, HopOccurrenceProjection> exactByHop, List<HopOccurrenceProjection> target,
-		Set<HopOccurrenceProjection> seen) {
+		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop, List<HopOccurrenceProjection> target,
+		Set<HopOccurrenceProjection> seen, PlacementAnalysis analysis) {
 		for(Hop root : roots) {
 			if(root == null)
 				continue;
-			HopOccurrenceProjection occurrence = exactByHop.get(root);
+			HopOccurrenceProjection occurrence = occurrenceByResolvedHop.get(root);
 			if(occurrence == null)
-				throw new IllegalArgumentException("Production additional root is not an exact analysis occurrence");
+				throw semanticFailure(analysis, failureAnchor(analysis),
+					ConstructionDisposition.UNMAPPABLE_OCCURRENCE, "REWIRE_ADDITIONAL_ROOT_UNMAPPABLE");
 			if(seen.add(occurrence))
 				target.add(occurrence);
 		}
@@ -410,20 +427,38 @@ public class FederatedPlannerDpRewireTransTable {
 			.filter(node -> node.kind() == NodeKind.CLONE).toList();
 		List<CloneReceipt> receipts = new ArrayList<>(clones.size());
 		for(Node clone : clones) {
+			HopOccurrenceProjection cloneOccurrence;
+			try {
+				cloneOccurrence = exactOccurrence(analysis, clone);
+			}
+			catch(IllegalArgumentException ex) {
+				throw semanticFailure(analysis, failureAnchor(analysis),
+					ConstructionDisposition.UNMAPPABLE_OCCURRENCE, "REWIRE_CLONE_OCCURRENCE_UNMAPPABLE");
+			}
 			List<Constraint> associations = analysis.graph().constraints().stream()
 				.filter(candidate -> candidate.kind() == ConstraintKind.SAME_ORIGIN)
 				.filter(candidate -> candidate.right().equals(clone.key())).toList();
 			if(associations.size() != 1)
-				throw new IllegalArgumentException("Production clone SAME_ORIGIN multiplicity differs");
+				throw semanticFailure(analysis, cloneOccurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_CLONE_SAME_ORIGIN_MULTIPLICITY_" + associations.size());
 			Constraint association = associations.get(0);
 			Node origin = analysis.graph().node(association.left()).orElse(null);
 			List<Exclusion> exclusions = clone.exclusions().stream()
 				.filter(candidate -> candidate.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).toList();
 			if(origin == null || origin.kind() == NodeKind.CLONE || exclusions.size() != 1
 				|| !origin.key().canonicalSourceOrigin().equals(clone.key().canonicalSourceOrigin()))
-				throw new IllegalArgumentException("Production clone ownership or recompile exclusion differs");
-			receipts.add(new CloneReceipt(exactOccurrence(analysis, origin), exactOccurrence(analysis, clone),
-				origin, clone, association, exclusions.get(0)));
+				throw semanticFailure(analysis, cloneOccurrence, ConstructionDisposition.STALE_CONTEXT,
+					"REWIRE_CLONE_OWNERSHIP_OR_EXCLUSION_DIFFERS");
+			HopOccurrenceProjection originOccurrence;
+			try {
+				originOccurrence = exactOccurrence(analysis, origin);
+			}
+			catch(IllegalArgumentException ex) {
+				throw semanticFailure(analysis, cloneOccurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_ORIGIN_OCCURRENCE_UNMAPPABLE");
+			}
+			receipts.add(new CloneReceipt(originOccurrence, cloneOccurrence, origin, clone, association,
+				exclusions.get(0)));
 		}
 		return List.copyOf(receipts);
 	}
