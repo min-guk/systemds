@@ -31,6 +31,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
@@ -70,6 +71,24 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -105,6 +124,43 @@ public class FederatedPlannerDpCostEnumerator {
 	// This is treated as a global legality constraint for planner/runtime consistency,
 	// not a workload-specific pruning heuristic.
 	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
+	private static final ThreadLocal<EnumerationCapture> ACTIVE_CAPTURE = new ThreadLocal<>();
+
+	public record DpEnumerationResult(FederatedPlannerDpMemoTable.FedPlan optimalPlan,
+		RewireOccurrenceSnapshot rewireSnapshot, PreSelectionSemanticBlock semanticBlock) {
+		public DpEnumerationResult {
+			Objects.requireNonNull(optimalPlan, "optimalPlan");
+			Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
+			Objects.requireNonNull(semanticBlock, "semanticBlock");
+			if(semanticBlock.context().rewireSnapshot() != rewireSnapshot)
+				throw new IllegalArgumentException("Semantic block does not retain the exact rewire snapshot");
+		}
+	}
+
+	public record CandidateNormalizationFixture(HopOccurrenceProjection parentOccurrence,
+		List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
+		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap) {
+		public CandidateNormalizationFixture {
+			Objects.requireNonNull(parentOccurrence, "parentOccurrence");
+			planChilds = List.copyOf(planChilds);
+			collectedHops = List.copyOf(collectedHops);
+			collectedFTypes = List.copyOf(collectedFTypes);
+			fedInputTypeMap = Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap));
+		}
+	}
+
+	public interface DpEnumerationObserver {
+		default void constructionFailed(DpSemanticConstructionException failure) { }
+		default void resultPublished(DpEnumerationResult result) { }
+		default void oracleEvaluated() { }
+		default void costEvaluated() { }
+		default void placementDecided() { }
+		default void candidateConstructed() { }
+		default void repairAttempted() { }
+		default void fallbackAttempted() { }
+	}
+
+	private static final DpEnumerationObserver NO_OP_OBSERVER = new DpEnumerationObserver() { };
 	/**
 	 * Enumerates the entire DML program to generate federated execution plans.
 	 * It processes each statement block, computes the optimal federated plan,
@@ -115,6 +171,38 @@ public class FederatedPlannerDpCostEnumerator {
 	 */
 	public static FederatedPlannerDpMemoTable.FedPlan enumerateProgram(DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			boolean isPrint) {
+		return enumerateProgramWithReceipts(prog, memoTable, isPrint,
+			prog.requirePlacementAnalysisAuthority()).optimalPlan();
+	}
+
+	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
+		FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis) {
+		return enumerateProgramWithReceipts(prog, memoTable, isPrint, analysis, null, NO_OP_OBSERVER);
+	}
+
+	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
+		FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis,
+		CandidateNormalizationFixture fixture, DpEnumerationObserver observer) {
+		Objects.requireNonNull(prog, "prog");
+		Objects.requireNonNull(memoTable, "memoTable");
+		Objects.requireNonNull(analysis, "analysis");
+		analysis.assertProgramOwner(prog);
+		DpEnumerationObserver exactObserver = observer == null ? NO_OP_OBSERVER : observer;
+		try {
+			if(fixture != null)
+				DpPlacementAdapter.validateCandidateInputs(analysis, fixture.parentOccurrence(), fixture.planChilds(),
+					fixture.collectedHops(), fixture.collectedFTypes(), fixture.fedInputTypeMap(), memoTable);
+			return enumerateProgramWithReceiptsInternal(prog, memoTable, isPrint, analysis, exactObserver);
+		}
+		catch(DpSemanticConstructionException failure) {
+			exactObserver.constructionFailed(failure);
+			throw failure;
+		}
+	}
+
+	private static DpEnumerationResult enumerateProgramWithReceiptsInternal(DMLProgram prog,
+		FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis,
+		DpEnumerationObserver observer) {
 		Map<Long, List<Hop>> rewireTable = new HashMap<>();
 		Map<Long, Set<Long>> parentChildUploadHints = new HashMap<>();
 		Set<Hop> progRootHopSet = new HashSet<>();
@@ -128,6 +216,14 @@ public class FederatedPlannerDpCostEnumerator {
 
 		FederatedPlannerDpRewireTransTable.rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
 				unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
+		RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
+			analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
+			analysis.analysisFingerprint());
+		EnumerationCapture previousCapture = ACTIVE_CAPTURE.get();
+		EnumerationCapture capture = new EnumerationCapture(
+			new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint()), memoTable, observer);
+		ACTIVE_CAPTURE.set(capture);
+		try {
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 		memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
@@ -155,6 +251,7 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
 
+		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
 
 		// NOTE: Do not resolve placement conflicts here by mutating only parent->child
@@ -186,7 +283,16 @@ public class FederatedPlannerDpCostEnumerator {
 					additionalTotalCost);
 		}
 
-		return optimalPlan;
+		DpEnumerationResult result = new DpEnumerationResult(optimalPlan, rewireSnapshot, semanticBlock);
+		observer.resultPublished(result);
+		return result;
+		}
+		finally {
+			if(previousCapture == null)
+				ACTIVE_CAPTURE.remove();
+			else
+				ACTIVE_CAPTURE.set(previousCapture);
+		}
 	}
 
 	public static FederatedPlannerDpMemoTable.FedPlan enumerateFunctionDynamic(FunctionStatementBlock function,
