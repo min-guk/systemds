@@ -145,9 +145,10 @@ public final class NeutralPlacementGraphBuilder {
 	public PlacementAnalysis buildDetachedAnalysis(DMLProgram program) {
 		String before = PlacementGraphFingerprint.capture(program);
 		String registryBefore = registrySentinel(program);
+		List<StatementBlock> topLevelStatementBlocks = List.copyOf(program.getStatementBlocks());
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences = PlacementGraphFingerprint.orderedOccurrences(program);
 		String programId = structuralFingerprint(occurrences);
-		CfgAnalysis cfg = analyzeCfg(program, occurrences);
+		CfgAnalysis cfg = analyzeCfg(program, topLevelStatementBlocks, occurrences);
 		List<Node> nodes = new ArrayList<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
 		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
@@ -259,7 +260,7 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections);
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
-		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts,
+		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts);
 		String after = PlacementGraphFingerprint.capture(program);
@@ -300,12 +301,12 @@ public final class NeutralPlacementGraphBuilder {
 			+ String.join("\n", projectionSignatures));
 	}
 
-	private static CfgAnalysis analyzeCfg(DMLProgram program,
+	private static CfgAnalysis analyzeCfg(DMLProgram program, List<StatementBlock> topLevelStatementBlocks,
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences) {
 		Map<StatementBlock,Set<StatementBlock>> predecessors = new IdentityHashMap<>();
 		Set<StatementBlock> loopHeaders = Collections.newSetFromMap(new IdentityHashMap<>());
 		Set<StatementBlock> loopLatches = Collections.newSetFromMap(new IdentityHashMap<>());
-		connectSequence(program.getStatementBlocks(), Set.of(), predecessors, loopHeaders, loopLatches);
+		connectSequence(topLevelStatementBlocks, Set.of(), predecessors, loopHeaders, loopLatches);
 		for(FunctionStatementBlock function : program.getNamedNSFunctionStatementBlocks().values())
 			connectSequence(List.of(function), Set.of(), predecessors, loopHeaders, loopLatches);
 		Map<StatementBlock,List<Integer>> byBlock = new IdentityHashMap<>();

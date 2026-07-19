@@ -31,6 +31,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersion
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable result of constructing one neutral placement universe for a compiled program. */
@@ -462,6 +463,7 @@ public final class PlacementAnalysis {
 
 	private final NeutralPlacementGraph graph;
 	private final List<HopOccurrenceProjection> occurrences;
+	private final List<StatementBlock> topLevelStatementBlocks;
 	private final Map<CompiledHopKey, Hop> hopsByKey;
 	private final PlacementShapeFacts shapeFacts;
 	private final String analysisFingerprint;
@@ -473,7 +475,8 @@ public final class PlacementAnalysis {
 	private final DMLProgram programOwner;
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
-		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
 		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
 		List<CandidateRuleFact> candidateRuleFacts,
 		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
@@ -482,6 +485,7 @@ public final class PlacementAnalysis {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
 		this.occurrences = List.copyOf(occurrences);
+		this.topLevelStatementBlocks = List.copyOf(topLevelStatementBlocks);
 		Map<CompiledHopKey, Hop> indexed = new LinkedHashMap<>();
 		for(HopOccurrenceProjection occurrence : this.occurrences)
 			if(indexed.put(occurrence.key(), occurrence.hop()) != null)
@@ -523,7 +527,7 @@ public final class PlacementAnalysis {
 		List<CandidateRuleFact> candidateRuleFacts,
 		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
-		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
+		this(graph, occurrences, List.of(), programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
 			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
 			List.of());
 	}
@@ -542,6 +546,10 @@ public final class PlacementAnalysis {
 
 	public List<HopOccurrenceProjection> occurrences() {
 		return occurrences;
+	}
+
+	public List<StatementBlock> topLevelStatementBlocks() {
+		return topLevelStatementBlocks;
 	}
 
 	public Optional<Hop> hop(CompiledHopKey key) {
