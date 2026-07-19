@@ -43,7 +43,8 @@ public class CampaignBG014DpEnumeratorOracleOwnershipRedTest {
 		else {
 			List<JavaSourceTokenScanner.Token> header = parenthesized(adapterTokens, receiptRecord + 3);
 			Set<String> headerIds = new LinkedHashSet<>(header.stream().map(JavaSourceTokenScanner.Token::text).toList());
-			for(String required : List.of("NeutralEnumerationContext", "CandidateOccurrenceSnapshot", "FType", "ReasonCode"))
+			for(String required : List.of("NeutralEnumerationContext", "CandidateOccurrenceSnapshot", "FType",
+				"ReasonCode", "CandidateCapabilityFact", "CapturedInvocationEvidence", "Privacy"))
 				if(!headerIds.contains(required))
 					missing.add("receiptField." + required);
 			long copiedAllowBits = header.stream().filter(t -> t.text().equals("boolean")).count();
@@ -88,20 +89,27 @@ public class CampaignBG014DpEnumeratorOracleOwnershipRedTest {
 		else {
 			String receiptVariable = token(canonicalTokens, receipt + 3);
 			int initializer = sequence(canonicalTokens, receipt, "=", "DpPlacementAdapter", ".",
-				"resolveCandidateDecision", "(", "capture", ".", "context", ",", "normalizedCandidateInputs", ")");
+				"resolveCandidateDecision", "(", "capture", ".", "context", ",", "normalizedCandidateInputs",
+				",", "i", ")");
 			if(initializer < 0)
-				missing.add("canonical.exactContextAndNormalizedCandidateResolver");
+				missing.add("canonical.exactContextNormalizedAndLocalOrdinalResolver");
+			if(sequence(canonicalTokens, Math.max(receipt, initializer), "capture", ".", "captureDecisionReceipt",
+				"(", receiptVariable, ",", "i", ")") < 0)
+				missing.add("canonical.retainExactLocalOrdinalReceipt");
 			if(sequence(canonicalTokens, receipt, "new", "CandidateDecisionReceipt") >= 0)
 				opaque.add("enumerator:new CandidateDecisionReceipt");
-			if(sequence(canonicalTokens, receipt + 1, receiptVariable, ".", "logicalFType", "(", ")") < 0)
-				missing.add("canonical.receipt.logicalFType");
-			if(!hasCapabilityConsumption(canonicalTokens, receipt + 1, receiptVariable))
-				missing.add("canonical.receipt.capabilityOrPlacementEvidence");
+			for(String accessor : List.of("logicalFType", "capabilityFact", "privacy", "allowCPLOUT",
+				"allowCPFOUT", "allowFEDLOUT", "allowFEDFOUT"))
+				if(sequence(canonicalTokens, receipt + 1, receiptVariable, ".", accessor, "(", ")") < 0)
+					missing.add("canonical.receipt." + accessor);
 		}
 		int resolverCalls = countSequence(canonicalTokens,
 			"DpPlacementAdapter", ".", "resolveCandidateDecision", "(");
 		if(resolverCalls != 1)
 			missing.add("canonical.singleResolverCall(actual=" + resolverCalls + ")");
+		int retainCalls = countSequence(canonicalTokens, "capture", ".", "captureDecisionReceipt", "(");
+		if(retainCalls != 1)
+			missing.add("canonical.singleRetainCall(actual=" + retainCalls + ")");
 		if(JavaSourceTokenScanner.containsSequence(canonicalTokens, "OracleUtils", ".", "decideWithOracle", "("))
 			opaque.add("canonical:OracleUtils.decideWithOracle");
 
@@ -152,15 +160,6 @@ public class CampaignBG014DpEnumeratorOracleOwnershipRedTest {
 				return List.copyOf(tokens.subList(opening + 1, i));
 		}
 		return List.of();
-	}
-
-	private static boolean hasCapabilityConsumption(List<JavaSourceTokenScanner.Token> tokens, int start,
-		String variable) {
-		for(String accessor : List.of("capabilityFact", "placementDecision", "reasonCode", "allowCPLOUT",
-			"allowCPFOUT", "allowFEDLOUT", "allowFEDFOUT"))
-			if(sequence(tokens, start, variable, ".", accessor) >= 0)
-				return true;
-		return false;
 	}
 
 	private static int countSequence(List<JavaSourceTokenScanner.Token> tokens, String... sequence) {
