@@ -1,8 +1,10 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -17,6 +19,154 @@ public interface AnchorProvenanceObserver {
 
 	public enum AnchorForm {
 		FEDINIT_LITERAL
+	}
+
+	public enum AnchorAccessForm {
+		FEDINIT_LITERAL,
+		FEDINIT_SIGNATURE,
+		GLOBAL_SIGNATURE_ANCHOR_KEY,
+		VAR_ANCHOR_KEY,
+		CPFOUT_ANCHOR_CACHE,
+		REFED_REGISTRY_RECORD,
+		FOUT_MATERIALIZE_RECORD,
+		RUNTIME_RECOMPILE_SIGNATURE;
+
+		public static Set<AnchorAccessForm> legalDpUsedForms() {
+			return EnumSet.allOf(AnchorAccessForm.class);
+		}
+	}
+
+	public enum AnchorMetadataDisposition {
+		ANCHOR_METADATA_INCOMPLETE,
+		UNSUPPORTED_ANCHOR_METADATA,
+		AVAILABLE
+	}
+
+	public record PlacementOwnedAnchorFact(PlacementAnalysis analysis, CompiledHopKey occurrence,
+		AnchorAccessForm accessForm, DurableAnchorKey normalizedAnchorIdentity,
+		List<AnchorPartition> partitions, FType fType, boolean fabricatedPartitions,
+		boolean runtimeFallbackUsed, Optional<String> sourceSignature) {
+		public PlacementOwnedAnchorFact {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(occurrence, "occurrence");
+			Objects.requireNonNull(accessForm, "accessForm");
+			Objects.requireNonNull(normalizedAnchorIdentity, "normalizedAnchorIdentity");
+			partitions = List.copyOf(Objects.requireNonNull(partitions, "partitions"));
+			Objects.requireNonNull(fType, "fType");
+			sourceSignature = Objects.requireNonNull(sourceSignature, "sourceSignature")
+				.map(signature -> {
+					if(signature.isBlank())
+						throw new IllegalArgumentException("sourceSignature must not be blank");
+					return signature;
+				});
+		}
+
+		public PlacementOwnedAnchorFact withAnalysis(PlacementAnalysis replacement) {
+			return new PlacementOwnedAnchorFact(replacement, occurrence, accessForm,
+				normalizedAnchorIdentity, partitions, fType, fabricatedPartitions,
+				runtimeFallbackUsed, sourceSignature);
+		}
+
+		public PlacementOwnedAnchorFact withOccurrence(CompiledHopKey replacement) {
+			return new PlacementOwnedAnchorFact(analysis, replacement, accessForm,
+				normalizedAnchorIdentity, partitions, fType, fabricatedPartitions,
+				runtimeFallbackUsed, sourceSignature);
+		}
+
+		public PlacementOwnedAnchorFact withoutWorkerRangeMetadata() {
+			return new PlacementOwnedAnchorFact(analysis, occurrence, accessForm,
+				normalizedAnchorIdentity, List.of(), fType, fabricatedPartitions,
+				runtimeFallbackUsed, sourceSignature);
+		}
+
+		public PlacementOwnedAnchorFact fromMutableCpfoutCacheOnly() {
+			return new PlacementOwnedAnchorFact(analysis, occurrence,
+				AnchorAccessForm.CPFOUT_ANCHOR_CACHE, normalizedAnchorIdentity,
+				partitions, fType, true, runtimeFallbackUsed, sourceSignature);
+		}
+	}
+
+	public record FullSpaceObservationRequest(PlacementAnalysis analysis,
+		CompiledHopKey occurrence, AnchorAccessForm accessForm, String statementBlockScope,
+		long hopId, String anchorKey, Optional<String> sourceSignature, boolean candidatePrecheck) {
+		public FullSpaceObservationRequest {
+			Objects.requireNonNull(accessForm, "accessForm");
+			sourceSignature = Objects.requireNonNull(sourceSignature, "sourceSignature")
+				.map(signature -> {
+					if(signature.isBlank())
+						throw new IllegalArgumentException("sourceSignature must not be blank");
+					return signature;
+				});
+			if(candidatePrecheck) {
+				if(statementBlockScope == null || statementBlockScope.isBlank())
+					throw new IllegalArgumentException("statementBlockScope must not be blank");
+				if(hopId < 0)
+					throw new IllegalArgumentException("hopId must be non-negative");
+				if(anchorKey == null || anchorKey.isBlank())
+					throw new IllegalArgumentException("anchorKey must not be blank");
+			}
+			else {
+				Objects.requireNonNull(analysis, "analysis");
+				Objects.requireNonNull(occurrence, "occurrence");
+			}
+		}
+
+		public static FullSpaceObservationRequest forCandidatePrecheck(
+			AnchorAccessForm accessForm, String statementBlockScope, long hopId,
+			String anchorKey, String sourceSignature) {
+			return new FullSpaceObservationRequest(null, null, accessForm,
+				statementBlockScope, hopId, anchorKey,
+				Optional.ofNullable(sourceSignature), true);
+		}
+
+		public static FullSpaceObservationRequest forExactAnalysis(PlacementAnalysis analysis,
+			CompiledHopKey occurrence, AnchorAccessForm accessForm, String sourceSignature) {
+			return new FullSpaceObservationRequest(analysis, occurrence, accessForm,
+				"exact-analysis", -1L, "exact-analysis",
+				Optional.ofNullable(sourceSignature), false);
+		}
+	}
+
+	public record FullSpaceObservationReceipt(AnchorMetadataDisposition disposition,
+		Optional<PlacementOwnedAnchorFact> fact, int dispositionSequence,
+		int candidateRejectionSequence, String rejectionReason) {
+		public FullSpaceObservationReceipt {
+			Objects.requireNonNull(disposition, "disposition");
+			fact = Objects.requireNonNull(fact, "fact");
+			if((disposition == AnchorMetadataDisposition.AVAILABLE) != fact.isPresent())
+				throw new IllegalArgumentException("Only AVAILABLE receipts carry a placement-owned fact");
+			if(dispositionSequence >= candidateRejectionSequence)
+				throw new IllegalArgumentException("disposition must precede candidate rejection");
+			if(rejectionReason == null || rejectionReason.isBlank())
+				throw new IllegalArgumentException("rejectionReason must not be blank");
+		}
+
+		public static FullSpaceObservationReceipt available(PlacementOwnedAnchorFact fact) {
+			return new FullSpaceObservationReceipt(AnchorMetadataDisposition.AVAILABLE,
+				Optional.of(Objects.requireNonNull(fact, "fact")), 10, 100,
+				"placement-owned anchor metadata accepted");
+		}
+
+		public static FullSpaceObservationReceipt incomplete(String reason) {
+			return new FullSpaceObservationReceipt(
+				AnchorMetadataDisposition.ANCHOR_METADATA_INCOMPLETE, Optional.empty(),
+				10, 100, reason);
+		}
+
+		public static FullSpaceObservationReceipt unsupported(String reason) {
+			return new FullSpaceObservationReceipt(
+				AnchorMetadataDisposition.UNSUPPORTED_ANCHOR_METADATA, Optional.empty(),
+				10, 100, reason);
+		}
+	}
+
+	default FullSpaceObservationReceipt observeFullSpace(FullSpaceObservationRequest request) {
+		return FullSpaceObservationReceipt.incomplete(
+			"full-space observation is not implemented by this observer");
+	}
+
+	default boolean acceptsFullSpaceFact(PlacementOwnedAnchorFact fact) {
+		return false;
 	}
 
 	public static final class RegistrationFact {

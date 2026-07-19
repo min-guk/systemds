@@ -87,6 +87,13 @@ public class FederatedPlannerUtils {
 	private static final Map<String, PlannerRecompileState> PLANNER_RECOMPILE_STATES = new ConcurrentHashMap<>();
 	private static final java.util.Set<String> AMBIGUOUS_PLANNER_RECOMPILE_STATES = ConcurrentHashMap.newKeySet();
 
+
+	/** Immutable copy of one variable's federated planner metadata. */
+	public record FedVarSnapshot(boolean fedInit, FType fType, String signature, String anchorKey) { }
+
+	/** Immutable copy of one planner recompile decision. */
+	public record PlannerRecompileStateSnapshot(Types.ExecType execType, FederatedOutput federatedOutput) { }
+
 	public static final class PlannerRecompileState {
 		private final Types.ExecType _execType;
 		private final FederatedOutput _fedOut;
@@ -617,6 +624,54 @@ public class FederatedPlannerUtils {
 			|| AMBIGUOUS_PLANNER_RECOMPILE_STATES.contains(signature))
 			return null;
 		return PLANNER_RECOMPILE_STATES.get(signature);
+	}
+
+
+	public static Set<String> snapshotFedInitVars() {
+		return Collections.unmodifiableSet(new HashSet<>(FED_INIT_VARS));
+	}
+
+	public static Map<String, FType> snapshotFedInitTypes() {
+		return Collections.unmodifiableMap(new HashMap<>(FED_INIT_FTYPES));
+	}
+
+	public static Map<String, String> snapshotFedInitSignatures() {
+		return Collections.unmodifiableMap(new HashMap<>(FED_INIT_SIGNATURES));
+	}
+
+	public static Map<String, String> snapshotFedAnchorKeys() {
+		return Collections.unmodifiableMap(new HashMap<>(FED_ANCHOR_KEYS));
+	}
+
+	public static Map<String, FedVarSnapshot> snapshotFedState() {
+		Set<String> names = new HashSet<>();
+		names.addAll(FED_INIT_VARS);
+		names.addAll(FED_INIT_FTYPES.keySet());
+		names.addAll(FED_INIT_SIGNATURES.keySet());
+		names.addAll(FED_ANCHOR_KEYS.keySet());
+		Map<String, FedVarSnapshot> snapshot = new HashMap<>();
+		for(String name : names)
+			snapshot.put(name, snapshotFedVarState(name));
+		return Collections.unmodifiableMap(snapshot);
+	}
+
+	public static FedVarSnapshot snapshotFedVarState(String varName) {
+		FedVarState state = captureFedVarState(varName);
+		return new FedVarSnapshot(state.fedInit, state.fType, state.signature, state.anchorKey);
+	}
+
+	public static Map<String, PlannerRecompileStateSnapshot> snapshotPlannerRecompileStates() {
+		Map<String, PlannerRecompileStateSnapshot> snapshot = new HashMap<>();
+		for(Entry<String, PlannerRecompileState> entry : PLANNER_RECOMPILE_STATES.entrySet()) {
+			PlannerRecompileState state = entry.getValue();
+			snapshot.put(entry.getKey(), new PlannerRecompileStateSnapshot(
+				state.getExecType(), state.getFederatedOutput()));
+		}
+		return Collections.unmodifiableMap(snapshot);
+	}
+
+	public static Set<String> snapshotAmbiguousPlannerRecompileSignatures() {
+		return Collections.unmodifiableSet(new HashSet<>(AMBIGUOUS_PLANNER_RECOMPILE_STATES));
 	}
 
 	public static void clearFedAnchorKeys() {

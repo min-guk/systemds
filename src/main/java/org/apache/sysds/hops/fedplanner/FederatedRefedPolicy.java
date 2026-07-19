@@ -3416,6 +3416,18 @@ public final class FederatedRefedPolicy {
 		return selectAnchor(hop, fTypeMap, onlyFedParents, throwOnFailure, blockAnchor);
 	}
 
+
+	public static java.util.Map<Long, CpfoutAnchorSnapshot> snapshotCpfoutAnchorCache() {
+		java.util.Map<Long, CpfoutAnchorSnapshot> snapshot = new java.util.HashMap<>();
+		for(java.util.Map.Entry<Long, AnchorKey> entry : CPFOUT_ANCHOR_CACHE.entrySet()) {
+			AnchorKey key = entry.getValue();
+			if(key != null)
+				snapshot.put(entry.getKey(), new CpfoutAnchorSnapshot(entry.getKey(),
+					key.type.name(), String.valueOf(key.value)));
+		}
+		return java.util.Collections.unmodifiableMap(snapshot);
+	}
+
 	private static void registerCpfoutWithSelection(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection selection) {
 		if (hop == null)
@@ -5497,6 +5509,10 @@ public final class FederatedRefedPolicy {
 			return empty;
 		}
 	}
+
+
+	/** Immutable public projection of one CP/FOUT anchor-cache entry. */
+	public record CpfoutAnchorSnapshot(long hopId, String anchorKeyType, String anchorKeyValue) { }
 
 	private static final class AnchorSelection {
 		private final AnchorKey key;
