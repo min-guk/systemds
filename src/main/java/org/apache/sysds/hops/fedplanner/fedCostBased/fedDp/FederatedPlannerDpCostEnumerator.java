@@ -368,15 +368,6 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
-		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
-	}
-
-	private static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
-			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
-			Set<Long> unRefTwriteSet, Set<String> fnStack,
 			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
 		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
