@@ -295,6 +295,7 @@ public class FederatedPlannerDpRewireTransTable {
 		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
 		Map<Long, HopOccurrenceProjection> exactByHopId = new LinkedHashMap<>();
 		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops = new IdentityHashMap<>();
+		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++) {
 			HopOccurrenceProjection occurrence = occurrences.get(i);
 			if(occurrence.normalizedOrdinal() != i)
@@ -385,8 +386,8 @@ public class FederatedPlannerDpRewireTransTable {
 		Map<Long, Long> cloneToOriginal, PlacementAnalysis analysis) {
 		Set<Hop> carrierHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
-			if(common != null && common.getHopRef() == occurrence.hop())
-				exactMatches.add(common.getHopRef());
+			if(common != null && common.getHopRef() != null)
+				carrierHops.add(common.getHopRef());
 		for(List<Hop> rewired : rewireTable.values())
 			if(rewired != null)
 				for(Hop candidate : rewired)
