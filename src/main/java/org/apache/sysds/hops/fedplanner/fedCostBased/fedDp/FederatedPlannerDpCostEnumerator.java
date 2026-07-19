@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
@@ -82,14 +81,7 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Nor
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
-import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -118,75 +110,6 @@ import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.runtime.DMLRuntimeException;
 
 public class FederatedPlannerDpCostEnumerator {
-	/** Immutable semantic result published by the supplied-analysis enumeration path. */
-	public record DpEnumerationResult(FederatedPlannerDpMemoTable.FedPlan optimalPlan,
-		RewireOccurrenceSnapshot rewireSnapshot, PreSelectionSemanticBlock semanticBlock) {
-		public DpEnumerationResult {
-			Objects.requireNonNull(optimalPlan, "optimalPlan");
-			Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
-			Objects.requireNonNull(semanticBlock, "semanticBlock");
-		}
-	}
-
-	/** Observer used only for exact semantic publication/failure evidence. */
-	public interface DpEnumerationObserver {
-		default void constructionFailed(DpSemanticConstructionException value) { }
-		default void resultPublished(DpEnumerationResult value) { }
-		default void oracleEvaluated() { }
-		default void costEvaluated() { }
-		default void placementDecided() { }
-		default void candidateConstructed() { }
-		default void repairAttempted() { }
-		default void fallbackAttempted() { }
-	}
-
-	/** Test-only direct input seam; canonical callers use the real raw carriers. */
-	public record CandidateNormalizationFixture(PlacementAnalysis.HopOccurrenceProjection parentOccurrence,
-		List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
-		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap) { }
-
-	private static final DpEnumerationObserver NOOP_OBSERVER = new DpEnumerationObserver() { };
-	private static final ThreadLocal<EnumerationCapture> ACTIVE_CAPTURE = new ThreadLocal<>();
-
-	private static final class EnumerationCapture {
-		private final PlacementAnalysis analysis;
-		private RewireOccurrenceSnapshot rewireSnapshot;
-		private NeutralEnumerationContext context;
-		private final DpEnumerationObserver observer;
-		private final List<CandidateOccurrenceSnapshot> snapshots = new ArrayList<>();
-		private int rawCandidateCount;
-
-		private EnumerationCapture(PlacementAnalysis analysis, DpEnumerationObserver observer) {
-			this.analysis = Objects.requireNonNull(analysis, "analysis");
-			this.observer = observer == null ? NOOP_OBSERVER : observer;
-		}
-
-		private void install(RewireOccurrenceSnapshot snapshot) {
-			this.rewireSnapshot = Objects.requireNonNull(snapshot, "rewireSnapshot");
-			this.context = new NeutralEnumerationContext(analysis, snapshot, analysis.analysisFingerprint());
-		}
-
-		private void capture(CandidateOccurrenceSnapshot snapshot) {
-			snapshots.add(Objects.requireNonNull(snapshot, "snapshot"));
-			rawCandidateCount++;
-		}
-
-		private PreSelectionSemanticBlock freeze() {
-			int captured = snapshots.size();
-			if(rawCandidateCount != captured)
-				throw new IllegalStateException("Raw/captured candidate count differs: " + rawCandidateCount + "/" + captured);
-			return new PreSelectionSemanticBlock(context, snapshots, rawCandidateCount, captured, true);
-		}
-	}
-	// Global privacy policy: never allow CP overrides for protected data unless
-	// this flag flips.
-	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
-	// Planner option: disallow CP->FOUT in recompile regions (function/while).
-	// This is treated as a global legality constraint for planner/runtime consistency,
-	// not a workload-specific pruning heuristic.
-	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
-	private static final ThreadLocal<EnumerationCapture> ACTIVE_CAPTURE = new ThreadLocal<>();
-
 	public record DpEnumerationResult(FederatedPlannerDpMemoTable.FedPlan optimalPlan,
 		RewireOccurrenceSnapshot rewireSnapshot, PreSelectionSemanticBlock semanticBlock) {
 		public DpEnumerationResult {
@@ -222,6 +145,27 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 	private static final DpEnumerationObserver NO_OP_OBSERVER = new DpEnumerationObserver() { };
+	private static final ThreadLocal<EnumerationCapture> ACTIVE_CAPTURE = new ThreadLocal<>();
+	private static final class EnumerationCapture {
+		private final NeutralEnumerationContext context;
+		private final DpEnumerationObserver observer;
+		private final List<CandidateOccurrenceSnapshot> snapshots = new ArrayList<>();
+		private int rawCandidateCount;
+		private EnumerationCapture(NeutralEnumerationContext context, FederatedPlannerDpMemoTable memo,
+			DpEnumerationObserver observer) { this.context = context; this.observer = observer == null ? NO_OP_OBSERVER : observer; }
+		private void capture(CandidateOccurrenceSnapshot snapshot) { snapshots.add(Objects.requireNonNull(snapshot)); rawCandidateCount++; }
+		private PreSelectionSemanticBlock semanticBlock() {
+			return new PreSelectionSemanticBlock(context, snapshots, rawCandidateCount, snapshots.size(),
+			rawCandidateCount == snapshots.size());
+		}
+	}
+	// Global privacy policy: never allow CP overrides for protected data unless
+	// this flag flips.
+	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
+	// Planner option: disallow CP->FOUT in recompile regions (function/while).
+	// This is treated as a global legality constraint for planner/runtime consistency,
+	// not a workload-specific pruning heuristic.
+	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
 	/**
 	 * Enumerates the entire DML program to generate federated execution plans.
 	 * It processes each statement block, computes the optimal federated plan,
@@ -232,49 +176,6 @@ public class FederatedPlannerDpCostEnumerator {
 	 */
 	public static FederatedPlannerDpMemoTable.FedPlan enumerateProgram(DMLProgram prog,
 			FederatedPlannerDpMemoTable memoTable, boolean isPrint) {
-		return enumerateProgramInternal(prog, memoTable, isPrint, null);
-	}
-
-	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
-			FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis) {
-		return enumerateProgramWithReceipts(prog, memoTable, isPrint, analysis, null, NOOP_OBSERVER);
-	}
-
-	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
-			FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis,
-			CandidateNormalizationFixture fixture, DpEnumerationObserver observer) {
-		Objects.requireNonNull(analysis, "analysis");
-		DpEnumerationObserver actualObserver = observer == null ? NOOP_OBSERVER : observer;
-		if(fixture != null) {
-			try {
-				DpPlacementAdapter.validateCandidateInputs(analysis, fixture.parentOccurrence(), fixture.planChilds(),
-					fixture.collectedHops(), fixture.collectedFTypes(), fixture.fedInputTypeMap(), memoTable);
-			}
-			catch(DpSemanticConstructionException ex) {
-				actualObserver.constructionFailed(ex);
-				throw ex;
-			}
-		}
-		EnumerationCapture capture = new EnumerationCapture(analysis, actualObserver);
-		ACTIVE_CAPTURE.set(capture);
-		try {
-			FederatedPlannerDpMemoTable.FedPlan optimal = enumerateProgramInternal(prog, memoTable, isPrint, analysis);
-			PreSelectionSemanticBlock block = capture.freeze();
-			DpEnumerationResult result = new DpEnumerationResult(optimal, capture.rewireSnapshot, block);
-			actualObserver.resultPublished(result);
-			return result;
-		}
-		catch(DpSemanticConstructionException ex) {
-			actualObserver.constructionFailed(ex);
-			throw ex;
-		}
-		finally {
-			ACTIVE_CAPTURE.remove();
-		}
-	}
-
-	private static FederatedPlannerDpMemoTable.FedPlan enumerateProgramInternal(DMLProgram prog,
-			FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis) {
 		return enumerateProgramWithReceipts(prog, memoTable, isPrint,
 			prog.requirePlacementAnalysisAuthority()).optimalPlan();
 	}
@@ -909,9 +810,18 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 
-				promoteLocalFedInputHints(memoTable, planChilds, collectedHops, collectedFTypes, fedInputTypeMap);
-				backfillLocalOracleInputHints(hop, planChilds, collectedHops, collectedFTypes,
-						fedInputTypeMap, oracleFacade, rewireTable);
+				NormalizedCandidateInputs normalizedCandidateInputs = ACTIVE_CAPTURE.get() == null ? null
+					: DpPlacementAdapter.normalizeCandidateInputs(
+						ACTIVE_CAPTURE.get().context, findOccurrence(ACTIVE_CAPTURE.get(), hop),
+						planChilds, collectedHops, effectiveCollectedFTypes, effectiveNonNullFTypeMap, memoTable);
+				List<FType> effectiveCollectedFTypes = normalizedCandidateInputs == null ? collectedFTypes
+					: normalizedCandidateInputs.effectiveCollectedFTypes();
+				Map<Long, FType> effectiveNonNullFTypeMap = normalizedCandidateInputs == null ? fedInputTypeMap
+					: normalizedCandidateInputs.effectiveNonNullFTypeMap();
+				if(normalizedCandidateInputs != null) {
+					ACTIVE_CAPTURE.get().capture(normalizedCandidateInputs.snapshot());
+					ACTIVE_CAPTURE.get().observer.oracleEvaluated();
+				}
 
 			if (enforceTReadConsistency) {
 				if (!tWriteSeen) {
@@ -942,13 +852,13 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 
 				OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
-						hop, privacyConstraint, collectedHops, collectedFTypes,
+						hop, privacyConstraint, collectedHops, effectiveCollectedFTypes,
 						oracleFacade, oracleCache, rewireTable);
 				OpCaps caps = oracleDecision.caps();
 				boolean canSatisfyFedInputs = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(
-						hop, fedInputTypeMap);
+						hop, effectiveNonNullFTypeMap);
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
-					boolean hasPlannedFedInput = fedInputTypeMap != null && !fedInputTypeMap.isEmpty();
+					boolean hasPlannedFedInput = effectiveNonNullFTypeMap != null && !effectiveNonNullFTypeMap.isEmpty();
 					if (!hasPlannedFedInput)
 						canSatisfyFedInputs = false;
 				}
@@ -956,7 +866,7 @@ public class FederatedPlannerDpCostEnumerator {
 				FType oracleLogicalFType = oracleDecision.logicalFType();
 				oracleLogicalFType = preferVectorAxisForRefedCandidate(
 						hop, oracleLogicalFType, rewireTable, numOfWorkers,
-						canGenerateCpfoutCandidateSafe(hop, fedInputTypeMap));
+						canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap));
 				FType lOutLogicalFType = resolveLoutLogicalFType(oracleLogicalFType);
 				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
 						hop, oracleLogicalFType, rewireTable, numOfWorkers);
@@ -973,7 +883,7 @@ public class FederatedPlannerDpCostEnumerator {
 										nativeAggUnaryResultDownloadCost);
 						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
 								FederatedCostModel.computeMixedFedLocalCost(
-										hop, collectedHops, collectedFTypes, oracleLogicalFType,
+										hop, collectedHops, effectiveCollectedFTypes, oracleLogicalFType,
 										baseSelfCost, outputMemEstimate, numOfWorkers);
 						double nativeAggUnaryFedComputeCost =
 								FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
@@ -1013,7 +923,7 @@ public class FederatedPlannerDpCostEnumerator {
 					ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
 							hop, privacyConstraint, oracleLogicalFType, caps);
 					boolean derivedFedFout = shouldEnableDerivedFedFout(
-							hop, privacyConstraint, fedInputTypeMap, caps, placementDecision);
+							hop, privacyConstraint, effectiveNonNullFTypeMap, caps, placementDecision);
 					if (derivedFedFout) {
 						placementDecision.allowFED_FOUT = true;
 				}
@@ -1107,7 +1017,7 @@ public class FederatedPlannerDpCostEnumerator {
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut));
 				boolean allowCpFoutCandidate = placementDecision.allowCP_FOUT
-						&& (canGenerateCpfoutCandidateSafe(hop, fedInputTypeMap)
+						&& (canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap)
 							|| canUseOracleCpfoutFallback(hop, cpLogicalFType))
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut));
@@ -1573,89 +1483,6 @@ public class FederatedPlannerDpCostEnumerator {
 		return oracleLogicalFType;
 	}
 
-	private static void backfillLocalOracleInputHints(Hop parentHop,
-			List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops, List<FType> collectedFTypes,
-			Map<Long, FType> fedInputTypeMap, OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable) {
-		if (parentHop == null || planChilds == null || collectedHops == null || collectedFTypes == null
-				|| fedInputTypeMap == null || fedInputTypeMap.isEmpty())
-			return;
-
-		for (int i = 0; i < planChilds.size() && i < collectedHops.size() && i < collectedFTypes.size(); i++) {
-			if (collectedFTypes.get(i) != null)
-				continue;
-			Pair<Long, FederatedOutput> childEdge = planChilds.get(i);
-			if (childEdge == null || childEdge.getRight() != FederatedOutput.LOUT)
-				continue;
-			Hop inputHop = collectedHops.get(i);
-			if (inputHop == null || inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
-				continue;
-
-			FType inferredFType = inferLocalOracleInputFType(inputHop, fedInputTypeMap, oracleFacade, rewireTable);
-			if (inferredFType != null)
-				collectedFTypes.set(i, inferredFType);
-		}
-	}
-
-	private static void promoteLocalFedInputHints(FederatedPlannerDpMemoTable memoTable,
-			List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops, List<FType> collectedFTypes,
-			Map<Long, FType> fedInputTypeMap) {
-		if (memoTable == null || planChilds == null || collectedHops == null || collectedFTypes == null
-				|| fedInputTypeMap == null || fedInputTypeMap.isEmpty())
-			return;
-
-		for (int i = 0; i < planChilds.size() && i < collectedHops.size() && i < collectedFTypes.size(); i++) {
-			Pair<Long, FederatedOutput> childEdge = planChilds.get(i);
-			if (childEdge == null || childEdge.getRight() != FederatedOutput.LOUT)
-				continue;
-			Hop inputHop = collectedHops.get(i);
-			if (inputHop == null || inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
-				continue;
-			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childEdge);
-			if (childPlan == null)
-				continue;
-
-			FType localHint = childPlan.getCpFoutTypeOrFType();
-			if (localHint == null)
-				continue;
-
-			if (collectedFTypes.get(i) == null)
-				collectedFTypes.set(i, localHint);
-			fedInputTypeMap.putIfAbsent(inputHop.getHopID(), localHint);
-		}
-	}
-
-	private static FType inferLocalOracleInputFType(Hop inputHop, Map<Long, FType> fedInputTypeMap,
-			OracleFacade oracleFacade, Map<Long, List<Hop>> rewireTable) {
-		try {
-			if (inputHop == null || fedInputTypeMap == null || fedInputTypeMap.isEmpty())
-				return null;
-			if (!FederatedRefedPolicy.canGenerateCpfoutCandidate(inputHop, fedInputTypeMap))
-				return null;
-		}
-		catch (DMLRuntimeException ex) {
-			return null;
-		}
-
-		List<Hop> inputs = inputHop.getInput();
-		List<FType> alignedInputFTypes = new ArrayList<>();
-		if (inputs != null) {
-			for (Hop in : inputs) {
-				if (in == null)
-					continue;
-				alignedInputFTypes.add(fedInputTypeMap.get(in.getHopID()));
-			}
-		}
-
-		FType inferred = OracleUtils.inferFallbackFType(inputHop, alignedInputFTypes, oracleFacade, rewireTable);
-		if (FederatedPlannerUtils.isScalarLikeMatrix(inputHop))
-			inferred = FType.BROADCAST;
-		if (inferred == null) {
-			FType axis = FederatedPlannerUtils.getVectorAxis(inputHop);
-			inferred = (axis != null) ? axis : FType.ROW;
-		}
-		return inferred;
-	}
-
 	private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
 			try {
 				if (hop == null)
@@ -1679,20 +1506,6 @@ public class FederatedPlannerDpCostEnumerator {
 				return false;
 			}
 		}
-
-	private static boolean canUseOracleCpfoutFallback(Hop hop, FType cpLogicalFType) {
-		if (hop == null || cpLogicalFType == null
-			|| cpLogicalFType == FType.PART || cpLogicalFType == FType.OTHER)
-			return false;
-		// Keep transient boundaries on the stricter refed-policy gate: TRead/TWrite CP->FOUT
-		// legality depends on additional alias/materialization invariants.
-		if (hop instanceof DataOp) {
-			Types.OpOpData op = ((DataOp) hop).getOp();
-			if (op == Types.OpOpData.TRANSIENTREAD || op == Types.OpOpData.TRANSIENTWRITE)
-				return false;
-		}
-		return true;
-	}
 
 	private static String formatSelectedBits(int[] bits) {
 		if (bits == null || bits.length == 0)
