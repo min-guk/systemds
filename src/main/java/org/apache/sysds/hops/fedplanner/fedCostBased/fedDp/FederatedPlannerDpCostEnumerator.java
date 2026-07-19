@@ -188,6 +188,28 @@ public class FederatedPlannerDpCostEnumerator {
 			fedInputTypeMap = Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap));
 		}
 	}
+
+	public static final class ParentCarrierProjectionException extends IllegalArgumentException {
+		private static final long serialVersionUID = 1L;
+		private final DpPlacementAdapter.ConstructionDisposition disposition;
+		private final String analysisFingerprint;
+		private final long carrierHopId;
+		private final String reasonCode;
+
+		private ParentCarrierProjectionException(String analysisFingerprint, long carrierHopId) {
+			super("UNMAPPABLE_PARENT_CARRIER: " + carrierHopId);
+			disposition = DpPlacementAdapter.ConstructionDisposition.UNMAPPABLE_OCCURRENCE;
+			this.analysisFingerprint = Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			this.carrierHopId = carrierHopId;
+			reasonCode = "UNMAPPABLE_PARENT_CARRIER";
+		}
+
+		public DpPlacementAdapter.ConstructionDisposition disposition() { return disposition; }
+		public String analysisFingerprint() { return analysisFingerprint; }
+		public long carrierHopId() { return carrierHopId; }
+		public String reasonCode() { return reasonCode; }
+	}
+
 	// Global privacy policy: never allow CP overrides for protected data unless
 	// this flag flips.
 	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
@@ -1612,10 +1634,11 @@ public class FederatedPlannerDpCostEnumerator {
 	private static HopOccurrenceProjection findOccurrence(EnumerationCapture capture, Hop hop) {
 		if(capture == null || hop == null)
 			throw new IllegalArgumentException("Missing supplied-analysis Hop occurrence");
-		for(HopOccurrenceProjection occurrence : capture.context.analysis().occurrences())
-			if(occurrence.hop() == hop)
-				return occurrence;
-		throw new IllegalArgumentException("Hop is not an exact supplied-analysis occurrence: " + hop.getHopID());
+		HopOccurrenceProjection occurrence = capture.context.rewireSnapshot().projectExactCarrier(hop);
+		if(occurrence != null)
+			return occurrence;
+		throw new ParentCarrierProjectionException(
+			capture.context.analysis().analysisFingerprint(), hop.getHopID());
 	}
 
 	private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
