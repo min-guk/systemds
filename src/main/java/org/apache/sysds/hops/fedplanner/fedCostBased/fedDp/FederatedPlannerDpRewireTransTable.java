@@ -26,12 +26,14 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import org.apache.commons.lang3.tuple.ImmutablePair;
@@ -76,6 +78,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -111,6 +114,78 @@ public class FederatedPlannerDpRewireTransTable {
 	public record CloneReceipt(HopOccurrenceProjection originOccurrence,
 		HopOccurrenceProjection cloneOccurrence, Node originNode, Node cloneNode,
 		Constraint sameOrigin, Exclusion recompileCpFoutExclusion) { }
+
+	public record RewireConsumerEdge(CompiledHopKey parentOccurrence,
+		CompiledHopKey childOccurrence, int inputPosition) {
+		public RewireConsumerEdge {
+			Objects.requireNonNull(parentOccurrence, "parentOccurrence");
+			Objects.requireNonNull(childOccurrence, "childOccurrence");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Rewire input position must be non-negative");
+		}
+	}
+
+	public record RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,
+		String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
+		List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
+		List<RewireConsumerEdge> consumerEdges, Map<Long, Long> cloneToOriginal,
+		String enumerationScopeKey) {
+		public RewireOccurrenceSnapshot {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(program, "program");
+			Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			Objects.requireNonNull(occurrences, "occurrences");
+			Objects.requireNonNull(cloneReceipts, "cloneReceipts");
+			Objects.requireNonNull(additionalRoots, "additionalRoots");
+			Objects.requireNonNull(consumerEdges, "consumerEdges");
+			Objects.requireNonNull(cloneToOriginal, "cloneToOriginal");
+			if(enumerationScopeKey == null || enumerationScopeKey.isBlank())
+				throw new IllegalArgumentException("Enumeration scope key must not be blank");
+			analysis.assertCanonicalProgramAuthority(program);
+			if(!analysis.analysisFingerprint().equals(analysisFingerprint))
+				throw new IllegalArgumentException("Rewire analysis fingerprint differs");
+
+			List<HopOccurrenceProjection> ownedOccurrences = analysis.occurrences();
+			if(occurrences.size() != ownedOccurrences.size())
+				throw new IllegalArgumentException("Rewire occurrence multiplicity differs");
+			Set<HopOccurrenceProjection> ownedByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<CompiledHopKey> ownedKeysByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(int i = 0; i < occurrences.size(); i++) {
+				HopOccurrenceProjection occurrence = occurrences.get(i);
+				if(occurrence != ownedOccurrences.get(i) || occurrence.normalizedOrdinal() != i
+					|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
+					throw new IllegalArgumentException("Rewire occurrence ownership or order differs");
+				ownedByIdentity.add(occurrence);
+				ownedKeysByIdentity.add(occurrence.key());
+			}
+			for(HopOccurrenceProjection root : additionalRoots)
+				if(!ownedByIdentity.contains(root))
+					throw new IllegalArgumentException("Additional root is not analysis-owned");
+			for(RewireConsumerEdge edge : consumerEdges)
+				if(!ownedKeysByIdentity.contains(edge.parentOccurrence())
+					|| !ownedKeysByIdentity.contains(edge.childOccurrence()))
+					throw new IllegalArgumentException("Consumer edge endpoint is not analysis-owned");
+
+			Map<Long, Long> exactCloneMap = new LinkedHashMap<>();
+			for(CloneReceipt receipt : cloneReceipts) {
+				if(receipt == null || !ownedByIdentity.contains(receipt.originOccurrence())
+					|| !ownedByIdentity.contains(receipt.cloneOccurrence()))
+					throw new IllegalArgumentException("Clone receipt occurrence is not analysis-owned");
+				Long previous = exactCloneMap.put(receipt.cloneOccurrence().hop().getHopID(),
+					receipt.originOccurrence().hop().getHopID());
+				if(previous != null)
+					throw new IllegalArgumentException("Duplicate clone receipt");
+			}
+			if(!exactCloneMap.equals(cloneToOriginal))
+				throw new IllegalArgumentException("Clone receipt mapping differs");
+
+			occurrences = List.copyOf(occurrences);
+			cloneReceipts = List.copyOf(cloneReceipts);
+			additionalRoots = List.copyOf(additionalRoots);
+			consumerEdges = List.copyOf(consumerEdges);
+			cloneToOriginal = Collections.unmodifiableMap(new LinkedHashMap<>(cloneToOriginal));
+		}
+	}
 
 	public record RewireReceipt(PlacementAnalysis analysis, DMLProgram program,
 		String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
@@ -192,6 +267,121 @@ public class FederatedPlannerDpRewireTransTable {
 		return new RewireReceipt(analysis, request.program(), analysis.analysisFingerprint(),
 			ownedOccurrences, cloneReceipts, List.of(), cloneToOrig,
 			analysis.graph().normalizedIdentities());
+	}
+
+	public static RewireOccurrenceSnapshot snapshotProductionRewire(PlacementAnalysis analysis,
+		DMLProgram program, Map<Long, List<Hop>> rewireTable,
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		Map<Long, Set<Long>> parentChildUploadHints, Set<Hop> progRootHopSet,
+		UnrollContext unrollContext, String enumerationScopeKey) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(program, "program");
+		Objects.requireNonNull(rewireTable, "rewireTable");
+		Objects.requireNonNull(hopCommonTable, "hopCommonTable");
+		Objects.requireNonNull(parentChildUploadHints, "parentChildUploadHints");
+		Objects.requireNonNull(progRootHopSet, "progRootHopSet");
+		Objects.requireNonNull(unrollContext, "unrollContext");
+		analysis.assertCanonicalProgramAuthority(program);
+
+		List<HopOccurrenceProjection> occurrences = analysis.occurrences();
+		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
+		Map<Long, HopOccurrenceProjection> exactByHopId = new LinkedHashMap<>();
+		for(int i = 0; i < occurrences.size(); i++) {
+			HopOccurrenceProjection occurrence = occurrences.get(i);
+			if(occurrence.normalizedOrdinal() != i
+				|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop()
+				|| exactByHop.put(occurrence.hop(), occurrence) != null
+				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
+				throw new IllegalArgumentException("Production rewire occurrence is duplicated or detached");
+			FederatedPlannerDpMemoTable.HopCommon common = hopCommonTable.get(occurrence.hop().getHopID());
+			if((common == null || common.getHopRef() != occurrence.hop())
+				&& !containsExactHop(rewireTable, occurrence.hop()))
+				throw new IllegalArgumentException("Production rewire carrier cannot resolve analysis occurrence");
+		}
+
+		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
+		for(HopOccurrenceProjection parent : occurrences) {
+			List<Hop> inputs = parent.hop().getInput();
+			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
+				HopOccurrenceProjection child = exactByHop.get(inputs.get(inputPosition));
+				if(child == null)
+					throw new IllegalArgumentException("Production rewire child is not an exact analysis occurrence");
+				consumerEdges.add(new RewireConsumerEdge(parent.key(), child.key(), inputPosition));
+			}
+		}
+
+		for(Map.Entry<Long, Set<Long>> entry : parentChildUploadHints.entrySet()) {
+			if(!exactByHopId.containsKey(entry.getKey()) || entry.getValue() == null)
+				throw new IllegalArgumentException("Production upload-hint parent is not analysis-owned");
+			for(Long childId : entry.getValue())
+				if(childId == null || !exactByHopId.containsKey(childId))
+					throw new IllegalArgumentException("Production upload-hint child is not analysis-owned");
+		}
+
+		List<CloneReceipt> cloneReceipts = exactCloneReceipts(analysis);
+		Map<Long, Long> cloneToOriginal = new LinkedHashMap<>();
+		for(CloneReceipt receipt : cloneReceipts)
+			cloneToOriginal.put(receipt.cloneOccurrence().hop().getHopID(),
+				receipt.originOccurrence().hop().getHopID());
+		if(!cloneToOriginal.equals(unrollContext.getCloneToOrig()))
+			throw new IllegalArgumentException("Production clone mapping differs from the analysis-owned clone universe");
+
+		List<HopOccurrenceProjection> additionalRoots = new ArrayList<>();
+		Set<HopOccurrenceProjection> seenRoots = Collections.newSetFromMap(new IdentityHashMap<>());
+		appendExactRoots(unrollContext.getIter1Roots(), exactByHop, additionalRoots, seenRoots);
+		appendExactRoots(unrollContext.getAdditionalRoots(), exactByHop, additionalRoots, seenRoots);
+		for(HopOccurrenceProjection occurrence : occurrences)
+			if(progRootHopSet.contains(occurrence.hop()) && seenRoots.add(occurrence))
+				additionalRoots.add(occurrence);
+
+		return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
+			cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, enumerationScopeKey);
+	}
+
+	private static boolean containsExactHop(Map<Long, List<Hop>> rewireTable, Hop expected) {
+		for(List<Hop> rewired : rewireTable.values())
+			if(rewired != null)
+				for(Hop candidate : rewired)
+					if(candidate == expected)
+						return true;
+		return false;
+	}
+
+	private static void appendExactRoots(List<Hop> roots,
+		Map<Hop, HopOccurrenceProjection> exactByHop, List<HopOccurrenceProjection> target,
+		Set<HopOccurrenceProjection> seen) {
+		for(Hop root : roots) {
+			if(root == null)
+				continue;
+			HopOccurrenceProjection occurrence = exactByHop.get(root);
+			if(occurrence == null)
+				throw new IllegalArgumentException("Production additional root is not an exact analysis occurrence");
+			if(seen.add(occurrence))
+				target.add(occurrence);
+		}
+	}
+
+	private static List<CloneReceipt> exactCloneReceipts(PlacementAnalysis analysis) {
+		List<Node> clones = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.CLONE).toList();
+		List<CloneReceipt> receipts = new ArrayList<>(clones.size());
+		for(Node clone : clones) {
+			List<Constraint> associations = analysis.graph().constraints().stream()
+				.filter(candidate -> candidate.kind() == ConstraintKind.SAME_ORIGIN)
+				.filter(candidate -> candidate.right().equals(clone.key())).toList();
+			if(associations.size() != 1)
+				throw new IllegalArgumentException("Production clone SAME_ORIGIN multiplicity differs");
+			Constraint association = associations.get(0);
+			Node origin = analysis.graph().node(association.left()).orElse(null);
+			List<Exclusion> exclusions = clone.exclusions().stream()
+				.filter(candidate -> candidate.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).toList();
+			if(origin == null || origin.kind() == NodeKind.CLONE || exclusions.size() != 1
+				|| !origin.key().canonicalSourceOrigin().equals(clone.key().canonicalSourceOrigin()))
+				throw new IllegalArgumentException("Production clone ownership or recompile exclusion differs");
+			receipts.add(new CloneReceipt(exactOccurrence(analysis, origin), exactOccurrence(analysis, clone),
+				origin, clone, association, exclusions.get(0)));
+		}
+		return List.copyOf(receipts);
 	}
 
 	private static HopOccurrenceProjection exactOccurrence(PlacementAnalysis analysis, Node node) {
