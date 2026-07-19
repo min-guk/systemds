@@ -9,9 +9,11 @@ package org.apache.sysds.hops.fedplanner.placement.adapter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
@@ -20,7 +22,10 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy.CapturedPlacementRequest;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
@@ -80,16 +85,26 @@ public final class DpPlacementAdapter {
 	}
 
 	public record NeutralEnumerationContext(PlacementAnalysis analysis,
-		RewireOccurrenceSnapshot rewireSnapshot, String analysisFingerprint) {
+		RewireOccurrenceSnapshot rewireSnapshot, String analysisFingerprint, int numWorkers,
+		Map<CompiledHopKey, CapturedInvocationEvidence> invocationEvidence,
+		Map<CompiledHopKey, Privacy> privacy) {
 		public NeutralEnumerationContext {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
 			Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			if(numWorkers <= 0)
+				throw new IllegalArgumentException("numWorkers must be positive");
+			invocationEvidence = immutableIdentityMap(invocationEvidence, "invocationEvidence");
+			privacy = immutableIdentityMap(privacy, "privacy");
 			if(rewireSnapshot.analysis() != analysis)
 				throw new IllegalArgumentException("Rewire snapshot belongs to a different analysis");
 			if(!analysis.analysisFingerprint().equals(analysisFingerprint)
 				|| !analysisFingerprint.equals(rewireSnapshot.analysisFingerprint()))
 				throw new IllegalArgumentException("Analysis fingerprint differs");
+			for(HopOccurrenceProjection occurrence : rewireSnapshot.candidateOccurrences()) {
+				if(!invocationEvidence.containsKey(occurrence.key()) || !privacy.containsKey(occurrence.key()))
+					throw new IllegalArgumentException("Captured occurrence evidence is incomplete");
+			}
 		}
 	}
 
@@ -132,24 +147,29 @@ public final class DpPlacementAdapter {
 					throw new IllegalArgumentException("Candidate edge order or identity differs");
 				if(!ownsCandidateKey(context.analysis(), raw.occurrence()))
 					throw new IllegalArgumentException("Candidate occurrence is not owned by the analysis");
-				if(promoted.oracleInputState() != orderedOracleInputs.get(i))
-					throw new IllegalArgumentException("Ordered oracle projection differs");
 			}
+			DpPlacementAdapter.orderedOracleInputs(context, parentOccurrence, rawEntries,
+				rawEntries.stream().map(CandidateMapEntry::oracleInputState).toList());
+			List<CandidateInputState> factInputs = orderedOracleInputs.stream()
+				.map(input -> input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
+					: CandidateInputState.present(FType.valueOf(input.name()))).toList();
+			context.analysis().candidateRuleFacts().requireExact(parentOccurrence, factInputs);
 		}
 	}
 
 	public record PreSelectionSemanticBlock(NeutralEnumerationContext context,
 		List<CandidateOccurrenceSnapshot> candidateSnapshots,
-		List<CandidateDecisionReceipt> candidateDecisionReceipts, int rawCandidateCount,
+		List<Long> candidateVariantOrdinals, List<CandidateDecisionReceipt> candidateDecisionReceipts, int rawCandidateCount,
 		int capturedCandidateCount, boolean zeroDifference) {
 		public PreSelectionSemanticBlock(NeutralEnumerationContext context,
 			List<CandidateOccurrenceSnapshot> candidateSnapshots, int rawCandidateCount,
 			int capturedCandidateCount, boolean zeroDifference) {
-			this(context, candidateSnapshots, List.of(), rawCandidateCount, capturedCandidateCount, zeroDifference);
+			this(context, candidateSnapshots, List.of(), List.of(), rawCandidateCount, capturedCandidateCount, zeroDifference);
 		}
 		public PreSelectionSemanticBlock {
 			Objects.requireNonNull(context, "context");
 			candidateSnapshots = List.copyOf(candidateSnapshots);
+			candidateVariantOrdinals = List.copyOf(candidateVariantOrdinals);
 			candidateDecisionReceipts = List.copyOf(candidateDecisionReceipts);
 			if(rawCandidateCount < 0 || capturedCandidateCount < 0)
 				throw new IllegalArgumentException("Candidate counts must be non-negative");
@@ -159,13 +179,14 @@ public final class DpPlacementAdapter {
 			for(CandidateOccurrenceSnapshot snapshot : candidateSnapshots)
 				if(snapshot.context() != context)
 					throw new IllegalArgumentException("Candidate snapshot belongs to a different context");
-			if(!candidateDecisionReceipts.isEmpty()) {
-				if(candidateDecisionReceipts.size() != candidateSnapshots.size())
+			if(!candidateDecisionReceipts.isEmpty() || !candidateVariantOrdinals.isEmpty()) {
+				if(candidateDecisionReceipts.size() != candidateSnapshots.size()
+					|| candidateVariantOrdinals.size() != candidateSnapshots.size())
 					throw new IllegalArgumentException("Candidate decision receipt count differs");
 				for(int i = 0; i < candidateDecisionReceipts.size(); i++) {
 					CandidateDecisionReceipt receipt = candidateDecisionReceipts.get(i);
 					if(receipt.context() != context || receipt.candidateSnapshot() != candidateSnapshots.get(i)
-						|| receipt.variantOrdinal() != i
+						|| receipt.variantOrdinal() != candidateVariantOrdinals.get(i)
 						|| !receipt.orderedOracleInputs().equals(candidateSnapshots.get(i).orderedOracleInputs()))
 						throw new IllegalArgumentException("Candidate decision receipt order or identity differs");
 				}
@@ -188,19 +209,23 @@ public final class DpPlacementAdapter {
 			effectiveNonNullFTypeMap = Collections.unmodifiableMap(copiedMap);
 			effectiveCollectedFTypes = Collections.unmodifiableList(new ArrayList<>(effectiveCollectedFTypes));
 			exactCollectedHops = List.copyOf(exactCollectedHops);
-			if(effectiveCollectedFTypes.size() != exactCollectedHops.size()
-				|| exactCollectedHops.size() != snapshot.promotedEntries().size())
+			if(effectiveCollectedFTypes.size() != exactCollectedHops.size())
 				throw new IllegalArgumentException("Normalized candidate carrier sizes differ");
+			int promotedIndex = 0;
 			for(int i = 0; i < exactCollectedHops.size(); i++) {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
-				CandidateMapEntry promoted = snapshot.promotedEntries().get(i);
-				FType effective = effectiveCollectedFTypes.get(i);
 				HopOccurrenceProjection projected = snapshot.context().rewireSnapshot().projectExactCarrier(hop);
-				if(projected == null || projected.key() != promoted.occurrence())
-					throw new IllegalArgumentException("Normalized Hop and occurrence differ");
-				if(effective != promoted.rawFType())
-					throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
+				if(projected == null)
+					throw new IllegalArgumentException("Normalized Hop occurrence is missing");
+				if(promotedIndex < snapshot.promotedEntries().size()
+					&& projected.key() == snapshot.promotedEntries().get(promotedIndex).occurrence()) {
+					CandidateMapEntry promoted = snapshot.promotedEntries().get(promotedIndex++);
+					if(effectiveCollectedFTypes.get(i) != promoted.rawFType())
+						throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
+				}
 			}
+			if(promotedIndex != snapshot.promotedEntries().size())
+				throw new IllegalArgumentException("Normalized physical carrier order differs");
 		}
 	}
 
@@ -209,6 +234,7 @@ public final class DpPlacementAdapter {
 		List<OracleInputState> orderedOracleInputs, ExecType nativeExec,
 		FederatedOutput nativeOutput, FType nativeFoutFType, FType logicalFType,
 		ReasonCode reasonCode, ConstructionDisposition disposition,
+		CapturedInvocationEvidence invocationEvidence, Privacy privacy,
 		boolean allowCPLOUT, boolean allowCPFOUT, boolean allowFEDLOUT, boolean allowFEDFOUT,
 		CandidateCapabilityFact capabilityFact) {
 		public CandidateDecisionReceipt {
@@ -219,6 +245,8 @@ public final class DpPlacementAdapter {
 			Objects.requireNonNull(nativeOutput, "nativeOutput");
 			Objects.requireNonNull(reasonCode, "reasonCode");
 			Objects.requireNonNull(disposition, "disposition");
+			Objects.requireNonNull(invocationEvidence, "invocationEvidence");
+			Objects.requireNonNull(privacy, "privacy");
 			Objects.requireNonNull(capabilityFact, "capabilityFact");
 			if(context != candidateSnapshot.context() || variantOrdinal < 0
 				|| !orderedOracleInputs.equals(candidateSnapshot.orderedOracleInputs()))
@@ -297,9 +325,21 @@ public final class DpPlacementAdapter {
 
 		List<CandidateMapEntry> rawEntries = new ArrayList<>(collectedHops.size());
 		List<CandidateMapEntry> promotedEntries = new ArrayList<>(collectedHops.size());
+		List<OracleInputState> rawOrderOracleStates = new ArrayList<>(collectedHops.size());
 		List<OracleInputState> orderedOracleInputs = new ArrayList<>(collectedHops.size());
 		List<FType> effectiveCollectedFTypes = new ArrayList<>(collectedFTypes);
 		LinkedHashMap<Long, FType> effectiveMap = new LinkedHashMap<>();
+		IdentityHashMap<CompiledHopKey, Integer> remainingPhysicalInputs = new IdentityHashMap<>();
+		Hop parentHop = context.analysis().hop(parent.key()).orElseThrow(() ->
+			failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+				"CANDIDATE_PARENT_STALE"));
+		for(Hop input : parentHop.getInput()) {
+			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(input);
+			if(occurrence == null)
+				throw failure(context.analysis(), parent.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"CANDIDATE_DIRECT_INPUT_UNMAPPABLE");
+			remainingPhysicalInputs.merge(occurrence.key(), 1, Integer::sum);
+		}
 		for(Map.Entry<Long, FType> entry : fedInputTypeMap.entrySet()) {
 			if(entry.getKey() == null || entry.getValue() == null)
 				throw failure(context.analysis(), parent.key(),
@@ -313,9 +353,8 @@ public final class DpPlacementAdapter {
 			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(hop);
 			boolean rawContainsKey = fedInputTypeMap.containsKey(hop.getHopID());
 			FType rawType = rawContainsKey ? fedInputTypeMap.get(hop.getHopID()) : null;
-			rawEntries.add(project(occurrence.key(), i, rawContainsKey, rawType));
-
 			FType collectedType = effectiveCollectedFTypes.get(i);
+			FedPlan childPlan = memo.getFedPlanAfterPrune(edge);
 			if(rawContainsKey && collectedType != null && collectedType != rawType)
 				throw failure(context.analysis(), parent.key(),
 					ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA, "FTYPE_MISMATCH");
@@ -324,7 +363,6 @@ public final class DpPlacementAdapter {
 				if(edge.getRight() == FederatedOutput.FOUT)
 					throw failure(context.analysis(), parent.key(),
 						ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE, "FOUT_METADATA_ABSENT");
-				FedPlan childPlan = memo.getFedPlanAfterPrune(edge);
 				FType memoType = childPlan == null ? null : childPlan.getCpFoutTypeOrFType();
 				if(collectedType != null && memoType != null && collectedType != memoType)
 					throw failure(context.analysis(), parent.key(),
@@ -334,10 +372,32 @@ public final class DpPlacementAdapter {
 					effectiveMap.put(hop.getHopID(), effectiveType);
 			}
 			effectiveCollectedFTypes.set(i, effectiveType);
-			CandidateMapEntry promoted = project(occurrence.key(), i, effectiveType != null, effectiveType);
-			promotedEntries.add(promoted);
-			orderedOracleInputs.add(promoted.oracleInputState());
+			int remaining = remainingPhysicalInputs.getOrDefault(occurrence.key(), 0);
+			if(remaining > 0) {
+				int filteredOrdinal = rawEntries.size();
+				rawEntries.add(project(occurrence.key(), filteredOrdinal, rawContainsKey, rawType));
+				promotedEntries.add(project(occurrence.key(), filteredOrdinal,
+					effectiveType != null, effectiveType));
+				boolean nativeFederatedFout = edge.getRight() == FederatedOutput.FOUT && childPlan != null
+					&& childPlan.getExecType() == ExecType.FED && !childPlan.isDerivedFedFout()
+					&& context.analysis().graph().node(occurrence.key()).stream()
+						.flatMap(node -> node.legalAlternatives().stream())
+						.anyMatch(state -> state.execType() == ExecType.FED
+							&& state.output() == FederatedOutput.FOUT
+							&& state.fType() == childPlan.getFType());
+				rawOrderOracleStates.add(nativeFederatedFout && childPlan.getFType() != null
+					? oracleState(true, childPlan.getFType()) : OracleInputState.ABSENT_LOCAL);
+				if(remaining == 1)
+					remainingPhysicalInputs.remove(occurrence.key());
+				else
+					remainingPhysicalInputs.put(occurrence.key(), remaining - 1);
+			}
 		}
+		if(!remainingPhysicalInputs.isEmpty())
+			throw failure(context.analysis(), parent.key(), ConstructionDisposition.REORDERED_EDGE,
+				"CANDIDATE_DIRECT_INPUT_MISSING");
+		orderedOracleInputs.addAll(orderedOracleInputs(
+			context, parent.key(), rawEntries, rawOrderOracleStates));
 
 		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
 			promotedEntries, orderedOracleInputs, ConstructionDisposition.AVAILABLE, "AVAILABLE");
@@ -357,36 +417,165 @@ public final class DpPlacementAdapter {
 			orderedInputs.add(input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
 				: CandidateInputState.present(FType.valueOf(input.name())));
 
-		List<ConsumerEdgeEvidence> consumerEdges = new ArrayList<>();
-		for(int i = 0; i < context.rewireSnapshot().consumerEdges().size(); i++) {
-			RewireConsumerEdge edge = context.rewireSnapshot().consumerEdges().get(i);
-			consumerEdges.add(new ConsumerEdgeEvidence(i, edge.parentOccurrence(), edge.childOccurrence(),
-				edge.inputPosition(), consumerKind(context.analysis(), edge.parentOccurrence())));
-		}
-		List<TransientForwardEvidence> forwards = new ArrayList<>();
-		for(int i = 0; i < context.rewireSnapshot().transientForwardEdges().size(); i++) {
-			RewireTransientForwardEdge edge = context.rewireSnapshot().transientForwardEdges().get(i);
-			forwards.add(new TransientForwardEvidence(i, edge.writeOccurrence(), edge.readOccurrence()));
-		}
 		Hop parentHop = context.analysis().hop(snapshot.parentOccurrence()).orElseThrow(() ->
 			failure(context.analysis(), snapshot.parentOccurrence(), ConstructionDisposition.STALE_CONTEXT,
 				"CANDIDATE_PARENT_STALE"));
-		InvocationEvidence projection = invocationEvidence(parentHop);
+		CapturedInvocationEvidence invocationEvidence = context.invocationEvidence().get(snapshot.parentOccurrence());
+		Privacy privacy = context.privacy().get(snapshot.parentOccurrence());
+		if(invocationEvidence == null || privacy == null)
+			throw failure(context.analysis(), snapshot.parentOccurrence(), ConstructionDisposition.STALE_CONTEXT,
+				"CANDIDATE_EVIDENCE_STALE");
 		CapturedResolution resolved = PlacementCandidateRuleResolver.resolveCaptured(new CapturedResolutionRequest(
 			context.analysis(), context.analysisFingerprint(), snapshot.parentOccurrence(), orderedInputs,
-			new CapturedInvocationEvidence(projection, consumerEdges, forwards)));
+			invocationEvidence));
 		CandidateCapabilityFact caps = resolved.fact().capability();
-		boolean cp = caps.nativeExec() == ExecType.CP;
-		boolean fed = caps.nativeExec() == ExecType.FED;
-		boolean lout = caps.nativeOutput() == FederatedOutput.LOUT;
-		boolean fout = caps.nativeOutput() == FederatedOutput.FOUT;
+		ExecPlacementPolicy.Decision placement = ExecPlacementPolicy.decideCaptured(
+			new CapturedPlacementRequest(parentHop, privacy, resolved.logicalFType(), caps,
+				normalizedCandidateInputs.effectiveNonNullFTypeMap()));
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
-			caps.reasonCode(), ConstructionDisposition.AVAILABLE, cp && lout, cp && fout, fed && lout, fed && fout,
-			caps);
+			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
+			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT, caps);
 	}
 
-	private static InvocationEvidence invocationEvidence(Hop hop) {
+	public static NeutralEnumerationContext captureNeutralEnumerationContext(PlacementAnalysis analysis,
+		RewireOccurrenceSnapshot rewireSnapshot, int numWorkers, Map<Long, Privacy> privacyByHop,
+		Set<Long> terminalTransientWriteHopIds) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
+		Objects.requireNonNull(privacyByHop, "privacyByHop");
+		Objects.requireNonNull(terminalTransientWriteHopIds, "terminalTransientWriteHopIds");
+		Set<CompiledHopKey> forwardWrites = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(RewireTransientForwardEdge forward : rewireSnapshot.transientForwardEdges())
+			forwardWrites.add(forward.writeOccurrence());
+		Set<CompiledHopKey> terminalTransientWrites = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(HopOccurrenceProjection occurrence : rewireSnapshot.candidateOccurrences()) {
+			if(!terminalTransientWriteHopIds.contains(occurrence.hop().getHopID()))
+				continue;
+			if(forwardWrites.contains(occurrence.key()))
+				throw failure(analysis, occurrence.key(), ConstructionDisposition.STALE_CONTEXT,
+					"TERMINAL_TRANSIENT_FORWARD_CONFLICT");
+			terminalTransientWrites.add(occurrence.key());
+		}
+		for(HopOccurrenceProjection root : rewireSnapshot.additionalRoots()) {
+			if(consumerKind(analysis, root.key()) != ConsumerNodeKind.TRANSIENT_WRITE)
+				continue;
+			if(!forwardWrites.contains(root.key()))
+				terminalTransientWrites.add(root.key());
+		}
+		Map<CompiledHopKey, CapturedInvocationEvidence> invocations = new IdentityHashMap<>();
+		Map<CompiledHopKey, Privacy> privacy = new IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : rewireSnapshot.candidateOccurrences()) {
+			Hop hop = occurrence.hop();
+			InvocationEvidence projection = invocationEvidence(hop, numWorkers);
+			invocations.put(occurrence.key(), occurrenceInvocationEvidence(
+				analysis, rewireSnapshot, occurrence.key(), projection, terminalTransientWrites));
+			privacy.put(occurrence.key(), privacyByHop.getOrDefault(hop.getHopID(), Privacy.PUBLIC));
+		}
+		return new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint(),
+			Math.max(1, numWorkers), invocations, privacy);
+	}
+
+	private static List<OracleInputState> orderedOracleInputs(NeutralEnumerationContext context,
+		CompiledHopKey parentOccurrence, List<CandidateMapEntry> rawEntries,
+		List<OracleInputState> rawOrderOracleStates) {
+		if(rawEntries.size() != rawOrderOracleStates.size())
+			throw failure(context.analysis(), parentOccurrence, ConstructionDisposition.REORDERED_EDGE,
+				"CANDIDATE_ORACLE_INPUT_ARITY");
+		Hop parent = context.analysis().hop(parentOccurrence).orElseThrow(() ->
+			failure(context.analysis(), parentOccurrence, ConstructionDisposition.STALE_CONTEXT,
+				"CANDIDATE_PARENT_STALE"));
+		boolean[] consumed = new boolean[rawEntries.size()];
+		List<OracleInputState> ordered = new ArrayList<>(parent.getInput().size());
+		for(Hop input : parent.getInput()) {
+			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(input);
+			if(occurrence == null)
+				throw failure(context.analysis(), parentOccurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"CANDIDATE_DIRECT_INPUT_UNMAPPABLE");
+			int match = -1;
+			for(int i = 0; i < rawEntries.size(); i++) {
+				if(!consumed[i] && rawEntries.get(i).occurrence() == occurrence.key()) {
+					match = i;
+					break;
+				}
+			}
+			if(match < 0)
+				throw failure(context.analysis(), parentOccurrence, ConstructionDisposition.REORDERED_EDGE,
+					"CANDIDATE_DIRECT_INPUT_MISSING");
+			consumed[match] = true;
+			ordered.add(rawOrderOracleStates.get(match));
+		}
+		for(int i = 0; i < rawEntries.size(); i++)
+			if(!consumed[i])
+				throw failure(context.analysis(), parentOccurrence, ConstructionDisposition.REORDERED_EDGE,
+					"CANDIDATE_DIRECT_INPUT_EXTRA");
+		return List.copyOf(ordered);
+	}
+
+	private static CapturedInvocationEvidence occurrenceInvocationEvidence(PlacementAnalysis analysis,
+		RewireOccurrenceSnapshot snapshot, CompiledHopKey parentOccurrence, InvocationEvidence projection,
+		Set<CompiledHopKey> terminalTransientWrites) {
+		if(!analysis.graph().node(parentOccurrence).orElseThrow(() ->
+			failure(analysis, parentOccurrence, ConstructionDisposition.STALE_CONTEXT,
+				"CANDIDATE_PARENT_STALE")).emittedWork())
+			return new CapturedInvocationEvidence(projection, List.of(), List.of());
+		Set<RewireConsumerEdge> retainedEdges = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<RewireTransientForwardEdge> retainedForwards = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<CompiledHopKey> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		collectOccurrenceEvidence(analysis, snapshot, parentOccurrence, parentOccurrence,
+			retainedEdges, retainedForwards, visited, terminalTransientWrites);
+
+		List<ConsumerEdgeEvidence> edges = new ArrayList<>();
+		for(RewireConsumerEdge edge : snapshot.consumerEdges()) {
+			if(retainedEdges.contains(edge))
+				edges.add(new ConsumerEdgeEvidence(edges.size(), edge.parentOccurrence(), edge.childOccurrence(),
+					edge.inputPosition(), terminalTransientWrites.contains(edge.parentOccurrence())
+						? ConsumerNodeKind.TERMINAL_TRANSIENT_WRITE
+						: consumerKind(analysis, edge.parentOccurrence())));
+		}
+		List<TransientForwardEvidence> forwards = new ArrayList<>();
+		for(RewireTransientForwardEdge edge : snapshot.transientForwardEdges()) {
+			if(retainedForwards.contains(edge))
+				forwards.add(new TransientForwardEvidence(forwards.size(),
+					edge.writeOccurrence(), edge.readOccurrence()));
+		}
+		return new CapturedInvocationEvidence(projection, edges, forwards);
+	}
+
+	private static void collectOccurrenceEvidence(PlacementAnalysis analysis, RewireOccurrenceSnapshot snapshot,
+		CompiledHopKey rootOccurrence, CompiledHopKey producerOccurrence,
+		Set<RewireConsumerEdge> retainedEdges, Set<RewireTransientForwardEdge> retainedForwards,
+		Set<CompiledHopKey> visited, Set<CompiledHopKey> terminalTransientWrites) {
+		if(!visited.add(producerOccurrence))
+			return;
+		for(RewireConsumerEdge edge : snapshot.consumerEdges()) {
+			if(edge.childOccurrence() != producerOccurrence)
+				continue;
+			retainedEdges.add(edge);
+			ConsumerNodeKind kind = consumerKind(analysis, edge.parentOccurrence());
+			if(kind == ConsumerNodeKind.NORMAL)
+				continue;
+			if(kind == ConsumerNodeKind.TRANSIENT_READ) {
+				collectOccurrenceEvidence(analysis, snapshot, rootOccurrence, edge.parentOccurrence(),
+					retainedEdges, retainedForwards, visited, terminalTransientWrites);
+				continue;
+			}
+			if(terminalTransientWrites.contains(edge.parentOccurrence()))
+				continue;
+			List<RewireTransientForwardEdge> matches = snapshot.transientForwardEdges().stream()
+				.filter(forward -> forward.writeOccurrence() == edge.parentOccurrence()).toList();
+			if(matches.isEmpty())
+				throw failure(analysis, rootOccurrence, ConstructionDisposition.STALE_CONTEXT,
+					"AMBIGUOUS_TRANSIENT_FORWARD");
+			for(RewireTransientForwardEdge forward : matches) {
+				retainedForwards.add(forward);
+				collectOccurrenceEvidence(analysis, snapshot, rootOccurrence, forward.readOccurrence(),
+					retainedEdges, retainedForwards, visited, terminalTransientWrites);
+			}
+		}
+	}
+
+	private static InvocationEvidence invocationEvidence(Hop hop, int numWorkers) {
 		boolean multiReturn = hop instanceof FunctionOp
 			&& ((FunctionOp)hop).getFunctionType() == FunctionOp.FunctionType.MULTIRETURN_BUILTIN;
 		FType fedInitType = null;
@@ -396,7 +585,38 @@ public final class DpPlacementAdapter {
 			FederatedPlannerUtils.isScalarLikeMatrix(hop), FederatedPlannerUtils.isVectorShape(hop),
 			hop.getDim1(), hop.getDim2(), fedInitType,
 			hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD,
-			false, false, false, null, 0);
+			FederatedPlannerUtils.getVectorAxis(hop) != null && hasConsumerAxisMismatch(hop),
+			hasConsumerAxisLengthMismatch(hop, FType.ROW), hasConsumerAxisLengthMismatch(hop, FType.COL),
+			null, Math.max(1, numWorkers));
+	}
+
+	private static boolean hasConsumerAxisMismatch(Hop hop) {
+		FType axis = FederatedPlannerUtils.getVectorAxis(hop);
+		if(axis == null) return false;
+		for(Hop parent : hop.getParent()) {
+			FType parentAxis = FederatedPlannerUtils.getVectorAxis(parent);
+			if(parentAxis != null && parentAxis != axis) return true;
+		}
+		return false;
+	}
+
+	private static boolean hasConsumerAxisLengthMismatch(Hop hop, FType axis) {
+		long length = axis == FType.ROW ? hop.getDim1() : hop.getDim2();
+		if(length <= 0) return false;
+		for(Hop parent : hop.getParent()) {
+			long parentLength = axis == FType.ROW ? parent.getDim1() : parent.getDim2();
+			if(parentLength > 0 && parentLength != length) return true;
+		}
+		return false;
+	}
+
+	private static <V> Map<CompiledHopKey, V> immutableIdentityMap(Map<CompiledHopKey, V> source, String name) {
+		Objects.requireNonNull(source, name);
+		IdentityHashMap<CompiledHopKey, V> copy = new IdentityHashMap<>();
+		for(Map.Entry<CompiledHopKey, V> entry : source.entrySet())
+			copy.put(Objects.requireNonNull(entry.getKey(), name + " key"),
+				Objects.requireNonNull(entry.getValue(), name + " value"));
+		return Collections.unmodifiableMap(copy);
 	}
 
 	private static ConsumerNodeKind consumerKind(PlacementAnalysis analysis, CompiledHopKey key) {

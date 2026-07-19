@@ -51,6 +51,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPol
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
@@ -157,6 +159,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleFact> candidateRuleFacts = new ArrayList<>();
 		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys = new ArrayList<>();
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts = new ArrayList<>();
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts = new ArrayList<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
 			Hop hop = occurrence.hop();
@@ -208,6 +211,7 @@ public final class NeutralPlacementGraphBuilder {
 			nodes.add(node);
 			nodesByHop.put(hop, node);
 		}
+		captureDetachedConsumerProfileFacts(occurrences, keys, factsByHop, detachedConsumerProfileFacts);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch before CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
@@ -257,7 +261,7 @@ public final class NeutralPlacementGraphBuilder {
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
-			candidateConsumerDomainKeys, candidateConsumerProfileFacts);
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
@@ -700,25 +704,72 @@ public final class NeutralPlacementGraphBuilder {
 		for(int inputPosition = 0; inputPosition < inputShapeFacts.size(); inputPosition++) {
 			CandidateConsumerProfileKey key = new CandidateConsumerProfileKey(consumerKey, inputPosition);
 			domainKeys.add(key);
-			List<FType> allowed = new ArrayList<>();
-			String failure = "";
-			for(FType candidate : PlacementCandidateRuleResolver.matrixFTypeCandidates()) {
-				try {
-					FTypeProfile profile = oracle.inferProfile(consumer,
-						consumerProfileInputDomains(inputShapeFacts, inputPosition, candidate), null);
-					if(profile != null && profile.outputs() != null && !profile.outputs().isEmpty())
-						allowed.add(candidate);
-				}
-				catch(Throwable t) {
-					failure = "PROFILE_ERROR:" + t.getClass().getSimpleName();
-					allowed.clear();
-					break;
-				}
-			}
-			facts.add(new CandidateConsumerProfileFact(key, failure.isEmpty()
-				? CandidateEvaluationStatus.AVAILABLE : CandidateEvaluationStatus.PROFILE_ERROR,
-				allowed, failure));
+			ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(consumer, inputShapeFacts,
+				List.of(inputPosition));
+			facts.add(new CandidateConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
+				evaluation.failureCode()));
 		}
+	}
+
+	private void captureDetachedConsumerProfileFacts(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, Map<Hop,CompiledHopKey> keys,
+		Map<Hop,NodeShapeFact> factsByHop, List<DetachedConsumerProfileFact> facts) {
+		for(PlacementGraphFingerprint.HopOccurrence producerOccurrence : occurrences) {
+			Hop producer = producerOccurrence.hop();
+			CompiledHopKey producerKey = keys.get(producer);
+			List<Hop> parents = producer.getParent();
+			for(int parentOrdinal = 0; parentOrdinal < parents.size(); parentOrdinal++) {
+				Hop parent = parents.get(parentOrdinal);
+				if(keys.containsKey(parent) || isTransientRead(parent) || isTransientWrite(parent)
+					|| isFunctionOutput(parent))
+					continue;
+				List<Integer> producerInputPositions = new ArrayList<>();
+				List<NodeShapeFact> inputShapeFacts = new ArrayList<>(parent.getInput().size());
+				for(int inputPosition = 0; inputPosition < parent.getInput().size(); inputPosition++) {
+					Hop input = parent.getInput(inputPosition);
+					if(input == producer)
+						producerInputPositions.add(inputPosition);
+					NodeShapeFact shapeFact = factsByHop.get(input);
+					if(shapeFact == null) {
+						var shape = OracleFacade.nodeShape(input);
+						shapeFact = new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols());
+					}
+					inputShapeFacts.add(shapeFact);
+				}
+				if(producerInputPositions.isEmpty())
+					continue;
+				ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(parent, inputShapeFacts,
+					producerInputPositions);
+				DetachedConsumerProfileKey key = new DetachedConsumerProfileKey(producerKey, parentOrdinal,
+					PlacementGraphFingerprint.semanticStructuralKey(parent), producerInputPositions);
+				facts.add(new DetachedConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
+					evaluation.failureCode()));
+			}
+		}
+	}
+
+	private record ConsumerProfileEvaluation(CandidateEvaluationStatus status,
+		List<FType> allowedTargetTypes, String failureCode) { }
+
+	private ConsumerProfileEvaluation evaluateConsumerProfile(Hop consumer, List<NodeShapeFact> inputShapeFacts,
+		List<Integer> targetPositions) {
+		List<FType> allowed = new ArrayList<>();
+		String failure = "";
+		for(FType candidate : PlacementCandidateRuleResolver.matrixFTypeCandidates()) {
+			try {
+				FTypeProfile profile = oracle.inferProfile(consumer,
+					consumerProfileInputDomains(inputShapeFacts, targetPositions, candidate), null);
+				if(profile != null && profile.outputs() != null && !profile.outputs().isEmpty())
+					allowed.add(candidate);
+			}
+			catch(Throwable t) {
+				failure = "PROFILE_ERROR:" + t.getClass().getSimpleName();
+				allowed.clear();
+				break;
+			}
+		}
+		return new ConsumerProfileEvaluation(failure.isEmpty() ? CandidateEvaluationStatus.AVAILABLE
+			: CandidateEvaluationStatus.PROFILE_ERROR, List.copyOf(allowed), failure);
 	}
 
 	private static List<List<FType>> consumerProfileInputDomains(List<NodeShapeFact> inputShapeFacts,
@@ -727,6 +778,20 @@ public final class NeutralPlacementGraphBuilder {
 		List<List<FType>> domains = new ArrayList<>(inputShapeFacts.size());
 		for(int i = 0; i < inputShapeFacts.size(); i++) {
 			if(i == targetPosition)
+				domains.add(List.of(targetCandidate));
+			else if(inputShapeFacts.get(i).dataType().isMatrix())
+				domains.add(PlacementCandidateRuleResolver.matrixFTypeCandidates());
+			else
+				domains.add(Collections.singletonList(null));
+		}
+		return Collections.unmodifiableList(domains);
+	}
+
+	private static List<List<FType>> consumerProfileInputDomains(List<NodeShapeFact> inputShapeFacts,
+		List<Integer> targetPositions, FType targetCandidate) {
+		List<List<FType>> domains = new ArrayList<>(inputShapeFacts.size());
+		for(int i = 0; i < inputShapeFacts.size(); i++) {
+			if(targetPositions.contains(i))
 				domains.add(List.of(targetCandidate));
 			else if(inputShapeFacts.get(i).dataType().isMatrix())
 				domains.add(PlacementCandidateRuleResolver.matrixFTypeCandidates());

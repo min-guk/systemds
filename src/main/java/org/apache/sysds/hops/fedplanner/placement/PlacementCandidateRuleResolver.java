@@ -19,6 +19,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleLookupException;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 
 /** Pure projection over explicit legacy evidence or exact analysis-owned captured facts. */
@@ -54,7 +55,7 @@ public final class PlacementCandidateRuleResolver {
 		}
 	}
 
-	public enum ConsumerNodeKind { NORMAL, TRANSIENT_WRITE, TRANSIENT_READ }
+	public enum ConsumerNodeKind { NORMAL, TRANSIENT_WRITE, TRANSIENT_READ, TERMINAL_TRANSIENT_WRITE }
 
 	/** Ordered exact edge: consumer reads producer at inputPosition. */
 	public record ConsumerEdgeEvidence(int ordinal, CompiledHopKey consumerOccurrence,
@@ -108,10 +109,12 @@ public final class PlacementCandidateRuleResolver {
 	}
 
 	public record CapturedResolution(CandidateRuleFact fact, FType logicalFType,
-		List<CandidateConsumerProfileFact> retainedConsumerFacts) {
+		List<CandidateConsumerProfileFact> retainedConsumerFacts,
+		List<DetachedConsumerProfileFact> retainedDetachedConsumerFacts) {
 		public CapturedResolution {
 			Objects.requireNonNull(fact, "fact");
 			retainedConsumerFacts = List.copyOf(retainedConsumerFacts);
+			retainedDetachedConsumerFacts = List.copyOf(retainedDetachedConsumerFacts);
 		}
 	}
 
@@ -187,12 +190,23 @@ public final class PlacementCandidateRuleResolver {
 				intersection.retainAll(consumerFact.allowedTargetTypes());
 			}
 		}
+		List<DetachedConsumerProfileFact> detachedConsumerFacts =
+			analysis.detachedConsumerProfileFacts().requireExactProducer(request.parentOccurrence());
+		for(DetachedConsumerProfileFact consumerFact : detachedConsumerFacts) {
+			if(consumerFact.status() != CandidateEvaluationStatus.AVAILABLE)
+				throw failure(CapturedResolutionFailure.CONSUMER_PROFILE_EVALUATION_FAILED, request,
+					consumerFact.failureCode());
+			if(!consumerFact.allowedTargetTypes().isEmpty()) {
+				constrained = true;
+				intersection.retainAll(consumerFact.allowedTargetTypes());
+			}
+		}
 		Set<FType> consumers = constrained ? intersection : Set.of();
 		ProfileEvidence profiles = new ProfileEvidence(new LinkedHashSet<>(fact.profile().producerOutputs()),
 			consumers, constrained);
 		FType logical = project(fact.key().orderedInputs(), fact.capability(), profiles,
 			request.invocation().projection());
-		return new CapturedResolution(fact, logical, consumerFacts);
+		return new CapturedResolution(fact, logical, consumerFacts, detachedConsumerFacts);
 	}
 
 	public static FType projectConsumerSafeType(FType logicalType, InvocationEvidence invocation) {
@@ -214,32 +228,35 @@ public final class PlacementCandidateRuleResolver {
 
 	private static List<RetainedConsumer> retainedConsumers(CapturedResolutionRequest request) {
 		List<RetainedConsumer> retained = new java.util.ArrayList<>();
-		Set<CompiledHopKey> active = Collections.newSetFromMap(new IdentityHashMap<>());
-		collectConsumers(request.parentOccurrence(), request, retained, active);
+		Set<CompiledHopKey> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		collectConsumers(request.parentOccurrence(), request, retained, visited);
 		return List.copyOf(retained);
 	}
 
 	private static void collectConsumers(CompiledHopKey producer, CapturedResolutionRequest request,
-		List<RetainedConsumer> retained, Set<CompiledHopKey> active) {
-		if(!active.add(producer))
-			throw failure(CapturedResolutionFailure.REORDERED_CONSUMER_EDGE, request,
-				"Transient consumer cycle detected");
+		List<RetainedConsumer> retained, Set<CompiledHopKey> visited) {
+		if(!visited.add(producer))
+			return;
 		for(ConsumerEdgeEvidence edge : request.invocation().consumerEdges()) {
 			if(edge.producerOccurrence() != producer) continue;
-			if(edge.consumerKind() == ConsumerNodeKind.NORMAL)
-				retained.add(new RetainedConsumer(edge.consumerOccurrence(), edge.inputPosition()));
+			if(edge.consumerKind() == ConsumerNodeKind.TERMINAL_TRANSIENT_WRITE) continue;
+			if(edge.consumerKind() == ConsumerNodeKind.NORMAL) {
+				if(retained.stream().noneMatch(value -> value.occurrence() == edge.consumerOccurrence()
+					&& value.inputPosition() == edge.inputPosition()))
+					retained.add(new RetainedConsumer(edge.consumerOccurrence(), edge.inputPosition()));
+			}
 			else if(edge.consumerKind() == ConsumerNodeKind.TRANSIENT_READ)
-				collectConsumers(edge.consumerOccurrence(), request, retained, active);
+				collectConsumers(edge.consumerOccurrence(), request, retained, visited);
 			else {
 				List<TransientForwardEvidence> matches = request.invocation().transientForwards().stream()
 					.filter(forward -> forward.writeOccurrence() == edge.consumerOccurrence()).toList();
-				if(matches.size() != 1)
+				if(matches.isEmpty())
 					throw failure(CapturedResolutionFailure.AMBIGUOUS_TRANSIENT_FORWARD, request,
-						"Transient write requires one exact read forward, found " + matches.size());
-				collectConsumers(matches.get(0).readOccurrence(), request, retained, active);
+						"Transient write requires at least one exact read forward");
+				for(TransientForwardEvidence forward : matches)
+					collectConsumers(forward.readOccurrence(), request, retained, visited);
 			}
 		}
-		active.remove(producer);
 	}
 
 	private static FType project(List<CandidateInputState> orderedInputs, CandidateCapabilityFact capability,

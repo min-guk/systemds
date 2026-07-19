@@ -20,6 +20,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
@@ -33,10 +34,21 @@ import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 public final class ExecPlacementPolicy {
+	public record CapturedPlacementRequest(Hop hop, Privacy privacy, FType logicalFType,
+		CandidateCapabilityFact capabilityFact, Map<Long, FType> effectiveFTypes) {
+		public CapturedPlacementRequest {
+			if(hop == null || privacy == null || capabilityFact == null)
+				throw new IllegalArgumentException("Captured placement request must be complete");
+			effectiveFTypes = Map.copyOf(effectiveFTypes);
+		}
+	}
+
 	public static final class Decision {
 		public boolean allowCP_LOUT;
 		public boolean allowCP_FOUT;
@@ -69,6 +81,59 @@ public final class ExecPlacementPolicy {
 	public static Decision decide(Hop hop, Privacy privacy, FType fType, OpCaps caps) {
 		ExecType oracleExec = (caps != null) ? caps.exec() : ExecType.CP;
 		FederatedOutput placement = (caps != null) ? caps.placement() : FederatedOutput.LOUT;
+		return decide(hop, privacy, fType, oracleExec, placement);
+	}
+
+	public static Decision decideCaptured(CapturedPlacementRequest request) {
+		CandidateCapabilityFact capability = request.capabilityFact();
+		Decision decision = decide(request.hop(), request.privacy(), request.logicalFType(),
+			capability.nativeExec(), capability.nativeOutput());
+		Hop hop = request.hop();
+		boolean derivedFedFout = !decision.allowFED_FOUT && decision.allowFED_LOUT
+			&& hop.getDataType() != null && hop.getDataType().isMatrix()
+			&& (request.privacy() == Privacy.PUBLIC
+				|| request.privacy() == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
+			&& FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, request.effectiveFTypes());
+		if(derivedFedFout)
+			decision.allowFED_FOUT = true;
+		if(hop instanceof org.apache.sysds.hops.NaryOp) {
+			Types.OpOpN op = ((org.apache.sysds.hops.NaryOp)hop).getOp();
+			if(op == Types.OpOpN.CBIND || op == Types.OpOpN.RBIND) {
+				decision.allowFED_LOUT = false;
+				decision.allowFED_FOUT = false;
+				decision.allowCP_FOUT = false;
+			}
+		}
+		if(capability.reasonCode() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME
+			&& hop instanceof org.apache.sysds.hops.ParameterizedBuiltinOp
+			&& ((org.apache.sysds.hops.ParameterizedBuiltinOp)hop).getOp() == Types.ParamBuiltinOp.REXPAND) {
+			decision.allowFED_LOUT = false;
+			decision.allowFED_FOUT = false;
+			decision.allowCP_LOUT = true;
+		}
+		if(isRecompileRegion(hop))
+			decision.allowCP_FOUT = false;
+		if(hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD
+			&& request.effectiveFTypes().isEmpty()) {
+			decision.allowFED_LOUT = false;
+			decision.allowFED_FOUT = false;
+			decision.allowCP_FOUT = false;
+			decision.allowCP_LOUT = true;
+		}
+		return decision;
+	}
+
+	private static boolean isRecompileRegion(Hop hop) {
+		if(hop.requiresRecompile()) return true;
+		List<Hop> inputs = hop.getInput();
+		if(inputs != null)
+			for(Hop input : inputs)
+				if(input != null && input.requiresRecompile()) return true;
+		return false;
+	}
+
+	private static Decision decide(Hop hop, Privacy privacy, FType fType, ExecType oracleExec,
+		FederatedOutput placement) {
 		boolean dmlFunctionPlaceholder = isDmlFunctionPlaceholder(hop);
 
 		Decision decision = new Decision();

@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
@@ -197,6 +198,43 @@ public final class PlacementAnalysis {
 		}
 	}
 
+	/** Primitive producer-scoped profile evidence for a consumer absent from the analysis occurrence graph. */
+	public record DetachedConsumerProfileKey(CompiledHopKey producerOccurrence, int parentOrdinal,
+		String normalizedConsumerSignature, List<Integer> producerInputPositions) {
+		public DetachedConsumerProfileKey {
+			Objects.requireNonNull(producerOccurrence, "producerOccurrence");
+			if(parentOrdinal < 0)
+				throw new IllegalArgumentException("Detached consumer parent ordinal must be non-negative");
+			if(normalizedConsumerSignature == null || normalizedConsumerSignature.isBlank())
+				throw new IllegalArgumentException("Detached consumer signature must not be blank");
+			producerInputPositions = List.copyOf(Objects.requireNonNull(producerInputPositions,
+				"producerInputPositions"));
+			if(producerInputPositions.isEmpty())
+				throw new IllegalArgumentException("Detached consumer must reference its producer");
+			int previous = -1;
+			for(int position : producerInputPositions) {
+				if(position <= previous)
+					throw new IllegalArgumentException("Detached consumer input positions must be strictly ordered");
+				previous = position;
+			}
+		}
+	}
+
+	public record DetachedConsumerProfileFact(DetachedConsumerProfileKey key,
+		CandidateEvaluationStatus status, List<FType> allowedTargetTypes, String failureCode) {
+		public DetachedConsumerProfileFact {
+			Objects.requireNonNull(key, "key");
+			Objects.requireNonNull(status, "status");
+			allowedTargetTypes = List.copyOf(Objects.requireNonNull(allowedTargetTypes, "allowedTargetTypes"));
+			failureCode = failureCode == null ? "" : failureCode;
+			if(status == CandidateEvaluationStatus.RULE_ERROR
+				|| status == CandidateEvaluationStatus.AVAILABLE && !failureCode.isEmpty()
+				|| status == CandidateEvaluationStatus.PROFILE_ERROR
+					&& (failureCode.isEmpty() || !allowedTargetTypes.isEmpty()))
+				throw new IllegalArgumentException("Detached consumer profile status and evidence differ");
+		}
+	}
+
 	/** One exact immutable rule/profile fact captured by the canonical builder pass. */
 	public record CandidateRuleFact(CandidateRuleKey key, CandidateEvaluationStatus status,
 		CandidateCapabilityFact capability, CandidateShapeProofFact shapeProof, CandidateProfileFact profile,
@@ -331,6 +369,39 @@ public final class PlacementAnalysis {
 			return fact;
 		}
 	}
+
+	/** Ordered, deeply immutable detached consumer evidence indexed by exact producer identity. */
+	public static final class DetachedConsumerProfileFacts {
+		private final List<DetachedConsumerProfileFact> orderedFacts;
+		private final Map<CompiledHopKey,List<DetachedConsumerProfileFact>> factsByProducer;
+
+		public DetachedConsumerProfileFacts(List<DetachedConsumerProfileFact> facts,
+			Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+			Objects.requireNonNull(facts, "facts");
+			Map<CompiledHopKey,List<DetachedConsumerProfileFact>> indexed = new IdentityHashMap<>();
+			Set<DetachedConsumerProfileKey> keys = new java.util.HashSet<>();
+			List<DetachedConsumerProfileFact> copied = new java.util.ArrayList<>(facts.size());
+			for(DetachedConsumerProfileFact fact : facts) {
+				Objects.requireNonNull(fact, "detached consumer profile fact");
+				if(!analysisKeysByIdentity.containsKey(fact.key().producerOccurrence()))
+					throw new IllegalArgumentException("Detached consumer producer is not analysis-owned");
+				if(!keys.add(fact.key()))
+					throw new IllegalArgumentException("Duplicate detached consumer profile fact");
+				indexed.computeIfAbsent(fact.key().producerOccurrence(), ignored -> new java.util.ArrayList<>()).add(fact);
+				copied.add(fact);
+			}
+			orderedFacts = List.copyOf(copied);
+			Map<CompiledHopKey,List<DetachedConsumerProfileFact>> immutable = new IdentityHashMap<>();
+			indexed.forEach((producer, producerFacts) -> immutable.put(producer, List.copyOf(producerFacts)));
+			factsByProducer = Collections.unmodifiableMap(immutable);
+		}
+
+		public List<DetachedConsumerProfileFact> orderedFacts() { return orderedFacts; }
+		public List<DetachedConsumerProfileFact> requireExactProducer(CompiledHopKey producer) {
+			List<DetachedConsumerProfileFact> facts = factsByProducer.get(producer);
+			return facts == null ? List.of() : facts;
+		}
+	}
 	/** Exact producer/value pair for one immutable Heuristic demotion fact. */
 	public record HeuristicPolicyFact(CompiledHopKey producer, ValueVersionKey valueVersion)
 		implements Comparable<HeuristicPolicyFact> {
@@ -398,6 +469,7 @@ public final class PlacementAnalysis {
 	private final CandidateRuleDomain candidateRuleDomain;
 	private final CandidateRuleFacts candidateRuleFacts;
 	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
+	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final DMLProgram programOwner;
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -405,7 +477,8 @@ public final class PlacementAnalysis {
 		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
 		List<CandidateRuleFact> candidateRuleFacts,
 		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
-		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
 		this.occurrences = List.copyOf(occurrences);
@@ -434,12 +507,25 @@ public final class PlacementAnalysis {
 		this.candidateRuleFacts = new CandidateRuleFacts(this.candidateRuleDomain, candidateRuleFacts);
 		this.candidateConsumerProfileFacts = new CandidateConsumerProfileFacts(this.candidateRuleDomain,
 			candidateConsumerProfileFacts);
+		this.detachedConsumerProfileFacts = new DetachedConsumerProfileFacts(detachedConsumerProfileFacts,
+			analysisKeysByIdentity);
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
 			if(!producer.valueVersion().equals(fact.valueVersion()))
 				throw new IllegalArgumentException("Heuristic policy producer/value pair does not match the analysis graph");
 		}
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		DMLProgram programOwner, PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
+		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
+			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
+			List.of());
 	}
 
 	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
@@ -477,6 +563,7 @@ public final class PlacementAnalysis {
 	public CandidateRuleDomain candidateRuleDomain() { return candidateRuleDomain; }
 	public CandidateRuleFacts candidateRuleFacts() { return candidateRuleFacts; }
 	public CandidateConsumerProfileFacts candidateConsumerProfileFacts() { return candidateConsumerProfileFacts; }
+	public DetachedConsumerProfileFacts detachedConsumerProfileFacts() { return detachedConsumerProfileFacts; }
 
 	public void assertProgramOwner(DMLProgram program) {
 		if(program == null || program != programOwner)

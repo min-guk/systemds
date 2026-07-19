@@ -68,13 +68,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
@@ -83,11 +83,7 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Pre
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
-import org.apache.sysds.hops.fedplanner.rules.RulesCore;
-import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
-import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
@@ -155,8 +151,19 @@ public class FederatedPlannerDpCostEnumerator {
 		private EnumerationCapture(NeutralEnumerationContext context, FederatedPlannerDpMemoTable memo,
 			DpEnumerationObserver observer) { this.context = context; this.observer = observer == null ? NO_OP_OBSERVER : observer; }
 		private void capture(CandidateOccurrenceSnapshot snapshot, long variantOrdinal) {
-			candidates.add(new CapturedCandidate(Objects.requireNonNull(snapshot), variantOrdinal));
+			candidates.add(new CapturedCandidate(Objects.requireNonNull(snapshot), variantOrdinal, null));
 			rawCandidateCount++;
+		}
+		private void captureDecisionReceipt(CandidateDecisionReceipt receipt, long variantOrdinal) {
+			Objects.requireNonNull(receipt, "receipt");
+			if(candidates.isEmpty())
+				throw new IllegalStateException("Decision receipt has no captured candidate");
+			int last = candidates.size() - 1;
+			CapturedCandidate candidate = candidates.get(last);
+			if(candidate.receipt() != null || candidate.variantOrdinal() != variantOrdinal
+				|| candidate.snapshot() != receipt.candidateSnapshot())
+				throw new IllegalArgumentException("Decision receipt differs from captured candidate");
+			candidates.set(last, new CapturedCandidate(candidate.snapshot(), variantOrdinal, receipt));
 		}
 		private PreSelectionSemanticBlock semanticBlock() {
 			Map<CompiledHopKey, Integer> parentOrder = new IdentityHashMap<>();
@@ -172,12 +179,18 @@ public class FederatedPlannerDpCostEnumerator {
 			}).thenComparingLong(CapturedCandidate::variantOrdinal));
 			List<CandidateOccurrenceSnapshot> orderedSnapshots = orderedCandidates.stream()
 				.map(CapturedCandidate::snapshot).toList();
-			return new PreSelectionSemanticBlock(context, orderedSnapshots, rawCandidateCount, orderedSnapshots.size(),
+			List<Long> candidateVariantOrdinals = orderedCandidates.stream()
+				.map(CapturedCandidate::variantOrdinal).toList();
+			List<CandidateDecisionReceipt> orderedDecisionReceipts = orderedCandidates.stream()
+				.map(CapturedCandidate::receipt).toList();
+			return new PreSelectionSemanticBlock(context, orderedSnapshots, candidateVariantOrdinals,
+				orderedDecisionReceipts, rawCandidateCount, orderedSnapshots.size(),
 				rawCandidateCount == candidates.size());
 		}
 	}
 
-	private record CapturedCandidate(CandidateOccurrenceSnapshot snapshot, long variantOrdinal) { }
+	private record CapturedCandidate(CandidateOccurrenceSnapshot snapshot, long variantOrdinal,
+		CandidateDecisionReceipt receipt) { }
 
 	private record EffectiveCandidateInputs(List<Hop> collectedHops, List<FType> collectedFTypes,
 		Map<Long, FType> fedInputTypeMap) {
@@ -275,18 +288,17 @@ public class FederatedPlannerDpCostEnumerator {
 		RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 			analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
 			analysis.analysisFingerprint());
-		EnumerationCapture capture = new EnumerationCapture(
-			new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint()), memoTable, observer);
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 		memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
 		memoTable.registerAdditionalRootHopIDs(unrollCtx.getIter1Roots());
 		populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 
-		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
-		OracleFacade oracleFacade = new OracleFacade(registry);
 		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 		memoTable.setNumWorkers(numOfWorkers);
+		EnumerationCapture capture = new EnumerationCapture(
+			DpPlacementAdapter.captureNeutralEnumerationContext(
+				analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet), memoTable, observer);
 
 		addUnreferencedTWriteRoots(progRootHopSet, unRefTwriteSet, hopCommonTable);
 		Set<String> fnStack = new HashSet<>();
@@ -294,13 +306,13 @@ public class FederatedPlannerDpCostEnumerator {
 
 		for (StatementBlock sb : prog.getStatementBlocks()) {
 			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
 			if (iter1Root == null)
 				continue;
 			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
 
@@ -368,26 +380,37 @@ public class FederatedPlannerDpCostEnumerator {
 				FederatedPlannerDpRewireTransTable.collectExecutableStatementRoots(function));
 			populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 
-		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
-		OracleFacade oracleFacade = new OracleFacade(registry);
-			int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
-			memoTable.setNumWorkers(numOfWorkers);
+				int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
+				memoTable.setNumWorkers(numOfWorkers);
+				PlacementAnalysis analysis = memoTable.analysis();
+				if(analysis == null)
+					throw new IllegalArgumentException("Dynamic DP enumeration requires captured placement analysis");
+				analysis.assertProgramOwner(prog);
+				RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
+					analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
+					analysis.analysisFingerprint());
 			addUnreferencedTWriteRoots(progRootHopSet, unRefTwriteSet, hopCommonTable);
 			memoTable.registerAdditionalRootHopIDs(
 				collectUnreferencedExecutedRoots(unRefSet, hopCommonTable));
 
 		Set<String> fnStack = new HashSet<>();
 		Set<Long> visitedHops = new HashSet<>();
-		EnumerationCapture capture = null;
+		NeutralEnumerationContext capturedContext = DpPlacementAdapter.captureNeutralEnumerationContext(
+			analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet);
+		EnumerationCapture capture = new EnumerationCapture(
+			new NeutralEnumerationContext(capturedContext.analysis(), capturedContext.rewireSnapshot(),
+				capturedContext.analysisFingerprint(), capturedContext.numWorkers(),
+				capturedContext.invocationEvidence(), capturedContext.privacy()), memoTable, NO_OP_OBSERVER);
 		enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
 			if (iter1Root == null)
 				continue;
 			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
+		capture.semanticBlock();
 
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
 
@@ -417,63 +440,63 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
+			int numOfWorkers, Set<Long> visitedHops) {
 		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
+			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, null);
 	}
 
 	private static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
+			int numOfWorkers, Set<Long> visitedHops, EnumerationCapture capture) {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
 
 			enumerateHopDAG(isb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
 					privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 
 			for (StatementBlock innerIsb : istmt.getElseBody())
 				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else if (sb instanceof ForStatementBlock) { // incl parfor
 			ForStatementBlock fsb = (ForStatementBlock) sb;
 			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
 
 			enumerateHopDAG(fsb.getFromHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			enumerateHopDAG(fsb.getToHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			if (fsb.getIncrementHops() != null) {
 				enumerateHopDAG(fsb.getIncrementHops(), prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			}
 
 			for (StatementBlock innerFsb : fstmt.getBody())
 				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
 			enumerateHopDAG(wsb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
 					privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 
 			for (StatementBlock innerWsb : wstmt.getBody())
 				enumerateStatementBlock(innerWsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else if (sb instanceof FunctionStatementBlock) {
 			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
 			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
@@ -481,12 +504,12 @@ public class FederatedPlannerDpCostEnumerator {
 			for (StatementBlock innerFsb : fstmt.getBody())
 				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		} else { // generic (last-level)
 			if (sb.getHops() != null) {
 				for (Hop c : sb.getHops())
 					enumerateHopDAG(c, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 			}
 		}
 	}
@@ -500,7 +523,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet,
-			Set<String> fnStack, int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
+			Set<String> fnStack, int numOfWorkers, Set<Long> visitedHops, EnumerationCapture capture) {
 		// Process all input nodes first if not already in memo table
 
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
@@ -520,7 +543,7 @@ public class FederatedPlannerDpCostEnumerator {
 				if (!visitedHops.contains(inputHopID)) {
 					visitedHops.add(inputHopID);
 					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
+							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 				}
 			}
 		}
@@ -548,7 +571,7 @@ public class FederatedPlannerDpCostEnumerator {
 						} else {
 							enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable,
 									privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers,
-									visitedHops, oracleFacade, capture);
+									visitedHops, capture);
 						}
 					}
 				}
@@ -557,7 +580,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 		// Enumerate the federated plan for the current Hop
 		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-				parentChildUploadHints, unRefTwriteSet, numOfWorkers, oracleFacade, capture);
+				parentChildUploadHints, unRefTwriteSet, numOfWorkers, capture);
 
 		// FederatedPlannerDpRewireTransTable.logHopInfo(hop, privacyConstraintMap,
 		// "enumerateHopDAG");
@@ -573,16 +596,8 @@ public class FederatedPlannerDpCostEnumerator {
 	private static void enumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
 			Map<Long, List<Hop>> rewireTable, Map<Long, Privacy> privacyConstraintMap,
-			Set<Long> unRefTwriteSet, int numOfWorkers, OracleFacade oracleFacade) {
-		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-				new HashMap<>(), unRefTwriteSet, numOfWorkers, oracleFacade, null);
-	}
-
-	private static void enumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-			Map<Long, List<Hop>> rewireTable, Map<Long, Privacy> privacyConstraintMap,
 			Map<Long, Set<Long>> parentChildUploadHints,
-			Set<Long> unRefTwriteSet, int numOfWorkers, OracleFacade oracleFacade, EnumerationCapture capture) {
+			Set<Long> unRefTwriteSet, int numOfWorkers, EnumerationCapture capture) {
 		long hopID = hop.getHopID();
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
 		int numParentHops = hop.getParent().size();
@@ -750,7 +765,6 @@ public class FederatedPlannerDpCostEnumerator {
 					FederatedOutput.LOUT);
 			FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
 					FederatedOutput.FOUT);
-			Map<List<FType>, OpCaps> oracleCache = new HashMap<>();
 
 			boolean sawOracleFedFout = false;
 			boolean sawAllowFedFout = false;
@@ -863,19 +877,21 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 
-				NormalizedCandidateInputs normalizedCandidateInputs = capture == null ? null
-					: DpPlacementAdapter.normalizeCandidateInputs(
-						capture.context, findOccurrence(capture, hop),
-						planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
-				EffectiveCandidateInputs effectiveInputs = normalizedCandidateInputs == null
-					? new EffectiveCandidateInputs(collectedHops, collectedFTypes, fedInputTypeMap)
-					: new EffectiveCandidateInputs(normalizedCandidateInputs.exactCollectedHops(),
-						normalizedCandidateInputs.effectiveCollectedFTypes(),
-						normalizedCandidateInputs.effectiveNonNullFTypeMap());
-				if(normalizedCandidateInputs != null) {
+					NormalizedCandidateInputs normalizedCandidateInputs = DpPlacementAdapter.normalizeCandidateInputs(
+							capture.context, findOccurrence(capture, hop),
+							planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
 					capture.capture(normalizedCandidateInputs.snapshot(), i);
+					DpPlacementAdapter.CandidateDecisionReceipt candidateDecisionReceipt =
+						DpPlacementAdapter.resolveCandidateDecision(capture.context, normalizedCandidateInputs, i);
+					capture.captureDecisionReceipt(candidateDecisionReceipt, i);
+					Privacy capturedPrivacy = candidateDecisionReceipt.privacy();
+					if(capturedPrivacy != privacyConstraint)
+						throw new IllegalStateException("Candidate receipt privacy differs from captured enumeration privacy");
 					capture.observer.oracleEvaluated();
-				}
+					EffectiveCandidateInputs effectiveInputs = new EffectiveCandidateInputs(
+							normalizedCandidateInputs.exactCollectedHops(),
+							normalizedCandidateInputs.effectiveCollectedFTypes(),
+							normalizedCandidateInputs.effectiveNonNullFTypeMap());
 				List<Hop> exactCollectedHops = effectiveInputs.collectedHops();
 				List<FType> effectiveCollectedFTypes = effectiveInputs.collectedFTypes();
 				Map<Long, FType> effectiveNonNullFTypeMap = effectiveInputs.fedInputTypeMap();
@@ -908,11 +924,7 @@ public class FederatedPlannerDpCostEnumerator {
 				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToFED.get(j);
 			}
 
-				OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
-						hop, privacyConstraint, exactCollectedHops, effectiveCollectedFTypes,
-						oracleFacade, oracleCache, rewireTable);
-				OpCaps caps = oracleDecision.caps();
-				boolean canSatisfyFedInputs = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(
+					boolean canSatisfyFedInputs = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(
 						hop, effectiveNonNullFTypeMap);
 				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
 					boolean hasPlannedFedInput = effectiveNonNullFTypeMap != null && !effectiveNonNullFTypeMap.isEmpty();
@@ -920,13 +932,11 @@ public class FederatedPlannerDpCostEnumerator {
 						canSatisfyFedInputs = false;
 				}
 
-				FType oracleLogicalFType = oracleDecision.logicalFType();
-				oracleLogicalFType = preferVectorAxisForRefedCandidate(
-						hop, oracleLogicalFType, rewireTable, numOfWorkers,
-						canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap));
-				FType lOutLogicalFType = resolveLoutLogicalFType(oracleLogicalFType);
-				FType cpLogicalFType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
-						hop, oracleLogicalFType, rewireTable, numOfWorkers);
+					FType oracleLogicalFType = candidateDecisionReceipt.logicalFType();
+					FType lOutLogicalFType = resolveLoutLogicalFType(oracleLogicalFType);
+					FType cpLogicalFType = org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver
+						.projectConsumerSafeType(oracleLogicalFType,
+							candidateDecisionReceipt.invocationEvidence().projection());
 				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
 						double genericResultDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
 								outputMemEstimate, lOutLogicalFType, numOfWorkers);
@@ -977,70 +987,23 @@ public class FederatedPlannerDpCostEnumerator {
 				// costs and enables faster federated downstream execution (e.g., kmeans WAN).
 					double cpUploadCost = hopPlacementWeight * cpUploadCostWithoutWeight;
 
-					ExecPlacementPolicy.Decision placementDecision = ExecPlacementPolicy.decide(
-							hop, privacyConstraint, oracleLogicalFType, caps);
-					boolean derivedFedFout = shouldEnableDerivedFedFout(
-							hop, privacyConstraint, effectiveNonNullFTypeMap, caps, placementDecision);
-					if (derivedFedFout) {
-						placementDecision.allowFED_FOUT = true;
-				}
-				// Runtime guard: The FED instruction set does not support all NaryOp opcodes.
-				// In particular, NaryOp CBIND/RBIND is represented as a BuiltinNary FED
-				// instruction ("cbind"/"rbind") which currently fails at compile time
-				// (Unsupported federated nary opcode). Disallow FED execution for these ops.
-				if (hop instanceof NaryOp) {
-					Types.OpOpN nOp = ((NaryOp) hop).getOp();
-					if (nOp == Types.OpOpN.CBIND || nOp == Types.OpOpN.RBIND) {
-						placementDecision.allowFED_LOUT = false;
-						placementDecision.allowFED_FOUT = false;
-						placementDecision.allowCP_FOUT = false;
-						derivedFedFout = false;
-					}
-				}
-				// Runtime limitation: some ops can execute FED but cannot produce a native federated output (FOUT).
-				//
-				// IMPORTANT: Do not "close" CP->FOUT (materialize) or derived FED/FOUT candidates here.
-				// Even when native FED/FOUT is unavailable, DP must still be able to compare:
-				//   - CP->FOUT (upload/refed materialization), and/or
-				//   - derived FED/FOUT (FED/LOUT + download+upload),
-				// against local alternatives. If MinST cannot encode such combinations, MinST should
-				// fall back to DP rather than constraining DP's candidate space.
-				if (caps != null && caps.reason() == ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME) {
-					// REXPAND with FED/LOUT + materialization can create cyclic anchor rewrites.
-					// Fall back to CP/LOUT for this op when native FOUT is unavailable.
-					if (hop instanceof ParameterizedBuiltinOp
-							&& ((ParameterizedBuiltinOp) hop).getOp() == Types.ParamBuiltinOp.REXPAND) {
-						placementDecision.allowFED_LOUT = false;
-						placementDecision.allowFED_FOUT = false;
-						derivedFedFout = false;
-						placementDecision.allowCP_LOUT = true;
-					}
-					else if (!derivedFedFout) {
-						// Ensure we don't accidentally allow a native FED/FOUT plan when runtime can't.
-						placementDecision.allowFED_FOUT = false;
-					}
-				}
-				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
-					placementDecision.allowCP_FOUT = false;
-				}
+					boolean derivedFedFout = candidateDecisionReceipt.allowFEDFOUT()
+						&& candidateDecisionReceipt.capabilityFact().nativeOutput() != FederatedOutput.FOUT;
 					if (isTransientReadHop && !hasConcreteTransientReadSource) {
-						placementDecision.allowFED_LOUT = false;
-						placementDecision.allowFED_FOUT = false;
-						placementDecision.allowCP_FOUT = false;
-					placementDecision.allowCP_LOUT = true;
-					canSatisfyFedInputs = false;
-				}
+						canSatisfyFedInputs = false;
+					}
 				// DP must not constrain its candidate space to match MinST's min-cut state encoding.
 				// If MinST cannot encode a combination (e.g., due to non-submodular costs), it should
 				// mark itself unsafe and fall back to DP. DP should remain cost-based over all
 				// runtime-supported combinations.
-				if (caps != null && caps.exec() == ExecType.FED && caps.placement() == FederatedOutput.FOUT) {
-					sawOracleFedFout = true;
-				}
-				sawAllowCpLout |= placementDecision.allowCP_LOUT;
-				sawAllowCpFout |= placementDecision.allowCP_FOUT;
-				sawAllowFedLout |= placementDecision.allowFED_LOUT;
-				sawAllowFedFout |= placementDecision.allowFED_FOUT;
+					if (candidateDecisionReceipt.capabilityFact().nativeExec() == ExecType.FED
+						&& candidateDecisionReceipt.capabilityFact().nativeOutput() == FederatedOutput.FOUT) {
+						sawOracleFedFout = true;
+					}
+					sawAllowCpLout |= candidateDecisionReceipt.allowCPLOUT();
+					sawAllowCpFout |= candidateDecisionReceipt.allowCPFOUT();
+					sawAllowFedLout |= candidateDecisionReceipt.allowFEDLOUT();
+					sawAllowFedFout |= candidateDecisionReceipt.allowFEDFOUT();
 				sawCanSatisfyFedInputs |= canSatisfyFedInputs;
 
 				// CP-local materialization of a concrete federated TRANSIENTREAD is paid
@@ -1062,18 +1025,18 @@ public class FederatedPlannerDpCostEnumerator {
 				double fedFoutCost = fedSelfCost + childCostFEDExec
 						+ derivedFedFoutBoundaryCost(derivedFedFout, cpUploadCost, resultDownloadCost);
 
-				boolean allowFedFoutCandidate = hasConcreteTransientReadSource
-						&& canSatisfyFedInputs && placementDecision.allowFED_FOUT
+					boolean allowFedFoutCandidate = hasConcreteTransientReadSource
+							&& canSatisfyFedInputs && candidateDecisionReceipt.allowFEDFOUT()
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.FED, FederatedOutput.FOUT, tWriteExec, tWriteOut));
 				boolean allowFedLoutCandidate = hasConcreteTransientReadSource
-						&& canSatisfyFedInputs && placementDecision.allowFED_LOUT
+							&& canSatisfyFedInputs && candidateDecisionReceipt.allowFEDLOUT()
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.FED, FederatedOutput.LOUT, tWriteExec, tWriteOut));
-				boolean allowCpLoutCandidate = placementDecision.allowCP_LOUT
+					boolean allowCpLoutCandidate = candidateDecisionReceipt.allowCPLOUT()
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut));
-				boolean allowCpFoutCandidate = placementDecision.allowCP_FOUT
+					boolean allowCpFoutCandidate = candidateDecisionReceipt.allowCPFOUT()
 						&& (canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap))
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut));
@@ -1278,6 +1241,10 @@ public class FederatedPlannerDpCostEnumerator {
 			capture.context, parentOccurrence, childEdges, collectedHops,
 			collectedFTypes, fedInputTypeMap, memoTable);
 		capture.capture(normalized.snapshot(), variantOrdinal);
+		CandidateDecisionReceipt receipt = DpPlacementAdapter.resolveCandidateDecision(
+			capture.context, normalized, variantOrdinal);
+		capture.captureDecisionReceipt(receipt, variantOrdinal);
+		capture.observer.oracleEvaluated();
 	}
 
 	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
@@ -1587,61 +1554,15 @@ public class FederatedPlannerDpCostEnumerator {
 		return true;
 	}
 
-	private static boolean allowsCPOverride(Privacy privacyConstraint, OpCaps caps) {
-		// Policy gate: CP override is globally disabled for protected data. Flip
-		// ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA only when the oracle can prove privacy
-		// guarantees.
-		if (!ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA) {
-			return false;
-		}
-		if (caps == null || privacyConstraint == null) {
-			return false;
-		}
-		return false;
-	}
-
 	private static double placementTransferWeight(FederatedPlannerDpMemoTable.HopCommon hopCommon) {
 		if (hopCommon == null)
 			return 1.0;
 		return hopCommon.getComputeWeight() * hopCommon.getMultiplicity();
 	}
 
-	private static boolean shouldEnableDerivedFedFout(Hop hop, Privacy privacy,
-			Map<Long, FType> fTypeMap, OpCaps caps, ExecPlacementPolicy.Decision decision) {
-		if (decision == null || decision.allowFED_FOUT || !decision.allowFED_LOUT)
-			return false;
-		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
-			return false;
-		if (!isDerivedFoutPrivacyAllowed(privacy))
-			return false;
-		if (fTypeMap == null || !FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap))
-			return false;
-		return true;
-	}
-
-		private static boolean isDerivedFoutPrivacyAllowed(Privacy privacy) {
-		return privacy == Privacy.PUBLIC || privacy == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC;
-	}
-
 	private static double derivedFedFoutBoundaryCost(boolean derivedFedFout, double cpUploadCost,
 			double resultDownloadCost) {
 		return derivedFedFout ? cpUploadCost + resultDownloadCost : 0.0;
-	}
-
-	private static FType preferVectorAxisForRefedCandidate(Hop hop, FType logicalFType,
-			Map<Long, List<Hop>> rewireTable, int numWorkers, boolean canRefed) {
-		if (!canRefed || logicalFType != FType.BROADCAST || hop == null)
-			return logicalFType;
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED)
-			return logicalFType;
-		if (!FederatedPlannerUtils.isVectorShape(hop))
-			return logicalFType;
-		FType axisType = FederatedPlannerUtils.getVectorAxis(hop);
-		if (axisType == null)
-			return logicalFType;
-		FType adjustedAxisType = OracleUtils.adjustCpFoutFTypeForConsumerAxisMismatch(
-				hop, axisType, rewireTable, numWorkers);
-		return adjustedAxisType == axisType ? axisType : logicalFType;
 	}
 
 	private static FType resolveLoutLogicalFType(FType oracleLogicalFType) {
