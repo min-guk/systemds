@@ -145,7 +145,7 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 	private static final DpEnumerationObserver NO_OP_OBSERVER = new DpEnumerationObserver() { };
-	private static final ThreadLocal<EnumerationCapture> ACTIVE_CAPTURE = new ThreadLocal<>();
+
 	private static final class EnumerationCapture {
 		private final NeutralEnumerationContext context;
 		private final DpEnumerationObserver observer;
@@ -224,10 +224,8 @@ public class FederatedPlannerDpCostEnumerator {
 		RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 			analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
 			analysis.analysisFingerprint());
-		EnumerationCapture previousCapture = ACTIVE_CAPTURE.get();
 		EnumerationCapture capture = new EnumerationCapture(
 			new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint()), memoTable, observer);
-		ACTIVE_CAPTURE.set(capture);
 		try {
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
@@ -246,13 +244,13 @@ public class FederatedPlannerDpCostEnumerator {
 
 		for (StatementBlock sb : prog.getStatementBlocks()) {
 			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		}
 		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
 			if (iter1Root == null)
 				continue;
 			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
 
@@ -291,12 +289,6 @@ public class FederatedPlannerDpCostEnumerator {
 		DpEnumerationResult result = new DpEnumerationResult(optimalPlan, rewireSnapshot, semanticBlock);
 		observer.resultPublished(result);
 		return result;
-		}
-		finally {
-			if(previousCapture == null)
-				ACTIVE_CAPTURE.remove();
-			else
-				ACTIVE_CAPTURE.set(previousCapture);
 		}
 	}
 
@@ -337,13 +329,14 @@ public class FederatedPlannerDpCostEnumerator {
 
 		Set<String> fnStack = new HashSet<>();
 		Set<Long> visitedHops = new HashSet<>();
+		EnumerationCapture capture = null;
 		enumerateStatementBlock(function, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
 			if (iter1Root == null)
 				continue;
 			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
 
@@ -375,6 +368,15 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
+			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
+		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
+	}
+
+	private static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
+			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
+			Set<Long> unRefTwriteSet, Set<String> fnStack,
 			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
@@ -382,47 +384,47 @@ public class FederatedPlannerDpCostEnumerator {
 
 			enumerateHopDAG(isb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
 					privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 
 			for (StatementBlock innerIsb : istmt.getIfBody())
 				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 
 			for (StatementBlock innerIsb : istmt.getElseBody())
 				enumerateStatementBlock(innerIsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		} else if (sb instanceof ForStatementBlock) { // incl parfor
 			ForStatementBlock fsb = (ForStatementBlock) sb;
 			ForStatement fstmt = (ForStatement) fsb.getStatement(0);
 
 			enumerateHopDAG(fsb.getFromHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 			enumerateHopDAG(fsb.getToHops(), prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 			if (fsb.getIncrementHops() != null) {
 				enumerateHopDAG(fsb.getIncrementHops(), prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 			}
 
 			for (StatementBlock innerFsb : fstmt.getBody())
 				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		} else if (sb instanceof WhileStatementBlock) {
 			WhileStatementBlock wsb = (WhileStatementBlock) sb;
 			WhileStatement wstmt = (WhileStatement) wsb.getStatement(0);
 
 			enumerateHopDAG(wsb.getPredicateHops(), prog, memoTable, hopCommonTable, rewireTable,
 					privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 
 			for (StatementBlock innerWsb : wstmt.getBody())
 				enumerateStatementBlock(innerWsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		} else if (sb instanceof FunctionStatementBlock) {
 			FunctionStatementBlock fsb = (FunctionStatementBlock) sb;
 			FunctionStatement fstmt = (FunctionStatement) fsb.getStatement(0);
@@ -430,12 +432,12 @@ public class FederatedPlannerDpCostEnumerator {
 			for (StatementBlock innerFsb : fstmt.getBody())
 				enumerateStatementBlock(innerFsb, prog, memoTable, hopCommonTable, rewireTable,
 						privacyConstraintMap,
-						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 		} else { // generic (last-level)
 			if (sb.getHops() != null) {
 				for (Hop c : sb.getHops())
 					enumerateHopDAG(c, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 			}
 		}
 	}
@@ -449,7 +451,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet,
-			Set<String> fnStack, int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
+			Set<String> fnStack, int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
 		// Process all input nodes first if not already in memo table
 
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
@@ -469,7 +471,7 @@ public class FederatedPlannerDpCostEnumerator {
 				if (!visitedHops.contains(inputHopID)) {
 					visitedHops.add(inputHopID);
 					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade);
+							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, capture);
 				}
 			}
 		}
@@ -497,7 +499,7 @@ public class FederatedPlannerDpCostEnumerator {
 						} else {
 							enumerateStatementBlock(fsb, prog, memoTable, hopCommonTable, rewireTable,
 									privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers,
-									visitedHops, oracleFacade);
+									visitedHops, oracleFacade, capture);
 						}
 					}
 				}
@@ -506,7 +508,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 		// Enumerate the federated plan for the current Hop
 		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-				parentChildUploadHints, unRefTwriteSet, numOfWorkers, oracleFacade);
+				parentChildUploadHints, unRefTwriteSet, numOfWorkers, oracleFacade, capture);
 
 		// FederatedPlannerDpRewireTransTable.logHopInfo(hop, privacyConstraintMap,
 		// "enumerateHopDAG");
@@ -524,14 +526,14 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, List<Hop>> rewireTable, Map<Long, Privacy> privacyConstraintMap,
 			Set<Long> unRefTwriteSet, int numOfWorkers, OracleFacade oracleFacade) {
 		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-				new HashMap<>(), unRefTwriteSet, numOfWorkers, oracleFacade);
+				new HashMap<>(), unRefTwriteSet, numOfWorkers, oracleFacade, null);
 	}
 
 	private static void enumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
 			Map<Long, List<Hop>> rewireTable, Map<Long, Privacy> privacyConstraintMap,
 			Map<Long, Set<Long>> parentChildUploadHints,
-			Set<Long> unRefTwriteSet, int numOfWorkers, OracleFacade oracleFacade) {
+			Set<Long> unRefTwriteSet, int numOfWorkers, OracleFacade oracleFacade, EnumerationCapture capture) {
 		long hopID = hop.getHopID();
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
 		int numParentHops = hop.getParent().size();
@@ -810,20 +812,14 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 
-				NormalizedCandidateInputs normalizedCandidateInputs = ACTIVE_CAPTURE.get() == null ? null
-					: DpPlacementAdapter.normalizeCandidateInputs(
-						ACTIVE_CAPTURE.get().context, findOccurrence(ACTIVE_CAPTURE.get(), hop),
+				NormalizedCandidateInputs normalizedCandidateInputs = DpPlacementAdapter.normalizeCandidateInputs(
+						capture.context, findOccurrence(capture, hop),
 						planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
-				List<FType> effectiveCollectedFTypes = normalizedCandidateInputs == null ? collectedFTypes
-					: normalizedCandidateInputs.effectiveCollectedFTypes();
-				Map<Long, FType> effectiveNonNullFTypeMap = normalizedCandidateInputs == null ? fedInputTypeMap
-					: normalizedCandidateInputs.effectiveNonNullFTypeMap();
-				List<Hop> exactCollectedHops = normalizedCandidateInputs == null ? collectedHops
-					: normalizedCandidateInputs.exactCollectedHops();
-				if(normalizedCandidateInputs != null) {
-					ACTIVE_CAPTURE.get().capture(normalizedCandidateInputs.snapshot());
-					ACTIVE_CAPTURE.get().observer.oracleEvaluated();
-				}
+				List<FType> effectiveCollectedFTypes = normalizedCandidateInputs.effectiveCollectedFTypes();
+				Map<Long, FType> effectiveNonNullFTypeMap = normalizedCandidateInputs.effectiveNonNullFTypeMap();
+				List<Hop> exactCollectedHops = normalizedCandidateInputs.exactCollectedHops();
+				capture.capture(normalizedCandidateInputs.snapshot());
+				capture.observer.oracleEvaluated();
 
 			if (enforceTReadConsistency) {
 				if (!tWriteSeen) {
