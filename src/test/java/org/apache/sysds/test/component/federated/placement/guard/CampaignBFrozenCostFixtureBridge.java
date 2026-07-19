@@ -11,13 +11,13 @@ import java.util.Set;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.LegacyDpOfflineSelectedCapture;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.R4ExactPrivateCostDpFixtures;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.LegacyMinstOfflineSelectedCapture;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.R4ExactPrivateCostMinstFixtures;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
@@ -96,8 +96,8 @@ final class CampaignBFrozenCostFixtureBridge {
 		public List<RoleAlias> aliases(){return List.of();}
 		public Object producer(){return analysis;}
 	}
-	record Arm(String name,String bFixture,DMLProgram program,PlacementAnalysis analysis,
-		Map<String,String> namedKeys,String fingerprint) { }
+	record Arm(String name,String bFixture,DMLProgram program,PlacementAnalysis analysis,DpInvocationReceipt dpReceipt,
+		LegacyDpOfflineSelectedCapture.RetainedFullPath dpRetained,Map<String,String> namedKeys,String fingerprint) { }
 	record Fixture(String planner,String id,List<Arm> arms,List<CostSelectionInput> inputs,
 		Map<String,String> preconditions,String digest) {
 		CostSelectionInput input(){return inputs.get(0);}
@@ -119,19 +119,32 @@ final class CampaignBFrozenCostFixtureBridge {
 					.getTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER);
 				java.util.concurrent.atomic.AtomicReference<org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt> receipt=
 					new java.util.concurrent.atomic.AtomicReference<>();
+				java.util.concurrent.atomic.AtomicReference<LegacyDpOfflineSelectedCapture.RetainedFullPath> retained=
+					new java.util.concurrent.atomic.AtomicReference<>();
 				try{
 					org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
 						.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER,"compile_cost_based");
 					new org.apache.sysds.parser.DMLTranslator(program).constructLops(program,value->{
 						if(!receipt.compareAndSet(null,value))throw new AssertionError("R4_FINAL_BOUNDARY_MULTIPLE_RECEIPTS");
+						if(!(value instanceof DpInvocationReceipt exactReceipt))
+							throw new AssertionError("R4_FINAL_BOUNDARY_DP_RECEIPT_FOREIGN");
+						if(planner==R4CostAdapterBridge.Planner.DP)try{
+							if(!retained.compareAndSet(null,LegacyDpOfflineSelectedCapture.captureFullPath(
+								name,fixture,program,exactReceipt)))
+								throw new AssertionError("R4_FINAL_BOUNDARY_MULTIPLE_RETAINED_SNAPSHOTS");
+						}catch(RuntimeException|Error x){throw x;}
+						catch(Exception x){throw new IllegalStateException("R4_FINAL_BOUNDARY_IMMEDIATE_CAPTURE_FAILED",x);}
 					});
 				}
 				finally{org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
 					.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER,old);}
-				if(receipt.get()==null)throw new AssertionError("R4_FINAL_BOUNDARY_RECEIPT_MISSING");
-				PlacementAnalysis analysis=receipt.get().analysis();analysis.assertCanonicalProgramAuthority(program);
+				if(!(receipt.get() instanceof DpInvocationReceipt exactReceipt))
+					throw new AssertionError("R4_FINAL_BOUNDARY_DP_RECEIPT_MISSING");
+				if(planner==R4CostAdapterBridge.Planner.DP&&retained.get()==null)
+					throw new AssertionError("R4_FINAL_BOUNDARY_RETAINED_SNAPSHOT_MISSING");
+				PlacementAnalysis analysis=exactReceipt.analysis();analysis.assertCanonicalProgramAuthority(program);
 				Map<String,String> keys=new LinkedHashMap<>();for(var o:analysis.occurrences())keys.put(o.key().normalizedSignature(),o.key().normalizedSignature());
-				return new Arm(name,fixture,program,analysis,Map.copyOf(keys),analysis.analysisFingerprint());
+				return new Arm(name,fixture,program,analysis,exactReceipt,retained.get(),Map.copyOf(keys),analysis.analysisFingerprint());
 			}catch(RuntimeException x){throw x;}catch(Exception x){throw new RuntimeException(x);}
 		};
 		List<Arm> arms=new ArrayList<>(); List<CostSelectionInput> inputs=new ArrayList<>();
@@ -147,7 +160,7 @@ final class CampaignBFrozenCostFixtureBridge {
 			try{inputs.add(dpAnchor(id+":MISSING",owner,false));}
 			catch(Exception x){throw new AssertionError("R4_DP04_MISSING_PRODUCER",x);}
 		}
-		else if(inputs.isEmpty()) { Arm a=attachedArm.apply("FULL_PATH",FULL_PATH.get(id));arms.add(a);
+		else if(inputs.isEmpty()) { Arm a=attachedArm.apply(id,FULL_PATH.get(id));arms.add(a);
 			inputs.add(id.equals("C2-DP-08-UNKNOWN-METADATA")?graphExclusion(id,a):full(planner,id,a)); }
 		Map<String,String> pre=Map.of("inputCount",String.valueOf(inputs.size()),"armCount",String.valueOf(arms.size()),
 			"producerKinds",inputs.stream().map(x->x.producer().getClass().getName()).toList().toString());
@@ -197,7 +210,10 @@ final class CampaignBFrozenCostFixtureBridge {
 	private static FullPathInput full(R4CostAdapterBridge.Planner planner,String id,Arm arm){
 		if(planner==R4CostAdapterBridge.Planner.DP){
 			try{
-				var retained=LegacyDpOfflineSelectedCapture.captureFullPath(id,arm.bFixture(),arm.program(),arm.analysis());
+				var retained=arm.dpRetained();
+				if(retained==null||retained.memo()!=arm.dpReceipt().memo()
+					||retained.rootPlan()!=arm.dpReceipt().legacyOptimalPlan())
+					throw new AssertionError("R4_DP_IMMEDIATE_RETAINED_IDENTITY_DIFFERS|"+id);
 				validateRetained(arm.analysis(),retained);
 				List<RoleAlias> liveAliases=arm.analysis().occurrences().stream().map(o->new RoleAlias(
 					o.key().normalizedSignature(),"compiled",o.key(),o.hop().getHopID())).toList();
@@ -303,11 +319,6 @@ final class CampaignBFrozenCostFixtureBridge {
 	}
 	private static List<String> stableAliases(List<RoleAlias> aliases){
 		return aliases.stream().map(a->a.literalKey()+"|"+a.role()+"|"+a.compiledKey().normalizedSignature()).sorted().toList();
-	}
-	private static Arm arm(String name,String fixture)throws Exception{
-		DMLProgram program=ProductionShadowFixtureFactory.compile(fixture);PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		Map<String,String> keys=new LinkedHashMap<>();for(var o:analysis.occurrences())keys.put(o.key().normalizedSignature(),o.key().normalizedSignature());
-		return new Arm(name,fixture,program,analysis,Map.copyOf(keys),analysis.analysisFingerprint());
 	}
 	private CampaignBFrozenCostFixtureBridge(){}
 }

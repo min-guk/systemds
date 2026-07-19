@@ -3,8 +3,10 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.conf.ConfigurationManager;
@@ -34,10 +36,11 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 		Assert.assertEquals(analysis.analysisFingerprint(), snapshot.analysisFingerprint());
 		assertIdentityList(analysis.occurrences(), snapshot.occurrences(), "occurrences");
 		Assert.assertFalse("scope key must bind one real enumeration", snapshot.enumerationScopeKey().isBlank());
-		Assert.assertEquals(snapshot.cloneReceipts().size(), snapshot.cloneToOriginal().size());
-		for(FederatedPlannerDpRewireTransTable.CloneReceipt clone : snapshot.cloneReceipts())
-			Assert.assertEquals(Long.valueOf(clone.originOccurrence().hop().getHopID()),
-				snapshot.cloneToOriginal().get(clone.cloneOccurrence().hop().getHopID()));
+		Assert.assertEquals("B-09 must retain its semantic recompile clone", 1, snapshot.cloneReceipts().size());
+		FederatedPlannerDpRewireTransTable.CloneReceipt semanticClone = snapshot.cloneReceipts().get(0);
+		assertPhysicalCloneDomainIsDisjoint(analysis, snapshot);
+		Assert.assertFalse("semantic clone Hop ID must not be a physical loop-unroll clone key",
+			snapshot.cloneToOriginal().containsKey(semanticClone.cloneOccurrence().hop().getHopID()));
 		assertImmutable(snapshot.occurrences());
 		assertImmutable(snapshot.cloneReceipts());
 		assertImmutable(snapshot.additionalRoots());
@@ -52,9 +55,24 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 		RewireOccurrenceSnapshot snapshot = invocation.semanticConsumption().rewireSnapshot();
 
 		Assert.assertTrue("B-05 must not fabricate clone receipts", snapshot.cloneReceipts().isEmpty());
-		Assert.assertTrue("B-05 must not fabricate clone mappings", snapshot.cloneToOriginal().isEmpty());
+		assertPhysicalCloneDomainIsDisjoint(invocation.analysis(), snapshot);
 		assertIdentityList(invocation.analysis().occurrences(), snapshot.occurrences(), "B-05 occurrences");
 		assertConsumerEdgesAreExact(invocation.analysis(), snapshot.consumerEdges());
+	}
+
+	private static void assertPhysicalCloneDomainIsDisjoint(PlacementAnalysis analysis,
+		RewireOccurrenceSnapshot snapshot) {
+		Set<Long> analysisHopIds = new HashSet<>();
+		for(HopOccurrenceProjection occurrence : analysis.occurrences())
+			analysisHopIds.add(occurrence.hop().getHopID());
+		Assert.assertFalse("loop-unroll fixture must retain physical clone mappings",
+			snapshot.cloneToOriginal().isEmpty());
+		for(Map.Entry<Long, Long> physicalClone : snapshot.cloneToOriginal().entrySet()) {
+			Assert.assertFalse("physical clone key must not be an analysis-owned Hop ID",
+				analysisHopIds.contains(physicalClone.getKey()));
+			Assert.assertTrue("physical clone original must be an analysis-owned Hop ID",
+				analysisHopIds.contains(physicalClone.getValue()));
+		}
 	}
 
 	private static void assertConsumerEdgesAreExact(PlacementAnalysis analysis, List<RewireConsumerEdge> edges) {

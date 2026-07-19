@@ -12,28 +12,34 @@ import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.InvocationCounters;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -127,52 +133,79 @@ public final class LegacyDpOfflineSelectedCapture {
 	private static String captureCompiledFixture(String rowId, String fixture) throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		return fullPath(rowId, fixture, program, analysis);
+		return captureCanonicalFullPath(rowId, fixture, program).serialize();
 	}
 
-	private static String fullPath(String rowId,String fixture,DMLProgram program,PlacementAnalysis analysis)throws Exception {
-		return captureFullPath(rowId,fixture,program,analysis).serialize();
+	private static RetainedFullPath captureCanonicalFullPath(String rowId, String fixture,
+		DMLProgram program) throws Exception {
+		AtomicReference<PlannerInvocationReceipt> emitted = new AtomicReference<>();
+		AtomicReference<RetainedFullPath> retained = new AtomicReference<>();
+		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			new DMLTranslator(program).constructLops(program, value -> {
+				if(!emitted.compareAndSet(null, value))
+					throw new AssertionError("DP_OFFLINE_MULTIPLE_FINAL_BOUNDARY_RECEIPTS");
+				if(!(value instanceof DpInvocationReceipt exactReceipt))
+					throw new AssertionError("DP_OFFLINE_FINAL_BOUNDARY_RECEIPT_FOREIGN");
+				try {
+					if(!retained.compareAndSet(null, captureFullPath(rowId, fixture, program, exactReceipt)))
+						throw new AssertionError("DP_OFFLINE_MULTIPLE_RETAINED_SNAPSHOTS");
+				}
+				catch(RuntimeException | Error ex) { throw ex; }
+				catch(Exception ex) { throw new IllegalStateException("DP_OFFLINE_IMMEDIATE_CAPTURE_FAILED", ex); }
+			});
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+		}
+		if(!(emitted.get() instanceof DpInvocationReceipt))
+			throw new AssertionError("DP_OFFLINE_FINAL_BOUNDARY_RECEIPT_MISSING_OR_FOREIGN");
+		if(retained.get() == null)
+			throw new AssertionError("DP_OFFLINE_IMMEDIATE_RETAINED_SNAPSHOT_MISSING");
+		return retained.get();
+	}
+
+	@Deprecated
+	public static RetainedFullPath captureFullPath(String rowId, String fixture, DMLProgram program,
+		PlacementAnalysis analysis) {
+		throw new IllegalStateException("DP_OFFLINE_PROGRAM_ANALYSIS_REPLAY_FORBIDDEN");
 	}
 
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	public static RetainedFullPath captureFullPath(String rowId, String fixture, DMLProgram program,
-		PlacementAnalysis analysis) throws Exception {
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		FedPlan root = FederatedPlannerDpCostEnumerator.enumerateProgram(program, memo, false);
-		FederatedPlannerDpFedCostBased planner = new FederatedPlannerDpFedCostBased();
+		DpInvocationReceipt receipt) throws Exception {
+		if(receipt == null)
+			throw new IllegalArgumentException("receipt");
+		PlacementAnalysis analysis = receipt.analysis();
+		analysis.assertCanonicalProgramAuthority(program);
+		assertCanonicalSingleInvocation(receipt);
+		FederatedPlannerDpMemoTable memo = receipt.memo();
+		FedPlan root = receipt.legacyOptimalPlan();
+		if(receipt.exactSelection().analysis() != analysis || receipt.exactSelection().memo() != memo
+			|| receipt.exactSelection().legacyOptimalPlan() != root
+			|| receipt.semanticConsumption().analysis() != analysis
+			|| receipt.semanticConsumption().exactSelection() != receipt.exactSelection())
+			throw new AssertionError("DP_OFFLINE_RECEIPT_IDENTITY_DIFFERS");
 		Method decisionsMethod = method("computeOutputDecisions", 2);
 		Map<Long,FederatedOutput> decisions = (Map<Long,FederatedOutput>) decisionsMethod.invoke(null, memo, root);
 		Method conflictsMethod = method("collectConflictsSingleBFS", 3);
 		Map conflicts = (Map) conflictsMethod.invoke(null, memo, root, decisions);
-		Method rewrite = method("rewriteHop", 8);
-		Set<Long> visited = new HashSet<>();
-		Map<Long,FType> fTypes = new HashMap<>();
-		Map localRequests = new LinkedHashMap();
-		for(Pair<Long,FederatedOutput> child : root.getChildFedPlans()) {
-			FedPlan selected = memo.getFedPlanAfterPrune(child);
-			if(selected != null)
-				rewrite.invoke(planner, selected, memo, decisions, visited, fTypes, conflicts, true, localRequests);
-		}
-		Method deferred = method("applyDeferredOutputDecisionStates", 4);
-		deferred.invoke(null, memo, decisions, conflicts, localRequests);
-		FederatedRefedPolicy.registerFromProgram(program, fTypes);
-		Method localRegister = method("registerDpLocalMaterializeRequests", 1);
-		localRegister.invoke(null, localRequests);
 		List<String> registries = registrySnapshots(analysis);
 		List<String> childSignature = new ArrayList<>();
-		List<FedPlan> rootChildPlanReceipts = new ArrayList<>();
-		List<Hop> rootHops = new ArrayList<>();
-		for(Pair<Long,FederatedOutput> child : root.getChildFedPlans()) {
-			FedPlan selected = memo.getFedPlanAfterPrune(child);
-			rootChildPlanReceipts.add(selected);
-			rootHops.add(selected.getHopRef());
-			long originalId = memo.resolveOriginalHopId(child.getLeft());
-			String key = analysis.occurrences().stream().filter(o -> o.hop().getHopID() == originalId)
-				.map(o -> o.key().normalizedSignature()).findFirst().orElseThrow(() ->
-					new IllegalStateException("UNMAPPED_SELECTED_HOP_ID fixture=" + fixture
-						+ " class=" + selected.getHopRef().getClass().getName()
-						+ " op=" + selected.getHopRef().getOpString()));
+		List<FedPlan> rootChildPlanReceipts = receipt.exactSelection().selectedRootPlans();
+		List<Hop> rootHops = receipt.exactSelection().selectedRootHops();
+		List<Pair<Long,FederatedOutput>> rootEdges = receipt.exactSelection().aggregateChildEdges();
+		if(!root.getChildFedPlans().equals(rootEdges))
+			throw new AssertionError("DP_OFFLINE_ROOT_EDGES_DIFFER");
+		for(int i = 0; i < rootEdges.size(); i++) {
+			Pair<Long,FederatedOutput> child = rootEdges.get(i);
+			FedPlan selected = rootChildPlanReceipts.get(i);
+			Hop selectedHop = rootHops.get(i);
+			if(selected != memo.getFedPlanAfterPrune(child) || selected.getHopRef() != selectedHop)
+				throw new AssertionError("DP_OFFLINE_ROOT_RECEIPT_IDENTITY_DIFFERS|index=" + i);
+			String key = receipt.semanticConsumption().rewireSnapshot().projectExactCarrier(selectedHop)
+				.key().normalizedSignature();
 			childSignature.add(key + "=" + child.getRight() + ":" + selected.getExecType() + ":"
 					+ observedHex(selected.getCumulativeCost()));
 		}
@@ -197,10 +230,8 @@ public final class LegacyDpOfflineSelectedCapture {
 				fallback, decisions, conflicts, true);
 			selectedPlanEdges.add(Pair.of(id, decision.getValue()));
 			selectedPlanReceipts.add(selected);
-			long originalId = memo.resolveOriginalHopId(id);
-			String key = analysis.occurrences().stream().filter(o -> o.hop().getHopID() == originalId)
-				.map(o -> o.key().normalizedSignature()).findFirst().orElseThrow(() ->
-					new IllegalStateException("UNMAPPED_SELECTED_HOP_ID fixture=" + fixture));
+			String key = receipt.semanticConsumption().rewireSnapshot().projectExactCarrier(selected.getHopRef())
+				.key().normalizedSignature();
 			selectedPlans.add(key + "{exec=" + selected.getExecType() + ",out=" + selected.getFedOutType()
 				+ ",cum=" + observedHex(selected.getCumulativeCost()) + ",self="
 				+ observedHex(selected.getSelfCost()) + ",forward="
@@ -214,7 +245,61 @@ public final class LegacyDpOfflineSelectedCapture {
 		return new RetainedFullPath(rowId,fixture,memo,root,rootChildPlanReceipts,rootHops,selectedPlanEdges,
 			selectedPlanReceipts,-1L,root.getCumulativeCost(),
 			"DECIMAL_SIGNIFICANT_12_HALF_EVEN","0x1.0p-38_RELATIVE",childSignature,decisions.size(),conflicts.size(),
-			visited.size(),selectedStates,selectedPlans,semanticFacts(rowId,analysis),registries);
+			countSelectedRewriteHops(receipt, decisions, conflicts),selectedStates,selectedPlans,
+			semanticFacts(rowId,analysis),registries);
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static int countSelectedRewriteHops(DpInvocationReceipt receipt,
+		Map<Long,FederatedOutput> decisions, Map conflicts) throws Exception {
+		FederatedPlannerDpMemoTable memo = receipt.memo();
+		Method selector = method("selectRewritePlanVariant", 8);
+		Set<Long> visited = new HashSet<>();
+		for(FedPlan root : receipt.exactSelection().selectedRootPlans())
+			visitSelectedRewriteHops(root, memo, decisions, conflicts, selector, visited, true);
+		for(long rootHopId : memo.getAdditionalRootHopIDs()) {
+			if(memo.isVirtualClone(rootHopId))
+				continue;
+			FedPlan lout = memo.getFedPlanAfterPrune(rootHopId, FederatedOutput.LOUT);
+			FedPlan fout = memo.getFedPlanAfterPrune(rootHopId, FederatedOutput.FOUT);
+			FedPlan seed = lout == null ? fout : fout == null ? lout
+				: lout.getCumulativeCost() <= fout.getCumulativeCost() ? lout : fout;
+			if(seed == null)
+				throw new AssertionError("DP_OFFLINE_ADDITIONAL_ROOT_SEED_MISSING|" + rootHopId);
+			visitSelectedRewriteHops(seed, memo, decisions, conflicts, selector, visited, true);
+		}
+		return visited.size();
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static void visitSelectedRewriteHops(FedPlan plan, FederatedPlannerDpMemoTable memo,
+		Map<Long,FederatedOutput> decisions, Map conflicts, Method selector, Set<Long> visited,
+		boolean allowOutputDecisionOverride) throws Exception {
+		long planHopId = plan.getHopRef().getHopID();
+		if(!visited.add(planHopId))
+			return;
+		long originalHopId = memo.resolveOriginalHopId(planHopId);
+		FederatedOutput desired = decisions.getOrDefault(originalHopId, plan.getFedOutType());
+		FedPlan effective = (FedPlan) selector.invoke(null, memo, planHopId, desired,
+			plan.getFedOutType(), plan, decisions, conflicts, allowOutputDecisionOverride);
+		for(Pair<Long,FederatedOutput> edge : effective.getChildFedPlans()) {
+			long childHopId = edge.getLeft();
+			long childOriginalHopId = memo.resolveOriginalHopId(childHopId);
+			FederatedOutput childDesired = decisions.getOrDefault(childOriginalHopId, edge.getRight());
+			FedPlan child = (FedPlan) selector.invoke(null, memo, childHopId, childDesired,
+				edge.getRight(), null, decisions, conflicts, false);
+			if(child != null)
+				visitSelectedRewriteHops(child, memo, decisions, conflicts, selector, visited, false);
+		}
+	}
+
+	private static void assertCanonicalSingleInvocation(DpInvocationReceipt receipt) {
+		InvocationCounters counters = receipt.counters();
+		if(counters.enumerationCount() != 1 || counters.exactSelectionCount() != 1
+			|| counters.applicationPhaseCount() != 1 || counters.reenumerationCount() != 0
+			|| counters.oldOverloadCount() != 0 || counters.repairCount() != 0
+			|| counters.fallbackCount() != 0 || counters.doubleApplicationCount() != 0)
+			throw new AssertionError("DP_OFFLINE_INVOCATION_COUNTERS_DIFFER|" + counters);
 	}
 
 	private static String observedHex(double value) {

@@ -1320,6 +1320,7 @@ public class FederatedPlannerDpCostEnumerator {
 		if (tWriteChildHops.isEmpty()) {
 			return false;
 		}
+		rejectAmbiguousTransientWriteHopIds(dataOp, tWriteChildHops, capture);
 
 		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
 
@@ -1435,6 +1436,22 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 
 		return true;
+	}
+
+	private static void rejectAmbiguousTransientWriteHopIds(DataOp transientRead,
+		List<Hop> transientWrites, EnumerationCapture capture) {
+		Map<Long, Hop> firstById = new LinkedHashMap<>();
+		for(Hop candidate : transientWrites) {
+			Hop previous = firstById.putIfAbsent(candidate.getHopID(), candidate);
+			if(previous == null || previous == candidate)
+				continue;
+			if(capture == null)
+				throw new DMLRuntimeException("Ambiguous transient-write child hop " + candidate.getHopID());
+			HopOccurrenceProjection parent = findOccurrence(capture, transientRead);
+			throw new DpSemanticConstructionException(
+				DpPlacementAdapter.ConstructionDisposition.DUPLICATE_OCCURRENCE,
+				capture.context.analysis().analysisFingerprint(), parent.key(), "DUPLICATE_OCCURRENCE");
+		}
 	}
 
 	private static boolean canTransientReadReuseMatchedFoutWrite(DataOp transientRead, long tWriteHopID,
