@@ -134,7 +134,7 @@ public class FederatedPlannerDpRewireTransTable {
 		String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
 		List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
 		List<RewireConsumerEdge> consumerEdges, Map<Long, Long> cloneToOriginal,
-		String enumerationScopeKey) {
+		Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, String enumerationScopeKey) {
 		public RewireOccurrenceSnapshot {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(program, "program");
@@ -144,6 +144,7 @@ public class FederatedPlannerDpRewireTransTable {
 			Objects.requireNonNull(additionalRoots, "additionalRoots");
 			Objects.requireNonNull(consumerEdges, "consumerEdges");
 			Objects.requireNonNull(cloneToOriginal, "cloneToOriginal");
+			Objects.requireNonNull(occurrenceByCarrier, "occurrenceByCarrier");
 			if(enumerationScopeKey == null || enumerationScopeKey.isBlank())
 				throw new IllegalArgumentException("Enumeration scope key must not be blank");
 			analysis.assertCanonicalProgramAuthority(program);
@@ -191,11 +192,39 @@ public class FederatedPlannerDpRewireTransTable {
 					throw new IllegalArgumentException("Physical clone original is not analysis-owned");
 			}
 
+			Map<Hop, HopOccurrenceProjection> exactCarrierProjection = new IdentityHashMap<>();
+			Set<Long> projectedPhysicalCloneIds = new LinkedHashSet<>();
+			for(Map.Entry<Hop, HopOccurrenceProjection> projected : occurrenceByCarrier.entrySet()) {
+				Hop carrier = projected.getKey();
+				HopOccurrenceProjection occurrence = projected.getValue();
+				if(carrier == null || occurrence == null || !ownedByIdentity.contains(occurrence))
+					throw new IllegalArgumentException("Carrier projection is not analysis-owned");
+				HopOccurrenceProjection previous = exactCarrierProjection.put(carrier, occurrence);
+				if(previous != null && previous != occurrence)
+					throw new IllegalArgumentException("Carrier identity projects to multiple occurrences");
+				if(carrier == occurrence.hop())
+					continue;
+				Long originalHopId = cloneToOriginal.get(carrier.getHopID());
+				if(originalHopId == null || originalHopId != occurrence.hop().getHopID()
+					|| !projectedPhysicalCloneIds.add(carrier.getHopID()))
+					throw new IllegalArgumentException("Physical carrier projection differs");
+			}
+			for(HopOccurrenceProjection occurrence : occurrences)
+				if(exactCarrierProjection.get(occurrence.hop()) != occurrence)
+					throw new IllegalArgumentException("Direct analysis carrier projection is missing");
+			if(projectedPhysicalCloneIds.size() != cloneToOriginal.size())
+				throw new IllegalArgumentException("Physical carrier projection multiplicity differs");
+
 			occurrences = List.copyOf(occurrences);
 			cloneReceipts = List.copyOf(cloneReceipts);
 			additionalRoots = List.copyOf(additionalRoots);
 			consumerEdges = List.copyOf(consumerEdges);
 			cloneToOriginal = Collections.unmodifiableMap(new LinkedHashMap<>(cloneToOriginal));
+			occurrenceByCarrier = Collections.unmodifiableMap(exactCarrierProjection);
+		}
+
+		public HopOccurrenceProjection projectExactCarrier(Hop carrier) {
+			return carrier == null ? null : occurrenceByCarrier.get(carrier);
 		}
 	}
 
@@ -384,7 +413,8 @@ public class FederatedPlannerDpRewireTransTable {
 				"REWIRE_ENUMERATION_SCOPE_MISSING");
 		try {
 			return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
-				cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, enumerationScopeKey);
+				cloneReceipts, additionalRoots, consumerEdges, cloneToOriginal, occurrenceByRootCarrier,
+				enumerationScopeKey);
 		}
 		catch(IllegalArgumentException ex) {
 			throw semanticFailureWithCause(analysis, failureAnchor(analysis), ConstructionDisposition.STALE_CONTEXT,
