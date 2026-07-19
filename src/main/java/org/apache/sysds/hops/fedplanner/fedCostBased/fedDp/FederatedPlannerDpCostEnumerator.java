@@ -226,6 +226,7 @@ public class FederatedPlannerDpCostEnumerator {
 			analysis.analysisFingerprint());
 		EnumerationCapture capture = new EnumerationCapture(
 			new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint()), memoTable, observer);
+		try {
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 		memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
@@ -364,6 +365,15 @@ public class FederatedPlannerDpCostEnumerator {
 	 * inner and outer block distinctions.
 	 */
 	public static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
+			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
+			Set<Long> unRefTwriteSet, Set<String> fnStack,
+			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
+		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
+	}
+
+	private static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
