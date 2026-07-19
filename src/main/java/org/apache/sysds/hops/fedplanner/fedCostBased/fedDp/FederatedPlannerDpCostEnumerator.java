@@ -368,7 +368,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
+			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
 		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
 	}
@@ -377,7 +377,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade) {
+			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
