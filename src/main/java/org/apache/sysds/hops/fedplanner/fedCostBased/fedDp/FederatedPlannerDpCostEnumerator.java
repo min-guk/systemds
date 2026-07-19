@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -149,16 +150,34 @@ public class FederatedPlannerDpCostEnumerator {
 	private static final class EnumerationCapture {
 		private final NeutralEnumerationContext context;
 		private final DpEnumerationObserver observer;
-		private final List<CandidateOccurrenceSnapshot> snapshots = new ArrayList<>();
+		private final List<CapturedCandidate> candidates = new ArrayList<>();
 		private int rawCandidateCount;
 		private EnumerationCapture(NeutralEnumerationContext context, FederatedPlannerDpMemoTable memo,
 			DpEnumerationObserver observer) { this.context = context; this.observer = observer == null ? NO_OP_OBSERVER : observer; }
-		private void capture(CandidateOccurrenceSnapshot snapshot) { snapshots.add(Objects.requireNonNull(snapshot)); rawCandidateCount++; }
+		private void capture(CandidateOccurrenceSnapshot snapshot, long variantOrdinal) {
+			candidates.add(new CapturedCandidate(Objects.requireNonNull(snapshot), variantOrdinal));
+			rawCandidateCount++;
+		}
 		private PreSelectionSemanticBlock semanticBlock() {
-			return new PreSelectionSemanticBlock(context, snapshots, rawCandidateCount, snapshots.size(),
-			rawCandidateCount == snapshots.size());
+			Map<CompiledHopKey, Integer> parentOrder = new IdentityHashMap<>();
+			List<HopOccurrenceProjection> occurrences = context.analysis().occurrences();
+			for(int i = 0; i < occurrences.size(); i++)
+				parentOrder.put(occurrences.get(i).key(), i);
+			List<CapturedCandidate> orderedCandidates = new ArrayList<>(candidates);
+			orderedCandidates.sort(Comparator.comparingInt((CapturedCandidate candidate) -> {
+				Integer ordinal = parentOrder.get(candidate.snapshot().parentOccurrence());
+				if(ordinal == null)
+					throw new IllegalStateException("Candidate parent is not owned by the supplied analysis");
+				return ordinal;
+			}).thenComparingLong(CapturedCandidate::variantOrdinal));
+			List<CandidateOccurrenceSnapshot> orderedSnapshots = orderedCandidates.stream()
+				.map(CapturedCandidate::snapshot).toList();
+			return new PreSelectionSemanticBlock(context, orderedSnapshots, rawCandidateCount, orderedSnapshots.size(),
+				rawCandidateCount == candidates.size());
 		}
 	}
+
+	private record CapturedCandidate(CandidateOccurrenceSnapshot snapshot, long variantOrdinal) { }
 
 	private record EffectiveCandidateInputs(List<Hop> collectedHops, List<FType> collectedFTypes,
 		Map<Long, FType> fedInputTypeMap) {
@@ -598,11 +617,13 @@ public class FederatedPlannerDpCostEnumerator {
 		FederatedPlannerDpMemoTable.HopCommon hopCommon = hopCommonTable.get(hopID);
 		hopCommon.setNumOfParentHops(numParentHops);
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
+			if(capture != null)
+				captureMemoSupportedChildSelections(hop, childHops, memoTable, capture);
 			enumerateFederatedDataOp((DataOp) hop, memoTable, hopCommon);
 			return;
 		}
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
-			if (enumerateTransientReadDataOp((DataOp) hop, childHops, memoTable, hopCommon, numOfWorkers)) {
+			if (enumerateTransientReadDataOp((DataOp) hop, childHops, memoTable, hopCommon, numOfWorkers, capture)) {
 				return;
 			}
 		}
@@ -830,7 +851,7 @@ public class FederatedPlannerDpCostEnumerator {
 						normalizedCandidateInputs.effectiveCollectedFTypes(),
 						normalizedCandidateInputs.effectiveNonNullFTypeMap());
 				if(normalizedCandidateInputs != null) {
-					capture.capture(normalizedCandidateInputs.snapshot());
+					capture.capture(normalizedCandidateInputs.snapshot(), i);
 					capture.observer.oracleEvaluated();
 				}
 				List<Hop> exactCollectedHops = effectiveInputs.collectedHops();
@@ -1152,6 +1173,91 @@ public class FederatedPlannerDpCostEnumerator {
 					|| (((FunctionOp) parentHop).getFunctionType() == FunctionType.DML));
 	}
 
+	private static void captureMemoSupportedChildSelections(Hop parent, List<Hop> childHops,
+			FederatedPlannerDpMemoTable memoTable, EnumerationCapture capture) {
+		List<Hop> bothOutputs = new ArrayList<>();
+		List<Hop> loutOnly = new ArrayList<>();
+		List<Hop> foutOnly = new ArrayList<>();
+		for(Hop child : childHops) {
+			boolean hasLout = memoTable.contains(child.getHopID(), FederatedOutput.LOUT);
+			boolean hasFout = memoTable.contains(child.getHopID(), FederatedOutput.FOUT);
+			if(hasLout && hasFout)
+				bothOutputs.add(child);
+			else if(hasLout)
+				loutOnly.add(child);
+			else if(hasFout)
+				foutOnly.add(child);
+			else
+				throw new DMLRuntimeException("Missing federated plan for child hop " + child.getHopID()
+					+ " while capturing parent " + parent.getHopID());
+		}
+
+		long variants = 1L << bothOutputs.size();
+		for(long variant = 0; variant < variants; variant++) {
+			List<Pair<Long, FederatedOutput>> planChilds = new ArrayList<>();
+			for(int bit = 0; bit < bothOutputs.size(); bit++)
+				appendMemoSupportedEdge(bothOutputs.get(bit),
+					(variant & (1L << bit)) == 0 ? FederatedOutput.LOUT : FederatedOutput.FOUT,
+					memoTable, planChilds);
+			for(Hop child : loutOnly)
+				appendMemoSupportedEdge(child, FederatedOutput.LOUT, memoTable, planChilds);
+			for(Hop child : foutOnly)
+				appendMemoSupportedEdge(child, FederatedOutput.FOUT, memoTable, planChilds);
+			captureConstructedChildSelection(parent, childHops, planChilds, memoTable, capture, variant);
+		}
+	}
+
+	private static void appendMemoSupportedEdge(Hop child, FederatedOutput output,
+			FederatedPlannerDpMemoTable memoTable, List<Pair<Long, FederatedOutput>> planChilds) {
+		FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(child.getHopID(), output);
+		if(childPlan == null)
+			throw new DMLRuntimeException("Missing " + output + " federated plan for child hop "
+				+ child.getHopID());
+		planChilds.add(Pair.of(child.getHopID(), output));
+	}
+
+	private static void captureConstructedChildSelection(Hop parent, List<Hop> availableChildren,
+			List<Pair<Long, FederatedOutput>> childEdges, FederatedPlannerDpMemoTable memoTable,
+			EnumerationCapture capture, long variantOrdinal) {
+		List<Hop> collectedHops = new ArrayList<>();
+		List<FType> collectedFTypes = new ArrayList<>();
+		Map<Long, FType> fedInputTypeMap = new LinkedHashMap<>();
+		HopOccurrenceProjection parentOccurrence = findOccurrence(capture, parent);
+		for(Pair<Long, FederatedOutput> edge : childEdges) {
+			Set<Hop> exactMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(Hop candidate : availableChildren)
+				if(candidate.getHopID() == edge.getLeft() && capture.context.analysis().occurrences().stream()
+					.anyMatch(occurrence -> occurrence.hop() == candidate))
+					exactMatches.add(candidate);
+			if(exactMatches.isEmpty())
+				throw new DpSemanticConstructionException(
+					DpPlacementAdapter.ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					capture.context.analysis().analysisFingerprint(), parentOccurrence.key(),
+					"UNMAPPABLE_OCCURRENCE");
+			if(exactMatches.size() != 1)
+				throw new DpSemanticConstructionException(
+					DpPlacementAdapter.ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					capture.context.analysis().analysisFingerprint(), parentOccurrence.key(),
+					"DUPLICATE_OCCURRENCE");
+			Hop child = exactMatches.iterator().next();
+			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(edge);
+			if(childPlan == null)
+				throw new DMLRuntimeException("Missing " + edge.getRight() + " federated plan for child hop "
+					+ edge.getLeft());
+			collectedHops.add(child);
+			if(edge.getRight() == FederatedOutput.FOUT) {
+				collectedFTypes.add(childPlan.getFType());
+				fedInputTypeMap.put(child.getHopID(), childPlan.getFType());
+			}
+			else
+				collectedFTypes.add(null);
+		}
+		NormalizedCandidateInputs normalized = DpPlacementAdapter.normalizeCandidateInputs(
+			capture.context, parentOccurrence, childEdges, collectedHops,
+			collectedFTypes, fedInputTypeMap, memoTable);
+		capture.capture(normalized.snapshot(), variantOrdinal);
+	}
+
 	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
 			FederatedPlannerDpMemoTable.HopCommon hopCommon) {
 		FType baseFType = FederatedTypePropagator.deriveFType(dataOp);
@@ -1178,6 +1284,12 @@ public class FederatedPlannerDpCostEnumerator {
 	private static boolean enumerateTransientReadDataOp(DataOp dataOp, List<Hop> childHops,
 			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.HopCommon hopCommon,
 			int numOfWorkers) {
+		return enumerateTransientReadDataOp(dataOp, childHops, memoTable, hopCommon, numOfWorkers, null);
+	}
+
+	private static boolean enumerateTransientReadDataOp(DataOp dataOp, List<Hop> childHops,
+			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.HopCommon hopCommon,
+			int numOfWorkers, EnumerationCapture capture) {
 		if (dataOp == null || dataOp.getOp() != Types.OpOpData.TRANSIENTREAD) {
 			return false;
 		}
@@ -1259,6 +1371,13 @@ public class FederatedPlannerDpCostEnumerator {
 			loutAcquireCost = localMaterializationWeight
 					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
 							outputMemEstimate, foutFType, numOfWorkers);
+		}
+
+		if(capture != null) {
+			if(allowLOUT)
+				captureConstructedChildSelection(dataOp, childHops, loutChilds, memoTable, capture, 0L);
+			if(allowFOUT)
+				captureConstructedChildSelection(dataOp, childHops, foutChilds, memoTable, capture, 1L);
 		}
 
 		if (allowLOUT) {
