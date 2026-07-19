@@ -304,7 +304,7 @@ public class FederatedPlannerDpCostEnumerator {
 		Set<String> fnStack = new HashSet<>();
 		Set<Long> visitedHops = new HashSet<>();
 
-		for (StatementBlock sb : prog.getStatementBlocks()) {
+		for (StatementBlock sb : analysis.topLevelStatementBlocks()) {
 			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
