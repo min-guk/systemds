@@ -23,7 +23,7 @@ import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.Ancho
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.AnchorMetadataDisposition;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.FullSpaceObservationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.FullSpaceObservationRequest;
-import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.LifecycleDurabilityReceipt;
+import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceLifecycleCapture.LifecycleDurabilityReceipt;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.PlacementOwnedAnchorFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
@@ -97,10 +97,8 @@ public class AnchorProvenanceFullSpaceRedContractTest {
 
 	@Test
 	public void provenanceSurvivesCleanupCloneUnrollAdditionalRootsAndRecompileByTypedReceipt() {
-		LifecycleDurabilityReceipt lifecycle = AnchorProvenanceObserverFactory.observer()
-			.observeFullSpace(FullSpaceObservationRequest.forLifecycleMatrix(
-				analysis(), List.of(AnchorAccessForm.values())))
-			.lifecycle().orElseThrow(AssertionError::new);
+		LifecycleDurabilityReceipt lifecycle = AnchorProvenanceLifecycleCapture
+			.captureStableLifecycle(analysis(), List.of(AnchorAccessForm.values()));
 
 		Assert.assertTrue("G014_FULLSPACE_CLEANUP_DURABILITY", lifecycle.afterCleanup().sameAnchorFacts());
 		Assert.assertTrue("G014_FULLSPACE_CLONE_DURABILITY", lifecycle.afterClone().sameCanonicalOrigins());
@@ -127,23 +125,23 @@ public class AnchorProvenanceFullSpaceRedContractTest {
 	}
 
 	private static PlacementAnalysis analysis() {
-		throw new AssertionError("G014_FULLSPACE_FIXTURE_PENDING");
+		return FullSpaceTestFixtures.analysis();
 	}
 
 	private static PlacementAnalysis foreignAnalysis() {
-		throw new AssertionError("G014_FULLSPACE_FOREIGN_FIXTURE_PENDING");
+		return FullSpaceTestFixtures.foreignAnalysis();
 	}
 
 	private static CompiledHopKey occurrence() {
-		throw new AssertionError("G014_FULLSPACE_OCCURRENCE_FIXTURE_PENDING");
+		return FullSpaceTestFixtures.anchoredOccurrence(analysis());
 	}
 
 	private static CompiledHopKey copiedOccurrence() {
-		throw new AssertionError("G014_FULLSPACE_COPIED_OCCURRENCE_FIXTURE_PENDING");
+		return FullSpaceTestFixtures.copiedOccurrence(occurrence());
 	}
 
 	private static PlacementOwnedAnchorFact validFact() {
-		throw new AssertionError("G014_FULLSPACE_VALID_FACT_FIXTURE_PENDING");
+		return FullSpaceTestFixtures.validFact(analysis(), occurrence(), AnchorAccessForm.FEDINIT_SIGNATURE);
 	}
 
 	@SuppressWarnings("unused")
