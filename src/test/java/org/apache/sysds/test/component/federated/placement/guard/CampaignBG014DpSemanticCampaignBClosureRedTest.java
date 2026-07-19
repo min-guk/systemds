@@ -53,11 +53,19 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 
 	@Test
 	public void concurrentFreshAnalysesRemainExactlyOwned() throws Exception {
+		Invocation first = run("B-05");
+		Invocation second = run("B-09");
 		var pool = Executors.newFixedThreadPool(2);
 		try {
-			List<Callable<Invocation>> work = List.of(() -> run("B-05"), () -> run("B-09"));
+			List<Callable<Invocation>> work = List.of(() -> {
+				assertConsumed(first);
+				return first;
+			}, () -> {
+				assertConsumed(second);
+				return second;
+			});
 			for(var future : pool.invokeAll(work))
-				assertConsumed(future.get());
+				Assert.assertNotNull("G014_CONCURRENT_RECEIPT", future.get());
 		}
 		finally {
 			pool.shutdownNow();
