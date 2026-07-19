@@ -112,12 +112,34 @@ final class CampaignBFrozenCostFixtureBridge {
 	static Fixture fresh(CampaignBLiteralAuthority.Expected expected)throws Exception{
 		String id=expected.fixture(); R4CostAdapterBridge.Planner planner=expected.planner().equals("DP")?
 			R4CostAdapterBridge.Planner.DP:R4CostAdapterBridge.Planner.MIN_ST;
+		java.util.function.BiFunction<String,String,Arm> attachedArm=(name,fixture)->{
+			try{
+				DMLProgram program=ProductionShadowFixtureFactory.compile(fixture);
+				String old=org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+					.getTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER);
+				java.util.concurrent.atomic.AtomicReference<org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt> receipt=
+					new java.util.concurrent.atomic.AtomicReference<>();
+				try{
+					org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+						.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER,"compile_cost_based");
+					new org.apache.sysds.parser.DMLTranslator(program).constructLops(program,value->{
+						if(!receipt.compareAndSet(null,value))throw new AssertionError("R4_FINAL_BOUNDARY_MULTIPLE_RECEIPTS");
+					});
+				}
+				finally{org.apache.sysds.conf.ConfigurationManager.getDMLConfig()
+					.setTextValue(org.apache.sysds.conf.DMLConfig.FEDERATED_PLANNER,old);}
+				if(receipt.get()==null)throw new AssertionError("R4_FINAL_BOUNDARY_RECEIPT_MISSING");
+				PlacementAnalysis analysis=receipt.get().analysis();analysis.assertCanonicalProgramAuthority(program);
+				Map<String,String> keys=new LinkedHashMap<>();for(var o:analysis.occurrences())keys.put(o.key().normalizedSignature(),o.key().normalizedSignature());
+				return new Arm(name,fixture,program,analysis,Map.copyOf(keys),analysis.analysisFingerprint());
+			}catch(RuntimeException x){throw x;}catch(Exception x){throw new RuntimeException(x);}
+		};
 		List<Arm> arms=new ArrayList<>(); List<CostSelectionInput> inputs=new ArrayList<>();
 		for(var f:R4ExactPrivateCostDpFixtures.all()) if(f.id().equals(id)) inputs.add(dp(f));
 		for(var f:R4ExactPrivateCostMinstFixtures.all()) if(f.id().equals(id)) inputs.add(minst(f));
 		if(id.equals("C2-DP-04-ANCHOR-CONTRAST")) {
 			Arm owner;
-			try{owner=arm("ANCHOR_CONTRAST_OWNER","B-01");}
+			try{owner=attachedArm.apply("ANCHOR_CONTRAST_OWNER","B-01");}
 			catch(Exception x){throw new AssertionError("R4_DP04_OWNER_BUILD",x);}
 			arms.add(owner);
 			try{inputs.add(dpAnchor(id+":CONCRETE",owner,true));}
@@ -125,7 +147,7 @@ final class CampaignBFrozenCostFixtureBridge {
 			try{inputs.add(dpAnchor(id+":MISSING",owner,false));}
 			catch(Exception x){throw new AssertionError("R4_DP04_MISSING_PRODUCER",x);}
 		}
-		else if(inputs.isEmpty()) { Arm a=arm("FULL_PATH",FULL_PATH.get(id));arms.add(a);
+		else if(inputs.isEmpty()) { Arm a=attachedArm.apply("FULL_PATH",FULL_PATH.get(id));arms.add(a);
 			inputs.add(id.equals("C2-DP-08-UNKNOWN-METADATA")?graphExclusion(id,a):full(planner,id,a)); }
 		Map<String,String> pre=Map.of("inputCount",String.valueOf(inputs.size()),"armCount",String.valueOf(arms.size()),
 			"producerKinds",inputs.stream().map(x->x.producer().getClass().getName()).toList().toString());
