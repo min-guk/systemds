@@ -159,7 +159,8 @@ public final class DpPlacementAdapter {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
 				CandidateMapEntry promoted = snapshot.promotedEntries().get(i);
 				FType effective = effectiveCollectedFTypes.get(i);
-				if(snapshot.context().analysis().hop(promoted.occurrence()).orElse(null) != hop)
+				HopOccurrenceProjection projected = snapshot.context().rewireSnapshot().projectExactCarrier(hop);
+				if(projected == null || projected.key() != promoted.occurrence())
 					throw new IllegalArgumentException("Normalized Hop and occurrence differ");
 				if(effective != promoted.rawFType())
 					throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
@@ -231,7 +232,7 @@ public final class DpPlacementAdapter {
 		HopOccurrenceProjection parent, List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
 		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap, FederatedPlannerDpMemoTable memo) {
 		Objects.requireNonNull(context, "context");
-		validateCandidateInputs(context.analysis(), parent, planChilds, collectedHops, collectedFTypes,
+		validateContextCandidateInputs(context, parent, planChilds, collectedHops, collectedFTypes,
 			fedInputTypeMap, memo);
 
 		List<CandidateMapEntry> rawEntries = new ArrayList<>(collectedHops.size());
@@ -249,8 +250,7 @@ public final class DpPlacementAdapter {
 		for(int i = 0; i < collectedHops.size(); i++) {
 			Hop hop = collectedHops.get(i);
 			Pair<Long, FederatedOutput> edge = planChilds.get(i);
-			HopOccurrenceProjection occurrence = context.analysis().occurrences().stream()
-				.filter(candidate -> candidate.hop() == hop).findFirst().orElseThrow();
+			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(hop);
 			boolean rawContainsKey = fedInputTypeMap.containsKey(hop.getHopID());
 			FType rawType = rawContainsKey ? fedInputTypeMap.get(hop.getHopID()) : null;
 			rawEntries.add(project(occurrence.key(), i, rawContainsKey, rawType));
@@ -282,6 +282,40 @@ public final class DpPlacementAdapter {
 		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
 			promotedEntries, orderedOracleInputs, ConstructionDisposition.AVAILABLE, "AVAILABLE");
 		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
+	}
+
+	private static void validateContextCandidateInputs(NeutralEnumerationContext context,
+		HopOccurrenceProjection parent, List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
+		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap, FederatedPlannerDpMemoTable memo) {
+		Objects.requireNonNull(parent, "parent");
+		Objects.requireNonNull(planChilds, "planChilds");
+		Objects.requireNonNull(collectedHops, "collectedHops");
+		Objects.requireNonNull(collectedFTypes, "collectedFTypes");
+		Objects.requireNonNull(fedInputTypeMap, "fedInputTypeMap");
+		Objects.requireNonNull(memo, "memo");
+		PlacementAnalysis analysis = context.analysis();
+		if(analysis.occurrences().stream().noneMatch(candidate -> candidate == parent))
+			throw failure(analysis, parent.key(), ConstructionDisposition.FOREIGN_CONTEXT, "FOREIGN_CONTEXT");
+		if(planChilds.size() != collectedHops.size() || collectedHops.size() != collectedFTypes.size())
+			throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
+		for(int i = 0; i < collectedHops.size(); i++) {
+			Pair<Long, FederatedOutput> edge = planChilds.get(i);
+			Hop hop = collectedHops.get(i);
+			if(edge == null || edge.getLeft() == null || edge.getRight() == null || hop == null)
+				throw failure(analysis, parent.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"UNMAPPABLE_OCCURRENCE");
+			if(edge.getLeft() != hop.getHopID())
+				throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
+			HopOccurrenceProjection occurrence = context.rewireSnapshot().projectExactCarrier(hop);
+			if(occurrence == null)
+				throw failure(analysis, parent.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"UNMAPPABLE_OCCURRENCE");
+			if(analysis.occurrences().stream().noneMatch(candidate -> candidate == occurrence))
+				throw failure(analysis, parent.key(), ConstructionDisposition.FOREIGN_CONTEXT, "FOREIGN_CONTEXT");
+			if(fedInputTypeMap.containsKey(hop.getHopID()) && fedInputTypeMap.get(hop.getHopID()) == null)
+				throw failure(analysis, parent.key(), ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE,
+					"PRESENT_NULL");
+		}
 	}
 
 	private static CandidateMapEntry project(CompiledHopKey occurrence, int edgePosition,
