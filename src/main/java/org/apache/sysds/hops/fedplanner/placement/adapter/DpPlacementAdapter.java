@@ -159,7 +159,7 @@ public final class DpPlacementAdapter {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
 				CandidateMapEntry promoted = snapshot.promotedEntries().get(i);
 				FType effective = effectiveCollectedFTypes.get(i);
-				if(hop.getHopID() != promoted.occurrence().hopId())
+				if(snapshot.context().analysis().hop(promoted.occurrence()).orElse(null) != hop)
 					throw new IllegalArgumentException("Normalized Hop and occurrence differ");
 				if(effective != promoted.rawFType())
 					throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
@@ -189,6 +189,130 @@ public final class DpPlacementAdapter {
 		public String analysisFingerprint() { return analysisFingerprint; }
 		public CompiledHopKey parentOccurrence() { return parentOccurrence; }
 		public String reasonCode() { return reasonCode; }
+	}
+
+	public static void validateCandidateInputs(PlacementAnalysis analysis, HopOccurrenceProjection parent,
+		List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops, List<FType> collectedFTypes,
+		Map<Long, FType> fedInputTypeMap, FederatedPlannerDpMemoTable memo) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(parent, "parent");
+		Objects.requireNonNull(planChilds, "planChilds");
+		Objects.requireNonNull(collectedHops, "collectedHops");
+		Objects.requireNonNull(collectedFTypes, "collectedFTypes");
+		Objects.requireNonNull(fedInputTypeMap, "fedInputTypeMap");
+		Objects.requireNonNull(memo, "memo");
+		if(analysis.occurrences().stream().noneMatch(candidate -> candidate == parent))
+			throw failure(analysis, parent.key(), ConstructionDisposition.FOREIGN_CONTEXT, "FOREIGN_CONTEXT");
+		if(planChilds.size() != collectedHops.size() || collectedHops.size() != collectedFTypes.size())
+			throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
+		for(int i = 0; i < collectedHops.size(); i++) {
+			Pair<Long, FederatedOutput> edge = planChilds.get(i);
+			Hop hop = collectedHops.get(i);
+			if(edge == null || edge.getLeft() == null || edge.getRight() == null || hop == null)
+				throw failure(analysis, parent.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"UNMAPPABLE_OCCURRENCE");
+			if(edge.getLeft() != hop.getHopID())
+				throw failure(analysis, parent.key(), ConstructionDisposition.REORDERED_EDGE, "REORDERED_EDGE");
+			List<HopOccurrenceProjection> owned = analysis.occurrences().stream()
+				.filter(candidate -> candidate.hop() == hop).toList();
+			if(owned.isEmpty())
+				throw failure(analysis, parent.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"UNMAPPABLE_OCCURRENCE");
+			if(owned.size() != 1)
+				throw failure(analysis, parent.key(), ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"DUPLICATE_OCCURRENCE");
+			if(fedInputTypeMap.containsKey(hop.getHopID()) && fedInputTypeMap.get(hop.getHopID()) == null)
+				throw failure(analysis, parent.key(), ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE,
+					"PRESENT_NULL");
+		}
+	}
+
+	public static NormalizedCandidateInputs normalizeCandidateInputs(NeutralEnumerationContext context,
+		HopOccurrenceProjection parent, List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
+		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap, FederatedPlannerDpMemoTable memo) {
+		Objects.requireNonNull(context, "context");
+		validateCandidateInputs(context.analysis(), parent, planChilds, collectedHops, collectedFTypes,
+			fedInputTypeMap, memo);
+
+		List<CandidateMapEntry> rawEntries = new ArrayList<>(collectedHops.size());
+		List<CandidateMapEntry> promotedEntries = new ArrayList<>(collectedHops.size());
+		List<OracleInputState> orderedOracleInputs = new ArrayList<>(collectedHops.size());
+		List<FType> effectiveCollectedFTypes = new ArrayList<>(collectedFTypes);
+		LinkedHashMap<Long, FType> effectiveMap = new LinkedHashMap<>();
+		for(Map.Entry<Long, FType> entry : fedInputTypeMap.entrySet()) {
+			if(entry.getKey() == null || entry.getValue() == null)
+				throw failure(context.analysis(), parent.key(),
+					ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE, "PRESENT_NULL");
+			effectiveMap.put(entry.getKey(), entry.getValue());
+		}
+
+		for(int i = 0; i < collectedHops.size(); i++) {
+			Hop hop = collectedHops.get(i);
+			Pair<Long, FederatedOutput> edge = planChilds.get(i);
+			HopOccurrenceProjection occurrence = context.analysis().occurrences().stream()
+				.filter(candidate -> candidate.hop() == hop).findFirst().orElseThrow();
+			boolean rawContainsKey = fedInputTypeMap.containsKey(hop.getHopID());
+			FType rawType = rawContainsKey ? fedInputTypeMap.get(hop.getHopID()) : null;
+			rawEntries.add(project(occurrence.key(), i, rawContainsKey, rawType));
+
+			FType collectedType = effectiveCollectedFTypes.get(i);
+			if(rawContainsKey && collectedType != null && collectedType != rawType)
+				throw failure(context.analysis(), parent.key(),
+					ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA, "FTYPE_MISMATCH");
+			FType effectiveType = rawType;
+			if(!rawContainsKey) {
+				if(edge.getRight() == FederatedOutput.FOUT)
+					throw failure(context.analysis(), parent.key(),
+						ConstructionDisposition.ANCHOR_METADATA_INCOMPLETE, "FOUT_METADATA_ABSENT");
+				FedPlan childPlan = memo.getFedPlanAfterPrune(edge);
+				FType memoType = childPlan == null ? null : childPlan.getCpFoutTypeOrFType();
+				if(collectedType != null && memoType != null && collectedType != memoType)
+					throw failure(context.analysis(), parent.key(),
+						ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA, "FTYPE_MISMATCH");
+				effectiveType = memoType != null ? memoType : collectedType;
+				if(effectiveType != null)
+					effectiveMap.put(hop.getHopID(), effectiveType);
+			}
+			if(effectiveType != null)
+				effectiveCollectedFTypes.set(i, effectiveType);
+			CandidateMapEntry promoted = project(occurrence.key(), i, effectiveType != null, effectiveType);
+			promotedEntries.add(promoted);
+			orderedOracleInputs.add(promoted.oracleInputState());
+		}
+
+		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
+			promotedEntries, orderedOracleInputs, ConstructionDisposition.AVAILABLE, "AVAILABLE");
+		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
+	}
+
+	private static CandidateMapEntry project(CompiledHopKey occurrence, int edgePosition,
+		boolean mapContainsKey, FType type) {
+		return new CandidateMapEntry(occurrence, edgePosition, mapContainsKey, type,
+			mapState(mapContainsKey, type), oracleState(mapContainsKey, type));
+	}
+
+	private static MapEntryState mapState(boolean mapContainsKey, FType type) {
+		if(!mapContainsKey)
+			return MapEntryState.ABSENT_LOCAL;
+		if(type == null)
+			return MapEntryState.PRESENT_NULL;
+		return MapEntryState.valueOf("PRESENT_" + type.name());
+	}
+
+	private static OracleInputState oracleState(boolean mapContainsKey, FType type) {
+		if(!mapContainsKey)
+			return OracleInputState.ABSENT_LOCAL;
+		return type == null ? null : OracleInputState.valueOf(type.name());
+	}
+
+	private static boolean ownsKey(PlacementAnalysis analysis, CompiledHopKey key) {
+		return analysis.occurrences().stream().anyMatch(candidate -> candidate.key() == key);
+	}
+
+	private static DpSemanticConstructionException failure(PlacementAnalysis analysis,
+		CompiledHopKey parentOccurrence, ConstructionDisposition disposition, String reasonCode) {
+		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parentOccurrence,
+			reasonCode);
 	}
 
 	public enum TieDecision {
