@@ -390,24 +390,39 @@ public class FederatedPlannerDpRewireTransTable {
 					if(candidate != null)
 						carrierHops.add(candidate);
 
-		Set<Hop> directMatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop candidate : carrierHops)
 			if(candidate == occurrence.hop())
-				directMatches.add(candidate);
-		if(directMatches.size() == 1)
-			return directMatches.iterator().next();
-		if(directMatches.size() > 1)
-			throw new IllegalArgumentException("Production rewire occurrence must resolve to exactly one concrete carrier");
+				return candidate;
 
-		Set<Hop> associatedCloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<Hop> cloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop candidate : carrierHops) {
 			Long originalHopId = cloneToOriginal.get(candidate.getHopID());
 			if(originalHopId != null && originalHopId == occurrence.hop().getHopID())
-				associatedCloneMatches.add(candidate);
+				cloneMatches.add(candidate);
 		}
-		if(associatedCloneMatches.size() != 1)
-			throw new IllegalArgumentException("Production clone association must resolve exactly one concrete carrier");
-		return associatedCloneMatches.iterator().next();
+		if(cloneMatches.size() != 1)
+			throw semanticFailure(analysis, occurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"REWIRE_CONCRETE_CARRIER_MULTIPLICITY_" + cloneMatches.size());
+		return cloneMatches.iterator().next();
+	}
+
+	private static DpSemanticConstructionException semanticFailure(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode) {
+		return new DpSemanticConstructionException(disposition, analysis.analysisFingerprint(), parent.key(), reasonCode);
+	}
+
+	private static DpSemanticConstructionException semanticFailureWithCause(PlacementAnalysis analysis,
+		HopOccurrenceProjection parent, ConstructionDisposition disposition, String reasonCode,
+		IllegalArgumentException cause) {
+		DpSemanticConstructionException failure = semanticFailure(analysis, parent, disposition, reasonCode);
+		failure.initCause(cause);
+		return failure;
+	}
+
+	private static HopOccurrenceProjection failureAnchor(PlacementAnalysis analysis) {
+		if(analysis.occurrences().isEmpty())
+			throw new IllegalStateException("Placement analysis has no occurrence for semantic failure evidence");
+		return analysis.occurrences().get(0);
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
