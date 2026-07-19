@@ -226,7 +226,6 @@ public class FederatedPlannerDpCostEnumerator {
 			analysis.analysisFingerprint());
 		EnumerationCapture capture = new EnumerationCapture(
 			new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint()), memoTable, observer);
-		try {
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 		memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
