@@ -194,10 +194,10 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 			&& sequence(adapter, 0, "candidateDecisionReceipts", ".", "size", "(", ")") >= 0
 			&& sequence(adapter, 0, "candidateSnapshots", ".", "size", "(", ")") >= 0
 			&& sequence(adapter, 0, "candidateVariantOrdinals", ".", "size", "(", ")") >= 0
-			&& sequence(adapter, 0, "receipt", ".", "context", "(", ")", "!=", "context") >= 0
-			&& sequence(adapter, 0, "receipt", ".", "candidateSnapshot", "(", ")", "!=",
+			&& sequence(adapter, 0, "receipt", ".", "context", "(", ")", "!", "=", "context") >= 0
+			&& sequence(adapter, 0, "receipt", ".", "candidateSnapshot", "(", ")", "!", "=",
 				"candidateSnapshots", ".", "get", "(", "i", ")") >= 0
-			&& sequence(adapter, 0, "receipt", ".", "variantOrdinal", "(", ")", "!=",
+			&& sequence(adapter, 0, "receipt", ".", "variantOrdinal", "(", ")", "!", "=",
 				"candidateVariantOrdinals", ".", "get", "(", "i", ")") >= 0
 			&& sequence(adapter, 0, "receipt", ".", "orderedOracleInputs", "(", ")", ".", "equals", "(",
 				"candidateSnapshots", ".", "get", "(", "i", ")", ".", "orderedOracleInputs", "(", ")", ")") >= 0;
@@ -242,7 +242,7 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 		return sequence(header, 0, "int", "numWorkers") >= 0
 			&& sequence(header, 0, "Map", "<", "CompiledHopKey", ",", "CapturedInvocationEvidence", ">") >= 0
 			&& sequence(header, 0, "Map", "<", "CompiledHopKey", ",", "Privacy", ">") >= 0
-			&& sequence(adapter, 0, "numWorkers", "<=", "0") >= 0
+			&& sequence(adapter, 0, "numWorkers", "<", "=", "0") >= 0
 			&& !containsHardCodedInvocationPlaceholder(adapter);
 	}
 
