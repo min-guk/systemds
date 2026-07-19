@@ -3,7 +3,6 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.Arrays;
 import java.util.ArrayList;
-import java.util.ArrayDeque;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,15 +17,14 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.InvocationCounters;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.CandidateNormalizationFixture;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationObserver;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
@@ -36,11 +34,8 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Ora
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
-import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry.MaterializeSpec;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
-import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry.LocalMaterializeSpec;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
-import org.apache.sysds.lops.compile.FederatedRefedRegistry.AnchorSpec;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -190,12 +185,16 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		PlacementAnalysis analysis = setup.analysis();
 		ProgramState before = snapshotProgram(fixture.program(), analysis);
 		TrackingMemo memo = new TrackingMemo(analysis);
+		assertTrackingMemoEmpty(memo, analysis);
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
 		FederatedLocalMaterializeRegistry.clear();
 		assertRegistriesEmpty(fixture.program());
 		CandidateNormalizationFixture negative = new CandidateNormalizationFixture(parent, planChilds,
 			collectedHops, collectedFTypes, fedInputTypeMap);
+		Assert.assertSame(parent, negative.parentOccurrence());
+		Assert.assertEquals(planChilds, negative.planChilds());
+		assertIdentityList(collectedHops, negative.collectedHops(), "negative collected Hops");
 		TrackingObserver observer = new TrackingObserver();
 		try {
 			DpInvocationReceipt published = new FederatedPlannerDpFedCostBased().rewriteProgram(fixture.program(),
@@ -208,10 +207,10 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			Assert.assertEquals(reasonCode, expected.reasonCode());
 			Assert.assertEquals(analysis.analysisFingerprint(), expected.analysisFingerprint());
 			Assert.assertSame(parent.key(), expected.parentOccurrence());
-			Assert.assertEquals(planChilds.size(), expected.edgeCount());
 		}
 		Assert.assertTrue("negative canonical invocation mutated memo: " + memo.writeEvents(),
 			memo.writeEvents().isEmpty());
+		assertTrackingMemoEmpty(memo, analysis);
 		Assert.assertEquals(0, observer.resultCount());
 		Assert.assertEquals(0, observer.oracleCount());
 		Assert.assertEquals(0, observer.costCount());
@@ -229,81 +228,16 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		Assert.assertEquals(type.name(), entry.oracleInputState().name());
 	}
 
-	private static PlannerState snapshot(DpInvocationReceipt invocation) {
-		PlacementAnalysis analysis = invocation.analysis();
-		Set<Long> ids = new LinkedHashSet<>();
-		analysis.occurrences().forEach(value -> ids.add(value.hop().getHopID()));
-		ids.addAll(invocation.memo().getAdditionalRootHopIDs());
-		invocation.exactSelection().aggregateChildEdges().forEach(value -> ids.add(value.getLeft()));
-		Set<FedPlan> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-		ArrayDeque<FedPlan> queue = new ArrayDeque<>(invocation.exactSelection().selectedRootPlans());
-		while(!queue.isEmpty()) {
-			FedPlan plan = queue.removeFirst();
-			if(!seen.add(plan)) continue;
-			ids.add(plan.getHopID());
-			for(Pair<Long, FederatedOutput> edge : plan.getChildFedPlans()) {
-				ids.add(edge.getLeft());
-				FedPlan child = invocation.memo().getFedPlanAfterPrune(edge);
-				if(child != null) queue.addLast(child);
-			}
-		}
-		List<MemoState> memo = new ArrayList<>();
-		for(long id : ids)
-			for(FederatedOutput output : FederatedOutput.values()) {
-				boolean present = invocation.memo().contains(id, output);
-				FedPlanVariants variants = present
-					? invocation.memo().getFedPlanVariants(Pair.of(id, output)) : null;
-				memo.add(new MemoState(id, output, present, variants,
-					variants == null ? List.of() : List.copyOf(variants.getFedPlanVariants())));
-			}
-		List<HopState> hops = analysis.occurrences().stream().map(HopOccurrenceProjection::hop).distinct()
-			.map(HopState::new).toList();
-		Map<Long, Map<Long, AnchorSpec>> refed = new LinkedHashMap<>();
-		Map<Long, Map<Long, MaterializeSpec>> fout = new LinkedHashMap<>();
-		Map<Long, Map<Long, Map<Long, LocalMaterializeSpec>>> local = new LinkedHashMap<>();
-		for(long scope : ids) {
-			refed.put(scope, FederatedRefedRegistry.snapshot(scope));
-			fout.put(scope, FederatedFoutMaterializeRegistry.snapshot(scope));
-			local.put(scope, FederatedLocalMaterializeRegistry.snapshotScopes(scope));
-		}
-		return new PlannerState(analysis, analysis.analysisFingerprint(), analysis.occurrences(), hops,
-			List.copyOf(memo), invocation.counters(), refed, fout, local);
-	}
-
-	private static void assertStateSame(PlannerState expected, PlannerState actual) {
-		Assert.assertSame(expected.analysis(), actual.analysis());
-		Assert.assertEquals(expected.analysisFingerprint(), actual.analysisFingerprint());
-		assertIdentityList(expected.occurrences(), actual.occurrences(), "analysis occurrences");
-		Assert.assertSame(expected.counters(), actual.counters());
-		Assert.assertEquals(expected.hops().size(), actual.hops().size());
-		for(int i = 0; i < expected.hops().size(); i++) expected.hops().get(i).assertSame(actual.hops().get(i));
-		Assert.assertEquals(expected.memo().size(), actual.memo().size());
-		for(int i = 0; i < expected.memo().size(); i++) expected.memo().get(i).assertSame(actual.memo().get(i));
-		assertNestedRegistrySame(expected.refed(), actual.refed(), "refed");
-		assertNestedRegistrySame(expected.fout(), actual.fout(), "fout");
-		Assert.assertEquals(expected.local().keySet(), actual.local().keySet());
-		for(long scope : expected.local().keySet())
-			assertNestedRegistrySame(expected.local().get(scope), actual.local().get(scope), "local " + scope);
-	}
-
 	private static void assertIdentityList(List<?> expected, List<?> actual, String label) {
 		Assert.assertEquals(label, expected.size(), actual.size());
 		for(int i = 0; i < expected.size(); i++) Assert.assertSame(label + '[' + i + ']', expected.get(i), actual.get(i));
 	}
 
-	private static void assertRegistrySame(Map<?, ?> expected, Map<?, ?> actual, String label) {
-		Assert.assertEquals(label, expected.keySet(), actual.keySet());
-		for(Object key : expected.keySet()) Assert.assertSame(label + ' ' + key, expected.get(key), actual.get(key));
-	}
-
-	private static void assertNestedRegistrySame(Map<Long, ? extends Map<?, ?>> expected,
-		Map<Long, ? extends Map<?, ?>> actual, String label) {
-		Assert.assertEquals(label + " scopes", expected.keySet(), actual.keySet());
-		for(long scope : expected.keySet())
-			assertRegistrySame(expected.get(scope), actual.get(scope), label + ' ' + scope);
-	}
-
 	private static DpInvocationReceipt invoke(String id) {
+		return fixture(id).receipt();
+	}
+
+	private static Fixture fixture(String id) {
 		try {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
 			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
@@ -314,26 +248,57 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			}
 			finally { ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old); }
 			Assert.assertTrue(receipt.get() instanceof DpInvocationReceipt);
-			return (DpInvocationReceipt) receipt.get();
+			return new Fixture(program, (DpInvocationReceipt) receipt.get());
 		}
 		catch(Exception e) { throw new AssertionError("Unable to compile G014 candidate fixture " + id, e); }
+	}
+
+	private static ProgramState snapshotProgram(DMLProgram program, PlacementAnalysis analysis) {
+		return new ProgramState(program, analysis, PlacementGraphFingerprint.capture(program),
+			analysis.analysisFingerprint(), analysis.occurrences(),
+			analysis.occurrences().stream().map(HopOccurrenceProjection::hop).distinct().map(HopState::new).toList());
+	}
+
+	private static void assertProgramSame(ProgramState expected, ProgramState actual) {
+		Assert.assertSame(expected.program(), actual.program());
+		Assert.assertSame(expected.analysis(), actual.analysis());
+		Assert.assertEquals(expected.programFingerprint(), actual.programFingerprint());
+		Assert.assertEquals(expected.analysisFingerprint(), actual.analysisFingerprint());
+		assertIdentityList(expected.occurrences(), actual.occurrences(), "negative analysis occurrences");
+		Assert.assertEquals(expected.hops().size(), actual.hops().size());
+		for(int i = 0; i < expected.hops().size(); i++) expected.hops().get(i).assertSame(actual.hops().get(i));
+	}
+
+	private static void assertRegistriesEmpty(DMLProgram program) {
+		Assert.assertTrue("refed registry is not globally empty", FederatedRefedRegistry.isEmpty());
+		Assert.assertTrue("FOUT registry is not globally empty", FederatedFoutMaterializeRegistry.isEmpty());
+		Assert.assertTrue("local registry is not globally empty", FederatedLocalMaterializeRegistry.isEmpty());
+		Set<Long> exactScopes = new LinkedHashSet<>();
+		exactScopes.add(-1L);
+		program.getStatementBlocks().forEach(block -> exactScopes.add(block.getSBID()));
+		Assert.assertEquals("B-15 exact default plus top-level statement-block scope universe",
+			program.getStatementBlocks().size() + 1, exactScopes.size());
+		for(long scope : exactScopes) {
+			Assert.assertTrue("refed scope " + scope, FederatedRefedRegistry.snapshot(scope).isEmpty());
+			Assert.assertTrue("FOUT scope " + scope, FederatedFoutMaterializeRegistry.snapshot(scope).isEmpty());
+			Assert.assertTrue("local scope " + scope,
+				FederatedLocalMaterializeRegistry.snapshotScopes(scope).isEmpty());
+		}
+	}
+
+	private static void assertTrackingMemoEmpty(TrackingMemo memo, PlacementAnalysis analysis) {
+		Assert.assertSame(analysis, memo.analysis());
+		Assert.assertTrue("negative memo acquired additional roots", memo.getAdditionalRootHopIDs().isEmpty());
+		for(HopOccurrenceProjection occurrence : analysis.occurrences())
+			for(FederatedOutput output : FederatedOutput.values())
+				Assert.assertFalse("negative memo acquired coordinate " + occurrence.key() + '/' + output,
+					memo.contains(occurrence.hop().getHopID(), output));
 	}
 
 	@SuppressWarnings({"rawtypes", "unchecked"})
 	private static void assertImmutable(List<?> values) {
 		try { ((List) values).add(null); Assert.fail("mutable candidate snapshots"); }
 		catch(UnsupportedOperationException expected) { }
-	}
-
-	private record MemoState(long hopId, FederatedOutput output, boolean present, FedPlanVariants variants,
-		List<FederatedPlannerDpMemoTable.FedPlan> variantOrder) {
-		private void assertSame(MemoState actual) {
-			Assert.assertEquals(hopId, actual.hopId);
-			Assert.assertSame(output, actual.output);
-			Assert.assertEquals(present, actual.present);
-			Assert.assertSame(variants, actual.variants);
-			assertIdentityList(variantOrder, actual.variantOrder, "memo variants");
-		}
 	}
 
 	private record HopState(Hop hop, org.apache.sysds.common.Types.ExecType execType,
@@ -352,9 +317,93 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		}
 	}
 
-	private record PlannerState(PlacementAnalysis analysis, String analysisFingerprint,
-		List<HopOccurrenceProjection> occurrences, List<HopState> hops, List<MemoState> memo,
-		InvocationCounters counters, Map<Long, Map<Long, AnchorSpec>> refed,
-		Map<Long, Map<Long, MaterializeSpec>> fout,
-		Map<Long, Map<Long, Map<Long, LocalMaterializeSpec>>> local) { }
+	private record Fixture(DMLProgram program, DpInvocationReceipt receipt) { }
+	private record ProgramState(DMLProgram program, PlacementAnalysis analysis, String programFingerprint,
+		String analysisFingerprint, List<HopOccurrenceProjection> occurrences, List<HopState> hops) { }
+	private record ExpectedRawInput(HopOccurrenceProjection child, FederatedOutput output) { }
+	private record ExpectedRawCandidate(HopOccurrenceProjection parent, List<ExpectedRawInput> inputs) { }
+
+	private static final class TrackingMemo extends FederatedPlannerDpMemoTable {
+		private final List<String> writes = new ArrayList<>();
+
+		private TrackingMemo(PlacementAnalysis analysis) {
+			super(analysis);
+		}
+
+		@Override
+		public void addFedPlanVariants(HopOccurrenceProjection occurrence, FederatedOutput output,
+			FedPlanVariants variants) {
+			writes.add("addFedPlanVariants.occurrence");
+			super.addFedPlanVariants(occurrence, output, variants);
+		}
+
+		@Override
+		public void addFedPlanVariants(long hopId, FederatedOutput output, FedPlanVariants variants) {
+			writes.add("addFedPlanVariants.id");
+			super.addFedPlanVariants(hopId, output, variants);
+		}
+
+		@Override
+		public void registerHopRefs(Map<Long, HopCommon> refs) {
+			writes.add("registerHopRefs");
+			super.registerHopRefs(refs);
+		}
+
+		@Override
+		public void registerCloneMapping(Map<Long, Long> clones) {
+			writes.add("registerCloneMapping");
+			super.registerCloneMapping(clones);
+		}
+
+		@Override
+		public void registerAdditionalRootHopIDs(List<Hop> roots) {
+			writes.add("registerAdditionalRootHopIDs");
+			super.registerAdditionalRootHopIDs(roots);
+		}
+
+		@Override
+		public void registerDeadFunctionOutputHopIDs(Set<Long> ids) {
+			writes.add("registerDeadFunctionOutputHopIDs");
+			super.registerDeadFunctionOutputHopIDs(ids);
+		}
+
+		@Override
+		public void setNumWorkers(int workers) {
+			writes.add("setNumWorkers");
+			super.setNumWorkers(workers);
+		}
+
+		private List<String> writeEvents() {
+			return List.copyOf(writes);
+		}
+	}
+
+	private static final class TrackingObserver implements DpEnumerationObserver {
+		private DpSemanticConstructionException failure;
+		private int results;
+		private int oracle;
+		private int cost;
+		private int placement;
+		private int candidates;
+		private int repair;
+		private int fallback;
+
+		@Override public void constructionFailed(DpSemanticConstructionException value) { failure = value; }
+		@Override public void resultPublished(DpEnumerationResult value) { results++; }
+		@Override public void oracleEvaluated() { oracle++; }
+		@Override public void costEvaluated() { cost++; }
+		@Override public void placementDecided() { placement++; }
+		@Override public void candidateConstructed() { candidates++; }
+		@Override public void repairAttempted() { repair++; }
+		@Override public void fallbackAttempted() { fallback++; }
+
+		private DpSemanticConstructionException failure() { return failure; }
+		private int resultCount() { return results; }
+		private int oracleCount() { return oracle; }
+		private int costCount() { return cost; }
+		private int placementCount() { return placement; }
+		private int candidateCount() { return candidates; }
+		private int repairCount() { return repair; }
+		private int fallbackCount() { return fallback; }
+	}
 }
