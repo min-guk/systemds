@@ -159,6 +159,16 @@ public class FederatedPlannerDpCostEnumerator {
 			rawCandidateCount == snapshots.size());
 		}
 	}
+
+	private record EffectiveCandidateInputs(List<Hop> collectedHops, List<FType> collectedFTypes,
+		Map<Long, FType> fedInputTypeMap) {
+		private EffectiveCandidateInputs {
+			collectedHops = List.copyOf(collectedHops);
+			// LOUT inputs are represented by null FTypes on the legacy dynamic path.
+			collectedFTypes = Collections.unmodifiableList(new ArrayList<>(collectedFTypes));
+			fedInputTypeMap = Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap));
+		}
+	}
 	// Global privacy policy: never allow CP overrides for protected data unless
 	// this flag flips.
 	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
@@ -226,7 +236,6 @@ public class FederatedPlannerDpCostEnumerator {
 			analysis.analysisFingerprint());
 		EnumerationCapture capture = new EnumerationCapture(
 			new NeutralEnumerationContext(analysis, rewireSnapshot, analysis.analysisFingerprint()), memoTable, observer);
-		try {
 		memoTable.registerHopRefs(hopCommonTable);
 		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
 		memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
@@ -289,7 +298,6 @@ public class FederatedPlannerDpCostEnumerator {
 		DpEnumerationResult result = new DpEnumerationResult(optimalPlan, rewireSnapshot, semanticBlock);
 		observer.resultPublished(result);
 		return result;
-		}
 	}
 
 	public static FederatedPlannerDpMemoTable.FedPlan enumerateFunctionDynamic(FunctionStatementBlock function,
@@ -365,15 +373,6 @@ public class FederatedPlannerDpCostEnumerator {
 	 * inner and outer block distinctions.
 	 */
 	public static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
-			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
-			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
-			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, OracleFacade oracleFacade, EnumerationCapture capture) {
-		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, oracleFacade, null);
-	}
-
-	private static void enumerateStatementBlock(StatementBlock sb, DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
@@ -821,14 +820,24 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 
-				NormalizedCandidateInputs normalizedCandidateInputs = DpPlacementAdapter.normalizeCandidateInputs(
+				EffectiveCandidateInputs effectiveInputs;
+				if(capture == null) {
+					effectiveInputs = new EffectiveCandidateInputs(
+						collectedHops, collectedFTypes, fedInputTypeMap);
+				}
+				else {
+					NormalizedCandidateInputs normalizedCandidateInputs = DpPlacementAdapter.normalizeCandidateInputs(
 						capture.context, findOccurrence(capture, hop),
 						planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
-				List<FType> effectiveCollectedFTypes = normalizedCandidateInputs.effectiveCollectedFTypes();
-				Map<Long, FType> effectiveNonNullFTypeMap = normalizedCandidateInputs.effectiveNonNullFTypeMap();
-				List<Hop> exactCollectedHops = normalizedCandidateInputs.exactCollectedHops();
-				capture.capture(normalizedCandidateInputs.snapshot());
-				capture.observer.oracleEvaluated();
+					effectiveInputs = new EffectiveCandidateInputs(normalizedCandidateInputs.exactCollectedHops(),
+						normalizedCandidateInputs.effectiveCollectedFTypes(),
+						normalizedCandidateInputs.effectiveNonNullFTypeMap());
+					capture.capture(normalizedCandidateInputs.snapshot());
+					capture.observer.oracleEvaluated();
+				}
+				List<Hop> exactCollectedHops = effectiveInputs.collectedHops();
+				List<FType> effectiveCollectedFTypes = effectiveInputs.collectedFTypes();
+				Map<Long, FType> effectiveNonNullFTypeMap = effectiveInputs.fedInputTypeMap();
 
 			if (enforceTReadConsistency) {
 				if (!tWriteSeen) {
@@ -890,7 +899,7 @@ public class FederatedPlannerDpCostEnumerator {
 										nativeAggUnaryResultDownloadCost);
 						FederatedCostModel.MixedFedLocalCost mixedFedLocalCost =
 								FederatedCostModel.computeMixedFedLocalCost(
-										hop, collectedHops, effectiveCollectedFTypes, oracleLogicalFType,
+										hop, exactCollectedHops, effectiveCollectedFTypes, oracleLogicalFType,
 										baseSelfCost, outputMemEstimate, numOfWorkers);
 						double nativeAggUnaryFedComputeCost =
 								FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
