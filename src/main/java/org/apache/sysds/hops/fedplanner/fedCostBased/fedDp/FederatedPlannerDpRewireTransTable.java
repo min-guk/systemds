@@ -390,24 +390,16 @@ public class FederatedPlannerDpRewireTransTable {
 					if(candidate != null)
 						carrierHops.add(candidate);
 
-		Set<Hop> directMatches = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(Hop candidate : carrierHops)
-			if(candidate == occurrence.hop())
-				directMatches.add(candidate);
-		if(directMatches.size() == 1)
-			return directMatches.iterator().next();
-		if(directMatches.size() > 1)
-			throw new IllegalArgumentException("Production rewire occurrence must resolve to exactly one concrete carrier");
-
-		Set<Hop> associatedCloneMatches = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<Hop> occurrenceMatches = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop candidate : carrierHops) {
 			Long originalHopId = cloneToOriginal.get(candidate.getHopID());
-			if(originalHopId != null && originalHopId == occurrence.hop().getHopID())
-				associatedCloneMatches.add(candidate);
+			if(candidate == occurrence.hop()
+				|| (originalHopId != null && originalHopId == occurrence.hop().getHopID()))
+				occurrenceMatches.add(candidate);
 		}
-		if(associatedCloneMatches.size() != 1)
-			throw new IllegalArgumentException("Production clone association must resolve exactly one concrete carrier");
-		return associatedCloneMatches.iterator().next();
+		if(occurrenceMatches.size() != 1)
+			throw new IllegalArgumentException("Production rewire occurrence must resolve exactly one concrete carrier");
+		return occurrenceMatches.iterator().next();
 	}
 
 	private static void appendExactRoots(List<Hop> roots,
