@@ -813,11 +813,13 @@ public class FederatedPlannerDpCostEnumerator {
 				NormalizedCandidateInputs normalizedCandidateInputs = ACTIVE_CAPTURE.get() == null ? null
 					: DpPlacementAdapter.normalizeCandidateInputs(
 						ACTIVE_CAPTURE.get().context, findOccurrence(ACTIVE_CAPTURE.get(), hop),
-						planChilds, collectedHops, effectiveCollectedFTypes, effectiveNonNullFTypeMap, memoTable);
+						planChilds, collectedHops, collectedFTypes, fedInputTypeMap, memoTable);
 				List<FType> effectiveCollectedFTypes = normalizedCandidateInputs == null ? collectedFTypes
 					: normalizedCandidateInputs.effectiveCollectedFTypes();
 				Map<Long, FType> effectiveNonNullFTypeMap = normalizedCandidateInputs == null ? fedInputTypeMap
 					: normalizedCandidateInputs.effectiveNonNullFTypeMap();
+				List<Hop> exactCollectedHops = normalizedCandidateInputs == null ? collectedHops
+					: normalizedCandidateInputs.exactCollectedHops();
 				if(normalizedCandidateInputs != null) {
 					ACTIVE_CAPTURE.get().capture(normalizedCandidateInputs.snapshot());
 					ACTIVE_CAPTURE.get().observer.oracleEvaluated();
@@ -852,7 +854,7 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 
 				OracleUtils.OracleDecision oracleDecision = OracleUtils.decideWithOracle(
-						hop, privacyConstraint, collectedHops, effectiveCollectedFTypes,
+						hop, privacyConstraint, exactCollectedHops, effectiveCollectedFTypes,
 						oracleFacade, oracleCache, rewireTable);
 				OpCaps caps = oracleDecision.caps();
 				boolean canSatisfyFedInputs = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(
@@ -1017,8 +1019,7 @@ public class FederatedPlannerDpCostEnumerator {
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut));
 				boolean allowCpFoutCandidate = placementDecision.allowCP_FOUT
-						&& (canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap)
-							|| canUseOracleCpfoutFallback(hop, cpLogicalFType))
+						&& (canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap))
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut));
 
