@@ -49,8 +49,14 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.CandidateNormalizationFixture;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationObserver;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -119,8 +125,98 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		int oldOverloadCount, int reenumerationCount, int repairCount, int fallbackCount,
 		int doubleApplicationCount) { }
 
+	public enum SemanticConsumptionState { NOT_IMPLEMENTED, CONSUMED }
+
+	/**
+	 * Invocation-local proof that the final DP boundary consumed the exact semantic
+	 * evidence published by the one enumeration performed for this invocation.
+	 *
+	 * <p>The public seven-argument constructor intentionally cannot authenticate a
+	 * terminal {@link SemanticConsumptionState#CONSUMED} claim: those fields alone
+	 * cannot distinguish the production block from a value-equal post-hoc copy.
+	 * Production uses {@link #consumed(DpEnumerationResult, PlacementAnalysis,
+	 * DpPlacementAdapter.ExactSelection, String, String)}, which additionally binds
+	 * the receipt to the exact invocation-local enumeration result without global
+	 * state, caches, or reconstructed evidence.</p>
+	 */
+	public static final class DpSemanticConsumptionReceipt {
+		private final PlacementAnalysis analysis;
+		private final RewireOccurrenceSnapshot rewireSnapshot;
+		private final PreSelectionSemanticBlock semanticBlock;
+		private final DpPlacementAdapter.ExactSelection exactSelection;
+		private final SemanticConsumptionState state;
+		private final String analysisFingerprintBefore;
+		private final String analysisFingerprintAfter;
+
+		public DpSemanticConsumptionReceipt(PlacementAnalysis analysis,
+			RewireOccurrenceSnapshot rewireSnapshot, PreSelectionSemanticBlock semanticBlock,
+			DpPlacementAdapter.ExactSelection exactSelection, SemanticConsumptionState state,
+			String analysisFingerprintBefore, String analysisFingerprintAfter) {
+			this(analysis, rewireSnapshot, semanticBlock, exactSelection, state,
+				analysisFingerprintBefore, analysisFingerprintAfter, null);
+		}
+
+		private DpSemanticConsumptionReceipt(PlacementAnalysis analysis,
+			RewireOccurrenceSnapshot rewireSnapshot, PreSelectionSemanticBlock semanticBlock,
+			DpPlacementAdapter.ExactSelection exactSelection, SemanticConsumptionState state,
+			String analysisFingerprintBefore, String analysisFingerprintAfter,
+			DpEnumerationResult productionResult) {
+			this.analysis = Objects.requireNonNull(analysis, "analysis");
+			this.rewireSnapshot = Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
+			this.semanticBlock = Objects.requireNonNull(semanticBlock, "semanticBlock");
+			this.exactSelection = Objects.requireNonNull(exactSelection, "exactSelection");
+			this.state = Objects.requireNonNull(state, "state");
+			this.analysisFingerprintBefore = Objects.requireNonNull(
+				analysisFingerprintBefore, "analysisFingerprintBefore");
+			this.analysisFingerprintAfter = Objects.requireNonNull(
+				analysisFingerprintAfter, "analysisFingerprintAfter");
+
+			if(state == SemanticConsumptionState.CONSUMED && productionResult == null)
+				throw new IllegalArgumentException("CONSUMED requires exact production enumeration evidence");
+			if(productionResult != null && (productionResult.rewireSnapshot() != rewireSnapshot
+				|| productionResult.semanticBlock() != semanticBlock
+				|| productionResult.optimalPlan() != exactSelection.legacyOptimalPlan()))
+				throw new IllegalArgumentException("Semantic evidence differs from the production enumeration result");
+			if(rewireSnapshot.analysis() != analysis || semanticBlock.context().analysis() != analysis
+				|| semanticBlock.context().rewireSnapshot() != rewireSnapshot
+				|| exactSelection.analysis() != analysis)
+				throw new IllegalArgumentException("Semantic consumption producer identities differ");
+			if(!analysis.analysisFingerprint().equals(analysisFingerprintBefore)
+				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter)
+				|| !rewireSnapshot.analysisFingerprint().equals(analysisFingerprintBefore)
+				|| !semanticBlock.context().analysisFingerprint().equals(analysisFingerprintBefore))
+				throw new IllegalArgumentException("Semantic consumption analysis fingerprint differs");
+			if(state == SemanticConsumptionState.CONSUMED) {
+				if(semanticBlock.rawCandidateCount() != semanticBlock.capturedCandidateCount()
+					|| !semanticBlock.zeroDifference())
+					throw new IllegalArgumentException("Semantic candidate capture is not zero-difference");
+				for(DpPlacementAdapter.CandidateOccurrenceSnapshot snapshot : semanticBlock.candidateSnapshots())
+					if(snapshot.disposition() != ConstructionDisposition.AVAILABLE)
+						throw new IllegalArgumentException("Non-available semantic candidate was consumed");
+			}
+		}
+
+		private static DpSemanticConsumptionReceipt consumed(DpEnumerationResult productionResult,
+			PlacementAnalysis analysis, DpPlacementAdapter.ExactSelection exactSelection,
+			String analysisFingerprintBefore, String analysisFingerprintAfter) {
+			Objects.requireNonNull(productionResult, "productionResult");
+			return new DpSemanticConsumptionReceipt(analysis, productionResult.rewireSnapshot(),
+				productionResult.semanticBlock(), exactSelection, SemanticConsumptionState.CONSUMED,
+				analysisFingerprintBefore, analysisFingerprintAfter, productionResult);
+		}
+
+		public PlacementAnalysis analysis() { return analysis; }
+		public RewireOccurrenceSnapshot rewireSnapshot() { return rewireSnapshot; }
+		public PreSelectionSemanticBlock semanticBlock() { return semanticBlock; }
+		public DpPlacementAdapter.ExactSelection exactSelection() { return exactSelection; }
+		public SemanticConsumptionState state() { return state; }
+		public String analysisFingerprintBefore() { return analysisFingerprintBefore; }
+		public String analysisFingerprintAfter() { return analysisFingerprintAfter; }
+	}
+
 	public record DpInvocationReceipt(PlacementAnalysis analysis, FederatedPlannerDpMemoTable memo,
 		FederatedPlannerDpMemoTable.FedPlan legacyOptimalPlan, DpPlacementAdapter.ExactSelection exactSelection,
+		DpSemanticConsumptionReceipt semanticConsumption,
 		List<AppliedPlanReceipt> appliedPlans, List<AdditionalRootInvocationReceipt> additionalRootInvocations,
 		InvocationCounters counters,
 		String analysisFingerprintBefore, String analysisFingerprintAfter)
@@ -130,12 +226,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Objects.requireNonNull(memo, "memo");
 			Objects.requireNonNull(legacyOptimalPlan, "legacyOptimalPlan");
 			Objects.requireNonNull(exactSelection, "exactSelection");
+			Objects.requireNonNull(semanticConsumption, "semanticConsumption");
 			Objects.requireNonNull(counters, "counters");
 			appliedPlans = List.copyOf(appliedPlans);
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
 			if(analysis != exactSelection.analysis() || memo != exactSelection.memo()
 				|| legacyOptimalPlan != exactSelection.legacyOptimalPlan())
 				throw new IllegalArgumentException("DP receipt producer identities differ");
+			if(semanticConsumption.analysis() != analysis
+				|| semanticConsumption.exactSelection() != exactSelection
+				|| semanticConsumption.state() != SemanticConsumptionState.CONSUMED
+				|| !semanticConsumption.analysisFingerprintBefore().equals(analysisFingerprintBefore)
+				|| !semanticConsumption.analysisFingerprintAfter().equals(analysisFingerprintAfter))
+				throw new IllegalArgumentException("DP semantic consumption receipt differs");
 			if(!analysis.analysisFingerprint().equals(analysisFingerprintBefore)
 				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter))
 				throw new IllegalArgumentException("Supplied analysis changed during planning");
@@ -260,8 +363,29 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable(analysis);
-		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
-			prog, memoTable, FederatedPlannerTrace.isEnabled());
+		DpEnumerationResult enumerationResult = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(
+			prog, memoTable, FederatedPlannerTrace.isEnabled(), analysis);
+		return rewriteProgramWithEnumeration(prog, analysis, memoTable, enumerationResult, fingerprintBefore);
+	}
+
+	public DpInvocationReceipt rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis, FederatedPlannerDpMemoTable memoTable,
+		CandidateNormalizationFixture normalizationFixture, DpEnumerationObserver observer) {
+		Objects.requireNonNull(prog, "prog");
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(memoTable, "memoTable");
+		analysis.assertProgramOwner(prog);
+		prog.requirePlacementAnalysisAuthority(analysis);
+		String fingerprintBefore = analysis.analysisFingerprint();
+		DpEnumerationResult enumerationResult = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(
+			prog, memoTable, FederatedPlannerTrace.isEnabled(), analysis, normalizationFixture, observer);
+		return rewriteProgramWithEnumeration(prog, analysis, memoTable, enumerationResult, fingerprintBefore);
+	}
+
+	private DpInvocationReceipt rewriteProgramWithEnumeration(DMLProgram prog, PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memoTable, DpEnumerationResult enumerationResult,
+		String fingerprintBefore) {
+		FederatedPlannerDpMemoTable.FedPlan optimalPlan = enumerationResult.optimalPlan();
 		DpPlacementAdapter.ExactSelection exactSelection =
 			new DpPlacementAdapter().selectExact(analysis, memoTable, optimalPlan);
 
@@ -325,9 +449,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			.filter(invocation -> invocation.disposition() == AdditionalRootDisposition.ALREADY_VISITED).count();
 		InvocationCounters counters = new InvocationCounters(1, 1, 1, appliedPlans.size(),
 			additionalRootInvocations.size(), noOps, 0, 0, 0, 0, 0, 0);
-		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, appliedPlans,
+		String fingerprintAfter = analysis.analysisFingerprint();
+		DpSemanticConsumptionReceipt semanticConsumption = DpSemanticConsumptionReceipt.consumed(
+			enumerationResult, analysis, exactSelection, fingerprintBefore, fingerprintAfter);
+		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, semanticConsumption, appliedPlans,
 			additionalRootInvocations, counters,
-			fingerprintBefore, analysis.analysisFingerprint());
+			fingerprintBefore, fingerprintAfter);
 	}
 
 	@Override
