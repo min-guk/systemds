@@ -41,6 +41,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCo
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.BoundaryName;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
@@ -459,13 +460,14 @@ public final class NeutralPlacementGraphBuilder {
 			Node call = nodes.get(callIndex);
 			String functionKey = callOp.getFunctionKey();
 			String[] inputNames = callOp.getInputVariableNames();
-			for(int inputPosition = 0; inputPosition < inputNames.length; inputPosition++) {
+			for(int inputPosition = 0; inputPosition < boundaryCount(inputNames, callOp.getInput().size()); inputPosition++) {
+				BoundaryName inputName = boundaryName(inputNames, inputPosition);
 				Node argument = inputPosition < callOp.getInput().size()
 					? nodesByHop.get(callOp.getInput(inputPosition)) : null;
 				List<PlacementState> alternatives = argument == null ? List.of(
 					new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false))
 					: transientAlternatives(argument.legalAlternatives());
-				Node input = functionBoundaryNode(call, functionKey, inputNames[inputPosition], callIndex,
+				Node input = functionBoundaryNode(call, functionKey, inputName, callIndex,
 					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives);
 				expanded.add(input);
 				expandedOrigins.put(input.key(), callOp);
@@ -473,22 +475,36 @@ public final class NeutralPlacementGraphBuilder {
 					"function-callsite-control"));
 				if(argument != null)
 					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, argument.key(), input.key(), inputPosition,
-						"function-argument:" + inputNames[inputPosition]));
+						"function-argument:" + inputName.canonicalSourceOriginToken()));
 			}
 			String[] outputNames = callOp.getOutputVariableNames();
-			for(int outputPosition = 0; outputPosition < outputNames.length; outputPosition++) {
-				Node output = functionBoundaryNode(call, functionKey, outputNames[outputPosition], callIndex,
+			int outputArity = callOp.getOutputs() == null ? 0 : callOp.getOutputs().size();
+			for(int outputPosition = 0; outputPosition < boundaryCount(outputNames, outputArity); outputPosition++) {
+				BoundaryName outputName = boundaryName(outputNames, outputPosition);
+				Node output = functionBoundaryNode(call, functionKey, outputName, callIndex,
 					outputPosition, VersionKind.FUNCTION_OUTPUT, NodeKind.FUNCTION_OUTPUT,
 					transientAlternatives(call.legalAlternatives()));
 				expanded.add(output);
 				expandedOrigins.put(output.key(), callOp);
 				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, call.key(), output.key(), outputPosition,
-					"function-result:" + outputNames[outputPosition]));
+					"function-result:" + outputName.canonicalSourceOriginToken()));
 			}
 		}
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins));
 	}
+
+	private static int boundaryCount(String[] names, int structuralArity) {
+		return names == null ? structuralArity : Math.max(names.length, structuralArity);
+	}
+
+	private static BoundaryName boundaryName(String[] names, int position) {
+		if(names == null || position >= names.length)
+			return BoundaryName.absent();
+		String name = names[position];
+		return name == null || name.isBlank() ? BoundaryName.unnamed() : BoundaryName.known(name);
+	}
+
 	private static List<Node> classifyOrphanFunctionBodies(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
 		List<Node> nodes) {
 		List<Node> result = new ArrayList<>(nodes);
@@ -503,7 +519,7 @@ public final class NeutralPlacementGraphBuilder {
 		return result;
 	}
 
-	private static Node functionBoundaryNode(Node call, String functionKey, String variable, int callIndex,
+	private static Node functionBoundaryNode(Node call, String functionKey, BoundaryName variable, int callIndex,
 		int position, VersionKind versionKind, NodeKind nodeKind, List<PlacementState> alternatives) {
 		String boundary = versionKind == VersionKind.FUNCTION_INPUT ? "input" : "output";
 		String callPath = call.key().callSitePath() + "->" + functionKey + '/' + boundary + '-' + position;
@@ -512,10 +528,19 @@ public final class NeutralPlacementGraphBuilder {
 			List.of(call.key().callSitePath(), boundary + '-' + position), callPath, context);
 		CompiledHopKey key = new CompiledHopKey(call.key().programFingerprint(), functionKey, callPath, context,
 			region, boundary + '-' + callIndex + '-' + position,
-			"function-boundary:" + functionKey + ':' + boundary + ':' + variable);
-		ValueVersionKey value = new ValueVersionKey(call.key().programFingerprint(), variable, region, position,
+			"function-boundary:" + functionKey + ':' + boundary + ':' + variable.canonicalSourceOriginToken());
+		ValueVersionKey value = new ValueVersionKey(call.key().programFingerprint(), variable.identityToken(), region, position,
 			versionKind, List.of("callsite:" + call.key().normalizedSignature()));
-		return new Node(key, nodeKind, value, true, alternatives, List.of(), List.of());
+		return variable.isKnown() ? new Node(key, nodeKind, value, true, alternatives, List.of(), List.of())
+			: new Node(key, nodeKind, value, false, List.of(), unknownBoundaryExclusions(alternatives, variable), List.of());
+	}
+
+	private static List<Exclusion> unknownBoundaryExclusions(List<PlacementState> alternatives, BoundaryName variable) {
+		List<Exclusion> exclusions = new ArrayList<>();
+		for(PlacementState alternative : alternatives)
+			exclusions.add(new Exclusion(alternative, ReasonCode.UNKNOWN_METADATA,
+				"function-boundary:" + variable.kind().name()));
+		return Collections.unmodifiableList(exclusions);
 	}
 
 	private static List<PlacementState> transientAlternatives(List<PlacementState> alternatives) {

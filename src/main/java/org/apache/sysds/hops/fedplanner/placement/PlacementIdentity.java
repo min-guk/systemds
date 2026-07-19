@@ -40,6 +40,55 @@ public final class PlacementIdentity {
 		CLONE_RECOMPILE
 	}
 
+	public enum BoundaryNameKind {
+		KNOWN,
+		UNNAMED,
+		ABSENT
+	}
+
+	public record BoundaryName(BoundaryNameKind kind, String name) implements Comparable<BoundaryName> {
+		public BoundaryName {
+			Objects.requireNonNull(kind, "kind");
+			if(kind == BoundaryNameKind.KNOWN)
+				name = requireText(name, "boundary name");
+			else if(name != null)
+				throw new IllegalArgumentException("Only known boundary metadata may carry a name");
+		}
+
+		public static BoundaryName known(String name) {
+			return new BoundaryName(BoundaryNameKind.KNOWN, name);
+		}
+
+		public static BoundaryName unnamed() {
+			return new BoundaryName(BoundaryNameKind.UNNAMED, null);
+		}
+
+		public static BoundaryName absent() {
+			return new BoundaryName(BoundaryNameKind.ABSENT, null);
+		}
+
+		public boolean isKnown() {
+			return kind == BoundaryNameKind.KNOWN;
+		}
+
+		public String identityToken() {
+			return isKnown() ? name : kind.name();
+		}
+
+		public String canonicalSourceOriginToken() {
+			return isKnown() ? name : '<' + kind.name() + '>';
+		}
+
+		public String normalizedSignature() {
+			return isKnown() ? name : fields(kind.name());
+		}
+
+		@Override
+		public int compareTo(BoundaryName that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
 	public record ControlRegionKey(String programFingerprint, String functionNamespace,
 		List<String> regionPath, String callSitePath, String recompileContext)
 		implements Comparable<ControlRegionKey> {
