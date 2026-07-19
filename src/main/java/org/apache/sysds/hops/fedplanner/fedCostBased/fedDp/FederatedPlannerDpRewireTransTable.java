@@ -206,9 +206,9 @@ public class FederatedPlannerDpRewireTransTable {
 				if(!ownedByIdentity.contains(root))
 					throw new IllegalArgumentException("Additional root is not analysis-owned");
 			for(RewireConsumerEdge edge : consumerEdges)
-				if(!candidateKeysByIdentity.contains(edge.parentOccurrence())
-					|| !candidateKeysByIdentity.contains(edge.childOccurrence()))
-					throw new IllegalArgumentException("Consumer edge endpoint is not a candidate carrier");
+				if(!ownedKeysByIdentity.contains(edge.parentOccurrence())
+					|| !ownedKeysByIdentity.contains(edge.childOccurrence()))
+					throw new IllegalArgumentException("Consumer edge endpoint is not analysis-owned");
 			for(RewireTransientForwardEdge edge : transientForwardEdges)
 				if(!candidateKeysByIdentity.contains(edge.writeOccurrence())
 					|| !candidateKeysByIdentity.contains(edge.readOccurrence()))
@@ -389,58 +389,62 @@ public class FederatedPlannerDpRewireTransTable {
 
 		List<HopOccurrenceProjection> occurrences = analysis.occurrences();
 		List<HopOccurrenceProjection> candidateOccurrences = candidateOccurrences(analysis);
+		Set<HopOccurrenceProjection> candidatesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(HopOccurrenceProjection occurrence : candidateOccurrences)
+			if(!candidatesByIdentity.add(occurrence)
+				|| occurrences.get(occurrence.normalizedOrdinal()) != occurrence
+				|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.STALE_CONTEXT,
+					"REWIRE_CANDIDATE_OCCURRENCE_DETACHED");
 		Map<Hop, HopOccurrenceProjection> exactByHop = new IdentityHashMap<>();
 		Map<Long, HopOccurrenceProjection> exactByHopId = new LinkedHashMap<>();
 		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops = new IdentityHashMap<>();
 		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop = new IdentityHashMap<>();
-		for(HopOccurrenceProjection occurrence : candidateOccurrences) {
-			if(occurrences.get(occurrence.normalizedOrdinal()) != occurrence)
+		Map<HopOccurrenceProjection, Hop> resolvedConsumerHops = new IdentityHashMap<>();
+		Map<Hop, HopOccurrenceProjection> consumerOccurrenceByResolvedHop = new IdentityHashMap<>();
+		for(int occurrenceOrdinal = 0; occurrenceOrdinal < occurrences.size(); occurrenceOrdinal++) {
+			HopOccurrenceProjection occurrence = occurrences.get(occurrenceOrdinal);
+			if(occurrence.normalizedOrdinal() != occurrenceOrdinal)
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.REORDERED_EDGE,
 					"REWIRE_OCCURRENCE_ORDER_DIFFERS");
 			if(analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.STALE_CONTEXT,
 					"REWIRE_OCCURRENCE_DETACHED");
+			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
+				unrollContext.getCloneToOrig(), analysis);
+			resolvedConsumerHops.put(occurrence, resolved);
+			if(consumerOccurrenceByResolvedHop.put(resolved, occurrence) != null)
+				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+					"REWIRE_CARRIER_OCCURRENCE_DUPLICATED");
+			if(!candidatesByIdentity.contains(occurrence))
+				continue;
 			if(exactByHop.put(occurrence.hop(), occurrence) != null
 				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
 					"REWIRE_OCCURRENCE_DUPLICATED");
-			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
-				unrollContext.getCloneToOrig(), analysis);
 			resolvedRewiredHops.put(occurrence, resolved);
 			if(occurrenceByResolvedHop.put(resolved, occurrence) != null)
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
-					"REWIRE_CARRIER_OCCURRENCE_DUPLICATED");
+					"REWIRE_CANDIDATE_CARRIER_OCCURRENCE_DUPLICATED");
 		}
 
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
-		for(HopOccurrenceProjection parent : candidateOccurrences) {
-			Hop resolvedParent = resolvedRewiredHops.get(parent);
+		for(HopOccurrenceProjection parent : occurrences) {
+			Hop resolvedParent = resolvedConsumerHops.get(parent);
 			if(resolvedParent == null)
 				throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					"REWIRE_PARENT_UNMAPPABLE");
 			List<Hop> inputs = resolvedParent.getInput();
 			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
-				HopOccurrenceProjection child = occurrenceByResolvedHop.get(inputs.get(inputPosition));
+				HopOccurrenceProjection child = consumerOccurrenceByResolvedHop.get(inputs.get(inputPosition));
 				if(child == null)
 					throw semanticFailure(analysis, parent, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 						"REWIRE_CHILD_UNMAPPABLE_AT_" + inputPosition);
 				consumerEdges.add(new RewireConsumerEdge(parent.key(), child.key(), inputPosition));
 			}
 		}
-		List<RewireTransientForwardEdge> transientForwardEdges = new ArrayList<>();
-		for(HopOccurrenceProjection write : candidateOccurrences) {
-			Hop resolvedWrite = resolvedRewiredHops.get(write);
-			if(!isTransientWrite(resolvedWrite)) continue;
-			List<Hop> forwardedReads = rewireTable.get(resolvedWrite.getHopID());
-			if(forwardedReads == null) continue;
-			for(Hop readCarrier : forwardedReads) {
-				HopOccurrenceProjection read = occurrenceByResolvedHop.get(readCarrier);
-				if(read == null || !isTransientRead(readCarrier))
-					throw semanticFailure(analysis, write, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
-						"REWIRE_TRANSIENT_FORWARD_UNMAPPABLE");
-				transientForwardEdges.add(new RewireTransientForwardEdge(write.key(), read.key()));
-			}
-		}
+		List<RewireTransientForwardEdge> transientForwardEdges = exactCandidateTransientForwardEdges(
+			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop, rewireTable);
 
 		for(Map.Entry<Long, Set<Long>> entry : parentChildUploadHints.entrySet()) {
 			HopOccurrenceProjection parent = exactByHopId.get(entry.getKey());
@@ -552,6 +556,53 @@ public class FederatedPlannerDpRewireTransTable {
 
 	private static boolean isTransientRead(Hop hop) {
 		return hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD;
+	}
+
+	private static List<RewireTransientForwardEdge> exactCandidateTransientForwardEdges(
+		PlacementAnalysis analysis, List<HopOccurrenceProjection> candidateOccurrences,
+		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops,
+		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop, Map<Long, List<Hop>> rewireTable) {
+		Set<HopOccurrenceProjection> candidatesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+		candidatesByIdentity.addAll(candidateOccurrences);
+		List<RewireTransientForwardEdge> edges = new ArrayList<>();
+		for(HopOccurrenceProjection read : candidateOccurrences) {
+			Hop resolvedRead = resolvedRewiredHops.get(read);
+			if(resolvedRead == null)
+				throw semanticFailure(analysis, read, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_TRANSIENT_READ_UNMAPPABLE");
+			if(!isTransientRead(resolvedRead))
+				continue;
+			List<Hop> producerCarriers = rewireTable.get(resolvedRead.getHopID());
+			if(producerCarriers == null)
+				continue;
+			for(Hop producerCarrier : producerCarriers) {
+				if(!isTransientWrite(producerCarrier))
+					continue;
+				HopOccurrenceProjection write = occurrenceByResolvedHop.get(producerCarrier);
+				if(write == null)
+					continue;
+				if(!candidatesByIdentity.contains(write)
+					|| analysis.hop(write.key()).orElse(null) != write.hop()
+					|| resolvedRewiredHops.get(write) != producerCarrier)
+					throw semanticFailure(analysis, write, ConstructionDisposition.STALE_CONTEXT,
+						"REWIRE_TRANSIENT_FORWARD_CANDIDATE_STALE");
+				List<Hop> reverseReads = rewireTable.get(producerCarrier.getHopID());
+				if(!containsExactIdentity(reverseReads, resolvedRead))
+					throw semanticFailure(analysis, write, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_TRANSIENT_FORWARD_CANDIDATE_ASYMMETRIC");
+				edges.add(new RewireTransientForwardEdge(write.key(), read.key()));
+			}
+		}
+		return edges;
+	}
+
+	private static boolean containsExactIdentity(List<Hop> carriers, Hop expected) {
+		if(carriers == null)
+			return false;
+		for(Hop carrier : carriers)
+			if(carrier == expected)
+				return true;
+		return false;
 	}
 
 	private static PhysicalCloneProjection exactPhysicalCloneMapping(Map<Long, Long> physicalCloneToOriginal,
