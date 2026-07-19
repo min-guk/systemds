@@ -283,7 +283,7 @@ public class FederatedPlannerDpCostEnumerator {
 		Map<Long, Privacy> privacyConstraintMap = new HashMap<>();
 		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
 
-		FederatedPlannerDpRewireTransTable.rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
+		FederatedPlannerDpRewireTransTable.rewireProgram(analysis, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap,
 				unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
 		RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 			analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,

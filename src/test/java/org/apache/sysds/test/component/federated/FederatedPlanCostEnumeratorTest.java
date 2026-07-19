@@ -41,6 +41,8 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCostEstimator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTRewire;
@@ -227,7 +229,8 @@ public class FederatedPlanCostEnumeratorTest extends AutomatedTestBase
 			FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx =
 				new FederatedPlannerDpRewireTransTable.UnrollContext();
 
-			FederatedPlannerDpRewireTransTable.rewireProgram(prog, rewireTable,
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(prog);
+			FederatedPlannerDpRewireTransTable.rewireProgram(analysis, prog, rewireTable,
 				hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet, progRootHopSet, unrollCtx);
 
 			boolean hasUnroll = !unrollCtx.getCloneToOrig().isEmpty() || !unrollCtx.getIter1Roots().isEmpty();

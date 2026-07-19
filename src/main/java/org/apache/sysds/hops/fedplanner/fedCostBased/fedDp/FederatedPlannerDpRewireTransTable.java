@@ -902,35 +902,36 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 	}
 
-	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
+	public static void rewireProgram(PlacementAnalysis analysis, DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, UnrollContext unrollCtx) {
-		rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
+		rewireProgram(analysis, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
 				progRootHopSet, null, unrollCtx, MAX_UNROLL_DEPTH);
 	}
 
-	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
+	public static void rewireProgram(PlacementAnalysis analysis, DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, Map<Long, Set<Long>> parentChildUploadHints, UnrollContext unrollCtx) {
-		rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
+		rewireProgram(analysis, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
 				progRootHopSet, parentChildUploadHints, unrollCtx, MAX_UNROLL_DEPTH);
 	}
 
-	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
+	public static void rewireProgram(PlacementAnalysis analysis, DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, UnrollContext unrollCtx, int maxUnrollDepth) {
-		rewireProgram(prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
+		rewireProgram(analysis, prog, rewireTable, hopCommonTable, privacyConstraintMap, fedMap, unRefTwriteSet, unRefSet,
 				progRootHopSet, null, unrollCtx, maxUnrollDepth);
 	}
 
-	public static void rewireProgram(DMLProgram prog, Map<Long, List<Hop>> rewireTable,
+	public static void rewireProgram(PlacementAnalysis analysis, DMLProgram prog, Map<Long, List<Hop>> rewireTable,
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, Privacy> privacyConstraintMap,
 			List<Pair<FederatedRange, FederatedData>> fedMap, Set<Long> unRefTwriteSet, Set<Long> unRefSet,
 			Set<Hop> progRootHopSet, Map<Long, Set<Long>> parentChildUploadHints, UnrollContext unrollCtx,
 			int maxUnrollDepth) {
+		analysis.assertProgramOwner(prog);
 		// Maps Hop ID and fedOutType pairs to their plan variants
 		Set<Long> visitedHops = new HashSet<>();
 		Set<String> fnStack = new HashSet<>();
@@ -942,7 +943,7 @@ public class FederatedPlannerDpRewireTransTable {
 		Map<String, List<Hop>> outerTransTable = new HashMap<>();
 		outerTransTableList.add(outerTransTable);
 
-		for (StatementBlock sb : prog.getStatementBlocks()) {
+		for (StatementBlock sb : analysis.topLevelStatementBlocks()) {
 			Map<String, List<Hop>> innerTransTable = rewireStatementBlock(sb, prog, visitedHops, rewireTable,
 					hopCommonTable, outerTransTableList, null, privacyConstraintMap,
 					fedMap, unRefTwriteSet, unRefSet, progRootHopSet, fnStack, injectedIds,
