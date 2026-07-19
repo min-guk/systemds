@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Function;
@@ -117,6 +118,66 @@ import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.runtime.DMLRuntimeException;
 
 public class FederatedPlannerDpCostEnumerator {
+	/** Immutable semantic result published by the supplied-analysis enumeration path. */
+	public record DpEnumerationResult(FederatedPlannerDpMemoTable.FedPlan optimalPlan,
+		RewireOccurrenceSnapshot rewireSnapshot, PreSelectionSemanticBlock semanticBlock) {
+		public DpEnumerationResult {
+			Objects.requireNonNull(optimalPlan, "optimalPlan");
+			Objects.requireNonNull(rewireSnapshot, "rewireSnapshot");
+			Objects.requireNonNull(semanticBlock, "semanticBlock");
+		}
+	}
+
+	/** Observer used only for exact semantic publication/failure evidence. */
+	public interface DpEnumerationObserver {
+		default void constructionFailed(DpSemanticConstructionException value) { }
+		default void resultPublished(DpEnumerationResult value) { }
+		default void oracleEvaluated() { }
+		default void costEvaluated() { }
+		default void placementDecided() { }
+		default void candidateConstructed() { }
+		default void repairAttempted() { }
+		default void fallbackAttempted() { }
+	}
+
+	/** Test-only direct input seam; canonical callers use the real raw carriers. */
+	public record CandidateNormalizationFixture(PlacementAnalysis.HopOccurrenceProjection parentOccurrence,
+		List<Pair<Long, FederatedOutput>> planChilds, List<Hop> collectedHops,
+		List<FType> collectedFTypes, Map<Long, FType> fedInputTypeMap) { }
+
+	private static final DpEnumerationObserver NOOP_OBSERVER = new DpEnumerationObserver() { };
+	private static final ThreadLocal<EnumerationCapture> ACTIVE_CAPTURE = new ThreadLocal<>();
+
+	private static final class EnumerationCapture {
+		private final PlacementAnalysis analysis;
+		private RewireOccurrenceSnapshot rewireSnapshot;
+		private NeutralEnumerationContext context;
+		private final DpEnumerationObserver observer;
+		private final List<CandidateOccurrenceSnapshot> snapshots = new ArrayList<>();
+		private int rawCandidateCount;
+
+		private EnumerationCapture(PlacementAnalysis analysis, DpEnumerationObserver observer) {
+			this.analysis = Objects.requireNonNull(analysis, "analysis");
+			this.observer = observer == null ? NOOP_OBSERVER : observer;
+		}
+
+		private void install(RewireOccurrenceSnapshot snapshot) {
+			this.rewireSnapshot = Objects.requireNonNull(snapshot, "rewireSnapshot");
+			this.context = new NeutralEnumerationContext(analysis, snapshot, analysis.analysisFingerprint());
+		}
+
+		private void capture(CandidateOccurrenceSnapshot snapshot) {
+			snapshots.add(Objects.requireNonNull(snapshot, "snapshot"));
+			rawCandidateCount++;
+		}
+
+		private PreSelectionSemanticBlock freeze() {
+			int captured = snapshots.size();
+			if(rawCandidateCount != captured)
+				throw new IllegalStateException("Raw/captured candidate count differs: " + rawCandidateCount + "/" + captured);
+			return new PreSelectionSemanticBlock(context, snapshots, rawCandidateCount, captured, true);
+		}
+	}
 	// Global privacy policy: never allow CP overrides for protected data unless
 	// this flag flips.
 	private static final boolean ALLOW_CP_OVERRIDE_ON_PROTECTED_DATA = false;
@@ -169,8 +230,51 @@ public class FederatedPlannerDpCostEnumerator {
 	 * @param prog    The DML program to enumerate.
 	 * @param isPrint A boolean indicating whether to print the federated plan tree.
 	 */
-	public static FederatedPlannerDpMemoTable.FedPlan enumerateProgram(DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
-			boolean isPrint) {
+	public static FederatedPlannerDpMemoTable.FedPlan enumerateProgram(DMLProgram prog,
+			FederatedPlannerDpMemoTable memoTable, boolean isPrint) {
+		return enumerateProgramInternal(prog, memoTable, isPrint, null);
+	}
+
+	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
+			FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis) {
+		return enumerateProgramWithReceipts(prog, memoTable, isPrint, analysis, null, NOOP_OBSERVER);
+	}
+
+	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
+			FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis,
+			CandidateNormalizationFixture fixture, DpEnumerationObserver observer) {
+		Objects.requireNonNull(analysis, "analysis");
+		DpEnumerationObserver actualObserver = observer == null ? NOOP_OBSERVER : observer;
+		if(fixture != null) {
+			try {
+				DpPlacementAdapter.validateCandidateInputs(analysis, fixture.parentOccurrence(), fixture.planChilds(),
+					fixture.collectedHops(), fixture.collectedFTypes(), fixture.fedInputTypeMap(), memoTable);
+			}
+			catch(DpSemanticConstructionException ex) {
+				actualObserver.constructionFailed(ex);
+				throw ex;
+			}
+		}
+		EnumerationCapture capture = new EnumerationCapture(analysis, actualObserver);
+		ACTIVE_CAPTURE.set(capture);
+		try {
+			FederatedPlannerDpMemoTable.FedPlan optimal = enumerateProgramInternal(prog, memoTable, isPrint, analysis);
+			PreSelectionSemanticBlock block = capture.freeze();
+			DpEnumerationResult result = new DpEnumerationResult(optimal, capture.rewireSnapshot, block);
+			actualObserver.resultPublished(result);
+			return result;
+		}
+		catch(DpSemanticConstructionException ex) {
+			actualObserver.constructionFailed(ex);
+			throw ex;
+		}
+		finally {
+			ACTIVE_CAPTURE.remove();
+		}
+	}
+
+	private static FederatedPlannerDpMemoTable.FedPlan enumerateProgramInternal(DMLProgram prog,
+			FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis) {
 		return enumerateProgramWithReceipts(prog, memoTable, isPrint,
 			prog.requirePlacementAnalysisAuthority()).optimalPlan();
 	}
