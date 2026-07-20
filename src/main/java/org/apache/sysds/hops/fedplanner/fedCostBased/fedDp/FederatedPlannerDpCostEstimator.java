@@ -506,7 +506,8 @@ public class FederatedPlannerDpCostEstimator {
 		if (fallbackUploadType == null && childHop != null)
 			fallbackUploadType = FederatedPlannerUtils.getVectorAxis(childHop);
 		fallbackUploadType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(childHop, fallbackUploadType);
-		if ((Double.isNaN(fallbackMemEstimate) || fallbackMemEstimate <= 0.0) && childHop != null)
+		if ((Double.isNaN(fallbackMemEstimate)
+			|| fallbackMemEstimate <= 0.0) && childHop != null)
 			fallbackMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(childHop);
 		if (fallbackMemEstimate > 0.0) {
 			uploadCost = FederatedCostModel.computeUploadNetworkCost(

@@ -177,22 +177,31 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 				Assert.assertEquals("null upload type must select vector ROW before the second projection",
 					FType.ROW, nullType.fallbackLogicalType());
 				Assert.assertEquals(Double.doubleToRawLongBits(Double.NaN), nullType.primaryCostBits());
-				Assert.assertEquals("NaN primary estimate currently prevents positive-input recovery",
-					Double.doubleToRawLongBits(Double.NaN), nullType.finalCostBits());
-				Assert.assertSame(FallbackDisposition.UNUSABLE_PRIMARY_NOT_RECOVERED, nullType.disposition());
+				Assert.assertEquals(nullType.expectedFinalCostBits(), nullType.finalCostBits());
+				Assert.assertSame(FallbackDisposition.FALLBACK_RECOVERED, nullType.disposition());
 
 				FallbackHop nonNull = new FallbackHop("nonNull", 1, 4, 4096.0, Double.NaN);
 				FallbackCertificate explicitType = fallbackCertificate(nonNull, FType.COL);
 				Assert.assertEquals(FType.BROADCAST, explicitType.primaryProjectedType());
 				Assert.assertEquals("fallback must re-run projection and preserve the anchor mismatch",
 					FType.BROADCAST, explicitType.fallbackProjectedType());
-				Assert.assertEquals(Double.doubleToRawLongBits(Double.NaN), explicitType.finalCostBits());
+				Assert.assertEquals(Double.doubleToRawLongBits(Double.NaN), explicitType.primaryCostBits());
+				Assert.assertEquals(explicitType.expectedFinalCostBits(), explicitType.finalCostBits());
+				Assert.assertSame(FallbackDisposition.FALLBACK_RECOVERED, explicitType.disposition());
 
 				FallbackHop positive = new FallbackHop("positive", 4, 2, 4096.0, 8192.0);
 				FallbackCertificate ordinary = fallbackCertificate(positive, FType.ROW);
 				Assert.assertSame(FallbackDisposition.PRIMARY_ACCEPTED, ordinary.disposition());
 				Assert.assertTrue(Double.longBitsToDouble(ordinary.finalCostBits()) > 0.0);
 				Assert.assertEquals(ordinary.expectedFinalCostBits(), ordinary.finalCostBits());
+
+				FallbackHop infinity = new FallbackHop("infinity", 4, 2, 4096.0, Double.POSITIVE_INFINITY);
+				FallbackCertificate sentinel = fallbackCertificate(infinity, FType.ROW);
+				Assert.assertEquals(Double.doubleToRawLongBits(Double.POSITIVE_INFINITY),
+					sentinel.primaryCostBits());
+				Assert.assertEquals(Double.doubleToRawLongBits(Double.POSITIVE_INFINITY),
+					sentinel.finalCostBits());
+				Assert.assertSame(FallbackDisposition.PRIMARY_ACCEPTED, sentinel.disposition());
 			}
 			finally {
 				clearSelectorState();
@@ -263,7 +272,7 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 		FType fallbackLogical = logicalType == null ? vectorAxis(hop) : primary;
 		FType fallbackProjected = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, fallbackLogical);
 		double fallbackMem = mem;
-		if(fallbackMem <= 0.0)
+		if(Double.isNaN(fallbackMem) || fallbackMem <= 0.0)
 			fallbackMem = FederatedCostModel.getEffectiveInputMemEstimate(hop);
 		double fallbackCost = FederatedCostModel.computeUploadNetworkCost(fallbackMem, fallbackProjected, WORKERS);
 		double expectedFinal = (!(Double.isNaN(primaryCost) || primaryCost <= 0.0))
