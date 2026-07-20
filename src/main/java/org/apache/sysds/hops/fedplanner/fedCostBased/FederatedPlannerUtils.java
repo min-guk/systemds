@@ -45,8 +45,8 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedPrivacyConstraintResolver;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -68,7 +68,6 @@ import java.util.Set;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.List;
-import java.util.concurrent.Future;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -417,79 +416,27 @@ public class FederatedPlannerUtils {
 		for (FedWorkerContext wctx : localWorkers) {
 			if (hasLocalObject) // do not contact workers for local_matrix-fedinit (see above)
 				break;
-			// Best-effort: if the coordinator can access the worker-local file path (e.g., shared
-			// filesystem / docker bind mount), prefer local metadata parsing to avoid planner-time
-			// federated RPCs (READ_VAR + EXEC_UDF) that would otherwise be repeated at runtime.
-			String localFallback = tryLocalPrivacyFallback(wctx);
-			if (localFallback != null) {
-				privacyConstraint = mergePrivacyConstraint(privacyConstraint, localFallback);
-				continue;
+			FederatedPrivacyConstraintResolver.Resolution resolution =
+				FederatedPrivacyConstraintResolver.resolve(wctx.data);
+			if (resolution.privacyConstraint() != null)
+				privacyConstraint = mergePrivacyConstraint(privacyConstraint, resolution.privacyConstraint());
+
+			if (resolution.failure() != FederatedPrivacyConstraintResolver.Failure.NONE) {
+				String requestContext = "privacy constraints from " + wctx.host + ":" + wctx.port + " ("
+					+ wctx.filePath + ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
+					+ initFedOp.getHopID() + ")";
+				if (resolution.failure() == FederatedPrivacyConstraintResolver.Failure.REQUEST_EXCEPTION
+					&& resolution.cause() instanceof Exception && resolution.privacyConstraint() == null)
+					FederatedPlannerLogger.logException("Failed to request " + requestContext,
+						(Exception) resolution.cause());
+				else if (resolution.privacyConstraint() == null)
+					FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] Failed to resolve " + requestContext
+						+ " (" + resolution.failure() + ")");
+				else
+					FederatedPlannerLogger.logWarnMessage("[FederatedPlanner] Recovered " + requestContext
+						+ " from local metadata after " + resolution.failure());
 			}
-
-			FederatedData data = wctx.data;
-
-			Future<FederatedResponse> future = data.requestPrivacyConstraints();
-			try {
-				FederatedResponse response = future.get(); // Get actual response from Future
-
-				if (response.isSuccessful()) {
-					Object[] responseData = response.getData();
-					String privacyConstraints = (String) responseData[0]; // Cast privacy constraint as string
-
-					if (privacyConstraints == null) {
-						String fallback = tryLocalPrivacyFallback(wctx);
-						if (fallback != null) {
-							FederatedPlannerLogger.logWarnMessage(
-									"[FederatedPlanner] Falling back to local metadata privacy constraints for "
-											+ wctx.host + ":" + wctx.port + " (" + wctx.filePath + ")");
-							privacyConstraint = mergePrivacyConstraint(privacyConstraint, fallback);
-							continue;
-						}
-						String msg = "Worker " + wctx.host + ":" + wctx.port + " (" + wctx.filePath
-								+ ") returned null privacy constraints for FEDERATED data op '" + initFedOp.getName()
-								+ "' (hopID=" + initFedOp.getHopID() + ")";
-						FederatedPlannerLogger.logErrorMessage("[FederatedPlanner] " + msg);
-						hadPrivacyFailure = true;
-						continue;
-					}
-
-					privacyConstraint = mergePrivacyConstraint(privacyConstraint, privacyConstraints);
-				} else {
-					// Error handling: treat any unsuccessful response as fatal for planning
-					String errorMsg = response.getErrorMessage();
-					FederatedPlannerLogger.logErrorMessage(
-							"Failed to request privacy constraints from " + wctx.host + ":" + wctx.port + " ("
-									+ wctx.filePath
-									+ ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
-									+ initFedOp.getHopID()
-									+ "): " + errorMsg);
-					String fallback = tryLocalPrivacyFallback(wctx);
-					if (fallback != null) {
-						FederatedPlannerLogger.logWarnMessage(
-								"[FederatedPlanner] Falling back to local metadata privacy constraints for "
-										+ wctx.host + ":" + wctx.port + " (" + wctx.filePath + ")");
-						privacyConstraint = mergePrivacyConstraint(privacyConstraint, fallback);
-					} else {
-						hadPrivacyFailure = true;
-					}
-				}
-			} catch (Exception e) {
-				String fallback = tryLocalPrivacyFallback(wctx);
-				if (fallback != null) {
-					FederatedPlannerLogger.logWarnMessage(
-							"[FederatedPlanner] Falling back to local metadata privacy constraints for "
-									+ wctx.host + ":" + wctx.port + " (" + wctx.filePath + ") after request failure");
-					privacyConstraint = mergePrivacyConstraint(privacyConstraint, fallback);
-				} else {
-					// Exception handling: also treated as fatal for planning
-					String errorContext = "Failed to request privacy constraints from " + wctx.host + ":" + wctx.port
-							+ " ("
-							+ wctx.filePath + ") for FEDERATED data op '" + initFedOp.getName() + "' (hopID="
-							+ initFedOp.getHopID() + ")";
-					FederatedPlannerLogger.logException(errorContext, e);
-					hadPrivacyFailure = true;
-				}
-			}
+			hadPrivacyFailure |= resolution.privacyConstraint() == null;
 		}
 		if (privacyConstraint == null || hadPrivacyFailure) {
 			String errorMsg = "One or more federated workers failed to provide valid privacy constraints for FEDERATED data op '"
@@ -1380,24 +1327,6 @@ public class FederatedPlannerUtils {
 		}
 		throw new DMLRuntimeException("Invalid privacy constraint: " + privacyConstraints
 				+ ". Must be one of 'PRIVATE', 'PRIVATE_AGGREGATE', 'PRIVATE_AGGREGATE_TO_PUBLIC', 'PUBLIC'.");
-	}
-
-	private static String tryLocalPrivacyFallback(FedWorkerContext wctx) {
-		if (wctx == null || wctx.filePath == null)
-			return null;
-		return readPrivacyConstraintsFromLocalMTD(wctx.filePath);
-	}
-
-	private static boolean isLocalHost(String host) {
-		if (host == null)
-			return false;
-		if ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host))
-			return true;
-		try {
-			return InetAddress.getByName(host).isLoopbackAddress();
-		} catch (Exception ex) {
-			return false;
-		}
 	}
 
 	private static String readPrivacyConstraintsFromLocalMTD(String filePath) {
