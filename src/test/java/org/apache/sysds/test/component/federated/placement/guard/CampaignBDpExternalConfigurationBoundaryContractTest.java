@@ -51,4 +51,30 @@ public class CampaignBDpExternalConfigurationBoundaryContractTest {
 			Assert.assertTrue("missing exact configuration API: " + method,
 				tokens.stream().anyMatch(token -> token.text().equals(method)));
 	}
+
+	@Test
+	public void costModelUsesOnlyTheNeutralTypedConfigurationOwner() throws Exception {
+		Path costModel = PLANNER_ROOT.resolve("fedCostBased/commons/FederatedCostModel.java");
+		List<JavaSourceTokenScanner.Token> tokens = JavaSourceTokenScanner.tokens(Files.readString(costModel));
+
+		Assert.assertFalse("CostModel must not retain the private typed configuration owner",
+			tokens.stream().anyMatch(token -> token.text().equals("getConfiguredDouble")));
+		Assert.assertFalse("CostModel must not parse external doubles directly",
+			JavaSourceTokenScanner.containsSequence(tokens, "Double", ".", "parseDouble", "("));
+		Assert.assertEquals("all thirteen CostModel constants must use the neutral typed configuration API", 13,
+			countSequence(tokens, "FederatedPlannerConfiguration", ".",
+				"captureDoublePropertyOrEnvironment", "("));
+	}
+
+	private static int countSequence(List<JavaSourceTokenScanner.Token> tokens, String... sequence) {
+		int count = 0;
+		for(int i = 0; i + sequence.length <= tokens.size(); i++) {
+			boolean match = true;
+			for(int j = 0; j < sequence.length; j++)
+				match &= tokens.get(i + j).text().equals(sequence[j]);
+			if(match)
+				count++;
+		}
+		return count;
+	}
 }
