@@ -3,9 +3,11 @@ package org.apache.sysds.test.component.federated.placement.guard;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.UUID;
 
 import org.junit.Test;
@@ -66,6 +68,40 @@ public class FederatedPlannerConfigurationContractTest {
 		}
 	}
 
+	@Test
+	public void doubleAcquisitionPreservesExactParsingAndDefaultBits() throws Exception {
+		String key = uniqueKey();
+		String original = System.getProperty(key);
+		double defaultValue = 7.25;
+		try {
+			Method capture = doubleCapture();
+			assertEquals(double.class, capture.getReturnType());
+			assertTrue("typed configuration API must be static", Modifier.isStatic(capture.getModifiers()));
+
+			System.clearProperty(key);
+			assertRawBits(defaultValue, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "");
+			assertRawBits(defaultValue, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "malformed");
+			assertRawBits(defaultValue, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, " 3.5 ");
+			assertRawBits(3.5, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "NaN");
+			assertRawBits(Double.NaN, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "Infinity");
+			assertRawBits(Double.POSITIVE_INFINITY, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "-Infinity");
+			assertRawBits(Double.NEGATIVE_INFINITY, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "0.0");
+			assertRawBits(0.0, capture.invoke(null, key, defaultValue));
+			System.setProperty(key, "-2.25");
+			assertRawBits(-2.25, capture.invoke(null, key, defaultValue));
+		}
+		finally {
+			restoreProperty(key, original);
+		}
+	}
+
 	private static Class<?> configuration() throws Exception {
 		try {
 			return Class.forName(CLASS_NAME);
@@ -74,6 +110,23 @@ public class FederatedPlannerConfigurationContractTest {
 			fail("planner-neutral configuration boundary is absent");
 			throw ex;
 		}
+	}
+
+	private static Method doubleCapture() throws Exception {
+		try {
+			return configuration().getMethod("captureDoublePropertyOrEnvironment", String.class, double.class);
+		}
+		catch(NoSuchMethodException ex) {
+			fail("missing exact typed configuration API: "
+				+ "captureDoublePropertyOrEnvironment(String, double)");
+			return null;
+		}
+	}
+
+	private static void assertRawBits(double expected, Object actual) {
+		assertTrue("typed configuration API must return a Double", actual instanceof Double);
+		assertEquals(Double.doubleToRawLongBits(expected),
+			Double.doubleToRawLongBits(((Double) actual).doubleValue()));
 	}
 
 	private static String nonBlankEnvironmentKey() {
