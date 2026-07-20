@@ -300,7 +300,7 @@ public class FederatedPlanMinSTCostEstimator {
 		appendFunctionOutputHopsIfNeeded(hop, rewireTable, childHops);
 		Hop explicitFunctionOutputSourceHop = (hop instanceof DataOp
 				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD)
-				? FederatedPlannerUtils.getPreferredMultiReturnFunctionOutputSourceForTransientRead(
+				? FunctionOp.getPreferredMultiReturnFunctionOutputSourceForTransientRead(
 						(DataOp) hop, childHops)
 				: null;
 		if (explicitFunctionOutputSourceHop != null) {
