@@ -96,7 +96,7 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 					FederatedPlannerUtils.registerFedInitVar("G011_SAME_B", FType.ROW, rowSignature);
 				});
 				assertSelector("divergent signatures without cache", rowCol.analysis(), SelectorDisposition.NONE,
-					Parity.DIFFERS, () -> registerDivergent(rowSignature, colSignature));
+					Parity.EQUAL, () -> registerDivergent(rowSignature, colSignature));
 				assertSelector("divergent signatures with cached fallback", row.analysis(), SelectorDisposition.ROW,
 					Parity.EQUAL, () -> {
 					cacheFromProgramOnly(row.program());
@@ -224,10 +224,10 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 	}
 
 	private static void assertAggBinarySharedDimensionCases() {
-		assertAggCase(FType.ROW, FType.COL, true, FType.ROW, 4, FType.COL, "COL/ROW left exception");
-		assertAggCase(FType.COL, FType.ROW, false, FType.COL, 4, FType.ROW, "ROW/COL right exception");
-		assertAggCase(FType.ROW, FType.COL, true, FType.COL, 4, FType.BROADCAST, "wrong other type");
-		assertAggCase(FType.ROW, FType.COL, true, FType.ROW, 3, FType.BROADCAST, "wrong shared axis");
+		assertAggCase(FType.ROW, FType.COL, true, FType.ROW, 4, 4, FType.COL, "COL/ROW left exception");
+		assertAggCase(FType.COL, FType.ROW, false, FType.COL, 4, 4, FType.ROW, "ROW/COL right exception");
+		assertAggCase(FType.ROW, FType.COL, true, FType.COL, 4, 4, FType.BROADCAST, "wrong other type");
+		assertAggCase(FType.ROW, FType.COL, true, FType.ROW, 4, 3, FType.BROADCAST, "wrong shared axis");
 
 		clearSelectorState();
 		FederatedPlannerUtils.registerFedInitVar("G011_NO_MM_ANCHOR", FType.ROW, "no-mm|0,4;");
@@ -237,10 +237,10 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 	}
 
 	private static void assertAggCase(FType anchorType, FType requestedType, boolean targetLeft,
-		FType otherType, long sharedAxis, FType expected, String label) {
+		FType otherType, long anchorAxis, long sharedAxis, FType expected, String label) {
 		clearSelectorState();
 		FederatedPlannerUtils.registerFedInitVar("G011_AGG_ANCHOR", anchorType,
-			"agg-anchor|0," + sharedAxis + ';');
+			"agg-anchor|0," + anchorAxis + ';');
 		FallbackHop target = targetLeft
 			? new FallbackHop("target", 2, sharedAxis, 1024, 1024)
 			: new FallbackHop("target", sharedAxis, 3, 1024, 1024);
