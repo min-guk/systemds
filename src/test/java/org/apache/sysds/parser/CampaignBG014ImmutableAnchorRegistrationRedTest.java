@@ -1,5 +1,5 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
-package org.apache.sysds.hops.fedplanner.placement;
+package org.apache.sysds.parser;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -7,6 +7,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
@@ -14,21 +15,32 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceLifecycleCapture;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceLifecycleCapture.AnchorSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.AnchorAccessForm;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
-import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.hops.fedplanner.placement.ExactPlacementRegistration;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
+import org.apache.sysds.hops.recompile.Recompiler;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
-import org.apache.sysds.parser.DMLProgram;
-import org.apache.sysds.parser.DMLTranslator;
-import org.apache.sysds.parser.ParserFactory;
-import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -69,7 +81,7 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 			assertCanonicalReceipt("G014_RED2_AFTER_CLEAR", fixture, afterClear);
 			Assert.assertEquals("G014_RED2_CLEAR_CHANGED_IMMUTABLE_RECEIPT", beforeClear.uploads(),
 				afterClear.uploads());
-			assertImmutable("G014_RED2_RECEIPT_UPLOADS_MUTABLE", afterClear.uploads());
+			assertUploadsImmutable("G014_RED2_RECEIPT_UPLOADS_MUTABLE", afterClear.uploads());
 		}
 		finally {
 			clearMutableState();
@@ -79,12 +91,18 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 	@Test
 	public void functionInputBoundaryCopiesCallSiteDurablePlacementIntoDistinctOccurrence() throws Exception {
 		DMLProgram compiled = ProductionShadowFixtureFactory.compile("B-21");
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compiled);
-		PlacementAnalysis.HopOccurrenceProjection boundary = analysis.occurrences().stream()
-			.filter(value -> value.key().canonicalSourceOrigin().startsWith("function-boundary:"))
-			.filter(value -> value.key().canonicalSourceOrigin().contains(":input:"))
+		PlacementAnalysis analysis = compiled.bindPlacementAnalysisAtFinalHopBoundary();
+		Assert.assertSame("G014_RED2_FUNCTION_NOT_FINAL_BOUNDARY_AUTHORITY", analysis,
+			compiled.requirePlacementAnalysisAuthority());
+		NeutralPlacementGraph.Node boundaryNode = analysis.graph().nodes().stream()
+			.filter(value -> value.kind() == NodeKind.FUNCTION_INPUT)
+			.filter(value -> value.valueVersion().versionKind() == VersionKind.FUNCTION_INPUT)
+			.filter(value -> analysis.graph().constraints().stream()
+				.anyMatch(edge -> edge.kind() == ConstraintKind.CONJUNCTIVE
+					&& edge.right() == value.key() && edge.inputPosition() >= 0))
 			.findFirst().orElseThrow();
-		NeutralPlacementGraph.Node boundaryNode = analysis.graph().node(boundary.key()).orElseThrow();
+		HopOccurrenceProjection boundary = analysis.occurrences().stream()
+			.filter(value -> value.key() == boundaryNode.key()).findFirst().orElseThrow();
 		NeutralPlacementGraph.Constraint exactInputEdge = analysis.graph().constraints().stream()
 			.filter(value -> value.kind() == ConstraintKind.CONJUNCTIVE)
 			.filter(value -> value.right() == boundary.key())
@@ -94,13 +112,18 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 
 		Assert.assertNotEquals("G014_RED2_FUNCTION_BOUNDARY_REUSED_CALLSITE_KEY",
 			callSiteAnchor.key(), boundary.key());
-		Assert.assertEquals("G014_RED2_FUNCTION_BOUNDARY_WRONG_INPUT_POSITION",
-			boundary.key().callSitePath().substring(boundary.key().callSitePath().lastIndexOf("input-") + 6),
-			Integer.toString(exactInputEdge.inputPosition()));
+		Assert.assertSame("G014_RED2_FUNCTION_BOUNDARY_EDGE_NOT_EXACT_KEY",
+			boundaryNode.key(), exactInputEdge.right());
+		Assert.assertTrue("G014_RED2_FUNCTION_BOUNDARY_WRONG_INPUT_POSITION",
+			exactInputEdge.inputPosition() >= 0);
+		Assert.assertEquals("G014_RED2_FUNCTION_BOUNDARY_POSITION_NOT_VALUE_VERSION_OWNED",
+			boundaryNode.valueVersion().definitionOrdinal(), exactInputEdge.inputPosition());
+		Assert.assertSame("G014_RED2_FUNCTION_BOUNDARY_NOT_STRUCTURAL_FUNCTION_INPUT",
+			NodeKind.FUNCTION_INPUT, boundaryNode.kind());
 		Assert.assertEquals("G014_RED2_FUNCTION_BOUNDARY_DROPPED_DURABLE_PLACEMENT",
 			callSiteAnchor.anchors(), boundaryNode.anchors());
 		List<DurableAnchorKey> beforeMutation = List.copyOf(boundaryNode.anchors());
-		assertImmutable("G014_RED2_FUNCTION_BOUNDARY_ANCHOR_MUTABLE", boundaryNode.anchors());
+		assertAnchorsImmutable("G014_RED2_FUNCTION_BOUNDARY_ANCHOR_MUTABLE", boundaryNode.anchors());
 		Assert.assertEquals("G014_RED2_FUNCTION_BOUNDARY_MUTATION_CHANGED_STATE", beforeMutation,
 			boundaryNode.anchors());
 	}
@@ -112,27 +135,87 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		Hop sourceRoot = HopRewriteUtils.createBinary(anchor, matrix("G014_RED2_CLONE_S"), OpOp2.PLUS);
 		sourceProgram.setStatementBlocks(new ArrayList<>(List.of(block(sourceRoot))));
 		PlacementAnalysis source = sourceProgram.bindPlacementAnalysisAtFinalHopBoundary();
+		Assert.assertSame("G014_RED2_SOURCE_NOT_FINAL_BOUNDARY_AUTHORITY", source,
+			sourceProgram.requirePlacementAnalysisAuthority());
+		HopOccurrenceProjection sourceAnchor = occurrence(source, anchor);
+		HopOccurrenceProjection sourceTarget = occurrence(source, fixtureName(source, "G014_RED2_CLONE_S"));
+		DurableAnchorKey sourceDurable = durableAnchor(source, anchor);
+		String sourceFingerprint = source.analysisFingerprint();
+		RegistrySnapshot beforeRejectedReanalysis = registrySnapshot(source, sourceTarget.hop());
 		try {
-			Hop clonedRoot = (Hop) sourceRoot.clone();
+			Hop clonedRoot = Recompiler.deepCopyHopsDag(sourceRoot);
 			DMLProgram cloneProgram = new DMLProgram();
 			cloneProgram.setStatementBlocks(new ArrayList<>(List.of(block(clonedRoot))));
 			PlacementAnalysis cloneAnalysis = cloneProgram.bindPlacementAnalysisAtFinalHopBoundary();
+			Assert.assertSame("G014_RED2_CLONE_NOT_FINAL_BOUNDARY_AUTHORITY", cloneAnalysis,
+				cloneProgram.requirePlacementAnalysisAuthority());
 			Assert.assertNotSame("G014_RED2_CLONE_REUSED_SOURCE_ANALYSIS", source, cloneAnalysis);
-			Assert.assertEquals("G014_RED2_CLONE_LOST_DURABLE_PLACEMENT",
-				AnchorProvenanceLifecycleCapture.snapshot(source, List.of(AnchorAccessForm.FEDINIT_LITERAL)).anchors(),
-				AnchorProvenanceLifecycleCapture.snapshot(cloneAnalysis,
-					List.of(AnchorAccessForm.FEDINIT_LITERAL)).anchors());
+			Hop cloneAnchorHop = fixtureName(cloneAnalysis, "G014_RED2_CLONE_X");
+			Hop cloneTargetHop = fixtureName(cloneAnalysis, "G014_RED2_CLONE_S");
+			Assert.assertNotSame("G014_RED2_DEEP_COPY_REUSED_SOURCE_ROOT", sourceRoot, clonedRoot);
+			Assert.assertNotSame("G014_RED2_DEEP_COPY_REUSED_SOURCE_ANCHOR", anchor, cloneAnchorHop);
+			Assert.assertNotSame("G014_RED2_DEEP_COPY_REUSED_SOURCE_TARGET", sourceTarget.hop(), cloneTargetHop);
+			HopOccurrenceProjection cloneAnchor = occurrence(cloneAnalysis, cloneAnchorHop);
+			HopOccurrenceProjection cloneTarget = occurrence(cloneAnalysis, cloneTargetHop);
+			Assert.assertNotSame("G014_RED2_CLONE_REUSED_SOURCE_ANCHOR_OCCURRENCE", sourceAnchor, cloneAnchor);
+			Assert.assertNotSame("G014_RED2_CLONE_REUSED_SOURCE_TARGET_OCCURRENCE", sourceTarget, cloneTarget);
+			Assert.assertNotSame("G014_RED2_CLONE_REUSED_SOURCE_ANCHOR_KEY", sourceAnchor.key(), cloneAnchor.key());
+			Assert.assertNotSame("G014_RED2_CLONE_REUSED_SOURCE_TARGET_KEY", sourceTarget.key(), cloneTarget.key());
+			Assert.assertEquals("G014_RED2_CLONE_LOST_DURABLE_PLACEMENT", sourceDurable,
+				durableAnchor(cloneAnalysis, cloneAnchorHop));
+			Assert.assertTrue("G014_RED2_SOURCE_ANCHOR_NOT_ANALYSIS_OWNED",
+				source.graph().node(sourceAnchor.key()).orElseThrow().anchors().contains(sourceDurable));
+			assertAnchorsImmutable("G014_RED2_CLONE_ANCHORS_MUTABLE",
+				cloneAnalysis.graph().node(cloneAnchor.key()).orElseThrow().anchors());
+			Assert.assertEquals("G014_RED2_CLONE_CHANGED_SOURCE_FINGERPRINT", sourceFingerprint,
+				source.analysisFingerprint());
+
+			PlacementAnalysis copiedSource = new NeutralPlacementGraphBuilder().buildAnalysis(sourceProgram);
+			HopOccurrenceProjection copiedTarget = occurrence(copiedSource, sourceTarget.hop());
+			Assert.assertEquals("G014_RED2_COPIED_REANALYSIS_NOT_SAME_VALUE_TARGET", sourceTarget,
+				copiedTarget);
+			Assert.assertNotSame("G014_RED2_COPIED_REANALYSIS_REUSED_TARGET_OCCURRENCE", sourceTarget,
+				copiedTarget);
+			Assert.assertNotSame("G014_RED2_COPIED_REANALYSIS_REUSED_TARGET_KEY", sourceTarget.key(),
+				copiedTarget.key());
+			expectRegisterReject(sourceProgram, sourceSelectedTypes(anchor, sourceTarget.hop()), copiedSource,
+				"G014_RED2_ACCEPTED_SAME_VALUE_COPIED_OCCURRENCE_AUTHORITY");
+			Assert.assertEquals("G014_RED2_COPIED_OCCURRENCE_REJECTION_MUTATED_REGISTRIES",
+				beforeRejectedReanalysis, registrySnapshot(source, sourceTarget.hop()));
+			Assert.assertEquals("G014_RED2_COPIED_OCCURRENCE_REJECTION_CHANGED_FINGERPRINT", sourceFingerprint,
+				source.analysisFingerprint());
 
 			DMLProgram recompiled = ProductionShadowFixtureFactory.compile("B-09");
-			PlacementAnalysis[] output = new PlacementAnalysis[1];
-			new DMLTranslator(recompiled).constructLops(recompiled, receipt -> output[0] = receipt.analysis());
-			Assert.assertNotNull("G014_RED2_RECOMPILE_DID_NOT_PUBLISH_ANALYSIS", output[0]);
+			AtomicReference<PlannerInvocationReceipt> output = new AtomicReference<>();
+			String oldPlanner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+			try {
+				ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,
+					"compile_cost_based");
+				new DMLTranslator(recompiled).constructLops(recompiled, receipt -> Assert.assertTrue(
+					"G014_RED2_RECOMPILE_PUBLISHED_MULTIPLE_RECEIPTS", output.compareAndSet(null, receipt)));
+			}
+			finally {
+				ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, oldPlanner);
+			}
+			Assert.assertNotNull("G014_RED2_RECOMPILE_DID_NOT_PUBLISH_ANALYSIS", output.get());
+			Assert.assertTrue("G014_RED2_RECOMPILE_DID_NOT_PUBLISH_DP_RECEIPT",
+				output.get() instanceof DpInvocationReceipt);
+			DpInvocationReceipt dpReceipt = (DpInvocationReceipt) output.get();
 			Assert.assertSame("G014_RED2_RECOMPILE_OUTPUT_NOT_FINAL_BOUNDARY_AUTHORITY",
-				recompiled.requirePlacementAnalysisAuthority(), output[0]);
-			AnchorSnapshot actual = AnchorProvenanceLifecycleCapture.snapshot(output[0],
+				recompiled.requirePlacementAnalysisAuthority(), dpReceipt.analysis());
+			Assert.assertSame("G014_RED2_RECOMPILE_EXACT_SELECTION_LOST_ANALYSIS", dpReceipt.analysis(),
+				dpReceipt.exactSelection().analysis());
+			Assert.assertSame("G014_RED2_RECOMPILE_SEMANTIC_CONTEXT_LOST_ANALYSIS", dpReceipt.analysis(),
+				dpReceipt.semanticConsumption().semanticBlock().context().analysis());
+			Assert.assertEquals("G014_RED2_RECOMPILE_FINGERPRINT_DRIFTED_BEFORE_AFTER",
+				dpReceipt.analysisFingerprintBefore(), dpReceipt.analysisFingerprintAfter());
+			Assert.assertEquals("G014_RED2_RECOMPILE_FINGERPRINT_NOT_ANALYSIS_OWNED",
+				dpReceipt.analysis().analysisFingerprint(), dpReceipt.analysisFingerprintBefore());
+			AnchorSnapshot actual = AnchorProvenanceLifecycleCapture.snapshot(dpReceipt.analysis(),
 				List.of(AnchorAccessForm.RUNTIME_RECOMPILE_SIGNATURE));
 			Assert.assertFalse("G014_RED2_RECOMPILE_OUTPUT_DROPPED_RUNTIME_FACTS",
 				actual.runtimeSignatureFacts().isEmpty());
+			assertRecompileCpFoutExcludedByReceipt(dpReceipt);
 		}
 		catch(Exception failure) {
 			throw new AssertionError("Unable to execute clone/recompile lifecycle", failure);
@@ -140,6 +223,26 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		finally {
 			clearMutableState();
 		}
+	}
+
+	private static void assertRecompileCpFoutExcludedByReceipt(DpInvocationReceipt receipt) {
+		List<NeutralPlacementGraph.Node> recompileNodes = receipt.analysis().graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.CLONE)
+			.filter(node -> "recompile".equals(node.key().recompileContext()))
+			.toList();
+		Assert.assertEquals("G014_RED2_RECOMPILE_EXPECTS_ONE_CLONE_BOUNDARY", 1, recompileNodes.size());
+		NeutralPlacementGraph.Node clone = recompileNodes.get(0);
+		Assert.assertTrue("G014_RED2_RECOMPILE_CP_FOUT_NOT_EXCLUDED_BY_ANALYSIS",
+			clone.exclusions().stream().anyMatch(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT
+				&& exclusion.state().execType() == ExecType.CP
+				&& exclusion.state().output() == FederatedOutput.FOUT));
+		List<CandidateDecisionReceipt> forbiddenPublished = receipt.semanticConsumption().semanticBlock()
+			.candidateDecisionReceipts().stream()
+			.filter(decision -> decision.candidateSnapshot().parentOccurrence() == clone.key())
+			.filter(decision -> decision.nativeExec() == ExecType.CP)
+			.filter(decision -> decision.nativeOutput() == FederatedOutput.FOUT)
+			.toList();
+		Assert.assertTrue("G014_RED2_RECOMPILE_CP_FOUT_PUBLISHED_DECISION_RECEIPT", forbiddenPublished.isEmpty());
 	}
 
 	private static Fixture fixture() {
@@ -153,11 +256,13 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		DMLProgram program = new DMLProgram();
 		program.setStatementBlocks(new ArrayList<>(List.of(block)));
 		PlacementAnalysis analysis = program.bindPlacementAnalysisAtFinalHopBoundary();
+		Assert.assertSame("G014_RED2_FIXTURE_NOT_FINAL_BOUNDARY_AUTHORITY", analysis,
+			program.requirePlacementAnalysisAuthority());
 		PlacementAnalysis.HopOccurrenceProjection anchorOccurrence = occurrence(analysis, anchor);
 		List<DurableAnchorKey> durableAnchors = analysis.graph().node(anchorOccurrence.key()).orElseThrow().anchors();
 		Assert.assertEquals("G014_RED2_REAL_ANCHOR_COUNT", 1, durableAnchors.size());
 		Assert.assertSame("G014_RED2_REAL_ANCHOR_FTYPE", FType.ROW, durableAnchors.get(0).fType());
-		assertImmutable("G014_RED2_ANALYSIS_ANCHORS_MUTABLE", durableAnchors);
+		assertAnchorsImmutable("G014_RED2_ANALYSIS_ANCHORS_MUTABLE", durableAnchors);
 		Map<Long, FType> selected = new LinkedHashMap<>();
 		selected.put(anchor.getHopID(), FType.ROW);
 		selected.put(target.getHopID(), FType.ROW);
@@ -195,9 +300,43 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		foreignProgram.setStatementBlocks(new ArrayList<>(List.of(block(
 			HopRewriteUtils.createBinary(foreignTarget, foreignAnchor, OpOp2.PLUS)))));
 		PlacementAnalysis foreign = foreignProgram.bindPlacementAnalysisAtFinalHopBoundary();
+		Assert.assertSame("G014_RED2_FOREIGN_NOT_FINAL_BOUNDARY_AUTHORITY", foreign,
+			foreignProgram.requirePlacementAnalysisAuthority());
 		expectReject(fixture, foreign, "G014_RED2_ACCEPTED_FOREIGN_ANALYSIS");
 		Assert.assertEquals("G014_RED2_FOREIGN_ANALYSIS_MUTATED_REGISTRIES", expected,
 			registrySnapshot(fixture));
+	}
+
+	private static void expectRegisterReject(DMLProgram program, Map<Long, FType> selectedTypes,
+		PlacementAnalysis candidate, String failure) {
+		try {
+			ExactPlacementRegistration.registerProgram(program, selectedTypes, candidate);
+			Assert.fail(failure);
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertNotNull(expected.getMessage());
+		}
+	}
+
+	private static Map<Long, FType> sourceSelectedTypes(Hop anchor, Hop target) {
+		Map<Long, FType> selected = new LinkedHashMap<>();
+		selected.put(anchor.getHopID(), FType.ROW);
+		selected.put(target.getHopID(), FType.ROW);
+		return Map.copyOf(selected);
+	}
+
+	private static Hop fixtureName(PlacementAnalysis analysis, String name) {
+		return analysis.occurrences().stream().map(PlacementAnalysis.HopOccurrenceProjection::hop)
+			.filter(DataOp.class::isInstance).map(DataOp.class::cast)
+			.filter(hop -> name.equals(hop.getName()))
+			.findFirst().orElseThrow();
+	}
+
+	private static RegistrySnapshot registrySnapshot(PlacementAnalysis analysis, Hop target) {
+		List<Long> scopes = analysis.occurrences().stream()
+			.filter(value -> value.hop() == target).map(value -> value.scopeId()).distinct().toList();
+		return new RegistrySnapshot(scopes.stream().map(FederatedRefedRegistry::snapshot).toList(),
+			scopes.stream().map(FederatedFoutMaterializeRegistry::snapshot).toList());
 	}
 
 	private static void expectReject(Fixture fixture, PlacementAnalysis candidate, String failure) {
@@ -229,7 +368,7 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 	}
 
 	private static String runtimeKey(DurableAnchorKey anchor) {
-		return anchor.partitions().stream().map(partition -> partition.address() + "@"
+		return anchor.partitions().stream().map(partition -> partition.workerId() + "@"
 			+ partition.begin().get(0) + ":" + partition.begin().get(1) + "-"
 			+ partition.end().get(0) + ":" + partition.end().get(1))
 			.reduce((left, right) -> left + ";" + right).orElseThrow() + "|" + anchor.fType().name();
@@ -285,7 +424,18 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 			null, 10, 10, -1, 1000);
 	}
 
-	private static void assertImmutable(String failure, List<?> values) {
+	private static void assertUploadsImmutable(String failure,
+		List<ExactPlacementRegistration.RegisteredUpload> values) {
+		try {
+			values.clear();
+			Assert.fail(failure);
+		}
+		catch(UnsupportedOperationException expected) {
+			// behavioral immutability, independent of collection implementation class
+		}
+	}
+
+	private static void assertAnchorsImmutable(String failure, List<DurableAnchorKey> values) {
 		try {
 			values.clear();
 			Assert.fail(failure);

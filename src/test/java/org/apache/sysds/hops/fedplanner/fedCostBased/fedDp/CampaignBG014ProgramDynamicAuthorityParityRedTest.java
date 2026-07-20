@@ -1,24 +1,31 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileStateSnapshot;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.AppliedPlanReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpDynamicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.FunctionStatementBlock;
@@ -29,49 +36,33 @@ import org.junit.Test;
 
 /** Executable RED for final program/dynamic DP authority and adapter-receipt parity. */
 public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
-	private static final Path DP_SOURCE = Path.of(
-		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
-
-	@Test
-	public void dynamicReceiptCarriesExactSelectionAndAppliedRootAuthority() throws Exception {
-		String source = executableSource(Files.readString(DP_SOURCE));
-		String header = recordHeader(source, "DpDynamicInvocationReceipt");
-		String constructor = compactRecordConstructorBody(source, "DpDynamicInvocationReceipt");
-		String rewrite = methodBody(source, "DpDynamicInvocationReceipt", "rewriteFunctionDynamic",
-			"FunctionStatementBlock", "LocalVariableMap", "PlacementAnalysis");
-		Assert.assertFalse("G014_RED5_DYNAMIC_CONSTRUCTOR_SCOPE_NOT_FOUND", constructor.isEmpty());
-		Assert.assertFalse("G014_RED5_EXACT_REWRITE_SCOPE_NOT_FOUND", rewrite.isEmpty());
-		Assert.assertTrue("G014_RED5_DYNAMIC_RECEIPT_MISSING_EXACT_SELECTION",
-			Pattern.compile("\\bExactSelection\\s+exactSelection\\b.*"
-				+ "\\bList<AppliedPlanReceipt>\\s+appliedPlans\\b", Pattern.DOTALL).matcher(header).find());
-		Assert.assertTrue("G014_RED5_DYNAMIC_RECEIPT_DID_NOT_BIND_SELECTION_TO_ENUMERATION",
-			Pattern.compile("exactSelection\\s*\\.\\s*analysis\\s*\\(\\s*\\)\\s*!=\\s*analysis"
-				+ ".*exactSelection\\s*\\.\\s*memo\\s*\\(\\s*\\)\\s*!=\\s*memoTable", Pattern.DOTALL)
-				.matcher(constructor).find());
-		Assert.assertTrue("G014_RED5_DYNAMIC_RECEIPT_DID_NOT_BIND_APPLIED_ROOT_IDENTITY",
-			Pattern.compile("applied\\s*\\.\\s*plan\\s*\\(\\s*\\)\\s*!=\\s*exactSelection\\s*\\.\\s*"
-				+ "selectedRootPlans\\s*\\(\\s*\\)\\s*\\.\\s*get\\s*\\(\\s*i\\s*\\)", Pattern.DOTALL)
-				.matcher(constructor).find());
-		Assert.assertTrue("G014_RED5_DYNAMIC_RETURN_DROPPED_EXACT_AUTHORITY",
-			Pattern.compile("return\\s+new\\s+DpDynamicInvocationReceipt\\s*\\(\\s*analysis\\s*,\\s*memoTable"
-				+ "\\s*,\\s*enumerationResult\\s*,\\s*exactSelection\\s*,\\s*appliedPlans\\s*,"
-				+ "\\s*fingerprintBefore\\s*,\\s*fingerprintAfter\\s*\\)", Pattern.DOTALL)
-				.matcher(rewrite).find());
-	}
-
-	@Test
-	public void sourceScannerRemovesCommentsLiteralsAndEscapedTextBlockQuotes() {
-		assertSanitizer(executableSource(sanitizerFixture()));
-	}
-
 	@Test
 	public void programAndDynamicEntrypointsRetainExactAdapterReceipts() {
 		ProgramInvocation owner = invokeProgram("B-21");
 		FunctionStatementBlock function = owner.program().getFunctionStatementBlock(
 			DMLProgram.DEFAULT_NAMESPACE, "f");
 		assertAppliedPlansAreExactReceipts(owner.receipt());
-		DpDynamicInvocationReceipt dynamic = new FederatedPlannerDpFedCostBased().rewriteFunctionDynamic(
-			function, new LocalVariableMap(), owner.receipt().analysis());
+		DpDynamicInvocationReceipt dynamic;
+		try {
+			dynamic = new FederatedPlannerDpFedCostBased().rewriteFunctionDynamic(
+				function, new LocalVariableMap(), owner.receipt().analysis());
+		}
+		catch(DpSemanticConstructionException failure) {
+			PlacementAnalysis analysis = owner.receipt().analysis();
+			String nodeKind = analysis.graph().node(failure.parentOccurrence())
+				.map(node -> node.kind().name()).orElse("MISSING");
+			String hop = analysis.hop(failure.parentOccurrence())
+				.map(value -> value.getOpString() + '#' + value.getHopID()).orElse("MISSING");
+			throw new AssertionError("G014_RED5_DYNAMIC_STRUCTURAL_OWNER"
+				+ "|reason=" + failure.reasonCode()
+				+ "|disposition=" + failure.disposition()
+				+ "|analysisFingerprint=" + failure.analysisFingerprint()
+				+ "|ownerKey=" + failure.parentOccurrence().normalizedSignature()
+				+ "|namespace=" + failure.parentOccurrence().functionNamespace()
+				+ "|callSite=" + failure.parentOccurrence().callSitePath()
+				+ "|recompile=" + failure.parentOccurrence().recompileContext()
+				+ "|nodeKind=" + nodeKind + "|hop=" + hop, failure);
+		}
 
 		Assert.assertSame(owner.receipt().analysis(), owner.receipt().exactSelection().analysis());
 		Assert.assertSame(owner.receipt().analysis(), owner.receipt().semanticConsumption().analysis());
@@ -79,6 +70,12 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(dynamic.analysis(), dynamic.memoTable().analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().rewireSnapshot().analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().semanticBlock().context().analysis());
+		DpPlacementAdapter.ExactSelection dynamicSelection = new DpPlacementAdapter().selectExact(
+			dynamic.analysis(), dynamic.memoTable(), dynamic.enumerationResult().optimalPlan());
+		Assert.assertSame(dynamic.analysis(), dynamicSelection.analysis());
+		Assert.assertSame(dynamic.memoTable(), dynamicSelection.memo());
+		Assert.assertSame(dynamic.enumerationResult().optimalPlan(), dynamicSelection.legacyOptimalPlan());
+		assertSelectedRootsAreExactMemoReceipts(dynamicSelection, dynamic.memoTable());
 		Assert.assertFalse("B-21 must exercise an exact function selection",
 			owner.receipt().exactSelection().selectedRootPlans().isEmpty());
 		Assert.assertEquals(dynamic.fingerprintBefore(), dynamic.fingerprintAfter());
@@ -93,18 +90,28 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		FunctionStatementBlock function = owner.program().getFunctionStatementBlock(DMLProgram.DEFAULT_NAMESPACE, "f");
 		FederatedPlannerDpFedCostBased planner = new FederatedPlannerDpFedCostBased();
 
-		BoundaryState before = snapshot(owner.program(), owner.receipt().analysis());
-		assertRejects(() -> planner.rewriteProgram(owner.program(), null, null, foreign), "foreign program authority");
-		assertRejects(() -> planner.rewriteFunctionDynamic(function, new LocalVariableMap(), foreign),
-			"foreign dynamic authority");
-		Assert.assertEquals("foreign authority rejection mutated program/global state", before,
-			snapshot(owner.program(), owner.receipt().analysis()));
+		assertAuthorityPairRejectsWithoutMutation(planner, owner, function, foreign, "foreign");
+
+		PlacementAnalysis copied = CampaignBPlacementAnalysisFixtureBridge.withProjectionOrder(
+			owner.receipt().analysis(), owner.program(),
+			CampaignBPlacementAnalysisFixtureBridge.ProjectionOrder.NORMAL);
+		Assert.assertNotSame(owner.receipt().analysis(), copied);
+		Assert.assertEquals(owner.receipt().analysis().analysisFingerprint(), copied.analysisFingerprint());
+		copied.assertProgramOwner(owner.program());
+		assertAuthorityPairRejectsWithoutMutation(planner, owner, function, copied, "copied same-value");
+
+		PlacementAnalysis detached = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(owner.program());
+		Assert.assertNotSame(owner.receipt().analysis(), detached);
+		detached.assertProgramOwner(owner.program());
+		assertAuthorityPairRejectsWithoutMutation(planner, owner, function, detached, "detached");
 
 		DMLProgram unbound = compile("B-21");
 		FunctionStatementBlock unboundFunction = unbound.getFunctionStatementBlock(DMLProgram.DEFAULT_NAMESPACE, "f");
 		BoundaryState unboundBefore = snapshot(unbound, null);
-		assertRejects(() -> planner.rewriteProgram(unbound, null, null), "unbound program authority");
-		assertRejects(() -> planner.rewriteFunctionDynamic(unboundFunction, new LocalVariableMap()),
+		assertRejects(IllegalStateException.class, () -> planner.rewriteProgram(unbound, null, null),
+			"unbound program authority");
+		assertRejects(IllegalStateException.class,
+			() -> planner.rewriteFunctionDynamic(unboundFunction, new LocalVariableMap()),
 			"unbound dynamic authority");
 		Assert.assertEquals("unbound authority rejection mutated program/global state", unboundBefore,
 			snapshot(unbound, null));
@@ -116,19 +123,77 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertEquals(0, owner.receipt().counters().reenumerationCount());
 	}
 
+	private static void assertAuthorityPairRejectsWithoutMutation(FederatedPlannerDpFedCostBased planner,
+		ProgramInvocation owner, FunctionStatementBlock function, PlacementAnalysis rejected, String label) {
+		BoundaryState before = snapshot(owner.program(), owner.receipt().analysis());
+		assertRejects(() -> planner.rewriteProgram(owner.program(), null, null, rejected),
+			label + " program authority");
+		Assert.assertEquals(label + " program rejection mutated planner/memo/registry state", before,
+			snapshot(owner.program(), owner.receipt().analysis()));
+		assertRejects(() -> planner.rewriteFunctionDynamic(function, new LocalVariableMap(), rejected),
+			label + " dynamic authority");
+		Assert.assertEquals(label + " dynamic rejection mutated planner/memo/registry state", before,
+			snapshot(owner.program(), owner.receipt().analysis()));
+	}
+
 	private static void assertAppliedPlansAreExactReceipts(DpInvocationReceipt receipt) {
 		Assert.assertSame(receipt.memo(), receipt.exactSelection().memo());
 		List<FedPlan> roots = receipt.exactSelection().selectedRootPlans();
 		Assert.assertFalse("exact adapter selection must publish root receipts", roots.isEmpty());
-		for(int i = 0; i < roots.size(); i++)
-			Assert.assertSame("applied plan must be the adapter-selected receipt", roots.get(i),
-				receipt.appliedPlans().get(i).plan());
+		for(int i = 0; i < roots.size(); i++) {
+			FedPlan selected = roots.get(i);
+			AppliedPlanReceipt applied = receipt.appliedPlans().get(i);
+			long planningHopId = receipt.exactSelection().aggregateChildEdges().get(i).getLeft();
+			long executableHopId = receipt.memo().resolveOriginalHopId(planningHopId);
+			Assert.assertEquals(i, applied.ordinal());
+			Assert.assertFalse(applied.additionalRoot());
+			Assert.assertEquals(planningHopId, applied.planningHopId());
+			Assert.assertEquals(receipt.exactSelection().aggregateChildEdges().get(i).getRight(), applied.output());
+			Assert.assertSame(selected, applied.plan());
+			Assert.assertSame(receipt.exactSelection().selectedRootHops().get(i), applied.planningHop());
+			Assert.assertEquals(executableHopId, applied.executableHopId());
+			Assert.assertSame(receipt.memo().resolveOriginalHop(planningHopId), applied.executableHop());
+		}
+	}
+
+	private static void assertSelectedRootsAreExactMemoReceipts(DpPlacementAdapter.ExactSelection selection,
+		FederatedPlannerDpMemoTable memo) {
+		Assert.assertFalse("exact dynamic selection must publish root receipts",
+			selection.selectedRootPlans().isEmpty());
+		Assert.assertEquals(selection.selectedRootPlans().size(), selection.aggregateChildEdges().size());
+		Assert.assertEquals(selection.selectedRootPlans().size(), selection.selectedRootHops().size());
+		for(int i = 0; i < selection.selectedRootPlans().size(); i++) {
+			FedPlan selected = selection.selectedRootPlans().get(i);
+			long planningHopId = selection.aggregateChildEdges().get(i).getLeft();
+			Assert.assertSame(selected, memo.getFedPlanAfterPrune(selection.aggregateChildEdges().get(i)));
+			Assert.assertSame(selected.getHopRef(), selection.selectedRootHops().get(i));
+			Assert.assertEquals(selected.getExecType(), selected.getHopRef().getForcedExecType());
+			Assert.assertEquals(selected.getFedOutType(), selected.getHopRef().getFederatedOutput());
+			Assert.assertEquals(selected.getExecType(), memo.resolveOriginalHop(planningHopId).getForcedExecType());
+			Assert.assertEquals(selected.getFedOutType(),
+				memo.resolveOriginalHop(planningHopId).getFederatedOutput());
+		}
 	}
 
 	private static BoundaryState snapshot(DMLProgram program, PlacementAnalysis analysis) {
 		return new BoundaryState(PlacementGraphFingerprint.capture(program),
 			analysis == null ? null : analysis.analysisFingerprint(),
-			FederatedPlannerUtils.snapshotFedState(), FederatedPlannerUtils.snapshotFedAnchorKeys());
+			FederatedPlannerUtils.snapshotFedState(), FederatedPlannerUtils.snapshotFedAnchorKeys(),
+			FederatedPlannerUtils.snapshotPlannerRecompileStates(),
+			FederatedPlannerUtils.snapshotAmbiguousPlannerRecompileSignatures(),
+			registrySnapshot(analysis));
+	}
+
+	private static List<String> registrySnapshot(PlacementAnalysis analysis) {
+		Set<Long> scopes = new LinkedHashSet<>();
+		scopes.add(-1L);
+		if(analysis != null)
+			analysis.occurrences().forEach(occurrence -> scopes.add(occurrence.scopeId()));
+		List<Long> ordered = new ArrayList<>(scopes);
+		ordered.sort(Long::compareTo);
+		return ordered.stream().map(scope -> scope + "|R=" + FederatedRefedRegistry.snapshot(scope)
+			+ "|F=" + FederatedFoutMaterializeRegistry.snapshot(scope)
+			+ "|L=" + FederatedLocalMaterializeRegistry.snapshotScopes(scope)).toList();
 	}
 
 	private static ProgramInvocation invokeProgram(String fixture) {
@@ -146,138 +211,28 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 	}
 
 	private static DMLProgram compile(String fixture) {
-		try { return ProductionShadowFixtureFactory.compile(fixture); }
+		try { return "B-21".equals(fixture) ? CampaignBG014HermeticPlannerFixtureFactory.compile(fixture)
+			: ProductionShadowFixtureFactory.compile(fixture); }
 		catch(Exception e) { throw new AssertionError("Unable to compile authority fixture " + fixture, e); }
 	}
 
 	private static void assertRejects(Runnable action, String label) {
+		assertRejects(IllegalArgumentException.class, action, label);
+	}
+
+	private static void assertRejects(Class<? extends RuntimeException> expectedType,
+		Runnable action, String label) {
 		try { action.run(); Assert.fail("accepted " + label); }
-		catch(IllegalArgumentException expected) { Assert.assertNotNull(expected.getMessage()); }
-	}
-
-	private static String typeBody(String source, String typeName) {
-		Matcher matcher = Pattern.compile("\\b(?:class|record)\\s+" + Pattern.quote(typeName) + "\\b")
-			.matcher(source);
-		return matcher.find() ? bracedBody(source, source.indexOf('{', matcher.end())) : "";
-	}
-
-	private static String recordHeader(String source, String recordName) {
-		Matcher matcher = Pattern.compile("\\brecord\\s+" + Pattern.quote(recordName) + "\\s*\\(([^)]*)\\)",
-			Pattern.DOTALL).matcher(source);
-		return matcher.find() ? matcher.group(1) : "";
-	}
-
-	private static String compactRecordConstructorBody(String source, String recordName) {
-		String body = typeBody(source, recordName);
-		Matcher constructor = Pattern.compile("\\bpublic\\s+" + Pattern.quote(recordName) + "\\s*\\{")
-			.matcher(body);
-		return constructor.find() ? bracedBody(body, body.indexOf('{', constructor.start())) : "";
-	}
-
-	private static String methodBody(String source, String returnType, String methodName,
-		String... parameterTypes) {
-		StringBuilder signature = new StringBuilder("\\b").append(Pattern.quote(returnType))
-			.append("\\s+").append(Pattern.quote(methodName)).append("\\s*\\(");
-		for(int i = 0; i < parameterTypes.length; i++) {
-			if(i > 0) signature.append("\\s*,\\s*");
-			signature.append("(?:[\\w.]+\\.)?").append(Pattern.quote(parameterTypes[i])).append("\\s+\\w+");
+		catch(RuntimeException expected) {
+			Assert.assertTrue("wrong rejection for " + label + ": " + expected,
+				expectedType.isInstance(expected));
+			Assert.assertNotNull(expected.getMessage());
 		}
-		signature.append("\\s*\\)");
-		Matcher matcher = Pattern.compile(signature.toString(), Pattern.DOTALL).matcher(source);
-		return matcher.find() ? bracedBody(source, source.indexOf('{', matcher.end())) : "";
-	}
-
-	private static String executableSource(String source) {
-		char[] executable = source.toCharArray();
-		int state = 0;
-		for(int i = 0; i < executable.length; i++) {
-			char current = executable[i];
-			char next = i + 1 < executable.length ? executable[i + 1] : '\0';
-			if(state == 0) {
-				if(current == '/' && next == '/') {
-					executable[i] = executable[++i] = ' ';
-					state = 1;
-				}
-				else if(current == '/' && next == '*') {
-					executable[i] = executable[++i] = ' ';
-					state = 2;
-				}
-				else if(current == '\"' && next == '\"'
-					&& i + 2 < executable.length && executable[i + 2] == '\"') {
-					executable[i] = executable[++i] = ' ';
-					executable[++i] = ' ';
-					state = 5;
-				}
-				else if(current == '\"' || current == '\'') {
-					executable[i] = ' ';
-					state = current == '\"' ? 3 : 4;
-				}
-			}
-			else if(state == 1) {
-				if(current == '\n' || current == '\r') state = 0;
-				else executable[i] = ' ';
-			}
-			else if(state == 2) {
-				if(current == '*' && next == '/') {
-					executable[i] = executable[++i] = ' ';
-					state = 0;
-				}
-				else if(current != '\n' && current != '\r') executable[i] = ' ';
-			}
-			else if(state == 3 || state == 4) {
-				executable[i] = current == '\n' || current == '\r' ? current : ' ';
-				if(current == '\\' && i + 1 < executable.length) executable[++i] = ' ';
-				else if((state == 3 && current == '\"') || (state == 4 && current == '\'')) state = 0;
-			}
-			else {
-				executable[i] = current == '\n' || current == '\r' ? current : ' ';
-				if(current == '\\' && i + 1 < executable.length) {
-					i++;
-					executable[i] = executable[i] == '\n' || executable[i] == '\r' ? executable[i] : ' ';
-				}
-				else if(current == '\"' && next == '\"'
-					&& i + 2 < executable.length && executable[i + 2] == '\"') {
-					executable[i] = executable[++i] = ' ';
-					executable[++i] = ' ';
-					state = 0;
-				}
-			}
-		}
-		return new String(executable);
-	}
-
-	private static String sanitizerFixture() {
-		String triple = "\"\"\"";
-		String slash = "\\";
-		String escapedTriple = slash + triple;
-		return "REAL_BEFORE(); // DECOY_LINE();\\n"
-			+ "/* DECOY_BLOCK(); */ char c = '{'; String s = \"DECOY_STRING();\";\\n"
-			+ "String escaped = \"prefix " + slash + "\" DECOY_ESCAPED_STRING();\";\\n"
-			+ "String block = " + triple + "\\nDECOY_TEXT_BLOCK();\\n" + escapedTriple
-			+ " DECOY_AFTER_ESCAPED_TRIPLE();\\n" + triple + ";\\nREAL_AFTER();\\n";
-	}
-
-	private static void assertSanitizer(String source) {
-		Assert.assertTrue(source.contains("REAL_BEFORE();"));
-		Assert.assertTrue(source.contains("REAL_AFTER();"));
-		Assert.assertFalse("sanitizer leaked a brace from a char literal", source.contains("{"));
-		for(String decoy : List.of("DECOY_LINE", "DECOY_BLOCK", "DECOY_STRING", "DECOY_ESCAPED_STRING",
-			"DECOY_TEXT_BLOCK", "DECOY_AFTER_ESCAPED_TRIPLE"))
-			Assert.assertFalse("sanitizer leaked " + decoy, source.contains(decoy));
-	}
-
-	private static String bracedBody(String source, int open) {
-		if(open < 0) return "";
-		int depth = 0;
-		for(int i = open; i < source.length(); i++) {
-			char current = source.charAt(i);
-			if(current == '{') depth++;
-			else if(current == '}' && --depth == 0) return source.substring(open, i + 1);
-		}
-		return "";
 	}
 
 	private record BoundaryState(String programFingerprint, String analysisFingerprint,
-		Map<String, FederatedPlannerUtils.FedVarSnapshot> fedState, Map<String, String> anchorKeys) { }
+		Map<String, FederatedPlannerUtils.FedVarSnapshot> fedState, Map<String, String> anchorKeys,
+		Map<String, PlannerRecompileStateSnapshot> recompileStates, Set<String> ambiguousRecompileSignatures,
+		List<String> registryState) { }
 	private record ProgramInvocation(DMLProgram program, DpInvocationReceipt receipt) { }
 }
