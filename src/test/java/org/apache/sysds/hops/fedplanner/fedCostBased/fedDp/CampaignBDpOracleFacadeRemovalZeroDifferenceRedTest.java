@@ -16,13 +16,15 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Pre-cutover RED for exact ordered DP candidate-decision parity evidence. */
+/** Pre-cutover RED for exact DP parity, dynamic analysis ownership, and receipt publication. */
 public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 	private static final Path ROOT = Path.of("").toAbsolutePath().normalize();
 	private static final Path ADAPTER = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java");
 	private static final Path ENUMERATOR = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java");
+	private static final Path PLANNER = ROOT.resolve(
+		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java");
 	private static final Path POLICY = ROOT.resolve(
 		"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/ExecPlacementPolicy.java");
 
@@ -55,10 +57,21 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 		List<Token> canonical = methodTokens(enumerator, "enumerateHop", "parentChildUploadHints");
 		if(!hasResolveThenRetainSeam(canonical, enumerator, adapter))
 			missing.add("enumerator.resolveThenRetainDecisionReceipt");
-		if(!hasNonNullDynamicCapture(enumerator))
-			missing.add("enumerator.dynamicNonNullCapture");
-
 		Assert.assertEquals("G014_DP_ORACLE_PARITY_RECEIPT_SEAM", List.of(), missing);
+	}
+
+	@Test
+	public void dynamicWriterBindsCanonicalProgramAnalysisExactlyOnce() throws Exception {
+		List<Token> planner = tokens(Files.readString(PLANNER));
+		Assert.assertTrue("G011_DP_DYNAMIC_CANONICAL_ANALYSIS_OWNER",
+			hasDynamicWriterCanonicalOwner(planner));
+	}
+
+	@Test
+	public void dynamicEnumeratorPublishesNamedSemanticReceiptBlock() throws Exception {
+		List<Token> enumerator = tokens(Files.readString(ENUMERATOR));
+		Assert.assertTrue("G011_DP_DYNAMIC_RECEIPT_PRODUCER",
+			hasReceiptProducingDynamicEnumerator(enumerator));
 	}
 
 	@Test
@@ -262,14 +275,62 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 			&& countSequence(adapter, "ExecPlacementPolicy", ".", "decideCaptured", "(") == 1;
 	}
 
-	private static boolean hasNonNullDynamicCapture(List<Token> enumerator) {
-		List<Token> dynamic = methodTokens(enumerator, "enumerateFunctionDynamic", "memoTable");
-		return sequence(dynamic, 0, "memoTable", ".", "analysis", "(", ")") >= 0
+	private static boolean hasDynamicWriterCanonicalOwner(List<Token> planner) {
+		List<Token> writer = methodTokens(planner, "rewriteFunctionDynamic", "funcArgs");
+		List<Token> owner = methodTokens(planner, "rewriteFunctionDynamic", "analysis");
+		int receipt = sequence(planner, 0, "public", "record", "DpDynamicInvocationReceipt", "(");
+		List<Token> receiptHeader = receipt < 0 ? List.of() : parenthesized(planner, receipt + 3);
+		return sequence(writer, 0, "DMLProgram", "prog", "=", "function", ".", "getDMLProg", "(", ")") >= 0
+			&& sequence(writer, 0, "PlacementAnalysis", "analysis", "=", "prog", ".",
+				"requirePlacementAnalysisAuthority", "(", ")") >= 0
+			&& countSequence(writer, "requirePlacementAnalysisAuthority", "(") == 1
+			&& sequence(writer, 0, "rewriteFunctionDynamic", "(", "function", ",", "funcArgs", ",",
+				"analysis", ")") >= 0
+			&& countSequence(writer, "rewriteFunctionDynamic", "(") == 1
+			&& sequence(writer, 0, "new", "FederatedPlannerDpMemoTable", "(") < 0
+			&& sequence(owner, 0, "analysis", ".", "assertProgramOwner", "(", "prog", ")") >= 0
+			&& sequence(owner, 0, "prog", ".", "requirePlacementAnalysisAuthority", "(", "analysis", ")") >= 0
+			&& sequence(owner, 0, "String", "fingerprintBefore", "=", "analysis", ".",
+				"analysisFingerprint", "(", ")") >= 0
+			&& sequence(owner, 0, "new", "FederatedPlannerDpMemoTable", "(", "analysis", ")") >= 0
+			&& sequence(owner, 0, "DpEnumerationResult", "enumerationResult", "=",
+				"FederatedPlannerDpCostEnumerator", ".", "enumerateFunctionDynamicWithReceipts", "(",
+				"function", ",", "memoTable", ",",
+				"FederatedPlannerTrace", ".", "isEnabled", "(", ")", ",", "analysis", ")") >= 0
+			&& sequence(owner, 0, "FederatedPlannerDpMemoTable", ".", "FedPlan", "optimalPlan", "=",
+				"enumerationResult", ".", "optimalPlan", "(", ")") >= 0
+			&& sequence(owner, 0, "String", "fingerprintAfter", "=", "analysis", ".",
+				"analysisFingerprint", "(", ")") >= 0
+			&& sequence(owner, 0, "return", "new", "DpDynamicInvocationReceipt", "(", "analysis", ",",
+				"memoTable", ",", "enumerationResult", ",", "fingerprintBefore", ",", "fingerprintAfter", ")") >= 0
+			&& sequence(owner, 0, "new", "FederatedPlannerDpMemoTable", "(", ")") < 0
+			&& sequence(owner, 0, "enumerateFunctionDynamic", "(") < 0
+			&& sequence(receiptHeader, 0, "PlacementAnalysis", "analysis") >= 0
+			&& sequence(receiptHeader, 0, "FederatedPlannerDpMemoTable", "memoTable") >= 0
+			&& sequence(receiptHeader, 0, "DpEnumerationResult", "enumerationResult") >= 0
+			&& sequence(receiptHeader, 0, "String", "fingerprintBefore") >= 0
+			&& sequence(receiptHeader, 0, "String", "fingerprintAfter") >= 0
+			&& sequence(planner, Math.max(0, receipt), "fingerprintBefore", ".", "equals", "(",
+				"fingerprintAfter", ")") >= 0;
+	}
+
+	private static boolean hasReceiptProducingDynamicEnumerator(List<Token> enumerator) {
+		List<Token> dynamic = methodTokens(enumerator, "enumerateFunctionDynamicWithReceipts", "memoTable");
+		return sequence(enumerator, 0, "public", "static", "DpEnumerationResult",
+			"enumerateFunctionDynamicWithReceipts", "(",
+			"FunctionStatementBlock", "function", ",", "FederatedPlannerDpMemoTable", "memoTable", ",", "boolean",
+			"isPrint", ",", "PlacementAnalysis", "analysis", ")") >= 0
 			&& sequence(dynamic, 0, "analysis", ".", "assertProgramOwner", "(", "prog", ")") >= 0
-			&& sequence(dynamic, 0, "new", "NeutralEnumerationContext", "(") >= 0
 			&& sequence(dynamic, 0, "new", "EnumerationCapture", "(") >= 0
-			&& sequence(dynamic, 0, "capture", ".", "semanticBlock", "(", ")") >= 0
-			&& sequence(dynamic, 0, "EnumerationCapture", "capture", "=", "null") < 0;
+			&& sequence(dynamic, 0, "PreSelectionSemanticBlock", "semanticBlock", "=", "capture", ".",
+				"semanticBlock", "(", ")") >= 0
+			&& countSequence(dynamic, "capture", ".", "semanticBlock", "(", ")") == 1
+			&& sequence(dynamic, 0, "return", "new", "DpEnumerationResult", "(", "optimalPlan", ",",
+				"rewireSnapshot", ",", "semanticBlock", ")") >= 0
+			&& sequence(dynamic, 0, "memoTable", ".", "analysis", "(", ")") < 0
+			&& sequence(dynamic, 0, "return", "optimalPlan") < 0
+			&& sequence(dynamic, 0, "EnumerationCapture", "capture", "=", "null") < 0
+			&& sequence(enumerator, 0, "enumerateFunctionDynamic", "(") < 0;
 	}
 
 	private static List<ParityMismatch> compare(LocalDecisionReceipt legacy, LocalDecisionReceipt neutral) {
