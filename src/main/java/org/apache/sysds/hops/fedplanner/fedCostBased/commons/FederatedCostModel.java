@@ -33,6 +33,7 @@ import org.apache.sysds.common.Types.OpOp4;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.conf.FederatedPlannerConfiguration;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
@@ -2052,9 +2053,7 @@ public final class FederatedCostModel {
 	}
 
 	private static double getConfiguredDouble(String key, double fallback) {
-		String value = System.getProperty(key);
-		if (value == null || value.isEmpty())
-			value = System.getenv(key);
+		String value = FederatedPlannerConfiguration.captureNonEmptyPropertyOrEnvironment(key);
 		if (value == null || value.isEmpty())
 			return fallback;
 		try {

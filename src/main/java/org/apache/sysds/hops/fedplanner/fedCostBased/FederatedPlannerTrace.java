@@ -23,6 +23,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
+
+import org.apache.sysds.conf.FederatedPlannerConfiguration;
 import org.apache.sysds.hops.Hop;
 
 /**
@@ -82,17 +84,7 @@ public final class FederatedPlannerTrace {
 	}
 
 	private static String resolveConfig(String propKey, String envKey) {
-		String propValue = trimToNull(System.getProperty(propKey));
-		if (propValue != null)
-			return propValue;
-		return trimToNull(System.getenv(envKey));
-	}
-
-	private static String trimToNull(String value) {
-		if (value == null)
-			return null;
-		String trimmed = value.trim();
-		return trimmed.isEmpty() ? null : trimmed;
+		return FederatedPlannerConfiguration.captureTrimmedPropertyOrEnvironment(propKey, envKey);
 	}
 
 	private static boolean parseBoolean(String raw, boolean defaultValue) {

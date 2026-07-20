@@ -43,6 +43,7 @@ import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.FederatedPlannerConfiguration;
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.AggUnaryOp;
 import org.apache.sysds.hops.BinaryOp;
@@ -82,7 +83,8 @@ public final class FederatedRefedPolicy {
 	private static final long DEFAULT_SBID = -1L;
 	private static final Log LOG = LogFactory.getLog(FederatedRefedPolicy.class.getName());
 	private static final boolean ENABLE_TRANSREAD_DEBUG =
-		Boolean.parseBoolean(System.getProperty("sysds.fedplanner.transread.debug", "false"));
+		Boolean.parseBoolean(FederatedPlannerConfiguration.captureProperty(
+			"sysds.fedplanner.transread.debug", "false"));
 	// NOTE: Runtime recompile must not apply cost-ignorant placement "repairs".
 	// If a FED/CP + FOUT/LOUT combination is (not) supported, the oracle/rules must
 	// report this and the planner must model the resulting cost. Do not silently
