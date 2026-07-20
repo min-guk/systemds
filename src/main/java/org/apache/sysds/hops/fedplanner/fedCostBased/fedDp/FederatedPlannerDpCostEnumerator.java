@@ -230,19 +230,6 @@ public class FederatedPlannerDpCostEnumerator {
 	// This is treated as a global legality constraint for planner/runtime consistency,
 	// not a workload-specific pruning heuristic.
 	private static final boolean DISALLOW_CPFOUT_ON_RECOMPILE = true;
-	/**
-	 * Enumerates the entire DML program to generate federated execution plans.
-	 * It processes each statement block, computes the optimal federated plan,
-	 * detects and resolves conflicts, and optionally prints the plan tree.
-	 *
-	 * @param prog    The DML program to enumerate.
-	 * @param isPrint A boolean indicating whether to print the federated plan tree.
-	 */
-	public static FederatedPlannerDpMemoTable.FedPlan enumerateProgram(DMLProgram prog,
-			FederatedPlannerDpMemoTable memoTable, boolean isPrint) {
-		return enumerateProgramWithReceipts(prog, memoTable, isPrint,
-			prog.requirePlacementAnalysisAuthority()).optimalPlan();
-	}
 
 	public static DpEnumerationResult enumerateProgramWithReceipts(DMLProgram prog,
 		FederatedPlannerDpMemoTable memoTable, boolean isPrint, PlacementAnalysis analysis) {

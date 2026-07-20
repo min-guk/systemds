@@ -304,52 +304,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
-		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateProgram(
-			prog, memoTable, FederatedPlannerTrace.isEnabled());
-
-		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
-		Map<Long, ConflictEntry> rewriteConflictCheckMap =
-			collectConflictsSingleBFS(memoTable, optimalPlan, outputDecisions);
-		Set<Long> visitedPlanHops = new HashSet<>();
-		Map<Long, FType> fTypeMap = new HashMap<>();
-		Map<Long, LocalMaterializeRequest> localMaterializeRequests = new LinkedHashMap<>();
-
-		for (Pair<Long, FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
-			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
-			if (childPlan == null) {
-				FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, optimalPlan, memoTable);
-				continue;
-			}
-					rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-						rewriteConflictCheckMap, true, localMaterializeRequests);
-		}
-
-		// Also rewrite additional non-clone roots that may not be reachable from the
-		// dummy root through Hop parent links. Skip virtual clone roots because they
-		// are planning-only artifacts and rewriting them can override executable-hop
-		// decisions through original-id aliasing.
-		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
-			if (memoTable.isVirtualClone(rootHopID))
-				continue;
-			FederatedPlannerDpMemoTable.FedPlan lPlan =
-				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.LOUT);
-			FederatedPlannerDpMemoTable.FedPlan fPlan =
-				memoTable.getFedPlanAfterPrune(rootHopID, FederatedOutput.FOUT);
-			FederatedPlannerDpMemoTable.FedPlan seed =
-				(lPlan == null) ? fPlan :
-				(fPlan == null) ? lPlan :
-				(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
-					if (seed != null)
-						rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-							rewriteConflictCheckMap, true, localMaterializeRequests);
-			}
-
-		applyDeferredOutputDecisionStates(
-			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
-		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
-		registerDpLocalMaterializeRequests(localMaterializeRequests);
+		PlacementAnalysis analysis = prog.requirePlacementAnalysisAuthority();
+		rewriteProgram(prog, fgraph, fcallSizes, analysis);
 	}
 
 	@Override
