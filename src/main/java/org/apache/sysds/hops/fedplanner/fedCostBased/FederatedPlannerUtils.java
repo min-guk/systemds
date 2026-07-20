@@ -64,7 +64,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Objects;
 import java.util.Set;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -953,35 +952,6 @@ public class FederatedPlannerUtils {
 		return false;
 	}
 
-	public static Hop getPreferredMultiReturnFunctionOutputSourceForTransientRead(DataOp transientRead,
-			List<Hop> sourceHops) {
-		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD
-				|| sourceHops == null || sourceHops.isEmpty())
-			return null;
-		Hop namedFallback = null;
-		Hop compatibleFallback = null;
-		Hop fallback = null;
-		for (Hop sourceHop : sourceHops) {
-			if (!isMultiReturnFunctionOutputHop(sourceHop))
-				continue;
-			boolean sameName = Objects.equals(transientRead.getName(), sourceHop.getName());
-			boolean compatible = dimsCompatible(transientRead, sourceHop);
-			if (sameName && compatible)
-				return sourceHop;
-			if (sameName && namedFallback == null)
-				namedFallback = sourceHop;
-			if (compatible && compatibleFallback == null)
-				compatibleFallback = sourceHop;
-			if (fallback == null)
-				fallback = sourceHop;
-		}
-		if (namedFallback != null)
-			return namedFallback;
-		if (compatibleFallback != null)
-			return compatibleFallback;
-		return fallback;
-	}
-
 	public static boolean isMultiReturnFunctionOutputHop(Hop hop) {
 		return getMultiReturnFunctionOutputParent(hop) != null;
 	}
@@ -1027,18 +997,6 @@ public class FederatedPlannerUtils {
 			changed = true;
 		}
 		return changed;
-	}
-
-	private static boolean dimsCompatible(Hop left, Hop right) {
-		if (left == null || right == null)
-			return false;
-		boolean d1Known = left.getDim1() > 0 && right.getDim1() > 0;
-		boolean d2Known = left.getDim2() > 0 && right.getDim2() > 0;
-		if (d1Known && left.getDim1() != right.getDim1())
-			return false;
-		if (d2Known && left.getDim2() != right.getDim2())
-			return false;
-		return true;
 	}
 
 	/**

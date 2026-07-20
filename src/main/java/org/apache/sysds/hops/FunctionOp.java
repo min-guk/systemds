@@ -22,9 +22,11 @@ package org.apache.sysds.hops;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Opcodes;
+import org.apache.sysds.common.Types;
 import org.apache.sysds.lops.Compression;
 import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
@@ -120,6 +122,66 @@ public class FunctionOp extends MultiThreadedHop
 	
 	public ArrayList<Hop> getOutputs() {
 		return _outputHops;
+	}
+
+	public static Hop getPreferredMultiReturnFunctionOutputSourceForTransientRead(DataOp transientRead,
+			List<Hop> sourceHops) {
+		if (transientRead == null || transientRead.getOp() != Types.OpOpData.TRANSIENTREAD
+				|| sourceHops == null || sourceHops.isEmpty())
+			return null;
+		Hop namedFallback = null;
+		Hop compatibleFallback = null;
+		Hop fallback = null;
+		for (Hop sourceHop : sourceHops) {
+			if (!isMultiReturnFunctionOutput(sourceHop))
+				continue;
+			boolean sameName = Objects.equals(transientRead.getName(), sourceHop.getName());
+			boolean compatible = dimsCompatible(transientRead, sourceHop);
+			if (sameName && compatible)
+				return sourceHop;
+			if (sameName && namedFallback == null)
+				namedFallback = sourceHop;
+			if (compatible && compatibleFallback == null)
+				compatibleFallback = sourceHop;
+			if (fallback == null)
+				fallback = sourceHop;
+		}
+		if (namedFallback != null)
+			return namedFallback;
+		if (compatibleFallback != null)
+			return compatibleFallback;
+		return fallback;
+	}
+
+	private static boolean isMultiReturnFunctionOutput(Hop hop) {
+		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.FUNCTIONOUTPUT)
+			return false;
+		List<Hop> inputs = hop.getInput();
+		if (inputs == null || inputs.isEmpty() || inputs.get(0) == null)
+			return false;
+		List<Hop> parents = inputs.get(0).getParent();
+		if (parents == null || parents.isEmpty())
+			return false;
+		for (Hop parent : parents) {
+			if (parent instanceof FunctionOp
+					&& ((FunctionOp) parent).getFunctionType() == FunctionType.MULTIRETURN_BUILTIN
+					&& ((FunctionOp) parent).getOutputs() != null
+					&& ((FunctionOp) parent).getOutputs().contains(hop))
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean dimsCompatible(Hop left, Hop right) {
+		if (left == null || right == null)
+			return false;
+		boolean d1Known = left.getDim1() > 0 && right.getDim1() > 0;
+		boolean d2Known = left.getDim2() > 0 && right.getDim2() > 0;
+		if (d1Known && left.getDim1() != right.getDim1())
+			return false;
+		if (d2Known && left.getDim2() != right.getDim2())
+			return false;
+		return true;
 	}
 
 	public double getMultiReturnBuiltinOutputMemEstimate(Hop outputHop) {

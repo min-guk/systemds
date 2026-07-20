@@ -659,7 +659,7 @@ public class FederatedPlannerDpCostEnumerator {
 				|| FederatedPlannerUtils.hasConcreteFederatedSourceForTransientRead(
 						(DataOp) hop, childHops);
 		final Hop explicitFunctionOutputSourceHop = isTransientReadHop
-				? FederatedPlannerUtils.getPreferredMultiReturnFunctionOutputSourceForTransientRead(
+				? FunctionOp.getPreferredMultiReturnFunctionOutputSourceForTransientRead(
 						(DataOp) hop, childHops)
 				: null;
 		if (explicitFunctionOutputSourceHop != null) {
