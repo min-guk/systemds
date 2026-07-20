@@ -81,6 +81,7 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Neu
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
@@ -650,7 +651,7 @@ public class FederatedPlannerDpCostEnumerator {
 			}
 		}
 
-		Set<Long> tWriteChildIds = collectHopIds(collectTransientWriteChildHops(hop, childHops));
+		Set<Long> tWriteChildIds = collectHopIds(collectTransientWriteChildHops(hop, childHops, capture));
 		final boolean enforceTReadConsistency = !tWriteChildIds.isEmpty();
 		final boolean isTransientReadHop = hop instanceof DataOp
 				&& ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD;
@@ -1268,11 +1269,12 @@ public class FederatedPlannerDpCostEnumerator {
 			return false;
 		}
 
-		List<Hop> tWriteChildHops = collectTransientWriteChildHops(dataOp, childHops);
+		List<Hop> physicalTransientWrites = collectTransientWriteChildHops(dataOp, childHops);
+		rejectAmbiguousTransientWriteHopIds(dataOp, physicalTransientWrites, capture);
+		List<Hop> tWriteChildHops = collectTransientWriteChildHops(dataOp, childHops, capture);
 		if (tWriteChildHops.isEmpty()) {
 			return false;
 		}
-		rejectAmbiguousTransientWriteHopIds(dataOp, tWriteChildHops, capture);
 
 		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
 
@@ -1445,37 +1447,43 @@ public class FederatedPlannerDpCostEnumerator {
 	// Keep selection object-owned: distinct physical writes may share a Hop ID, so
 	// IDs are derived only after exact TRead capture no longer needs object identity.
 	private static List<Hop> collectTransientWriteChildHops(Hop hop, List<Hop> childHops) {
-		List<Hop> matches = new ArrayList<>();
+		List<Hop> transientWrites = new ArrayList<>();
 		if (!(hop instanceof DataOp) || ((DataOp) hop).getOp() != Types.OpOpData.TRANSIENTREAD) {
-			return matches;
+			return transientWrites;
 		}
 		if (childHops == null || childHops.isEmpty()) {
-			return matches;
+			return transientWrites;
 		}
-		String hopName = hop.getName();
-		List<Hop> fallback = new ArrayList<>();
 		for (Hop childHop : childHops) {
 			if (!(childHop instanceof DataOp)
 					|| ((DataOp) childHop).getOp() != Types.OpOpData.TRANSIENTWRITE) {
 				continue;
 			}
-			fallback.add(childHop);
-			if (hopName != null && hopName.equals(childHop.getName())) {
-				matches.add(childHop);
-			}
+			transientWrites.add(childHop);
 		}
-		List<Hop> preferredHops = matches.isEmpty() ? fallback : matches;
-		List<Hop> dimCompatible = new ArrayList<>();
-		for (Hop childHop : preferredHops) {
-			if (dimsCompatible(hop.getDim1(), hop.getDim2(), childHop.getDim1(), childHop.getDim2())) {
-				dimCompatible.add(childHop);
-			}
+		return transientWrites;
+	}
+
+	private static List<Hop> collectTransientWriteChildHops(Hop hop, List<Hop> childHops,
+		EnumerationCapture capture) {
+		List<Hop> transientWrites = collectTransientWriteChildHops(hop, childHops);
+		if(capture == null || transientWrites.isEmpty())
+			return transientWrites;
+
+		RewireOccurrenceSnapshot snapshot = capture.context.rewireSnapshot();
+		HopOccurrenceProjection readOccurrence = findOccurrence(capture, hop);
+		Set<CompiledHopKey> exactWriteOccurrences = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(RewireTransientForwardEdge edge : snapshot.transientForwardEdges())
+			if(edge.readOccurrence() == readOccurrence.key())
+				exactWriteOccurrences.add(edge.writeOccurrence());
+
+		List<Hop> exactWrites = new ArrayList<>();
+		for(Hop transientWrite : transientWrites) {
+			HopOccurrenceProjection writeOccurrence = snapshot.projectExactCarrier(transientWrite);
+			if(writeOccurrence != null && exactWriteOccurrences.contains(writeOccurrence.key()))
+				exactWrites.add(transientWrite);
 		}
-		if (!dimCompatible.isEmpty()) {
-			preferredHops = dimCompatible;
-		}
-		List<Hop> dominating = TransTableRewireUtils.preferDominatingTransientWrites(preferredHops, (DataOp) hop);
-		return dominating == null || dominating.isEmpty() ? preferredHops : dominating;
+		return exactWrites;
 	}
 
 	private static Set<Long> collectHopIds(List<Hop> hops) {
@@ -1483,18 +1491,6 @@ public class FederatedPlannerDpCostEnumerator {
 		for (Hop hop : hops)
 			hopIds.add(hop.getHopID());
 		return hopIds;
-	}
-
-	private static boolean dimsCompatible(long d1a, long d2a, long d1b, long d2b) {
-		boolean d1Known = d1a > 0 && d1b > 0;
-		boolean d2Known = d2a > 0 && d2b > 0;
-		if (d1Known && d1a != d1b) {
-			return false;
-		}
-		if (d2Known && d2a != d2b) {
-			return false;
-		}
-		return true;
 	}
 
 	private static boolean isRecompileRegion(Hop hop) {
