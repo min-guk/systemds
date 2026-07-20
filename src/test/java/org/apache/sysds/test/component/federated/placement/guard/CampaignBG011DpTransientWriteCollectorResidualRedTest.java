@@ -17,11 +17,15 @@ public class CampaignBG011DpTransientWriteCollectorResidualRedTest {
 	@Test
 	public void transientWriteCollectorContainsNoFallbackOwnerResiduals() throws Exception {
 		String source = Files.readString(ENUMERATOR);
+		String declaration = "collectTransientWriteChildHops(Hop hop, List<Hop> childHops)";
+		int declarationOffset = source.indexOf(declaration);
+		Assert.assertTrue("DP transient-write collector declaration is missing", declarationOffset >= 0);
+		long declarationLine = source.substring(0, declarationOffset).lines().count();
 		String collector = JavaSourceBoundaryScanner.methodBody(
 			source, "collectTransientWriteChildHops", "childHops");
 		List<String> residuals = JavaSourceTokenScanner.tokens(collector).stream()
 			.filter(token -> normalize(token.text()).equals("fallback"))
-			.map(token -> token.line() + ":" + token.text())
+			.map(token -> (declarationLine + token.line() - 1) + ":" + token.text())
 			.toList();
 		Assert.assertEquals("G011_DP_TRANSIENT_WRITE_COLLECTOR_RESIDUALS", List.of(), residuals);
 	}
