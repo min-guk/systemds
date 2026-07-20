@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -69,6 +70,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -96,6 +98,7 @@ public class FederatedPlannerDpMemoTable {
 	// Maps Hop ID and fedOutType pairs to their plan variants
 	private final Map<Pair<Long, FederatedOutput>, FedPlanVariants> hopMemoTable = new HashMap<>();
 	private final PlacementAnalysis analysis;
+	private final Map<Hop, HopOccurrenceProjection> occurrenceByPlanCarrier = new IdentityHashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
 	private final Map<Long, Long> cloneToOrig = new HashMap<>();
 	private final LinkedHashSet<Long> deadFunctionOutputHopIDs = new LinkedHashSet<>();
@@ -125,11 +128,26 @@ public class FederatedPlannerDpMemoTable {
 	public void addFedPlanVariants(HopOccurrenceProjection occurrence, FederatedOutput fedOutType,
 		FedPlanVariants fedPlanVariants) {
 		assertOwnedOccurrence(occurrence);
-		if(fedPlanVariants == null || fedPlanVariants.hopCommon == null
-			|| fedPlanVariants.hopCommon.getHopRef() != occurrence.hop()
+		Hop carrier = fedPlanVariants == null || fedPlanVariants.hopCommon == null
+			? null : fedPlanVariants.hopCommon.getHopRef();
+		if(carrier == null || requirePlanCarrierOccurrence(carrier) != occurrence
 			|| fedPlanVariants.getFedOutType() != fedOutType)
 			throw new IllegalArgumentException("Plan variants do not bind the supplied occurrence");
-		addFedPlanVariants(occurrence.hop().getHopID(), fedOutType, fedPlanVariants);
+		occurrenceByPlanCarrier.put(carrier, occurrence);
+		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
+	}
+
+	public void addFedPlanVariants(RewireOccurrenceSnapshot snapshot, HopOccurrenceProjection occurrence,
+		FederatedOutput fedOutType, FedPlanVariants fedPlanVariants) {
+		assertOwnedSnapshot(snapshot);
+		assertOwnedOccurrence(occurrence);
+		Hop carrier = fedPlanVariants == null || fedPlanVariants.hopCommon == null
+			? null : fedPlanVariants.hopCommon.getHopRef();
+		if(carrier == null || snapshot.projectExactCarrier(carrier) != occurrence
+			|| fedPlanVariants.getFedOutType() != fedOutType)
+			throw new IllegalArgumentException("Plan variants do not bind the supplied rewire occurrence");
+		occurrenceByPlanCarrier.put(carrier, occurrence);
+		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
 	}
 
 	public void addFedPlanVariants(long hopID, FederatedOutput fedOutType, FedPlanVariants fedPlanVariants) {
@@ -164,6 +182,27 @@ public class FederatedPlannerDpMemoTable {
 	public Hop resolveExecutableHop(HopOccurrenceProjection occurrence) {
 		assertOwnedOccurrence(occurrence);
 		return occurrence.hop();
+	}
+
+	public HopOccurrenceProjection requireOccurrence(Hop hop) {
+		if(hop == null)
+			throw new IllegalArgumentException("Hop must not be null");
+		HopOccurrenceProjection match = null;
+		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
+			if(occurrence.hop() != hop)
+				continue;
+			if(match != null)
+				throw new IllegalArgumentException("Hop has multiple analysis occurrences");
+			match = occurrence;
+		}
+		if(match == null)
+			throw new IllegalArgumentException("Hop is not owned by the memo analysis");
+		return match;
+	}
+
+	public HopOccurrenceProjection requirePlanCarrierOccurrence(Hop hop) {
+		HopOccurrenceProjection occurrence = occurrenceByPlanCarrier.get(hop);
+		return occurrence != null ? occurrence : requireOccurrence(hop);
 	}
 
 	private void assertOwnedOccurrence(HopOccurrenceProjection occurrence) {
@@ -267,10 +306,30 @@ public class FederatedPlannerDpMemoTable {
 		}
 	}
 
+	public void registerHopRefs(RewireOccurrenceSnapshot snapshot, Map<Long, HopCommon> hopCommonTable) {
+		assertOwnedSnapshot(snapshot);
+		if(hopCommonTable == null)
+			return;
+		for(Map.Entry<Long, HopCommon> entry : hopCommonTable.entrySet()) {
+			HopCommon common = entry.getValue();
+			Hop carrier = common == null ? null : common.getHopRef();
+			HopOccurrenceProjection occurrence = snapshot.projectExactCarrier(carrier);
+			if(carrier == null || occurrence == null || entry.getKey() != carrier.getHopID())
+				throw new IllegalArgumentException("Rewire Hop reference is not owned by the supplied snapshot");
+			hopRefMap.put(entry.getKey(), carrier);
+			occurrenceByPlanCarrier.put(carrier, occurrence);
+		}
+	}
+
 	public void registerCloneMapping(Map<Long, Long> cloneToOrigMap) {
 		if (cloneToOrigMap == null || cloneToOrigMap.isEmpty())
 			return;
 		cloneToOrig.putAll(cloneToOrigMap);
+	}
+
+	public void registerCloneMapping(RewireOccurrenceSnapshot snapshot) {
+		assertOwnedSnapshot(snapshot);
+		cloneToOrig.putAll(snapshot.cloneToOriginal());
 	}
 
 	public void registerAdditionalRootHopIDs(List<Hop> roots) {
@@ -279,6 +338,17 @@ public class FederatedPlannerDpMemoTable {
 		for (Hop root : roots) {
 			if (root != null)
 				additionalRootHopIDs.add(root.getHopID());
+		}
+	}
+
+	public void registerAdditionalRootHopIDs(RewireOccurrenceSnapshot snapshot, List<Hop> roots) {
+		assertOwnedSnapshot(snapshot);
+		if(roots == null || roots.isEmpty())
+			return;
+		for(Hop root : roots) {
+			if(snapshot.projectExactCarrier(root) == null)
+				throw new IllegalArgumentException("Additional root is not owned by the supplied snapshot");
+			additionalRootHopIDs.add(root.getHopID());
 		}
 	}
 
@@ -293,6 +363,23 @@ public class FederatedPlannerDpMemoTable {
 			if (hopID != null && hopID >= 0)
 				deadFunctionOutputHopIDs.add(hopID);
 		}
+	}
+
+	public void registerDeadFunctionOutputHopIDs(RewireOccurrenceSnapshot snapshot, Set<Long> deadOutputHopIDs) {
+		assertOwnedSnapshot(snapshot);
+		if(deadOutputHopIDs == null || deadOutputHopIDs.isEmpty())
+			return;
+		for(Long hopID : deadOutputHopIDs)
+			if(hopID != null && hopID >= 0)
+				deadFunctionOutputHopIDs.add(hopID);
+	}
+
+	private void assertOwnedSnapshot(RewireOccurrenceSnapshot snapshot) {
+		if(analysis == null)
+			throw new IllegalStateException("Memo is not bound to a placement analysis");
+		if(snapshot == null || snapshot.analysis() != analysis
+			|| !analysis.analysisFingerprint().equals(snapshot.analysisFingerprint()))
+			throw new IllegalArgumentException("Rewire snapshot is not owned by the memo analysis");
 	}
 
 	public boolean isDeadFunctionOutputHop(long hopID) {

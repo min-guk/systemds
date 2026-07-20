@@ -57,7 +57,6 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
@@ -276,10 +275,10 @@ public class FederatedPlannerDpCostEnumerator {
 		RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 			analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
 			analysis.analysisFingerprint());
-		memoTable.registerHopRefs(hopCommonTable);
-		memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
-		memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
-		memoTable.registerAdditionalRootHopIDs(unrollCtx.getIter1Roots());
+		memoTable.registerHopRefs(rewireSnapshot, hopCommonTable);
+		memoTable.registerCloneMapping(rewireSnapshot);
+		memoTable.registerDeadFunctionOutputHopIDs(rewireSnapshot, unrollCtx.getDeadFunctionOutputHopIDs());
+		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, unrollCtx.getIter1Roots());
 		populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 
 		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
@@ -302,7 +301,7 @@ public class FederatedPlannerDpCostEnumerator {
 			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
-		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
+		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, collectPredicateWriteRoots(hopCommonTable));
 
 		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
@@ -360,23 +359,22 @@ public class FederatedPlannerDpCostEnumerator {
 			FederatedPlannerDpRewireTransTable.rewireFunctionDynamic(function, prog, rewireTable, hopCommonTable,
 					privacyConstraintMap,
 					fedMap, unRefTwriteSet, unRefSet, progRootHopSet, parentChildUploadHints, unrollCtx);
-			memoTable.registerHopRefs(hopCommonTable);
-			memoTable.registerCloneMapping(unrollCtx.getCloneToOrig());
-			memoTable.registerDeadFunctionOutputHopIDs(unrollCtx.getDeadFunctionOutputHopIDs());
-			memoTable.registerAdditionalRootHopIDs(unrollCtx.getIter1Roots());
-			memoTable.registerAdditionalRootHopIDs(unrollCtx.getAdditionalRoots());
-			memoTable.registerAdditionalRootHopIDs(
-				FederatedPlannerDpRewireTransTable.collectExecutableStatementRoots(function));
-			populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
-
 				int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 				memoTable.setNumWorkers(numOfWorkers);
 				analysis.assertProgramOwner(prog);
 				RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 					analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
 					analysis.analysisFingerprint());
+			memoTable.registerHopRefs(rewireSnapshot, hopCommonTable);
+			memoTable.registerCloneMapping(rewireSnapshot);
+			memoTable.registerDeadFunctionOutputHopIDs(rewireSnapshot, unrollCtx.getDeadFunctionOutputHopIDs());
+			memoTable.registerAdditionalRootHopIDs(rewireSnapshot, unrollCtx.getIter1Roots());
+			memoTable.registerAdditionalRootHopIDs(rewireSnapshot, unrollCtx.getAdditionalRoots());
+			memoTable.registerAdditionalRootHopIDs(rewireSnapshot,
+				FederatedPlannerDpRewireTransTable.collectExecutableStatementRoots(function));
+			populateParentChildUploadHintsFromRewire(parentChildUploadHints, rewireTable, hopCommonTable);
 			addUnreferencedTWriteRoots(progRootHopSet, unRefTwriteSet, hopCommonTable);
-			memoTable.registerAdditionalRootHopIDs(
+			memoTable.registerAdditionalRootHopIDs(rewireSnapshot,
 				collectUnreferencedExecutedRoots(unRefSet, hopCommonTable));
 
 		Set<String> fnStack = new HashSet<>();
@@ -395,7 +393,7 @@ public class FederatedPlannerDpCostEnumerator {
 			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
-		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
+		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, collectPredicateWriteRoots(hopCommonTable));
 		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
 
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
@@ -639,10 +637,14 @@ public class FederatedPlannerDpCostEnumerator {
 
 		FederatedPlannerDpMemoTable.HopCommon hopCommon = hopCommonTable.get(hopID);
 		hopCommon.setNumOfParentHops(numParentHops);
+		HopOccurrenceProjection hopOccurrence = findOccurrence(capture, hop);
+		FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator =
+			FederatedPlannerDpCostEstimator.bindExact(
+				capture.context.analysis(), hopOccurrence, memoTable);
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.FEDERATED) {
 			if(capture != null)
 				captureMemoSupportedChildSelections(hop, childHops, memoTable, capture);
-			enumerateFederatedDataOp((DataOp) hop, memoTable, hopCommon);
+			enumerateFederatedDataOp((DataOp) hop, memoTable, hopCommon, capture);
 			return;
 		}
 		if (hop instanceof DataOp && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
@@ -667,7 +669,7 @@ public class FederatedPlannerDpCostEnumerator {
 					(DataOp) hop, explicitFunctionOutputSourceHop);
 		}
 
-		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
+		double baseSelfCost = exactEstimator.computeHopCost(hopCommon);
 
 		int initialNumInputs = childHops.size();
 		// Preallocate for the original child count; getChildCosts may shrink childHops,
@@ -689,7 +691,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 		// The self cost follows the producer weight. Boundary forwarding is shared by
 		// producer occurrence and parent demand weights.
-		FederatedPlannerDpCostEstimator.getChildCosts(hopCommon, memoTable, hopCommonTable,
+		exactEstimator.getChildCosts(hopCommon, hopCommonTable,
 				lOutfOutChildHops, childCumulativeCost, childForwardingCostToCP,
 				childForwardingCostToFED, childForwardingCostFOutToFED, lOUTOnlyinputHops,
 				lOUTOnlychildCumulativeCost, lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops,
@@ -910,21 +912,14 @@ public class FederatedPlannerDpCostEnumerator {
 				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToFED.get(j);
 			}
 
-					boolean canSatisfyFedInputs = FederatedRefedPolicy.canSatisfyFederatedInputsFromFTypes(
-						hop, effectiveNonNullFTypeMap);
-				if (DISALLOW_CPFOUT_ON_RECOMPILE && isRecompileRegion(hop)) {
-					boolean hasPlannedFedInput = effectiveNonNullFTypeMap != null && !effectiveNonNullFTypeMap.isEmpty();
-					if (!hasPlannedFedInput)
-						canSatisfyFedInputs = false;
-				}
+					boolean canSatisfyFedInputs = canSatisfyFederatedInputsFromFTypes(candidateDecisionReceipt);
 
 					FType oracleLogicalFType = candidateDecisionReceipt.logicalFType();
 					FType lOutLogicalFType = resolveLoutLogicalFType(oracleLogicalFType);
 					FType cpLogicalFType = org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver
 						.projectConsumerSafeType(oracleLogicalFType,
 							candidateDecisionReceipt.invocationEvidence().projection());
-				cpLogicalFType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, cpLogicalFType);
-						double genericResultDownloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
+						double genericResultDownloadCost = exactEstimator.download(
 								outputMemEstimate, lOutLogicalFType, numOfWorkers);
 						double nativeAggUnaryResultDownloadCost =
 								FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
@@ -961,7 +956,7 @@ public class FederatedPlannerDpCostEnumerator {
 						hop, oracleLogicalFType, fedExecWeight, numOfWorkers, false);
 				double fedSelfCost = fedComputeCost + effectiveFedOverhead + singleWorkerFedPenalty
 						+ fedInstructionLatencyCost + inputPreparationCost;
-				double cpUploadCostWithoutWeight = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
+				double cpUploadCostWithoutWeight = exactEstimator.upload(
 						uploadMemEstimate, cpLogicalFType, numOfWorkers);
 				// NOTE: Do not add local-to-fed forwarding penalty here.
 				//
@@ -997,10 +992,10 @@ public class FederatedPlannerDpCostEnumerator {
 				double tReadAcquireCost = 0.0;
 				if (isTransientReadHop && hasConcreteTransientReadSource) {
 					double tReadAcquireWeight =
-						FederatedPlannerDpCostEstimator.computeStableFederatedInputLocalMaterializationWeight(
+						exactEstimator.stableLocalMaterializationWeight(
 							hop, hopPlacementWeight, true);
 					tReadAcquireCost = tReadAcquireWeight
-							* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
+							* exactEstimator.download(
 									outputMemEstimate, lOutLogicalFType, numOfWorkers);
 				}
 				double cpLoutCost = cpSelfCost + childCostCPExec + tReadAcquireCost;
@@ -1023,7 +1018,6 @@ public class FederatedPlannerDpCostEnumerator {
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.LOUT, tWriteExec, tWriteOut));
 					boolean allowCpFoutCandidate = candidateDecisionReceipt.allowCPFOUT()
-						&& (canGenerateCpfoutCandidateSafe(hop, effectiveNonNullFTypeMap))
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut));
 
@@ -1099,11 +1093,19 @@ public class FederatedPlannerDpCostEnumerator {
 
 		if (hasLOutPlan) {
 			lOutFedPlanVariants.pruneFedPlans();
-			memoTable.addFedPlanVariants(hopID, FederatedOutput.LOUT, lOutFedPlanVariants);
+			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), hopOccurrence,
+				FederatedOutput.LOUT, lOutFedPlanVariants);
+			FederatedPlannerDpCostEstimator.estimateExact(new FederatedPlannerDpCostEstimator.EstimatorRequest(
+				capture.context.analysis(), hopOccurrence, memoTable,
+				memoTable.getFedPlanAfterPrune(hopOccurrence, FederatedOutput.LOUT)));
 		}
 		if (hasFOutPlan) {
 			fOutFedPlanVariants.pruneFedPlans();
-			memoTable.addFedPlanVariants(hopID, FederatedOutput.FOUT, fOutFedPlanVariants);
+			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), hopOccurrence,
+				FederatedOutput.FOUT, fOutFedPlanVariants);
+			FederatedPlannerDpCostEstimator.estimateExact(new FederatedPlannerDpCostEstimator.EstimatorRequest(
+				capture.context.analysis(), hopOccurrence, memoTable,
+				memoTable.getFedPlanAfterPrune(hopOccurrence, FederatedOutput.FOUT)));
 		}
 		logDpBestPlans(hop, lOutFedPlanVariants, fOutFedPlanVariants, hasLOutPlan, hasFOutPlan);
 	
@@ -1234,7 +1236,7 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
-			FederatedPlannerDpMemoTable.HopCommon hopCommon) {
+			FederatedPlannerDpMemoTable.HopCommon hopCommon, EnumerationCapture capture) {
 		FType baseFType = FederatedTypePropagator.deriveFType(dataOp);
 		FederatedPlannerUtils.registerFedInitVar(dataOp.getName(), baseFType,
 			FederatedPlannerUtils.deriveFedInitSignature(dataOp));
@@ -1247,7 +1249,8 @@ public class FederatedPlannerDpCostEnumerator {
 			fedPlan.setFType(baseFType);
 			fedPlan.setCpFoutType(baseFType);
 			fOutFedPlanVariants.addFedPlan(fedPlan);
-			memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
+			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), findOccurrence(capture, dataOp),
+				FederatedOutput.FOUT, fOutFedPlanVariants);
 	}
 
 	private static boolean enumerateTransientReadDataOp(DataOp dataOp, List<Hop> childHops,
@@ -1276,7 +1279,12 @@ public class FederatedPlannerDpCostEnumerator {
 			return false;
 		}
 
-		double baseSelfCost = FederatedPlannerDpCostEstimator.computeHopCost(hopCommon);
+		FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator = capture == null ? null :
+			FederatedPlannerDpCostEstimator.bindExact(
+				capture.context.analysis(), findOccurrence(capture, dataOp), memoTable);
+		double baseSelfCost = exactEstimator == null
+			? FederatedPlannerDpCostEstimator.legacyHopCost(hopCommon)
+			: exactEstimator.computeHopCost(hopCommon);
 
 		boolean allowLOUT = true;
 		boolean allowFOUT = true;
@@ -1346,13 +1354,13 @@ public class FederatedPlannerDpCostEnumerator {
 		if (!hasLocalTransientWriteSourcePlan && hasFederatedSourcePlan && dataOp.getDim1() > 0
 				&& dataOp.getDim2() > 0) {
 			double hopPlacementWeight = placementTransferWeight(hopCommon);
-			double localMaterializationWeight =
-				FederatedPlannerDpCostEstimator.computeStableFederatedInputLocalMaterializationWeight(
-					dataOp, hopPlacementWeight, true);
 			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(dataOp);
-			loutAcquireCost = localMaterializationWeight
-					* FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
-							outputMemEstimate, foutFType, numOfWorkers);
+			FederatedPlannerDpCostEstimator.TransientReadCostReceipt costReceipt = exactEstimator == null
+				? FederatedPlannerDpCostEstimator.legacyTransientReadCosts(hopCommon, dataOp,
+					hopPlacementWeight, true, outputMemEstimate, foutFType, numOfWorkers)
+				: exactEstimator.transientReadCosts(hopCommon, dataOp, hopPlacementWeight, true,
+					outputMemEstimate, foutFType, numOfWorkers);
+			loutAcquireCost = costReceipt.localMaterializationWeight() * costReceipt.downloadCost();
 		}
 
 		if(capture != null) {
@@ -1373,7 +1381,12 @@ public class FederatedPlannerDpCostEnumerator {
 				loutPlan.setCpFoutType(loutFType);
 				lOutFedPlanVariants.addFedPlan(loutPlan);
 				lOutFedPlanVariants.pruneFedPlans();
-				memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.LOUT, lOutFedPlanVariants);
+				if(capture == null)
+					memoTable.addFedPlanVariants(memoTable.requirePlanCarrierOccurrence(dataOp),
+						FederatedOutput.LOUT, lOutFedPlanVariants);
+				else
+					memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), findOccurrence(capture, dataOp),
+						FederatedOutput.LOUT, lOutFedPlanVariants);
 		}
 
 		if (allowFOUT) {
@@ -1386,7 +1399,12 @@ public class FederatedPlannerDpCostEnumerator {
 				foutPlan.setCpFoutType(foutFType);
 				fOutFedPlanVariants.addFedPlan(foutPlan);
 				fOutFedPlanVariants.pruneFedPlans();
-				memoTable.addFedPlanVariants(dataOp.getHopID(), FederatedOutput.FOUT, fOutFedPlanVariants);
+				if(capture == null)
+					memoTable.addFedPlanVariants(memoTable.requirePlanCarrierOccurrence(dataOp),
+						FederatedOutput.FOUT, fOutFedPlanVariants);
+				else
+					memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), findOccurrence(capture, dataOp),
+						FederatedOutput.FOUT, fOutFedPlanVariants);
 		}
 
 		return true;
@@ -1560,30 +1578,6 @@ public class FederatedPlannerDpCostEnumerator {
 			capture.context.analysis().analysisFingerprint(), hop.getHopID());
 	}
 
-	private static boolean canGenerateCpfoutCandidateSafe(Hop hop, Map<Long, FType> fTypeMap) {
-			try {
-				if (hop == null)
-					return false;
-				// Root CP->FOUT materialization is still legal when an anchor exists, even if the hop has
-				// no FED parents (e.g., to keep the final result federated for privacy constraints).
-				List<Hop> parents = hop.getParent();
-				if (parents == null || parents.isEmpty()) {
-					if (fTypeMap != null && !fTypeMap.isEmpty()) {
-						for (FType fType : fTypeMap.values()) {
-							if (fType == null || (fType != FType.PART && fType != FType.OTHER))
-								return true;
-						}
-						return false;
-					}
-					return FederatedPlannerUtils.getUniqueFedInitVarName() != null;
-				}
-				return FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, fTypeMap);
-			}
-			catch (DMLRuntimeException ex) {
-				return false;
-			}
-		}
-
 	private static String formatSelectedBits(int[] bits) {
 		if (bits == null || bits.length == 0)
 			return "[]";
@@ -1595,6 +1589,10 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 		sb.append("]");
 		return sb.toString();
+	}
+
+	private static boolean canSatisfyFederatedInputsFromFTypes(CandidateDecisionReceipt receipt) {
+		return receipt.allowFEDLOUT() || receipt.allowFEDFOUT();
 	}
 
 	private static void logDpBestPlans(Hop hop,
@@ -1702,19 +1700,6 @@ public class FederatedPlannerDpCostEnumerator {
 				nextSearchStart.put(hopID, found + 1);
 		}
 		return indices;
-	}
-
-	private static boolean requiresFederatedInputForParent(Hop parentHop, Hop inputHop, int inputIndex,
-			Map<Long, FType> inputFTypes) {
-		if (parentHop == null || inputHop == null)
-			return true;
-		if (inputHop.getDataType() == null || !inputHop.getDataType().isMatrix())
-			return false;
-		if (inputIndex < 0)
-			return true;
-		FederatedRefedPolicy.InputRequirement requirement = FederatedRefedPolicy.getInputRequirementForFedExec(
-				parentHop, inputHop, inputIndex, inputFTypes);
-		return requirement != FederatedRefedPolicy.InputRequirement.OPTIONAL;
 	}
 
 	private static boolean shouldAddFedForwardingForParentInput(Hop parentHop, Hop inputHop, int inputIndex,
@@ -2050,14 +2035,15 @@ public class FederatedPlannerDpCostEnumerator {
 			return Double.POSITIVE_INFINITY;
 		}
 
-		double fromCumulativeShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
-				fromPlan.getCumulativeCost(), fromPlan);
-		double toCumulativeShare = FederatedPlannerDpCostEstimator.computeCumulativeCostShareForParent(
-				toPlan.getCumulativeCost(), toPlan);
+		FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator =
+			FederatedPlannerDpCostEstimator.bindExact(memoTable.analysis(),
+				memoTable.requireOccurrence(fromPlan.getHopRef()), memoTable);
+		double fromCumulativeShare = exactEstimator.cumulativeShare(fromPlan);
+		double toCumulativeShare = exactEstimator.cumulativeShare(toPlan);
 		double fromForwardingShare = computeParentChildForwardingCostShare(
-				parentIsFed, fromOut, fromPlan, parentPlan, numOfWorkers);
+				exactEstimator, parentIsFed, fromOut, fromPlan, parentPlan, numOfWorkers);
 		double toForwardingShare = computeParentChildForwardingCostShare(
-				parentIsFed, toOut, toPlan, parentPlan, numOfWorkers);
+				exactEstimator, parentIsFed, toOut, toPlan, parentPlan, numOfWorkers);
 
 		double childForwardingDelta =
 				(toCumulativeShare - fromCumulativeShare) + (toForwardingShare - fromForwardingShare);
@@ -2133,6 +2119,7 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 	private static double computeParentChildForwardingCostShare(
+			FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator,
 			boolean parentIsFed, FederatedOutput childOut,
 			FederatedPlannerDpMemoTable.FedPlan childPlan,
 			FederatedPlannerDpMemoTable.FedPlan parentPlan,
@@ -2144,16 +2131,15 @@ public class FederatedPlannerDpCostEnumerator {
 		if (parentIsFed && childOut == FederatedOutput.LOUT) {
 			double transferMem = FederatedCostModel.getEffectiveUploadMemEstimate(childPlan.getHopRef());
 			FType uploadType = childPlan.getCpFoutTypeOrFType();
-			double uploadCost = FederatedPlannerDpCostEstimator.computeUploadNetworkCost(
-					transferMem, uploadType, numOfWorkers);
-			return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
+			double uploadCost = exactEstimator.upload(transferMem, uploadType, numOfWorkers);
+			return exactEstimator.forwardingShare(uploadCost, childPlan, parentPlan);
 			} else if (parentIsFed && childOut == FederatedOutput.FOUT && childPlan.getExecType() == ExecType.CP) {
 				if (childPlan.isFoutMaterializationAccounted())
 					return 0.0;
 				FType uploadType = childPlan.getCpFoutTypeOrFType();
-				double uploadCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
+				double uploadCost = exactEstimator.upload(
 						childPlan.getHopRef(), parentPlan.getHopRef(), uploadType, numOfWorkers);
-				return FederatedPlannerDpCostEstimator.computeForwardingCostShareForParent(uploadCost, childPlan, parentPlan);
+				return exactEstimator.forwardingShare(uploadCost, childPlan, parentPlan);
 		} else if (!parentIsFed && childOut == FederatedOutput.FOUT) {
 			double downloadCost;
 			if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childPlan.getHopRef())) {
@@ -2163,10 +2149,10 @@ public class FederatedPlannerDpCostEnumerator {
 				downloadCost = 0.0;
 			}
 			else
-				downloadCost = FederatedPlannerDpCostEstimator.computeDownloadNetworkCost(
-					FederatedCostModel.getEffectiveOutputMemEstimate(childPlan.getHopRef()),
-					childPlan.getFType(), numOfWorkers);
-			return FederatedPlannerDpCostEstimator.computeParentChildFoutToCpDownloadShare(
+				downloadCost = exactEstimator.download(
+						FederatedCostModel.getEffectiveOutputMemEstimate(childPlan.getHopRef()),
+						childPlan.getFType(), numOfWorkers);
+			return exactEstimator.foutToCpShare(
 					parentPlan.getHopRef(), downloadCost, childPlan, parentPlan);
 		}
 		return 0.0;

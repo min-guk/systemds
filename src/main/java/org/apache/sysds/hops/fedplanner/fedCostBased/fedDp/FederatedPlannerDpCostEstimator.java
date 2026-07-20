@@ -56,7 +56,6 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
@@ -130,6 +129,107 @@ public class FederatedPlannerDpCostEstimator {
 		}
 	}
 
+	public record TransientReadCostReceipt(double selfCost, double localMaterializationWeight,
+		double downloadCost) { }
+
+	public static final class ExactEstimator {
+		private final PlacementAnalysis analysis;
+		private final HopOccurrenceProjection occurrence;
+		private final FederatedPlannerDpMemoTable memo;
+
+		private ExactEstimator(PlacementAnalysis analysis, HopOccurrenceProjection occurrence,
+			FederatedPlannerDpMemoTable memo) {
+			this.analysis = analysis;
+			this.occurrence = occurrence;
+			this.memo = memo;
+		}
+
+		public double computeHopCost(FederatedPlannerDpMemoTable.HopCommon common) {
+			if(common == null || memo.requirePlanCarrierOccurrence(common.getHopRef()) != occurrence)
+				throw new IllegalArgumentException("Estimator HopCommon is not owned by the exact occurrence");
+			return FederatedPlannerDpCostEstimator.computeHopCost(common);
+		}
+
+		public void getChildCosts(FederatedPlannerDpMemoTable.HopCommon common,
+			Map<Long, FederatedPlannerDpMemoTable.HopCommon> commonTable, List<Hop> inputs,
+			double[][] cumulative, double[] toCP, double[] toFED, double[] foutToFED,
+			List<Hop> loutOnly, List<Double> loutCumulative, List<Double> loutToFED,
+			List<Hop> foutOnly, List<Double> foutCumulative, List<Double> foutToCP,
+			List<Double> foutOnlyToFED, int workers) {
+			if(common == null || memo.requirePlanCarrierOccurrence(common.getHopRef()) != occurrence)
+				throw new IllegalArgumentException("Estimator parent is not owned by the exact occurrence");
+			FederatedPlannerDpCostEstimator.getChildCosts(common, memo, commonTable, inputs, cumulative, toCP,
+				toFED, foutToFED, loutOnly, loutCumulative, loutToFED, foutOnly, foutCumulative,
+				foutToCP, foutOnlyToFED, workers);
+		}
+
+		public double download(double memory, FType type, int workers) {
+			return computeDownloadNetworkCost(memory, type, workers);
+		}
+
+		public double upload(double memory, FType type, int workers) {
+			return computeUploadNetworkCost(memory, type, workers);
+		}
+
+		public double upload(Hop child, Hop parent, FType type, int workers) {
+			memo.requirePlanCarrierOccurrence(child);
+			return computeUploadCostWithFallback(child, parent, type, workers);
+		}
+
+		public double cumulativeShare(FederatedPlannerDpMemoTable.FedPlan plan) {
+			estimate(plan);
+			return computeCumulativeCostShareForParent(plan.getCumulativeCost(), plan);
+		}
+
+		public double forwardingShare(double cost, FederatedPlannerDpMemoTable.FedPlan child,
+			FederatedPlannerDpMemoTable.FedPlan parent) {
+			estimate(child);
+			return computeForwardingCostShareForParent(cost, child, parent);
+		}
+
+		public double foutToCpShare(Hop parent, double cost, FederatedPlannerDpMemoTable.FedPlan child,
+			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
+			estimate(child);
+			return computeParentChildFoutToCpDownloadShare(parent, cost, child, parentPlan);
+		}
+
+		public double stableLocalMaterializationWeight(Hop hop, double weight, boolean concreteSource) {
+			memo.requirePlanCarrierOccurrence(hop);
+			return computeStableFederatedInputLocalMaterializationWeight(hop, weight, concreteSource);
+		}
+
+		public EstimatorReceipt estimate(FederatedPlannerDpMemoTable.FedPlan plan) {
+			return estimateExact(new EstimatorRequest(analysis, occurrence, memo, plan));
+		}
+
+		public TransientReadCostReceipt transientReadCosts(FederatedPlannerDpMemoTable.HopCommon common,
+			Hop hop, double placementWeight, boolean concreteSource, double outputMemory, FType type, int workers) {
+			return new TransientReadCostReceipt(computeHopCost(common),
+				stableLocalMaterializationWeight(hop, placementWeight, concreteSource),
+				download(outputMemory, type, workers));
+		}
+	}
+
+	public static ExactEstimator bindExact(PlacementAnalysis analysis, HopOccurrenceProjection occurrence,
+		FederatedPlannerDpMemoTable memo) {
+		if(analysis == null || occurrence == null || memo == null || memo.analysis() != analysis
+			|| analysis.occurrences().stream().noneMatch(candidate -> candidate == occurrence)
+			|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
+			throw new IllegalArgumentException("Exact estimator binding is not analysis-owned");
+		return new ExactEstimator(analysis, occurrence, memo);
+	}
+
+	static TransientReadCostReceipt legacyTransientReadCosts(FederatedPlannerDpMemoTable.HopCommon common,
+		Hop hop, double placementWeight, boolean concreteSource, double outputMemory, FType type, int workers) {
+		return new TransientReadCostReceipt(computeHopCost(common),
+			computeStableFederatedInputLocalMaterializationWeight(hop, placementWeight, concreteSource),
+			computeDownloadNetworkCost(outputMemory, type, workers));
+	}
+
+	static double legacyHopCost(FederatedPlannerDpMemoTable.HopCommon common) {
+		return computeHopCost(common);
+	}
+
 	public static EstimatorReceipt estimateExact(EstimatorRequest request) {
 		if (request == null)
 			throw new IllegalArgumentException("Estimator request must not be null");
@@ -142,7 +242,7 @@ public class FederatedPlannerDpCostEstimator {
 			|| analysis.occurrences().stream().noneMatch(candidate -> candidate == occurrence)
 			|| analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
 			throw new IllegalArgumentException("Estimator request is not owned by the supplied analysis");
-		if (memo.resolveExecutableHop(occurrence) != occurrence.hop() || plan.getHopRef() != occurrence.hop())
+		if (memo.requirePlanCarrierOccurrence(plan.getHopRef()) != occurrence)
 			throw new IllegalArgumentException("Estimator plan does not bind the supplied occurrence");
 
 		FederatedPlannerDpMemoTable.FedPlanVariants variants = memo.getFedPlanVariants(
@@ -163,7 +263,7 @@ public class FederatedPlannerDpCostEstimator {
 				|| childPlan.getFedOutType() != childEdge.getRight())
 				throw new IllegalArgumentException("Estimator child plan is missing from the supplied memo");
 
-			HopOccurrenceProjection childOccurrence = exactOccurrenceForHop(analysis, childPlan.getHopRef());
+			HopOccurrenceProjection childOccurrence = memo.requirePlanCarrierOccurrence(childPlan.getHopRef());
 			FederatedPlannerDpMemoTable.FedPlanVariants childVariants = memo.getFedPlanVariants(childEdge);
 			if (!retainsExactPlan(childVariants, childPlan))
 				throw new IllegalArgumentException("Estimator child plan is not retained by the supplied memo");
@@ -181,14 +281,6 @@ public class FederatedPlannerDpCostEstimator {
 	private static boolean retainsExactPlan(FederatedPlannerDpMemoTable.FedPlanVariants variants,
 		FederatedPlannerDpMemoTable.FedPlan plan) {
 		return variants != null && variants.getFedPlanVariants().stream().anyMatch(candidate -> candidate == plan);
-	}
-
-	private static HopOccurrenceProjection exactOccurrenceForHop(PlacementAnalysis analysis, Hop hop) {
-		for (HopOccurrenceProjection occurrence : analysis.occurrences()) {
-			if (occurrence.hop() == hop && analysis.hop(occurrence.key()).orElse(null) == hop)
-				return occurrence;
-		}
-		throw new IllegalArgumentException("Estimator child Hop is foreign to the supplied analysis");
 	}
 
 	/**
@@ -486,13 +578,9 @@ public class FederatedPlannerDpCostEstimator {
 	static double computeUploadCostWithFallback(Hop childHop, Hop parentHop, FType uploadType, int numWorkers) {
 		if (!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(childHop))
 			return 0.0;
-		// Align forwarding-cost estimation with runtime CP->FOUT materialization policy.
-		//
-		// When the global anchor key implies ROW/COL partitioning but the forwarded local matrix's
-		// axis length (or vector axis) does not match, runtime will broadcast the data even if the
-		// logical FType is ROW/COL. If we do not apply the same adjustment here, the planner can
-		// severely under-estimate LOUT->FED upload cost (missing the replication multiplier).
-		FType adjustedUploadType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(childHop, uploadType);
+		// The caller supplies the consumer-safe type captured by the typed placement receipt.
+		// Costing must not reopen the broad policy universe or reinterpret that owned decision.
+		FType adjustedUploadType = uploadType;
 		double outputMemEstimate = FederatedCostModel.getEffectiveUploadMemEstimate(childHop);
 		double uploadCost = computeUploadNetworkCost(outputMemEstimate, adjustedUploadType, numWorkers);
 		FType effectiveUploadType = adjustedUploadType;
@@ -505,7 +593,6 @@ public class FederatedPlannerDpCostEstimator {
 		double fallbackMemEstimate = outputMemEstimate;
 		if (fallbackUploadType == null && childHop != null)
 			fallbackUploadType = FederatedPlannerUtils.getVectorAxis(childHop);
-		fallbackUploadType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(childHop, fallbackUploadType);
 		if ((Double.isNaN(fallbackMemEstimate)
 			|| fallbackMemEstimate <= 0.0) && childHop != null)
 			fallbackMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(childHop);
