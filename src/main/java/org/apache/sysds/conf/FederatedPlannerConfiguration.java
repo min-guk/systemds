@@ -39,8 +39,7 @@ public final class FederatedPlannerConfiguration {
 		return value == null || value.isEmpty() ? System.getenv(key) : value;
 	}
 
-	public static double captureDoublePropertyOrEnvironment(String key,
-		double defaultValue) {
+	public static double captureDoublePropertyOrEnvironment(String key, double defaultValue) {
 		String value = captureNonEmptyPropertyOrEnvironment(key);
 		if(value == null || value.isEmpty())
 			return defaultValue;
