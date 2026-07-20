@@ -55,7 +55,6 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
