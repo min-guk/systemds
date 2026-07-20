@@ -80,8 +80,6 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 
 		double actual = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
 			hop, null, logicalType, WORKERS);
-		Assert.assertEquals("current DP fallback must remain the independently proven RED NaN contract",
-			bits(Double.NaN), bits(actual));
 		Assert.assertEquals("owner proof must not mutate the controlled Hop", before, snapshot(hop));
 		Assert.assertEquals("finite input-memory fallback must equal the independent expected raw bits",
 			bits(independentExpected), bits(actual));
