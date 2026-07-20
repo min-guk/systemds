@@ -20,7 +20,6 @@ import org.junit.Test;
 
 /** Test-only RED owner proof for the DP estimator's NaN upload-memory fallback gap. */
 public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
-	private static final Object MUTABLE_SELECTOR_LOCK = new Object();
 	private static final int WORKERS = 3;
 	private static final double INPUT_MEM_BYTES = 4096.0;
 	private static final long ANCHOR_AXIS = 4;
@@ -28,22 +27,22 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 
 	@Test
 	public void nullUploadTypeMustRecoverFiniteInputMemory() {
-		assertNaNGap(new ControlledMemoryHop("nullType", 4, 1), null);
+		assertNaNGap(new ControlledMemoryHop("nullType", 4, 1), null, FType.ROW);
 	}
 
 	@Test
 	public void explicitUploadTypeMustRecoverFiniteInputMemory() {
-		assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL);
+		assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL, FType.BROADCAST);
 	}
 
-	private static void assertNaNGap(ControlledMemoryHop hop, FType logicalType) {
-		synchronized(MUTABLE_SELECTOR_LOCK) {
+	private static void assertNaNGap(ControlledMemoryHop hop, FType logicalType, FType expectedProjectedType) {
+		synchronized(CampaignBG011DpEstimatorNaNFallbackOwnerProofTest.class) {
 			MutableStateSnapshot outer = snapshotMutableState();
 			Assert.assertTrue("owner proof requires an empty planner registry", outer.fedState().isEmpty());
 			try {
 				FederatedPlannerUtils.registerFedInitVar(ANCHOR_VARIABLE, FType.ROW,
 					"g011-nan-fallback-owner-proof|0," + ANCHOR_AXIS + ';');
-				assertIndependentFiniteExpectedButProductionNaN(hop, logicalType);
+				assertIndependentFiniteExpectedButProductionNaN(hop, logicalType, expectedProjectedType);
 			}
 			finally {
 				FederatedPlannerUtils.removeFedAnchorKey(ANCHOR_VARIABLE);
@@ -54,7 +53,8 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 		}
 	}
 
-	private static void assertIndependentFiniteExpectedButProductionNaN(ControlledMemoryHop hop, FType logicalType) {
+	private static void assertIndependentFiniteExpectedButProductionNaN(ControlledMemoryHop hop, FType logicalType,
+		FType expectedProjectedType) {
 		HopSnapshot before = snapshot(hop);
 		Assert.assertEquals("controlled finite input estimate", bits(INPUT_MEM_BYTES),
 			bits(FederatedCostModel.getEffectiveInputMemEstimate(hop)));
@@ -62,6 +62,7 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 			bits(FederatedCostModel.getEffectiveUploadMemEstimate(hop)));
 
 		FType independentlyProjected = independentFallbackProjection(hop, logicalType);
+		Assert.assertSame("independent fallback projection", expectedProjectedType, independentlyProjected);
 		double independentNetworkCost = FederatedCostModel.computeUploadNetworkCost(
 			INPUT_MEM_BYTES, independentlyProjected, WORKERS);
 		double independentForwardingPenalty = FederatedCostModel.computeLocalToFedForwardingPenalty(
