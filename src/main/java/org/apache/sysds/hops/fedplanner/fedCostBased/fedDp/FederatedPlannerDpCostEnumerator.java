@@ -956,8 +956,14 @@ public class FederatedPlannerDpCostEnumerator {
 						hop, oracleLogicalFType, fedExecWeight, numOfWorkers, false);
 				double fedSelfCost = fedComputeCost + effectiveFedOverhead + singleWorkerFedPenalty
 						+ fedInstructionLatencyCost + inputPreparationCost;
+				double cpUploadMemEstimate = uploadMemEstimate;
+				if(Double.isNaN(cpUploadMemEstimate)) {
+					double inputMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(hop);
+					if(Double.isFinite(inputMemEstimate) && inputMemEstimate > 0)
+						cpUploadMemEstimate = inputMemEstimate;
+				}
 				double cpUploadCostWithoutWeight = exactEstimator.upload(
-						uploadMemEstimate, cpLogicalFType, numOfWorkers);
+						cpUploadMemEstimate, cpLogicalFType, numOfWorkers);
 				// NOTE: Do not add local-to-fed forwarding penalty here.
 				//
 				// The CP/FOUT candidate already pays a full multi-worker payload upload

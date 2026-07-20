@@ -546,10 +546,14 @@ public class FederatedPlannerDpCostEstimator {
 			}
 		}
 
-		double selfCost = hopCommon.getComputeWeight() * hopCommon.getMultiplicity()
-				* FederatedCostModel.computeLocalIndexingCostWithFallback(
-						hopCommon.hopRef,
-						FederatedCostModel.computeOpCostWithFallback(hopCommon.hopRef));
+		double modeledLocalCost = FederatedCostModel.computeLocalIndexingCostWithFallback(
+			hopCommon.hopRef, FederatedCostModel.computeOpCostWithFallback(hopCommon.hopRef));
+		if(Double.isNaN(modeledLocalCost)) {
+			double inputMemEstimate = FederatedCostModel.getEffectiveInputMemEstimate(hopCommon.hopRef);
+			if(Double.isFinite(inputMemEstimate) && inputMemEstimate > 0)
+				modeledLocalCost = FederatedCostModel.computeMemoryAccessCost(inputMemEstimate);
+		}
+		double selfCost = hopCommon.getComputeWeight() * hopCommon.getMultiplicity() * modeledLocalCost;
 		double forwardingCost = computeDownloadNetworkCost(
 			FederatedCostModel.getEffectiveOutputMemEstimate(hopCommon.hopRef));
 
