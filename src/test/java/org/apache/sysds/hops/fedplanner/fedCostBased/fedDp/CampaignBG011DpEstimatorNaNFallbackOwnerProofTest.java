@@ -27,16 +27,23 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 	private static final String ANCHOR_VARIABLE = "G011_NAN_FALLBACK_OWNER_PROOF";
 
 	@Test
-	public void finiteInputHasFiniteIndependentCostWhileCurrentNullAndExplicitPathsRemainNaN() {
+	public void nullUploadTypeMustRecoverFiniteInputMemory() {
+		assertNaNGap(new ControlledMemoryHop("nullType", 4, 1), null);
+	}
+
+	@Test
+	public void explicitUploadTypeMustRecoverFiniteInputMemory() {
+		assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL);
+	}
+
+	private static void assertNaNGap(ControlledMemoryHop hop, FType logicalType) {
 		synchronized(MUTABLE_SELECTOR_LOCK) {
 			MutableStateSnapshot outer = snapshotMutableState();
 			Assert.assertTrue("owner proof requires an empty planner registry", outer.fedState().isEmpty());
 			try {
 				FederatedPlannerUtils.registerFedInitVar(ANCHOR_VARIABLE, FType.ROW,
 					"g011-nan-fallback-owner-proof|0," + ANCHOR_AXIS + ';');
-
-				assertNaNGap(new ControlledMemoryHop("nullType", 4, 1), null);
-				assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL);
+				assertIndependentFiniteExpectedButProductionNaN(hop, logicalType);
 			}
 			finally {
 				FederatedPlannerUtils.removeFedAnchorKey(ANCHOR_VARIABLE);
@@ -47,7 +54,7 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 		}
 	}
 
-	private static void assertNaNGap(ControlledMemoryHop hop, FType logicalType) {
+	private static void assertIndependentFiniteExpectedButProductionNaN(ControlledMemoryHop hop, FType logicalType) {
 		HopSnapshot before = snapshot(hop);
 		Assert.assertEquals("controlled finite input estimate", bits(INPUT_MEM_BYTES),
 			bits(FederatedCostModel.getEffectiveInputMemEstimate(hop)));
@@ -74,9 +81,9 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 			hop, null, logicalType, WORKERS);
 		Assert.assertEquals("current DP fallback must remain the independently proven RED NaN contract",
 			bits(Double.NaN), bits(actual));
-		Assert.assertNotEquals("finite independent owner oracle must differ from current NaN result",
-			bits(independentExpected), bits(actual));
 		Assert.assertEquals("owner proof must not mutate the controlled Hop", before, snapshot(hop));
+		Assert.assertEquals("finite input-memory fallback must equal the independent expected raw bits",
+			bits(independentExpected), bits(actual));
 	}
 
 	private static FType independentFallbackProjection(ControlledMemoryHop hop, FType logicalType) {
@@ -135,6 +142,11 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 		@Override
 		public double getOutputMemEstimate() {
 			return Double.NaN;
+		}
+
+		@Override
+		public long getHopID() {
+			return -1;
 		}
 	}
 }
