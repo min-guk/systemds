@@ -187,32 +187,45 @@ public final class FederatedCostModel {
 	private static final double SINGLE_WORKER_CTRL_PENALTY_THRESHOLD_MS = 10.0;
 	// All costs are returned in milliseconds.
 	private static final double TO_MS = 1000.0;
-	private static final double MBS_MEMORY_BANDWIDTH = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_MEMORY_BANDWIDTH,
+	private static final double MBS_MEMORY_BANDWIDTH =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_MEMORY_BANDWIDTH,
 			DEFAULT_MBS_MEMORY_BANDWIDTH);
-	private static final double MBS_NETWORK_BANDWIDTH = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH,
+	private static final double MBS_NETWORK_BANDWIDTH =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH,
 			DEFAULT_MBS_NETWORK_BANDWIDTH);
-	private static final double MBS_NETWORK_BANDWIDTH_C2W = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH_C2W,
+	private static final double MBS_NETWORK_BANDWIDTH_C2W =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH_C2W,
 			MBS_NETWORK_BANDWIDTH);
-	private static final double MBS_NETWORK_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH_W2C,
+	private static final double MBS_NETWORK_BANDWIDTH_W2C =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_BANDWIDTH_W2C,
 			MBS_NETWORK_BANDWIDTH);
-	private static final double MBS_NETWORK_SERDES_BANDWIDTH = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH,
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH,
 			DEFAULT_MBS_NETWORK_SERDES_BANDWIDTH);
-	private static final double MBS_NETWORK_SERDES_BANDWIDTH_C2W = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W,
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH_C2W =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_C2W,
 			MBS_NETWORK_SERDES_BANDWIDTH);
-	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
+	private static final double MBS_NETWORK_SERDES_BANDWIDTH_W2C =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_SERDES_BANDWIDTH_W2C,
 			MBS_NETWORK_SERDES_BANDWIDTH);
-	private static final double MBS_NETWORK_LATENCY = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_LATENCY,
+	private static final double MBS_NETWORK_LATENCY =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_MBS_NETWORK_LATENCY,
 			DEFAULT_MBS_NETWORK_LATENCY);
-	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
+	private static final double LOCAL_TO_FED_CTRL_OVERHEAD_MS =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_LOCAL_TO_FED_CTRL_OVERHEAD_MS,
 			DEFAULT_LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-	private static final double UPLOAD_ESTIMATE_CLAMP_RATIO = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_UPLOAD_ESTIMATE_CLAMP_RATIO,
+	private static final double UPLOAD_ESTIMATE_CLAMP_RATIO =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_UPLOAD_ESTIMATE_CLAMP_RATIO,
 			DEFAULT_UPLOAD_ESTIMATE_CLAMP_RATIO);
 	private static final double UNKNOWN_DIM_TRANSFER_FALLBACK_BYTES =
-		Math.max(1.0, FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB,
+		Math.max(1.0, FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(
+			ENV_UNKNOWN_DIM_TRANSFER_FALLBACK_MB,
 			DEFAULT_UNKNOWN_DIM_TRANSFER_FALLBACK_MB) * 1024 * 1024);
-	private static final double FLOPS_PER_SEC = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_FLOPS_PER_SEC,
+	private static final double FLOPS_PER_SEC =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_FLOPS_PER_SEC,
 			DEFAULT_FLOPS_PER_SEC);
-	private static final double AGGBINARY_FLOPS_PER_SEC = FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_AGGBINARY_FLOPS_PER_SEC,
+	private static final double AGGBINARY_FLOPS_PER_SEC =
+		FederatedPlannerConfiguration.captureDoublePropertyOrEnvironment(ENV_AGGBINARY_FLOPS_PER_SEC,
 			Math.max(FLOPS_PER_SEC, DEFAULT_AGGBINARY_FLOPS_PER_SEC));
 
 	private FederatedCostModel() {
