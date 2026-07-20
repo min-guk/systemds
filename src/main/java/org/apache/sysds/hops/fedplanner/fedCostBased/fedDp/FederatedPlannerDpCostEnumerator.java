@@ -340,9 +340,10 @@ public class FederatedPlannerDpCostEnumerator {
 		return result;
 	}
 
-	public static FederatedPlannerDpMemoTable.FedPlan enumerateFunctionDynamic(FunctionStatementBlock function,
+	public static DpEnumerationResult enumerateFunctionDynamicWithReceipts(FunctionStatementBlock function,
 			FederatedPlannerDpMemoTable memoTable,
-			boolean isPrint) {
+			boolean isPrint, PlacementAnalysis analysis) {
+		Objects.requireNonNull(analysis, "analysis");
 		Map<Long, List<Hop>> rewireTable = new HashMap<>();
 		Map<Long, Set<Long>> parentChildUploadHints = new HashMap<>();
 		Set<Hop> progRootHopSet = new HashSet<>();
@@ -369,9 +370,6 @@ public class FederatedPlannerDpCostEnumerator {
 
 				int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 				memoTable.setNumWorkers(numOfWorkers);
-				PlacementAnalysis analysis = memoTable.analysis();
-				if(analysis == null)
-					throw new IllegalArgumentException("Dynamic DP enumeration requires captured placement analysis");
 				analysis.assertProgramOwner(prog);
 				RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 					analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
@@ -397,7 +395,7 @@ public class FederatedPlannerDpCostEnumerator {
 					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 		}
 		memoTable.registerAdditionalRootHopIDs(collectPredicateWriteRoots(hopCommonTable));
-		capture.semanticBlock();
+		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
 
 		FederatedPlannerDpMemoTable.FedPlan optimalPlan = getMinCostRootFedPlan(progRootHopSet, memoTable);
 
@@ -410,7 +408,7 @@ public class FederatedPlannerDpCostEnumerator {
 			FederatedPlannerLogger.printFedPlanTree(optimalPlan, unRefTwriteSet, memoTable, additionalTotalCost);
 		}
 
-		return optimalPlan;
+		return new DpEnumerationResult(optimalPlan, rewireSnapshot, semanticBlock);
 	}
 
 	/**

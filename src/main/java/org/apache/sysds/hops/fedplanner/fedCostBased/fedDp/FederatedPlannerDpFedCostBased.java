@@ -292,6 +292,25 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalArgumentException("DP invocation counters differ");
 		}
 	}
+
+	public record DpDynamicInvocationReceipt(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memoTable, DpEnumerationResult enumerationResult,
+		String fingerprintBefore, String fingerprintAfter) {
+		public DpDynamicInvocationReceipt {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(memoTable, "memoTable");
+			Objects.requireNonNull(enumerationResult, "enumerationResult");
+			Objects.requireNonNull(fingerprintBefore, "fingerprintBefore");
+			Objects.requireNonNull(fingerprintAfter, "fingerprintAfter");
+			if(memoTable.analysis() != analysis
+				|| enumerationResult.rewireSnapshot().analysis() != analysis
+				|| enumerationResult.semanticBlock().context().analysis() != analysis)
+				throw new IllegalArgumentException("Dynamic DP receipt producer identities differ");
+			if(!fingerprintBefore.equals(fingerprintAfter)
+				|| !analysis.analysisFingerprint().equals(fingerprintBefore))
+				throw new IllegalArgumentException("Supplied dynamic analysis changed during planning");
+		}
+	}
 	private static final int MAX_ENUM_INPUTS = 20; // guard against 2^n blowups and shift overflow
 	// Candidate 1: isolate the near-tie transient FOUT bundle widening heuristic
 	// without disabling seed/refine, locked transient propagation, or genuinely
@@ -415,10 +434,25 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
+		DMLProgram prog = function.getDMLProg();
+		PlacementAnalysis analysis = prog.requirePlacementAnalysisAuthority();
+		rewriteFunctionDynamic(function, funcArgs, analysis);
+	}
+
+	public DpDynamicInvocationReceipt rewriteFunctionDynamic(FunctionStatementBlock function,
+		LocalVariableMap funcArgs, PlacementAnalysis analysis) {
+		Objects.requireNonNull(function, "function");
+		Objects.requireNonNull(analysis, "analysis");
+		DMLProgram prog = function.getDMLProg();
+		analysis.assertProgramOwner(prog);
+		prog.requirePlacementAnalysisAuthority(analysis);
+		String fingerprintBefore = analysis.analysisFingerprint();
 		FederatedPlannerUtils.clearFedInitVars();
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		FederatedPlannerDpMemoTable.FedPlan optimalPlan = FederatedPlannerDpCostEnumerator.enumerateFunctionDynamic(
-			function, memoTable, FederatedPlannerTrace.isEnabled());
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable(analysis);
+		DpEnumerationResult enumerationResult =
+			FederatedPlannerDpCostEnumerator.enumerateFunctionDynamicWithReceipts(
+				function, memoTable, FederatedPlannerTrace.isEnabled(), analysis);
+		FederatedPlannerDpMemoTable.FedPlan optimalPlan = enumerationResult.optimalPlan();
 
 		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
 		Map<Long, ConflictEntry> rewriteConflictCheckMap =
@@ -457,6 +491,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 		registerDpLocalMaterializeRequests(localMaterializeRequests);
+		String fingerprintAfter = analysis.analysisFingerprint();
+		return new DpDynamicInvocationReceipt(
+			analysis, memoTable, enumerationResult, fingerprintBefore, fingerprintAfter);
 	}
 
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
