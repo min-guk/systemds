@@ -29,6 +29,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.logging.Log;
@@ -1247,10 +1248,10 @@ public class FederatedPlannerLogger {
 			String parentIds = formatTabularIds(facts.parentHopIds());
 			String networkCosts = formatNetworkCosts(facts.positiveChildNetworkCostsInInputOrder());
 			System.out.printf("%-7d | %-12s | %-20s | %-10s | %-13s | %-8s | %-9s | %-15s | %-15s | %-10.1f | %s%n",
-				facts.hopId(), hopType, opCode, nullDisplay(facts.forcedExecNameOrNull(), "N/A"),
-				nullDisplay(facts.outputNameOrNull(), "N/A"),
+				facts.hopId(), hopType, opCode, Objects.toString(facts.forcedExecNameOrNull(), "N/A"),
+				Objects.toString(facts.outputNameOrNull(), "N/A"),
 				facts.privacyNameOrNull() != null ? getPrivacyAbbreviation(facts.privacyNameOrNull()) : "N/A",
-				nullDisplay(facts.fTypeNameOrNull(), "N/A"), childIds, parentIds,
+				Objects.toString(facts.fTypeNameOrNull(), "N/A"), childIds, parentIds,
 				value(facts.tabularOpCostBits()), networkCosts);
 		}
 		System.out.println("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
@@ -1261,9 +1262,9 @@ public class FederatedPlannerLogger {
 		sb.append("[HopID]: ").append(facts.hopId())
 			.append(", [Name]: ").append(facts.opString())
 			.append(", [DataType]: ").append(facts.dataTypeName())
-			.append(", [ExecType]: ").append(nullDisplay(facts.effectiveExecNameOrNull(), "null"))
-			.append(", [OutputType]: ").append(nullDisplay(facts.outputNameOrNull(), "null"))
-			.append(", [FType]: ").append(nullDisplay(facts.fTypeNameOrNull(), "null"));
+			.append(", [ExecType]: ").append(Objects.toString(facts.effectiveExecNameOrNull(), "null"))
+			.append(", [OutputType]: ").append(Objects.toString(facts.outputNameOrNull(), "null"))
+			.append(", [FType]: ").append(Objects.toString(facts.fTypeNameOrNull(), "null"));
 		appendHopIds(sb, "ChildHopIDs", facts.childHopIds());
 		appendHopIds(sb, "ParentHopIDs", facts.parentHopIds());
 		sb.append(", [CostInfo]: {TotalCost: ").append(String.format(Locale.ROOT, "%.1f", value(facts.totalCostBits())))
@@ -1330,10 +1331,6 @@ public class FederatedPlannerLogger {
 			value.append(String.format("%d -> %.1f", cost.childHopId(), value(cost.costBits())));
 		}
 		return value.toString();
-	}
-
-	private static String nullDisplay(String value, String fallback) {
-		return value != null ? value : fallback;
 	}
 
 	private static double value(long bits) {
