@@ -67,7 +67,8 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		Assert.assertEquals(0L, missing.uploadCostBits());
 
 		DMLProgram ambiguousProgram = compile(federated("X", FType.ROW, 4, 2)
-			+ federated("Z", FType.COL, 2, 4) + "S=matrix(1,4,2);\nprint(sum(S));\n");
+			+ federated("Z", FType.COL, 2, 4)
+			+ "S=matrix(1,4,2);\nprint(sum(X)+sum(Z)+sum(S));\n");
 		PlacementAnalysis ambiguousAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(ambiguousProgram);
 		Projection ambiguous = new IndependentComparator(ambiguousAnalysis).project(
 			matrixOccurrence(ambiguousAnalysis, 4, 2, false), FType.ROW, WORKERS);
@@ -190,15 +191,40 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		long targetRows, long targetCols) throws Exception {
 		String target = targetRows > 0 && targetCols > 0
 			? "S=matrix(1," + targetRows + ',' + targetCols + ");\n"
-			: "S=read(\"unknown-owner-proof\");\n";
+			: "S=matrix(1," + anchorRows + ',' + anchorCols + ");\n";
 		DMLProgram program = compile(federated("X", anchorType, anchorRows, anchorCols)
-			+ target + "print(sum(S));\n");
+			+ target + "print(sum(X)+sum(S));\n");
+		if(targetRows <= 0 || targetCols <= 0) {
+			Hop unknown = program.getStatementBlocks().stream().flatMap(sb -> sb.getHops().stream())
+				.flatMap(root -> collect(root).stream())
+				.filter(hop -> hop.getDataType() == DataType.MATRIX && !hop.isFederatedDataOp()
+					&& hop.getDim1() == anchorRows && hop.getDim2() == anchorCols)
+				.findFirst().orElseThrow();
+			unknown.setDim1(-1);
+			unknown.setDim2(-1);
+		}
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		HopOccurrenceProjection occurrence = targetRows > 0 && targetCols > 0
 			? matrixOccurrence(analysis, targetRows, targetCols, false)
 			: analysis.occurrences().stream().filter(o -> o.hop().getDataType() == DataType.MATRIX
 				&& (o.hop().getDim1() <= 0 || o.hop().getDim2() <= 0)).findFirst().orElseThrow();
 		return new Fixture(program, analysis, occurrence);
+	}
+
+	private static List<Hop> collect(Hop root) {
+		List<Hop> result = new ArrayList<>();
+		Set<Hop> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		java.util.ArrayDeque<Hop> pending = new java.util.ArrayDeque<>();
+		pending.push(root);
+		while(!pending.isEmpty()) {
+			Hop hop = pending.pop();
+			if(!seen.add(hop))
+				continue;
+			result.add(hop);
+			for(Hop input : hop.getInput())
+				pending.push(input);
+		}
+		return result;
 	}
 
 	private static HopOccurrenceProjection matrixOccurrence(PlacementAnalysis analysis,
