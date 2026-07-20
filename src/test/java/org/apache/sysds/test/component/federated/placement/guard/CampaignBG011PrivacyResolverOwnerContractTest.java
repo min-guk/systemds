@@ -80,7 +80,7 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 		if(countIdentifier(tokens, "FederatedPlannerLogger") == 0)
 			failures.add("plannerContextLoggingMissing");
 		int fatalCheck = sequence(tokens, 0,
-			"if", "(", "privacyConstraint", "==", "null", "||", "hadPrivacyFailure", ")");
+			"if", "(", "privacyConstraint", "=", "=", "null", "|", "|", "hadPrivacyFailure", ")");
 		int fatalLog = sequence(tokens, Math.max(0, fatalCheck),
 			"FederatedPlannerLogger", ".", "logErrorMessage", "(");
 		int fatalThrow = sequence(tokens, Math.max(0, fatalCheck),
