@@ -15,6 +15,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
+import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse.ResponseType;
@@ -67,6 +69,43 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	}
 
 	@Test
+	public void plannerRetainsFatalMergeLoggingAndRegistersOnlyAfterResolution() throws Exception {
+		String plannerBody = JavaSourceBoundaryScanner.methodBody(
+			Files.readString(PLANNER_UTILS), "getFedWorkerMetaData", "List<Pair<FederatedRange, FederatedData>> fedMap");
+		List<JavaSourceTokenScanner.Token> tokens = JavaSourceTokenScanner.tokens(plannerBody);
+		List<String> failures = new ArrayList<>();
+
+		if(countIdentifier(tokens, "mergePrivacyConstraint") == 0)
+			failures.add("plannerPrivacyMergeMissing");
+		if(countIdentifier(tokens, "FederatedPlannerLogger") == 0)
+			failures.add("plannerContextLoggingMissing");
+		int fatalCheck = sequence(tokens, 0,
+			"if", "(", "privacyConstraint", "==", "null", "||", "hadPrivacyFailure", ")");
+		int fatalLog = sequence(tokens, Math.max(0, fatalCheck),
+			"FederatedPlannerLogger", ".", "logErrorMessage", "(");
+		int fatalThrow = sequence(tokens, Math.max(0, fatalCheck),
+			"throw", "new", "DMLRuntimeException", "(", "errorMsg", ")", ";");
+		int register = sequence(tokens, Math.max(0, fatalCheck), "registerFedInitVar", "(");
+		if(!(fatalCheck >= 0 && fatalLog > fatalCheck && fatalThrow > fatalLog && register > fatalThrow))
+			failures.add("fatalLogThrowMustPrecedeRegistration");
+		if(countIdentifier(tokens, "registerFedInitVar") != 1)
+			failures.add("fedInitRegistrations=" + countIdentifier(tokens, "registerFedInitVar"));
+
+		Assert.assertEquals("G011_PRIVACY_PLANNER_RETAINED_BOUNDARIES", List.of(), failures);
+	}
+
+	@Test
+	public void plannerPrivacyMergePreservesStrongestValueOrdering() throws Exception {
+		Assert.assertEquals(Privacy.PUBLIC, merge(null, "public"));
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC,
+			merge(Privacy.PUBLIC, "private-aggregate-to-public"));
+		Assert.assertEquals(Privacy.PRIVATE_AGGREGATE,
+			merge(Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, "private-aggregate"));
+		Assert.assertEquals(Privacy.PRIVATE, merge(Privacy.PRIVATE_AGGREGATE, "private"));
+		Assert.assertEquals(Privacy.PRIVATE, merge(Privacy.PRIVATE, "public"));
+	}
+
+	@Test
 	public void coordinatorLocalMetadataWinsWithoutWorkerRequest() throws Exception {
 		Path dataPath = workerDataPath("local-first");
 		writePrivacyMetadata(dataPath, "private");
@@ -107,6 +146,22 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 	}
 
 	@Test
+	public void successfulNullPayloadRecoversAndRetainsResponse() throws Exception {
+		Path dataPath = workerDataPath("null-payload");
+		FederatedData data = workerData(dataPath);
+		FederatedResponse response = new FederatedResponse(ResponseType.SUCCESS, (Object) null);
+		when(data.requestPrivacyConstraints()).thenAnswer(invocation -> {
+			writePrivacyMetadata(dataPath, "private");
+			return CompletableFuture.completedFuture(response);
+		});
+
+		Object result = resolve(data);
+
+		assertResolution(result, "private", "LOCAL_POST_REQUEST", "NULL_PAYLOAD", response, null);
+		verify(data).requestPrivacyConstraints();
+	}
+
+	@Test
 	public void unsuccessfulWorkerResponseRecoversAndRetainsResponse() throws Exception {
 		Path dataPath = workerDataPath("error-response");
 		FederatedData data = workerData(dataPath);
@@ -136,6 +191,33 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 
 		assertResolution(result, "private", "LOCAL_POST_REQUEST", "REQUEST_EXCEPTION", null, failure);
 		verify(data).requestPrivacyConstraints();
+	}
+
+	@Test
+	public void unresolvedWorkerResultsRetainFailureEvidenceWithoutLocalMetadata() throws Exception {
+		FederatedData nullResponseData = workerData(workerDataPath("unresolved-null-response"));
+		when(nullResponseData.requestPrivacyConstraints()).thenReturn(CompletableFuture.completedFuture(null));
+		assertResolution(resolve(nullResponseData), null, "UNRESOLVED", "NULL_RESPONSE", null, null);
+
+		FederatedData nullPayloadData = workerData(workerDataPath("unresolved-null-payload"));
+		FederatedResponse nullPayload = new FederatedResponse(ResponseType.SUCCESS, (Object) null);
+		when(nullPayloadData.requestPrivacyConstraints()).thenReturn(CompletableFuture.completedFuture(nullPayload));
+		assertResolution(resolve(nullPayloadData), null, "UNRESOLVED", "NULL_PAYLOAD", nullPayload, null);
+
+		FederatedData errorData = workerData(workerDataPath("unresolved-error"));
+		FederatedResponse error = new FederatedResponse(ResponseType.ERROR, "worker-error");
+		when(errorData.requestPrivacyConstraints()).thenReturn(CompletableFuture.completedFuture(error));
+		assertResolution(resolve(errorData), null, "UNRESOLVED", "ERROR_RESPONSE", error, null);
+
+		FederatedData exceptionData = workerData(workerDataPath("unresolved-exception"));
+		IllegalStateException failure = new IllegalStateException("request-failed");
+		when(exceptionData.requestPrivacyConstraints()).thenReturn(CompletableFuture.failedFuture(failure));
+		assertResolution(resolve(exceptionData), null, "UNRESOLVED", "REQUEST_EXCEPTION", null, failure);
+
+		verify(nullResponseData).requestPrivacyConstraints();
+		verify(nullPayloadData).requestPrivacyConstraints();
+		verify(errorData).requestPrivacyConstraints();
+		verify(exceptionData).requestPrivacyConstraints();
 	}
 
 	private FederatedData workerData(Path dataPath) {
@@ -186,6 +268,13 @@ public class CampaignBG011PrivacyResolverOwnerContractTest {
 
 	private static Object accessor(Object target, String name) throws Exception {
 		return target.getClass().getMethod(name).invoke(target);
+	}
+
+	private static Privacy merge(Privacy current, String rawPrivacy) throws Exception {
+		Method merge = FederatedPlannerUtils.class.getDeclaredMethod(
+			"mergePrivacyConstraint", Privacy.class, String.class);
+		merge.setAccessible(true);
+		return (Privacy) merge.invoke(null, current, rawPrivacy);
 	}
 
 	private static int countIdentifier(List<JavaSourceTokenScanner.Token> tokens, String identifier) {
