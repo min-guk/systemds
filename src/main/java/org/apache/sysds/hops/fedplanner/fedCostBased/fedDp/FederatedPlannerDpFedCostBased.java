@@ -418,7 +418,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		applyDeferredOutputDecisionStates(
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
-		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
+		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap, analysis);
 		registerDpLocalMaterializeRequests(localMaterializeRequests);
 		int noOps = (int) additionalRootInvocations.stream()
 			.filter(invocation -> invocation.disposition() == AdditionalRootDisposition.ALREADY_VISITED).count();

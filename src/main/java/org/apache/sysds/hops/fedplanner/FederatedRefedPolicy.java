@@ -61,6 +61,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -171,25 +172,34 @@ public final class FederatedRefedPolicy {
 	private FederatedRefedPolicy() {
 	}
 
+	public record ProgramRegistrationReceipt(PlacementAnalysis analysis,
+		List<StatementBlock> topLevelStatementBlocks) {
+	}
+
 	public static void registerFromProgram(DMLProgram prog) {
 		registerFromProgram(prog, null);
 	}
 
 	public static void registerFromProgram(DMLProgram prog, java.util.Map<Long, FType> fTypeMap) {
-		FederatedRefedRegistry.clear();
-		FederatedFoutMaterializeRegistry.clear();
-		FederatedLocalMaterializeRegistry.clear();
-		clearCpfoutAnchorCache();
-		clearGlobalTWriteCache();
-		FederatedPlannerUtils.clearFedAnchorKeys();
-		GLOBAL_SIGNATURE_ANCHOR_KEY.remove();
-		if (prog == null)
+		if (prog == null) {
+			resetProgramRegistrationState();
 			return;
-		AnchorSelection programAnchor = buildGlobalAnchorForProgram(prog, fTypeMap);
+		}
+		PlacementAnalysis analysis = prog.requirePlacementAnalysisAuthority();
+		registerFromProgram(prog, fTypeMap, analysis);
+	}
+
+	public static ProgramRegistrationReceipt registerFromProgram(DMLProgram prog,
+		java.util.Map<Long, FType> fTypeMap, PlacementAnalysis analysis) {
+		Objects.requireNonNull(prog, "Program must not be null for typed registration");
+		prog.requirePlacementAnalysisAuthority(analysis);
+		List<StatementBlock> topLevelStatementBlocks = analysis.topLevelStatementBlocks();
+		resetProgramRegistrationState();
+		AnchorSelection programAnchor = buildGlobalAnchorForProgram(topLevelStatementBlocks, fTypeMap);
 		if (programAnchor != null && programAnchor.key != null && !isVarAnchor(programAnchor.key))
 			GLOBAL_SIGNATURE_ANCHOR_KEY.set(programAnchor.key);
-		List<Hop> programScopeHops = collectAllHopsFromStatementBlocks(prog.getStatementBlocks());
-		for (StatementBlock sb : prog.getStatementBlocks())
+		List<Hop> programScopeHops = collectAllHopsFromStatementBlocks(topLevelStatementBlocks);
+		for (StatementBlock sb : topLevelStatementBlocks)
 			registerFromStatementBlock(sb, fTypeMap, programAnchor, false, programScopeHops);
 		for (String namespaceKey : prog.getNamespaces().keySet()) {
 			for (String fname : prog.getFunctionStatementBlocks(namespaceKey).keySet()) {
@@ -200,7 +210,7 @@ public final class FederatedRefedPolicy {
 				registerFromStatementBlock(fsb, fTypeMap, functionAnchor, true, functionScopeHops);
 			}
 		}
-		for (StatementBlock sb : prog.getStatementBlocks())
+		for (StatementBlock sb : topLevelStatementBlocks)
 			finalizeRegisteredStatementBlock(sb, fTypeMap, programAnchor, false, programScopeHops);
 		for (String namespaceKey : prog.getNamespaces().keySet()) {
 			for (String fname : prog.getFunctionStatementBlocks(namespaceKey).keySet()) {
@@ -211,6 +221,17 @@ public final class FederatedRefedPolicy {
 				finalizeRegisteredStatementBlock(fsb, fTypeMap, functionAnchor, true, functionScopeHops);
 			}
 		}
+		return new ProgramRegistrationReceipt(analysis, topLevelStatementBlocks);
+	}
+
+	private static void resetProgramRegistrationState() {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+		clearCpfoutAnchorCache();
+		clearGlobalTWriteCache();
+		FederatedPlannerUtils.clearFedAnchorKeys();
+		GLOBAL_SIGNATURE_ANCHOR_KEY.remove();
 	}
 
 	public static void registerFromFunction(FunctionStatementBlock function) {
@@ -2609,11 +2630,12 @@ public final class FederatedRefedPolicy {
 		return collectAllHops(new ArrayList<>(roots));
 	}
 
-	private static AnchorSelection buildGlobalAnchorForProgram(DMLProgram prog, java.util.Map<Long, FType> fTypeMap) {
-		if (prog == null)
+	private static AnchorSelection buildGlobalAnchorForProgram(List<StatementBlock> topLevelStatementBlocks,
+		java.util.Map<Long, FType> fTypeMap) {
+		if (topLevelStatementBlocks == null)
 			return null;
 		Set<Hop> roots = new HashSet<>();
-		for (StatementBlock sb : prog.getStatementBlocks())
+		for (StatementBlock sb : topLevelStatementBlocks)
 			collectRoots(sb, roots);
 		if (roots.isEmpty())
 			return null;
