@@ -155,6 +155,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
 		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
+		Map<CompiledHopKey,Long> scopes = new java.util.LinkedHashMap<>();
 		Map<Hop,NodeShapeFact> factsByHop = new IdentityHashMap<>();
 		List<CandidateRuleKey> candidateRuleDomainKeys = new ArrayList<>();
 		List<CandidateRuleFact> candidateRuleFacts = new ArrayList<>();
@@ -170,6 +171,7 @@ public final class NeutralPlacementGraphBuilder {
 			CompiledHopKey key = new CompiledHopKey(programId, occurrence.namespace(), occurrence.path(), context, region,
 				occurrence.topology(), PlacementGraphFingerprint.semanticStructuralKey(hop));
 			origins.put(key, hop);
+			scopes.put(key, occurrence.block().getSBID());
 			var shape = OracleFacade.nodeShape(hop);
 			NodeShapeFact shapeFact = new NodeShapeFact(shape.dataType(), shape.rows(), shape.cols());
 			factsByHop.put(hop, shapeFact);
@@ -221,9 +223,10 @@ public final class NeutralPlacementGraphBuilder {
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
-		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes, origins);
+		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes, origins, scopes);
 		nodes = functionExpansion.nodes();
 		origins = functionExpansion.origins();
+		scopes = functionExpansion.scopes();
 		nodesByHop.clear();
 		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
 		Set<Constraint> constraints = new java.util.TreeSet<>();
@@ -246,7 +249,10 @@ public final class NeutralPlacementGraphBuilder {
 			Hop hop = origins.get(key);
 			if(hop == null)
 				throw new IllegalStateException("Neutral placement node has no compiled Hop origin: " + key);
-			projections.add(new HopOccurrenceProjection(key, hop, ordinal, key.normalizedSignature()));
+			Long scopeId = scopes.get(key);
+			if(scopeId == null)
+				throw new IllegalStateException("Neutral placement node has no statement-block scope: " + key);
+			projections.add(new HopOccurrenceProjection(key, hop, scopeId, ordinal, key.normalizedSignature()));
 		}
 		Set<CompiledHopKey> expectedKeys = new LinkedHashSet<>();
 		var factsByKey = new LinkedHashMap<CompiledHopKey, NodeShapeFact>();
@@ -296,7 +302,7 @@ public final class NeutralPlacementGraphBuilder {
 
 	static String analysisFingerprint(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences) {
 		List<String> projectionSignatures = occurrences.stream()
-			.map(HopOccurrenceProjection::normalizedSignature).sorted().toList();
+			.map(occurrence -> occurrence.scopeId() + "|" + occurrence.normalizedSignature()).sorted().toList();
 		return PlacementGraphFingerprint.sha256(graph.normalizedSignature() + '\n'
 			+ String.join("\n", projectionSignatures));
 	}
@@ -480,10 +486,11 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static FunctionExpansion expandFunctionBoundaryContexts(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
-		Map<CompiledHopKey,Hop> origins) {
+		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes) {
 		List<Node> expanded = new ArrayList<>(nodes);
 		List<Constraint> constraints = new ArrayList<>();
 		Map<CompiledHopKey,Hop> expandedOrigins = new java.util.LinkedHashMap<>(origins);
+		Map<CompiledHopKey,Long> expandedScopes = new java.util.LinkedHashMap<>(scopes);
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
 		for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
@@ -491,6 +498,9 @@ public final class NeutralPlacementGraphBuilder {
 			if(!(hop instanceof FunctionOp)) continue;
 			FunctionOp callOp = (FunctionOp) hop;
 			Node call = nodes.get(callIndex);
+			Long callScope = scopes.get(call.key());
+			if(callScope == null)
+				throw new IllegalStateException("Function call has no statement-block scope: " + call.key());
 			String functionKey = callOp.getFunctionKey();
 			String[] inputNames = callOp.getInputVariableNames();
 			for(int inputPosition = 0; inputPosition < boundaryCount(inputNames, callOp.getInput().size()); inputPosition++) {
@@ -504,6 +514,7 @@ public final class NeutralPlacementGraphBuilder {
 					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives);
 				expanded.add(input);
 				expandedOrigins.put(input.key(), callOp);
+				expandedScopes.put(input.key(), callScope);
 				constraints.add(new Constraint(ConstraintKind.DOMINATES, call.key(), input.key(), inputPosition,
 					"function-callsite-control"));
 				if(argument != null)
@@ -519,12 +530,14 @@ public final class NeutralPlacementGraphBuilder {
 					transientAlternatives(call.legalAlternatives()));
 				expanded.add(output);
 				expandedOrigins.put(output.key(), callOp);
+				expandedScopes.put(output.key(), callScope);
 				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, call.key(), output.key(), outputPosition,
 					"function-result:" + outputName.canonicalSourceOriginToken()));
 			}
 		}
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
-			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins));
+			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins),
+			Collections.unmodifiableMap(expandedScopes));
 	}
 
 	private static int boundaryCount(String[] names, int structuralArity) {
@@ -585,7 +598,7 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private record FunctionExpansion(List<Node> nodes, List<Constraint> constraints,
-		Map<CompiledHopKey,Hop> origins) { }
+		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes) { }
 
 	private static void addCfgConstraints(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
 		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints, CfgAnalysis cfg) {

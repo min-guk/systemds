@@ -43,7 +43,6 @@ import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
@@ -53,6 +52,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCos
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationObserver;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.placement.ExactPlacementRegistration;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
@@ -418,7 +418,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		applyDeferredOutputDecisionStates(
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
-		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap, analysis);
+		ExactPlacementRegistration.registerProgram(prog, fTypeMap, analysis);
 		registerDpLocalMaterializeRequests(localMaterializeRequests);
 		int noOps = (int) additionalRootInvocations.stream()
 			.filter(invocation -> invocation.disposition() == AdditionalRootDisposition.ALREADY_VISITED).count();
@@ -489,7 +489,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		applyDeferredOutputDecisionStates(
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
-		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
+		ExactPlacementRegistration.registerProgram(prog, fTypeMap, analysis);
 		registerDpLocalMaterializeRequests(localMaterializeRequests);
 		String fingerprintAfter = analysis.analysisFingerprint();
 		return new DpDynamicInvocationReceipt(
@@ -4039,10 +4039,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						selectedPlan.getExecType() == ExecType.FED
 							&& selectedPlan.getFedOutType() == FederatedOutput.FOUT;
 					if (selectedFedFout) {
-						if (FederatedRefedPolicy.canSatisfyFederatedInputs(hopRef, contextualFTypeMap)) {
-							contextualFTypeMap.put(origHopID, contextualType);
-							changed = true;
-						}
+						if (!hasExactSelectedChildReceipt(memoTable, selectedPlanMap, selectedPlan))
+							continue;
+						contextualFTypeMap.put(origHopID, contextualType);
+						changed = true;
 					}
 					else {
 						// CP/LOUT (or FED/LOUT) selected plans can still provide a downstream-safe
@@ -4098,6 +4098,23 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 		return false;
+	}
+
+	private static boolean hasExactSelectedChildReceipt(FederatedPlannerDpMemoTable memoTable,
+		Map<Long, FederatedPlannerDpMemoTable.FedPlan> selectedPlanMap,
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan) {
+		if (memoTable == null || selectedPlanMap == null || selectedPlan == null
+			|| selectedPlan.getChildFedPlans() == null)
+			return false;
+		for (Pair<Long, FederatedOutput> childEdge : selectedPlan.getChildFedPlans()) {
+			if (childEdge == null || childEdge.getValue() == null)
+				return false;
+			FederatedPlannerDpMemoTable.FedPlan child =
+				selectedPlanMap.get(memoTable.resolveOriginalHopId(childEdge.getKey()));
+			if (child == null || child.getFedOutType() != childEdge.getValue())
+				return false;
+		}
+		return true;
 	}
 
 	private static List<Hop> collectSelectedSourceHops(

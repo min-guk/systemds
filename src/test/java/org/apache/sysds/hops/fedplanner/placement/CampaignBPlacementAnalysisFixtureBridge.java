@@ -40,7 +40,7 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		int ordinal = 0;
 		for(NeutralPlacementGraph.Node node : graph.nodes()) {
 			LiteralOp hop = new LiteralOp(ordinal + 1L);
-			projections.add(new HopOccurrenceProjection(node.key(), hop, ordinal++, node.key().normalizedSignature()));
+			projections.add(new HopOccurrenceProjection(node.key(), hop, -1L, ordinal++, node.key().normalizedSignature()));
 		}
 		if(order == ProjectionOrder.REVERSED) Collections.reverse(projections);
 		PlacementShapeFacts shapeFacts = syntheticShapeFacts(graph, projections);
@@ -142,7 +142,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 			String group = p.key().emittedHopInstance();
 			org.apache.sysds.hops.Hop hop = representative.putIfAbsent(group, p.hop());
 			if(hop == null) hop = p.hop(); else duplicate = true;
-			projections.add(new HopOccurrenceProjection(p.key(), hop, p.normalizedOrdinal(), p.normalizedSignature()));
+			projections.add(new HopOccurrenceProjection(p.key(), hop, p.scopeId(), p.normalizedOrdinal(),
+				p.normalizedSignature()));
 		}
 		if(!duplicate) {
 			representative.clear(); projections.clear();
@@ -150,7 +151,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 				String group = p.key().canonicalSourceOrigin();
 				org.apache.sysds.hops.Hop hop = representative.putIfAbsent(group, p.hop());
 				if(hop == null) hop = p.hop(); else duplicate = true;
-				projections.add(new HopOccurrenceProjection(p.key(), hop, p.normalizedOrdinal(), p.normalizedSignature()));
+				projections.add(new HopOccurrenceProjection(p.key(), hop, p.scopeId(), p.normalizedOrdinal(),
+					p.normalizedSignature()));
 			}
 		}
 		if(!duplicate) throw new AssertionError("R4_SAME_HOP_CONTEXT|no-repeated-B17-origin");
@@ -187,8 +189,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 			if(!occurrence.key().equals(key))
 				return occurrence;
 			found[0] = true;
-			return new HopOccurrenceProjection(occurrence.key(), hop, occurrence.normalizedOrdinal(),
-				occurrence.normalizedSignature());
+			return new HopOccurrenceProjection(occurrence.key(), hop, occurrence.scopeId(),
+				occurrence.normalizedOrdinal(), occurrence.normalizedSignature());
 		}).toList();
 		if(!found[0])
 			throw new AssertionError("R4_REPLACE_HOP_KEY_MISSING|key=" + key.normalizedSignature());
@@ -217,8 +219,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 					throw new AssertionError("R4_MISSING_HOP_KEY_DUPLICATE|key=" + key.normalizedSignature());
 				replaced = true;
 				occurrenceKey = dummyKey;
-				projections.add(new HopOccurrenceProjection(dummyKey, occurrence.hop(), occurrence.normalizedOrdinal(),
-					occurrence.normalizedSignature()));
+				projections.add(new HopOccurrenceProjection(dummyKey, occurrence.hop(), occurrence.scopeId(),
+					occurrence.normalizedOrdinal(), occurrence.normalizedSignature()));
 			}
 			else
 				projections.add(occurrence);
@@ -283,7 +285,7 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 	private static String testFingerprint(NeutralPlacementGraph graph,
 		List<HopOccurrenceProjection> projections) {
 		List<String> signatures = projections.stream()
-			.map(HopOccurrenceProjection::normalizedSignature).sorted().toList();
+			.map(projection -> projection.scopeId() + "|" + projection.normalizedSignature()).sorted().toList();
 		String canonical = graph.normalizedSignature() + '\n' + String.join("\n", signatures);
 		try {
 			byte[] digest = MessageDigest.getInstance("SHA-256")
@@ -301,7 +303,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 	public static List<String> fullSnapshot(PlacementAnalysis analysis) {
 		List<String> out = new ArrayList<>();
 		for(HopOccurrenceProjection p : analysis.occurrences()) out.add("P|" + p.key().normalizedSignature()
-			+ '|' + p.normalizedOrdinal() + '|' + p.normalizedSignature() + '|' + System.identityHashCode(p.hop()));
+			+ '|' + p.scopeId() + '|' + p.normalizedOrdinal() + '|' + p.normalizedSignature() + '|'
+			+ System.identityHashCode(p.hop()));
 		for(NeutralPlacementGraph.Node n : analysis.graph().nodes()) out.add("N|" + n.key().normalizedSignature()
 			+ '|' + n.kind() + '|' + n.valueVersion().normalizedSignature() + '|' + n.legalAlternatives()
 			+ '|' + n.exclusions() + '|' + n.anchors());

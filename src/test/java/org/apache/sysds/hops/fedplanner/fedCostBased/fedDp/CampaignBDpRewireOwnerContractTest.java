@@ -103,8 +103,8 @@ public class CampaignBDpRewireOwnerContractTest {
 			claims.additionalRoots()));
 		List<HopOccurrenceProjection> copiedOccurrence = new ArrayList<>(owner.fixture().analysis().occurrences());
 		HopOccurrenceProjection first = copiedOccurrence.get(0);
-		copiedOccurrence.set(0, new HopOccurrenceProjection(first.key(), first.hop(), first.normalizedOrdinal(),
-			first.normalizedSignature()));
+		copiedOccurrence.set(0, new HopOccurrenceProjection(first.key(), first.hop(), first.scopeId(),
+			first.normalizedOrdinal(), first.normalizedSignature()));
 		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
 			copiedOccurrence, claims.cloneAssociations(), claims.additionalRoots()));
 		List<HopOccurrenceProjection> reordered = new ArrayList<>(owner.fixture().analysis().occurrences());
@@ -210,7 +210,8 @@ public class CampaignBDpRewireOwnerContractTest {
 		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
 			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), List.of(substitutedRoot)));
 		HopOccurrenceProjection copiedRoot = new HopOccurrenceProjection(substitutedRoot.key(),
-			substitutedRoot.hop(), substitutedRoot.normalizedOrdinal(), substitutedRoot.normalizedSignature());
+			substitutedRoot.hop(), substitutedRoot.scopeId(), substitutedRoot.normalizedOrdinal(),
+			substitutedRoot.normalizedSignature());
 		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),
 			owner.fixture().analysis().occurrences(), claims.cloneAssociations(), List.of(copiedRoot)));
 		expectReject(owner, before, new RewireRequest(owner.fixture().analysis(), owner.fixture().program(),

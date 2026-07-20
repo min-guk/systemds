@@ -33,6 +33,16 @@ public class PlacementAnalysisOriginProjectionTest {
 		for(String fixture : List.of("B-07", "B-17", "B-21")) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
 			List<Hop> independentlyTraversed = allHops(program);
+			Map<Hop,List<Long>> expectedScopes = new IdentityHashMap<>();
+			for(PlacementGraphFingerprint.HopOccurrence occurrence
+				: PlacementGraphFingerprint.orderedOccurrences(program)) {
+				int multiplicity = occurrence.hop() instanceof FunctionOp
+					? 1 + ((FunctionOp) occurrence.hop()).getInputVariableNames().length
+						+ ((FunctionOp) occurrence.hop()).getOutputVariableNames().length : 1;
+				for(int i = 0; i < multiplicity; i++)
+					expectedScopes.computeIfAbsent(occurrence.hop(), ignored -> new ArrayList<>())
+						.add(occurrence.block().getSBID());
+			}
 			Set<Hop> identities = Collections.newSetFromMap(new IdentityHashMap<>());
 			identities.addAll(independentlyTraversed);
 			Map<Hop,Integer> expectedMultiplicity = new IdentityHashMap<>();
@@ -43,15 +53,21 @@ public class PlacementAnalysisOriginProjectionTest {
 
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 			Map<Hop,Integer> actualMultiplicity = new IdentityHashMap<>();
+			Map<Hop,List<Long>> actualScopes = new IdentityHashMap<>();
 			for(HopOccurrenceProjection projection : analysis.occurrences()) {
 				Assert.assertTrue(fixture + " projected an identity absent from independent traversal",
 					identities.contains(projection.hop()));
 				actualMultiplicity.merge(projection.hop(), 1, Integer::sum);
+				actualScopes.computeIfAbsent(projection.hop(), ignored -> new ArrayList<>()).add(projection.scopeId());
 				if(projection.key().canonicalSourceOrigin().startsWith("function-boundary:"))
 					assertIndependentFunctionBoundary(fixture, projection);
 			}
 			Assert.assertEquals(fixture + " concrete Hop/context multiplicity", expectedMultiplicity,
 				actualMultiplicity);
+			Assert.assertEquals(fixture + " exact scope owner count", expectedScopes.size(), actualScopes.size());
+			for(Map.Entry<Hop,List<Long>> expectedScope : expectedScopes.entrySet())
+				Assert.assertEquals(fixture + " exact main/nested/function/call-boundary statement-block scopes",
+					expectedScope.getValue(), actualScopes.get(expectedScope.getKey()));
 			Assert.assertEquals(fixture, analysis.graph().nodes().size(), analysis.occurrences().size());
 		}
 	}
@@ -75,6 +91,10 @@ public class PlacementAnalysisOriginProjectionTest {
 		Assert.assertEquals("shared Hop must project through two distinct compiled keys", 2,
 			analysis.occurrences().stream().filter(value -> value.hop() == shared)
 				.map(HopOccurrenceProjection::key).distinct().count());
+		Assert.assertEquals("shared Hop projections must retain both exact owning statement-block scopes",
+			Set.of(program.getStatementBlocks().get(0).getSBID(), program.getStatementBlocks().get(1).getSBID()),
+			analysis.occurrences().stream().filter(value -> value.hop() == shared)
+				.map(HopOccurrenceProjection::scopeId).collect(java.util.stream.Collectors.toSet()));
 	}
 
 	private static DMLProgram sharedHopAcrossStatementBlocks(Hop shared) {

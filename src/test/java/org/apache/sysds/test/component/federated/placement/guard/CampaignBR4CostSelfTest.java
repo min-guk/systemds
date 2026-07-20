@@ -226,7 +226,8 @@ public class CampaignBR4CostSelfTest {
 			.filter(e->e.fixture().equals("C2-DP-08-UNKNOWN-METADATA")&&e.planner().equals("DP")).findFirst().orElseThrow();
 		var input=(CampaignBFrozenCostFixtureBridge.GraphExclusionInput)CampaignBFrozenCostFixtureBridge.fresh(expected).input();var exact=input.receipt();
 		var copiedOccurrence=new org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection(
-			exact.occurrence().key(),exact.occurrence().hop(),exact.occurrence().normalizedOrdinal(),exact.occurrence().normalizedSignature());
+			exact.occurrence().key(),exact.occurrence().hop(),exact.occurrence().scopeId(),
+			exact.occurrence().normalizedOrdinal(),exact.occurrence().normalizedSignature());
 		Assert.assertThrows(IllegalArgumentException.class,()->new org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.GraphExclusionReceipt(
 			input.analysis(),copiedOccurrence,exact.node(),exact.exclusion()));
 		var copiedNode=new org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node(exact.node().key(),exact.node().kind(),

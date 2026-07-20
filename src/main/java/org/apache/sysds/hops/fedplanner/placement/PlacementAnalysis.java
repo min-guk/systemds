@@ -449,7 +449,7 @@ public final class PlacementAnalysis {
 		public boolean knownPositiveMatrix() { return dataType == DataType.MATRIX && rows > 0 && cols > 0; }
 	}
 	/** Stable association between a neutral graph key and its concrete compiled Hop origin. */
-	public record HopOccurrenceProjection(CompiledHopKey key, Hop hop, int normalizedOrdinal,
+	public record HopOccurrenceProjection(CompiledHopKey key, Hop hop, long scopeId, int normalizedOrdinal,
 		String normalizedSignature) {
 		public HopOccurrenceProjection {
 			Objects.requireNonNull(key, "key");

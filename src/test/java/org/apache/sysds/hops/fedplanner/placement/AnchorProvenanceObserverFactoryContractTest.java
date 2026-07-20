@@ -219,7 +219,7 @@ public class AnchorProvenanceObserverFactoryContractTest {
 			Hop hop = occurrence.hop();
 			if(hop instanceof DataOp && ((DataOp) hop).isFederatedDataOp()) {
 				Node node = analysis.graph().node(occurrence.key()).orElseThrow(AssertionError::new);
-				matches.add(new SourceBinding((DataOp) hop, occurrence.key(), node));
+				matches.add(new SourceBinding((DataOp) hop, occurrence.key(), occurrence.scopeId(), node));
 			}
 		}
 		Assert.assertEquals("fixture must have one exact federated DataOp occurrence", 1, matches.size());
@@ -266,7 +266,7 @@ public class AnchorProvenanceObserverFactoryContractTest {
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, source.graph().constraints(),
 			source.graph().relocationActions());
 		List<HopOccurrenceProjection> projections = new ArrayList<>(source.occurrences());
-		projections.add(new HopOccurrenceProjection(duplicateKey, binding.dataOp, projections.size(),
+		projections.add(new HopOccurrenceProjection(duplicateKey, binding.dataOp, binding.scopeId, projections.size(),
 			duplicateKey.normalizedSignature()));
 		return new PlacementAnalysis(graph, projections, null, shapeFacts(source, projections),
 			"multiple-occurrence-" + source.analysisFingerprint(), source.heuristicPolicyFacts());
@@ -303,7 +303,7 @@ public class AnchorProvenanceObserverFactoryContractTest {
 		return new PlacementShapeFacts(facts, expectedKeys);
 	}
 
-	private record SourceBinding(DataOp dataOp, CompiledHopKey key, Node node) { }
+	private record SourceBinding(DataOp dataOp, CompiledHopKey key, long scopeId, Node node) { }
 
 	private static final class AnalysisSnapshot {
 		private final PlacementAnalysis analysis;
