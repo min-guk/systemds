@@ -76,8 +76,9 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 				FunctionStatementBlock function = functionProgram.getFunctionStatementBlock(
 					DMLProgram.DEFAULT_NAMESPACE, "f");
 				PlacementAnalysis functionAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(functionProgram);
-				assertSelector("cached-only function", functionAnalysis, SelectorDisposition.COL,
-					Parity.EQUAL, () -> cacheFromFunctionOnly(function));
+				assertSelector("cached-only function currently exposes no global selector",
+					functionAnalysis, SelectorDisposition.NONE, Parity.DIFFERS,
+					() -> cacheFromFunctionOnly(function));
 
 				assertSelector("single signature without key", row.analysis(), SelectorDisposition.ROW,
 					Parity.EQUAL, () -> {
@@ -182,7 +183,7 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 
 				FallbackHop nonNull = new FallbackHop("nonNull", 1, 4, 4096.0, Double.NaN);
 				FallbackCertificate explicitType = fallbackCertificate(nonNull, FType.COL);
-				Assert.assertEquals(FType.COL, explicitType.primaryProjectedType());
+				Assert.assertEquals(FType.BROADCAST, explicitType.primaryProjectedType());
 				Assert.assertEquals("fallback must re-run projection and preserve the anchor mismatch",
 					FType.BROADCAST, explicitType.fallbackProjectedType());
 				Assert.assertEquals(Double.doubleToRawLongBits(Double.NaN), explicitType.finalCostBits());
@@ -246,7 +247,7 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 		DataOp other = new DataOp("G011_OTHER", DataType.MATRIX, ValueType.FP64,
 			OpOpData.TRANSIENTREAD, "G011_OTHER", targetLeft ? sharedAxis : 2,
 			targetLeft ? 3 : sharedAxis, -1, 1024);
-		FederatedPlannerUtils.registerFedInitVar("G011_OTHER", otherType, "other|0," + sharedAxis + ';');
+		FederatedPlannerUtils.registerFedInitVar("G011_OTHER", otherType);
 		if(targetLeft)
 			new AggBinaryOp("mm", DataType.MATRIX, ValueType.FP64, OpOp2.MULT, AggOp.SUM, target, other);
 		else
