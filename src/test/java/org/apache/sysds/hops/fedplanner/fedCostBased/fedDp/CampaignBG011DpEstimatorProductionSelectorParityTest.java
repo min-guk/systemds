@@ -26,6 +26,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.FedVarSnapshot;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.ExactPlacementRegistration;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
@@ -374,6 +375,10 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 	}
 
 	private static void cacheFromProgramOnly(DMLProgram program) {
+		PlacementAnalysis analysis = program.requirePlacementAnalysisAuthority();
+		ExactPlacementRegistration.Receipt receipt = ExactPlacementRegistration.registerProgram(program, Map.of(), analysis);
+		Assert.assertSame("typed registration must retain canonical PlacementAnalysis authority",
+			analysis, receipt.analysis());
 		FederatedRefedPolicy.registerFromProgram(program);
 		removeAllFedState();
 	}

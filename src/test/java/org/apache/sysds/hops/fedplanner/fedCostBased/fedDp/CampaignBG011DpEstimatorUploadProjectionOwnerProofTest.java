@@ -8,25 +8,41 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOp2;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.OptimizerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
+import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -40,6 +56,45 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		assertSingletonParity(FType.ROW, 4, 2, 3, 2, FType.BROADCAST);
 		assertSingletonParity(FType.COL, 2, 4, 2, 4, FType.COL);
 		assertSingletonParity(FType.COL, 2, 4, 2, 3, FType.BROADCAST);
+	}
+
+	@Test
+	public void canonicalEnumeratorPublishesTypedProjectionReceiptAndSelectedPlanUploadBits() throws Exception {
+		CanonicalFixture fixture = canonicalFixture();
+		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(
+			fixture.program(), fixture.memo(), false, fixture.analysis());
+		PreSelectionSemanticBlock block = result.semanticBlock();
+		CandidateDecisionReceipt decision = exactDecision(block, fixture.targetOccurrence());
+		NormalizedCandidateInputs normalized = DpPlacementAdapter.normalizeCandidateInputs(
+			block.context(), fixture.targetOccurrence(), List.of(), List.of(), List.of(), Map.of(), fixture.memo());
+		Assert.assertSame("canonical analysis authority", fixture.analysis(), block.context().analysis());
+		Assert.assertSame("receipt context identity", block.context(), decision.context());
+		Assert.assertEquals("normalized occurrence key", decision.candidateSnapshot().parentOccurrence(),
+			normalized.snapshot().parentOccurrence());
+		Assert.assertEquals("normalized oracle inputs", decision.orderedOracleInputs(),
+			normalized.snapshot().orderedOracleInputs());
+		FType projected = PlacementCandidateRuleResolver.projectConsumerSafeType(
+			decision.logicalFType(), decision.invocationEvidence().projection());
+		Assert.assertSame("typed receipt projects the row anchor mismatch to BROADCAST", FType.BROADCAST, projected);
+		FedPlan cpFout = exactPlan(fixture.memo(), fixture.targetOccurrence(), FederatedOutput.FOUT, ExecType.CP);
+		FedPlan cpLout = exactPlan(fixture.memo(), fixture.targetOccurrence(), FederatedOutput.LOUT, ExecType.CP);
+		Assert.assertSame("memo-selected FOUT plan", cpFout,
+			fixture.memo().getFedPlanAfterPrune(fixture.targetOccurrence(), FederatedOutput.FOUT));
+		Assert.assertEquals("CP variants retain identical child edges",
+			cpLout.getChildFedPlans(), cpFout.getChildFedPlans());
+		Assert.assertSame("selected CP/FOUT plan FType", projected, cpFout.getFType());
+		Assert.assertSame("selected CP/FOUT materialization type", projected, cpFout.getCpFoutType());
+		Assert.assertTrue("selected CP/FOUT materialization is accounted",
+			cpFout.isFoutMaterializationAccounted());
+		Assert.assertSame("ExactEstimator binds the same canonical analysis", fixture.analysis(),
+			FederatedPlannerDpCostEstimator.bindExact(fixture.analysis(), fixture.targetOccurrence(), fixture.memo())
+				.estimate(cpFout).analysis());
+		double expectedBoundary = cpFout.getComputeWeight() * cpFout.getMultiplicity()
+			* FederatedCostModel.computeUploadNetworkCost(CANONICAL_FALLBACK_PAYLOAD, projected,
+				block.context().numWorkers());
+		double rawDelta = cpFout.getCumulativeCost() - cpLout.getCumulativeCost();
+		Assert.assertEquals("selected CP/FOUT upload boundary bits",
+			Double.doubleToRawLongBits(expectedBoundary), Double.doubleToRawLongBits(rawDelta));
 	}
 
 	@Test
@@ -107,22 +162,53 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		AnalysisSnapshot before = snapshot(fixture.analysis());
 		IndependentComparator comparator = new IndependentComparator(fixture.analysis());
 		Projection independent = comparator.project(fixture.target(), anchorType, WORKERS);
-		Projection selected = selectedProjectionOracle(fixture.analysis(), fixture.target(), anchorType, WORKERS);
+		Projection typedCost = typedEstimatorCostOracle(fixture, anchorType, WORKERS);
 
 		Assert.assertSame(Disposition.ACCEPTED_SINGLETON, independent.disposition());
 		Assert.assertSame(expected, independent.projectedType());
-		Assert.assertSame(selected.projectedType(), independent.projectedType());
-		Assert.assertEquals(selected.uploadCostBits(), independent.uploadCostBits());
+		Assert.assertSame(typedCost.projectedType(), independent.projectedType());
+		Assert.assertEquals(typedCost.uploadCostBits(), independent.uploadCostBits());
 		assertSnapshotSame(before, snapshot(fixture.analysis()));
 	}
 
-	private static Projection selectedProjectionOracle(PlacementAnalysis analysis,
-		HopOccurrenceProjection occurrence, FType logicalType, int workers) {
-		Projection typed = new IndependentComparator(analysis).project(occurrence, logicalType, workers);
+	private static Projection typedEstimatorCostOracle(Fixture fixture, FType logicalType, int workers) {
+		Projection typed = new IndependentComparator(fixture.analysis()).project(fixture.target(), logicalType, workers);
 		double cost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
-			occurrence.hop(), null, typed.projectedType(), workers);
-		return new Projection(analysis, occurrence, typed.disposition(), typed.anchor(),
+			fixture.target().hop(), null, typed.projectedType(), workers);
+		return new Projection(fixture.analysis(), fixture.target(), typed.disposition(), typed.anchor(),
 			typed.projectedType(), Double.doubleToRawLongBits(cost));
+	}
+
+
+	private static CandidateDecisionReceipt exactDecision(PreSelectionSemanticBlock block,
+		HopOccurrenceProjection occurrence) {
+		List<CandidateDecisionReceipt> matches = block.candidateDecisionReceipts().stream()
+			.filter(candidate -> candidate.candidateSnapshot().parentOccurrence() == occurrence.key()).toList();
+		Assert.assertEquals("target must retain one exact candidate decision", 1, matches.size());
+		CandidateDecisionReceipt decision = matches.get(0);
+		int index = identityIndex(block.candidateDecisionReceipts(), decision);
+		Assert.assertTrue("target decision must be retained by exact identity", index >= 0);
+		Assert.assertSame("decision snapshot must be retained by exact identity",
+			block.candidateSnapshots().get(index), decision.candidateSnapshot());
+		Assert.assertEquals("decision variant ordinal", block.candidateVariantOrdinals().get(index).longValue(),
+			decision.variantOrdinal());
+		return decision;
+	}
+
+	private static FedPlan exactPlan(FederatedPlannerDpMemoTable memo, HopOccurrenceProjection occurrence,
+		FederatedOutput output, ExecType exec) {
+		FedPlanVariants variants = memo.getFedPlanVariants(Pair.of(occurrence.hop().getHopID(), output));
+		Assert.assertNotNull("missing target " + output + " variants", variants);
+		List<FedPlan> matches = variants.getFedPlanVariants().stream()
+			.filter(plan -> plan.getExecType() == exec).toList();
+		Assert.assertFalse("target must retain a " + exec + '/' + output + " plan", matches.isEmpty());
+		return matches.get(0);
+	}
+
+	private static int identityIndex(List<CandidateDecisionReceipt> values, CandidateDecisionReceipt target) {
+		for(int i = 0; i < values.size(); i++)
+			if(values.get(i) == target) return i;
+		return -1;
 	}
 
 	private static final class IndependentComparator {
@@ -198,6 +284,33 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		return new Fixture(program, analysis, occurrence);
 	}
 
+	private static CanonicalFixture canonicalFixture() throws Exception {
+		DMLProgram compiled = compile(anchoredGeometry());
+		Hop anchor = compiled.getStatementBlocks().stream().flatMap(block -> block.getHops().stream())
+			.flatMap(root -> collect(root).stream()).filter(Hop::isFederatedDataOp).findFirst().orElseThrow();
+		anchor.getParent().clear();
+		ControlledMemoryHop target = new ControlledMemoryHop();
+		Hop consumer = HopRewriteUtils.createBinary(anchor, target, OpOp2.RBIND);
+		consumer.setDim1(anchor.getDim1() + target.getDim1());
+		consumer.setDim2(anchor.getDim2());
+		StatementBlock block = new StatementBlock();
+		block.setHops(new ArrayList<>(List.of(consumer)));
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(List.of(block)));
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
+		Assert.assertSame("canonical fixture authority", analysis, program.requirePlacementAnalysisAuthority());
+		HopOccurrenceProjection occurrence = analysis.occurrences().stream()
+			.filter(candidate -> candidate.hop() == target).findFirst().orElseThrow();
+		return new CanonicalFixture(program, analysis, occurrence, new FederatedPlannerDpMemoTable(analysis));
+	}
+
+	private static String anchoredGeometry() {
+		return "L=matrix(0,4,2);\n"
+			+ "X=federated(local_matrix=L,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
+			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
+			+ "print(sum(X));\n";
+	}
+
 	private static List<Hop> collect(Hop root) {
 		List<Hop> result = new ArrayList<>();
 		Set<Hop> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
@@ -228,14 +341,6 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		return Set.copyOf(anchors);
 	}
 
-	private static String signature(DurableAnchorKey anchor) {
-		StringBuilder ranges = new StringBuilder("owner-proof|");
-		int axis = anchor.fType() == FType.ROW ? 0 : 1;
-		for(AnchorPartition partition : anchor.partitions())
-			ranges.append(partition.begin().get(axis)).append(',')
-				.append(partition.end().get(axis)).append(';');
-		return ranges.toString();
-	}
 
 	private static String federated(String variable, FType type, long rows, long cols) {
 		if(type == FType.ROW)
@@ -292,12 +397,26 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		}
 	}
 
+	private static final double CANONICAL_FALLBACK_PAYLOAD = 4096.0;
+
 	private enum Disposition { ACCEPTED_SINGLETON, AMBIGUOUS_ANCHOR, MISSING_ANCHOR, UNKNOWN_SHAPE, ZERO_TRANSFER }
 	private record Projection(PlacementAnalysis analysis, HopOccurrenceProjection occurrence,
 		Disposition disposition, DurableAnchorKey anchor, FType projectedType, long uploadCostBits) { }
 	private record Fixture(DMLProgram program, PlacementAnalysis analysis, HopOccurrenceProjection target) { }
+	private record CanonicalFixture(DMLProgram program, PlacementAnalysis analysis,
+		HopOccurrenceProjection targetOccurrence, FederatedPlannerDpMemoTable memo) { }
 	private record HopState(HopOccurrenceProjection occurrence, Hop hop, long rows, long cols, DataType dataType) { }
 	private record AnalysisSnapshot(PlacementAnalysis analysis, NeutralPlacementGraph graph, String fingerprint,
 		List<HopOccurrenceProjection> occurrences, List<String> identities, List<String> anchors,
 		List<String> relocations, List<HopState> hops) { }
+
+	private static final class ControlledMemoryHop extends DataOp {
+		private ControlledMemoryHop() {
+			super("S", DataType.MATRIX, ValueType.FP64, OpOpData.PERSISTENTREAD,
+				"G011_CANONICAL_CONTROLLED_MEMORY", 1, 2, -1, 1024);
+		}
+
+		@Override public double getInputMemEstimate() { return CANONICAL_FALLBACK_PAYLOAD; }
+		@Override public double getOutputMemEstimate() { return Double.NaN; }
+	}
 }

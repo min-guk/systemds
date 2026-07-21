@@ -35,6 +35,21 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 		assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL, FType.COL);
 	}
 
+	@Test
+	public void canonicalTypedReceiptOwnerProofCoversNaNFallbackProductionPath() {
+		synchronized(CampaignBG011DpEstimatorNaNFallbackOwnerProofTest.class) {
+			MutableStateSnapshot outer = snapshotMutableState();
+			try {
+				new CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest()
+					.canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt();
+			}
+			finally {
+				clearSelectorState();
+				assertMutableStateSame(outer, snapshotMutableState());
+			}
+		}
+	}
+
 	private static void assertNaNGap(ControlledMemoryHop hop, FType logicalType, FType expectedProjectedType) {
 		synchronized(CampaignBG011DpEstimatorNaNFallbackOwnerProofTest.class) {
 			MutableStateSnapshot outer = snapshotMutableState();
@@ -93,6 +108,14 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 	private static FType independentVectorAxis(Hop hop) {
 		return hop.getDim1() == 1 && hop.getDim2() > 1 ? FType.COL
 			: hop.getDim2() == 1 && hop.getDim1() > 1 ? FType.ROW : null;
+	}
+
+	private static void clearSelectorState() {
+		for(String name : List.copyOf(FederatedPlannerUtils.snapshotFedState().keySet())) {
+			FederatedPlannerUtils.removeFedAnchorKey(name);
+			FederatedPlannerUtils.removeFedInitVar(name);
+		}
+		FederatedRefedPolicy.registerFromProgram((DMLProgram) null);
 	}
 
 	private static MutableStateSnapshot snapshotMutableState() {
