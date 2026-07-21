@@ -66,19 +66,6 @@ final class MinStExactTwoDecisionOracle {
 			throw new IllegalArgumentException("MinST objective differs from literal capacities");
 	}
 
-	static void validateLiteral(OwnerBoundLiteral literal, String expectedFingerprint,
-		List<Long> expectedScope, List<String> expectedStates, List<String> expectedObligations) {
-		if(!literal.analysisFingerprint().equals(expectedFingerprint))
-			throw new IllegalArgumentException("MinST literal has a foreign owner fingerprint");
-		if(!literal.orderedScope().equals(expectedScope))
-			throw new IllegalArgumentException("MinST literal scope order/cardinality changed");
-		validateObjective(literal.edges(), literal.selection());
-		if(!literal.selectedStatesInScopeOrder().equals(expectedStates))
-			throw new IllegalArgumentException("MinST selected state order changed");
-		if(!literal.obligationReceiptsInOrder().equals(expectedObligations))
-			throw new IllegalArgumentException("MinST obligation order changed");
-	}
-
 	static long bits(double value) {
 		return Double.doubleToRawLongBits(value);
 	}
@@ -88,16 +75,6 @@ final class MinStExactTwoDecisionOracle {
 	record Selection(long objectiveBits, List<Long> sourceNodeIds, int mask) {
 		Selection {
 			sourceNodeIds = List.copyOf(sourceNodeIds);
-		}
-	}
-
-	record OwnerBoundLiteral(String analysisFingerprint, List<Long> orderedScope, List<Edge> edges,
-		Selection selection, List<String> selectedStatesInScopeOrder, List<String> obligationReceiptsInOrder) {
-		OwnerBoundLiteral {
-			orderedScope = List.copyOf(orderedScope);
-			edges = List.copyOf(edges);
-			selectedStatesInScopeOrder = List.copyOf(selectedStatesInScopeOrder);
-			obligationReceiptsInOrder = List.copyOf(obligationReceiptsInOrder);
 		}
 	}
 }
