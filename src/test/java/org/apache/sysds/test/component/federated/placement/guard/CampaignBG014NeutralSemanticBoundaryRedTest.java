@@ -43,6 +43,7 @@ public class CampaignBG014NeutralSemanticBoundaryRedTest {
 		int federatedLoop = canonical.indexOf("for (int j = 0; j < numFoutOnlyInputs; j++)", localLoop);
 		int childCollectionEnd = blockEnd(canonical, federatedLoop);
 		int normalization = canonical.indexOf("normalizeCandidateInputs(", childCollectionEnd);
+		int exactDecision = canonical.indexOf("DpPlacementAdapter.resolveCandidateDecision(", normalization);
 		int legacyPromotion = canonical.indexOf("promoteLocalFedInputHints(", childCollectionEnd);
 		int legacyBackfill = canonical.indexOf("backfillLocalOracleInputHints(", childCollectionEnd);
 		int oracle = canonical.indexOf("OracleUtils.decideWithOracle", childCollectionEnd);
@@ -51,7 +52,8 @@ public class CampaignBG014NeutralSemanticBoundaryRedTest {
 			candidateLoop >= 0 && bothLoop > candidateLoop && localLoop > bothLoop
 				&& federatedLoop > localLoop && childCollectionEnd > federatedLoop);
 		Assert.assertTrue("G014_NEUTRAL_RAW_CAPTURE_EXACT_SEAM",
-			normalization > childCollectionEnd && oracle > normalization && feasibility > normalization);
+			normalization > childCollectionEnd && exactDecision > normalization && feasibility > exactDecision);
+		Assert.assertEquals("G014_NEUTRAL_GLOBAL_ORACLE_DECISION_FORBIDDEN", -1, oracle);
 		Assert.assertFalse("G014_NEUTRAL_RAW_CAPTURE_NOT_FIRST_POST_LOOP_STATEMENT",
 			canonical.substring(childCollectionEnd, normalization).contains(";"));
 		Assert.assertTrue("G014_NEUTRAL_NORMALIZATION_PRECEDES_LEGACY_PROMOTION",

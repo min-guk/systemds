@@ -36,6 +36,16 @@ public class CampaignBArchitectureGuardTest {
 		Assert.assertEquals("R4_OWNERSHIP_CLOSURE", List.of(), violations);
 	}
 
+	@Test public void dpOwnershipClosureHasOneSharedAnalysisBoundaryAndNoHiddenUniverse() throws Exception {
+		Map<String,CampaignBPlannerOwnershipClosure.Unit> index = CampaignBPlannerOwnershipClosure.index(
+			ROOT.resolve("src/main/java/org/apache/sysds/hops/fedplanner"));
+		List<CampaignBPlannerOwnershipClosure.Unit> closure = CampaignBPlannerOwnershipClosure.closure(
+			ROOTS.get("DP"), index);
+		CampaignBPlannerOwnershipClosure.assertPositiveAdapterBoundary(closure, ADAPTERS.get("DP"));
+		Assert.assertEquals("G014_DP_OWNERSHIP_CLOSURE", List.of(),
+			CampaignBPlannerOwnershipClosure.violations(closure));
+	}
+
 	@Test public void delegationMultilineRenamingAndInjectedCollaboratorsCannotEvadeClosure() throws Exception {
 		Path dir = Files.createTempDirectory("r4-owner");
 		Path pkg = dir.resolve("org/apache/sysds/hops/fedplanner/demo"); Files.createDirectories(pkg);

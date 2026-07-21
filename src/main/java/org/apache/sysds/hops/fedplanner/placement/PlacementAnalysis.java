@@ -29,7 +29,6 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -136,7 +135,8 @@ public final class PlacementAnalysis {
 	}
 
 	/** Immutable copy of one rule note; no mutable oracle capability object is retained. */
-	public record CandidateRuleNote(ReasonCode code, String message) {
+	public record CandidateRuleNote(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode code,
+		String message) {
 		public CandidateRuleNote {
 			Objects.requireNonNull(code, "code");
 			message = message == null ? "" : message;
@@ -145,7 +145,8 @@ public final class PlacementAnalysis {
 
 	/** Immutable primitive/enum projection of the exact rule capability result. */
 	public record CandidateCapabilityFact(OpCategory category, String opcode, ExecType nativeExec,
-		FederatedOutput nativeOutput, FType nativeFoutFType, ReasonCode reasonCode, String detail,
+		FederatedOutput nativeOutput, FType nativeFoutFType,
+		org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode reasonCode, String detail,
 		List<CandidateRuleNote> notes) {
 		public CandidateCapabilityFact {
 			Objects.requireNonNull(category, "category");
