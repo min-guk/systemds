@@ -27,8 +27,9 @@ public class MinStExactTwoDecisionOracleTest {
 	public void literalOracleRejectsCapacityTotalAndSourceCorruption() {
 		MinStExactTwoDecisionOracle.Selection selected = MinStExactTwoDecisionOracle.enumerateUniqueFixture();
 		List<MinStExactTwoDecisionOracle.Edge> mutated = new ArrayList<>(MinStExactTwoDecisionOracle.UNIQUE_EDGES);
-		MinStExactTwoDecisionOracle.Edge first = mutated.get(0);
-		mutated.set(0, new MinStExactTwoDecisionOracle.Edge(first.from(), first.to(), first.capacityBits() ^ 1L));
+		MinStExactTwoDecisionOracle.Edge selectedCutEdge = mutated.get(1);
+		mutated.set(1, new MinStExactTwoDecisionOracle.Edge(selectedCutEdge.from(), selectedCutEdge.to(),
+			selectedCutEdge.capacityBits() ^ 1L));
 		assertRejects(() -> MinStExactTwoDecisionOracle.validateObjective(mutated, selected));
 		assertRejects(() -> MinStExactTwoDecisionOracle.validateObjective(MinStExactTwoDecisionOracle.UNIQUE_EDGES,
 			new MinStExactTwoDecisionOracle.Selection(selected.objectiveBits() ^ 1L,

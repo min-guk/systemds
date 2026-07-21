@@ -32,10 +32,10 @@ public class CampaignBMinStExactBoundaryRedTest {
 		Class<?> selection = boundary(SELECTION);
 		Class<?> producer = boundary(DIAGNOSTICS_PRODUCER);
 		Class<?> logger = boundary(DIAGNOSTICS_LOGGER);
-		org.junit.Assert.assertEquals(facts,
-			requireStatic(factsProducer, "derive", PlacementAnalysis.class, List.class).getReturnType());
+		Method derive = requireStatic(factsProducer, "derive", PlacementAnalysis.class, List.class);
+		org.junit.Assert.assertEquals(facts, derive.getReturnType());
 		org.junit.Assert.assertTrue("MINST_EXACT_SCOPE_KEY_TYPE_MISSING",
-			CompiledHopKey.class.getName().endsWith("CompiledHopKey"));
+			derive.getGenericParameterTypes()[1].getTypeName().contains(CompiledHopKey.class.getName()));
 		org.junit.Assert.assertEquals(selection, requirePublic(selector, "select", facts).getReturnType());
 		org.junit.Assert.assertEquals("MinStDiagnostics",
 			requirePublic(producer, "project", PlacementAnalysis.class, facts, selection)
