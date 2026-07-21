@@ -6,7 +6,6 @@
 package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 /** Literal, production-independent enumeration oracle for the B0 MinST selector contract. */
@@ -39,9 +38,14 @@ final class MinStExactTwoDecisionOracle {
 			long totalBits = cutBits(UNIQUE_EDGES, source);
 			candidates.add(new Selection(totalBits, List.copyOf(source), mask));
 		}
-		return candidates.stream().min(Comparator
-			.comparingDouble((Selection value) -> Double.longBitsToDouble(value.objectiveBits()))
-			.thenComparingInt(Selection::mask)).orElseThrow();
+		double minimum = candidates.stream()
+			.mapToDouble(value -> Double.longBitsToDouble(value.objectiveBits())).min().orElseThrow();
+		List<Selection> minima = candidates.stream()
+			.filter(value -> Double.compare(Double.longBitsToDouble(value.objectiveBits()), minimum) == 0)
+			.toList();
+		if(minima.size() != 1)
+			throw new IllegalStateException("MINST_LITERAL_FIXTURE_NOT_UNIQUE|count=" + minima.size());
+		return minima.get(0);
 	}
 
 	static long cutBits(List<Edge> edges, List<Long> sourceNodeIds) {

@@ -7,6 +7,7 @@ package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
 import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
@@ -39,8 +40,12 @@ public class CampaignBMinStExactBoundaryRedTest {
 			Modifier.isFinal(selection.getModifiers()));
 		Method derive = requireStatic(factsProducer, "derive", PlacementAnalysis.class, List.class);
 		org.junit.Assert.assertEquals(facts, derive.getReturnType());
-		org.junit.Assert.assertTrue("MINST_EXACT_SCOPE_KEY_TYPE_MISSING",
-			derive.getGenericParameterTypes()[1].getTypeName().contains(CompiledHopKey.class.getName()));
+		org.junit.Assert.assertTrue("MINST_EXACT_SCOPE_MUST_BE_PARAMETERIZED_LIST",
+			derive.getGenericParameterTypes()[1] instanceof ParameterizedType);
+		ParameterizedType scopeType = (ParameterizedType) derive.getGenericParameterTypes()[1];
+		org.junit.Assert.assertEquals(List.class, scopeType.getRawType());
+		org.junit.Assert.assertArrayEquals("MINST_EXACT_SCOPE_KEY_TYPE_MISSING",
+			new Object[] {CompiledHopKey.class}, scopeType.getActualTypeArguments());
 		org.junit.Assert.assertEquals(selection, requirePublic(selector, "select", facts).getReturnType());
 		org.junit.Assert.assertEquals(MinStDiagnostics.class,
 			requirePublic(producer, "project", PlacementAnalysis.class, facts, selection)
