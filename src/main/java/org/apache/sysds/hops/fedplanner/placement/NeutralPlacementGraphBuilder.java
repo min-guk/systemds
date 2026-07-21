@@ -330,8 +330,9 @@ public final class NeutralPlacementGraphBuilder {
 	private static Map<Hop,CompiledHopKey> findBlockKeys(Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock,
 		CompiledHopKey consumer) {
 		for(Map<Hop,CompiledHopKey> blockKeys : keysByBlock.values())
-			if(blockKeys.containsValue(consumer))
-				return blockKeys;
+			for(CompiledHopKey candidate : blockKeys.values())
+				if(candidate == consumer)
+					return blockKeys;
 		return null;
 	}
 

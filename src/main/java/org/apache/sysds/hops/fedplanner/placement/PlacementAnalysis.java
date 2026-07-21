@@ -29,6 +29,8 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
@@ -571,7 +573,7 @@ public final class PlacementAnalysis {
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
 		this(graph, occurrences, List.of(), programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
 			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
-			List.of(), deriveCompiledInputEdges(occurrences));
+			List.of(), deriveCompiledInputEdges(graph, occurrences));
 	}
 
 	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
@@ -613,7 +615,7 @@ public final class PlacementAnalysis {
 
 	private List<CompiledInputEdgeFact> validateCompiledInputEdges(List<CompiledInputEdgeFact> facts) {
 		Objects.requireNonNull(facts, "compiledInputEdges");
-		List<CompiledInputEdgeFact> expected = deriveCompiledInputEdges(compiledHopOccurrences());
+		List<CompiledInputEdgeFact> expected = deriveCompiledInputEdges(graph, compiledHopOccurrences());
 		if(facts.size() != expected.size())
 			throw new IllegalArgumentException("Compiled input edge facts do not exactly cover compiled matrix inputs");
 		List<CompiledInputEdgeFact> copied = new java.util.ArrayList<>(facts.size());
@@ -645,36 +647,44 @@ public final class PlacementAnalysis {
 		return Collections.unmodifiableMap(indexed);
 	}
 
-	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(List<HopOccurrenceProjection> occurrences) {
+	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> occurrences) {
+		Objects.requireNonNull(graph, "graph");
 		Objects.requireNonNull(occurrences, "occurrences");
 		List<HopOccurrenceProjection> compiled = occurrences.stream()
 			.filter(occurrence -> isCompiledHopOccurrenceKey(occurrence.key())).toList();
+		Map<CompiledHopKey,HopOccurrenceProjection> occurrencesByIdentity = new IdentityHashMap<>();
+		for(HopOccurrenceProjection occurrence : compiled)
+			if(occurrencesByIdentity.put(occurrence.key(), occurrence) != null)
+				throw new IllegalArgumentException("Duplicate compiled Hop occurrence identity");
+		Map<CompiledHopKey,Map<Integer,Constraint>> inputsByConsumer = new IdentityHashMap<>();
+		for(Constraint constraint : graph.constraints()) {
+			if(constraint.kind() != ConstraintKind.DOMINATES || !"data-input".equals(constraint.evidence()))
+				continue;
+			HopOccurrenceProjection producer = occurrencesByIdentity.get(constraint.left());
+			HopOccurrenceProjection consumer = occurrencesByIdentity.get(constraint.right());
+			if(producer == null || consumer == null)
+				throw new IllegalArgumentException("Data-input constraint has a foreign compiled owner");
+			if(constraint.inputPosition() < 0)
+				throw new IllegalArgumentException("Data-input constraint has no exact input position");
+			if(producer.hop().getDataType() == null || !producer.hop().getDataType().isMatrix())
+				continue;
+			Map<Integer,Constraint> byPosition = inputsByConsumer.computeIfAbsent(consumer.key(),
+				ignored -> new LinkedHashMap<>());
+			if(byPosition.putIfAbsent(constraint.inputPosition(), constraint) != null)
+				throw new IllegalArgumentException("Compiled consumer input position has multiple producers");
+		}
 		List<CompiledInputEdgeFact> edges = new java.util.ArrayList<>();
-		for(int consumerOrdinal = 0; consumerOrdinal < compiled.size(); consumerOrdinal++) {
-			HopOccurrenceProjection consumerOccurrence = compiled.get(consumerOrdinal);
-			Hop consumer = consumerOccurrence.hop();
-			for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
-				Hop producer = consumer.getInput(inputPosition);
-				if(!producer.getDataType().isMatrix())
-					continue;
-				CompiledHopKey producerKey = latestPriorProducerKey(compiled, producer, consumerOrdinal);
-				if(producerKey == null)
-					continue;
-				edges.add(new CompiledInputEdgeFact(producerKey, consumerOccurrence.key(), inputPosition));
-			}
+		for(HopOccurrenceProjection consumer : compiled) {
+			Map<Integer,Constraint> byPosition = inputsByConsumer.get(consumer.key());
+			if(byPosition == null)
+				continue;
+			byPosition.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+				Constraint constraint = entry.getValue();
+				edges.add(new CompiledInputEdgeFact(constraint.left(), constraint.right(), entry.getKey()));
+			});
 		}
 		return List.copyOf(edges);
-	}
-
-	private static CompiledHopKey latestPriorProducerKey(List<HopOccurrenceProjection> compiled, Hop producer,
-		int consumerOrdinal) {
-		for(int i = consumerOrdinal - 1; i >= 0; i--)
-			if(compiled.get(i).hop() == producer)
-				return compiled.get(i).key();
-		for(HopOccurrenceProjection occurrence : compiled)
-			if(occurrence.hop() == producer)
-				return occurrence.key();
-		return null;
 	}
 
 	private record EdgeIdentity(CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) { }
