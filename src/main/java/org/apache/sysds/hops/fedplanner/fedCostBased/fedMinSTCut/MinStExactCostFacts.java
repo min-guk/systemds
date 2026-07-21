@@ -112,19 +112,22 @@ public final class MinStExactCostFacts {
 	}
 
 	public static final class EndpointFact {
+		private final CompiledHopKey producerKey;
 		private final int inputPosition;
 		private final CompiledHopKey consumerKey;
 		private final long consumerComputeNodeId;
 		private final long demandCostBits;
 
-		EndpointFact(int inputPosition, CompiledHopKey consumerKey,
+		EndpointFact(CompiledHopKey producerKey, CompiledHopKey consumerKey, int inputPosition,
 			long consumerComputeNodeId, long demandCostBits) {
+			this.producerKey = Objects.requireNonNull(producerKey, "producerKey");
 			this.inputPosition = inputPosition;
 			this.consumerKey = Objects.requireNonNull(consumerKey, "consumerKey");
 			this.consumerComputeNodeId = consumerComputeNodeId;
 			this.demandCostBits = demandCostBits;
 		}
 
+		public CompiledHopKey producerKey() { return producerKey; }
 		public int inputPosition() { return inputPosition; }
 		public CompiledHopKey consumerKey() { return consumerKey; }
 		public long consumerComputeNodeId() { return consumerComputeNodeId; }

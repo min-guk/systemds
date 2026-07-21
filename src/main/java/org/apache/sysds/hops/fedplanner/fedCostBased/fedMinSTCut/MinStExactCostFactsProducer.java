@@ -40,6 +40,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ValidationReason;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -97,7 +98,7 @@ public final class MinStExactCostFactsProducer {
 		for(int index = 0; index < orderedScope.size(); index++) {
 			CompiledHopKey key = orderedScope.get(index);
 			Hop hop = analysis.hop(key).orElseThrow();
-			List<PlacementState> states = legalStates(analysis, key, hop);
+			List<PlacementState> states = legalStates(analysis, key);
 			DecisionFact decision = new DecisionFact(key, computeNodeId(index),
 				placementNodeId(index), states);
 			decisions.add(decision);
@@ -116,34 +117,43 @@ public final class MinStExactCostFactsProducer {
 		return new Derivation(List.copyOf(decisions), edges, groups, obligations, fingerprint);
 	}
 
-	private static List<PlacementState> legalStates(PlacementAnalysis analysis,
-		CompiledHopKey key, Hop hop) {
+	private static List<PlacementState> legalStates(PlacementAnalysis analysis, CompiledHopKey key) {
 		Set<PlacementState> legal = new TreeSet<>();
 		NeutralPlacementGraph.Node node = analysis.graph().node(key).orElseThrow();
 		for(PlacementState state : node.legalAlternatives())
-			if(preSolveLegal(analysis, hop, state))
+			if(preSolveLegal(analysis, key, state))
 				legal.add(state);
 		for(NeutralPlacementGraph.RelocationAction action : analysis.graph().relocationActions())
 			if(action.key().sourceValueVersion().equals(node.valueVersion())
-				&& preSolveLegal(analysis, hop, action.key().targetPlacement()))
+				&& preSolveLegal(analysis, key, action.key().targetPlacement()))
 				legal.add(action.key().targetPlacement());
 		if(legal.isEmpty())
 			throw new IllegalArgumentException("Neutral decision has no pre-solve legal state: " + key);
 		return List.copyOf(legal);
 	}
 
-	private static boolean preSolveLegal(PlacementAnalysis analysis, Hop hop, PlacementState state) {
+	private static boolean preSolveLegal(PlacementAnalysis analysis, CompiledHopKey consumerKey,
+		PlacementState state) {
 		if(state.execType() != ExecType.FED)
 			return true;
-		for(Hop input : hop.getInput()) {
-			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix())
-				continue;
-			if(input instanceof DataGenOp)
+		Hop consumer = analysis.hop(consumerKey).orElseThrow(() ->
+			new IllegalArgumentException("MINST_CONSUMER_HOP_UNPROVEN"));
+		for(Hop input : consumer.getInput())
+			if(input != null && input.getDataType() != null && input.getDataType().isMatrix()
+				&& input instanceof DataGenOp)
 				return false;
-			CompiledHopKey inputKey = keyForHop(analysis, input);
-			if(inputKey == null)
+		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(edge.consumer() != consumerKey)
 				continue;
-			NeutralPlacementGraph.Node inputNode = analysis.graph().node(inputKey).orElseThrow();
+			if(analysis.requireExactCompiledInputEdge(edge.producer(), edge.consumer(),
+				edge.inputPosition()) != edge)
+				throw new IllegalArgumentException("MINST_COMPILED_EDGE_IDENTITY_UNPROVEN");
+			if(edge.inputPosition() >= consumer.getInput().size())
+				throw new IllegalArgumentException("MINST_INPUT_POSITION_UNPROVEN");
+			Hop input = consumer.getInput().get(edge.inputPosition());
+			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				throw new IllegalArgumentException("MINST_INPUT_HOP_UNPROVEN");
+			NeutralPlacementGraph.Node inputNode = analysis.graph().node(edge.producer()).orElseThrow();
 			boolean hasFederatedRepresentation = inputNode.legalAlternatives().stream()
 				.anyMatch(candidate -> candidate.output() == FederatedOutput.FOUT)
 				|| isPersistentRead(input)
@@ -165,9 +175,10 @@ public final class MinStExactCostFactsProducer {
 		boolean fedLout = hasState(decision, ExecType.FED, FederatedOutput.LOUT);
 		boolean cpFout = hasState(decision, ExecType.CP, FederatedOutput.FOUT);
 
-		double base = canonicalCost(FederatedCostModel.computeOpCost(hop));
-		double fedCost = canonicalCost(FederatedCostModel.computeFederatedComputeCost(
-			hop, base, workers, false) + FederatedCostModel.computeFedCoordinationCost(workers));
+		double base = requireCost(FederatedCostModel.computeOpCost(hop), "MINST_CP_COST_UNPROVEN");
+		double fedCost = requireCost(FederatedCostModel.computeFederatedComputeCost(
+			hop, base, workers, false) + FederatedCostModel.computeFedCoordinationCost(workers),
+			"MINST_FED_COST_UNPROVEN");
 		edges.add(SOURCE, decision.computeNodeId(), cp ? base : HARD_LEGALITY,
 			cp ? ContributionKind.CP_UNARY : ContributionKind.HARD_EXEC,
 			decision.key(), null, -1, cp ? "neutral-cp-unary" : "pre-solve-cp-illegal");
@@ -181,15 +192,15 @@ public final class MinStExactCostFactsProducer {
 			edges.add(decision.placementNodeId(), SINK, HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1, "pre-solve-fout-illegal");
 
-		FType fType = firstFoutType(decision);
-		double bytes = estimatedBytes(analysis, decision.key(), hop);
 		if(!fedLout)
 			edges.add(decision.computeNodeId(), decision.placementNodeId(), HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1,
 				"pre-solve-fed-lout-illegal");
 		else {
-			double download = canonicalCost(FederatedCostModel.computeDownloadNetworkCost(bytes,
-				fType, workers));
+			FType fType = requireUniqueLayoutType(decision);
+			double bytes = estimatedBytes(analysis, decision.key(), hop);
+			double download = requireCost(FederatedCostModel.computeDownloadNetworkCost(bytes,
+				fType, workers), "MINST_DOWNLOAD_COST_UNPROVEN");
 			edges.add(decision.computeNodeId(), decision.placementNodeId(), download,
 				ContributionKind.DOWNLOAD, decision.key(), null, -1, "native-fed-lout-download");
 		}
@@ -198,8 +209,10 @@ public final class MinStExactCostFactsProducer {
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1,
 				"pre-solve-cp-fout-illegal");
 		else {
-			double upload = canonicalCost(FederatedCostModel.computeUploadNetworkCost(bytes,
-				fType, workers));
+			FType fType = requireUniqueLayoutType(decision);
+			double bytes = estimatedBytes(analysis, decision.key(), hop);
+			double upload = requireCost(FederatedCostModel.computeUploadNetworkCost(bytes,
+				fType, workers), "MINST_UPLOAD_COST_UNPROVEN");
 			edges.add(decision.placementNodeId(), decision.computeNodeId(), upload,
 				ContributionKind.UPLOAD, decision.key(), null, -1, "native-cp-fout-upload");
 		}
@@ -209,6 +222,14 @@ public final class MinStExactCostFactsProducer {
 		List<CompiledHopKey> orderedScope, IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
 		int workers, EdgeAccumulator edges) {
 		List<AuxiliaryGroupFact> result = new ArrayList<>();
+		IdentityHashMap<CompiledHopKey,List<CompiledInputEdgeFact>> edgesByProducer = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(analysis.requireExactCompiledInputEdge(edge.producer(), edge.consumer(),
+				edge.inputPosition()) != edge)
+				throw new IllegalArgumentException("MINST_COMPILED_EDGE_IDENTITY_UNPROVEN");
+			if(decisions.containsKey(edge.producer()) && decisions.containsKey(edge.consumer()))
+				edgesByProducer.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge);
+		}
 		long nextAux = -3L;
 		for(CompiledHopKey producerKey : orderedScope) {
 			DecisionFact producerDecision = decisions.get(producerKey);
@@ -216,38 +237,34 @@ public final class MinStExactCostFactsProducer {
 			if(producer.getDataType() == null || !producer.getDataType().isMatrix())
 				continue;
 			Map<GroupDemandKey,List<Use>> demands = new LinkedHashMap<>();
-			for(CompiledHopKey consumerKey : orderedScope) {
-				Hop consumer = analysis.hop(consumerKey).orElseThrow();
+			for(CompiledInputEdgeFact edge : edgesByProducer.getOrDefault(producerKey, List.of())) {
+				CompiledHopKey consumerKey = edge.consumer();
 				DecisionFact consumerDecision = decisions.get(consumerKey);
-				for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
-					if(consumer.getInput().get(inputPosition) != producer)
-						continue;
-					if(hasExec(consumerDecision, ExecType.FED) && canUpload(producer)) {
-						FType type = requiredType(analysis, consumerKey, inputPosition,
-							firstFoutType(producerDecision));
-						demands.computeIfAbsent(new GroupDemandKey(Direction.UPLOAD, type), ignored ->
-							new ArrayList<>()).add(new Use(consumerKey, consumerDecision, inputPosition));
-					}
-					if(hasExec(consumerDecision, ExecType.CP)
-						&& hasOutput(producerDecision, FederatedOutput.FOUT)) {
-						FType type = firstFoutType(producerDecision);
-						demands.computeIfAbsent(new GroupDemandKey(Direction.DOWNLOAD, type), ignored ->
-							new ArrayList<>()).add(new Use(consumerKey, consumerDecision, inputPosition));
-					}
+				if(hasExec(consumerDecision, ExecType.FED) && canUpload(producer)) {
+					FType type = requiredType(analysis, edge);
+					demands.computeIfAbsent(new GroupDemandKey(Direction.UPLOAD, type), ignored ->
+						new ArrayList<>()).add(new Use(edge, consumerDecision));
+				}
+				if(hasExec(consumerDecision, ExecType.CP)
+					&& hasOutput(producerDecision, FederatedOutput.FOUT)) {
+					FType type = requireUniqueLayoutType(producerDecision);
+					demands.computeIfAbsent(new GroupDemandKey(Direction.DOWNLOAD, type), ignored ->
+						new ArrayList<>()).add(new Use(edge, consumerDecision));
 				}
 			}
 			for(Map.Entry<GroupDemandKey,List<Use>> entry : demands.entrySet()) {
 				List<Use> uses = entry.getValue().stream()
-					.sorted(Comparator.comparing(use -> use.consumerKey.normalizedSignature()))
+					.sorted(Comparator.comparing((Use use) -> use.edge.consumer().normalizedSignature())
+						.thenComparingInt(use -> use.edge.inputPosition()))
 					.toList();
 				List<EndpointFact> endpoints = new ArrayList<>(uses.size());
 				double bytes = estimatedBytes(analysis, producerKey, producer);
 				double demand = entry.getKey().direction == Direction.UPLOAD
 					? FederatedCostModel.computeUploadNetworkCost(bytes, entry.getKey().type, workers)
 					: FederatedCostModel.computeDownloadNetworkCost(bytes, entry.getKey().type, workers);
-				demand = canonicalCost(demand);
+				demand = requireCost(demand, "MINST_GROUP_DEMAND_COST_UNPROVEN");
 				for(Use use : uses)
-					endpoints.add(new EndpointFact(use.inputPosition, use.consumerKey,
+					endpoints.add(new EndpointFact(use.edge.producer(), use.edge.consumer(), use.edge.inputPosition(),
 						use.consumerDecision.computeNodeId(), bits(demand)));
 				long aux = nextAux--;
 				AuxiliaryGroupFact group = new AuxiliaryGroupFact(aux, entry.getKey().direction,
@@ -304,37 +321,46 @@ public final class MinStExactCostFactsProducer {
 		return List.copyOf(result);
 	}
 
-	private static FType requiredType(PlacementAnalysis analysis, CompiledHopKey consumer,
-		int inputPosition, FType defaultType) {
+	private static FType requiredType(PlacementAnalysis analysis, CompiledInputEdgeFact edge) {
+		Set<FType> structuralLayouts = new LinkedHashSet<>();
+		addPublishedLayouts(analysis.graph().node(edge.producer()).orElseThrow(), structuralLayouts);
+		for(CompiledInputEdgeFact sibling : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(sibling.consumer() != edge.consumer() || sibling.inputPosition() == edge.inputPosition())
+				continue;
+			addPublishedLayouts(analysis.graph().node(sibling.producer()).orElseThrow(), structuralLayouts);
+		}
 		try {
-			List<FType> allowed = analysis.candidateConsumerProfileFacts()
-				.requireExact(consumer, inputPosition).allowedTargetTypes();
-			if(!allowed.isEmpty()) {
-				Set<FType> siblingLayouts = new LinkedHashSet<>();
-				Hop consumerHop = analysis.hop(consumer).orElseThrow();
-				for(int index = 0; index < consumerHop.getInput().size(); index++) {
-					if(index == inputPosition)
-						continue;
-					CompiledHopKey sibling = keyForHop(analysis, consumerHop.getInput().get(index));
-					if(sibling == null)
-						continue;
-					analysis.graph().node(sibling).orElseThrow().legalAlternatives().stream()
-						.filter(state -> state.output() == FederatedOutput.FOUT && state.fType() != null)
-						.map(PlacementState::fType).forEach(siblingLayouts::add);
-				}
-				for(FType type : allowed)
-					if(siblingLayouts.contains(type))
-						return type;
-				for(FType type : allowed)
-					if(type != FType.BROADCAST)
-						return type;
-				return allowed.get(0);
+			PlacementAnalysis.CandidateConsumerProfileFact profile = analysis.candidateConsumerProfileFacts()
+				.requireExact(edge.consumer(), edge.inputPosition());
+			if(profile.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE)
+				throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|profile-status="
+					+ profile.status() + "|failure=" + profile.failureCode());
+			List<FType> allowed = profile.allowedTargetTypes().stream()
+				.distinct().sorted(Comparator.comparing(Enum::name)).toList();
+			if(allowed.isEmpty()) {
+				if(structuralLayouts.size() == 1)
+					return structuralLayouts.iterator().next();
+				throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|unconstrained-profile");
 			}
+			List<FType> compatibleLayouts = allowed.stream().filter(structuralLayouts::contains).toList();
+			if(compatibleLayouts.size() == 1)
+				return compatibleLayouts.get(0);
+			if(compatibleLayouts.size() > 1)
+				throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|ambiguous-sibling-layout");
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|no-structural-intersection");
 		}
-		catch(IllegalArgumentException ignored) {
-			// Missing profile facts retain the neutral graph's published layout.
+		catch(PlacementAnalysis.CandidateRuleLookupException missingProfile) {
+			if(structuralLayouts.size() == 1)
+				return structuralLayouts.iterator().next();
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|missing-profile", missingProfile);
 		}
-		return defaultType == null ? FType.BROADCAST : defaultType;
+	}
+
+	private static void addPublishedLayouts(NeutralPlacementGraph.Node node, Set<FType> layouts) {
+		node.legalAlternatives().stream()
+			.filter(state -> state.output() == FederatedOutput.FOUT && state.fType() != null)
+			.map(PlacementState::fType).forEach(layouts::add);
+		node.anchors().stream().map(anchor -> anchor.fType()).forEach(layouts::add);
 	}
 
 	private static boolean canUpload(Hop producer) {
@@ -343,13 +369,6 @@ public final class MinStExactCostFactsProducer {
 
 	private static boolean isPersistentRead(Hop hop) {
 		return hop instanceof DataOp && ((DataOp)hop).getOp() == OpOpData.PERSISTENTREAD;
-	}
-
-	private static CompiledHopKey keyForHop(PlacementAnalysis analysis, Hop hop) {
-		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences())
-			if(occurrence.hop() == hop)
-				return occurrence.key();
-		return null;
 	}
 
 	private static boolean hasExec(DecisionFact decision, ExecType exec) {
@@ -365,11 +384,14 @@ public final class MinStExactCostFactsProducer {
 			.anyMatch(state -> state.execType() == exec && state.output() == output);
 	}
 
-	private static FType firstFoutType(DecisionFact decision) {
-		return decision.legalStatesInCanonicalOrder().stream()
-			.filter(state -> state.output() == FederatedOutput.FOUT && state.fType() != null)
-			.map(PlacementState::fType).sorted(Comparator.comparing(Enum::name)).findFirst()
-			.orElse(FType.BROADCAST);
+	private static FType requireUniqueLayoutType(DecisionFact decision) {
+		List<FType> types = decision.legalStatesInCanonicalOrder().stream()
+			.map(PlacementState::fType).filter(Objects::nonNull).distinct()
+			.sorted(Comparator.comparing(Enum::name)).toList();
+		if(types.size() != 1)
+			throw new IllegalArgumentException("MINST_DECISION_LAYOUT_UNPROVEN|key="
+				+ decision.key().normalizedSignature() + "|types=" + types);
+		return types.get(0);
 	}
 
 	private static long computeNodeId(int scopeIndex) { return 2L * scopeIndex; }
@@ -381,23 +403,32 @@ public final class MinStExactCostFactsProducer {
 			for(var anchor : node.anchors())
 				for(var partition : anchor.partitions())
 					workers.add(partition.workerId());
-		return Math.max(1, workers.size());
+		if(workers.isEmpty())
+			throw new IllegalArgumentException("MINST_WORKER_COUNT_UNPROVEN");
+		return workers.size();
 	}
 
 	private static double estimatedBytes(PlacementAnalysis analysis, CompiledHopKey key, Hop hop) {
 		double estimate = hop.getOutputMemEstimate();
 		if(Double.isFinite(estimate) && estimate > 0.0)
 			return estimate;
-		return analysis.shapeFact(key).filter(shape -> shape.rows() > 0 && shape.cols() > 0)
-			.map(shape -> canonicalCost((double)shape.rows() * shape.cols() * 8.0)).orElse(0.0);
+		double derived = analysis.shapeFact(key).filter(shape -> shape.rows() > 0 && shape.cols() > 0)
+			.map(shape -> (double)shape.rows() * shape.cols() * 8.0).orElse(Double.NaN);
+		if(!Double.isFinite(derived) || derived <= 0.0)
+			throw new IllegalArgumentException("MINST_OUTPUT_BYTES_UNPROVEN|key="
+				+ key.normalizedSignature());
+		return derived;
 	}
 
-	private static double canonicalCost(double value) {
-		return Double.isFinite(value) && value > 0.0 ? value : 0.0;
+	private static double requireCost(double value, String reason) {
+		if(!Double.isFinite(value) || value < 0.0
+			|| Double.doubleToRawLongBits(value) == Double.doubleToRawLongBits(-0.0))
+			throw new IllegalArgumentException(reason + "|value=" + value);
+		return value;
 	}
 
 	private static long bits(double value) {
-		return Double.doubleToRawLongBits(canonicalCost(value));
+		return Double.doubleToRawLongBits(requireCost(value, "MINST_COST_BITS_UNPROVEN"));
 	}
 
 	private static void validateScope(PlacementAnalysis analysis, List<CompiledHopKey> scope) {
@@ -477,7 +508,8 @@ public final class MinStExactCostFactsProducer {
 		if(expected.size() != actual.size()) return false;
 		for(int i = 0; i < expected.size(); i++) {
 			EndpointFact left = expected.get(i), right = actual.get(i);
-			if(left.inputPosition() != right.inputPosition()
+			if(left.producerKey() != right.producerKey()
+				|| left.inputPosition() != right.inputPosition()
 				|| left.consumerKey() != right.consumerKey()
 				|| left.consumerComputeNodeId() != right.consumerComputeNodeId()
 				|| left.demandCostBits() != right.demandCostBits())
@@ -561,7 +593,8 @@ public final class MinStExactCostFactsProducer {
 				.append(':').append(group.producerPlacementNodeId()).append(':')
 				.append(group.conversionType()).append(':').append(group.priceBits());
 			for(EndpointFact endpoint : group.endpointsInCanonicalOrder())
-				normalized.append(':').append(endpoint.inputPosition()).append(':')
+				normalized.append(':').append(endpoint.producerKey().normalizedSignature()).append(':')
+					.append(endpoint.inputPosition()).append(':')
 					.append(endpoint.consumerKey().normalizedSignature()).append(':')
 					.append(endpoint.consumerComputeNodeId()).append(':').append(endpoint.demandCostBits());
 		}
@@ -588,7 +621,7 @@ public final class MinStExactCostFactsProducer {
 
 		void add(long from, long to, double cost, ContributionKind kind,
 			CompiledHopKey owner, CompiledHopKey peer, int inputPosition, String provenance) {
-			double canonical = canonicalCost(cost);
+			double canonical = requireCost(cost, "MINST_EDGE_COST_UNPROVEN");
 			contributions.computeIfAbsent(new EdgeKey(from, to), ignored -> new ArrayList<>())
 				.add(new EdgeContribution(kind, owner, peer, inputPosition, bits(canonical), provenance));
 		}
@@ -599,6 +632,7 @@ public final class MinStExactCostFactsProducer {
 				double sum = 0.0;
 				for(EdgeContribution contribution : entry.getValue())
 					sum += Double.longBitsToDouble(contribution.costBits());
+				sum = requireCost(sum, "MINST_EDGE_SUM_UNPROVEN");
 				result.add(new DirectedEdgeFact(entry.getKey().from, entry.getKey().to,
 					Double.doubleToRawLongBits(sum), entry.getValue()));
 			}
@@ -628,13 +662,11 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static final class Use {
-		private final CompiledHopKey consumerKey;
+		private final CompiledInputEdgeFact edge;
 		private final DecisionFact consumerDecision;
-		private final int inputPosition;
-		Use(CompiledHopKey consumerKey, DecisionFact consumerDecision, int inputPosition) {
-			this.consumerKey = consumerKey;
+		Use(CompiledInputEdgeFact edge, DecisionFact consumerDecision) {
+			this.edge = Objects.requireNonNull(edge, "edge");
 			this.consumerDecision = consumerDecision;
-			this.inputPosition = inputPosition;
 		}
 	}
 
