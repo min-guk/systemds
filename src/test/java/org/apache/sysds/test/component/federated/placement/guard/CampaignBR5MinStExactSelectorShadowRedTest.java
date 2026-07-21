@@ -31,11 +31,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -77,33 +79,7 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 	}
 
 	@Test
-	public void actualRootFixtureCanRepresentNonemptyRawSelectedStatesWithoutRepair() throws Exception {
-		PlacementAnalysis analysis = functionLoopAnalysis();
-		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
-		DecisionFact federatedDecision = facts.decisionFactsInScopeOrder().stream()
-			.filter(decision -> decision.legalStatesInCanonicalOrder().stream()
-				.filter(state -> state.execType() == ExecType.FED
-					&& state.output() == FederatedOutput.FOUT).count() == 1L)
-			.findFirst().orElseThrow(() -> new AssertionError(
-				"R5_MINST_ACTUAL_ROOT_NONEMPTY_STATE_ANCHOR_MISSING"));
-		List<Long> nonemptyRawSource = List.of(federatedDecision.computeNodeId(),
-			federatedDecision.placementNodeId());
-
-		List<PlacementState> rawStates = rawSelectedStates(facts, nonemptyRawSource);
-		List<PlacementState> finalStates = selectedStates(facts, nonemptyRawSource);
-
-		Assert.assertFalse("R5_MINST_RAW_SELECTED_STATES_FIXTURE_VACUOUS", rawStates.isEmpty());
-		Assert.assertTrue("R5_MINST_RAW_SELECTED_STATES_FIXTURE_NONEMPTY_SOURCE",
-			nonemptyRawSource.size() > 0);
-		Assert.assertTrue("R5_MINST_RAW_SELECTED_STATES_FIXTURE_HAS_FED_FOUT",
-			rawStates.stream().anyMatch(state -> state.execType() == ExecType.FED
-				&& state.output() == FederatedOutput.FOUT));
-		Assert.assertEquals("R5_MINST_RAW_SELECTED_STATES_MUST_NOT_BE_REPAIRED",
-			rawStates, finalStates);
-	}
-
-	@Test
-	public void actualRootAuxiliarySelectionsBindToProducerEdgeAndAuthoritativeActions() throws Exception {
+	public void actualRootUploadAndDownloadSelectionsBindToAuthoritativeRelocationActions() throws Exception {
 		PlacementAnalysis analysis = occurrenceAnalysis();
 		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
 		CompiledHopKey consumer = keyByHopName(analysis, "Yout1");
@@ -113,13 +89,17 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 			.transferGroupContaining(facts, Direction.DOWNLOAD, consumer, "X");
 
 		List<String> uploadObligations = selectedObligations(facts, List.of(upload.auxiliaryNodeId()));
-		List<String> downloadEvidence = selectedAuxiliaryEvidence(facts,
+		List<String> downloadObligations = selectedObligations(facts,
 			List.of(download.producerPlacementNodeId()));
 
 		Assert.assertFalse("R5_MINST_ACTUAL_ROOT_UPLOAD_SELECTED_OBLIGATIONS_MISSING",
 			uploadObligations.isEmpty());
-		Assert.assertFalse("R5_MINST_ACTUAL_ROOT_DOWNLOAD_SELECTED_EVIDENCE_MISSING",
-			downloadEvidence.isEmpty());
+		Assert.assertFalse("R5_MINST_ACTUAL_ROOT_DOWNLOAD_SELECTED_OBLIGATIONS_MISSING",
+			downloadObligations.isEmpty());
+		Assert.assertEquals("R5_MINST_ACTUAL_ROOT_UPLOAD_ENDPOINT_COVERAGE",
+			upload.endpointsInCanonicalOrder().size(), uploadObligations.size());
+		Assert.assertEquals("R5_MINST_ACTUAL_ROOT_DOWNLOAD_ENDPOINT_COVERAGE",
+			download.endpointsInCanonicalOrder().size(), downloadObligations.size());
 	}
 
 	private static CutSelection enumerateUniqueMinimum(MinStExactCostFacts facts) {
@@ -236,25 +216,6 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 		return capacity;
 	}
 
-
-	private static List<PlacementState> rawSelectedStates(MinStExactCostFacts facts,
-		List<Long> sourceNodeIds) {
-		List<PlacementState> states = new ArrayList<>();
-		for(DecisionFact decision : facts.decisionFactsInScopeOrder()) {
-			ExecType exec = sourceNodeIds.contains(decision.computeNodeId()) ? ExecType.FED : ExecType.CP;
-			FederatedOutput output = sourceNodeIds.contains(decision.placementNodeId())
-				? FederatedOutput.FOUT : FederatedOutput.LOUT;
-			PlacementState raw = decision.legalStatesInCanonicalOrder().stream()
-				.filter(state -> state.execType() == exec && state.output() == output)
-				.findFirst().orElseThrow(() -> new AssertionError(
-					"R5_MINST_RAW_SELECTED_STATE_NOT_LEGAL|key="
-						+ decision.key().normalizedSignature() + "|exec=" + exec
-						+ "|output=" + output));
-			states.add(raw);
-		}
-		return List.copyOf(states);
-	}
-
 	private static List<PlacementState> selectedStates(MinStExactCostFacts facts,
 		List<Long> sourceNodeIds) {
 		List<PlacementState> states = new ArrayList<>();
@@ -279,24 +240,25 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 			boolean auxSource = sourceNodeIds.contains(group.auxiliaryNodeId());
 			boolean producerPlacementSource = sourceNodeIds.contains(group.producerPlacementNodeId());
 			if(group.direction() == Direction.UPLOAD && auxSource && !producerPlacementSource)
-				addGroupObligations(result, facts, group, Direction.UPLOAD, FederatedOutput.FOUT);
+				addGroupObligations(result, facts, group, Direction.UPLOAD);
 			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)
-				addGroupObligations(result, facts, group, Direction.DOWNLOAD, FederatedOutput.LOUT);
+				addGroupObligations(result, facts, group, Direction.DOWNLOAD);
 		}
 		return result.stream().sorted().toList();
 	}
 
 	private static void addGroupObligations(List<String> result, MinStExactCostFacts facts,
-		AuxiliaryGroupFact group, Direction direction, FederatedOutput requiredOutput) {
+		AuxiliaryGroupFact group, Direction direction) {
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
-			AuthoritativeObligation obligation = authoritativeObligation(facts, group, endpoint, requiredOutput);
+			PlacementState expected = exactGraphRequiredPlacement(facts, group, endpoint);
+			AuthoritativeObligation obligation = authoritativeObligation(facts, group, endpoint, expected);
 			result.add(obligationSignature(direction.name(), group.producerKey(), endpoint.consumerKey(),
 				endpoint.inputPosition(), obligation.endpoint().requiredPlacement()));
 		}
 	}
 
 	private static AuthoritativeObligation authoritativeObligation(MinStExactCostFacts facts,
-		AuxiliaryGroupFact group, EndpointFact endpoint, FederatedOutput requiredOutput) {
+		AuxiliaryGroupFact group, EndpointFact endpoint, PlacementState expectedPlacement) {
 		assertEndpointBoundToProducerAndCanonicalEdge(facts, group, endpoint);
 		List<AuthoritativeObligation> matches = new ArrayList<>();
 		for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder()) {
@@ -304,11 +266,14 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 			Assert.assertNotNull("R5_MINST_OBLIGATION_ACTION_SIGNATURE_MISSING",
 				actionSignature);
 			for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder())
-				if(candidate.consumerKey() == endpoint.consumerKey()
+				if(candidate.consumerKey().equals(endpoint.consumerKey())
 					&& candidate.inputPosition() == endpoint.inputPosition()
-					&& candidate.requiredPlacement().output() == requiredOutput
-					&& actionSignatureEncodesExistingEndpoint(actionSignature, endpoint, candidate))
-					matches.add(new AuthoritativeObligation(actionSignature, candidate));
+					&& candidate.requiredPlacement().equals(expectedPlacement)) {
+					NeutralPlacementGraph.RelocationAction action = exactActionForSignature(facts, group,
+						actionSignature);
+					if(actionContainsExactObligation(action, candidate))
+						matches.add(new AuthoritativeObligation(actionSignature, candidate));
+				}
 		}
 		if(matches.size() != 1)
 			throw new AssertionError("R5_MINST_AUTHORITY_OBLIGATION_"
@@ -317,36 +282,65 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 				+ "|producer=" + group.producerKey().normalizedSignature()
 				+ "|consumer=" + endpoint.consumerKey().normalizedSignature()
 				+ "|input=" + endpoint.inputPosition()
-				+ "|requiredOutput=" + requiredOutput
+				+ "|expectedPlacement=" + expectedPlacement.normalizedSignature()
 				+ "|actions=" + matches.stream().map(AuthoritativeObligation::actionSignature).toList());
 		return matches.get(0);
 	}
 
-	private static List<String> selectedAuxiliaryEvidence(MinStExactCostFacts facts,
-		List<Long> sourceNodeIds) {
-		List<String> result = new ArrayList<>();
-		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder()) {
-			boolean auxSource = sourceNodeIds.contains(group.auxiliaryNodeId());
-			boolean producerPlacementSource = sourceNodeIds.contains(group.producerPlacementNodeId());
-			if(group.direction() == Direction.UPLOAD && auxSource && !producerPlacementSource)
-				addGroupEvidence(result, facts, group, FederatedOutput.FOUT);
-			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)
-				addGroupEvidence(result, facts, group, FederatedOutput.LOUT);
-		}
-		return result.stream().sorted().toList();
+	private static NeutralPlacementGraph.RelocationAction exactActionForSignature(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, String actionSignature) {
+		List<NeutralPlacementGraph.RelocationAction> actions = facts.analysis().graph().relocationActions().stream()
+			.filter(action -> action.normalizedSignature().equals(actionSignature))
+			.toList();
+		if(actions.size() != 1)
+			throw new AssertionError("R5_MINST_AUTHORITY_ACTION_"
+				+ (actions.isEmpty() ? "MISSING" : "AMBIGUOUS")
+				+ "|producer=" + group.producerKey().normalizedSignature()
+				+ "|signature=" + actionSignature + "|matches=" + actions.size());
+		NeutralPlacementGraph.RelocationAction action = actions.get(0);
+		Assert.assertEquals("R5_MINST_AUTHORITY_ACTION_SOURCE_VALUE_DRIFT",
+			facts.analysis().graph().node(group.producerKey()).orElseThrow().valueVersion(),
+			action.key().sourceValueVersion());
+		return action;
 	}
 
-	private static void addGroupEvidence(List<String> result, MinStExactCostFacts facts,
-		AuxiliaryGroupFact group, FederatedOutput requiredOutput) {
-		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
-			assertEndpointBoundToProducerAndCanonicalEdge(facts, group, endpoint);
-			result.add(group.direction().name() + "|producer="
-				+ group.producerKey().normalizedSignature() + "|hop="
-				+ facts.analysis().hop(group.producerKey()).orElseThrow().getOpString()
+	private static PlacementState exactGraphRequiredPlacement(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, EndpointFact endpoint) {
+		List<PlacementState> placements = new ArrayList<>();
+		for(NeutralPlacementGraph.RelocationAction action : facts.analysis().graph().relocationActions()) {
+			if(!action.key().sourceValueVersion().equals(
+				facts.analysis().graph().node(group.producerKey()).orElseThrow().valueVersion()))
+				continue;
+			for(ObligationKey obligation : action.obligations())
+				if(obligation.consumer().equals(endpoint.consumerKey())
+					&& obligation.inputPosition() == endpoint.inputPosition()) {
+					Assert.assertEquals("R5_MINST_AUTHORITY_ACTION_TARGET_DRIFT",
+						action.key().targetPlacement(), obligation.requiredPlacement());
+					placements.add(obligation.requiredPlacement());
+				}
+		}
+		List<PlacementState> unique = placements.stream().distinct().toList();
+		if(unique.size() != 1)
+			throw new AssertionError("R5_MINST_AUTHORITY_EXPECTED_PLACEMENT_"
+				+ (unique.isEmpty() ? "MISSING" : "AMBIGUOUS")
+				+ "|direction=" + group.direction()
+				+ "|producer=" + group.producerKey().normalizedSignature()
 				+ "|consumer=" + endpoint.consumerKey().normalizedSignature()
 				+ "|input=" + endpoint.inputPosition()
-				+ "|requiredOutput=" + requiredOutput);
-		}
+				+ "|placements=" + unique.stream().map(PlacementState::normalizedSignature).toList());
+		return unique.get(0);
+	}
+
+	private static boolean actionContainsExactObligation(NeutralPlacementGraph.RelocationAction action,
+		ObligationEndpointFact candidate) {
+		for(ObligationKey obligation : action.obligations())
+			if(obligation.consumer().equals(candidate.consumerKey())
+				&& obligation.inputPosition() == candidate.inputPosition()
+				&& obligation.requiredPlacement().equals(candidate.requiredPlacement())
+				&& obligation.sourceValueVersion().equals(action.key().sourceValueVersion())
+				&& obligation.relocationAction().equals(action.key()))
+				return true;
+		return false;
 	}
 
 	private static void assertEndpointBoundToProducerAndCanonicalEdge(MinStExactCostFacts facts,
@@ -364,13 +358,6 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 		Assert.assertEquals("R5_MINST_ENDPOINT_CANONICAL_EDGE_INPUT_DRIFT",
 			endpoint.inputPosition(), edge.inputPosition());
 		assertCanonicalEdge(facts.analysis(), endpoint);
-	}
-
-	private static boolean actionSignatureEncodesExistingEndpoint(String actionSignature,
-		EndpointFact endpoint, ObligationEndpointFact candidate) {
-		return actionSignature.contains(endpoint.consumerKey().normalizedSignature())
-			&& actionSignature.contains(Integer.toString(endpoint.inputPosition()))
-			&& actionSignature.contains(candidate.requiredPlacement().normalizedSignature());
 	}
 
 	private static Object invokeSelector(MinStExactCostFacts facts) throws Exception {
