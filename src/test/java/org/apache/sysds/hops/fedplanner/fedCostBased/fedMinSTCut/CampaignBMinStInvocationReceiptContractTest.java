@@ -1,10 +1,12 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -14,6 +16,9 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
@@ -28,17 +33,79 @@ import org.junit.Test;
 
 /** RED contract for an explicit, invocation-scoped MinST selection receipt. */
 public class CampaignBMinStInvocationReceiptContractTest {
+	private static final long B09_CUT_OBJECTIVE_BITS = 4546512829529802670L;
+	private static final String OFFLINE_MANIFEST =
+		"/org/apache/sysds/test/component/federated/placement/characterization/"
+			+ "g004b-c2-dp-minst-offline-literal.manifest";
+
 	@Test public void b09CloneRecompileProjectionPreservesExactNormalizedSelection() throws Exception {
 		FederatedPlanMinSTCut planner = new FederatedPlanMinSTCut();
 		Invocation first = invoke(planner, declaredRewrite(), "B-09");
-		Invocation second = invoke(planner, declaredRewrite(), "B-09");
+		SelectionSnapshot expected = new SelectionSnapshot(B09_CUT_OBJECTIVE_BITS, List.of("SOURCE"),
+			approvedB09States(), List.of());
+		SelectionSnapshot actual = snapshot(first);
+		assertB09Selection(expected, actual);
+		assertB09CloneOriginIdentity(first.analysis);
 
-		SelectionSnapshot expected = snapshot(first);
-		SelectionSnapshot actual = snapshot(second);
+		Invocation repeated = invoke(planner, declaredRewrite(), "B-09");
+		SelectionSnapshot repeatedActual = snapshot(repeated);
+		assertB09Selection(expected, repeatedActual);
+		Assert.assertEquals("MINST_B09_REPEATED_SELECTION_STABILITY", actual, repeatedActual);
+	}
+
+	private static void assertB09Selection(SelectionSnapshot expected, SelectionSnapshot actual) {
 		Assert.assertEquals("MINST_B09_OBJECTIVE_BITS", expected.objectiveBits(), actual.objectiveBits());
 		Assert.assertEquals("MINST_B09_SOURCE_PARTITION", expected.sourcePartition(), actual.sourcePartition());
 		Assert.assertEquals("MINST_B09_SELECTED_STATES", expected.selectedStates(), actual.selectedStates());
 		Assert.assertEquals("MINST_B09_SELECTED_OBLIGATIONS", expected.obligations(), actual.obligations());
+	}
+
+	private static List<String> approvedB09States() throws Exception {
+		try(InputStream stream = CampaignBMinStInvocationReceiptContractTest.class
+			.getResourceAsStream(OFFLINE_MANIFEST)) {
+			Assert.assertNotNull("MINST_B09_APPROVED_MANIFEST_MISSING", stream);
+			String manifest = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+			String prefix = "C2-X-11-CLONE-RECOMPILE|planner=MINST|MINST_FULL_OFFLINE_SELECTION|";
+			List<String> rows = manifest.lines().filter(line -> line.startsWith(prefix)).toList();
+			Assert.assertEquals("MINST_B09_APPROVED_ROW_MULTIPLICITY", 1, rows.size());
+			String row = rows.get(0);
+			String startToken = "|selectedStates=[";
+			String endToken = "]|semanticFacts=";
+			int start = row.indexOf(startToken);
+			int end = row.indexOf(endToken, start + startToken.length());
+			Assert.assertTrue("MINST_B09_APPROVED_SELECTED_STATES_MISSING", start >= 0 && end > start);
+			List<String> states = List.of(row.substring(start + startToken.length(), end).split(", "));
+			Assert.assertEquals("MINST_B09_APPROVED_STATE_COUNT", 26, states.size());
+			Assert.assertTrue("MINST_B09_APPROVED_STATE_DOMAIN",
+				states.stream().allMatch(state -> state.endsWith("=CP/LOUT")));
+			Assert.assertEquals("MINST_B09_APPROVED_RECOMPILE_STATE_COUNT", 1,
+				states.stream().filter(state -> state.contains("|9:recompile|")).count());
+			return states;
+		}
+	}
+
+	private static void assertB09CloneOriginIdentity(PlacementAnalysis analysis) {
+		var clones = analysis.graph().nodes().stream().filter(node -> node.kind() == NodeKind.CLONE
+			&& "CLONE_RECOMPILE".equals(node.valueVersion().versionKind().name())).toList();
+		Assert.assertEquals("MINST_B09_CLONE_RECOMPILE_MULTIPLICITY", 1, clones.size());
+		var clone = clones.get(0);
+		Assert.assertEquals("MINST_B09_CLONE_RECOMPILE_CONTEXT", "recompile", clone.key().recompileContext());
+		var origins = analysis.graph().nodes().stream().filter(node -> node.kind() != NodeKind.CLONE
+			&& node.key().canonicalSourceOrigin().equals(clone.key().canonicalSourceOrigin())).toList();
+		Assert.assertEquals("MINST_B09_ORIGIN_MULTIPLICITY", 1, origins.size());
+		var origin = origins.get(0);
+		Assert.assertEquals("MINST_B09_CANONICAL_SOURCE_ORIGIN", origin.key().canonicalSourceOrigin(),
+			clone.key().canonicalSourceOrigin());
+		Assert.assertEquals("MINST_B09_SAME_ORIGIN_MULTIPLICITY", 1, analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_ORIGIN)
+			.filter(constraint -> constraint.left().equals(origin.key()) && constraint.right().equals(clone.key())
+				|| constraint.right().equals(origin.key()) && constraint.left().equals(clone.key())).count());
+		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_MULTIPLICITY", 1, clone.exclusions().stream()
+			.filter(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).count());
+		Assert.assertFalse("MINST_B09_CLONE_PREDECESSORS_MISSING",
+			clone.valueVersion().predecessorVersions().isEmpty());
+		Assert.assertTrue("MINST_B09_CLONE_PREDECESSOR_IDENTITY", clone.valueVersion().predecessorVersions().stream()
+			.allMatch(predecessor -> predecessor.startsWith("input-")));
 	}
 
 	@Test public void b07NamedFunctionBodyFutureContractRed() throws Exception {
