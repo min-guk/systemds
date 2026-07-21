@@ -9,6 +9,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.List;
 
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
@@ -33,6 +34,10 @@ public class CampaignBMinStExactBoundaryRedTest {
 		Class<?> selection = boundary(SELECTION);
 		Class<?> producer = boundary(DIAGNOSTICS_PRODUCER);
 		Class<?> logger = boundary(DIAGNOSTICS_LOGGER);
+		org.junit.Assert.assertTrue("MINST_EXACT_FACTS_MUST_BE_IMMUTABLE",
+			Modifier.isFinal(facts.getModifiers()));
+		org.junit.Assert.assertTrue("MINST_EXACT_SELECTION_MUST_BE_IMMUTABLE",
+			Modifier.isFinal(selection.getModifiers()));
 		Method derive = requireStatic(factsProducer, "derive", PlacementAnalysis.class, List.class);
 		org.junit.Assert.assertEquals(facts, derive.getReturnType());
 		org.junit.Assert.assertTrue("MINST_EXACT_SCOPE_KEY_TYPE_MISSING",
