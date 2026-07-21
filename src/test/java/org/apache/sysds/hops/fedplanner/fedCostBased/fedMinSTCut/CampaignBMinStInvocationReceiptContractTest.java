@@ -14,12 +14,12 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -43,7 +43,7 @@ public class CampaignBMinStInvocationReceiptContractTest {
 
 	@Test public void b07NamedFunctionBodyFutureContractRed() throws Exception {
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-07");
-		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis=CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		Assert.assertTrue("B07_NAMED_FUNCTION_BODY_MISSING",analysis.occurrences().stream().anyMatch(
 			o -> !"main".equals(o.key().functionNamespace()) && o.key().callSitePath().startsWith("function/")));
 		MinStPlacementInput receipt=new FederatedPlanMinSTCut().rewriteProgram(program,null,null,analysis);
@@ -96,7 +96,7 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		Assert.assertSame("MINST_EXPLICIT_RECEIPT_PUBLIC_ANALYSIS_IDENTITY",second.analysis,analysis.invoke(second.receipt));
 
 		DMLProgram foreignProgram=ProductionShadowFixtureFactory.compile("B-16");
-		PlacementAnalysis foreign=new NeutralPlacementGraphBuilder().buildAnalysis(foreignProgram);
+		PlacementAnalysis foreign=CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(foreignProgram);
 		try {
 			new MinStPlacementAdapter().select(foreign,first.receipt);
 			Assert.fail("MINST_EXPLICIT_RECEIPT_FOREIGN_ANALYSIS_ACCEPTED");
@@ -132,7 +132,7 @@ public class CampaignBMinStInvocationReceiptContractTest {
 
 	private static Invocation invoke(FederatedPlanMinSTCut planner,Method rewrite,String fixture) throws Exception {
 		DMLProgram program=ProductionShadowFixtureFactory.compile(fixture);
-		PlacementAnalysis supplied=new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis supplied=CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		String fingerprint=supplied.analysisFingerprint();
 		Object result;
 		try {
@@ -182,12 +182,19 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		List<String> states = selection.selectedReceipts().stream().map(receipt ->
 			receipt.planningKey().normalizedSignature() + '=' + receipt.execType() + '/' + receipt.output())
 			.toList();
-		List<String> obligations = selection.selectedObligations().stream().map(obligation ->
-			obligation.kind() + '|' + normalizeHop(obligation.childHopId(), hopKeys) + '|'
-				+ normalizeHop(obligation.originalHopId(), hopKeys) + '|' + obligation.domainId() + '|'
-				+ obligation.consumerHopIds().stream().map(id -> normalizeHop(id, hopKeys)).toList() + '|'
-				+ obligation.fType() + '|' + obligation.capability() + '|'
-				+ obligation.capabilityReason() + '|' + obligation.reason()).toList();
+		List<String> obligations = selection.selectedObligations().stream().map(obligation -> {
+			String expectedDomain = obligation.kind() + ":" + obligation.originalHopId() + ":"
+				+ obligation.fType() + ":" + obligation.consumerHopIds();
+			Assert.assertEquals("MINST_B09_OBLIGATION_DOMAIN", expectedDomain, obligation.domainId());
+			List<String> consumers = obligation.consumerHopIds().stream()
+				.map(id -> normalizeHop(id, hopKeys)).toList();
+			return obligation.kind() + "|child=" + normalizeHop(obligation.childHopId(), hopKeys)
+				+ "|original=" + normalizeHop(obligation.originalHopId(), hopKeys)
+				+ "|domain=" + obligation.kind() + ':' + normalizeHop(obligation.originalHopId(), hopKeys)
+				+ ':' + obligation.fType() + ':' + consumers + "|consumers=" + consumers
+				+ "|fType=" + obligation.fType() + "|capability=" + obligation.capability()
+				+ "|capabilityReason=" + obligation.capabilityReason() + "|reason=" + obligation.reason();
+		}).toList();
 		return new SelectionSnapshot(selection.cutObjectiveBits(), partition, states, obligations);
 	}
 
