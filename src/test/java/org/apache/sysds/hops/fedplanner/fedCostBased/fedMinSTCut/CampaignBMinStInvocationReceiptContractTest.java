@@ -7,14 +7,17 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
@@ -37,6 +40,8 @@ public class CampaignBMinStInvocationReceiptContractTest {
 	private static final String OFFLINE_MANIFEST =
 		"/org/apache/sysds/test/component/federated/placement/characterization/"
 			+ "g004b-c2-dp-minst-offline-literal.manifest";
+	private static final String OFFLINE_MANIFEST_SHA256 =
+		"3d84a0bc9d64ea6c5eac1b09ebcee48e9c139b7cf0c4958e8fccef701186cf5e";
 
 	@Test public void b09CloneRecompileProjectionPreservesExactNormalizedSelection() throws Exception {
 		FederatedPlanMinSTCut planner = new FederatedPlanMinSTCut();
@@ -45,7 +50,7 @@ public class CampaignBMinStInvocationReceiptContractTest {
 			approvedB09States(), List.of());
 		SelectionSnapshot actual = snapshot(first);
 		assertB09Selection(expected, actual);
-		assertB09CloneOriginIdentity(first.analysis);
+		assertB09CloneOriginIdentity(first.analysis, expected.selectedStates());
 
 		Invocation repeated = invoke(planner, declaredRewrite(), "B-09");
 		SelectionSnapshot repeatedActual = snapshot(repeated);
@@ -64,11 +69,15 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		try(InputStream stream = CampaignBMinStInvocationReceiptContractTest.class
 			.getResourceAsStream(OFFLINE_MANIFEST)) {
 			Assert.assertNotNull("MINST_B09_APPROVED_MANIFEST_MISSING", stream);
-			String manifest = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+			byte[] bytes = stream.readAllBytes();
+			Assert.assertEquals("MINST_B09_APPROVED_MANIFEST_DIGEST", OFFLINE_MANIFEST_SHA256,
+				HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+			String manifest = new String(bytes, StandardCharsets.UTF_8);
 			String prefix = "C2-X-11-CLONE-RECOMPILE|planner=MINST|MINST_FULL_OFFLINE_SELECTION|";
 			List<String> rows = manifest.lines().filter(line -> line.startsWith(prefix)).toList();
 			Assert.assertEquals("MINST_B09_APPROVED_ROW_MULTIPLICITY", 1, rows.size());
 			String row = rows.get(0);
+			Assert.assertTrue("MINST_B09_APPROVED_FIXTURE", row.contains("|fixture=B-09|"));
 			String startToken = "|selectedStates=[";
 			String endToken = "]|semanticFacts=";
 			int start = row.indexOf(startToken);
@@ -84,28 +93,52 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		}
 	}
 
-	private static void assertB09CloneOriginIdentity(PlacementAnalysis analysis) {
+	private static void assertB09CloneOriginIdentity(PlacementAnalysis analysis, List<String> approvedStates) {
+		List<String> approvedCloneStates = approvedStates.stream().filter(state -> state.contains("|9:recompile|")
+			&& state.endsWith("org.apache.sysds.hops.DataOp:TWrite X:X=CP/LOUT")).toList();
+		Assert.assertEquals("MINST_B09_APPROVED_CLONE_KEY_MULTIPLICITY", 1, approvedCloneStates.size());
+		List<String> approvedOriginStates = approvedStates.stream().filter(state -> state.contains("|6:main/3|8:compiled|")
+			&& state.endsWith("org.apache.sysds.hops.DataOp:TWrite X:X=CP/LOUT")).toList();
+		Assert.assertEquals("MINST_B09_APPROVED_ORIGIN_KEY_MULTIPLICITY", 1, approvedOriginStates.size());
+		String approvedCloneKey = selectedStateKey(approvedCloneStates.get(0));
+		String approvedOriginKey = selectedStateKey(approvedOriginStates.get(0));
 		var clones = analysis.graph().nodes().stream().filter(node -> node.kind() == NodeKind.CLONE
 			&& "CLONE_RECOMPILE".equals(node.valueVersion().versionKind().name())).toList();
 		Assert.assertEquals("MINST_B09_CLONE_RECOMPILE_MULTIPLICITY", 1, clones.size());
 		var clone = clones.get(0);
+		Assert.assertEquals("MINST_B09_APPROVED_CLONE_KEY", approvedCloneKey, clone.key().normalizedSignature());
 		Assert.assertEquals("MINST_B09_CLONE_RECOMPILE_CONTEXT", "recompile", clone.key().recompileContext());
-		var origins = analysis.graph().nodes().stream().filter(node -> node.kind() != NodeKind.CLONE
-			&& node.key().canonicalSourceOrigin().equals(clone.key().canonicalSourceOrigin())).toList();
+		var origins = analysis.graph().nodes().stream()
+			.filter(node -> approvedOriginKey.equals(node.key().normalizedSignature())).toList();
 		Assert.assertEquals("MINST_B09_ORIGIN_MULTIPLICITY", 1, origins.size());
 		var origin = origins.get(0);
+		Assert.assertNotEquals("MINST_B09_ORIGIN_MUST_NOT_BE_CLONE", NodeKind.CLONE, origin.kind());
 		Assert.assertEquals("MINST_B09_CANONICAL_SOURCE_ORIGIN", origin.key().canonicalSourceOrigin(),
 			clone.key().canonicalSourceOrigin());
-		Assert.assertEquals("MINST_B09_SAME_ORIGIN_MULTIPLICITY", 1, analysis.graph().constraints().stream()
+		var sameOrigin = analysis.graph().constraints().stream()
 			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_ORIGIN)
-			.filter(constraint -> constraint.left().equals(origin.key()) && constraint.right().equals(clone.key())
-				|| constraint.right().equals(origin.key()) && constraint.left().equals(clone.key())).count());
-		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_MULTIPLICITY", 1, clone.exclusions().stream()
-			.filter(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).count());
-		Assert.assertFalse("MINST_B09_CLONE_PREDECESSORS_MISSING",
-			clone.valueVersion().predecessorVersions().isEmpty());
-		Assert.assertTrue("MINST_B09_CLONE_PREDECESSOR_IDENTITY", clone.valueVersion().predecessorVersions().stream()
-			.allMatch(predecessor -> predecessor.startsWith("input-")));
+			.filter(constraint -> constraint.left().equals(origin.key()) && constraint.right().equals(clone.key())).toList();
+		Assert.assertEquals("MINST_B09_SAME_ORIGIN_MULTIPLICITY", 1, sameOrigin.size());
+		Assert.assertEquals("MINST_B09_SAME_ORIGIN_INPUT_POSITION", -1, sameOrigin.get(0).inputPosition());
+		Assert.assertEquals("MINST_B09_SAME_ORIGIN_EVIDENCE", "stable-origin", sameOrigin.get(0).evidence());
+		var exclusions = clone.exclusions().stream()
+			.filter(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).toList();
+		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_MULTIPLICITY", 1, exclusions.size());
+		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_EXEC", ExecType.CP, exclusions.get(0).state().execType());
+		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_OUTPUT", FederatedOutput.FOUT,
+			exclusions.get(0).state().output());
+		Assert.assertNull("MINST_B09_RECOMPILE_EXCLUSION_FTYPE", exclusions.get(0).state().fType());
+		Assert.assertFalse("MINST_B09_RECOMPILE_EXCLUSION_SHAPE", exclusions.get(0).state().shapeDependent());
+		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_DETAIL", "recompile-context forbids CP/FOUT",
+			exclusions.get(0).detail());
+		Assert.assertEquals("MINST_B09_CLONE_PREDECESSOR_IDENTITY", List.of("input-0"),
+			clone.valueVersion().predecessorVersions());
+	}
+
+	private static String selectedStateKey(String state) {
+		int separator = state.lastIndexOf('=');
+		Assert.assertTrue("MINST_B09_APPROVED_STATE_ENCODING", separator > 0);
+		return state.substring(0, separator);
 	}
 
 	@Test public void b07NamedFunctionBodyFutureContractRed() throws Exception {
