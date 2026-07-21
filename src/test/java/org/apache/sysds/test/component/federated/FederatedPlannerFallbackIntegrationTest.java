@@ -78,6 +78,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEstimator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
@@ -95,6 +96,11 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -154,42 +160,36 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpFallbackFTypeForCpfout() {
-		DataOp left = transientRead("X");
-		DataOp right = transientRead("Y");
+	public void testDpFallbackFTypeForCpfout() throws Exception {
+		DataOp left = federatedRead("XrowFallback", ROWS, COLS, FType.ROW);
+		DataOp right = federatedRead("YcolFallback", ROWS, COLS, FType.COL);
 		BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
 		plus.setDim1(ROWS);
 		plus.setDim2(COLS);
+		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
 
-		OpCaps caps = OpCaps.newBuilder()
-			.exec(ExecType.CP)
-			.fout(true, FType.ROW)
-			.build();
-		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
-			plus, Privacy.PUBLIC, FType.ROW, caps);
-
-		assertTrue("Typed CP/FOUT placement decision should remain available for binary plus",
-			decision.allowCP_FOUT);
-		assertEquals("Expected ROW fallback FType for mismatch inputs", java.util.Optional.of(FType.ROW), caps.foutFType());
+		FedPlan selected = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("DP memo should publish a selected CP/FOUT fallback plan for binary plus", selected);
+		assertEquals("Expected selected CP/FOUT fallback execution", ExecType.CP, selected.getExecType());
+		assertEquals("Expected ROW fallback FType for ROW/COL mismatch inputs", FType.ROW, selected.getFType());
 	}
 
 	@Test
-	public void testDpOracleCpfoutFallbackForMixedLocalAndFederatedInputs() {
+	public void testDpOracleCpfoutFallbackForMixedLocalAndFederatedInputs() throws Exception {
 		DataOp localLeft = transientRead("LocalLeft", ROWS, 1);
-		DataOp fedRight = federatedRead("FedRight", ROWS, 1);
+		DataOp fedRight = federatedRead("FedRight", ROWS, 1, FType.ROW);
 		BinaryOp cbind = new BinaryOp("cbindMixed", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND, localLeft, fedRight);
 		cbind.setDim1(ROWS);
 		cbind.setDim2(2);
+		DpPublicEnumeration dp = enumerateSyntheticDp(cbind);
 
-		OpCaps caps = OpCaps.newBuilder()
-			.exec(ExecType.CP)
-			.fout(true, FType.ROW)
-			.build();
-		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(
-			cbind, Privacy.PUBLIC, FType.ROW, caps);
-
-		assertTrue("Expected CP/FOUT decision for mixed local/federated cbind when typed oracle allows CP/FOUT",
-			decision.allowCP_FOUT);
+		FedPlanVariants variants = dp.memo().getFedPlanVariants(Pair.of(cbind.getHopID(), FederatedOutput.FOUT));
+		assertNotNull("DP enumeration should publish real FOUT variants for mixed local/federated cbind", variants);
+		assertFalse("Expected at least one real FOUT variant for mixed local/federated cbind",
+			variants.getFedPlanVariants().isEmpty());
+		FedPlan selected = dp.memo().getFedPlanAfterPrune(cbind.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Expected selected CP/FOUT memo plan for mixed local/federated cbind", selected);
+		assertEquals("Expected selected cbind FOUT plan to come from CP fallback", ExecType.CP, selected.getExecType());
 	}
 
 	@Test
@@ -292,26 +292,27 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpDerivedFedFoutWhenOracleOnlyAllowsFedLout() {
-		DataOp left = federatedRead("FX", ROWS, COLS);
-		DataOp right = transientRead("Y");
+	public void testDpDerivedFedFoutWhenOracleOnlyAllowsFedLout() throws Exception {
+		DataOp left = federatedRead("FXderived", ROWS, COLS, FType.ROW);
+		DataOp right = transientRead("Yderived", ROWS, COLS);
 		BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
 		plus.setDim1(ROWS);
 		plus.setDim2(COLS);
 		UnaryOp fedParent = HopRewriteUtils.createUnary(plus, OpOp1.EXP);
 		fedParent.setDim1(ROWS);
 		fedParent.setDim2(COLS);
+		DpPublicEnumeration dp = enumerateSyntheticDp(fedParent);
+
+		FedPlanVariants variants = dp.memo().getFedPlanVariants(Pair.of(plus.getHopID(), FederatedOutput.FOUT));
+		assertNotNull("DP enumeration should publish FOUT variants for the derived child", variants);
+		FedPlan derivedFout = variants.getFedPlanVariants().stream()
+			.filter(plan -> plan.getFedOutType() == FederatedOutput.FOUT)
+			.findFirst().orElse(null);
+		assertNotNull("Public DP enumeration should publish a FOUT candidate for the derived child", derivedFout);
 		Map<Long, FType> plannedFTypes = new HashMap<>();
 		plannedFTypes.put(left.getHopID(), FType.ROW);
-		assertTrue("Expected refed planner to allow CP->FOUT candidate from planned FTypes",
+		assertTrue("Refed public policy should prove the derived FOUT candidate is legal for planned FTypes",
 			FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(plus, plannedFTypes));
-		OpCaps caps = OpCaps.newBuilder().exec(ExecType.FED).placement(FederatedOutput.LOUT)
-			.reason(ReasonCode.FOUT_NOT_SUPPORTED_BY_RUNTIME).build();
-		ExecPlacementPolicy.Decision decision = ExecPlacementPolicy.decide(plus, Privacy.PUBLIC, FType.ROW, caps);
-		decision.allowFED_FOUT = decision.allowFED_FOUT
-			|| FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(plus, plannedFTypes);
-		assertTrue("Expected typed decision evidence to enable derived FED_FOUT under FED+LOUT oracle decision",
-			decision.allowFED_FOUT);
 	}
 
 	@Test
@@ -786,17 +787,19 @@ public class FederatedPlannerFallbackIntegrationTest {
 		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
 
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		FedPlan childPlan = addCustomPlan(memoTable, childCommon,
+		addCustomPlan(memoTable, childCommon,
 			FederatedOutput.FOUT, ExecType.CP, FType.FULL, 10.0);
-		FedPlan parentPlan = addCustomPlan(memoTable, parentCommon,
+		addCustomPlan(memoTable, parentCommon,
 			FederatedOutput.LOUT, ExecType.FED, FType.FULL, 20.0);
 		memoTable.registerHopRefs(hopCommonTable);
 
-		double forwardingShare = invokeDpPlannerForwardingShare(
-			true, FederatedOutput.FOUT, childPlan, parentPlan, 1);
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(child));
+		List<Double> forwardingShares = collectDpFoutOnlyForwardingCostToFED(
+			memoTable, hopCommonTable, parentCommon, fOUTOnlyinputHops, 1);
 
+		assertEquals("Expected one public FOUT-only FED forwarding entry", 1, forwardingShares.size());
 		assertTrue("Non-transient CP/FOUT child consumed by FED parent should pay an upload/share cost",
-			forwardingShare > 0.0);
+			forwardingShares.get(0) > 0.0);
 	}
 
 	@Test
@@ -908,23 +911,24 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpPromoteLocalFedInputHintsUsesCpFoutTypeWhenAnchorExists() {
-		DataOp fedInput = federatedRead("XfedAnchor", ROWS, COLS);
+	public void testDpPromoteLocalFedInputHintsUsesCpFoutTypeWhenAnchorExists() throws Exception {
+		DataOp fedInput = federatedRead("XfedAnchor", ROWS, COLS, FType.ROW);
 		UnaryOp localVec = new UnaryOp("localVec", DataType.MATRIX, ValueType.FP64, OpOp1.EXP,
 			transientRead("localVecIn", ROWS, 1));
-		HopCommon fedInputCommon = new HopCommon(fedInput, 1.0, 1.0, 1.0, 1, List.of());
-		HopCommon localVecCommon = new HopCommon(localVec, 1.0, 1.0, 1.0, 1, List.of());
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		FedPlan fedPlan = addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.FULL, 10.0);
-		FedPlan localPlan = addCustomPlan(memoTable, localVecCommon, FederatedOutput.LOUT, ExecType.CP, FType.BROADCAST, 5.0);
-		localPlan.setCpFoutType(FType.ROW);
-		Map<Long, FType> fedInputTypeMap = new HashMap<>();
-		fedInputTypeMap.put(fedInput.getHopID(), fedPlan.getFType());
-		fedInputTypeMap.put(localVec.getHopID(), localPlan.getCpFoutTypeOrFType());
-		assertEquals("Local ROW cpFoutType should become an oracle/planning hint once a federated anchor exists",
-			FType.ROW, localPlan.getCpFoutTypeOrFType());
-		assertEquals("Local ROW cpFoutType should be visible to FED-input feasibility checks",
-			FType.ROW, fedInputTypeMap.get(localVec.getHopID()));
+		localVec.setDim1(ROWS);
+		localVec.setDim2(1);
+		BinaryOp plus = new BinaryOp("plusAnchorLocal", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+			fedInput, localVec);
+		plus.setDim1(ROWS);
+		plus.setDim2(COLS);
+		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
+
+		FedPlan localPlan = dp.memo().getFedPlanAfterPrune(localVec.getHopID(), FederatedOutput.LOUT);
+		assertNotNull("Public enumeration should produce a local-vector LOUT plan", localPlan);
+		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Anchor/local-vector candidate should retain a public CP/FOUT plan after normalization", plusFout);
+		assertEquals("The promoted anchor candidate should preserve ROW FType on the selected FOUT plan",
+			FType.ROW, plusFout.getFType());
 	}
 
 	@Test
@@ -3602,15 +3606,15 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
 		addSinglePlan(memoTable, inputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
-		addCustomPlan(memoTable, outputCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
+		FedPlan mappedOutput = addCustomPlan(memoTable, outputCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
 		FedPlan functionPlan = addPlanWithChildren(memoTable, functionCommon, FederatedOutput.FOUT,
-			ExecType.FED, FType.ROW, 100.0,
+			ExecType.FED, FType.ROW, mappedOutput.getCumulativeCost(),
 			List.of(Pair.of(functionOutput.getHopID(), FederatedOutput.LOUT)));
 
 		assertTrue("Function placeholder must reference the mapped function output hop",
 			functionPlan.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == functionOutput.getHopID()));
 		assertEquals("Function placeholder cumulative cost should include mapped output cost attribution",
-			100.0, functionPlan.getCumulativeCost(), 1e-9);
+			mappedOutput.getCumulativeCost(), functionPlan.getCumulativeCost(), 1e-9);
 	}
 
 	@Test
@@ -4258,23 +4262,35 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpOptionalInputAlwaysAddsFedForwarding() {
-		DataOp parent = transientRead("parentHint", ROWS, COLS);
-		DataOp child = transientRead("childHint", ROWS, COLS);
-		Map<Long, Set<Long>> uploadHints = new HashMap<>();
-		TransTableRewireUtils.markParentChildUploadHint(uploadHints, parent.getHopID(), child.getHopID());
-		assertTrue("OPTIONAL input must add LOUT->FED forwarding for FED execution",
-			TransTableRewireUtils.hasParentChildUploadHint(uploadHints, parent.getHopID(), child.getHopID()));
+	public void testDpOptionalInputAlwaysAddsFedForwarding() throws Exception {
+		DataOp fed = federatedRead("Xoptional", ROWS, COLS, FType.ROW);
+		AggUnaryOp scalar = new AggUnaryOp("sumOptional", DataType.SCALAR, ValueType.FP64, AggOp.SUM, Direction.RowCol, fed);
+		BinaryOp plus = new BinaryOp("plusOptional", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, fed, scalar);
+		plus.setDim1(ROWS);
+		plus.setDim2(COLS);
+		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
+
+		FedPlan fedPlan = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.LOUT);
+		assertNotNull("Production enumeration should retain an LOUT candidate for OPTIONAL input forwarding", fedPlan);
+		assertFalse("OPTIONAL input enumeration must retain child forwarding edges instead of dropping the scalar producer",
+			fedPlan.getChildFedPlans().isEmpty());
 	}
 
 	@Test
-	public void testDpRewireProducesUploadHintForTransientReadOptionalInput() {
-		DataOp parent = transientRead("parentRewireHint", ROWS, COLS);
-		DataOp child = transientRead("childRewireHint", ROWS, COLS);
-		Map<Long, Set<Long>> uploadHints = new HashMap<>();
-		TransTableRewireUtils.markParentChildUploadHint(uploadHints, parent.getHopID(), child.getHopID());
-		assertTrue("Producer-generated upload hint must force LOUT->FED forwarding for OPTIONAL input",
-			TransTableRewireUtils.hasParentChildUploadHint(uploadHints, parent.getHopID(), child.getHopID()));
+	public void testDpRewireProducesUploadHintForTransientReadOptionalInput() throws Exception {
+		DataOp fed = federatedRead("XrewireHint", ROWS, COLS, FType.ROW);
+		DataOp tWrite = HopRewriteUtils.createTransientWrite("TrewireHint", fed);
+		DataOp tRead = transientRead("TrewireHint", ROWS, COLS);
+		BinaryOp plus = new BinaryOp("plusRewireHint", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+			tRead, transientRead("LocalRewireHint", ROWS, COLS));
+		plus.setDim1(ROWS);
+		plus.setDim2(COLS);
+		DpPublicEnumeration dp = enumerateSyntheticDp(tWrite, plus);
+
+		FedPlan tReadFout = dp.memo().getFedPlanAfterPrune(tRead.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Producer-generated rewire evidence should produce a transient-read FOUT plan", tReadFout);
+		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Transient-read consumer should retain a FOUT candidate from producer rewire evidence", plusFout);
 	}
 
 	@Test
@@ -5768,6 +5784,47 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals(dominatingTWrite, rewireTable.get(tRead.getHopID()).get(0));
 	}
 
+	private record DpPublicEnumeration(FederatedPlannerDpMemoTable memo, List<Hop> allHops) { }
+
+	private static DpPublicEnumeration enumerateSyntheticDp(Hop... roots) throws Exception {
+		DMLProgram prog = new DMLProgram();
+		StatementBlock sb = new StatementBlock();
+		sb.setHops(new ArrayList<>(List.of(roots)));
+		sb.setDMLProg(prog);
+		prog.addStatementBlock(sb);
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
+		return new DpPublicEnumeration(memo, collectAllHops(List.of(roots)));
+	}
+
+	private static DpPublicEnumeration enumerateDpScript(String script) throws Exception {
+		DMLProgram prog = parseAndRewrite(script, new HashMap<>(), "compile_cost_based");
+		PlacementAnalysis analysis;
+		try {
+			analysis = prog.requirePlacementAnalysisAuthority();
+		}
+		catch(IllegalStateException ex) {
+			analysis = bindSyntheticPlacementAnalysis(prog);
+		}
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
+		return new DpPublicEnumeration(memo, collectAllHops(collectRoots(prog)));
+	}
+
+	private static PlacementAnalysis bindSyntheticPlacementAnalysis(DMLProgram prog) throws Exception {
+		Method method = DMLProgram.class.getDeclaredMethod("bindPlacementAnalysisAtFinalHopBoundary");
+		method.setAccessible(true);
+		return (PlacementAnalysis) method.invoke(prog);
+	}
+
+	private static BinaryOp findBinaryOp(List<Hop> allHops, OpOp2 op) {
+		for(Hop hop : allHops)
+			if(hop instanceof BinaryOp && ((BinaryOp) hop).getOp() == op)
+				return (BinaryOp) hop;
+		return null;
+	}
+
 	private static DMLProgram parseAndRewrite(String script, Map<String, String> args, String planner) throws Exception {
 		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
 		DMLConfig newConfig = new DMLConfig(oldConfig);
@@ -5877,7 +5934,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	private static DataOp federatedRead(String name, long rows, long cols) {
-		FederatedPlannerUtils.registerFedInitVar(name);
+		return federatedRead(name, rows, cols, null);
+	}
+
+	private static DataOp federatedRead(String name, long rows, long cols, FType fType) {
+		FederatedPlannerUtils.registerFedInitVar(name, fType);
 		DataOp op = transientRead(name, rows, cols);
 		op.setForcedExecType(ExecType.FED);
 		op.setFederatedOutput(FederatedOutput.FOUT);
@@ -6017,6 +6078,16 @@ public class FederatedPlannerFallbackIntegrationTest {
 			lOUTOnlychildForwardingCostToFED, fOUTOnlyinputHops, fOUTOnlychildCumulativeCost,
 			fOUTOnlychildForwardingCostToCP, fOUTOnlychildForwardingCostToFED, numWorkers);
 		return lOUTOnlychildForwardingCostToFED;
+	}
+
+	private static void enumerateStatementBlockPublic(Hop hop, FederatedPlannerDpMemoTable memoTable,
+			Map<Long, HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
+			Map<Long, Privacy> privacyMap) {
+		StatementBlock sb = new StatementBlock();
+		sb.setHops(new ArrayList<>(List.of(hop)));
+		FederatedPlannerDpCostEnumerator.enumerateStatementBlock(sb, new DMLProgram(), memoTable,
+			hopCommonTable, rewireTable, privacyMap, new HashMap<>(), new HashSet<>(),
+			new HashSet<>(), 1, new HashSet<>());
 	}
 
 	private static void invokeEnumerateHop(Hop hop, FederatedPlannerDpMemoTable memoTable,
