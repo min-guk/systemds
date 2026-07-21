@@ -31,9 +31,8 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
@@ -51,6 +50,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersion
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
@@ -63,12 +63,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRul
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleNote;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateShapeProofFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.ExecutionFrequencyFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LoopContextFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.ProducerConsumerDemandFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.ProducerConsumerDemandKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransferSourceKind;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.TransferSourceProof;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -91,8 +85,6 @@ import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.apache.commons.lang3.tuple.Pair;
-import org.apache.sysds.runtime.util.UtilFunctions;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -300,15 +292,11 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections);
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
-		List<ExecutionFrequencyFact> executionFrequencyFacts = deriveExecutionFrequencyFacts(program,
-			topLevelStatementBlocks, projections, graph, keysByBlock);
-		List<ProducerConsumerDemandFact> producerConsumerDemandFacts = deriveProducerConsumerDemandFacts(graph,
-			projections, keysByBlock, executionFrequencyFacts, candidateConsumerDomainKeys,
-			candidateConsumerProfileFacts);
+		List<CompiledInputEdgeFact> compiledInputEdges = deriveCompiledInputEdges(projections, keysByBlock);
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
-			executionFrequencyFacts, producerConsumerDemandFacts);
+			compiledInputEdges);
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
@@ -318,185 +306,25 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 
-	private static List<ExecutionFrequencyFact> deriveExecutionFrequencyFacts(DMLProgram program,
-		List<StatementBlock> topLevelStatementBlocks, List<HopOccurrenceProjection> projections,
-		NeutralPlacementGraph graph, Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock) {
-		Map<CompiledHopKey,ExecutionFrequencyFact> factsByKey = new IdentityHashMap<>();
-		FrequencyContext root = new FrequencyContext(1.0d, 1.0d, 1.0d, List.of());
-		for(StatementBlock block : topLevelStatementBlocks)
-			captureStatementBlockFrequency(block, root, keysByBlock, factsByKey);
-		for(FunctionStatementBlock function : program.getNamedNSFunctionStatementBlocks().values())
-			captureStatementBlockFrequency(function, root, keysByBlock, factsByKey);
-		List<ExecutionFrequencyFact> ordered = new ArrayList<>();
-		for(HopOccurrenceProjection projection : projections) {
-			NodeKind kind = graph.node(projection.key()).orElseThrow().kind();
-			if(kind == NodeKind.FUNCTION_INPUT || kind == NodeKind.FUNCTION_OUTPUT)
-				continue;
-			ExecutionFrequencyFact fact = factsByKey.get(projection.key());
-			if(fact == null)
-				fact = new ExecutionFrequencyFact(projection.key(), 1.0d, 1.0d, 1.0d, List.of());
-			ordered.add(fact);
-		}
-		return List.copyOf(ordered);
-	}
-
-	private record FrequencyContext(double computeWeight, double networkWeight, double multiplicity,
-		List<LoopSeed> loops) { }
-	private record LoopSeed(long statementBlockId, double weight) { }
-
-	private static void captureStatementBlockFrequency(StatementBlock block, FrequencyContext context,
-		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock,
-		Map<CompiledHopKey,ExecutionFrequencyFact> factsByKey) {
-		if(block == null)
-			return;
-		if(block instanceof IfStatementBlock) {
-			recordBlockFrequency(block, context, keysByBlock, factsByKey);
-			IfStatement statement = (IfStatement) block.getStatement(0);
-			FrequencyContext branch = new FrequencyContext(context.computeWeight() * RewireConstants.DEFAULT_IF_ELSE_WEIGHT,
-				context.networkWeight() * RewireConstants.DEFAULT_IF_ELSE_WEIGHT, context.multiplicity(),
-				context.loops());
-			for(StatementBlock inner : statement.getIfBody())
-				captureStatementBlockFrequency(inner, branch, keysByBlock, factsByKey);
-			for(StatementBlock inner : statement.getElseBody())
-				captureStatementBlockFrequency(inner, branch, keysByBlock, factsByKey);
-		}
-		else if(block instanceof ForStatementBlock) {
-			ForStatementBlock fsb = (ForStatementBlock) block;
-			double loopWeight = estimateForLoopWeight(fsb);
-			List<LoopSeed> loops = appendLoop(context.loops(), block.getSBID(), loopWeight);
-			FrequencyContext loop = new FrequencyContext(context.computeWeight() * loopWeight,
-				context.networkWeight() * loopWeight, context.multiplicity(), loops);
-			recordBlockFrequency(block, loop, keysByBlock, factsByKey);
-			ForStatement statement = (ForStatement) block.getStatement(0);
-			for(StatementBlock inner : statement.getBody())
-				captureStatementBlockFrequency(inner, loop, keysByBlock, factsByKey);
-		}
-		else if(block instanceof WhileStatementBlock) {
-			WhileStatementBlock wsb = (WhileStatementBlock) block;
-			double loopWeight = RewireConstants.estimateWhileLoopWeight(wsb, null);
-			List<LoopSeed> loops = appendLoop(context.loops(), block.getSBID(), loopWeight);
-			FrequencyContext loop = new FrequencyContext(context.computeWeight() * loopWeight,
-				context.networkWeight() * loopWeight, context.multiplicity(), loops);
-			recordBlockFrequency(block, loop, keysByBlock, factsByKey);
-			WhileStatement statement = (WhileStatement) block.getStatement(0);
-			for(StatementBlock inner : statement.getBody())
-				captureStatementBlockFrequency(inner, loop, keysByBlock, factsByKey);
-		}
-		else if(block instanceof FunctionStatementBlock) {
-			recordBlockFrequency(block, context, keysByBlock, factsByKey);
-			FunctionStatement statement = (FunctionStatement) block.getStatement(0);
-			for(StatementBlock inner : statement.getBody())
-				captureStatementBlockFrequency(inner, context, keysByBlock, factsByKey);
-		}
-		else
-			recordBlockFrequency(block, context, keysByBlock, factsByKey);
-	}
-
-	private static void recordBlockFrequency(StatementBlock block, FrequencyContext context,
-		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock,
-		Map<CompiledHopKey,ExecutionFrequencyFact> factsByKey) {
-		Map<Hop,CompiledHopKey> keys = keysByBlock.get(block);
-		if(keys == null)
-			return;
-		for(CompiledHopKey key : keys.values()) {
-			List<LoopContextFact> loopContext = instantiateLoopContext(key, context.loops());
-			factsByKey.putIfAbsent(key, new ExecutionFrequencyFact(key, context.computeWeight(),
-				context.networkWeight(), context.multiplicity(), loopContext));
-		}
-	}
-
-	private static List<LoopSeed> appendLoop(List<LoopSeed> loops, long statementBlockId, double weight) {
-		if(!Double.isFinite(weight) || weight <= 0.0d)
-			throw new IllegalArgumentException("Loop execution weight must be finite and strictly positive");
-		List<LoopSeed> copy = new ArrayList<>(loops);
-		copy.add(new LoopSeed(statementBlockId, weight));
-		return List.copyOf(copy);
-	}
-
-	private static List<LoopContextFact> instantiateLoopContext(CompiledHopKey key, List<LoopSeed> seeds) {
-		List<LoopContextFact> result = new ArrayList<>(seeds.size());
-		List<String> path = new ArrayList<>(key.controlRegion().regionPath());
-		for(LoopSeed seed : seeds) {
-			path.add("loop:" + seed.statementBlockId());
-			ControlRegionKey region = new ControlRegionKey(key.programFingerprint(), key.functionNamespace(),
-				path, key.callSitePath(), key.recompileContext());
-			result.add(new LoopContextFact(region, seed.weight()));
-		}
-		return List.copyOf(result);
-	}
-
-	private static double estimateForLoopWeight(ForStatementBlock fsb) {
-		double loopWeight = RewireConstants.DEFAULT_LOOP_WEIGHT;
-		Hop from = fsb.getFromHops().getInput().get(0);
-		Hop to = fsb.getToHops().getInput().get(0);
-		Hop incr = fsb.getIncrementHops() != null ? fsb.getIncrementHops().getInput().get(0) : null;
-		Double dfromConst = RewireConstants.tryEvaluateScalarConstant(from, null);
-		Double dtoConst = RewireConstants.tryEvaluateScalarConstant(to, null);
-		Double dincrConst = incr == null ? Double.valueOf(1.0d)
-			: RewireConstants.tryEvaluateScalarConstant(incr, null);
-		if(dfromConst != null && dtoConst != null && dincrConst != null && dincrConst != 0.0d) {
-			double dfrom = dfromConst.doubleValue();
-			double dto = dtoConst.doubleValue();
-			double dincr = dincrConst.doubleValue();
-			if(dfrom > dto && dincr == 1.0d)
-				dincr = -1.0d;
-			double estimated = UtilFunctions.getSeqLength(dfrom, dto, dincr, false);
-			if(Double.isFinite(estimated) && estimated > 0.0d)
-				loopWeight = estimated;
-		}
-		if(!Double.isFinite(loopWeight) || loopWeight <= 0.0d)
-			throw new IllegalArgumentException("For-loop execution weight must be finite and strictly positive");
-		return loopWeight;
-	}
-
-	private static List<ProducerConsumerDemandFact> deriveProducerConsumerDemandFacts(NeutralPlacementGraph graph,
-		List<HopOccurrenceProjection> projections, Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock,
-		List<ExecutionFrequencyFact> frequencyFacts, List<CandidateConsumerProfileKey> consumerDomainKeys,
-		List<CandidateConsumerProfileFact> consumerProfileFacts) {
-		Map<CompiledHopKey,ExecutionFrequencyFact> frequencyByKey = new IdentityHashMap<>();
-		for(ExecutionFrequencyFact fact : frequencyFacts)
-			frequencyByKey.put(fact.key(), fact);
-		Map<CandidateConsumerProfileKey,CandidateConsumerProfileFact> profiles = new LinkedHashMap<>();
-		for(int i = 0; i < consumerDomainKeys.size(); i++)
-			profiles.put(consumerDomainKeys.get(i), consumerProfileFacts.get(i));
-		List<ProducerConsumerDemandFact> demands = new ArrayList<>();
+	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(List<HopOccurrenceProjection> projections,
+		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock) {
+		List<CompiledInputEdgeFact> edges = new ArrayList<>();
 		for(HopOccurrenceProjection consumerProjection : projections) {
-			Hop consumer = consumerProjection.hop();
 			Map<Hop,CompiledHopKey> blockKeys = findBlockKeys(keysByBlock, consumerProjection.key());
 			if(blockKeys == null)
 				continue;
+			Hop consumer = consumerProjection.hop();
 			for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
-				Hop producerHop = consumer.getInput(inputPosition);
-				if(!producerHop.getDataType().isMatrix())
+				Hop producer = consumer.getInput(inputPosition);
+				if(!producer.getDataType().isMatrix())
 					continue;
-				CompiledHopKey producerKey = blockKeys.get(producerHop);
+				CompiledHopKey producerKey = blockKeys.get(producer);
 				if(producerKey == null)
 					throw new IllegalStateException("Matrix producer input lacks exact compiled owner key");
-				CandidateConsumerProfileFact profile = profiles.get(new CandidateConsumerProfileKey(
-					consumerProjection.key(), inputPosition));
-				if(profile == null)
-					throw new IllegalStateException("Missing exact candidate consumer profile fact");
-				if(profile.status() != CandidateEvaluationStatus.AVAILABLE || profile.allowedTargetTypes().isEmpty())
-					continue;
-				ExecutionFrequencyFact producerFrequency = frequencyByKey.get(producerKey);
-				ExecutionFrequencyFact consumerFrequency = frequencyByKey.get(consumerProjection.key());
-				if(producerFrequency == null || consumerFrequency == null)
-					throw new IllegalStateException("Missing exact execution frequency fact for demand edge");
-				double forwardingWeight = FederatedPlannerUtils.computeForwardingWeightOfChild(
-					producerFrequency.networkWeight(), loopPairs(producerFrequency.loopContext()),
-					loopPairs(consumerFrequency.loopContext()), consumerFrequency.multiplicity());
-				if(!Double.isFinite(forwardingWeight) || forwardingWeight <= 0.0d)
-					throw new IllegalStateException("Demand forwarding weight is not finite and strictly positive");
-				TransferSourceProof proof = classifyTransferSource(graph, producerKey, producerHop,
-					consumerProjection.key());
-				FType requiredTargetType = selectRequiredTargetType(graph, producerKey, profile, proof);
-				ProducerConsumerDemandKey key = new ProducerConsumerDemandKey(producerKey,
-					consumerProjection.key(), inputPosition);
-				demands.add(new ProducerConsumerDemandFact(key, forwardingWeight,
-					requiredTargetType, profile, proof));
+				edges.add(new CompiledInputEdgeFact(producerKey, consumerProjection.key(), inputPosition));
 			}
 		}
-		return List.copyOf(demands);
+		return List.copyOf(edges);
 	}
 
 	private static Map<Hop,CompiledHopKey> findBlockKeys(Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock,
@@ -505,57 +333,6 @@ public final class NeutralPlacementGraphBuilder {
 			if(blockKeys.containsValue(consumer))
 				return blockKeys;
 		return null;
-	}
-
-	private static List<Pair<Long,Double>> loopPairs(List<LoopContextFact> loopContext) {
-		List<Pair<Long,Double>> pairs = new ArrayList<>(loopContext.size());
-		for(LoopContextFact fact : loopContext)
-			pairs.add(Pair.of((long)fact.loopRegion().normalizedSignature().hashCode(), fact.weight()));
-		return List.copyOf(pairs);
-	}
-
-	private static TransferSourceProof classifyTransferSource(NeutralPlacementGraph graph,
-		CompiledHopKey producer, Hop producerHop, CompiledHopKey consumer) {
-		NeutralPlacementGraph.Node producerNode = graph.node(producer).orElseThrow(() ->
-			new IllegalStateException("Demand producer is missing from the exact graph"));
-		if(producerHop instanceof DataOp && ((DataOp) producerHop).getOp() == OpOpData.PERSISTENTREAD)
-			return new TransferSourceProof(TransferSourceKind.PERSISTENT_LOCAL_READ, producer, null, null);
-		if(!producerNode.anchors().isEmpty())
-			return new TransferSourceProof(TransferSourceKind.DURABLE_ANCHOR, null,
-				producerNode.anchors().get(0), null);
-		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions())
-			if(action.key().sourceValueVersion().equals(producerNode.valueVersion())
-				&& action.key().compatibleConsumers().contains(consumer))
-				return new TransferSourceProof(TransferSourceKind.EXPLICIT_RELOCATION, null, null, action.key());
-		return new TransferSourceProof(TransferSourceKind.DERIVED_LOCAL_VALUE, producer, null, null);
-	}
-
-	private static FType selectRequiredTargetType(NeutralPlacementGraph graph, CompiledHopKey producer,
-		CandidateConsumerProfileFact profile, TransferSourceProof proof) {
-		FType structural = null;
-		if(proof.kind() == TransferSourceKind.DURABLE_ANCHOR)
-			structural = proof.durableAnchorOrNull().fType();
-		else if(proof.kind() == TransferSourceKind.EXPLICIT_RELOCATION)
-			structural = proof.relocationActionOrNull().targetPlacement().fType();
-		if(structural != null) {
-			if(profile.allowedTargetTypes().contains(structural))
-				return structural;
-			throw new IllegalStateException("Structural transfer source type is not allowed by exact profile");
-		}
-		NeutralPlacementGraph.Node producerNode = graph.node(producer).orElseThrow();
-		List<FType> candidates = producerNode.legalAlternatives().stream()
-			.map(PlacementState::fType).filter(Objects::nonNull)
-			.filter(profile.allowedTargetTypes()::contains).distinct()
-			.sorted(java.util.Comparator.comparing(Enum::name)).toList();
-		if(candidates.size() == 1)
-			return candidates.get(0);
-		if(candidates.isEmpty()
-			&& (proof.kind() == TransferSourceKind.PERSISTENT_LOCAL_READ
-				|| proof.kind() == TransferSourceKind.DERIVED_LOCAL_VALUE))
-			return profile.allowedTargetTypes().stream().sorted(java.util.Comparator.comparing(Enum::name))
-				.findFirst().orElseThrow(() -> new IllegalStateException(
-					"Exact candidate consumer profile has no canonical target type"));
-		throw new IllegalStateException("Demand target type is not uniquely determined by exact structural evidence");
 	}
 
 	private static HeuristicPolicyFacts heuristicPolicyFacts(NeutralPlacementGraph graph,
@@ -1221,7 +998,7 @@ public final class NeutralPlacementGraphBuilder {
 			ConsumerProfileEvaluation evaluation = evaluateConsumerProfile(consumer, inputShapeFacts,
 				List.of(inputPosition));
 			facts.add(new CandidateConsumerProfileFact(key, evaluation.status(), evaluation.allowedTargetTypes(),
-				evaluation.failureCode(), true));
+				evaluation.failureCode()));
 		}
 	}
 
