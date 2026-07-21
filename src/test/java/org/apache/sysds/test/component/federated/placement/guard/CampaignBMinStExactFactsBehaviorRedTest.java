@@ -30,6 +30,8 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -58,6 +60,68 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		"fromNodeId", "toNodeId", "capacityBits", "contributionsInDerivationOrder"};
 	private static final String[] GROUP_ACCESSORS = {"auxiliaryNodeId", "direction", "producerKey",
 		"producerPlacementNodeId", "conversionType", "priceBits", "endpointsInCanonicalOrder"};
+
+	@Test
+	public void neutralAnalysisOwnsTypedExecutionFrequencyAndDemandFacts() throws Exception {
+		Class<?> owner = PlacementAnalysis.class;
+		String[] carriers = {"LoopContextFact", "ExecutionFrequencyFact",
+			"ProducerConsumerDemandKey", "TransferSourceProof", "ProducerConsumerDemandFact"};
+		for(String n : carriers) {
+			Class<?> c = Class.forName(owner.getName() + "$" + n);
+			Assert.assertTrue("MINST_TYPED_CARRIER_IMMUTABLE|" + n, Modifier.isFinal(c.getModifiers()));
+		}
+		Class<?> loop = Class.forName(owner.getName() + "$" + "LoopContextFact");
+		assertTypedCarrier(loop, new String[] {"loopRegion", "weight"},
+			new Class<?>[] {ControlRegionKey.class, double.class});
+		Class<?> freq = Class.forName(owner.getName() + "$" + "ExecutionFrequencyFact");
+		assertTypedCarrier(freq,
+			new String[] {"key", "computeWeight", "networkWeight", "multiplicity", "loopContext"},
+			new Class<?>[] {CompiledHopKey.class, double.class, double.class, double.class, List.class});
+		Class<?> demandKey = Class.forName(owner.getName() + "$" + "ProducerConsumerDemandKey");
+		assertTypedCarrier(demandKey, new String[] {"producer", "consumer", "inputPosition"},
+			new Class<?>[] {CompiledHopKey.class, CompiledHopKey.class, int.class});
+		Class<?> proofKind = Class.forName(owner.getName() + "$" + "TransferSourceKind");
+		Assert.assertTrue("MINST_TRANSFER_SOURCE_KIND_TYPED", proofKind.isEnum());
+		Set<String> proofKinds = Arrays.stream(proofKind.getEnumConstants()).map(String::valueOf)
+			.collect(java.util.stream.Collectors.toSet());
+		Assert.assertEquals("MINST_TRANSFER_SOURCE_KIND_DOMAIN",
+			Set.of("DURABLE_ANCHOR", "EXPLICIT_RELOCATION"), proofKinds);
+		Class<?> proof = Class.forName(owner.getName() + "$" + "TransferSourceProof");
+		assertTypedCarrier(proof,
+			new String[] {"kind", "durableAnchorOrNull", "relocationActionSignatureOrNull"},
+			new Class<?>[] {proofKind, DurableAnchorKey.class, String.class});
+		Class<?> demand = Class.forName(owner.getName() + "$" + "ProducerConsumerDemandFact");
+		assertTypedCarrier(demand,
+			new String[] {"key", "forwardingWeight", "requiredTargetType", "transferSourceProof"},
+			new Class<?>[] {demandKey, double.class, FType.class, proof});
+		Assert.assertEquals(List.class,
+			owner.getMethod("executionFrequencyFactsInScopeOrder").getReturnType());
+		Assert.assertEquals(freq,
+			owner.getMethod("requireExactExecutionFrequency", CompiledHopKey.class).getReturnType());
+		Assert.assertEquals(List.class,
+			owner.getMethod("producerConsumerDemandFactsInCanonicalOrder").getReturnType());
+		Assert.assertEquals(demand, owner.getMethod("requireExactProducerConsumerDemand",
+			CompiledHopKey.class, CompiledHopKey.class, int.class).getReturnType());
+		Assert.assertEquals(String.class, owner.getMethod("executionCostFactsFingerprint").getReturnType());
+	}
+
+	private static void assertTypedCarrier(Class<?> type, String[] accessors, Class<?>[] types)
+		throws Exception {
+		Assert.assertEquals("MINST_TYPED_CARRIER_ARITY|" + type.getName(), accessors.length, types.length);
+		Constructor<?>[] constructors = type.getDeclaredConstructors();
+		Assert.assertEquals("MINST_TYPED_CARRIER_CONSTRUCTOR_COUNT|" + type.getName(), 1,
+			constructors.length);
+		Assert.assertFalse("MINST_TYPED_CARRIER_PUBLIC_LITERAL_CONSTRUCTOR|" + type.getName(),
+			Modifier.isPublic(constructors[0].getModifiers()));
+		Assert.assertArrayEquals("MINST_TYPED_CARRIER_CONSTRUCTOR_TYPES|" + type.getName(), types,
+			constructors[0].getParameterTypes());
+		for(int i = 0; i < accessors.length; i++)
+			Assert.assertEquals("MINST_TYPED_CARRIER_ACCESSOR_TYPE|" + type.getName() + '|' + accessors[i],
+				types[i], type.getMethod(accessors[i]).getReturnType());
+		for(Method method : type.getMethods())
+			Assert.assertFalse("MINST_TYPED_CARRIER_PUBLIC_LITERAL_FACTORY|" + method,
+				Modifier.isStatic(method.getModifiers()) && type.equals(method.getReturnType()));
+	}
 
 	@Test
 	public void persistentReadFixtureHasTwoFederatedConsumerOccurrences() throws Exception {
