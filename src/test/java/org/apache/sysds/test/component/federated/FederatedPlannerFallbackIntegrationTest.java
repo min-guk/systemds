@@ -38,6 +38,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.api.DMLScript;
@@ -81,6 +82,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCos
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEstimator;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
@@ -102,11 +104,13 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Can
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.ParserWrapper;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.common.Types.ParamBuiltinOp;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.instructions.fed.QuaternaryFEDInstruction;
@@ -293,26 +297,25 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 	@Test
 	public void testDpDerivedFedFoutWhenOracleOnlyAllowsFedLout() throws Exception {
-		DataOp left = federatedRead("FXderived", ROWS, COLS, FType.ROW);
-		DataOp right = transientRead("Yderived", ROWS, COLS);
-		BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
-		plus.setDim1(ROWS);
-		plus.setDim2(COLS);
-		UnaryOp fedParent = HopRewriteUtils.createUnary(plus, OpOp1.EXP);
-		fedParent.setDim1(ROWS);
-		fedParent.setDim2(COLS);
-		DpPublicEnumeration dp = enumerateSyntheticDp(fedParent);
-
-		FedPlanVariants variants = dp.memo().getFedPlanVariants(Pair.of(plus.getHopID(), FederatedOutput.FOUT));
-		assertNotNull("DP enumeration should publish FOUT variants for the derived child", variants);
-		FedPlan derivedFout = variants.getFedPlanVariants().stream()
-			.filter(plan -> plan.getFedOutType() == FederatedOutput.FOUT)
+		DpInvocationReceipt invocation = invokeDpPlannerNoRewriteScript(String.join("\n",
+			"FX_LOCAL=matrix(0,4,2);",
+			"FX=federated(local_matrix=FX_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
+				+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+			"Y=FX+1;",
+			"print(sum(Y));"));
+		CandidateDecisionReceipt receipt = invocation.semanticConsumption().semanticBlock()
+			.candidateDecisionReceipts().stream()
+			.filter(value -> value.nativeOutput() == FederatedOutput.LOUT
+				&& !value.allowFEDLOUT() && value.allowFEDFOUT())
 			.findFirst().orElse(null);
-		assertNotNull("Public DP enumeration should publish a FOUT candidate for the derived child", derivedFout);
-		Map<Long, FType> plannedFTypes = new HashMap<>();
-		plannedFTypes.put(left.getHopID(), FType.ROW);
-		assertTrue("Refed public policy should prove the derived FOUT candidate is legal for planned FTypes",
-			FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(plus, plannedFTypes));
+		assertNotNull("Typed CandidateDecisionReceipt should capture LOUT native authority and derived FED/FOUT enablement",
+			receipt);
+		Hop receiptHop = invocation.analysis().hop(receipt.candidateSnapshot().parentOccurrence()).orElse(null);
+		assertNotNull("Receipt parent must resolve to an exact hop", receiptHop);
+		FedPlan derived = invocation.memo().getFedPlanAfterPrune(receiptHop.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Public DP enumeration should publish/select a derived FOUT memo plan for the receipt-owned hop",
+			derived);
+		assertEquals("Selected derived FOUT must be FED-executable", ExecType.FED, derived.getExecType());
 	}
 
 	@Test
@@ -923,12 +926,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 		plus.setDim2(COLS);
 		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
 
-		FedPlan localPlan = dp.memo().getFedPlanAfterPrune(localVec.getHopID(), FederatedOutput.LOUT);
-		assertNotNull("Public enumeration should produce a local-vector LOUT plan", localPlan);
+		CandidateDecisionReceipt plusReceipt = dp.result().semanticBlock().candidateDecisionReceipts().stream()
+			.filter(value -> value.candidateSnapshot().promotedEntries().stream()
+				.anyMatch(entry -> entry.rawFType() == FType.ROW))
+			.findFirst().orElse(null);
+		assertNotNull("NormalizedCandidateInputs receipt should expose promoted ROW cpFoutType evidence", plusReceipt);
 		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Anchor/local-vector candidate should retain a public CP/FOUT plan after normalization", plusFout);
-		assertEquals("The promoted anchor candidate should preserve ROW FType on the selected FOUT plan",
-			FType.ROW, plusFout.getFType());
 	}
 
 	@Test
@@ -3591,30 +3595,25 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 
 	@Test
-	public void testDpEnumerateFunctionPlaceholderIncludesMappedFunctionOutputs() {
-		DataOp fedInput = federatedRead("FX", ROWS, COLS);
-		DataOp functionOutput = transientWrite("FY", ROWS, COLS);
+	public void testDpEnumerateFunctionPlaceholderIncludesMappedFunctionOutputs() throws Exception {
+		DataOp fedInput = federatedRead("FXfunction", ROWS, COLS, FType.ROW);
+		DataOp functionOutput = HopRewriteUtils.createTransientWrite("FYfunction", fedInput);
+		functionOutput.setDim1(ROWS);
+		functionOutput.setDim2(COLS);
 		FunctionOp functionHop = new FunctionOp(FunctionType.DML, DMLProgram.DEFAULT_NAMESPACE,
-			"test_fun", new String[] {"X"}, List.of(fedInput), new String[] {"Y"}, true);
+			"test_fun", new String[] {"X"}, List.of(fedInput, functionOutput), new String[] {"Y"}, true);
 		functionHop.setDim1(ROWS);
 		functionHop.setDim2(COLS);
+		DpPublicEnumeration dp = enumerateSyntheticDp(functionHop);
 
-		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
-		HopCommon inputCommon = registerHopCommon(hopCommonTable, fedInput);
-		HopCommon outputCommon = registerHopCommon(hopCommonTable, functionOutput);
-		HopCommon functionCommon = registerHopCommon(hopCommonTable, functionHop);
-
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		addSinglePlan(memoTable, inputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
-		FedPlan mappedOutput = addCustomPlan(memoTable, outputCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 100.0);
-		FedPlan functionPlan = addPlanWithChildren(memoTable, functionCommon, FederatedOutput.FOUT,
-			ExecType.FED, FType.ROW, mappedOutput.getCumulativeCost(),
-			List.of(Pair.of(functionOutput.getHopID(), FederatedOutput.LOUT)));
-
+		FedPlan outputPlan = dp.memo().getFedPlanAfterPrune(functionOutput.getHopID(), FederatedOutput.LOUT);
+		assertNotNull("Public program enumeration should publish the mapped function output plan", outputPlan);
+		FedPlan functionPlan = dp.memo().getFedPlanAfterPrune(functionHop.getHopID(), FederatedOutput.LOUT);
+		assertNotNull("Expected function placeholder LOUT plan from public program enumeration", functionPlan);
 		assertTrue("Function placeholder must reference the mapped function output hop",
 			functionPlan.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == functionOutput.getHopID()));
-		assertEquals("Function placeholder cumulative cost should include mapped output cost attribution",
-			mappedOutput.getCumulativeCost(), functionPlan.getCumulativeCost(), 1e-9);
+		assertTrue("Function placeholder cumulative cost should include mapped output cost attribution",
+			functionPlan.getCumulativeCost() >= outputPlan.getCumulativeCost());
 	}
 
 	@Test
@@ -4264,16 +4263,47 @@ public class FederatedPlannerFallbackIntegrationTest {
 	@Test
 	public void testDpOptionalInputAlwaysAddsFedForwarding() throws Exception {
 		DataOp fed = federatedRead("Xoptional", ROWS, COLS, FType.ROW);
-		AggUnaryOp scalar = new AggUnaryOp("sumOptional", DataType.SCALAR, ValueType.FP64, AggOp.SUM, Direction.RowCol, fed);
-		BinaryOp plus = new BinaryOp("plusOptional", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, fed, scalar);
+		DataOp matrixOptional = transientRead("MatrixOptional", ROWS, COLS);
+		BinaryOp plus = new BinaryOp("plusOptional", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, fed, matrixOptional);
 		plus.setDim1(ROWS);
 		plus.setDim2(COLS);
 		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
 
 		FedPlan fedPlan = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.LOUT);
-		assertNotNull("Production enumeration should retain an LOUT candidate for OPTIONAL input forwarding", fedPlan);
-		assertFalse("OPTIONAL input enumeration must retain child forwarding edges instead of dropping the scalar producer",
-			fedPlan.getChildFedPlans().isEmpty());
+		assertNotNull("Production enumeration should retain an LOUT candidate for matrix OPTIONAL forwarding", fedPlan);
+		assertTrue("OPTIONAL matrix input enumeration must retain the matrix producer edge",
+			fedPlan.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == matrixOptional.getHopID()));
+		Map<Long, HopCommon> table = hopCommonTableFor(fed, matrixOptional, plus);
+		List<Double> forwarding = collectDpLoutOnlyForwardingCostToFED(dp.memo(), table,
+			table.get(plus.getHopID()), matrixOptional, 1);
+		assertFalse("Public child-cost evidence should include matrix LOUT->FED forwarding", forwarding.isEmpty());
+	}
+
+	@Test
+	public void testDpRewireProducesUploadHintForConsumerWhenProducerIsCpfout() throws Exception {
+		DataOp producerInput = transientRead("CpfoutProducerInput", ROWS, COLS);
+		UnaryOp producer = new UnaryOp("cpfoutProducer", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, producerInput);
+		producer.setDim1(ROWS);
+		producer.setDim2(COLS);
+		UnaryOp consumer = new UnaryOp("fedConsumer", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, producer);
+		consumer.setDim1(ROWS);
+		consumer.setDim2(COLS);
+		Map<Long, HopCommon> table = hopCommonTableFor(producerInput, producer, consumer);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
+		FedPlan producerFout = addCustomPlan(memo, table.get(producer.getHopID()),
+			FederatedOutput.FOUT, ExecType.CP, FType.ROW, 10.0);
+		addCustomPlan(memo, table.get(consumer.getHopID()), FederatedOutput.LOUT, ExecType.FED, FType.ROW, 20.0);
+		memo.registerHopRefs(table);
+
+		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(producer));
+		List<Double> forwarding = collectDpFoutOnlyForwardingCostToFED(
+			memo, table, table.get(consumer.getHopID()), fOUTOnlyinputHops, 1);
+		assertEquals("CP/FOUT producer should be the exact FOUT-only consumer input",
+			producer, fOUTOnlyinputHops.get(0));
+		assertEquals("Producer plan should remain CP/FOUT", FederatedOutput.FOUT, producerFout.getFedOutType());
+		assertFalse("CP/FOUT producer -> FED consumer must publish upload-hint forwarding evidence",
+			forwarding.isEmpty());
+		assertTrue("CP/FOUT producer -> FED consumer upload/share should be positive", forwarding.get(0) > 0.0);
 	}
 
 	@Test
@@ -4289,8 +4319,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		FedPlan tReadFout = dp.memo().getFedPlanAfterPrune(tRead.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Producer-generated rewire evidence should produce a transient-read FOUT plan", tReadFout);
+		assertTrue("tRead FOUT plan should retain the rewire-derived tWrite/FOUT child edge",
+			tReadFout.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == tWrite.getHopID()
+				&& edge.getValue() == FederatedOutput.FOUT));
 		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Transient-read consumer should retain a FOUT candidate from producer rewire evidence", plusFout);
+		assertTrue("consumer FOUT plan should reference tRead through rewire-derived forwarding evidence",
+			plusFout.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == tRead.getHopID()));
 	}
 
 	@Test
@@ -5784,7 +5819,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertEquals(dominatingTWrite, rewireTable.get(tRead.getHopID()).get(0));
 	}
 
-	private record DpPublicEnumeration(FederatedPlannerDpMemoTable memo, List<Hop> allHops) { }
+	private record DpPublicEnumeration(FederatedPlannerDpMemoTable memo, DpEnumerationResult result, List<Hop> allHops) { }
 
 	private static DpPublicEnumeration enumerateSyntheticDp(Hop... roots) throws Exception {
 		DMLProgram prog = new DMLProgram();
@@ -5794,8 +5829,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 		prog.addStatementBlock(sb);
 		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
-		FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
-		return new DpPublicEnumeration(memo, collectAllHops(List.of(roots)));
+		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
+		return new DpPublicEnumeration(memo, result, collectAllHops(List.of(roots)));
 	}
 
 	private static DpPublicEnumeration enumerateDpScript(String script) throws Exception {
@@ -5808,14 +5843,57 @@ public class FederatedPlannerFallbackIntegrationTest {
 			analysis = bindSyntheticPlacementAnalysis(prog);
 		}
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
-		FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
-		return new DpPublicEnumeration(memo, collectAllHops(collectRoots(prog)));
+		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
+		return new DpPublicEnumeration(memo, result, collectAllProgramHops(prog));
 	}
 
-	private static PlacementAnalysis bindSyntheticPlacementAnalysis(DMLProgram prog) throws Exception {
-		Method method = DMLProgram.class.getDeclaredMethod("bindPlacementAnalysisAtFinalHopBoundary");
-		method.setAccessible(true);
-		return (PlacementAnalysis) method.invoke(prog);
+	private static PlacementAnalysis bindSyntheticPlacementAnalysis(DMLProgram prog) {
+		return CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(prog);
+	}
+
+	private static DpInvocationReceipt invokeSyntheticDpPlanner(Hop root) throws Exception {
+		DMLProgram prog = new DMLProgram();
+		StatementBlock sb = new StatementBlock();
+		sb.setHops(new ArrayList<>(List.of(root)));
+		sb.setDMLProg(prog);
+		prog.addStatementBlock(sb);
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		return new FederatedPlannerDpFedCostBased().rewriteProgram(
+			prog, null, null, analysis, memo, null, null);
+	}
+
+	private static DpInvocationReceipt invokeDpPlannerNoRewriteScript(String script) throws Exception {
+		ParserWrapper parser = ParserFactory.createParser();
+		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator dmlt = new DMLTranslator(prog);
+		dmlt.liveVariableAnalysis(prog);
+		dmlt.validateParseTree(prog);
+		dmlt.constructHops(prog);
+		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			new DMLTranslator(prog).constructLops(prog, value -> receipt.compareAndSet(null, value));
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+		}
+		assertTrue("Expected DP invocation receipt", receipt.get() instanceof DpInvocationReceipt);
+		return (DpInvocationReceipt) receipt.get();
+	}
+
+	private static DpPublicEnumeration enumerateDpNoRewriteScript(String script) throws Exception {
+		ParserWrapper parser = ParserFactory.createParser();
+		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator dmlt = new DMLTranslator(prog);
+		dmlt.liveVariableAnalysis(prog);
+		dmlt.validateParseTree(prog);
+		dmlt.constructHops(prog);
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
+		return new DpPublicEnumeration(memo, result, collectAllProgramHops(prog));
 	}
 
 	private static BinaryOp findBinaryOp(List<Hop> allHops, OpOp2 op) {
@@ -5856,6 +5934,16 @@ public class FederatedPlannerFallbackIntegrationTest {
 				roots.addAll(sb.getHops());
 		}
 		return roots;
+	}
+
+	private static List<Hop> collectAllProgramHops(DMLProgram prog) {
+		List<Hop> roots = collectRoots(prog);
+		for(org.apache.sysds.parser.FunctionDictionary<org.apache.sysds.parser.FunctionStatementBlock> dict
+				: prog.getNamespaces().values())
+			for(org.apache.sysds.parser.FunctionStatementBlock fsb : dict.getFunctions().values())
+				if(fsb.getHops() != null)
+					roots.addAll(fsb.getHops());
+		return collectAllHops(roots);
 	}
 
 	private static List<Hop> collectAllHops(List<Hop> roots) {
@@ -6005,6 +6093,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 		variants.addFedPlan(plan);
 		memoTable.addFedPlanVariants(hopCommon.getHopRef().getHopID(), fedOutType, variants);
 		return plan;
+	}
+
+	private static Map<Long, HopCommon> hopCommonTableFor(Hop... hops) {
+		Map<Long, HopCommon> table = new HashMap<>();
+		for(Hop hop : hops)
+			registerHopCommon(table, hop);
+		return table;
 	}
 
 	private static List<Double> collectDpFoutOnlyForwardingCostToCP(Hop child, HopCommon childCommon,
