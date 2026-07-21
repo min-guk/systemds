@@ -268,7 +268,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		LinkedHashSet<PlacementIdentity.CompiledHopKey> expectedKeys = new LinkedHashSet<>();
 		for(HopOccurrenceProjection projection : projections) {
 			expectedKeys.add(projection.key());
-			NodeShapeFact fact = replacementKey != null && replacementKey.equals(projection.key()) ? replacementFact :
+			NodeShapeFact fact = replacementKey != null && replacementFact != null
+				&& replacementKey.equals(projection.key()) ? replacementFact :
 				source.shapeFact(projection.key()).orElseThrow(
 					() -> new IllegalArgumentException("Source analysis lacks shape fact for " + projection.key()));
 			facts.put(projection.key(), fact);
