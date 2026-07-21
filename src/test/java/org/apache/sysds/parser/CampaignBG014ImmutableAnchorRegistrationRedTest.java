@@ -41,7 +41,10 @@ import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.util.ProgramConverter;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -126,6 +129,90 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		assertAnchorsImmutable("G014_RED2_FUNCTION_BOUNDARY_ANCHOR_MUTABLE", boundaryNode.anchors());
 		Assert.assertEquals("G014_RED2_FUNCTION_BOUNDARY_MUTATION_CHANGED_STATE", beforeMutation,
 			boundaryNode.anchors());
+	}
+
+	@Test
+	public void immutableReceiptAnchorKeyRebuildsExactRuntimePlacement() {
+		Fixture fixture = fixture();
+		try {
+			ExactPlacementRegistration.RegisteredUpload upload = ExactPlacementRegistration.registerProgram(
+				fixture.program(), fixture.selectedTypes(), fixture.analysis()).uploads().get(0);
+			FederationMap rebuilt = FederationUtils.buildAnchorMapFromKey(upload.anchorKey());
+			Assert.assertNotNull("G014_RED2_RUNTIME_KEY_NOT_DECODABLE", rebuilt);
+			Assert.assertSame("G014_RED2_RUNTIME_KEY_FTYPE", FType.ROW, rebuilt.getType());
+			Assert.assertEquals("G014_RED2_RUNTIME_KEY_PARTITIONS", 2, rebuilt.getFederatedRanges().length);
+			Assert.assertArrayEquals("G014_RED2_RUNTIME_KEY_FIRST_BEGIN", new long[] {0, 0},
+				rebuilt.getFederatedRanges()[0].getBeginDims());
+			Assert.assertArrayEquals("G014_RED2_RUNTIME_KEY_FIRST_END", new long[] {5, 0},
+				rebuilt.getFederatedRanges()[0].getEndDims());
+			Assert.assertArrayEquals("G014_RED2_RUNTIME_KEY_SECOND_BEGIN", new long[] {5, 0},
+				rebuilt.getFederatedRanges()[1].getBeginDims());
+			Assert.assertArrayEquals("G014_RED2_RUNTIME_KEY_SECOND_END", new long[] {10, 0},
+				rebuilt.getFederatedRanges()[1].getEndDims());
+		}
+		finally {
+			clearMutableState();
+		}
+	}
+
+	@Test
+	public void immutableReceiptAnchorKeySupportsEveryDurableRuntimeType() {
+		try {
+			assertRuntimeRoundTrip(literalFederatedAnchor("G014_RED2_KEY_ROW", 18211, FType.ROW), FType.ROW,
+				new long[][] {{0, 0, 5, 0}, {5, 0, 10, 0}});
+			assertRuntimeRoundTrip(literalFederatedAnchor("G014_RED2_KEY_COL", 18221, FType.COL), FType.COL,
+				new long[][] {{0, 0, 0, 5}, {0, 5, 0, 10}});
+			assertRuntimeRoundTrip(literalFederatedAnchor("G014_RED2_KEY_FULL", 18231, FType.FULL), FType.FULL,
+				new long[][] {{0, 0, 10, 10}});
+			assertRuntimeRoundTrip(literalFederatedAnchor("G014_RED2_KEY_BROADCAST", 18241, FType.BROADCAST),
+				FType.BROADCAST, new long[][] {{0, 0, 10, 10}, {0, 0, 10, 10}});
+		}
+		finally {
+			clearMutableState();
+		}
+	}
+
+	@Test
+	public void inlinedFunctionBoundaryMetadataSurvivesStatementBlockDeepCopy() throws Exception {
+		DMLProgram compiled = ProductionShadowFixtureFactory.compile("B-21");
+		StatementBlock source = compiled.getStatementBlocks().stream()
+			.filter(block -> !block.getInlinedFunctionCallBoundaries().isEmpty()).findFirst().orElseThrow();
+		StatementBlock copied = ProgramConverter.createStatementBlockCopy(source, -1, true, true);
+		Assert.assertNotSame("G014_RED2_RECOMPILE_REUSED_STATEMENT_BLOCK", source, copied);
+		Assert.assertEquals("G014_RED2_RECOMPILE_DROPPED_TYPED_FUNCTION_BOUNDARIES",
+			source.getInlinedFunctionCallBoundaries(), copied.getInlinedFunctionCallBoundaries());
+		DMLProgram copiedProgram = new DMLProgram();
+		copiedProgram.setStatementBlocks(new ArrayList<>(List.of(copied)));
+		PlacementAnalysis copiedAnalysis = copiedProgram.bindPlacementAnalysisAtFinalHopBoundary();
+		Assert.assertTrue("G014_RED2_RECOMPILE_DROPPED_EXACT_FUNCTION_INPUT",
+			copiedAnalysis.graph().nodes().stream().anyMatch(node -> node.kind() == NodeKind.FUNCTION_INPUT
+				&& copiedAnalysis.graph().constraints().stream().anyMatch(edge -> edge.left() != node.key()
+					&& edge.right() == node.key() && edge.kind() == ConstraintKind.CONJUNCTIVE)));
+	}
+
+	@Test
+	public void nestedInliningPrefixesTypedBoundaryAuthorityBeforeAnalysis() throws Exception {
+		String script = "inner=function(matrix[double] X) return (matrix[double] Y){Y=rowSums(X);}\n"
+			+ "outer=function(matrix[double] A) return (matrix[double] B){B=inner(A);}\n"
+			+ "F=federated(addresses=list(\"localhost:18201/X1\",\"localhost:18202/X2\"),"
+			+ "ranges=list(list(0,0),list(5,10),list(5,0),list(10,10)));\n"
+			+ "R=outer(F);\nprint(sum(R));\n";
+		DMLProgram compiled = compileWithoutHopRewrites(script);
+		List<StatementBlock.InlinedFunctionCallBoundary> boundaries = compiled.getStatementBlocks().stream()
+			.flatMap(block -> block.getInlinedFunctionCallBoundaries().stream()).distinct().toList();
+		Assert.assertEquals("G014_RED2_NESTED_TYPED_CALL_COUNT", 2, boundaries.size());
+		Assert.assertEquals("G014_RED2_NESTED_CALL_POSITIONS_COLLIDE", 2,
+			boundaries.stream().map(StatementBlock.InlinedFunctionCallBoundary::callStatementPosition)
+				.distinct().count());
+		PlacementAnalysis analysis = compiled.bindPlacementAnalysisAtFinalHopBoundary();
+		List<NeutralPlacementGraph.Node> functionInputs = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.FUNCTION_INPUT)
+			.filter(node -> analysis.graph().constraints().stream().anyMatch(edge -> edge.right() == node.key()
+				&& edge.evidence().startsWith("inlined-function-argument:"))).toList();
+		Assert.assertEquals("G014_RED2_NESTED_EXACT_FUNCTION_INPUT_COUNT", 2, functionInputs.size());
+		Assert.assertTrue("G014_RED2_NESTED_INPUT_DROPPED_TYPED_CONJUNCTIVE_AUTHORITY",
+			functionInputs.stream().allMatch(node -> analysis.graph().constraints().stream()
+				.anyMatch(edge -> edge.kind() == ConstraintKind.CONJUNCTIVE && edge.right() == node.key())));
 	}
 
 	@Test
@@ -368,15 +455,33 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 	}
 
 	private static String runtimeKey(DurableAnchorKey anchor) {
-		return anchor.partitions().stream().map(partition -> partition.workerId() + "@"
-			+ partition.begin().get(0) + ":" + partition.begin().get(1) + "-"
-			+ partition.end().get(0) + ":" + partition.end().get(1))
-			.reduce((left, right) -> left + ";" + right).orElseThrow() + "|" + anchor.fType().name();
+		String addresses = anchor.partitions().stream().map(partition -> partition.workerId() + ';')
+			.reduce("", String::concat);
+		String ranges = anchor.partitions().stream().map(partition -> switch(anchor.fType()) {
+			case ROW -> partition.begin().get(0) + "," + partition.end().get(0) + ';';
+			case COL -> partition.begin().get(1) + "," + partition.end().get(1) + ';';
+			case FULL, BROADCAST -> partition.begin().get(0) + "," + partition.begin().get(1) + ","
+				+ partition.end().get(0) + "," + partition.end().get(1) + ';';
+			default -> throw new IllegalArgumentException("unsupported durable anchor " + anchor.fType());
+		}).reduce("", String::concat);
+		return addresses + '|' + ranges + '|' + anchor.fType().name();
 	}
 
 	private static DataOp literalFederatedAnchor(String name, int port) {
-		String script = name + "=federated(addresses=list(\"localhost:" + port + "/X1\",\"localhost:"
-			+ (port + 1) + "/X2\"),ranges=list(list(0,0),list(5,10),list(5,0),list(10,10)));\n"
+		return literalFederatedAnchor(name, port, FType.ROW);
+	}
+
+	private static DataOp literalFederatedAnchor(String name, int port, FType type) {
+		String addresses = type == FType.FULL ? "list(\"localhost:" + port + "/X1\")"
+			: "list(\"localhost:" + port + "/X1\",\"localhost:" + (port + 1) + "/X2\")";
+		String ranges = switch(type) {
+			case ROW -> "list(list(0,0),list(5,10),list(5,0),list(10,10))";
+			case COL -> "list(list(0,0),list(10,5),list(0,5),list(10,10))";
+			case FULL -> "list(list(0,0),list(10,10))";
+			case BROADCAST -> "list(list(0,0),list(10,10),list(0,0),list(10,10))";
+			default -> throw new IllegalArgumentException("unsupported durable anchor " + type);
+		};
+		String script = name + "=federated(addresses=" + addresses + ",ranges=" + ranges + ");\n"
 			+ "print(sum(" + name + "));\n";
 		try {
 			DMLProgram parsed = compile(script);
@@ -388,14 +493,44 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		}
 	}
 
+	private static void assertRuntimeRoundTrip(DataOp anchor, FType type, long[][] expectedRanges) {
+		DataOp target = matrix("G014_RED2_KEY_TARGET_" + type);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(List.of(block(
+			HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS)))));
+		PlacementAnalysis analysis = program.bindPlacementAnalysisAtFinalHopBoundary();
+		ExactPlacementRegistration.RegisteredUpload upload = ExactPlacementRegistration.registerProgram(program,
+			Map.of(anchor.getHopID(), type, target.getHopID(), type), analysis).uploads().get(0);
+		FederationMap rebuilt = FederationUtils.buildAnchorMapFromKey(upload.anchorKey());
+		Assert.assertNotNull("G014_RED2_RUNTIME_KEY_NOT_DECODABLE_" + type, rebuilt);
+		Assert.assertSame("G014_RED2_RUNTIME_KEY_FTYPE_" + type, type, rebuilt.getType());
+		Assert.assertEquals("G014_RED2_RUNTIME_KEY_PARTITIONS_" + type,
+			expectedRanges.length, rebuilt.getFederatedRanges().length);
+		for(int i = 0; i < expectedRanges.length; i++) {
+			Assert.assertArrayEquals("G014_RED2_RUNTIME_KEY_BEGIN_" + type + '_' + i,
+				new long[] {expectedRanges[i][0], expectedRanges[i][1]},
+				rebuilt.getFederatedRanges()[i].getBeginDims());
+			Assert.assertArrayEquals("G014_RED2_RUNTIME_KEY_END_" + type + '_' + i,
+				new long[] {expectedRanges[i][2], expectedRanges[i][3]},
+				rebuilt.getFederatedRanges()[i].getEndDims());
+		}
+	}
+
 	private static DMLProgram compile(String script) throws Exception {
+		DMLProgram program = compileWithoutHopRewrites(script);
+		new DMLTranslator(program).rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileWithoutHopRewrites(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
 		translator.liveVariableAnalysis(program);
 		translator.validateParseTree(program);
 		translator.constructHops(program);
-		translator.rewriteHopsDAG(program);
 		return program;
 	}
 

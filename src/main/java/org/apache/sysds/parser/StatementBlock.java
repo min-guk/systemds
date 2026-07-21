@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
@@ -47,6 +48,64 @@ import org.apache.sysds.utils.MLContextProxy;
 
 public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 {
+	public record InlinedFunctionInputBoundary(int position, int statementPosition, String formalVariable,
+		String boundVariable, String actualVariable) {
+		public InlinedFunctionInputBoundary {
+			if(position < 0 || statementPosition < 0 || formalVariable == null || formalVariable.isBlank()
+				|| boundVariable == null || boundVariable.isBlank())
+				throw new IllegalArgumentException("Inlined function input identity must not be blank");
+			if(actualVariable != null && actualVariable.isBlank())
+				throw new IllegalArgumentException("Inlined function actual variable must be null or non-blank");
+		}
+
+		private InlinedFunctionInputBoundary rewrite(String prefix, int statementOffset) {
+			return new InlinedFunctionInputBoundary(position, statementOffset + statementPosition,
+				formalVariable, prefix + boundVariable,
+				actualVariable == null ? null : prefix + actualVariable);
+		}
+	}
+
+	public record InlinedFunctionOutputBoundary(int position, int statementPosition, String formalVariable,
+		String boundVariable, String targetVariable) {
+		public InlinedFunctionOutputBoundary {
+			if(position < 0 || statementPosition < 0 || formalVariable == null || formalVariable.isBlank()
+				|| boundVariable == null || boundVariable.isBlank()
+				|| targetVariable == null || targetVariable.isBlank())
+				throw new IllegalArgumentException("Inlined function output identity must not be blank");
+		}
+
+		private InlinedFunctionOutputBoundary rewrite(String prefix, int statementOffset) {
+			return new InlinedFunctionOutputBoundary(position, statementOffset + statementPosition,
+				formalVariable, prefix + boundVariable, prefix + targetVariable);
+		}
+	}
+
+	public record InlinedFunctionCallBoundary(String functionKey, int callStatementPosition,
+		List<InlinedFunctionInputBoundary> inputs, List<InlinedFunctionOutputBoundary> outputs) {
+		public InlinedFunctionCallBoundary {
+			if(functionKey == null || functionKey.isBlank() || callStatementPosition < 0)
+				throw new IllegalArgumentException("Inlined function key must not be blank");
+			inputs = Objects.requireNonNull(inputs, "inputs").stream()
+				.map(input -> Objects.requireNonNull(input, "input"))
+				.sorted(java.util.Comparator.comparingInt(InlinedFunctionInputBoundary::position)).toList();
+			outputs = Objects.requireNonNull(outputs, "outputs").stream()
+				.map(output -> Objects.requireNonNull(output, "output"))
+				.sorted(java.util.Comparator.comparingInt(InlinedFunctionOutputBoundary::position)).toList();
+			for(int i = 1; i < inputs.size(); i++)
+				if(inputs.get(i - 1).position() == inputs.get(i).position())
+					throw new IllegalArgumentException("Duplicate inlined function input position");
+			for(int i = 1; i < outputs.size(); i++)
+				if(outputs.get(i - 1).position() == outputs.get(i).position())
+					throw new IllegalArgumentException("Duplicate inlined function output position");
+		}
+
+		private InlinedFunctionCallBoundary rewrite(String prefix, int statementOffset) {
+			return new InlinedFunctionCallBoundary(functionKey, statementOffset + callStatementPosition,
+				inputs.stream().map(input -> input.rewrite(prefix, statementOffset)).toList(),
+				outputs.stream().map(output -> output.rewrite(prefix, statementOffset)).toList());
+		}
+	}
+
 	protected static final Log LOG = LogFactory.getLog(StatementBlock.class.getName());
 	protected static IDSequence _seq = new IDSequence();
 	private static IDSequence _seqSBID = new IDSequence();
@@ -55,6 +114,7 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 	
 	protected DMLProgram _dmlProg;
 	protected ArrayList<Statement> _statements;
+	private final List<InlinedFunctionCallBoundary> _inlinedFunctionCallBoundaries = new ArrayList<>();
 	ArrayList<Hop> _hops = null;
 	ArrayList<Lop> _lops = null;
 	HashMap<String,ConstIdentifier> _constVarsIn;
@@ -92,6 +152,7 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 		setParseInfo(sb);
 		_dmlProg = sb._dmlProg;
 		_nondeterministic = sb.isNondeterministic();
+		_inlinedFunctionCallBoundaries.addAll(sb._inlinedFunctionCallBoundaries);
 	}
 
 	public void setDMLProg(DMLProgram dmlProg){
@@ -144,6 +205,19 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 
 	public ArrayList<Statement> getStatements() {
 		return _statements;
+	}
+
+	public List<InlinedFunctionCallBoundary> getInlinedFunctionCallBoundaries() {
+		return _inlinedFunctionCallBoundaries.stream()
+			.sorted(java.util.Comparator.comparingInt(InlinedFunctionCallBoundary::callStatementPosition))
+			.toList();
+	}
+
+	public void copyInlinedFunctionCallBoundariesFrom(StatementBlock source) {
+		Objects.requireNonNull(source, "source");
+		if(!_inlinedFunctionCallBoundaries.isEmpty())
+			throw new IllegalStateException("Inlined function boundaries already initialized");
+		_inlinedFunctionCallBoundaries.addAll(source.getInlinedFunctionCallBoundaries());
 	}
 
 	public void setStatements( ArrayList<Statement> s ) {
@@ -707,6 +781,7 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 			if( fblock == null )
 				fcall.raiseValidateError("function " + fcall.getName() + " is undefined in namespace " + fcall.getNamespace(), false);
 			FunctionStatement fstmt = (FunctionStatement)fblock.getStatement(0);
+			int callStatementPosition = newStatements.size();
 
 			// recursive inlining (no memo required because update-inplace of function statement blocks, so no redundant inlining)
 			if( rIsInlineableFunction(fblock, dmlProg) ){
@@ -721,6 +796,7 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 				sourceExpr.raiseValidateError("rewritable function can only have 1 statement block", false);
 			}
 			StatementBlock sblock = fstmt.getBody().get(0);
+			List<InlinedFunctionInputBoundary> boundaryInputs = new ArrayList<>();
 
 			if( fcall.getParamExprs().size() != fstmt.getInputParams().size() ) {
 				sourceExpr.raiseValidateError("Wrong number of function input arguments: "+
@@ -741,6 +817,11 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 				newTarget.setName(newFormalParameterName);
 
 				Expression currCallParam = inputArg.getExpr();
+				int formalPosition = fstmt.getInputParams().indexOf(currFormalParam);
+				String actualVariable = currCallParam instanceof DataIdentifier
+					? ((DataIdentifier) currCallParam).getName() : null;
+				boundaryInputs.add(new InlinedFunctionInputBoundary(formalPosition, newStatements.size(),
+					currFormalParam.getName(), newFormalParameterName, actualVariable));
 
 				//auto casting of inputs on inlining (if required)
 				ValueType targetVT = newTarget.getValueType();
@@ -755,6 +836,9 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 				newStatements.add(new AssignmentStatement(newTarget, currCallParam, newTarget));
 			}
 
+			int bodyStatementOffset = newStatements.size();
+			for(InlinedFunctionCallBoundary nested : sblock.getInlinedFunctionCallBoundaries())
+				_inlinedFunctionCallBoundaries.add(nested.rewrite(prefix, bodyStatementOffset));
 			for (Statement stmt : sblock._statements){
 				// rewrite the statement to use the "rewritten" name
 				Statement rewrittenStmt = stmt.rewriteStatement(prefix);
@@ -780,6 +864,21 @@ public class StatementBlock extends LiveVariableAnalysis implements ParseInfo
 			
 			// handle returns by appending name mappings, but with special handling of 
 			// statements that contain function calls or multi-return builtin expressions (but disabled)
+			List<InlinedFunctionOutputBoundary> boundaryOutputs = new ArrayList<>();
+			for(int outputPosition = 0; outputPosition < fstmt.getOutputParams().size(); outputPosition++) {
+				DataIdentifier formalOutput = fstmt.getOutputParams().get(outputPosition);
+				DataIdentifier targetOutput = current instanceof AssignmentStatement
+					? ((AssignmentStatement) current).getTarget()
+					: ((MultiAssignmentStatement) current).getTargetList().get(outputPosition);
+				if(targetOutput != null)
+					boundaryOutputs.add(new InlinedFunctionOutputBoundary(outputPosition,
+						newStatements.size() + outputPosition,
+						formalOutput.getName(), prefix + formalOutput.getName(), targetOutput.getName()));
+			}
+			_inlinedFunctionCallBoundaries.add(new InlinedFunctionCallBoundary(
+				DMLProgram.constructFunctionKey(fcall.getNamespace(), fcall.getName()), callStatementPosition,
+				boundaryInputs,
+				boundaryOutputs));
 			appendOutputAssignments(current, prefix, fstmt, newStatements);
 		}
 		return newStatements;

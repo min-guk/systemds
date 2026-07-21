@@ -228,10 +228,16 @@ public class CampaignBG014ExactOccurrenceRegistrationRedTest {
 	}
 
 	private static String runtimeKey(DurableAnchorKey anchor) {
-		return anchor.partitions().stream().map(partition -> partition.workerId() + "@"
-			+ partition.begin().get(0) + ":" + partition.begin().get(1) + "-"
-			+ partition.end().get(0) + ":" + partition.end().get(1))
-			.reduce((left, right) -> left + ";" + right).orElseThrow() + "|" + anchor.fType().name();
+		String addresses = anchor.partitions().stream().map(partition -> partition.workerId() + ';')
+			.reduce("", String::concat);
+		String ranges = anchor.partitions().stream().map(partition -> switch(anchor.fType()) {
+			case ROW -> partition.begin().get(0) + "," + partition.end().get(0) + ';';
+			case COL -> partition.begin().get(1) + "," + partition.end().get(1) + ';';
+			case FULL, BROADCAST -> partition.begin().get(0) + "," + partition.begin().get(1) + ","
+				+ partition.end().get(0) + "," + partition.end().get(1) + ';';
+			default -> throw new IllegalArgumentException("unsupported durable anchor " + anchor.fType());
+		}).reduce("", String::concat);
+		return addresses + '|' + ranges + '|' + anchor.fType().name();
 	}
 
 	private static DataOp literalFederatedAnchor(String name, int port) {

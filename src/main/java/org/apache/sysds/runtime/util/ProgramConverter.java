@@ -522,6 +522,7 @@ public class ProgramConverter
 		retSb.setParseInfo(fsb);
 		retSb.setLiveIn( fsb.liveIn() );
 		retSb.setLiveOut( fsb.liveOut() );
+		retSb.copyInlinedFunctionCallBoundariesFrom(fsb);
 		for( StatementBlock sb : fstmt.getBody() )
 			retStmt.getBody().add(rCreateDeepCopyStatementBlock(sb));
 		return retSb;
@@ -592,6 +593,7 @@ public class ProgramConverter
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
 				ret.setReadVariables( sb.variablesRead() );
+				ret.copyInlinedFunctionCallBoundariesFrom(sb);
 				
 				//deep copy hops dag for concurrent recompile
 				ArrayList<Hop> hops = sb.getHops();
@@ -632,6 +634,7 @@ public class ProgramConverter
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
 				ret.setReadVariables( sb.variablesRead() );
+				ret.copyInlinedFunctionCallBoundariesFrom(sb);
 				
 				//shallow copy child statements
 				ret.setStatements( sb.getStatements() );
@@ -670,6 +673,7 @@ public class ProgramConverter
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
 				ret.setReadVariables( sb.variablesRead() );
+				ret.copyInlinedFunctionCallBoundariesFrom(sb);
 				ret.setUpdateInPlaceVars( sb.getUpdateInPlaceVars() );
 				ret.setRecompileOnce( sb.isRecompileOnce() );
 				
@@ -713,6 +717,7 @@ public class ProgramConverter
 				ret.setLiveOut( sb.liveOut() );
 				ret.setUpdatedVariables( sb.variablesUpdated() );
 				ret.setReadVariables( sb.variablesRead() );
+				ret.copyInlinedFunctionCallBoundariesFrom(sb);
 				ret.setUpdateInPlaceVars( sb.getUpdateInPlaceVars() );
 				ret.setRecompileOnce( sb.isRecompileOnce() );
 				

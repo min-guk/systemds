@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -77,6 +78,9 @@ import org.apache.sysds.parser.ForStatementBlock;
 import org.apache.sysds.parser.IfStatement;
 import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.StatementBlock.InlinedFunctionCallBoundary;
+import org.apache.sysds.parser.StatementBlock.InlinedFunctionInputBoundary;
+import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -151,9 +155,12 @@ public final class NeutralPlacementGraphBuilder {
 		CfgAnalysis cfg = analyzeCfg(program, topLevelStatementBlocks, occurrences);
 		List<Node> nodes = new ArrayList<>();
 		Map<Hop,ValueVersionKey> values = new IdentityHashMap<>();
-		Map<Hop,CompiledHopKey> keys = new IdentityHashMap<>();
+		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock = new IdentityHashMap<>();
+		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock = new IdentityHashMap<>();
+		Set<Hop> ownedHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
 		Map<Hop,DurableAnchorKey> anchorProvenance = new IdentityHashMap<>();
+		List<DurableAnchorKey> occurrenceAnchorProvenance = new ArrayList<>();
 		Map<CompiledHopKey,Hop> origins = new java.util.LinkedHashMap<>();
 		Map<CompiledHopKey,Long> scopes = new java.util.LinkedHashMap<>();
 		Map<Hop,NodeShapeFact> factsByHop = new IdentityHashMap<>();
@@ -188,15 +195,27 @@ public final class NeutralPlacementGraphBuilder {
 			ValueVersionKey value = new ValueVersionKey(programId, variable, region, version, versionKind,
 				predecessorEdges);
 			values.put(hop, value);
-			keys.put(hop, key);
+			Map<Hop,CompiledHopKey> blockKeys = keysByBlock.computeIfAbsent(occurrence.block(),
+				ignored -> new IdentityHashMap<>());
+			if(blockKeys.put(hop, key) != null)
+				throw new IllegalStateException("Duplicate physical Hop within one exact statement-block occurrence");
+			ordinalsByBlock.computeIfAbsent(occurrence.block(), ignored -> new IdentityHashMap<>())
+				.put(hop, ordinal);
+			ownedHops.add(hop);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
-			if(!anchors.isEmpty()) anchorProvenance.put(hop, anchors.get(0));
+			DurableAnchorKey occurrenceAnchor = null;
+			if(!anchors.isEmpty()) occurrenceAnchor = anchors.get(0);
 			else {
 				Set<DurableAnchorKey> inherited = new java.util.TreeSet<>();
 				for(Hop input : hop.getInput())
 					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
-				if(inherited.size() == 1) anchorProvenance.put(hop, inherited.iterator().next());
+				if(inherited.size() == 1) occurrenceAnchor = inherited.iterator().next();
 			}
+			if(occurrenceAnchor == null)
+				anchorProvenance.remove(hop);
+			else
+				anchorProvenance.put(hop, occurrenceAnchor);
+			occurrenceAnchorProvenance.add(occurrenceAnchor);
 			List<NodeShapeFact> inputShapeFacts = new ArrayList<>(hop.getInput().size());
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
 				NodeShapeFact inputShapeFact = factsByHop.get(hop.getInput(inputPosition));
@@ -208,40 +227,50 @@ public final class NeutralPlacementGraphBuilder {
 			inputShapeFacts = List.copyOf(inputShapeFacts);
 			captureConsumerProfileFacts(hop, key, inputShapeFacts,
 				candidateConsumerDomainKeys, candidateConsumerProfileFacts);
-			Node node = buildNode(hop, key, value, anchors, shapeFact, inputShapeFacts,
+			List<DurableAnchorKey> exactAnchors = occurrenceAnchor == null ? List.of() : List.of(occurrenceAnchor);
+			Node node = buildNode(hop, key, value, exactAnchors, shapeFact, inputShapeFacts,
 				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind),
 				candidateRuleDomainKeys, candidateRuleFacts);
 			nodes.add(node);
 			nodesByHop.put(hop, node);
 		}
-		captureDetachedConsumerProfileFacts(occurrences, keys, factsByHop, detachedConsumerProfileFacts);
+		captureDetachedConsumerProfileFacts(occurrences, nodes, ownedHops, factsByHop,
+			detachedConsumerProfileFacts);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch before CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
 		nodes = closeCfgValueVersions(occurrences, nodes, values, cfg);
+		AnchorClosure anchorClosure = closeCfgDurableAnchors(nodes, occurrenceAnchorProvenance, cfg);
+		nodes = anchorClosure.nodes();
+		occurrenceAnchorProvenance = anchorClosure.anchors();
 		nodes = classifyOrphanFunctionBodies(occurrences, nodes);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
-		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes, origins, scopes);
+		FunctionExpansion functionExpansion = expandFunctionBoundaryContexts(occurrences, nodes,
+			origins, scopes);
 		nodes = functionExpansion.nodes();
 		origins = functionExpansion.origins();
 		scopes = functionExpansion.scopes();
 		nodesByHop.clear();
 		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
 		Set<Constraint> constraints = new java.util.TreeSet<>();
-		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
-			CompiledHopKey consumer = keys.get(occurrence.hop());
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
+			CompiledHopKey consumer = nodes.get(ordinal).key();
+			Map<Hop,CompiledHopKey> blockKeys = keysByBlock.get(occurrence.block());
 			for(int inputPosition = 0; inputPosition < occurrence.hop().getInput().size(); inputPosition++) {
 				Hop input = occurrence.hop().getInput(inputPosition);
-				if(keys.containsKey(input)) constraints.add(new Constraint(ConstraintKind.DOMINATES,
-					keys.get(input), consumer, inputPosition, "data-input"));
+				CompiledHopKey inputKey = blockKeys == null ? null : blockKeys.get(input);
+				if(inputKey != null) constraints.add(new Constraint(ConstraintKind.DOMINATES,
+					inputKey, consumer, inputPosition, "data-input"));
 			}
 		}
-		addCfgConstraints(occurrences, nodes, keys, constraints, cfg);
+		addCfgConstraints(occurrences, nodes, constraints, cfg);
 		constraints.addAll(functionExpansion.constraints());
 		addStableOriginConstraints(nodes, constraints);
-		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, keys, values, anchorProvenance);
+		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, nodes,
+			ordinalsByBlock, occurrenceAnchorProvenance);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
 		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
@@ -484,6 +513,33 @@ public final class NeutralPlacementGraphBuilder {
 		return closed;
 	}
 
+	private static AnchorClosure closeCfgDurableAnchors(List<Node> nodes,
+		List<DurableAnchorKey> occurrenceAnchors, CfgAnalysis cfg) {
+		List<Node> closedNodes = new ArrayList<>(nodes.size());
+		List<DurableAnchorKey> closedAnchors = new ArrayList<>(nodes.size());
+		for(int i = 0; i < nodes.size(); i++) {
+			DurableAnchorKey anchor = occurrenceAnchors.get(i);
+			if(anchor == null) {
+				Set<DurableAnchorKey> reaching = new java.util.TreeSet<>();
+				for(int definition : cfg.reachingDefinitions().get(i)) {
+					DurableAnchorKey definitionAnchor = occurrenceAnchors.get(definition);
+					if(definitionAnchor != null)
+						reaching.add(definitionAnchor);
+				}
+				if(reaching.size() == 1)
+					anchor = reaching.iterator().next();
+			}
+			Node node = nodes.get(i);
+			closedNodes.add(new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
+				node.legalAlternatives(), node.exclusions(), anchor == null ? List.of() : List.of(anchor)));
+			closedAnchors.add(anchor);
+		}
+		return new AnchorClosure(List.copyOf(closedNodes),
+			Collections.unmodifiableList(new ArrayList<>(closedAnchors)));
+	}
+
+	private record AnchorClosure(List<Node> nodes, List<DurableAnchorKey> anchors) { }
+
 	private static FunctionExpansion expandFunctionBoundaryContexts(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
 		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes) {
@@ -491,8 +547,13 @@ public final class NeutralPlacementGraphBuilder {
 		List<Constraint> constraints = new ArrayList<>();
 		Map<CompiledHopKey,Hop> expandedOrigins = new java.util.LinkedHashMap<>(origins);
 		Map<CompiledHopKey,Long> expandedScopes = new java.util.LinkedHashMap<>(scopes);
-		Map<Hop,Node> nodesByHop = new IdentityHashMap<>();
-		for(int i = 0; i < occurrences.size(); i++) nodesByHop.put(occurrences.get(i).hop(), nodes.get(i));
+		Map<StatementBlock,Map<Hop,Node>> nodesByBlock = new IdentityHashMap<>();
+		Map<Node,Integer> ordinalsByNode = new IdentityHashMap<>();
+		for(int i = 0; i < occurrences.size(); i++) {
+			nodesByBlock.computeIfAbsent(occurrences.get(i).block(), ignored -> new IdentityHashMap<>())
+				.put(occurrences.get(i).hop(), nodes.get(i));
+			ordinalsByNode.put(nodes.get(i), i);
+		}
 		for(int callIndex = 0; callIndex < occurrences.size(); callIndex++) {
 			Hop hop = occurrences.get(callIndex).hop();
 			if(!(hop instanceof FunctionOp)) continue;
@@ -506,12 +567,13 @@ public final class NeutralPlacementGraphBuilder {
 			for(int inputPosition = 0; inputPosition < boundaryCount(inputNames, callOp.getInput().size()); inputPosition++) {
 				BoundaryName inputName = boundaryName(inputNames, inputPosition);
 				Node argument = inputPosition < callOp.getInput().size()
-					? nodesByHop.get(callOp.getInput(inputPosition)) : null;
+					? nodesByBlock.get(occurrences.get(callIndex).block()).get(callOp.getInput(inputPosition)) : null;
 				List<PlacementState> alternatives = argument == null ? List.of(
 					new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false))
 					: transientAlternatives(argument.legalAlternatives());
 				Node input = functionBoundaryNode(call, functionKey, inputName, callIndex,
-					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives);
+					inputPosition, VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives,
+					argument == null ? List.of() : argument.anchors());
 				expanded.add(input);
 				expandedOrigins.put(input.key(), callOp);
 				expandedScopes.put(input.key(), callScope);
@@ -527,7 +589,7 @@ public final class NeutralPlacementGraphBuilder {
 				BoundaryName outputName = boundaryName(outputNames, outputPosition);
 				Node output = functionBoundaryNode(call, functionKey, outputName, callIndex,
 					outputPosition, VersionKind.FUNCTION_OUTPUT, NodeKind.FUNCTION_OUTPUT,
-					transientAlternatives(call.legalAlternatives()));
+					transientAlternatives(call.legalAlternatives()), call.anchors());
 				expanded.add(output);
 				expandedOrigins.put(output.key(), callOp);
 				expandedScopes.put(output.key(), callScope);
@@ -535,9 +597,155 @@ public final class NeutralPlacementGraphBuilder {
 					"function-result:" + outputName.canonicalSourceOriginToken()));
 			}
 		}
+		Set<StatementBlock> expandedBlocks = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
+			StatementBlock block = occurrence.block();
+			if(!expandedBlocks.add(block))
+				continue;
+			Map<Hop,Node> blockNodes = nodesByBlock.get(block);
+			if(blockNodes.values().stream().allMatch(node -> node.kind() == NodeKind.FUNCTION_BODY_NON_EMITTED))
+				continue;
+			Map<String,InlinedFunctionInputBoundary> inputBindings = new LinkedHashMap<>();
+			Map<String,InlinedFunctionOutputBoundary> outputBindings = new LinkedHashMap<>();
+			for(InlinedFunctionCallBoundary boundary : block.getInlinedFunctionCallBoundaries())
+				for(InlinedFunctionInputBoundary input : boundary.inputs()) {
+					if(inputBindings.put(input.boundVariable(), input) != null)
+						throw new IllegalStateException("Duplicate compiler-owned inlined input binding: "
+							+ input.boundVariable());
+				}
+			for(InlinedFunctionCallBoundary boundary : block.getInlinedFunctionCallBoundaries())
+				for(InlinedFunctionOutputBoundary output : boundary.outputs())
+					if(outputBindings.put(output.targetVariable(), output) != null)
+						throw new IllegalStateException("Duplicate compiler-owned inlined output binding: "
+							+ output.targetVariable());
+			for(InlinedFunctionCallBoundary inlinedCall : block.getInlinedFunctionCallBoundaries()) {
+				List<Node> arguments = new ArrayList<>(inlinedCall.inputs().size());
+				for(InlinedFunctionInputBoundary inlinedInput : inlinedCall.inputs()) {
+					ResolvedInlinedInput exactInput = resolveInlinedInput(inlinedInput, inputBindings);
+					arguments.add(exactInput.transientRead()
+						? requireExactDataNode(blockNodes, OpOpData.TRANSIENTREAD,
+							exactInput.variable(), inlinedCall, "input", inlinedInput.position())
+						: requireExactNamedNode(blockNodes, exactInput.variable(), inlinedCall,
+							"input", inlinedInput.position()));
+				}
+				List<Node> results = new ArrayList<>(inlinedCall.outputs().size());
+				for(InlinedFunctionOutputBoundary inlinedOutput : inlinedCall.outputs())
+					results.add(requireExactNamedNode(blockNodes, resolveInlinedOutput(inlinedOutput, outputBindings), inlinedCall,
+						"output", inlinedOutput.position()));
+				Node callAuthority = results.stream().findFirst()
+					.orElseGet(() -> arguments.stream().filter(Objects::nonNull).findFirst().orElse(null));
+				if(callAuthority == null)
+					continue;
+				Long callScope = scopes.get(callAuthority.key());
+				Integer authorityOrdinal = ordinalsByNode.get(callAuthority);
+				int callIndex = inlinedCall.callStatementPosition();
+				if(callScope == null || authorityOrdinal == null)
+					throw new IllegalStateException("Inlined function call has no exact occurrence authority");
+				for(int inputOrdinal = 0; inputOrdinal < inlinedCall.inputs().size(); inputOrdinal++) {
+					InlinedFunctionInputBoundary inlinedInput = inlinedCall.inputs().get(inputOrdinal);
+					int inputPosition = inlinedInput.position();
+					BoundaryName inputName = BoundaryName.known(inlinedInput.formalVariable());
+					Node argument = arguments.get(inputOrdinal);
+					List<PlacementState> alternatives = argument == null ? List.of(
+						new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false))
+						: transientAlternatives(argument.legalAlternatives());
+					Node input = functionBoundaryNode(callAuthority, inlinedCall.functionKey(), inputName, callIndex,
+						inputPosition,
+						VersionKind.FUNCTION_INPUT, NodeKind.FUNCTION_INPUT, alternatives,
+						argument == null ? List.of() : argument.anchors());
+					expanded.add(input);
+					expandedOrigins.put(input.key(), origins.get(callAuthority.key()));
+					expandedScopes.put(input.key(), callScope);
+					if(argument != null)
+						constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, argument.key(), input.key(),
+							inputPosition, "inlined-function-argument:"
+								+ inputName.canonicalSourceOriginToken()));
+				}
+				for(int outputOrdinal = 0; outputOrdinal < inlinedCall.outputs().size(); outputOrdinal++) {
+					InlinedFunctionOutputBoundary inlinedOutput = inlinedCall.outputs().get(outputOrdinal);
+					int outputPosition = inlinedOutput.position();
+					BoundaryName outputName = BoundaryName.known(inlinedOutput.formalVariable());
+					Node result = results.get(outputOrdinal);
+					Node output = functionBoundaryNode(callAuthority, inlinedCall.functionKey(), outputName, callIndex,
+						outputPosition,
+						VersionKind.FUNCTION_OUTPUT, NodeKind.FUNCTION_OUTPUT,
+						transientAlternatives(result.legalAlternatives()), result.anchors());
+					expanded.add(output);
+					expandedOrigins.put(output.key(), origins.get(callAuthority.key()));
+					expandedScopes.put(output.key(), callScope);
+					constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, result.key(), output.key(),
+						outputPosition, "inlined-function-result:"
+							+ outputName.canonicalSourceOriginToken()));
+				}
+			}
+		}
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins),
 			Collections.unmodifiableMap(expandedScopes));
+	}
+
+	private static Node requireExactDataNode(Map<Hop,Node> blockNodes, OpOpData operation, String name,
+		InlinedFunctionCallBoundary call, String boundary, int position) {
+		if(name == null || name.isBlank())
+			throw new IllegalStateException("Inlined function " + boundary + " has no compiler-owned variable identity");
+		List<Node> matches = blockNodes.entrySet().stream()
+			.filter(entry -> entry.getKey() instanceof DataOp)
+			.filter(entry -> ((DataOp) entry.getKey()).getOp() == operation)
+			.filter(entry -> name.equals(entry.getKey().getName()))
+			.map(Map.Entry::getValue).toList();
+		if(matches.size() != 1)
+			throw new IllegalStateException("Inlined function boundary requires one exact compiler-owned occurrence: "
+				+ call.functionKey() + " callStatement=" + call.callStatementPosition() + ' ' + boundary + '='
+				+ position + " variable=" + name + " operation=" + operation + " matches=" + matches.size());
+		return matches.get(0);
+	}
+
+	private static Node requireExactNamedNode(Map<Hop,Node> blockNodes, String name,
+		InlinedFunctionCallBoundary call, String boundary, int position) {
+		if(name == null || name.isBlank())
+			throw new IllegalStateException("Inlined function " + boundary + " has no compiler-owned variable identity");
+		List<Node> matches = blockNodes.entrySet().stream()
+			.filter(entry -> name.equals(entry.getKey().getName()))
+			.map(Map.Entry::getValue).toList();
+		if(matches.size() != 1)
+			throw new IllegalStateException("Inlined function boundary requires one exact compiler-owned occurrence: "
+				+ call.functionKey() + " callStatement=" + call.callStatementPosition() + ' ' + boundary + '='
+				+ position + " variable=" + name + " matches=" + matches.size());
+		return matches.get(0);
+	}
+
+	private record ResolvedInlinedInput(String variable, boolean transientRead) { }
+
+	private static ResolvedInlinedInput resolveInlinedInput(InlinedFunctionInputBoundary input,
+		Map<String,InlinedFunctionInputBoundary> bindings) {
+		String actual = input.actualVariable();
+		if(actual == null)
+			return new ResolvedInlinedInput(input.boundVariable(), false);
+		Set<String> visited = new LinkedHashSet<>();
+		while(true) {
+			if(!visited.add(actual))
+				throw new IllegalStateException("Cyclic compiler-owned inlined input binding: " + visited);
+			InlinedFunctionInputBoundary binding = bindings.get(actual);
+			if(binding == null)
+				return new ResolvedInlinedInput(actual, true);
+			if(binding.actualVariable() == null)
+				return new ResolvedInlinedInput(binding.boundVariable(), false);
+			actual = binding.actualVariable();
+		}
+	}
+
+	private static String resolveInlinedOutput(InlinedFunctionOutputBoundary output,
+		Map<String,InlinedFunctionOutputBoundary> bindings) {
+		String variable = output.boundVariable();
+		Set<String> visited = new LinkedHashSet<>();
+		while(true) {
+			if(!visited.add(variable))
+				throw new IllegalStateException("Cyclic compiler-owned inlined output binding: " + visited);
+			InlinedFunctionOutputBoundary binding = bindings.get(variable);
+			if(binding == null)
+				return variable;
+			variable = binding.boundVariable();
+		}
 	}
 
 	private static int boundaryCount(String[] names, int structuralArity) {
@@ -566,7 +774,8 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static Node functionBoundaryNode(Node call, String functionKey, BoundaryName variable, int callIndex,
-		int position, VersionKind versionKind, NodeKind nodeKind, List<PlacementState> alternatives) {
+		int position, VersionKind versionKind, NodeKind nodeKind, List<PlacementState> alternatives,
+		List<DurableAnchorKey> anchors) {
 		String boundary = versionKind == VersionKind.FUNCTION_INPUT ? "input" : "output";
 		String callPath = call.key().callSitePath() + "->" + functionKey + '/' + boundary + '-' + position;
 		String context = "callsite:" + call.key().normalizedSignature();
@@ -577,7 +786,7 @@ public final class NeutralPlacementGraphBuilder {
 			"function-boundary:" + functionKey + ':' + boundary + ':' + variable.canonicalSourceOriginToken());
 		ValueVersionKey value = new ValueVersionKey(call.key().programFingerprint(), variable.identityToken(), region, position,
 			versionKind, List.of("callsite:" + call.key().normalizedSignature()));
-		return variable.isKnown() ? new Node(key, nodeKind, value, true, alternatives, List.of(), List.of())
+		return variable.isKnown() ? new Node(key, nodeKind, value, true, alternatives, List.of(), anchors)
 			: new Node(key, nodeKind, value, false, List.of(), unknownBoundaryExclusions(alternatives, variable), List.of());
 	}
 
@@ -601,7 +810,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes) { }
 
 	private static void addCfgConstraints(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
-		List<Node> nodes, Map<Hop,CompiledHopKey> keys, Set<Constraint> constraints, CfgAnalysis cfg) {
+		List<Node> nodes, Set<Constraint> constraints, CfgAnalysis cfg) {
 		for(int i = 0; i < occurrences.size(); i++) {
 			Node target = nodes.get(i);
 			if(isTransientRead(occurrences.get(i).hop()) && cfg.reachingDefinitions().get(i).size() > 1) {
@@ -617,7 +826,8 @@ public final class NeutralPlacementGraphBuilder {
 				if(occurrences.get(j).hop() instanceof FunctionOp) {
 					FunctionOp right = (FunctionOp) occurrences.get(j).hop();
 					if(left.getFunctionKey().equals(right.getFunctionKey()))
-						constraints.add(new Constraint(ConstraintKind.DISTINCT_CONTEXT, keys.get(left), keys.get(right),
+						constraints.add(new Constraint(ConstraintKind.DISTINCT_CONTEXT,
+							nodes.get(i).key(), nodes.get(j).key(),
 							-1, left.getFunctionKey()));
 				}
 			}
@@ -726,15 +936,16 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private void captureDetachedConsumerProfileFacts(
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, Map<Hop,CompiledHopKey> keys,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, Set<Hop> ownedHops,
 		Map<Hop,NodeShapeFact> factsByHop, List<DetachedConsumerProfileFact> facts) {
-		for(PlacementGraphFingerprint.HopOccurrence producerOccurrence : occurrences) {
+		for(int occurrenceOrdinal = 0; occurrenceOrdinal < occurrences.size(); occurrenceOrdinal++) {
+			PlacementGraphFingerprint.HopOccurrence producerOccurrence = occurrences.get(occurrenceOrdinal);
 			Hop producer = producerOccurrence.hop();
-			CompiledHopKey producerKey = keys.get(producer);
+			CompiledHopKey producerKey = nodes.get(occurrenceOrdinal).key();
 			List<Hop> parents = producer.getParent();
 			for(int parentOrdinal = 0; parentOrdinal < parents.size(); parentOrdinal++) {
 				Hop parent = parents.get(parentOrdinal);
-				if(keys.containsKey(parent) || isTransientRead(parent) || isTransientWrite(parent)
+				if(ownedHops.contains(parent) || isTransientRead(parent) || isTransientWrite(parent)
 					|| isFunctionOutput(parent))
 					continue;
 				List<Integer> producerInputPositions = new ArrayList<>();
@@ -914,19 +1125,27 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, Map<Hop,CompiledHopKey> keys,
-		Map<Hop,ValueVersionKey> values, Map<Hop,DurableAnchorKey> anchorProvenance) {
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
+		List<DurableAnchorKey> occurrenceAnchorProvenance) {
 		Map<ValueVersionKey,List<InputUse>> uses = new java.util.TreeMap<>();
 		Map<ValueVersionKey,DurableAnchorKey> valueAnchors = new java.util.TreeMap<>();
-		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences)
+		for(int occurrenceOrdinal = 0; occurrenceOrdinal < occurrences.size(); occurrenceOrdinal++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(occurrenceOrdinal);
+			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
 			for(int i = 0; i < occurrence.hop().getInput().size(); i++) {
 				Hop input = occurrence.hop().getInput(i);
-				if(values.containsKey(input) && anchorProvenance.containsKey(input)) {
-					uses.computeIfAbsent(values.get(input), k -> new ArrayList<>())
-						.add(new InputUse(keys.get(occurrence.hop()), i, occurrence.path()));
-					valueAnchors.put(values.get(input), anchorProvenance.get(input));
+				Integer inputOrdinal = blockOrdinals == null ? null : blockOrdinals.get(input);
+				DurableAnchorKey anchor = inputOrdinal == null ? null
+					: occurrenceAnchorProvenance.get(inputOrdinal);
+				if(inputOrdinal != null && anchor != null) {
+					ValueVersionKey inputValue = nodes.get(inputOrdinal).valueVersion();
+					uses.computeIfAbsent(inputValue, k -> new ArrayList<>())
+						.add(new InputUse(nodes.get(occurrenceOrdinal).key(), i, occurrence.path()));
+					valueAnchors.put(inputValue, anchor);
 				}
 			}
+		}
 		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
 		for(Map.Entry<ValueVersionKey,List<InputUse>> entry : uses.entrySet()) {
 			DurableAnchorKey anchor = valueAnchors.get(entry.getKey());
