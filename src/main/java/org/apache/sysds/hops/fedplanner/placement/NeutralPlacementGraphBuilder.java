@@ -549,6 +549,8 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Long> expandedScopes = new java.util.LinkedHashMap<>(scopes);
 		Map<StatementBlock,Map<Hop,Node>> nodesByBlock = new IdentityHashMap<>();
 		Map<Node,Integer> ordinalsByNode = new IdentityHashMap<>();
+		Map<String,List<Node>> inlinedAuthoritiesByFunction = new LinkedHashMap<>();
+		Set<Node> claimedInlinedAuthorities = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(int i = 0; i < occurrences.size(); i++) {
 			nodesByBlock.computeIfAbsent(occurrences.get(i).block(), ignored -> new IdentityHashMap<>())
 				.put(occurrences.get(i).hop(), nodes.get(i));
@@ -641,6 +643,25 @@ public final class NeutralPlacementGraphBuilder {
 				int callIndex = inlinedCall.callStatementPosition();
 				if(callScope == null || authorityOrdinal == null)
 					throw new IllegalStateException("Inlined function call has no exact occurrence authority");
+				Node originalCallAuthority = callAuthority;
+				if(!claimedInlinedAuthorities.add(originalCallAuthority))
+					throw new IllegalStateException("Inlined function calls share one emitted authority: "
+						+ inlinedCall.functionKey() + " callStatement=" + callIndex);
+				Node exactCallAuthority = withNodeKind(originalCallAuthority, NodeKind.FUNCTION_CALL);
+				expanded.set(authorityOrdinal, exactCallAuthority);
+				ordinalsByNode.remove(originalCallAuthority);
+				ordinalsByNode.put(exactCallAuthority, authorityOrdinal);
+				nodesByBlock.get(block).replaceAll((hop, node) -> node == originalCallAuthority
+					? exactCallAuthority : node);
+				for(int i = 0; i < arguments.size(); i++)
+					if(arguments.get(i) == originalCallAuthority)
+						arguments.set(i, exactCallAuthority);
+				for(int i = 0; i < results.size(); i++)
+					if(results.get(i) == originalCallAuthority)
+						results.set(i, exactCallAuthority);
+				callAuthority = exactCallAuthority;
+				inlinedAuthoritiesByFunction.computeIfAbsent(inlinedCall.functionKey(), ignored -> new ArrayList<>())
+					.add(callAuthority);
 				for(int inputOrdinal = 0; inputOrdinal < inlinedCall.inputs().size(); inputOrdinal++) {
 					InlinedFunctionInputBoundary inlinedInput = inlinedCall.inputs().get(inputOrdinal);
 					int inputPosition = inlinedInput.position();
@@ -679,9 +700,21 @@ public final class NeutralPlacementGraphBuilder {
 				}
 			}
 		}
+		for(Map.Entry<String,List<Node>> entry : inlinedAuthoritiesByFunction.entrySet()) {
+			List<Node> authorities = entry.getValue();
+			for(int left = 0; left < authorities.size(); left++)
+				for(int right = left + 1; right < authorities.size(); right++)
+					constraints.add(new Constraint(ConstraintKind.DISTINCT_CONTEXT,
+						authorities.get(left).key(), authorities.get(right).key(), -1, entry.getKey()));
+		}
 		return new FunctionExpansion(Collections.unmodifiableList(expanded),
 			Collections.unmodifiableList(constraints), Collections.unmodifiableMap(expandedOrigins),
 			Collections.unmodifiableMap(expandedScopes));
+	}
+
+	private static Node withNodeKind(Node node, NodeKind kind) {
+		return node.kind() == kind ? node : new Node(node.key(), kind, node.valueVersion(), node.emittedWork(),
+			node.legalAlternatives(), node.exclusions(), node.anchors());
 	}
 
 	private static Node requireExactDataNode(Map<Hop,Node> blockNodes, OpOpData operation, String name,

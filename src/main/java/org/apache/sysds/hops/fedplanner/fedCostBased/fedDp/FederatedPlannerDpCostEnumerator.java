@@ -362,9 +362,13 @@ public class FederatedPlannerDpCostEnumerator {
 				int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 				memoTable.setNumWorkers(numOfWorkers);
 				analysis.assertProgramOwner(prog);
+				Set<Long> activeScopeIds = FederatedPlannerDpRewireTransTable.collectExecutableScopeIds(function);
+				String dynamicScopeKey = analysis.analysisFingerprint() + "|dynamic|"
+					+ activeScopeIds.stream().sorted().map(String::valueOf)
+						.collect(java.util.stream.Collectors.joining(","));
 				RewireOccurrenceSnapshot rewireSnapshot = FederatedPlannerDpRewireTransTable.snapshotProductionRewire(
 					analysis, prog, rewireTable, hopCommonTable, parentChildUploadHints, progRootHopSet, unrollCtx,
-					analysis.analysisFingerprint());
+					activeScopeIds, dynamicScopeKey);
 			memoTable.registerHopRefs(rewireSnapshot, hopCommonTable);
 			memoTable.registerCloneMapping(rewireSnapshot);
 			memoTable.registerDeadFunctionOutputHopIDs(rewireSnapshot, unrollCtx.getDeadFunctionOutputHopIDs());

@@ -142,7 +142,8 @@ public class FederatedPlannerDpRewireTransTable {
 		List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
 		List<RewireConsumerEdge> consumerEdges, List<RewireTransientForwardEdge> transientForwardEdges,
 		Map<Long, Long> cloneToOriginal,
-		Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, String enumerationScopeKey) {
+		Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, Set<Long> activeScopeIds,
+		String enumerationScopeKey) {
 		public RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,
 			String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
 			List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
@@ -150,7 +151,8 @@ public class FederatedPlannerDpRewireTransTable {
 			Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, String enumerationScopeKey) {
 			this(analysis, program, analysisFingerprint, occurrences,
 				FederatedPlannerDpRewireTransTable.candidateOccurrences(analysis), cloneReceipts,
-				additionalRoots, consumerEdges, List.of(), cloneToOriginal, occurrenceByCarrier, enumerationScopeKey);
+				additionalRoots, consumerEdges, List.of(), cloneToOriginal, occurrenceByCarrier, Set.of(),
+				enumerationScopeKey);
 		}
 
 		public RewireOccurrenceSnapshot {
@@ -165,6 +167,8 @@ public class FederatedPlannerDpRewireTransTable {
 			Objects.requireNonNull(transientForwardEdges, "transientForwardEdges");
 			Objects.requireNonNull(cloneToOriginal, "cloneToOriginal");
 			Objects.requireNonNull(occurrenceByCarrier, "occurrenceByCarrier");
+			activeScopeIds = Collections.unmodifiableSet(new LinkedHashSet<>(
+				Objects.requireNonNull(activeScopeIds, "activeScopeIds")));
 			if(enumerationScopeKey == null || enumerationScopeKey.isBlank())
 				throw new IllegalArgumentException("Enumeration scope key must not be blank");
 			analysis.assertCanonicalProgramAuthority(program);
@@ -185,7 +189,7 @@ public class FederatedPlannerDpRewireTransTable {
 				ownedKeysByIdentity.add(occurrence.key());
 			}
 			List<HopOccurrenceProjection> expectedCandidates =
-				FederatedPlannerDpRewireTransTable.candidateOccurrences(analysis);
+				FederatedPlannerDpRewireTransTable.candidateOccurrences(analysis, activeScopeIds);
 			if(candidateOccurrences.size() != expectedCandidates.size())
 				throw new IllegalArgumentException("Rewire candidate occurrence multiplicity differs");
 			Set<CompiledHopKey> candidateKeysByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -201,12 +205,14 @@ public class FederatedPlannerDpRewireTransTable {
 					throw new IllegalArgumentException("Rewire candidate Hop ID is duplicated");
 			}
 			for(HopOccurrenceProjection root : additionalRoots)
-				if(!ownedByIdentity.contains(root))
-					throw new IllegalArgumentException("Additional root is not analysis-owned");
+				if(!ownedByIdentity.contains(root) || !candidatesByIdentity.contains(root))
+					throw new IllegalArgumentException("Additional root is not active-candidate-owned");
 			for(RewireConsumerEdge edge : consumerEdges)
 				if(!ownedKeysByIdentity.contains(edge.parentOccurrence())
-					|| !ownedKeysByIdentity.contains(edge.childOccurrence()))
-					throw new IllegalArgumentException("Consumer edge endpoint is not analysis-owned");
+					|| !ownedKeysByIdentity.contains(edge.childOccurrence())
+					|| !candidateKeysByIdentity.contains(edge.parentOccurrence())
+					|| !candidateKeysByIdentity.contains(edge.childOccurrence()))
+					throw new IllegalArgumentException("Consumer edge endpoint is not active-candidate-owned");
 			for(RewireTransientForwardEdge edge : transientForwardEdges)
 				if(!candidateKeysByIdentity.contains(edge.writeOccurrence())
 					|| !candidateKeysByIdentity.contains(edge.readOccurrence()))
@@ -268,6 +274,11 @@ public class FederatedPlannerDpRewireTransTable {
 	}
 
 	private static List<HopOccurrenceProjection> candidateOccurrences(PlacementAnalysis analysis) {
+		return candidateOccurrences(analysis, Set.of());
+	}
+
+	private static List<HopOccurrenceProjection> candidateOccurrences(PlacementAnalysis analysis,
+		Set<Long> activeScopeIds) {
 		Map<CompiledHopKey,HopOccurrenceProjection> projections = new IdentityHashMap<>();
 		for(HopOccurrenceProjection occurrence : analysis.occurrences())
 			projections.put(occurrence.key(), occurrence);
@@ -278,7 +289,8 @@ public class FederatedPlannerDpRewireTransTable {
 			HopOccurrenceProjection occurrence = projections.get(key.parentOccurrence());
 			if(occurrence == null)
 				throw new IllegalArgumentException("Candidate domain parent has no exact analysis projection");
-			candidates.add(occurrence);
+			if(activeScopeIds.isEmpty() || activeScopeIds.contains(occurrence.scopeId()))
+				candidates.add(occurrence);
 		}
 		return List.copyOf(candidates);
 	}
@@ -370,6 +382,15 @@ public class FederatedPlannerDpRewireTransTable {
 		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
 		Map<Long, Set<Long>> parentChildUploadHints, Set<Hop> progRootHopSet,
 		UnrollContext unrollContext, String enumerationScopeKey) {
+		return snapshotProductionRewire(analysis, program, rewireTable, hopCommonTable,
+			parentChildUploadHints, progRootHopSet, unrollContext, Set.of(), enumerationScopeKey);
+	}
+
+	public static RewireOccurrenceSnapshot snapshotProductionRewire(PlacementAnalysis analysis,
+		DMLProgram program, Map<Long, List<Hop>> rewireTable,
+		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		Map<Long, Set<Long>> parentChildUploadHints, Set<Hop> progRootHopSet,
+		UnrollContext unrollContext, Set<Long> activeScopeIds, String enumerationScopeKey) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(program, "program");
 		Objects.requireNonNull(rewireTable, "rewireTable");
@@ -377,6 +398,8 @@ public class FederatedPlannerDpRewireTransTable {
 		Objects.requireNonNull(parentChildUploadHints, "parentChildUploadHints");
 		Objects.requireNonNull(progRootHopSet, "progRootHopSet");
 		Objects.requireNonNull(unrollContext, "unrollContext");
+		Set<Long> exactActiveScopeIds = Collections.unmodifiableSet(new LinkedHashSet<>(
+			Objects.requireNonNull(activeScopeIds, "activeScopeIds")));
 		try {
 			analysis.assertCanonicalProgramAuthority(program);
 		}
@@ -386,7 +409,7 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 
 		List<HopOccurrenceProjection> occurrences = analysis.occurrences();
-		List<HopOccurrenceProjection> candidateOccurrences = candidateOccurrences(analysis);
+		List<HopOccurrenceProjection> candidateOccurrences = candidateOccurrences(analysis, exactActiveScopeIds);
 		Set<HopOccurrenceProjection> candidatesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(HopOccurrenceProjection occurrence : candidateOccurrences)
 			if(!candidatesByIdentity.add(occurrence)
@@ -406,10 +429,10 @@ public class FederatedPlannerDpRewireTransTable {
 			if(analysis.hop(occurrence.key()).orElse(null) != occurrence.hop())
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.STALE_CONTEXT,
 					"REWIRE_OCCURRENCE_DETACHED");
-			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
-				unrollContext.getCloneToOrig(), analysis);
 			if(!candidatesByIdentity.contains(occurrence))
 				continue;
+			Hop resolved = resolveExactRewiredHop(occurrence, rewireTable, hopCommonTable,
+				unrollContext.getCloneToOrig(), analysis);
 			if(exactByHop.put(occurrence.hop(), occurrence) != null
 				|| exactByHopId.put(occurrence.hop().getHopID(), occurrence) != null)
 				throw semanticFailure(analysis, occurrence, ConstructionDisposition.DUPLICATE_OCCURRENCE,
@@ -435,6 +458,8 @@ public class FederatedPlannerDpRewireTransTable {
 			if(parent == null || child == null || constraint.inputPosition() < 0)
 				throw semanticFailure(analysis, anchor, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					"REWIRE_SEMANTIC_EDGE_UNMAPPABLE");
+			if(!candidatesByIdentity.contains(parent) || !candidatesByIdentity.contains(child))
+				continue;
 			Map<Integer, CompiledHopKey> inputs = semanticInputsByParent.computeIfAbsent(
 				parent.key(), ignored -> new LinkedHashMap<>());
 			if(inputs.putIfAbsent(constraint.inputPosition(), child.key()) != null)
@@ -443,6 +468,8 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 		List<RewireConsumerEdge> consumerEdges = new ArrayList<>();
 		for(HopOccurrenceProjection parent : occurrences) {
+			if(!candidatesByIdentity.contains(parent))
+				continue;
 			Map<Integer, CompiledHopKey> inputs = semanticInputsByParent.get(parent.key());
 			if(inputs == null)
 				continue;
@@ -454,8 +481,10 @@ public class FederatedPlannerDpRewireTransTable {
 				consumerEdges.add(new RewireConsumerEdge(parent.key(), child, inputPosition));
 			}
 		}
+		Set<Hop> activeRewireCarriers = exactActiveRewireCarriers(resolvedRewiredHops, rewireTable);
 		PhysicalCloneProjection physicalClones = exactPhysicalCloneMapping(unrollContext.getCloneToOrig(),
-			rewireTable, hopCommonTable, exactByHopId, analysis);
+			rewireTable, hopCommonTable, exactByHopId, analysis, activeRewireCarriers,
+			!exactActiveScopeIds.isEmpty());
 		List<RewireTransientForwardEdge> transientForwardEdges = exactCandidateTransientForwardEdges(
 			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop,
 			physicalClones.occurrenceByCloneCarrier(), rewireTable);
@@ -477,7 +506,11 @@ public class FederatedPlannerDpRewireTransTable {
 		// Semantic CLONE_RECOMPILE receipts and physical unroll clones are independent
 		// owner domains. Validate the former against the analysis graph above and the
 		// latter against exact carriers produced by this rewire invocation.
-		List<CloneReceipt> cloneReceipts = exactCloneReceipts(analysis);
+		List<CloneReceipt> cloneReceipts = exactCloneReceipts(analysis).stream()
+			.filter(receipt -> exactActiveScopeIds.isEmpty()
+				|| (exactActiveScopeIds.contains(receipt.originOccurrence().scopeId())
+					&& exactActiveScopeIds.contains(receipt.cloneOccurrence().scopeId())))
+			.toList();
 		Map<Long, Long> cloneToOriginal = physicalClones.cloneToOriginal();
 		Map<Hop, HopOccurrenceProjection> occurrenceByRootCarrier = new IdentityHashMap<>();
 		for(HopOccurrenceProjection occurrence : candidateOccurrences)
@@ -502,7 +535,7 @@ public class FederatedPlannerDpRewireTransTable {
 			return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
 				candidateOccurrences, cloneReceipts, additionalRoots, consumerEdges, transientForwardEdges,
 				cloneToOriginal, occurrenceByRootCarrier,
-				enumerationScopeKey);
+				exactActiveScopeIds, enumerationScopeKey);
 		}
 		catch(IllegalArgumentException ex) {
 			throw semanticFailureWithCause(analysis, failureAnchor(analysis), ConstructionDisposition.STALE_CONTEXT,
@@ -622,10 +655,27 @@ public class FederatedPlannerDpRewireTransTable {
 		return false;
 	}
 
+	private static Set<Hop> exactActiveRewireCarriers(Map<HopOccurrenceProjection, Hop> resolvedRewiredHops,
+		Map<Long, List<Hop>> rewireTable) {
+		Set<Hop> activeCarriers = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop resolved : resolvedRewiredHops.values()) {
+			if(resolved == null)
+				continue;
+			activeCarriers.add(resolved);
+			List<Hop> linked = rewireTable.get(resolved.getHopID());
+			if(linked != null)
+				for(Hop carrier : linked)
+					if(carrier != null)
+						activeCarriers.add(carrier);
+		}
+		return activeCarriers;
+	}
+
 	private static PhysicalCloneProjection exactPhysicalCloneMapping(Map<Long, Long> physicalCloneToOriginal,
 		Map<Long, List<Hop>> rewireTable,
 		Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
-		Map<Long, HopOccurrenceProjection> exactByHopId, PlacementAnalysis analysis) {
+		Map<Long, HopOccurrenceProjection> exactByHopId, PlacementAnalysis analysis,
+		Set<Hop> activeRewireCarriers, boolean activeScopeOnly) {
 		Map<Long, Set<Hop>> carriersByHopId = new LinkedHashMap<>();
 		for(FederatedPlannerDpMemoTable.HopCommon common : hopCommonTable.values())
 			if(common != null && common.getHopRef() != null)
@@ -651,13 +701,19 @@ public class FederatedPlannerDpRewireTransTable {
 			if(cloneHopId == null || originalHopId == null)
 				throw semanticFailure(analysis, failureOccurrence, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					"REWIRE_PHYSICAL_CLONE_MAPPING_NULL");
+			Set<Hop> cloneCarriers = carriersByHopId.getOrDefault(cloneHopId, Collections.emptySet());
+			if(activeScopeOnly && original == null) {
+				if(cloneCarriers.stream().anyMatch(activeRewireCarriers::contains))
+					throw semanticFailure(analysis, failureOccurrence, ConstructionDisposition.FOREIGN_CONTEXT,
+						"REWIRE_PHYSICAL_CLONE_ACTIVE_ORIGINAL_FOREIGN");
+				continue;
+			}
 			if(original == null || analysis.hop(original.key()).orElse(null) != original.hop())
 				throw semanticFailure(analysis, failureOccurrence, ConstructionDisposition.FOREIGN_CONTEXT,
 					"REWIRE_PHYSICAL_CLONE_ORIGINAL_FOREIGN");
 			if(exactByHopId.containsKey(cloneHopId))
 				throw semanticFailure(analysis, original, ConstructionDisposition.STALE_CONTEXT,
 					"REWIRE_PHYSICAL_CLONE_IS_ANALYSIS_OCCURRENCE");
-			Set<Hop> cloneCarriers = carriersByHopId.getOrDefault(cloneHopId, Collections.emptySet());
 			if(cloneCarriers.size() != 1)
 				throw semanticFailure(analysis, original, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 					"REWIRE_PHYSICAL_CLONE_CARRIER_MULTIPLICITY_" + cloneCarriers.size());
@@ -1547,6 +1603,38 @@ public class FederatedPlannerDpRewireTransTable {
 			executableRoots.add(rootHop);
 		}
 		return executableRoots;
+	}
+
+	static Set<Long> collectExecutableScopeIds(StatementBlock sb) {
+		LinkedHashSet<Long> scopes = new LinkedHashSet<>();
+		collectStatementBlockScopeIds(Objects.requireNonNull(sb, "statementBlock"), scopes);
+		return Collections.unmodifiableSet(scopes);
+	}
+
+	private static void collectStatementBlockScopeIds(StatementBlock sb, Set<Long> scopes) {
+		scopes.add(sb.getSBID());
+		if(sb instanceof IfStatementBlock) {
+			IfStatement statement = (IfStatement) sb.getStatement(0);
+			for(StatementBlock inner : statement.getIfBody())
+				collectStatementBlockScopeIds(inner, scopes);
+			for(StatementBlock inner : statement.getElseBody())
+				collectStatementBlockScopeIds(inner, scopes);
+		}
+		else if(sb instanceof ForStatementBlock) {
+			ForStatement statement = (ForStatement) sb.getStatement(0);
+			for(StatementBlock inner : statement.getBody())
+				collectStatementBlockScopeIds(inner, scopes);
+		}
+		else if(sb instanceof WhileStatementBlock) {
+			WhileStatement statement = (WhileStatement) sb.getStatement(0);
+			for(StatementBlock inner : statement.getBody())
+				collectStatementBlockScopeIds(inner, scopes);
+		}
+		else if(sb instanceof FunctionStatementBlock) {
+			FunctionStatement statement = (FunctionStatement) sb.getStatement(0);
+			for(StatementBlock inner : statement.getBody())
+				collectStatementBlockScopeIds(inner, scopes);
+		}
 	}
 
 	private static void collectStatementBlockRoots(StatementBlock sb, Map<Long, Hop> hopCloneMap,

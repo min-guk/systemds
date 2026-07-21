@@ -21,6 +21,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
@@ -34,18 +35,43 @@ import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedResolution;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedResolutionRequest;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 public final class ExecPlacementPolicy {
 	public record CapturedPlacementRequest(Hop hop, Privacy privacy, FType logicalFType,
-		CandidateCapabilityFact capabilityFact, Map<Long, FType> effectiveFTypes) {
+		CandidateCapabilityFact capabilityFact, Map<Long, FType> effectiveFTypes,
+		PlacementAnalysis analysis, String analysisFingerprint, CompiledHopKey parentOccurrence,
+		List<CandidateInputState> orderedInputs, CandidateRuleFact exactFact,
+		CapturedInvocationEvidence invocationEvidence, long variantOrdinal) {
+		public CapturedPlacementRequest(Hop hop, Privacy privacy, FType logicalFType,
+			CandidateCapabilityFact capabilityFact, Map<Long, FType> effectiveFTypes) {
+			this(hop, privacy, logicalFType, capabilityFact, effectiveFTypes,
+				null, null, null, List.of(), null, null, -1L);
+		}
+
 		public CapturedPlacementRequest {
 			if(hop == null || privacy == null || capabilityFact == null)
 				throw new IllegalArgumentException("Captured placement request must be complete");
-			effectiveFTypes = Map.copyOf(effectiveFTypes);
+			effectiveFTypes = Map.copyOf(Objects.requireNonNull(effectiveFTypes, "effectiveFTypes"));
+			orderedInputs = List.copyOf(Objects.requireNonNull(orderedInputs, "orderedInputs"));
+		}
+
+		public boolean hasExactAuthority() {
+			return analysis != null && analysisFingerprint != null && parentOccurrence != null
+				&& exactFact != null && invocationEvidence != null && variantOrdinal >= 0;
 		}
 	}
 
@@ -85,17 +111,37 @@ public final class ExecPlacementPolicy {
 	}
 
 	public static Decision decideCaptured(CapturedPlacementRequest request) {
+		Objects.requireNonNull(request, "request");
+		CapturedResolution exactResolution = requireExactAuthority(request);
 		CandidateCapabilityFact capability = request.capabilityFact();
 		Decision decision = decide(request.hop(), request.privacy(), request.logicalFType(),
 			capability.nativeExec(), capability.nativeOutput());
 		Hop hop = request.hop();
+		FType exactProjectedType = PlacementCandidateRuleResolver.projectConsumerSafeType(
+			exactResolution.logicalFType(), request.invocationEvidence().projection());
+		boolean distinctCallContext = request.analysis().graph().constraints().stream()
+			.anyMatch(constraint -> constraint.kind() == ConstraintKind.DISTINCT_CONTEXT
+				&& (constraint.left() == request.parentOccurrence()
+					|| constraint.right() == request.parentOccurrence()));
+		if(capability.reasonCode() == ReasonCode.NO_FED_INPUT && hasExactFedLoutAlternative(request))
+			decision.allowFED_LOUT = true;
 		boolean derivedFedFout = !decision.allowFED_FOUT && decision.allowFED_LOUT
 			&& hop.getDataType() != null && hop.getDataType().isMatrix()
 			&& (request.privacy() == Privacy.PUBLIC
 				|| request.privacy() == Privacy.PRIVATE_AGGREGATE_TO_PUBLIC)
-			&& FederatedRefedPolicy.canGenerateCpfoutCandidateFromFTypes(hop, request.effectiveFTypes());
+			&& exactProjectedType != null && exactProjectedType != FType.PART
+			&& exactProjectedType != FType.OTHER;
 		if(derivedFedFout)
 			decision.allowFED_FOUT = true;
+		decision.allowCP_FOUT = decision.allowCP_FOUT
+			&& exactProjectedType != null && exactProjectedType != FType.PART
+			&& exactProjectedType != FType.OTHER;
+		if(distinctCallContext) {
+			decision.allowCP_FOUT = false;
+			decision.allowFED_LOUT = false;
+			decision.allowFED_FOUT = false;
+			decision.allowCP_LOUT = true;
+		}
 		if(hop instanceof org.apache.sysds.hops.NaryOp) {
 			Types.OpOpN op = ((org.apache.sysds.hops.NaryOp)hop).getOp();
 			if(op == Types.OpOpN.CBIND || op == Types.OpOpN.RBIND) {
@@ -121,6 +167,43 @@ public final class ExecPlacementPolicy {
 			decision.allowCP_LOUT = true;
 		}
 		return decision;
+	}
+
+	private static CapturedResolution requireExactAuthority(CapturedPlacementRequest request) {
+		if(!request.hasExactAuthority())
+			throw new IllegalArgumentException("Captured placement request is not bound to exact analysis authority");
+		PlacementAnalysis analysis = request.analysis();
+		if(!analysis.analysisFingerprint().equals(request.analysisFingerprint())
+			|| analysis.hop(request.parentOccurrence()).orElse(null) != request.hop())
+			throw new IllegalArgumentException("Captured placement request belongs to a foreign analysis context");
+		CandidateRuleFact exact = analysis.candidateRuleFacts()
+			.requireExact(request.parentOccurrence(), request.orderedInputs());
+		if(exact != request.exactFact() || exact.capability() != request.capabilityFact())
+			throw new IllegalArgumentException("Captured placement request detached its exact rule fact");
+		CapturedResolution resolved = PlacementCandidateRuleResolver.resolveCaptured(new CapturedResolutionRequest(
+			analysis, request.analysisFingerprint(), request.parentOccurrence(), request.orderedInputs(),
+			request.invocationEvidence()));
+		if(resolved.fact() != exact || resolved.logicalFType() != request.logicalFType())
+			throw new IllegalArgumentException("Captured placement request differs from exact retained resolution");
+		return resolved;
+	}
+
+	private static boolean hasExactFedLoutAlternative(CapturedPlacementRequest request) {
+		Hop hop = request.hop();
+		Privacy privacy = request.privacy();
+		if(hop == null || privacy == Privacy.PRIVATE)
+			return false;
+		if(hop instanceof DataOp && isTransientDataOp(hop))
+			return false;
+		CandidateRuleFact exact = request.exactFact();
+		CandidateCapabilityFact capability = exact.capability();
+		return exact.status() == CandidateEvaluationStatus.AVAILABLE
+			&& capability != null && capability.reasonCode() == ReasonCode.NO_FED_INPUT
+			&& capability.nativeExec() == ExecType.CP
+			&& capability.nativeOutput() == FederatedOutput.LOUT
+			&& request.logicalFType() == null
+			&& !request.orderedInputs().isEmpty()
+			&& request.orderedInputs().stream().noneMatch(CandidateInputState::present);
 	}
 
 	private static boolean isRecompileRegion(Hop hop) {

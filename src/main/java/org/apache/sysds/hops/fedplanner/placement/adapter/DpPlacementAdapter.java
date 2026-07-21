@@ -431,7 +431,9 @@ public final class DpPlacementAdapter {
 		CandidateCapabilityFact caps = resolved.fact().capability();
 		ExecPlacementPolicy.Decision placement = ExecPlacementPolicy.decideCaptured(
 			new CapturedPlacementRequest(parentHop, privacy, resolved.logicalFType(), caps,
-				normalizedCandidateInputs.effectiveNonNullFTypeMap()));
+				normalizedCandidateInputs.effectiveNonNullFTypeMap(), context.analysis(),
+				context.analysisFingerprint(), snapshot.parentOccurrence(), orderedInputs,
+				resolved.fact(), invocationEvidence, variantOrdinal));
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
 			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
