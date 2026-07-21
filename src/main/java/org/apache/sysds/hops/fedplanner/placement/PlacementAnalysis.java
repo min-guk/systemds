@@ -37,6 +37,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegio
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -514,6 +515,9 @@ public final class PlacementAnalysis {
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
 	private final DMLProgram programOwner;
+	private final Map<String,FunctionStatementBlock> namedFunctionStatementBlocks;
+	private final Runnable programMutationGuard;
+	private final boolean guardedFunctionRoots;
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
 		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
@@ -524,8 +528,29 @@ public final class PlacementAnalysis {
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
 		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
+			compiledInputEdges, null);
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges, Runnable programMutationGuard) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
+		this.programMutationGuard = programMutationGuard == null ? () -> { } : programMutationGuard;
+		this.guardedFunctionRoots = programOwner != null && programMutationGuard != null;
+		Map<String,FunctionStatementBlock> functions = new java.util.TreeMap<>();
+		if(guardedFunctionRoots)
+			functions.putAll(programOwner.getNamedNSFunctionStatementBlocks());
+		this.namedFunctionStatementBlocks = Collections.unmodifiableMap(functions);
 		this.occurrences = List.copyOf(occurrences);
 		this.topLevelStatementBlocks = List.copyOf(topLevelStatementBlocks);
 		Map<CompiledHopKey, Hop> indexed = new LinkedHashMap<>();
@@ -728,6 +753,26 @@ public final class PlacementAnalysis {
 
 	public List<StatementBlock> topLevelStatementBlocks() {
 		return topLevelStatementBlocks;
+	}
+
+	/**
+	 * Immutable namespace index over the compiled program's named function roots.
+	 * The indexed blocks remain compiler-owned and are protected by the program
+	 * structure fingerprint rather than copied into a second semantic universe.
+	 */
+	public Map<String,FunctionStatementBlock> namedFunctionStatementBlocks() {
+		assertProgramStructureUnchanged();
+		return namedFunctionStatementBlocks;
+	}
+
+	/** Whether named compiler-owned function roots are protected by the analysis guard. */
+	public boolean hasGuardedFunctionRoots() {
+		return guardedFunctionRoots;
+	}
+
+	/** Fail closed if compiler-owned program structure changed after analysis. */
+	public void assertProgramStructureUnchanged() {
+		programMutationGuard.run();
 	}
 
 	public Optional<Hop> hop(CompiledHopKey key) {

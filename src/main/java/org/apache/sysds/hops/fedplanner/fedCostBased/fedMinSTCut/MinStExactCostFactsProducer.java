@@ -20,13 +20,17 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataGenOp;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ContributionKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
@@ -44,13 +48,25 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInpu
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.ForStatement;
+import org.apache.sysds.parser.ForStatementBlock;
+import org.apache.sysds.parser.FunctionStatement;
+import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.IfStatement;
+import org.apache.sysds.parser.IfStatementBlock;
+import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.WhileStatement;
+import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.runtime.util.UtilFunctions;
 
 /** Deterministic projection from neutral placement semantics to exact MinST cut facts. */
 public final class MinStExactCostFactsProducer {
 	private static final long SOURCE = -1L;
 	private static final long SINK = -2L;
 	private static final double HARD_LEGALITY = 1e15;
+	private static final Object MAIN_OCCURRENCE_CONTEXT = new Object();
 
 	private MinStExactCostFactsProducer() {
 		// utility class
@@ -222,6 +238,7 @@ public final class MinStExactCostFactsProducer {
 		List<CompiledHopKey> orderedScope, IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
 		int workers, EdgeAccumulator edges) {
 		List<AuxiliaryGroupFact> result = new ArrayList<>();
+		Map<String,List<OccurrenceProfile>> occurrenceProfiles = occurrenceProfiles(analysis);
 		IdentityHashMap<CompiledHopKey,List<CompiledInputEdgeFact>> edgesByProducer = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(analysis.requireExactCompiledInputEdge(edge.producer(), edge.consumer(),
@@ -259,22 +276,427 @@ public final class MinStExactCostFactsProducer {
 					.toList();
 				List<EndpointFact> endpoints = new ArrayList<>(uses.size());
 				double bytes = estimatedBytes(analysis, producerKey, producer);
-				double demand = entry.getKey().direction == Direction.UPLOAD
+				double transferCost = entry.getKey().direction == Direction.UPLOAD
 					? FederatedCostModel.computeUploadNetworkCost(bytes, entry.getKey().type, workers)
+						+ FederatedCostModel.computeLocalToFedForwardingPenalty(entry.getKey().type, workers)
 					: FederatedCostModel.computeDownloadNetworkCost(bytes, entry.getKey().type, workers);
-				demand = requireCost(demand, "MINST_GROUP_DEMAND_COST_UNPROVEN");
-				for(Use use : uses)
+				transferCost = requireCost(transferCost, "MINST_GROUP_TRANSFER_COST_UNPROVEN");
+				double price = Double.NEGATIVE_INFINITY;
+				for(Use use : uses) {
+					double forwardingWeight = forwardingWeight(occurrenceProfiles,
+						use.edge.consumer(), use.edge.producer());
+					double demand = requireCost(forwardingWeight * transferCost,
+						"MINST_GROUP_DEMAND_COST_UNPROVEN");
 					endpoints.add(new EndpointFact(use.edge.producer(), use.edge.consumer(), use.edge.inputPosition(),
 						use.consumerDecision.computeNodeId(), bits(demand)));
+					price = Math.max(price, demand);
+				}
+				price = requireCost(price, "MINST_GROUP_PRICE_UNPROVEN");
 				long aux = nextAux--;
 				AuxiliaryGroupFact group = new AuxiliaryGroupFact(aux, entry.getKey().direction,
 					producerKey, producerDecision.placementNodeId(), entry.getKey().type,
-					bits(demand), endpoints);
+					bits(price), endpoints);
 				result.add(group);
 				addGroupEdges(group, edges);
 			}
 		}
 		return List.copyOf(result);
+	}
+
+	private static Map<String,List<OccurrenceProfile>> occurrenceProfiles(PlacementAnalysis analysis) {
+		analysis.assertProgramStructureUnchanged();
+		if(!analysis.hasGuardedFunctionRoots() && analysis.compiledHopOccurrences().stream()
+			.map(PlacementAnalysis.HopOccurrenceProjection::hop)
+			.anyMatch(hop -> hop instanceof FunctionOp
+				&& ((FunctionOp)hop).getFunctionType() == FunctionOp.FunctionType.DML))
+			throw new IllegalArgumentException("MINST_GUARDED_FUNCTION_ROOTS_REQUIRED");
+		Map<String,List<OccurrenceProfile>> profiles = new LinkedHashMap<>();
+		Map<String,List<FunctionCallContext>> functionCalls = new LinkedHashMap<>();
+		Map<Hop,List<FunctionCallContext>> indexedFunctionCallContexts = new IdentityHashMap<>();
+		indexBlocks(analysis.topLevelStatementBlocks(), "main", 1.0, List.of(), List.of(), List.of(),
+			MAIN_OCCURRENCE_CONTEXT,
+			profiles, functionCalls, indexedFunctionCallContexts);
+		Map<String,Integer> processedCalls = new LinkedHashMap<>();
+		boolean advanced;
+		do {
+			advanced = false;
+			for(String functionKey : new ArrayList<>(functionCalls.keySet())) {
+				List<FunctionCallContext> calls = functionCalls.get(functionKey);
+				int processed = processedCalls.getOrDefault(functionKey, 0);
+				FunctionStatementBlock function = analysis.namedFunctionStatementBlocks().get(functionKey);
+				if(function == null)
+					throw new IllegalArgumentException("MINST_FUNCTION_ROOT_UNPROVEN|function=" + functionKey);
+				while(processed < calls.size()) {
+					FunctionCallContext call = calls.get(processed++);
+					indexBlock(function, "function/" + functionKey, call.networkWeight,
+						call.loopContext, call.transTables, Map.of(), call.callStack, call, profiles,
+						functionCalls, indexedFunctionCallContexts);
+					advanced = true;
+				}
+				processedCalls.put(functionKey, processed);
+			}
+		}
+		while(advanced);
+		if(profiles.isEmpty())
+			indexDetachedStraightLineProfiles(analysis, profiles);
+		analysis.assertProgramStructureUnchanged();
+		Map<String,List<OccurrenceProfile>> frozen = new LinkedHashMap<>();
+		profiles.forEach((path, occurrences) -> frozen.put(path, List.copyOf(occurrences)));
+		return Collections.unmodifiableMap(frozen);
+	}
+
+	private static void indexDetachedStraightLineProfiles(PlacementAnalysis analysis,
+		Map<String,List<OccurrenceProfile>> profiles) {
+		if(!analysis.topLevelStatementBlocks().isEmpty()
+			|| !analysis.namedFunctionStatementBlocks().isEmpty())
+			return;
+		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences()) {
+			List<String> paths = occurrence.key().controlRegion().regionPath();
+			if(paths.size() != 1 || !paths.get(0).matches("main/\\d+"))
+				continue;
+			putOccurrenceProfile(profiles, paths.get(0),
+				new OccurrenceProfile(1.0, List.of(), MAIN_OCCURRENCE_CONTEXT));
+		}
+	}
+
+	private static Map<String,List<Hop>> indexBlocks(List<StatementBlock> blocks, String path,
+		double networkWeight, List<Pair<Long,Double>> loopContext,
+		List<Map<String,List<Hop>>> outerTransTables, List<String> callStack,
+		Object occurrenceContext, Map<String,List<OccurrenceProfile>> profiles,
+		Map<String,List<FunctionCallContext>> functionCalls,
+		Map<Hop,List<FunctionCallContext>> indexedFunctionCallContexts) {
+		Map<String,List<Hop>> former = new LinkedHashMap<>();
+		for(int index = 0; blocks != null && index < blocks.size(); index++) {
+			Map<String,List<Hop>> writes = indexBlock(blocks.get(index), path + '/' + index,
+				networkWeight, loopContext, outerTransTables, former, callStack, occurrenceContext, profiles,
+				functionCalls, indexedFunctionCallContexts);
+			replaceMappings(former, writes);
+		}
+		return former;
+	}
+
+	private static Map<String,List<Hop>> indexBlock(StatementBlock block, String path,
+		double networkWeight, List<Pair<Long,Double>> loopContext,
+		List<Map<String,List<Hop>>> outerTransTables, Map<String,List<Hop>> formerTransTable,
+		List<String> callStack, Object occurrenceContext,
+		Map<String,List<OccurrenceProfile>> profiles,
+		Map<String,List<FunctionCallContext>> functionCalls,
+		Map<Hop,List<FunctionCallContext>> indexedFunctionCallContexts) {
+		List<Map<String,List<Hop>>> visibleTransTables = visibleTransTables(
+			outerTransTables, formerTransTable);
+		Map<String,List<Hop>> headerWrites;
+		if(block instanceof ForStatementBlock) {
+			double loopWeight = forLoopWeight((ForStatementBlock)block, visibleTransTables);
+			OccurrenceProfile nested = nestedLoopProfile(block, networkWeight, loopContext, loopWeight,
+				occurrenceContext);
+			headerWrites = scanBlockRoots(blockRoots(block), nested.networkWeight,
+				nested.loopContext, visibleTransTables, callStack, functionCalls,
+				indexedFunctionCallContexts);
+			putOccurrenceProfile(profiles, path, nested);
+			ForStatement statement = (ForStatement)block.getStatement(0);
+			Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/loop-body",
+				nested.networkWeight, nested.loopContext, appendTransTable(visibleTransTables, headerWrites),
+				callStack, occurrenceContext, profiles, functionCalls, indexedFunctionCallContexts);
+			replaceMappings(headerWrites, bodyWrites);
+		}
+		else if(block instanceof WhileStatementBlock) {
+			double loopWeight = requirePositiveWeight(
+				RewireConstants.estimateWhileLoopWeight((WhileStatementBlock)block, visibleTransTables),
+				"MINST_WHILE_OCCURRENCE_WEIGHT_UNPROVEN");
+			OccurrenceProfile nested = nestedLoopProfile(block, networkWeight, loopContext, loopWeight,
+				occurrenceContext);
+			headerWrites = scanBlockRoots(blockRoots(block), nested.networkWeight,
+				nested.loopContext, visibleTransTables, callStack, functionCalls,
+				indexedFunctionCallContexts);
+			putOccurrenceProfile(profiles, path, nested);
+			WhileStatement statement = (WhileStatement)block.getStatement(0);
+			Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/loop-body",
+				nested.networkWeight, nested.loopContext, appendTransTable(visibleTransTables, headerWrites),
+				callStack, occurrenceContext, profiles, functionCalls, indexedFunctionCallContexts);
+			replaceMappings(headerWrites, bodyWrites);
+		}
+		else if(block instanceof IfStatementBlock) {
+			headerWrites = scanBlockRoots(blockRoots(block), networkWeight,
+				loopContext, visibleTransTables, callStack, functionCalls, indexedFunctionCallContexts);
+			putOccurrenceProfile(profiles, path,
+				new OccurrenceProfile(requirePositiveWeight(networkWeight,
+					"MINST_BRANCH_PARENT_WEIGHT_UNPROVEN"), loopContext, occurrenceContext));
+			double branchWeight = requirePositiveWeight(networkWeight
+				* RewireConstants.DEFAULT_IF_ELSE_WEIGHT, "MINST_BRANCH_WEIGHT_UNPROVEN");
+			IfStatement statement = (IfStatement)block.getStatement(0);
+			List<Map<String,List<Hop>>> branchOuter = appendTransTable(visibleTransTables, headerWrites);
+			Map<String,List<Hop>> ifWrites = indexBlocks(statement.getIfBody(), path + "/branch-if",
+				branchWeight, loopContext, branchOuter, callStack, occurrenceContext, profiles, functionCalls,
+				indexedFunctionCallContexts);
+			Map<String,List<Hop>> elseWrites = indexBlocks(statement.getElseBody(), path + "/branch-else",
+				branchWeight, loopContext, branchOuter, callStack, occurrenceContext, profiles, functionCalls,
+				indexedFunctionCallContexts);
+			mergeMappings(headerWrites, ifWrites);
+			mergeMappings(headerWrites, elseWrites);
+		}
+		else if(block instanceof FunctionStatementBlock) {
+			headerWrites = scanBlockRoots(blockRoots(block), networkWeight,
+				loopContext, visibleTransTables, callStack, functionCalls, indexedFunctionCallContexts);
+			putOccurrenceProfile(profiles, path,
+				new OccurrenceProfile(requirePositiveWeight(networkWeight,
+					"MINST_FUNCTION_WEIGHT_UNPROVEN"), loopContext, occurrenceContext));
+			FunctionStatement statement = (FunctionStatement)block.getStatement(0);
+			Map<String,List<Hop>> bodyWrites = indexBlocks(statement.getBody(), path + "/body",
+				networkWeight, loopContext, appendTransTable(visibleTransTables, headerWrites), callStack,
+				occurrenceContext,
+				profiles, functionCalls, indexedFunctionCallContexts);
+			replaceMappings(headerWrites, bodyWrites);
+		}
+		else {
+			headerWrites = scanBlockRoots(blockRoots(block), networkWeight,
+				loopContext, visibleTransTables, callStack, functionCalls, indexedFunctionCallContexts);
+			putOccurrenceProfile(profiles, path,
+				new OccurrenceProfile(requirePositiveWeight(networkWeight,
+					"MINST_OCCURRENCE_WEIGHT_UNPROVEN"), loopContext, occurrenceContext));
+		}
+		return headerWrites;
+	}
+
+	private static OccurrenceProfile nestedLoopProfile(StatementBlock block, double networkWeight,
+		List<Pair<Long,Double>> loopContext, double loopWeight, Object occurrenceContext) {
+		List<Pair<Long,Double>> nestedContext = new ArrayList<>(loopContext);
+		nestedContext.add(Pair.of(block.getSBID(), loopWeight));
+		return new OccurrenceProfile(requirePositiveWeight(networkWeight * loopWeight,
+			"MINST_NESTED_LOOP_WEIGHT_UNPROVEN"), nestedContext, occurrenceContext);
+	}
+
+	private static double forLoopWeight(ForStatementBlock block,
+		List<Map<String,List<Hop>>> transTables) {
+		double fallback = RewireConstants.DEFAULT_LOOP_WEIGHT;
+		Double from = scalarConstant(block.getFromHops(), transTables);
+		Double to = scalarConstant(block.getToHops(), transTables);
+		Double increment = block.getIncrementHops() == null ? 1.0
+			: scalarConstant(block.getIncrementHops(), transTables);
+		if(from == null || to == null || increment == null || increment == 0.0)
+			return requirePositiveWeight(fallback, "MINST_FOR_OCCURRENCE_WEIGHT_UNPROVEN");
+		double step = increment;
+		if(from > to && step == 1.0)
+			step = -1.0;
+		double iterations = UtilFunctions.getSeqLength(from, to, step, false);
+		return requirePositiveWeight(iterations > 0.0 ? iterations : fallback,
+			"MINST_FOR_OCCURRENCE_WEIGHT_UNPROVEN");
+	}
+
+	private static Double scalarConstant(Hop boundRoot, List<Map<String,List<Hop>>> transTables) {
+		if(boundRoot == null || boundRoot.getInput() == null || boundRoot.getInput().isEmpty())
+			return null;
+		return RewireConstants.tryEvaluateScalarConstant(boundRoot.getInput().get(0), transTables);
+	}
+
+	private static void putOccurrenceProfile(Map<String,List<OccurrenceProfile>> profiles,
+		String path, OccurrenceProfile profile) {
+		List<OccurrenceProfile> occurrences = profiles.computeIfAbsent(path, ignored -> new ArrayList<>());
+		for(OccurrenceProfile existing : occurrences)
+			if(existing.contextIdentity == profile.contextIdentity) {
+				if(!existing.sameAs(profile))
+					throw new IllegalArgumentException("MINST_OCCURRENCE_CONTEXT_CONFLICT|path=" + path);
+				return;
+			}
+		occurrences.add(profile);
+	}
+
+	private static double forwardingWeight(Map<String,List<OccurrenceProfile>> profiles,
+		CompiledHopKey consumer, CompiledHopKey producer) {
+		List<OccurrenceProfile> consumerProfiles = requireOccurrenceProfiles(profiles, consumer);
+		List<OccurrenceProfile> producerProfiles = requireOccurrenceProfiles(profiles, producer);
+		double total = 0.0;
+		for(OccurrenceProfile consumerProfile : consumerProfiles) {
+			OccurrenceProfile producerProfile = producerProfiles.stream()
+				.filter(candidate -> candidate.contextIdentity == consumerProfile.contextIdentity)
+				.findFirst().orElseThrow(() -> new IllegalArgumentException(
+					"MINST_OCCURRENCE_CONTEXT_UNMATCHED|consumer=" + consumer.normalizedSignature()
+						+ "|producer=" + producer.normalizedSignature()));
+			total += requirePositiveWeight(FederatedPlannerUtils.computeForwardingWeightOfChild(
+				consumerProfile.networkWeight, consumerProfile.loopContext, producerProfile.loopContext),
+				"MINST_FORWARDING_WEIGHT_UNPROVEN");
+		}
+		return requirePositiveWeight(total, "MINST_FORWARDING_WEIGHT_UNPROVEN");
+	}
+
+	private static List<OccurrenceProfile> requireOccurrenceProfiles(
+		Map<String,List<OccurrenceProfile>> profiles,
+		CompiledHopKey key) {
+		List<String> regionPath = key.controlRegion().regionPath();
+		if(regionPath.size() != 1)
+			throw new IllegalArgumentException("MINST_OCCURRENCE_PATH_UNPROVEN|key="
+				+ key.normalizedSignature() + "|paths=" + regionPath);
+		String path = regionPath.get(0);
+		List<OccurrenceProfile> pathProfiles = profiles.get(path);
+		if(pathProfiles == null || pathProfiles.isEmpty())
+			throw new IllegalArgumentException("MINST_OCCURRENCE_PATH_UNPROVEN|path=" + path);
+		return pathProfiles;
+	}
+
+	private static List<Hop> blockRoots(StatementBlock block) {
+		List<Hop> roots = new ArrayList<>();
+		if(block.getHops() != null)
+			roots.addAll(block.getHops());
+		if(block instanceof IfStatementBlock)
+			roots.add(((IfStatementBlock)block).getPredicateHops());
+		else if(block instanceof WhileStatementBlock)
+			roots.add(((WhileStatementBlock)block).getPredicateHops());
+		else if(block instanceof ForStatementBlock) {
+			roots.add(((ForStatementBlock)block).getFromHops());
+			roots.add(((ForStatementBlock)block).getToHops());
+			roots.add(((ForStatementBlock)block).getIncrementHops());
+		}
+		roots.removeIf(Objects::isNull);
+		return roots;
+	}
+
+	private static Map<String,List<Hop>> scanBlockRoots(List<Hop> roots, double networkWeight,
+		List<Pair<Long,Double>> loopContext, List<Map<String,List<Hop>>> visibleTransTables,
+		List<String> callStack,
+		Map<String,List<FunctionCallContext>> functionCalls,
+		Map<Hop,List<FunctionCallContext>> indexedFunctionCallContexts) {
+		Map<String,List<Hop>> writes = new LinkedHashMap<>();
+		for(Hop root : roots) {
+			List<Map<String,List<Hop>>> current = appendTransTable(visibleTransTables, writes);
+			collectFunctionCalls(List.of(root), networkWeight, loopContext, current,
+				callStack, functionCalls, indexedFunctionCallContexts);
+			mergeMappings(writes, transientWrites(List.of(root)));
+		}
+		return writes;
+	}
+
+	private static Map<String,List<Hop>> transientWrites(List<Hop> roots) {
+		Map<String,List<Hop>> writes = new LinkedHashMap<>();
+		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop root : roots)
+			collectTransientWrites(root, visited, writes);
+		return writes;
+	}
+
+	private static void collectTransientWrites(Hop hop, Set<Hop> visited,
+		Map<String,List<Hop>> writes) {
+		if(hop == null || !visited.add(hop))
+			return;
+		for(Hop input : hop.getInput())
+			collectTransientWrites(input, visited, writes);
+		if(hop instanceof DataOp && ((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE) {
+			String name = hop.getName();
+			if(name != null && !name.isBlank())
+				writes.computeIfAbsent(name, ignored -> new ArrayList<>()).add(hop);
+		}
+	}
+
+	private static void collectFunctionCalls(List<Hop> roots, double networkWeight,
+		List<Pair<Long,Double>> loopContext, List<Map<String,List<Hop>>> visibleTransTables,
+		List<String> callStack,
+		Map<String,List<FunctionCallContext>> functionCalls,
+		Map<Hop,List<FunctionCallContext>> indexedFunctionCallContexts) {
+		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop root : roots)
+			collectFunctionCalls(root, networkWeight, loopContext, visibleTransTables,
+				callStack, functionCalls, indexedFunctionCallContexts, visited);
+	}
+
+	private static void collectFunctionCalls(Hop hop, double networkWeight,
+		List<Pair<Long,Double>> loopContext, List<Map<String,List<Hop>>> visibleTransTables,
+		List<String> callStack,
+		Map<String,List<FunctionCallContext>> functionCalls,
+		Map<Hop,List<FunctionCallContext>> indexedFunctionCallContexts,
+		Set<Hop> visited) {
+		if(hop == null || !visited.add(hop))
+			return;
+		for(Hop input : hop.getInput())
+			collectFunctionCalls(input, networkWeight, loopContext, visibleTransTables,
+				callStack, functionCalls, indexedFunctionCallContexts, visited);
+		if(!(hop instanceof FunctionOp))
+			return;
+		FunctionOp function = (FunctionOp)hop;
+		if(function.getFunctionType() != FunctionOp.FunctionType.DML)
+			return;
+		String functionIdentity = function.getFunctionKey();
+		if(functionIdentity == null || functionIdentity.isBlank())
+			throw new IllegalArgumentException("MINST_FUNCTION_IDENTITY_UNPROVEN");
+		if(callStack.contains(functionIdentity))
+			throw new IllegalArgumentException("MINST_RECURSIVE_FUNCTION_CONTEXT_UNSUPPORTED|function="
+				+ functionIdentity);
+		String functionRootKey = DMLProgram.DEFAULT_NAMESPACE.equals(function.getFunctionNamespace())
+			? function.getFunctionName() : functionIdentity;
+		Map<String,List<Hop>> inputs = new LinkedHashMap<>();
+		String[] names = function.getInputVariableNames();
+		int limit = Math.min(names == null ? 0 : names.length, function.getInput().size());
+		for(int index = 0; index < limit; index++) {
+			String name = Objects.requireNonNull(names[index], "function input name");
+			if(name.isBlank())
+				throw new IllegalArgumentException("MINST_FUNCTION_INPUT_NAME_UNPROVEN");
+			Hop input = resolveTransientSource(function.getInput(index), visibleTransTables);
+			inputs.computeIfAbsent(name, ignored -> new ArrayList<>()).add(input);
+		}
+		List<Map<String,List<Hop>>> functionTransTables = appendTransTable(
+			visibleTransTables, inputs);
+		FunctionCallContext context = new FunctionCallContext(networkWeight, loopContext,
+			functionTransTables, appendCallStack(callStack, functionIdentity));
+		List<FunctionCallContext> indexedContexts = indexedFunctionCallContexts.computeIfAbsent(
+			hop, ignored -> new ArrayList<>());
+		if(indexedContexts.stream().anyMatch(existing -> existing.sameAs(context)))
+			return;
+		indexedContexts.add(context);
+		functionCalls.computeIfAbsent(functionRootKey, ignored -> new ArrayList<>()).add(context);
+	}
+
+	private static List<String> appendCallStack(List<String> callStack, String functionIdentity) {
+		List<String> nested = new ArrayList<>(callStack);
+		nested.add(functionIdentity);
+		return List.copyOf(nested);
+	}
+
+	private static Hop resolveTransientSource(Hop hop,
+		List<Map<String,List<Hop>>> visibleTransTables) {
+		if(!(hop instanceof DataOp) || ((DataOp)hop).getOp() != OpOpData.TRANSIENTREAD)
+			return hop;
+		String name = hop.getName();
+		for(int index = visibleTransTables.size() - 1; index >= 0; index--) {
+			List<Hop> candidates = visibleTransTables.get(index).get(name);
+			if(candidates != null && !candidates.isEmpty()) {
+				Hop candidate = candidates.get(candidates.size() - 1);
+				if(candidate != hop)
+					return candidate;
+			}
+		}
+		return hop;
+	}
+
+	private static List<Map<String,List<Hop>>> visibleTransTables(
+		List<Map<String,List<Hop>>> outer, Map<String,List<Hop>> former) {
+		return appendTransTable(outer, former);
+	}
+
+	private static List<Map<String,List<Hop>>> appendTransTable(
+		List<Map<String,List<Hop>>> tables, Map<String,List<Hop>> table) {
+		List<Map<String,List<Hop>>> result = new ArrayList<>();
+		if(tables != null)
+			for(Map<String,List<Hop>> candidate : tables)
+				if(candidate != null && !candidate.isEmpty())
+					result.add(candidate);
+		if(table != null && !table.isEmpty())
+			result.add(table);
+		return List.copyOf(result);
+	}
+
+	private static void replaceMappings(Map<String,List<Hop>> target,
+		Map<String,List<Hop>> source) {
+		for(Map.Entry<String,List<Hop>> entry : source.entrySet())
+			target.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+	}
+
+	private static void mergeMappings(Map<String,List<Hop>> target,
+		Map<String,List<Hop>> source) {
+		for(Map.Entry<String,List<Hop>> entry : source.entrySet())
+			target.computeIfAbsent(entry.getKey(), ignored -> new ArrayList<>()).addAll(entry.getValue());
+	}
+
+	private static double requirePositiveWeight(double value, String reason) {
+		if(!Double.isFinite(value) || value <= 0.0)
+			throw new IllegalArgumentException(reason + "|value=" + value);
+		return value;
 	}
 
 	private static void addGroupEdges(AuxiliaryGroupFact group, EdgeAccumulator edges) {
@@ -659,6 +1081,69 @@ public final class MinStExactCostFactsProducer {
 				&& type == ((GroupDemandKey)other).type;
 		}
 		@Override public int hashCode() { return direction.hashCode() * 31 + type.hashCode(); }
+	}
+
+	private static final class OccurrenceProfile {
+		private final double networkWeight;
+		private final List<Pair<Long,Double>> loopContext;
+		private final Object contextIdentity;
+		OccurrenceProfile(double networkWeight, List<Pair<Long,Double>> loopContext,
+			Object contextIdentity) {
+			this.networkWeight = requirePositiveWeight(networkWeight,
+				"MINST_OCCURRENCE_WEIGHT_UNPROVEN");
+			this.loopContext = List.copyOf(loopContext);
+			this.contextIdentity = Objects.requireNonNull(contextIdentity, "contextIdentity");
+		}
+		boolean sameAs(OccurrenceProfile that) {
+			return Double.doubleToRawLongBits(networkWeight)
+					== Double.doubleToRawLongBits(that.networkWeight)
+				&& loopContext.equals(that.loopContext);
+		}
+	}
+
+	private static final class FunctionCallContext {
+		private final double networkWeight;
+		private final List<Pair<Long,Double>> loopContext;
+		private final List<Map<String,List<Hop>>> transTables;
+		private final List<String> callStack;
+		FunctionCallContext(double networkWeight, List<Pair<Long,Double>> loopContext,
+			List<Map<String,List<Hop>>> transTables, List<String> callStack) {
+			this.networkWeight = requirePositiveWeight(networkWeight,
+				"MINST_FUNCTION_CALL_WEIGHT_UNPROVEN");
+			this.loopContext = List.copyOf(loopContext);
+			List<Map<String,List<Hop>>> copied = new ArrayList<>();
+			for(Map<String,List<Hop>> table : transTables) {
+				Map<String,List<Hop>> copiedTable = new LinkedHashMap<>();
+				for(Map.Entry<String,List<Hop>> entry : table.entrySet())
+					copiedTable.put(entry.getKey(), List.copyOf(entry.getValue()));
+				copied.add(Collections.unmodifiableMap(copiedTable));
+			}
+			this.transTables = List.copyOf(copied);
+			this.callStack = List.copyOf(callStack);
+		}
+		boolean sameAs(FunctionCallContext that) {
+			if(Double.doubleToRawLongBits(networkWeight)
+				!= Double.doubleToRawLongBits(that.networkWeight)
+				|| !loopContext.equals(that.loopContext) || !callStack.equals(that.callStack)
+				|| transTables.size() != that.transTables.size())
+				return false;
+			for(int tableIndex = 0; tableIndex < transTables.size(); tableIndex++) {
+				Map<String,List<Hop>> left = transTables.get(tableIndex);
+				Map<String,List<Hop>> right = that.transTables.get(tableIndex);
+				if(!left.keySet().equals(right.keySet()))
+					return false;
+				for(String name : left.keySet()) {
+					List<Hop> leftHops = left.get(name);
+					List<Hop> rightHops = right.get(name);
+					if(rightHops == null || leftHops.size() != rightHops.size())
+						return false;
+					for(int hopIndex = 0; hopIndex < leftHops.size(); hopIndex++)
+						if(leftHops.get(hopIndex) != rightHops.get(hopIndex))
+							return false;
+				}
+			}
+			return true;
+		}
 	}
 
 	private static final class Use {

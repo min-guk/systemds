@@ -169,9 +169,13 @@ public class DMLProgram
 	
 	public Map<String,FunctionStatementBlock> getNamedNSFunctionStatementBlocks() {
 		Map<String, FunctionStatementBlock> ret = new HashMap<>();
-		for( FunctionDictionary<FunctionStatementBlock> dict : _namespaces.values() )
-			for( Entry<String, FunctionStatementBlock> e : dict.getFunctions().entrySet() )
-				ret.put(e.getKey(), e.getValue());
+		for( Entry<String, FunctionDictionary<FunctionStatementBlock>> namespace : _namespaces.entrySet() )
+			for( Entry<String, FunctionStatementBlock> function : namespace.getValue().getFunctions().entrySet() ) {
+				String key = DEFAULT_NAMESPACE.equals(namespace.getKey()) ? function.getKey()
+					: constructFunctionKey(namespace.getKey(), function.getKey());
+				if(ret.put(key, function.getValue()) != null)
+					throw new LanguageException("Duplicate qualified function root: " + key);
+			}
 		return ret;
 	}
 	

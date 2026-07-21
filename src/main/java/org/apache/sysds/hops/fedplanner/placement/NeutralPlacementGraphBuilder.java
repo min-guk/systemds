@@ -296,7 +296,10 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
-			compiledInputEdges);
+			compiledInputEdges, () -> {
+				if(!before.equals(PlacementGraphFingerprint.capture(program)))
+					throw new IllegalStateException("PLACEMENT_ANALYSIS_PROGRAM_STRUCTURE_CHANGED");
+			});
 		String after = PlacementGraphFingerprint.capture(program);
 		if(!before.equals(after))
 			throw new IllegalStateException("Neutral placement analysis mutated the compiled Hop graph");
