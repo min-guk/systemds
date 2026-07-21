@@ -9,6 +9,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -16,7 +18,10 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.FileFormat;
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
@@ -28,12 +33,17 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.io.MatrixWriterFactory;
+import org.apache.sysds.runtime.matrix.data.MatrixBlock;
+import org.apache.sysds.runtime.meta.MatrixCharacteristics;
+import org.apache.sysds.runtime.util.HDFSTool;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
@@ -64,6 +74,52 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 			call(actual, "selectedStatesInScopeOrder"));
 		Assert.assertEquals("R5_MINST_SELECTOR_OBLIGATIONS", expectedObligations,
 			normalizedSelectedObligations(call(actual, "obligationReceiptsInOrder")));
+	}
+
+	@Test
+	public void actualRootFixtureCanRepresentNonemptyRawSelectedStatesWithoutRepair() throws Exception {
+		PlacementAnalysis analysis = functionLoopAnalysis();
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		DecisionFact federatedDecision = facts.decisionFactsInScopeOrder().stream()
+			.filter(decision -> decision.legalStatesInCanonicalOrder().stream()
+				.filter(state -> state.execType() == ExecType.FED
+					&& state.output() == FederatedOutput.FOUT).count() == 1L)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"R5_MINST_ACTUAL_ROOT_NONEMPTY_STATE_ANCHOR_MISSING"));
+		List<Long> nonemptyRawSource = List.of(federatedDecision.computeNodeId(),
+			federatedDecision.placementNodeId());
+
+		List<PlacementState> rawStates = rawSelectedStates(facts, nonemptyRawSource);
+		List<PlacementState> finalStates = selectedStates(facts, nonemptyRawSource);
+
+		Assert.assertFalse("R5_MINST_RAW_SELECTED_STATES_FIXTURE_VACUOUS", rawStates.isEmpty());
+		Assert.assertTrue("R5_MINST_RAW_SELECTED_STATES_FIXTURE_NONEMPTY_SOURCE",
+			nonemptyRawSource.size() > 0);
+		Assert.assertTrue("R5_MINST_RAW_SELECTED_STATES_FIXTURE_HAS_FED_FOUT",
+			rawStates.stream().anyMatch(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.FOUT));
+		Assert.assertEquals("R5_MINST_RAW_SELECTED_STATES_MUST_NOT_BE_REPAIRED",
+			rawStates, finalStates);
+	}
+
+	@Test
+	public void actualRootAuxiliarySelectionsBindToProducerEdgeAndAuthoritativeActions() throws Exception {
+		PlacementAnalysis analysis = occurrenceAnalysis();
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		CompiledHopKey consumer = keyByHopName(analysis, "Yout1");
+		AuxiliaryGroupFact upload = CampaignBR5MinStExactSelectorShadowRedTest
+			.uploadGroupContaining(facts, consumer);
+		AuxiliaryGroupFact download = CampaignBR5MinStExactSelectorShadowRedTest
+			.transferGroupContaining(facts, Direction.DOWNLOAD, consumer, "X");
+
+		List<String> uploadObligations = selectedObligations(facts, List.of(upload.auxiliaryNodeId()));
+		List<String> downloadEvidence = selectedAuxiliaryEvidence(facts,
+			List.of(download.producerPlacementNodeId()));
+
+		Assert.assertFalse("R5_MINST_ACTUAL_ROOT_UPLOAD_SELECTED_OBLIGATIONS_MISSING",
+			uploadObligations.isEmpty());
+		Assert.assertFalse("R5_MINST_ACTUAL_ROOT_DOWNLOAD_SELECTED_EVIDENCE_MISSING",
+			downloadEvidence.isEmpty());
 	}
 
 	private static CutSelection enumerateUniqueMinimum(MinStExactCostFacts facts) {
@@ -180,6 +236,25 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 		return capacity;
 	}
 
+
+	private static List<PlacementState> rawSelectedStates(MinStExactCostFacts facts,
+		List<Long> sourceNodeIds) {
+		List<PlacementState> states = new ArrayList<>();
+		for(DecisionFact decision : facts.decisionFactsInScopeOrder()) {
+			ExecType exec = sourceNodeIds.contains(decision.computeNodeId()) ? ExecType.FED : ExecType.CP;
+			FederatedOutput output = sourceNodeIds.contains(decision.placementNodeId())
+				? FederatedOutput.FOUT : FederatedOutput.LOUT;
+			PlacementState raw = decision.legalStatesInCanonicalOrder().stream()
+				.filter(state -> state.execType() == exec && state.output() == output)
+				.findFirst().orElseThrow(() -> new AssertionError(
+					"R5_MINST_RAW_SELECTED_STATE_NOT_LEGAL|key="
+						+ decision.key().normalizedSignature() + "|exec=" + exec
+						+ "|output=" + output));
+			states.add(raw);
+		}
+		return List.copyOf(states);
+	}
+
 	private static List<PlacementState> selectedStates(MinStExactCostFacts facts,
 		List<Long> sourceNodeIds) {
 		List<PlacementState> states = new ArrayList<>();
@@ -222,15 +297,18 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 
 	private static AuthoritativeObligation authoritativeObligation(MinStExactCostFacts facts,
 		AuxiliaryGroupFact group, EndpointFact endpoint, FederatedOutput requiredOutput) {
+		assertEndpointBoundToProducerAndCanonicalEdge(facts, group, endpoint);
 		List<AuthoritativeObligation> matches = new ArrayList<>();
 		for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder()) {
+			String actionSignature = obligation.actionSignature();
 			Assert.assertNotNull("R5_MINST_OBLIGATION_ACTION_SIGNATURE_MISSING",
-				obligation.actionSignature());
+				actionSignature);
 			for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder())
 				if(candidate.consumerKey() == endpoint.consumerKey()
 					&& candidate.inputPosition() == endpoint.inputPosition()
-					&& candidate.requiredPlacement().output() == requiredOutput)
-					matches.add(new AuthoritativeObligation(obligation.actionSignature(), candidate));
+					&& candidate.requiredPlacement().output() == requiredOutput
+					&& actionSignatureEncodesExistingEndpoint(actionSignature, endpoint, candidate))
+					matches.add(new AuthoritativeObligation(actionSignature, candidate));
 		}
 		if(matches.size() != 1)
 			throw new AssertionError("R5_MINST_AUTHORITY_OBLIGATION_"
@@ -242,6 +320,57 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 				+ "|requiredOutput=" + requiredOutput
 				+ "|actions=" + matches.stream().map(AuthoritativeObligation::actionSignature).toList());
 		return matches.get(0);
+	}
+
+	private static List<String> selectedAuxiliaryEvidence(MinStExactCostFacts facts,
+		List<Long> sourceNodeIds) {
+		List<String> result = new ArrayList<>();
+		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder()) {
+			boolean auxSource = sourceNodeIds.contains(group.auxiliaryNodeId());
+			boolean producerPlacementSource = sourceNodeIds.contains(group.producerPlacementNodeId());
+			if(group.direction() == Direction.UPLOAD && auxSource && !producerPlacementSource)
+				addGroupEvidence(result, facts, group, FederatedOutput.FOUT);
+			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)
+				addGroupEvidence(result, facts, group, FederatedOutput.LOUT);
+		}
+		return result.stream().sorted().toList();
+	}
+
+	private static void addGroupEvidence(List<String> result, MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, FederatedOutput requiredOutput) {
+		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
+			assertEndpointBoundToProducerAndCanonicalEdge(facts, group, endpoint);
+			result.add(group.direction().name() + "|producer="
+				+ group.producerKey().normalizedSignature() + "|hop="
+				+ facts.analysis().hop(group.producerKey()).orElseThrow().getOpString()
+				+ "|consumer=" + endpoint.consumerKey().normalizedSignature()
+				+ "|input=" + endpoint.inputPosition()
+				+ "|requiredOutput=" + requiredOutput);
+		}
+	}
+
+	private static void assertEndpointBoundToProducerAndCanonicalEdge(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, EndpointFact endpoint) {
+		Assert.assertSame("R5_MINST_ENDPOINT_GROUP_PRODUCER_IDENTITY_DRIFT",
+			group.producerKey(), endpoint.producerKey());
+		Assert.assertTrue("R5_MINST_ENDPOINT_PRODUCER_HOP_MISSING",
+			facts.analysis().hop(group.producerKey()).isPresent());
+		CompiledInputEdgeFact edge = facts.analysis().requireExactCompiledInputEdge(
+			group.producerKey(), endpoint.consumerKey(), endpoint.inputPosition());
+		Assert.assertSame("R5_MINST_ENDPOINT_CANONICAL_EDGE_PRODUCER_DRIFT",
+			group.producerKey(), edge.producer());
+		Assert.assertSame("R5_MINST_ENDPOINT_CANONICAL_EDGE_CONSUMER_DRIFT",
+			endpoint.consumerKey(), edge.consumer());
+		Assert.assertEquals("R5_MINST_ENDPOINT_CANONICAL_EDGE_INPUT_DRIFT",
+			endpoint.inputPosition(), edge.inputPosition());
+		assertCanonicalEdge(facts.analysis(), endpoint);
+	}
+
+	private static boolean actionSignatureEncodesExistingEndpoint(String actionSignature,
+		EndpointFact endpoint, ObligationEndpointFact candidate) {
+		return actionSignature.contains(endpoint.consumerKey().normalizedSignature())
+			&& actionSignature.contains(Integer.toString(endpoint.inputPosition()))
+			&& actionSignature.contains(candidate.requiredPlacement().normalizedSignature());
 	}
 
 	private static Object invokeSelector(MinStExactCostFacts facts) throws Exception {
@@ -307,9 +436,123 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 		return ((List<?>)raw).stream().map(value -> ((Number)value).longValue()).toList();
 	}
 
+	private static CompiledHopKey keyByHopName(PlacementAnalysis analysis, String name) {
+		return scope(analysis).stream()
+			.filter(key -> analysis.hop(key).map(hop -> name.equals(hop.getName())).orElse(false))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"R5_MINST_ACTUAL_ROOT_HOP_MISSING|name=" + name));
+	}
+
 	private static List<CompiledHopKey> scope(PlacementAnalysis analysis) {
 		return analysis.compiledHopOccurrences().stream()
 			.map(HopOccurrenceProjection::key).toList();
+	}
+
+
+	private static void assertCanonicalEdge(PlacementAnalysis analysis, EndpointFact endpoint) {
+		CompiledInputEdgeFact edge = analysis.requireExactCompiledInputEdge(endpoint.producerKey(),
+			endpoint.consumerKey(), endpoint.inputPosition());
+		Assert.assertSame("R5_MINST_ENDPOINT_PRODUCER_IDENTITY_DRIFT", endpoint.producerKey(), edge.producer());
+		Assert.assertSame("R5_MINST_ENDPOINT_CONSUMER_IDENTITY_DRIFT", endpoint.consumerKey(), edge.consumer());
+		Assert.assertEquals("R5_MINST_ENDPOINT_INPUT_POSITION_DRIFT",
+			endpoint.inputPosition(), edge.inputPosition());
+	}
+
+	private static AuxiliaryGroupFact uploadGroupContaining(MinStExactCostFacts facts,
+		CompiledHopKey consumer) {
+		return facts.auxiliaryGroupsInCanonicalOrder().stream()
+			.filter(group -> group.direction() == Direction.UPLOAD)
+			.filter(group -> group.endpointsInCanonicalOrder().stream()
+				.anyMatch(endpoint -> endpoint.consumerKey() == consumer))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"R5_MINST_UPLOAD_GROUP_MISSING|consumer=" + consumer.normalizedSignature()));
+	}
+
+	private static AuxiliaryGroupFact transferGroupContaining(MinStExactCostFacts facts,
+		Direction direction, CompiledHopKey consumer, String producerName) {
+		return facts.auxiliaryGroupsInCanonicalOrder().stream()
+			.filter(group -> group.direction() == direction)
+			.filter(group -> facts.analysis().hop(group.producerKey())
+				.map(hop -> producerName.equals(hop.getName())).orElse(false))
+			.filter(group -> group.endpointsInCanonicalOrder().stream()
+				.anyMatch(endpoint -> endpoint.consumerKey() == consumer))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"R5_MINST_TRANSFER_GROUP_MISSING|direction=" + direction
+					+ "|producer=" + producerName + "|consumer=" + consumer.normalizedSignature()));
+	}
+
+	private static PlacementAnalysis occurrenceAnalysis() throws Exception {
+		Path directory = Files.createTempDirectory("minst-r5-occurrence-");
+		String input = directory.resolve("S").toString();
+		writePrivateLocalMatrix(input);
+		try {
+			String script = String.join("\n",
+				"S=read(\"" + input + "\",data_type=\"matrix\",value_type=\"double\","
+					+ "rows=4,cols=2,format=\"binary\");",
+				"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+					+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+				"Yout1=X+S;", "Yout2=X-S;",
+				"write(Yout1,\"out-1\",format=\"binary\");",
+				"write(Yout2,\"out-2\",format=\"binary\");",
+				"for(i in 1:2) {",
+				"  Sloop=read(\"" + input + "\",data_type=\"matrix\",value_type=\"double\","
+					+ "rows=4,cols=2,format=\"binary\");",
+				"  Xloop=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+					+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+				"  Yloop1=Xloop-Sloop;", "  Yloop2=Xloop+Sloop;",
+				"  write(Yloop1,\"out-loop-1\",format=\"binary\");",
+				"  write(Yloop2,\"out-loop-2\",format=\"binary\");", "}") + "\n";
+			return buildAnalysis(script);
+		}
+		finally {
+			HDFSTool.deleteFileIfExistOnHDFS(input);
+			HDFSTool.deleteFileIfExistOnHDFS(input + ".mtd");
+			Files.deleteIfExists(directory);
+		}
+	}
+
+	private static PlacementAnalysis functionLoopAnalysis() throws Exception {
+		Path directory = Files.createTempDirectory("minst-r5-function-loop-");
+		String input = directory.resolve("S").toString();
+		writePrivateLocalMatrix(input);
+		try {
+			String script = String.join("\n",
+				"f=function(integer n) return(matrix[double] Y){",
+				"  for(i in 1:n) {",
+				"    Sloop=read(\"" + input + "\",data_type=\"matrix\",value_type=\"double\","
+					+ "rows=4,cols=2,format=\"binary\");",
+				"    Xloop=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+					+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+				"    Y=Xloop-Sloop;", "  }", "}", "Z=f(2);",
+				"write(Z,\"out-function\",format=\"binary\");") + "\n";
+			return buildAnalysis(script);
+		}
+		finally {
+			HDFSTool.deleteFileIfExistOnHDFS(input);
+			HDFSTool.deleteFileIfExistOnHDFS(input + ".mtd");
+			Files.deleteIfExists(directory);
+		}
+	}
+
+	private static PlacementAnalysis buildAnalysis(String script) throws Exception {
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
+	}
+
+	private static void writePrivateLocalMatrix(String path) throws Exception {
+		MatrixBlock block = new MatrixBlock(4, 2, 3.0);
+		MatrixCharacteristics characteristics = new MatrixCharacteristics(4, 2, 1024,
+			block.getNonZeros());
+		MatrixWriterFactory.createMatrixWriter(FileFormat.BINARY).writeMatrixToHDFS(block, path,
+			4, 2, 1024, block.getNonZeros());
+		HDFSTool.writeMetaDataFile(path + ".mtd", ValueType.FP64, null, DataType.MATRIX,
+			characteristics, FileFormat.BINARY, null, "private");
 	}
 
 	private static PlacementAnalysis actualRootAnalysis() throws Exception {
