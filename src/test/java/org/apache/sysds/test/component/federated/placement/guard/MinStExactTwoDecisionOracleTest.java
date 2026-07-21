@@ -24,6 +24,27 @@ public class MinStExactTwoDecisionOracleTest {
 	}
 
 	@Test
+	public void nonuniqueTwoDecisionLiteralReportsTieUnspecified() {
+		MinStExactTwoDecisionOracle.Enumeration enumeration =
+			MinStExactTwoDecisionOracle.enumerateNonuniqueFixture();
+		Assert.assertEquals(MinStExactTwoDecisionOracle.Result.TIE_UNSPECIFIED,
+			enumeration.result());
+		Assert.assertEquals(4, enumeration.minima().size());
+		Assert.assertTrue(enumeration.minima().stream()
+			.allMatch(selection -> selection.objectiveBits() == MinStExactTwoDecisionOracle.bits(2.0)));
+	}
+
+	@Test
+	public void literalOracleRejectsNonCanonicalCapacities() {
+		for(long badBits : List.of(Double.doubleToRawLongBits(Double.POSITIVE_INFINITY),
+			Double.doubleToRawLongBits(Double.NaN), Double.doubleToRawLongBits(-1.0),
+			Double.doubleToRawLongBits(-0.0)))
+			assertRejects(() -> MinStExactTwoDecisionOracle.cutBits(List.of(
+				new MinStExactTwoDecisionOracle.Edge(MinStExactTwoDecisionOracle.SOURCE_ID,
+					MinStExactTwoDecisionOracle.A_ID, badBits)), List.of()));
+	}
+
+	@Test
 	public void literalOracleRejectsCapacityTotalAndSourceCorruption() {
 		MinStExactTwoDecisionOracle.Selection selected = MinStExactTwoDecisionOracle.enumerateUniqueFixture();
 		List<MinStExactTwoDecisionOracle.Edge> mutated = new ArrayList<>(MinStExactTwoDecisionOracle.UNIQUE_EDGES);
