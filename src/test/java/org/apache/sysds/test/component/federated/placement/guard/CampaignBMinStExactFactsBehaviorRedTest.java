@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -34,6 +35,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -121,6 +124,44 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		for(Path source : Files.list(Path.of("src/main/java/org/apache/sysds/hops/fedplanner/placement"))
 			.filter(path -> path.getFileName().toString().endsWith(".java")).toList())
 			assertSourceExcludes(source, "cloneToOrig", "isVirtualClone", "MinStExact", "auxiliaryNodeId");
+	}
+
+	@Test
+	public void sameHopDifferentContextCannotCreateAlternateInputEdgeUniverse() throws Exception {
+		PlacementAnalysis source = analysis("B-17");
+		PlacementAnalysis trapped = CampaignBPlacementAnalysisFixtureBridge.sameHopContextTrap(source);
+		List<?> actual = list(trapped, "compiledInputEdgesInCanonicalOrder");
+		Set<String> expected = trapped.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.DOMINATES)
+			.filter(constraint -> "data-input".equals(constraint.evidence()))
+			.filter(constraint -> trapped.hop(constraint.left())
+				.map(hop -> hop.getDataType() != null && hop.getDataType().isMatrix()).orElse(false))
+			.map(constraint -> edgeSignature(constraint.left(), constraint.right(), constraint.inputPosition()))
+			.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+		Set<String> observed = actual.stream().map(edge -> {
+			try {
+				return edgeSignature((CompiledHopKey)call(edge, "producer"),
+					(CompiledHopKey)call(edge, "consumer"),
+					((Number)call(edge, "inputPosition")).intValue());
+			}
+			catch(Exception ex) {
+				throw new AssertionError("NEUTRAL_EDGE_CONTEXT_TRAP_ACCESS_FAILED", ex);
+			}
+		}).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+		Assert.assertEquals("NEUTRAL_EDGE_CONTEXT_TRAP_ALTERNATE_UNIVERSE", expected, observed);
+		Assert.assertEquals("NEUTRAL_EDGE_CONTEXT_TRAP_DUPLICATE_OR_MISSING", expected.size(), actual.size());
+		Method require = PlacementAnalysis.class.getMethod("requireExactCompiledInputEdge",
+			CompiledHopKey.class, CompiledHopKey.class, int.class);
+		for(var constraint : trapped.graph().constraints())
+			if(constraint.kind() == ConstraintKind.DOMINATES && "data-input".equals(constraint.evidence())
+				&& trapped.hop(constraint.left()).map(hop -> hop.getDataType() != null
+					&& hop.getDataType().isMatrix()).orElse(false))
+				Assert.assertNotNull("NEUTRAL_EDGE_CONTEXT_TRAP_EXACT_LOOKUP",
+					require.invoke(trapped, constraint.left(), constraint.right(), constraint.inputPosition()));
+	}
+
+	private static String edgeSignature(CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) {
+		return producer.normalizedSignature() + "->" + consumer.normalizedSignature() + '@' + inputPosition;
 	}
 
 	private static Class<?> nestedPlacementAnalysisClass(String simpleName, String marker) throws Exception {
