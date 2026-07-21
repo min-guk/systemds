@@ -13,6 +13,9 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -28,6 +31,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.parser.DMLProgram;
@@ -186,19 +190,39 @@ public final class PlacementAnalysis {
 
 	public enum CandidateEvaluationStatus { AVAILABLE, RULE_ERROR, PROFILE_ERROR }
 
-	public record CandidateConsumerProfileFact(CandidateConsumerProfileKey key,
-		CandidateEvaluationStatus status, List<FType> allowedTargetTypes, String failureCode) {
-		public CandidateConsumerProfileFact {
-			Objects.requireNonNull(key, "key");
-			Objects.requireNonNull(status, "status");
-			allowedTargetTypes = List.copyOf(Objects.requireNonNull(allowedTargetTypes, "allowedTargetTypes"));
-			failureCode = failureCode == null ? "" : failureCode;
-			if(status == CandidateEvaluationStatus.RULE_ERROR
-				|| status == CandidateEvaluationStatus.AVAILABLE && !failureCode.isEmpty()
-				|| status == CandidateEvaluationStatus.PROFILE_ERROR
-					&& (failureCode.isEmpty() || !allowedTargetTypes.isEmpty()))
-				throw new IllegalArgumentException("Consumer profile status and evidence differ");
+	public static final class CandidateConsumerProfileFact {
+		private final CandidateConsumerProfileKey key;
+		private final CandidateEvaluationStatus status;
+		private final List<FType> allowedTargetTypes;
+		private final String failureCode;
+		private final boolean canonicalBuilderFact;
+
+		public CandidateConsumerProfileFact(CandidateConsumerProfileKey key,
+			CandidateEvaluationStatus status, List<FType> allowedTargetTypes, String failureCode) {
+			this(key, status, allowedTargetTypes, failureCode, false);
 		}
+
+		CandidateConsumerProfileFact(CandidateConsumerProfileKey key,
+			CandidateEvaluationStatus status, List<FType> allowedTargetTypes, String failureCode,
+			boolean canonicalBuilderFact) {
+			this.key = Objects.requireNonNull(key, "key");
+			this.status = Objects.requireNonNull(status, "status");
+			this.allowedTargetTypes = List.copyOf(Objects.requireNonNull(allowedTargetTypes,
+				"allowedTargetTypes"));
+			this.failureCode = failureCode == null ? "" : failureCode;
+			if(status == CandidateEvaluationStatus.RULE_ERROR
+				|| status == CandidateEvaluationStatus.AVAILABLE && !this.failureCode.isEmpty()
+				|| status == CandidateEvaluationStatus.PROFILE_ERROR
+					&& (this.failureCode.isEmpty() || !this.allowedTargetTypes.isEmpty()))
+				throw new IllegalArgumentException("Consumer profile status and evidence differ");
+			this.canonicalBuilderFact = canonicalBuilderFact;
+		}
+
+		public CandidateConsumerProfileKey key() { return key; }
+		public CandidateEvaluationStatus status() { return status; }
+		public List<FType> allowedTargetTypes() { return allowedTargetTypes; }
+		public String failureCode() { return failureCode; }
+		boolean canonicalBuilderFact() { return canonicalBuilderFact; }
 	}
 
 	/** Primitive producer-scoped profile evidence for a consumer absent from the analysis occurrence graph. */
@@ -256,6 +280,179 @@ public final class PlacementAnalysis {
 					&& (capability == null || profile.available() || failureCode.isEmpty()))
 				throw new IllegalArgumentException("Candidate rule status and evidence differ");
 		}
+	}
+
+
+	public static final class LoopContextFact {
+		private final ControlRegionKey loopRegion;
+		private final double weight;
+
+		LoopContextFact(ControlRegionKey loopRegion, double weight) {
+			this.loopRegion = Objects.requireNonNull(loopRegion, "loopRegion");
+			this.weight = requirePositiveFinite(weight, "weight");
+		}
+
+		public ControlRegionKey loopRegion() { return loopRegion; }
+		public double weight() { return weight; }
+	}
+
+	public static final class ExecutionFrequencyFact {
+		private final CompiledHopKey key;
+		private final double computeWeight;
+		private final double networkWeight;
+		private final double multiplicity;
+		private final List<LoopContextFact> loopContext;
+
+		ExecutionFrequencyFact(CompiledHopKey key, double computeWeight, double networkWeight,
+			double multiplicity, List<LoopContextFact> loopContext) {
+			this.key = Objects.requireNonNull(key, "key");
+			this.computeWeight = requirePositiveFinite(computeWeight, "computeWeight");
+			this.networkWeight = requirePositiveFinite(networkWeight, "networkWeight");
+			this.multiplicity = requirePositiveFinite(multiplicity, "multiplicity");
+			this.loopContext = copyCanonicalLoopContext(key, loopContext);
+		}
+
+		public CompiledHopKey key() { return key; }
+		public double computeWeight() { return computeWeight; }
+		public double networkWeight() { return networkWeight; }
+		public double multiplicity() { return multiplicity; }
+		public List<LoopContextFact> loopContext() { return loopContext; }
+	}
+
+	public static final class ProducerConsumerDemandKey {
+		private final CompiledHopKey producer;
+		private final CompiledHopKey consumer;
+		private final int inputPosition;
+
+		ProducerConsumerDemandKey(CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) {
+			this.producer = Objects.requireNonNull(producer, "producer");
+			this.consumer = Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("inputPosition must be non-negative");
+			this.inputPosition = inputPosition;
+		}
+
+		public CompiledHopKey producer() { return producer; }
+		public CompiledHopKey consumer() { return consumer; }
+		public int inputPosition() { return inputPosition; }
+	}
+
+	public enum TransferSourceKind {
+		DURABLE_ANCHOR,
+		PERSISTENT_LOCAL_READ,
+		DERIVED_LOCAL_VALUE,
+		EXPLICIT_RELOCATION
+	}
+
+	public static final class TransferSourceProof {
+		private final TransferSourceKind kind;
+		private final CompiledHopKey localProducerOrNull;
+		private final org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey durableAnchorOrNull;
+		private final org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey relocationActionOrNull;
+
+		TransferSourceProof(TransferSourceKind kind, CompiledHopKey localProducerOrNull,
+			org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey durableAnchorOrNull,
+			org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey relocationActionOrNull) {
+			this.kind = Objects.requireNonNull(kind, "kind");
+			switch(kind) {
+				case DURABLE_ANCHOR:
+					if(localProducerOrNull != null || durableAnchorOrNull == null || relocationActionOrNull != null)
+						throw new IllegalArgumentException("Durable-anchor proof must carry exactly one durable anchor");
+					break;
+				case PERSISTENT_LOCAL_READ:
+				case DERIVED_LOCAL_VALUE:
+					if(localProducerOrNull == null || durableAnchorOrNull != null || relocationActionOrNull != null)
+						throw new IllegalArgumentException("Local-source proof must carry exactly one local producer");
+					break;
+				case EXPLICIT_RELOCATION:
+					if(localProducerOrNull != null || durableAnchorOrNull != null || relocationActionOrNull == null)
+						throw new IllegalArgumentException("Relocation proof must carry exactly one relocation action");
+					break;
+				default:
+					throw new IllegalArgumentException("Unknown transfer source kind");
+			}
+			this.localProducerOrNull = localProducerOrNull;
+			this.durableAnchorOrNull = durableAnchorOrNull;
+			this.relocationActionOrNull = relocationActionOrNull;
+		}
+
+		public TransferSourceKind kind() { return kind; }
+		public CompiledHopKey localProducerOrNull() { return localProducerOrNull; }
+		public org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey durableAnchorOrNull() { return durableAnchorOrNull; }
+		public org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey relocationActionOrNull() { return relocationActionOrNull; }
+	}
+
+	public static final class ProducerConsumerDemandFact {
+		private final ProducerConsumerDemandKey key;
+		private final double forwardingWeight;
+		private final FType requiredTargetType;
+		private final CandidateConsumerProfileFact exactConsumerProfile;
+		private final TransferSourceProof transferSourceProof;
+
+		ProducerConsumerDemandFact(ProducerConsumerDemandKey key, double forwardingWeight,
+			FType requiredTargetType, CandidateConsumerProfileFact exactConsumerProfile,
+			TransferSourceProof transferSourceProof) {
+			this.key = Objects.requireNonNull(key, "key");
+			this.forwardingWeight = requirePositiveFinite(forwardingWeight, "forwardingWeight");
+			this.requiredTargetType = Objects.requireNonNull(requiredTargetType, "requiredTargetType");
+			this.exactConsumerProfile = Objects.requireNonNull(exactConsumerProfile, "exactConsumerProfile");
+			this.transferSourceProof = Objects.requireNonNull(transferSourceProof, "transferSourceProof");
+			if(!exactConsumerProfile.canonicalBuilderFact())
+				throw new IllegalArgumentException("Demand requires the owner-canonical consumer profile fact");
+			if(exactConsumerProfile.status() != CandidateEvaluationStatus.AVAILABLE)
+				throw new IllegalArgumentException("Demand requires an available exact consumer profile");
+			if(exactConsumerProfile.key().consumerOccurrence() != key.consumer()
+				|| exactConsumerProfile.key().inputPosition() != key.inputPosition())
+				throw new IllegalArgumentException("Demand key and exact consumer profile differ");
+			if(!exactConsumerProfile.allowedTargetTypes().contains(requiredTargetType))
+				throw new IllegalArgumentException("Required target type is not allowed by the exact consumer profile");
+			if((transferSourceProof.kind() == TransferSourceKind.PERSISTENT_LOCAL_READ
+				|| transferSourceProof.kind() == TransferSourceKind.DERIVED_LOCAL_VALUE)
+				&& transferSourceProof.localProducerOrNull() != key.producer())
+				throw new IllegalArgumentException("Local-source proof producer is not the exact demand producer");
+		}
+
+		public ProducerConsumerDemandKey key() { return key; }
+		public double forwardingWeight() { return forwardingWeight; }
+		public FType requiredTargetType() { return requiredTargetType; }
+		public CandidateConsumerProfileFact exactConsumerProfile() { return exactConsumerProfile; }
+		public TransferSourceProof transferSourceProof() { return transferSourceProof; }
+	}
+
+	private static double requirePositiveFinite(double value, String name) {
+		if(!Double.isFinite(value) || value <= 0.0d)
+			throw new IllegalArgumentException(name + " must be finite and strictly positive");
+		return value;
+	}
+
+	private static List<LoopContextFact> copyCanonicalLoopContext(CompiledHopKey key,
+		List<LoopContextFact> loopContext) {
+		Objects.requireNonNull(loopContext, "loopContext");
+		List<LoopContextFact> copied = new java.util.ArrayList<>(loopContext.size());
+		Set<ControlRegionKey> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+		ControlRegionKey previous = key.controlRegion();
+		for(LoopContextFact fact : loopContext) {
+			Objects.requireNonNull(fact, "loop context fact");
+			if(!seen.add(fact.loopRegion()))
+				throw new IllegalArgumentException("Duplicate loop context region identity");
+			if(!isStrictRegionDescendant(previous, fact.loopRegion()))
+				throw new IllegalArgumentException("Loop context must be canonical outer-to-inner");
+			copied.add(fact);
+			previous = fact.loopRegion();
+		}
+		return List.copyOf(copied);
+	}
+
+	private static boolean isStrictRegionDescendant(ControlRegionKey parent, ControlRegionKey child) {
+		if(!parent.programFingerprint().equals(child.programFingerprint())
+			|| !parent.functionNamespace().equals(child.functionNamespace())
+			|| !parent.callSitePath().equals(child.callSitePath())
+			|| !parent.recompileContext().equals(child.recompileContext()))
+			return false;
+		List<String> parentPath = parent.regionPath();
+		List<String> childPath = child.regionPath();
+		return childPath.size() > parentPath.size()
+			&& childPath.subList(0, parentPath.size()).equals(parentPath);
 	}
 
 	public enum CandidateLookupFailure {
@@ -474,6 +671,11 @@ public final class PlacementAnalysis {
 	private final CandidateRuleFacts candidateRuleFacts;
 	private final CandidateConsumerProfileFacts candidateConsumerProfileFacts;
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
+	private final List<ExecutionFrequencyFact> executionFrequencyFactsInScopeOrder;
+	private final List<ProducerConsumerDemandFact> producerConsumerDemandFactsInCanonicalOrder;
+	private final Map<CompiledHopKey,ExecutionFrequencyFact> frequencyFactsByIdentity;
+	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,ProducerConsumerDemandFact>>> demandFactsByIdentity;
+	private final String executionCostFactsFingerprint;
 	private final DMLProgram programOwner;
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -483,7 +685,9 @@ public final class PlacementAnalysis {
 		List<CandidateRuleFact> candidateRuleFacts,
 		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
-		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts) {
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<ExecutionFrequencyFact> executionFrequencyFacts,
+		List<ProducerConsumerDemandFact> producerConsumerDemandFacts) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
 		this.occurrences = List.copyOf(occurrences);
@@ -500,7 +704,7 @@ public final class PlacementAnalysis {
 		hopsByKey = Map.copyOf(indexed);
 		if(analysisFingerprint == null || analysisFingerprint.isBlank())
 			throw new IllegalArgumentException("analysisFingerprint must not be blank");
-		this.analysisFingerprint = analysisFingerprint;
+		this.analysisFingerprint = canonicalizeSuppliedAnalysisFingerprint(analysisFingerprint);
 		this.heuristicPolicyFacts = Objects.requireNonNull(heuristicPolicyFacts, "heuristicPolicyFacts");
 		this.candidateRuleDomain = new CandidateRuleDomain(analysisFingerprint, candidateRuleDomainKeys,
 			candidateConsumerDomainKeys);
@@ -515,6 +719,11 @@ public final class PlacementAnalysis {
 			candidateConsumerProfileFacts);
 		this.detachedConsumerProfileFacts = new DetachedConsumerProfileFacts(detachedConsumerProfileFacts,
 			analysisKeysByIdentity);
+		this.executionFrequencyFactsInScopeOrder = validateExecutionFrequencyFacts(executionFrequencyFacts);
+		this.frequencyFactsByIdentity = indexFrequencyFacts(this.executionFrequencyFactsInScopeOrder);
+		this.producerConsumerDemandFactsInCanonicalOrder = validateProducerConsumerDemandFacts(producerConsumerDemandFacts);
+		this.demandFactsByIdentity = indexDemandFacts(this.producerConsumerDemandFactsInCanonicalOrder);
+		this.executionCostFactsFingerprint = computeExecutionCostFactsFingerprint();
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
@@ -531,7 +740,7 @@ public final class PlacementAnalysis {
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts) {
 		this(graph, occurrences, List.of(), programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
 			candidateRuleDomainKeys, candidateRuleFacts, candidateConsumerDomainKeys, candidateConsumerProfileFacts,
-			List.of());
+			List.of(), defaultExecutionFrequencyFacts(graph, occurrences), List.of());
 	}
 
 	/** Compatibility surface for fixtures that predate canonical candidate-fact publication. */
@@ -540,6 +749,185 @@ public final class PlacementAnalysis {
 		HeuristicPolicyFacts heuristicPolicyFacts) {
 		this(graph, occurrences, programOwner, shapeFacts, analysisFingerprint, heuristicPolicyFacts,
 			List.of(), List.of(), List.of(), List.of());
+	}
+
+
+	private List<ExecutionFrequencyFact> validateExecutionFrequencyFacts(List<ExecutionFrequencyFact> facts) {
+		Objects.requireNonNull(facts, "executionFrequencyFacts");
+		List<CompiledHopKey> scope = compiledHopOccurrences().stream().map(HopOccurrenceProjection::key).toList();
+		if(facts.size() != scope.size())
+			throw new IllegalArgumentException("Execution frequency facts do not exactly cover compiled scope");
+		List<ExecutionFrequencyFact> copied = new java.util.ArrayList<>(facts.size());
+		for(int i = 0; i < facts.size(); i++) {
+			ExecutionFrequencyFact fact = Objects.requireNonNull(facts.get(i), "execution frequency fact");
+			if(fact.key() != scope.get(i))
+				throw new IllegalArgumentException("Execution frequency fact order or owner identity differs");
+			copied.add(fact);
+		}
+		return List.copyOf(copied);
+	}
+
+	private Map<CompiledHopKey,ExecutionFrequencyFact> indexFrequencyFacts(List<ExecutionFrequencyFact> facts) {
+		Map<CompiledHopKey,ExecutionFrequencyFact> indexed = new IdentityHashMap<>();
+		for(ExecutionFrequencyFact fact : facts)
+			if(indexed.put(fact.key(), fact) != null)
+				throw new IllegalArgumentException("Duplicate execution frequency fact");
+		return Collections.unmodifiableMap(indexed);
+	}
+
+	private List<ProducerConsumerDemandFact> validateProducerConsumerDemandFacts(
+		List<ProducerConsumerDemandFact> facts) {
+		Objects.requireNonNull(facts, "producerConsumerDemandFacts");
+		Map<CompiledHopKey,Integer> scopeOrder = new IdentityHashMap<>();
+		List<CompiledHopKey> scope = compiledHopOccurrences().stream().map(HopOccurrenceProjection::key).toList();
+		for(int i = 0; i < scope.size(); i++)
+			scopeOrder.put(scope.get(i), i);
+		List<ProducerConsumerDemandFact> copied = new java.util.ArrayList<>(facts.size());
+		ProducerConsumerDemandFact previous = null;
+		for(ProducerConsumerDemandFact fact : facts) {
+			Objects.requireNonNull(fact, "producer-consumer demand fact");
+			ProducerConsumerDemandKey key = fact.key();
+			Integer consumerOrdinal = scopeOrder.get(key.consumer());
+			if(consumerOrdinal == null || !scopeOrder.containsKey(key.producer()))
+				throw new IllegalArgumentException("Demand key is outside the compiled analysis scope");
+			Hop consumerHop = hopsByKey.get(key.consumer());
+			Hop producerHop = hopsByKey.get(key.producer());
+			if(consumerHop == null || producerHop == null || key.inputPosition() >= consumerHop.getInput().size()
+				|| consumerHop.getInput(key.inputPosition()) != producerHop)
+				throw new IllegalArgumentException("Demand key is not an exact producer/consumer/input edge");
+			CandidateConsumerProfileFact exactProfile = candidateConsumerProfileFacts.requireExact(key.consumer(),
+				key.inputPosition());
+			if(fact.exactConsumerProfile() != exactProfile)
+				throw new IllegalArgumentException("Demand does not bind the owner-canonical consumer profile fact");
+			if(!exactProfile.allowedTargetTypes().contains(fact.requiredTargetType()))
+				throw new IllegalArgumentException("Demand required type is not owner-canonical");
+			validateTransferSourceProof(fact);
+			if(previous != null && compareDemandCanonical(previous, fact, scopeOrder) >= 0)
+				throw new IllegalArgumentException("Producer/consumer demand facts are not in canonical order");
+			copied.add(fact);
+			previous = fact;
+		}
+		return List.copyOf(copied);
+	}
+
+	private int compareDemandCanonical(ProducerConsumerDemandFact left, ProducerConsumerDemandFact right,
+		Map<CompiledHopKey,Integer> scopeOrder) {
+		ProducerConsumerDemandKey a = left.key();
+		ProducerConsumerDemandKey b = right.key();
+		int c = Integer.compare(scopeOrder.get(a.consumer()), scopeOrder.get(b.consumer()));
+		if(c != 0) return c;
+		c = Integer.compare(a.inputPosition(), b.inputPosition());
+		if(c != 0) return c;
+		return Integer.compare(scopeOrder.get(a.producer()), scopeOrder.get(b.producer()));
+	}
+
+	private void validateTransferSourceProof(ProducerConsumerDemandFact fact) {
+		ProducerConsumerDemandKey key = fact.key();
+		TransferSourceProof proof = fact.transferSourceProof();
+		NeutralPlacementGraph.Node producer = graph.node(key.producer()).orElseThrow(() ->
+			new IllegalArgumentException("Demand producer is missing from the analysis graph"));
+		switch(proof.kind()) {
+			case PERSISTENT_LOCAL_READ:
+			case DERIVED_LOCAL_VALUE:
+				if(proof.localProducerOrNull() != key.producer())
+					throw new IllegalArgumentException("Demand local proof is not owner-bound");
+				break;
+			case DURABLE_ANCHOR:
+				if(producer.anchors().stream().noneMatch(anchor -> anchor == proof.durableAnchorOrNull()))
+					throw new IllegalArgumentException("Demand durable proof is not graph-owned");
+				break;
+			case EXPLICIT_RELOCATION:
+				if(graph.relocationActions().stream().noneMatch(action -> action.key() == proof.relocationActionOrNull()))
+					throw new IllegalArgumentException("Demand relocation proof is not graph-owned");
+				if(!proof.relocationActionOrNull().sourceValueVersion().equals(producer.valueVersion())
+					|| !proof.relocationActionOrNull().compatibleConsumers().contains(key.consumer()))
+					throw new IllegalArgumentException("Demand relocation proof does not match source value/consumer");
+				break;
+			default:
+				throw new IllegalArgumentException("Unknown demand proof kind");
+		}
+	}
+
+	private Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,ProducerConsumerDemandFact>>> indexDemandFacts(
+		List<ProducerConsumerDemandFact> facts) {
+		Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,ProducerConsumerDemandFact>>> indexed = new IdentityHashMap<>();
+		for(ProducerConsumerDemandFact fact : facts) {
+			ProducerConsumerDemandKey key = fact.key();
+			Map<CompiledHopKey,Map<Integer,ProducerConsumerDemandFact>> byConsumer = indexed.computeIfAbsent(
+				key.producer(), ignored -> new IdentityHashMap<>());
+			Map<Integer,ProducerConsumerDemandFact> byPosition = byConsumer.computeIfAbsent(key.consumer(),
+				ignored -> new LinkedHashMap<>());
+			if(byPosition.putIfAbsent(key.inputPosition(), fact) != null)
+				throw new IllegalArgumentException("Duplicate producer-consumer demand fact");
+		}
+		return Collections.unmodifiableMap(indexed);
+	}
+
+	private String canonicalizeSuppliedAnalysisFingerprint(String supplied) {
+		if(!supplied.matches("[0-9a-f]{64}"))
+			return supplied;
+		String graphSignature = graph.normalizedSignature();
+		List<String> projectionSignatures = occurrences.stream()
+			.map(occurrence -> stableSignature(occurrence.normalizedSignature())).sorted().toList();
+		return sha256(stableSignature(graphSignature) + '\n' + String.join("\n", projectionSignatures));
+	}
+
+	private String computeExecutionCostFactsFingerprint() {
+		List<String> rows = new java.util.ArrayList<>();
+		for(ExecutionFrequencyFact fact : executionFrequencyFactsInScopeOrder) {
+			rows.add("F|" + stableSignature(fact.key().normalizedSignature()) + '|' + Double.doubleToRawLongBits(fact.computeWeight())
+				+ '|' + Double.doubleToRawLongBits(fact.networkWeight()) + '|'
+				+ Double.doubleToRawLongBits(fact.multiplicity()) + '|' + loopSignature(fact.loopContext()));
+		}
+		for(ProducerConsumerDemandFact fact : producerConsumerDemandFactsInCanonicalOrder) {
+			ProducerConsumerDemandKey key = fact.key();
+			TransferSourceProof proof = fact.transferSourceProof();
+			rows.add("D|" + stableSignature(key.producer().normalizedSignature()) + '|' + stableSignature(key.consumer().normalizedSignature())
+				+ '|' + key.inputPosition() + '|' + Double.doubleToRawLongBits(fact.forwardingWeight())
+				+ '|' + fact.requiredTargetType().name() + '|' + proofSignature(proof));
+		}
+		return sha256(String.join("\n", rows));
+	}
+
+	private static String loopSignature(List<LoopContextFact> loopContext) {
+		return loopContext.stream().map(fact -> stableSignature(fact.loopRegion().normalizedSignature()) + '@'
+			+ Double.doubleToRawLongBits(fact.weight())).collect(java.util.stream.Collectors.joining(","));
+	}
+
+	private static String proofSignature(TransferSourceProof proof) {
+		return proof.kind().name() + '|'
+			+ (proof.localProducerOrNull() == null ? "" : stableSignature(proof.localProducerOrNull().normalizedSignature())) + '|'
+			+ (proof.durableAnchorOrNull() == null ? "" : stableSignature(proof.durableAnchorOrNull().normalizedSignature())) + '|'
+			+ (proof.relocationActionOrNull() == null ? "" : stableSignature(proof.relocationActionOrNull().normalizedSignature()));
+	}
+
+	private static String stableSignature(String signature) {
+		return signature.replaceAll("[0-9a-f]{64}", "<program>");
+	}
+
+	private static String sha256(String value) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+			StringBuilder builder = new StringBuilder(hash.length * 2);
+			for(byte b : hash)
+				builder.append(String.format("%02x", b));
+			return builder.toString();
+		}
+		catch(NoSuchAlgorithmException ex) {
+			throw new IllegalStateException("SHA-256 unavailable", ex);
+		}
+	}
+
+	private static List<ExecutionFrequencyFact> defaultExecutionFrequencyFacts(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> occurrences) {
+		List<ExecutionFrequencyFact> facts = new java.util.ArrayList<>();
+		for(HopOccurrenceProjection occurrence : occurrences) {
+			NodeKind kind = graph.node(occurrence.key()).map(NeutralPlacementGraph.Node::kind).orElse(NodeKind.OPERATION);
+			if(kind != NodeKind.FUNCTION_INPUT && kind != NodeKind.FUNCTION_OUTPUT)
+				facts.add(new ExecutionFrequencyFact(occurrence.key(), 1.0d, 1.0d, 1.0d, List.of()));
+		}
+		return List.copyOf(facts);
 	}
 
 	public NeutralPlacementGraph graph() {
@@ -599,6 +987,38 @@ public final class PlacementAnalysis {
 	public CandidateRuleFacts candidateRuleFacts() { return candidateRuleFacts; }
 	public CandidateConsumerProfileFacts candidateConsumerProfileFacts() { return candidateConsumerProfileFacts; }
 	public DetachedConsumerProfileFacts detachedConsumerProfileFacts() { return detachedConsumerProfileFacts; }
+
+
+	public List<ExecutionFrequencyFact> executionFrequencyFactsInScopeOrder() {
+		return executionFrequencyFactsInScopeOrder;
+	}
+
+	public ExecutionFrequencyFact requireExactExecutionFrequency(CompiledHopKey key) {
+		ExecutionFrequencyFact fact = frequencyFactsByIdentity.get(Objects.requireNonNull(key, "key"));
+		if(fact == null)
+			throw new IllegalArgumentException("Exact execution frequency fact is missing or foreign");
+		return fact;
+	}
+
+	public List<ProducerConsumerDemandFact> producerConsumerDemandFactsInCanonicalOrder() {
+		return producerConsumerDemandFactsInCanonicalOrder;
+	}
+
+	public ProducerConsumerDemandFact requireExactProducerConsumerDemand(CompiledHopKey producer,
+		CompiledHopKey consumer, int inputPosition) {
+		Map<CompiledHopKey,Map<Integer,ProducerConsumerDemandFact>> byConsumer = demandFactsByIdentity.get(
+			Objects.requireNonNull(producer, "producer"));
+		Map<Integer,ProducerConsumerDemandFact> byPosition = byConsumer == null ? null
+			: byConsumer.get(Objects.requireNonNull(consumer, "consumer"));
+		ProducerConsumerDemandFact fact = byPosition == null ? null : byPosition.get(inputPosition);
+		if(fact == null)
+			throw new IllegalArgumentException("Exact producer-consumer demand fact is missing or foreign");
+		return fact;
+	}
+
+	public String executionCostFactsFingerprint() {
+		return executionCostFactsFingerprint;
+	}
 
 	public void assertProgramOwner(DMLProgram program) {
 		if(program == null || program != programOwner)
