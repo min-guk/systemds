@@ -304,19 +304,36 @@ public class FederatedPlannerFallbackIntegrationTest {
 				+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
 			"Y=FX%*%matrix(1,2,2);",
 			"print(sum(Y));"));
+		List<HopOccurrenceProjection> targetOccurrences = invocation.analysis().occurrences().stream()
+			.filter(value -> value.hop() instanceof AggUnaryOp
+				&& ((AggUnaryOp) value.hop()).getDirection() == Direction.Col)
+			.toList();
+		assertEquals("The fixture must contain exactly one column-aggregate semantic owner",
+			1, targetOccurrences.size());
+		HopOccurrenceProjection targetOccurrence = targetOccurrences.get(0);
+		assertEquals("The aggregate owner must retain one rewritten federated input", 1,
+			targetOccurrence.hop().getInput().size());
+		assertTrue("The exact aggregate owner must consume the rewritten FX federated source",
+			targetOccurrence.hop().getInput(0) instanceof DataOp
+				&& ((DataOp) targetOccurrence.hop().getInput(0)).getOp() == OpOpData.FEDERATED
+				&& "FX".equals(targetOccurrence.hop().getInput(0).getName()));
 		CandidateDecisionReceipt receipt = invocation.semanticConsumption().semanticBlock()
 			.candidateDecisionReceipts().stream()
+			.filter(value -> value.candidateSnapshot().parentOccurrence() == targetOccurrence.key())
 			.filter(value -> value.nativeExec() == ExecType.FED
 				&& value.nativeOutput() == FederatedOutput.LOUT
 				&& value.allowFEDLOUT() && value.allowFEDFOUT())
 			.findFirst().orElse(null);
-		assertNotNull("Typed CandidateDecisionReceipt should capture FED/LOUT native authority and derived FED/FOUT enablement",
+		assertNotNull("The exact aggregate receipt must capture FED/LOUT authority and derived FED/FOUT enablement",
 			receipt);
 		Hop receiptHop = invocation.analysis().hop(receipt.candidateSnapshot().parentOccurrence()).orElse(null);
-		assertNotNull("Receipt parent must resolve to an exact hop", receiptHop);
+		assertTrue("The receipt must resolve to the exact aggregate carrier",
+			receiptHop == targetOccurrence.hop());
 		FedPlan derived = invocation.memo().getFedPlanAfterPrune(receiptHop.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Public DP enumeration should publish/select a derived FOUT memo plan for the receipt-owned hop",
 			derived);
+		assertTrue("The selected derived plan must retain the exact aggregate carrier",
+			derived.getHopRef() == targetOccurrence.hop());
 		assertEquals("Selected derived FOUT must be FED-executable", ExecType.FED, derived.getExecType());
 		assertEquals("Selected derived plan must publish FOUT", FederatedOutput.FOUT, derived.getFedOutType());
 		assertTrue("Selected FOUT must be marked as derived from the retained FED/LOUT authority",
@@ -4302,24 +4319,58 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 	@Test
 	public void testDpOptionalInputAlwaysAddsFedForwarding() throws Exception {
-		DataOp fed = federatedRead("Xoptional", ROWS, COLS, FType.ROW);
-		DataOp matrixOptional = transientRead("MatrixOptional", ROWS, COLS);
-		BinaryOp plus = new BinaryOp("plusOptional", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, fed, matrixOptional);
-		plus.setDim1(ROWS);
-		plus.setDim2(COLS);
-		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
+		DpInvocationReceipt invocation = invokeDpPlannerRewriteScript(String.join("\n",
+			"FX_LOCAL=matrix(0,10,10);",
+			"FX=federated(local_matrix=FX_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
+				+ "ranges=list(list(0,0),list(5,10),list(5,0),list(10,10)));",
+			"MatrixOptional=matrix(1,1,10);",
+			"Y=FX+MatrixOptional;",
+			"print(sum(Y));"));
+		List<HopOccurrenceProjection> plusOccurrences = invocation.analysis().occurrences().stream()
+			.filter(value -> value.hop() instanceof BinaryOp
+				&& ((BinaryOp) value.hop()).getOp() == OpOp2.PLUS)
+			.toList();
+		assertEquals("The fixture must retain exactly one OPTIONAL plus owner", 1, plusOccurrences.size());
+		HopOccurrenceProjection plusOccurrence = plusOccurrences.get(0);
+		Hop plus = plusOccurrence.hop();
+		Hop matrixOptional = plus.getInput().stream()
+			.filter(value -> !(value instanceof DataOp && ((DataOp) value).getOp() == OpOpData.FEDERATED))
+			.findFirst().orElse(null);
+		assertNotNull("The plus owner must retain its local matrix OPTIONAL input", matrixOptional);
+		HopOccurrenceProjection optionalOccurrence = invocation.semanticConsumption().rewireSnapshot()
+			.projectExactCarrier(matrixOptional);
+		assertNotNull("Production rewire must retain the exact OPTIONAL parent", plusOccurrence);
+		assertNotNull("Production rewire must retain the exact OPTIONAL matrix input", optionalOccurrence);
+		assertTrue("Production rewire must retain the exact parent-to-OPTIONAL input edge",
+			invocation.semanticConsumption().rewireSnapshot().consumerEdges().stream().anyMatch(value ->
+				value.parentOccurrence() == plusOccurrence.key()
+					&& value.childOccurrence() == optionalOccurrence.key()));
+		CandidateDecisionReceipt plusReceipt = invocation.semanticConsumption().semanticBlock()
+			.candidateDecisionReceipts().stream()
+			.filter(value -> value.candidateSnapshot().parentOccurrence() == plusOccurrence.key())
+			.filter(value -> value.candidateSnapshot().rawEntries().stream().anyMatch(entry ->
+				entry.occurrence() == optionalOccurrence.key()))
+			.filter(CandidateDecisionReceipt::allowFEDFOUT)
+			.findFirst().orElse(null);
+		assertNotNull("Typed candidate capture must bind the matrix OPTIONAL input to the exact FED parent",
+			plusReceipt);
 
-		FedPlan fedPlan = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.LOUT);
-		assertNotNull("Production enumeration should retain an LOUT candidate for matrix OPTIONAL forwarding", fedPlan);
+		FedPlan fedPlan = invocation.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Production enumeration should retain a FED/FOUT candidate for matrix OPTIONAL forwarding", fedPlan);
+		assertEquals("The selected OPTIONAL parent plan must execute in FED", ExecType.FED, fedPlan.getExecType());
+		assertTrue("The selected FED plan must retain the exact parent carrier", fedPlan.getHopRef() == plus);
 		assertEquals("OPTIONAL matrix input enumeration must retain exactly one matrix producer edge", 1,
-			fedPlan.getChildFedPlans().stream().filter(edge -> edge.getKey() == matrixOptional.getHopID()).count());
-		Map<Long, HopCommon> table = hopCommonTableFor(fed, matrixOptional, plus);
-		List<Double> forwarding = collectDpLoutOnlyForwardingCostToFED(dp.memo(), table,
-			table.get(plus.getHopID()), matrixOptional, 1);
-		assertEquals("Public child-cost evidence should contain exactly one matrix LOUT->FED forwarding entry",
-			1, forwarding.size());
-		assertTrue("Matrix OPTIONAL LOUT->FED forwarding must charge a positive upload cost",
-			forwarding.get(0) > 0.0);
+			fedPlan.getChildFedPlans().stream().filter(edge -> edge.getKey() == matrixOptional.getHopID()
+				&& edge.getValue() == FederatedOutput.LOUT).count());
+		var estimate = FederatedPlannerDpCostEstimator.bindExact(
+			invocation.analysis(), plusOccurrence, invocation.memo()).estimate(fedPlan);
+		var optionalCost = estimate.childCosts().stream()
+			.filter(value -> value.occurrence() == optionalOccurrence
+				&& value.output() == FederatedOutput.LOUT && value.plan().getHopRef() == matrixOptional)
+			.findFirst().orElse(null);
+		assertNotNull("Exact estimator receipt must retain the selected matrix OPTIONAL child", optionalCost);
+		assertTrue("The selected FED parent must consume a positive LOUT-to-FED upload for its OPTIONAL child",
+			Double.longBitsToDouble(optionalCost.forwardingCostBits()) > 0.0);
 	}
 
 	@Test
