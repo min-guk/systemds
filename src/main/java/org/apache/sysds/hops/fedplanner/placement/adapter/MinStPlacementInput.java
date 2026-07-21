@@ -56,8 +56,7 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 		this.producer = Objects.requireNonNull(producer, "producer");
 		this.occurrences = List.copyOf(occurrences);
 		this.obligations = List.copyOf(obligations);
-		if(this.occurrences.size() != owner.occurrences().size())
-			throw new IllegalArgumentException("Incomplete MinST occurrence binding");
+		validateOwnerBinding();
 	}
 
 	public static MinStPlacementInput create(PlacementAnalysis owner, ProducerReceipt producer,
@@ -71,20 +70,31 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 	public List<ObligationReceipt> obligationReceipts() { return obligations; }
 
 	void validateUnchanged() {
-		for(int i = 0; i < occurrences.size(); i++) {
-			OccurrenceReceipt receipt = occurrences.get(i);
-			PlacementAnalysis.HopOccurrenceProjection occurrence = owner.occurrences().get(i);
-			Hop hop = owner.hop(receipt.planningKey()).orElseThrow(
-				() -> new IllegalArgumentException("Owner occurrence disappeared"));
-			if(!receipt.planningKey().equals(occurrence.key()) || hop != occurrence.hop()
-				|| hop != receipt.planningHop() || hop != receipt.executableHop()
-				|| hop.getHopID() != receipt.planningHopId() || hop.getHopID() != receipt.executableHopId())
-				throw new IllegalArgumentException("Owner occurrence identity changed");
+		validateOwnerBinding();
+		for(OccurrenceReceipt receipt : occurrences) {
+			Hop hop = receipt.planningHop();
 			ExecType exec = receipt.execType() == null ? null
 				: (hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType());
 			FederatedOutput output = receipt.execType() == null ? FederatedOutput.NONE : hop.getFederatedOutput();
 			if(exec != receipt.execType() || output != receipt.output())
 				throw new IllegalArgumentException("MinST occurrence state is stale");
+		}
+	}
+
+	private void validateOwnerBinding() {
+		if(!producer.analysisFingerprint().equals(owner.analysisFingerprint()))
+			throw new IllegalArgumentException("MinST producer fingerprint differs from its analysis owner");
+		if(occurrences.size() != owner.occurrences().size())
+			throw new IllegalArgumentException("Incomplete MinST occurrence binding");
+		for(int i = 0; i < occurrences.size(); i++) {
+			OccurrenceReceipt receipt = occurrences.get(i);
+			PlacementAnalysis.HopOccurrenceProjection occurrence = owner.occurrences().get(i);
+			Hop hop = owner.hop(receipt.planningKey()).orElseThrow(
+				() -> new IllegalArgumentException("Owner occurrence disappeared"));
+			if(receipt.planningKey() != occurrence.key() || hop != occurrence.hop()
+				|| hop != receipt.planningHop() || hop != receipt.executableHop()
+				|| hop.getHopID() != receipt.planningHopId() || hop.getHopID() != receipt.executableHopId())
+				throw new IllegalArgumentException("Owner occurrence identity changed");
 		}
 	}
 }
