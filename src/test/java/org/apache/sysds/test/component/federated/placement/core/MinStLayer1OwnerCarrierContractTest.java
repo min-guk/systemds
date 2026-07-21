@@ -20,12 +20,17 @@ import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.OccurrenceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ProducerReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -74,6 +79,30 @@ public class MinStLayer1OwnerCarrierContractTest {
 	public void carriersExposeOnlyNeutralTypes() {
 		assertNeutralSurface(MinStPlacementInput.class);
 		assertNeutralSurface(MinStPlacementAdapter.class);
+	}
+
+	@Test
+	public void carrierRejectsForeignProducerFingerprintAndEqualCopiedOccurrenceKey() throws Exception {
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-01");
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
+		MinStPlacementInput retained = new FederatedPlanMinSTCut().rewriteProgram(program, null, null, analysis);
+		ProducerReceipt producer = retained.producerReceipt();
+		Assert.assertThrows(IllegalArgumentException.class, () -> MinStPlacementInput.create(analysis,
+			new ProducerReceipt("foreign", producer.cutObjectiveBits(), producer.sourcePartitionNodeIds()),
+			retained.occurrenceReceipts(), retained.obligationReceipts()));
+
+		List<OccurrenceReceipt> copied = new ArrayList<>(retained.occurrenceReceipts());
+		OccurrenceReceipt first = copied.get(0);
+		var key = first.planningKey();
+		var equalCopy = new org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey(
+			key.programFingerprint(), key.functionNamespace(), key.callSitePath(), key.recompileContext(),
+			key.controlRegion(), key.emittedHopInstance(), key.canonicalSourceOrigin());
+		Assert.assertEquals(key, equalCopy);
+		Assert.assertNotSame(key, equalCopy);
+		copied.set(0, new OccurrenceReceipt(equalCopy, first.planningHop(), first.planningHopId(),
+			first.executableHop(), first.executableHopId(), first.execType(), first.output()));
+		Assert.assertThrows(IllegalArgumentException.class, () -> MinStPlacementInput.create(analysis,
+			producer, copied, retained.obligationReceipts()));
 	}
 
 	private static void assertForeignOwnerRejected(Method assertion, PlacementAnalysis analysis,
