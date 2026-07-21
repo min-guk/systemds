@@ -6,6 +6,7 @@
 package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -248,7 +249,11 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 			Class<?> selector = Class.forName(SELECTOR);
 			Method select = selector.getMethod("select", MinStExactCostFacts.class);
 			Assert.assertTrue("R5_MINST_SELECTOR_SELECT_MUST_BE_PUBLIC", Modifier.isPublic(select.getModifiers()));
-			return select.invoke(null, facts);
+			if(Modifier.isStatic(select.getModifiers()))
+				return select.invoke(null, facts);
+			Constructor<?> ctor = selector.getConstructor();
+			Assert.assertTrue("R5_MINST_SELECTOR_CTOR_MUST_BE_PUBLIC", Modifier.isPublic(ctor.getModifiers()));
+			return select.invoke(ctor.newInstance(), facts);
 		}
 		catch(ClassNotFoundException | NoSuchMethodException ex) {
 			Assert.fail(RED_REASON);
