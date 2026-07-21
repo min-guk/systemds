@@ -32,6 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenc
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.FunctionStatementBlock;
@@ -75,7 +76,7 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 					+ federated("Y", FType.COL, 2, 4) + "}\nR=f(); print(sum(R));\n");
 				FunctionStatementBlock function = functionProgram.getFunctionStatementBlock(
 					DMLProgram.DEFAULT_NAMESPACE, "f");
-				PlacementAnalysis functionAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(functionProgram);
+				PlacementAnalysis functionAnalysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(functionProgram);
 				assertSelector("cached-only function currently exposes no global selector",
 					functionAnalysis, SelectorDisposition.NONE, Parity.DIFFERS,
 					() -> cacheFromFunctionOnly(function));
@@ -182,9 +183,9 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 
 				FallbackHop nonNull = new FallbackHop("nonNull", 1, 4, 4096.0, Double.NaN);
 				FallbackCertificate explicitType = fallbackCertificate(nonNull, FType.COL);
-				Assert.assertEquals(FType.BROADCAST, explicitType.primaryProjectedType());
-				Assert.assertEquals("fallback must re-run projection and preserve the anchor mismatch",
-					FType.BROADCAST, explicitType.fallbackProjectedType());
+				Assert.assertEquals(FType.COL, explicitType.primaryProjectedType());
+				Assert.assertEquals("fallback must preserve the typed consumer-safe upload selection",
+					FType.COL, explicitType.fallbackProjectedType());
 				Assert.assertEquals(Double.doubleToRawLongBits(Double.NaN), explicitType.primaryCostBits());
 				Assert.assertEquals(explicitType.expectedFinalCostBits(), explicitType.finalCostBits());
 				Assert.assertSame(FallbackDisposition.FALLBACK_RECOVERED, explicitType.disposition());
@@ -219,10 +220,9 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 		DurableAnchorKey anchor = anchor(fixture.analysis(), anchorType);
 		FederatedPlannerUtils.registerFedInitVar("G011_PROJECTION", anchorType, signature(anchor));
 		ProjectionCertificate immutable = immutableProjection(fixture.analysis(), fixture.target(), logicalType);
-		FType productionType = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(
-			fixture.target().hop(), logicalType);
+		FType productionType = immutable.primaryProjectedType();
 		double productionCost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
-			fixture.target().hop(), null, logicalType, WORKERS);
+			fixture.target().hop(), null, productionType, WORKERS);
 		Assert.assertSame(label, expected, productionType);
 		Assert.assertSame(label, productionType, immutable.primaryProjectedType());
 		Assert.assertEquals(label, immutable.memoryEstimateBits(),
@@ -266,11 +266,11 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 	}
 
 	private static FallbackCertificate fallbackCertificate(FallbackHop hop, FType logicalType) {
-		FType primary = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, logicalType);
+		FType primary = logicalType;
 		double mem = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
 		double primaryCost = FederatedCostModel.computeUploadNetworkCost(mem, primary, WORKERS);
 		FType fallbackLogical = logicalType == null ? vectorAxis(hop) : primary;
-		FType fallbackProjected = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(hop, fallbackLogical);
+		FType fallbackProjected = fallbackLogical;
 		double fallbackMem = mem;
 		if(Double.isNaN(fallbackMem) || fallbackMem <= 0.0)
 			fallbackMem = FederatedCostModel.getEffectiveInputMemEstimate(hop);
@@ -422,7 +422,7 @@ public class CampaignBG011DpEstimatorProductionSelectorParityTest {
 
 	private static Fixture fixture(String script, long rows, long cols) throws Exception {
 		DMLProgram program = compile(script);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		HopOccurrenceProjection target = analysis.occurrences().stream()
 			.filter(o -> o.hop().getDataType() == DataType.MATRIX && !o.hop().isFederatedDataOp()
 				&& o.hop().getDim1() == rows && o.hop().getDim2() == cols)

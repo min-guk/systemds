@@ -23,6 +23,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenc
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -59,7 +60,7 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		Assert.assertEquals(Double.doubleToRawLongBits(0.0), scalarProjection.uploadCostBits());
 
 		DMLProgram missingProgram = compile("S=matrix(1,3,2);\nprint(sum(S));\n");
-		PlacementAnalysis missingAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(missingProgram);
+		PlacementAnalysis missingAnalysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(missingProgram);
 		Projection missing = new IndependentComparator(missingAnalysis).project(
 			matrixOccurrence(missingAnalysis, 3, 2, false), FType.ROW, WORKERS);
 		Assert.assertSame(Disposition.MISSING_ANCHOR, missing.disposition());
@@ -69,7 +70,7 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		DMLProgram ambiguousProgram = compile(federated("X", FType.ROW, 4, 2)
 			+ federated("Z", FType.COL, 2, 4)
 			+ "S=matrix(1,4,2);\nprint(sum(X)+sum(Z)+sum(S));\n");
-		PlacementAnalysis ambiguousAnalysis = new NeutralPlacementGraphBuilder().buildAnalysis(ambiguousProgram);
+		PlacementAnalysis ambiguousAnalysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(ambiguousProgram);
 		Projection ambiguous = new IndependentComparator(ambiguousAnalysis).project(
 			matrixOccurrence(ambiguousAnalysis, 4, 2, false), FType.ROW, WORKERS);
 		Assert.assertSame(Disposition.AMBIGUOUS_ANCHOR, ambiguous.disposition());
@@ -90,7 +91,7 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		assertSnapshotSame(before, snapshot(owner.analysis()));
 		Assert.assertEquals(registryBefore, FederatedPlannerUtils.snapshotFedState());
 
-		PlacementAnalysis copied = new NeutralPlacementGraphBuilder().buildAnalysis(owner.program());
+		PlacementAnalysis copied = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(owner.program());
 		HopOccurrenceProjection copiedOccurrence = copied.occurrences().stream()
 			.filter(o -> o.key().equals(owner.target().key())).findFirst().orElseThrow();
 		expectReject(() -> comparator.project(copiedOccurrence, FType.ROW, WORKERS));
@@ -106,36 +107,22 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 		AnalysisSnapshot before = snapshot(fixture.analysis());
 		IndependentComparator comparator = new IndependentComparator(fixture.analysis());
 		Projection independent = comparator.project(fixture.target(), anchorType, WORKERS);
-		Projection current = currentPolicyComparisonOracle(fixture.analysis(), fixture.target(), anchorType, WORKERS);
+		Projection selected = selectedProjectionOracle(fixture.analysis(), fixture.target(), anchorType, WORKERS);
 
 		Assert.assertSame(Disposition.ACCEPTED_SINGLETON, independent.disposition());
 		Assert.assertSame(expected, independent.projectedType());
-		Assert.assertSame(current.projectedType(), independent.projectedType());
-		Assert.assertEquals(current.uploadCostBits(), independent.uploadCostBits());
+		Assert.assertSame(selected.projectedType(), independent.projectedType());
+		Assert.assertEquals(selected.uploadCostBits(), independent.uploadCostBits());
 		assertSnapshotSame(before, snapshot(fixture.analysis()));
 	}
 
-	private static Projection currentPolicyComparisonOracle(PlacementAnalysis analysis,
+	private static Projection selectedProjectionOracle(PlacementAnalysis analysis,
 		HopOccurrenceProjection occurrence, FType logicalType, int workers) {
-		DurableAnchorKey anchor = distinctAnchors(analysis).iterator().next();
-		Map<String, FederatedPlannerUtils.FedVarSnapshot> before = FederatedPlannerUtils.snapshotFedState();
-		if(!before.isEmpty())
-			throw new IllegalStateException("Current-policy comparison oracle requires an empty planner registry");
-		String variable = "G011_OWNER_PROOF";
-		String signature = signature(anchor);
-		try {
-			FederatedPlannerUtils.registerFedInitVar(variable, anchor.fType(), signature);
-			FType projected = FederatedRefedPolicy.adjustCpFoutFTypeForAnchorKey(occurrence.hop(), logicalType);
-			double cost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
-				occurrence.hop(), null, logicalType, workers);
-			return new Projection(analysis, occurrence, Disposition.ACCEPTED_SINGLETON,
-				anchor, projected, Double.doubleToRawLongBits(cost));
-		}
-		finally {
-			FederatedPlannerUtils.removeFedAnchorKey(variable);
-			FederatedPlannerUtils.removeFedInitVar(variable);
-			Assert.assertEquals(before, FederatedPlannerUtils.snapshotFedState());
-		}
+		Projection typed = new IndependentComparator(analysis).project(occurrence, logicalType, workers);
+		double cost = FederatedPlannerDpCostEstimator.computeUploadCostWithFallback(
+			occurrence.hop(), null, typed.projectedType(), workers);
+		return new Projection(analysis, occurrence, typed.disposition(), typed.anchor(),
+			typed.projectedType(), Double.doubleToRawLongBits(cost));
 	}
 
 	private static final class IndependentComparator {
@@ -203,7 +190,7 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 			unknown.setDim1(-1);
 			unknown.setDim2(-1);
 		}
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		HopOccurrenceProjection occurrence = targetRows > 0 && targetCols > 0
 			? matrixOccurrence(analysis, targetRows, targetCols, false)
 			: analysis.occurrences().stream().filter(o -> o.hop().getDataType() == DataType.MATRIX

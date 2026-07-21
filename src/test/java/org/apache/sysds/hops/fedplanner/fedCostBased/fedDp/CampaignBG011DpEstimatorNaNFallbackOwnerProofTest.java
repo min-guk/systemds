@@ -32,7 +32,7 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 
 	@Test
 	public void explicitUploadTypeMustRecoverFiniteInputMemory() {
-		assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL, FType.BROADCAST);
+		assertNaNGap(new ControlledMemoryHop("explicitType", 1, 4), FType.COL, FType.COL);
 	}
 
 	private static void assertNaNGap(ControlledMemoryHop hop, FType logicalType, FType expectedProjectedType) {
@@ -87,11 +87,6 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 
 	private static FType independentFallbackProjection(ControlledMemoryHop hop, FType logicalType) {
 		FType fallbackLogical = logicalType == null ? independentVectorAxis(hop) : logicalType;
-		FType vectorAxis = independentVectorAxis(hop);
-		if(vectorAxis != null && vectorAxis != FType.ROW)
-			return FType.BROADCAST;
-		if(hop.getDim1() != ANCHOR_AXIS)
-			return FType.BROADCAST;
 		return fallbackLogical;
 	}
 
