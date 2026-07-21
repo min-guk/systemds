@@ -132,6 +132,27 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 	}
 
 	@Test
+	public void syntheticFunctionBoundariesDoNotMasqueradeAsCompiledSelectedPlanOccurrences() throws Exception {
+		DMLProgram compiled = ProductionShadowFixtureFactory.compile("B-21");
+		PlacementAnalysis analysis = compiled.bindPlacementAnalysisAtFinalHopBoundary();
+		List<HopOccurrenceProjection> compiledOccurrences = analysis.compiledHopOccurrences();
+		long syntheticBoundaries = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT)
+			.count();
+
+		Assert.assertTrue("G014_DIFFERENTIAL_FUNCTION_BOUNDARY_FIXTURE_EMPTY", syntheticBoundaries > 0);
+		Assert.assertEquals("G014_DIFFERENTIAL_COMPILED_PROJECTION_CARDINALITY",
+			analysis.occurrences().size() - syntheticBoundaries, compiledOccurrences.size());
+		Assert.assertTrue("G014_DIFFERENTIAL_SYNTHETIC_BOUNDARY_LEAKED_INTO_COMPILED_PROJECTION",
+			compiledOccurrences.stream().allMatch(analysis::isCompiledHopOccurrence));
+		Assert.assertTrue("G014_DIFFERENTIAL_ORPHAN_FUNCTION_BODY_WAS_HIDDEN",
+			compiledOccurrences.stream().anyMatch(occurrence -> analysis.graph().node(occurrence.key())
+				.orElseThrow().kind() == NodeKind.FUNCTION_BODY_NON_EMITTED));
+		Assert.assertEquals("G014_DIFFERENTIAL_SEMANTIC_GRAPH_LOST_BOUNDARIES", syntheticBoundaries,
+			analysis.occurrences().stream().filter(occurrence -> !analysis.isCompiledHopOccurrence(occurrence)).count());
+	}
+
+	@Test
 	public void immutableReceiptAnchorKeyRebuildsExactRuntimePlacement() {
 		Fixture fixture = fixture();
 		try {

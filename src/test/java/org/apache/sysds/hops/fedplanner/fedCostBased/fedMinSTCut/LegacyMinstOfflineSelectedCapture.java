@@ -263,6 +263,7 @@ public final class LegacyMinstOfflineSelectedCapture {
 		MinStPlacementInput input = new FederatedPlanMinSTCut().rewriteProgram(program, null, null, analysis);
 		MinStPlacementAdapter.Selection selection = new MinStPlacementAdapter().select(analysis, input);
 		List<String> states = selection.selectedReceipts().stream()
+			.filter(receipt -> analysis.isCompiledHopOccurrence(receipt.planningKey()))
 			.map(receipt -> receipt.planningKey().normalizedSignature() + '=' + receipt.execType() + '/'
 				+ receipt.output()).sorted().toList();
 		return new RetainedFullPath(seed, analysis, input, selection, states,

@@ -26,6 +26,7 @@ import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
@@ -547,6 +548,31 @@ public final class PlacementAnalysis {
 
 	public List<HopOccurrenceProjection> occurrences() {
 		return occurrences;
+	}
+
+	/**
+	 * Return projections backed by compiled Hop occurrences. Synthetic function
+	 * boundary projections remain part of the semantic graph but are not
+	 * independent selected-plan assignments.
+	 *
+	 * @return immutable compiled occurrence projections in analysis order
+	 */
+	public List<HopOccurrenceProjection> compiledHopOccurrences() {
+		return occurrences.stream().filter(occurrence -> isCompiledHopOccurrence(occurrence.key())).toList();
+	}
+
+	public boolean isCompiledHopOccurrence(HopOccurrenceProjection occurrence) {
+		Objects.requireNonNull(occurrence, "occurrence");
+		if(occurrences.stream().noneMatch(candidate -> candidate == occurrence))
+			throw new IllegalArgumentException("Occurrence is not owned by this placement analysis");
+		return isCompiledHopOccurrence(occurrence.key());
+	}
+
+	public boolean isCompiledHopOccurrence(CompiledHopKey key) {
+		NodeKind kind = graph.node(Objects.requireNonNull(key, "key"))
+			.orElseThrow(() -> new IllegalArgumentException("Key is not owned by this placement analysis"))
+			.kind();
+		return kind != NodeKind.FUNCTION_INPUT && kind != NodeKind.FUNCTION_OUTPUT;
 	}
 
 	public List<StatementBlock> topLevelStatementBlocks() {

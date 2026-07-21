@@ -211,7 +211,7 @@ public final class LegacyDpOfflineSelectedCapture {
 		}
 		childSignature.sort(String::compareTo);
 		List<String> selectedStates = new ArrayList<>();
-		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.occurrences()) {
+		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences()) {
 			Hop hop = occurrence.hop();
 			ExecType exec = hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType();
 			selectedStates.add(occurrence.key().normalizedSignature() + "=" + exec + "/"

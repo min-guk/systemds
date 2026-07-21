@@ -95,9 +95,7 @@ public final class NeutralPlacementGraphBuilder {
 	public List<String> selectedProjection(DMLProgram program) {
 		PlacementAnalysis analysis = buildAnalysis(program);
 		List<String> selected = new ArrayList<>();
-		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
-			Node node = analysis.graph().node(occurrence.key()).orElseThrow();
-			if(node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT) continue;
+		for(HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences()) {
 			Hop hop = occurrence.hop();
 			ExecType selectedExec = selectedExecType(hop);
 			selected.add(occurrence.key().functionNamespace() + '|' + occurrence.key().callSitePath() + '|'
@@ -111,9 +109,7 @@ public final class NeutralPlacementGraphBuilder {
 	public List<String> selectedMembershipViolations(DMLProgram program, NeutralPlacementGraph graph) {
 		PlacementAnalysis analysis = buildAnalysis(program);
 		List<String> violations = new ArrayList<>();
-		for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
-			Node projected = analysis.graph().node(occurrence.key()).orElseThrow();
-			if(projected.kind() == NodeKind.FUNCTION_INPUT || projected.kind() == NodeKind.FUNCTION_OUTPUT) continue;
+		for(HopOccurrenceProjection occurrence : analysis.compiledHopOccurrences()) {
 			Hop hop = occurrence.hop();
 			ExecType selectedExec = selectedExecType(hop);
 			if(selectedExec == null || hop.getFederatedOutput() == FederatedOutput.NONE) continue;
