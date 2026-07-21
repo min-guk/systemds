@@ -11,6 +11,7 @@ import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
 import org.junit.Test;
 
 /** Prepatch B0 RED for the typed, graph-free exact MinST ownership boundary. */
@@ -37,13 +38,12 @@ public class CampaignBMinStExactBoundaryRedTest {
 		org.junit.Assert.assertTrue("MINST_EXACT_SCOPE_KEY_TYPE_MISSING",
 			derive.getGenericParameterTypes()[1].getTypeName().contains(CompiledHopKey.class.getName()));
 		org.junit.Assert.assertEquals(selection, requirePublic(selector, "select", facts).getReturnType());
-		org.junit.Assert.assertEquals("MinStDiagnostics",
+		org.junit.Assert.assertEquals(MinStDiagnostics.class,
 			requirePublic(producer, "project", PlacementAnalysis.class, facts, selection)
-				.getReturnType().getSimpleName());
-		org.junit.Assert.assertTrue("MINST_DIAGNOSTICS_LOGGER_TYPED_METHOD_MISSING",
-			List.of(logger.getMethods()).stream().anyMatch(method -> method.getName().equals("log")
-				&& method.getParameterCount() == 1
-				&& method.getParameterTypes()[0].getSimpleName().equals("MinStDiagnostics")));
+				.getReturnType());
+		Method log = requirePublic(logger, "log", MinStDiagnostics.class);
+		org.junit.Assert.assertEquals("MINST_DIAGNOSTICS_LOGGER_MUST_RETURN_VOID", void.class,
+			log.getReturnType());
 	}
 
 	@Test
@@ -79,3 +79,7 @@ public class CampaignBMinStExactBoundaryRedTest {
 		return method;
 	}
 }
+		org.junit.Assert.assertTrue("MINST_EXACT_FACTS_MUST_BE_IMMUTABLE",
+			Modifier.isFinal(facts.getModifiers()));
+		org.junit.Assert.assertTrue("MINST_EXACT_SELECTION_MUST_BE_IMMUTABLE",
+			Modifier.isFinal(selection.getModifiers()));

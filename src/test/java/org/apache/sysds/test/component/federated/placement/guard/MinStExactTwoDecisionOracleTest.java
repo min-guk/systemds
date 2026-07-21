@@ -29,7 +29,7 @@ public class MinStExactTwoDecisionOracleTest {
 		List<MinStExactTwoDecisionOracle.Edge> mutated = new ArrayList<>(MinStExactTwoDecisionOracle.UNIQUE_EDGES);
 		MinStExactTwoDecisionOracle.Edge selectedCutEdge = mutated.get(1);
 		mutated.set(1, new MinStExactTwoDecisionOracle.Edge(selectedCutEdge.from(), selectedCutEdge.to(),
-			selectedCutEdge.capacityBits() ^ 1L));
+			selectedCutEdge.capacityBits() ^ (1L << 10)));
 		assertRejects(() -> MinStExactTwoDecisionOracle.validateObjective(mutated, selected));
 		assertRejects(() -> MinStExactTwoDecisionOracle.validateObjective(MinStExactTwoDecisionOracle.UNIQUE_EDGES,
 			new MinStExactTwoDecisionOracle.Selection(selected.objectiveBits() ^ 1L,
