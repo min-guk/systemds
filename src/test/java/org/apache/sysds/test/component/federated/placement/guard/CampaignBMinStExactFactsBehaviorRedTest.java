@@ -194,7 +194,8 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		Set<Long> expectedConsumerNodes = new HashSet<>();
 		for(Object decision : decisions) {
 			CompiledHopKey key = (CompiledHopKey)call(decision, "key");
-			if(owner.hop(key).map(hop -> List.of("Y1", "Y2").contains(hop.getName())).orElse(false))
+			if(owner.hop(key).map(hop -> List.of("Y1", "Y2").contains(hop.getName()) && hop.getInput().size() > 1
+				&& hop.getInput().get(1) == owner.hop(persistentReadKey).orElse(null)).orElse(false))
 				expectedConsumerNodes.add(((Number)call(decision, "computeNodeId")).longValue());
 		}
 		int boundFanoutGroups = 0;
@@ -229,7 +230,8 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 				IdentityHashMap<CompiledHopKey, Long> expectedConsumerKeys = new IdentityHashMap<>();
 				for(Object decision : decisions) {
 					CompiledHopKey key = (CompiledHopKey)call(decision, "key");
-					if(owner.hop(key).map(hop -> List.of("Y1", "Y2").contains(hop.getName())).orElse(false))
+					if(owner.hop(key).map(hop -> List.of("Y1", "Y2").contains(hop.getName()) && hop.getInput().size() > 1
+						&& hop.getInput().get(1) == owner.hop(persistentReadKey).orElse(null)).orElse(false))
 						expectedConsumerKeys.put(key, ((Number)call(decision, "computeNodeId")).longValue());
 				}
 				Assert.assertEquals("MINST_OR_EXPECTED_CONSUMER_KEYS", 2, expectedConsumerKeys.size());
