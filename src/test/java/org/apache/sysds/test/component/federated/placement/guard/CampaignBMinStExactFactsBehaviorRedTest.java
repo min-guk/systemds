@@ -33,12 +33,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -68,361 +63,252 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		"producerPlacementNodeId", "conversionType", "priceBits", "endpointsInCanonicalOrder"};
 
 	@Test
-	public void neutralAnalysisOwnsTypedExecutionFrequencyAndDemandFacts() throws Exception {
-		Class<?> owner = PlacementAnalysis.class;
-		String[] carriers = {"LoopContextFact", "ExecutionFrequencyFact",
-			"ProducerConsumerDemandKey", "TransferSourceProof", "ProducerConsumerDemandFact"};
-		for(String n : carriers) {
-			Class<?> c = Class.forName(owner.getName() + "$" + n);
-			Assert.assertTrue("MINST_TYPED_CARRIER_IMMUTABLE|" + n, Modifier.isFinal(c.getModifiers()));
-		}
-		Class<?> loop = Class.forName(owner.getName() + "$" + "LoopContextFact");
-		assertTypedCarrier(loop, new String[] {"loopRegion", "weight"},
-			new Class<?>[] {ControlRegionKey.class, double.class});
-		Class<?> freq = Class.forName(owner.getName() + "$" + "ExecutionFrequencyFact");
-		assertTypedCarrier(freq,
-			new String[] {"key", "computeWeight", "networkWeight", "multiplicity", "loopContext"},
-			new Class<?>[] {CompiledHopKey.class, double.class, double.class, double.class, List.class});
-		Class<?> demandKey = Class.forName(owner.getName() + "$" + "ProducerConsumerDemandKey");
-		assertTypedCarrier(demandKey, new String[] {"producer", "consumer", "inputPosition"},
-			new Class<?>[] {CompiledHopKey.class, CompiledHopKey.class, int.class});
-		Class<?> proofKind = Class.forName(owner.getName() + "$" + "TransferSourceKind");
-		Assert.assertTrue("MINST_TRANSFER_SOURCE_KIND_TYPED", proofKind.isEnum());
-		Set<String> proofKinds = Arrays.stream(proofKind.getEnumConstants()).map(String::valueOf)
-			.collect(java.util.stream.Collectors.toSet());
-		Assert.assertEquals("MINST_TRANSFER_SOURCE_KIND_DOMAIN",
-			Set.of("DURABLE_ANCHOR", "PERSISTENT_LOCAL_READ", "DERIVED_LOCAL_VALUE",
-				"EXPLICIT_RELOCATION"), proofKinds);
-		Class<?> proof = Class.forName(owner.getName() + "$" + "TransferSourceProof");
-		assertTypedCarrier(proof,
-			new String[] {"kind", "localProducerOrNull", "durableAnchorOrNull",
-				"relocationActionOrNull"},
-			new Class<?>[] {proofKind, CompiledHopKey.class, DurableAnchorKey.class,
-				RelocationActionKey.class});
-		Class<?> demand = Class.forName(owner.getName() + "$" + "ProducerConsumerDemandFact");
-		assertTypedCarrier(demand,
-			new String[] {"key", "forwardingWeight", "requiredTargetType", "exactConsumerProfile",
-				"transferSourceProof"},
-			new Class<?>[] {demandKey, double.class, FType.class, CandidateConsumerProfileFact.class,
-				proof});
-		assertGenericListReturn(freq.getMethod("loopContext"), loop);
-		assertGenericListReturn(owner.getMethod("executionFrequencyFactsInScopeOrder"), freq);
-		Assert.assertEquals(freq,
-			owner.getMethod("requireExactExecutionFrequency", CompiledHopKey.class).getReturnType());
-		assertGenericListReturn(owner.getMethod("producerConsumerDemandFactsInCanonicalOrder"), demand);
-		Assert.assertEquals(demand, owner.getMethod("requireExactProducerConsumerDemand",
-			CompiledHopKey.class, CompiledHopKey.class, int.class).getReturnType());
-		Assert.assertEquals(String.class, owner.getMethod("executionCostFactsFingerprint").getReturnType());
-
+	public void neutralAnalysisOwnsExactCompiledInputEdgeFactsOnly() throws Exception {
 		PlacementAnalysis analysis = persistentReadAnalysis();
-		assertTypedCarrierConstructorInvariants(analysis, loop, freq, demandKey, proofKind, proof, demand);
-		assertExecutionCostFactOwnership(analysis, freq, demand, proofKind);
-	}
-
-	private static void assertGenericListReturn(Method method, Class<?> elementType) {
-		Assert.assertEquals("MINST_TYPED_LIST_RAW_TYPE|" + method, List.class, method.getReturnType());
-		Type generic = method.getGenericReturnType();
-		Assert.assertTrue("MINST_TYPED_LIST_PARAMETERIZED|" + method, generic instanceof ParameterizedType);
-		Type[] arguments = ((ParameterizedType)generic).getActualTypeArguments();
-		Assert.assertArrayEquals("MINST_TYPED_LIST_ELEMENT|" + method,
-			new Type[] {elementType}, arguments);
-	}
-
-	private static void assertTypedCarrierConstructorInvariants(PlacementAnalysis analysis,
-		Class<?> loop, Class<?> frequency, Class<?> demandKey, Class<?> proofKind, Class<?> proof,
-		Class<?> demand) throws Exception {
-		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
-			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		Assert.assertTrue("MINST_TYPED_SCOPE_TOO_SMALL", scope.size() >= 2);
-		CompiledHopKey producer = persistentReadKey(analysis);
-		CompiledHopKey consumer = persistentReadConsumers(analysis, producer).get(0);
-		CandidateConsumerProfileFact profile = analysis.candidateConsumerProfileFacts()
-			.requireExact(consumer, 1);
-		Assert.assertEquals("MINST_TYPED_PROFILE_AVAILABLE", CandidateEvaluationStatus.AVAILABLE,
-			profile.status());
-		Assert.assertFalse("MINST_TYPED_PROFILE_TARGET_EMPTY", profile.allowedTargetTypes().isEmpty());
-		FType required = profile.allowedTargetTypes().get(0);
-
-		Constructor<?> loopConstructor = typedConstructor(loop);
-		Object loopFact = newTyped(loopConstructor, producer.controlRegion(), 2.0d);
-		for(double invalid : invalidPositiveFiniteValues())
-			assertIllegalArgument(loopConstructor, producer.controlRegion(), invalid);
-		assertIllegalArgument(loopConstructor, null, 1.0d);
-
-		ControlRegionKey outerRegion = copiedRegion(producer.controlRegion(), "loop-contract-outer");
-		ControlRegionKey innerRegion = copiedRegion(outerRegion, "loop-contract-inner");
-		Object outerLoop = newTyped(loopConstructor, outerRegion, 2.0d);
-		Object innerLoop = newTyped(loopConstructor, innerRegion, 3.0d);
-		Constructor<?> frequencyConstructor = typedConstructor(frequency);
-		Object frequencyFact = newTyped(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
-			List.of(outerLoop, innerLoop));
-		assertImmutable(list(frequencyFact, "loopContext"), "MINST_TYPED_LOOP_CONTEXT_MUTABLE");
-		Assert.assertSame("MINST_TYPED_OUTER_LOOP_IDENTITY", outerLoop,
-			list(frequencyFact, "loopContext").get(0));
-		Assert.assertSame("MINST_TYPED_INNER_LOOP_IDENTITY", innerLoop,
-			list(frequencyFact, "loopContext").get(1));
-		for(int position = 1; position <= 3; position++)
-			for(double invalid : invalidPositiveFiniteValues()) {
-				Object[] arguments = {producer, 1.0d, 2.0d, 3.0d, List.of(loopFact)};
-				arguments[position] = invalid;
-				assertIllegalArgument(frequencyConstructor, arguments);
-			}
-		assertIllegalArgument(frequencyConstructor, null, 1.0d, 2.0d, 3.0d, List.of());
-		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
-			List.of(loopFact, loopFact));
-		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
-			List.of(innerLoop, outerLoop));
-		Object foreignLoop = newTyped(loopConstructor,
-			copiedRegion(producer.controlRegion(), "unrelated-loop"), 1.0d);
-		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
-			List.of(outerLoop, foreignLoop));
-		Assert.assertSame("MINST_TYPED_FREQUENCY_KEY_IDENTITY", producer, call(frequencyFact, "key"));
-
-		Constructor<?> demandKeyConstructor = typedConstructor(demandKey);
-		Object edgeKey = newTyped(demandKeyConstructor, producer, consumer, 1);
-		assertIllegalArgument(demandKeyConstructor, null, consumer, 1);
-		assertIllegalArgument(demandKeyConstructor, producer, null, 1);
-		assertIllegalArgument(demandKeyConstructor, producer, consumer, -1);
-
-		DurableAnchorKey anchor = analysis.graph().nodes().stream().flatMap(node -> node.anchors().stream())
-			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_ANCHOR_FIXTURE_MISSING"));
-		RelocationActionKey relocation = analysis.graph().relocationActions().stream()
-			.map(action -> action.key()).findFirst()
-			.orElseThrow(() -> new AssertionError("MINST_TYPED_RELOCATION_FIXTURE_MISSING"));
-		Constructor<?> proofConstructor = typedConstructor(proof);
-		Object durableProof = newTyped(proofConstructor, enumValue(proofKind, "DURABLE_ANCHOR"),
-			null, anchor, null);
-		Object persistentProof = newTyped(proofConstructor,
-			enumValue(proofKind, "PERSISTENT_LOCAL_READ"), producer, null, null);
-		newTyped(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"), producer, null, null);
-		newTyped(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"), null, null, relocation);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DURABLE_ANCHOR"),
-			null, null, null);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DURABLE_ANCHOR"),
-			producer, anchor, null);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "PERSISTENT_LOCAL_READ"),
-			null, null, null);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "PERSISTENT_LOCAL_READ"),
-			producer, null, relocation);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"),
-			producer, anchor, null);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"),
-			producer, null, relocation);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"),
-			null, anchor, relocation);
-		assertIllegalArgument(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"),
-			producer, null, relocation);
-
-		Constructor<?> demandConstructor = typedConstructor(demand);
-		Object demandFact = newTyped(demandConstructor, edgeKey, 2.0d, required, profile,
-			persistentProof);
-		Assert.assertSame("MINST_TYPED_DEMAND_PROFILE_IDENTITY", profile,
-			call(demandFact, "exactConsumerProfile"));
-		for(double invalid : invalidPositiveFiniteValues())
-			assertIllegalArgument(demandConstructor, edgeKey, invalid, required, profile, persistentProof);
-		assertIllegalArgument(demandConstructor, null, 1.0d, required, profile, persistentProof);
-		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, null, profile, persistentProof);
-		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, required, null, persistentProof);
-		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, required, profile, null);
-		FType forbidden = Arrays.stream(FType.values()).filter(type -> !profile.allowedTargetTypes().contains(type))
-			.findFirst().orElse(null);
-		if(forbidden != null)
-			assertIllegalArgument(demandConstructor, edgeKey, 1.0d, forbidden, profile, persistentProof);
-		CandidateConsumerProfileFact mismatchedProfile = analysis.candidateConsumerProfileFacts()
-			.requireExact(persistentReadConsumers(analysis, producer).get(1), 1);
-		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, required, mismatchedProfile,
-			persistentProof);
-		CandidateConsumerProfileFact copiedProfile = new CandidateConsumerProfileFact(profile.key(),
-			profile.status(), profile.allowedTargetTypes(), profile.failureCode());
-		assertFactOrOwnerRejectsForeignDemand(analysis, demandConstructor,
-			new Object[] {edgeKey, 1.0d, required, copiedProfile, persistentProof}, demandFact,
-			"MINST_TYPED_VALUE_EQUAL_PROFILE_ACCEPTED");
-		Object copiedProducerProof = newTyped(proofConstructor,
-			enumValue(proofKind, "PERSISTENT_LOCAL_READ"), equalCopy(producer), null, null);
-		assertFactOrOwnerRejectsForeignDemand(analysis, demandConstructor,
-			new Object[] {edgeKey, 1.0d, required, profile, copiedProducerProof}, demandFact,
-			"MINST_TYPED_COPIED_LOCAL_PRODUCER_ACCEPTED");
-		Assert.assertNotNull("MINST_TYPED_DURABLE_PROOF_UNUSED", durableProof);
-		assertPolicyNeutralProvenanceSurface(proofKind, proof);
-	}
-
-	private static void assertExecutionCostFactOwnership(PlacementAnalysis analysis,
-		Class<?> frequencyType, Class<?> demandType, Class<?> proofKind) throws Exception {
-		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
-			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		List<?> frequencies = list(analysis, "executionFrequencyFactsInScopeOrder");
-		Assert.assertEquals("MINST_TYPED_FREQUENCY_SCOPE_CARDINALITY", scope.size(), frequencies.size());
-		assertImmutable(frequencies, "MINST_TYPED_FREQUENCY_OWNER_LIST_MUTABLE");
-		for(int index = 0; index < scope.size(); index++) {
-			Object fact = frequencies.get(index);
-			Assert.assertEquals(frequencyType, fact.getClass());
-			Assert.assertSame("MINST_TYPED_FREQUENCY_SCOPE_IDENTITY|" + index, scope.get(index),
-				call(fact, "key"));
-			Assert.assertSame("MINST_TYPED_FREQUENCY_REQUIRE_EXACT|" + index, fact,
-				PlacementAnalysis.class.getMethod("requireExactExecutionFrequency", CompiledHopKey.class)
-					.invoke(analysis, scope.get(index)));
-			assertImmutable(list(fact, "loopContext"), "MINST_TYPED_FREQUENCY_NESTED_MUTABLE");
-		}
-		assertLookupRejects(PlacementAnalysis.class.getMethod("requireExactExecutionFrequency",
-			CompiledHopKey.class), analysis, equalCopy(scope.get(0)));
-
 		CompiledHopKey producer = persistentReadKey(analysis);
 		List<CompiledHopKey> consumers = persistentReadConsumers(analysis, producer);
-		List<?> demands = list(analysis, "producerConsumerDemandFactsInCanonicalOrder");
-		assertImmutable(demands, "MINST_TYPED_DEMAND_OWNER_LIST_MUTABLE");
-		Method require = PlacementAnalysis.class.getMethod("requireExactProducerConsumerDemand",
+		assertPersistentReadTwoConsumerFixture(analysis);
+
+		Class<?> edgeFact = nestedPlacementAnalysisClass("CompiledInputEdgeFact",
+			"NEUTRAL_EDGE_FACT_CARRIER_MISSING");
+		Assert.assertTrue("NEUTRAL_EDGE_FACT_IMMUTABLE", Modifier.isFinal(edgeFact.getModifiers()));
+		assertTypedCarrier(edgeFact, new String[] {"producer", "consumer", "inputPosition"},
+			new Class<?>[] {CompiledHopKey.class, CompiledHopKey.class, int.class});
+		assertGenericListReturn(PlacementAnalysis.class.getMethod("compiledInputEdgesInCanonicalOrder"),
+			edgeFact);
+		Method require = PlacementAnalysis.class.getMethod("requireExactCompiledInputEdge",
 			CompiledHopKey.class, CompiledHopKey.class, int.class);
+		Assert.assertEquals(edgeFact, require.getReturnType());
+
+		List<?> edges = list(analysis, "compiledInputEdgesInCanonicalOrder");
+		assertImmutable(edges, "NEUTRAL_EDGE_FACT_LIST_MUTABLE");
+		Assert.assertEquals("NEUTRAL_EDGE_FACT_PERSISTENT_CONSUMER_COUNT", 2,
+			edges.stream().filter(edge -> edgeMatches(edge, producer, consumers, 1)).count());
+
 		for(CompiledHopKey consumer : consumers) {
-			Object fact = require.invoke(analysis, producer, consumer, 1);
-			Assert.assertEquals(demandType, fact.getClass());
-			Assert.assertTrue("MINST_TYPED_CANONICAL_DEMAND_LIST_MISSING", demands.stream()
-				.anyMatch(candidate -> candidate == fact));
-			Object key = call(fact, "key");
-			Assert.assertSame(producer, call(key, "producer"));
-			Assert.assertSame(consumer, call(key, "consumer"));
-			CandidateConsumerProfileFact profile = analysis.candidateConsumerProfileFacts()
-				.requireExact(consumer, 1);
-			Assert.assertSame("MINST_TYPED_PROFILE_OWNER_IDENTITY", profile,
-				call(fact, "exactConsumerProfile"));
-			Assert.assertTrue("MINST_TYPED_REQUIRED_TYPE_ALLOWED", profile.allowedTargetTypes()
-				.contains(call(fact, "requiredTargetType")));
-			Object proof = call(fact, "transferSourceProof");
-			Assert.assertEquals(enumValue(proofKind, "PERSISTENT_LOCAL_READ"), call(proof, "kind"));
-			Assert.assertSame("MINST_TYPED_LOCAL_SOURCE_OWNER_IDENTITY", producer,
-				call(proof, "localProducerOrNull"));
+			Object edge = require.invoke(analysis, producer, consumer, 1);
+			Assert.assertTrue("NEUTRAL_EDGE_FACT_CANONICAL_LIST_MISSING", edges.stream()
+				.anyMatch(candidate -> candidate == edge));
+			Assert.assertSame("NEUTRAL_EDGE_FACT_PRODUCER_IDENTITY", producer, call(edge, "producer"));
+			Assert.assertSame("NEUTRAL_EDGE_FACT_CONSUMER_IDENTITY", consumer, call(edge, "consumer"));
+			Assert.assertEquals("NEUTRAL_EDGE_FACT_INPUT_POSITION", 1,
+				((Number)call(edge, "inputPosition")).intValue());
 		}
-		assertEveryPublishedTransferProofIsGraphOwned(analysis, demands, proofKind);
 		assertLookupRejects(require, analysis, equalCopy(producer), consumers.get(0), 1);
 		assertLookupRejects(require, analysis, producer, equalCopy(consumers.get(0)), 1);
 		assertLookupRejects(require, analysis, consumers.get(0), producer, 1);
 		assertLookupRejects(require, analysis, producer, consumers.get(0), 0);
 
-		String fingerprint = String.valueOf(call(analysis, "executionCostFactsFingerprint"));
-		Assert.assertFalse("MINST_TYPED_COST_FINGERPRINT_BLANK", fingerprint.isBlank());
-		Assert.assertEquals("MINST_TYPED_COST_FINGERPRINT_UNSTABLE", fingerprint,
-			String.valueOf(call(analysis, "executionCostFactsFingerprint")));
-		Assert.assertNotEquals("MINST_TYPED_COST_FINGERPRINT_NOT_OWNER_BOUND",
-			analysis.analysisFingerprint(), fingerprint);
-		PlacementAnalysis equivalentA = analysis("B-21");
-		PlacementAnalysis equivalentB = analysis("B-21");
-		PlacementAnalysis different = analysis("B-22");
-		String equivalentFingerprintA = String.valueOf(call(equivalentA,
-			"executionCostFactsFingerprint"));
-		String equivalentFingerprintB = String.valueOf(call(equivalentB,
-			"executionCostFactsFingerprint"));
-		String differentFingerprint = String.valueOf(call(different, "executionCostFactsFingerprint"));
-		Assert.assertEquals("MINST_TYPED_EQUIVALENT_OWNER_FINGERPRINT_UNSTABLE",
-			equivalentFingerprintA, equivalentFingerprintB);
-		Assert.assertNotEquals("MINST_TYPED_CONSTANT_OWNER_FINGERPRINT",
-			equivalentFingerprintA, differentFingerprint);
-		assertAnalysisRejectsReorderedExecutionFacts(analysis, frequencies, demands);
+		Constructor<?> constructor = typedConstructor(edgeFact);
+		Object valid = constructor.newInstance(producer, consumers.get(0), 1);
+		Assert.assertSame("NEUTRAL_EDGE_FACT_CONSTRUCTOR_PRODUCER_IDENTITY", producer,
+			call(valid, "producer"));
+		assertIllegalArgument(constructor, null, consumers.get(0), 1);
+		assertIllegalArgument(constructor, producer, null, 1);
+		assertIllegalArgument(constructor, producer, consumers.get(0), -1);
+		assertAnalysisRejectsCorruptedInputEdges(analysis, edgeFact, edges, valid);
 	}
 
-	private static void assertEveryPublishedTransferProofIsGraphOwned(PlacementAnalysis analysis,
-		List<?> demands, Class<?> proofKind) throws Exception {
-		for(Object fact : demands) {
-			Object key = call(fact, "key");
-			CompiledHopKey producer = (CompiledHopKey)call(key, "producer");
-			Object proof = call(fact, "transferSourceProof");
-			String kind = String.valueOf(call(proof, "kind"));
-			if(kind.equals("PERSISTENT_LOCAL_READ") || kind.equals("DERIVED_LOCAL_VALUE"))
-				Assert.assertSame("MINST_TYPED_PUBLISHED_LOCAL_PRODUCER_FOREIGN", producer,
-					call(proof, "localProducerOrNull"));
-			else if(kind.equals("DURABLE_ANCHOR")) {
-				Object anchor = call(proof, "durableAnchorOrNull");
-				Assert.assertTrue("MINST_TYPED_PUBLISHED_ANCHOR_FOREIGN",
-					analysis.graph().node(producer).orElseThrow().anchors().stream()
-						.anyMatch(candidate -> candidate == anchor));
-			}
-			else if(kind.equals("EXPLICIT_RELOCATION")) {
-				Object relocation = call(proof, "relocationActionOrNull");
-				Assert.assertTrue("MINST_TYPED_PUBLISHED_RELOCATION_FOREIGN",
-					analysis.graph().relocationActions().stream().map(action -> action.key())
-						.anyMatch(candidate -> candidate == relocation));
-				Assert.assertEquals("MINST_TYPED_RELOCATION_SOURCE_VALUE_MISMATCH",
-					analysis.graph().node(producer).orElseThrow().valueVersion(),
-					call(relocation, "sourceValueVersion"));
-			}
-			else
-				Assert.fail("MINST_TYPED_UNKNOWN_PUBLISHED_PROOF_KIND|" + kind + '|' + proofKind);
-		}
+	@Test
+	public void neutralBoundaryExcludesMinStNumericCostAndDpCloneSemantics() throws Exception {
+		assertSourceExcludes(Path.of("src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java"),
+			"RewireConstants", "DEFAULT_LOOP_WEIGHT", "DEFAULT_IF_ELSE_WEIGHT", "estimateWhileLoopWeight",
+			"computeForwardingWeightOfChild", "selectRequiredTargetType", "TransferSourceProof",
+			"TransferSourceKind", "semanticHash");
+		assertSourceExcludes(Path.of("src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java"),
+			"ExecutionFrequencyFact", "ProducerConsumerDemandFact", "executionCostFactsFingerprint",
+			"forwardingWeight", "computeWeight", "networkWeight", "multiplicity");
+		for(Path source : Files.list(Path.of("src/main/java/org/apache/sysds/hops/fedplanner/placement"))
+			.filter(path -> path.getFileName().toString().endsWith(".java")).toList())
+			assertSourceExcludes(source, "cloneToOrig", "isVirtualClone", "MinStExact", "auxiliaryNodeId");
 	}
 
-	private static void assertPolicyNeutralProvenanceSurface(Class<?> proofKind, Class<?> proof) {
-		for(Class<?> semanticType : List.of(
-			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.class,
-			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node.class,
-			PlacementState.class)) {
-			for(Method method : semanticType.getDeclaredMethods()) {
-				Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|return|" + method,
-					proofKind, method.getReturnType());
-				Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|return|" + method,
-					proof, method.getReturnType());
-				for(Class<?> parameter : method.getParameterTypes()) {
-					Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|parameter|" + method,
-						proofKind, parameter);
-					Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|parameter|" + method,
-						proof, parameter);
-				}
-			}
-		}
-	}
-
-	private static void assertFactOrOwnerRejectsForeignDemand(PlacementAnalysis owner,
-		Constructor<?> demandConstructor, Object[] forgedArguments, Object canonicalDemand,
-		String marker) throws Exception {
-		Object forged;
+	private static Class<?> nestedPlacementAnalysisClass(String simpleName, String marker) throws Exception {
 		try {
-			forged = demandConstructor.newInstance(forgedArguments);
+			return Class.forName(PlacementAnalysis.class.getName() + "$" + simpleName);
+		}
+		catch(ClassNotFoundException ex) {
+			throw new AssertionError(marker + "|" + simpleName, ex);
+		}
+	}
+
+	private static boolean edgeMatches(Object edge, CompiledHopKey producer,
+		List<CompiledHopKey> consumers, int inputPosition) {
+		try {
+			if(call(edge, "producer") != producer)
+				return false;
+			Object consumerKey = call(edge, "consumer");
+			boolean consumerMatches = false;
+			for(CompiledHopKey consumer : consumers)
+				consumerMatches |= consumerKey == consumer;
+			return consumerMatches && ((Number)call(edge, "inputPosition")).intValue() == inputPosition;
+		}
+		catch(Exception ex) {
+			throw new AssertionError("NEUTRAL_EDGE_FACT_ACCESS_FAILED", ex);
+		}
+	}
+
+	private static void assertAnalysisRejectsCorruptedInputEdges(PlacementAnalysis owner,
+		Class<?> edgeFact, List<?> canonicalEdges, Object validEdge) throws Exception {
+		assertFreshExactKeyInputEdgesAccepted(owner, edgeFact, canonicalEdges);
+		if(canonicalEdges.size() > 1)
+			assertInputEdgeAnalysisConstructionRejected(owner, edgeFact, reversed(canonicalEdges),
+				"NEUTRAL_EDGE_FACT_REORDERED_ACCEPTED");
+		assertInputEdgeAnalysisConstructionRejected(owner, edgeFact, duplicated(canonicalEdges),
+			"NEUTRAL_EDGE_FACT_DUPLICATE_ACCEPTED");
+		int canonicalPosition = ((Number)call(validEdge, "inputPosition")).intValue();
+		Assert.assertEquals("NEUTRAL_EDGE_FACT_PERSISTENT_READ_POSITION", 1, canonicalPosition);
+		assertInputEdgeAnalysisConstructionRejected(owner, edgeFact,
+			replaceFirstRelevantInputEdge(edgeFact, canonicalEdges, validEdge, true, false, canonicalPosition),
+			"NEUTRAL_EDGE_FACT_FOREIGN_PRODUCER_KEY_ACCEPTED");
+		assertInputEdgeAnalysisConstructionRejected(owner, edgeFact,
+			replaceFirstRelevantInputEdge(edgeFact, canonicalEdges, validEdge, false, true, canonicalPosition),
+			"NEUTRAL_EDGE_FACT_FOREIGN_CONSUMER_KEY_ACCEPTED");
+		assertInputEdgeAnalysisConstructionRejected(owner, edgeFact,
+			replaceFirstRelevantInputEdge(edgeFact, canonicalEdges, validEdge, false, false, 0),
+			"NEUTRAL_EDGE_FACT_WRONG_INPUT_POSITION_ACCEPTED");
+		assertInputEdgeAnalysisConstructionRejected(owner, edgeFact,
+			foreignValueEqualKeyInputEdges(edgeFact, canonicalEdges),
+			"NEUTRAL_EDGE_FACT_FOREIGN_VALUE_EQUAL_ACCEPTED");
+		List<Object> swapped = new ArrayList<>(canonicalEdges);
+		if(swapped.size() > 1) {
+			Collections.swap(swapped, 0, 1);
+			assertInputEdgeAnalysisConstructionRejected(owner, edgeFact, List.copyOf(swapped),
+				"NEUTRAL_EDGE_FACT_SWAPPED_ACCEPTED");
+		}
+		Assert.assertNotNull("NEUTRAL_EDGE_FACT_VALID_EDGE_UNUSED", validEdge);
+	}
+
+	private static void assertFreshExactKeyInputEdgesAccepted(PlacementAnalysis owner,
+		Class<?> edgeFact, List<?> canonicalEdges) throws Exception {
+		List<?> freshEdges = freshExactKeyInputEdges(edgeFact, canonicalEdges);
+		Constructor<?> constructor = exactInputEdgeOwnerConstructor(edgeFact);
+		constructor.setAccessible(true);
+		PlacementAnalysis reconstructed;
+		try {
+			reconstructed = (PlacementAnalysis)constructor.newInstance(
+				exactInputEdgeOwnerArguments(owner, freshEdges));
 		}
 		catch(InvocationTargetException ex) {
-			Assert.assertTrue(marker + "|carrier_reason=" + ex.getCause(),
-				ex.getCause() instanceof IllegalArgumentException || ex.getCause() instanceof NullPointerException);
-			return;
+			throw new AssertionError("NEUTRAL_EDGE_FACT_FRESH_EXACT_KEYS_REJECTED|" + ex.getCause(),
+				ex.getCause());
 		}
-		List<?> original = list(owner, "producerConsumerDemandFactsInCanonicalOrder");
-		List<Object> corrupted = new ArrayList<>(original);
-		int index = -1;
-		for(int i = 0; i < original.size(); i++)
-			if(original.get(i) == canonicalDemand) { index = i; break; }
-		Assert.assertTrue(marker + "|canonical_demand_missing", index >= 0);
-		corrupted.set(index, forged);
-		assertAnalysisConstructionRejected(owner, null, List.copyOf(corrupted), marker);
+
+		List<?> actualEdges = list(reconstructed, "compiledInputEdgesInCanonicalOrder");
+		assertImmutable(actualEdges, "NEUTRAL_EDGE_FACT_RECONSTRUCTED_LIST_MUTABLE");
+		Assert.assertEquals("NEUTRAL_EDGE_FACT_RECONSTRUCTED_SIZE", canonicalEdges.size(), actualEdges.size());
+		Method require = PlacementAnalysis.class.getMethod("requireExactCompiledInputEdge",
+			CompiledHopKey.class, CompiledHopKey.class, int.class);
+		for(int i = 0; i < canonicalEdges.size(); i++) {
+			Object canonical = canonicalEdges.get(i);
+			Object fresh = freshEdges.get(i);
+			Object actual = actualEdges.get(i);
+			Assert.assertNotSame("NEUTRAL_EDGE_FACT_FRESH_CARRIER_REQUIRED|" + i, canonical, fresh);
+			assertExactInputEdgeSemantics(canonical, fresh, "FRESH|" + i);
+			assertExactInputEdgeSemantics(canonical, actual, "RECONSTRUCTED|" + i);
+			Assert.assertSame("NEUTRAL_EDGE_FACT_RECONSTRUCTED_LOOKUP|" + i, actual,
+				require.invoke(reconstructed, call(actual, "producer"), call(actual, "consumer"),
+					((Number)call(actual, "inputPosition")).intValue()));
+		}
 	}
 
-	private static void assertAnalysisRejectsReorderedExecutionFacts(PlacementAnalysis owner,
-		List<?> frequencies, List<?> demands) throws Exception {
-		if(frequencies.size() > 1)
-			assertAnalysisConstructionRejected(owner, reversed(frequencies), null,
-				"MINST_TYPED_REORDERED_FREQUENCY_ACCEPTED");
-		if(demands.size() > 1)
-			assertAnalysisConstructionRejected(owner, null, reversed(demands),
-				"MINST_TYPED_REORDERED_DEMAND_ACCEPTED");
+	private static void assertExactInputEdgeSemantics(Object expected, Object actual, String marker)
+		throws Exception {
+		Assert.assertSame("NEUTRAL_EDGE_FACT_PRODUCER_SEMANTICS|" + marker,
+			call(expected, "producer"), call(actual, "producer"));
+		Assert.assertSame("NEUTRAL_EDGE_FACT_CONSUMER_SEMANTICS|" + marker,
+			call(expected, "consumer"), call(actual, "consumer"));
+		Assert.assertEquals("NEUTRAL_EDGE_FACT_POSITION_SEMANTICS|" + marker,
+			call(expected, "inputPosition"), call(actual, "inputPosition"));
 	}
 
-	private static void assertAnalysisConstructionRejected(PlacementAnalysis owner,
-		List<?> frequencyReplacement, List<?> demandReplacement, String marker) throws Exception {
-		Constructor<?> constructor = Arrays.stream(PlacementAnalysis.class.getDeclaredConstructors())
-			.filter(candidate -> candidate.getParameterCount() == 14)
-			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_FULL_OWNER_CONSTRUCTOR_MISSING"));
+	private static List<?> freshExactKeyInputEdges(Class<?> edgeFact, List<?> canonicalEdges) throws Exception {
+		Constructor<?> constructor = typedConstructor(edgeFact);
+		List<Object> copied = new ArrayList<>();
+		for(Object edge : canonicalEdges)
+			copied.add(constructor.newInstance(call(edge, "producer"), call(edge, "consumer"),
+				((Number)call(edge, "inputPosition")).intValue()));
+		return List.copyOf(copied);
+	}
+
+	private static List<?> replaceFirstRelevantInputEdge(Class<?> edgeFact, List<?> canonicalEdges,
+		Object relevantEdge, boolean copyProducer, boolean copyConsumer, int inputPosition) throws Exception {
+		CompiledHopKey producer = (CompiledHopKey)call(relevantEdge, "producer");
+		CompiledHopKey consumer = (CompiledHopKey)call(relevantEdge, "consumer");
+		int canonicalPosition = ((Number)call(relevantEdge, "inputPosition")).intValue();
+		List<Object> replacement = new ArrayList<>(canonicalEdges);
+		for(int i = 0; i < canonicalEdges.size(); i++) {
+			Object candidate = canonicalEdges.get(i);
+			if(call(candidate, "producer") == producer && call(candidate, "consumer") == consumer
+				&& ((Number)call(candidate, "inputPosition")).intValue() == canonicalPosition) {
+				Constructor<?> constructor = typedConstructor(edgeFact);
+				replacement.set(i, constructor.newInstance(copyProducer ? equalCopy(producer) : producer,
+					copyConsumer ? equalCopy(consumer) : consumer, inputPosition));
+				return List.copyOf(replacement);
+			}
+		}
+		throw new AssertionError("NEUTRAL_EDGE_FACT_RELEVANT_EDGE_MISSING");
+	}
+
+	private static List<?> foreignValueEqualKeyInputEdges(Class<?> edgeFact, List<?> canonicalEdges)
+		throws Exception {
+		Constructor<?> constructor = typedConstructor(edgeFact);
+		List<Object> foreign = new ArrayList<>();
+		for(Object edge : canonicalEdges)
+			foreign.add(constructor.newInstance(equalCopy((CompiledHopKey)call(edge, "producer")),
+				equalCopy((CompiledHopKey)call(edge, "consumer")),
+				((Number)call(edge, "inputPosition")).intValue()));
+		return List.copyOf(foreign);
+	}
+
+	private static void assertInputEdgeAnalysisConstructionRejected(PlacementAnalysis owner,
+		Class<?> edgeFact, List<?> edgeReplacement, String marker) throws Exception {
+		Constructor<?> constructor = exactInputEdgeOwnerConstructor(edgeFact);
 		constructor.setAccessible(true);
-		Object[] arguments = {
-			owner.graph(), owner.occurrences(), owner.topLevelStatementBlocks(), privateField(owner, "programOwner"),
-			privateField(owner, "shapeFacts"), owner.analysisFingerprint(), owner.heuristicPolicyFacts(),
-			owner.candidateRuleDomain().orderedRuleKeys(), owner.candidateRuleFacts().orderedFacts(),
-			owner.candidateRuleDomain().orderedConsumerKeys(), owner.candidateConsumerProfileFacts().orderedFacts(),
-			owner.detachedConsumerProfileFacts().orderedFacts(),
-			frequencyReplacement == null ? list(owner, "executionFrequencyFactsInScopeOrder") : frequencyReplacement,
-			demandReplacement == null ? list(owner, "producerConsumerDemandFactsInCanonicalOrder") : demandReplacement
-		};
 		try {
-			constructor.newInstance(arguments);
+			constructor.newInstance(exactInputEdgeOwnerArguments(owner, edgeReplacement));
 			Assert.fail(marker);
 		}
 		catch(InvocationTargetException ex) {
 			Assert.assertTrue(marker + "|owner_reason=" + ex.getCause(),
 				ex.getCause() instanceof IllegalArgumentException || ex.getCause() instanceof NullPointerException);
 		}
+	}
+
+	private static Object[] exactInputEdgeOwnerArguments(PlacementAnalysis owner, List<?> edgeReplacement)
+		throws Exception {
+		return new Object[] {
+			owner.graph(),
+			owner.occurrences(),
+			owner.topLevelStatementBlocks(),
+			privateField(owner, "programOwner"),
+			privateField(owner, "shapeFacts"),
+			owner.analysisFingerprint(),
+			owner.heuristicPolicyFacts(),
+			owner.candidateRuleDomain().orderedRuleKeys(),
+			owner.candidateRuleFacts().orderedFacts(),
+			owner.candidateRuleDomain().orderedConsumerKeys(),
+			owner.candidateConsumerProfileFacts().orderedFacts(),
+			owner.detachedConsumerProfileFacts().orderedFacts(),
+			edgeReplacement
+		};
+	}
+
+	private static Constructor<?> exactInputEdgeOwnerConstructor(Class<?> edgeFact) {
+		return Arrays.stream(PlacementAnalysis.class.getDeclaredConstructors())
+			.filter(candidate -> candidate.getParameterCount() == 13)
+			.filter(candidate -> candidate.getParameterTypes()[12] == List.class)
+			.filter(candidate -> genericListElementIs(candidate.getGenericParameterTypes()[12], edgeFact))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"NEUTRAL_EDGE_FACT_13_ARG_OWNER_CONSTRUCTOR_MISSING|" + edgeFact.getName()));
+	}
+
+	private static boolean genericListElementIs(Type generic, Class<?> elementType) {
+		if(!(generic instanceof ParameterizedType))
+			return false;
+		Type[] arguments = ((ParameterizedType)generic).getActualTypeArguments();
+		return arguments.length == 1 && (arguments[0].getTypeName().equals(elementType.getName())
+			|| arguments[0].getTypeName().equals(elementType.getName().replace('$', '.')));
 	}
 
 	private static Object privateField(Object owner, String name) throws Exception {
@@ -435,16 +321,6 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		Constructor<?> constructor = soleNonPublicConstructor(type);
 		constructor.setAccessible(true);
 		return constructor;
-	}
-
-	private static Object newTyped(Constructor<?> constructor, Object... arguments) throws Exception {
-		try {
-			return constructor.newInstance(arguments);
-		}
-		catch(InvocationTargetException ex) {
-			throw new AssertionError("MINST_TYPED_VALID_CONSTRUCTION_REJECTED|" + constructor,
-				ex.getCause());
-		}
 	}
 
 	private static void assertIllegalArgument(Constructor<?> constructor, Object... arguments)
@@ -471,21 +347,22 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		}
 	}
 
-	private static double[] invalidPositiveFiniteValues() {
-		return new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
-			0.0d, -0.0d, -1.0d};
+
+	private static void assertSourceExcludes(Path source, String... forbiddenTokens) throws Exception {
+		String text = Files.readString(source);
+		for(String token : forbiddenTokens)
+			Assert.assertFalse("NEUTRAL_BOUNDARY_FORBIDDEN_TOKEN|" + source.getFileName() + "|" + token,
+				text.contains(token));
 	}
 
-	private static Object enumValue(Class<?> enumType, String value) {
-		return Arrays.stream(enumType.getEnumConstants()).filter(constant -> value.equals(String.valueOf(constant)))
-			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_ENUM_VALUE_MISSING|" + value));
-	}
 
-	private static ControlRegionKey copiedRegion(ControlRegionKey source, String suffix) {
-		List<String> path = new ArrayList<>(source.regionPath());
-		path.add(suffix);
-		return new ControlRegionKey(source.programFingerprint(), source.functionNamespace(), path,
-			source.callSitePath(), source.recompileContext());
+	private static void assertGenericListReturn(Method method, Class<?> elementType) {
+		Assert.assertEquals("NEUTRAL_EDGE_FACT_LIST_RAW_TYPE|" + method, List.class, method.getReturnType());
+		Type generic = method.getGenericReturnType();
+		Assert.assertTrue("NEUTRAL_EDGE_FACT_LIST_PARAMETERIZED|" + method, generic instanceof ParameterizedType);
+		Type[] arguments = ((ParameterizedType)generic).getActualTypeArguments();
+		Assert.assertArrayEquals("NEUTRAL_EDGE_FACT_LIST_ELEMENT|" + method,
+			new Type[] {elementType}, arguments);
 	}
 
 	private static CompiledHopKey equalCopy(CompiledHopKey key) {
