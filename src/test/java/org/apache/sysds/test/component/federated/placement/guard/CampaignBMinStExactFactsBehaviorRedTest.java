@@ -6,6 +6,7 @@
 package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -148,12 +149,18 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 			assertIllegalArgument(loopConstructor, producer.controlRegion(), invalid);
 		assertIllegalArgument(loopConstructor, null, 1.0d);
 
-		ControlRegionKey siblingRegion = copiedRegion(producer.controlRegion(), "loop-contract-sibling");
-		Object siblingLoop = newTyped(loopConstructor, siblingRegion, 3.0d);
+		ControlRegionKey outerRegion = copiedRegion(producer.controlRegion(), "loop-contract-outer");
+		ControlRegionKey innerRegion = copiedRegion(outerRegion, "loop-contract-inner");
+		Object outerLoop = newTyped(loopConstructor, outerRegion, 2.0d);
+		Object innerLoop = newTyped(loopConstructor, innerRegion, 3.0d);
 		Constructor<?> frequencyConstructor = typedConstructor(frequency);
 		Object frequencyFact = newTyped(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
-			List.of(loopFact));
+			List.of(outerLoop, innerLoop));
 		assertImmutable(list(frequencyFact, "loopContext"), "MINST_TYPED_LOOP_CONTEXT_MUTABLE");
+		Assert.assertSame("MINST_TYPED_OUTER_LOOP_IDENTITY", outerLoop,
+			list(frequencyFact, "loopContext").get(0));
+		Assert.assertSame("MINST_TYPED_INNER_LOOP_IDENTITY", innerLoop,
+			list(frequencyFact, "loopContext").get(1));
 		for(int position = 1; position <= 3; position++)
 			for(double invalid : invalidPositiveFiniteValues()) {
 				Object[] arguments = {producer, 1.0d, 2.0d, 3.0d, List.of(loopFact)};
@@ -163,16 +170,12 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		assertIllegalArgument(frequencyConstructor, null, 1.0d, 2.0d, 3.0d, List.of());
 		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
 			List.of(loopFact, loopFact));
-		List<Object> reversed = new ArrayList<>(List.of(loopFact, siblingLoop));
-		reversed.sort((left, right) -> {
-			try {
-				return String.valueOf(call(right, "loopRegion")).compareTo(String.valueOf(call(left,
-					"loopRegion")));
-			}
-			catch(Exception ex) { throw new RuntimeException(ex); }
-		});
 		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
-			List.copyOf(reversed));
+			List.of(innerLoop, outerLoop));
+		Object foreignLoop = newTyped(loopConstructor,
+			copiedRegion(producer.controlRegion(), "unrelated-loop"), 1.0d);
+		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
+			List.of(outerLoop, foreignLoop));
 		Assert.assertSame("MINST_TYPED_FREQUENCY_KEY_IDENTITY", producer, call(frequencyFact, "key"));
 
 		Constructor<?> demandKeyConstructor = typedConstructor(demandKey);
@@ -199,10 +202,16 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 			producer, anchor, null);
 		assertIllegalArgument(proofConstructor, enumValue(proofKind, "PERSISTENT_LOCAL_READ"),
 			null, null, null);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "PERSISTENT_LOCAL_READ"),
+			producer, null, relocation);
 		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"),
 			producer, anchor, null);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"),
+			producer, null, relocation);
 		assertIllegalArgument(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"),
 			null, anchor, relocation);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"),
+			producer, null, relocation);
 
 		Constructor<?> demandConstructor = typedConstructor(demand);
 		Object demandFact = newTyped(demandConstructor, edgeKey, 2.0d, required, profile,
@@ -219,7 +228,22 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 			.findFirst().orElse(null);
 		if(forbidden != null)
 			assertIllegalArgument(demandConstructor, edgeKey, 1.0d, forbidden, profile, persistentProof);
+		CandidateConsumerProfileFact mismatchedProfile = analysis.candidateConsumerProfileFacts()
+			.requireExact(persistentReadConsumers(analysis, producer).get(1), 1);
+		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, required, mismatchedProfile,
+			persistentProof);
+		CandidateConsumerProfileFact copiedProfile = new CandidateConsumerProfileFact(profile.key(),
+			profile.status(), profile.allowedTargetTypes(), profile.failureCode());
+		assertFactOrOwnerRejectsForeignDemand(analysis, demandConstructor,
+			new Object[] {edgeKey, 1.0d, required, copiedProfile, persistentProof}, demandFact,
+			"MINST_TYPED_VALUE_EQUAL_PROFILE_ACCEPTED");
+		Object copiedProducerProof = newTyped(proofConstructor,
+			enumValue(proofKind, "PERSISTENT_LOCAL_READ"), equalCopy(producer), null, null);
+		assertFactOrOwnerRejectsForeignDemand(analysis, demandConstructor,
+			new Object[] {edgeKey, 1.0d, required, profile, copiedProducerProof}, demandFact,
+			"MINST_TYPED_COPIED_LOCAL_PRODUCER_ACCEPTED");
 		Assert.assertNotNull("MINST_TYPED_DURABLE_PROOF_UNUSED", durableProof);
+		assertPolicyNeutralProvenanceSurface(proofKind, proof);
 	}
 
 	private static void assertExecutionCostFactOwnership(PlacementAnalysis analysis,
@@ -267,6 +291,7 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 			Assert.assertSame("MINST_TYPED_LOCAL_SOURCE_OWNER_IDENTITY", producer,
 				call(proof, "localProducerOrNull"));
 		}
+		assertEveryPublishedTransferProofIsGraphOwned(analysis, demands, proofKind);
 		assertLookupRejects(require, analysis, equalCopy(producer), consumers.get(0), 1);
 		assertLookupRejects(require, analysis, producer, equalCopy(consumers.get(0)), 1);
 		assertLookupRejects(require, analysis, consumers.get(0), producer, 1);
@@ -278,6 +303,132 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 			String.valueOf(call(analysis, "executionCostFactsFingerprint")));
 		Assert.assertNotEquals("MINST_TYPED_COST_FINGERPRINT_NOT_OWNER_BOUND",
 			analysis.analysisFingerprint(), fingerprint);
+		PlacementAnalysis equivalentA = analysis("B-21");
+		PlacementAnalysis equivalentB = analysis("B-21");
+		PlacementAnalysis different = analysis("B-22");
+		String equivalentFingerprintA = String.valueOf(call(equivalentA,
+			"executionCostFactsFingerprint"));
+		String equivalentFingerprintB = String.valueOf(call(equivalentB,
+			"executionCostFactsFingerprint"));
+		String differentFingerprint = String.valueOf(call(different, "executionCostFactsFingerprint"));
+		Assert.assertEquals("MINST_TYPED_EQUIVALENT_OWNER_FINGERPRINT_UNSTABLE",
+			equivalentFingerprintA, equivalentFingerprintB);
+		Assert.assertNotEquals("MINST_TYPED_CONSTANT_OWNER_FINGERPRINT",
+			equivalentFingerprintA, differentFingerprint);
+		assertAnalysisRejectsReorderedExecutionFacts(analysis, frequencies, demands);
+	}
+
+	private static void assertEveryPublishedTransferProofIsGraphOwned(PlacementAnalysis analysis,
+		List<?> demands, Class<?> proofKind) throws Exception {
+		for(Object fact : demands) {
+			Object key = call(fact, "key");
+			CompiledHopKey producer = (CompiledHopKey)call(key, "producer");
+			Object proof = call(fact, "transferSourceProof");
+			String kind = String.valueOf(call(proof, "kind"));
+			if(kind.equals("PERSISTENT_LOCAL_READ") || kind.equals("DERIVED_LOCAL_VALUE"))
+				Assert.assertSame("MINST_TYPED_PUBLISHED_LOCAL_PRODUCER_FOREIGN", producer,
+					call(proof, "localProducerOrNull"));
+			else if(kind.equals("DURABLE_ANCHOR")) {
+				Object anchor = call(proof, "durableAnchorOrNull");
+				Assert.assertTrue("MINST_TYPED_PUBLISHED_ANCHOR_FOREIGN",
+					analysis.graph().node(producer).orElseThrow().anchors().stream()
+						.anyMatch(candidate -> candidate == anchor));
+			}
+			else if(kind.equals("EXPLICIT_RELOCATION")) {
+				Object relocation = call(proof, "relocationActionOrNull");
+				Assert.assertTrue("MINST_TYPED_PUBLISHED_RELOCATION_FOREIGN",
+					analysis.graph().relocationActions().stream().map(action -> action.key())
+						.anyMatch(candidate -> candidate == relocation));
+				Assert.assertEquals("MINST_TYPED_RELOCATION_SOURCE_VALUE_MISMATCH",
+					analysis.graph().node(producer).orElseThrow().valueVersion(),
+					call(relocation, "sourceValueVersion"));
+			}
+			else
+				Assert.fail("MINST_TYPED_UNKNOWN_PUBLISHED_PROOF_KIND|" + kind + '|' + proofKind);
+		}
+	}
+
+	private static void assertPolicyNeutralProvenanceSurface(Class<?> proofKind, Class<?> proof) {
+		for(Class<?> semanticType : List.of(
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.class,
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node.class,
+			PlacementState.class)) {
+			for(Method method : semanticType.getDeclaredMethods()) {
+				Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|return|" + method,
+					proofKind, method.getReturnType());
+				Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|return|" + method,
+					proof, method.getReturnType());
+				for(Class<?> parameter : method.getParameterTypes()) {
+					Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|parameter|" + method,
+						proofKind, parameter);
+					Assert.assertNotEquals("MINST_PROVENANCE_MUST_NOT_OPEN_LEGALITY|parameter|" + method,
+						proof, parameter);
+				}
+			}
+		}
+	}
+
+	private static void assertFactOrOwnerRejectsForeignDemand(PlacementAnalysis owner,
+		Constructor<?> demandConstructor, Object[] forgedArguments, Object canonicalDemand,
+		String marker) throws Exception {
+		Object forged;
+		try {
+			forged = demandConstructor.newInstance(forgedArguments);
+		}
+		catch(InvocationTargetException ex) {
+			Assert.assertTrue(marker + "|carrier_reason=" + ex.getCause(),
+				ex.getCause() instanceof IllegalArgumentException || ex.getCause() instanceof NullPointerException);
+			return;
+		}
+		List<?> original = list(owner, "producerConsumerDemandFactsInCanonicalOrder");
+		List<Object> corrupted = new ArrayList<>(original);
+		int index = -1;
+		for(int i = 0; i < original.size(); i++)
+			if(original.get(i) == canonicalDemand) { index = i; break; }
+		Assert.assertTrue(marker + "|canonical_demand_missing", index >= 0);
+		corrupted.set(index, forged);
+		assertAnalysisConstructionRejected(owner, null, List.copyOf(corrupted), marker);
+	}
+
+	private static void assertAnalysisRejectsReorderedExecutionFacts(PlacementAnalysis owner,
+		List<?> frequencies, List<?> demands) throws Exception {
+		if(frequencies.size() > 1)
+			assertAnalysisConstructionRejected(owner, reversed(frequencies), null,
+				"MINST_TYPED_REORDERED_FREQUENCY_ACCEPTED");
+		if(demands.size() > 1)
+			assertAnalysisConstructionRejected(owner, null, reversed(demands),
+				"MINST_TYPED_REORDERED_DEMAND_ACCEPTED");
+	}
+
+	private static void assertAnalysisConstructionRejected(PlacementAnalysis owner,
+		List<?> frequencyReplacement, List<?> demandReplacement, String marker) throws Exception {
+		Constructor<?> constructor = Arrays.stream(PlacementAnalysis.class.getDeclaredConstructors())
+			.filter(candidate -> candidate.getParameterCount() == 14)
+			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_FULL_OWNER_CONSTRUCTOR_MISSING"));
+		constructor.setAccessible(true);
+		Object[] arguments = {
+			owner.graph(), owner.occurrences(), owner.topLevelStatementBlocks(), privateField(owner, "programOwner"),
+			privateField(owner, "shapeFacts"), owner.analysisFingerprint(), owner.heuristicPolicyFacts(),
+			owner.candidateRuleDomain().orderedRuleKeys(), owner.candidateRuleFacts().orderedFacts(),
+			owner.candidateRuleDomain().orderedConsumerKeys(), owner.candidateConsumerProfileFacts().orderedFacts(),
+			owner.detachedConsumerProfileFacts().orderedFacts(),
+			frequencyReplacement == null ? list(owner, "executionFrequencyFactsInScopeOrder") : frequencyReplacement,
+			demandReplacement == null ? list(owner, "producerConsumerDemandFactsInCanonicalOrder") : demandReplacement
+		};
+		try {
+			constructor.newInstance(arguments);
+			Assert.fail(marker);
+		}
+		catch(InvocationTargetException ex) {
+			Assert.assertTrue(marker + "|owner_reason=" + ex.getCause(),
+				ex.getCause() instanceof IllegalArgumentException || ex.getCause() instanceof NullPointerException);
+		}
+	}
+
+	private static Object privateField(Object owner, String name) throws Exception {
+		Field field = owner.getClass().getDeclaredField(name);
+		field.setAccessible(true);
+		return field.get(owner);
 	}
 
 	private static Constructor<?> typedConstructor(Class<?> type) {
