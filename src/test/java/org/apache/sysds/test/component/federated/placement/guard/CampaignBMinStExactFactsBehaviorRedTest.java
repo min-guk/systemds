@@ -9,6 +9,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -32,7 +34,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -85,24 +90,279 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		Set<String> proofKinds = Arrays.stream(proofKind.getEnumConstants()).map(String::valueOf)
 			.collect(java.util.stream.Collectors.toSet());
 		Assert.assertEquals("MINST_TRANSFER_SOURCE_KIND_DOMAIN",
-			Set.of("DURABLE_ANCHOR", "EXPLICIT_RELOCATION"), proofKinds);
+			Set.of("DURABLE_ANCHOR", "PERSISTENT_LOCAL_READ", "DERIVED_LOCAL_VALUE",
+				"EXPLICIT_RELOCATION"), proofKinds);
 		Class<?> proof = Class.forName(owner.getName() + "$" + "TransferSourceProof");
 		assertTypedCarrier(proof,
-			new String[] {"kind", "durableAnchorOrNull", "relocationActionSignatureOrNull"},
-			new Class<?>[] {proofKind, DurableAnchorKey.class, String.class});
+			new String[] {"kind", "localProducerOrNull", "durableAnchorOrNull",
+				"relocationActionOrNull"},
+			new Class<?>[] {proofKind, CompiledHopKey.class, DurableAnchorKey.class,
+				RelocationActionKey.class});
 		Class<?> demand = Class.forName(owner.getName() + "$" + "ProducerConsumerDemandFact");
 		assertTypedCarrier(demand,
-			new String[] {"key", "forwardingWeight", "requiredTargetType", "transferSourceProof"},
-			new Class<?>[] {demandKey, double.class, FType.class, proof});
-		Assert.assertEquals(List.class,
-			owner.getMethod("executionFrequencyFactsInScopeOrder").getReturnType());
+			new String[] {"key", "forwardingWeight", "requiredTargetType", "exactConsumerProfile",
+				"transferSourceProof"},
+			new Class<?>[] {demandKey, double.class, FType.class, CandidateConsumerProfileFact.class,
+				proof});
+		assertGenericListReturn(freq.getMethod("loopContext"), loop);
+		assertGenericListReturn(owner.getMethod("executionFrequencyFactsInScopeOrder"), freq);
 		Assert.assertEquals(freq,
 			owner.getMethod("requireExactExecutionFrequency", CompiledHopKey.class).getReturnType());
-		Assert.assertEquals(List.class,
-			owner.getMethod("producerConsumerDemandFactsInCanonicalOrder").getReturnType());
+		assertGenericListReturn(owner.getMethod("producerConsumerDemandFactsInCanonicalOrder"), demand);
 		Assert.assertEquals(demand, owner.getMethod("requireExactProducerConsumerDemand",
 			CompiledHopKey.class, CompiledHopKey.class, int.class).getReturnType());
 		Assert.assertEquals(String.class, owner.getMethod("executionCostFactsFingerprint").getReturnType());
+
+		PlacementAnalysis analysis = persistentReadAnalysis();
+		assertTypedCarrierConstructorInvariants(analysis, loop, freq, demandKey, proofKind, proof, demand);
+		assertExecutionCostFactOwnership(analysis, freq, demand, proofKind);
+	}
+
+	private static void assertGenericListReturn(Method method, Class<?> elementType) {
+		Assert.assertEquals("MINST_TYPED_LIST_RAW_TYPE|" + method, List.class, method.getReturnType());
+		Type generic = method.getGenericReturnType();
+		Assert.assertTrue("MINST_TYPED_LIST_PARAMETERIZED|" + method, generic instanceof ParameterizedType);
+		Type[] arguments = ((ParameterizedType)generic).getActualTypeArguments();
+		Assert.assertArrayEquals("MINST_TYPED_LIST_ELEMENT|" + method,
+			new Type[] {elementType}, arguments);
+	}
+
+	private static void assertTypedCarrierConstructorInvariants(PlacementAnalysis analysis,
+		Class<?> loop, Class<?> frequency, Class<?> demandKey, Class<?> proofKind, Class<?> proof,
+		Class<?> demand) throws Exception {
+		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
+			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
+		Assert.assertTrue("MINST_TYPED_SCOPE_TOO_SMALL", scope.size() >= 2);
+		CompiledHopKey producer = persistentReadKey(analysis);
+		CompiledHopKey consumer = persistentReadConsumers(analysis, producer).get(0);
+		CandidateConsumerProfileFact profile = analysis.candidateConsumerProfileFacts()
+			.requireExact(consumer, 1);
+		Assert.assertEquals("MINST_TYPED_PROFILE_AVAILABLE", CandidateEvaluationStatus.AVAILABLE,
+			profile.status());
+		Assert.assertFalse("MINST_TYPED_PROFILE_TARGET_EMPTY", profile.allowedTargetTypes().isEmpty());
+		FType required = profile.allowedTargetTypes().get(0);
+
+		Constructor<?> loopConstructor = typedConstructor(loop);
+		Object loopFact = newTyped(loopConstructor, producer.controlRegion(), 2.0d);
+		for(double invalid : invalidPositiveFiniteValues())
+			assertIllegalArgument(loopConstructor, producer.controlRegion(), invalid);
+		assertIllegalArgument(loopConstructor, null, 1.0d);
+
+		ControlRegionKey siblingRegion = copiedRegion(producer.controlRegion(), "loop-contract-sibling");
+		Object siblingLoop = newTyped(loopConstructor, siblingRegion, 3.0d);
+		Constructor<?> frequencyConstructor = typedConstructor(frequency);
+		Object frequencyFact = newTyped(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
+			List.of(loopFact));
+		assertImmutable(list(frequencyFact, "loopContext"), "MINST_TYPED_LOOP_CONTEXT_MUTABLE");
+		for(int position = 1; position <= 3; position++)
+			for(double invalid : invalidPositiveFiniteValues()) {
+				Object[] arguments = {producer, 1.0d, 2.0d, 3.0d, List.of(loopFact)};
+				arguments[position] = invalid;
+				assertIllegalArgument(frequencyConstructor, arguments);
+			}
+		assertIllegalArgument(frequencyConstructor, null, 1.0d, 2.0d, 3.0d, List.of());
+		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
+			List.of(loopFact, loopFact));
+		List<Object> reversed = new ArrayList<>(List.of(loopFact, siblingLoop));
+		reversed.sort((left, right) -> {
+			try {
+				return String.valueOf(call(right, "loopRegion")).compareTo(String.valueOf(call(left,
+					"loopRegion")));
+			}
+			catch(Exception ex) { throw new RuntimeException(ex); }
+		});
+		assertIllegalArgument(frequencyConstructor, producer, 1.0d, 2.0d, 3.0d,
+			List.copyOf(reversed));
+		Assert.assertSame("MINST_TYPED_FREQUENCY_KEY_IDENTITY", producer, call(frequencyFact, "key"));
+
+		Constructor<?> demandKeyConstructor = typedConstructor(demandKey);
+		Object edgeKey = newTyped(demandKeyConstructor, producer, consumer, 1);
+		assertIllegalArgument(demandKeyConstructor, null, consumer, 1);
+		assertIllegalArgument(demandKeyConstructor, producer, null, 1);
+		assertIllegalArgument(demandKeyConstructor, producer, consumer, -1);
+
+		DurableAnchorKey anchor = analysis.graph().nodes().stream().flatMap(node -> node.anchors().stream())
+			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_ANCHOR_FIXTURE_MISSING"));
+		RelocationActionKey relocation = analysis.graph().relocationActions().stream()
+			.map(action -> action.key()).findFirst()
+			.orElseThrow(() -> new AssertionError("MINST_TYPED_RELOCATION_FIXTURE_MISSING"));
+		Constructor<?> proofConstructor = typedConstructor(proof);
+		Object durableProof = newTyped(proofConstructor, enumValue(proofKind, "DURABLE_ANCHOR"),
+			null, anchor, null);
+		Object persistentProof = newTyped(proofConstructor,
+			enumValue(proofKind, "PERSISTENT_LOCAL_READ"), producer, null, null);
+		newTyped(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"), producer, null, null);
+		newTyped(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"), null, null, relocation);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DURABLE_ANCHOR"),
+			null, null, null);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DURABLE_ANCHOR"),
+			producer, anchor, null);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "PERSISTENT_LOCAL_READ"),
+			null, null, null);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "DERIVED_LOCAL_VALUE"),
+			producer, anchor, null);
+		assertIllegalArgument(proofConstructor, enumValue(proofKind, "EXPLICIT_RELOCATION"),
+			null, anchor, relocation);
+
+		Constructor<?> demandConstructor = typedConstructor(demand);
+		Object demandFact = newTyped(demandConstructor, edgeKey, 2.0d, required, profile,
+			persistentProof);
+		Assert.assertSame("MINST_TYPED_DEMAND_PROFILE_IDENTITY", profile,
+			call(demandFact, "exactConsumerProfile"));
+		for(double invalid : invalidPositiveFiniteValues())
+			assertIllegalArgument(demandConstructor, edgeKey, invalid, required, profile, persistentProof);
+		assertIllegalArgument(demandConstructor, null, 1.0d, required, profile, persistentProof);
+		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, null, profile, persistentProof);
+		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, required, null, persistentProof);
+		assertIllegalArgument(demandConstructor, edgeKey, 1.0d, required, profile, null);
+		FType forbidden = Arrays.stream(FType.values()).filter(type -> !profile.allowedTargetTypes().contains(type))
+			.findFirst().orElse(null);
+		if(forbidden != null)
+			assertIllegalArgument(demandConstructor, edgeKey, 1.0d, forbidden, profile, persistentProof);
+		Assert.assertNotNull("MINST_TYPED_DURABLE_PROOF_UNUSED", durableProof);
+	}
+
+	private static void assertExecutionCostFactOwnership(PlacementAnalysis analysis,
+		Class<?> frequencyType, Class<?> demandType, Class<?> proofKind) throws Exception {
+		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
+			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
+		List<?> frequencies = list(analysis, "executionFrequencyFactsInScopeOrder");
+		Assert.assertEquals("MINST_TYPED_FREQUENCY_SCOPE_CARDINALITY", scope.size(), frequencies.size());
+		assertImmutable(frequencies, "MINST_TYPED_FREQUENCY_OWNER_LIST_MUTABLE");
+		for(int index = 0; index < scope.size(); index++) {
+			Object fact = frequencies.get(index);
+			Assert.assertEquals(frequencyType, fact.getClass());
+			Assert.assertSame("MINST_TYPED_FREQUENCY_SCOPE_IDENTITY|" + index, scope.get(index),
+				call(fact, "key"));
+			Assert.assertSame("MINST_TYPED_FREQUENCY_REQUIRE_EXACT|" + index, fact,
+				PlacementAnalysis.class.getMethod("requireExactExecutionFrequency", CompiledHopKey.class)
+					.invoke(analysis, scope.get(index)));
+			assertImmutable(list(fact, "loopContext"), "MINST_TYPED_FREQUENCY_NESTED_MUTABLE");
+		}
+		assertLookupRejects(PlacementAnalysis.class.getMethod("requireExactExecutionFrequency",
+			CompiledHopKey.class), analysis, equalCopy(scope.get(0)));
+
+		CompiledHopKey producer = persistentReadKey(analysis);
+		List<CompiledHopKey> consumers = persistentReadConsumers(analysis, producer);
+		List<?> demands = list(analysis, "producerConsumerDemandFactsInCanonicalOrder");
+		assertImmutable(demands, "MINST_TYPED_DEMAND_OWNER_LIST_MUTABLE");
+		Method require = PlacementAnalysis.class.getMethod("requireExactProducerConsumerDemand",
+			CompiledHopKey.class, CompiledHopKey.class, int.class);
+		for(CompiledHopKey consumer : consumers) {
+			Object fact = require.invoke(analysis, producer, consumer, 1);
+			Assert.assertEquals(demandType, fact.getClass());
+			Assert.assertTrue("MINST_TYPED_CANONICAL_DEMAND_LIST_MISSING", demands.stream()
+				.anyMatch(candidate -> candidate == fact));
+			Object key = call(fact, "key");
+			Assert.assertSame(producer, call(key, "producer"));
+			Assert.assertSame(consumer, call(key, "consumer"));
+			CandidateConsumerProfileFact profile = analysis.candidateConsumerProfileFacts()
+				.requireExact(consumer, 1);
+			Assert.assertSame("MINST_TYPED_PROFILE_OWNER_IDENTITY", profile,
+				call(fact, "exactConsumerProfile"));
+			Assert.assertTrue("MINST_TYPED_REQUIRED_TYPE_ALLOWED", profile.allowedTargetTypes()
+				.contains(call(fact, "requiredTargetType")));
+			Object proof = call(fact, "transferSourceProof");
+			Assert.assertEquals(enumValue(proofKind, "PERSISTENT_LOCAL_READ"), call(proof, "kind"));
+			Assert.assertSame("MINST_TYPED_LOCAL_SOURCE_OWNER_IDENTITY", producer,
+				call(proof, "localProducerOrNull"));
+		}
+		assertLookupRejects(require, analysis, equalCopy(producer), consumers.get(0), 1);
+		assertLookupRejects(require, analysis, producer, equalCopy(consumers.get(0)), 1);
+		assertLookupRejects(require, analysis, consumers.get(0), producer, 1);
+		assertLookupRejects(require, analysis, producer, consumers.get(0), 0);
+
+		String fingerprint = String.valueOf(call(analysis, "executionCostFactsFingerprint"));
+		Assert.assertFalse("MINST_TYPED_COST_FINGERPRINT_BLANK", fingerprint.isBlank());
+		Assert.assertEquals("MINST_TYPED_COST_FINGERPRINT_UNSTABLE", fingerprint,
+			String.valueOf(call(analysis, "executionCostFactsFingerprint")));
+		Assert.assertNotEquals("MINST_TYPED_COST_FINGERPRINT_NOT_OWNER_BOUND",
+			analysis.analysisFingerprint(), fingerprint);
+	}
+
+	private static Constructor<?> typedConstructor(Class<?> type) {
+		Constructor<?> constructor = soleNonPublicConstructor(type);
+		constructor.setAccessible(true);
+		return constructor;
+	}
+
+	private static Object newTyped(Constructor<?> constructor, Object... arguments) throws Exception {
+		try {
+			return constructor.newInstance(arguments);
+		}
+		catch(InvocationTargetException ex) {
+			throw new AssertionError("MINST_TYPED_VALID_CONSTRUCTION_REJECTED|" + constructor,
+				ex.getCause());
+		}
+	}
+
+	private static void assertIllegalArgument(Constructor<?> constructor, Object... arguments)
+		throws Exception {
+		try {
+			constructor.newInstance(arguments);
+			Assert.fail("MINST_TYPED_INVALID_CONSTRUCTION_ACCEPTED|" + constructor);
+		}
+		catch(InvocationTargetException ex) {
+			Assert.assertTrue("MINST_TYPED_INVALID_CONSTRUCTION_REASON|" + ex.getCause(),
+				ex.getCause() instanceof IllegalArgumentException || ex.getCause() instanceof NullPointerException);
+		}
+	}
+
+	private static void assertLookupRejects(Method lookup, Object owner, Object... arguments)
+		throws Exception {
+		try {
+			lookup.invoke(owner, arguments);
+			Assert.fail("MINST_TYPED_FOREIGN_LOOKUP_ACCEPTED|" + lookup);
+		}
+		catch(InvocationTargetException ex) {
+			Assert.assertTrue("MINST_TYPED_FOREIGN_LOOKUP_REASON|" + ex.getCause(),
+				ex.getCause() instanceof IllegalArgumentException);
+		}
+	}
+
+	private static double[] invalidPositiveFiniteValues() {
+		return new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
+			0.0d, -0.0d, -1.0d};
+	}
+
+	private static Object enumValue(Class<?> enumType, String value) {
+		return Arrays.stream(enumType.getEnumConstants()).filter(constant -> value.equals(String.valueOf(constant)))
+			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_ENUM_VALUE_MISSING|" + value));
+	}
+
+	private static ControlRegionKey copiedRegion(ControlRegionKey source, String suffix) {
+		List<String> path = new ArrayList<>(source.regionPath());
+		path.add(suffix);
+		return new ControlRegionKey(source.programFingerprint(), source.functionNamespace(), path,
+			source.callSitePath(), source.recompileContext());
+	}
+
+	private static CompiledHopKey equalCopy(CompiledHopKey key) {
+		CompiledHopKey copy = new CompiledHopKey(key.programFingerprint(), key.functionNamespace(),
+			key.callSitePath(), key.recompileContext(), key.controlRegion(), key.emittedHopInstance(),
+			key.canonicalSourceOrigin());
+		Assert.assertEquals(key, copy);
+		Assert.assertNotSame(key, copy);
+		return copy;
+	}
+
+	private static CompiledHopKey persistentReadKey(PlacementAnalysis analysis) {
+		return analysis.compiledHopOccurrences().stream().map(PlacementAnalysis.HopOccurrenceProjection::key)
+			.filter(key -> analysis.hop(key).map(hop -> "S".equals(hop.getName())
+				&& hop.getOpString().startsWith("PRead")).orElse(false))
+			.findFirst().orElseThrow(() -> new AssertionError("MINST_TYPED_PERSISTENT_READ_MISSING"));
+	}
+
+	private static List<CompiledHopKey> persistentReadConsumers(PlacementAnalysis analysis,
+		CompiledHopKey producer) {
+		Hop producerHop = analysis.hop(producer).orElseThrow();
+		List<CompiledHopKey> result = analysis.compiledHopOccurrences().stream()
+			.map(PlacementAnalysis.HopOccurrenceProjection::key)
+			.filter(key -> analysis.hop(key).map(hop -> List.of("Y1", "Y2").contains(hop.getName())
+				&& hop.getInput().size() > 1 && hop.getInput().get(1) == producerHop).orElse(false))
+			.toList();
+		Assert.assertEquals("MINST_TYPED_PERSISTENT_CONSUMER_COUNT", 2, result.size());
+		return result;
 	}
 
 	private static void assertTypedCarrier(Class<?> type, String[] accessors, Class<?>[] types)
