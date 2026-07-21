@@ -12,7 +12,6 @@ import java.util.List;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDiagnostics;
 import org.junit.Test;
 
 /** Prepatch B0 RED for the typed, graph-free exact MinST ownership boundary. */
@@ -49,11 +48,6 @@ public class CampaignBMinStExactBoundaryRedTest {
 		Method log = requirePublic(logger, "log", MinStDiagnostics.class);
 		org.junit.Assert.assertEquals("MINST_DIAGNOSTICS_LOGGER_MUST_RETURN_VOID", void.class,
 			log.getReturnType());
-	}
-
-	@Test
-	public void exactSelectionExposesApprovedOrderedProvenance() throws Exception {
-		Class<?> selection = boundary(SELECTION);
 		for(String accessor : List.of("objectiveBits", "sourcePartitionNodeIds",
 			"selectedStatesInScopeOrder", "obligationReceiptsInOrder", "tieCertificate"))
 			requirePublic(selection, accessor);
@@ -84,7 +78,3 @@ public class CampaignBMinStExactBoundaryRedTest {
 		return method;
 	}
 }
-		org.junit.Assert.assertTrue("MINST_EXACT_FACTS_MUST_BE_IMMUTABLE",
-			Modifier.isFinal(facts.getModifiers()));
-		org.junit.Assert.assertTrue("MINST_EXACT_SELECTION_MUST_BE_IMMUTABLE",
-			Modifier.isFinal(selection.getModifiers()));
