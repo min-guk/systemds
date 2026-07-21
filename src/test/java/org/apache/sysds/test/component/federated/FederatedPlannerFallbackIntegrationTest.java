@@ -100,6 +100,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
@@ -297,18 +298,19 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 	@Test
 	public void testDpDerivedFedFoutWhenOracleOnlyAllowsFedLout() throws Exception {
-		DpInvocationReceipt invocation = invokeDpPlannerNoRewriteScript(String.join("\n",
+		DpInvocationReceipt invocation = invokeDpPlannerRewriteScript(String.join("\n",
 			"FX_LOCAL=matrix(0,4,2);",
 			"FX=federated(local_matrix=FX_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
 				+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
-			"Y=FX+1;",
+			"Y=FX%*%matrix(1,2,2);",
 			"print(sum(Y));"));
 		CandidateDecisionReceipt receipt = invocation.semanticConsumption().semanticBlock()
 			.candidateDecisionReceipts().stream()
-			.filter(value -> value.nativeOutput() == FederatedOutput.LOUT
-				&& !value.allowFEDLOUT() && value.allowFEDFOUT())
+			.filter(value -> value.nativeExec() == ExecType.FED
+				&& value.nativeOutput() == FederatedOutput.LOUT
+				&& value.allowFEDLOUT() && value.allowFEDFOUT())
 			.findFirst().orElse(null);
-		assertNotNull("Typed CandidateDecisionReceipt should capture LOUT native authority and derived FED/FOUT enablement",
+		assertNotNull("Typed CandidateDecisionReceipt should capture FED/LOUT native authority and derived FED/FOUT enablement",
 			receipt);
 		Hop receiptHop = invocation.analysis().hop(receipt.candidateSnapshot().parentOccurrence()).orElse(null);
 		assertNotNull("Receipt parent must resolve to an exact hop", receiptHop);
@@ -316,6 +318,9 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertNotNull("Public DP enumeration should publish/select a derived FOUT memo plan for the receipt-owned hop",
 			derived);
 		assertEquals("Selected derived FOUT must be FED-executable", ExecType.FED, derived.getExecType());
+		assertEquals("Selected derived plan must publish FOUT", FederatedOutput.FOUT, derived.getFedOutType());
+		assertTrue("Selected FOUT must be marked as derived from the retained FED/LOUT authority",
+			derived.isDerivedFedFout());
 	}
 
 	@Test
@@ -915,22 +920,32 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 	@Test
 	public void testDpPromoteLocalFedInputHintsUsesCpFoutTypeWhenAnchorExists() throws Exception {
+		DataOp source = federatedRead("XpromotedSource", ROWS, COLS, FType.ROW);
+		DataOp tWrite = HopRewriteUtils.createTransientWrite("PromotedRow", source);
+		DataOp localVec = transientRead("PromotedRow", ROWS, COLS);
 		DataOp fedInput = federatedRead("XfedAnchor", ROWS, COLS, FType.ROW);
-		UnaryOp localVec = new UnaryOp("localVec", DataType.MATRIX, ValueType.FP64, OpOp1.EXP,
-			transientRead("localVecIn", ROWS, 1));
-		localVec.setDim1(ROWS);
-		localVec.setDim2(1);
 		BinaryOp plus = new BinaryOp("plusAnchorLocal", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
 			fedInput, localVec);
 		plus.setDim1(ROWS);
 		plus.setDim2(COLS);
-		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
+		DpPublicEnumeration dp = enumerateSyntheticDp(tWrite, plus);
 
+		HopOccurrenceProjection plusOccurrence = dp.result().rewireSnapshot().projectExactCarrier(plus);
+		HopOccurrenceProjection localOccurrence = dp.result().rewireSnapshot().projectExactCarrier(localVec);
+		assertNotNull("Public rewire snapshot must retain the tested parent occurrence", plusOccurrence);
+		assertNotNull("Public rewire snapshot must retain the local-vector occurrence", localOccurrence);
+		FedPlan localLout = dp.memo().getFedPlanAfterPrune(localVec.getHopID(), FederatedOutput.LOUT);
+		assertNotNull("Production transient rewire must publish the local LOUT plan", localLout);
+		assertEquals("The real local LOUT producer must retain its ROW CP/FOUT projection",
+			FType.ROW, localLout.getCpFoutType());
 		CandidateDecisionReceipt plusReceipt = dp.result().semanticBlock().candidateDecisionReceipts().stream()
+			.filter(value -> value.candidateSnapshot().parentOccurrence() == plusOccurrence.key())
 			.filter(value -> value.candidateSnapshot().promotedEntries().stream()
-				.anyMatch(entry -> entry.rawFType() == FType.ROW))
+				.anyMatch(entry -> entry.occurrence() == localOccurrence.key()
+					&& entry.edgePosition() == 0 && entry.rawFType() == FType.ROW))
 			.findFirst().orElse(null);
-		assertNotNull("NormalizedCandidateInputs receipt should expose promoted ROW cpFoutType evidence", plusReceipt);
+		assertNotNull("NormalizedCandidateInputs receipt should expose localVec's promoted ROW cpFoutType evidence",
+			plusReceipt);
 		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
 		assertNotNull("Anchor/local-vector candidate should retain a public CP/FOUT plan after normalization", plusFout);
 	}
@@ -3596,24 +3611,49 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 	@Test
 	public void testDpEnumerateFunctionPlaceholderIncludesMappedFunctionOutputs() throws Exception {
-		DataOp fedInput = federatedRead("FXfunction", ROWS, COLS, FType.ROW);
-		DataOp functionOutput = HopRewriteUtils.createTransientWrite("FYfunction", fedInput);
-		functionOutput.setDim1(ROWS);
-		functionOutput.setDim2(COLS);
-		FunctionOp functionHop = new FunctionOp(FunctionType.DML, DMLProgram.DEFAULT_NAMESPACE,
-			"test_fun", new String[] {"X"}, List.of(fedInput, functionOutput), new String[] {"Y"}, true);
-		functionHop.setDim1(ROWS);
-		functionHop.setDim2(COLS);
-		DpPublicEnumeration dp = enumerateSyntheticDp(functionHop);
+		DMLProgram program = org.apache.sysds.test.component.federated.placement.shadow
+			.ProductionShadowFixtureFactory.compile("B-07");
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(program);
+		HopOccurrenceProjection inputBoundary = analysis.occurrences().stream()
+			.filter(value -> "function-boundary:.defaultNS::f:input:A"
+				.equals(value.key().canonicalSourceOrigin()))
+			.findFirst().orElse(null);
+		HopOccurrenceProjection outputBoundary = analysis.occurrences().stream()
+			.filter(value -> "function-boundary:.defaultNS::f:output:B"
+				.equals(value.key().canonicalSourceOrigin()))
+			.findFirst().orElse(null);
+		assertNotNull("Final-boundary analysis must retain the exact function input occurrence", inputBoundary);
+		assertNotNull("Final-boundary analysis must retain the exact mapped function output occurrence", outputBoundary);
+		assertTrue("Input and output boundary roles require distinct semantic identities",
+			inputBoundary.key() != outputBoundary.key());
+		assertEquals("Mapped output occurrence must retain FUNCTION_OUTPUT ownership",
+			org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT,
+			analysis.graph().node(outputBoundary.key()).orElseThrow().kind());
 
-		FedPlan outputPlan = dp.memo().getFedPlanAfterPrune(functionOutput.getHopID(), FederatedOutput.LOUT);
-		assertNotNull("Public program enumeration should publish the mapped function output plan", outputPlan);
-		FedPlan functionPlan = dp.memo().getFedPlanAfterPrune(functionHop.getHopID(), FederatedOutput.LOUT);
-		assertNotNull("Expected function placeholder LOUT plan from public program enumeration", functionPlan);
-		assertTrue("Function placeholder must reference the mapped function output hop",
-			functionPlan.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == functionOutput.getHopID()));
-		assertTrue("Function placeholder cumulative cost should include mapped output cost attribution",
-			functionPlan.getCumulativeCost() >= outputPlan.getCumulativeCost());
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		DpEnumerationResult result = FederatedPlannerDpCostEnumerator
+			.enumerateProgramWithReceipts(program, memo, false, analysis);
+		HopOccurrenceProjection outputCarrier = result.rewireSnapshot()
+			.projectExactCarrier(outputBoundary.hop());
+		assertNotNull("Production rewire must project the mapped output to its exact emitted carrier", outputCarrier);
+		assertTrue("The mapped output carrier must retain the same compiled Hop identity",
+			outputCarrier.hop() == outputBoundary.hop());
+		assertTrue("Semantic output ownership must remain distinct from its physical plan carrier",
+			outputCarrier.key() != outputBoundary.key());
+		assertTrue("The output carrier must belong to the exact production candidate universe",
+			result.rewireSnapshot().candidateOccurrences().stream().anyMatch(value -> value == outputCarrier));
+		assertTrue("The neutral graph must bind the emitted result carrier to the mapped function output role",
+			analysis.graph().constraints().stream().anyMatch(value ->
+				value.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+					&& value.left() == outputCarrier.key() && value.right() == outputBoundary.key()
+					&& value.inputPosition() == 0 && "inlined-function-result:B".equals(value.evidence())));
+		assertTrue("DP semantic capture must enumerate the exact emitted output carrier",
+			result.semanticBlock().candidateDecisionReceipts().stream().anyMatch(value ->
+				value.candidateSnapshot().parentOccurrence() == outputCarrier.key()));
+		FedPlan outputPlan = memo.getFedPlanAfterPrune(outputCarrier.hop().getHopID(), FederatedOutput.LOUT);
+		assertNotNull("Public DP enumeration must publish the mapped output carrier plan", outputPlan);
+		assertTrue("The published mapped-output plan must retain the exact compiled carrier",
+			outputPlan.getHopRef() == outputBoundary.hop());
 	}
 
 	@Test
@@ -4271,12 +4311,15 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		FedPlan fedPlan = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.LOUT);
 		assertNotNull("Production enumeration should retain an LOUT candidate for matrix OPTIONAL forwarding", fedPlan);
-		assertTrue("OPTIONAL matrix input enumeration must retain the matrix producer edge",
-			fedPlan.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == matrixOptional.getHopID()));
+		assertEquals("OPTIONAL matrix input enumeration must retain exactly one matrix producer edge", 1,
+			fedPlan.getChildFedPlans().stream().filter(edge -> edge.getKey() == matrixOptional.getHopID()).count());
 		Map<Long, HopCommon> table = hopCommonTableFor(fed, matrixOptional, plus);
 		List<Double> forwarding = collectDpLoutOnlyForwardingCostToFED(dp.memo(), table,
 			table.get(plus.getHopID()), matrixOptional, 1);
-		assertFalse("Public child-cost evidence should include matrix LOUT->FED forwarding", forwarding.isEmpty());
+		assertEquals("Public child-cost evidence should contain exactly one matrix LOUT->FED forwarding entry",
+			1, forwarding.size());
+		assertTrue("Matrix OPTIONAL LOUT->FED forwarding must charge a positive upload cost",
+			forwarding.get(0) > 0.0);
 	}
 
 	@Test
@@ -4285,25 +4328,40 @@ public class FederatedPlannerFallbackIntegrationTest {
 		UnaryOp producer = new UnaryOp("cpfoutProducer", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, producerInput);
 		producer.setDim1(ROWS);
 		producer.setDim2(COLS);
-		UnaryOp consumer = new UnaryOp("fedConsumer", DataType.MATRIX, ValueType.FP64, OpOp1.SQRT, producer);
+		DataOp fedAnchor = federatedRead("CpfoutFedAnchor", ROWS, COLS, FType.ROW);
+		BinaryOp consumer = new BinaryOp("fedConsumer", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS,
+			fedAnchor, producer);
 		consumer.setDim1(ROWS);
 		consumer.setDim2(COLS);
-		Map<Long, HopCommon> table = hopCommonTableFor(producerInput, producer, consumer);
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		FedPlan producerFout = addCustomPlan(memo, table.get(producer.getHopID()),
-			FederatedOutput.FOUT, ExecType.CP, FType.ROW, 10.0);
-		addCustomPlan(memo, table.get(consumer.getHopID()), FederatedOutput.LOUT, ExecType.FED, FType.ROW, 20.0);
-		memo.registerHopRefs(table);
+		DpPublicEnumeration dp = enumerateSyntheticDp(consumer);
+		HopOccurrenceProjection consumerOccurrence = dp.result().rewireSnapshot().projectExactCarrier(consumer);
+		HopOccurrenceProjection producerOccurrence = dp.result().rewireSnapshot().projectExactCarrier(producer);
+		assertNotNull("Rewire snapshot must retain the FED consumer occurrence", consumerOccurrence);
+		assertNotNull("Rewire snapshot must retain the CP/FOUT producer occurrence", producerOccurrence);
+		assertTrue("Production rewire must publish the exact consumer->producer input edge",
+			dp.result().rewireSnapshot().consumerEdges().stream().anyMatch(edge ->
+				edge.parentOccurrence() == consumerOccurrence.key()
+					&& edge.childOccurrence() == producerOccurrence.key() && edge.inputPosition() == 1));
 
+		FedPlan producerFout = dp.memo().getFedPlanAfterPrune(producer.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("Production enumeration must publish the CP/FOUT producer", producerFout);
+		assertEquals("Producer plan must be CP/FOUT", ExecType.CP, producerFout.getExecType());
+		assertEquals("Producer plan must publish FOUT", FederatedOutput.FOUT, producerFout.getFedOutType());
+		FedPlan consumerFout = dp.memo().getFedPlanAfterPrune(consumer.getHopID(), FederatedOutput.FOUT);
+		assertNotNull("FED consumer must retain a FOUT candidate", consumerFout);
+
+		Map<Long, HopCommon> table = hopCommonTableFor(producerInput, producer, fedAnchor, consumer);
 		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(producer));
 		List<Double> forwarding = collectDpFoutOnlyForwardingCostToFED(
-			memo, table, table.get(consumer.getHopID()), fOUTOnlyinputHops, 1);
-		assertEquals("CP/FOUT producer should be the exact FOUT-only consumer input",
-			producer, fOUTOnlyinputHops.get(0));
-		assertEquals("Producer plan should remain CP/FOUT", FederatedOutput.FOUT, producerFout.getFedOutType());
-		assertFalse("CP/FOUT producer -> FED consumer must publish upload-hint forwarding evidence",
-			forwarding.isEmpty());
-		assertTrue("CP/FOUT producer -> FED consumer upload/share should be positive", forwarding.get(0) > 0.0);
+			dp.memo(), table, table.get(consumer.getHopID()), fOUTOnlyinputHops, 1);
+		assertEquals("CP/FOUT producer should be the exact FOUT-only consumer input", producer,
+			fOUTOnlyinputHops.get(0));
+		assertEquals("CP/FOUT producer -> FED consumer must publish one upload forwarding entry",
+			1, forwarding.size());
+		assertTrue("Production CP/FOUT producer must account for its upload at the producer boundary",
+			producerFout.isFoutMaterializationAccounted());
+		assertEquals("An already materialized CP/FOUT producer must not be charged a second upload at its FED consumer",
+			0.0, forwarding.get(0), 1e-9);
 	}
 
 	@Test
@@ -5870,6 +5928,27 @@ public class FederatedPlannerFallbackIntegrationTest {
 		dmlt.liveVariableAnalysis(prog);
 		dmlt.validateParseTree(prog);
 		dmlt.constructHops(prog);
+		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			new DMLTranslator(prog).constructLops(prog, value -> receipt.compareAndSet(null, value));
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+		}
+		assertTrue("Expected DP invocation receipt", receipt.get() instanceof DpInvocationReceipt);
+		return (DpInvocationReceipt) receipt.get();
+	}
+
+	private static DpInvocationReceipt invokeDpPlannerRewriteScript(String script) throws Exception {
+		ParserWrapper parser = ParserFactory.createParser();
+		DMLProgram prog = parser.parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator dmlt = new DMLTranslator(prog);
+		dmlt.liveVariableAnalysis(prog);
+		dmlt.validateParseTree(prog);
+		dmlt.constructHops(prog);
+		dmlt.rewriteHopsDAG(prog);
 		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
 		try {
