@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -42,6 +43,23 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 		String expected = resource(MANIFEST);
 		assertEquals(resource(DIGEST).trim(), sha256(expected));
 		assertEquals(expected, actual);
+	}
+
+	@Test
+	public void dpOnlyFrozenManifestIsolatedAndComplete() throws Exception {
+		String expected = resource(MANIFEST);
+		assertEquals(resource(DIGEST).trim(), sha256(expected));
+		List<String> frozen = new ArrayList<>();
+		for(String line : expected.split("\\R"))
+			if(line.contains("|planner=DP|")) frozen.add(line.replace("|planner=DP|", "|"));
+		List<String> actual = new ArrayList<>();
+		for(String row : LegacyDpOfflineSelectedCapture.capture()) actual.add(tagPlanner(row, "DP").replace("|planner=DP|", "|"));
+		Collections.sort(frozen); Collections.sort(actual);
+		assertEquals(frozen, actual);
+		for(String token : List.of("DP_ROOT_OBJECTIVE", "rootChildren=", "selectedStates=", "selectedPlans=", "semanticFacts=", "registrySnapshots="))
+			assertTrue("DP frozen manifest missing " + token, frozen.stream().anyMatch(r -> r.contains(token)));
+		assertTrue(frozen.stream().anyMatch(r -> r.startsWith("C2-DP-01-ROOT-EQUAL-LOUT|")
+			&& r.contains("selected=LOUT") && r.contains("tieRule=LOUT_LE_FOUT")));
 	}
 
 	private static String capture() throws Exception {
