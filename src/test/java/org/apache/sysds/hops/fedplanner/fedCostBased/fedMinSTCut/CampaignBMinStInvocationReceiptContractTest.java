@@ -7,8 +7,10 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
@@ -26,6 +28,19 @@ import org.junit.Test;
 
 /** RED contract for an explicit, invocation-scoped MinST selection receipt. */
 public class CampaignBMinStInvocationReceiptContractTest {
+	@Test public void b09CloneRecompileProjectionPreservesExactNormalizedSelection() throws Exception {
+		FederatedPlanMinSTCut planner = new FederatedPlanMinSTCut();
+		Invocation first = invoke(planner, declaredRewrite(), "B-09");
+		Invocation second = invoke(planner, declaredRewrite(), "B-09");
+
+		SelectionSnapshot expected = snapshot(first);
+		SelectionSnapshot actual = snapshot(second);
+		Assert.assertEquals("MINST_B09_OBJECTIVE_BITS", expected.objectiveBits(), actual.objectiveBits());
+		Assert.assertEquals("MINST_B09_SOURCE_PARTITION", expected.sourcePartition(), actual.sourcePartition());
+		Assert.assertEquals("MINST_B09_SELECTED_STATES", expected.selectedStates(), actual.selectedStates());
+		Assert.assertEquals("MINST_B09_SELECTED_OBLIGATIONS", expected.obligations(), actual.obligations());
+	}
+
 	@Test public void b07NamedFunctionBodyFutureContractRed() throws Exception {
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-07");
 		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);
@@ -156,5 +171,50 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		}
 	}
 
+	private static SelectionSnapshot snapshot(Invocation invocation) {
+		MinStPlacementAdapter.Selection selection = new MinStPlacementAdapter()
+			.select(invocation.analysis, invocation.receipt);
+		Map<Long,String> hopKeys = new LinkedHashMap<>();
+		invocation.analysis.occurrences().forEach(occurrence ->
+			hopKeys.put(occurrence.hop().getHopID(), occurrence.key().normalizedSignature()));
+		List<String> partition = selection.sourcePartitionNodeIds().stream()
+			.map(node -> normalizeCutNode(node, hopKeys)).toList();
+		List<String> states = selection.selectedReceipts().stream().map(receipt ->
+			receipt.planningKey().normalizedSignature() + '=' + receipt.execType() + '/' + receipt.output())
+			.toList();
+		List<String> obligations = selection.selectedObligations().stream().map(obligation ->
+			obligation.kind() + '|' + normalizeHop(obligation.childHopId(), hopKeys) + '|'
+				+ normalizeHop(obligation.originalHopId(), hopKeys) + '|' + obligation.domainId() + '|'
+				+ obligation.consumerHopIds().stream().map(id -> normalizeHop(id, hopKeys)).toList() + '|'
+				+ obligation.fType() + '|' + obligation.capability() + '|'
+				+ obligation.capabilityReason() + '|' + obligation.reason()).toList();
+		return new SelectionSnapshot(selection.cutObjectiveBits(), partition, states, obligations);
+	}
+
+	private static String normalizeCutNode(long node, Map<Long,String> hopKeys) {
+		if(node == -1L)
+			return "SOURCE";
+		if(node == -2L)
+			return "SINK";
+		String key = hopKeys.get(node >> 2);
+		if(key == null)
+			throw new AssertionError("MINST_B09_FOREIGN_CUT_NODE|" + node);
+		return key + switch((int)(node & 3L)) {
+			case 0 -> ":COMPUTE";
+			case 1 -> ":PLACEMENT";
+			case 2 -> ":LOCALITY";
+			default -> throw new AssertionError("MINST_B09_UNKNOWN_CUT_NODE_KIND|" + node);
+		};
+	}
+
+	private static String normalizeHop(long hopId, Map<Long,String> hopKeys) {
+		String key = hopKeys.get(hopId);
+		if(key == null)
+			throw new AssertionError("MINST_B09_FOREIGN_OBLIGATION_HOP|" + hopId);
+		return key;
+	}
+
 	private record Invocation(PlacementAnalysis analysis,MinStPlacementInput receipt,String fingerprint) { }
+	private record SelectionSnapshot(long objectiveBits, List<String> sourcePartition,
+		List<String> selectedStates, List<String> obligations) { }
 }
