@@ -250,6 +250,7 @@ public final class DpPlacementAdapter {
 			if(effectiveCollectedFTypes.size() != exactCollectedHops.size())
 				throw new IllegalArgumentException("Normalized candidate carrier sizes differ");
 			int promotedIndex = 0;
+			int logicalIndex = 0;
 			for(int i = 0; i < exactCollectedHops.size(); i++) {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
 				HopOccurrenceProjection projected = snapshot.context().rewireSnapshot().projectExactCarrier(hop);
@@ -261,9 +262,20 @@ public final class DpPlacementAdapter {
 					if(effectiveCollectedFTypes.get(i) != promoted.rawFType())
 						throw new IllegalArgumentException("Normalized collected FType differs from promoted entry");
 				}
+				else if(logicalIndex < snapshot.logicalEntries().size()
+					&& projected.key() == snapshot.logicalEntries().get(logicalIndex).sourceOccurrence()) {
+					LogicalCandidateInputEntry logical = snapshot.logicalEntries().get(logicalIndex++);
+					FType expected = logical.selectedSourceState() == logical.fact().federatedSourceState()
+						? logical.fact().anchor().fType() : null;
+					if(effectiveCollectedFTypes.get(i) != expected)
+						throw new IllegalArgumentException("Normalized logical FType differs from selected source state");
+				}
+				else
+					throw new IllegalArgumentException("Normalized collected carrier has no exact physical or logical owner");
 			}
-			if(promotedIndex != snapshot.promotedEntries().size())
-				throw new IllegalArgumentException("Normalized physical carrier order differs");
+			if(promotedIndex != snapshot.promotedEntries().size()
+				|| logicalIndex != snapshot.logicalEntries().size())
+				throw new IllegalArgumentException("Normalized carrier order differs");
 		}
 	}
 
@@ -460,7 +472,9 @@ public final class DpPlacementAdapter {
 			FType collectedType = effectiveCollectedFTypes.get(i);
 			FedPlan childPlan = memo.getFedPlanAfterPrune(edge);
 			int remaining = remainingPhysicalInputs.getOrDefault(occurrence.key(), 0);
-			if(remaining == 0 && parentHop.getInput().isEmpty()
+			boolean hasLogicalTransientInput = context.analysis().logicalTransientInputsInCanonicalOrder().stream()
+				.anyMatch(fact -> fact.targetRead() == parent.key());
+			if(remaining == 0 && hasLogicalTransientInput && parentHop.getInput().isEmpty()
 				&& context.analysis().graph().node(parent.key()).orElseThrow().kind()
 					== NeutralPlacementGraph.NodeKind.TRANSIENT_READ) {
 				LogicalTransientInputFact fact;

@@ -660,8 +660,10 @@ public final class PlacementAnalysis {
 			if(source.valueVersion() != fact.sourceValueVersion() || read.valueVersion() != fact.readValueVersion())
 				throw new IllegalArgumentException("Logical transient input value identity differs");
 			if(source.anchors().size() != 1 || read.anchors().size() != 1
-				|| !source.anchors().get(0).equals(fact.anchor()) || !read.anchors().get(0).equals(fact.anchor()))
+				|| source.anchors().get(0) != fact.anchor() || !read.anchors().get(0).equals(fact.anchor()))
 				throw new IllegalArgumentException("Logical transient input anchor differs");
+			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
+				throw new IllegalArgumentException("Logical transient read has physical inputs");
 			if(source.legalAlternatives().stream().noneMatch(state -> state == fact.localSourceState())
 				|| source.legalAlternatives().stream().noneMatch(state -> state == fact.federatedSourceState()))
 				throw new IllegalArgumentException("Logical transient input source state is not analysis-owned");
@@ -679,8 +681,22 @@ public final class PlacementAnalysis {
 				.filter(key -> key.parentOccurrence() == fact.targetRead()).map(CandidateRuleKey::orderedInputs).toList();
 			if(!actual.equals(expected))
 				throw new IllegalArgumentException("Logical transient candidate domain differs");
-			for(List<CandidateInputState> inputs : expected)
-				candidateRuleFacts.requireExact(fact.targetRead(), inputs);
+			CandidateRuleFact localFact = candidateRuleFacts.requireExact(fact.targetRead(), expected.get(0));
+			CandidateRuleFact federatedFact = candidateRuleFacts.requireExact(fact.targetRead(), expected.get(1));
+			if(localFact.status() != CandidateEvaluationStatus.AVAILABLE
+				|| localFact.capability().nativeExec() != ExecType.CP
+				|| localFact.capability().nativeOutput() != FederatedOutput.LOUT
+				|| localFact.capability().nativeFoutFType() != null
+				|| federatedFact.status() != CandidateEvaluationStatus.AVAILABLE
+				|| federatedFact.capability().nativeExec() != ExecType.FED
+				|| federatedFact.capability().nativeOutput() != FederatedOutput.FOUT
+				|| federatedFact.capability().nativeFoutFType() != fact.anchor().fType())
+				throw new IllegalArgumentException("Logical transient candidate capability differs");
+			if(read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.CP
+				&& state.output() == FederatedOutput.LOUT && state.fType() == null)
+				|| read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
+					&& state.output() == FederatedOutput.FOUT && state.fType() == fact.anchor().fType()))
+				throw new IllegalArgumentException("Logical transient read legal tuples differ");
 			if(compiledInputEdgesInCanonicalOrder.stream().anyMatch(edge -> edge.producer() == fact.sourceWrite()
 				&& edge.consumer() == fact.targetRead() && edge.inputPosition() == fact.logicalPosition()))
 				throw new IllegalArgumentException("Logical transient input fabricated a physical edge");
