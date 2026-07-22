@@ -1528,6 +1528,8 @@ public class FederatedPlannerDpCostEnumerator {
 		return exactWrites;
 	}
 
+	// Rewire forwards are scheduling dependencies, not automatic candidate inputs. Only an exact
+	// neutral owner may enter adapter normalization; an unowned matrix read keeps its zero-input domain.
 	private static boolean isTransientForwardCandidateCarrier(Hop readHop, Hop writeHop,
 		EnumerationCapture capture) {
 		if(capture == null)
@@ -1540,9 +1542,7 @@ public class FederatedPlannerDpCostEnumerator {
 		PlacementAnalysis analysis = capture.context.analysis();
 		long physicalOwners = analysis.compiledInputEdgesInCanonicalOrder().stream().filter(fact ->
 			fact.producer() == write.key() && fact.consumer() == read.key()).count();
-		if(physicalOwners > 1)
-			throw new IllegalArgumentException("Transient candidate carrier has duplicate physical ownership");
-		if(physicalOwners == 1)
+		if(physicalOwners > 0)
 			return true;
 		long logicalOwners = analysis.logicalTransientInputsInCanonicalOrder().stream().filter(fact ->
 			fact.sourceWrite() == write.key() && fact.targetRead() == read.key() && fact.logicalPosition() == 0).count();
