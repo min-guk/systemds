@@ -12,6 +12,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
@@ -71,6 +72,7 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 	}
 
 	private static DpInvocationReceipt invoke(boolean consumerFirst) throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		DMLProgram program = compile(consumerFirst);
 		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
 		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
