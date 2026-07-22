@@ -800,12 +800,13 @@ public final class OracleFacade {
       ShapeHint hint, String phase) {
     if (hop == null || sig == null)
       return;
+    ShapeHint.DiagnosticSnapshot diagnostic = hint == null ? null : hint.diagnosticSnapshot();
     String message = String.format(Locale.ROOT,
         "[Oracle::%s] hop=%d (%s) opcode=%s ns=%s name=%s inFTypes=%s hint=[r=%d,c=%d,b=%d]",
         phase, hop.getHopID(), hop.getOpString(), sig.opcode(),
         attrValue(sig, ATTR_FCALL_NAMESPACE), attrValue(sig, ATTR_FCALL_NAME),
-        formatFTypes(inFTypes), hint == null ? -1 : hint.rows(),
-        hint == null ? -1 : hint.cols(), hint == null ? -1 : hint.blockSize());
+        formatFTypes(inFTypes), diagnostic == null ? -1 : diagnostic.rows(),
+        diagnostic == null ? -1 : diagnostic.cols(), diagnostic == null ? -1 : diagnostic.blockSize());
     FederatedPlannerLogger.logInfoMessage(message);
   }
 

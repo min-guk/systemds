@@ -203,6 +203,14 @@ public final class RulesApi {
     public long rows() { record("rows", rows); return rows; }
     public long cols() { record("cols", cols); return cols; }
     public int blockSize() { record("blockSize", blockSize); return blockSize; }
+	/**
+	 * Returns raw values for diagnostics without recording semantic shape consultation.
+	 * This observational snapshot must not be used as evidence of shape legality.
+	 */
+	public DiagnosticSnapshot diagnosticSnapshot() {
+	  return new DiagnosticSnapshot(rows, cols, blockSize);
+	}
+	public record DiagnosticSnapshot(long rows, long cols, int blockSize) { }
     public Optional<Boolean> fullSinglePartition() {
       consultedFacts.put("fullSinglePartition", fullSinglePartition.map(String::valueOf).orElse("UNKNOWN"));
       return fullSinglePartition;

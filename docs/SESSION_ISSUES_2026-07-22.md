@@ -104,3 +104,18 @@
 - **잠재 회귀 위험**: FED/FOUT 이외 arm에 FType parity를 확장하면 logical/costing semantics를 부당하게 닫을 수 있다. Focused memo matching/mismatch tests와 기존 DP suite로 감지한다. 추가 owner proof 없이 TWrite/privacy/candidate gates를 완화하면 최상위 합법성 회귀가 발생한다.
 - **의사결정 근거**: DP source/memo authority만 수정했고, B-21 잔여 실패는 planner adapter/input-satisfiability owner proof 대상으로 분리했다.
 - **적용 원칙/제약**: runtime fallback 금지; TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>`만 허용; candidate-space 임의 축소 금지; stop-on-first-failure; exact analysis-owned FType authority.
+
+## Oracle logging polluted ShapeProof; fixing it exposes a later unary-aggregate blocker
+
+- **상태**: 진행중
+- **환경/조건**: DP planner, approved v15 observability amendment, accepted PRIVATE B-21 fixture, no Docker. Task86 focused regression integrated path-by-path.
+- **재현 절차**: (1) `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacadeTest test`; (2) apply v15 correction; (3) compile and rerun OracleFacadeTest; (4) run memo-owner test; (5) `mvn -q -DskipITs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014ProgramDynamicAuthorityParityRedTest test`.
+- **관측 증상**: pre-fix OracleFacadeTest는 8개 중 정확히 2개가 실패해 logging-only `rows/cols/blockSize` consultation contamination을 증명했다. 수정 후 OracleFacadeTest 8/8 및 memo 5/5는 GREEN이다. B-21은 이전 `TWrite A` 실패를 통과하지만 다음 PRIVATE unary aggregate `ua(+RC)` hop 56/122에서 `oracleFedFout=false`, `allowFedFout=false`, `canSatisfyFedInputs=false`로 2/2 실패한다.
+- **원인 분석**: `logOracleInvocation`이 rule 실행 전에 consultation-tracking ShapeHint getters를 호출해 UNKNOWN facts를 semantic proof에 추가했다. 이 owner는 해결됐다. 새 unary-aggregate 실패의 exact owner는 아직 증명되지 않았으며 v15 범위와 별개다.
+- **해결 요약**: `ShapeHint`에 raw `rows/cols/blockSize`만 담는 immutable non-recording diagnostic snapshot을 추가하고 logger만 사용하게 했다. Rule-facing getters, proof-after-rule 순서, builder `UNKNOWN_METADATA` fail-closed gate, log format/order/null fallback은 유지했다. 새 aggregate 실패에서 stop-first-failure로 중단했다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/rules/RulesApi.java`; `src/main/java/org/apache/sysds/hops/fedplanner/rules/bridge/OracleFacade.java`; `src/test/java/org/apache/sysds/hops/fedplanner/rules/bridge/OracleFacadeTest.java`; 본 문서.
+- **검증**: Task86 RED `/tmp/worker2-v15-oracle-red-1784732529.log` SHA-256 `0ec594570fa84071fd78753b93bbc566b99e3b1cecfdcac934de5833bc43e0fd`, XML `b956348835b6f0e70888d48e576e2bc440661c1dca78a5d664d29703d03c7136`; compile PASS `/tmp/worker2-v15-compile-1784732604.log` SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`; Oracle GREEN 8/8 log `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`, XML `8da991df8b307ac1452991de1bb7478b0ec57fc11e4b82ec6ae3f93e6900aeb0`; memo GREEN 5/5 XML `6e0ad09ef574d480dff056e7f98b00bc69b41eeaec0b0ec16b0fdfc4a616ffd7`; B-21 RED `/tmp/worker2-v15-b21-green-1784732686.log` SHA-256 `b1cd009f9b09f93a212c4ac7918ff8ee9aceac4b8e2a179788078b06c7c7421e`, XML `f35573173b1cfadc55d27dbe7b1478e1deb56899f32093bb2ed35ce5ed955286`.
+- **잔여 이슈**: PRIVATE unary aggregate `ua(+RC)`의 exact candidate facts, input FType domain, shape proof, runtime capability/oracle reason을 read-only owner proof로 분리해야 한다. 새 amendment 승인 전 수정하지 않는다.
+- **잠재 회귀 위험**: diagnostic snapshot을 rule legality evidence로 사용하면 tracking contract가 우회될 수 있다. OracleFacadeTest의 empty-proof TWrite와 genuine binary missing-rows case로 감지한다. Aggregate를 임의로 열면 privacy/runtime 합법성 회귀가 발생한다.
+- **의사결정 근거**: observability side effect만 수정했고, 새 aggregate 실패는 oracle/runtime/planner owner proof 대상으로 분리했다.
+- **적용 원칙/제약**: runtime fallback 금지; privacy/TRead/TWrite 완화 금지; candidate 임의 확대 금지; 실제 rule consultation만 ShapeProof 권위; stop-on-first-failure.
