@@ -77,7 +77,7 @@ public class CampaignBDpMemoOwnerContractTest {
 		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.FOUT);
 		FedPlan matching = plan(variants, ExecType.FED, 0x1.0p3);
 		variants.addFedPlan(matching);
-		Assert.assertDoesNotThrow(() -> memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants));
+		memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants);
 		Assert.assertSame(matching, memo.getFedPlanAfterPrune(owner.occurrence(), FederatedOutput.FOUT));
 	}
 
