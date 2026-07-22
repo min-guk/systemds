@@ -34,6 +34,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
@@ -76,12 +77,24 @@ public class CampaignBG011DpTransientWriteExactOwnerRedTest {
 		Assert.assertFalse("transient read must not admit FED/LOUT",
 			hasTuple(read, ExecType.FED, FederatedOutput.LOUT));
 
+		List<CandidateRuleKey> keys = analysis.candidateRuleDomain().orderedRuleKeys().stream()
+			.filter(key -> key.parentOccurrence() == read.key()).toList();
+		Assert.assertEquals("transient read logical candidate domain order differs", List.of(
+			List.of(CandidateInputState.absentLocal()),
+			List.of(CandidateInputState.present(FType.ROW))),
+			keys.stream().map(CandidateRuleKey::orderedInputs).toList());
 		List<CandidateRuleFact> facts = analysis.candidateRuleFacts().orderedFacts().stream()
 			.filter(fact -> fact.key().parentOccurrence() == read.key())
-			.filter(fact -> fact.key().orderedInputs().equals(List.of(CandidateInputState.present(FType.ROW))))
 			.toList();
-		Assert.assertEquals("transient read lacks exact present-ROW candidate fact", 1, facts.size());
-		CandidateRuleFact fact = facts.get(0);
+		Assert.assertEquals("transient read candidate fact order differs", keys,
+			facts.stream().map(CandidateRuleFact::key).toList());
+		Assert.assertEquals("transient read lacks exact local and present-ROW candidate facts", 2, facts.size());
+		CandidateRuleFact localFact = facts.get(0);
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, localFact.status());
+		Assert.assertEquals(ExecType.CP, localFact.capability().nativeExec());
+		Assert.assertEquals(FederatedOutput.LOUT, localFact.capability().nativeOutput());
+		Assert.assertNull(localFact.capability().nativeFoutFType());
+		CandidateRuleFact fact = facts.get(1);
 		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, fact.status());
 		Assert.assertEquals(ExecType.FED, fact.capability().nativeExec());
 		Assert.assertEquals(FederatedOutput.FOUT, fact.capability().nativeOutput());

@@ -240,6 +240,11 @@ public final class NeutralPlacementGraphBuilder {
 		AnchorClosure anchorClosure = closeCfgDurableAnchors(nodes, occurrenceAnchorProvenance, cfg);
 		nodes = anchorClosure.nodes();
 		occurrenceAnchorProvenance = anchorClosure.anchors();
+		CandidateReplay candidateReplay = replayUniqueCfgTransientForwards(occurrences, nodes, cfg, factsByHop,
+			candidateRuleDomainKeys, candidateRuleFacts);
+		nodes = candidateReplay.nodes();
+		candidateRuleDomainKeys = candidateReplay.domainKeys();
+		candidateRuleFacts = candidateReplay.facts();
 		nodes = classifyOrphanFunctionBodies(occurrences, nodes);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
@@ -578,6 +583,106 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private record AnchorClosure(List<Node> nodes, List<DurableAnchorKey> anchors) { }
+
+	private CandidateReplay replayUniqueCfgTransientForwards(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> domainKeys,
+		List<CandidateRuleFact> facts) {
+		if(domainKeys.size() != facts.size())
+			throw new IllegalStateException("Candidate rule fact/domain count differs before CFG replay");
+		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
+		for(int i = 0; i < domainKeys.size(); i++) {
+			CandidateRuleKey key = domainKeys.get(i);
+			CandidateRuleFact fact = facts.get(i);
+			if(key.parentOccurrence() != fact.key().parentOccurrence()
+				|| !key.orderedInputs().equals(fact.key().orderedInputs()))
+				throw new IllegalStateException("Candidate rule fact/domain order differs before CFG replay");
+			candidateSlots.computeIfAbsent(key.parentOccurrence(), ignored -> new ArrayList<>()).add(i);
+		}
+		List<Node> replayedNodes = new ArrayList<>(nodes.size());
+		List<CandidateRuleKey> replayedKeys = new ArrayList<>();
+		List<CandidateRuleFact> replayedFacts = new ArrayList<>();
+		Set<Integer> copiedSlots = new HashSet<>();
+		Set<CompiledHopKey> replacedParents = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			Node node = nodes.get(ordinal);
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
+			Node replayed = replayUniqueCfgTransientForward(ordinal, occurrence, node, occurrences, nodes, cfg,
+				factsByHop, replayedKeys, replayedFacts);
+			replayedNodes.add(replayed);
+			if(replayed != node) {
+				replacedParents.add(node.key());
+				continue;
+			}
+			for(int slot : candidateSlots.getOrDefault(node.key(), List.of())) {
+				replayedKeys.add(domainKeys.get(slot));
+				replayedFacts.add(facts.get(slot));
+				copiedSlots.add(slot);
+			}
+		}
+		for(int slot = 0; slot < domainKeys.size(); slot++) {
+			CompiledHopKey parent = domainKeys.get(slot).parentOccurrence();
+			if(!copiedSlots.contains(slot) && !replacedParents.contains(parent))
+				throw new IllegalStateException("Candidate rule slot has no exact CFG replay owner");
+		}
+		return new CandidateReplay(List.copyOf(replayedNodes), List.copyOf(replayedKeys),
+			List.copyOf(replayedFacts));
+	}
+
+	private Node replayUniqueCfgTransientForward(int ordinal,
+		PlacementGraphFingerprint.HopOccurrence readOccurrence, Node read,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> factsByHop, List<CandidateRuleKey> replayedKeys,
+		List<CandidateRuleFact> replayedFacts) {
+		if(read.kind() != NodeKind.TRANSIENT_READ || !isTransientRead(readOccurrence.hop()))
+			return read;
+		Set<Integer> definitions = cfg.reachingDefinitions().get(ordinal);
+		if(definitions.size() != 1)
+			return read;
+		int definition = definitions.iterator().next();
+		if(definition < 0 || definition >= occurrences.size())
+			return read;
+		PlacementGraphFingerprint.HopOccurrence sourceOccurrence = occurrences.get(definition);
+		Node source = nodes.get(definition);
+		if(source.kind() != NodeKind.TRANSIENT_WRITE || !isTransientWrite(sourceOccurrence.hop())
+			|| !sameTransientForwardContext(source, read)
+			|| source.anchors().size() != 1 || read.anchors().size() != 1
+			|| !source.anchors().get(0).equals(read.anchors().get(0))
+			|| source.anchors().get(0).fType() == null
+			|| source.legalAlternatives().stream().anyMatch(state -> !isLegalTransient(state)))
+			return read;
+		DurableAnchorKey anchor = source.anchors().get(0);
+		boolean ownsLocal = source.legalAlternatives().stream().anyMatch(state ->
+			state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+				&& state.fType() == null && !state.shapeDependent());
+		boolean ownsFederated = source.legalAlternatives().stream().anyMatch(state ->
+			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() == anchor.fType());
+		NodeShapeFact sourceShape = factsByHop.get(sourceOccurrence.hop());
+		NodeShapeFact readShape = factsByHop.get(readOccurrence.hop());
+		if(!ownsLocal || !ownsFederated || sourceShape == null || readShape == null)
+			return read;
+		List<FType> logicalDomain = new ArrayList<>();
+		logicalDomain.add(null);
+		source.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() == anchor.fType())
+			.map(PlacementState::fType).distinct().sorted(java.util.Comparator.comparing(Enum::name))
+			.forEach(logicalDomain::add);
+		return buildNode(readOccurrence.hop(), read.key(), read.valueVersion(), read.anchors(), readShape,
+			List.of(sourceShape), List.of(Collections.unmodifiableList(logicalDomain)), replayedKeys, replayedFacts);
+	}
+
+	private static boolean sameTransientForwardContext(Node source, Node read) {
+		return source.key().programFingerprint().equals(read.key().programFingerprint())
+			&& source.valueVersion().programFingerprint().equals(read.valueVersion().programFingerprint())
+			&& source.valueVersion().lexicalVariable().equals(read.valueVersion().lexicalVariable())
+			&& source.key().functionNamespace().equals(read.key().functionNamespace())
+			&& source.key().recompileContext().equals(read.key().recompileContext());
+	}
+
+	private record CandidateReplay(List<Node> nodes, List<CandidateRuleKey> domainKeys,
+		List<CandidateRuleFact> facts) { }
 
 	private static FunctionExpansion expandFunctionBoundaryContexts(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
