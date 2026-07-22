@@ -18,8 +18,10 @@ public class CampaignBR6MinStRootCutoverRedTest {
 		List<String> names = closure.stream().map(CampaignBPlannerOwnershipClosure.Unit::fqcn).toList();
 		Assert.assertTrue("R6_EXACT_FACTS_MISSING", names.stream().anyMatch(n -> n.endsWith("MinStExactCostFactsProducer")));
 		Assert.assertTrue("R6_SELECTOR_MISSING", names.stream().anyMatch(n -> n.endsWith("MinStExactSelector")));
-		Assert.assertFalse("R6_LEGACY_GRAPH_REACHABLE", names.stream().anyMatch(n -> n.endsWith("FederatedPlanMinSTGraph")));
-		Assert.assertFalse("R6_LEGACY_REWIRE_REACHABLE", names.stream().anyMatch(n -> n.endsWith("FederatedPlanMinSTRewire")));
-		Assert.assertFalse("R6_LEGACY_COST_REACHABLE", names.stream().anyMatch(n -> n.endsWith("FederatedPlanMinSTCostEstimator")));
+		for(String forbidden : List.of("FederatedPlanMinSTGraph", "FederatedPlanMinSTRewire",
+			"FederatedPlanMinSTCostEstimator", "FederatedPlanMinSTPlanner", "MinStDiagnostics",
+			"FederatedPlannerLogger"))
+			Assert.assertFalse("R6_LEGACY_REACHABLE|" + forbidden,
+				names.stream().anyMatch(n -> n.endsWith(forbidden)));
 	}
 }
