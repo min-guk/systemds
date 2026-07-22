@@ -19,6 +19,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFed
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpDynamicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -27,9 +28,12 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInp
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.OracleInputState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
@@ -86,6 +90,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 			DMLProgram.DEFAULT_NAMESPACE, "f");
 		assertAppliedPlansAreExactReceipts(owner.receipt());
 		assertTransientReadLogicalParity(owner.receipt().semanticConsumption().semanticBlock());
+		assertScalarTransientForwardDependency(owner.receipt().semanticConsumption().semanticBlock());
 		DpDynamicInvocationReceipt dynamic;
 		try {
 			dynamic = new FederatedPlannerDpFedCostBased().rewriteFunctionDynamic(
@@ -115,6 +120,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().rewireSnapshot().analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().semanticBlock().context().analysis());
 		assertTransientReadLogicalParity(dynamic.enumerationResult().semanticBlock());
+		assertScalarTransientForwardDependency(dynamic.enumerationResult().semanticBlock());
 		DpPlacementAdapter.ExactSelection dynamicSelection = new DpPlacementAdapter().selectExact(
 			dynamic.analysis(), dynamic.memoTable(), dynamic.enumerationResult().optimalPlan());
 		Assert.assertSame(dynamic.analysis(), dynamicSelection.analysis());
@@ -126,6 +132,69 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertEquals(dynamic.fingerprintBefore(), dynamic.fingerprintAfter());
 		Assert.assertEquals(dynamic.analysis().analysisFingerprint(), dynamic.fingerprintAfter());
 	}
+
+	private static void assertScalarTransientForwardDependency(PreSelectionSemanticBlock block) {
+		List<ScalarTransientDependency> dependencies = new ArrayList<>();
+		for(CandidateOccurrenceSnapshot snapshot : block.candidateSnapshots()) {
+			List<?> entries = transientForwardDependencies(snapshot);
+			for(Object entry : entries)
+				dependencies.add(new ScalarTransientDependency(snapshot,
+					invokeAccessor(entry, "forwardEdge", RewireTransientForwardEdge.class),
+					invokeAccessor(entry, "sourceOccurrence", CompiledHopKey.class),
+					invokeAccessor(entry, "collectedPosition", Integer.class),
+					invokeAccessor(entry, "selectedSourceState", PlacementState.class)));
+		}
+		Assert.assertEquals("B-21 must publish exactly one scalar transient-forward dependency receipt",
+			1, dependencies.size());
+		ScalarTransientDependency dependency = dependencies.get(0);
+		CandidateOccurrenceSnapshot snapshot = dependency.snapshot();
+		PlacementAnalysis analysis = block.context().analysis();
+		RewireTransientForwardEdge forward = dependency.forwardEdge();
+		Assert.assertSame(block.context(), snapshot.context());
+		Assert.assertSame(forward.writeOccurrence(), dependency.sourceOccurrence());
+		Assert.assertSame(forward.readOccurrence(), snapshot.parentOccurrence());
+		Assert.assertEquals(0, dependency.collectedPosition());
+		Assert.assertEquals(org.apache.sysds.common.Types.DataType.SCALAR,
+			analysis.hop(forward.writeOccurrence()).orElseThrow().getDataType());
+		Assert.assertEquals(org.apache.sysds.common.Types.DataType.SCALAR,
+			analysis.hop(forward.readOccurrence()).orElseThrow().getDataType());
+		Assert.assertEquals(1, block.context().rewireSnapshot().transientForwardEdges().stream()
+			.filter(edge -> edge == forward).count());
+		Assert.assertTrue(analysis.compiledInputEdgesInCanonicalOrder().stream().noneMatch(edge ->
+			edge.producer() == forward.writeOccurrence() && edge.consumer() == forward.readOccurrence()));
+		Assert.assertTrue(analysis.logicalTransientInputsInCanonicalOrder().stream().noneMatch(fact ->
+			fact.sourceWrite() == forward.writeOccurrence() && fact.targetRead() == forward.readOccurrence()));
+		Assert.assertTrue(snapshot.rawEntries().isEmpty());
+		Assert.assertTrue(snapshot.promotedEntries().isEmpty());
+		Assert.assertTrue(snapshot.logicalEntries().isEmpty());
+		Assert.assertTrue(snapshot.orderedOracleInputs().isEmpty());
+		PlacementState selected = dependency.selectedSourceState();
+		Assert.assertEquals(ExecType.CP, selected.execType());
+		Assert.assertEquals(FederatedOutput.LOUT, selected.output());
+		Assert.assertNull(selected.fType());
+		Assert.assertEquals(1, analysis.graph().node(forward.writeOccurrence()).orElseThrow()
+			.legalAlternatives().stream().filter(state -> state == selected).count());
+		CandidateRuleFact empty = analysis.candidateRuleFacts().requireExact(forward.readOccurrence(), List.of());
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, empty.status());
+		Assert.assertEquals(ExecType.CP, empty.capability().nativeExec());
+		Assert.assertEquals(FederatedOutput.LOUT, empty.capability().nativeOutput());
+		Assert.assertNull(empty.capability().nativeFoutFType());
+	}
+
+	private static List<?> transientForwardDependencies(CandidateOccurrenceSnapshot snapshot) {
+		return invokeAccessor(snapshot, "transientForwardDependencies", List.class);
+	}
+
+	private static <T> T invokeAccessor(Object owner, String name, Class<T> type) {
+		try { return type.cast(owner.getClass().getMethod(name).invoke(owner)); }
+		catch(ReflectiveOperationException failure) {
+			throw new AssertionError("G014_RED6_EXACT_NONCARRIER_TRANSIENT_FORWARD_RECEIPT_MISSING", failure);
+		}
+	}
+
+	private record ScalarTransientDependency(CandidateOccurrenceSnapshot snapshot,
+		RewireTransientForwardEdge forwardEdge, CompiledHopKey sourceOccurrence, int collectedPosition,
+		PlacementState selectedSourceState) { }
 
 	private static void assertTransientReadLogicalParity(PreSelectionSemanticBlock block) {
 		List<List<OracleInputState>> vectors = block.candidateSnapshots().stream()
