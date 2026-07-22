@@ -1,8 +1,11 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -11,6 +14,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.conf.ConfigurationManager;
@@ -46,6 +50,7 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -111,47 +116,69 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 	@Test
 	public void scalarTransientForwardReceiptIsExactAndHostileVariantsReject() {
-		DpInvocationReceipt invocation = invoke("B-15");
+		DpInvocationReceipt invocation = invoke("B-21-SCALAR");
 		PreSelectionSemanticBlock block = invocation.semanticConsumption().semanticBlock();
 		NeutralEnumerationContext base = block.context();
-		HopOccurrenceProjection parent = block.candidateSnapshots().stream()
-			.filter(snapshot -> snapshot.rawEntries().isEmpty() && snapshot.logicalEntries().isEmpty()
-				&& snapshot.orderedOracleInputs().isEmpty())
-			.map(snapshot -> base.analysis().occurrences().stream()
-				.filter(occurrence -> occurrence.key() == snapshot.parentOccurrence()).findFirst().orElseThrow())
-			.filter(occurrence -> occurrence.hop().getDataType() != DataType.MATRIX)
-			.findFirst().orElseThrow();
+		List<RewireTransientForwardEdge> scalarForwards = base.rewireSnapshot().transientForwardEdges().stream()
+			.filter(edge -> base.analysis().hop(edge.writeOccurrence()).orElseThrow().getDataType() != DataType.MATRIX
+				&& base.analysis().hop(edge.readOccurrence()).orElseThrow().getDataType() != DataType.MATRIX).toList();
+		Assert.assertEquals("scalar-only fixture must publish both exact transient forwards", 2, scalarForwards.size());
+		List<CandidateOccurrenceSnapshot> ownedSnapshots = new ArrayList<>();
+		for(RewireTransientForwardEdge scalarForward : scalarForwards) {
+			HopOccurrenceProjection scalarSource = base.rewireSnapshot().candidateOccurrences().stream()
+				.filter(occurrence -> occurrence.key() == scalarForward.writeOccurrence()).findFirst().orElseThrow();
+			HopOccurrenceProjection scalarParent = base.rewireSnapshot().candidateOccurrences().stream()
+				.filter(occurrence -> occurrence.key() == scalarForward.readOccurrence()).findFirst().orElseThrow();
+			Assert.assertEquals(DataType.SCALAR, scalarSource.hop().getDataType());
+			Assert.assertEquals(DataType.SCALAR, scalarParent.hop().getDataType());
+			List<CandidateOccurrenceSnapshot> scalarOwned = block.candidateSnapshots().stream()
+				.filter(snapshot -> snapshot.transientForwardDependencies().stream()
+					.anyMatch(dependency -> dependency.forwardEdge() == scalarForward)).toList();
+			Assert.assertEquals("production enumeration must publish one exact scalar receipt", 1,
+				scalarOwned.size());
+			CandidateOccurrenceSnapshot scalarSnapshot = scalarOwned.get(0);
+			Assert.assertSame(scalarParent.key(), scalarSnapshot.parentOccurrence());
+			Assert.assertTrue(scalarSnapshot.rawEntries().isEmpty());
+			Assert.assertTrue(scalarSnapshot.promotedEntries().isEmpty());
+			Assert.assertTrue(scalarSnapshot.logicalEntries().isEmpty());
+			Assert.assertTrue(scalarSnapshot.orderedOracleInputs().isEmpty());
+			Assert.assertEquals(1, scalarSnapshot.transientForwardDependencies().size());
+			TransientForwardDependencyEntry scalarEntry = scalarSnapshot.transientForwardDependencies().get(0);
+			Assert.assertSame(scalarForward, scalarEntry.forwardEdge());
+			Assert.assertSame(scalarSource.key(), scalarEntry.sourceOccurrence());
+			Assert.assertEquals(0, scalarEntry.collectedPosition());
+			PlacementState scalarSelected = scalarEntry.selectedSourceState();
+			Assert.assertSame(occurrenceState(scalarSource, base), scalarSelected);
+			Assert.assertEquals(ExecType.CP, scalarSelected.execType());
+			Assert.assertEquals(FederatedOutput.LOUT, scalarSelected.output());
+			Assert.assertNull(scalarSelected.fType());
+			ownedSnapshots.add(scalarSnapshot);
+		}
+		RewireTransientForwardEdge forward = scalarForwards.get(0);
 		HopOccurrenceProjection source = base.rewireSnapshot().candidateOccurrences().stream()
-			.filter(occurrence -> occurrence != parent && occurrence.hop().getDataType() != DataType.MATRIX)
-			.filter(occurrence -> occurrenceState(occurrence, base) != null)
-			.findFirst().orElseThrow();
-		PlacementState selected = occurrenceState(source, base);
-		RewireTransientForwardEdge forward = new RewireTransientForwardEdge(source.key(), parent.key());
-		NeutralEnumerationContext exact = withForward(base, forward);
-		TransientForwardDependencyEntry entry = new TransientForwardDependencyEntry(
-			forward, source.key(), 0, selected);
-		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(),
-			List.of(), List.of(), List.of(entry), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE");
+			.filter(occurrence -> occurrence.key() == forward.writeOccurrence()).findFirst().orElseThrow();
+		HopOccurrenceProjection parent = base.rewireSnapshot().candidateOccurrences().stream()
+			.filter(occurrence -> occurrence.key() == forward.readOccurrence()).findFirst().orElseThrow();
+		CandidateOccurrenceSnapshot snapshot = ownedSnapshots.get(0);
+		TransientForwardDependencyEntry entry = snapshot.transientForwardDependencies().get(0);
+		PlacementState selected = entry.selectedSourceState();
 		List<FType> localType = new ArrayList<>();
 		localType.add(null);
-		NormalizedCandidateInputs normalized = new NormalizedCandidateInputs(snapshot, Map.of(), localType,
-			List.of(source.hop()));
-		Assert.assertSame(snapshot, normalized.snapshot());
+		List<Pair<Long, FederatedOutput>> localEdge = List.of(
+			Pair.of(source.hop().getHopID(), FederatedOutput.LOUT));
+		NormalizedCandidateInputs normalized = org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter
+			.normalizeCandidateInputs(base, parent, localEdge, List.of(source.hop()), localType, Map.of(), invocation.memo());
+		Assert.assertSame(forward, normalized.snapshot().transientForwardDependencies().get(0).forwardEdge());
 		Assert.assertEquals(List.of(source.hop()), normalized.exactCollectedHops());
 		Assert.assertEquals(1, normalized.effectiveCollectedFTypes().size());
 		Assert.assertNull(normalized.effectiveCollectedFTypes().get(0));
-		Assert.assertTrue(snapshot.rawEntries().isEmpty());
-		Assert.assertTrue(snapshot.promotedEntries().isEmpty());
-		Assert.assertTrue(snapshot.logicalEntries().isEmpty());
-		Assert.assertTrue(snapshot.orderedOracleInputs().isEmpty());
-		Assert.assertSame(forward, snapshot.transientForwardDependencies().get(0).forwardEdge());
-		Assert.assertSame(selected, snapshot.transientForwardDependencies().get(0).selectedSourceState());
+		Assert.assertTrue(normalized.effectiveNonNullFTypeMap().isEmpty());
 		assertImmutable(snapshot.transientForwardDependencies());
 
-		assertIllegal(() -> new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(), List.of(), List.of(),
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(base, parent.key(), List.of(), List.of(), List.of(),
 			List.of(entry, entry), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 		RewireTransientForwardEdge stale = new RewireTransientForwardEdge(source.key(), parent.key());
-		assertIllegal(() -> new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(), List.of(), List.of(),
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(base, parent.key(), List.of(), List.of(), List.of(),
 			List.of(new TransientForwardDependencyEntry(stale, source.key(), 0, selected)), List.of(),
 			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 		RewireTransientForwardEdge reversed = new RewireTransientForwardEdge(parent.key(), source.key());
@@ -160,15 +187,26 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			List.of(new TransientForwardDependencyEntry(reversed, parent.key(), 0,
 				occurrenceState(parent, base))), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 		PlacementState federated = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
-		assertIllegal(() -> new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(), List.of(), List.of(),
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(base, parent.key(), List.of(), List.of(), List.of(),
 			List.of(new TransientForwardDependencyEntry(forward, source.key(), 0, federated)), List.of(),
 			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 		List<FType> federatedType = new ArrayList<>();
 		federatedType.add(FType.ROW);
-		assertIllegal(() -> new NormalizedCandidateInputs(snapshot, Map.of(), federatedType,
-			List.of(source.hop())));
-		assertIllegal(() -> new NormalizedCandidateInputs(snapshot, Map.of(), localType,
-			List.of(parent.hop())));
+		assertSemanticFailure("TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS", () ->
+			org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.normalizeCandidateInputs(
+				base, parent, localEdge, List.of(source.hop()), federatedType, Map.of(), invocation.memo()));
+		assertSemanticFailure("TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS", () ->
+			org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.normalizeCandidateInputs(
+				base, parent, List.of(Pair.of(source.hop().getHopID(), FederatedOutput.FOUT)),
+				List.of(source.hop()), localType, Map.of(), invocation.memo()));
+		assertSemanticFailure("TRANSIENT_FORWARD_DEPENDENCY_DUPLICATED", () ->
+			org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.normalizeCandidateInputs(
+				base, parent, List.of(localEdge.get(0), localEdge.get(0)),
+				List.of(source.hop(), source.hop()), java.util.Arrays.asList(null, null), Map.of(), invocation.memo()));
+		assertSemanticFailure("COLLECTED_DEPENDENCY_UNOWNED", () ->
+			org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.normalizeCandidateInputs(
+				base, parent, List.of(Pair.of(parent.hop().getHopID(), FederatedOutput.LOUT)),
+				List.of(parent.hop()), localType, Map.of(), invocation.memo()));
 
 		HopOccurrenceProjection matrixSource = base.rewireSnapshot().candidateOccurrences().stream()
 			.filter(occurrence -> occurrence.hop().getDataType() == DataType.MATRIX)
@@ -182,10 +220,12 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			List.of(), List.of(new TransientForwardDependencyEntry(matrix, matrixSource.key(), 0,
 				occurrenceState(matrixSource, base))), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 
-		DpInvocationReceipt foreign = invoke("B-15");
+		DpInvocationReceipt foreign = invoke("B-21-SCALAR");
 		HopOccurrenceProjection foreignSource = foreign.analysis().occurrences().get(source.normalizedOrdinal());
-		assertIllegal(() -> withForward(base,
-			new RewireTransientForwardEdge(foreignSource.key(), parent.key())));
+		assertSemanticFailure("UNMAPPABLE_OCCURRENCE", () ->
+			org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.normalizeCandidateInputs(
+				base, parent, List.of(Pair.of(foreignSource.hop().getHopID(), FederatedOutput.LOUT)),
+				List.of(foreignSource.hop()), localType, Map.of(), invocation.memo()));
 	}
 
 	private static PlacementState occurrenceState(HopOccurrenceProjection occurrence,
@@ -212,6 +252,11 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 	private static void assertIllegal(Runnable action) {
 		try { action.run(); Assert.fail("hostile transient-forward authority was accepted"); }
 		catch(IllegalArgumentException | DpSemanticConstructionException expected) { }
+	}
+
+	private static void assertSemanticFailure(String reason, Runnable action) {
+		try { action.run(); Assert.fail("hostile transient-forward request was accepted: " + reason); }
+		catch(DpSemanticConstructionException expected) { Assert.assertEquals(reason, expected.reasonCode()); }
 	}
 
 	private static void assertRawCandidateOrder(DpInvocationReceipt invocation,
@@ -352,7 +397,9 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 	private static Fixture fixture(String id) {
 		try {
-			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+			DMLProgram program = "B-21".equals(id) ? CampaignBG014HermeticPlannerFixtureFactory.compile(id)
+				: "B-21-SCALAR".equals(id) ? compileScalarTransientFixture()
+				: ProductionShadowFixtureFactory.compile(id);
 			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 			AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
 			try {
@@ -364,6 +411,29 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			return new Fixture(program, (DpInvocationReceipt) receipt.get());
 		}
 		catch(Exception e) { throw new AssertionError("Unable to compile G014 candidate fixture " + id, e); }
+	}
+
+	private static DMLProgram compileScalarTransientFixture() throws Exception {
+		Path data = Files.createTempFile("g014-b21-scalar-", ".data");
+		Path metadata = Path.of(data.toString() + ".mtd");
+		Files.writeString(data, "");
+		Files.writeString(metadata, "{\"data_type\":\"matrix\",\"value_type\":\"double\","
+			+ "\"format\":\"text\",\"rows\":4,\"cols\":2,\"nnz\":0,"
+			+ "\"privacy\":\"private-aggregate\"}");
+		data.toFile().deleteOnExit();
+		metadata.toFile().deleteOnExit();
+		String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+		String script = "A_LOCAL=read(\"" + path + "\");\n"
+			+ "A=federated(local_matrix=A_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
+			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
+			+ "Z=sum(A);\nif(Z>=0){print(Z);}\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		return program;
 	}
 
 	private static ProgramState snapshotProgram(DMLProgram program, PlacementAnalysis analysis) {
