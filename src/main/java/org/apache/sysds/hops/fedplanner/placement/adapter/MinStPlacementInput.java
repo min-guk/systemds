@@ -111,6 +111,12 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 
 	void validateUnchanged() {
 		validateOwnerBinding();
+		if(emissionReceipt != null) {
+			if(normalizedResult == null || !org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction
+				.canonicalPlanHash(normalizedResult).equals(emissionReceipt.planHash()))
+				throw new IllegalArgumentException("MinST canonical emission receipt differs");
+			return;
+		}
 		owner.assertProgramStructureUnchanged();
 		if(!appliedStateRequired)
 			return;

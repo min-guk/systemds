@@ -56,6 +56,8 @@ import org.apache.sysds.hops.fedplanner.placement.ExactPlacementRegistration;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -561,21 +563,43 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		for(var node : analysis.graph().decisionNodes()) {
 			if(selectedStates.containsKey(node.key()))
 				continue;
+			if(node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT)
+				continue;
 			PlacementAnalysis.HopOccurrenceProjection occurrence = analysis.occurrences().stream()
 				.filter(candidate -> candidate.key() == node.key()).findFirst().orElseThrow();
 			FederatedPlannerDpMemoTable.FedPlan plan = memoTable.getCheapestPlanForOccurrence(occurrence);
 			if(plan != null)
 				rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
 					rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
-			else if(completeBaseUnavailable(selectedStates, analysis))
+			else
 				throw new IllegalStateException("DP memo omitted exact decision occurrence " + node.key()
 					+ " carriers=" + memoTable.describePlanCarriers(occurrence));
 		}
-	}
-
-	private static boolean completeBaseUnavailable(Map<CompiledHopKey, SelectedDpState> selectedStates,
-		PlacementAnalysis analysis) {
-		return selectedStates.size() < analysis.graph().decisionNodes().size();
+		boolean progressed;
+		do {
+			progressed = false;
+			for(var node : analysis.graph().decisionNodes()) {
+				if(selectedStates.containsKey(node.key())
+					|| node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT)
+					continue;
+				List<CompiledHopKey> authorities = analysis.graph().constraints().stream()
+					.filter(constraint -> constraint.kind() == ConstraintKind.CONJUNCTIVE
+						&& constraint.right() == node.key())
+					.map(constraint -> constraint.left()).toList();
+				if(authorities.size() != 1)
+					throw new IllegalStateException("DP synthetic boundary requires one exact conjunctive authority: "
+						+ node.key());
+				SelectedDpState source = selectedStates.get(authorities.get(0));
+				if(source == null)
+					continue;
+				if(node.legalAlternatives().stream().noneMatch(state -> state == source.exactState()))
+					throw new IllegalStateException("DP synthetic boundary did not retain its exact source state identity: "
+						+ node.key());
+				coalesceSelectedState(selectedStates, node.key(), source);
+				progressed = true;
+			}
+		}
+		while(progressed);
 	}
 
 	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
