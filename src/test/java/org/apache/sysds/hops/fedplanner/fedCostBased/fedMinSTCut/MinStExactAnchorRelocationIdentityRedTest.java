@@ -82,7 +82,8 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 		Assert.assertEquals("P4_CROSS_ANCHOR_REQUIRES_ONE_UPLOAD", 1L,
 			graph.relocationActions().stream().filter(action -> graph.isRelocationActive(action, selected)).count());
 		MinStExactSelection selection = MinStExactSelector.select(facts(graph, uploadGroup()));
-		Assert.assertEquals("P4_MINST_CROSS_ANCHOR_EMITS_ONE_EXACT_UPLOAD_RECEIPT", 1L,
+		Assert.assertEquals("P4_MINST_CROSS_ANCHOR_EMITS_ONE_EXACT_UPLOAD_RECEIPT|source="
+			+ selection.sourcePartitionNodeIds() + "|objective=" + selection.objectiveBits(), 1L,
 			uploadReceipts(selection, CONSUMER));
 		Assert.assertEquals("P4_MINST_CROSS_ANCHOR_OBJECTIVE_INCLUDES_ONE_UPLOAD_PRICE",
 			Double.doubleToRawLongBits(2.0), selection.objectiveBits());
@@ -135,7 +136,8 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 			List.of(PRODUCER, CONSUMER, CONSUMER_B).stream().sorted().toList(),
 			graph.nodes().stream().map(Node::key).toList());
 		MinStExactSelection selection = MinStExactSelector.select(facts(graph, group));
-		Assert.assertEquals("P4_MINST_GROUPED_UPLOAD_RETAINS_BOTH_EXACT_ENDPOINT_RECEIPTS", 2L,
+		Assert.assertEquals("P4_MINST_GROUPED_UPLOAD_RETAINS_BOTH_EXACT_ENDPOINT_RECEIPTS|source="
+			+ selection.sourcePartitionNodeIds() + "|objective=" + selection.objectiveBits(), 2L,
 			selection.obligationReceiptsInOrder().stream().filter(receipt ->
 				receipt.direction() == Direction.UPLOAD && receipt.producerKey() == PRODUCER).count());
 		Assert.assertEquals("P4_MINST_GROUPED_UPLOAD_HAS_ONE_RECEIPT_FOR_CROSS_ANCHOR_B", 1L,
@@ -181,6 +183,8 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 		edges.add(edge(-1L, group.auxiliaryNodeId(), 5.0));
 		edges.add(edge(-1L, group.producerPlacementNodeId(), 5.0));
 		edges.add(edge(-1L, -2L, 1.0));
+		for(EndpointFact endpoint : group.endpointsInCanonicalOrder())
+			edges.add(edge(endpoint.consumerComputeNodeId(), -2L, 5.0));
 		edges.addAll(productionPriceEdges(analysis, group));
 		set(facts, "edges", List.copyOf(edges));
 		set(facts, "groups", List.of(group));
@@ -205,16 +209,22 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 		Method freeze = accumulatorType.getDeclaredMethod("freeze");
 		freeze.setAccessible(true);
 		List<DirectedEdgeFact> edges = (List<DirectedEdgeFact>)freeze.invoke(accumulator);
-		Assert.assertEquals("P4_PRODUCTION_DERIVES_ONE_SHARED_UPLOAD_PRICE_EDGE", 1, edges.size());
-		DirectedEdgeFact price = edges.get(0);
+		List<DirectedEdgeFact> prices = edges.stream().filter(edge -> edge.contributionsInDerivationOrder()
+			.stream().anyMatch(contribution -> contribution.kind() == ContributionKind.PRICE_UPLOAD_OR)).toList();
+		Assert.assertEquals("P4_PRODUCTION_DERIVES_ONE_SHARED_UPLOAD_PRICE_EDGE", 1, prices.size());
+		DirectedEdgeFact price = prices.get(0);
 		Assert.assertEquals("P4_PRODUCTION_UPLOAD_PRICE_EDGE_STARTS_AT_SHARED_AUXILIARY",
 			group.auxiliaryNodeId(), price.fromNodeId());
 		Assert.assertEquals("P4_PRODUCTION_UPLOAD_PRICE_EDGE_HAS_EXACT_SHARED_PRICE",
 			group.priceBits(), price.capacityBits());
+		long expectedTarget = MinStExactCostFactsProducer.hasExactCompatibleDurableSource(analysis, group)
+			? group.producerPlacementNodeId() : -2L;
+		Assert.assertEquals("P4_PRODUCTION_UPLOAD_PRICE_EDGE_HAS_EXACT_ANCHOR_POLARITY",
+			expectedTarget, price.toNodeId());
 		Assert.assertEquals("P4_PRODUCTION_UPLOAD_PRICE_EDGE_RETAINS_PRICE_AUTHORITY", 1L,
 			price.contributionsInDerivationOrder().stream()
 				.filter(contribution -> contribution.kind() == ContributionKind.PRICE_UPLOAD_OR).count());
-		return edges;
+		return prices;
 	}
 
 	private static List<TransferAuthorityFact> transferAuthorities(NeutralPlacementGraph graph,
