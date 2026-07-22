@@ -38,4 +38,13 @@ public interface PlacementPlannerAdapter<R extends NormalizedPlannerResult> {
 		Objects.requireNonNull(result.normalizedPlanFingerprint(), "normalizedPlanFingerprint");
 		return ImmutableNormalizedPlannerResult.of(context, result);
 	}
+
+	/** Canonicalizes a planner-owned result before the single emission boundary. */
+	static NormalizedPlannerResult normalize(PlacementAnalysis analysis, NormalizedPlannerResult result) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(result, "result");
+		if(result.analysis() != analysis)
+			throw new IllegalStateException("planner result analysis identity does not match supplied analysis");
+		return ImmutableNormalizedPlannerResult.of(PlannerPlacementContext.of(analysis), result);
+	}
 }

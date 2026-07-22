@@ -26,9 +26,13 @@ import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.PlacementPlannerAdapter;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -45,14 +49,14 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 		public InvocationCounters {
 			if(selectionCount != 1 || internalAnalysisBuildCount != 0 || legacyRouteCount != 0
 				|| repairCount != 0 || fallbackCount != 0 || mutationCount != 0
-				|| applicationCount != 0 || doubleApplicationCount != 0)
+				|| applicationCount != 1 || doubleApplicationCount != 0)
 				throw new IllegalArgumentException("FedHeuristic selection receipt counters differ");
 		}
 	}
 
 	public record HeuristicInvocationReceipt(PlacementAnalysis analysis, HeuristicPolicyFacts policyFacts,
 		Set<ValueVersionKey> markers, HeuristicPlacementAdapter.Result result, InvocationCounters counters,
-		String analysisFingerprintBefore, String analysisFingerprintAfter)
+		String analysisFingerprintBefore, String analysisFingerprintAfter, PlacementEmissionReceipt emissionReceipt)
 		implements AFederatedPlanner.PlannerInvocationReceipt {
 		public HeuristicInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
@@ -62,6 +66,7 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 			Objects.requireNonNull(counters, "counters");
 			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
 			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
+			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(policyFacts != analysis.heuristicPolicyFacts())
 				throw new IllegalArgumentException("FedHeuristic policy facts identity differs");
 			if(result.analysis() != analysis)
@@ -87,9 +92,12 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 			policyFacts.demotions().stream().map(fact -> fact.valueVersion()).toList()));
 		String fingerprintBefore = analysis.analysisFingerprint();
 		HeuristicPlacementAdapter.Result result = select(analysis, markers);
-		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 0, 0);
+		NormalizedPlannerResult normalized = PlacementPlannerAdapter.normalize(analysis, result);
+		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
+			PlacementEmissionTransaction.FailureInjector.none());
+		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
 		return new HeuristicInvocationReceipt(analysis, policyFacts, markers, result, counters,
-			fingerprintBefore, analysis.analysisFingerprint());
+			fingerprintBefore, analysis.analysisFingerprint(), emission);
 	}
 
 	@Override
