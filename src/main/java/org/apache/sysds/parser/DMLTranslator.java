@@ -336,6 +336,7 @@ public class DMLTranslator
 			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
 			return;
 		synchronized(dmlp) {
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
 
