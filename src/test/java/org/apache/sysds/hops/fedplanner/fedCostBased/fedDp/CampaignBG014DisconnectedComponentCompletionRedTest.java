@@ -95,16 +95,14 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		data.toFile().deleteOnExit();
 		mtd.toFile().deleteOnExit();
 		String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
-		String aggregate = "S=sum(P);";
-		String function = "Q=g(P);";
 		String script = String.join("\n",
 			"g=function(matrix[double] I) return (matrix[double] O){O=rowSums(I);}",
 			"P_LOCAL=read(\"" + path + "\");",
 			"P=federated(local_matrix=P_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
 				+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
-			consumerFirst ? function : aggregate,
-			consumerFirst ? aggregate : function,
-			"print(S+sum(Q));", "");
+			"S=sum(P);",
+			"Q=g(P);",
+			consumerFirst ? "print(sum(Q)+S);" : "print(S+sum(Q));", "");
 		DMLProgram program = ParserFactory.createParser().parse(
 			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
