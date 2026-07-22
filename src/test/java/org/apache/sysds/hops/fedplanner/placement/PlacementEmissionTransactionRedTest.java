@@ -6,7 +6,10 @@
  */
 package org.apache.sysds.hops.fedplanner.placement;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +20,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailureInjector;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailurePoint;
@@ -48,7 +52,6 @@ public class PlacementEmissionTransactionRedTest {
 		PlacementEmissionTransaction.resetForTesting();
 		clearRegistries();
 		fixture = relocationFixture();
-		assertB11AlreadyCompatibleNegative();
 	}
 
 	@After
@@ -131,6 +134,11 @@ public class PlacementEmissionTransactionRedTest {
 				&& selected(fixture.plan(), o.key(), ExecType.CP, FederatedOutput.FOUT)));
 	}
 
+	@Test
+	public void b11AlreadyCompatibleFederatedSourceNeedsNoRelocation() throws Exception {
+		assertB11AlreadyCompatibleNegative();
+	}
+
 	private void assertExactRollback(FailurePoint failurePoint) throws Exception {
 		seedRegistries();
 		primeDistinctHopMirrors(fixture.analysis());
@@ -150,6 +158,7 @@ public class PlacementEmissionTransactionRedTest {
 		FixtureProgram program = FixtureProgram.adopt(compileRelocationProgram());
 		PlacementAnalysis baseline = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NormalizedPlannerResult baselinePlan = new FedAllPlacementAdapter().select(baseline);
+		NormalizedPlannerResult plan = withCanonicalFingerprint(baselinePlan, baseline);
 		NeutralPlacementGraph.Node local = uniqueNode(baseline, "S");
 		NeutralPlacementGraph.Node anchor = uniqueNode(baseline, "X");
 		List<PlacementAnalysis.CompiledInputEdgeFact> localEdges = baseline.compiledInputEdgesInCanonicalOrder()
@@ -160,6 +169,9 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_TWO_EXACT_LOCAL_INPUTS", 2, localEdges.size());
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_INPUT_POSITION_ONE",
 			localEdges.stream().allMatch(edge -> edge.inputPosition() == 1));
+		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_CP_LOUT_SOURCE",
+			selected(plan, local.key(), ExecType.CP, FederatedOutput.LOUT));
+		Assert.assertTrue("P4_FIXTURE_LOCAL_SOURCE_HAS_NO_DURABLE_ANCHOR", local.anchors().isEmpty());
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_SHARED_GRAPH_RELOCATION", 1, uploads.size());
 		RelocationAction upload = uploads.get(0);
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_TWO_EXACT_RELOCATION_OBLIGATIONS", 2,
@@ -169,8 +181,15 @@ public class PlacementEmissionTransactionRedTest {
 			upload.obligations().stream().map(obligation ->
 				endpoint(obligation.consumer(), obligation.inputPosition())).sorted().toList());
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_DURABLE_ANCHOR", 1, anchor.anchors().size());
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_ROW_DURABLE_ANCHOR", FType.ROW,
+			anchor.anchors().get(0).fType());
+		Assert.assertTrue("P4_FIXTURE_REQUIRES_FED_FOUT_ANCHOR_SOURCE",
+			selected(plan, anchor.key(), ExecType.FED, FederatedOutput.FOUT));
 		Assert.assertEquals("P4_FIXTURE_RELOCATION_USES_EXACT_ANCHOR", anchor.anchors().get(0),
 			upload.key().durableAnchor());
+		Assert.assertEquals("P4_FIXTURE_RELOCATION_NAMES_EXACT_COMPATIBLE_CONSUMERS",
+			localEdges.stream().map(PlacementAnalysis.CompiledInputEdgeFact::consumer).sorted().toList(),
+			upload.key().compatibleConsumers());
 		Assert.assertTrue("P4_FIXTURE_RELOCATION_IS_ANCHOR_TYPED_FED_FOUT",
 			upload.key().targetPlacement().execType() == ExecType.FED
 				&& upload.key().targetPlacement().output() == FederatedOutput.FOUT
@@ -184,12 +203,12 @@ public class PlacementEmissionTransactionRedTest {
 					&& baseline.graph().node(obligation.consumer()).orElseThrow().legalAlternatives()
 						.contains(obligation.requiredPlacement())
 					&& obligation.requiredPlacement().equals(
-						baselinePlan.selectedStates().get(obligation.consumer()))));
+						plan.selectedStates().get(obligation.consumer()))));
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_EXACT_FEDALL_RELOCATION_SELECTION",
-			baselinePlan.selectedRelocations().contains(upload.key()));
-		Assert.assertFalse("P4_FIXTURE_REQUIRES_DECISIONS", baselinePlan.selectedStates().isEmpty());
+			plan.selectedRelocations().contains(upload.key()));
+		Assert.assertFalse("P4_FIXTURE_REQUIRES_DECISIONS", plan.selectedStates().isEmpty());
 		program.install(baseline);
-		return new Fixture(program, baseline, baselinePlan);
+		return new Fixture(program, baseline, plan);
 	}
 
 	private static void assertB11AlreadyCompatibleNegative() throws Exception {
@@ -217,6 +236,35 @@ public class PlacementEmissionTransactionRedTest {
 
 	private static String endpoint(CompiledHopKey consumer, int inputPosition) {
 		return consumer.normalizedSignature() + '@' + inputPosition;
+	}
+
+	private static NormalizedPlannerResult withCanonicalFingerprint(NormalizedPlannerResult source,
+		PlacementAnalysis analysis) {
+		return wrap(source, analysis, analysis.analysisFingerprint(), source.selectedStates(),
+			source.selectedRelocations(), canonicalPlanHash(source));
+	}
+
+	private static String canonicalPlanHash(NormalizedPlannerResult result) {
+		StringBuilder canonical = new StringBuilder().append(result.plannerId()).append('\n')
+			.append(result.analysisFingerprint()).append('\n');
+		result.selectedStates().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> canonical
+			.append(entry.getKey().normalizedSignature()).append('=')
+			.append(entry.getValue().normalizedSignature()).append('\n'));
+		result.selectedRelocations().stream()
+			.sorted(Comparator.comparing(RelocationActionKey::normalizedSignature))
+			.forEach(relocation -> canonical.append(relocation.normalizedSignature()).append('\n'));
+		canonical.append(result.objectiveCertificate());
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256")
+				.digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+			StringBuilder hash = new StringBuilder(64);
+			for(byte value : digest)
+				hash.append(String.format("%02x", value));
+			return hash.toString();
+		}
+		catch(Exception failure) {
+			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
 	}
 
 	private static DMLProgram compileRelocationProgram() throws Exception {
