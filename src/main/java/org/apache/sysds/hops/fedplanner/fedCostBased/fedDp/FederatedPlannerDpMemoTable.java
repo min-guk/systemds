@@ -223,22 +223,60 @@ public class FederatedPlannerDpMemoTable {
 		return occurrence != null ? occurrence : requireOccurrence(hop);
 	}
 
-	/** Selects the minimum-cost memo arm for an exact neutral occurrence, including disconnected regions. */
-	public FedPlan getCheapestPlanForOccurrence(HopOccurrenceProjection occurrence) {
+	/** Immutable exact plan arm retained for one analysis-owned occurrence. */
+	public record OccurrencePlanArm(HopOccurrenceProjection occurrence, Hop carrier,
+		FederatedOutput output, FedPlan plan) {
+		public OccurrencePlanArm {
+			Objects.requireNonNull(occurrence, "occurrence");
+			Objects.requireNonNull(carrier, "carrier");
+			Objects.requireNonNull(output, "output");
+			Objects.requireNonNull(plan, "plan");
+			if(plan.getHopRef() != carrier || plan.getHopID() != carrier.getHopID()
+				|| plan.getFedOutType() != output)
+				throw new IllegalArgumentException("Occurrence plan arm identity differs");
+		}
+	}
+
+	/** Returns the canonically ordered pruned LOUT/FOUT arms for one exact occurrence. */
+	public List<OccurrencePlanArm> getExactPlanArmsForOccurrence(HopOccurrenceProjection occurrence) {
 		assertOwnedOccurrence(occurrence);
-		FedPlan best = null;
+		List<OccurrencePlanArm> arms = new ArrayList<>();
+		Set<String> carrierOutputs = new HashSet<>();
+		Map<Long, Hop> carriersById = new HashMap<>();
 		for(Map.Entry<Hop, HopOccurrenceProjection> entry : occurrenceByPlanCarrier.entrySet()) {
 			if(entry.getValue() != occurrence)
 				continue;
-			long carrierId = entry.getKey().getHopID();
+			Hop carrier = entry.getKey();
+			Hop prior = carriersById.putIfAbsent(carrier.getHopID(), carrier);
+			if(prior != null && prior != carrier)
+				throw new IllegalStateException("Ambiguous exact memo carriers for " + occurrence.key());
 			for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
-				FedPlan candidate = getFedPlanAfterPrune(carrierId, output);
-				if(candidate != null && (best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
-					|| candidate.getCumulativeCost() == best.getCumulativeCost()
-						&& candidate.getFedOutType() == FederatedOutput.LOUT
-						&& best.getFedOutType() == FederatedOutput.FOUT))
-					best = candidate;
+				FedPlan plan = getFedPlanAfterPrune(carrier.getHopID(), output);
+				if(plan == null)
+					continue;
+				if(plan.getHopRef() != carrier || requirePlanCarrierOccurrence(plan.getHopRef()) != occurrence)
+					throw new IllegalStateException("Foreign exact memo carrier for " + occurrence.key());
+				String duplicateKey = carrier.getHopID() + "|" + output;
+				if(!carrierOutputs.add(duplicateKey))
+					throw new IllegalStateException("Duplicate exact memo arm for " + occurrence.key());
+				arms.add(new OccurrencePlanArm(occurrence, carrier, output, plan));
 			}
+		}
+		arms.sort(Comparator.comparing((OccurrencePlanArm arm) -> arm.output() == FederatedOutput.LOUT ? 0 : 1)
+			.thenComparingLong(arm -> arm.carrier().getHopID()));
+		return List.copyOf(arms);
+	}
+
+	/** Selects the minimum-cost memo arm for an exact neutral occurrence, including disconnected regions. */
+	public FedPlan getCheapestPlanForOccurrence(HopOccurrenceProjection occurrence) {
+		FedPlan best = null;
+		for(OccurrencePlanArm arm : getExactPlanArmsForOccurrence(occurrence)) {
+			FedPlan candidate = arm.plan();
+			if(best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
+				|| candidate.getCumulativeCost() == best.getCumulativeCost()
+					&& candidate.getFedOutType() == FederatedOutput.LOUT
+					&& best.getFedOutType() == FederatedOutput.FOUT)
+				best = candidate;
 		}
 		return best;
 	}
