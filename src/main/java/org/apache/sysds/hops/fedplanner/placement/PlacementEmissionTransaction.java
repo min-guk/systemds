@@ -101,19 +101,17 @@ public final class PlacementEmissionTransaction {
 	public static PlacementEmissionReceipt emit(DMLProgram program, NormalizedPlannerResult result,
 		FailureInjector failureInjector) {
 		Objects.requireNonNull(failureInjector, "failureInjector");
-		synchronized(LOCK) {
+			synchronized(LOCK) {
 			PreparedEmission prepared = prevalidate(program, result);
 			CommittedPlan existing = COMMITTED.get(program);
 			if(existing != null) {
 				if(!existing.receipt().planHash().equals(prepared.planHash()))
 					throw new PlacementEmissionException("A different placement plan was already emitted");
-				if(!existing.contentHash().equals(prepared.contentHash()))
-					throw new PlacementEmissionException("Plan hash was reused for different placement content");
 				return new PlacementEmissionReceipt(prepared.planHash(), false, true, 0, 0);
 			}
 
 			Map<Hop, HopSnapshot> hopSnapshots = snapshotHops(prepared.hopWrites());
-			List<RegistrySnapshot> registrySnapshots = snapshotRegistries(prepared.registryWrites());
+			RegistrySnapshots registrySnapshots = RegistrySnapshots.capture();
 			Map<DMLProgram, CommittedPlan> receiptSnapshot = new IdentityHashMap<>(COMMITTED);
 			long fallbackSnapshot = runtimeFallbackCount;
 			long repairSnapshot = runtimeRepairCount;
@@ -122,11 +120,11 @@ public final class PlacementEmissionTransaction {
 				applyRegistries(prepared.registryWrites(), failureInjector);
 				PlacementEmissionReceipt receipt = new PlacementEmissionReceipt(prepared.planHash(), true, false,
 					prepared.hopWrites().size(), prepared.registryWrites().size());
-				COMMITTED.put(program, new CommittedPlan(receipt, prepared.contentHash()));
+				COMMITTED.put(program, new CommittedPlan(receipt));
 				return receipt;
 			}
 			catch(RuntimeException | Error failure) {
-				restoreRegistries(registrySnapshots);
+				registrySnapshots.restore();
 				restoreHops(hopSnapshots);
 				COMMITTED.clear();
 				COMMITTED.putAll(receiptSnapshot);
@@ -159,6 +157,33 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
+	/**
+	 * Computes the sole content authority for a normalized placement result.
+	 * The fingerprint covers every public selection field and is independent of
+	 * map/list iteration order.
+	 */
+	public static String canonicalPlanHash(NormalizedPlannerResult result) {
+		Objects.requireNonNull(result, "result");
+		String plannerId = requireText(result.plannerId(), "plannerId");
+		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
+		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
+		Map<CompiledHopKey, PlacementState> selected = Objects.requireNonNull(result.selectedStates(),
+			"selectedStates");
+		List<RelocationActionKey> relocations = Objects.requireNonNull(result.selectedRelocations(),
+			"selectedRelocations");
+		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
+			.append(analysisFingerprint).append('\n');
+		selected.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> canonical
+			.append(Objects.requireNonNull(entry.getKey(), "selected state key").normalizedSignature())
+			.append('=').append(Objects.requireNonNull(entry.getValue(), "selected state").normalizedSignature())
+			.append('\n'));
+		relocations.stream().map(key -> Objects.requireNonNull(key, "selected relocation"))
+			.sorted(Comparator.comparing(RelocationActionKey::normalizedSignature))
+			.forEach(relocation -> canonical.append(relocation.normalizedSignature()).append('\n'));
+		canonical.append(objective);
+		return sha256(canonical.toString());
+	}
+
 	private static PreparedEmission prevalidate(DMLProgram program, NormalizedPlannerResult result) {
 		Objects.requireNonNull(program, "program");
 		Objects.requireNonNull(result, "result");
@@ -170,6 +195,9 @@ public final class PlacementEmissionTransaction {
 		String plannerId = requireText(result.plannerId(), "plannerId");
 		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
 		String planHash = requireCanonicalHash(result.normalizedPlanFingerprint());
+		String canonicalPlanHash = canonicalPlanHash(result);
+		if(!planHash.equals(canonicalPlanHash))
+			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
 
 		Map<CompiledHopKey, PlacementState> selected = Objects.requireNonNull(result.selectedStates(),
 			"selectedStates");
@@ -203,9 +231,7 @@ public final class PlacementEmissionTransaction {
 			"selectedRelocations");
 		List<RelocationAction> relocations = exactRelocations(analysis, selectedRelocations);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(analysis, occurrences, relocations);
-		String contentHash = contentHash(plannerId, analysis.analysisFingerprint(), selected,
-			selectedRelocations, objective);
-		return new PreparedEmission(planHash, contentHash, List.copyOf(hopWrites), List.copyOf(registryWrites));
+		return new PreparedEmission(planHash, List.copyOf(hopWrites), List.copyOf(registryWrites));
 	}
 
 	private static Map<CompiledHopKey, HopOccurrenceProjection> occurrenceIndex(PlacementAnalysis analysis) {
@@ -301,13 +327,6 @@ public final class PlacementEmissionTransaction {
 		return snapshots;
 	}
 
-	private static List<RegistrySnapshot> snapshotRegistries(List<RegistryWrite> writes) {
-		List<RegistrySnapshot> snapshots = new ArrayList<>(writes.size());
-		for(RegistryWrite write : writes)
-			snapshots.add(RegistrySnapshot.capture(write.slot()));
-		return snapshots;
-	}
-
 	private static void applyHops(List<HopWrite> writes, FailureInjector injector) {
 		for(int i = 0; i < writes.size(); i++) {
 			HopWrite write = writes.get(i);
@@ -330,24 +349,6 @@ public final class PlacementEmissionTransaction {
 
 	private static void restoreHops(Map<Hop, HopSnapshot> snapshots) {
 		snapshots.forEach((hop, snapshot) -> snapshot.restore(hop));
-	}
-
-	private static void restoreRegistries(List<RegistrySnapshot> snapshots) {
-		for(int i = snapshots.size() - 1; i >= 0; i--)
-			snapshots.get(i).restore();
-	}
-
-	private static String contentHash(String plannerId, String analysisFingerprint,
-		Map<CompiledHopKey, PlacementState> selected, List<RelocationActionKey> relocations, String objective) {
-		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
-			.append(analysisFingerprint).append('\n');
-		selected.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> canonical
-			.append(entry.getKey().normalizedSignature()).append('=').append(entry.getValue().normalizedSignature())
-			.append('\n'));
-		relocations.stream().sorted().forEach(relocation -> canonical.append(relocation.normalizedSignature())
-			.append('\n'));
-		canonical.append(objective);
-		return sha256(canonical.toString());
 	}
 
 	private static String sha256(String value) {
@@ -411,52 +412,18 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
-	private record RegistrySnapshot(RegistrySlot slot, Object value) {
-		private static RegistrySnapshot capture(RegistrySlot slot) {
-			Object value = switch(slot.kind()) {
-				case REFED -> FederatedRefedRegistry.snapshot(slot.scopeId()).get(slot.hopId());
-				case FOUT -> FederatedFoutMaterializeRegistry.snapshot(slot.scopeId()).get(slot.hopId());
-				case LOCAL -> FederatedLocalMaterializeRegistry.snapshotScopes(slot.scopeId())
-					.getOrDefault(slot.scopeId(), Map.of()).get(slot.hopId());
-			};
-			return new RegistrySnapshot(slot, value);
+	private record RegistrySnapshots(FederatedRefedRegistry.Snapshot refed,
+		FederatedFoutMaterializeRegistry.Snapshot fout,
+		FederatedLocalMaterializeRegistry.Snapshot local) {
+		private static RegistrySnapshots capture() {
+			return new RegistrySnapshots(FederatedRefedRegistry.snapshotAll(),
+				FederatedFoutMaterializeRegistry.snapshotAll(), FederatedLocalMaterializeRegistry.snapshotAll());
 		}
 
 		private void restore() {
-			switch(slot.kind()) {
-				case REFED -> restoreRefed();
-				case FOUT -> restoreFout();
-				case LOCAL -> restoreLocal();
-			}
-		}
-
-		private void restoreRefed() {
-			FederatedRefedRegistry.remove(slot.scopeId(), slot.hopId());
-			if(value != null) {
-				FederatedRefedRegistry.AnchorSpec spec = (FederatedRefedRegistry.AnchorSpec) value;
-				FederatedRefedRegistry.register(slot.scopeId(), slot.hopId(), spec.getAnchorHopId(),
-					spec.getAnchorKey());
-			}
-		}
-
-		private void restoreFout() {
-			FederatedFoutMaterializeRegistry.remove(slot.scopeId(), slot.hopId());
-			if(value != null) {
-				FederatedFoutMaterializeRegistry.MaterializeSpec spec =
-					(FederatedFoutMaterializeRegistry.MaterializeSpec) value;
-				FederatedFoutMaterializeRegistry.register(slot.scopeId(), slot.hopId(), spec.getAnchorHopId(),
-					spec.getFTypeHint(), spec.getAnchorLabel(), spec.getAnchorKey());
-			}
-		}
-
-		private void restoreLocal() {
-			FederatedLocalMaterializeRegistry.remove(slot.scopeId(), slot.hopId());
-			if(value != null) {
-				FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec =
-					(FederatedLocalMaterializeRegistry.LocalMaterializeSpec) value;
-				FederatedLocalMaterializeRegistry.register(slot.scopeId(), slot.hopId(), spec.getConsumerHopIds(),
-					spec.getFTypeHint(), spec.getReason());
-			}
+			FederatedLocalMaterializeRegistry.restoreAll(local);
+			FederatedFoutMaterializeRegistry.restoreAll(fout);
+			FederatedRefedRegistry.restoreAll(refed);
 		}
 	}
 
@@ -480,9 +447,9 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
-	private record PreparedEmission(String planHash, String contentHash, List<HopWrite> hopWrites,
+	private record PreparedEmission(String planHash, List<HopWrite> hopWrites,
 		List<RegistryWrite> registryWrites) { }
-	private record CommittedPlan(PlacementEmissionReceipt receipt, String contentHash) { }
+	private record CommittedPlan(PlacementEmissionReceipt receipt) { }
 
 	private static final class PlacementEmissionException extends IllegalStateException {
 		private static final long serialVersionUID = 1L;
