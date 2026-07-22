@@ -161,7 +161,9 @@ public class FederatedPlannerDpMemoTable {
 			PlacementState exact = Objects.requireNonNull(plan.getSelectedPlacementState(),
 				"DP plan lacks an exact analysis-owned placement carrier for " + occurrence.key());
 			if(node.legalAlternatives().stream().noneMatch(state -> state == exact)
-				|| exact.execType() != plan.getExecType() || exact.output() != plan.getFedOutType())
+				|| exact.execType() != plan.getExecType() || exact.output() != plan.getFedOutType()
+				|| exact.execType() == ExecType.FED && exact.output() == FederatedOutput.FOUT
+					&& exact.fType() != plan.getFType())
 				throw new IllegalStateException("DP plan has a foreign exact placement carrier for " + occurrence.key());
 		}
 	}

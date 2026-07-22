@@ -71,6 +71,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
@@ -1256,8 +1257,12 @@ public class FederatedPlannerDpCostEnumerator {
 
 	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
 			FederatedPlannerDpMemoTable.HopCommon hopCommon, EnumerationCapture capture) {
-		FType baseFType = FederatedTypePropagator.deriveFType(dataOp);
-		FederatedPlannerUtils.registerFedInitVar(dataOp.getName(), baseFType,
+		HopOccurrenceProjection sourceOccurrence = findOccurrence(capture, dataOp);
+		PlacementState exactSourceState = DpPlacementAdapter.requireExactSourceState(capture.context,
+			sourceOccurrence, ExecType.FED, FederatedOutput.FOUT);
+		FType sourceFType = Objects.requireNonNull(exactSourceState.fType(),
+			"Exact FED/FOUT source state lacks a concrete FType for " + sourceOccurrence.key());
+		FederatedPlannerUtils.registerFedInitVar(dataOp.getName(), sourceFType,
 			FederatedPlannerUtils.deriveFedInitSignature(dataOp));
 
 		FederatedPlannerDpMemoTable.FedPlanVariants fOutFedPlanVariants = new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon,
@@ -1265,12 +1270,11 @@ public class FederatedPlannerDpCostEnumerator {
 			FederatedPlannerDpMemoTable.FedPlan fedPlan = new FederatedPlannerDpMemoTable.FedPlan(0.0, fOutFedPlanVariants,
 					Collections.emptyList());
 			fedPlan.setExecType(ExecType.FED);
-			fedPlan.setFType(baseFType);
-			fedPlan.setCpFoutType(baseFType);
-			fedPlan.setSelectedPlacementState(DpPlacementAdapter.requireExactSourceState(capture.context,
-				findOccurrence(capture, dataOp), ExecType.FED, FederatedOutput.FOUT));
+			fedPlan.setFType(sourceFType);
+			fedPlan.setCpFoutType(sourceFType);
+			fedPlan.setSelectedPlacementState(exactSourceState);
 			fOutFedPlanVariants.addFedPlan(fedPlan);
-			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), findOccurrence(capture, dataOp),
+			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), sourceOccurrence,
 				FederatedOutput.FOUT, fOutFedPlanVariants);
 	}
 

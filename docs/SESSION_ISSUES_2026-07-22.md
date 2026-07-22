@@ -89,3 +89,18 @@
 - **잠재 회귀 위험**: planner를 완화하면 금지된 `<CP,FOUT>` TRead/TWrite 계획이나 runtime 불가능 계획이 생성될 수 있다. TRead/TWrite consistency 및 B-21 오류 reason flags로 감지한다.
 - **의사결정 근거**: 테스트 정책/fixture authority 문제이며 planner/runtime 합법성 규칙은 수정하지 않는다.
 - **적용 원칙/제약**: public privacy 케이스 ignore; TRead/TWrite 최상위 제약; runtime fallback 금지; first-failure stop.
+
+## DP exact FED/FOUT source FType parity fixes memo boundary but B-21 remains unsatisfied
+
+- **상태**: 진행중
+- **환경/조건**: DP planner, accepted v13 PRIVATE B-21 fixture, approved v14 source-FType-authority amendment, no Docker. Worker-2 HEAD before edits `e54f191194f13086b9e87e369a7cb0fd458d5749`; accepted Task72 test authority `5dd03b08d2286a1bd0240715f26d645231f941e1`.
+- **재현 절차**: (1) `mvn -q -DskipITs -DskipTests test-compile`; (2) `mvn -q -DskipITs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBDpMemoOwnerContractTest test`; (3) `mvn -q -DskipITs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014ProgramDynamicAuthorityParityRedTest test`.
+- **관측 증상**: compile과 focused memo contract 5/5는 GREEN이다. 그러나 다음 ordered B-21 gate는 2/2 실패하며 PRIVATE `TWrite A` hop 55/121에서 `oracleFedFout=true`, `allowFedFout=false`, `canSatisfyFedInputs=false`를 보고한다.
+- **원인 분석**: v14가 증명한 memo 결함은 실제였다. FED/FOUT plan의 exact state FType과 plan FType mismatch를 이제 삽입 시 거부하며 source plan은 exact state의 concrete FType만 사용한다. 하지만 B-21의 새 플래그 조합은 이 수정 이후에도 downstream federated-input satisfiability가 별도 이유로 성립하지 않음을 보여준다. v14 범위에서 추가 원인은 증명되지 않았으므로 추측 수정하지 않고 별도 owner proof가 필요하다. 아래의 오래된 `B-21 fixture reaches DP with default PUBLIC privacy` 원인 설명은 v13 PRIVATE fixture와 본 실행으로 superseded되며 최종 인과로 사용하면 안 된다.
+- **해결 요약**: `enumerateFederatedDataOp`가 exact source occurrence/state를 한 번만 resolve하고 non-null exact FType을 registration/`setFType`/`setCpFoutType`에 사용하도록 수정했다. Memo validation은 exact FED/FOUT에 한해서만 `exact.fType() == plan.getFType()`를 fail-closed로 요구한다. B-21 실패 후 v14 stop condition에 따라 추가 production 변경을 중단했다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`; `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpMemoTable.java`; accepted test authorities `CampaignBDpMemoOwnerContractTest.java`, `CampaignBG014HermeticPlannerFixtureFactory.java`; 본 문서.
+- **검증**: compile PASS `/tmp/worker2-v14-compile-1784729608.log` SHA-256 `e3b0c44298fc1c149afbf4f8996fb92427ae41e4649b934ca495991b7852b855`; memo 5/5 GREEN `/tmp/worker2-v14-memo-green-1784729650.log` SHA-256 `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`, XML SHA-256 `df7d583437fb84275a04c67c8531659feb1a632afcc411b4a366b4539f9ae1e8`; B-21 2/2 RED `/tmp/worker2-v14-b21-green-1784729681.log` SHA-256 `e59c3d19abee15298618185e979d4464699a395ec9a3a35762be4bad9745f8fb`, XML SHA-256 `4b022ba70ed4b52f0f5f3fa39a0e14c6e558bbeeb052de914708f82afa80f4a9`.
+- **잔여 이슈**: `canSatisfyFedInputs=false`의 exact owner를 별도 read-only proof로 확정해야 한다. 승인된 후에만 새 범위/수정을 적용하고 B-21부터 ordered gates를 재개한다.
+- **잠재 회귀 위험**: FED/FOUT 이외 arm에 FType parity를 확장하면 logical/costing semantics를 부당하게 닫을 수 있다. Focused memo matching/mismatch tests와 기존 DP suite로 감지한다. 추가 owner proof 없이 TWrite/privacy/candidate gates를 완화하면 최상위 합법성 회귀가 발생한다.
+- **의사결정 근거**: DP source/memo authority만 수정했고, B-21 잔여 실패는 planner adapter/input-satisfiability owner proof 대상으로 분리했다.
+- **적용 원칙/제약**: runtime fallback 금지; TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>`만 허용; candidate-space 임의 축소 금지; stop-on-first-failure; exact analysis-owned FType authority.
