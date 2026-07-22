@@ -96,17 +96,12 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				}
 				catch(RuntimeException failure) {
 					Throwable owner = deepestCause(failure);
-					boolean cleanMinSTDownstream = "compile_min_st_cut".equals(planner)
-						&& owner instanceof IllegalArgumentException
-						&& "MINST_CONSUMER_LAYOUT_UNPROVEN|unconstrained-profile".equals(owner.getMessage());
-					if(!cleanMinSTDownstream) {
-						Assert.assertTrue("wrong shared lifecycle owner for " + planner + ": " + owner,
-							owner instanceof IllegalArgumentException);
-						Assert.assertEquals("Logical transient candidate capability differs", owner.getMessage());
-						contaminatedPlanners.add(planner);
-						if(firstFailure == null)
-							firstFailure = failure;
-					}
+					Assert.assertTrue("wrong shared lifecycle owner for " + planner + ": " + owner,
+						owner instanceof IllegalArgumentException);
+					Assert.assertEquals("Logical transient candidate capability differs", owner.getMessage());
+					contaminatedPlanners.add(planner);
+					if(firstFailure == null)
+						firstFailure = failure;
 				}
 
 				FederatedPlannerUtils.resetFederatedPlannerRunState();
