@@ -150,5 +150,20 @@ public final class FederatedFoutMaterializeRegistry {
 		public String getAnchorKey() {
 			return _anchorKey;
 		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if(this == obj)
+				return true;
+			if(!(obj instanceof MaterializeSpec that))
+				return false;
+			return _anchorHopId == that._anchorHopId && Objects.equals(_fTypeHint, that._fTypeHint)
+				&& Objects.equals(_anchorLabel, that._anchorLabel) && Objects.equals(_anchorKey, that._anchorKey);
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(_anchorHopId, _fTypeHint, _anchorLabel, _anchorKey);
+		}
 	}
 }

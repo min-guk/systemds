@@ -141,5 +141,19 @@ public final class FederatedRefedRegistry {
 		public String getAnchorKey() {
 			return _anchorKey;
 		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if(this == obj)
+				return true;
+			if(!(obj instanceof AnchorSpec that))
+				return false;
+			return _anchorHopId == that._anchorHopId && Objects.equals(_anchorKey, that._anchorKey);
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(_anchorHopId, _anchorKey);
+		}
 	}
 }
