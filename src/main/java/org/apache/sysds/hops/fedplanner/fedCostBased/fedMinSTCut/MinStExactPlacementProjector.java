@@ -303,8 +303,12 @@ public final class MinStExactPlacementProjector {
 		}
 
 		private void add(CompiledHopKey consumerKey, long consumerHopId) {
-			if(!consumerKeys.add(consumerKey) && !consumerHopIds.contains(consumerHopId))
-				throw new IllegalArgumentException("MINST_PROJECTOR_CONSUMER_IDENTITY_COLLISION");
+			if(!consumerKeys.add(consumerKey)) {
+				if(!consumerHopIds.contains(consumerHopId))
+					throw new IllegalArgumentException("MINST_PROJECTOR_CONSUMER_IDENTITY_COLLISION");
+				throw new IllegalArgumentException("MINST_PROJECTOR_DUPLICATE_OBLIGATION_ENDPOINT|consumer="
+					+ consumerKey.normalizedSignature());
+			}
 			consumerHopIds.add(consumerHopId);
 		}
 

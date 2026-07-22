@@ -14,12 +14,8 @@ import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.ValueType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelector;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -59,11 +55,23 @@ public class CampaignBMinStDuplicateObligationRedTest {
 					&& receipt.consumerKey().equals(endpoint.consumerKey())
 					&& receipt.inputPosition() == endpoint.inputPosition()).count();
 			Assert.assertEquals("G014_HEAVY_MM_SELECTED_UPLOAD_COUNT", 1L, selected);
-			var receipt = selection.obligationReceiptsInOrder().stream().filter(r -> r.direction() == Direction.UPLOAD && r.producerKey().equals(upload.producerKey()) && r.consumerKey().equals(endpoint.consumerKey()) && r.inputPosition() == endpoint.inputPosition()).findFirst().orElseThrow();
-			List<MinStExactSelection.ObligationReceipt> dup = new java.util.ArrayList<>(selection.obligationReceiptsInOrder());
-			dup.add(receipt);
-			MinStExactSelection forged = new MinStExactSelection(selection.objectiveBits(), selection.sourcePartitionNodeIds(), selection.selectedStatesInScopeOrder(), dup, selection.tieCertificate(), selection.minimumSourcePartitionCertificates());
-			Assert.assertThrows("duplicate endpoint must be rejected", IllegalArgumentException.class, () -> MinStExactPlacementProjector.project(facts, forged));
+			var receipt = selection.obligationReceiptsInOrder().stream()
+				.filter(candidate -> candidate.direction() == Direction.UPLOAD
+					&& candidate.producerKey() == upload.producerKey()
+					&& candidate.consumerKey() == endpoint.consumerKey()
+					&& candidate.inputPosition() == endpoint.inputPosition())
+				.findFirst().orElseThrow();
+			List<MinStExactSelection.ObligationReceipt> duplicated =
+				new java.util.ArrayList<>(selection.obligationReceiptsInOrder());
+			duplicated.add(receipt);
+			MinStExactSelection duplicateCertificate = new MinStExactSelection(selection.objectiveBits(),
+				selection.sourcePartitionNodeIds(), selection.selectedStatesInScopeOrder(), duplicated,
+				selection.tieCertificate(), selection.minimumSourcePartitionCertificates());
+			IllegalArgumentException failure = Assert.assertThrows(
+				"duplicate endpoint must be rejected", IllegalArgumentException.class,
+				() -> MinStExactPlacementProjector.project(facts, duplicateCertificate));
+			Assert.assertTrue(failure.getMessage(), failure.getMessage()
+				.startsWith("MINST_PROJECTOR_DUPLICATE_OBLIGATION_ENDPOINT"));
 		}
 		finally {
 			HDFSTool.deleteFileIfExistOnHDFS(input);
