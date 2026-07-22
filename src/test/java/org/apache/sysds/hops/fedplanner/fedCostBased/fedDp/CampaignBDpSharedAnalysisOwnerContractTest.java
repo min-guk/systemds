@@ -78,7 +78,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	private static final Path TOKEN_SCANNER = Path.of(
 		"src/test/java/org/apache/sysds/test/component/federated/placement/guard/JavaSourceTokenScanner.java");
 	private static final String ARCHITECTURE_GUARD_SHA =
-		"8263e06a82f9f17823a1d281a5ab5f2932887ef17b950a7f5bcccaec8ea6fa90";
+		"2b860d601bafe5165bc6a4606d40ab0efd84b8b5941541ce1109414f69aee48c";
 	private static final String OWNERSHIP_CLOSURE_SHA =
 		"a6286fe39edad061225405023d707c676429bb6707fa84c852628db1185c57ab";
 	private static final String TOKEN_SCANNER_SHA =
