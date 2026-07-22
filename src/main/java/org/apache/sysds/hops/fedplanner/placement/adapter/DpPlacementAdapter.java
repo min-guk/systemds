@@ -149,9 +149,22 @@ public final class DpPlacementAdapter {
 		}
 	}
 
+	/** Exact rewire-owned dependency retained for DP indexing but excluded from candidate-oracle inputs. */
+	public record TransientForwardDependencyEntry(RewireTransientForwardEdge forwardEdge,
+		CompiledHopKey sourceOccurrence, int collectedPosition, PlacementState selectedSourceState) {
+		public TransientForwardDependencyEntry {
+			Objects.requireNonNull(forwardEdge, "forwardEdge");
+			Objects.requireNonNull(sourceOccurrence, "sourceOccurrence");
+			Objects.requireNonNull(selectedSourceState, "selectedSourceState");
+			if(sourceOccurrence != forwardEdge.writeOccurrence() || collectedPosition < 0)
+				throw new IllegalArgumentException("Transient-forward dependency identity differs");
+		}
+	}
+
 	public record CandidateOccurrenceSnapshot(NeutralEnumerationContext context,
 		CompiledHopKey parentOccurrence, List<CandidateMapEntry> rawEntries,
 		List<CandidateMapEntry> promotedEntries, List<LogicalCandidateInputEntry> logicalEntries,
+		List<TransientForwardDependencyEntry> transientForwardDependencies,
 		List<OracleInputState> orderedOracleInputs,
 		ConstructionDisposition disposition, String reasonCode) {
 		public CandidateOccurrenceSnapshot {
@@ -160,6 +173,7 @@ public final class DpPlacementAdapter {
 			rawEntries = List.copyOf(rawEntries);
 			promotedEntries = List.copyOf(promotedEntries);
 			logicalEntries = List.copyOf(logicalEntries);
+			transientForwardDependencies = List.copyOf(transientForwardDependencies);
 			orderedOracleInputs = List.copyOf(orderedOracleInputs);
 			Objects.requireNonNull(disposition, "disposition");
 			Objects.requireNonNull(reasonCode, "reasonCode");
@@ -187,6 +201,31 @@ public final class DpPlacementAdapter {
 						parentOccurrence, i) != logical.fact()
 					|| orderedOracleInputs.get(rawEntries.size() + i) != logical.oracleInputState())
 					throw new IllegalArgumentException("Logical candidate input order or identity differs");
+			}
+			Set<CompiledHopKey> carrierSources = Collections.newSetFromMap(new IdentityHashMap<>());
+			rawEntries.forEach(entry -> carrierSources.add(entry.occurrence()));
+			logicalEntries.forEach(entry -> carrierSources.add(entry.sourceOccurrence()));
+			Set<CompiledHopKey> dependencySources = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<RewireTransientForwardEdge> dependencyEdges = Collections.newSetFromMap(new IdentityHashMap<>());
+			int previousPosition = -1;
+			for(TransientForwardDependencyEntry dependency : transientForwardDependencies) {
+				RewireTransientForwardEdge forward = dependency.forwardEdge();
+				CompiledHopKey source = dependency.sourceOccurrence();
+				PlacementState selected = dependency.selectedSourceState();
+				if(forward.readOccurrence() != parentOccurrence || carrierSources.contains(source)
+					|| !dependencySources.add(source) || !dependencyEdges.add(forward)
+					|| dependency.collectedPosition() <= previousPosition
+					|| context.rewireSnapshot().transientForwardEdges().stream()
+						.filter(edge -> edge == forward).count() != 1
+					|| !ownsCandidateKey(context.analysis(), source)
+					|| context.analysis().hop(source).orElseThrow().getDataType() == Types.DataType.MATRIX
+					|| context.analysis().hop(parentOccurrence).orElseThrow().getDataType() == Types.DataType.MATRIX
+					|| context.analysis().graph().node(source).orElseThrow().legalAlternatives().stream()
+						.filter(state -> state == selected).count() != 1
+					|| selected.execType() != ExecType.CP || selected.output() != FederatedOutput.LOUT
+					|| selected.fType() != null)
+					throw new IllegalArgumentException("Transient-forward dependency ownership differs");
+				previousPosition = dependency.collectedPosition();
 			}
 			List<CandidateInputState> factInputs = orderedOracleInputs.stream()
 				.map(input -> input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
@@ -251,6 +290,7 @@ public final class DpPlacementAdapter {
 				throw new IllegalArgumentException("Normalized candidate carrier sizes differ");
 			int promotedIndex = 0;
 			int logicalIndex = 0;
+			int dependencyIndex = 0;
 			for(int i = 0; i < exactCollectedHops.size(); i++) {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
 				HopOccurrenceProjection projected = snapshot.context().rewireSnapshot().projectExactCarrier(hop);
@@ -270,11 +310,23 @@ public final class DpPlacementAdapter {
 					if(effectiveCollectedFTypes.get(i) != expected)
 						throw new IllegalArgumentException("Normalized logical FType differs from selected source state");
 				}
+				else if(dependencyIndex < snapshot.transientForwardDependencies().size()
+					&& projected.key() == snapshot.transientForwardDependencies().get(dependencyIndex).sourceOccurrence()
+					&& i == snapshot.transientForwardDependencies().get(dependencyIndex).collectedPosition()) {
+					if(effectiveCollectedFTypes.get(i) != null)
+						throw new IllegalArgumentException("Transient-forward dependency has a federated carrier type");
+					dependencyIndex++;
+				}
 				else
-					throw new IllegalArgumentException("Normalized collected carrier has no exact physical or logical owner");
+					throw new IllegalArgumentException(
+						"Normalized collected dependency has no exact physical, logical, or transient-forward owner"
+							+ "|parent=" + snapshot.parentOccurrence().normalizedSignature()
+							+ "|source=" + projected.key().normalizedSignature()
+							+ "|sourceType=" + hop.getDataType() + "|position=" + i);
 			}
 			if(promotedIndex != snapshot.promotedEntries().size()
-				|| logicalIndex != snapshot.logicalEntries().size())
+				|| logicalIndex != snapshot.logicalEntries().size()
+				|| dependencyIndex != snapshot.transientForwardDependencies().size())
 				throw new IllegalArgumentException("Normalized carrier order differs");
 		}
 	}
@@ -441,6 +493,7 @@ public final class DpPlacementAdapter {
 		List<CandidateMapEntry> rawEntries = new ArrayList<>(collectedHops.size());
 		List<CandidateMapEntry> promotedEntries = new ArrayList<>(collectedHops.size());
 		List<LogicalCandidateInputEntry> logicalEntries = new ArrayList<>(1);
+		List<TransientForwardDependencyEntry> transientForwardDependencies = new ArrayList<>(1);
 		List<OracleInputState> rawOrderOracleStates = new ArrayList<>(collectedHops.size());
 		List<OracleInputState> orderedOracleInputs = new ArrayList<>(collectedHops.size());
 		List<FType> effectiveCollectedFTypes = new ArrayList<>(collectedFTypes);
@@ -471,6 +524,7 @@ public final class DpPlacementAdapter {
 			FType rawType = rawContainsKey ? fedInputTypeMap.get(hop.getHopID()) : null;
 			FType collectedType = effectiveCollectedFTypes.get(i);
 			FedPlan childPlan = memo.getFedPlanAfterPrune(edge);
+			Hop sourceHop = context.analysis().hop(occurrence.key()).orElseThrow();
 			int remaining = remainingPhysicalInputs.getOrDefault(occurrence.key(), 0);
 			boolean hasLogicalTransientInput = context.analysis().logicalTransientInputsInCanonicalOrder().stream()
 				.anyMatch(fact -> fact.targetRead() == parent.key());
@@ -519,6 +573,37 @@ public final class DpPlacementAdapter {
 				logicalEntries.add(new LogicalCandidateInputEntry(fact, occurrence.key(), 0, selected, oracle));
 				continue;
 			}
+			if(remaining == 0 && sourceHop.getDataType() != Types.DataType.MATRIX
+				&& parentHop.getDataType() != Types.DataType.MATRIX) {
+				List<RewireTransientForwardEdge> forwards = context.rewireSnapshot().transientForwardEdges().stream()
+					.filter(forward -> forward.writeOccurrence() == occurrence.key()
+						&& forward.readOccurrence() == parent.key()).toList();
+				if(forwards.size() != 1 || transientForwardDependencies.stream()
+					.anyMatch(dependency -> dependency.sourceOccurrence() == occurrence.key()))
+					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+						forwards.isEmpty() ? "COLLECTED_DEPENDENCY_UNOWNED" : "TRANSIENT_FORWARD_DEPENDENCY_DUPLICATED");
+				PlacementState selected = childPlan == null ? null : childPlan.getSelectedPlacementState();
+				List<PlacementState> ownedSelections = selected == null ? List.of()
+					: context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
+						.filter(selected::equals).toList();
+				String authorityDifference = rawContainsKey ? "MAP_PRESENT"
+					: collectedType != null ? "COLLECTED_FTYPE_PRESENT"
+					: edge.getRight() != FederatedOutput.LOUT ? "EDGE_NOT_LOUT"
+					: childPlan == null ? "CHILD_PLAN_MISSING"
+					: childPlan.getExecType() != ExecType.CP ? "CHILD_EXEC_NOT_CP"
+					: selected == null ? "SELECTED_STATE_MISSING"
+					: selected.execType() != ExecType.CP ? "SELECTED_EXEC_NOT_CP"
+					: selected.output() != FederatedOutput.LOUT ? "SELECTED_OUTPUT_NOT_LOUT"
+					: selected.fType() != null ? "SELECTED_FTYPE_PRESENT"
+					: ownedSelections.size() != 1 ? "SELECTED_STATE_NOT_ANALYSIS_OWNED" : null;
+				if(authorityDifference != null)
+					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+						"TRANSIENT_FORWARD_DEPENDENCY_" + authorityDifference);
+				effectiveCollectedFTypes.set(i, null);
+				transientForwardDependencies.add(new TransientForwardDependencyEntry(
+					forwards.get(0), occurrence.key(), i, ownedSelections.get(0)));
+				continue;
+			}
 			if(rawContainsKey && collectedType != null && collectedType != rawType)
 				throw failure(context.analysis(), parent.key(),
 					ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA, "FTYPE_MISMATCH");
@@ -564,7 +649,8 @@ public final class DpPlacementAdapter {
 		logicalEntries.forEach(entry -> orderedOracleInputs.add(entry.oracleInputState()));
 
 		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
-			promotedEntries, logicalEntries, orderedOracleInputs, ConstructionDisposition.AVAILABLE, "AVAILABLE");
+			promotedEntries, logicalEntries, transientForwardDependencies, orderedOracleInputs,
+			ConstructionDisposition.AVAILABLE, "AVAILABLE");
 		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
 	}
 
