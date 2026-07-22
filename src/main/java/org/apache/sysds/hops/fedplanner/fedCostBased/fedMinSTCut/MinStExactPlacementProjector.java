@@ -2,7 +2,6 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 
@@ -31,9 +30,10 @@ public final class MinStExactPlacementProjector {
   }
   MinStPlacementInput.ProducerReceipt p=new MinStPlacementInput.ProducerReceipt(facts.analysisFingerprint(),selection.objectiveBits(),selection.sourcePartitionNodeIds());
   List<MinStPlacementInput.ObligationReceipt> obligations=new ArrayList<>();
-  for(MinStExactSelection.ObligationReceipt r:selection.obligationReceiptsInOrder())
-   if(r.requiredPlacement().fType()==null) throw new IllegalArgumentException("MINST_PROJECTOR_NONCONCRETE_FTYPE");
-   obligations.add(new MinStPlacementInput.ObligationReceipt(r.kind().name(),r.producerKey().hashCode(),r.producerKey().hashCode(),r.actionSignature(),List.of((long)r.consumerKey().hashCode()),r.requiredPlacement().fType(),true,"EXACT_MINST_ACTION","EXACT_MINST"));
+	  for(MinStExactSelection.ObligationReceipt r:selection.obligationReceiptsInOrder()) {
+	   if(r.requiredPlacement().fType()==null) throw new IllegalArgumentException("MINST_PROJECTOR_NONCONCRETE_FTYPE");
+	   obligations.add(new MinStPlacementInput.ObligationReceipt(r.kind().name(),r.producerKey().hashCode(),r.producerKey().hashCode(),r.actionSignature(),List.of((long)r.consumerKey().hashCode()),r.requiredPlacement().fType(),true,"EXACT_MINST_ACTION","EXACT_MINST"));
+	  }
   return MinStPlacementInput.create(facts.analysis(),p,out,obligations);
  }
 }
