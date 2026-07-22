@@ -56,7 +56,8 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 
 	public record HeuristicInvocationReceipt(PlacementAnalysis analysis, HeuristicPolicyFacts policyFacts,
 		Set<ValueVersionKey> markers, HeuristicPlacementAdapter.Result result, InvocationCounters counters,
-		String analysisFingerprintBefore, String analysisFingerprintAfter, PlacementEmissionReceipt emissionReceipt)
+		String analysisFingerprintBefore, String analysisFingerprintAfter,
+		NormalizedPlannerResult normalizedResult, PlacementEmissionReceipt emissionReceipt)
 		implements AFederatedPlanner.PlannerInvocationReceipt {
 		public HeuristicInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
@@ -66,6 +67,7 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 			Objects.requireNonNull(counters, "counters");
 			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
 			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
+			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(policyFacts != analysis.heuristicPolicyFacts())
 				throw new IllegalArgumentException("FedHeuristic policy facts identity differs");
@@ -75,6 +77,9 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter)
 				|| !analysisFingerprintBefore.equals(result.analysisFingerprint()))
 				throw new IllegalArgumentException("Supplied analysis changed during FedHeuristic selection");
+			if(normalizedResult.analysis() != analysis
+				|| !PlacementEmissionTransaction.canonicalPlanHash(normalizedResult).equals(emissionReceipt.planHash()))
+				throw new IllegalArgumentException("FedHeuristic normalized result and emission receipt differ");
 		}
 	}
 
@@ -97,7 +102,7 @@ public class FederatedPlannerFedHeuristic extends AFederatedPlanner {
 			PlacementEmissionTransaction.FailureInjector.none());
 		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
 		return new HeuristicInvocationReceipt(analysis, policyFacts, markers, result, counters,
-			fingerprintBefore, analysis.analysisFingerprint(), emission);
+			fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
 	}
 
 	@Override

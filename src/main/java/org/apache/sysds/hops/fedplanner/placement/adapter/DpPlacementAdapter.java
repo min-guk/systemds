@@ -467,6 +467,23 @@ public final class DpPlacementAdapter {
 			caps, catalog);
 	}
 
+	/** Exact catalog lookup for an authorized zero-input/source variant. */
+	public static PlacementState requireExactSourceState(NeutralEnumerationContext context,
+		HopOccurrenceProjection occurrence, ExecType execType, FederatedOutput output) {
+		Objects.requireNonNull(context, "context");
+		Objects.requireNonNull(occurrence, "occurrence");
+		if(context.analysis().occurrences().stream().noneMatch(candidate -> candidate == occurrence))
+			throw failure(context.analysis(), occurrence.key(), ConstructionDisposition.FOREIGN_CONTEXT,
+				"FOREIGN_CONTEXT");
+		List<PlacementState> matches = context.analysis().graph().node(occurrence.key()).orElseThrow()
+			.legalAlternatives().stream().filter(state -> state.execType() == execType
+				&& state.output() == output).toList();
+		if(matches.size() != 1)
+			throw failure(context.analysis(), occurrence.key(), ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+				"SOURCE_EXACT_STATE_UNAVAILABLE");
+		return matches.get(0);
+	}
+
 	public static NeutralEnumerationContext captureNeutralEnumerationContext(PlacementAnalysis analysis,
 		RewireOccurrenceSnapshot rewireSnapshot, int numWorkers, Map<Long, Privacy> privacyByHop,
 		Set<Long> terminalTransientWriteHopIds) {

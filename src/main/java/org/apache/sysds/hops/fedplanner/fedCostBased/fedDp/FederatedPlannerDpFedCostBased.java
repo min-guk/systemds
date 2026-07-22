@@ -240,7 +240,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(normalizedResult.analysis() != analysis
-				|| !normalizedResult.normalizedPlanFingerprint().equals(emissionReceipt.planHash()))
+				|| !PlacementEmissionTransaction.canonicalPlanHash(normalizedResult).equals(emissionReceipt.planHash()))
 				throw new IllegalArgumentException("DP normalized result and emission receipt differ");
 			appliedPlans = List.copyOf(appliedPlans);
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
@@ -320,7 +320,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(normalizedResult.analysis() != analysis
-				|| !normalizedResult.normalizedPlanFingerprint().equals(emissionReceipt.planHash()))
+				|| !PlacementEmissionTransaction.canonicalPlanHash(normalizedResult).equals(emissionReceipt.planHash()))
 				throw new IllegalArgumentException("Dynamic DP normalized result and emission receipt differ");
 			if(memoTable.analysis() != analysis
 				|| enumerationResult.rewireSnapshot().analysis() != analysis

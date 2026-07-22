@@ -48,7 +48,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 
 	public record FedAllInvocationReceipt(PlacementAnalysis analysis, FedAllPlacementAdapter.Result result,
 		InvocationCounters counters, String analysisFingerprintBefore, String analysisFingerprintAfter,
-		PlacementEmissionReceipt emissionReceipt)
+		NormalizedPlannerResult normalizedResult, PlacementEmissionReceipt emissionReceipt)
 		implements AFederatedPlanner.PlannerInvocationReceipt {
 		public FedAllInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
@@ -56,6 +56,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			Objects.requireNonNull(counters, "counters");
 			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
 			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
+			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(result.analysis() != analysis)
 				throw new IllegalArgumentException("FedAll receipt producer identity differs");
@@ -63,6 +64,9 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 				|| !analysisFingerprintBefore.equals(analysisFingerprintAfter)
 				|| !analysisFingerprintBefore.equals(result.analysisFingerprint()))
 				throw new IllegalArgumentException("Supplied analysis changed during FedAll selection");
+			if(normalizedResult.analysis() != analysis
+				|| !PlacementEmissionTransaction.canonicalPlanHash(normalizedResult).equals(emissionReceipt.planHash()))
+				throw new IllegalArgumentException("FedAll normalized result and emission receipt differ");
 		}
 	}
 
@@ -82,7 +86,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			PlacementEmissionTransaction.FailureInjector.none());
 		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
 		return new FedAllInvocationReceipt(analysis, result, counters,
-			fingerprintBefore, analysis.analysisFingerprint(), emission);
+			fingerprintBefore, analysis.analysisFingerprint(), normalized, emission);
 	}
 
 	@Override

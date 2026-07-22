@@ -137,7 +137,7 @@ public class FederatedPlannerDpMemoTable {
 			|| fedPlanVariants.getFedOutType() != fedOutType)
 			throw new IllegalArgumentException("Plan variants do not bind the supplied occurrence");
 		occurrenceByPlanCarrier.put(carrier, occurrence);
-		bindExactPlacementStates(occurrence, fedPlanVariants);
+		validateExactPlacementStates(occurrence, fedPlanVariants);
 		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
 	}
 
@@ -151,22 +151,18 @@ public class FederatedPlannerDpMemoTable {
 			|| fedPlanVariants.getFedOutType() != fedOutType)
 			throw new IllegalArgumentException("Plan variants do not bind the supplied rewire occurrence");
 		occurrenceByPlanCarrier.put(carrier, occurrence);
-		bindExactPlacementStates(occurrence, fedPlanVariants);
+		validateExactPlacementStates(occurrence, fedPlanVariants);
 		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
 	}
 
-	private void bindExactPlacementStates(HopOccurrenceProjection occurrence, FedPlanVariants variants) {
+	private void validateExactPlacementStates(HopOccurrenceProjection occurrence, FedPlanVariants variants) {
 		NeutralPlacementGraph.Node node = analysis.graph().node(occurrence.key()).orElseThrow();
 		for(FedPlan plan : variants.getFedPlanVariants()) {
-			if(plan.getSelectedPlacementState() != null)
-				continue;
-			List<PlacementState> matches = node.legalAlternatives().stream()
-				.filter(state -> state.execType() == plan.getExecType()
-					&& state.output() == plan.getFedOutType()).toList();
-			if(matches.size() != 1)
-				throw new IllegalStateException("DP plan lacks an unambiguous exact placement carrier for "
-					+ occurrence.key() + " plan=" + plan.getExecType() + "/" + plan.getFedOutType());
-			plan.setSelectedPlacementState(matches.get(0));
+			PlacementState exact = Objects.requireNonNull(plan.getSelectedPlacementState(),
+				"DP plan lacks an exact analysis-owned placement carrier for " + occurrence.key());
+			if(node.legalAlternatives().stream().noneMatch(state -> state == exact)
+				|| exact.execType() != plan.getExecType() || exact.output() != plan.getFedOutType())
+				throw new IllegalStateException("DP plan has a foreign exact placement carrier for " + occurrence.key());
 		}
 	}
 
