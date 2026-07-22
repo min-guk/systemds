@@ -22,6 +22,8 @@ package org.apache.sysds.lops.compile;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class FederatedRefedRegistry {
@@ -32,6 +34,30 @@ public final class FederatedRefedRegistry {
 
 	public static void clear() {
 		REFED_ANCHORS.clear();
+	}
+
+	/** Deep immutable snapshot of every statement-block scope in this registry. */
+	public record Snapshot(Map<Long, Map<Long, AnchorSpec>> scopes) {
+		public Snapshot {
+			scopes = immutableSnapshot(scopes);
+		}
+	}
+
+	public static Snapshot snapshotAll() {
+		return new Snapshot(REFED_ANCHORS);
+	}
+
+	/** Exactly replaces all registry scopes with the supplied typed snapshot. */
+	public static void restoreAll(Snapshot snapshot) {
+		Objects.requireNonNull(snapshot, "snapshot");
+		REFED_ANCHORS.clear();
+		for(Map.Entry<Long, Map<Long, AnchorSpec>> scope : snapshot.scopes().entrySet()) {
+			Map<Long, AnchorSpec> entries = new ConcurrentHashMap<>();
+			for(Map.Entry<Long, AnchorSpec> entry : scope.getValue().entrySet())
+				entries.put(entry.getKey(), copy(entry.getValue()));
+			if(!entries.isEmpty())
+				REFED_ANCHORS.put(scope.getKey(), entries);
+		}
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId) {
@@ -78,6 +104,25 @@ public final class FederatedRefedRegistry {
 		if (anchors == null || anchors.isEmpty())
 			return Collections.emptyMap();
 		return Collections.unmodifiableMap(new HashMap<>(anchors));
+	}
+
+	private static Map<Long, Map<Long, AnchorSpec>> immutableSnapshot(
+		Map<Long, ? extends Map<Long, AnchorSpec>> source) {
+		Objects.requireNonNull(source, "scopes");
+		Map<Long, Map<Long, AnchorSpec>> scopes = new TreeMap<>();
+		for(Map.Entry<Long, ? extends Map<Long, AnchorSpec>> scope : source.entrySet()) {
+			Map<Long, AnchorSpec> entries = new TreeMap<>();
+			for(Map.Entry<Long, AnchorSpec> entry : scope.getValue().entrySet())
+				entries.put(entry.getKey(), copy(entry.getValue()));
+			if(!entries.isEmpty())
+				scopes.put(scope.getKey(), Collections.unmodifiableMap(entries));
+		}
+		return Collections.unmodifiableMap(scopes);
+	}
+
+	private static AnchorSpec copy(AnchorSpec spec) {
+		Objects.requireNonNull(spec, "anchorSpec");
+		return new AnchorSpec(spec.getAnchorHopId(), spec.getAnchorKey());
 	}
 
 	public static final class AnchorSpec {
