@@ -45,7 +45,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
@@ -113,8 +115,10 @@ public final class MinStExactCostFactsProducer {
 		List<DecisionFact> decisions = new ArrayList<>(orderedScope.size());
 		for(int index = 0; index < orderedScope.size(); index++) {
 			CompiledHopKey key = orderedScope.get(index);
-			Hop hop = analysis.hop(key).orElseThrow();
-			List<PlacementState> states = legalStates(analysis, key);
+			NeutralPlacementGraph.Node node = analysis.graph().node(key).orElseThrow();
+			if(!node.emittedWork())
+				continue;
+			List<PlacementState> states = legalStates(analysis, key, node);
 			DecisionFact decision = new DecisionFact(key, computeNodeId(index),
 				placementNodeId(index), states);
 			decisions.add(decision);
@@ -133,9 +137,9 @@ public final class MinStExactCostFactsProducer {
 		return new Derivation(List.copyOf(decisions), edges, groups, obligations, fingerprint);
 	}
 
-	private static List<PlacementState> legalStates(PlacementAnalysis analysis, CompiledHopKey key) {
+	private static List<PlacementState> legalStates(PlacementAnalysis analysis, CompiledHopKey key,
+		NeutralPlacementGraph.Node node) {
 		Set<PlacementState> legal = new TreeSet<>();
-		NeutralPlacementGraph.Node node = analysis.graph().node(key).orElseThrow();
 		for(PlacementState state : node.legalAlternatives())
 			if(preSolveLegal(analysis, key, state))
 				legal.add(state);
@@ -250,6 +254,8 @@ public final class MinStExactCostFactsProducer {
 		long nextAux = -3L;
 		for(CompiledHopKey producerKey : orderedScope) {
 			DecisionFact producerDecision = decisions.get(producerKey);
+			if(producerDecision == null)
+				continue;
 			Hop producer = analysis.hop(producerKey).orElseThrow();
 			if(producer.getDataType() == null || !producer.getDataType().isMatrix())
 				continue;
@@ -831,15 +837,37 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static double estimatedBytes(PlacementAnalysis analysis, CompiledHopKey key, Hop hop) {
+		if(hop.getDataType() != null && hop.getDataType().isScalar())
+			return 8.0;
 		double estimate = hop.getOutputMemEstimate();
 		if(Double.isFinite(estimate) && estimate > 0.0)
 			return estimate;
 		double derived = analysis.shapeFact(key).filter(shape -> shape.rows() > 0 && shape.cols() > 0)
 			.map(shape -> (double)shape.rows() * shape.cols() * 8.0).orElse(Double.NaN);
 		if(!Double.isFinite(derived) || derived <= 0.0)
+			derived = anchorBytes(analysis, key);
+		if(!Double.isFinite(derived) || derived <= 0.0)
 			throw new IllegalArgumentException("MINST_OUTPUT_BYTES_UNPROVEN|key="
 				+ key.normalizedSignature());
 		return derived;
+	}
+
+	private static double anchorBytes(PlacementAnalysis analysis, CompiledHopKey key) {
+		NeutralPlacementGraph.Node node = analysis.graph().node(key).orElseThrow();
+		if(node.anchors().size() != 1)
+			return Double.NaN;
+		DurableAnchorKey anchor = node.anchors().get(0);
+		long rows = 0L;
+		long cols = 0L;
+		for(AnchorPartition partition : anchor.partitions()) {
+			if(partition.end().size() < 2)
+				return Double.NaN;
+			rows = Math.max(rows, partition.end().get(0));
+			cols = Math.max(cols, partition.end().get(1));
+		}
+		if(rows <= 0L || cols <= 0L)
+			return Double.NaN;
+		return (double)rows * cols * 8.0;
 	}
 
 	private static double requireCost(double value, String reason) {

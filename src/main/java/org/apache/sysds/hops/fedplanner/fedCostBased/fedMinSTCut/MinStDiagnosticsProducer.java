@@ -69,16 +69,22 @@ public final class MinStDiagnosticsProducer {
 	private static void validateScopeIdentity(PlacementAnalysis analysis, MinStExactCostFacts facts) {
 		List<CompiledHopKey> expected = analysis.compiledHopOccurrences().stream()
 			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		if(facts.orderedScope().size() != expected.size()
-			|| facts.decisionFactsInScopeOrder().size() != expected.size())
+		if(facts.orderedScope().size() != expected.size())
 			throw new IllegalArgumentException("MINST_DIAGNOSTICS_SCOPE_CARDINALITY");
 		Set<CompiledHopKey> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+		List<CompiledHopKey> emitted = new ArrayList<>();
 		for(int index = 0; index < expected.size(); index++) {
 			CompiledHopKey key = facts.orderedScope().get(index);
-			if(key != expected.get(index) || facts.decisionFactsInScopeOrder().get(index).key() != key
-				|| !seen.add(key))
+			if(key != expected.get(index) || !seen.add(key))
 				throw new IllegalArgumentException("MINST_DIAGNOSTICS_SCOPE_IDENTITY_OR_ORDER");
+			if(analysis.graph().node(key).orElseThrow().emittedWork())
+				emitted.add(key);
 		}
+		if(facts.decisionFactsInScopeOrder().size() != emitted.size())
+			throw new IllegalArgumentException("MINST_DIAGNOSTICS_DECISION_CARDINALITY");
+		for(int index = 0; index < emitted.size(); index++)
+			if(facts.decisionFactsInScopeOrder().get(index).key() != emitted.get(index))
+				throw new IllegalArgumentException("MINST_DIAGNOSTICS_SCOPE_IDENTITY_OR_ORDER");
 	}
 
 	private static ValidatedSelection validateSelection(MinStExactCostFacts facts,

@@ -53,7 +53,7 @@ public final class MinStExactPlacementProjector {
 
 		IdentityHashMap<CompiledHopKey,PlacementState> selectedStates = selectedStatesByIdentity(facts,
 			selection);
-		List<MinStPlacementInput.OccurrenceReceipt> occurrences = occurrenceReceipts(analysis,
+		List<MinStPlacementInput.OccurrenceReceipt> occurrences = occurrenceReceipts(facts, analysis,
 			selectedStates);
 		List<MinStPlacementInput.ObligationReceipt> obligations = obligationReceipts(facts,
 			selection);
@@ -97,13 +97,16 @@ public final class MinStExactPlacementProjector {
 		MinStExactCostFacts facts, MinStExactSelection selection) {
 		List<DecisionFact> decisions = facts.decisionFactsInScopeOrder();
 		List<PlacementState> states = selection.selectedStatesInScopeOrder();
-		if(states.size() != decisions.size() || states.size() != facts.orderedScope().size())
+		if(states.size() != decisions.size())
 			throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_STATE_CARDINALITY");
+		List<CompiledHopKey> emittedScope = emittedScope(facts);
+		if(decisions.size() != emittedScope.size())
+			throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_DECISION_CARDINALITY");
 		Set<Long> source = new LinkedHashSet<>(selection.sourcePartitionNodeIds());
 		IdentityHashMap<CompiledHopKey,PlacementState> result = new IdentityHashMap<>();
 		for(int i = 0; i < decisions.size(); i++) {
 			DecisionFact decision = decisions.get(i);
-			if(decision.key() != facts.orderedScope().get(i))
+			if(decision.key() != emittedScope.get(i))
 				throw new IllegalArgumentException("MINST_PROJECTOR_SCOPE_DECISION_IDENTITY_MISMATCH");
 			PlacementState selected = Objects.requireNonNull(states.get(i),
 				"selectedStatesInScopeOrder[" + i + "]");
@@ -124,8 +127,21 @@ public final class MinStExactPlacementProjector {
 		return result;
 	}
 
+	private static List<CompiledHopKey> emittedScope(MinStExactCostFacts facts) {
+		List<CompiledHopKey> emitted = new ArrayList<>();
+		for(CompiledHopKey key : facts.orderedScope()) {
+			NeutralPlacementGraph.Node node = facts.analysis().graph().node(key).orElseThrow();
+			if(node.emittedWork())
+				emitted.add(key);
+		}
+		return List.copyOf(emitted);
+	}
+
 	private static List<MinStPlacementInput.OccurrenceReceipt> occurrenceReceipts(
-		PlacementAnalysis analysis, IdentityHashMap<CompiledHopKey,PlacementState> selectedStates) {
+		MinStExactCostFacts facts, PlacementAnalysis analysis,
+		IdentityHashMap<CompiledHopKey,PlacementState> selectedStates) {
+		Set<CompiledHopKey> exactScope = Collections.newSetFromMap(new IdentityHashMap<>());
+		exactScope.addAll(facts.orderedScope());
 		List<MinStPlacementInput.OccurrenceReceipt> receipts = new ArrayList<>(analysis.occurrences().size());
 		for(PlacementAnalysis.HopOccurrenceProjection occurrence : analysis.occurrences()) {
 			NeutralPlacementGraph.Node node = analysis.graph().node(occurrence.key()).orElseThrow();
@@ -135,15 +151,15 @@ public final class MinStExactPlacementProjector {
 			PlacementState state = selectedStates.get(occurrence.key());
 			ExecType exec = null;
 			FederatedOutput output = FederatedOutput.NONE;
-			if(node.emittedWork()) {
-				if(state == null)
-					throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_STATE_MISSING|key="
+			if(state != null) {
+				if(!node.emittedWork() || !exactScope.contains(occurrence.key()))
+					throw new IllegalArgumentException("MINST_PROJECTOR_UNSCOPED_STATE_PRESENT|key="
 						+ occurrence.key().normalizedSignature());
 				exec = state.execType();
 				output = state.output();
 			}
-			else if(state != null)
-				throw new IllegalArgumentException("MINST_PROJECTOR_NON_EMITTED_STATE_PRESENT|key="
+			else if(node.emittedWork() && exactScope.contains(occurrence.key()))
+				throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_STATE_MISSING|key="
 					+ occurrence.key().normalizedSignature());
 			receipts.add(new MinStPlacementInput.OccurrenceReceipt(occurrence.key(), hop,
 				hop.getHopID(), hop, hop.getHopID(), exec, output));
