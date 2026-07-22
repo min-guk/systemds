@@ -420,7 +420,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertTrue("B-21 RED must remain the exact DP disagreement: " + owner,
 			owner instanceof IllegalStateException
 				&& owner.getMessage().startsWith("DP occurrence has disagreeing exact selections: "));
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+		PlacementAnalysis analysis = program.requirePlacementAnalysisAuthority();
 		List<CompiledHopKey> keys = analysis.logicalTransientInputsInCanonicalOrder().stream()
 			.map(LogicalTransientInputFact::sourceWrite).distinct().toList();
 		Assert.assertEquals("B-21 RED must have one exact logical source producer", 1, keys.size());

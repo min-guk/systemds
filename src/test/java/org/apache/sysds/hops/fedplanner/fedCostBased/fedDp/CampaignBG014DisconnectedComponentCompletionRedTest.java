@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -71,7 +73,14 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 	private static DpInvocationReceipt invoke(boolean consumerFirst) throws Exception {
 		DMLProgram program = compile(consumerFirst);
 		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
-		new DMLTranslator(program).constructLops(program, receipt::set);
+		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			new DMLTranslator(program).constructLops(program, receipt::set);
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+		}
 		Assert.assertTrue(receipt.get() instanceof DpInvocationReceipt);
 		return (DpInvocationReceipt) receipt.get();
 	}
