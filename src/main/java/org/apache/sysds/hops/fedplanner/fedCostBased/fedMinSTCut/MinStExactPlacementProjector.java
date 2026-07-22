@@ -51,6 +51,7 @@ public final class MinStExactPlacementProjector {
 
 		IdentityHashMap<CompiledHopKey,PlacementState> selectedStates = selectedStatesByIdentity(facts,
 			selection);
+		completeSyntheticBoundaryStates(analysis, selectedStates);
 		List<MinStPlacementInput.OccurrenceReceipt> occurrences = occurrenceReceipts(facts, analysis,
 			selectedStates);
 		List<MinStPlacementInput.ObligationReceipt> obligations = obligationReceipts(facts,
@@ -137,6 +138,39 @@ public final class MinStExactPlacementProjector {
 		return result;
 	}
 
+	private static void completeSyntheticBoundaryStates(PlacementAnalysis analysis,
+		IdentityHashMap<CompiledHopKey, PlacementState> selectedStates) {
+		boolean progressed;
+		do {
+			progressed = false;
+			for(NeutralPlacementGraph.Node node : analysis.graph().decisionNodes()) {
+				if(selectedStates.containsKey(node.key()) || node.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+					&& node.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+					continue;
+				List<CompiledHopKey> authorities = analysis.graph().constraints().stream()
+					.filter(constraint -> constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+						&& constraint.right() == node.key())
+					.map(constraint -> constraint.left()).toList();
+				if(authorities.size() != 1)
+					throw new IllegalArgumentException("MINST_PROJECTOR_BOUNDARY_AUTHORITY_CARDINALITY|key="
+						+ node.key().normalizedSignature());
+				PlacementState source = selectedStates.get(authorities.get(0));
+				if(source == null)
+					continue;
+				if(node.legalAlternatives().stream().noneMatch(state -> state == source))
+					throw new IllegalArgumentException("MINST_PROJECTOR_BOUNDARY_EXACT_STATE_IDENTITY|key="
+						+ node.key().normalizedSignature());
+				selectedStates.put(node.key(), source);
+				progressed = true;
+			}
+		}
+		while(progressed);
+		for(NeutralPlacementGraph.Node node : analysis.graph().decisionNodes())
+			if(!selectedStates.containsKey(node.key()))
+				throw new IllegalArgumentException("MINST_PROJECTOR_TOTAL_DECISION_AUTHORITY|key="
+					+ node.key().normalizedSignature());
+	}
+
 	private static List<CompiledHopKey> emittedScope(MinStExactCostFacts facts) {
 		List<CompiledHopKey> emitted = new ArrayList<>();
 		for(CompiledHopKey key : facts.orderedScope()) {
@@ -162,52 +196,21 @@ public final class MinStExactPlacementProjector {
 			ExecType exec = null;
 			FederatedOutput output = FederatedOutput.NONE;
 			if(state != null) {
-				if(!node.emittedWork() || !exactScope.contains(occurrence.key()))
+				boolean semanticBoundary = node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+					|| node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT;
+				if(!node.emittedWork() || !exactScope.contains(occurrence.key()) && !semanticBoundary)
 					throw new IllegalArgumentException("MINST_PROJECTOR_UNSCOPED_STATE_PRESENT|key="
 						+ occurrence.key().normalizedSignature());
 				exec = state.execType();
 				output = state.output();
 			}
-			else if(node.emittedWork()) {
-				if(exactScope.contains(occurrence.key()))
-					throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_STATE_MISSING|key="
-						+ occurrence.key().normalizedSignature());
-				PlacementState boundaryState = functionBoundaryState(analysis, occurrence, node,
-					exactScope, selectedStates);
-				exec = boundaryState.execType();
-				output = boundaryState.output();
-			}
+			else if(node.emittedWork())
+				throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_STATE_MISSING|key="
+					+ occurrence.key().normalizedSignature());
 			receipts.add(new MinStPlacementInput.OccurrenceReceipt(occurrence.key(), hop,
 				hop.getHopID(), hop, hop.getHopID(), exec, output));
 		}
 		return List.copyOf(receipts);
-	}
-
-	private static PlacementState functionBoundaryState(PlacementAnalysis analysis,
-		PlacementAnalysis.HopOccurrenceProjection boundary, NeutralPlacementGraph.Node boundaryNode,
-		Set<CompiledHopKey> exactScope,
-		IdentityHashMap<CompiledHopKey,PlacementState> selectedStates) {
-		if(boundaryNode.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
-			&& boundaryNode.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
-			throw new IllegalArgumentException("MINST_PROJECTOR_UNSCOPED_EMITTED_NODE|key="
-				+ boundary.key().normalizedSignature());
-		List<PlacementState> owners = analysis.compiledHopOccurrences().stream()
-			.filter(candidate -> candidate.hop() == boundary.hop())
-			.filter(candidate -> exactScope.contains(candidate.key()))
-			.map(candidate -> selectedStates.get(candidate.key()))
-			.filter(Objects::nonNull).toList();
-		if(owners.size() != 1)
-			throw new IllegalArgumentException("MINST_PROJECTOR_FUNCTION_BOUNDARY_OWNER_"
-				+ (owners.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|key="
-				+ boundary.key().normalizedSignature());
-		PlacementState selected = owners.get(0);
-		boolean legalMembership = boundaryNode.legalAlternatives().stream()
-			.anyMatch(candidate -> candidate.execType() == selected.execType()
-				&& candidate.output() == selected.output());
-		if(!legalMembership)
-			throw new IllegalArgumentException("MINST_PROJECTOR_FUNCTION_BOUNDARY_STATE_ILLEGAL|key="
-				+ boundary.key().normalizedSignature());
-		return selected;
 	}
 
 	private static List<MinStPlacementInput.ObligationReceipt> obligationReceipts(
