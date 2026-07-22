@@ -1533,7 +1533,7 @@ public class FederatedPlannerDpCostEnumerator {
 	private static boolean isTransientForwardCandidateCarrier(Hop readHop, Hop writeHop,
 		EnumerationCapture capture) {
 		if(capture == null)
-			return true;
+			throw new IllegalStateException("Transient candidate carrier requires exact neutral capture");
 		RewireOccurrenceSnapshot snapshot = capture.context.rewireSnapshot();
 		HopOccurrenceProjection read = findOccurrence(capture, readHop);
 		HopOccurrenceProjection write = snapshot.projectExactCarrier(writeHop);

@@ -151,6 +151,24 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		assertScalarTransientForwardDependency(enumeration.semanticBlock());
 	}
 
+	@Test
+	public void missingNeutralCaptureCannotAuthorizeTransientCarrier() throws Exception {
+		Class<?> captureType = Class.forName(FederatedPlannerDpCostEnumerator.class.getName() + "$EnumerationCapture");
+		java.lang.reflect.Method predicate = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"isTransientForwardCandidateCarrier", org.apache.sysds.hops.Hop.class,
+			org.apache.sysds.hops.Hop.class, captureType);
+		predicate.setAccessible(true);
+		try {
+			Object accepted = predicate.invoke(null, new Object[] {null, null, null});
+			Assert.fail("missing neutral capture authorized a transient carrier: " + accepted);
+		}
+		catch(java.lang.reflect.InvocationTargetException expected) {
+			Assert.assertTrue(expected.getCause() instanceof IllegalStateException);
+			Assert.assertEquals("Transient candidate carrier requires exact neutral capture",
+				expected.getCause().getMessage());
+		}
+	}
+
 	private static void assertScalarTransientForwardDependency(PreSelectionSemanticBlock block) {
 		List<ScalarTransientDependency> dependencies = new ArrayList<>();
 		for(CandidateOccurrenceSnapshot snapshot : block.candidateSnapshots()) {
