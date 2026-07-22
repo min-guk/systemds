@@ -23,9 +23,12 @@ import static org.junit.Assert.assertTrue;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
@@ -45,11 +48,13 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeProof;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore.OracleEngine;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.FTypes;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class OracleFacadeTest {
@@ -143,6 +148,44 @@ public class OracleFacadeTest {
     OpCaps viaManual = legacy.decide(manualSig, List.of(FType.ROW, FType.ROW), hint);
 
     assertCapsEquivalent(viaFacade, viaManual);
+  }
+
+  @Test
+  public void transientWriteProofIgnoresObservationOnlyShapeLogging() {
+    Hop input = matrix("input", -1, -1);
+    input.setBlocksize(-1);
+    DataOp write = new DataOp("write", DataType.MATRIX, ValueType.FP64,
+        input, OpOpData.TRANSIENTWRITE, "A");
+    write.setDim1(-1);
+    write.setDim2(-1);
+    write.setBlocksize(-1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(write, List.of(FType.ROW), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
+    assertEquals(new ShapeProof(Map.of(), Set.of(), Set.of()), evidence.shapeProof());
+  }
+
+  @Test
+  public void binaryProofIncludesOnlyRuleConsultedMissingShapeFacts() {
+    Hop left = matrix("left", 4, 7);
+    Hop right = matrix("right", 4, 7);
+    BinaryOp plus = new BinaryOp(
+        "plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
+    plus.setDim1(-1);
+    plus.setDim2(7);
+    plus.setBlocksize(-1);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, List.of(FType.ROW, FType.ROW), null);
+
+    assertEquals(ExecType.FED, evidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, evidence.caps().placement());
+    assertEquals(Optional.of(FType.ROW), evidence.caps().foutFType());
+    assertEquals(Set.of("rows"), evidence.shapeProof().missingRequiredFacts());
   }
 
   private static void assertCapsEquivalent(OpCaps actual, OpCaps expected) {
