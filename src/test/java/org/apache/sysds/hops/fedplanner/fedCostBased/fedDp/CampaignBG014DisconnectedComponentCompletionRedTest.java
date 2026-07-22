@@ -3,37 +3,41 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
-import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
+import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,60 +46,66 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 	@Test
 	public void captureOnlyCloneFamilySelectionDoesNotMutatePlannerState() throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		LiteralOp original = new LiteralOp(7L);
-		LiteralOp clone = new LiteralOp(11L);
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		FedPlan originalPlan = addPlan(memo, original, FederatedOutput.LOUT, ExecType.CP, 0x1.0p2);
-		FedPlan clonePlan = addPlan(memo, clone, FederatedOutput.LOUT, ExecType.CP, 0x1.0p2);
-		memo.registerCloneMapping(Map.of(clone.getHopID(), original.getHopID()));
+		EnumeratedFixture enumerated = enumerateHostileFixture();
+		PlacementAnalysis analysis = enumerated.analysis();
+		FederatedPlannerDpMemoTable memo = enumerated.memo();
+		Map<Long,FederatedOutput> outputDecisions = enumerated.outputDecisions();
+		Map<Long,Object> conflicts = enumerated.conflicts();
+		HostileComponentFixture fixture = enumerated.hostile();
 
-		Class<?> conflictType = Class.forName(FederatedPlannerDpFedCostBased.class.getName() + "$ConflictEntry");
-		Constructor<?> constructor = conflictType.getDeclaredConstructor(FederatedOutput.class,
-			FedPlan.class, long.class, FedPlan.class);
-		constructor.setAccessible(true);
-		Object conflict = constructor.newInstance(FederatedOutput.LOUT, originalPlan,
-			original.getHopID(), originalPlan);
-		Method addUsage = conflictType.getDeclaredMethod("addUsage", FederatedOutput.class,
-			FedPlan.class, long.class, FedPlan.class);
-		addUsage.setAccessible(true);
-		addUsage.invoke(conflict, FederatedOutput.LOUT, clonePlan, clone.getHopID(), clonePlan);
-		Map<Long,Object> conflicts = new HashMap<>();
-		conflicts.put(original.getHopID(), conflict);
-		Map<Long,FederatedOutput> outputDecisions = new LinkedHashMap<>();
-		outputDecisions.put(original.getHopID(), FederatedOutput.LOUT);
-		Map<String,String> selectedStates = new LinkedHashMap<>(Map.of("boundary", "locked"));
-		Set<String> visitedPlanHops = new LinkedHashSet<>(Set.of("boundary"));
-		Map<Long,String> fTypeMap = new LinkedHashMap<>(Map.of(original.getHopID(), "ROW"));
-		Map<Long,String> localMaterializeRequests =
-			new LinkedHashMap<>(Map.of(original.getHopID(), "existing-request"));
-
-		CloneSnapshot before = snapshotCloneFamily(original, clone);
+		Map<CompiledHopKey,Object> selectedStates = new IdentityHashMap<>();
+		Set<CompiledHopKey> visitedPlanHops = Collections.newSetFromMap(new IdentityHashMap<>());
+		Map<Long,FType> fTypeMap = new LinkedHashMap<>();
+		selectedStates.put(fixture.rootKey(), newSelectedState(fixture.lockedRootState(), false));
+		visitedPlanHops.add(fixture.rootKey());
+		if(fixture.lockedRootState().fType() != null)
+			fTypeMap.put(memo.resolveOriginalHopId(fixture.rootPlan().getHopID()),
+				fixture.lockedRootState().fType());
+		Map<Long,Object> localMaterializeRequests = new LinkedHashMap<>();
+		CloneSnapshot before = snapshotCloneFamily(fixture.familyHops());
 		AccumulatorSnapshot accumulatorsBefore = snapshotAccumulators(selectedStates, visitedPlanHops,
 			fTypeMap, outputDecisions, conflicts, localMaterializeRequests);
-		Method selector = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
-			"selectLoopAwareCloneFamilyRewritePlan", FederatedPlannerDpMemoTable.class,
-			long.class, FedPlan.class, Map.class, Map.class);
-		selector.setAccessible(true);
-		Object selected = selector.invoke(null, memo, original.getHopID(), originalPlan,
-			outputDecisions, conflicts);
-		CloneSelectionReceipt receipt = new CloneSelectionReceipt((FedPlan) selected,
-			Double.doubleToRawLongBits(((FedPlan) selected).getCumulativeCost()));
-		Assert.assertSame("capture-only path must retain exact best-plan identity", originalPlan, receipt.plan());
-		Assert.assertEquals(Double.doubleToRawLongBits(originalPlan.getCumulativeCost()), receipt.costBits());
 
+		Method rewrite = FederatedPlannerDpFedCostBased.class.getDeclaredMethod("rewriteHop",
+			FedPlan.class, FederatedPlannerDpMemoTable.class, Map.class, Set.class, Map.class,
+			Map.class, boolean.class, Map.class, Map.class);
+		rewrite.setAccessible(true);
 		try {
-			requireExactComponentCoverage(
-				Set.of(original.getHopID(), clone.getHopID()), Set.of(original.getHopID()));
-			Assert.fail("fixture must force a later incomplete component-coverage failure");
+			rewrite.invoke(new FederatedPlannerDpFedCostBased(), fixture.rootPlan(), memo, outputDecisions,
+				visitedPlanHops, fTypeMap, conflicts, true, localMaterializeRequests, selectedStates);
+			Assert.fail("fixture must force a real boundary-lock disagreement");
 		}
-		catch(IllegalStateException expected) {
-			Assert.assertTrue(expected.getMessage().contains("incomplete component coverage"));
+		catch(InvocationTargetException expected) {
+			Assert.assertTrue(expected.getCause() instanceof IllegalStateException);
+			Assert.assertTrue(expected.getCause().getMessage().contains(
+				"DP occurrence has disagreeing exact selections: " + fixture.rootKey()));
 		}
 		Assert.assertEquals("failed component changed global planning accumulators",
 			accumulatorsBefore, snapshotAccumulators(selectedStates, visitedPlanHops,
 				fTypeMap, outputDecisions, conflicts, localMaterializeRequests));
 		Assert.assertEquals("clone-family selection mutated Hop/recompile state before component validation",
-			before, snapshotCloneFamily(original, clone));
+			before, snapshotCloneFamily(fixture.familyHops()));
+	}
+
+	private static EnumeratedFixture enumerateHostileFixture() throws Exception {
+		AssertionError last = null;
+		for(String fixtureID : List.of("B-09", "B-05")) {
+			DMLProgram program = ProductionShadowFixtureFactory.compile(fixtureID);
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
+			FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+			DpEnumerationResult enumeration =
+				FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(program, memo, false, analysis);
+			Map<Long,FederatedOutput> decisions = computeOutputDecisions(memo, enumeration.optimalPlan());
+			Map<Long,Object> conflicts = collectConflicts(memo, enumeration.optimalPlan(), decisions);
+			try {
+				return new EnumeratedFixture(analysis, memo, decisions, conflicts,
+					findHostileComponentFixture(analysis, memo, enumeration, decisions, conflicts));
+			}
+			catch(AssertionError miss) {
+				last = miss;
+			}
+		}
+		throw last == null ? new AssertionError("no clone-family fixture enumerated") : last;
 	}
 
 	@Test
@@ -158,48 +168,128 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		return (DpInvocationReceipt) receipt.get();
 	}
 
-	private static FedPlan addPlan(FederatedPlannerDpMemoTable memo, LiteralOp carrier,
-		FederatedOutput output, ExecType execType, double cost) {
-		HopCommon common = new HopCommon(carrier, 1, 1, 1, 1, List.of());
-		common.setSelfCost(0x1.0p-4);
-		common.setForwardingCost(0x1.0p-3);
-		FedPlanVariants variants = new FedPlanVariants(common, output);
-		FedPlan plan = new FedPlan(cost, variants, List.<Pair<Long,FederatedOutput>>of());
-		plan.setExecType(execType);
-		variants.addFedPlan(plan);
-		variants.pruneFedPlans();
-		memo.registerHopRefs(Map.of(carrier.getHopID(), common));
-		memo.addFedPlanVariants(carrier.getHopID(), output, variants);
-		return plan;
+	@SuppressWarnings("unchecked")
+	private static Map<Long,FederatedOutput> computeOutputDecisions(
+		FederatedPlannerDpMemoTable memo, FedPlan root) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"computeOutputDecisions", FederatedPlannerDpMemoTable.class, FedPlan.class);
+		method.setAccessible(true);
+		return (Map<Long,FederatedOutput>) method.invoke(null, memo, root);
 	}
 
-	private static CloneSnapshot snapshotCloneFamily(LiteralOp original, LiteralOp clone) {
-		return new CloneSnapshot(hopState(original), hopState(clone),
+	@SuppressWarnings("unchecked")
+	private static Map<Long,Object> collectConflicts(FederatedPlannerDpMemoTable memo,
+		FedPlan root, Map<Long,FederatedOutput> decisions) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"collectConflictsSingleBFS", FederatedPlannerDpMemoTable.class, FedPlan.class, Map.class);
+		method.setAccessible(true);
+		return (Map<Long,Object>) method.invoke(null, memo, root, decisions);
+	}
+
+	private static HostileComponentFixture findHostileComponentFixture(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memo, DpEnumerationResult enumeration,
+		Map<Long,FederatedOutput> decisions, Map<Long,Object> conflicts) throws Exception {
+		for(Map.Entry<Long,Long> mapping : enumeration.rewireSnapshot().cloneToOriginal().entrySet()) {
+			long cloneID = mapping.getKey();
+			long originalID = mapping.getValue();
+			Object conflict = conflicts.get(originalID);
+			if(conflict == null || !conflictMemberIDs(conflict).containsAll(Set.of(originalID, cloneID)))
+				continue;
+			FedPlan local = memo.getFedPlanAfterPrune(originalID, FederatedOutput.LOUT);
+			FedPlan federated = memo.getFedPlanAfterPrune(originalID, FederatedOutput.FOUT);
+			if(local == null && federated == null)
+				continue;
+			FedPlan root = local == null ? federated : federated == null ? local
+				: local.getCumulativeCost() <= federated.getCumulativeCost() ? local : federated;
+			FederatedOutput effectiveOutput = decisions.getOrDefault(originalID, root.getFedOutType());
+			FedPlan effective = memo.getFedPlanAfterPrune(originalID, effectiveOutput);
+			if(effective != null)
+				root = effective;
+			CompiledHopKey rootKey = memo.requirePlanCarrierOccurrence(root.getHopRef()).key();
+			PlacementState locked = analysis.graph().node(rootKey).orElseThrow().legalAlternatives().stream()
+				.filter(state -> state != root.getSelectedPlacementState()).findFirst().orElse(null);
+			if(locked == null)
+				continue;
+			List<Hop> family = new java.util.ArrayList<>();
+			for(long memberID : conflictMemberIDs(conflict)) {
+				FedPlan member = cheapest(memo, memberID);
+				if(member != null && family.stream().noneMatch(hop -> hop == member.getHopRef()))
+					family.add(member.getHopRef());
+			}
+			if(family.size() > 1)
+				return new HostileComponentFixture(rootKey, root, locked, List.copyOf(family));
+		}
+		Map<Long,Object> conflictMembers = new LinkedHashMap<>();
+		for(Map.Entry<Long,Object> entry : conflicts.entrySet())
+			conflictMembers.put(entry.getKey(), conflictMemberIDs(entry.getValue()));
+		throw new AssertionError("fixture has no real clone-family root with an opposite exact child arm: clones="
+			+ enumeration.rewireSnapshot().cloneToOriginal() + " conflicts=" + conflictMembers);
+	}
+
+	private static Object newSelectedState(FedPlan plan) throws Exception {
+		PlacementState exact = plan.getSelectedPlacementState();
+		return newSelectedState(exact, plan.isDerivedFedFout());
+	}
+
+	private static Object newSelectedState(PlacementState exact, boolean derivedFedFout) throws Exception {
+		Class<?> type = Class.forName(FederatedPlannerDpFedCostBased.class.getName() + "$SelectedDpState");
+		Constructor<?> constructor = type.getDeclaredConstructor(ExecType.class, FederatedOutput.class,
+			FType.class, boolean.class, PlacementState.class);
+		constructor.setAccessible(true);
+		return constructor.newInstance(exact.execType(), exact.output(), exact.fType(), derivedFedFout, exact);
+	}
+
+	private static FedPlan cheapest(FederatedPlannerDpMemoTable memo, long hopID) {
+		FedPlan local = memo.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
+		FedPlan federated = memo.getFedPlanAfterPrune(hopID, FederatedOutput.FOUT);
+		return local == null ? federated : federated == null ? local
+			: local.getCumulativeCost() <= federated.getCumulativeCost() ? local : federated;
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Set<Long> conflictMemberIDs(Object conflict) throws Exception {
+		Field field = conflict.getClass().getDeclaredField("memberHopIDs");
+		field.setAccessible(true);
+		return Set.copyOf((Set<Long>) field.get(conflict));
+	}
+
+	private static CloneSnapshot snapshotCloneFamily(List<Hop> family) {
+		List<List<Object>> states = family.stream().map(CampaignBG014DisconnectedComponentCompletionRedTest::hopState)
+			.toList();
+		return new CloneSnapshot(states,
 			new LinkedHashMap<>(FederatedPlannerUtils.snapshotPlannerRecompileStates()),
 			FederatedPlannerUtils.snapshotAmbiguousPlannerRecompileSignatures());
 	}
 
-	private static List<Object> hopState(LiteralOp hop) {
+	private static List<Object> hopState(Hop hop) {
 		return List.of(String.valueOf(hop.getExecType()), String.valueOf(hop.getForcedExecType()),
 			String.valueOf(hop.getFederatedOutput()), hop.isFederatedOutputDerived());
 	}
 
-	private record CloneSnapshot(List<Object> original, List<Object> cloneState,
+	private record CloneSnapshot(List<List<Object>> familyStates,
 		Map<String,FederatedPlannerUtils.PlannerRecompileStateSnapshot> recompileStates,
 		java.util.Set<String> ambiguousSignatures) { }
 
-	private record CloneSelectionReceipt(FedPlan plan, long costBits) { }
+	private record HostileComponentFixture(CompiledHopKey rootKey, FedPlan rootPlan,
+		PlacementState lockedRootState, List<Hop> familyHops) { }
 
-	private static AccumulatorSnapshot snapshotAccumulators(Map<String,String> selectedStates,
-		Set<String> visitedPlanHops, Map<Long,String> fTypeMap,
+	private record EnumeratedFixture(PlacementAnalysis analysis, FederatedPlannerDpMemoTable memo,
 		Map<Long,FederatedOutput> outputDecisions, Map<Long,Object> conflicts,
-		Map<Long,String> localMaterializeRequests) throws ReflectiveOperationException {
+		HostileComponentFixture hostile) { }
+
+	private static AccumulatorSnapshot snapshotAccumulators(Map<CompiledHopKey,Object> selectedStates,
+		Set<CompiledHopKey> visitedPlanHops, Map<Long,FType> fTypeMap,
+		Map<Long,FederatedOutput> outputDecisions, Map<Long,Object> conflicts,
+		Map<Long,Object> localMaterializeRequests) throws ReflectiveOperationException {
 		Map<Long,List<Object>> conflictStates = new LinkedHashMap<>();
 		for(Map.Entry<Long,Object> entry : conflicts.entrySet())
 			conflictStates.put(entry.getKey(), snapshotConflict(entry.getValue()));
+		Map<Long,List<Object>> requestStates = new LinkedHashMap<>();
+		for(Map.Entry<Long,Object> entry : localMaterializeRequests.entrySet())
+			requestStates.put(entry.getKey(), snapshotLocalMaterializeRequest(entry.getValue()));
 		return new AccumulatorSnapshot(Map.copyOf(selectedStates), Set.copyOf(visitedPlanHops),
 			Map.copyOf(fTypeMap), Map.copyOf(outputDecisions), Map.copyOf(conflictStates),
-			Map.copyOf(localMaterializeRequests));
+			Map.copyOf(requestStates));
 	}
 
 	private static List<Object> snapshotConflict(Object conflict) throws ReflectiveOperationException {
@@ -218,16 +308,27 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		return List.copyOf(state);
 	}
 
-	private record AccumulatorSnapshot(Map<String,String> selectedStates,
-		Set<String> visitedPlanHops, Map<Long,String> fTypeMap,
-		Map<Long,FederatedOutput> outputDecisions, Map<Long,List<Object>> conflicts,
-		Map<Long,String> localMaterializeRequests) { }
-
-	private static void requireExactComponentCoverage(Set<Long> expected, Set<Long> captured) {
-		if(!expected.equals(captured))
-			throw new IllegalStateException("incomplete component coverage: expected=" + expected
-				+ " captured=" + captured);
+	private static List<Object> snapshotLocalMaterializeRequest(Object request)
+		throws ReflectiveOperationException {
+		List<Object> state = new java.util.ArrayList<>();
+		for(String fieldName : List.of("producerHopID", "producerHop", "consumerHops",
+			"consumerOutputs", "fTypeHint")) {
+			Field field = request.getClass().getDeclaredField(fieldName);
+			field.setAccessible(true);
+			Object value = field.get(request);
+			if(value instanceof Set<?> set)
+				value = List.copyOf(set);
+			else if(value instanceof Map<?,?> map)
+				value = Map.copyOf(map);
+			state.add(value);
+		}
+		return List.copyOf(state);
 	}
+
+	private record AccumulatorSnapshot(Map<CompiledHopKey,Object> selectedStates,
+		Set<CompiledHopKey> visitedPlanHops, Map<Long,FType> fTypeMap,
+		Map<Long,FederatedOutput> outputDecisions, Map<Long,List<Object>> conflicts,
+		Map<Long,List<Object>> localMaterializeRequests) { }
 
 	private static DMLProgram compile(boolean consumerFirst) throws Exception {
 		Path data = Files.createTempFile("g014-component-", ".data");
