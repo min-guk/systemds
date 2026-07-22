@@ -241,6 +241,14 @@ public class FederatedPlannerDpMemoTable {
 		return best;
 	}
 
+	public String describePlanCarriers(HopOccurrenceProjection occurrence) {
+		List<String> descriptions = new ArrayList<>();
+		for(Map.Entry<Hop, HopOccurrenceProjection> entry : occurrenceByPlanCarrier.entrySet())
+			if(entry.getValue() == occurrence)
+				descriptions.add(entry.getKey().getHopID() + ":" + entry.getKey().getOpString());
+		return descriptions.toString();
+	}
+
 	private void assertOwnedOccurrence(HopOccurrenceProjection occurrence) {
 		if(analysis == null)
 			throw new IllegalStateException("Memo is not bound to a placement analysis");
@@ -330,6 +338,14 @@ public class FederatedPlannerDpMemoTable {
 
 	public boolean contains(long hopID, FederatedOutput fedOutType) {
 		return hopMemoTable.containsKey(new ImmutablePair<>(hopID, fedOutType));
+	}
+
+	public boolean containsPlanForCarrier(Hop carrier, FederatedOutput fedOutType) {
+		if(carrier == null)
+			return false;
+		FedPlanVariants variants = hopMemoTable.get(new ImmutablePair<>(carrier.getHopID(), fedOutType));
+		return variants != null && variants.hopCommon != null
+			&& variants.hopCommon.getHopRef() == carrier;
 	}
 
 	public void registerHopRefs(Map<Long, HopCommon> hopCommonTable) {

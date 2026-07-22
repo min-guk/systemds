@@ -567,7 +567,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(plan != null)
 				rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
 					rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
+			else if(completeBaseUnavailable(selectedStates, analysis))
+				throw new IllegalStateException("DP memo omitted exact decision occurrence " + node.key()
+					+ " carriers=" + memoTable.describePlanCarriers(occurrence));
 		}
+	}
+
+	private static boolean completeBaseUnavailable(Map<CompiledHopKey, SelectedDpState> selectedStates,
+		PlacementAnalysis analysis) {
+		return selectedStates.size() < analysis.graph().decisionNodes().size();
 	}
 
 	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,

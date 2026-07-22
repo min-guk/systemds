@@ -289,7 +289,7 @@ public class FederatedPlannerDpCostEnumerator {
 
 		addUnreferencedTWriteRoots(progRootHopSet, unRefTwriteSet, hopCommonTable);
 		Set<String> fnStack = new HashSet<>();
-		Set<Long> visitedHops = new HashSet<>();
+		Set<Hop> visitedHops = Collections.newSetFromMap(new IdentityHashMap<>());
 
 		for (StatementBlock sb : analysis.topLevelStatementBlocks()) {
 			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
@@ -382,7 +382,7 @@ public class FederatedPlannerDpCostEnumerator {
 				collectUnreferencedExecutedRoots(unRefSet, hopCommonTable));
 
 		Set<String> fnStack = new HashSet<>();
-		Set<Long> visitedHops = new HashSet<>();
+		Set<Hop> visitedHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		NeutralEnumerationContext capturedContext = DpPlacementAdapter.captureNeutralEnumerationContext(
 			analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet);
 		EnumerationCapture capture = new EnumerationCapture(
@@ -428,7 +428,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops) {
+			int numOfWorkers, Set<Hop> visitedHops) {
 		enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 			parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, null);
 	}
@@ -437,7 +437,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet, Set<String> fnStack,
-			int numOfWorkers, Set<Long> visitedHops, EnumerationCapture capture) {
+			int numOfWorkers, Set<Hop> visitedHops, EnumerationCapture capture) {
 		if (sb instanceof IfStatementBlock) {
 			IfStatementBlock isb = (IfStatementBlock) sb;
 			IfStatement istmt = (IfStatement) isb.getStatement(0);
@@ -511,7 +511,7 @@ public class FederatedPlannerDpCostEnumerator {
 			Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable, Map<Long, List<Hop>> rewireTable,
 			Map<Long, Privacy> privacyConstraintMap, Map<Long, Set<Long>> parentChildUploadHints,
 			Set<Long> unRefTwriteSet,
-			Set<String> fnStack, int numOfWorkers, Set<Long> visitedHops, EnumerationCapture capture) {
+			Set<String> fnStack, int numOfWorkers, Set<Hop> visitedHops, EnumerationCapture capture) {
 		// Process all input nodes first if not already in memo table
 
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
@@ -526,10 +526,10 @@ public class FederatedPlannerDpCostEnumerator {
 
 		for (Hop inputHop : childHops) {
 			long inputHopID = inputHop.getHopID();
-			if (!memoTable.contains(inputHopID, FederatedOutput.FOUT)
-					&& !memoTable.contains(inputHopID, FederatedOutput.LOUT)) {
-				if (!visitedHops.contains(inputHopID)) {
-					visitedHops.add(inputHopID);
+			if (!memoTable.containsPlanForCarrier(inputHop, FederatedOutput.FOUT)
+					&& !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.LOUT)) {
+				if (!visitedHops.contains(inputHop)) {
+					visitedHops.add(inputHop);
 					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 							parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
 				}
@@ -1210,7 +1210,7 @@ public class FederatedPlannerDpCostEnumerator {
 		selectedChildHops.add(child);
 	}
 
-	private static void captureConstructedChildSelection(Hop parent,
+	private static CandidateDecisionReceipt captureConstructedChildSelection(Hop parent,
 			List<Pair<Long, FederatedOutput>> childEdges, List<Hop> selectedChildHops,
 			FederatedPlannerDpMemoTable memoTable,
 			EnumerationCapture capture, long variantOrdinal) {
@@ -1251,6 +1251,7 @@ public class FederatedPlannerDpCostEnumerator {
 			capture.context, normalized, variantOrdinal);
 		capture.captureDecisionReceipt(receipt, variantOrdinal);
 		capture.observer.oracleEvaluated();
+		return receipt;
 	}
 
 	private static void enumerateFederatedDataOp(DataOp dataOp, FederatedPlannerDpMemoTable memoTable,
@@ -1266,6 +1267,8 @@ public class FederatedPlannerDpCostEnumerator {
 			fedPlan.setExecType(ExecType.FED);
 			fedPlan.setFType(baseFType);
 			fedPlan.setCpFoutType(baseFType);
+			fedPlan.setSelectedPlacementState(DpPlacementAdapter.requireExactSourceState(capture.context,
+				findOccurrence(capture, dataOp), ExecType.FED, FederatedOutput.FOUT));
 			fOutFedPlanVariants.addFedPlan(fedPlan);
 			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), findOccurrence(capture, dataOp),
 				FederatedOutput.FOUT, fOutFedPlanVariants);
@@ -1286,6 +1289,8 @@ public class FederatedPlannerDpCostEnumerator {
 	private static boolean enumerateTransientReadDataOp(DataOp dataOp, List<Hop> childHops,
 			FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.HopCommon hopCommon,
 			int numOfWorkers, EnumerationCapture capture) {
+		if(capture == null)
+			throw new IllegalStateException("Transient-read DP enumeration requires exact neutral capture");
 		if (dataOp == null || dataOp.getOp() != Types.OpOpData.TRANSIENTREAD) {
 			return false;
 		}
@@ -1381,12 +1386,12 @@ public class FederatedPlannerDpCostEnumerator {
 			loutAcquireCost = costReceipt.localMaterializationWeight() * costReceipt.downloadCost();
 		}
 
-		if(capture != null) {
-			if(allowLOUT)
-				captureConstructedChildSelection(dataOp, loutChilds, loutSelectedChildHops, memoTable, capture, 0L);
-			if(allowFOUT)
-				captureConstructedChildSelection(dataOp, foutChilds, foutSelectedChildHops, memoTable, capture, 1L);
-		}
+		CandidateDecisionReceipt loutReceipt = allowLOUT
+			? captureConstructedChildSelection(dataOp, loutChilds, loutSelectedChildHops, memoTable, capture, 0L)
+			: null;
+		CandidateDecisionReceipt foutReceipt = allowFOUT
+			? captureConstructedChildSelection(dataOp, foutChilds, foutSelectedChildHops, memoTable, capture, 1L)
+			: null;
 
 		if (allowLOUT) {
 			loutCost += loutAcquireCost;
@@ -1397,6 +1402,8 @@ public class FederatedPlannerDpCostEnumerator {
 				loutPlan.setExecType(ExecType.CP);
 				loutPlan.setFType(loutFType);
 				loutPlan.setCpFoutType(loutFType);
+				loutPlan.setSelectedPlacementState(
+					loutReceipt.requireExactState(ExecType.CP, FederatedOutput.LOUT));
 				lOutFedPlanVariants.addFedPlan(loutPlan);
 				lOutFedPlanVariants.pruneFedPlans();
 				if(capture == null)
@@ -1415,6 +1422,8 @@ public class FederatedPlannerDpCostEnumerator {
 				foutPlan.setExecType(ExecType.FED);
 				foutPlan.setFType(foutFType);
 				foutPlan.setCpFoutType(foutFType);
+				foutPlan.setSelectedPlacementState(
+					foutReceipt.requireExactState(ExecType.FED, FederatedOutput.FOUT));
 				fOutFedPlanVariants.addFedPlan(foutPlan);
 				fOutFedPlanVariants.pruneFedPlans();
 				if(capture == null)
