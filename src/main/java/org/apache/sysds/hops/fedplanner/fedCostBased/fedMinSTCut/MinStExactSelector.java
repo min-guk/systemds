@@ -140,15 +140,18 @@ public final class MinStExactSelector {
 		MinStExactCostFacts facts, AuxiliaryGroupFact group) {
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
 			List<ObligationReceipt> matches = new ArrayList<>();
-			for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder()) {
-				NeutralPlacementGraph.RelocationAction action = exactActionForSignature(facts, group,
-					obligation.actionSignature());
-				for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder())
+			for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder())
+				for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder()) {
+					if(!candidate.consumerKey().equals(endpoint.consumerKey())
+						|| candidate.inputPosition() != endpoint.inputPosition())
+						continue;
+					NeutralPlacementGraph.RelocationAction action = exactActionForSignature(facts, group,
+						obligation.actionSignature());
 					if(authorizesExactEndpoint(action, group, endpoint, candidate))
 						matches.add(new ObligationReceipt(group.direction(), group.producerKey(),
 							endpoint.consumerKey(), endpoint.inputPosition(), candidate.requiredPlacement(),
 							obligation.actionSignature()));
-			}
+				}
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_OBLIGATION_AUTHORITY_"
 					+ (matches.isEmpty() ? "MISSING" : "AMBIGUOUS")

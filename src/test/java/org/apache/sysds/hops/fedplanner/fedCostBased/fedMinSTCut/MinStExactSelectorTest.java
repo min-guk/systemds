@@ -50,7 +50,7 @@ public class MinStExactSelectorTest {
 	public void selectedReceiptRejectsWrongActionSignature() throws Exception {
 		MinStExactCostFacts facts = uploadFacts(List.of(action(PRODUCER_VERSION, FF, CONSUMER)),
 			List.of(obligationFact("missing-signature", CONSUMER, 0, FF)));
-		assertRejects(() -> MinStExactSelector.select(facts));
+		assertRejectsCode("MINST_EXACT_AUTHORITY_ACTION_MISSING", () -> MinStExactSelector.select(facts));
 	}
 
 	@Test
@@ -58,7 +58,7 @@ public class MinStExactSelectorTest {
 		RelocationAction wrong = action(OTHER_VERSION, FF, CONSUMER);
 		MinStExactCostFacts facts = uploadFacts(List.of(wrong),
 			List.of(obligationFact(wrong.normalizedSignature(), CONSUMER, 0, FF)));
-		assertRejects(() -> MinStExactSelector.select(facts));
+		assertRejectsCode("MINST_EXACT_AUTHORITY_ACTION_SOURCE_MISMATCH", () -> MinStExactSelector.select(facts));
 	}
 
 	@Test
@@ -66,17 +66,38 @@ public class MinStExactSelectorTest {
 		RelocationAction action = action(PRODUCER_VERSION, FF, CONSUMER);
 		MinStExactCostFacts facts = uploadFacts(List.of(action),
 			List.of(obligationFact(action.normalizedSignature(), CONSUMER, 0, CP)));
-		assertRejects(() -> MinStExactSelector.select(facts));
+		assertRejectsCode("MINST_EXACT_OBLIGATION_AUTHORITY_MISSING", () -> MinStExactSelector.select(facts));
 	}
 
 	@Test
-	public void selectedReceiptRejectsDuplicateConsumerInputFromDifferentAction() throws Exception {
+	public void selectedReceiptRejectsAmbiguousSameSourceActionsForSameEndpoint() throws Exception {
+		RelocationAction first = action(PRODUCER_VERSION, FF, CONSUMER, "anchor-a");
+		RelocationAction second = action(PRODUCER_VERSION, FF, CONSUMER, "anchor-b");
+		MinStExactCostFacts facts = uploadFacts(List.of(first, second), List.of(
+			obligationFact(first.normalizedSignature(), CONSUMER, 0, FF),
+			obligationFact(second.normalizedSignature(), CONSUMER, 0, FF)));
+		assertRejectsCode("MINST_EXACT_OBLIGATION_AUTHORITY_AMBIGUOUS", () -> MinStExactSelector.select(facts));
+	}
+
+	@Test
+	public void validUnrelatedProducerObligationIsIgnored() throws Exception {
 		RelocationAction valid = action(PRODUCER_VERSION, FF, CONSUMER);
-		RelocationAction wrongSource = action(OTHER_VERSION, FF, CONSUMER);
-		MinStExactCostFacts facts = uploadFacts(List.of(valid, wrongSource), List.of(
+		RelocationAction unrelated = action(OTHER_VERSION, FF, OTHER);
+		MinStExactCostFacts facts = uploadFacts(List.of(valid, unrelated), List.of(
 			obligationFact(valid.normalizedSignature(), CONSUMER, 0, FF),
-			obligationFact(wrongSource.normalizedSignature(), CONSUMER, 0, FF)));
-		assertRejects(() -> MinStExactSelector.select(facts));
+			obligationFact(unrelated.normalizedSignature(), OTHER, 0, FF)));
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
+		Assert.assertEquals(1, selection.obligationReceiptsInOrder().size());
+		Assert.assertEquals(CONSUMER, selection.obligationReceiptsInOrder().get(0).consumerKey());
+	}
+
+	@Test
+	public void selectedDownloadReceiptRejectsWrongRequiredPlacement() throws Exception {
+		RelocationAction action = action(PRODUCER_VERSION, FF, CONSUMER);
+		MinStExactCostFacts facts = downloadFacts(List.of(action),
+			List.of(obligationFact(action.normalizedSignature(), CONSUMER, 0, CP)));
+		assertRejectsCode("MINST_EXACT_OBLIGATION_AUTHORITY_MISSING", () -> MinStExactSelector.select(facts));
 	}
 
 	@Test
@@ -107,10 +128,24 @@ public class MinStExactSelectorTest {
 		List<ObligationFact> obligations) throws Exception {
 		AuxiliaryGroupFact group = new AuxiliaryGroupFact(-3L, Direction.UPLOAD, PRODUCER, 1L,
 			FType.ROW, bits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(1.0))));
-		NeutralPlacementGraph graph = new NeutralPlacementGraph(List.of(node(PRODUCER, PRODUCER_VERSION),
-			node(CONSUMER, version("consumer-version")), node(OTHER, OTHER_VERSION)), List.of(), actions);
+		NeutralPlacementGraph graph = graph(actions);
 		return facts(graph, List.of(), List.of(edge(-1L, -3L, 5.0), edge(1L, -2L, 5.0),
 			edge(-1L, -2L, 1.0)), List.of(group), obligations);
+	}
+
+	private static MinStExactCostFacts downloadFacts(List<RelocationAction> actions,
+		List<ObligationFact> obligations) throws Exception {
+		AuxiliaryGroupFact group = new AuxiliaryGroupFact(-3L, Direction.DOWNLOAD, PRODUCER, 1L,
+			FType.ROW, bits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(1.0))));
+		NeutralPlacementGraph graph = graph(actions);
+		return facts(graph, List.of(), List.of(edge(-1L, 1L, 5.0), edge(1L, -2L, 1.0),
+			edge(-1L, -3L, 1.0), edge(-3L, -2L, 5.0), edge(-1L, -2L, 1.0)),
+			List.of(group), obligations);
+	}
+
+	private static NeutralPlacementGraph graph(List<RelocationAction> actions) {
+		return new NeutralPlacementGraph(List.of(node(PRODUCER, PRODUCER_VERSION),
+			node(CONSUMER, version("consumer-version")), node(OTHER, OTHER_VERSION)), List.of(), actions);
 	}
 
 	private static MinStExactCostFacts facts(NeutralPlacementGraph graph, List<DecisionFact> decisions,
@@ -137,7 +172,12 @@ public class MinStExactSelectorTest {
 
 	private static RelocationAction action(ValueVersionKey source, PlacementState target,
 		CompiledHopKey consumer) {
-		RelocationActionKey action = new RelocationActionKey(source, target, anchor(source.lexicalVariable()),
+		return action(source, target, consumer, source.lexicalVariable());
+	}
+
+	private static RelocationAction action(ValueVersionKey source, PlacementState target,
+		CompiledHopKey consumer, String anchorId) {
+		RelocationActionKey action = new RelocationActionKey(source, target, anchor(anchorId),
 			"scope", List.of(consumer));
 		return new RelocationAction(action, List.of(new ObligationKey(consumer, 0, source, target,
 			action, "context")));
@@ -170,13 +210,14 @@ public class MinStExactSelectorTest {
 
 	private static long bits(double value) { return Double.doubleToRawLongBits(value); }
 
-	private static void assertRejects(ThrowingRunnable action) throws Exception {
+	private static void assertRejectsCode(String code, ThrowingRunnable action) throws Exception {
 		try {
 			action.run();
-			Assert.fail("Expected exact selector rejection");
+			Assert.fail("Expected exact selector rejection code " + code);
 		}
 		catch(IllegalArgumentException expected) {
-			// expected
+			Assert.assertTrue("Expected code " + code + " but got " + expected.getMessage(),
+				expected.getMessage().startsWith(code));
 		}
 	}
 
