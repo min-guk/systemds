@@ -136,6 +136,20 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertEquals(dynamic.analysis().analysisFingerprint(), dynamic.fingerprintAfter());
 	}
 
+	@Test
+	public void matrixTransientSchedulingEdgeIsNotACandidateCarrier() {
+		DMLProgram program = compile("B-21");
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		FederatedPlannerDpCostEnumerator.DpEnumerationResult enumeration =
+			FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(program, memo, false, analysis);
+		Assert.assertSame(analysis, enumeration.rewireSnapshot().analysis());
+		Assert.assertSame(analysis, enumeration.semanticBlock().context().analysis());
+		assertMatrixTransientSchedulingIsNotACandidateCarrier(enumeration.semanticBlock());
+		assertTransientReadLogicalParity(enumeration.semanticBlock());
+		assertScalarTransientForwardDependency(enumeration.semanticBlock());
+	}
+
 	private static void assertScalarTransientForwardDependency(PreSelectionSemanticBlock block) {
 		List<ScalarTransientDependency> dependencies = new ArrayList<>();
 		for(CandidateOccurrenceSnapshot snapshot : block.candidateSnapshots()) {

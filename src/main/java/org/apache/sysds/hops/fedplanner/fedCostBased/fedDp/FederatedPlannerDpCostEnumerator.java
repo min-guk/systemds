@@ -1545,7 +1545,7 @@ public class FederatedPlannerDpCostEnumerator {
 		if(physicalOwners == 1)
 			return true;
 		long logicalOwners = analysis.logicalTransientInputsInCanonicalOrder().stream().filter(fact ->
-			fact.sourceWrite() == write.key() && fact.targetRead() == read.key() && fact.inputPosition() == 0).count();
+			fact.sourceWrite() == write.key() && fact.targetRead() == read.key() && fact.logicalPosition() == 0).count();
 		if(logicalOwners > 1)
 			throw new IllegalArgumentException("Transient candidate carrier has duplicate logical ownership");
 		if(logicalOwners == 1)
