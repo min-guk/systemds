@@ -42,8 +42,10 @@ public class CampaignBR9MinStEmittedDecisionRedTest {
 		MinStExactSelection selection = MinStExactSelector.select(facts);
 		MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
 
-		Assert.assertEquals("exact decisions must be emitted-only in canonical order", emittedKeys,
+		Assert.assertEquals("full canonical occurrence ownership must remain in exact facts", exactScope,
 			facts.orderedScope());
+		Assert.assertEquals("exact decisions must be emitted-only in canonical order", emittedKeys,
+			facts.decisionFactsInScopeOrder().stream().map(decision -> decision.key()).toList());
 		Assert.assertEquals("selected states must cover emitted decisions only", emittedKeys.size(),
 			selection.selectedStatesInScopeOrder().size());
 		Assert.assertEquals("carrier receipts must cover every neutral occurrence", analysis.occurrences().size(),
