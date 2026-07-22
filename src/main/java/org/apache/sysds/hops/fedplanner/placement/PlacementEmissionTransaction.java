@@ -101,7 +101,7 @@ public final class PlacementEmissionTransaction {
 	public static PlacementEmissionReceipt emit(DMLProgram program, NormalizedPlannerResult result,
 		FailureInjector failureInjector) {
 		Objects.requireNonNull(failureInjector, "failureInjector");
-			synchronized(LOCK) {
+		synchronized(LOCK) {
 			PreparedEmission prepared = prevalidate(program, result);
 			CommittedPlan existing = COMMITTED.get(program);
 			if(existing != null) {
