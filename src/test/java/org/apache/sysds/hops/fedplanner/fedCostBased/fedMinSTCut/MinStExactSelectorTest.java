@@ -6,6 +6,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -17,12 +18,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
@@ -51,7 +53,7 @@ public class MinStExactSelectorTest {
 	public void selectedReceiptRejectsWrongActionSignature() throws Exception {
 		MinStExactCostFacts facts = uploadFacts(List.of(action(PRODUCER_VERSION, FF, CONSUMER)),
 			List.of(obligationFact("missing-signature", CONSUMER, 0, FF)));
-		assertRejectsCode("MINST_EXACT_AUTHORITY_ACTION_MISSING", () -> MinStExactSelector.select(facts));
+		assertRejectsCode("MINST_EXACT_OBLIGATION_AUTHORITY_MISSING", () -> MinStExactSelector.select(facts));
 	}
 
 	@Test
@@ -59,7 +61,7 @@ public class MinStExactSelectorTest {
 		RelocationAction wrong = action(OTHER_VERSION, FF, CONSUMER);
 		MinStExactCostFacts facts = uploadFacts(List.of(wrong),
 			List.of(obligationFact(wrong.normalizedSignature(), CONSUMER, 0, FF)));
-		assertRejectsCode("MINST_EXACT_AUTHORITY_ACTION_SOURCE_MISMATCH", () -> MinStExactSelector.select(facts));
+		assertRejectsCode("MINST_EXACT_OBLIGATION_AUTHORITY_MISSING", () -> MinStExactSelector.select(facts));
 	}
 
 	@Test
@@ -168,9 +170,43 @@ public class MinStExactSelectorTest {
 		set(facts, "membershipRepresentatives", List.of());
 		set(facts, "edges", edges);
 		set(facts, "groups", groups);
+		set(facts, "transferAuthorities", transferAuthorities(graph, groups, obligations));
 		set(facts, "obligations", obligations);
 		set(facts, "derivationFingerprint", "test-derivation");
 		return facts;
+	}
+
+	private static List<TransferAuthorityFact> transferAuthorities(NeutralPlacementGraph graph,
+		List<AuxiliaryGroupFact> groups, List<ObligationFact> obligationFacts) {
+		List<TransferAuthorityFact> result = new ArrayList<>();
+		for(AuxiliaryGroupFact group : groups) {
+			for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
+				for(RelocationAction action : graph.relocationActions()) {
+					for(ObligationKey obligation : action.obligations()) {
+						if(action.key().sourceValueVersion() != PRODUCER_VERSION
+							|| obligation.consumer() != endpoint.consumerKey()
+							|| obligation.inputPosition() != endpoint.inputPosition()
+							|| obligation.requiredPlacement().fType() != group.conversionType()
+							|| !published(obligationFacts, action, obligation))
+							continue;
+						result.add(TransferAuthorityFact.relocation(group, endpoint,
+							CampaignBPlacementAnalysisFixtureBridge.compiledInputEdge(
+								endpoint.producerKey(), endpoint.consumerKey(), endpoint.inputPosition()),
+							PRODUCER_VERSION, action, obligation));
+					}
+				}
+			}
+		}
+		return List.copyOf(result);
+	}
+
+	private static boolean published(List<ObligationFact> facts, RelocationAction action,
+		ObligationKey obligation) {
+		return facts.stream().anyMatch(fact -> fact.actionSignature().equals(action.normalizedSignature())
+			&& fact.endpointsInCanonicalOrder().stream().anyMatch(endpoint ->
+				endpoint.consumerKey() == obligation.consumer()
+					&& endpoint.inputPosition() == obligation.inputPosition()
+					&& endpoint.requiredPlacement() == obligation.requiredPlacement()));
 	}
 
 	private static ObligationFact obligationFact(String signature, CompiledHopKey consumer,
