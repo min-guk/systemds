@@ -19,6 +19,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelector;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -35,7 +36,7 @@ import org.junit.Test;
 /** Structural RED for the real persistent-read heavy-MM upload authority boundary. */
 public class CampaignBG014MinStHeavyMmUploadAuthorityRedTest {
 	@Test
-	public void heavyMmRealUploadReachesExactObligationAuthorityBoundary() throws Exception {
+	public void heavyMmRealUploadSelectsPersistentReadUploadObligation() throws Exception {
 		Path directory = Files.createTempDirectory("minst-g014-heavy-mm-");
 		String input = directory.resolve("S").toString();
 		writePersistentMatrix(input);
@@ -44,13 +45,20 @@ public class CampaignBG014MinStHeavyMmUploadAuthorityRedTest {
 			List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
 				.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
 			MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope);
-			Assert.assertTrue("G014_HEAVY_MM_UPLOAD_GROUP_MISSING", facts.auxiliaryGroupsInCanonicalOrder()
-				.stream().anyMatch(group -> isPersistentReadUpload(analysis, group)));
-			IllegalArgumentException failure = Assert.assertThrows(IllegalArgumentException.class,
-				() -> MinStExactSelector.select(facts));
-			Assert.assertTrue("G014_HEAVY_MM_MUST_FAIL_SELECTED_UPLOAD_AUTHORITY",
-				failure.getMessage().startsWith("MINST_EXACT_OBLIGATION_AUTHORITY_MISSING")
-					&& failure.getMessage().contains("input=1"));
+			AuxiliaryGroupFact upload = facts.auxiliaryGroupsInCanonicalOrder().stream()
+				.filter(group -> isPersistentReadUpload(analysis, group)).findFirst()
+				.orElseThrow(() -> new AssertionError("G014_HEAVY_MM_UPLOAD_GROUP_MISSING"));
+			var endpoint = upload.endpointsInCanonicalOrder().stream()
+				.filter(candidate -> candidate.inputPosition() == 1).findFirst()
+				.orElseThrow(() -> new AssertionError("G014_HEAVY_MM_INPUT1_ENDPOINT_MISSING"));
+			MinStExactSelection selection = MinStExactSelector.select(facts);
+			Assert.assertEquals("UNIQUE", selection.tieCertificate());
+			long selected = selection.obligationReceiptsInOrder().stream()
+				.filter(receipt -> receipt.direction() == Direction.UPLOAD
+					&& receipt.producerKey().equals(upload.producerKey())
+					&& receipt.consumerKey().equals(endpoint.consumerKey())
+					&& receipt.inputPosition() == endpoint.inputPosition()).count();
+			Assert.assertEquals("G014_HEAVY_MM_SELECTED_UPLOAD_COUNT", 1L, selected);
 		}
 		finally {
 			HDFSTool.deleteFileIfExistOnHDFS(input);
