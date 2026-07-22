@@ -91,6 +91,8 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		assertAppliedPlansAreExactReceipts(owner.receipt());
 		assertTransientReadLogicalParity(owner.receipt().semanticConsumption().semanticBlock());
 		assertScalarTransientForwardDependency(owner.receipt().semanticConsumption().semanticBlock());
+		assertMatrixTransientSchedulingIsNotACandidateCarrier(
+			owner.receipt().semanticConsumption().semanticBlock());
 		DpDynamicInvocationReceipt dynamic;
 		try {
 			dynamic = new FederatedPlannerDpFedCostBased().rewriteFunctionDynamic(
@@ -121,6 +123,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().semanticBlock().context().analysis());
 		assertTransientReadLogicalParity(dynamic.enumerationResult().semanticBlock());
 		assertScalarTransientForwardDependency(dynamic.enumerationResult().semanticBlock());
+		assertMatrixTransientSchedulingIsNotACandidateCarrier(dynamic.enumerationResult().semanticBlock());
 		DpPlacementAdapter.ExactSelection dynamicSelection = new DpPlacementAdapter().selectExact(
 			dynamic.analysis(), dynamic.memoTable(), dynamic.enumerationResult().optimalPlan());
 		Assert.assertSame(dynamic.analysis(), dynamicSelection.analysis());
@@ -175,6 +178,41 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertEquals(1, analysis.graph().node(forward.writeOccurrence()).orElseThrow()
 			.legalAlternatives().stream().filter(state -> state == selected).count());
 		CandidateRuleFact empty = analysis.candidateRuleFacts().requireExact(forward.readOccurrence(), List.of());
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, empty.status());
+		Assert.assertEquals(ExecType.CP, empty.capability().nativeExec());
+		Assert.assertEquals(FederatedOutput.LOUT, empty.capability().nativeOutput());
+		Assert.assertNull(empty.capability().nativeFoutFType());
+	}
+
+	private static void assertMatrixTransientSchedulingIsNotACandidateCarrier(PreSelectionSemanticBlock block) {
+		PlacementAnalysis analysis = block.context().analysis();
+		List<RewireTransientForwardEdge> schedulingOnly = block.context().rewireSnapshot().transientForwardEdges()
+			.stream().filter(edge ->
+				analysis.hop(edge.writeOccurrence()).orElseThrow().getDataType()
+					== org.apache.sysds.common.Types.DataType.MATRIX
+				&& analysis.hop(edge.readOccurrence()).orElseThrow().getDataType()
+					== org.apache.sysds.common.Types.DataType.MATRIX
+				&& analysis.compiledInputEdgesInCanonicalOrder().stream().noneMatch(fact ->
+					fact.producer() == edge.writeOccurrence() && fact.consumer() == edge.readOccurrence())
+				&& analysis.logicalTransientInputsInCanonicalOrder().stream().noneMatch(fact ->
+					fact.sourceWrite() == edge.writeOccurrence() && fact.targetRead() == edge.readOccurrence()))
+			.toList();
+		Assert.assertEquals("B-21 must retain one exact scheduling-only matrix forward", 1,
+			schedulingOnly.size());
+		RewireTransientForwardEdge schedulingEdge = schedulingOnly.get(0);
+		Assert.assertEquals(1, block.context().rewireSnapshot().transientForwardEdges().stream()
+			.filter(edge -> edge == schedulingEdge).count());
+		List<CandidateOccurrenceSnapshot> readCandidates = block.candidateSnapshots().stream()
+			.filter(snapshot -> snapshot.parentOccurrence() == schedulingEdge.readOccurrence()).toList();
+		Assert.assertEquals("scheduling-only matrix read must retain one zero-input candidate", 1,
+			readCandidates.size());
+		CandidateOccurrenceSnapshot read = readCandidates.get(0);
+		Assert.assertTrue(read.rawEntries().isEmpty());
+		Assert.assertTrue(read.promotedEntries().isEmpty());
+		Assert.assertTrue(read.logicalEntries().isEmpty());
+		Assert.assertTrue(transientForwardDependencies(read).isEmpty());
+		Assert.assertTrue(read.orderedOracleInputs().isEmpty());
+		CandidateRuleFact empty = analysis.candidateRuleFacts().requireExact(schedulingEdge.readOccurrence(), List.of());
 		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, empty.status());
 		Assert.assertEquals(ExecType.CP, empty.capability().nativeExec());
 		Assert.assertEquals(FederatedOutput.LOUT, empty.capability().nativeOutput());

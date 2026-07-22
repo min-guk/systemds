@@ -626,7 +626,9 @@ public class FederatedPlannerDpCostEnumerator {
 								&& hop.getName().equals(transChildHop.getName())) {
 							continue;
 						}
-						childHops.add(transChildHop);
+						if(isTransientForwardCandidateCarrier(hop, transChildHop, capture)
+							&& childHops.stream().noneMatch(input -> input == transChildHop))
+							childHops.add(transChildHop);
 					}
 				}
 			}
@@ -1519,20 +1521,41 @@ public class FederatedPlannerDpCostEnumerator {
 		if(capture == null || transientWrites.isEmpty())
 			return transientWrites;
 
-		RewireOccurrenceSnapshot snapshot = capture.context.rewireSnapshot();
-		HopOccurrenceProjection readOccurrence = findOccurrence(capture, hop);
-		Set<CompiledHopKey> exactWriteOccurrences = Collections.newSetFromMap(new IdentityHashMap<>());
-		for(RewireTransientForwardEdge edge : snapshot.transientForwardEdges())
-			if(edge.readOccurrence() == readOccurrence.key())
-				exactWriteOccurrences.add(edge.writeOccurrence());
-
 		List<Hop> exactWrites = new ArrayList<>();
-		for(Hop transientWrite : transientWrites) {
-			HopOccurrenceProjection writeOccurrence = snapshot.projectExactCarrier(transientWrite);
-			if(writeOccurrence != null && exactWriteOccurrences.contains(writeOccurrence.key()))
+		for(Hop transientWrite : transientWrites)
+			if(isTransientForwardCandidateCarrier(hop, transientWrite, capture))
 				exactWrites.add(transientWrite);
-		}
 		return exactWrites;
+	}
+
+	private static boolean isTransientForwardCandidateCarrier(Hop readHop, Hop writeHop,
+		EnumerationCapture capture) {
+		if(capture == null)
+			return true;
+		RewireOccurrenceSnapshot snapshot = capture.context.rewireSnapshot();
+		HopOccurrenceProjection read = findOccurrence(capture, readHop);
+		HopOccurrenceProjection write = snapshot.projectExactCarrier(writeHop);
+		if(write == null)
+			return false;
+		PlacementAnalysis analysis = capture.context.analysis();
+		long physicalOwners = analysis.compiledInputEdgesInCanonicalOrder().stream().filter(fact ->
+			fact.producer() == write.key() && fact.consumer() == read.key()).count();
+		if(physicalOwners > 1)
+			throw new IllegalArgumentException("Transient candidate carrier has duplicate physical ownership");
+		if(physicalOwners == 1)
+			return true;
+		long logicalOwners = analysis.logicalTransientInputsInCanonicalOrder().stream().filter(fact ->
+			fact.sourceWrite() == write.key() && fact.targetRead() == read.key() && fact.inputPosition() == 0).count();
+		if(logicalOwners > 1)
+			throw new IllegalArgumentException("Transient candidate carrier has duplicate logical ownership");
+		if(logicalOwners == 1)
+			return true;
+		long forwardOwners = snapshot.transientForwardEdges().stream().filter(edge ->
+			edge.writeOccurrence() == write.key() && edge.readOccurrence() == read.key()).count();
+		if(forwardOwners > 1)
+			throw new IllegalArgumentException("Transient candidate carrier has duplicate forward ownership");
+		return forwardOwners == 1 && write.hop().getDataType() != Types.DataType.MATRIX
+			&& read.hop().getDataType() != Types.DataType.MATRIX;
 	}
 
 	private static Set<Long> collectHopIds(List<Hop> hops) {
