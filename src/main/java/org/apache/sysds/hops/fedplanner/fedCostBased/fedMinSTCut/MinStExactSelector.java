@@ -7,8 +7,10 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -21,7 +23,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection.ObligationReceipt;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -48,7 +52,7 @@ public final class MinStExactSelector {
 		List<MinStExactCutSolver.Decision> result = new ArrayList<>();
 		for(DecisionFact decision : facts.decisionFactsInScopeOrder()) {
 			List<MinStExactCutSolver.Choice> choices = new ArrayList<>();
-			for(PlacementState state : decision.legalStatesInCanonicalOrder()) {
+			for(PlacementState state : uniqueStatesByCutMembership(decision)) {
 				List<Long> nodes = new ArrayList<>(2);
 				if(state.execType() == ExecType.FED)
 					nodes.add(decision.computeNodeId());
@@ -59,6 +63,20 @@ public final class MinStExactSelector {
 			result.add(new MinStExactCutSolver.Decision(choices));
 		}
 		return List.copyOf(result);
+	}
+
+	private static List<PlacementState> uniqueStatesByCutMembership(DecisionFact decision) {
+		Map<String,PlacementState> statesByMembership = new HashMap<>();
+		for(PlacementState state : decision.legalStatesInCanonicalOrder()) {
+			String membership = state.execType().name() + '/' + state.output().name();
+			PlacementState previous = statesByMembership.get(membership);
+			if(previous == null)
+				statesByMembership.put(membership, state);
+			else if(!previous.equals(state))
+				throw new IllegalArgumentException("MINST_EXACT_STATE_MEMBERSHIP_AMBIGUOUS|key="
+					+ decision.key().normalizedSignature() + "|membership=" + membership);
+		}
+		return decision.legalStatesInCanonicalOrder().stream().distinct().toList();
 	}
 
 	private static List<MinStExactCutSolver.Edge> edges(MinStExactCostFacts facts) {
@@ -93,7 +111,7 @@ public final class MinStExactSelector {
 			ExecType exec = source.contains(decision.computeNodeId()) ? ExecType.FED : ExecType.CP;
 			FederatedOutput output = source.contains(decision.placementNodeId())
 				? FederatedOutput.FOUT : FederatedOutput.LOUT;
-			List<PlacementState> matches = decision.legalStatesInCanonicalOrder().stream()
+			List<PlacementState> matches = uniqueStatesByCutMembership(decision).stream()
 				.filter(state -> state.execType() == exec && state.output() == output).toList();
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_SELECTED_STATE_NOT_LEGAL|key="
@@ -122,13 +140,15 @@ public final class MinStExactSelector {
 		MinStExactCostFacts facts, AuxiliaryGroupFact group) {
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
 			List<ObligationReceipt> matches = new ArrayList<>();
-			for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder())
+			for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder()) {
+				NeutralPlacementGraph.RelocationAction action = exactActionForSignature(facts, group,
+					obligation.actionSignature());
 				for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder())
-					if(candidate.consumerKey().equals(endpoint.consumerKey())
-						&& candidate.inputPosition() == endpoint.inputPosition())
+					if(authorizesExactEndpoint(action, group, endpoint, candidate))
 						matches.add(new ObligationReceipt(group.direction(), group.producerKey(),
 							endpoint.consumerKey(), endpoint.inputPosition(), candidate.requiredPlacement(),
 							obligation.actionSignature()));
+			}
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_OBLIGATION_AUTHORITY_"
 					+ (matches.isEmpty() ? "MISSING" : "AMBIGUOUS")
@@ -138,6 +158,42 @@ public final class MinStExactSelector {
 					+ "|input=" + endpoint.inputPosition());
 			receipts.add(matches.get(0));
 		}
+	}
+
+	private static NeutralPlacementGraph.RelocationAction exactActionForSignature(
+		MinStExactCostFacts facts, AuxiliaryGroupFact group, String actionSignature) {
+		List<NeutralPlacementGraph.RelocationAction> actions = facts.analysis().graph()
+			.relocationActions().stream()
+			.filter(action -> action.normalizedSignature().equals(actionSignature))
+			.toList();
+		if(actions.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_AUTHORITY_ACTION_"
+				+ (actions.isEmpty() ? "MISSING" : "AMBIGUOUS")
+				+ "|producer=" + group.producerKey().normalizedSignature()
+				+ "|signature=" + actionSignature);
+		NeutralPlacementGraph.RelocationAction action = actions.get(0);
+		if(!facts.analysis().graph().node(group.producerKey()).orElseThrow().valueVersion()
+			.equals(action.key().sourceValueVersion()))
+			throw new IllegalArgumentException("MINST_EXACT_AUTHORITY_ACTION_SOURCE_MISMATCH|producer="
+				+ group.producerKey().normalizedSignature() + "|signature=" + actionSignature);
+		return action;
+	}
+
+	private static boolean authorizesExactEndpoint(NeutralPlacementGraph.RelocationAction action,
+		AuxiliaryGroupFact group, EndpointFact endpoint, ObligationEndpointFact candidate) {
+		if(!candidate.consumerKey().equals(endpoint.consumerKey())
+			|| candidate.inputPosition() != endpoint.inputPosition())
+			return false;
+		for(ObligationKey obligation : action.obligations())
+			if(obligation.sourceValueVersion().equals(action.key().sourceValueVersion())
+				&& obligation.relocationAction().equals(action.key())
+				&& obligation.consumer().equals(endpoint.consumerKey())
+				&& obligation.inputPosition() == endpoint.inputPosition()
+				&& obligation.requiredPlacement().equals(candidate.requiredPlacement())
+				&& obligation.requiredPlacement().equals(action.key().targetPlacement())
+				&& group.producerKey().equals(endpoint.producerKey()))
+				return true;
+		return false;
 	}
 
 	private static Comparator<ObligationReceipt> receiptComparator() {
