@@ -36,6 +36,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInp
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
@@ -99,6 +100,28 @@ public class CampaignBG011DpTransientWriteExactOwnerRedTest {
 		Assert.assertEquals(ExecType.FED, fact.capability().nativeExec());
 		Assert.assertEquals(FederatedOutput.FOUT, fact.capability().nativeOutput());
 		Assert.assertEquals(FType.ROW, fact.capability().nativeFoutFType());
+
+		List<LogicalTransientInputFact> logicalInputs = analysis.logicalTransientInputsInCanonicalOrder().stream()
+			.filter(input -> input.targetRead() == read.key()).toList();
+		Assert.assertEquals("transient read must publish one analysis-owned logical input", 1,
+			logicalInputs.size());
+		LogicalTransientInputFact logical = logicalInputs.get(0);
+		Assert.assertSame(source.key(), logical.sourceWrite());
+		Assert.assertSame(read.key(), logical.targetRead());
+		Assert.assertEquals(0, logical.logicalPosition());
+		Assert.assertSame(source.valueVersion(), logical.sourceValueVersion());
+		Assert.assertSame(read.valueVersion(), logical.readValueVersion());
+		Assert.assertEquals(sourceAnchor, logical.anchor());
+		Assert.assertTrue(source.legalAlternatives().stream()
+			.anyMatch(state -> state == logical.localSourceState()));
+		Assert.assertTrue(source.legalAlternatives().stream()
+			.anyMatch(state -> state == logical.federatedSourceState()));
+		Assert.assertEquals(CandidateInputState.absentLocal(), logical.localInput());
+		Assert.assertEquals(CandidateInputState.present(FType.ROW), logical.federatedInput());
+		Assert.assertSame(logical, analysis.requireExactLogicalTransientInput(source.key(), read.key(), 0));
+		Assert.assertTrue("logical input must not fabricate a physical compiled edge",
+			analysis.compiledInputEdgesInCanonicalOrder().stream().noneMatch(edge ->
+				edge.producer() == source.key() && edge.consumer() == read.key()));
 	}
 
 	@Test

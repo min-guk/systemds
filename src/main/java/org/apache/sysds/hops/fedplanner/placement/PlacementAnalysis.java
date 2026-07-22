@@ -34,6 +34,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.parser.DMLProgram;
@@ -488,6 +489,34 @@ public final class PlacementAnalysis {
 		public int inputPosition() { return inputPosition; }
 	}
 
+	/** One analysis-owned logical input carried across an exact CFG transient forward. */
+	public record LogicalTransientInputFact(CompiledHopKey sourceWrite, CompiledHopKey targetRead,
+		int logicalPosition, ValueVersionKey sourceValueVersion, ValueVersionKey readValueVersion,
+		DurableAnchorKey anchor, PlacementState localSourceState, PlacementState federatedSourceState,
+		CandidateInputState localInput, CandidateInputState federatedInput) implements Comparable<LogicalTransientInputFact> {
+		public LogicalTransientInputFact {
+			Objects.requireNonNull(sourceWrite, "sourceWrite");
+			Objects.requireNonNull(targetRead, "targetRead");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(readValueVersion, "readValueVersion");
+			Objects.requireNonNull(anchor, "anchor");
+			Objects.requireNonNull(localSourceState, "localSourceState");
+			Objects.requireNonNull(federatedSourceState, "federatedSourceState");
+			Objects.requireNonNull(localInput, "localInput");
+			Objects.requireNonNull(federatedInput, "federatedInput");
+			if(logicalPosition != 0)
+				throw new IllegalArgumentException("Transient logical input position must be zero");
+		}
+
+		@Override
+		public int compareTo(LogicalTransientInputFact that) {
+			int readOrder = targetRead.compareTo(that.targetRead);
+			if(readOrder != 0) return readOrder;
+			int positionOrder = Integer.compare(logicalPosition, that.logicalPosition);
+			return positionOrder != 0 ? positionOrder : sourceWrite.compareTo(that.sourceWrite);
+		}
+	}
+
 	/** Stable association between a neutral graph key and its concrete compiled Hop origin. */
 	public record HopOccurrenceProjection(CompiledHopKey key, Hop hop, long scopeId, int normalizedOrdinal,
 		String normalizedSignature) {
@@ -514,6 +543,8 @@ public final class PlacementAnalysis {
 	private final DetachedConsumerProfileFacts detachedConsumerProfileFacts;
 	private final List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
+	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
+	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>> logicalInputsByIdentity;
 	private final DMLProgram programOwner;
 	private final Map<String,FunctionStatementBlock> namedFunctionStatementBlocks;
 	private final Runnable programMutationGuard;
@@ -531,7 +562,7 @@ public final class PlacementAnalysis {
 		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
 			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
-			compiledInputEdges, null);
+			compiledInputEdges, List.of(), null);
 	}
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -543,6 +574,22 @@ public final class PlacementAnalysis {
 		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
 		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges, Runnable programMutationGuard) {
+		this(graph, occurrences, topLevelStatementBlocks, programOwner, shapeFacts, analysisFingerprint,
+			heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
+			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
+			compiledInputEdges, List.of(), programMutationGuard);
+	}
+
+	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
+		List<StatementBlock> topLevelStatementBlocks, DMLProgram programOwner,
+		PlacementShapeFacts shapeFacts, String analysisFingerprint,
+		HeuristicPolicyFacts heuristicPolicyFacts, List<CandidateRuleKey> candidateRuleDomainKeys,
+		List<CandidateRuleFact> candidateRuleFacts,
+		List<CandidateConsumerProfileKey> candidateConsumerDomainKeys,
+		List<CandidateConsumerProfileFact> candidateConsumerProfileFacts,
+		List<DetachedConsumerProfileFact> detachedConsumerProfileFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges,
+		List<LogicalTransientInputFact> logicalTransientInputs, Runnable programMutationGuard) {
 		this.graph = Objects.requireNonNull(graph, "graph");
 		this.programOwner = programOwner;
 		this.programMutationGuard = programMutationGuard == null ? () -> { } : programMutationGuard;
@@ -582,12 +629,80 @@ public final class PlacementAnalysis {
 			analysisKeysByIdentity);
 		this.compiledInputEdgesInCanonicalOrder = validateCompiledInputEdges(compiledInputEdges);
 		this.inputEdgesByIdentity = indexCompiledInputEdges(this.compiledInputEdgesInCanonicalOrder);
+		this.logicalTransientInputsInCanonicalOrder = validateLogicalTransientInputs(logicalTransientInputs,
+			analysisKeysByIdentity);
+		this.logicalInputsByIdentity = indexLogicalTransientInputs(this.logicalTransientInputsInCanonicalOrder);
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
 			if(!producer.valueVersion().equals(fact.valueVersion()))
 				throw new IllegalArgumentException("Heuristic policy producer/value pair does not match the analysis graph");
 		}
+	}
+
+	private List<LogicalTransientInputFact> validateLogicalTransientInputs(
+		List<LogicalTransientInputFact> supplied, Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		Objects.requireNonNull(supplied, "logicalTransientInputs");
+		List<LogicalTransientInputFact> sorted = supplied.stream()
+			.map(fact -> Objects.requireNonNull(fact, "logical transient input fact")).sorted().toList();
+		if(!sorted.equals(supplied))
+			throw new IllegalArgumentException("Logical transient input facts are not in canonical order");
+		Map<CompiledHopKey,Set<Integer>> slots = new IdentityHashMap<>();
+		for(LogicalTransientInputFact fact : sorted) {
+			if(!analysisKeysByIdentity.containsKey(fact.sourceWrite())
+				|| !analysisKeysByIdentity.containsKey(fact.targetRead()))
+				throw new IllegalArgumentException("Logical transient input has a foreign occurrence");
+			NeutralPlacementGraph.Node source = graph.node(fact.sourceWrite()).orElseThrow();
+			NeutralPlacementGraph.Node read = graph.node(fact.targetRead()).orElseThrow();
+			if(source.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE
+				|| read.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_READ)
+				throw new IllegalArgumentException("Logical transient input endpoints have wrong node kinds");
+			if(source.valueVersion() != fact.sourceValueVersion() || read.valueVersion() != fact.readValueVersion())
+				throw new IllegalArgumentException("Logical transient input value identity differs");
+			if(source.anchors().size() != 1 || read.anchors().size() != 1
+				|| !source.anchors().get(0).equals(fact.anchor()) || !read.anchors().get(0).equals(fact.anchor()))
+				throw new IllegalArgumentException("Logical transient input anchor differs");
+			if(source.legalAlternatives().stream().noneMatch(state -> state == fact.localSourceState())
+				|| source.legalAlternatives().stream().noneMatch(state -> state == fact.federatedSourceState()))
+				throw new IllegalArgumentException("Logical transient input source state is not analysis-owned");
+			if(fact.localSourceState().execType() != ExecType.CP
+				|| fact.localSourceState().output() != FederatedOutput.LOUT
+				|| fact.localSourceState().fType() != null || fact.localSourceState().shapeDependent()
+				|| fact.federatedSourceState().execType() != ExecType.FED
+				|| fact.federatedSourceState().output() != FederatedOutput.FOUT
+				|| fact.federatedSourceState().fType() != fact.anchor().fType()
+				|| !fact.localInput().equals(CandidateInputState.absentLocal())
+				|| !fact.federatedInput().equals(CandidateInputState.present(fact.anchor().fType())))
+				throw new IllegalArgumentException("Logical transient input state semantics differ");
+			List<List<CandidateInputState>> expected = List.of(List.of(fact.localInput()), List.of(fact.federatedInput()));
+			List<List<CandidateInputState>> actual = candidateRuleDomain.orderedRuleKeys().stream()
+				.filter(key -> key.parentOccurrence() == fact.targetRead()).map(CandidateRuleKey::orderedInputs).toList();
+			if(!actual.equals(expected))
+				throw new IllegalArgumentException("Logical transient candidate domain differs");
+			for(List<CandidateInputState> inputs : expected)
+				candidateRuleFacts.requireExact(fact.targetRead(), inputs);
+			if(compiledInputEdgesInCanonicalOrder.stream().anyMatch(edge -> edge.producer() == fact.sourceWrite()
+				&& edge.consumer() == fact.targetRead() && edge.inputPosition() == fact.logicalPosition()))
+				throw new IllegalArgumentException("Logical transient input fabricated a physical edge");
+			if(!slots.computeIfAbsent(fact.targetRead(), ignored -> new java.util.HashSet<>())
+				.add(fact.logicalPosition()))
+				throw new IllegalArgumentException("Duplicate logical transient input slot");
+		}
+		return List.copyOf(sorted);
+	}
+
+	private static Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>>
+		indexLogicalTransientInputs(List<LogicalTransientInputFact> facts) {
+		Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>> indexed = new IdentityHashMap<>();
+		for(LogicalTransientInputFact fact : facts) {
+			Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>> byRead = indexed.computeIfAbsent(
+				fact.sourceWrite(), ignored -> new IdentityHashMap<>());
+			Map<Integer,LogicalTransientInputFact> byPosition = byRead.computeIfAbsent(fact.targetRead(),
+				ignored -> new LinkedHashMap<>());
+			if(byPosition.putIfAbsent(fact.logicalPosition(), fact) != null)
+				throw new IllegalArgumentException("Duplicate logical transient input fact");
+		}
+		return Collections.unmodifiableMap(indexed);
 	}
 
 	PlacementAnalysis(NeutralPlacementGraph graph, List<HopOccurrenceProjection> occurrences,
@@ -804,6 +919,22 @@ public final class PlacementAnalysis {
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {
 		return compiledInputEdgesInCanonicalOrder;
+	}
+
+	public List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder() {
+		return logicalTransientInputsInCanonicalOrder;
+	}
+
+	public LogicalTransientInputFact requireExactLogicalTransientInput(CompiledHopKey sourceWrite,
+		CompiledHopKey targetRead, int logicalPosition) {
+		Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>> byRead = logicalInputsByIdentity.get(
+			Objects.requireNonNull(sourceWrite, "sourceWrite"));
+		Map<Integer,LogicalTransientInputFact> byPosition = byRead == null ? null
+			: byRead.get(Objects.requireNonNull(targetRead, "targetRead"));
+		LogicalTransientInputFact fact = byPosition == null ? null : byPosition.get(logicalPosition);
+		if(fact == null)
+			throw new IllegalArgumentException("Exact logical transient input fact is missing");
+		return fact;
 	}
 
 	public CompiledInputEdgeFact requireExactCompiledInputEdge(CompiledHopKey producer,
