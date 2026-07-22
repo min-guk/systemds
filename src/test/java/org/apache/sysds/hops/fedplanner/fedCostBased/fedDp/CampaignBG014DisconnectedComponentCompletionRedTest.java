@@ -56,7 +56,8 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		Map<CompiledHopKey,Object> selectedStates = new IdentityHashMap<>();
 		Set<CompiledHopKey> visitedPlanHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		Map<Long,FType> fTypeMap = new LinkedHashMap<>();
-		selectedStates.put(fixture.rootKey(), newSelectedState(fixture.lockedRootState(), false));
+		selectedStates.put(fixture.rootKey(),
+			newSelectedState(fixture.lockedRootState(), fixture.lockedDerivedFedFout()));
 		visitedPlanHops.add(fixture.rootKey());
 		if(fixture.lockedRootState().fType() != null)
 			fTypeMap.put(memo.resolveOriginalHopId(fixture.rootPlan().getHopID()),
@@ -206,10 +207,7 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 			if(effective != null)
 				root = effective;
 			CompiledHopKey rootKey = memo.requirePlanCarrierOccurrence(root.getHopRef()).key();
-			PlacementState locked = analysis.graph().node(rootKey).orElseThrow().legalAlternatives().stream()
-				.filter(state -> state != root.getSelectedPlacementState()).findFirst().orElse(null);
-			if(locked == null)
-				continue;
+			PlacementState locked = root.getSelectedPlacementState();
 			List<Hop> family = new java.util.ArrayList<>();
 			for(long memberID : conflictMemberIDs(conflict)) {
 				FedPlan member = cheapest(memo, memberID);
@@ -217,7 +215,8 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 					family.add(member.getHopRef());
 			}
 			if(family.size() > 1)
-				return new HostileComponentFixture(rootKey, root, locked, List.copyOf(family));
+				return new HostileComponentFixture(rootKey, root, locked,
+					!root.isDerivedFedFout(), List.copyOf(family));
 		}
 		Map<Long,Object> conflictMembers = new LinkedHashMap<>();
 		for(Map.Entry<Long,Object> entry : conflicts.entrySet())
@@ -271,7 +270,7 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		java.util.Set<String> ambiguousSignatures) { }
 
 	private record HostileComponentFixture(CompiledHopKey rootKey, FedPlan rootPlan,
-		PlacementState lockedRootState, List<Hop> familyHops) { }
+		PlacementState lockedRootState, boolean lockedDerivedFedFout, List<Hop> familyHops) { }
 
 	private record EnumeratedFixture(PlacementAnalysis analysis, FederatedPlannerDpMemoTable memo,
 		Map<Long,FederatedOutput> outputDecisions, Map<Long,Object> conflicts,
