@@ -343,6 +343,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final boolean ENABLE_FORCED_TRANSIENT_NEIGHBORHOOD_REEVAL = false;
 	private record SelectedDpState(ExecType execType, FederatedOutput output, FType fType,
 		boolean derivedFedFout, PlacementState exactState) { }
+	private enum RewriteMutationMode { APPLY, CAPTURE_ONLY }
 
 	private static SelectedDpState selectedState(FederatedPlannerDpMemoTable.FedPlan plan) {
 		PlacementState exact = Objects.requireNonNull(plan.getSelectedPlacementState(),
@@ -669,7 +670,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		FederatedPlannerDpMemoTable.FedPlan effectivePlan = selectRewritePlanVariant(
 			memoTable, planHopId, desiredOut, plan.getFedOutType(), plan, outputDecisions,
-			rewriteConflictCheckMap, allowOutputDecisionOverride);
+			rewriteConflictCheckMap, allowOutputDecisionOverride,
+			selectedStates == null ? RewriteMutationMode.APPLY : RewriteMutationMode.CAPTURE_ONLY);
 		CompiledHopKey occurrenceKey = memoTable.requirePlanCarrierOccurrence(effectivePlan.getHopRef()).key();
 		if(selectedStates != null)
 			coalesceSelectedState(selectedStates, occurrenceKey, selectedState(effectivePlan));
@@ -692,7 +694,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					FederatedOutput childDesiredOut = outputDecisions.getOrDefault(childOrigHopID, childFedPlanPair.getValue());
 						FederatedPlannerDpMemoTable.FedPlan childPlan = selectRewritePlanVariant(
 							memoTable, childHopID, childDesiredOut, childFedPlanPair.getValue(), null, outputDecisions,
-							rewriteConflictCheckMap, false);
+							rewriteConflictCheckMap, false,
+							selectedStates == null ? RewriteMutationMode.APPLY : RewriteMutationMode.CAPTURE_ONLY);
 				if (childPlan == null) {
 					FederatedPlannerLogger.logNullChildPlanDebug(childFedPlanPair, effectivePlan, memoTable);
 					continue;
@@ -779,7 +782,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					selectedPlan = memoTable.getFedPlanAfterPrune(origHopID, desiredOut);
 				if (selectedPlan != null) {
 					selectedPlan = selectLoopAwareCloneFamilyRewritePlan(
-						memoTable, origHopID, selectedPlan, outputDecisions, rewriteConflictCheckMap);
+						memoTable, origHopID, selectedPlan, outputDecisions, rewriteConflictCheckMap,
+						selectedStates == null ? RewriteMutationMode.APPLY : RewriteMutationMode.CAPTURE_ONLY);
 				}
 				if (selectedPlan == null) {
 					String msg = "Missing deferred output-decision plan for hop " + origHopID
