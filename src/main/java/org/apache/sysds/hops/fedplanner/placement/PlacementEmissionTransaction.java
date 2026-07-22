@@ -102,13 +102,14 @@ public final class PlacementEmissionTransaction {
 		FailureInjector failureInjector) {
 		Objects.requireNonNull(failureInjector, "failureInjector");
 		synchronized(LOCK) {
-			PreparedEmission prepared = prevalidate(program, result);
+			String candidatePlanHash = validateAuthorityAndHash(program, result);
 			CommittedPlan existing = COMMITTED.get(program);
 			if(existing != null) {
-				if(!existing.receipt().planHash().equals(prepared.planHash()))
+				if(!existing.receipt().planHash().equals(candidatePlanHash))
 					throw new PlacementEmissionException("A different placement plan was already emitted");
-				return new PlacementEmissionReceipt(prepared.planHash(), false, true, 0, 0);
+				return new PlacementEmissionReceipt(candidatePlanHash, false, true, 0, 0);
 			}
+			PreparedEmission prepared = prevalidate(program, result);
 
 			Map<Hop, HopSnapshot> hopSnapshots = snapshotHops(prepared.hopWrites());
 			RegistrySnapshots registrySnapshots = RegistrySnapshots.capture();
@@ -190,24 +191,18 @@ public final class PlacementEmissionTransaction {
 	}
 
 	private static PreparedEmission prevalidate(DMLProgram program, NormalizedPlannerResult result) {
-		Objects.requireNonNull(program, "program");
-		Objects.requireNonNull(result, "result");
-		PlacementAnalysis analysis = Objects.requireNonNull(result.analysis(), "result.analysis");
-		analysis.assertCanonicalProgramAuthority(program);
+		String planHash = validateAuthorityAndHash(program, result);
+		PlacementAnalysis analysis = result.analysis();
 		analysis.assertProgramStructureUnchanged();
-		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
-		if(!analysis.analysisFingerprint().equals(analysisFingerprint))
-			throw new PlacementEmissionException("Placement result has a stale analysis fingerprint");
-		String plannerId = requireText(result.plannerId(), "plannerId");
-		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
-		String planHash = requireCanonicalHash(result.normalizedPlanFingerprint());
+		String analysisFingerprint = result.analysisFingerprint();
+		String plannerId = result.plannerId();
+		String objective = result.objectiveCertificate();
 		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
-			Objects.requireNonNull(result.selectedStates(), "selectedStates")));
-		List<RelocationActionKey> selectedRelocations = List.copyOf(Objects.requireNonNull(
-			result.selectedRelocations(), "selectedRelocations"));
+			result.selectedStates()));
+		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
 		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
 			selectedRelocations, objective)))
-			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
+			throw new PlacementEmissionException("Normalized plan changed during prevalidation");
 
 		List<Node> decisionNodes = analysis.graph().decisionNodes();
 		if(selected.size() != decisionNodes.size())
@@ -238,6 +233,27 @@ public final class PlacementEmissionTransaction {
 		List<RelocationAction> relocations = exactRelocations(analysis, selectedRelocations);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(analysis, occurrences, relocations);
 		return new PreparedEmission(planHash, List.copyOf(hopWrites), List.copyOf(registryWrites));
+	}
+
+	private static String validateAuthorityAndHash(DMLProgram program, NormalizedPlannerResult result) {
+		Objects.requireNonNull(program, "program");
+		Objects.requireNonNull(result, "result");
+		PlacementAnalysis analysis = Objects.requireNonNull(result.analysis(), "result.analysis");
+		analysis.assertCanonicalProgramAuthority(program);
+		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
+		if(!analysis.analysisFingerprint().equals(analysisFingerprint))
+			throw new PlacementEmissionException("Placement result has a stale analysis fingerprint");
+		String plannerId = requireText(result.plannerId(), "plannerId");
+		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
+		String planHash = requireCanonicalHash(result.normalizedPlanFingerprint());
+		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
+			Objects.requireNonNull(result.selectedStates(), "selectedStates")));
+		List<RelocationActionKey> selectedRelocations = List.copyOf(Objects.requireNonNull(
+			result.selectedRelocations(), "selectedRelocations"));
+		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
+			selectedRelocations, objective)))
+			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
+		return planHash;
 	}
 
 	private static Map<CompiledHopKey, HopOccurrenceProjection> occurrenceIndex(PlacementAnalysis analysis) {
