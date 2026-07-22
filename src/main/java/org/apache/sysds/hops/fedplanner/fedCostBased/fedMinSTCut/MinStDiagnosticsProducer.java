@@ -126,27 +126,26 @@ public final class MinStDiagnosticsProducer {
 		IdentityHashMap<CompiledHopKey, CostBucket> buckets = new IdentityHashMap<>();
 		for(CompiledHopKey key : facts.orderedScope())
 			buckets.put(key, new CostBucket());
-		double global = 0.0;
+		MinStCompensatedCostSum global = new MinStCompensatedCostSum();
 		for(DirectedEdgeFact edge : facts.directedEdgesInDerivationOrder()) {
 			boolean fromSource = edge.fromNodeId() == facts.sourceNodeId()
 				|| source.contains(edge.fromNodeId());
 			boolean toSource = edge.toNodeId() != facts.sinkNodeId() && source.contains(edge.toNodeId());
 			if(!fromSource || toSource)
 				continue;
+			global.addBits(edge.capacityBits(), "MINST_DIAGNOSTICS_EDGE_CAPACITY",
+				"MINST_DIAGNOSTICS_GLOBAL_TOTAL");
 			for(EdgeContribution contribution : edge.contributionsInDerivationOrder()) {
 				CostBucket bucket = buckets.get(contribution.ownerKey());
 				if(bucket == null)
 					throw new IllegalArgumentException("MINST_DIAGNOSTICS_FOREIGN_CONTRIBUTION_OWNER");
-				double value = canonicalCost(contribution.costBits(), "MINST_DIAGNOSTICS_CONTRIBUTION_COST");
-				global = canonicalCost(Double.doubleToRawLongBits(global + value),
-					"MINST_DIAGNOSTICS_GLOBAL_TOTAL");
 				if(isNetwork(contribution.kind()))
-					bucket.addNetwork(contribution, value);
+					bucket.addNetwork(contribution);
 				else
-					bucket.addSelf(value);
+					bucket.addSelf(contribution.costBits());
 			}
 		}
-		if(Double.doubleToRawLongBits(global) != selectedObjectiveBits)
+		if(global.totalBits("MINST_DIAGNOSTICS_GLOBAL_TOTAL") != selectedObjectiveBits)
 			throw new IllegalArgumentException("MINST_DIAGNOSTICS_OBJECTIVE_REPLAY_MISMATCH");
 		return new CostProjection(buckets);
 	}
@@ -203,10 +202,12 @@ public final class MinStDiagnosticsProducer {
 
 	private static List<ChildNetworkCost> positiveChildNetworkCosts(PlacementAnalysis analysis,
 		CompiledHopKey owner, CostBucket bucket) {
-		Map<Integer, Double> byInput = new LinkedHashMap<>();
+		Map<Integer, MinStCompensatedCostSum> byInput = new LinkedHashMap<>();
 		Map<Integer, Long> childHopIdByInput = new LinkedHashMap<>();
 		for(PeerContribution contribution : bucket.peerContributions()) {
-			if(contribution.peer() == null || contribution.inputPosition() < 0 || contribution.cost() <= 0.0)
+			double cost = canonicalCost(contribution.costBits(),
+				"MINST_DIAGNOSTICS_CHILD_NETWORK_COST");
+			if(contribution.peer() == null || contribution.inputPosition() < 0 || cost <= 0.0)
 				continue;
 			CompiledInputEdgeFact edge;
 			try {
@@ -222,14 +223,15 @@ public final class MinStDiagnosticsProducer {
 			Long previousHopId = childHopIdByInput.putIfAbsent(contribution.inputPosition(), hopId);
 			if(previousHopId != null && previousHopId.longValue() != hopId)
 				throw new IllegalArgumentException("MINST_DIAGNOSTICS_CHILD_NETWORK_EDGE_AMBIGUOUS");
-			byInput.merge(contribution.inputPosition(), contribution.cost(), (left, right) ->
-				canonicalCost(Double.doubleToRawLongBits(left + right),
-					"MINST_DIAGNOSTICS_CHILD_NETWORK_TOTAL"));
+			byInput.computeIfAbsent(contribution.inputPosition(), ignored ->
+				new MinStCompensatedCostSum()).addBits(contribution.costBits(),
+					"MINST_DIAGNOSTICS_CHILD_NETWORK_COST",
+					"MINST_DIAGNOSTICS_CHILD_NETWORK_TOTAL");
 		}
 		List<ChildNetworkCost> result = new ArrayList<>();
-		for(Map.Entry<Integer, Double> entry : byInput.entrySet())
+		for(Map.Entry<Integer, MinStCompensatedCostSum> entry : byInput.entrySet())
 			result.add(new ChildNetworkCost(childHopIdByInput.get(entry.getKey()),
-				Double.doubleToRawLongBits(entry.getValue())));
+				entry.getValue().totalBits("MINST_DIAGNOSTICS_CHILD_NETWORK_TOTAL")));
 		return List.copyOf(result);
 	}
 
@@ -267,29 +269,34 @@ public final class MinStDiagnosticsProducer {
 
 	private record ValidatedSelection(Set<Long> source, List<PlacementState> states) { }
 	private record CostProjection(IdentityHashMap<CompiledHopKey, CostBucket> byOwner) { }
-	private record PeerContribution(CompiledHopKey peer, int inputPosition, double cost) { }
+	private record PeerContribution(CompiledHopKey peer, int inputPosition, long costBits) { }
 	private record HopProjection(CompiledHopKey key, Hop hop, HopFacts facts) { }
 
 	private static final class CostBucket {
-		private double self;
-		private double network;
+		private final MinStCompensatedCostSum self = new MinStCompensatedCostSum();
+		private final MinStCompensatedCostSum network = new MinStCompensatedCostSum();
 		private final List<PeerContribution> peerContributions = new ArrayList<>();
-		void addSelf(double value) {
-			self = canonicalCost(Double.doubleToRawLongBits(self + value), "MINST_DIAGNOSTICS_SELF_TOTAL");
+		void addSelf(long costBits) {
+			self.addBits(costBits, "MINST_DIAGNOSTICS_CONTRIBUTION_COST",
+				"MINST_DIAGNOSTICS_SELF_TOTAL");
 		}
 
-		void addNetwork(EdgeContribution contribution, double value) {
-			network = canonicalCost(Double.doubleToRawLongBits(network + value),
+		void addNetwork(EdgeContribution contribution) {
+			network.addBits(contribution.costBits(), "MINST_DIAGNOSTICS_CONTRIBUTION_COST",
 				"MINST_DIAGNOSTICS_NETWORK_TOTAL");
 			peerContributions.add(new PeerContribution(contribution.peerKeyOrNull(),
-				contribution.inputPosition(), value));
+				contribution.inputPosition(), contribution.costBits()));
 		}
 
-		long selfBits() { return Double.doubleToRawLongBits(self); }
-		long networkBits() { return Double.doubleToRawLongBits(network); }
+		long selfBits() { return self.totalBits("MINST_DIAGNOSTICS_SELF_TOTAL"); }
+		long networkBits() { return network.totalBits("MINST_DIAGNOSTICS_NETWORK_TOTAL"); }
 		long totalBits() {
-			return Double.doubleToRawLongBits(canonicalCost(Double.doubleToRawLongBits(self + network),
-				"MINST_DIAGNOSTICS_OWNER_TOTAL"));
+			MinStCompensatedCostSum total = new MinStCompensatedCostSum();
+			total.addBits(selfBits(), "MINST_DIAGNOSTICS_SELF_TOTAL",
+				"MINST_DIAGNOSTICS_OWNER_TOTAL");
+			total.addBits(networkBits(), "MINST_DIAGNOSTICS_NETWORK_TOTAL",
+				"MINST_DIAGNOSTICS_OWNER_TOTAL");
+			return total.totalBits("MINST_DIAGNOSTICS_OWNER_TOTAL");
 		}
 		List<PeerContribution> peerContributions() { return peerContributions; }
 	}

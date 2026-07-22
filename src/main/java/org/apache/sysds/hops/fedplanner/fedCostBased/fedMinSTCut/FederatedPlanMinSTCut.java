@@ -1,607 +1,67 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0.
  */
-
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Queue;
-import java.util.Set;
-import java.util.function.Function;
-import org.apache.commons.lang3.tuple.Pair;
-import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.common.Types;
-import org.apache.sysds.hops.*;
-import org.apache.sysds.hops.DataOp;
-import org.apache.sysds.hops.FunctionOp.FunctionType;
-import org.apache.sysds.hops.FunctionOp;
-import org.apache.sysds.hops.Hop;
+
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
-import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ExecPlacementCaps;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.Vertex;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedTypePropagator;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedWorkerUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.OracleUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
-import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
-import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ObligationReceipt;
-import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.OccurrenceReceipt;
-import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ProducerReceipt;
-import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
-import org.apache.sysds.hops.fedplanner.rules.RulesCore;
-import org.apache.sysds.hops.fedplanner.rules.RulesCore.RuleRegistry;
-import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
-import org.apache.sysds.hops.rewrite.HopRewriteUtils;
-import org.apache.sysds.parser.*;
 import org.apache.sysds.parser.DMLProgram;
-import org.apache.sysds.parser.ForStatement;
-import org.apache.sysds.parser.ForStatementBlock;
-import org.apache.sysds.parser.FunctionStatement;
 import org.apache.sysds.parser.FunctionStatementBlock;
-import org.apache.sysds.parser.IfStatement;
-import org.apache.sysds.parser.IfStatementBlock;
-import org.apache.sysds.parser.StatementBlock;
-import org.apache.sysds.parser.WhileStatement;
-import org.apache.sysds.parser.WhileStatementBlock;
-import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
-import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.apache.sysds.runtime.util.UtilFunctions;
-import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
-import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
-import org.apache.sysds.lops.compile.FederatedRefedRegistry;
-import org.jgrapht.Graph;
-import org.jgrapht.alg.flow.PushRelabelMFImpl;
-import org.jgrapht.graph.DefaultDirectedWeightedGraph;
-import org.jgrapht.graph.DefaultWeightedEdge;
 
+/** MinST policy root over the canonical immutable placement analysis. */
 public class FederatedPlanMinSTCut extends AFederatedPlanner {
+	private final MinStPlacementAdapter adapter = new MinStPlacementAdapter();
+
 	@Override
-	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
-		rewriteProgramInternal(prog, fgraph, fcallSizes, null);
+	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
+		FunctionCallSizeInfo fcallSizes) {
+		Objects.requireNonNull(prog, "prog");
+		rewriteProgram(prog, fgraph, fcallSizes, prog.requirePlacementAnalysisAuthority());
 	}
 
 	@Override
 	public MinStPlacementInput rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph,
 		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
+		Objects.requireNonNull(prog, "prog");
 		Objects.requireNonNull(analysis, "analysis");
 		analysis.assertCanonicalProgramAuthority(prog);
-		return rewriteProgramInternal(prog, fgraph, fcallSizes, analysis);
-	}
+		analysis.assertProgramStructureUnchanged();
 
-	private MinStPlacementInput rewriteProgramInternal(DMLProgram prog, FunctionCallGraph fgraph,
-		FunctionCallSizeInfo fcallSizes, PlacementAnalysis analysis) {
-		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		Map<Long, List<Hop>> rewireTable = new HashMap<>();
-		Set<Hop> progRootHopSet = new HashSet<>();
-		Set<Long> unRefTwriteSet = new HashSet<>();
-		Set<Long> unRefSet = new HashSet<>();
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		RuleRegistry registry = RulesCore.RulesModule.createDefaultRegistry();
-		OracleFacade oracleFacade = new OracleFacade(registry);
+		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
+			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope);
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+		MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
+		adapter.select(analysis, input);
 
-		List<Pair<FederatedRange, FederatedData>> fedMap = new ArrayList<>();
-
-		FederatedPlanMinSTRewire.rewireProgram(prog, rewireTable, graph, fedMap,
-				unRefTwriteSet, unRefSet, progRootHopSet, oracleFacade);
-		for (long hopID : unRefTwriteSet) {
-			progRootHopSet.add(graph.getHopRef(hopID));
-		}
-
-		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
-		graph.setNumOfWorkers(numOfWorkers);
-		FederatedPlanMinSTCostEstimator.estimateProgram(prog, graph, rewireTable, true);
-
-		graph.getOptimalPlan();
-		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
-		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
-		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
-		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
-		restoreMinstPlanDecisions(plannedExecOut, graph);
-		registerMinstCpfoutSelections(graph, fTypeMap);
-		registerMinstSelectedObligations(graph, fTypeMap);
-		restoreMinstPlanDecisions(plannedExecOut, graph);
-		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
-		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
-		MinStDiagnostics diagnostics = captureMinStDiagnostics(graph);
-		FederatedPlannerLogger.logOptimalPlanStructured(diagnostics);
-		FederatedPlannerLogger.logOptimalPlan(diagnostics, true);
-		if (analysis == null)
-			return null;
-		MinStPlacementInput input = bindPlacementInput(analysis, graph);
-		new MinStPlacementAdapter().select(analysis, input);
+		analysis.assertProgramStructureUnchanged();
 		return input;
-	}
-
-	public static MinStPlacementInput bindPlacementInput(PlacementAnalysis analysis,
-		FederatedPlanMinSTGraph graph) {
-		Objects.requireNonNull(analysis, "analysis");
-		Objects.requireNonNull(graph, "graph");
-		List<OccurrenceReceipt> occurrences = new ArrayList<>();
-		for(var occurrence : analysis.occurrences()) {
-			Hop hop = analysis.hop(occurrence.key()).orElseThrow();
-			Vertex vertex = graph.getVertex(hop.getHopID());
-			boolean trace = analysis.graph().node(occurrence.key()).orElseThrow().kind()
-				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_BODY_NON_EMITTED;
-			if(vertex == null && !trace)
-				throw new IllegalArgumentException("MinST selected occurrence is missing: " + occurrence.key());
-			if(vertex != null && (vertex.getHopID() != hop.getHopID() || vertex.getHopRef() != hop))
-				throw new IllegalArgumentException("MinST selected occurrence is foreign: " + occurrence.key());
-			ExecType exec = trace ? null : (hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType());
-			FederatedOutput output = trace ? FederatedOutput.NONE : hop.getFederatedOutput();
-			if(!trace && (exec == null || output == null))
-				throw new IllegalArgumentException("Selected occurrence has incomplete executable state");
-			occurrences.add(new OccurrenceReceipt(occurrence.key(), hop, hop.getHopID(), hop, hop.getHopID(),
-				exec, output));
-		}
-		List<ObligationReceipt> obligations = graph.getSelectedObligations().stream().map(value ->
-			new ObligationReceipt(value.getKind().name(), value.getChildHopId(), value.getOriginalHopId(),
-				value.getDomainId(), value.getConsumerHopIds(), value.getFType(), value.hasCapability(),
-				value.getCapabilityReason(), value.getReason())).toList();
-		ProducerReceipt producer = new ProducerReceipt(analysis.analysisFingerprint(),
-			graph.getSelectedCutObjectiveBits(), graph.getSelectedSourcePartitionNodeIds());
-		return MinStPlacementInput.create(analysis, producer, occurrences, obligations);
 	}
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
-		FederatedPlannerUtils.clearFedInitVars();
-		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-		FederatedPlanMinSTCostEstimator.estimateFunctionDynamic(function, graph, true);
-		graph.getOptimalPlan();
-		Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = capturePlannedExecOutputs(graph);
-		Map<Long, FType> plannedFTypeMap = buildPlannedFTypeMap(graph);
-		Map<Long, FType> fTypeMap = new HashMap<>(plannedFTypeMap);
-		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
-		restoreMinstPlanDecisions(plannedExecOut, graph);
-		registerMinstCpfoutSelections(graph, fTypeMap);
-		registerMinstSelectedObligations(graph, fTypeMap);
-		restoreMinstPlanDecisions(plannedExecOut, graph);
-		Map<Long, FType> resolvedFTypeMap = buildPlannedFTypeMap(graph);
-		validateMinstPlanConsistency(plannedExecOut, resolvedFTypeMap, graph);
-		MinStDiagnostics diagnostics = captureMinStDiagnostics(graph);
-		FederatedPlannerLogger.logOptimalPlanStructured(diagnostics);
-		FederatedPlannerLogger.logOptimalPlan(diagnostics, true);
+		Objects.requireNonNull(function, "function");
+		DMLProgram program = Objects.requireNonNull(function.getDMLProg(), "function program");
+		rewriteFunctionDynamic(function, funcArgs, program.requirePlacementAnalysisAuthority());
 	}
 
-	private static Map<Long, Pair<ExecType, FederatedOutput>> capturePlannedExecOutputs(
-			FederatedPlanMinSTGraph graph) {
-		Map<Long, Pair<ExecType, FederatedOutput>> planned = new HashMap<>();
-		if (graph == null)
-			return planned;
-		for (Vertex vertex : graph.getMemoTable().values()) {
-			if (vertex == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			if (hop == null)
-				continue;
-			ExecType exec = hop.getForcedExecType();
-			if (exec == null)
-				exec = hop.getExecType();
-			FederatedOutput out = hop.getFederatedOutput();
-			planned.put(vertex.getHopID(), Pair.of(exec, out));
-		}
-		return planned;
+	public MinStPlacementInput rewriteFunctionDynamic(FunctionStatementBlock function,
+		LocalVariableMap funcArgs, PlacementAnalysis analysis) {
+		Objects.requireNonNull(function, "function");
+		Objects.requireNonNull(analysis, "analysis");
+		DMLProgram program = Objects.requireNonNull(function.getDMLProg(), "function program");
+		return rewriteProgram(program, null, null, analysis);
 	}
-
-	private static void restoreMinstPlanDecisions(Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut,
-			FederatedPlanMinSTGraph graph) {
-		if (plannedExecOut == null || graph == null)
-			return;
-		for (Map.Entry<Long, Pair<ExecType, FederatedOutput>> entry : plannedExecOut.entrySet()) {
-			Vertex vertex = graph.getVertex(entry.getKey());
-			if (vertex == null || vertex.getHopRef() == null || entry.getValue() == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			ExecType exec = entry.getValue().getLeft();
-			FederatedOutput out = entry.getValue().getRight();
-			hop.setForcedExecType(exec);
-			hop.setFederatedOutput(out);
-			FederatedPlannerUtils.registerPlannerRecompileState(hop, exec, out);
-		}
-	}
-
-	private static List<Hop> collectGraphHops(FederatedPlanMinSTGraph graph) {
-		List<Hop> hops = new ArrayList<>();
-		if (graph == null)
-			return hops;
-		for (Vertex vertex : graph.getMemoTable().values()) {
-			if (vertex == null || vertex.getHopRef() == null)
-				continue;
-			hops.add(vertex.getHopRef());
-		}
-		return hops;
-	}
-
-	private static void registerMinstCpfoutSelections(FederatedPlanMinSTGraph graph,
-			Map<Long, FType> fTypeMap) {
-		if (graph == null || fTypeMap == null)
-			return;
-		List<Hop> cpfoutHops = new ArrayList<>();
-		for (Vertex vertex : graph.getMemoTable().values()) {
-			if (vertex == null || vertex.getHopRef() == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			ExecType exec = hop.getForcedExecType();
-			if (exec == null)
-				exec = hop.getExecType();
-			if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT)
-				cpfoutHops.add(hop);
-		}
-		if (!cpfoutHops.isEmpty())
-			FederatedRefedPolicy.registerFoutMaterializeCandidates(cpfoutHops, fTypeMap, -1L);
-	}
-
-	private static void registerMinstSelectedObligations(FederatedPlanMinSTGraph graph,
-			Map<Long, FType> fTypeMap) {
-		if (graph == null || fTypeMap == null)
-			return;
-		for (FederatedPlanMinSTGraph.SelectedObligation obligation : graph.getSelectedObligations()) {
-			if (obligation == null)
-				continue;
-			if (!obligation.hasCapability()) {
-				throw new DMLRuntimeException("MinST selected obligation without runtime capability: "
-						+ obligation);
-			}
-			if (obligation.getKind() == FederatedPlanMinSTGraph.ObligationKind.D) {
-				String fTypeHint = obligation.getFType() != null ? obligation.getFType().name() : null;
-				FederatedPlannerLogger.logInfoMessage("[MinST] Register selected D obligation: " + obligation);
-				FederatedLocalMaterializeRegistry.register(-1L, obligation.getChildHopId(),
-						obligation.getConsumerHopIds(), fTypeHint, obligation.getReason());
-				continue;
-			}
-			if (obligation.getKind() != FederatedPlanMinSTGraph.ObligationKind.U)
-				continue;
-			Hop hop = graph.getHopRef(obligation.getChildHopId());
-			if (hop == null)
-				continue;
-			ExecType oldExec = hop.getForcedExecType();
-			FederatedOutput oldOut = hop.getFederatedOutput();
-			if (obligation.getFType() != null)
-				fTypeMap.put(obligation.getChildHopId(), obligation.getFType());
-			FederatedPlannerLogger.logInfoMessage("[MinST] Register selected U obligation: " + obligation);
-			FederatedRefedPolicy.registerFoutMaterializeObligation(hop,
-					collectObligationConsumers(graph, obligation), fTypeMap, -1L);
-			hop.setForcedExecType(oldExec);
-			hop.setFederatedOutput(oldOut);
-			if (!hasCpFoutRegistration(hop)) {
-				throw new DMLRuntimeException("MinST selected U obligation for hop "
-						+ obligation.getChildHopId()
-						+ " but no refed/materialize entry was registered: " + obligation);
-			}
-		}
-	}
-
-	private static List<Hop> collectObligationConsumers(FederatedPlanMinSTGraph graph,
-			FederatedPlanMinSTGraph.SelectedObligation obligation) {
-		List<Hop> consumers = new ArrayList<>();
-		if (graph == null || obligation == null)
-			return consumers;
-		for (Long consumerId : obligation.getConsumerHopIds()) {
-			if (consumerId == null || !graph.contains(consumerId))
-				continue;
-			Hop consumer = graph.getHopRef(consumerId);
-			if (consumer != null)
-				consumers.add(consumer);
-		}
-		return consumers;
-	}
-
-	private static Map<Long, FType> buildPlannedFTypeMap(FederatedPlanMinSTGraph graph) {
-		Map<Long, FType> fTypeMap = new HashMap<>();
-		if (graph == null)
-			return fTypeMap;
-		for (Vertex vertex : graph.getMemoTable().values()) {
-			Hop hop = vertex.getHopRef();
-			if (hop == null)
-				continue;
-			boolean isTransient = (hop instanceof DataOp)
-				&& (((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD
-					|| ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTWRITE);
-			FType fType = null;
-			if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
-				fType = vertex.getDataType();
-				if (hop.getForcedExecType() == ExecType.CP) {
-					FType cpFoutType = vertex.getCpFoutDataType();
-					if (cpFoutType != null)
-						fType = cpFoutType;
-				}
-			} else if (!isTransient) {
-				// Local outputs can still require CP->FOUT materialization; keep the
-				// inferred FType as a hint for refed insertion, but they are NOT treated
-				// as federated sources (see isFederatedInput()).
-				fType = vertex.getCpFoutDataType();
-				// Some vertices can miss an explicit cpFout type even though the logical
-				// FType is already BROADCAST/ROW/COL. Keep that planner signal so
-				// refed-policy does not silently fall back to fed_refed on unknown dims.
-				if (fType == null)
-					fType = vertex.getDataType();
-			}
-			if (fType != null)
-				fTypeMap.put(vertex.getHopID(), fType);
-		}
-		return fTypeMap;
-	}
-
-	private static void validateMinstPlanConsistency(
-			Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut,
-			Map<Long, FType> plannedFTypeMap,
-			FederatedPlanMinSTGraph graph) {
-		if (graph == null || plannedExecOut == null || plannedExecOut.isEmpty())
-			return;
-		for (Map.Entry<Long, Pair<ExecType, FederatedOutput>> entry : plannedExecOut.entrySet()) {
-			long hopId = entry.getKey();
-			Pair<ExecType, FederatedOutput> planned = entry.getValue();
-			Vertex vertex = graph.getVertex(hopId);
-			if (vertex == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			if (hop == null)
-				continue;
-			ExecType curExec = hop.getForcedExecType();
-			if (curExec == null)
-				curExec = hop.getExecType();
-			FederatedOutput curOut = hop.getFederatedOutput();
-			if (planned.getLeft() != curExec || planned.getRight() != curOut) {
-				throw new DMLRuntimeException("MinST plan changed during resolve for hop "
-						+ hopId + " (" + hop.getOpString() + "): planned=" + planned.getLeft()
-						+ "/" + planned.getRight() + " resolved=" + curExec + "/" + curOut);
-			}
-
-			if (planned.getLeft() == ExecType.CP && planned.getRight() == FederatedOutput.FOUT) {
-				if (!hasCpFoutRegistration(hop)) {
-					throw new DMLRuntimeException("MinST plan requires CP->FOUT for hop " + hopId
-							+ " (" + hop.getOpString() + ") but no refed/materialize entry was registered.");
-				}
-			}
-
-			if (planned.getLeft() == ExecType.FED) {
-				// Validate FED feasibility against the actual planned ExecType/FedOutput markers.
-				// Using the FType-only variant would incorrectly treat CP->FOUT hint entries as
-				// already-federated sources.
-				boolean ok = FederatedRefedPolicy.canSatisfyFederatedInputs(hop, plannedFTypeMap);
-				if (!ok)
-					FederatedPlannerLogger.logWarnMessage(
-							"[MinST] FED feasibility check failed after resolve for hop "
-									+ hopId + " (" + hop.getOpString() + "); continuing (policy may have inserted refed/fout via transient anchors).");
-			}
-		}
-	}
-
-	private static boolean hasCpFoutRegistration(Hop hop) {
-		if (hop == null)
-			return false;
-		if (isExistingFederatedTransientSource(hop))
-			return true;
-		long hopId = hop.getHopID();
-		if (FederatedRefedRegistry.hasEntry(hopId) || FederatedFoutMaterializeRegistry.hasEntry(hopId))
-			return true;
-		List<Hop> parents = hop.getParent();
-		if (parents == null || parents.isEmpty())
-			return false;
-		for (Hop parent : parents) {
-			if (!(parent instanceof DataOp))
-				continue;
-			DataOp dataOp = (DataOp) parent;
-			if (dataOp.getOp() != Types.OpOpData.TRANSIENTWRITE)
-				continue;
-			List<Hop> inputs = dataOp.getInput();
-			if (inputs == null || inputs.isEmpty() || inputs.get(0) != hop)
-				continue;
-			long parentHopId = dataOp.getHopID();
-			if (FederatedRefedRegistry.hasEntry(parentHopId)
-					|| FederatedFoutMaterializeRegistry.hasEntry(parentHopId))
-				return true;
-		}
-		return false;
-	}
-
-	private static boolean isExistingFederatedTransientSource(Hop hop) {
-		if (!(hop instanceof DataOp))
-			return false;
-		DataOp dataOp = (DataOp) hop;
-		if (dataOp.getOp() != Types.OpOpData.TRANSIENTREAD)
-			return false;
-		String name = dataOp.getName();
-		if (name == null || name.isEmpty())
-			return false;
-		return FederatedPlannerUtils.isFedInitVar(name);
-	}
-	private static MinStDiagnostics captureMinStDiagnostics(FederatedPlanMinSTGraph planGraph) {
-		Map<Long, Vertex> memoTable = planGraph.getMemoTable();
-		Graph<Long, DefaultWeightedEdge> graph = planGraph.getGraph();
-		List<MinStDiagnostics.OptimalSummary> summaries = new ArrayList<>();
-		for(Vertex vertex : memoTable.values()) {
-			if(vertex == null || vertex.getHopRef() == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			ExecPlacementCaps caps = vertex.getCaps();
-			summaries.add(new MinStDiagnostics.OptimalSummary(hop.getHopID(), hop.getOpString(),
-				name(hop.getForcedExecType()), name(hop.getFederatedOutput()), name(vertex.getPrivacy()),
-				name(vertex.getDataType()), caps.allowCP_LOUT, caps.allowCP_FOUT, caps.allowFED_LOUT,
-				caps.allowFED_FOUT));
-		}
-
-		List<Long> sortedHopIds = new ArrayList<>(memoTable.keySet());
-		Collections.sort(sortedHopIds);
-		List<MinStDiagnostics.HopFacts> hopFacts = new ArrayList<>();
-		for(Long hopId : sortedHopIds) {
-			Vertex vertex = memoTable.get(hopId);
-			if(vertex == null || vertex.getHopRef() == null)
-				continue;
-			Hop hop = vertex.getHopRef();
-			ExecType forcedExec = hop.getForcedExecType();
-			ExecType effectiveExec = forcedExec != null ? forcedExec : hop.getExecType();
-			FederatedOutput output = hop.getFederatedOutput();
-			double selfCost = getMinstSelfCost(graph, hopId, effectiveExec);
-			double networkCost = getMinstNetworkCost(graph, memoTable, vertex, hop, effectiveExec, output);
-			double tabularOpCost = getMinstTabularOpCost(graph, hopId, forcedExec);
-			List<Long> childIds = hopIds(hop.getInput());
-			List<Long> parentIds = hopIds(hop.getParent());
-			List<Long> missingParents = new ArrayList<>();
-			for(Long parentId : parentIds)
-				if(!memoTable.containsKey(parentId))
-					missingParents.add(parentId);
-			List<MinStDiagnostics.ChildNetworkCost> childCosts = getPositiveChildNetworkCosts(
-				graph, memoTable, hop, forcedExec);
-			double rawInputMem = hop.getInputMemEstimate();
-			double rawOutputMem = hop.getOutputMemEstimate();
-			double effectiveInputMem = FederatedCostModel.getEffectiveInputMemEstimate(hop);
-			double effectiveOutputMem = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
-			String updateType = hop.getUpdateType().isInPlace()
-				? hop.getUpdateType().toString().toLowerCase() : null;
-			hopFacts.add(new MinStDiagnostics.HopFacts(hopId, hop.getClass().getSimpleName(),
-				hop.getOpString(), String.valueOf(hop.getDataType()), name(effectiveExec), name(forcedExec),
-				name(output), name(vertex.getPrivacy()), name(vertex.getDataType()), childIds, parentIds,
-				missingParents, bits(selfCost), bits(networkCost), bits(selfCost + networkCost),
-				bits(vertex.getOpWeight()), bits(tabularOpCost), childCosts, hop.getDim1(), hop.getDim2(),
-				hop.getBlocksize(), hop.getNnz(), bits(rawInputMem), bits(rawOutputMem),
-				bits(effectiveInputMem), bits(effectiveOutputMem), updateType));
-		}
-		return new MinStDiagnostics(planGraph.getSelectedCutObjectiveBits(),
-			planGraph.getSelectedSourcePartitionNodeIds(), summaries, hopFacts);
-	}
-
-	private static String name(Enum<?> value) {
-		return value != null ? value.name() : null;
-	}
-
-	private static long bits(double value) {
-		return Double.doubleToRawLongBits(value);
-	}
-
-	private static List<Long> hopIds(List<Hop> hops) {
-		List<Long> ids = new ArrayList<>();
-		if(hops != null)
-			for(Hop hop : hops)
-				if(hop != null)
-					ids.add(hop.getHopID());
-		return ids;
-	}
-
-	private static double getMinstSelfCost(Graph<Long, DefaultWeightedEdge> graph, long hopId,
-		ExecType execType) {
-		long computeId = minstComputeId(hopId);
-		return execType == ExecType.FED ? getEdgeWeightOrZero(graph, computeId, -2L)
-			: getEdgeWeightOrZero(graph, -1L, computeId);
-	}
-
-	private static double getMinstNetworkCost(Graph<Long, DefaultWeightedEdge> graph,
-		Map<Long, Vertex> memoTable, Vertex vertex, Hop hop, ExecType execType, FederatedOutput output) {
-		double networkCost = 0.0;
-		long computeId = minstComputeId(hop.getHopID());
-		long placementId = minstPlacementId(hop.getHopID());
-		long localityId = minstLocalityId(hop.getHopID());
-		if(output == FederatedOutput.FOUT) {
-			if(vertex.isDerivedFedFout())
-				networkCost += getEdgeWeightOrZero(graph, placementId, -2L);
-			else if(execType == ExecType.CP)
-				networkCost += getEdgeWeightOrZero(graph, placementId, computeId);
-		}
-		else if(execType == ExecType.FED)
-			networkCost += getEdgeWeightOrZero(graph, computeId, localityId);
-		if(execType == ExecType.FED && !isDmlFunctionPlaceholder(hop) && hop.getInput() != null) {
-			for(Hop child : hop.getInput()) {
-				if(child == null || child.getDataType() == null || !child.getDataType().isMatrix()
-					|| !memoTable.containsKey(child.getHopID()))
-					continue;
-				if(child.getFederatedOutput() != FederatedOutput.FOUT)
-					networkCost += getEdgeWeightOrZero(graph, computeId,
-						minstPlacementId(child.getHopID()));
-			}
-		}
-		return networkCost;
-	}
-
-	private static double getMinstTabularOpCost(Graph<Long, DefaultWeightedEdge> graph, long hopId,
-		ExecType forcedExec) {
-		if(forcedExec == ExecType.FED)
-			return getEdgeWeightOrZero(graph, hopId, -2L);
-		if(forcedExec == ExecType.CP)
-			return getEdgeWeightOrZero(graph, -1L, hopId);
-		return 0.0;
-	}
-
-	private static List<MinStDiagnostics.ChildNetworkCost> getPositiveChildNetworkCosts(
-		Graph<Long, DefaultWeightedEdge> graph, Map<Long, Vertex> memoTable, Hop hop, ExecType parentExec) {
-		List<MinStDiagnostics.ChildNetworkCost> costs = new ArrayList<>();
-		if(hop.getInput() == null)
-			return costs;
-		for(Hop child : hop.getInput()) {
-			if(child == null || !memoTable.containsKey(child.getHopID()))
-				continue;
-			double cost = 0.0;
-			ExecType childExec = child.getForcedExecType();
-			if(childExec == ExecType.FED && parentExec == ExecType.CP)
-				cost = getEdgeWeightOrZero(graph, child.getHopID(), hop.getHopID());
-			else if(childExec == ExecType.CP && parentExec == ExecType.FED)
-				cost = getEdgeWeightOrZero(graph, hop.getHopID(), child.getHopID());
-			if(cost > 0)
-				costs.add(new MinStDiagnostics.ChildNetworkCost(child.getHopID(), bits(cost)));
-		}
-		return costs;
-	}
-
-	private static long minstComputeId(long hopId) {
-		return hopId << 2;
-	}
-
-	private static long minstPlacementId(long hopId) {
-		return (hopId << 2) | 1;
-	}
-
-	private static long minstLocalityId(long hopId) {
-		return (hopId << 2) | 2;
-	}
-
-	private static boolean isDmlFunctionPlaceholder(Hop hop) {
-		return hop instanceof FunctionOp
-			&& ((FunctionOp) hop).getFunctionType() == FunctionOp.FunctionType.DML;
-	}
-
-	private static double getEdgeWeightOrZero(Graph<Long, DefaultWeightedEdge> graph, long src, long dst) {
-		DefaultWeightedEdge edge = graph.getEdge(src, dst);
-		return edge != null ? graph.getEdgeWeight(edge) : 0.0;
-	}
-
 }

@@ -1,6 +1,6 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.test.component.federated.placement.guard;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.LegacyMinstOfflineSelectedCapture;
 
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -353,7 +353,7 @@ public class CampaignBR4CostSelfTest {
 				Assert.assertNotNull(occurrence.hop().getForcedExecType()!=null?occurrence.hop().getForcedExecType():occurrence.hop().getExecType());
 				Assert.assertNotNull(occurrence.hop().getFederatedOutput());
 			}
-			var bound=FederatedPlanMinSTCut.bindPlacementInput(fixture.analysis(),fixture.producerGraph());
+			var bound=LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(fixture.analysis(),fixture.producerGraph());
 			var selected=new MinStPlacementAdapter().select(fixture.analysis(),bound);
 			Assert.assertSame(bound.producerReceipt(),selected.producer());
 			Assert.assertEquals(fixture.analysis().occurrences().size(),selected.selectedReceipts().size());
@@ -363,7 +363,7 @@ public class CampaignBR4CostSelfTest {
 	}
 	@Test public void exactMinstOwnerRejectsMissingForeignStaleAndDescriptorReceipt()throws Exception{
 		var fixtures=R4ExactPrivateCostMinstFixtures.all();var owner=fixtures.get(0);
-		var bound=FederatedPlanMinSTCut.bindPlacementInput(owner.analysis(),owner.producerGraph());
+		var bound=LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(owner.analysis(),owner.producerGraph());
 		var foreign=R4ExactPrivateCostMinstFixtures.all().get(0);
 		Assert.assertThrows(IllegalArgumentException.class,()->new MinStPlacementAdapter().select(foreign.analysis(),bound));
 		FederatedPlanMinSTGraph missing=new FederatedPlanMinSTGraph();
@@ -372,9 +372,9 @@ public class CampaignBR4CostSelfTest {
 			org.apache.sysds.hops.fedplanner.FTypes.Privacy.PUBLIC,org.apache.sysds.hops.fedplanner.FTypes.FType.ROW,
 			new FederatedPlanMinSTGraph.ExecPlacementCaps());
 		vertex.setMetadata(1,1,List.of());vertex.setCost(0,0,0);missing.addVertex(vertex);
-		Assert.assertThrows(IllegalArgumentException.class,()->FederatedPlanMinSTCut.bindPlacementInput(owner.analysis(),missing));
+		Assert.assertThrows(IllegalArgumentException.class,()->LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(owner.analysis(),missing));
 		var staleFixture=fixtures.stream().filter(f->f.id().equals("C2-MS-03-SHARED-DOWNLOAD")).findFirst().orElseThrow();
-		var stale=FederatedPlanMinSTCut.bindPlacementInput(staleFixture.analysis(),staleFixture.producerGraph());
+		var stale=LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(staleFixture.analysis(),staleFixture.producerGraph());
 		var staleHop=staleFixture.analysis().occurrences().get(0).hop();
 		var originalOutput=staleHop.getFederatedOutput();
 		staleHop.setFederatedOutput(originalOutput==org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.NONE?
@@ -397,7 +397,7 @@ public class CampaignBR4CostSelfTest {
 			String before=fixture.analysis().occurrences().stream().map(o->o.key().normalizedSignature()+":"+
 				(o.hop().getForcedExecType()!=null?o.hop().getForcedExecType():o.hop().getExecType())+":"+o.hop().getFederatedOutput()).toList()+"|"+
 				fixture.producerGraph().getSelectedCutObjectiveBits()+"|"+fixture.producerGraph().getSelectedSourcePartitionNodeIds();
-			var bound=FederatedPlanMinSTCut.bindPlacementInput(fixture.analysis(),fixture.producerGraph());
+			var bound=LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(fixture.analysis(),fixture.producerGraph());
 			var first=new MinStPlacementAdapter().select(fixture.analysis(),bound);var second=new MinStPlacementAdapter().select(fixture.analysis(),bound);
 			Assert.assertEquals(first.cutObjectiveBits(),second.cutObjectiveBits());Assert.assertEquals(first.selectedReceipts(),second.selectedReceipts());
 			String after=fixture.analysis().occurrences().stream().map(o->o.key().normalizedSignature()+":"+
@@ -559,7 +559,7 @@ public class CampaignBR4CostSelfTest {
 			CampaignBContractProbe.resource("g004b-c2-dp-minst-offline-literal.manifest"))).stream()
 			.filter(e->e.fixture().equals("C2-MS-03-SHARED-DOWNLOAD")).findFirst().orElseThrow();
 		var staleFixture=(CampaignBFrozenCostFixtureBridge.MinstGraphInput)CampaignBFrozenCostFixtureBridge.fresh(staleExpected).input();
-		var stale=FederatedPlanMinSTCut.bindPlacementInput(staleFixture.analysis(),staleFixture.graph());
+		var stale=LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(staleFixture.analysis(),staleFixture.graph());
 		var staleHop=staleFixture.analysis().occurrences().get(0).hop();var originalOutput=staleHop.getFederatedOutput();
 		staleHop.setFederatedOutput(originalOutput==org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.NONE?
 			org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT:

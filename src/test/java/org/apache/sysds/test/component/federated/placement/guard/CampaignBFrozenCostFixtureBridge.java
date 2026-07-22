@@ -1,6 +1,5 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.test.component.federated.placement.guard;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -202,7 +201,7 @@ final class CampaignBFrozenCostFixtureBridge {
 	}
 	private static MinstGraphInput minst(R4ExactPrivateCostMinstFixtures.Fixture f)throws Exception{
 		List<RoleAlias> aliases=aliases(f.analysis(),f.literalAliases(),f.namedRoles());
-		return new MinstGraphInput(f.id(),f.analysis(),f.producerGraph(),FederatedPlanMinSTCut.bindPlacementInput(f.analysis(),f.producerGraph()),
+		return new MinstGraphInput(f.id(),f.analysis(),f.producerGraph(),LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(f.analysis(),f.producerGraph()),
 			f.cutGraph(),cutCertificate(f.cutGraph(),aliases),repairCertificates(f,aliases),List.copyOf(f.selectedObligationObjects()),
 			List.copyOf(f.registryObjects()),registryCertificates(f,aliases),aliases,
 			CampaignBContractProbe.sha256(f.id()+"|"+f.analysis().analysisFingerprint()+"|"+stableAliases(aliases)+"|MINST_GRAPH"));

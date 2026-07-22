@@ -56,13 +56,24 @@ public final class MinStExactPlacementProjector {
 		List<MinStPlacementInput.ObligationReceipt> obligations = obligationReceipts(facts,
 			selection);
 		MinStPlacementInput.ProducerReceipt producer = new MinStPlacementInput.ProducerReceipt(
-			facts.analysisFingerprint(), selection.objectiveBits(), selection.sourcePartitionNodeIds());
-		MinStPlacementInput input = MinStPlacementInput.create(analysis, producer, occurrences,
+			facts.analysisFingerprint(), selection.objectiveBits(), completeSourcePartition(facts, selection));
+		MinStPlacementInput input = MinStPlacementInput.createSelected(analysis, producer, occurrences,
 			obligations);
 		analysis.assertProgramStructureUnchanged();
 		if(!facts.analysisFingerprint().equals(analysis.analysisFingerprint()))
 			throw new IllegalArgumentException("MINST_PROJECTOR_ANALYSIS_FINGERPRINT_STALE");
 		return input;
+	}
+
+	private static List<Long> completeSourcePartition(MinStExactCostFacts facts,
+		MinStExactSelection selection) {
+		List<Long> selected = selection.sourcePartitionNodeIds();
+		if(selected.contains(facts.sourceNodeId()) || selected.contains(facts.sinkNodeId()))
+			throw new IllegalArgumentException("MINST_PROJECTOR_SELECTION_CONTAINS_TERMINAL");
+		List<Long> complete = new ArrayList<>(selected.size() + 1);
+		complete.add(facts.sourceNodeId());
+		complete.addAll(selected);
+		return complete.stream().sorted().toList();
 	}
 
 	private static void validateExactFacts(MinStExactCostFacts facts, PlacementAnalysis analysis) {
@@ -157,13 +168,46 @@ public final class MinStExactPlacementProjector {
 				exec = state.execType();
 				output = state.output();
 			}
-			else if(node.emittedWork() && exactScope.contains(occurrence.key()))
-				throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_STATE_MISSING|key="
-					+ occurrence.key().normalizedSignature());
+			else if(node.emittedWork()) {
+				if(exactScope.contains(occurrence.key()))
+					throw new IllegalArgumentException("MINST_PROJECTOR_EMITTED_STATE_MISSING|key="
+						+ occurrence.key().normalizedSignature());
+				PlacementState boundaryState = functionBoundaryState(analysis, occurrence, node,
+					exactScope, selectedStates);
+				exec = boundaryState.execType();
+				output = boundaryState.output();
+			}
 			receipts.add(new MinStPlacementInput.OccurrenceReceipt(occurrence.key(), hop,
 				hop.getHopID(), hop, hop.getHopID(), exec, output));
 		}
 		return List.copyOf(receipts);
+	}
+
+	private static PlacementState functionBoundaryState(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection boundary, NeutralPlacementGraph.Node boundaryNode,
+		Set<CompiledHopKey> exactScope,
+		IdentityHashMap<CompiledHopKey,PlacementState> selectedStates) {
+		if(boundaryNode.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+			&& boundaryNode.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+			throw new IllegalArgumentException("MINST_PROJECTOR_UNSCOPED_EMITTED_NODE|key="
+				+ boundary.key().normalizedSignature());
+		List<PlacementState> owners = analysis.compiledHopOccurrences().stream()
+			.filter(candidate -> candidate.hop() == boundary.hop())
+			.filter(candidate -> exactScope.contains(candidate.key()))
+			.map(candidate -> selectedStates.get(candidate.key()))
+			.filter(Objects::nonNull).toList();
+		if(owners.size() != 1)
+			throw new IllegalArgumentException("MINST_PROJECTOR_FUNCTION_BOUNDARY_OWNER_"
+				+ (owners.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|key="
+				+ boundary.key().normalizedSignature());
+		PlacementState selected = owners.get(0);
+		boolean legalMembership = boundaryNode.legalAlternatives().stream()
+			.anyMatch(candidate -> candidate.execType() == selected.execType()
+				&& candidate.output() == selected.output());
+		if(!legalMembership)
+			throw new IllegalArgumentException("MINST_PROJECTOR_FUNCTION_BOUNDARY_STATE_ILLEGAL|key="
+				+ boundary.key().normalizedSignature());
+		return selected;
 	}
 
 	private static List<MinStPlacementInput.ObligationReceipt> obligationReceipts(
@@ -251,11 +295,12 @@ public final class MinStExactPlacementProjector {
 	private static long cutObjectiveBits(MinStExactCostFacts facts, List<Long> sourceNodeIds) {
 		Set<Long> source = new LinkedHashSet<>(sourceNodeIds);
 		source.add(facts.sourceNodeId());
-		double total = 0.0;
+		MinStCompensatedCostSum total = new MinStCompensatedCostSum();
 		for(MinStExactCostFacts.DirectedEdgeFact edge : facts.directedEdgesInDerivationOrder())
 			if(source.contains(edge.fromNodeId()) && !source.contains(edge.toNodeId()))
-				total += Double.longBitsToDouble(edge.capacityBits());
-		return Double.doubleToRawLongBits(total);
+				total.addBits(edge.capacityBits(), "MINST_PROJECTOR_EDGE_CAPACITY_NOT_CANONICAL",
+					"MINST_PROJECTOR_CUT_TOTAL_NOT_CANONICAL");
+		return total.totalBits("MINST_PROJECTOR_CUT_TOTAL_NOT_CANONICAL");
 	}
 
 	private static String kind(Direction direction) {

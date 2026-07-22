@@ -28,7 +28,6 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
@@ -47,6 +46,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ValidationReason;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
@@ -150,11 +150,12 @@ public final class MinStExactCostFactsProducer {
 		}
 
 		int workers = workerCount(analysis.graph());
+		Map<String,List<OccurrenceProfile>> occurrenceProfiles = occurrenceProfiles(analysis);
 		EdgeAccumulator accumulator = new EdgeAccumulator();
 		for(DecisionFact decision : decisions)
-			addDecisionEdges(analysis, decision, workers, accumulator);
+			addDecisionEdges(analysis, decision, workers, occurrenceProfiles, accumulator);
 		List<AuxiliaryGroupFact> groups = deriveGroups(analysis, orderedScope,
-			decisionsByKey, workers, accumulator);
+			decisionsByKey, workers, occurrenceProfiles, accumulator);
 		List<ObligationFact> obligations = deriveObligations(analysis, decisionsByKey);
 		List<DirectedEdgeFact> edges = accumulator.freeze();
 		List<MembershipRepresentative> representatives = membershipRepresentatives(analysis, decisions);
@@ -535,7 +536,7 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static void addDecisionEdges(PlacementAnalysis analysis, DecisionFact decision,
-		int workers, EdgeAccumulator edges) {
+		int workers, Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
 		Hop hop = analysis.hop(decision.key()).orElseThrow();
 		boolean cp = hasExec(decision, ExecType.CP);
 		boolean fed = hasExec(decision, ExecType.FED);
@@ -544,7 +545,7 @@ public final class MinStExactCostFactsProducer {
 		boolean fedLout = hasState(decision, ExecType.FED, FederatedOutput.LOUT);
 		boolean cpFout = hasState(decision, ExecType.CP, FederatedOutput.FOUT);
 
-		double base = requireCost(FederatedCostModel.computeOpCost(hop), "MINST_CP_COST_UNPROVEN");
+		double base = cpUnaryCost(hop, executionWeight(occurrenceProfiles, decision.key()));
 		double fedCost = requireCost(FederatedCostModel.computeFederatedComputeCost(
 			hop, base, workers, false) + FederatedCostModel.computeFedCoordinationCost(workers),
 			"MINST_FED_COST_UNPROVEN");
@@ -589,9 +590,8 @@ public final class MinStExactCostFactsProducer {
 
 	private static List<AuxiliaryGroupFact> deriveGroups(PlacementAnalysis analysis,
 		List<CompiledHopKey> orderedScope, IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
-		int workers, EdgeAccumulator edges) {
+		int workers, Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
 		List<AuxiliaryGroupFact> result = new ArrayList<>();
-		Map<String,List<OccurrenceProfile>> occurrenceProfiles = occurrenceProfiles(analysis);
 		IdentityHashMap<CompiledHopKey,List<CompiledInputEdgeFact>> edgesByProducer = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(analysis.requireExactCompiledInputEdge(edge.producer(), edge.consumer(),
@@ -656,6 +656,27 @@ public final class MinStExactCostFactsProducer {
 			}
 		}
 		return List.copyOf(result);
+	}
+
+	private static double cpUnaryCost(Hop hop, double executionWeight) {
+		if(hop instanceof DataOp) {
+			OpOpData op = ((DataOp)hop).getOp();
+			if(op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE)
+				return 0.0;
+			return requireCost(executionWeight * FederatedCostModel.computeOpCostWithFallback(hop),
+				"MINST_CP_COST_UNPROVEN");
+		}
+		double unit = FederatedCostModel.computeLocalIndexingCostWithFallback(hop,
+			FederatedCostModel.computeOpCostWithFallback(hop));
+		return requireCost(executionWeight * unit, "MINST_CP_COST_UNPROVEN");
+	}
+
+	private static double executionWeight(Map<String,List<OccurrenceProfile>> profiles,
+		CompiledHopKey key) {
+		double total = 0.0;
+		for(OccurrenceProfile profile : requireOccurrenceProfiles(profiles, key))
+			total += profile.networkWeight;
+		return requirePositiveWeight(total, "MINST_EXECUTION_WEIGHT_UNPROVEN");
 	}
 
 	private static Map<String,List<OccurrenceProfile>> occurrenceProfiles(PlacementAnalysis analysis) {
@@ -822,19 +843,20 @@ public final class MinStExactCostFactsProducer {
 
 	private static double forLoopWeight(ForStatementBlock block,
 		List<Map<String,List<Hop>>> transTables) {
-		double fallback = RewireConstants.DEFAULT_LOOP_WEIGHT;
+		double defaultWeight = requirePositiveWeight(RewireConstants.DEFAULT_LOOP_WEIGHT,
+			"MINST_DEFAULT_FOR_OCCURRENCE_WEIGHT_UNPROVEN");
 		Double from = scalarConstant(block.getFromHops(), transTables);
 		Double to = scalarConstant(block.getToHops(), transTables);
 		Double increment = block.getIncrementHops() == null ? 1.0
 			: scalarConstant(block.getIncrementHops(), transTables);
 		if(from == null || to == null || increment == null || increment == 0.0)
-			return requirePositiveWeight(fallback, "MINST_FOR_OCCURRENCE_WEIGHT_UNPROVEN");
+			return defaultWeight;
 		double step = increment;
 		if(from > to && step == 1.0)
 			step = -1.0;
 		double iterations = UtilFunctions.getSeqLength(from, to, step, false);
-		return requirePositiveWeight(iterations > 0.0 ? iterations : fallback,
-			"MINST_FOR_OCCURRENCE_WEIGHT_UNPROVEN");
+		return iterations > 0.0 ? requirePositiveWeight(iterations,
+			"MINST_FOR_OCCURRENCE_WEIGHT_UNPROVEN") : defaultWeight;
 	}
 
 	private static Double scalarConstant(Hop boundRoot, List<Map<String,List<Hop>>> transTables) {
@@ -866,7 +888,7 @@ public final class MinStExactCostFactsProducer {
 				.findFirst().orElseThrow(() -> new IllegalArgumentException(
 					"MINST_OCCURRENCE_CONTEXT_UNMATCHED|consumer=" + consumer.normalizedSignature()
 						+ "|producer=" + producer.normalizedSignature()));
-			total += requirePositiveWeight(FederatedPlannerUtils.computeForwardingWeightOfChild(
+			total += requirePositiveWeight(PlacementCostSemantics.forwardingWeight(
 				consumerProfile.networkWeight, consumerProfile.loopContext, producerProfile.loopContext),
 				"MINST_FORWARDING_WEIGHT_UNPROVEN");
 		}
@@ -1269,8 +1291,6 @@ public final class MinStExactCostFactsProducer {
 			for(var anchor : node.anchors())
 				for(var partition : anchor.partitions())
 					workers.add(partition.workerId());
-		if(workers.isEmpty())
-			throw new IllegalArgumentException("MINST_WORKER_COUNT_UNPROVEN");
 		return workers.size();
 	}
 
@@ -1718,12 +1738,12 @@ public final class MinStExactCostFactsProducer {
 		List<DirectedEdgeFact> freeze() {
 			List<DirectedEdgeFact> result = new ArrayList<>(contributions.size());
 			for(Map.Entry<EdgeKey,List<EdgeContribution>> entry : contributions.entrySet()) {
-				double sum = 0.0;
+				MinStCompensatedCostSum sum = new MinStCompensatedCostSum();
 				for(EdgeContribution contribution : entry.getValue())
-					sum += Double.longBitsToDouble(contribution.costBits());
-				sum = requireCost(sum, "MINST_EDGE_SUM_UNPROVEN");
+					sum.addBits(contribution.costBits(), "MINST_EDGE_COST_UNPROVEN",
+						"MINST_EDGE_SUM_UNPROVEN");
 				result.add(new DirectedEdgeFact(entry.getKey().from, entry.getKey().to,
-					Double.doubleToRawLongBits(sum), entry.getValue()));
+					sum.totalBits("MINST_EDGE_SUM_UNPROVEN"), entry.getValue()));
 			}
 			return List.copyOf(result);
 		}

@@ -49,19 +49,27 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 	private final ProducerReceipt producer;
 	private final List<OccurrenceReceipt> occurrences;
 	private final List<ObligationReceipt> obligations;
+	private final boolean appliedStateRequired;
 
 	private MinStPlacementInput(PlacementAnalysis owner, ProducerReceipt producer,
-		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
+		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations,
+		boolean appliedStateRequired) {
 		this.owner = Objects.requireNonNull(owner, "owner");
 		this.producer = Objects.requireNonNull(producer, "producer");
 		this.occurrences = List.copyOf(occurrences);
 		this.obligations = List.copyOf(obligations);
+		this.appliedStateRequired = appliedStateRequired;
 		validateOwnerBinding();
 	}
 
 	public static MinStPlacementInput create(PlacementAnalysis owner, ProducerReceipt producer,
 		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
-		return new MinStPlacementInput(owner, producer, occurrences, obligations);
+		return new MinStPlacementInput(owner, producer, occurrences, obligations, true);
+	}
+
+	public static MinStPlacementInput createSelected(PlacementAnalysis owner, ProducerReceipt producer,
+		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
+		return new MinStPlacementInput(owner, producer, occurrences, obligations, false);
 	}
 
 	@Override public PlacementAnalysis analysis() { return owner; }
@@ -71,6 +79,9 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 
 	void validateUnchanged() {
 		validateOwnerBinding();
+		owner.assertProgramStructureUnchanged();
+		if(!appliedStateRequired)
+			return;
 		for(OccurrenceReceipt receipt : occurrences) {
 			Hop hop = receipt.planningHop();
 			ExecType exec = receipt.execType() == null ? null

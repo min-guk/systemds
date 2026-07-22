@@ -33,6 +33,9 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ObligationReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.OccurrenceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ProducerReceipt;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -268,6 +271,38 @@ public final class LegacyMinstOfflineSelectedCapture {
 				+ receipt.output()).sorted().toList();
 		return new RetainedFullPath(seed, analysis, input, selection, states,
 			structuralFacts(analysis, selection));
+	}
+
+	/** Test-only bridge for historical graph fixtures after the production root cutover. */
+	public static MinStPlacementInput bindLegacyPlacementInput(PlacementAnalysis analysis,
+		FederatedPlanMinSTGraph graph) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(graph, "graph");
+		List<OccurrenceReceipt> occurrences = new ArrayList<>();
+		for(var occurrence : analysis.occurrences()) {
+			Hop hop = analysis.hop(occurrence.key()).orElseThrow();
+			Vertex vertex = graph.getVertex(hop.getHopID());
+			boolean trace = analysis.graph().node(occurrence.key()).orElseThrow().kind()
+				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_BODY_NON_EMITTED;
+			if(vertex == null && !trace)
+				throw new IllegalArgumentException("MinST selected occurrence is missing: " + occurrence.key());
+			if(vertex != null && (vertex.getHopID() != hop.getHopID() || vertex.getHopRef() != hop))
+				throw new IllegalArgumentException("MinST selected occurrence is foreign: " + occurrence.key());
+			ExecType exec = trace ? null
+				: (hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType());
+			FederatedOutput output = trace ? FederatedOutput.NONE : hop.getFederatedOutput();
+			if(!trace && (exec == null || output == null))
+				throw new IllegalArgumentException("Selected occurrence has incomplete executable state");
+			occurrences.add(new OccurrenceReceipt(occurrence.key(), hop, hop.getHopID(), hop,
+				hop.getHopID(), exec, output));
+		}
+		List<ObligationReceipt> obligations = graph.getSelectedObligations().stream().map(value ->
+			new ObligationReceipt(value.getKind().name(), value.getChildHopId(), value.getOriginalHopId(),
+				value.getDomainId(), value.getConsumerHopIds(), value.getFType(), value.hasCapability(),
+				value.getCapabilityReason(), value.getReason())).toList();
+		ProducerReceipt producer = new ProducerReceipt(analysis.analysisFingerprint(),
+			graph.getSelectedCutObjectiveBits(), graph.getSelectedSourcePartitionNodeIds());
+		return MinStPlacementInput.create(analysis, producer, occurrences, obligations);
 	}
 
 	private static String captureFullPath(String rowId, String fixture) throws Exception {

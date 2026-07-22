@@ -482,8 +482,9 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		List<?> decisions = list(facts, "decisionFactsInScopeOrder");
 		List<?> edges = list(facts, "directedEdgesInDerivationOrder");
 		List<?> groups = list(facts, "auxiliaryGroupsInCanonicalOrder");
+		List<?> transferAuthorities = list(facts, "transferAuthoritiesInCanonicalOrder");
 		List<?> obligations = list(facts, "obligationFactsInCanonicalOrder");
-		for(List<?> values : List.of(decisions, edges, groups, obligations))
+		for(List<?> values : List.of(decisions, edges, groups, transferAuthorities, obligations))
 			assertImmutable(values, "MINST_FACT_TOP_LEVEL_LIST_MUTABLE");
 		assertNodeAndEdgeFacts(scope, decisions, groups, edges);
 		int targetGroup = assertOrGroups(owner, decisions, groups, edges);
@@ -493,15 +494,15 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		Constructor<?> carrier = soleNonPublicConstructor(factsType);
 		assertCarrierSignature(carrier);
 		Object[] valid = new Object[] {owner, owner.analysisFingerprint(), actualScope, decisions,
-			edges, groups, obligations, call(facts, "derivationFingerprint")};
+			edges, groups, transferAuthorities, obligations, call(facts, "derivationFingerprint")};
 		assertRejected(carrier, replace(valid, 2, reversed(actualScope)), "SCOPE_REORDERED");
 		assertRejected(carrier, replace(valid, 2, duplicated(actualScope)), "SCOPE_DUPLICATE");
 		assertRejected(carrier, replace(valid, 2, equalCopiedScope(actualScope)), "SCOPE_FOREIGN");
 		PlacementAnalysis foreign = analysis("B-21");
 		assertRejected(carrier, replace(valid, 0, foreign), "FOREIGN_OWNER");
 		assertRejected(carrier, replace(valid, 4, mutateEdgeCapacity(edges)), "CAPACITY_SUM_MISMATCH");
-		assertRejected(carrier, replace(valid, 7,
-			String.valueOf(valid[7]) + "0"), "DERIVATION_FINGERPRINT_MISMATCH");
+		assertRejected(carrier, replace(valid, 8,
+			String.valueOf(valid[8]) + "0"), "DERIVATION_FINGERPRINT_MISMATCH");
 		if(!groups.isEmpty()) {
 			assertRejected(carrier, replace(valid, 5, mutateGroupList(groups, targetGroup, "priceBits")),
 				"OR_GROUP_PRICE_MISMATCH");
@@ -701,6 +702,7 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		int repairOwned = assertB22PreSolveLegality(owner, decisions, edges);
 		Object[] valid = new Object[] {owner, owner.analysisFingerprint(), list(facts, "orderedScope"),
 			decisions, edges, list(facts, "auxiliaryGroupsInCanonicalOrder"),
+			list(facts, "transferAuthoritiesInCanonicalOrder"),
 			list(facts, "obligationFactsInCanonicalOrder"), call(facts, "derivationFingerprint")};
 		assertRejected(carrier, replace(valid, 3, mutateDecisionState(decisions, repairOwned)),
 			"RAW_STATE_RECEIPT_MISMATCH");
@@ -800,12 +802,12 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 
 	private static void assertCarrierSignature(Constructor<?> constructor) {
 		Class<?>[] types = constructor.getParameterTypes();
-		Assert.assertEquals("MINST_FACT_CANONICAL_PARAMETER_COUNT", 8, types.length);
+		Assert.assertEquals("MINST_FACT_CANONICAL_PARAMETER_COUNT", 9, types.length);
 		Assert.assertEquals(PlacementAnalysis.class, types[0]);
 		Assert.assertEquals(String.class, types[1]);
-		for(int i = 2; i <= 6; i++)
+		for(int i = 2; i <= 7; i++)
 			Assert.assertTrue("MINST_FACT_CANONICAL_LIST_PARAMETER|" + i, List.class.isAssignableFrom(types[i]));
-		Assert.assertEquals(String.class, types[7]);
+		Assert.assertEquals(String.class, types[8]);
 	}
 
 	private static void assertRejected(Constructor<?> constructor, Object[] arguments, String reason)

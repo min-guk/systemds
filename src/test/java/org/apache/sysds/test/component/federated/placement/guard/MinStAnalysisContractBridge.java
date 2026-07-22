@@ -33,7 +33,8 @@ final class MinStAnalysisContractBridge {
 	private static final long SINK = -2L;
 	private static final String ADAPTER = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter";
 	private static final String INPUT = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput";
-	private static final String CUT = "org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut";
+	private static final String BINDER =
+		"org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.LegacyMinstOfflineSelectedCapture";
 
 	record Handle(Object adapter, Method bindPlacementInput, Method select) { }
 	record Selection(PlacementAnalysis analysis, long objectiveBits, List<String> sourcePartition,
@@ -67,15 +68,15 @@ final class MinStAnalysisContractBridge {
 	static Handle open() {
 		try {
 			Class<?> inputType = Class.forName(INPUT);
-			Method bindInput = Class.forName(CUT).getMethod("bindPlacementInput",
+			Method bindInput = Class.forName(BINDER).getMethod("bindLegacyPlacementInput",
 				PlacementAnalysis.class, FederatedPlanMinSTGraph.class);
 			Class<?> adapterType = Class.forName(ADAPTER);
 			return new Handle(adapterType.getConstructor().newInstance(), bindInput,
 				adapterType.getMethod("select", PlacementAnalysis.class, inputType));
 		}
 		catch(ReflectiveOperationException e) {
-			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + CUT
-				+ ".bindPlacementInput(PlacementAnalysis,FederatedPlanMinSTGraph)->" + ADAPTER
+			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + BINDER
+				+ ".bindLegacyPlacementInput(PlacementAnalysis,FederatedPlanMinSTGraph)->" + ADAPTER
 				+ ".select(PlacementAnalysis,MinStPlacementInput)");
 		}
 	}

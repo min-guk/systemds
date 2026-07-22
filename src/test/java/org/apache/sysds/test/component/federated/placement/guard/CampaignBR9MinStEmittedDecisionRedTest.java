@@ -17,8 +17,6 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelec
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
-import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -26,7 +24,7 @@ import org.junit.Test;
 /** RED guard for MinST exact placement decisions that must be scoped to emitted occurrences. */
 public class CampaignBR9MinStEmittedDecisionRedTest {
 	@Test
-	public void derivesOnlyEmittedDecisionsWhileProjectingAllOccurrenceReceipts() throws Exception {
+	public void derivesOnlyEmittedDecisionsAndFailsClosedOnAmbiguousProjection() throws Exception {
 		PlacementAnalysis analysis = federatedFunctionAnalysis();
 		List<CompiledHopKey> emittedKeys = emittedKeys(analysis);
 		List<CompiledHopKey> exactScope = compiledScope(analysis);
@@ -40,31 +38,20 @@ public class CampaignBR9MinStEmittedDecisionRedTest {
 
 		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, exactScope);
 		MinStExactSelection selection = MinStExactSelector.select(facts);
-		MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
 
 		Assert.assertEquals("full canonical occurrence ownership must remain in exact facts", exactScope,
 			facts.orderedScope());
 		Assert.assertEquals("exact decisions must be emitted-only in canonical order", emittedKeys,
 			facts.decisionFactsInScopeOrder().stream().map(decision -> decision.key()).toList());
-		Assert.assertEquals("selected states must cover emitted decisions only", emittedKeys.size(),
-			selection.selectedStatesInScopeOrder().size());
-		Assert.assertEquals("carrier receipts must cover every neutral occurrence", analysis.occurrences().size(),
-			input.occurrenceReceipts().size());
-
-		Set<CompiledHopKey> emittedByIdentity = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-		emittedByIdentity.addAll(emittedKeys);
-		for(int i = 0; i < analysis.occurrences().size(); i++) {
-			PlacementAnalysis.HopOccurrenceProjection occurrence = analysis.occurrences().get(i);
-			MinStPlacementInput.OccurrenceReceipt receipt = input.occurrenceReceipts().get(i);
-			Assert.assertSame("receipt must retain exact occurrence owner identity", occurrence.key(),
-				receipt.planningKey());
-			Assert.assertSame("receipt must retain exact Hop owner identity", occurrence.hop(),
-				receipt.planningHop());
-			if(!emittedByIdentity.contains(occurrence.key())) {
-				Assert.assertNull("non-emitted receipt execType", receipt.execType());
-				Assert.assertEquals("non-emitted receipt output", FederatedOutput.NONE, receipt.output());
-			}
-		}
+		Assert.assertEquals("genuine equal cut must remain explicit", MinStExactSelection.TIE_UNSPECIFIED,
+			selection.tieCertificate());
+		Assert.assertEquals("both exact minimum certificates must be retained", 2,
+			selection.minimaCertificates().size());
+		Assert.assertTrue("ambiguous selection must not publish states",
+			selection.selectedStatesInScopeOrder().isEmpty());
+		Assert.assertThrows("ambiguous projection must fail closed", IllegalArgumentException.class,
+			() -> MinStExactPlacementProjector.project(facts, selection));
+		analysis.assertProgramStructureUnchanged();
 	}
 
 	private static PlacementAnalysis federatedFunctionAnalysis() throws Exception {

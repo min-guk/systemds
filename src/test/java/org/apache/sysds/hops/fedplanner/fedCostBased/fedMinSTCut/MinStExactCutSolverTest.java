@@ -59,6 +59,23 @@ public class MinStExactCutSolverTest {
 	}
 
 	@Test
+	public void cutObjectiveUsesCompensatedCanonicalCapacitySum() {
+		List<MinStExactCutSolver.Edge> largeFirst = List.of(
+			edge(SOURCE, SINK, 1.0e16), edge(SOURCE, SINK, 1.0), edge(SOURCE, SINK, 1.0));
+		List<MinStExactCutSolver.Edge> smallFirst = List.of(
+			edge(SOURCE, SINK, 1.0), edge(SOURCE, SINK, 1.0), edge(SOURCE, SINK, 1.0e16));
+		long exactBits = bits(1.0000000000000002e16);
+
+		MinStExactCutSolver.Result largeFirstResult = MinStExactCutSolver.solve(SOURCE, SINK,
+			List.of(), List.of(), largeFirst);
+		MinStExactCutSolver.Result smallFirstResult = MinStExactCutSolver.solve(SOURCE, SINK,
+			List.of(), List.of(), smallFirst);
+
+		Assert.assertEquals(exactBits, largeFirstResult.objectiveBits());
+		Assert.assertEquals(exactBits, smallFirstResult.objectiveBits());
+	}
+
+	@Test
 	public void solverSourceContainsNoTimeoutCapOrFallbackMarkers() throws Exception {
 		String source = Files.readString(Path.of(
 			"src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCutSolver.java"));

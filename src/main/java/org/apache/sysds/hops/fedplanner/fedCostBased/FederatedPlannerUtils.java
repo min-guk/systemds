@@ -51,6 +51,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.InitFEDInstruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.StatementBlock;
@@ -202,26 +203,8 @@ public class FederatedPlannerUtils {
 	public static double computeForwardingWeightOfChild(double networkWeight,
 			List<Pair<Long, Double>> parentLoopContext, List<Pair<Long, Double>> childLoopContext,
 			double consumerMultiplicity) {
-		double base = (networkWeight != 0.0) ? networkWeight : 1.0;
-
-		if (parentLoopContext == null || parentLoopContext.isEmpty())
-			return base * Math.max(consumerMultiplicity, 0.0);
-
-		Map<Long, Double> childMap = new HashMap<>();
-		if (childLoopContext != null) {
-			for (Pair<Long, Double> p : childLoopContext)
-				childMap.put(p.getLeft(), p.getRight());
-		}
-
-		double weight = base;
-		for (Pair<Long, Double> p : parentLoopContext) {
-			long loopId = p.getLeft();
-			double iters = p.getRight();
-			if (!childMap.containsKey(loopId) && iters > 0.0)
-				weight /= iters;
-		}
-
-		return weight * Math.max(consumerMultiplicity, 0.0);
+		return PlacementCostSemantics.forwardingWeight(networkWeight, parentLoopContext,
+			childLoopContext, consumerMultiplicity);
 	}
 
 	public static final class CompatibilityScore {
@@ -900,7 +883,7 @@ public class FederatedPlannerUtils {
 	}
 
 	public static boolean isMultiReturnFunctionOutputHop(Hop hop) {
-		return getMultiReturnFunctionOutputParent(hop) != null;
+		return PlacementCostSemantics.isMultiReturnFunctionOutput(hop);
 	}
 
 	public static FunctionOp getMultiReturnFunctionOutputParent(Hop hop) {

@@ -49,7 +49,7 @@ import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.cost.ComputeCost;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -1502,7 +1502,7 @@ public final class FederatedCostModel {
 		if (!(transientReadHop instanceof DataOp)
 				|| ((DataOp) transientReadHop).getOp() != OpOpData.TRANSIENTREAD
 				|| sourceHop == null
-				|| !FederatedPlannerUtils.isMultiReturnFunctionOutputHop(sourceHop)) {
+				|| !PlacementCostSemantics.isMultiReturnFunctionOutput(sourceHop)) {
 			return readerMemEstimate;
 		}
 		// Prefer the transient-read's own estimate once it is concrete/reliable. The explicit

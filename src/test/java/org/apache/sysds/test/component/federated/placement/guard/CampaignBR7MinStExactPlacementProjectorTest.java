@@ -61,7 +61,10 @@ public class CampaignBR7MinStExactPlacementProjectorTest {
 				projection.input.producerReceipt().analysisFingerprint());
 			Assert.assertEquals(id, projection.selection.objectiveBits(),
 				projection.input.producerReceipt().cutObjectiveBits());
-			Assert.assertEquals(id, projection.selection.sourcePartitionNodeIds(),
+			List<Long> completeSourcePartition = new ArrayList<>(
+				projection.selection.sourcePartitionNodeIds());
+			completeSourcePartition.add(projection.facts.sourceNodeId());
+			Assert.assertEquals(id, completeSourcePartition.stream().sorted().toList(),
 				projection.input.producerReceipt().sourcePartitionNodeIds());
 			Assert.assertEquals(id, projection.analysis.occurrences().size(),
 				projection.input.occurrenceReceipts().size());
@@ -83,7 +86,8 @@ public class CampaignBR7MinStExactPlacementProjectorTest {
 				}
 			}
 
-			MinStPlacementAdapter.Selection replay = replayWithSelectedHopState(projection);
+			MinStPlacementAdapter.Selection replay = new MinStPlacementAdapter()
+				.select(projection.analysis, projection.input);
 			Assert.assertSame(id, projection.analysis, replay.analysis());
 			Assert.assertSame(id, projection.input.producerReceipt(), replay.producer());
 			Assert.assertEquals(id, projection.selection.objectiveBits(), replay.cutObjectiveBits());
@@ -98,22 +102,38 @@ public class CampaignBR7MinStExactPlacementProjectorTest {
 				projection.analysis.analysisFingerprint());
 		}
 		Assert.assertEquals("root null/NONE contextual receipts", 0, nonEmittedNoneReceipts);
-		assertActualCampaignBFixturesFailClosedUntilExactFactsCanBeDerived();
+		assertActualCampaignBFixturesDeriveAndProjectWithoutMutation();
 		if(selectedObligations > 0)
 			Assert.assertTrue("actual obligations are retained/grouped", groupedObligations > 0
 				&& groupedObligations <= selectedObligations);
 		Assert.assertEquals("fixtures exercised", 1, fixtures);
 	}
 
-	private static void assertActualCampaignBFixturesFailClosedUntilExactFactsCanBeDerived() throws Exception {
+	private static void assertActualCampaignBFixturesDeriveAndProjectWithoutMutation() throws Exception {
 		for(String id : List.of("B-01", "B-07", "B-09", "B-16")) {
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 				.buildAnalysis(ProductionShadowFixtureFactory.compile(id));
 			Assert.assertFalse(id, analysis.occurrences().isEmpty());
 			if("B-07".equals(id))
 				Assert.assertTrue(id, analysis.graph().nodes().stream().anyMatch(node -> !node.emittedWork()));
-			Assert.assertThrows(id, IllegalArgumentException.class,
-				() -> MinStExactCostFactsProducer.derive(analysis, scope(analysis)));
+			String fingerprint = analysis.analysisFingerprint();
+			MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+			MinStExactSelection selection = MinStExactSelector.select(facts);
+			Assert.assertEquals(id, MinStExactSelection.UNIQUE, selection.tieCertificate());
+			MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
+			Assert.assertSame(id, analysis, input.analysis());
+			Assert.assertEquals(id, selection.objectiveBits(), input.producerReceipt().cutObjectiveBits());
+			Assert.assertFalse(id, selection.sourcePartitionNodeIds().contains(facts.sourceNodeId()));
+			Assert.assertFalse(id, selection.sourcePartitionNodeIds().contains(facts.sinkNodeId()));
+			Assert.assertTrue(id, input.producerReceipt().sourcePartitionNodeIds()
+				.contains(facts.sourceNodeId()));
+			Assert.assertFalse(id, input.producerReceipt().sourcePartitionNodeIds()
+				.contains(facts.sinkNodeId()));
+			Assert.assertEquals(id, analysis.occurrences().size(), input.occurrenceReceipts().size());
+			MinStPlacementAdapter.Selection replay = new MinStPlacementAdapter().select(analysis, input);
+			Assert.assertEquals(id, selection.objectiveBits(), replay.cutObjectiveBits());
+			analysis.assertProgramStructureUnchanged();
+			Assert.assertEquals(id, fingerprint, analysis.analysisFingerprint());
 		}
 	}
 
@@ -162,36 +182,6 @@ public class CampaignBR7MinStExactPlacementProjectorTest {
 				owner.facts, selection(owner.selection.objectiveBits(), owner.selection.sourcePartitionNodeIds(),
 					owner.selection.selectedStatesInScopeOrder(), List.of(copied), MinStExactSelection.UNIQUE,
 					owner.selection.minimaCertificates())));
-		}
-	}
-
-	private static MinStPlacementAdapter.Selection replayWithSelectedHopState(Projection projection) {
-		List<ExecType> oldExec = projection.analysis.compiledHopOccurrences().stream()
-			.map(o -> o.hop().getExecType()).toList();
-		List<ExecType> oldForced = projection.analysis.compiledHopOccurrences().stream()
-			.map(o -> o.hop().getForcedExecType()).toList();
-		List<FederatedOutput> oldOutput = projection.analysis.compiledHopOccurrences().stream()
-			.map(o -> o.hop().getFederatedOutput()).toList();
-		try {
-			for(int i = 0; i < projection.analysis.compiledHopOccurrences().size(); i++) {
-				var occurrence = projection.analysis.compiledHopOccurrences().get(i);
-				PlacementState state = projection.selection.selectedStatesInScopeOrder().get(i);
-				occurrence.hop().clearForcedExecType();
-				occurrence.hop().setExecType(state.execType());
-				occurrence.hop().setFederatedOutput(state.output());
-			}
-			return new MinStPlacementAdapter().select(projection.analysis, projection.input);
-		}
-		finally {
-			for(int i = 0; i < projection.analysis.compiledHopOccurrences().size(); i++) {
-				var hop = projection.analysis.compiledHopOccurrences().get(i).hop();
-				hop.setExecType(oldExec.get(i));
-				if(oldForced.get(i) == null)
-					hop.clearForcedExecType();
-				else
-					hop.setForcedExecType(oldForced.get(i));
-				hop.setFederatedOutput(oldOutput.get(i));
-			}
 		}
 	}
 

@@ -73,16 +73,15 @@ final class MinStExactCutSolver {
 	private static long cutBits(long sourceNodeId, long sinkNodeId, List<Edge> edges,
 		List<Long> sourceNodeIds) {
 		Set<Long> source = new LinkedHashSet<>(sourceNodeIds);
-		double total = 0.0;
+		MinStCompensatedCostSum total = new MinStCompensatedCostSum();
 		for(Edge edge : edges) {
 			boolean fromSource = edge.fromNodeId() == sourceNodeId || source.contains(edge.fromNodeId());
 			boolean toSource = edge.toNodeId() != sinkNodeId && source.contains(edge.toNodeId());
-			if(fromSource && !toSource) {
-				total += capacity(edge.capacityBits());
-				validateCost(total, "MINST_EXACT_CUT_TOTAL_NOT_CANONICAL");
-			}
+			if(fromSource && !toSource)
+				total.addBits(edge.capacityBits(), "MINST_EXACT_EDGE_CAPACITY_NOT_CANONICAL",
+					"MINST_EXACT_CUT_TOTAL_NOT_CANONICAL");
 		}
-		return Double.doubleToRawLongBits(total);
+		return total.totalBits("MINST_EXACT_CUT_TOTAL_NOT_CANONICAL");
 	}
 
 	private static void validateEdges(List<Edge> edges) {
@@ -94,10 +93,6 @@ final class MinStExactCutSolver {
 		double capacity = Double.longBitsToDouble(capacityBits);
 		validateCostBits(capacityBits, capacity, "MINST_EXACT_EDGE_CAPACITY_NOT_CANONICAL");
 		return capacity;
-	}
-
-	private static void validateCost(double cost, String reason) {
-		validateCostBits(Double.doubleToRawLongBits(cost), cost, reason);
 	}
 
 	private static void validateCostBits(long bits, double cost, String reason) {

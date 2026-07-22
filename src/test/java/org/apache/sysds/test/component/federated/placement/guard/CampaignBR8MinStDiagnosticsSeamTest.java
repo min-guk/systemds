@@ -85,10 +85,10 @@ public class CampaignBR8MinStDiagnosticsSeamTest {
 
 	private static void assertExactCrossingCosts(PlacementAnalysis analysis, MinStExactCostFacts facts,
 		MinStExactSelection selection, MinStDiagnostics diagnostics) {
-		IdentityHashMap<CompiledHopKey, double[]> expected = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey, ExpectedCost> expected = new IdentityHashMap<>();
 		for(CompiledHopKey key : facts.orderedScope())
-			expected.put(key, new double[2]);
-		double global = 0.0;
+			expected.put(key, new ExpectedCost());
+		CompensatedSum global = new CompensatedSum();
 		for(DirectedEdgeFact edge : facts.directedEdgesInDerivationOrder()) {
 			boolean fromSource = edge.fromNodeId() == facts.sourceNodeId()
 				|| selection.sourcePartitionNodeIds().contains(edge.fromNodeId());
@@ -96,28 +96,27 @@ public class CampaignBR8MinStDiagnosticsSeamTest {
 				&& selection.sourcePartitionNodeIds().contains(edge.toNodeId());
 			if(!fromSource || toSource)
 				continue;
+			global.addBits(edge.capacityBits());
 			for(EdgeContribution contribution : edge.contributionsInDerivationOrder()) {
-				double value = Double.longBitsToDouble(contribution.costBits());
-				global += value;
-				double[] owner = expected.get(contribution.ownerKey());
+				ExpectedCost owner = expected.get(contribution.ownerKey());
 				Assert.assertNotNull("R8_DIAGNOSTICS_FOREIGN_OWNER", owner);
-				owner[isNetwork(contribution.kind()) ? 1 : 0] += value;
+				owner.add(contribution.costBits(), isNetwork(contribution.kind()));
 			}
 		}
 		Assert.assertEquals("R8_DIAGNOSTICS_GLOBAL_TOTAL_REPLAYS_SELECTOR",
-			selection.objectiveBits(), Double.doubleToRawLongBits(global));
+			selection.objectiveBits(), global.bits());
 		Map<Long, MinStDiagnostics.HopFacts> actualByHop = new java.util.HashMap<>();
 		for(MinStDiagnostics.HopFacts hopFacts : diagnostics.hopsInSortedIdOrder())
 			actualByHop.put(hopFacts.hopId(), hopFacts);
 		for(CompiledHopKey key : facts.orderedScope()) {
 			Hop hop = analysis.hop(key).orElseThrow();
 			MinStDiagnostics.HopFacts actual = actualByHop.get(hop.getHopID());
-			double[] owner = expected.get(key);
-			Assert.assertEquals("R8_DIAGNOSTICS_SELF_COST", Double.doubleToRawLongBits(owner[0]),
+			ExpectedCost owner = expected.get(key);
+			Assert.assertEquals("R8_DIAGNOSTICS_SELF_COST", owner.selfBits(),
 				actual.selfCostBits());
-			Assert.assertEquals("R8_DIAGNOSTICS_NETWORK_COST", Double.doubleToRawLongBits(owner[1]),
+			Assert.assertEquals("R8_DIAGNOSTICS_NETWORK_COST", owner.networkBits(),
 				actual.networkCostBits());
-			Assert.assertEquals("R8_DIAGNOSTICS_TOTAL_COST", Double.doubleToRawLongBits(owner[0] + owner[1]),
+			Assert.assertEquals("R8_DIAGNOSTICS_TOTAL_COST", owner.totalBits(),
 				actual.totalCostBits());
 			Assert.assertEquals("R8_DIAGNOSTICS_COMPUTE_WEIGHT_EXPLICIT_ZERO",
 				Double.doubleToRawLongBits(0.0), actual.computeWeightBits());
@@ -149,6 +148,39 @@ public class CampaignBR8MinStDiagnosticsSeamTest {
 		return kind == ContributionKind.UPLOAD || kind == ContributionKind.DOWNLOAD
 			|| kind == ContributionKind.HARD_UPLOAD_OR || kind == ContributionKind.HARD_DOWNLOAD_OR
 			|| kind == ContributionKind.PRICE_UPLOAD_OR || kind == ContributionKind.PRICE_DOWNLOAD_OR;
+	}
+
+	private static final class ExpectedCost {
+		private final CompensatedSum self = new CompensatedSum();
+		private final CompensatedSum network = new CompensatedSum();
+		void add(long bits, boolean networkCost) {
+			(networkCost ? network : self).addBits(bits);
+		}
+		long selfBits() { return self.bits(); }
+		long networkBits() { return network.bits(); }
+		long totalBits() {
+			CompensatedSum total = new CompensatedSum();
+			total.addBits(selfBits());
+			total.addBits(networkBits());
+			return total.bits();
+		}
+	}
+
+	private static final class CompensatedSum {
+		private double sum;
+		private double correction;
+		void addBits(long bits) {
+			double value = Double.longBitsToDouble(bits);
+			Assert.assertTrue("R8_NON_CANONICAL_COST", Double.isFinite(value) && value >= 0.0
+				&& bits != Double.doubleToRawLongBits(-0.0));
+			double next = sum + value;
+			if(Math.abs(sum) >= Math.abs(value))
+				correction += (sum - next) + value;
+			else
+				correction += (value - next) + sum;
+			sum = next;
+		}
+		long bits() { return Double.doubleToRawLongBits(sum + correction); }
 	}
 
 	private static void assertGraphFreeSourceSeam() throws Exception {
