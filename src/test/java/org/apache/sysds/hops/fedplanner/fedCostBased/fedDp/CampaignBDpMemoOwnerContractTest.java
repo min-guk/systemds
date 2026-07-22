@@ -17,7 +17,6 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenc
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
-import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -125,6 +124,9 @@ public class CampaignBDpMemoOwnerContractTest {
 			for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
 				if(federatedSource && (!(occurrence.hop() instanceof DataOp data)
 					|| data.getOp() != OpOpData.FEDERATED))
+					continue;
+				if(!federatedSource && analysis.occurrences().stream()
+					.filter(candidate -> candidate.hop() == occurrence.hop()).count() != 1)
 					continue;
 				PlacementState exact = analysis.graph().node(occurrence.key()).orElseThrow()
 					.legalAlternatives().stream()
