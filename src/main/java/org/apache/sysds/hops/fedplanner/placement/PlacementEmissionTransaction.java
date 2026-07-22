@@ -146,7 +146,7 @@ public final class PlacementEmissionTransaction {
 				applyRegistries(prepared.registryWrites(), failureInjector);
 				PlacementEmissionReceipt receipt = new PlacementEmissionReceipt(prepared.planHash(), true, false,
 					prepared.hopWrites().size(), prepared.registryWrites().size());
-				COMMITTED.put(program, new CommittedPlan(receipt, baselineHops, baselineRegistries));
+				COMMITTED.put(program, new CommittedPlan(receipt, result, baselineHops, baselineRegistries));
 				return receipt;
 			}
 			catch(RuntimeException | Error failure) {
@@ -174,6 +174,17 @@ public final class PlacementEmissionTransaction {
 			Map<DMLProgram, PlacementEmissionReceipt> snapshot = new IdentityHashMap<>();
 			COMMITTED.forEach((program, committed) -> snapshot.put(program, committed.receipt()));
 			return Collections.unmodifiableMap(snapshot);
+		}
+	}
+
+	/** Return the current complete immutable authority for planner-owned dynamic replacement. */
+	public static NormalizedPlannerResult currentNormalizedResult(DMLProgram program) {
+		Objects.requireNonNull(program, "program");
+		synchronized(LOCK) {
+			CommittedPlan committed = COMMITTED.get(program);
+			if(committed == null)
+				throw new PlacementEmissionException("No complete placement authority is committed");
+			return committed.result();
 		}
 	}
 
@@ -607,7 +618,8 @@ public final class PlacementEmissionTransaction {
 
 	private record PreparedEmission(String planHash, List<HopWrite> hopWrites,
 		List<RegistryWrite> registryWrites) { }
-	private record CommittedPlan(PlacementEmissionReceipt receipt, Map<Hop, HopSnapshot> baselineHops,
+	private record CommittedPlan(PlacementEmissionReceipt receipt, NormalizedPlannerResult result,
+		Map<Hop, HopSnapshot> baselineHops,
 		RegistrySnapshots baselineRegistries) { }
 
 	private static final class PlacementEmissionException extends IllegalStateException {

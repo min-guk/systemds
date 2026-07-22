@@ -55,6 +55,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRew
 import org.apache.sysds.hops.fedplanner.placement.ExactPlacementRegistration;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -226,6 +227,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		List<AppliedPlanReceipt> appliedPlans, List<AdditionalRootInvocationReceipt> additionalRootInvocations,
 		InvocationCounters counters,
 		String analysisFingerprintBefore, String analysisFingerprintAfter,
+		NormalizedPlannerResult normalizedResult,
 		PlacementEmissionReceipt emissionReceipt)
 		implements AFederatedPlanner.PlannerInvocationReceipt {
 		public DpInvocationReceipt {
@@ -235,7 +237,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Objects.requireNonNull(exactSelection, "exactSelection");
 			Objects.requireNonNull(semanticConsumption, "semanticConsumption");
 			Objects.requireNonNull(counters, "counters");
+			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
+			if(normalizedResult.analysis() != analysis
+				|| !normalizedResult.normalizedPlanFingerprint().equals(emissionReceipt.planHash()))
+				throw new IllegalArgumentException("DP normalized result and emission receipt differ");
 			appliedPlans = List.copyOf(appliedPlans);
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
 			if(analysis != exactSelection.analysis() || memo != exactSelection.memo()
@@ -303,14 +309,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	public record DpDynamicInvocationReceipt(PlacementAnalysis analysis,
 		FederatedPlannerDpMemoTable memoTable, DpEnumerationResult enumerationResult,
-		String fingerprintBefore, String fingerprintAfter, PlacementEmissionReceipt emissionReceipt) {
+		String fingerprintBefore, String fingerprintAfter, NormalizedPlannerResult normalizedResult,
+		PlacementEmissionReceipt emissionReceipt) {
 		public DpDynamicInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(memoTable, "memoTable");
 			Objects.requireNonNull(enumerationResult, "enumerationResult");
 			Objects.requireNonNull(fingerprintBefore, "fingerprintBefore");
 			Objects.requireNonNull(fingerprintAfter, "fingerprintAfter");
+			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
+			if(normalizedResult.analysis() != analysis
+				|| !normalizedResult.normalizedPlanFingerprint().equals(emissionReceipt.planHash()))
+				throw new IllegalArgumentException("Dynamic DP normalized result and emission receipt differ");
 			if(memoTable.analysis() != analysis
 				|| enumerationResult.rewireSnapshot().analysis() != analysis
 				|| enumerationResult.semanticBlock().context().analysis() != analysis)
@@ -442,7 +453,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			enumerationResult, analysis, exactSelection, fingerprintBefore, fingerprintAfter);
 		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, semanticConsumption, appliedPlans,
 			additionalRootInvocations, counters,
-			fingerprintBefore, fingerprintAfter, emission);
+			fingerprintBefore, fingerprintAfter, normalized, emission);
 	}
 
 	@Override
@@ -505,30 +516,46 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
 		DpPlacementAdapter.ExactSelection exactSelection =
 			new DpPlacementAdapter().selectExact(analysis, memoTable, optimalPlan);
-		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog,
-			normalizeDpSelection(analysis, selectedStates, exactSelection),
-			PlacementEmissionTransaction.FailureInjector.none());
+		NormalizedPlannerResult previous = PlacementEmissionTransaction.currentNormalizedResult(prog);
+		NormalizedPlannerResult normalized = normalizeDpSelection(analysis, selectedStates, exactSelection, previous);
+		PlacementEmissionReceipt emission = PlacementEmissionTransaction.replaceCompleteProgram(prog,
+			normalized, PlacementEmissionTransaction.FailureInjector.none());
 		String fingerprintAfter = analysis.analysisFingerprint();
 		return new DpDynamicInvocationReceipt(
-			analysis, memoTable, enumerationResult, fingerprintBefore, fingerprintAfter, emission);
+			analysis, memoTable, enumerationResult, fingerprintBefore, fingerprintAfter, normalized, emission);
 	}
 
 	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
 		Map<Long, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection) {
-		Map<CompiledHopKey, PlacementState> assignment = new LinkedHashMap<>();
+		return normalizeDpSelection(analysis, selected, exactSelection, null);
+	}
+
+	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
+		Map<Long, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection,
+		NormalizedPlannerResult completeBase) {
+		Map<CompiledHopKey, PlacementEmissionState> assignment = new LinkedHashMap<>();
+		if(completeBase != null) {
+			if(completeBase.analysis() != analysis)
+				throw new IllegalArgumentException("Dynamic base authority belongs to a different analysis");
+			assignment.putAll(completeBase.selectedEmissionStates());
+		}
 		for(var node : analysis.graph().decisionNodes()) {
 			Hop hop = analysis.hop(node.key()).orElseThrow();
 			SelectedDpState choice = selected.get(hop.getHopID());
-			if(choice == null)
+			if(choice == null && completeBase == null)
 				throw new IllegalStateException("DP selection omitted " + node.key());
+			if(choice == null)
+				continue;
 			List<PlacementState> matches = node.legalAlternatives().stream()
 				.filter(state -> state.execType() == choice.execType() && state.output() == choice.output())
+				.filter(state -> state.fType() == choice.fType())
 				.toList();
 			if(matches.size() != 1)
-				throw new IllegalStateException("DP selection is not an exact neutral state: " + node.key());
-			assignment.put(node.key(), matches.get(0));
+				throw new IllegalStateException("DP selection is not an exact neutral state: " + node.key()
+					+ " choice=" + choice + " legal=" + node.legalAlternatives());
+			assignment.put(node.key(), new PlacementEmissionState(matches.get(0), choice.derivedFedFout()));
 		}
-		return NormalizedPlannerResults.create(analysis, "DP", assignment,
+		return NormalizedPlannerResults.createWithEmissionStates(analysis, "DP", assignment,
 			"objectiveBits=" + exactSelection.objectiveCostBits());
 	}
 
@@ -621,7 +648,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				}
 				else if(applyStateToTargetHop)
 					selectedStates.put(origHopId, new SelectedDpState(execType, outType,
-						effectivePlan.getFType(), derivedFedFout));
+						outType == FederatedOutput.FOUT ? effectivePlan.getCpFoutTypeOrFType() : null,
+						derivedFedFout));
 				if (!applyStateToTargetHop && FederatedPlannerTrace.shouldTrace(targetHop)) {
 					FederatedPlannerTrace.log(targetHop, "DP-Rewrite-SkipVirtualCloneTargetState",
 						String.format(Locale.ROOT,
@@ -715,7 +743,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				registerPlannerRecompileState(selectedPlan.getHopRef(), targetHop, execType, outType);
 			}
 			else selectedStates.put(origHopID, new SelectedDpState(execType, outType,
-				selectedPlan.getFType(), derivedFedFout));
+				outType == FederatedOutput.FOUT ? selectedPlan.getCpFoutTypeOrFType() : null,
+				derivedFedFout));
 			collectDeferredLocalMaterializeRequests(
 				memoTable, selectedPlan, outputDecisions, localMaterializeRequests);
 
