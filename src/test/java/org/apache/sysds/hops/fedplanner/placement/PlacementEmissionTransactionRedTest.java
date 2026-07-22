@@ -7,27 +7,30 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailureInjector;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailurePoint;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.After;
@@ -44,7 +47,8 @@ public class PlacementEmissionTransactionRedTest {
 	public void setUp() throws Exception {
 		PlacementEmissionTransaction.resetForTesting();
 		clearRegistries();
-		fixture = fixture("B-11");
+		fixture = relocationFixture();
+		assertB11AlreadyCompatibleNegative();
 	}
 
 	@After
@@ -91,7 +95,7 @@ public class PlacementEmissionTransactionRedTest {
 			wrap(fixture.plan(), fixture.analysis(), "stale-analysis-fingerprint",
 				fixture.plan().selectedStates(), fixture.plan().selectedRelocations(), "stale-plan"),
 			FailureInjector.none()));
-		Fixture foreign = fixture("B-11");
+		Fixture foreign = relocationFixture();
 		expectFailure(() -> PlacementEmissionTransaction.emit(fixture.program(),
 			wrap(fixture.plan(), foreign.analysis(), foreign.analysis().analysisFingerprint(),
 				foreign.plan().selectedStates(), foreign.plan().selectedRelocations(),
@@ -142,36 +146,94 @@ public class PlacementEmissionTransactionRedTest {
 		return state != null && state.execType() == exec && state.output() == output;
 	}
 
-	private static Fixture fixture(String id) throws Exception {
-		FixtureProgram program = FixtureProgram.adopt(ProductionShadowFixtureFactory.compile(id));
+	private static Fixture relocationFixture() throws Exception {
+		FixtureProgram program = FixtureProgram.adopt(compileRelocationProgram());
 		PlacementAnalysis baseline = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NormalizedPlannerResult baselinePlan = new FedAllPlacementAdapter().select(baseline);
-		RelocationAction source = baseline.graph().relocationActions().stream().findFirst()
-			.orElseThrow(() -> new AssertionError("P4_FIXTURE_REQUIRES_GRAPH_RELOCATION"));
-		ObligationKey sourceObligation = source.obligations().get(0);
-		PlacementState required = baselinePlan.selectedStates().get(sourceObligation.consumer());
-		if(required == null || !baseline.graph().node(sourceObligation.consumer()).orElseThrow()
-			.legalAlternatives().contains(required))
-			throw new AssertionError("P4_FIXTURE_REQUIRES_LEGAL_RELOCATION_TARGET");
-		RelocationActionKey sourceKey = source.key();
-		RelocationActionKey relocationKey = new RelocationActionKey(sourceKey.sourceValueVersion(), required,
-			sourceKey.durableAnchor(), sourceKey.statementBlockScope(), sourceKey.compatibleConsumers());
-		ObligationKey obligation = new ObligationKey(sourceObligation.consumer(), sourceObligation.inputPosition(),
-			sourceObligation.sourceValueVersion(), required, relocationKey,
-			sourceObligation.callRecompileContext());
-		NeutralPlacementGraph graph = new NeutralPlacementGraph(baseline.graph().nodes(),
-			baseline.graph().constraints(), List.of(new RelocationAction(relocationKey, List.of(obligation))));
-		Map<CompiledHopKey, NodeShapeFact> shapes = new IdentityHashMap<>();
-		baseline.occurrences().forEach(occurrence -> shapes.put(occurrence.key(),
-			baseline.shapeFact(occurrence.key()).orElseThrow()));
-		PlacementAnalysis analysis = new PlacementAnalysis(graph, baseline.occurrences(), program,
-			new PlacementShapeFacts(shapes, shapes.keySet()), baseline.analysisFingerprint(),
-			baseline.heuristicPolicyFacts());
-		program.install(analysis);
+		NeutralPlacementGraph.Node local = uniqueNode(baseline, "S");
+		NeutralPlacementGraph.Node anchor = uniqueNode(baseline, "X");
+		List<PlacementAnalysis.CompiledInputEdgeFact> localEdges = baseline.compiledInputEdgesInCanonicalOrder()
+			.stream().filter(edge -> edge.producer() == local.key()).toList();
+		List<RelocationAction> uploads = baseline.graph().relocationActions().stream()
+			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion())).toList();
+
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_TWO_EXACT_LOCAL_INPUTS", 2, localEdges.size());
+		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_INPUT_POSITION_ONE",
+			localEdges.stream().allMatch(edge -> edge.inputPosition() == 1));
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_SHARED_GRAPH_RELOCATION", 1, uploads.size());
+		RelocationAction upload = uploads.get(0);
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_TWO_EXACT_RELOCATION_OBLIGATIONS", 2,
+			upload.obligations().size());
+		Assert.assertEquals("P4_FIXTURE_RELOCATION_ENDPOINTS_ARE_EXACT",
+			localEdges.stream().map(edge -> endpoint(edge.consumer(), edge.inputPosition())).sorted().toList(),
+			upload.obligations().stream().map(obligation ->
+				endpoint(obligation.consumer(), obligation.inputPosition())).sorted().toList());
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_DURABLE_ANCHOR", 1, anchor.anchors().size());
+		Assert.assertEquals("P4_FIXTURE_RELOCATION_USES_EXACT_ANCHOR", anchor.anchors().get(0),
+			upload.key().durableAnchor());
+		Assert.assertTrue("P4_FIXTURE_RELOCATION_IS_ANCHOR_TYPED_FED_FOUT",
+			upload.key().targetPlacement().execType() == ExecType.FED
+				&& upload.key().targetPlacement().output() == FederatedOutput.FOUT
+				&& upload.key().targetPlacement().fType() == upload.key().durableAnchor().fType()
+				&& upload.key().targetPlacement().shapeDependent());
+		Assert.assertTrue("P4_FIXTURE_RELOCATION_AUTHORITY_IS_EXACT",
+			upload.obligations().stream().allMatch(obligation ->
+				obligation.sourceValueVersion().equals(local.valueVersion())
+					&& obligation.relocationAction().equals(upload.key())
+					&& obligation.requiredPlacement().equals(upload.key().targetPlacement())
+					&& baseline.graph().node(obligation.consumer()).orElseThrow().legalAlternatives()
+						.contains(obligation.requiredPlacement())
+					&& obligation.requiredPlacement().equals(
+						baselinePlan.selectedStates().get(obligation.consumer()))));
+		Assert.assertTrue("P4_FIXTURE_REQUIRES_EXACT_FEDALL_RELOCATION_SELECTION",
+			baselinePlan.selectedRelocations().contains(upload.key()));
+		Assert.assertFalse("P4_FIXTURE_REQUIRES_DECISIONS", baselinePlan.selectedStates().isEmpty());
+		program.install(baseline);
+		return new Fixture(program, baseline, baselinePlan);
+	}
+
+	private static void assertB11AlreadyCompatibleNegative() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(ProductionShadowFixtureFactory.compile("B-11"));
 		NormalizedPlannerResult plan = new FedAllPlacementAdapter().select(analysis);
-		Assert.assertFalse("P4_FIXTURE_REQUIRES_DECISIONS", plan.selectedStates().isEmpty());
-		Assert.assertFalse("P4_FIXTURE_REQUIRES_REGISTRY_OBLIGATIONS", plan.selectedRelocations().isEmpty());
-		return new Fixture(program, analysis, plan);
+		NeutralPlacementGraph.Node source = analysis.graph().nodes().stream()
+			.filter(node -> analysis.hop(node.key()).orElseThrow() instanceof DataOp data
+				&& data.getOp() == OpOpData.FEDERATED).findFirst()
+			.orElseThrow(() -> new AssertionError("P4_B11_REQUIRES_DURABLE_SOURCE"));
+		Assert.assertTrue("P4_B11_SOURCE_IS_ALREADY_FED_FOUT_COMPATIBLE",
+			selected(plan, source.key(), ExecType.FED, FederatedOutput.FOUT));
+		Assert.assertTrue("P4_B11_ALREADY_COMPATIBLE_SOURCE_NEEDS_NO_RELOCATION",
+			plan.selectedRelocations().isEmpty()
+				&& analysis.graph().relocationActions().stream()
+					.noneMatch(action -> analysis.graph().isRelocationActive(action, plan.selectedStates())));
+	}
+
+	private static NeutralPlacementGraph.Node uniqueNode(PlacementAnalysis analysis, String name) {
+		List<NeutralPlacementGraph.Node> matches = analysis.graph().nodes().stream()
+			.filter(node -> analysis.hop(node.key()).map(hop -> name.equals(hop.getName())).orElse(false)).toList();
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_" + name, 1, matches.size());
+		return matches.get(0);
+	}
+
+	private static String endpoint(CompiledHopKey consumer, int inputPosition) {
+		return consumer.normalizedSignature() + '@' + inputPosition;
+	}
+
+	private static DMLProgram compileRelocationProgram() throws Exception {
+		String script = "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
+			+ "S=rand(rows=4,cols=2,seed=7);\n"
+			+ "Y1=X+S;\nY2=X-S;\n"
+			+ "write(Y1,\"/tmp/g005-p4-y1\",format=\"binary\");\n"
+			+ "write(Y2,\"/tmp/g005-p4-y2\",format=\"binary\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
 	}
 
 	private static NormalizedPlannerResult wrap(NormalizedPlannerResult source, PlacementAnalysis analysis,
