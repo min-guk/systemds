@@ -168,5 +168,20 @@ public final class FederatedLocalMaterializeRegistry {
 		public String getReason() {
 			return _reason;
 		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if(this == obj)
+				return true;
+			if(!(obj instanceof LocalMaterializeSpec that))
+				return false;
+			return _consumerHopIds.equals(that._consumerHopIds) && Objects.equals(_fTypeHint, that._fTypeHint)
+				&& Objects.equals(_reason, that._reason);
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(_consumerHopIds, _fTypeHint, _reason);
+		}
 	}
 }
