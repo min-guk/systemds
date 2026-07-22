@@ -25,6 +25,8 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 	public enum ProjectionOrder { NORMAL, REVERSED }
 	private static final AtomicLong CONSTRUCTIONS = new AtomicLong();
 
+	public static PlacementAnalysis.CompiledInputEdgeFact compiledInputEdge(CompiledHopKey producer, CompiledHopKey consumer, int position) { return new PlacementAnalysis.CompiledInputEdgeFact(producer, consumer, position); }
+
 	public static PlacementAnalysis build(org.apache.sysds.parser.DMLProgram program) {
 		CONSTRUCTIONS.incrementAndGet();
 		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
