@@ -318,7 +318,8 @@ public final class NeutralPlacementGraphBuilder {
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
 			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
 			Hop consumer = occurrence.hop();
-			if(!isCompiledHopOccurrenceKey(nodes.get(consumerOrdinal).key()))
+			Node consumerNode = nodes.get(consumerOrdinal);
+			if(!PlacementAnalysis.isCompiledHopOccurrenceKey(consumerNode.key(), consumerNode.kind()))
 				continue;
 			for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
 				Hop producer = consumer.getInput(inputPosition);
@@ -327,20 +328,16 @@ public final class NeutralPlacementGraphBuilder {
 				Integer producerOrdinal = blockOrdinals == null ? null : blockOrdinals.get(producer);
 				if(producerOrdinal == null)
 					throw new IllegalStateException("Matrix producer input lacks exact compiled owner key");
-				CompiledHopKey producerKey = nodes.get(producerOrdinal).key();
-				if(isCompiledHopOccurrenceKey(producerKey))
+				Node producerNode = nodes.get(producerOrdinal);
+				CompiledHopKey producerKey = producerNode.key();
+				if(PlacementAnalysis.isCompiledHopOccurrenceKey(producerKey, producerNode.kind()))
 					edges.add(new CompiledInputEdgeFact(producerKey,
-						nodes.get(consumerOrdinal).key(), inputPosition));
+						consumerNode.key(), inputPosition));
 			}
 		}
 		edges.sort(java.util.Comparator.comparing(CompiledInputEdgeFact::consumer)
 			.thenComparingInt(CompiledInputEdgeFact::inputPosition));
 		return List.copyOf(edges);
-	}
-
-	private static boolean isCompiledHopOccurrenceKey(CompiledHopKey key) {
-		return key.controlRegion().regionPath().stream()
-			.noneMatch(part -> part.startsWith("function-boundary:"));
 	}
 
 	private static HeuristicPolicyFacts heuristicPolicyFacts(NeutralPlacementGraph graph,

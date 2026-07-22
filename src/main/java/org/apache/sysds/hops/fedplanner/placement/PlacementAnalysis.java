@@ -677,7 +677,8 @@ public final class PlacementAnalysis {
 		Objects.requireNonNull(graph, "graph");
 		Objects.requireNonNull(occurrences, "occurrences");
 		List<HopOccurrenceProjection> compiled = occurrences.stream()
-			.filter(occurrence -> isCompiledHopOccurrenceKey(occurrence.key())).toList();
+			.filter(occurrence -> isCompiledHopOccurrenceKey(occurrence.key(), graph.node(occurrence.key())
+				.orElseThrow(() -> new IllegalArgumentException("Occurrence has a foreign graph key")).kind())).toList();
 		Map<CompiledHopKey,HopOccurrenceProjection> occurrencesByIdentity = new IdentityHashMap<>();
 		for(HopOccurrenceProjection occurrence : compiled)
 			if(occurrencesByIdentity.put(occurrence.key(), occurrence) != null)
@@ -714,8 +715,12 @@ public final class PlacementAnalysis {
 
 	private record EdgeIdentity(CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) { }
 
-	private static boolean isCompiledHopOccurrenceKey(CompiledHopKey key) {
-		return key.controlRegion().regionPath().stream().noneMatch(part -> part.startsWith("function-boundary:"));
+	static boolean isCompiledHopOccurrenceKey(CompiledHopKey key, NodeKind kind) {
+		Objects.requireNonNull(key, "key");
+		Objects.requireNonNull(kind, "kind");
+		return kind != NodeKind.FUNCTION_INPUT && kind != NodeKind.FUNCTION_OUTPUT
+			&& key.controlRegion().regionPath().stream()
+				.noneMatch(part -> part.startsWith("function-boundary:"));
 	}
 
 	public NeutralPlacementGraph graph() {
@@ -748,7 +753,7 @@ public final class PlacementAnalysis {
 		NodeKind kind = graph.node(Objects.requireNonNull(key, "key"))
 			.orElseThrow(() -> new IllegalArgumentException("Key is not owned by this placement analysis"))
 			.kind();
-		return kind != NodeKind.FUNCTION_INPUT && kind != NodeKind.FUNCTION_OUTPUT;
+		return isCompiledHopOccurrenceKey(key, kind);
 	}
 
 	public List<StatementBlock> topLevelStatementBlocks() {

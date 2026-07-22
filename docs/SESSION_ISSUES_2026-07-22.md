@@ -74,3 +74,18 @@
 - **잠재 회귀 위험**: reverting to lexical/Hop-ID provenance causes registry aliasing. Tampered-provenance and distinct-scope/FType tests detect it.
 - **의사결정 근거**: planner/transaction analysis-owned metadata rule 수정; runtime registry fallback 없음.
 - **적용 원칙/제약**: anchor는 placement metadata; lexical-only/Hop-ID ownership 금지.
+
+## B-21 fixture reaches DP with default PUBLIC privacy
+
+- **상태**: 진행중
+- **환경/조건**: v12 ordered B-21 gate after compile PASS; DP planner; `CampaignBG014HermeticPlannerFixtureFactory` does not attach a non-public privacy constraint, so `TRead X` is evaluated as `PUBLIC`.
+- **재현 절차**: `mvn -q -DskipITs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014ProgramDynamicAuthorityParityRedTest test`; log `/tmp/worker2-v12-b21-1784726636.log`, SHA-256 `0f546fe697349cc3013e94ac073eb90f8e701402f7bfb0332aa2f802aeb8fa8f`.
+- **관측 증상**: 2 tests 중 첫 테스트가 `No valid federated plan for hop 0 (TRead X) under privacy PUBLIC (LOUT candidates=false, FOUT candidates=false, allowCpLout=false, allowCpFout=false, allowFedLout=false, oracleFedFout=false, allowFedFout=false, canSatisfyFedInputs=false)`로 emission 전에 종료했고, 두 번째 테스트는 통과했다.
+- **원인 분석**: 최초 메시지는 PUBLIC이지만 이전 v7 실행은 동일 fixture로 planner를 통과해 structure guard까지 도달했다. 차이는 v12에서 FCG를 bind 앞으로 옮긴 것이다. `FunctionCallGraph.rConstructFunctionCallGraph`는 모든 방문 Hop에 `setVisited()`를 호출하고 복원하지 않으며, 이후 planner traversal은 그 상태를 관측한다. 따라서 분석/계획 입력이 불완전해지고 첫 실행이 실패한다. 첫 실패 뒤 남은 global state 때문에 같은 클래스의 두 번째 테스트가 통과하는 순서 의존성도 보인다. PUBLIC은 표면 메시지이지 새 회귀의 단독 원인이 아니다.
+- **해결 요약**: production/planner/runtime 수정 없이 v12 stop-on-first-failure를 준수해 중단했다. 안전한 구조 후보는 FCG 생성 직후이자 analysis bind 전 기존 `DMLTranslator.resetHopsDAGVisitStatus(dmlp)`로 traversal scratch state를 복원하는 것이지만, v12가 “sole ordering change”로 제한하므로 새 독립 승인 전 적용하지 않는다. bind 후 reset/fingerprint 완화는 금지 유지한다.
+- **수정 파일**: 없음(본 세션 문서만 갱신).
+- **검증**: compile PASS log `/tmp/worker2-v12-compile-1784726595.log` SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`; B-21 XML은 tests=2, errors=1, failures=0, skipped=0.
+- **잔여 이슈**: v12 계획이 FCG의 persistent visit scratch-state side effect를 빠뜨렸다. bind 전 reset을 DMLTranslator ordering contract에 포함할지 독립 검토/승인이 필요하다. 이후 B-21부터 gate를 재개한다.
+- **잠재 회귀 위험**: planner를 완화하면 금지된 `<CP,FOUT>` TRead/TWrite 계획이나 runtime 불가능 계획이 생성될 수 있다. TRead/TWrite consistency 및 B-21 오류 reason flags로 감지한다.
+- **의사결정 근거**: 테스트 정책/fixture authority 문제이며 planner/runtime 합법성 규칙은 수정하지 않는다.
+- **적용 원칙/제약**: public privacy 케이스 ignore; TRead/TWrite 최상위 제약; runtime fallback 금지; first-failure stop.

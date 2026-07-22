@@ -336,6 +336,7 @@ public class DMLTranslator
 			|| org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner)) )
 			return;
 		synchronized(dmlp) {
+			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 			PlacementAnalysis analysis = dmlp.bindPlacementAnalysisAtFinalHopBoundary();
 
 			org.apache.sysds.lops.compile.FederatedRefedRegistry.clear();
@@ -343,7 +344,6 @@ public class DMLTranslator
 				org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.isCompiled(planner) ?
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.valueOf(planner.toUpperCase()) :
 					org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner.COMPILE_FED_HEURISTIC;
-			org.apache.sysds.hops.ipa.FunctionCallGraph fgraph = new org.apache.sysds.hops.ipa.FunctionCallGraph(dmlp);
 			// fcallSizes are not recomputed here; planner uses null when unavailable.
 			long tFedPlanner = DMLScript.STATISTICS ? System.nanoTime() : 0;
 			AFederatedPlanner.PlannerInvocationReceipt receipt =
