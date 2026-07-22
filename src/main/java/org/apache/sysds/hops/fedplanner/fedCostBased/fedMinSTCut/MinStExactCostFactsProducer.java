@@ -1126,9 +1126,17 @@ public final class MinStExactCostFactsProducer {
 					if(sibling.consumer() != endpoint.consumerKey()
 						|| sibling.inputPosition() == endpoint.inputPosition())
 						continue;
-					analysis.graph().node(sibling.producer()).orElseThrow().anchors().stream()
+					NeutralPlacementGraph.Node siblingNode = analysis.graph().node(sibling.producer()).orElseThrow();
+					siblingNode.anchors().stream()
 						.filter(anchor -> anchor.fType() == group.conversionType())
 						.forEach(endpointAnchors::add);
+					analysis.graph().relocationActions().stream()
+						.filter(action -> action.key().sourceValueVersion().equals(siblingNode.valueVersion())
+							&& action.key().targetPlacement().fType() == group.conversionType()
+							&& action.obligations().stream().anyMatch(obligation ->
+								obligation.consumer() == endpoint.consumerKey()
+									&& obligation.inputPosition() == sibling.inputPosition()))
+						.map(action -> action.key().durableAnchor()).forEach(endpointAnchors::add);
 				}
 			if(endpointAnchors.isEmpty())
 				return false;
@@ -1162,8 +1170,8 @@ public final class MinStExactCostFactsProducer {
 				CompiledInputEdgeFact inputEdge = analysis.requireExactCompiledInputEdge(
 					endpoint.producerKey(), endpoint.consumerKey(), endpoint.inputPosition());
 				int authorityCount = result.size();
-				addRelocationAuthorities(analysis, result, group, endpoint, inputEdge, producer);
 				if(group.direction() == Direction.UPLOAD) {
+					addRelocationAuthorities(analysis, result, group, endpoint, inputEdge, producer);
 					if(result.size() == authorityCount)
 						addIndependentAnchorAuthorities(analysis, result, group, endpoint, inputEdge);
 				}
