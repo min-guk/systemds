@@ -59,6 +59,29 @@ public class CampaignBDpMemoOwnerContractTest {
 	}
 
 	@Test
+	public void sourceFTypeMustMatchExactFedOutOwner() {
+		Fixture owner = fixture("B-01");
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
+		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.FOUT);
+		FedPlan mismatched = plan(variants, ExecType.FED, 0x1.0p3);
+		mismatched.setFType(FType.COL);
+		variants.addFedPlan(mismatched);
+		Assert.assertThrows("mismatched source FType must be rejected", IllegalArgumentException.class,
+			() -> memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants));
+	}
+
+	@Test
+	public void matchingSourceFTypeRetainsExactOwnerIdentity() {
+		Fixture owner = fixture("B-01");
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
+		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.FOUT);
+		FedPlan matching = plan(variants, ExecType.FED, 0x1.0p3);
+		variants.addFedPlan(matching);
+		Assert.assertDoesNotThrow(() -> memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants));
+		Assert.assertSame(matching, memo.getFedPlanAfterPrune(owner.occurrence(), FederatedOutput.FOUT));
+	}
+
+	@Test
 	public void copiedAndForeignOccurrencesRejectWithoutChangingSelection() {
 		Fixture owner = fixture("B-01");
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
