@@ -403,10 +403,37 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 			new DMLTranslator(program).constructLops(program, receipt::set);
 		}
-		catch(Exception e) { throw new AssertionError("Unable to invoke program fixture " + fixture, e); }
+		catch(Exception e) {
+			if("B-21".equals(fixture))
+				assertExactDisconnectedProducerConflict(program, e);
+			throw new AssertionError("Unable to invoke program fixture " + fixture, e);
+		}
 		finally { ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old); }
 		Assert.assertTrue(receipt.get() instanceof DpInvocationReceipt);
 		return new ProgramInvocation(program, (DpInvocationReceipt) receipt.get());
+	}
+
+	private static void assertExactDisconnectedProducerConflict(DMLProgram program, Exception failure) {
+		Throwable owner = failure;
+		while(owner.getCause() != null)
+			owner = owner.getCause();
+		Assert.assertTrue("B-21 RED must remain the exact DP disagreement: " + owner,
+			owner instanceof IllegalStateException
+				&& owner.getMessage().startsWith("DP occurrence has disagreeing exact selections: "));
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+		List<CompiledHopKey> keys = analysis.logicalTransientInputsInCanonicalOrder().stream()
+			.map(LogicalTransientInputFact::sourceWrite).distinct().toList();
+		Assert.assertEquals("B-21 RED must have one exact logical source producer", 1, keys.size());
+		CompiledHopKey producer = keys.get(0);
+		Assert.assertTrue(owner.getMessage().contains(producer.toString()));
+		Assert.assertEquals("B-21 RED must not be a clone/recompile/second-occurrence alias", 1,
+			analysis.occurrences().stream().filter(value -> value.key() == producer).count());
+		Assert.assertEquals("compiled", producer.recompileContext());
+		Assert.assertEquals("root-0", producer.emittedHopInstance());
+		Assert.assertTrue(analysis.graph().node(producer).orElseThrow().legalAlternatives().stream()
+			.anyMatch(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT));
+		Assert.assertTrue(analysis.graph().node(producer).orElseThrow().legalAlternatives().stream()
+			.anyMatch(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT));
 	}
 
 	private static DMLProgram compile(String fixture) {
