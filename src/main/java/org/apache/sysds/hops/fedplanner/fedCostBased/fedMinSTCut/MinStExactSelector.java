@@ -76,7 +76,12 @@ public final class MinStExactSelector {
 				throw new IllegalArgumentException("MINST_EXACT_STATE_MEMBERSHIP_AMBIGUOUS|key="
 					+ decision.key().normalizedSignature() + "|membership=" + membership);
 		}
-		return decision.legalStatesInCanonicalOrder().stream().distinct().toList();
+		// The cut solver reasons only about the (exec, output) membership bits.  Keep
+		// exactly one certified representative for each membership; carrying every
+		// FType variant here would create duplicate choices for the same cut and make
+		// state resolution depend on incidental list order.
+		return statesByMembership.entrySet().stream().sorted(Map.Entry.comparingByKey())
+			.map(Map.Entry::getValue).toList();
 	}
 
 	private static List<MinStExactCutSolver.Edge> edges(MinStExactCostFacts facts) {
