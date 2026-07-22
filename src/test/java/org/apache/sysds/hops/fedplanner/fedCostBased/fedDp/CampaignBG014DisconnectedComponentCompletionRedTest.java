@@ -2,13 +2,16 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
@@ -58,17 +61,39 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		addUsage.invoke(conflict, FederatedOutput.LOUT, clonePlan, clone.getHopID(), clonePlan);
 		Map<Long,Object> conflicts = new HashMap<>();
 		conflicts.put(original.getHopID(), conflict);
+		Map<Long,FederatedOutput> outputDecisions = new LinkedHashMap<>();
+		outputDecisions.put(original.getHopID(), FederatedOutput.LOUT);
+		Map<String,String> selectedStates = new LinkedHashMap<>(Map.of("boundary", "locked"));
+		Set<String> visitedPlanHops = new LinkedHashSet<>(Set.of("boundary"));
+		Map<Long,String> fTypeMap = new LinkedHashMap<>(Map.of(original.getHopID(), "ROW"));
+		Map<Long,String> localMaterializeRequests =
+			new LinkedHashMap<>(Map.of(original.getHopID(), "existing-request"));
 
 		CloneSnapshot before = snapshotCloneFamily(original, clone);
+		AccumulatorSnapshot accumulatorsBefore = snapshotAccumulators(selectedStates, visitedPlanHops,
+			fTypeMap, outputDecisions, conflicts, localMaterializeRequests);
 		Method selector = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
 			"selectLoopAwareCloneFamilyRewritePlan", FederatedPlannerDpMemoTable.class,
 			long.class, FedPlan.class, Map.class, Map.class);
 		selector.setAccessible(true);
 		Object selected = selector.invoke(null, memo, original.getHopID(), originalPlan,
-			Map.of(original.getHopID(), FederatedOutput.LOUT), conflicts);
-		Assert.assertSame("capture-only path must retain exact best-plan identity", originalPlan, selected);
-		Assert.assertEquals(Double.doubleToRawLongBits(originalPlan.getCumulativeCost()),
+			outputDecisions, conflicts);
+		CloneSelectionReceipt receipt = new CloneSelectionReceipt((FedPlan) selected,
 			Double.doubleToRawLongBits(((FedPlan) selected).getCumulativeCost()));
+		Assert.assertSame("capture-only path must retain exact best-plan identity", originalPlan, receipt.plan());
+		Assert.assertEquals(Double.doubleToRawLongBits(originalPlan.getCumulativeCost()), receipt.costBits());
+
+		try {
+			requireExactComponentCoverage(
+				Set.of(original.getHopID(), clone.getHopID()), Set.of(original.getHopID()));
+			Assert.fail("fixture must force a later incomplete component-coverage failure");
+		}
+		catch(IllegalStateException expected) {
+			Assert.assertTrue(expected.getMessage().contains("incomplete component coverage"));
+		}
+		Assert.assertEquals("failed component changed global planning accumulators",
+			accumulatorsBefore, snapshotAccumulators(selectedStates, visitedPlanHops,
+				fTypeMap, outputDecisions, conflicts, localMaterializeRequests));
 		Assert.assertEquals("clone-family selection mutated Hop/recompile state before component validation",
 			before, snapshotCloneFamily(original, clone));
 	}
@@ -162,6 +187,47 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 	private record CloneSnapshot(List<Object> original, List<Object> cloneState,
 		Map<String,FederatedPlannerUtils.PlannerRecompileStateSnapshot> recompileStates,
 		java.util.Set<String> ambiguousSignatures) { }
+
+	private record CloneSelectionReceipt(FedPlan plan, long costBits) { }
+
+	private static AccumulatorSnapshot snapshotAccumulators(Map<String,String> selectedStates,
+		Set<String> visitedPlanHops, Map<Long,String> fTypeMap,
+		Map<Long,FederatedOutput> outputDecisions, Map<Long,Object> conflicts,
+		Map<Long,String> localMaterializeRequests) throws ReflectiveOperationException {
+		Map<Long,List<Object>> conflictStates = new LinkedHashMap<>();
+		for(Map.Entry<Long,Object> entry : conflicts.entrySet())
+			conflictStates.put(entry.getKey(), snapshotConflict(entry.getValue()));
+		return new AccumulatorSnapshot(Map.copyOf(selectedStates), Set.copyOf(visitedPlanHops),
+			Map.copyOf(fTypeMap), Map.copyOf(outputDecisions), Map.copyOf(conflictStates),
+			Map.copyOf(localMaterializeRequests));
+	}
+
+	private static List<Object> snapshotConflict(Object conflict) throws ReflectiveOperationException {
+		List<Object> state = new java.util.ArrayList<>();
+		for(String fieldName : List.of("parents", "memberHopIDs", "selectedMemberPlans",
+			"seenLOUT", "seenFOUT", "canChooseLOUT", "canChooseFOUT")) {
+			Field field = conflict.getClass().getDeclaredField(fieldName);
+			field.setAccessible(true);
+			Object value = field.get(conflict);
+			if(value instanceof Set<?> set)
+				value = List.copyOf(set);
+			else if(value instanceof Map<?,?> map)
+				value = Map.copyOf(map);
+			state.add(value);
+		}
+		return List.copyOf(state);
+	}
+
+	private record AccumulatorSnapshot(Map<String,String> selectedStates,
+		Set<String> visitedPlanHops, Map<Long,String> fTypeMap,
+		Map<Long,FederatedOutput> outputDecisions, Map<Long,List<Object>> conflicts,
+		Map<Long,String> localMaterializeRequests) { }
+
+	private static void requireExactComponentCoverage(Set<Long> expected, Set<Long> captured) {
+		if(!expected.equals(captured))
+			throw new IllegalStateException("incomplete component coverage: expected=" + expected
+				+ " captured=" + captured);
+	}
 
 	private static DMLProgram compile(boolean consumerFirst) throws Exception {
 		Path data = Files.createTempFile("g014-component-", ".data");
