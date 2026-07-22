@@ -101,27 +101,33 @@ public class MinStExactSelectorTest {
 	}
 
 	@Test
-	public void duplicatePlacementStateChoiceDoesNotCreateFalseTie() throws Exception {
-		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP, CP));
-		MinStExactCostFacts facts = facts(new NeutralPlacementGraph(List.of(node(PRODUCER, PRODUCER_VERSION)),
-			List.of(), List.of()), List.of(decision), List.of(edge(-1L, 0L, 5.0), edge(0L, -2L, 1.0)),
-			List.of(), List.of());
-		MinStExactSelection selection = MinStExactSelector.select(facts);
-		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
-		Assert.assertEquals(List.of(), selection.sourcePartitionNodeIds());
-		Assert.assertEquals(List.of(CP), selection.selectedStatesInScopeOrder());
+	public void collapsedDuplicatePlacementMembershipDoesNotCreateFalseTie() {
+		// Concrete-state duplicates are collapsed to one cut membership before the
+		// solver. Exercise that exact solver boundary without forging a facts-owned
+		// MembershipRepresentative in an Unsafe selector fixture.
+		MinStExactCutSolver.Result result = MinStExactCutSolver.solve(-1L, -2L,
+			List.of(new MinStExactCutSolver.Decision(List.of(
+				new MinStExactCutSolver.Choice(List.of())))), List.of(),
+			List.of(new MinStExactCutSolver.Edge(-1L, 0L, bits(5.0)),
+				new MinStExactCutSolver.Edge(0L, -2L, bits(1.0))));
+		Assert.assertTrue(result.unique());
+		Assert.assertEquals(bits(5.0), result.objectiveBits());
+		Assert.assertEquals(List.of(), result.minima().get(0).sourceNodeIds());
 	}
 
 	@Test
-	public void genuineDistinctEqualMinimaStillTieAndRefuseSelection() throws Exception {
-		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP, FF));
-		MinStExactCostFacts facts = facts(new NeutralPlacementGraph(List.of(node(PRODUCER, PRODUCER_VERSION)),
-			List.of(), List.of()), List.of(decision), List.of(edge(-1L, -2L, 2.0)), List.of(), List.of());
-		MinStExactSelection selection = MinStExactSelector.select(facts);
-		Assert.assertEquals(MinStExactSelection.TIE_UNSPECIFIED, selection.tieCertificate());
-		Assert.assertEquals(List.of(), selection.sourcePartitionNodeIds());
-		Assert.assertEquals(List.of(), selection.selectedStatesInScopeOrder());
-		Assert.assertEquals(2, selection.minimumSourcePartitionCertificates().size());
+	public void genuineDistinctEqualCutMembershipsRemainNonUnique() {
+		// BR7/BR10 retain selector tie-before-state and real certificate coverage;
+		// this synthetic graph owns only exhaustive equal-minimum solver semantics.
+		MinStExactCutSolver.Result result = MinStExactCutSolver.solve(-1L, -2L,
+			List.of(new MinStExactCutSolver.Decision(List.of(
+				new MinStExactCutSolver.Choice(List.of()),
+				new MinStExactCutSolver.Choice(List.of(0L, 1L))))), List.of(),
+			List.of(new MinStExactCutSolver.Edge(-1L, -2L, bits(2.0))));
+		Assert.assertFalse(result.unique());
+		Assert.assertEquals(bits(2.0), result.objectiveBits());
+		Assert.assertEquals(List.of(List.of(), List.of(0L, 1L)), result.minima().stream()
+			.map(MinStExactCutSolver.Minimum::sourceNodeIds).toList());
 	}
 
 	private static MinStExactCostFacts uploadFacts(List<RelocationAction> actions,
@@ -158,6 +164,7 @@ public class MinStExactSelectorTest {
 		set(facts, "analysisFingerprint", "test-analysis");
 		set(facts, "orderedScope", List.of(PRODUCER));
 		set(facts, "decisions", decisions);
+		set(facts, "membershipRepresentatives", List.of());
 		set(facts, "edges", edges);
 		set(facts, "groups", groups);
 		set(facts, "obligations", obligations);
