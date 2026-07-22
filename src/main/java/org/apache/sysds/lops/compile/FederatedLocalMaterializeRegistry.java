@@ -24,6 +24,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -43,6 +45,30 @@ public final class FederatedLocalMaterializeRegistry {
 
 	public static void clear() {
 		LOCAL_MATERIALIZE.clear();
+	}
+
+	/** Deep immutable snapshot of every statement-block scope in this registry. */
+	public record Snapshot(Map<Long, Map<Long, LocalMaterializeSpec>> scopes) {
+		public Snapshot {
+			scopes = immutableSnapshot(scopes);
+		}
+	}
+
+	public static Snapshot snapshotAll() {
+		return new Snapshot(LOCAL_MATERIALIZE);
+	}
+
+	/** Exactly replaces all registry scopes with the supplied typed snapshot. */
+	public static void restoreAll(Snapshot snapshot) {
+		Objects.requireNonNull(snapshot, "snapshot");
+		LOCAL_MATERIALIZE.clear();
+		for(Map.Entry<Long, Map<Long, LocalMaterializeSpec>> scope : snapshot.scopes().entrySet()) {
+			Map<Long, LocalMaterializeSpec> entries = new ConcurrentHashMap<>();
+			for(Map.Entry<Long, LocalMaterializeSpec> entry : scope.getValue().entrySet())
+				entries.put(entry.getKey(), copy(entry.getValue()));
+			if(!entries.isEmpty())
+				LOCAL_MATERIALIZE.put(scope.getKey(), entries);
+		}
 	}
 
 	public static void register(long sbId, long hopId, List<Long> consumerHopIds, String fTypeHint,
@@ -98,6 +124,25 @@ public final class FederatedLocalMaterializeRegistry {
 		if (entries == null || entries.isEmpty())
 			return;
 		snapshot.put(sbId, Collections.unmodifiableMap(new HashMap<>(entries)));
+	}
+
+	private static Map<Long, Map<Long, LocalMaterializeSpec>> immutableSnapshot(
+		Map<Long, ? extends Map<Long, LocalMaterializeSpec>> source) {
+		Objects.requireNonNull(source, "scopes");
+		Map<Long, Map<Long, LocalMaterializeSpec>> scopes = new TreeMap<>();
+		for(Map.Entry<Long, ? extends Map<Long, LocalMaterializeSpec>> scope : source.entrySet()) {
+			Map<Long, LocalMaterializeSpec> entries = new TreeMap<>();
+			for(Map.Entry<Long, LocalMaterializeSpec> entry : scope.getValue().entrySet())
+				entries.put(entry.getKey(), copy(entry.getValue()));
+			if(!entries.isEmpty())
+				scopes.put(scope.getKey(), Collections.unmodifiableMap(entries));
+		}
+		return Collections.unmodifiableMap(scopes);
+	}
+
+	private static LocalMaterializeSpec copy(LocalMaterializeSpec spec) {
+		Objects.requireNonNull(spec, "localMaterializeSpec");
+		return new LocalMaterializeSpec(spec.getConsumerHopIds(), spec.getFTypeHint(), spec.getReason());
 	}
 
 	public static final class LocalMaterializeSpec {

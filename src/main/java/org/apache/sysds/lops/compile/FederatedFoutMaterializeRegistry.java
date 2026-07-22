@@ -22,6 +22,8 @@ package org.apache.sysds.lops.compile;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class FederatedFoutMaterializeRegistry {
@@ -32,6 +34,30 @@ public final class FederatedFoutMaterializeRegistry {
 
 	public static void clear() {
 		MATERIALIZE_ANCHORS.clear();
+	}
+
+	/** Deep immutable snapshot of every statement-block scope in this registry. */
+	public record Snapshot(Map<Long, Map<Long, MaterializeSpec>> scopes) {
+		public Snapshot {
+			scopes = immutableSnapshot(scopes);
+		}
+	}
+
+	public static Snapshot snapshotAll() {
+		return new Snapshot(MATERIALIZE_ANCHORS);
+	}
+
+	/** Exactly replaces all registry scopes with the supplied typed snapshot. */
+	public static void restoreAll(Snapshot snapshot) {
+		Objects.requireNonNull(snapshot, "snapshot");
+		MATERIALIZE_ANCHORS.clear();
+		for(Map.Entry<Long, Map<Long, MaterializeSpec>> scope : snapshot.scopes().entrySet()) {
+			Map<Long, MaterializeSpec> entries = new ConcurrentHashMap<>();
+			for(Map.Entry<Long, MaterializeSpec> entry : scope.getValue().entrySet())
+				entries.put(entry.getKey(), copy(entry.getValue()));
+			if(!entries.isEmpty())
+				MATERIALIZE_ANCHORS.put(scope.getKey(), entries);
+		}
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId, String fTypeHint) {
@@ -74,6 +100,26 @@ public final class FederatedFoutMaterializeRegistry {
 		if (entries == null || entries.isEmpty())
 			return Collections.emptyMap();
 		return Collections.unmodifiableMap(new HashMap<>(entries));
+	}
+
+	private static Map<Long, Map<Long, MaterializeSpec>> immutableSnapshot(
+		Map<Long, ? extends Map<Long, MaterializeSpec>> source) {
+		Objects.requireNonNull(source, "scopes");
+		Map<Long, Map<Long, MaterializeSpec>> scopes = new TreeMap<>();
+		for(Map.Entry<Long, ? extends Map<Long, MaterializeSpec>> scope : source.entrySet()) {
+			Map<Long, MaterializeSpec> entries = new TreeMap<>();
+			for(Map.Entry<Long, MaterializeSpec> entry : scope.getValue().entrySet())
+				entries.put(entry.getKey(), copy(entry.getValue()));
+			if(!entries.isEmpty())
+				scopes.put(scope.getKey(), Collections.unmodifiableMap(entries));
+		}
+		return Collections.unmodifiableMap(scopes);
+	}
+
+	private static MaterializeSpec copy(MaterializeSpec spec) {
+		Objects.requireNonNull(spec, "materializeSpec");
+		return new MaterializeSpec(spec.getAnchorHopId(), spec.getFTypeHint(), spec.getAnchorLabel(),
+			spec.getAnchorKey());
 	}
 
 	public static final class MaterializeSpec {
