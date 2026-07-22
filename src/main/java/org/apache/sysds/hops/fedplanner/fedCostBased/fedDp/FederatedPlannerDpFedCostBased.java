@@ -523,7 +523,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalStateException("DP selection omitted " + node.key());
 			List<PlacementState> matches = node.legalAlternatives().stream()
 				.filter(state -> state.execType() == choice.execType() && state.output() == choice.output())
-				.filter(state -> choice.fType() == null || state.fType() == choice.fType()).toList();
+				.toList();
 			if(matches.size() != 1)
 				throw new IllegalStateException("DP selection is not an exact neutral state: " + node.key());
 			assignment.put(node.key(), matches.get(0));

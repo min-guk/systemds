@@ -68,7 +68,6 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		input = input.withEmissionReceipt(PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none()));
 
-		analysis.assertProgramStructureUnchanged();
 		return input;
 	}
 

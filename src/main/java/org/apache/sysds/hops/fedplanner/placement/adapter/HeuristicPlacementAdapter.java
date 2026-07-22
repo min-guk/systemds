@@ -30,6 +30,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
@@ -101,7 +102,7 @@ public final class HeuristicPlacementAdapter {
 		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment, candidates, exclusions,
 			relocations, obligations, anchors, List.of(), List.of(), List.of(), objective, ties, relationships,
 			boundaries, clones, structural, facts, certificate, score, "");
-		return partial.withNormalizedPlanFingerprint(planFingerprint(partial));
+		return partial.withNormalizedPlanFingerprint(PlacementEmissionTransaction.canonicalPlanHash(partial));
 	}
 
 	private static List<CompiledHopKey> markerKeys(NeutralPlacementGraph graph, Set<ValueVersionKey> markers) {
@@ -367,24 +368,6 @@ public final class HeuristicPlacementAdapter {
 		}
 		bounds.sort(Comparator.comparing(Bound::componentId));
 		return List.copyOf(bounds);
-	}
-	private static String planFingerprint(Result r) {
-		Map<String,String> assignment = new TreeMap<>(); r.assignment().forEach((k,v)->assignment.put(k.normalizedSignature(),v.normalizedSignature()));
-		return sha256(r.analysisFingerprint()+'|'+assignment+'|'+signatures(r.filteredCandidateUniverse())+'|'
-			+signatures(r.policyExclusions())+'|'+signatures(r.selectedRelocations())+'|'+signatures(r.selectedObligations())+'|'
-			+signatures(r.durableAnchors())+'|'+r.registryRefed()+'|'+r.registryFoutMaterialize()+'|'
-			+r.registryLocalMaterialize()+'|'+r.objectiveComponents()+'|'+r.orderedTieBreaks()+'|'
-			+signatures(r.transientRelationships())+'|'+signatures(r.controlBoundaryFacts())+'|'
-			+signatures(r.cloneRecompileMultiplicities())+'|'+signatures(r.structuralExclusions())+'|'
-			+new TreeMap<>(r.plannerFacts()));
-	}
-	private static String signatures(Iterable<?> values) {
-		List<String> result=new ArrayList<>(); for(Object value:values) result.add(normalized(value)); Collections.sort(result); return result.toString();
-	}
-	private static String normalized(Object value) {
-		if(value instanceof String) return (String)value;
-		try { return String.valueOf(value.getClass().getMethod("normalizedSignature").invoke(value)); }
-		catch(Exception e) { throw new IllegalStateException("Missing normalized signature", e); }
 	}
 	private static String sha256(String value) {
 		try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }

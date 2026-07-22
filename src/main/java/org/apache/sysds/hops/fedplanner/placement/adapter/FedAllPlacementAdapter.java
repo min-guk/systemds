@@ -36,6 +36,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -66,8 +67,10 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 			assignmentHash(assignment), counts.explored(), counts.pruned(), counts.explored() + counts.pruned(),
 			score, score, bounds, analysis.graph().nodes().size(), analysis.graph().constraints().size(),
 			structuralComponentCount(analysis.graph()), SEARCH_DERIVATION, "EXHAUSTED", false);
+		Result draft = new Result(analysis, assignment, relocations, score, certificate,
+			context.analysisFingerprint(), "canonicalization-pending");
 		return new Result(analysis, assignment, relocations, score, certificate,
-			context.analysisFingerprint(), normalizedPlanFingerprint(assignment, relocations, score, certificate));
+			context.analysisFingerprint(), PlacementEmissionTransaction.canonicalPlanHash(draft));
 	}
 
 	@Override
@@ -297,15 +300,6 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		List<String> lines = assignment.entrySet().stream().map(entry ->
 			entry.getKey().normalizedSignature() + '=' + entry.getValue().normalizedSignature()).sorted().toList();
 		return sha256(String.join("\n", lines));
-	}
-
-	private static String normalizedPlanFingerprint(Map<CompiledHopKey, PlacementState> assignment,
-		List<RelocationActionKey> relocations, Score score, Certificate certificate) {
-		List<String> entries = assignment.entrySet().stream().map(entry -> entry.getKey().normalizedSignature()
-			+ '=' + entry.getValue().normalizedSignature()).sorted().toList();
-		List<String> actions = relocations.stream().map(RelocationActionKey::normalizedSignature).sorted().toList();
-		return sha256(String.join("\n", entries) + '\n' + String.join("\n", actions) + '\n'
-			+ score.normalizedSignature() + '\n' + certificate.assignmentHash());
 	}
 
 	private static String sha256(String value) {
