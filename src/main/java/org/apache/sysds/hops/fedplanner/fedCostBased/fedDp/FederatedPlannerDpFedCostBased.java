@@ -1016,6 +1016,22 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> outputDecisions,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		boolean allowOutputDecisionOverride) {
+		return selectRewritePlanVariant(memoTable, hopID, desiredOut, inheritedOut, fallbackPlan,
+			outputDecisions, rewriteConflictCheckMap, allowOutputDecisionOverride, RewriteMutationMode.APPLY);
+	}
+
+	private static FederatedPlannerDpMemoTable.FedPlan selectRewritePlanVariant(
+		FederatedPlannerDpMemoTable memoTable,
+		long hopID,
+		FederatedOutput desiredOut,
+		FederatedOutput inheritedOut,
+		FederatedPlannerDpMemoTable.FedPlan fallbackPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap,
+		boolean allowOutputDecisionOverride,
+		RewriteMutationMode mutationMode) {
+
+		Objects.requireNonNull(mutationMode, "mutationMode");
 
 		if (memoTable == null)
 			return fallbackPlan;
@@ -1029,7 +1045,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			selected = findStrictCompatiblePlanVariant(memoTable, hopID, desiredOut, outputDecisions);
 			if (selected != null)
 				return selectLoopAwareCloneFamilyRewritePlan(
-					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
+					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap, mutationMode);
 		}
 		if (inheritedOut != null)
 			selected = selectCompatiblePlanVariant(memoTable, hopID, inheritedOut, outputDecisions);
@@ -1037,7 +1053,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			selected = selectCompatiblePlanVariant(memoTable, hopID, desiredOut, outputDecisions);
 		if (selected != null)
 			return selectLoopAwareCloneFamilyRewritePlan(
-				memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
+				memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap, mutationMode);
 
 		// Rewrite must preserve an executable parent->child forest even when the
 		// global decision map is temporarily inconsistent. Prefer the inherited
@@ -1047,18 +1063,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			selected = memoTable.getFedPlanAfterPrune(hopID, inheritedOut);
 			if (selected != null)
 				return selectLoopAwareCloneFamilyRewritePlan(
-					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
+					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap, mutationMode);
 		}
 		if (desiredOut != null && desiredOut != inheritedOut) {
 			selected = memoTable.getFedPlanAfterPrune(hopID, desiredOut);
 			if (selected != null)
 				return selectLoopAwareCloneFamilyRewritePlan(
-					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap);
+					memoTable, hopID, selected, outputDecisions, rewriteConflictCheckMap, mutationMode);
 		}
 
 		if (fallbackPlan != null)
 			return selectLoopAwareCloneFamilyRewritePlan(
-				memoTable, hopID, fallbackPlan, outputDecisions, rewriteConflictCheckMap);
+				memoTable, hopID, fallbackPlan, outputDecisions, rewriteConflictCheckMap, mutationMode);
 
 		FederatedPlannerDpMemoTable.FedPlan lPlan =
 			memoTable.getFedPlanAfterPrune(hopID, FederatedOutput.LOUT);
@@ -1068,7 +1084,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			(fPlan == null) ? lPlan :
 			(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
 		return selectLoopAwareCloneFamilyRewritePlan(
-			memoTable, hopID, selectedPlan, outputDecisions, rewriteConflictCheckMap);
+			memoTable, hopID, selectedPlan, outputDecisions, rewriteConflictCheckMap, mutationMode);
 	}
 
 	private static FederatedPlannerDpMemoTable.FedPlan selectLoopAwareCloneFamilyRewritePlan(
@@ -1077,6 +1093,19 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan selectedPlan,
 		Map<Long, FederatedOutput> outputDecisions,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap) {
+		return selectLoopAwareCloneFamilyRewritePlan(memoTable, hopID, selectedPlan, outputDecisions,
+			rewriteConflictCheckMap, RewriteMutationMode.APPLY);
+	}
+
+	private static FederatedPlannerDpMemoTable.FedPlan selectLoopAwareCloneFamilyRewritePlan(
+		FederatedPlannerDpMemoTable memoTable,
+		long hopID,
+		FederatedPlannerDpMemoTable.FedPlan selectedPlan,
+		Map<Long, FederatedOutput> outputDecisions,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap,
+		RewriteMutationMode mutationMode) {
+
+		Objects.requireNonNull(mutationMode, "mutationMode");
 
 		if (memoTable == null || selectedPlan == null || rewriteConflictCheckMap == null
 			|| memoTable.isVirtualClone(hopID)) {
@@ -1152,8 +1181,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				bestPlan != selectedPlan));
 		}
 
-		applyCloneFamilyRewriteStateToMembers(
-			memoTable, familyMemberIDs, bestPlan, outputDecisions);
+		if(mutationMode == RewriteMutationMode.APPLY)
+			applyCloneFamilyRewriteStateToMembers(
+				memoTable, familyMemberIDs, bestPlan, outputDecisions);
 
 		return bestPlan;
 	}
