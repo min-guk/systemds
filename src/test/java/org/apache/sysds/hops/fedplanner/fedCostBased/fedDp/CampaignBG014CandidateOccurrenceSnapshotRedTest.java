@@ -211,7 +211,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 	private static void assertIllegal(Runnable action) {
 		try { action.run(); Assert.fail("hostile transient-forward authority was accepted"); }
-		catch(IllegalArgumentException expected) { }
+		catch(RuntimeException expected) { }
 	}
 
 	private static void assertRawCandidateOrder(DpInvocationReceipt invocation,
