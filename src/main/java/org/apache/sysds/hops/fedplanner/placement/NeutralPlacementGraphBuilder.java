@@ -243,6 +243,8 @@ public final class NeutralPlacementGraphBuilder {
 		occurrenceAnchorProvenance = anchorClosure.anchors();
 		CandidateReplay candidateReplay = replayUniqueCfgTransientForwards(occurrences, nodes, cfg, factsByHop,
 			candidateRuleDomainKeys, candidateRuleFacts);
+		candidateReplay = closePostCfgPhysicalCandidateDependencies(occurrences, candidateReplay,
+			factsByHop, ordinalsByBlock);
 		nodes = candidateReplay.nodes();
 		candidateRuleDomainKeys = candidateReplay.domainKeys();
 		candidateRuleFacts = candidateReplay.facts();
@@ -607,6 +609,7 @@ public final class NeutralPlacementGraphBuilder {
 		List<LogicalTransientInputFact> logicalInputs = new ArrayList<>();
 		Set<Integer> copiedSlots = new HashSet<>();
 		Set<CompiledHopKey> replacedParents = Collections.newSetFromMap(new IdentityHashMap<>());
+		List<Integer> changedOrdinals = new ArrayList<>();
 		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
 			Node node = nodes.get(ordinal);
 			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(ordinal);
@@ -615,6 +618,7 @@ public final class NeutralPlacementGraphBuilder {
 			replayedNodes.add(replayed);
 			if(replayed != node) {
 				replacedParents.add(node.key());
+				changedOrdinals.add(ordinal);
 				continue;
 			}
 			for(int slot : candidateSlots.getOrDefault(node.key(), List.of())) {
@@ -629,7 +633,7 @@ public final class NeutralPlacementGraphBuilder {
 				throw new IllegalStateException("Candidate rule slot has no exact CFG replay owner");
 		}
 		return new CandidateReplay(List.copyOf(replayedNodes), List.copyOf(replayedKeys),
-			List.copyOf(replayedFacts), logicalInputs.stream().sorted().toList());
+			List.copyOf(replayedFacts), logicalInputs.stream().sorted().toList(), List.copyOf(changedOrdinals));
 	}
 
 	private Node replayUniqueCfgTransientForward(int ordinal,
@@ -688,8 +692,101 @@ public final class NeutralPlacementGraphBuilder {
 			&& source.key().recompileContext().equals(read.key().recompileContext());
 	}
 
+	private CandidateReplay closePostCfgPhysicalCandidateDependencies(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CandidateReplay replay,
+		Map<Hop,NodeShapeFact> factsByHop, Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock) {
+		if(replay.changedOrdinals().isEmpty())
+			return replay;
+		if(replay.domainKeys().size() != replay.facts().size())
+			throw new IllegalStateException("Candidate rule fact/domain count differs before physical closure");
+
+		List<Node> nodes = new ArrayList<>(replay.nodes());
+		Map<CompiledHopKey,Integer> ordinalsByKey = new IdentityHashMap<>();
+		List<List<CandidateRuleKey>> keysByOrdinal = new ArrayList<>(occurrences.size());
+		List<List<CandidateRuleFact>> factsByOrdinal = new ArrayList<>(occurrences.size());
+		List<Set<Integer>> consumersByProducer = new ArrayList<>(occurrences.size());
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			ordinalsByKey.put(nodes.get(ordinal).key(), ordinal);
+			keysByOrdinal.add(new ArrayList<>());
+			factsByOrdinal.add(new ArrayList<>());
+			consumersByProducer.add(new java.util.TreeSet<>());
+		}
+		for(int slot = 0; slot < replay.domainKeys().size(); slot++) {
+			CandidateRuleKey key = replay.domainKeys().get(slot);
+			CandidateRuleFact fact = replay.facts().get(slot);
+			Integer ordinal = ordinalsByKey.get(key.parentOccurrence());
+			if(ordinal == null || fact.key().parentOccurrence() != key.parentOccurrence()
+				|| !fact.key().orderedInputs().equals(key.orderedInputs()))
+				throw new IllegalStateException("Candidate rule slot has no exact physical-closure owner");
+			keysByOrdinal.get(ordinal).add(key);
+			factsByOrdinal.get(ordinal).add(fact);
+		}
+		for(int consumerOrdinal = 0; consumerOrdinal < occurrences.size(); consumerOrdinal++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
+			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
+			for(Hop input : occurrence.hop().getInput()) {
+				if(input.getDataType() == null || !input.getDataType().isMatrix())
+					continue;
+				Integer producerOrdinal = blockOrdinals == null ? null : blockOrdinals.get(input);
+				if(producerOrdinal == null)
+					throw new IllegalStateException("Matrix producer lacks exact post-CFG closure owner");
+				consumersByProducer.get(producerOrdinal).add(consumerOrdinal);
+			}
+		}
+
+		java.util.TreeSet<Integer> worklist = new java.util.TreeSet<>(replay.changedOrdinals());
+		while(!worklist.isEmpty()) {
+			int producerOrdinal = worklist.pollFirst();
+			for(int consumerOrdinal : consumersByProducer.get(producerOrdinal)) {
+				PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
+				Hop hop = occurrence.hop();
+				Node current = nodes.get(consumerOrdinal);
+				Map<Hop,Node> exactBlockNodes = new IdentityHashMap<>();
+				Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
+				if(blockOrdinals != null)
+					for(Map.Entry<Hop,Integer> entry : blockOrdinals.entrySet())
+						exactBlockNodes.put(entry.getKey(), nodes.get(entry.getValue()));
+				List<NodeShapeFact> inputShapes = new ArrayList<>(hop.getInput().size());
+				for(Hop input : hop.getInput()) {
+					NodeShapeFact inputShape = factsByHop.get(input);
+					if(inputShape == null)
+						throw new IllegalStateException("Physical closure input has no builder-owned shape fact");
+					inputShapes.add(inputShape);
+				}
+				List<CandidateRuleKey> replacementKeys = new ArrayList<>();
+				List<CandidateRuleFact> replacementFacts = new ArrayList<>();
+				Node replacement = buildNode(hop, current.key(), current.valueVersion(), current.anchors(),
+					factsByHop.get(hop), List.copyOf(inputShapes),
+					inputDomains(hop, exactBlockNodes, occurrence, occurrences,
+						current.valueVersion().versionKind()), replacementKeys, replacementFacts);
+				List<CandidateRuleKey> priorKeys = keysByOrdinal.get(consumerOrdinal);
+				List<CandidateRuleFact> priorFacts = factsByOrdinal.get(consumerOrdinal);
+				boolean changed = !replacement.equals(current) || !replacementKeys.equals(priorKeys)
+					|| !replacementFacts.equals(priorFacts);
+				if(!changed)
+					continue;
+				if(!replacement.legalAlternatives().containsAll(current.legalAlternatives())
+					|| !replacementKeys.containsAll(priorKeys))
+					throw new IllegalStateException("Post-CFG physical candidate closure is not monotone");
+				nodes.set(consumerOrdinal, replacement);
+				keysByOrdinal.set(consumerOrdinal, List.copyOf(replacementKeys));
+				factsByOrdinal.set(consumerOrdinal, List.copyOf(replacementFacts));
+				worklist.add(consumerOrdinal);
+			}
+		}
+		List<CandidateRuleKey> closedKeys = new ArrayList<>();
+		List<CandidateRuleFact> closedFacts = new ArrayList<>();
+		for(int ordinal = 0; ordinal < occurrences.size(); ordinal++) {
+			closedKeys.addAll(keysByOrdinal.get(ordinal));
+			closedFacts.addAll(factsByOrdinal.get(ordinal));
+		}
+		return new CandidateReplay(List.copyOf(nodes), List.copyOf(closedKeys), List.copyOf(closedFacts),
+			replay.logicalInputs(), replay.changedOrdinals());
+	}
+
 	private record CandidateReplay(List<Node> nodes, List<CandidateRuleKey> domainKeys,
-		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> logicalInputs) { }
+		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> logicalInputs,
+		List<Integer> changedOrdinals) { }
 
 	private static FunctionExpansion expandFunctionBoundaryContexts(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
