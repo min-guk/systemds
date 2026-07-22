@@ -32,7 +32,8 @@ public final class MinStExactPlacementProjector {
   List<MinStPlacementInput.ObligationReceipt> obligations=new ArrayList<>();
 	  for(MinStExactSelection.ObligationReceipt r:selection.obligationReceiptsInOrder()) {
 	   if(r.requiredPlacement().fType()==null) throw new IllegalArgumentException("MINST_PROJECTOR_NONCONCRETE_FTYPE");
-	   obligations.add(new MinStPlacementInput.ObligationReceipt(r.kind().name(),r.producerKey().hashCode(),r.producerKey().hashCode(),r.actionSignature(),List.of((long)r.consumerKey().hashCode()),r.requiredPlacement().fType(),true,"EXACT_MINST_ACTION","EXACT_MINST"));
+   Hop producer=facts.analysis().hop(r.producerKey()).orElseThrow(); Hop consumer=facts.analysis().hop(r.consumerKey()).orElseThrow();
+   obligations.add(new MinStPlacementInput.ObligationReceipt(r.kind().name(),producer.getHopID(),producer.getHopID(),r.actionSignature(),List.of(consumer.getHopID()),r.requiredPlacement().fType(),true,"EXACT_MINST_ACTION","EXACT_MINST"));
 	  }
   return MinStPlacementInput.create(facts.analysis(),p,out,obligations);
  }
