@@ -1,6 +1,8 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashMap;
 
 import org.apache.sysds.api.DMLScript;
@@ -22,8 +24,7 @@ final class CampaignBG014HermeticPlannerFixtureFactory {
 				rewrite = true;
 				break;
 			case "B-21":
-				script = lines("f=function(matrix[double] X) return (matrix[double] Y){Y=rowSums(X);}",
-					localFederatedRow("A"), "Z=sum(A);", "Y=f(A);", "print(Z+sum(Y));");
+				script = b21Script();
 				rewrite = false;
 				break;
 			default:
@@ -39,6 +40,23 @@ final class CampaignBG014HermeticPlannerFixtureFactory {
 		if(rewrite)
 			translator.rewriteHopsDAG(program);
 		return program;
+	}
+
+	private static String b21Script() throws Exception {
+		Path data = Files.createTempFile("g014-b21-", ".data");
+		Path mtd = Path.of(data.toString() + ".mtd");
+		Files.writeString(data, "");
+		Files.writeString(mtd, "{\"data_type\":\"matrix\"," +
+			"\"value_type\":\"double\",\"format\":\"text\"," +
+			"\"rows\":4,\"cols\":2,\"nnz\":0,\"privacy\":\"private\"}");
+		data.toFile().deleteOnExit();
+		mtd.toFile().deleteOnExit();
+		String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+		return lines("f=function(matrix[double] X) return (matrix[double] Y){Y=rowSums(X);}",
+			"A_LOCAL=read(\"" + path + "\");",
+			"A=federated(local_matrix=A_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\")," +
+			"ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+			"Z=sum(A);", "Y=f(A);", "print(Z+sum(Y));");
 	}
 
 	private static String localFederatedRow(String variable) {
