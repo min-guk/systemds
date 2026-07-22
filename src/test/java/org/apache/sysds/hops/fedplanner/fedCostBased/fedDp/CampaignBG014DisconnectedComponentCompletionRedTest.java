@@ -52,6 +52,14 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		Map<Long,FederatedOutput> outputDecisions = enumerated.outputDecisions();
 		Map<Long,Object> conflicts = enumerated.conflicts();
 		HostileComponentFixture fixture = enumerated.hostile();
+		Map<Hop,MutableHopState> initialFamilyState = snapshotMutableHopState(fixture.familyHops());
+		FedPlan selectedBest = selectEffectivePlan(memo, fixture.rootPlan(), outputDecisions, conflicts);
+		Assert.assertNotNull("real clone-family selector must return an exact plan", selectedBest);
+		long selectedCostBits = Double.doubleToRawLongBits(selectedBest.getCumulativeCost());
+		restoreMutableHopState(initialFamilyState);
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		fixture = new HostileComponentFixture(fixture.rootKey(), selectedBest,
+			selectedBest.getSelectedPlacementState(), !selectedBest.isDerivedFedFout(), fixture.familyHops());
 
 		Map<CompiledHopKey,Object> selectedStates = new IdentityHashMap<>();
 		Set<CompiledHopKey> visitedPlanHops = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -81,11 +89,27 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 			Assert.assertTrue(expected.getCause().getMessage().contains(
 				"DP occurrence has disagreeing exact selections: " + fixture.rootKey()));
 		}
+		Assert.assertSame("real-path rewrite must retain the probed clone-family best-plan identity",
+			selectedBest, fixture.rootPlan());
+		Assert.assertEquals("real-path rewrite changed the probed clone-family best-plan cost",
+			selectedCostBits, Double.doubleToRawLongBits(fixture.rootPlan().getCumulativeCost()));
 		Assert.assertEquals("failed component changed global planning accumulators",
 			accumulatorsBefore, snapshotAccumulators(selectedStates, visitedPlanHops,
 				fTypeMap, outputDecisions, conflicts, localMaterializeRequests));
 		Assert.assertEquals("clone-family selection mutated Hop/recompile state before component validation",
 			before, snapshotCloneFamily(fixture.familyHops()));
+	}
+
+	private static FedPlan selectEffectivePlan(FederatedPlannerDpMemoTable memo, FedPlan seed,
+		Map<Long,FederatedOutput> decisions, Map<Long,Object> conflicts) throws Exception {
+		Method selector = FederatedPlannerDpFedCostBased.class.getDeclaredMethod("selectRewritePlanVariant",
+			FederatedPlannerDpMemoTable.class, long.class, FederatedOutput.class, FederatedOutput.class,
+			FedPlan.class, Map.class, Map.class, boolean.class);
+		selector.setAccessible(true);
+		long originalID = memo.resolveOriginalHopId(seed.getHopID());
+		FederatedOutput desired = decisions.getOrDefault(originalID, seed.getFedOutType());
+		return (FedPlan) selector.invoke(null, memo, seed.getHopID(), desired, seed.getFedOutType(),
+			seed, decisions, conflicts, true);
 	}
 
 	private static EnumeratedFixture enumerateHostileFixture() throws Exception {
@@ -260,6 +284,28 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 			FederatedPlannerUtils.snapshotAmbiguousPlannerRecompileSignatures());
 	}
 
+	private static Map<Hop,MutableHopState> snapshotMutableHopState(List<Hop> family) {
+		Map<Hop,MutableHopState> states = new IdentityHashMap<>();
+		for(Hop hop : family)
+			states.put(hop, new MutableHopState(hop.getExecType(), hop.getForcedExecType(),
+				hop.getFederatedOutput(), hop.isFederatedOutputDerived()));
+		return states;
+	}
+
+	private static void restoreMutableHopState(Map<Hop,MutableHopState> states) {
+		for(Map.Entry<Hop,MutableHopState> entry : states.entrySet()) {
+			Hop hop = entry.getKey();
+			MutableHopState state = entry.getValue();
+			hop.setExecType(state.execType());
+			if(state.forcedExecType() == null)
+				hop.clearForcedExecType();
+			else
+				hop.setForcedExecType(state.forcedExecType());
+			hop.setFederatedOutput(state.output());
+			hop.setFederatedOutputDerived(state.derived());
+		}
+	}
+
 	private static List<Object> hopState(Hop hop) {
 		return List.of(String.valueOf(hop.getExecType()), String.valueOf(hop.getForcedExecType()),
 			String.valueOf(hop.getFederatedOutput()), hop.isFederatedOutputDerived());
@@ -268,6 +314,9 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 	private record CloneSnapshot(List<List<Object>> familyStates,
 		Map<String,FederatedPlannerUtils.PlannerRecompileStateSnapshot> recompileStates,
 		java.util.Set<String> ambiguousSignatures) { }
+
+	private record MutableHopState(ExecType execType, ExecType forcedExecType,
+		FederatedOutput output, boolean derived) { }
 
 	private record HostileComponentFixture(CompiledHopKey rootKey, FedPlan rootPlan,
 		PlacementState lockedRootState, boolean lockedDerivedFedFout, List<Hop> familyHops) { }
