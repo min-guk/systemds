@@ -1,0 +1,76 @@
+# Session Issues — 2026-07-22
+
+## P4 exact planner-to-emission authority integration
+
+- **상태**: 진행중
+- **환경/조건**: DP 우선, public privacy 테스트 제외, approved v6/v7 production plans, no Docker. Worker worktree `worker-2`; Maven target is the preserved `/dev/shm` symlink.
+- **재현 절차**: `mvn -q -DskipITs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014ProgramDynamicAuthorityParityRedTest test`; MinST gate is the three-class command recorded below.
+- **관측 증상**: 기존 planner roots가 exact `CompiledHopKey -> PlacementState`/derived/LOCAL authority를 transaction에 완전하게 전달하지 못했다. 구현 후 B-21은 먼저 synthetic boundary exact identity에서, 이후 `PLACEMENT_ANALYSIS_PROGRAM_STRUCTURE_CHANGED`에서 실패했다.
+- **원인 분석**: DP memo/selected traversal이 Hop-ID/tuple 중심이었고, MinST projector도 tuple/shared-Hop inference를 사용했다. Transaction에는 derived bit, LOCAL action, complete dynamic replacement, all-registry rollback이 없었다. 추가로 named-function synthetic boundaries는 normalized decision authority이지만 독립 compiled Hop mutation owner가 아니다.
+- **해결 요약**: `PlacementEmissionState` 및 exact normalized authority를 도입하고, canonical hash/transaction rollback/dynamic replacement를 확장했다. DP candidate catalog→FedPlan→exact occurrence map, MinST exact selection direct handoff, 네 planner root의 normalized/emission receipts를 연결했다. DP/MinST synthetic boundary는 정확히 하나의 incoming `CONJUNCTIVE` source에서 동일 `PlacementState` 객체를 topological하게 전달하며 DP derived bit도 보존한다. Transaction은 semantic-only boundaries를 검증/해시에 포함하지만 Hop writes에서 제외한다.
+- **수정 파일**: v6/v7 allowlist의 placement adapters, DP/MinST/root classes, `PlacementEmissionTransaction.java`, `NeutralPlacementGraphBuilder.java` 등. 최종 diff는 완료 전 재검증 필요.
+- **검증**: transaction/same-Hop/derived 16/16 GREEN; Task33 LOCAL 5/5 GREEN; MinST 17/17 GREEN at combined-boundary experiment. B-21은 현재 아래 DMLTranslator ordering blocker 때문에 RED.
+- **잔여 이슈**: approved structural-scope amendment가 아직 review 중이다. 승인 후 DMLTranslator ordering과 canonical boundary classification을 적용하고 v6/v7 전체 gate를 실행해야 한다. `CampaignBDpSharedAnalysisOwnerContractTest`에는 tracked architecture-guard SHA와 frozen expected SHA 불일치도 별도 확인이 필요하다.
+- **잠재 회귀 위험**: synthetic boundary를 physical Hop write로 다시 취급하면 same-Hop conflict가 재발한다. B-21/B07, same-Hop transaction tests, exact selected-key totality로 감지한다.
+- **의사결정 근거**: planner/analysis/transaction authority를 수정했다. runtime fallback/repair 및 tuple reconstruction은 추가하지 않았다.
+- **적용 원칙/제약**: runtime fallback 금지; exact analysis-owned identity; synthetic boundary는 semantic authority이나 fabricated carrier가 아님; `CONJUNCTIVE`만 placement authority.
+
+## Synthetic function-boundary state identity loss
+
+- **상태**: 해결
+- **환경/조건**: DP B-21 named function call, MinST B07.
+- **재현 절차**: B-21 command above. 기존 실패 메시지: `DP synthetic boundary did not retain its exact source state identity`.
+- **관측 증상**: boundary legal set에 source와 value-equal한 CP/LOUT은 있었지만 source 객체 identity는 없었다.
+- **원인 분석**: `NeutralPlacementGraphBuilder.transientAlternatives`가 새 default CP/LOUT을 먼저 `TreeSet`에 넣어 이후 source-owned equal state를 버렸다.
+- **해결 요약**: approved v7에 따라 legal source alternatives를 먼저 삽입하고 default CP/LOUT을 마지막에 넣었다. value set/order는 동일하고 first exact object identity만 보존된다.
+- **수정 파일**: `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`.
+- **검증**: B-21 exact-identity guard를 통과해 다음 structural fingerprint guard까지 진행; MinST boundary exact identity guard도 통과.
+- **잔여 이슈**: 없음. 이후 실패는 별도 ordering/classification 원인이다.
+- **잠재 회귀 위험**: insertion 순서를 되돌리거나 state를 재구성하면 identity가 다시 손실된다. B-21/B07 exact identity assertions로 감지한다.
+- **의사결정 근거**: planner-neutral graph builder identity 보존을 수정; legality/candidate set은 변경하지 않음.
+- **적용 원칙/제약**: candidate-space 축소 금지; tuple inference 금지.
+
+## Final-hop analysis capture precedes mutating FunctionCallGraph traversal
+
+- **상태**: 진행중
+- **환경/조건**: DMLTranslator final-hop federated planner entry, DP B-21/shared-owner fixtures.
+- **재현 절차**: B-21 command; log `/tmp/worker2-b21-v7-1784724835.log`, SHA `a450356104b126d59f1b5a094f585bbd98031b26a8eb0316c500e48792cdf0ae`.
+- **관측 증상**: `PLACEMENT_ANALYSIS_PROGRAM_STRUCTURE_CHANGED` before transaction mutation.
+- **원인 분석**: `DMLTranslator.runFederatedPlannerAtFinalHopBoundary` binds analysis, then constructs `FunctionCallGraph`. FCG resets/sets Hop visit flags, while `PlacementGraphFingerprint` intentionally hashes `hop.isVisited()`.
+- **해결 요약**: 승인 대기 중. 최소 수정은 같은 synchronized block에서 FCG를 먼저 생성한 후 analysis를 bind하고 둘을 그대로 planner에 전달하는 순서 변경이다. fingerprint/guard는 완화하지 않는다.
+- **수정 파일**: 예정 `src/main/java/org/apache/sysds/parser/DMLTranslator.java`.
+- **검증**: Task54 read-only trace로 exact mutation owner 확인. 승인 후 B-21 2/2와 shared-owner suite 재실행 필요.
+- **잔여 이슈**: scope amendment 독립 승인 필요.
+- **잠재 회귀 위험**: analysis bind 뒤 다른 compiler traversal이 Hop fields를 바꾸면 동일 guard가 재발한다. final-boundary tests와 fingerprint guard로 감지한다.
+- **의사결정 근거**: compiler ordering 수정 예정; guard/runtime/planner fallback은 수정하지 않음.
+- **적용 원칙/제약**: structure guard weakening 금지; post-bind reset workaround 금지.
+
+## Compiled-occurrence classification has two boundary signals
+
+- **상태**: 진행중
+- **환경/조건**: MinST B07 named function, transaction Hop-write grouping, compiled input-edge facts.
+- **재현 절차**: region-only experiment log `/tmp/worker2-minst-region-boundary-1784725281.log`, SHA `27d124ab03bf676d4b03fa901f48fcaefb0b5c9a042560e3edd2cf26d80a4de3`; combined experiment GREEN log SHA `9fdf2c551c997edd5c63a4e30385f00628d539b8b5b27cd079a510fa29f24953`.
+- **관측 증상**: kind-only classification can miss region-marked synthetic projections; region-only classification misclassifies a `FUNCTION_INPUT` whose region path is `[main/1,input-0]`, producing `MINST_OCCURRENCE_PATH_UNPROVEN`.
+- **원인 분석**: NodeKind and `function-boundary:` control-region marker are independent semantic signals. PlacementAnalysis and NeutralPlacementGraphBuilder also duplicate region-only helpers.
+- **해결 요약**: 승인 대기 중. Canonical rule must be: compiled iff kind is neither FUNCTION_INPUT nor FUNCTION_OUTPUT **and** no region-path component starts `function-boundary:`. One package-private graph-aware helper must serve PlacementAnalysis and builder compiled-edge derivation.
+- **수정 파일**: 예정 `PlacementAnalysis.java`; already-v7-scoped `NeutralPlacementGraphBuilder.java` call-site replacement; transaction semantic-only skip already WIP.
+- **검증**: combined experiment restored MinST 17/17; core 16/16 remained GREEN.
+- **잔여 이슈**: corrected plan approval and final implementation/tests.
+- **잠재 회귀 위험**: duplicated predicates can diverge and make builder facts disagree with PlacementAnalysis constructor re-derivation. B07 plus compiled-edge equality validation detects this.
+- **의사결정 근거**: analysis ownership/classification rule 수정; conflicting compiled Hop states remain fail-closed.
+- **적용 원칙/제약**: no conflicting-state coalescing, no boundary demotion, no fabricated carriers.
+
+## LOCAL durable provenance lexical alias risk
+
+- **상태**: 해결
+- **환경/조건**: selected FED/FOUT producer with CP/LOUT consumers, inherited/absent anchors.
+- **재현 절차**: `mvn -q -DskipITs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014LocalMaterializationAuthorityRedTest test`.
+- **관측 증상**: early WIP used `fed-init:` plus lexical variable, allowing distinct value versions to alias.
+- **원인 분석**: lexical name is not durable placement provenance across branch/loop/function/recompile contexts.
+- **해결 요약**: shared helper returns the unique compatible analysis-owned `DurableAnchorKey.placementId`; without one unique anchor it uses deterministic full `ValueVersionKey.normalizedSignature` plus exact occurrence signature. Multiple compatible anchors fail closed. Normalizer and transaction validator use the same helper.
+- **수정 파일**: `NormalizedPlannerResults.java`, `PlacementEmissionTransaction.java`.
+- **검증**: Task33 LOCAL 5/5 GREEN; mismatched/tampered provenance rejects before mutation; log SHA `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`.
+- **잔여 이슈**: broader branch/loop/function/recompile workload coverage remains part of related suite.
+- **잠재 회귀 위험**: reverting to lexical/Hop-ID provenance causes registry aliasing. Tampered-provenance and distinct-scope/FType tests detect it.
+- **의사결정 근거**: planner/transaction analysis-owned metadata rule 수정; runtime registry fallback 없음.
+- **적용 원칙/제약**: anchor는 placement metadata; lexical-only/Hop-ID ownership 금지.

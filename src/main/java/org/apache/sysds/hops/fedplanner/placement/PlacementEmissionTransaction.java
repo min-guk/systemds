@@ -271,11 +271,16 @@ public final class PlacementEmissionTransaction {
 			HopOccurrenceProjection occurrence = occurrences.get(node.key());
 			if(occurrence == null)
 				throw new PlacementEmissionException("Emitted Hop ownership is missing");
+			selectedIdentities.add(node.key());
+			// Synthetic function boundaries are normalized semantic authority, but do not
+			// own an independent compiled Hop mutation. Their exact state is validated
+			// above and is projected structurally by the planner from its source.
+			if(!analysis.isCompiledHopOccurrence(node.key()))
+				continue;
 			HopWrite prior = writesByHop.get(occurrence.hop());
 			if(prior != null && (prior.state() != state
 				|| prior.derivedFedFout() != emissionState.derivedFedFout()))
 				throw new PlacementEmissionException("One concrete Hop has conflicting occurrence authority");
-			selectedIdentities.add(node.key());
 			writesByHop.putIfAbsent(occurrence.hop(), new HopWrite(occurrence.hop(), state,
 				emissionState.derivedFedFout()));
 		}
