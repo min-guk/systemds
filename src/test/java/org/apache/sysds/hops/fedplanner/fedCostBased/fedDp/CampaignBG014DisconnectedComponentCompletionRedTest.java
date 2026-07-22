@@ -52,7 +52,12 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		try {
 			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,
 				"compile_cost_based");
-			new DMLTranslator(program).constructLops(program, receiptRef::set);
+			try {
+				new DMLTranslator(program).constructLops(program, receiptRef::set);
+			}
+			catch(IllegalStateException red) {
+				throw exactDifferentOwnerTraversalRed(program, red);
+			}
 		}
 		finally {
 			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
@@ -68,10 +73,10 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		for(var applied : receipt.appliedPlans())
 			collectTraversedPlanCarriers(receipt.memo(), applied.plan(), traversed, visitedPlans);
 
-		List<CompiledHopKey> traversalOnly = traversed.stream()
-			.filter(key -> !decisions.contains(key)).sorted().toList();
-		Assert.assertFalse("fixture must exercise analysis-owned non-decision plan carriers",
-			traversalOnly.isEmpty());
+		List<CompiledHopKey> exactNeutralDecisions = traversed.stream()
+			.filter(decisions::contains).sorted().toList();
+		Assert.assertEquals("concrete traversal must retain exact neutral-decision identity",
+			decisions.stream().sorted().toList(), exactNeutralDecisions);
 		Assert.assertTrue("all exact neutral decisions must still be reached by concrete plan traversal",
 			traversed.containsAll(decisions));
 		Assert.assertEquals("component capture published traversal-only carriers as placement decisions",
@@ -96,6 +101,41 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		for(var child : plan.getChildFedPlans())
 			collectTraversedPlanCarriers(memo,
 				memo.getFedPlanAfterPrune(child.getKey(), child.getValue()), carriers, visitedPlans);
+	}
+
+	private static AssertionError exactDifferentOwnerTraversalRed(DMLProgram program,
+		IllegalStateException failure) {
+		String prefix = "DP disconnected component coverage differs: expected=";
+		String message = String.valueOf(failure.getMessage());
+		Assert.assertTrue("focused RED must reach disconnected-component capture", message.startsWith(prefix));
+		int actualOffset = message.indexOf(" actual=", prefix.length());
+		Assert.assertTrue("coverage RED must expose the current component and observed source delta",
+			actualOffset > prefix.length());
+		String currentComponent = message.substring(prefix.length(), actualOffset);
+		String observedSourceDelta = message.substring(actualOffset + " actual=".length());
+
+		PlacementAnalysis analysis = program.requirePlacementAnalysisAuthority();
+		List<CompiledHopKey> exactDifferentOwnerDecisions = analysis.graph().decisionNodes().stream()
+			.map(node -> node.key())
+			.filter(key -> observedSourceDelta.contains(key.toString()))
+			.filter(key -> !currentComponent.contains(key.toString()))
+			.sorted().toList();
+		Assert.assertEquals("B-05 must expose four exact different-owner decision occurrences", 4,
+			exactDifferentOwnerDecisions.size());
+		for(CompiledHopKey key : exactDifferentOwnerDecisions) {
+			Assert.assertTrue("different-owner carrier must retain exact neutral-decision identity",
+				analysis.graph().decisionNodes().stream().anyMatch(node -> node.key() == key));
+			var occurrence = analysis.occurrences().stream().filter(value -> value.key() == key)
+				.findFirst().orElseThrow();
+			Assert.assertSame("different-owner carrier must retain its analysis-owned occurrence",
+				analysis.hop(key).orElseThrow(), occurrence.hop());
+			Assert.assertFalse("different-owner carrier must remain outside the current component",
+				currentComponent.contains(key.toString()));
+			Assert.assertTrue("different-owner carrier must not be an existing boundary lock",
+				observedSourceDelta.contains(key.toString()));
+		}
+		return new AssertionError("DP exact-edge traversal ledger must authorize different-owner decisions "
+			+ "before coalesce/visited/publication: " + exactDifferentOwnerDecisions, failure);
 	}
 
 	@Test
