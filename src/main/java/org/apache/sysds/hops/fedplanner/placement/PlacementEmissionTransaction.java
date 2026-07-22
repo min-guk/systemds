@@ -167,10 +167,15 @@ public final class PlacementEmissionTransaction {
 		String plannerId = requireText(result.plannerId(), "plannerId");
 		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
 		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
-		Map<CompiledHopKey, PlacementState> selected = Objects.requireNonNull(result.selectedStates(),
-			"selectedStates");
-		List<RelocationActionKey> relocations = Objects.requireNonNull(result.selectedRelocations(),
-			"selectedRelocations");
+		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
+			Objects.requireNonNull(result.selectedStates(), "selectedStates")));
+		List<RelocationActionKey> relocations = List.copyOf(Objects.requireNonNull(result.selectedRelocations(),
+			"selectedRelocations"));
+		return canonicalPlanHash(plannerId, analysisFingerprint, selected, relocations, objective);
+	}
+
+	private static String canonicalPlanHash(String plannerId, String analysisFingerprint,
+		Map<CompiledHopKey, PlacementState> selected, List<RelocationActionKey> relocations, String objective) {
 		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
 			.append(analysisFingerprint).append('\n');
 		selected.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> canonical
@@ -190,17 +195,20 @@ public final class PlacementEmissionTransaction {
 		PlacementAnalysis analysis = Objects.requireNonNull(result.analysis(), "result.analysis");
 		analysis.assertCanonicalProgramAuthority(program);
 		analysis.assertProgramStructureUnchanged();
-		if(!analysis.analysisFingerprint().equals(result.analysisFingerprint()))
+		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
+		if(!analysis.analysisFingerprint().equals(analysisFingerprint))
 			throw new PlacementEmissionException("Placement result has a stale analysis fingerprint");
 		String plannerId = requireText(result.plannerId(), "plannerId");
 		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
 		String planHash = requireCanonicalHash(result.normalizedPlanFingerprint());
-		String canonicalPlanHash = canonicalPlanHash(result);
-		if(!planHash.equals(canonicalPlanHash))
+		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
+			Objects.requireNonNull(result.selectedStates(), "selectedStates")));
+		List<RelocationActionKey> selectedRelocations = List.copyOf(Objects.requireNonNull(
+			result.selectedRelocations(), "selectedRelocations"));
+		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
+			selectedRelocations, objective)))
 			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
 
-		Map<CompiledHopKey, PlacementState> selected = Objects.requireNonNull(result.selectedStates(),
-			"selectedStates");
 		List<Node> decisionNodes = analysis.graph().decisionNodes();
 		if(selected.size() != decisionNodes.size())
 			throw new PlacementEmissionException("Selected placement does not cover every decision node");
@@ -227,8 +235,6 @@ public final class PlacementEmissionTransaction {
 			if(!selectedIdentities.contains(key))
 				throw new PlacementEmissionException("Selected placement contains a foreign decision key");
 
-		List<RelocationActionKey> selectedRelocations = Objects.requireNonNull(result.selectedRelocations(),
-			"selectedRelocations");
 		List<RelocationAction> relocations = exactRelocations(analysis, selectedRelocations);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(analysis, occurrences, relocations);
 		return new PreparedEmission(planHash, List.copyOf(hopWrites), List.copyOf(registryWrites));
