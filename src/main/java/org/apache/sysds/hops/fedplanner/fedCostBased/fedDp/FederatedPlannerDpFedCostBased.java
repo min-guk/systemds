@@ -578,24 +578,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		boolean progressed;
 		do {
 			progressed = false;
+			Map<CompiledHopKey, PlacementEmissionState> emissionStates = new IdentityHashMap<>();
+			selectedStates.forEach((key, value) -> emissionStates.put(key,
+				new PlacementEmissionState(value.exactState(), value.derivedFedFout())));
 			for(var node : analysis.graph().decisionNodes()) {
 				if(selectedStates.containsKey(node.key())
 					|| node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT)
 					continue;
-				List<CompiledHopKey> authorities = analysis.graph().constraints().stream()
-					.filter(constraint -> constraint.kind() == ConstraintKind.CONJUNCTIVE
-						&& constraint.right() == node.key())
-					.map(constraint -> constraint.left()).toList();
-				if(authorities.size() != 1)
-					throw new IllegalStateException("DP synthetic boundary requires one exact conjunctive authority: "
-						+ node.key());
-				SelectedDpState source = selectedStates.get(authorities.get(0));
-				if(source == null)
+				DpPlacementAdapter.SyntheticBoundaryReceipt receipt =
+					DpPlacementAdapter.projectSyntheticBoundary(analysis, node, emissionStates);
+				if(receipt == null)
 					continue;
-				if(node.legalAlternatives().stream().noneMatch(state -> state == source.exactState()))
-					throw new IllegalStateException("DP synthetic boundary did not retain its exact source state identity: "
-						+ node.key());
-				coalesceSelectedState(selectedStates, node.key(), source);
+				PlacementEmissionState selected = receipt.selectedEmissionState();
+				PlacementState exact = selected.placementState();
+				coalesceSelectedState(selectedStates, node.key(), new SelectedDpState(
+					exact.execType(), exact.output(), exact.fType(), selected.derivedFedFout(), exact));
 				progressed = true;
 			}
 		}

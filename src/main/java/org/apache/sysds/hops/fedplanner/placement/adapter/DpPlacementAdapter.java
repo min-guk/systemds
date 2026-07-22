@@ -33,6 +33,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRew
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
@@ -231,6 +232,59 @@ public final class DpPlacementAdapter {
 	}
 
 	public record CandidatePlacementArm(ExecType execType, FederatedOutput output) { }
+
+	/** Exact compiler-owned authority for one carrierless synthetic function boundary. */
+	public record SyntheticBoundaryReceipt(PlacementAnalysis analysis,
+		NeutralPlacementGraph.Node boundary, NeutralPlacementGraph.Constraint authority,
+		CompiledHopKey sourceKey, PlacementEmissionState selectedEmissionState) {
+		public SyntheticBoundaryReceipt {
+			Objects.requireNonNull(analysis, "analysis");
+			Objects.requireNonNull(boundary, "boundary");
+			Objects.requireNonNull(authority, "authority");
+			Objects.requireNonNull(sourceKey, "sourceKey");
+			Objects.requireNonNull(selectedEmissionState, "selectedEmissionState");
+			if(boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+				&& boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+				throw new IllegalArgumentException("DP synthetic receipt requires a function boundary");
+			if(analysis.graph().node(boundary.key()).orElse(null) != boundary
+				|| analysis.graph().node(sourceKey).isEmpty())
+				throw new IllegalArgumentException("DP synthetic receipt contains a foreign graph node");
+			if(authority.kind() != NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+				|| authority.left() != sourceKey || authority.right() != boundary.key()
+				|| analysis.graph().constraints().stream().noneMatch(candidate -> candidate == authority))
+				throw new IllegalArgumentException("DP synthetic receipt contains foreign authority");
+			if(boundary.legalAlternatives().stream()
+				.noneMatch(state -> state == selectedEmissionState.placementState()))
+				throw new IllegalArgumentException(
+					"DP synthetic boundary did not retain its exact source state identity");
+		}
+	}
+
+	/**
+	 * Projects the sole incoming compiler-owned conjunctive authority for a synthetic boundary.
+	 * Returns {@code null} only while that exact source occurrence has not yet been selected.
+	 */
+	public static SyntheticBoundaryReceipt projectSyntheticBoundary(PlacementAnalysis analysis,
+		NeutralPlacementGraph.Node boundary,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(boundary, "boundary");
+		Objects.requireNonNull(selectedEmissionStates, "selectedEmissionStates");
+		if(boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+			&& boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+			throw new IllegalArgumentException("DP synthetic projection requires a function boundary");
+		List<NeutralPlacementGraph.Constraint> authorities = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
+				&& constraint.right() == boundary.key()).toList();
+		if(authorities.size() != 1)
+			throw new IllegalStateException("DP synthetic boundary requires one exact conjunctive authority: "
+				+ boundary.key());
+		NeutralPlacementGraph.Constraint authority = authorities.get(0);
+		PlacementEmissionState source = selectedEmissionStates.get(authority.left());
+		if(source == null)
+			return null;
+		return new SyntheticBoundaryReceipt(analysis, boundary, authority, authority.left(), source);
+	}
 
 	public record CandidateDecisionReceipt(NeutralEnumerationContext context,
 		CandidateOccurrenceSnapshot candidateSnapshot, long variantOrdinal,
