@@ -44,6 +44,61 @@ import org.junit.Test;
 /** RED for coherent completion of one disconnected component with two sink paths. */
 public class CampaignBG014DisconnectedComponentCompletionRedTest {
 	@Test
+	public void nonDecisionMemoCarriersRemainTraversalOnlyDuringComponentCapture() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-05");
+		AtomicReference<PlannerInvocationReceipt> receiptRef = new AtomicReference<>();
+		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,
+				"compile_cost_based");
+			new DMLTranslator(program).constructLops(program, receiptRef::set);
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+		}
+
+		Assert.assertTrue("real B-05 planning must publish an exact DP receipt",
+			receiptRef.get() instanceof DpInvocationReceipt);
+		DpInvocationReceipt receipt = (DpInvocationReceipt) receiptRef.get();
+		Set<CompiledHopKey> decisions = Collections.newSetFromMap(new IdentityHashMap<>());
+		receipt.analysis().graph().decisionNodes().forEach(node -> decisions.add(node.key()));
+		Set<CompiledHopKey> traversed = Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<FedPlan> visitedPlans = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(var applied : receipt.appliedPlans())
+			collectTraversedPlanCarriers(receipt.memo(), applied.plan(), traversed, visitedPlans);
+
+		List<CompiledHopKey> traversalOnly = traversed.stream()
+			.filter(key -> !decisions.contains(key)).sorted().toList();
+		Assert.assertFalse("fixture must exercise analysis-owned non-decision plan carriers",
+			traversalOnly.isEmpty());
+		Assert.assertTrue("all exact neutral decisions must still be reached by concrete plan traversal",
+			traversed.containsAll(decisions));
+		Assert.assertEquals("component capture published traversal-only carriers as placement decisions",
+			decisions, receipt.normalizedResult().selectedEmissionStates().keySet());
+		Assert.assertSame(receipt.analysis(), receipt.exactSelection().analysis());
+		Assert.assertSame(receipt.memo(), receipt.exactSelection().memo());
+		Assert.assertSame(receipt.legacyOptimalPlan(), receipt.exactSelection().legacyOptimalPlan());
+		Assert.assertEquals(Double.doubleToRawLongBits(receipt.legacyOptimalPlan().getCumulativeCost()),
+			receipt.exactSelection().objectiveCostBits());
+		Assert.assertEquals(receipt.analysisFingerprintBefore(), receipt.analysisFingerprintAfter());
+		Assert.assertEquals(0, receipt.counters().fallbackCount());
+		Assert.assertEquals(0, receipt.counters().repairCount());
+		Assert.assertEquals(0, receipt.counters().reenumerationCount());
+		Assert.assertEquals(0, receipt.counters().doubleApplicationCount());
+	}
+
+	private static void collectTraversedPlanCarriers(FederatedPlannerDpMemoTable memo, FedPlan plan,
+		Set<CompiledHopKey> carriers, Set<FedPlan> visitedPlans) {
+		if(plan == null || !visitedPlans.add(plan))
+			return;
+		carriers.add(memo.requirePlanCarrierOccurrence(plan.getHopRef()).key());
+		for(var child : plan.getChildFedPlans())
+			collectTraversedPlanCarriers(memo,
+				memo.getFedPlanAfterPrune(child.getKey(), child.getValue()), carriers, visitedPlans);
+	}
+
+	@Test
 	public void captureOnlyCloneFamilySelectionDoesNotMutatePlannerState() throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		EnumeratedFixture enumerated = enumerateHostileFixture();
