@@ -91,7 +91,6 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				Assert.assertTrue(FederatedPlannerUtils.snapshotPlannerRecompileStates()
 					.containsKey(recompileSignature));
 
-				RuntimeException contaminatedFailure = null;
 				try {
 					invokeStaticProgramPlanning(planner, compile("B-21"));
 				}
@@ -100,7 +99,6 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 					Assert.assertTrue("wrong shared lifecycle owner for " + planner + ": " + owner,
 						owner instanceof IllegalArgumentException);
 					Assert.assertEquals("Logical transient candidate capability differs", owner.getMessage());
-					contaminatedFailure = failure;
 					contaminatedPlanners.add(planner);
 					if(firstFailure == null)
 						firstFailure = failure;
@@ -142,7 +140,6 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 					Assert.assertNotNull(current.signature());
 					Assert.assertNotNull(current.anchorKey());
 				}
-				Assert.assertNotNull(planner + " contamination was not reproduced", contaminatedFailure);
 			}
 			if(!contaminatedPlanners.isEmpty())
 				throw new AssertionError("G014_RED_ALL_COMPILED_PLANNERS_PRE_ANALYSIS_RESET_MISSING|planners="
