@@ -48,7 +48,7 @@ final class CampaignBG014HermeticPlannerFixtureFactory {
 		Files.writeString(data, "");
 		Files.writeString(mtd, "{\"data_type\":\"matrix\"," +
 			"\"value_type\":\"double\",\"format\":\"text\"," +
-			"\"rows\":4,\"cols\":2,\"nnz\":0,\"privacy\":\"private\"}");
+			"\"rows\":4,\"cols\":2,\"nnz\":0,\"privacy\":\"private-aggregate\"}");
 		data.toFile().deleteOnExit();
 		mtd.toFile().deleteOnExit();
 		String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
