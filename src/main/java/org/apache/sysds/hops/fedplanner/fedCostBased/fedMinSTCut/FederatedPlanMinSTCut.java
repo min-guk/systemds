@@ -7,19 +7,15 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.List;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
-import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
-import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -51,20 +47,8 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		MinStExactSelection selection = MinStExactSelector.select(facts);
 		MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
 		adapter.select(analysis, input);
-		Map<CompiledHopKey, PlacementState> states = new LinkedHashMap<>();
-		for(var node : analysis.graph().decisionNodes()) {
-			MinStPlacementInput.OccurrenceReceipt receipt = input.occurrenceReceipts().stream()
-				.filter(candidate -> candidate.planningKey().equals(node.key())).findFirst()
-				.orElseThrow(() -> new IllegalStateException("MinST selection omitted " + node.key()));
-			List<PlacementState> matches = node.legalAlternatives().stream()
-				.filter(state -> state.execType() == receipt.execType() && state.output() == receipt.output()).toList();
-			if(matches.size() != 1)
-				throw new IllegalStateException("MinST selection is not an exact neutral state: " + node.key());
-			states.put(node.key(), matches.get(0));
-		}
-		NormalizedPlannerResult normalized = NormalizedPlannerResults.create(analysis, "MinST", states,
-			"cut=" + input.producerReceipt().cutObjectiveBits() + ";source="
-				+ input.producerReceipt().sourcePartitionNodeIds());
+		NormalizedPlannerResult normalized = Objects.requireNonNull(input.normalizedResult(),
+			"MinST projector normalized result");
 		input = input.withEmissionReceipt(PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none()));
 

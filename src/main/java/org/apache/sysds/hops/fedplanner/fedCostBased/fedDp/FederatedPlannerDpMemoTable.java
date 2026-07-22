@@ -71,6 +71,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -136,6 +137,7 @@ public class FederatedPlannerDpMemoTable {
 			|| fedPlanVariants.getFedOutType() != fedOutType)
 			throw new IllegalArgumentException("Plan variants do not bind the supplied occurrence");
 		occurrenceByPlanCarrier.put(carrier, occurrence);
+		bindExactPlacementStates(occurrence, fedPlanVariants);
 		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
 	}
 
@@ -149,7 +151,23 @@ public class FederatedPlannerDpMemoTable {
 			|| fedPlanVariants.getFedOutType() != fedOutType)
 			throw new IllegalArgumentException("Plan variants do not bind the supplied rewire occurrence");
 		occurrenceByPlanCarrier.put(carrier, occurrence);
+		bindExactPlacementStates(occurrence, fedPlanVariants);
 		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
+	}
+
+	private void bindExactPlacementStates(HopOccurrenceProjection occurrence, FedPlanVariants variants) {
+		NeutralPlacementGraph.Node node = analysis.graph().node(occurrence.key()).orElseThrow();
+		for(FedPlan plan : variants.getFedPlanVariants()) {
+			if(plan.getSelectedPlacementState() != null)
+				continue;
+			List<PlacementState> matches = node.legalAlternatives().stream()
+				.filter(state -> state.execType() == plan.getExecType()
+					&& state.output() == plan.getFedOutType()).toList();
+			if(matches.size() != 1)
+				throw new IllegalStateException("DP plan lacks an unambiguous exact placement carrier for "
+					+ occurrence.key() + " plan=" + plan.getExecType() + "/" + plan.getFedOutType());
+			plan.setSelectedPlacementState(matches.get(0));
+		}
 	}
 
 	public void addFedPlanVariants(long hopID, FederatedOutput fedOutType, FedPlanVariants fedPlanVariants) {
@@ -205,6 +223,26 @@ public class FederatedPlannerDpMemoTable {
 	public HopOccurrenceProjection requirePlanCarrierOccurrence(Hop hop) {
 		HopOccurrenceProjection occurrence = occurrenceByPlanCarrier.get(hop);
 		return occurrence != null ? occurrence : requireOccurrence(hop);
+	}
+
+	/** Selects the minimum-cost memo arm for an exact neutral occurrence, including disconnected regions. */
+	public FedPlan getCheapestPlanForOccurrence(HopOccurrenceProjection occurrence) {
+		assertOwnedOccurrence(occurrence);
+		FedPlan best = null;
+		for(Map.Entry<Hop, HopOccurrenceProjection> entry : occurrenceByPlanCarrier.entrySet()) {
+			if(entry.getValue() != occurrence)
+				continue;
+			long carrierId = entry.getKey().getHopID();
+			for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+				FedPlan candidate = getFedPlanAfterPrune(carrierId, output);
+				if(candidate != null && (best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
+					|| candidate.getCumulativeCost() == best.getCumulativeCost()
+						&& candidate.getFedOutType() == FederatedOutput.LOUT
+						&& best.getFedOutType() == FederatedOutput.FOUT))
+					best = candidate;
+			}
+		}
+		return best;
 	}
 
 	private void assertOwnedOccurrence(HopOccurrenceProjection occurrence) {

@@ -14,6 +14,7 @@ import java.util.Objects;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationObligation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
@@ -68,9 +69,25 @@ public final class NormalizedPlannerResults {
 				.findFirst().orElseThrow();
 			result.add(new LocalMaterializationActionKey(node.key(), node.valueVersion(), producer,
 				obligations, occurrence.scopeId() + ":" + node.key().functionNamespace(),
-				"fed-init:" + node.valueVersion().lexicalVariable()));
+				durableLocalProvenance(node, producer)));
 		}
 		return result.stream().sorted().toList();
+	}
+
+	/** Exact analysis-owned provenance for one selected FED/FOUT source. */
+	public static String durableLocalProvenance(
+		org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node node,
+		PlacementState producer) {
+		Objects.requireNonNull(node, "node");
+		Objects.requireNonNull(producer, "producer");
+		List<DurableAnchorKey> compatible = node.anchors().stream()
+			.filter(anchor -> anchor.fType() == producer.fType()).toList();
+		if(compatible.size() > 1)
+			throw new IllegalStateException("LOCAL source has ambiguous compatible durable anchors: " + node.key());
+		if(compatible.size() == 1)
+			return compatible.get(0).placementId();
+		return "selected-source:" + node.valueVersion().normalizedSignature()
+			+ ":occurrence:" + node.key().normalizedSignature();
 	}
 
 	private record Draft(PlacementAnalysis analysis, String plannerId, String analysisFingerprint,

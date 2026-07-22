@@ -42,6 +42,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMateria
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationObligation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -366,7 +367,14 @@ public final class PlacementEmissionTransaction {
 			if(action.statementBlockScope() == null || action.statementBlockScope().isBlank()
 				|| !expectedScope.equals(action.statementBlockScope()))
 				throw new PlacementEmissionException("LOCAL statement-block scope differs");
-			String expectedProvenance = "fed-init:" + action.sourceValueVersion().lexicalVariable();
+			String expectedProvenance;
+			try {
+				expectedProvenance = NormalizedPlannerResults.durableLocalProvenance(
+					sourceNode, action.producerPlacement());
+			}
+			catch(IllegalStateException ex) {
+				throw new PlacementEmissionException(ex.getMessage(), ex);
+			}
 			if(action.durableProvenance() == null || action.durableProvenance().isBlank()
 				|| !expectedProvenance.equals(action.durableProvenance()))
 				throw new PlacementEmissionException("LOCAL durable provenance differs");
@@ -627,6 +635,10 @@ public final class PlacementEmissionTransaction {
 
 		private PlacementEmissionException(String message) {
 			super(message);
+		}
+
+		private PlacementEmissionException(String message, Throwable cause) {
+			super(message, cause);
 		}
 	}
 }

@@ -58,7 +58,7 @@ public final class MinStExactPlacementProjector {
 		MinStPlacementInput.ProducerReceipt producer = new MinStPlacementInput.ProducerReceipt(
 			facts.analysisFingerprint(), selection.objectiveBits(), completeSourcePartition(facts, selection));
 		MinStPlacementInput input = MinStPlacementInput.createSelected(analysis, producer, occurrences,
-			obligations);
+			obligations, selectedStates);
 		analysis.assertProgramStructureUnchanged();
 		if(!facts.analysisFingerprint().equals(analysis.analysisFingerprint()))
 			throw new IllegalArgumentException("MINST_PROJECTOR_ANALYSIS_FINGERPRINT_STALE");

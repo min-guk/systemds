@@ -460,7 +460,10 @@ public final class DpPlacementAdapter {
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
 			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
-			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT,
+			catalog.containsKey(new CandidatePlacementArm(ExecType.CP, FederatedOutput.LOUT)),
+			catalog.containsKey(new CandidatePlacementArm(ExecType.CP, FederatedOutput.FOUT)),
+			catalog.containsKey(new CandidatePlacementArm(ExecType.FED, FederatedOutput.LOUT)),
+			catalog.containsKey(new CandidatePlacementArm(ExecType.FED, FederatedOutput.FOUT)),
 			caps, catalog);
 	}
 

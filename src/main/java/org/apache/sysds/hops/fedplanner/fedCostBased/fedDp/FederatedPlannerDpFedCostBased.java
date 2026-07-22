@@ -343,6 +343,23 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private record SelectedDpState(ExecType execType, FederatedOutput output, FType fType,
 		boolean derivedFedFout, PlacementState exactState) { }
 
+	private static SelectedDpState selectedState(FederatedPlannerDpMemoTable.FedPlan plan) {
+		PlacementState exact = Objects.requireNonNull(plan.getSelectedPlacementState(),
+			"DP FedPlan has no exact analysis-owned placement-state carrier");
+		if(exact.execType() != plan.getExecType() || exact.output() != plan.getFedOutType())
+			throw new IllegalStateException("DP FedPlan tuple differs from its exact placement-state carrier");
+		return new SelectedDpState(exact.execType(), exact.output(), exact.fType(),
+			plan.isDerivedFedFout(), exact);
+	}
+
+	private static void coalesceSelectedState(Map<CompiledHopKey, SelectedDpState> selected,
+		CompiledHopKey key, SelectedDpState proposed) {
+		SelectedDpState previous = selected.putIfAbsent(key, proposed);
+		if(previous != null && (previous.exactState() != proposed.exactState()
+			|| previous.derivedFedFout() != proposed.derivedFedFout()))
+			throw new IllegalStateException("DP occurrence has disagreeing exact selections: " + key);
+	}
+
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
 		PlacementAnalysis analysis = prog.requirePlacementAnalysisAuthority();
@@ -389,10 +406,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
 		Map<Long, ConflictEntry> rewriteConflictCheckMap =
 			collectConflictsSingleBFS(memoTable, optimalPlan, outputDecisions);
-		Set<Long> visitedPlanHops = new HashSet<>();
+		Set<CompiledHopKey> visitedPlanHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests = new LinkedHashMap<>();
-		Map<Long, SelectedDpState> selectedStates = new LinkedHashMap<>();
+		Map<CompiledHopKey, SelectedDpState> selectedStates = new IdentityHashMap<>();
 		List<AppliedPlanReceipt> appliedPlans = new ArrayList<>();
 		List<AdditionalRootInvocationReceipt> additionalRootInvocations = new ArrayList<>();
 
@@ -426,7 +443,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			long executableHopId = memoTable.resolveOriginalHopId(rootHopID);
 			Hop executableHop = Objects.requireNonNull(memoTable.resolveOriginalHop(rootHopID),
 				"additionalRoot.executableHop");
-			boolean alreadyVisited = visitedPlanHops.contains(rootHopID);
+			CompiledHopKey rootKey = memoTable.requirePlanCarrierOccurrence(seed.getHopRef()).key();
+			boolean alreadyVisited = visitedPlanHops.contains(rootKey);
 			rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
 				rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
 			AdditionalRootDisposition disposition = alreadyVisited
@@ -441,6 +459,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		applyDeferredOutputDecisionStates(
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
+		completeDisconnectedDecisionAuthority(analysis, memoTable, outputDecisions, visitedPlanHops,
+			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
 		NormalizedPlannerResult normalized = normalizeDpSelection(analysis, selectedStates, exactSelection);
 		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none());
@@ -481,10 +501,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> outputDecisions = computeOutputDecisions(memoTable, optimalPlan);
 		Map<Long, ConflictEntry> rewriteConflictCheckMap =
 			collectConflictsSingleBFS(memoTable, optimalPlan, outputDecisions);
-		Set<Long> visitedPlanHops = new HashSet<>();
+		Set<CompiledHopKey> visitedPlanHops = Collections.newSetFromMap(new IdentityHashMap<>());
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests = new LinkedHashMap<>();
-		Map<Long, SelectedDpState> selectedStates = new LinkedHashMap<>();
+		Map<CompiledHopKey, SelectedDpState> selectedStates = new IdentityHashMap<>();
 
 		for (Pair<Long, FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
 			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
@@ -514,6 +534,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 		applyDeferredOutputDecisionStates(
 			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
+		completeDisconnectedDecisionAuthority(analysis, memoTable, outputDecisions, visitedPlanHops,
+			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
 		DpPlacementAdapter.ExactSelection exactSelection =
 			new DpPlacementAdapter().selectExact(analysis, memoTable, optimalPlan);
 		NormalizedPlannerResult previous = PlacementEmissionTransaction.currentNormalizedResult(prog);
@@ -526,12 +548,30 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
-		Map<Long, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection) {
+		Map<CompiledHopKey, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection) {
 		return normalizeDpSelection(analysis, selected, exactSelection, null);
 	}
 
+	private void completeDisconnectedDecisionAuthority(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memoTable, Map<Long, FederatedOutput> outputDecisions,
+		Set<CompiledHopKey> visitedPlanHops, Map<Long, FType> fTypeMap,
+		Map<Long, ConflictEntry> rewriteConflictCheckMap,
+		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
+		Map<CompiledHopKey, SelectedDpState> selectedStates) {
+		for(var node : analysis.graph().decisionNodes()) {
+			if(selectedStates.containsKey(node.key()))
+				continue;
+			PlacementAnalysis.HopOccurrenceProjection occurrence = analysis.occurrences().stream()
+				.filter(candidate -> candidate.key() == node.key()).findFirst().orElseThrow();
+			FederatedPlannerDpMemoTable.FedPlan plan = memoTable.getCheapestPlanForOccurrence(occurrence);
+			if(plan != null)
+				rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
+					rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
+		}
+	}
+
 	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
-		Map<Long, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection,
+		Map<CompiledHopKey, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection,
 		NormalizedPlannerResult completeBase) {
 		Map<CompiledHopKey, PlacementEmissionState> assignment = new LinkedHashMap<>();
 		if(completeBase != null) {
@@ -539,24 +579,28 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalArgumentException("Dynamic base authority belongs to a different analysis");
 			assignment.putAll(completeBase.selectedEmissionStates());
 		}
+		Set<CompiledHopKey> decisionKeys = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(var node : analysis.graph().decisionNodes()) {
-			Hop hop = analysis.hop(node.key()).orElseThrow();
-			SelectedDpState choice = selected.get(hop.getHopID());
+			decisionKeys.add(node.key());
+			SelectedDpState choice = selected.get(node.key());
 			if(choice == null && completeBase == null)
 				throw new IllegalStateException("DP selection omitted " + node.key());
 			if(choice == null)
 				continue;
-			PlacementState exact = choice.exactState();
-			if(exact != null && node.legalAlternatives().stream().noneMatch(state -> state == exact))
+			PlacementState exact = Objects.requireNonNull(choice.exactState(),
+				"DP FedPlan omitted its exact analysis-owned placement state for " + node.key());
+			if(node.legalAlternatives().stream().noneMatch(state -> state == exact))
 				throw new IllegalStateException("DP exact state is foreign to neutral node: " + node.key());
-			List<PlacementState> matches = exact == null ? node.legalAlternatives().stream()
-				.filter(state -> state.execType() == choice.execType() && state.output() == choice.output())
-				.filter(state -> state.fType() == choice.fType()).toList() : List.of(exact);
-			if(matches.size() != 1)
+			if(exact.execType() != choice.execType() || exact.output() != choice.output()
+				|| exact.fType() != choice.fType())
 				throw new IllegalStateException("DP selection is not an exact neutral state: " + node.key()
 					+ " choice=" + choice + " legal=" + node.legalAlternatives());
-			assignment.put(node.key(), new PlacementEmissionState(matches.get(0), choice.derivedFedFout()));
+			assignment.put(node.key(), new PlacementEmissionState(exact, choice.derivedFedFout()));
 		}
+		if(completeBase == null && !selected.keySet().equals(decisionKeys))
+			throw new IllegalStateException("DP selection key set differs from neutral decision authority");
+		if(completeBase != null && !decisionKeys.containsAll(selected.keySet()))
+			throw new IllegalStateException("Dynamic DP selection contains foreign neutral decision keys");
 		return NormalizedPlannerResults.createWithEmissionStates(analysis, "DP", assignment,
 			"objectiveBits=" + exactSelection.objectiveCostBits());
 	}
@@ -564,7 +608,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
 		FederatedPlannerDpMemoTable memoTable,
 		Map<Long, FederatedOutput> outputDecisions,
-		Set<Long> visitedPlanHops,
+		Set<CompiledHopKey> visitedPlanHops,
 		Map<Long, FType> fTypeMap) {
 
 		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, null, false, null, null);
@@ -573,7 +617,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
 		FederatedPlannerDpMemoTable memoTable,
 		Map<Long, FederatedOutput> outputDecisions,
-		Set<Long> visitedPlanHops,
+		Set<CompiledHopKey> visitedPlanHops,
 		Map<Long, FType> fTypeMap,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap) {
 
@@ -583,16 +627,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
 		FederatedPlannerDpMemoTable memoTable,
 		Map<Long, FederatedOutput> outputDecisions,
-		Set<Long> visitedPlanHops,
+		Set<CompiledHopKey> visitedPlanHops,
 		Map<Long, FType> fTypeMap,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		boolean allowOutputDecisionOverride,
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
-		Map<Long, SelectedDpState> selectedStates) {
+		Map<CompiledHopKey, SelectedDpState> selectedStates) {
 
 		long planHopId = plan.getHopRef().getHopID();
-		if (visitedPlanHops != null && !visitedPlanHops.add(planHopId))
-			return;
 
 		long origHopId = memoTable.resolveOriginalHopId(planHopId);
 		FederatedOutput desiredOut = outputDecisions.getOrDefault(origHopId, plan.getFedOutType());
@@ -600,6 +642,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan effectivePlan = selectRewritePlanVariant(
 			memoTable, planHopId, desiredOut, plan.getFedOutType(), plan, outputDecisions,
 			rewriteConflictCheckMap, allowOutputDecisionOverride);
+		CompiledHopKey occurrenceKey = memoTable.requirePlanCarrierOccurrence(effectivePlan.getHopRef()).key();
+		if(selectedStates != null)
+			coalesceSelectedState(selectedStates, occurrenceKey, selectedState(effectivePlan));
+		if (visitedPlanHops != null && !visitedPlanHops.add(occurrenceKey))
+			return;
 
 		if (FederatedPlannerTrace.shouldTrace(memoTable.resolveOriginalHop(planHopId))) {
 			FederatedPlannerTrace.log(memoTable.resolveOriginalHop(planHopId), "DP-Rewrite-Plan",
@@ -648,10 +695,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					if(targetHop != hopRef && applyStateToTargetHop)
 						applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
 				}
-				else if(applyStateToTargetHop)
-					selectedStates.put(origHopId, new SelectedDpState(execType, outType,
-						outType == FederatedOutput.FOUT ? effectivePlan.getCpFoutTypeOrFType() : null,
-						derivedFedFout, effectivePlan.getSelectedPlacementState()));
+				else if(applyStateToTargetHop) {
+					// Exact selection was recorded before traversal using the analysis-owned carrier occurrence.
+				}
 				if (!applyStateToTargetHop && FederatedPlannerTrace.shouldTrace(targetHop)) {
 					FederatedPlannerTrace.log(targetHop, "DP-Rewrite-SkipVirtualCloneTargetState",
 						String.format(Locale.ROOT,
@@ -682,7 +728,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> outputDecisions,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
-		Map<Long, SelectedDpState> selectedStates) {
+		Map<CompiledHopKey, SelectedDpState> selectedStates) {
 
 		if (memoTable == null || outputDecisions == null || outputDecisions.isEmpty())
 			return;
@@ -698,22 +744,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Hop targetHop = memoTable.resolveOriginalHop(origHopID);
 			if (targetHop == null)
 				continue;
-
-			// This pass is deliberately conservative: it only fills gaps left by the
-			// selected-root rewrite traversal. If a concrete traversal already registered
-			// a state for this executable hop, keep that earlier selected state instead
-			// of letting an unvisited clone/side-branch decision overwrite it.
-			SelectedDpState existing = selectedStates == null ? null : selectedStates.get(origHopID);
-			if (existing != null) {
-				if (FederatedPlannerTrace.shouldTrace(targetHop)) {
-					FederatedPlannerTrace.log(targetHop, "DP-Rewrite-DeferredOutputDecisionSkip",
-						String.format(Locale.ROOT,
-							"decisionHop=%d origHop=%d desiredOut=%s existing=%s",
-							decisionHopID, origHopID, desiredOut,
-							existing.execType() + "/" + existing.output()));
-				}
-				continue;
-			}
 
 				FederatedPlannerDpMemoTable.FedPlan selectedPlan =
 					selectCompatiblePlanVariant(memoTable, origHopID, desiredOut, outputDecisions);
@@ -731,6 +761,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				FederatedPlannerLogger.logNullFedPlanError(origHopID, msg);
 				continue;
 			}
+			CompiledHopKey selectedKey = memoTable.requirePlanCarrierOccurrence(selectedPlan.getHopRef()).key();
+			SelectedDpState proposed = selectedState(selectedPlan);
+			SelectedDpState existing = selectedStates == null ? null : selectedStates.get(selectedKey);
+			if(existing != null) {
+				coalesceSelectedState(selectedStates, selectedKey, proposed);
+				continue;
+			}
 
 			ExecType execType = selectedPlan.getExecType();
 			FederatedOutput outType = selectedPlan.getFedOutType();
@@ -744,9 +781,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
 				registerPlannerRecompileState(selectedPlan.getHopRef(), targetHop, execType, outType);
 			}
-			else selectedStates.put(origHopID, new SelectedDpState(execType, outType,
-				outType == FederatedOutput.FOUT ? selectedPlan.getCpFoutTypeOrFType() : null,
-				derivedFedFout, selectedPlan.getSelectedPlacementState()));
+			else coalesceSelectedState(selectedStates, selectedKey, proposed);
 			collectDeferredLocalMaterializeRequests(
 				memoTable, selectedPlan, outputDecisions, localMaterializeRequests);
 
