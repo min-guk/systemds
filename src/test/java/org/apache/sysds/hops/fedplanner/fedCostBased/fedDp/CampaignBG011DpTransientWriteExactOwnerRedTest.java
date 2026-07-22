@@ -14,18 +14,29 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationObserver;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -35,6 +46,48 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class CampaignBG011DpTransientWriteExactOwnerRedTest {
+	@Test
+	public void transientReadRetainsExactCfgForwardedFederatedState() throws Exception {
+		DMLProgram program = CampaignBG014HermeticPlannerFixtureFactory.compile("B-21");
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(program);
+
+		List<Node> reads = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.TRANSIENT_READ)
+			.filter(node -> reachingTransientWrites(analysis, node).stream()
+				.anyMatch(CampaignBG011DpTransientWriteExactOwnerRedTest::hasRowFederatedState))
+			.toList();
+		Assert.assertEquals("B-21 must have one CFG-forwarded federated transient read", 1, reads.size());
+		Node read = reads.get(0);
+		List<Node> sources = reachingTransientWrites(analysis, read);
+		Assert.assertEquals("transient read must have one exact reaching transient write", 1, sources.size());
+		Node source = sources.get(0);
+
+		DurableAnchorKey sourceAnchor = onlyRowAnchor(source, "reaching transient write");
+		DurableAnchorKey readAnchor = onlyRowAnchor(read, "transient read");
+		Assert.assertSame("CFG-forwarded read must retain the exact source anchor", sourceAnchor, readAnchor);
+		Assert.assertTrue("reaching transient write lacks FED/FOUT/ROW",
+			hasState(source, ExecType.FED, FederatedOutput.FOUT, FType.ROW));
+		Assert.assertTrue("transient read must retain CP/LOUT",
+			hasState(read, ExecType.CP, FederatedOutput.LOUT, null));
+		Assert.assertTrue("transient read lacks CFG-forwarded FED/FOUT/ROW",
+			hasState(read, ExecType.FED, FederatedOutput.FOUT, FType.ROW));
+		Assert.assertFalse("transient read must not admit CP/FOUT",
+			hasTuple(read, ExecType.CP, FederatedOutput.FOUT));
+		Assert.assertFalse("transient read must not admit FED/LOUT",
+			hasTuple(read, ExecType.FED, FederatedOutput.LOUT));
+
+		List<CandidateRuleFact> facts = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == read.key())
+			.filter(fact -> fact.key().orderedInputs().equals(List.of(CandidateInputState.present(FType.ROW))))
+			.toList();
+		Assert.assertEquals("transient read lacks exact present-ROW candidate fact", 1, facts.size());
+		CandidateRuleFact fact = facts.get(0);
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, fact.status());
+		Assert.assertEquals(ExecType.FED, fact.capability().nativeExec());
+		Assert.assertEquals(FederatedOutput.FOUT, fact.capability().nativeOutput());
+		Assert.assertEquals(FType.ROW, fact.capability().nativeFoutFType());
+	}
+
 	@Test
 	public void compatibleForeignWriteWithoutExactForwardEdgeIsRejectedBeforePublication() throws Exception {
 		Fixture fixture = fixture("B-09");
@@ -49,6 +102,41 @@ public class CampaignBG011DpTransientWriteExactOwnerRedTest {
 		Assert.assertEquals("foreign transient write published captured candidates", 0, captureCount(capture));
 		Assert.assertEquals(beforeLout, variantCount(memo, pair.read(), FederatedOutput.LOUT));
 		Assert.assertEquals(beforeFout, variantCount(memo, pair.read(), FederatedOutput.FOUT));
+	}
+
+	private static List<Node> reachingTransientWrites(PlacementAnalysis analysis, Node read) {
+		return analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.TRANSIENT_WRITE)
+			.filter(node -> read.valueVersion().predecessorVersions()
+				.contains("cfg-definition:" + valueReference(node.valueVersion())))
+			.toList();
+	}
+
+	private static String valueReference(ValueVersionKey value) {
+		return value.lexicalVariable() + '#' + value.definitionOrdinal() + '@'
+			+ value.definingControlRegion().callSitePath() + ':' + value.versionKind();
+	}
+
+	private static boolean hasRowFederatedState(Node node) {
+		return node.anchors().stream().anyMatch(anchor -> anchor.fType() == FType.ROW)
+			&& hasState(node, ExecType.FED, FederatedOutput.FOUT, FType.ROW);
+	}
+
+	private static DurableAnchorKey onlyRowAnchor(Node node, String owner) {
+		List<DurableAnchorKey> anchors = node.anchors().stream()
+			.filter(anchor -> anchor.fType() == FType.ROW).toList();
+		Assert.assertEquals(owner + " must own one ROW anchor", 1, anchors.size());
+		return anchors.get(0);
+	}
+
+	private static boolean hasState(Node node, ExecType execType, FederatedOutput output, FType fType) {
+		return node.legalAlternatives().stream().anyMatch(state -> state.execType() == execType
+			&& state.output() == output && state.fType() == fType);
+	}
+
+	private static boolean hasTuple(Node node, ExecType execType, FederatedOutput output) {
+		return node.legalAlternatives().stream().anyMatch(state -> state.execType() == execType
+			&& state.output() == output);
 	}
 
 	private static ForeignPair foreignCompatiblePair(DpInvocationReceipt receipt) {
