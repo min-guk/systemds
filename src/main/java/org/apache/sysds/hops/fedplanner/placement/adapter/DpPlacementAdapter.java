@@ -319,10 +319,7 @@ public final class DpPlacementAdapter {
 				}
 				else
 					throw new IllegalArgumentException(
-						"Normalized collected dependency has no exact physical, logical, or transient-forward owner"
-							+ "|parent=" + snapshot.parentOccurrence().normalizedSignature()
-							+ "|source=" + projected.key().normalizedSignature()
-							+ "|sourceType=" + hop.getDataType() + "|position=" + i);
+						"Normalized collected dependency has no exact physical, logical, or transient-forward owner");
 			}
 			if(promotedIndex != snapshot.promotedEntries().size()
 				|| logicalIndex != snapshot.logicalEntries().size()
@@ -586,19 +583,12 @@ public final class DpPlacementAdapter {
 				List<PlacementState> ownedSelections = selected == null ? List.of()
 					: context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
 						.filter(selected::equals).toList();
-				String authorityDifference = rawContainsKey ? "MAP_PRESENT"
-					: collectedType != null ? "COLLECTED_FTYPE_PRESENT"
-					: edge.getRight() != FederatedOutput.LOUT ? "EDGE_NOT_LOUT"
-					: childPlan == null ? "CHILD_PLAN_MISSING"
-					: childPlan.getExecType() != ExecType.CP ? "CHILD_EXEC_NOT_CP"
-					: selected == null ? "SELECTED_STATE_MISSING"
-					: selected.execType() != ExecType.CP ? "SELECTED_EXEC_NOT_CP"
-					: selected.output() != FederatedOutput.LOUT ? "SELECTED_OUTPUT_NOT_LOUT"
-					: selected.fType() != null ? "SELECTED_FTYPE_PRESENT"
-					: ownedSelections.size() != 1 ? "SELECTED_STATE_NOT_ANALYSIS_OWNED" : null;
-				if(authorityDifference != null)
+				if(rawContainsKey || collectedType != null || edge.getRight() != FederatedOutput.LOUT
+					|| childPlan == null || childPlan.getExecType() != ExecType.CP || selected == null
+					|| selected.execType() != ExecType.CP || selected.output() != FederatedOutput.LOUT
+					|| selected.fType() != null || ownedSelections.size() != 1)
 					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
-						"TRANSIENT_FORWARD_DEPENDENCY_" + authorityDifference);
+						"TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS");
 				effectiveCollectedFTypes.set(i, null);
 				transientForwardDependencies.add(new TransientForwardDependencyEntry(
 					forwards.get(0), occurrence.key(), i, ownedSelections.get(0)));
