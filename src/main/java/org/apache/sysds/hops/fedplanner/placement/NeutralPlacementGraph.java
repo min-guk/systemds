@@ -36,6 +36,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAncho
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable planner-neutral placement graph used by shadow comparison. */
 public final class NeutralPlacementGraph {
@@ -215,6 +216,27 @@ public final class NeutralPlacementGraph {
 		return Optional.ofNullable(nodesByKey.get(Objects.requireNonNull(key, "key")));
 	}
 
+	/** Returns whether an exact assignment requires this relocation action. */
+	public boolean isRelocationActive(RelocationAction action,
+		Map<CompiledHopKey, PlacementState> assignment) {
+		Objects.requireNonNull(action, "action");
+		Objects.requireNonNull(assignment, "assignment");
+		boolean requiredByConsumer = action.obligations().stream().anyMatch(obligation ->
+			obligation.requiredPlacement().equals(assignment.get(obligation.consumer())));
+		if(!requiredByConsumer)
+			return false;
+		for(Node source : nodes) {
+			if(!source.valueVersion().equals(action.key().sourceValueVersion()))
+				continue;
+			PlacementState sourceState = assignment.get(source.key());
+			if(sourceState != null && sourceState.output() == FederatedOutput.FOUT
+				&& Objects.equals(sourceState.fType(), action.key().durableAnchor().fType())
+				&& source.anchors().contains(action.key().durableAnchor()))
+				return false;
+		}
+		return true;
+	}
+
 	public List<String> normalizedCandidateUniverse() {
 		List<String> normalized = new ArrayList<>();
 		for(Node node : nodes)
@@ -388,6 +410,8 @@ public final class NeutralPlacementGraph {
 				requireNode(obligation.consumer(), "obligation consumer");
 				if(!valueVersions.contains(obligation.sourceValueVersion()))
 					throw new IllegalArgumentException("Obligation source value is absent from graph");
+				if(!key.targetPlacement().equals(obligation.requiredPlacement()))
+					throw new IllegalArgumentException("Obligation target differs from relocation target");
 			}
 		}
 	}

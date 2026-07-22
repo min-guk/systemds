@@ -266,8 +266,10 @@ public final class NeutralPlacementGraphBuilder {
 		addCfgConstraints(occurrences, nodes, constraints, cfg);
 		constraints.addAll(functionExpansion.constraints());
 		addStableOriginConstraints(nodes, constraints);
-		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(occurrences, nodes,
-			ordinalsByBlock, occurrenceAnchorProvenance);
+		List<CompiledInputEdgeFact> compiledInputEdges = deriveCompiledInputEdges(occurrences, nodes,
+			ordinalsByBlock);
+		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, nodes,
+			scopes);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
 		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
@@ -292,7 +294,6 @@ public final class NeutralPlacementGraphBuilder {
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections);
 		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
-		List<CompiledInputEdgeFact> compiledInputEdges = deriveCompiledInputEdges(projections, keysByBlock);
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
@@ -309,34 +310,37 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 
-	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(List<HopOccurrenceProjection> projections,
-		Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock) {
+	private static List<CompiledInputEdgeFact> deriveCompiledInputEdges(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
+		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock) {
 		List<CompiledInputEdgeFact> edges = new ArrayList<>();
-		for(HopOccurrenceProjection consumerProjection : projections) {
-			Map<Hop,CompiledHopKey> blockKeys = findBlockKeys(keysByBlock, consumerProjection.key());
-			if(blockKeys == null)
+		for(int consumerOrdinal = 0; consumerOrdinal < occurrences.size(); consumerOrdinal++) {
+			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
+			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
+			Hop consumer = occurrence.hop();
+			if(!isCompiledHopOccurrenceKey(nodes.get(consumerOrdinal).key()))
 				continue;
-			Hop consumer = consumerProjection.hop();
 			for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
 				Hop producer = consumer.getInput(inputPosition);
 				if(!producer.getDataType().isMatrix())
 					continue;
-				CompiledHopKey producerKey = blockKeys.get(producer);
-				if(producerKey == null)
+				Integer producerOrdinal = blockOrdinals == null ? null : blockOrdinals.get(producer);
+				if(producerOrdinal == null)
 					throw new IllegalStateException("Matrix producer input lacks exact compiled owner key");
-				edges.add(new CompiledInputEdgeFact(producerKey, consumerProjection.key(), inputPosition));
+				CompiledHopKey producerKey = nodes.get(producerOrdinal).key();
+				if(isCompiledHopOccurrenceKey(producerKey))
+					edges.add(new CompiledInputEdgeFact(producerKey,
+						nodes.get(consumerOrdinal).key(), inputPosition));
 			}
 		}
+		edges.sort(java.util.Comparator.comparing(CompiledInputEdgeFact::consumer)
+			.thenComparingInt(CompiledInputEdgeFact::inputPosition));
 		return List.copyOf(edges);
 	}
 
-	private static Map<Hop,CompiledHopKey> findBlockKeys(Map<StatementBlock,Map<Hop,CompiledHopKey>> keysByBlock,
-		CompiledHopKey consumer) {
-		for(Map<Hop,CompiledHopKey> blockKeys : keysByBlock.values())
-			for(CompiledHopKey candidate : blockKeys.values())
-				if(candidate == consumer)
-					return blockKeys;
-		return null;
+	private static boolean isCompiledHopOccurrenceKey(CompiledHopKey key) {
+		return key.controlRegion().regionPath().stream()
+			.noneMatch(part -> part.startsWith("function-boundary:"));
 	}
 
 	private static HeuristicPolicyFacts heuristicPolicyFacts(NeutralPlacementGraph graph,
@@ -1196,42 +1200,62 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
-		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,
-		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock,
-		List<DurableAnchorKey> occurrenceAnchorProvenance) {
-		Map<ValueVersionKey,List<InputUse>> uses = new java.util.TreeMap<>();
-		Map<ValueVersionKey,DurableAnchorKey> valueAnchors = new java.util.TreeMap<>();
-		for(int occurrenceOrdinal = 0; occurrenceOrdinal < occurrences.size(); occurrenceOrdinal++) {
-			PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(occurrenceOrdinal);
-			Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
-			for(int i = 0; i < occurrence.hop().getInput().size(); i++) {
-				Hop input = occurrence.hop().getInput(i);
-				Integer inputOrdinal = blockOrdinals == null ? null : blockOrdinals.get(input);
-				DurableAnchorKey anchor = inputOrdinal == null ? null
-					: occurrenceAnchorProvenance.get(inputOrdinal);
-				if(inputOrdinal != null && anchor != null) {
-					ValueVersionKey inputValue = nodes.get(inputOrdinal).valueVersion();
-					uses.computeIfAbsent(inputValue, k -> new ArrayList<>())
-						.add(new InputUse(nodes.get(occurrenceOrdinal).key(), i, occurrence.path()));
-					valueAnchors.put(inputValue, anchor);
+		List<CompiledInputEdgeFact> compiledInputEdges, List<Node> nodes,
+		Map<CompiledHopKey,Long> scopes) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		Map<RelocationGroup,List<InputUse>> uses = new java.util.TreeMap<>();
+		for(CompiledInputEdgeFact edge : compiledInputEdges) {
+			Node source = nodesByKey.get(edge.producer());
+			Node consumer = nodesByKey.get(edge.consumer());
+			if(source == null || consumer == null)
+				throw new IllegalStateException("Compiled matrix edge is outside the neutral graph");
+			Long scopeId = scopes.get(consumer.key());
+			if(scopeId == null)
+				throw new IllegalStateException("Relocation consumer has no statement-block scope: " + consumer.key());
+			String scope = scopeId + ":" + consumer.key().recompileContext();
+			for(DurableAnchorKey anchor : consumer.anchors()) {
+				// An input already carrying this durable placement is not an upload source.
+				if(source.anchors().contains(anchor))
+					continue;
+				for(PlacementState target : consumer.legalAlternatives()) {
+					if(target.execType() != ExecType.FED || target.output() != FederatedOutput.FOUT
+						|| target.fType() != anchor.fType())
+						continue;
+					RelocationGroup group = new RelocationGroup(source.valueVersion(), target, anchor, scope);
+					uses.computeIfAbsent(group, ignored -> new ArrayList<>())
+						.add(new InputUse(consumer.key(), edge.inputPosition(), scope));
 				}
 			}
 		}
 		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
-		for(Map.Entry<ValueVersionKey,List<InputUse>> entry : uses.entrySet()) {
-			DurableAnchorKey anchor = valueAnchors.get(entry.getKey());
-			PlacementState target = new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false);
+		for(Map.Entry<RelocationGroup,List<InputUse>> entry : uses.entrySet()) {
+			RelocationGroup group = entry.getKey();
 			Set<CompiledHopKey> consumerSet = new java.util.TreeSet<>();
 			for(InputUse use : entry.getValue()) consumerSet.add(use.consumer());
 			List<CompiledHopKey> consumers = new ArrayList<>(consumerSet);
-			RelocationActionKey key = new RelocationActionKey(entry.getKey(), target, anchor,
-				entry.getValue().get(0).scope(), consumers);
+			RelocationActionKey key = new RelocationActionKey(group.source(), group.target(), group.anchor(),
+				group.scope(), consumers);
 			List<ObligationKey> obligations = new ArrayList<>();
 			for(InputUse use : entry.getValue()) obligations.add(new ObligationKey(use.consumer(), use.position(),
-				entry.getKey(), target, key, use.scope()));
+				group.source(), group.target(), key, use.scope()));
 			result.add(new NeutralPlacementGraph.RelocationAction(key, obligations));
 		}
 		return result;
+	}
+
+	private record RelocationGroup(ValueVersionKey source, PlacementState target,
+		DurableAnchorKey anchor, String scope) implements Comparable<RelocationGroup> {
+		@Override
+		public int compareTo(RelocationGroup that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+
+		private String normalizedSignature() {
+			return source.normalizedSignature() + '|' + target.normalizedSignature() + '|'
+				+ anchor.normalizedSignature() + '|' + scope;
+		}
 	}
 
 	private record InputUse(CompiledHopKey consumer, int position, String scope) { }

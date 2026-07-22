@@ -246,7 +246,7 @@ public final class MinStExactPlacementProjector {
 		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder()) {
 			if(group.direction() != receipt.direction() || group.producerKey() != receipt.producerKey())
 				continue;
-			if(!selectedGroup(source, group))
+			if(!selectedGroup(facts, source, group))
 				continue;
 			for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
 				if(endpoint.consumerKey() != receipt.consumerKey()
@@ -270,10 +270,13 @@ public final class MinStExactPlacementProjector {
 		return matches.get(0);
 	}
 
-	private static boolean selectedGroup(Set<Long> source, AuxiliaryGroupFact group) {
+	private static boolean selectedGroup(MinStExactCostFacts facts, Set<Long> source,
+		AuxiliaryGroupFact group) {
 		boolean auxSource = source.contains(group.auxiliaryNodeId());
 		boolean producerPlacementSource = source.contains(group.producerPlacementNodeId());
-		return group.direction() == Direction.UPLOAD && auxSource && !producerPlacementSource
+		boolean compatibleProducerSource = producerPlacementSource
+			&& MinStExactCostFactsProducer.hasExactCompatibleDurableSource(facts.analysis(), group);
+		return group.direction() == Direction.UPLOAD && auxSource && !compatibleProducerSource
 			|| group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource;
 	}
 

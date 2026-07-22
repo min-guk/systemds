@@ -154,9 +154,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		Map<CompiledHopKey, PlacementState> assignment) {
 		Set<RelocationActionKey> selected = new TreeSet<>();
 		for(RelocationAction action : graph.relocationActions())
-			if(action.obligations().stream().anyMatch(obligation ->
-				assignment.containsKey(obligation.consumer())
-					&& obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))))
+			if(graph.isRelocationActive(action, assignment))
 				selected.add(action.key());
 		return Collections.unmodifiableSet(new LinkedHashSet<>(selected));
 	}

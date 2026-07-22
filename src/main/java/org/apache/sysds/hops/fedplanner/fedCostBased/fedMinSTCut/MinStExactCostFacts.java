@@ -28,7 +28,7 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 public final class MinStExactCostFacts {
 	public enum Direction { UPLOAD, DOWNLOAD }
 	public enum MembershipAuthorityKind { LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE }
-	public enum TransferAuthorityKind { RELOCATION_OBLIGATION, INDEPENDENT_ANCHOR }
+	public enum TransferAuthorityKind { RELOCATION_OBLIGATION, INDEPENDENT_ANCHOR, DURABLE_SOURCE }
 	public enum ContributionKind {
 		CP_UNARY, FED_UNARY, UPLOAD, DOWNLOAD, HARD_EXEC, HARD_OUTPUT,
 		HARD_UPLOAD_OR, HARD_DOWNLOAD_OR, PRICE_UPLOAD_OR, PRICE_DOWNLOAD_OR
@@ -303,6 +303,10 @@ public final class MinStExactCostFacts {
 						&& !consumerProfile.allowedTargetTypes().contains(group.conversionType()))
 					throw new IllegalArgumentException("MINST_EXACT_INDEPENDENT_ANCHOR_AUTHORITY_MISMATCH");
 			}
+			else if(group.direction() != Direction.DOWNLOAD || action != null || obligation != null
+				|| anchorInputEdge != null || independentAnchor == null || consumerProfile != null
+				|| independentAnchor.fType() != group.conversionType())
+				throw new IllegalArgumentException("MINST_EXACT_DURABLE_SOURCE_AUTHORITY_MISMATCH");
 		}
 
 		static TransferAuthorityFact relocation(AuxiliaryGroupFact group, EndpointFact endpoint,
@@ -321,6 +325,14 @@ public final class MinStExactCostFacts {
 			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
 				TransferAuthorityKind.INDEPENDENT_ANCHOR, requiredPlacement, authoritySignature,
 				null, null, anchorInputEdge, anchor, profile);
+		}
+
+		static TransferAuthorityFact durableSource(AuxiliaryGroupFact group, EndpointFact endpoint,
+			CompiledInputEdgeFact inputEdge, ValueVersionKey sourceValueVersion,
+			DurableAnchorKey anchor, PlacementState requiredPlacement, String authoritySignature) {
+			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
+				TransferAuthorityKind.DURABLE_SOURCE, requiredPlacement, authoritySignature,
+				null, null, null, anchor, null);
 		}
 
 		public AuxiliaryGroupFact group() { return group; }

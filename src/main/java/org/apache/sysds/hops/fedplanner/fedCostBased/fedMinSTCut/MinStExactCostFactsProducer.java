@@ -210,7 +210,7 @@ public final class MinStExactCostFactsProducer {
 		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, node, states);
 		if(captured != null)
 			return captured;
-		MembershipRepresentative relocation = relocationRepresentative(analysis, decision, node, states);
+		MembershipRepresentative relocation = relocationRepresentative(analysis, decision, states);
 		if(relocation != null)
 			return relocation;
 		throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_MISSING|key="
@@ -244,14 +244,16 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static MembershipRepresentative relocationRepresentative(PlacementAnalysis analysis,
-		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states) {
+		DecisionFact decision, List<PlacementState> states) {
 		List<NeutralPlacementGraph.RelocationAction> actions = analysis.graph().relocationActions().stream()
-			.filter(action -> action.key().sourceValueVersion().equals(node.valueVersion())
-				&& states.stream().anyMatch(state -> state.equals(action.key().targetPlacement())))
+			.filter(action -> action.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == decision.key()
+					&& states.stream().anyMatch(state -> state.equals(obligation.requiredPlacement()))))
 			.toList();
 		if(actions.isEmpty()) return null;
 		List<PlacementState> retained = states.stream().filter(state -> actions.stream()
-			.anyMatch(action -> action.key().targetPlacement().equals(state))).toList();
+			.anyMatch(action -> action.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == decision.key() && obligation.requiredPlacement().equals(state)))).toList();
 		if(retained.size() != 1)
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RELOCATION_STATE_AMBIGUOUS|key="
 				+ decision.key().normalizedSignature());
@@ -652,7 +654,7 @@ public final class MinStExactCostFactsProducer {
 					producerKey, producerDecision.placementNodeId(), entry.getKey().type,
 					bits(price), endpoints);
 				result.add(group);
-				addGroupEdges(group, edges);
+				addGroupEdges(analysis, group, edges);
 			}
 		}
 		return List.copyOf(result);
@@ -1076,7 +1078,8 @@ public final class MinStExactCostFactsProducer {
 		return value;
 	}
 
-	private static void addGroupEdges(AuxiliaryGroupFact group, EdgeAccumulator edges) {
+	private static void addGroupEdges(PlacementAnalysis analysis, AuxiliaryGroupFact group,
+		EdgeAccumulator edges) {
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
 			if(group.direction() == Direction.UPLOAD)
 				edges.add(endpoint.consumerComputeNodeId(), group.auxiliaryNodeId(),
@@ -1094,7 +1097,8 @@ public final class MinStExactCostFactsProducer {
 				.thenComparing(endpoint -> endpoint.consumerKey().normalizedSignature()))
 			.orElseThrow();
 		if(group.direction() == Direction.UPLOAD)
-			edges.add(group.auxiliaryNodeId(), group.producerPlacementNodeId(),
+			edges.add(group.auxiliaryNodeId(), hasExactCompatibleDurableSource(analysis, group)
+				? group.producerPlacementNodeId() : SINK,
 				Double.longBitsToDouble(group.priceBits()), ContributionKind.PRICE_UPLOAD_OR,
 				group.producerKey(), priceOwner.consumerKey(), priceOwner.inputPosition(),
 				"upload-or-price-max");
@@ -1103,6 +1107,34 @@ public final class MinStExactCostFactsProducer {
 				Double.longBitsToDouble(group.priceBits()), ContributionKind.PRICE_DOWNLOAD_OR,
 				group.producerKey(), priceOwner.consumerKey(), priceOwner.inputPosition(),
 				"download-or-price-max");
+	}
+
+	static boolean hasExactCompatibleDurableSource(PlacementAnalysis analysis, AuxiliaryGroupFact group) {
+		NeutralPlacementGraph.Node producer = analysis.graph().node(group.producerKey()).orElseThrow();
+		Set<DurableAnchorKey> required = new LinkedHashSet<>();
+		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
+			Set<DurableAnchorKey> endpointAnchors = new LinkedHashSet<>();
+			for(NeutralPlacementGraph.RelocationAction action : analysis.graph().relocationActions())
+				if(action.key().sourceValueVersion().equals(producer.valueVersion())
+					&& action.key().targetPlacement().fType() == group.conversionType()
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == endpoint.consumerKey()
+							&& obligation.inputPosition() == endpoint.inputPosition()))
+					endpointAnchors.add(action.key().durableAnchor());
+			if(endpointAnchors.isEmpty())
+				for(CompiledInputEdgeFact sibling : analysis.compiledInputEdgesInCanonicalOrder()) {
+					if(sibling.consumer() != endpoint.consumerKey()
+						|| sibling.inputPosition() == endpoint.inputPosition())
+						continue;
+					analysis.graph().node(sibling.producer()).orElseThrow().anchors().stream()
+						.filter(anchor -> anchor.fType() == group.conversionType())
+						.forEach(endpointAnchors::add);
+				}
+			if(endpointAnchors.isEmpty())
+				return false;
+			required.addAll(endpointAnchors);
+		}
+		return !required.isEmpty() && producer.anchors().containsAll(required);
 	}
 
 	private static List<ObligationFact> deriveObligations(PlacementAnalysis analysis,
@@ -1129,12 +1161,38 @@ public final class MinStExactCostFactsProducer {
 			for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
 				CompiledInputEdgeFact inputEdge = analysis.requireExactCompiledInputEdge(
 					endpoint.producerKey(), endpoint.consumerKey(), endpoint.inputPosition());
+				int authorityCount = result.size();
 				addRelocationAuthorities(analysis, result, group, endpoint, inputEdge, producer);
-				if(group.direction() == Direction.UPLOAD)
-					addIndependentAnchorAuthorities(analysis, result, group, endpoint, inputEdge);
+				if(group.direction() == Direction.UPLOAD) {
+					if(result.size() == authorityCount)
+						addIndependentAnchorAuthorities(analysis, result, group, endpoint, inputEdge);
+				}
+				else
+					addDurableSourceAuthorities(result, group, endpoint, inputEdge, producer);
 			}
 		}
 		return List.copyOf(result);
+	}
+
+	private static void addDurableSourceAuthorities(List<TransferAuthorityFact> result,
+		AuxiliaryGroupFact group, EndpointFact endpoint, CompiledInputEdgeFact inputEdge,
+		NeutralPlacementGraph.Node producer) {
+		for(DurableAnchorKey anchor : producer.anchors()) {
+			if(anchor.fType() != group.conversionType())
+				continue;
+			for(PlacementState required : producer.legalAlternatives()) {
+				if(required.output() != FederatedOutput.FOUT || required.fType() != anchor.fType())
+					continue;
+				String signature = "DURABLE_SOURCE|" + group.direction() + '|'
+					+ producer.valueVersion().normalizedSignature() + '|'
+					+ inputEdge.producer().normalizedSignature() + '|'
+					+ inputEdge.consumer().normalizedSignature() + '|' + inputEdge.inputPosition() + '|'
+					+ anchor.normalizedSignature() + '|' + required.normalizedSignature() + '|'
+					+ endpoint.demandCostBits();
+				result.add(TransferAuthorityFact.durableSource(group, endpoint, inputEdge,
+					producer.valueVersion(), anchor, required, signature));
+			}
+		}
 	}
 
 	private static void addRelocationAuthorities(PlacementAnalysis analysis,
@@ -1468,8 +1526,31 @@ public final class MinStExactCostFactsProducer {
 			switch(authority.authorityKind()) {
 				case RELOCATION_OBLIGATION -> validateRelocationAuthority(analysis, authority);
 				case INDEPENDENT_ANCHOR -> validateIndependentAnchorAuthority(analysis, authority);
+				case DURABLE_SOURCE -> validateDurableSourceAuthority(analysis, authority);
 			}
 		}
+	}
+
+	private static void validateDurableSourceAuthority(PlacementAnalysis analysis,
+		TransferAuthorityFact authority) {
+		NeutralPlacementGraph.Node producer = analysis.graph().node(
+			authority.group().producerKey()).orElseThrow();
+		DurableAnchorKey anchor = authority.independentAnchorOrNull();
+		String signature = "DURABLE_SOURCE|" + authority.group().direction() + '|'
+			+ producer.valueVersion().normalizedSignature() + '|'
+			+ authority.inputEdge().producer().normalizedSignature() + '|'
+			+ authority.inputEdge().consumer().normalizedSignature() + '|'
+			+ authority.inputEdge().inputPosition() + '|' + anchor.normalizedSignature() + '|'
+			+ authority.requiredPlacement().normalizedSignature() + '|'
+			+ authority.endpoint().demandCostBits();
+		if(authority.group().direction() != Direction.DOWNLOAD || anchor == null
+			|| producer.anchors().stream().noneMatch(candidate -> candidate == anchor)
+			|| !producer.legalAlternatives().contains(authority.requiredPlacement())
+			|| authority.requiredPlacement().output() != FederatedOutput.FOUT
+			|| authority.requiredPlacement().fType() != anchor.fType()
+			|| !authority.authoritySignature().equals(signature))
+			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
+				"Durable-source transfer authority differs from its exact owner");
 	}
 
 	private static void validateRelocationAuthority(PlacementAnalysis analysis,

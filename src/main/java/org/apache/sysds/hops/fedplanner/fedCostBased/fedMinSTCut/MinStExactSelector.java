@@ -135,7 +135,9 @@ public final class MinStExactSelector {
 		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder()) {
 			boolean auxSource = source.contains(group.auxiliaryNodeId());
 			boolean producerPlacementSource = source.contains(group.producerPlacementNodeId());
-			if(group.direction() == Direction.UPLOAD && auxSource && !producerPlacementSource)
+			boolean compatibleProducerSource = producerPlacementSource
+				&& MinStExactCostFactsProducer.hasExactCompatibleDurableSource(facts.analysis(), group);
+			if(group.direction() == Direction.UPLOAD && auxSource && !compatibleProducerSource)
 				addGroupReceipts(receipts, facts, group);
 			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)
 				addGroupReceipts(receipts, facts, group);
