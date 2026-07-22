@@ -159,7 +159,7 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 			String.valueOf(hop.getFederatedOutput()), hop.isFederatedOutputDerived());
 	}
 
-	private record CloneSnapshot(List<Object> original, List<Object> clone,
+	private record CloneSnapshot(List<Object> original, List<Object> cloneState,
 		Map<String,FederatedPlannerUtils.PlannerRecompileStateSnapshot> recompileStates,
 		java.util.Set<String> ambiguousSignatures) { }
 
