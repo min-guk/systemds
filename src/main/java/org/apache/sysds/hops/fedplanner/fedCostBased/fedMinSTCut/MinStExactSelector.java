@@ -7,10 +7,8 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -20,6 +18,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection.ObligationReceipt;
@@ -35,6 +34,7 @@ public final class MinStExactSelector {
 
 	public static MinStExactSelection select(MinStExactCostFacts facts) {
 		Objects.requireNonNull(facts, "facts");
+		MinStExactCostFactsProducer.validateMembershipRepresentatives(facts);
 		MinStExactCutSolver.Result solved = MinStExactCutSolver.solve(facts.sourceNodeId(),
 			facts.sinkNodeId(), decisions(facts), freeNonDecisionNodes(facts), edges(facts));
 		List<List<Long>> minima = solved.minima().stream()
@@ -52,7 +52,8 @@ public final class MinStExactSelector {
 		List<MinStExactCutSolver.Decision> result = new ArrayList<>();
 		for(DecisionFact decision : facts.decisionFactsInScopeOrder()) {
 			List<MinStExactCutSolver.Choice> choices = new ArrayList<>();
-			for(PlacementState state : uniqueStatesByCutMembership(decision)) {
+			for(MembershipRepresentative representative : representatives(facts, decision)) {
+				PlacementState state = representative.state();
 				List<Long> nodes = new ArrayList<>(2);
 				if(state.execType() == ExecType.FED)
 					nodes.add(decision.computeNodeId());
@@ -65,23 +66,26 @@ public final class MinStExactSelector {
 		return List.copyOf(result);
 	}
 
-	private static List<PlacementState> uniqueStatesByCutMembership(DecisionFact decision) {
-		Map<String,PlacementState> statesByMembership = new HashMap<>();
-		for(PlacementState state : decision.legalStatesInCanonicalOrder()) {
-			String membership = state.execType().name() + '/' + state.output().name();
-			PlacementState previous = statesByMembership.get(membership);
-			if(previous == null)
-				statesByMembership.put(membership, state);
-			else if(!previous.equals(state))
-				throw new IllegalArgumentException("MINST_EXACT_STATE_MEMBERSHIP_AMBIGUOUS|key="
-					+ decision.key().normalizedSignature() + "|membership=" + membership);
+	private static List<MembershipRepresentative> representatives(MinStExactCostFacts facts,
+		DecisionFact decision) {
+		List<MembershipRepresentative> published = facts.membershipRepresentativesInCanonicalOrder();
+		List<MembershipRepresentative> matches = published.stream()
+			.filter(representative -> representative.decisionKey() == decision.key()).toList();
+		Set<String> memberships = new LinkedHashSet<>();
+		for(MembershipRepresentative representative : matches) {
+			if(decision.legalStatesInCanonicalOrder().stream().noneMatch(state -> state == representative.state()))
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_STATE_NOT_RETAINED|key="
+					+ decision.key().normalizedSignature());
+			if(!memberships.add(membership(representative.execType(), representative.output())))
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_DUPLICATE|key="
+					+ decision.key().normalizedSignature());
 		}
-		// The cut solver reasons only about the (exec, output) membership bits.  Keep
-		// exactly one certified representative for each membership; carrying every
-		// FType variant here would create duplicate choices for the same cut and make
-		// state resolution depend on incidental list order.
-		return statesByMembership.entrySet().stream().sorted(Map.Entry.comparingByKey())
-			.map(Map.Entry::getValue).toList();
+		long expected = decision.legalStatesInCanonicalOrder().stream()
+			.map(state -> membership(state.execType(), state.output())).distinct().count();
+		if(matches.size() != expected)
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_MISSING|key="
+				+ decision.key().normalizedSignature());
+		return matches;
 	}
 
 	private static List<MinStExactCutSolver.Edge> edges(MinStExactCostFacts facts) {
@@ -116,12 +120,13 @@ public final class MinStExactSelector {
 			ExecType exec = source.contains(decision.computeNodeId()) ? ExecType.FED : ExecType.CP;
 			FederatedOutput output = source.contains(decision.placementNodeId())
 				? FederatedOutput.FOUT : FederatedOutput.LOUT;
-			List<PlacementState> matches = uniqueStatesByCutMembership(decision).stream()
-				.filter(state -> state.execType() == exec && state.output() == output).toList();
+			List<MembershipRepresentative> matches = representatives(facts, decision).stream()
+				.filter(representative -> representative.execType() == exec
+					&& representative.output() == output).toList();
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_SELECTED_STATE_NOT_LEGAL|key="
 					+ decision.key().normalizedSignature() + "|exec=" + exec + "|output=" + output);
-			states.add(matches.get(0));
+			states.add(matches.get(0).state());
 		}
 		return List.copyOf(states);
 	}
@@ -152,7 +157,7 @@ public final class MinStExactSelector {
 						continue;
 					NeutralPlacementGraph.RelocationAction action = exactActionForSignature(facts, group,
 						obligation.actionSignature());
-					if(authorizesExactEndpoint(action, group, endpoint, candidate))
+					if(authorizesExactEndpoint(facts, action, group, endpoint, candidate))
 						matches.add(new ObligationReceipt(group.direction(), group.producerKey(),
 							endpoint.consumerKey(), endpoint.inputPosition(), candidate.requiredPlacement(),
 							obligation.actionSignature()));
@@ -187,10 +192,13 @@ public final class MinStExactSelector {
 		return action;
 	}
 
-	private static boolean authorizesExactEndpoint(NeutralPlacementGraph.RelocationAction action,
+	private static boolean authorizesExactEndpoint(MinStExactCostFacts facts,
+		NeutralPlacementGraph.RelocationAction action,
 		AuxiliaryGroupFact group, EndpointFact endpoint, ObligationEndpointFact candidate) {
 		if(!candidate.consumerKey().equals(endpoint.consumerKey())
-			|| candidate.inputPosition() != endpoint.inputPosition())
+			|| candidate.inputPosition() != endpoint.inputPosition()
+			|| candidate.requiredPlacement().fType() != group.conversionType()
+			|| !representativeAuthorizesAction(facts, group, action, candidate.requiredPlacement()))
 			return false;
 		for(ObligationKey obligation : action.obligations())
 			if(obligation.sourceValueVersion().equals(action.key().sourceValueVersion())
@@ -202,6 +210,23 @@ public final class MinStExactSelector {
 				&& group.producerKey().equals(endpoint.producerKey()))
 				return true;
 		return false;
+	}
+
+	private static boolean representativeAuthorizesAction(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, NeutralPlacementGraph.RelocationAction action,
+		PlacementState requiredPlacement) {
+		List<MembershipRepresentative> published = facts.membershipRepresentativesInCanonicalOrder();
+		List<MembershipRepresentative> matches = published.stream()
+			.filter(representative -> representative.decisionKey() == group.producerKey()
+				&& representative.state().equals(requiredPlacement)
+				&& representative.compatibleActionSignaturesInCanonicalOrder()
+					.contains(action.normalizedSignature()))
+			.toList();
+		return matches.size() == 1;
+	}
+
+	private static String membership(ExecType execType, FederatedOutput output) {
+		return execType.name() + '/' + output.name();
 	}
 
 	private static Comparator<ObligationReceipt> receiptComparator() {

@@ -8,14 +8,21 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 import java.util.List;
 import java.util.Objects;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable, owner-bound input to the exact MinST selector. */
 public final class MinStExactCostFacts {
 	public enum Direction { UPLOAD, DOWNLOAD }
+	public enum MembershipAuthorityKind { LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE }
 	public enum ContributionKind {
 		CP_UNARY, FED_UNARY, UPLOAD, DOWNLOAD, HARD_EXEC, HARD_OUTPUT,
 		HARD_UPLOAD_OR, HARD_DOWNLOAD_OR, PRICE_UPLOAD_OR, PRICE_DOWNLOAD_OR
@@ -63,6 +70,72 @@ public final class MinStExactCostFacts {
 		public long computeNodeId() { return computeNodeId; }
 		public long placementNodeId() { return placementNodeId; }
 		public List<PlacementState> legalStatesInCanonicalOrder() { return legalStates; }
+	}
+
+	/** Exact pre-solve authority for one cut membership and its retained concrete state. */
+	public static final class MembershipRepresentative {
+		private final CompiledHopKey decisionKey;
+		private final ExecType execType;
+		private final FederatedOutput output;
+		private final PlacementState state;
+		private final MembershipAuthorityKind authorityKind;
+		private final DurableAnchorKey durableAnchor;
+		private final CandidateRuleFact candidateRuleFact;
+		private final List<CandidateInputState> orderedInputs;
+		private final CapturedInvocationEvidence invocationEvidence;
+		private final List<String> compatibleActionSignatures;
+
+		MembershipRepresentative(CompiledHopKey decisionKey, ExecType execType,
+			FederatedOutput output, PlacementState state, MembershipAuthorityKind authorityKind,
+			DurableAnchorKey durableAnchorOrNull, CandidateRuleFact candidateRuleFactOrNull,
+			List<CandidateInputState> orderedInputs,
+			CapturedInvocationEvidence invocationEvidenceOrNull,
+			List<String> compatibleActionSignatures) {
+			this.decisionKey = Objects.requireNonNull(decisionKey, "decisionKey");
+			this.execType = Objects.requireNonNull(execType, "execType");
+			this.output = Objects.requireNonNull(output, "output");
+			this.state = Objects.requireNonNull(state, "state");
+			this.authorityKind = Objects.requireNonNull(authorityKind, "authorityKind");
+			this.durableAnchor = durableAnchorOrNull;
+			this.candidateRuleFact = candidateRuleFactOrNull;
+			this.orderedInputs = List.copyOf(Objects.requireNonNull(orderedInputs, "orderedInputs"));
+			this.invocationEvidence = invocationEvidenceOrNull;
+			this.compatibleActionSignatures = compatibleActionSignatures.stream()
+				.map(value -> Objects.requireNonNull(value, "compatible action signature"))
+				.distinct().sorted().toList();
+			if(state.execType() != execType || state.output() != output)
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_STATE_MISMATCH");
+			if(output == FederatedOutput.FOUT && (state.fType() == null
+				|| state.fType() == FType.OTHER || state.fType() == FType.PART))
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_FTYPE_NONCONCRETE");
+			if(authorityKind == MembershipAuthorityKind.LEGAL_SINGLETON) {
+				if(durableAnchor != null || candidateRuleFact != null || invocationEvidence != null
+					|| !this.orderedInputs.isEmpty())
+					throw new IllegalArgumentException("MINST_EXACT_SINGLETON_AUTHORITY_MIXED");
+			}
+			else if(authorityKind == MembershipAuthorityKind.DURABLE_ANCHOR) {
+				if(durableAnchor == null || candidateRuleFact != null || invocationEvidence != null
+					|| !this.orderedInputs.isEmpty() || state.fType() != durableAnchor.fType())
+					throw new IllegalArgumentException("MINST_EXACT_ANCHOR_AUTHORITY_MISMATCH");
+			}
+			else if(candidateRuleFact == null || invocationEvidence == null || durableAnchor != null
+				|| candidateRuleFact.key().parentOccurrence() != decisionKey
+				|| !candidateRuleFact.key().orderedInputs().equals(this.orderedInputs))
+				throw new IllegalArgumentException("MINST_EXACT_RULE_AUTHORITY_MISMATCH");
+		}
+
+		public CompiledHopKey decisionKey() { return decisionKey; }
+		public ExecType execType() { return execType; }
+		public FederatedOutput output() { return output; }
+		public PlacementState state() { return state; }
+		public MembershipAuthorityKind authorityKind() { return authorityKind; }
+		public DurableAnchorKey durableAnchorOrNull() { return durableAnchor; }
+		public CandidateRuleFact candidateRuleFactOrNull() { return candidateRuleFact; }
+		public List<CandidateInputState> orderedInputs() { return orderedInputs; }
+		public CapturedInvocationEvidence invocationEvidenceOrNull() { return invocationEvidence; }
+		public List<String> compatibleActionSignaturesInCanonicalOrder() {
+			return compatibleActionSignatures;
+		}
 	}
 
 	public static final class EdgeContribution {
@@ -199,6 +272,7 @@ public final class MinStExactCostFacts {
 	private final String analysisFingerprint;
 	private final List<CompiledHopKey> orderedScope;
 	private final List<DecisionFact> decisions;
+	private final List<MembershipRepresentative> membershipRepresentatives;
 	private final List<DirectedEdgeFact> edges;
 	private final List<AuxiliaryGroupFact> groups;
 	private final List<ObligationFact> obligations;
@@ -217,6 +291,8 @@ public final class MinStExactCostFacts {
 		this.analysisFingerprint = analysisFingerprint;
 		this.orderedScope = List.copyOf(orderedScope);
 		this.decisions = List.copyOf(decisionFactsInScopeOrder);
+		this.membershipRepresentatives = MinStExactCostFactsProducer.membershipRepresentatives(
+			analysis, this.decisions);
 		this.edges = List.copyOf(directedEdgesInDerivationOrder);
 		this.groups = List.copyOf(auxiliaryGroupsInCanonicalOrder);
 		this.obligations = List.copyOf(obligationFactsInCanonicalOrder);
@@ -229,6 +305,10 @@ public final class MinStExactCostFacts {
 	public long sourceNodeId() { return -1L; }
 	public long sinkNodeId() { return -2L; }
 	public List<DecisionFact> decisionFactsInScopeOrder() { return decisions; }
+	public List<MembershipRepresentative> membershipRepresentativesInCanonicalOrder() {
+		return Objects.requireNonNull(membershipRepresentatives,
+			"MINST_EXACT_MEMBERSHIP_AUTHORITY_NOT_PUBLISHED");
+	}
 	public List<DirectedEdgeFact> directedEdgesInDerivationOrder() { return edges; }
 	public List<AuxiliaryGroupFact> auxiliaryGroupsInCanonicalOrder() { return groups; }
 	public List<ObligationFact> obligationFactsInCanonicalOrder() { return obligations; }
