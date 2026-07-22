@@ -560,20 +560,29 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
 		Map<CompiledHopKey, SelectedDpState> selectedStates) {
-		for(var node : analysis.graph().decisionNodes()) {
-			if(selectedStates.containsKey(node.key()))
+		List<CompiledHopKey> ordinaryKeys = analysis.graph().decisionNodes().stream()
+			.filter(node -> node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT)
+			.map(node -> node.key()).filter(key -> !selectedStates.containsKey(key)).sorted().toList();
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing = new LinkedHashMap<>();
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected = new LinkedHashMap<>();
+		for(CompiledHopKey key : ordinaryKeys) {
+			outgoing.put(key, new HashSet<>());
+			undirected.put(key, new HashSet<>());
+		}
+		for(var edge : analysis.compiledInputEdgesInCanonicalOrder())
+			addComponentEdge(edge.producer(), edge.consumer(), outgoing, undirected);
+		for(var edge : analysis.logicalTransientInputsInCanonicalOrder())
+			addComponentEdge(edge.sourceWrite(), edge.targetRead(), outgoing, undirected);
+		Set<CompiledHopKey> assigned = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(int componentIndex = ordinaryKeys.size() - 1; componentIndex >= 0; componentIndex--) {
+			CompiledHopKey first = ordinaryKeys.get(componentIndex);
+			if(assigned.contains(first))
 				continue;
-			if(node.kind() == NodeKind.FUNCTION_INPUT || node.kind() == NodeKind.FUNCTION_OUTPUT)
-				continue;
-			PlacementAnalysis.HopOccurrenceProjection occurrence = analysis.occurrences().stream()
-				.filter(candidate -> candidate.key() == node.key()).findFirst().orElseThrow();
-			FederatedPlannerDpMemoTable.FedPlan plan = memoTable.getCheapestPlanForOccurrence(occurrence);
-			if(plan != null)
-				rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-					rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
-			else
-				throw new IllegalStateException("DP memo omitted exact decision occurrence " + node.key()
-					+ " carriers=" + memoTable.describePlanCarriers(occurrence));
+			List<CompiledHopKey> component = collectWeakComponent(first, undirected);
+			assigned.addAll(component);
+			completeDisconnectedComponent(analysis, memoTable, component,
+				componentSinkRoots(component, outgoing), outputDecisions, visitedPlanHops, fTypeMap,
+				rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
 		}
 		boolean progressed;
 		do {
@@ -597,6 +606,188 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 		while(progressed);
+	}
+
+	private static void addComponentEdge(CompiledHopKey producer, CompiledHopKey consumer,
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing,
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected) {
+		if(!outgoing.containsKey(producer) || !outgoing.containsKey(consumer))
+			return;
+		outgoing.get(producer).add(consumer);
+		undirected.get(producer).add(consumer);
+		undirected.get(consumer).add(producer);
+	}
+
+	private static List<CompiledHopKey> collectWeakComponent(CompiledHopKey first,
+		Map<CompiledHopKey, Set<CompiledHopKey>> undirected) {
+		Set<CompiledHopKey> seen = new HashSet<>();
+		Queue<CompiledHopKey> queue = new ArrayDeque<>();
+		queue.add(first);
+		while(!queue.isEmpty()) {
+			CompiledHopKey key = queue.remove();
+			if(!seen.add(key))
+				continue;
+			List<CompiledHopKey> neighbors = new ArrayList<>(undirected.getOrDefault(key, Set.of()));
+			Collections.sort(neighbors);
+			queue.addAll(neighbors);
+		}
+		List<CompiledHopKey> component = new ArrayList<>(seen);
+		Collections.sort(component);
+		return component;
+	}
+
+	private static List<CompiledHopKey> componentSinkRoots(List<CompiledHopKey> component,
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing) {
+		Set<CompiledHopKey> universe = new HashSet<>();
+		universe.addAll(component);
+		Map<CompiledHopKey, Integer> index = new HashMap<>();
+		Map<CompiledHopKey, Integer> lowLink = new HashMap<>();
+		Set<CompiledHopKey> onStack = new HashSet<>();
+		ArrayDeque<CompiledHopKey> stack = new ArrayDeque<>();
+		List<List<CompiledHopKey>> sccs = new ArrayList<>();
+		int[] nextIndex = {0};
+		for(CompiledHopKey key : component)
+			if(!index.containsKey(key))
+				collectStrongComponent(key, universe, outgoing, index, lowLink, onStack, stack, nextIndex, sccs);
+		Map<CompiledHopKey, Integer> owner = new HashMap<>();
+		for(int i = 0; i < sccs.size(); i++)
+			for(CompiledHopKey key : sccs.get(i))
+				owner.put(key, i);
+		boolean[] sink = new boolean[sccs.size()];
+		java.util.Arrays.fill(sink, true);
+		for(CompiledHopKey producer : component)
+			for(CompiledHopKey consumer : outgoing.getOrDefault(producer, Set.of()))
+				if(universe.contains(consumer) && !owner.get(producer).equals(owner.get(consumer)))
+					sink[owner.get(producer)] = false;
+		List<CompiledHopKey> roots = new ArrayList<>();
+		for(int i = 0; i < sccs.size(); i++)
+			if(sink[i])
+				roots.addAll(sccs.get(i));
+		Collections.sort(roots);
+		if(roots.isEmpty())
+			throw new IllegalStateException("DP disconnected component has no sink roots: " + component);
+		return roots;
+	}
+
+	private static void collectStrongComponent(CompiledHopKey key, Set<CompiledHopKey> universe,
+		Map<CompiledHopKey, Set<CompiledHopKey>> outgoing, Map<CompiledHopKey, Integer> index,
+		Map<CompiledHopKey, Integer> lowLink, Set<CompiledHopKey> onStack, ArrayDeque<CompiledHopKey> stack,
+		int[] nextIndex, List<List<CompiledHopKey>> sccs) {
+		index.put(key, nextIndex[0]);
+		lowLink.put(key, nextIndex[0]++);
+		stack.push(key);
+		onStack.add(key);
+		List<CompiledHopKey> children = new ArrayList<>(outgoing.getOrDefault(key, Set.of()));
+		Collections.sort(children);
+		for(CompiledHopKey child : children) {
+			if(!universe.contains(child))
+				continue;
+			if(!index.containsKey(child)) {
+				collectStrongComponent(child, universe, outgoing, index, lowLink, onStack, stack, nextIndex, sccs);
+				lowLink.put(key, Math.min(lowLink.get(key), lowLink.get(child)));
+			}
+			else if(onStack.contains(child))
+				lowLink.put(key, Math.min(lowLink.get(key), index.get(child)));
+		}
+		if(!lowLink.get(key).equals(index.get(key)))
+			return;
+		List<CompiledHopKey> scc = new ArrayList<>();
+		CompiledHopKey member;
+		do {
+			member = stack.pop();
+			onStack.remove(member);
+			scc.add(member);
+		} while(member != key);
+		Collections.sort(scc);
+		sccs.add(scc);
+	}
+
+	private void completeDisconnectedComponent(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memoTable, List<CompiledHopKey> component, List<CompiledHopKey> roots,
+		Map<Long, FederatedOutput> outputDecisions, Set<CompiledHopKey> visitedPlanHops,
+		Map<Long, FType> fTypeMap, Map<Long, ConflictEntry> rewriteConflictCheckMap,
+		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
+		Map<CompiledHopKey, SelectedDpState> selectedStates) {
+		Map<CompiledHopKey, PlacementAnalysis.HopOccurrenceProjection> occurrences = new IdentityHashMap<>();
+		for(var occurrence : analysis.occurrences())
+			occurrences.put(occurrence.key(), occurrence);
+		List<FederatedPlannerDpMemoTable.FedPlan> rootPlans = new ArrayList<>();
+		for(CompiledHopKey root : roots) {
+			PlacementAnalysis.HopOccurrenceProjection occurrence = occurrences.get(root);
+			if(occurrence == null)
+				throw new IllegalStateException("DP component sink lacks exact occurrence: " + root);
+			FederatedPlannerDpMemoTable.FedPlan plan = memoTable.getCheapestPlanForOccurrence(occurrence);
+			if(plan == null)
+				throw new IllegalStateException("DP memo omitted component sink " + root
+					+ " carriers=" + memoTable.describePlanCarriers(occurrence));
+			rootPlans.add(plan);
+		}
+
+		Map<Long, FederatedOutput> localDecisions = new LinkedHashMap<>(outputDecisions);
+		for(FederatedPlannerDpMemoTable.FedPlan rootPlan : rootPlans)
+			localDecisions = simulateOutputDecisionsWithLocks(
+				memoTable, rootPlan, localDecisions, outputDecisions);
+		Map<Long, ConflictEntry> localConflicts = copyConflictEntries(rewriteConflictCheckMap);
+		for(FederatedPlannerDpMemoTable.FedPlan rootPlan : rootPlans)
+			mergeConflictEntries(localConflicts, collectConflictsSingleBFS(memoTable, rootPlan, localDecisions));
+		Map<CompiledHopKey, SelectedDpState> localSelected = new IdentityHashMap<>(selectedStates);
+		Set<CompiledHopKey> localVisited = Collections.newSetFromMap(new IdentityHashMap<>());
+		localVisited.addAll(visitedPlanHops);
+		Map<Long, FType> localFTypes = new LinkedHashMap<>(fTypeMap);
+		Map<Long, LocalMaterializeRequest> localRequests = copyLocalMaterializeRequests(localMaterializeRequests);
+		for(FederatedPlannerDpMemoTable.FedPlan rootPlan : rootPlans)
+			rewriteHop(rootPlan, memoTable, localDecisions, localVisited, localFTypes,
+				localConflicts, true, localRequests, localSelected);
+
+		Set<CompiledHopKey> delta = Collections.newSetFromMap(new IdentityHashMap<>());
+		delta.addAll(localSelected.keySet());
+		delta.removeAll(selectedStates.keySet());
+		Set<CompiledHopKey> expected = Collections.newSetFromMap(new IdentityHashMap<>());
+		expected.addAll(component);
+		if(!delta.equals(expected))
+			throw new IllegalStateException("DP disconnected component coverage differs: expected="
+				+ component + " actual=" + delta);
+		for(Map.Entry<CompiledHopKey, SelectedDpState> lock : selectedStates.entrySet())
+			if(localSelected.get(lock.getKey()) != lock.getValue())
+				throw new IllegalStateException("DP component changed boundary lock " + lock.getKey());
+		for(Map.Entry<Long, FederatedOutput> lock : outputDecisions.entrySet())
+			if(localDecisions.get(lock.getKey()) != lock.getValue())
+				throw new IllegalStateException("DP component changed output boundary lock " + lock.getKey());
+
+		for(CompiledHopKey key : component)
+			selectedStates.put(key, localSelected.get(key));
+		visitedPlanHops.addAll(localVisited);
+		fTypeMap.clear();
+		fTypeMap.putAll(localFTypes);
+		outputDecisions.clear();
+		outputDecisions.putAll(localDecisions);
+		rewriteConflictCheckMap.clear();
+		rewriteConflictCheckMap.putAll(localConflicts);
+		localMaterializeRequests.clear();
+		localMaterializeRequests.putAll(localRequests);
+	}
+
+	private static Map<Long, ConflictEntry> copyConflictEntries(Map<Long, ConflictEntry> source) {
+		Map<Long, ConflictEntry> copy = new LinkedHashMap<>();
+		source.forEach((key, value) -> copy.put(key, new ConflictEntry(value)));
+		return copy;
+	}
+
+	private static void mergeConflictEntries(Map<Long, ConflictEntry> target, Map<Long, ConflictEntry> additions) {
+		additions.forEach((key, value) -> {
+			ConflictEntry existing = target.get(key);
+			if(existing == null)
+				target.put(key, new ConflictEntry(value));
+			else
+				existing.merge(value);
+		});
+	}
+
+	private static Map<Long, LocalMaterializeRequest> copyLocalMaterializeRequests(
+		Map<Long, LocalMaterializeRequest> source) {
+		Map<Long, LocalMaterializeRequest> copy = new LinkedHashMap<>();
+		source.forEach((key, value) -> copy.put(key, new LocalMaterializeRequest(value)));
+		return copy;
 	}
 
 	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
@@ -6243,6 +6434,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			this.producerHop = producerHop;
 		}
 
+		private LocalMaterializeRequest(LocalMaterializeRequest source) {
+			this(source.producerHopID, source.producerHop);
+			this.consumerHops.putAll(source.consumerHops);
+			this.consumerOutputs.putAll(source.consumerOutputs);
+			this.fTypeHint = source.fTypeHint;
+		}
+
 		private void addConsumer(long consumerHopID, Hop consumerHop, FederatedOutput consumerOutput, FType fType) {
 			consumerHops.put(consumerHopID, consumerHop);
 			consumerOutputs.put(consumerHopID, consumerOutput);
@@ -6368,6 +6566,26 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			this.seenFOUT = (out == FederatedOutput.FOUT);
 			this.canChooseLOUT = true;
 			this.canChooseFOUT = true;
+		}
+
+		ConflictEntry(ConflictEntry source) {
+			this.parents = new LinkedHashSet<>(source.parents);
+			this.memberHopIDs = new LinkedHashSet<>(source.memberHopIDs);
+			this.selectedMemberPlans = new LinkedHashMap<>(source.selectedMemberPlans);
+			this.seenLOUT = source.seenLOUT;
+			this.seenFOUT = source.seenFOUT;
+			this.canChooseLOUT = source.canChooseLOUT;
+			this.canChooseFOUT = source.canChooseFOUT;
+		}
+
+		void merge(ConflictEntry source) {
+			this.parents.addAll(source.parents);
+			this.memberHopIDs.addAll(source.memberHopIDs);
+			source.selectedMemberPlans.forEach(this.selectedMemberPlans::putIfAbsent);
+			this.seenLOUT |= source.seenLOUT;
+			this.seenFOUT |= source.seenFOUT;
+			this.canChooseLOUT &= source.canChooseLOUT;
+			this.canChooseFOUT &= source.canChooseFOUT;
 		}
 
 		void addUsage(FederatedOutput out, FederatedPlannerDpMemoTable.FedPlan parent, long memberHopID,
