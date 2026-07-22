@@ -19,6 +19,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
@@ -239,6 +240,7 @@ public final class MinStExactCostFacts {
 		private final AuxiliaryGroupFact group;
 		private final EndpointFact endpoint;
 		private final CompiledInputEdgeFact inputEdge;
+		private final ValueVersionKey sourceValueVersion;
 		private final TransferAuthorityKind authorityKind;
 		private final PlacementState requiredPlacement;
 		private final String authoritySignature;
@@ -249,7 +251,8 @@ public final class MinStExactCostFacts {
 		private final CandidateConsumerProfileFact consumerProfile;
 
 		private TransferAuthorityFact(AuxiliaryGroupFact group, EndpointFact endpoint,
-			CompiledInputEdgeFact inputEdge, TransferAuthorityKind authorityKind,
+			CompiledInputEdgeFact inputEdge, ValueVersionKey sourceValueVersion,
+			TransferAuthorityKind authorityKind,
 			PlacementState requiredPlacement, String authoritySignature,
 			RelocationAction actionOrNull, ObligationKey obligationOrNull,
 			CompiledInputEdgeFact anchorInputEdgeOrNull, DurableAnchorKey independentAnchorOrNull,
@@ -257,6 +260,7 @@ public final class MinStExactCostFacts {
 			this.group = Objects.requireNonNull(group, "group");
 			this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
 			this.inputEdge = Objects.requireNonNull(inputEdge, "inputEdge");
+			this.sourceValueVersion = Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
 			this.authorityKind = Objects.requireNonNull(authorityKind, "authorityKind");
 			this.requiredPlacement = Objects.requireNonNull(requiredPlacement, "requiredPlacement");
 			this.authoritySignature = Objects.requireNonNull(authoritySignature, "authoritySignature");
@@ -279,7 +283,8 @@ public final class MinStExactCostFacts {
 					|| obligation.consumer() != endpoint.consumerKey()
 					|| obligation.inputPosition() != endpoint.inputPosition()
 					|| obligation.relocationAction() != action.key()
-					|| obligation.sourceValueVersion() != action.key().sourceValueVersion()
+					|| obligation.sourceValueVersion() != sourceValueVersion
+					|| action.key().sourceValueVersion() != sourceValueVersion
 					|| obligation.requiredPlacement() != action.key().targetPlacement()
 					|| requiredPlacement != obligation.requiredPlacement()
 					|| !authoritySignature.equals(action.normalizedSignature()))
@@ -301,17 +306,19 @@ public final class MinStExactCostFacts {
 		}
 
 		static TransferAuthorityFact relocation(AuxiliaryGroupFact group, EndpointFact endpoint,
-			CompiledInputEdgeFact inputEdge, RelocationAction action, ObligationKey obligation) {
-			return new TransferAuthorityFact(group, endpoint, inputEdge,
+			CompiledInputEdgeFact inputEdge, ValueVersionKey sourceValueVersion,
+			RelocationAction action, ObligationKey obligation) {
+			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
 				TransferAuthorityKind.RELOCATION_OBLIGATION, obligation.requiredPlacement(),
 				action.normalizedSignature(), action, obligation, null, null, null);
 		}
 
 		static TransferAuthorityFact independentAnchor(AuxiliaryGroupFact group, EndpointFact endpoint,
-			CompiledInputEdgeFact inputEdge, CompiledInputEdgeFact anchorInputEdge,
+			CompiledInputEdgeFact inputEdge, ValueVersionKey sourceValueVersion,
+			CompiledInputEdgeFact anchorInputEdge,
 			DurableAnchorKey anchor, CandidateConsumerProfileFact profile,
 			PlacementState requiredPlacement, String authoritySignature) {
-			return new TransferAuthorityFact(group, endpoint, inputEdge,
+			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
 				TransferAuthorityKind.INDEPENDENT_ANCHOR, requiredPlacement, authoritySignature,
 				null, null, anchorInputEdge, anchor, profile);
 		}
@@ -319,6 +326,7 @@ public final class MinStExactCostFacts {
 		public AuxiliaryGroupFact group() { return group; }
 		public EndpointFact endpoint() { return endpoint; }
 		public CompiledInputEdgeFact inputEdge() { return inputEdge; }
+		public ValueVersionKey sourceValueVersion() { return sourceValueVersion; }
 		public TransferAuthorityKind authorityKind() { return authorityKind; }
 		public RelocationAction actionOrNull() { return action; }
 		public ObligationKey obligationOrNull() { return obligation; }

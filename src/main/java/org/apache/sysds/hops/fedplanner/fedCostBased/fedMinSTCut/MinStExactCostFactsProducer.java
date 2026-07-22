@@ -65,6 +65,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartit
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.ForStatement;
@@ -1126,7 +1127,7 @@ public final class MinStExactCostFactsProducer {
 					&& obligation.inputPosition() == endpoint.inputPosition()
 					&& obligation.requiredPlacement() == action.key().targetPlacement())
 					result.add(TransferAuthorityFact.relocation(group, endpoint, inputEdge,
-						action, obligation));
+						producer.valueVersion(), action, obligation));
 		}
 	}
 
@@ -1158,18 +1159,21 @@ public final class MinStExactCostFactsProducer {
 					continue;
 				PlacementState required = new PlacementState(ExecType.FED, FederatedOutput.FOUT,
 					anchor.fType(), false);
-				String signature = independentAnchorSignature(group, endpoint, inputEdge, sibling,
-					anchor, profile, required);
+				NeutralPlacementGraph.Node producer = analysis.graph().node(group.producerKey()).orElseThrow();
+				String signature = independentAnchorSignature(group, endpoint, inputEdge,
+					producer.valueVersion(), sibling, anchor, profile, required);
 				result.add(TransferAuthorityFact.independentAnchor(group, endpoint, inputEdge,
-					sibling, anchor, profile, required, signature));
+					producer.valueVersion(), sibling, anchor, profile, required, signature));
 			}
 		}
 	}
 
 	private static String independentAnchorSignature(AuxiliaryGroupFact group, EndpointFact endpoint,
-		CompiledInputEdgeFact inputEdge, CompiledInputEdgeFact anchorInputEdge,
+		CompiledInputEdgeFact inputEdge, ValueVersionKey source,
+		CompiledInputEdgeFact anchorInputEdge,
 		DurableAnchorKey anchor, CandidateConsumerProfileFact profile, PlacementState required) {
 		return "INDEPENDENT_ANCHOR|" + group.direction() + '|'
+			+ source.normalizedSignature() + '|'
 			+ inputEdge.producer().normalizedSignature() + '|'
 			+ inputEdge.consumer().normalizedSignature() + '|' + inputEdge.inputPosition() + '|'
 			+ anchorInputEdge.producer().normalizedSignature() + '|'
@@ -1434,6 +1438,11 @@ public final class MinStExactCostFactsProducer {
 			if(authority.requiredPlacement().fType() != authority.group().conversionType())
 				fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 					"Transfer authority identity payload differs from its owner");
+			NeutralPlacementGraph.Node producer = analysis.graph().node(
+				authority.group().producerKey()).orElseThrow();
+			if(authority.sourceValueVersion() != producer.valueVersion())
+				fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
+					"Transfer authority source version differs from its exact producer");
 			switch(authority.authorityKind()) {
 				case RELOCATION_OBLIGATION -> validateRelocationAuthority(analysis, authority);
 				case INDEPENDENT_ANCHOR -> validateIndependentAnchorAuthority(analysis, authority);
@@ -1485,7 +1494,7 @@ public final class MinStExactCostFactsProducer {
 			|| authority.requiredPlacement().output() != FederatedOutput.FOUT
 			|| authority.requiredPlacement().shapeDependent()
 			|| !authority.authoritySignature().equals(independentAnchorSignature(authority.group(),
-				authority.endpoint(), authority.inputEdge(), anchorEdge, anchor, profile,
+				authority.endpoint(), authority.inputEdge(), authority.sourceValueVersion(), anchorEdge, anchor, profile,
 				authority.requiredPlacement())))
 			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 				"Independent-anchor transfer authority differs from its exact owner");
@@ -1504,6 +1513,7 @@ public final class MinStExactCostFactsProducer {
 				|| left.endpoint().consumerKey() != right.endpoint().consumerKey()
 				|| left.endpoint().inputPosition() != right.endpoint().inputPosition()
 				|| left.inputEdge() != right.inputEdge()
+				|| left.sourceValueVersion() != right.sourceValueVersion()
 				|| !left.requiredPlacement().equals(right.requiredPlacement())
 				|| !left.authoritySignature().equals(right.authoritySignature())
 				|| left.actionOrNull() != right.actionOrNull()
@@ -1618,6 +1628,7 @@ public final class MinStExactCostFactsProducer {
 				.append(authority.endpoint().producerKey().normalizedSignature()).append(':')
 				.append(authority.endpoint().consumerKey().normalizedSignature()).append(':')
 				.append(authority.endpoint().inputPosition()).append(':')
+				.append(authority.sourceValueVersion().normalizedSignature()).append(':')
 				.append(authority.requiredPlacement().normalizedSignature()).append(':')
 				.append(authority.authoritySignature()).append(':')
 				.append(authority.actionOrNull() == null ? "-"
