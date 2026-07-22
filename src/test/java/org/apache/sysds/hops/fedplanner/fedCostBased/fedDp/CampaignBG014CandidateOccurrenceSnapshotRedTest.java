@@ -111,7 +111,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 	@Test
 	public void scalarTransientForwardReceiptIsExactAndHostileVariantsReject() {
-		DpInvocationReceipt invocation = invoke("B-11");
+		DpInvocationReceipt invocation = invoke("B-15");
 		PreSelectionSemanticBlock block = invocation.semanticConsumption().semanticBlock();
 		NeutralEnumerationContext base = block.context();
 		HopOccurrenceProjection parent = block.candidateSnapshots().stream()
@@ -182,7 +182,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			List.of(), List.of(new TransientForwardDependencyEntry(matrix, matrixSource.key(), 0,
 				occurrenceState(matrixSource, base))), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
 
-		DpInvocationReceipt foreign = invoke("B-11");
+		DpInvocationReceipt foreign = invoke("B-15");
 		HopOccurrenceProjection foreignSource = foreign.analysis().occurrences().get(source.normalizedOrdinal());
 		assertIllegal(() -> withForward(base,
 			new RewireTransientForwardEdge(foreignSource.key(), parent.key())));
