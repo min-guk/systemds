@@ -54,7 +54,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCos
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.ExactPlacementRegistration;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -219,7 +225,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		DpSemanticConsumptionReceipt semanticConsumption,
 		List<AppliedPlanReceipt> appliedPlans, List<AdditionalRootInvocationReceipt> additionalRootInvocations,
 		InvocationCounters counters,
-		String analysisFingerprintBefore, String analysisFingerprintAfter)
+		String analysisFingerprintBefore, String analysisFingerprintAfter,
+		PlacementEmissionReceipt emissionReceipt)
 		implements AFederatedPlanner.PlannerInvocationReceipt {
 		public DpInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
@@ -228,6 +235,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Objects.requireNonNull(exactSelection, "exactSelection");
 			Objects.requireNonNull(semanticConsumption, "semanticConsumption");
 			Objects.requireNonNull(counters, "counters");
+			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			appliedPlans = List.copyOf(appliedPlans);
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
 			if(analysis != exactSelection.analysis() || memo != exactSelection.memo()
@@ -295,13 +303,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	public record DpDynamicInvocationReceipt(PlacementAnalysis analysis,
 		FederatedPlannerDpMemoTable memoTable, DpEnumerationResult enumerationResult,
-		String fingerprintBefore, String fingerprintAfter) {
+		String fingerprintBefore, String fingerprintAfter, PlacementEmissionReceipt emissionReceipt) {
 		public DpDynamicInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(memoTable, "memoTable");
 			Objects.requireNonNull(enumerationResult, "enumerationResult");
 			Objects.requireNonNull(fingerprintBefore, "fingerprintBefore");
 			Objects.requireNonNull(fingerprintAfter, "fingerprintAfter");
+			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(memoTable.analysis() != analysis
 				|| enumerationResult.rewireSnapshot().analysis() != analysis
 				|| enumerationResult.semanticBlock().context().analysis() != analysis)
@@ -320,6 +329,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final boolean ENABLE_TRANSIENT_FAMILY_SCORING_TRACE = false;
 	private static final boolean ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION = false;
 	private static final boolean ENABLE_FORCED_TRANSIENT_NEIGHBORHOOD_REEVAL = false;
+	private record SelectedDpState(ExecType execType, FederatedOutput output, FType fType,
+		boolean derivedFedFout) { }
 
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
@@ -370,6 +381,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Set<Long> visitedPlanHops = new HashSet<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests = new LinkedHashMap<>();
+		Map<Long, SelectedDpState> selectedStates = new LinkedHashMap<>();
 		List<AppliedPlanReceipt> appliedPlans = new ArrayList<>();
 		List<AdditionalRootInvocationReceipt> additionalRootInvocations = new ArrayList<>();
 
@@ -383,7 +395,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			appliedPlans.add(new AppliedPlanReceipt(appliedPlans.size(), false, edge.getLeft(),
 				edge.getRight(), childPlan, childPlan.getHopRef(), executableHopId, executableHop));
 			rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-				rewriteConflictCheckMap, true, localMaterializeRequests);
+				rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
 		}
 
 		for(long rootHopID : memoTable.getAdditionalRootHopIDs()) {
@@ -405,7 +417,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				"additionalRoot.executableHop");
 			boolean alreadyVisited = visitedPlanHops.contains(rootHopID);
 			rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-				rewriteConflictCheckMap, true, localMaterializeRequests);
+				rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
 			AdditionalRootDisposition disposition = alreadyVisited
 				? AdditionalRootDisposition.ALREADY_VISITED : AdditionalRootDisposition.APPLIED;
 			additionalRootInvocations.add(new AdditionalRootInvocationReceipt(
@@ -417,9 +429,10 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		applyDeferredOutputDecisionStates(
-			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
-		ExactPlacementRegistration.registerProgram(prog, fTypeMap, analysis);
-		registerDpLocalMaterializeRequests(localMaterializeRequests);
+			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
+		NormalizedPlannerResult normalized = normalizeDpSelection(analysis, selectedStates, exactSelection);
+		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
+			PlacementEmissionTransaction.FailureInjector.none());
 		int noOps = (int) additionalRootInvocations.stream()
 			.filter(invocation -> invocation.disposition() == AdditionalRootDisposition.ALREADY_VISITED).count();
 		InvocationCounters counters = new InvocationCounters(1, 1, 1, appliedPlans.size(),
@@ -429,7 +442,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			enumerationResult, analysis, exactSelection, fingerprintBefore, fingerprintAfter);
 		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, semanticConsumption, appliedPlans,
 			additionalRootInvocations, counters,
-			fingerprintBefore, fingerprintAfter);
+			fingerprintBefore, fingerprintAfter, emission);
 	}
 
 	@Override
@@ -460,6 +473,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Set<Long> visitedPlanHops = new HashSet<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests = new LinkedHashMap<>();
+		Map<Long, SelectedDpState> selectedStates = new LinkedHashMap<>();
 
 		for (Pair<Long, FederatedOutput> childFedPlanPair : optimalPlan.getChildFedPlans()) {
 			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childFedPlanPair);
@@ -468,7 +482,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				continue;
 			}
 					rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-						rewriteConflictCheckMap, true, localMaterializeRequests);
+						rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
 		}
 
 		for (long rootHopID : memoTable.getAdditionalRootHopIDs()) {
@@ -484,16 +498,38 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				(lPlan.getCumulativeCost() <= fPlan.getCumulativeCost()) ? lPlan : fPlan;
 					if (seed != null)
 						rewriteHop(seed, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-							rewriteConflictCheckMap, true, localMaterializeRequests);
+							rewriteConflictCheckMap, true, localMaterializeRequests, selectedStates);
 			}
 
 		applyDeferredOutputDecisionStates(
-			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests);
-		ExactPlacementRegistration.registerProgram(prog, fTypeMap, analysis);
-		registerDpLocalMaterializeRequests(localMaterializeRequests);
+			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
+		DpPlacementAdapter.ExactSelection exactSelection =
+			new DpPlacementAdapter().selectExact(analysis, memoTable, optimalPlan);
+		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog,
+			normalizeDpSelection(analysis, selectedStates, exactSelection),
+			PlacementEmissionTransaction.FailureInjector.none());
 		String fingerprintAfter = analysis.analysisFingerprint();
 		return new DpDynamicInvocationReceipt(
-			analysis, memoTable, enumerationResult, fingerprintBefore, fingerprintAfter);
+			analysis, memoTable, enumerationResult, fingerprintBefore, fingerprintAfter, emission);
+	}
+
+	private static NormalizedPlannerResult normalizeDpSelection(PlacementAnalysis analysis,
+		Map<Long, SelectedDpState> selected, DpPlacementAdapter.ExactSelection exactSelection) {
+		Map<CompiledHopKey, PlacementState> assignment = new LinkedHashMap<>();
+		for(var node : analysis.graph().decisionNodes()) {
+			Hop hop = analysis.hop(node.key()).orElseThrow();
+			SelectedDpState choice = selected.get(hop.getHopID());
+			if(choice == null)
+				throw new IllegalStateException("DP selection omitted " + node.key());
+			List<PlacementState> matches = node.legalAlternatives().stream()
+				.filter(state -> state.execType() == choice.execType() && state.output() == choice.output())
+				.filter(state -> choice.fType() == null || state.fType() == choice.fType()).toList();
+			if(matches.size() != 1)
+				throw new IllegalStateException("DP selection is not an exact neutral state: " + node.key());
+			assignment.put(node.key(), matches.get(0));
+		}
+		return NormalizedPlannerResults.create(analysis, "DP", assignment,
+			"objectiveBits=" + exactSelection.objectiveCostBits());
 	}
 
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
@@ -502,7 +538,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Set<Long> visitedPlanHops,
 		Map<Long, FType> fTypeMap) {
 
-		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, null, false, null);
+		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, null, false, null, null);
 	}
 
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
@@ -512,7 +548,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FType> fTypeMap,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap) {
 
-		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, rewriteConflictCheckMap, false, null);
+		rewriteHop(plan, memoTable, outputDecisions, visitedPlanHops, fTypeMap, rewriteConflictCheckMap, false, null, null);
 	}
 
 	private void rewriteHop(FederatedPlannerDpMemoTable.FedPlan plan,
@@ -522,7 +558,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FType> fTypeMap,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		boolean allowOutputDecisionOverride,
-		Map<Long, LocalMaterializeRequest> localMaterializeRequests) {
+		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
+		Map<Long, SelectedDpState> selectedStates) {
 
 		long planHopId = plan.getHopRef().getHopID();
 		if (visitedPlanHops != null && !visitedPlanHops.add(planHopId))
@@ -559,7 +596,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					collectDpLocalMaterializeRequest(
 						memoTable, effectivePlan, childFedPlanPair, childPlan, localMaterializeRequests);
 					rewriteHop(childPlan, memoTable, outputDecisions, visitedPlanHops, fTypeMap,
-						rewriteConflictCheckMap, false, localMaterializeRequests);
+						rewriteConflictCheckMap, false, localMaterializeRequests, selectedStates);
 			}
 
 			Hop hopRef = effectivePlan.getHopRef();
@@ -577,9 +614,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			boolean derivedFedFout = execType == ExecType.FED
 				&& outType == FederatedOutput.FOUT
 				&& effectivePlan.isDerivedFedFout();
-				applyPlannedHopState(hopRef, execType, outType, derivedFedFout);
-				if (targetHop != hopRef && applyStateToTargetHop)
-					applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
+				if(selectedStates == null) {
+					applyPlannedHopState(hopRef, execType, outType, derivedFedFout);
+					if(targetHop != hopRef && applyStateToTargetHop)
+						applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
+				}
+				else if(applyStateToTargetHop)
+					selectedStates.put(origHopId, new SelectedDpState(execType, outType,
+						effectivePlan.getFType(), derivedFedFout));
 				if (!applyStateToTargetHop && FederatedPlannerTrace.shouldTrace(targetHop)) {
 					FederatedPlannerTrace.log(targetHop, "DP-Rewrite-SkipVirtualCloneTargetState",
 						String.format(Locale.ROOT,
@@ -587,8 +629,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						planHopId, targetHop.getHopID(), execType, outType,
 						formatPlannerRecompileState(FederatedPlannerUtils.getPlannerRecompileState(targetHop))));
 			}
-		registerPlannerRecompileState(
-					hopRef, applyStateToTargetHop ? targetHop : null, execType, outType);
+		if(selectedStates == null)
+			registerPlannerRecompileState(hopRef, applyStateToTargetHop ? targetHop : null, execType, outType);
 
 		FType fType = effectivePlan.getFType();
 		FType forwardingFType = effectivePlan.getCpFoutTypeOrFType();
@@ -609,7 +651,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable,
 		Map<Long, FederatedOutput> outputDecisions,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
-		Map<Long, LocalMaterializeRequest> localMaterializeRequests) {
+		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
+		Map<Long, SelectedDpState> selectedStates) {
 
 		if (memoTable == null || outputDecisions == null || outputDecisions.isEmpty())
 			return;
@@ -630,15 +673,14 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			// selected-root rewrite traversal. If a concrete traversal already registered
 			// a state for this executable hop, keep that earlier selected state instead
 			// of letting an unvisited clone/side-branch decision overwrite it.
-			FederatedPlannerUtils.PlannerRecompileState existing =
-				FederatedPlannerUtils.getPlannerRecompileState(targetHop);
+			SelectedDpState existing = selectedStates == null ? null : selectedStates.get(origHopID);
 			if (existing != null) {
 				if (FederatedPlannerTrace.shouldTrace(targetHop)) {
 					FederatedPlannerTrace.log(targetHop, "DP-Rewrite-DeferredOutputDecisionSkip",
 						String.format(Locale.ROOT,
 							"decisionHop=%d origHop=%d desiredOut=%s existing=%s",
 							decisionHopID, origHopID, desiredOut,
-							formatPlannerRecompileState(existing)));
+							existing.execType() + "/" + existing.output()));
 				}
 				continue;
 			}
@@ -668,8 +710,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			boolean derivedFedFout = execType == ExecType.FED
 				&& outType == FederatedOutput.FOUT
 				&& selectedPlan.isDerivedFedFout();
-			applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
-			registerPlannerRecompileState(selectedPlan.getHopRef(), targetHop, execType, outType);
+			if(selectedStates == null) {
+				applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
+				registerPlannerRecompileState(selectedPlan.getHopRef(), targetHop, execType, outType);
+			}
+			else selectedStates.put(origHopID, new SelectedDpState(execType, outType,
+				selectedPlan.getFType(), derivedFedFout));
 			collectDeferredLocalMaterializeRequests(
 				memoTable, selectedPlan, outputDecisions, localMaterializeRequests);
 
