@@ -11,6 +11,8 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.Hop;
@@ -22,16 +24,22 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCos
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.MapEntryState;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NormalizedCandidateInputs;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.OracleInputState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.TransientForwardDependencyEntry;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -99,6 +107,111 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			assertImmutable(snapshot.orderedOracleInputs());
 		}
 		assertImmutable(block.candidateSnapshots());
+	}
+
+	@Test
+	public void scalarTransientForwardReceiptIsExactAndHostileVariantsReject() {
+		DpInvocationReceipt invocation = invoke("B-11");
+		PreSelectionSemanticBlock block = invocation.semanticConsumption().semanticBlock();
+		NeutralEnumerationContext base = block.context();
+		HopOccurrenceProjection parent = block.candidateSnapshots().stream()
+			.filter(snapshot -> snapshot.rawEntries().isEmpty() && snapshot.logicalEntries().isEmpty()
+				&& snapshot.orderedOracleInputs().isEmpty())
+			.map(snapshot -> base.analysis().occurrences().stream()
+				.filter(occurrence -> occurrence.key() == snapshot.parentOccurrence()).findFirst().orElseThrow())
+			.filter(occurrence -> occurrence.hop().getDataType() != DataType.MATRIX)
+			.findFirst().orElseThrow();
+		HopOccurrenceProjection source = base.rewireSnapshot().candidateOccurrences().stream()
+			.filter(occurrence -> occurrence != parent && occurrence.hop().getDataType() != DataType.MATRIX)
+			.filter(occurrence -> occurrenceState(occurrence, base) != null)
+			.findFirst().orElseThrow();
+		PlacementState selected = occurrenceState(source, base);
+		RewireTransientForwardEdge forward = new RewireTransientForwardEdge(source.key(), parent.key());
+		NeutralEnumerationContext exact = withForward(base, forward);
+		TransientForwardDependencyEntry entry = new TransientForwardDependencyEntry(
+			forward, source.key(), 0, selected);
+		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(),
+			List.of(), List.of(), List.of(entry), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE");
+		List<FType> localType = new ArrayList<>();
+		localType.add(null);
+		NormalizedCandidateInputs normalized = new NormalizedCandidateInputs(snapshot, Map.of(), localType,
+			List.of(source.hop()));
+		Assert.assertSame(snapshot, normalized.snapshot());
+		Assert.assertEquals(List.of(source.hop()), normalized.exactCollectedHops());
+		Assert.assertEquals(1, normalized.effectiveCollectedFTypes().size());
+		Assert.assertNull(normalized.effectiveCollectedFTypes().get(0));
+		Assert.assertTrue(snapshot.rawEntries().isEmpty());
+		Assert.assertTrue(snapshot.promotedEntries().isEmpty());
+		Assert.assertTrue(snapshot.logicalEntries().isEmpty());
+		Assert.assertTrue(snapshot.orderedOracleInputs().isEmpty());
+		Assert.assertSame(forward, snapshot.transientForwardDependencies().get(0).forwardEdge());
+		Assert.assertSame(selected, snapshot.transientForwardDependencies().get(0).selectedSourceState());
+		assertImmutable(snapshot.transientForwardDependencies());
+
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(), List.of(), List.of(),
+			List.of(entry, entry), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		RewireTransientForwardEdge stale = new RewireTransientForwardEdge(source.key(), parent.key());
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(), List.of(), List.of(),
+			List.of(new TransientForwardDependencyEntry(stale, source.key(), 0, selected)), List.of(),
+			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		RewireTransientForwardEdge reversed = new RewireTransientForwardEdge(parent.key(), source.key());
+		NeutralEnumerationContext reversedContext = withForward(base, reversed);
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(reversedContext, parent.key(), List.of(), List.of(), List.of(),
+			List.of(new TransientForwardDependencyEntry(reversed, parent.key(), 0,
+				occurrenceState(parent, base))), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		PlacementState federated = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(exact, parent.key(), List.of(), List.of(), List.of(),
+			List.of(new TransientForwardDependencyEntry(forward, source.key(), 0, federated)), List.of(),
+			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		List<FType> federatedType = new ArrayList<>();
+		federatedType.add(FType.ROW);
+		assertIllegal(() -> new NormalizedCandidateInputs(snapshot, Map.of(), federatedType,
+			List.of(source.hop())));
+		assertIllegal(() -> new NormalizedCandidateInputs(snapshot, Map.of(), localType,
+			List.of(parent.hop())));
+
+		HopOccurrenceProjection matrixSource = base.rewireSnapshot().candidateOccurrences().stream()
+			.filter(occurrence -> occurrence.hop().getDataType() == DataType.MATRIX)
+			.filter(occurrence -> occurrenceState(occurrence, base) != null).findFirst().orElseThrow();
+		HopOccurrenceProjection matrixParent = base.rewireSnapshot().candidateOccurrences().stream()
+			.filter(occurrence -> occurrence != matrixSource && occurrence.hop().getDataType() == DataType.MATRIX)
+			.findFirst().orElseThrow();
+		RewireTransientForwardEdge matrix = new RewireTransientForwardEdge(matrixSource.key(), matrixParent.key());
+		NeutralEnumerationContext matrixContext = withForward(base, matrix);
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(matrixContext, matrixParent.key(), List.of(), List.of(),
+			List.of(), List.of(new TransientForwardDependencyEntry(matrix, matrixSource.key(), 0,
+				occurrenceState(matrixSource, base))), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+
+		DpInvocationReceipt foreign = invoke("B-11");
+		HopOccurrenceProjection foreignSource = foreign.analysis().occurrences().get(source.normalizedOrdinal());
+		assertIllegal(() -> withForward(base,
+			new RewireTransientForwardEdge(foreignSource.key(), parent.key())));
+	}
+
+	private static PlacementState occurrenceState(HopOccurrenceProjection occurrence,
+		NeutralEnumerationContext context) {
+		return context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+				&& state.fType() == null).findFirst().orElse(null);
+	}
+
+	private static NeutralEnumerationContext withForward(NeutralEnumerationContext base,
+		RewireTransientForwardEdge forward) {
+		RewireOccurrenceSnapshot snapshot = base.rewireSnapshot();
+		List<RewireTransientForwardEdge> forwards = new ArrayList<>(snapshot.transientForwardEdges());
+		forwards.add(forward);
+		RewireOccurrenceSnapshot expanded = new RewireOccurrenceSnapshot(snapshot.analysis(), snapshot.program(),
+			snapshot.analysisFingerprint(), snapshot.occurrences(), snapshot.candidateOccurrences(),
+			snapshot.cloneReceipts(), snapshot.additionalRoots(), snapshot.consumerEdges(), forwards,
+			snapshot.cloneToOriginal(), snapshot.occurrenceByCarrier(), snapshot.activeScopeIds(),
+			snapshot.enumerationScopeKey());
+		return new NeutralEnumerationContext(base.analysis(), expanded, base.analysisFingerprint(), base.numWorkers(),
+			base.invocationEvidence(), base.privacy());
+	}
+
+	private static void assertIllegal(Runnable action) {
+		try { action.run(); Assert.fail("hostile transient-forward authority was accepted"); }
+		catch(IllegalArgumentException expected) { }
 	}
 
 	private static void assertRawCandidateOrder(DpInvocationReceipt invocation,
