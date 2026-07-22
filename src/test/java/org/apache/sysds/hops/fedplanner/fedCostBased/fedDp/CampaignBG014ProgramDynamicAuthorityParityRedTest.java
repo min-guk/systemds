@@ -8,9 +8,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileStateSnapshot;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.AppliedPlanReceipt;
@@ -20,6 +22,11 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
@@ -33,12 +40,45 @@ import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
 /** Executable RED for final program/dynamic DP authority and adapter-receipt parity. */
 public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
+	@Test
+	public void cfgReplayClosesExactPhysicalConsumerCandidateFacts() {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(compile("B-21"));
+		Assert.assertEquals("B-21 must retain exactly one logical TWrite-to-TRead authority", 1,
+			analysis.logicalTransientInputsInCanonicalOrder().size());
+		LogicalTransientInputFact logical = analysis.logicalTransientInputsInCanonicalOrder().get(0);
+		List<CompiledInputEdgeFact> physicalConsumers = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.producer() == logical.targetRead()).toList();
+		Assert.assertEquals("replayed TRead must have one exact physical consumer", 1, physicalConsumers.size());
+		CompiledInputEdgeFact physical = physicalConsumers.get(0);
+		Assert.assertEquals(0, physical.inputPosition());
+		Assert.assertTrue("physical consumer must not gain a fabricated logical authority",
+			analysis.logicalTransientInputsInCanonicalOrder().stream()
+				.noneMatch(fact -> fact.targetRead() == physical.consumer()));
+		Assert.assertTrue("TWrite-to-TRead relation must not be a compiled physical edge",
+			analysis.compiledInputEdgesInCanonicalOrder().stream().noneMatch(edge ->
+				edge.producer() == logical.sourceWrite() && edge.consumer() == logical.targetRead()));
+
+		List<List<CandidateInputState>> vectors = analysis.candidateRuleDomain().orderedRuleKeys().stream()
+			.filter(key -> key.parentOccurrence() == physical.consumer())
+			.map(key -> key.orderedInputs()).toList();
+		List<CandidateInputState> local = List.of(CandidateInputState.absentLocal());
+		List<CandidateInputState> row = List.of(CandidateInputState.present(FType.ROW));
+		Assert.assertTrue("physical consumer must retain its local candidate", vectors.contains(local));
+		Assert.assertTrue("post-CFG closure must publish the physical PRESENT ROW candidate", vectors.contains(row));
+		CandidateRuleFact rowFact = analysis.candidateRuleFacts().requireExact(physical.consumer(), row);
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, rowFact.status());
+		Assert.assertEquals(ExecType.FED, rowFact.capability().nativeExec());
+		Assert.assertEquals(FederatedOutput.FOUT, rowFact.capability().nativeOutput());
+		Assert.assertEquals(FType.ROW, rowFact.capability().nativeFoutFType());
+	}
+
 	@Test
 	public void programAndDynamicEntrypointsRetainExactAdapterReceipts() {
 		ProgramInvocation owner = invokeProgram("B-21");
