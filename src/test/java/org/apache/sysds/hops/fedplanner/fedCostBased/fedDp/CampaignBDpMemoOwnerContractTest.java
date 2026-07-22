@@ -4,6 +4,8 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 import java.util.List;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
@@ -12,6 +14,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -40,13 +43,13 @@ public class CampaignBDpMemoOwnerContractTest {
 
 	@Test
 	public void equalCostTieRetainsFirstPlanAndExactExecutableIdentity() {
-		Fixture fixture = fixture("B-01");
+		Fixture fixture = fixture(ExecType.CP, FederatedOutput.LOUT, false);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(fixture.analysis());
 		Assert.assertSame("memo analysis owner", fixture.analysis(), memo.analysis());
 
 		FedPlanVariants variants = variants(fixture.occurrence().hop(), FederatedOutput.LOUT);
-		FedPlan first = plan(variants, ExecType.CP, 0x1.0p3);
-		FedPlan second = plan(variants, ExecType.FED, 0x1.0p3);
+		FedPlan first = plan(variants, fixture.state(), 0x1.0p3);
+		FedPlan second = plan(variants, fixture.state(), 0x1.0p3);
 		variants.addFedPlan(first);
 		variants.addFedPlan(second);
 		Assert.assertTrue("memo fixture prune", variants.pruneFedPlans());
@@ -60,33 +63,35 @@ public class CampaignBDpMemoOwnerContractTest {
 
 	@Test
 	public void sourceFTypeMustMatchExactFedOutOwner() {
-		Fixture owner = fixture("B-01");
+		Fixture owner = fixture(ExecType.FED, FederatedOutput.FOUT, true);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
 		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.FOUT);
-		FedPlan mismatched = plan(variants, ExecType.FED, 0x1.0p3);
-		mismatched.setFType(FType.COL);
+		FedPlan mismatched = plan(variants, owner.state(), 0x1.0p3);
+		mismatched.setFType(differentConcreteFType(owner.state().fType()));
 		variants.addFedPlan(mismatched);
-		Assert.assertThrows("mismatched source FType must be rejected", IllegalArgumentException.class,
+		Assert.assertThrows("mismatched source FType must be rejected", IllegalStateException.class,
 			() -> memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants));
 	}
 
 	@Test
 	public void matchingSourceFTypeRetainsExactOwnerIdentity() {
-		Fixture owner = fixture("B-01");
+		Fixture owner = fixture(ExecType.FED, FederatedOutput.FOUT, true);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
 		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.FOUT);
-		FedPlan matching = plan(variants, ExecType.FED, 0x1.0p3);
+		FedPlan matching = plan(variants, owner.state(), 0x1.0p3);
 		variants.addFedPlan(matching);
 		memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants);
 		Assert.assertSame(matching, memo.getFedPlanAfterPrune(owner.occurrence(), FederatedOutput.FOUT));
+		Assert.assertSame("matching plan must retain exact analysis-owned state", owner.state(),
+			matching.getSelectedPlacementState());
 	}
 
 	@Test
 	public void copiedAndForeignOccurrencesRejectWithoutChangingSelection() {
-		Fixture owner = fixture("B-01");
+		Fixture owner = fixture(ExecType.FED, FederatedOutput.FOUT, true);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
 		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.FOUT);
-		FedPlan retained = plan(variants, ExecType.FED, 0x1.0p3);
+		FedPlan retained = plan(variants, owner.state(), 0x1.0p3);
 		variants.addFedPlan(retained);
 		Assert.assertTrue("memo fixture prune", variants.pruneFedPlans());
 		memo.addFedPlanVariants(owner.occurrence(), FederatedOutput.FOUT, variants);
@@ -98,7 +103,7 @@ public class CampaignBDpMemoOwnerContractTest {
 		expectReject(() -> memo.getFedPlanAfterPrune(copiedOccurrence, FederatedOutput.FOUT));
 		expectReject(() -> memo.resolveExecutableHop(copiedOccurrence));
 
-		Fixture foreign = fixture("B-02");
+		Fixture foreign = fixture(ExecType.FED, FederatedOutput.FOUT, true);
 		expectReject(() -> memo.getFedPlanAfterPrune(foreign.occurrence(), FederatedOutput.FOUT));
 		expectReject(() -> memo.resolveExecutableHop(foreign.occurrence()));
 
@@ -111,16 +116,29 @@ public class CampaignBDpMemoOwnerContractTest {
 	public record BaselineRedSignatures(int dpUnits, int dpViolations, int tests, int failures,
 		int errors, int skipped, String enumeratorRed, String fedAllRed) { }
 	private record Fixture(DMLProgram program, PlacementAnalysis analysis,
-		HopOccurrenceProjection occurrence) { }
+		HopOccurrenceProjection occurrence, PlacementState state) { }
 
-	private static Fixture fixture(String id) {
+	private static Fixture fixture(ExecType execType, FederatedOutput output, boolean federatedSource) {
 		try {
-			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+			DMLProgram program = CampaignBG014HermeticPlannerFixtureFactory.compile("B-21");
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-			return new Fixture(program, analysis, analysis.occurrences().get(0));
+			for(HopOccurrenceProjection occurrence : analysis.occurrences()) {
+				if(federatedSource && (!(occurrence.hop() instanceof DataOp data)
+					|| data.getOp() != OpOpData.FEDERATED))
+					continue;
+				PlacementState exact = analysis.graph().node(occurrence.key()).orElseThrow()
+					.legalAlternatives().stream()
+					.filter(state -> state.execType() == execType && state.output() == output
+						&& (!federatedSource || state.fType() != null))
+					.findFirst().orElse(null);
+				if(exact != null)
+					return new Fixture(program, analysis, occurrence, exact);
+			}
+			throw new AssertionError("B-21 lacks the required exact " + execType + '/' + output
+				+ (federatedSource ? " FEDERATED source" : " occurrence"));
 		}
 		catch(Exception e) {
-			throw new AssertionError("Unable to compile DP memo owner fixture " + id, e);
+			throw new AssertionError("Unable to compile B-21 DP memo owner fixture", e);
 		}
 	}
 
@@ -131,11 +149,17 @@ public class CampaignBDpMemoOwnerContractTest {
 		return new FedPlanVariants(common, output);
 	}
 
-	private static FedPlan plan(FedPlanVariants variants, ExecType execType, double cost) {
+	private static FedPlan plan(FedPlanVariants variants, PlacementState exact, double cost) {
 		FedPlan plan = new FedPlan(cost, variants, List.of());
-		plan.setExecType(execType);
-		plan.setFType(FType.ROW);
+		plan.setExecType(exact.execType());
+		plan.setFType(exact.fType());
+		plan.setSelectedPlacementState(exact);
 		return plan;
+	}
+
+	private static FType differentConcreteFType(FType exact) {
+		Assert.assertNotNull("FED/FOUT source state must carry a concrete FType", exact);
+		return exact == FType.ROW ? FType.COL : FType.ROW;
 	}
 
 	private static void expectReject(Runnable action) {
