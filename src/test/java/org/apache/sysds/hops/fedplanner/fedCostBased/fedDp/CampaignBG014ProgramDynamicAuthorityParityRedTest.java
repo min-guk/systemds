@@ -53,6 +53,50 @@ import org.junit.Test;
 /** Executable RED for final program/dynamic DP authority and adapter-receipt parity. */
 public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 	@Test
+	public void plannerRunResetsFedMetadataBeforeAnalysisBinding() {
+		PlannerGlobalState before = snapshotPlannerGlobalState();
+		try {
+			FederatedPlannerUtils.clearFedInitVars();
+			DMLProgram contaminatingProgram = compile("B-21");
+			PlacementAnalysis contaminatingAnalysis =
+				CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(contaminatingProgram);
+			FederatedPlannerDpMemoTable contaminatingMemo =
+				new FederatedPlannerDpMemoTable(contaminatingAnalysis);
+			FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(
+				contaminatingProgram, contaminatingMemo, false, contaminatingAnalysis);
+
+			FederatedPlannerUtils.FedVarSnapshot leaked =
+				FederatedPlannerUtils.snapshotFedState().get("A");
+			Assert.assertNotNull("direct enumeration must expose the exact leaked fed-init variable", leaked);
+			Assert.assertTrue(leaked.fedInit());
+			Assert.assertEquals(FType.ROW, leaked.fType());
+			Assert.assertNotNull(leaked.signature());
+			Assert.assertNotNull(leaked.anchorKey());
+
+			RuntimeException contaminatedFailure = null;
+			try {
+				invokeStaticProgramPlanning(compile("B-21"));
+			}
+			catch(RuntimeException failure) {
+				Throwable owner = deepestCause(failure);
+				Assert.assertTrue("wrong pre-analysis lifecycle owner: " + owner,
+					owner instanceof IllegalArgumentException);
+				Assert.assertEquals("Logical transient candidate capability differs", owner.getMessage());
+				contaminatedFailure = failure;
+			}
+
+			FederatedPlannerUtils.clearFedInitVars();
+			DpInvocationReceipt control = invokeStaticProgramPlanning(compile("B-21"));
+			Assert.assertNotNull("explicit pre-analysis fed-state reset must preserve static planning", control);
+			if(contaminatedFailure != null)
+				throw new AssertionError("G014_RED_PRE_ANALYSIS_PLANNER_RUN_RESET_MISSING", contaminatedFailure);
+		}
+		finally {
+			restorePlannerGlobalState(before);
+		}
+	}
+
+	@Test
 	public void cfgReplayClosesExactPhysicalConsumerCandidateFacts() {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(compile("B-21"));
 		Assert.assertEquals("B-21 must retain exactly one logical TWrite-to-TRead authority", 1,
@@ -413,6 +457,48 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		return new ProgramInvocation(program, (DpInvocationReceipt) receipt.get());
 	}
 
+	private static DpInvocationReceipt invokeStaticProgramPlanning(DMLProgram program) {
+		String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
+		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
+		try {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
+			new DMLTranslator(program).constructLops(program, receipt::set);
+		}
+		finally {
+			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, old);
+		}
+		Assert.assertTrue("static planner entrypoint did not publish a DP receipt",
+			receipt.get() instanceof DpInvocationReceipt);
+		return (DpInvocationReceipt) receipt.get();
+	}
+
+	private static Throwable deepestCause(Throwable failure) {
+		Throwable owner = failure;
+		while(owner.getCause() != null)
+			owner = owner.getCause();
+		return owner;
+	}
+
+	private static PlannerGlobalState snapshotPlannerGlobalState() {
+		return new PlannerGlobalState(FederatedPlannerUtils.snapshotFedState(),
+			FederatedRefedRegistry.snapshotAll(), FederatedFoutMaterializeRegistry.snapshotAll(),
+			FederatedLocalMaterializeRegistry.snapshotAll());
+	}
+
+	private static void restorePlannerGlobalState(PlannerGlobalState snapshot) {
+		FederatedPlannerUtils.clearFedInitVars();
+		for(Map.Entry<String, FederatedPlannerUtils.FedVarSnapshot> entry : snapshot.fedState().entrySet()) {
+			FederatedPlannerUtils.FedVarSnapshot state = entry.getValue();
+			if(state.fedInit())
+				FederatedPlannerUtils.registerFedInitVar(entry.getKey(), state.fType(), state.signature());
+			if(state.anchorKey() != null)
+				FederatedPlannerUtils.registerFedAnchorKey(entry.getKey(), state.anchorKey());
+		}
+		FederatedRefedRegistry.restoreAll(snapshot.refed());
+		FederatedFoutMaterializeRegistry.restoreAll(snapshot.foutMaterialize());
+		FederatedLocalMaterializeRegistry.restoreAll(snapshot.localMaterialize());
+	}
+
 	private static void assertExactDisconnectedProducerConflict(DMLProgram program, Exception failure) {
 		Throwable owner = failure;
 		while(owner.getCause() != null)
@@ -460,5 +546,8 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Map<String, FederatedPlannerUtils.FedVarSnapshot> fedState, Map<String, String> anchorKeys,
 		Map<String, PlannerRecompileStateSnapshot> recompileStates, Set<String> ambiguousRecompileSignatures,
 		List<String> registryState) { }
+	private record PlannerGlobalState(Map<String, FederatedPlannerUtils.FedVarSnapshot> fedState,
+		FederatedRefedRegistry.Snapshot refed, FederatedFoutMaterializeRegistry.Snapshot foutMaterialize,
+		FederatedLocalMaterializeRegistry.Snapshot localMaterialize) { }
 	private record ProgramInvocation(DMLProgram program, DpInvocationReceipt receipt) { }
 }
