@@ -31,6 +31,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils.PlannerRecompileState;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -139,10 +141,33 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertEquals(0, counters.repairCount());
 		Assert.assertEquals(0, counters.fallbackCount());
 		Assert.assertEquals(0, counters.doubleApplicationCount());
+		assertSingleCanonicalEmission(receipt, fixture.analysis());
 		assertImmutable(receipt.appliedPlans(), "applied plans");
 		assertImmutable(receipt.additionalRootInvocations(), "additional-root invocations");
 		assertImmutable(receipt.exactSelection().selectedRootPlans(), "selected root plans");
 		assertImmutable(receipt.exactSelection().selectedRootHops(), "selected root hops");
+	}
+
+	private static void assertSingleCanonicalEmission(Object receipt, PlacementAnalysis analysis) {
+		try {
+			Object normalized = receipt.getClass().getMethod("normalizedResult").invoke(receipt);
+			Assert.assertTrue("DP_NORMALIZED_RESULT_TYPE", normalized instanceof NormalizedPlannerResult);
+			Assert.assertSame("DP_NORMALIZED_ANALYSIS_IDENTITY", analysis,
+				((NormalizedPlannerResult) normalized).analysis());
+			String canonical = PlacementEmissionTransaction.canonicalPlanHash((NormalizedPlannerResult) normalized);
+			Assert.assertEquals("DP_PUBLIC_CANONICAL_HASH_AUTHORITY", canonical,
+				((NormalizedPlannerResult) normalized).normalizedPlanFingerprint());
+			Object emission = receipt.getClass().getMethod("emissionReceipt").invoke(receipt);
+			Assert.assertEquals("DP_EXACTLY_ONE_EMISSION_HASH", canonical,
+				emission.getClass().getMethod("planHash").invoke(emission));
+			Assert.assertEquals("DP_EMISSION_APPLIED", true,
+				emission.getClass().getMethod("applied").invoke(emission));
+			Assert.assertEquals("DP_EMISSION_NOT_NOOP", false,
+				emission.getClass().getMethod("noOp").invoke(emission));
+		}
+		catch(ReflectiveOperationException e) {
+			throw new AssertionError("DP_TRANSACTION_ENTRYPOINT_CONTRACT_MISSING", e);
+		}
 	}
 
 	@Test

@@ -23,6 +23,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -251,6 +253,7 @@ public class CampaignBMinStInvocationReceiptContractTest {
 	}
 
 	private static void assertComplete(Invocation invocation) {
+		assertSingleCanonicalEmission(invocation.receipt, invocation.analysis);
 		MinStPlacementAdapter.Selection selection=new MinStPlacementAdapter().select(invocation.analysis,invocation.receipt);
 		Assert.assertSame("MINST_EXPLICIT_RECEIPT_SELECTION_ANALYSIS_IDENTITY",invocation.analysis,selection.analysis());
 		Assert.assertEquals("MINST_EXPLICIT_RECEIPT_SELECTION_FINGERPRINT",invocation.fingerprint,
@@ -262,6 +265,28 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		Assert.assertEquals("MINST_EXPLICIT_RECEIPT_BIJECTION_KEYS",expected,actual);
 		Assert.assertTrue("MINST_EXPLICIT_RECEIPT_INCOMPLETE_STATE",selection.selectedReceipts().stream()
 			.allMatch(r->r.execType()!=null&&r.output()!=null));
+	}
+
+	private static void assertSingleCanonicalEmission(Object receipt, PlacementAnalysis analysis) {
+		try {
+			Object normalized = receipt.getClass().getMethod("normalizedResult").invoke(receipt);
+			Assert.assertTrue("MINST_NORMALIZED_RESULT_TYPE", normalized instanceof NormalizedPlannerResult);
+			Assert.assertSame("MINST_NORMALIZED_ANALYSIS_IDENTITY", analysis,
+				((NormalizedPlannerResult) normalized).analysis());
+			String canonical = PlacementEmissionTransaction.canonicalPlanHash((NormalizedPlannerResult) normalized);
+			Assert.assertEquals("MINST_PUBLIC_CANONICAL_HASH_AUTHORITY", canonical,
+				((NormalizedPlannerResult) normalized).normalizedPlanFingerprint());
+			Object emission = receipt.getClass().getMethod("emissionReceipt").invoke(receipt);
+			Assert.assertEquals("MINST_EXACTLY_ONE_EMISSION_HASH", canonical,
+				emission.getClass().getMethod("planHash").invoke(emission));
+			Assert.assertEquals("MINST_EMISSION_APPLIED", true,
+				emission.getClass().getMethod("applied").invoke(emission));
+			Assert.assertEquals("MINST_EMISSION_NOT_NOOP", false,
+				emission.getClass().getMethod("noOp").invoke(emission));
+		}
+		catch(ReflectiveOperationException e) {
+			throw new AssertionError("MINST_TRANSACTION_ENTRYPOINT_CONTRACT_MISSING", e);
+		}
 	}
 
 	private static void assertNoPersistedInvocationResult() {

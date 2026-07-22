@@ -13,9 +13,12 @@ import java.util.List;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -32,7 +35,7 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 	@Test
 	public void realFourArgumentRootSelectsExactlyOnceAndReturnsTheExactTypedReceipt() throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile("B-01");
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		List<String> hopStateBefore = hopState(analysis);
 		String fingerprintBefore = analysis.analysisFingerprint();
 		TrackingFedAll planner = new TrackingFedAll();
@@ -71,7 +74,7 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 	@Test
 	public void suppliedAnalysisOwnershipAndLegacyRoutesRemainFailClosed() throws Exception {
 		DMLProgram owner = ProductionShadowFixtureFactory.compile("B-01");
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(owner);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(owner);
 		FederatedPlannerFedAll planner = new FederatedPlannerFedAll();
 
 		Assert.assertThrows("FEDALL_ROOT_NULL_ANALYSIS", NullPointerException.class,
@@ -89,7 +92,7 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 
 	private static Invocation invokeFactory(FederatedPlanner kind, String fixture) throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		AFederatedPlanner planner = FederatedPlannerFactory.create(kind);
 		AFederatedPlanner.PlannerInvocationReceipt receipt =
 			planner.rewriteProgram(program, null, null, analysis);
@@ -116,6 +119,7 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 		Assert.assertNotNull("FEDALL_RECEIPT_CERTIFICATE", exactResult.certificate());
 		Assert.assertFalse("FEDALL_RECEIPT_PLAN_FINGERPRINT",
 			exactResult.normalizedPlanFingerprint().isBlank());
+		assertSingleCanonicalEmission(receipt, analysis);
 
 		Object counters = invoke(receipt, "counters");
 		Class<?> countersType = Class.forName(COUNTERS_TYPE);
@@ -128,8 +132,22 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 		assertCounter(counters, "repairCount", 0);
 		assertCounter(counters, "fallbackCount", 0);
 		assertCounter(counters, "mutationCount", 0);
-		assertCounter(counters, "applicationCount", 0);
+		assertCounter(counters, "applicationCount", 1);
 		assertCounter(counters, "doubleApplicationCount", 0);
+	}
+
+	private static void assertSingleCanonicalEmission(Object receipt, PlacementAnalysis analysis) throws Exception {
+		Object normalized = invoke(receipt, "normalizedResult");
+		Assert.assertTrue("FEDALL_NORMALIZED_RESULT_TYPE", normalized instanceof NormalizedPlannerResult);
+		Assert.assertSame("FEDALL_NORMALIZED_ANALYSIS_IDENTITY", analysis,
+			((NormalizedPlannerResult) normalized).analysis());
+		String canonical = PlacementEmissionTransaction.canonicalPlanHash((NormalizedPlannerResult) normalized);
+		Assert.assertEquals("FEDALL_PUBLIC_CANONICAL_HASH_AUTHORITY", canonical,
+			((NormalizedPlannerResult) normalized).normalizedPlanFingerprint());
+		Object emission = invoke(receipt, "emissionReceipt");
+		Assert.assertEquals("FEDALL_EXACTLY_ONE_EMISSION_HASH", canonical, invoke(emission, "planHash"));
+		Assert.assertEquals("FEDALL_EMISSION_APPLIED", true, invoke(emission, "applied"));
+		Assert.assertEquals("FEDALL_EMISSION_NOT_NOOP", false, invoke(emission, "noOp"));
 	}
 
 	private static FedAllPlacementAdapter.Result result(Object receipt) throws Exception {

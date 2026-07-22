@@ -24,12 +24,15 @@ import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge.ProjectionOrder;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.ipa.FederatedPlannerFactory;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -188,6 +191,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 		Assert.assertFalse("HEURISTIC_FALLBACK", exactResult.certificate().fallbackUsed());
 		Assert.assertEquals("HEURISTIC_COMPLETE_UNIVERSE", exactResult.certificate().legalUniverseSize(),
 			exactResult.certificate().exploredCount() + exactResult.certificate().prunedCount());
+		assertSingleCanonicalEmission(receipt, fixture.analysis());
 
 		R4Heuristic2Probe.immutable((Set<?>) invoke(receipt, "markers"));
 		R4Heuristic2Probe.immutable(fixture.facts().demotions());
@@ -212,8 +216,22 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 		assertCounter(counters, "repairCount", 0);
 		assertCounter(counters, "fallbackCount", 0);
 		assertCounter(counters, "mutationCount", 0);
-		assertCounter(counters, "applicationCount", 0);
+		assertCounter(counters, "applicationCount", 1);
 		assertCounter(counters, "doubleApplicationCount", 0);
+	}
+
+	private static void assertSingleCanonicalEmission(Object receipt, PlacementAnalysis analysis) throws Exception {
+		Object normalized = invoke(receipt, "normalizedResult");
+		Assert.assertTrue("HEURISTIC_NORMALIZED_RESULT_TYPE", normalized instanceof NormalizedPlannerResult);
+		Assert.assertSame("HEURISTIC_NORMALIZED_ANALYSIS_IDENTITY", analysis,
+			((NormalizedPlannerResult) normalized).analysis());
+		String canonical = PlacementEmissionTransaction.canonicalPlanHash((NormalizedPlannerResult) normalized);
+		Assert.assertEquals("HEURISTIC_PUBLIC_CANONICAL_HASH_AUTHORITY", canonical,
+			((NormalizedPlannerResult) normalized).normalizedPlanFingerprint());
+		Object emission = invoke(receipt, "emissionReceipt");
+		Assert.assertEquals("HEURISTIC_EXACTLY_ONE_EMISSION_HASH", canonical, invoke(emission, "planHash"));
+		Assert.assertEquals("HEURISTIC_EMISSION_APPLIED", true, invoke(emission, "applied"));
+		Assert.assertEquals("HEURISTIC_EMISSION_NOT_NOOP", false, invoke(emission, "noOp"));
 	}
 
 	private static HeuristicPlacementAdapter.Result result(Object receipt) throws Exception {
@@ -235,7 +253,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 
 	private static Fixture fixture(String id) throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		HeuristicPolicyFacts facts = analysis.heuristicPolicyFacts();
 		return new Fixture(program, analysis, facts, markers(facts));
 	}
@@ -252,7 +270,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		HeuristicPolicyFacts facts = analysis.heuristicPolicyFacts();
 		Assert.assertEquals("HEURISTIC_VECTOR_FIXTURE_TYPED_FACT_COUNT", 1, facts.demotions().size());
 		return new Fixture(program, analysis, facts, markers(facts));
