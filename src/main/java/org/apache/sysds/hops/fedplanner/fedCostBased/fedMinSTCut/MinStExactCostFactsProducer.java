@@ -48,11 +48,13 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedResolution;
@@ -1586,6 +1588,7 @@ public final class MinStExactCostFactsProducer {
 			for(PlacementState state : decision.legalStatesInCanonicalOrder())
 				normalized.append(':').append(state.normalizedSignature());
 		}
+		appendCandidateAuthorityFacts(normalized, analysis);
 		for(MembershipRepresentative representative : representatives) {
 			normalized.append("|M:").append(representative.decisionKey().normalizedSignature())
 				.append(':').append(representative.execType()).append(':').append(representative.output())
@@ -1664,6 +1667,38 @@ public final class MinStExactCostFactsProducer {
 		catch(NoSuchAlgorithmException ex) {
 			throw new IllegalStateException("SHA-256 is unavailable", ex);
 		}
+	}
+
+	private static void appendCandidateAuthorityFacts(StringBuilder normalized,
+		PlacementAnalysis analysis) {
+		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts()) {
+			normalized.append("|CR:").append(fact.key().parentOccurrence().normalizedSignature())
+				.append(':').append(fact.key().orderedInputs()).append(':').append(fact.status());
+			CandidateCapabilityFact capability = fact.capability();
+			if(capability == null)
+				normalized.append(":C:-");
+			else
+				normalized.append(":C:").append(capability.category()).append(':')
+					.append(capability.opcode()).append(':').append(capability.nativeExec()).append(':')
+					.append(capability.nativeOutput()).append(':').append(capability.nativeFoutFType())
+					.append(':').append(capability.reasonCode()).append(':').append(capability.detail())
+					.append(':').append(capability.notes());
+			normalized.append(":S:").append(fact.shapeProof().consultedFacts()).append(':')
+				.append(fact.shapeProof().requiredFacts()).append(':')
+				.append(fact.shapeProof().missingRequiredFacts())
+				.append(":P:").append(fact.profile().producerOutputs()).append(':')
+				.append(fact.profile().evaluationFailure()).append(":F:").append(fact.failureCode());
+		}
+		for(CandidateConsumerProfileFact fact : analysis.candidateConsumerProfileFacts().orderedFacts())
+			normalized.append("|CC:").append(fact.key().consumerOccurrence().normalizedSignature())
+				.append(':').append(fact.key().inputPosition()).append(':').append(fact.status())
+				.append(':').append(fact.allowedTargetTypes()).append(':').append(fact.failureCode());
+		for(DetachedConsumerProfileFact fact : analysis.detachedConsumerProfileFacts().orderedFacts())
+			normalized.append("|DC:").append(fact.key().producerOccurrence().normalizedSignature())
+				.append(':').append(fact.key().parentOrdinal()).append(':')
+				.append(fact.key().normalizedConsumerSignature()).append(':')
+				.append(fact.key().producerInputPositions()).append(':').append(fact.status())
+				.append(':').append(fact.allowedTargetTypes()).append(':').append(fact.failureCode());
 	}
 
 	private static void fail(ValidationReason reason, String message) {
