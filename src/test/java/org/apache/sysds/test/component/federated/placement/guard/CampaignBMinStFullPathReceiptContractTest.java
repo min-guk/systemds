@@ -26,6 +26,7 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -208,7 +209,8 @@ public class CampaignBMinStFullPathReceiptContractTest {
 		method.setAccessible(true);
 
 		DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
 		String fingerprint = analysis.analysisFingerprint();
 		Object retained = invoke(method, null, program, analysis, NO_RANDOM_SEED);
 		Assert.assertSame("MINST_FULLPATH_CAPTURE_ANALYSIS", analysis, accessor(retained, "analysis"));
