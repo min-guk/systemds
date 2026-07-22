@@ -16,9 +16,6 @@
  */
 package org.apache.sysds.hops.fedplanner.placement.adapter;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -28,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -58,27 +56,11 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 			if(relocations.get(i-1).normalizedSignature().equals(relocations.get(i).normalizedSignature()))
 				throw new IllegalArgumentException("duplicate relocation action");
 		selectedRelocations = Collections.unmodifiableList(relocations);
-		normalizedPlanFingerprint = fingerprint();
+		normalizedPlanFingerprint = PlacementEmissionTransaction.canonicalPlanHash(this);
 	}
 
 	static NormalizedPlannerResult of(PlannerPlacementContext context, NormalizedPlannerResult draft) {
 		return new ImmutableNormalizedPlannerResult(context, draft);
-	}
-
-	private String fingerprint() {
-		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n').append(analysisFingerprint).append('\n');
-		selectedStates.entrySet().stream().sorted(Map.Entry.comparingByKey())
-			.forEach(e -> canonical.append(e.getKey().normalizedSignature()).append('=')
-				.append(e.getValue().normalizedSignature()).append('\n'));
-		selectedRelocations.forEach(r -> canonical.append(r.normalizedSignature()).append('\n'));
-		canonical.append(objectiveCertificate);
-		try {
-			byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
-			StringBuilder out = new StringBuilder();
-			for(byte b : digest) out.append(String.format("%02x", b));
-			return out.toString();
-		}
-		catch(NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
 	}
 
 	@Override public PlacementAnalysis analysis() { return analysis; }

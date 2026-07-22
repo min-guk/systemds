@@ -20,7 +20,11 @@ import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.PlacementPlannerAdapter;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.parser.DMLProgram;
@@ -37,13 +41,14 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		public InvocationCounters {
 			if(selectionCount != 1 || internalAnalysisBuildCount != 0 || legacyRouteCount != 0
 				|| repairCount != 0 || fallbackCount != 0 || mutationCount != 0
-				|| applicationCount != 0 || doubleApplicationCount != 0)
+				|| applicationCount != 1 || doubleApplicationCount != 0)
 				throw new IllegalArgumentException("FedAll selection receipt counters differ");
 		}
 	}
 
 	public record FedAllInvocationReceipt(PlacementAnalysis analysis, FedAllPlacementAdapter.Result result,
-		InvocationCounters counters, String analysisFingerprintBefore, String analysisFingerprintAfter)
+		InvocationCounters counters, String analysisFingerprintBefore, String analysisFingerprintAfter,
+		PlacementEmissionReceipt emissionReceipt)
 		implements AFederatedPlanner.PlannerInvocationReceipt {
 		public FedAllInvocationReceipt {
 			Objects.requireNonNull(analysis, "analysis");
@@ -51,6 +56,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			Objects.requireNonNull(counters, "counters");
 			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
 			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
+			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(result.analysis() != analysis)
 				throw new IllegalArgumentException("FedAll receipt producer identity differs");
 			if(!analysis.analysisFingerprint().equals(analysisFingerprintBefore)
@@ -71,9 +77,12 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		analysis.assertCanonicalProgramAuthority(prog);
 		String fingerprintBefore = analysis.analysisFingerprint();
 		FedAllPlacementAdapter.Result result = select(analysis);
-		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 0, 0);
+		NormalizedPlannerResult normalized = PlacementPlannerAdapter.normalize(analysis, result);
+		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
+			PlacementEmissionTransaction.FailureInjector.none());
+		InvocationCounters counters = new InvocationCounters(1, 0, 0, 0, 0, 0, 1, 0);
 		return new FedAllInvocationReceipt(analysis, result, counters,
-			fingerprintBefore, analysis.analysisFingerprint());
+			fingerprintBefore, analysis.analysisFingerprint(), emission);
 	}
 
 	@Override
