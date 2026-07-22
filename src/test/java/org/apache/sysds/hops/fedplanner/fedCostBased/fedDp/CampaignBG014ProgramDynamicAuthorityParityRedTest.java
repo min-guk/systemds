@@ -43,6 +43,7 @@ import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.FunctionStatementBlock;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -139,7 +140,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 	@Test
 	public void matrixTransientSchedulingEdgeIsNotACandidateCarrier() {
 		DMLProgram program = compile("B-21");
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
 		FederatedPlannerDpCostEnumerator.DpEnumerationResult enumeration =
 			FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(program, memo, false, analysis);
