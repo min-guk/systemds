@@ -20,9 +20,12 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementGraphFingerprint;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.OracleInputState;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.PreSelectionSemanticBlock;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -42,6 +45,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		FunctionStatementBlock function = owner.program().getFunctionStatementBlock(
 			DMLProgram.DEFAULT_NAMESPACE, "f");
 		assertAppliedPlansAreExactReceipts(owner.receipt());
+		assertTransientReadLogicalParity(owner.receipt().semanticConsumption().semanticBlock());
 		DpDynamicInvocationReceipt dynamic;
 		try {
 			dynamic = new FederatedPlannerDpFedCostBased().rewriteFunctionDynamic(
@@ -70,6 +74,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(dynamic.analysis(), dynamic.memoTable().analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().rewireSnapshot().analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().semanticBlock().context().analysis());
+		assertTransientReadLogicalParity(dynamic.enumerationResult().semanticBlock());
 		DpPlacementAdapter.ExactSelection dynamicSelection = new DpPlacementAdapter().selectExact(
 			dynamic.analysis(), dynamic.memoTable(), dynamic.enumerationResult().optimalPlan());
 		Assert.assertSame(dynamic.analysis(), dynamicSelection.analysis());
@@ -80,6 +85,20 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 			owner.receipt().exactSelection().selectedRootPlans().isEmpty());
 		Assert.assertEquals(dynamic.fingerprintBefore(), dynamic.fingerprintAfter());
 		Assert.assertEquals(dynamic.analysis().analysisFingerprint(), dynamic.fingerprintAfter());
+	}
+
+	private static void assertTransientReadLogicalParity(PreSelectionSemanticBlock block) {
+		List<List<OracleInputState>> vectors = block.candidateSnapshots().stream()
+			.filter(snapshot -> block.context().analysis().graph().node(snapshot.parentOccurrence())
+				.orElseThrow().kind() == NodeKind.TRANSIENT_READ)
+			.filter(snapshot -> !snapshot.logicalEntries().isEmpty())
+			.map(snapshot -> snapshot.orderedOracleInputs()).distinct().toList();
+		Assert.assertEquals("B-21 transient read must consume nonempty local and ROW logical vectors",
+			List.of(List.of(OracleInputState.ABSENT_LOCAL), List.of(OracleInputState.ROW)), vectors);
+		Assert.assertTrue("logical transient candidate must retain zero physical inputs",
+			block.candidateSnapshots().stream().filter(snapshot -> !snapshot.logicalEntries().isEmpty())
+				.allMatch(snapshot -> snapshot.rawEntries().isEmpty()
+					&& snapshot.promotedEntries().isEmpty() && snapshot.logicalEntries().size() == 1));
 	}
 
 	@Test
