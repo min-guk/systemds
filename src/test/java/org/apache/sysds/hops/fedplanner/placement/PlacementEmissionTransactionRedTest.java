@@ -7,22 +7,18 @@
 package org.apache.sysds.hops.fedplanner.placement;
 
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailureInjector;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailurePoint;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
@@ -143,31 +139,8 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	private static Fixture fixture(String id) throws Exception {
-		FixtureProgram program = FixtureProgram.adopt(ProductionShadowFixtureFactory.compile(id));
-		PlacementAnalysis baseline = new NeutralPlacementGraphBuilder().buildAnalysis(program);
-		NormalizedPlannerResult baselinePlan = new FedAllPlacementAdapter().select(baseline);
-		RelocationAction source = baseline.graph().relocationActions().stream().findFirst()
-			.orElseThrow(() -> new AssertionError("P4_FIXTURE_REQUIRES_GRAPH_RELOCATION"));
-		ObligationKey sourceObligation = source.obligations().get(0);
-		PlacementState required = baselinePlan.selectedStates().get(sourceObligation.consumer());
-		if(required == null || !baseline.graph().node(sourceObligation.consumer()).orElseThrow()
-			.legalAlternatives().contains(required))
-			throw new AssertionError("P4_FIXTURE_REQUIRES_LEGAL_RELOCATION_TARGET");
-		RelocationActionKey sourceKey = source.key();
-		RelocationActionKey relocationKey = new RelocationActionKey(sourceKey.sourceValueVersion(), required,
-			sourceKey.durableAnchor(), sourceKey.statementBlockScope(), sourceKey.compatibleConsumers());
-		ObligationKey obligation = new ObligationKey(sourceObligation.consumer(), sourceObligation.inputPosition(),
-			sourceObligation.sourceValueVersion(), required, relocationKey,
-			sourceObligation.callRecompileContext());
-		NeutralPlacementGraph graph = new NeutralPlacementGraph(baseline.graph().nodes(),
-			baseline.graph().constraints(), List.of(new RelocationAction(relocationKey, List.of(obligation))));
-		Map<CompiledHopKey, NodeShapeFact> shapes = new IdentityHashMap<>();
-		baseline.occurrences().forEach(occurrence -> shapes.put(occurrence.key(),
-			baseline.shapeFact(occurrence.key()).orElseThrow()));
-		PlacementAnalysis analysis = new PlacementAnalysis(graph, baseline.occurrences(), program,
-			new PlacementShapeFacts(shapes, shapes.keySet()), baseline.analysisFingerprint(),
-			baseline.heuristicPolicyFacts());
-		program.install(analysis);
+		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		NormalizedPlannerResult plan = new FedAllPlacementAdapter().select(analysis);
 		Assert.assertFalse("P4_FIXTURE_REQUIRES_DECISIONS", plan.selectedStates().isEmpty());
 		Assert.assertFalse("P4_FIXTURE_REQUIRES_REGISTRY_OBLIGATIONS", plan.selectedRelocations().isEmpty());
@@ -254,38 +227,6 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	private record Fixture(DMLProgram program, PlacementAnalysis analysis, NormalizedPlannerResult plan) { }
-	private static final class FixtureProgram extends DMLProgram {
-		private PlacementAnalysis authority;
-
-		private FixtureProgram() {
-			super(DMLProgram.DEFAULT_NAMESPACE);
-		}
-
-		private static FixtureProgram adopt(DMLProgram compiled) {
-			FixtureProgram result = new FixtureProgram();
-			result.getStatementBlocks().addAll(compiled.getStatementBlocks());
-			return result;
-		}
-
-		private void install(PlacementAnalysis analysis) {
-			if(authority != null)
-				throw new IllegalStateException("fixture placement authority is already installed");
-			authority = analysis;
-		}
-
-		@Override
-		public PlacementAnalysis requirePlacementAnalysisAuthority() {
-			if(authority == null)
-				throw new IllegalStateException("fixture program has no placement authority");
-			return authority;
-		}
-
-		@Override
-		public void requirePlacementAnalysisAuthority(PlacementAnalysis candidate) {
-			if(candidate == null || candidate != authority)
-				throw new IllegalArgumentException("Placement analysis is not the canonical fixture owner");
-		}
-	}
 	private record HopSnapshot(ExecType exec, ExecType forcedExec, FederatedOutput output, boolean derived) { }
 	private record StateSnapshot(Map<Long, HopSnapshot> hops, List<String> registries, Map<?, ?> receipts,
 		long fallbackCount, long repairCount) { }
