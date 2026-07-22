@@ -62,7 +62,8 @@ public final class MinStDiagnosticsProducer {
 		validateScopeIdentity(analysis, facts);
 		MinStExactCostFactsProducer.validate(analysis, facts.analysisFingerprint(), facts.orderedScope(),
 			facts.decisionFactsInScopeOrder(), facts.directedEdgesInDerivationOrder(),
-			facts.auxiliaryGroupsInCanonicalOrder(), facts.obligationFactsInCanonicalOrder(),
+			facts.auxiliaryGroupsInCanonicalOrder(), facts.transferAuthoritiesInCanonicalOrder(),
+			facts.obligationFactsInCanonicalOrder(),
 			facts.derivationFingerprint());
 	}
 

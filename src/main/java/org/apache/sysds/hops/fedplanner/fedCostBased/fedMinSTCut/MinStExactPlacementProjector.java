@@ -22,19 +22,17 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Graph-free, fail-closed projection from exact MinST facts/selection into the placement carrier. */
 public final class MinStExactPlacementProjector {
-	private static final String EXACT_NEUTRAL_CAPABILITY = "proven by exact neutral action";
+	private static final String EXACT_NEUTRAL_CAPABILITY = "proven by exact MinST transfer authority";
 	private static final String UPLOAD_REASON = "CP/LOUT child has active FED consumers";
 	private static final String DOWNLOAD_REASON = "FED/FOUT child has active LOCAL consumers";
 
@@ -74,7 +72,8 @@ public final class MinStExactPlacementProjector {
 			throw new IllegalArgumentException("MINST_PROJECTOR_ANALYSIS_FINGERPRINT_STALE");
 		MinStExactCostFactsProducer.validate(analysis, facts.analysisFingerprint(), facts.orderedScope(),
 			facts.decisionFactsInScopeOrder(), facts.directedEdgesInDerivationOrder(),
-			facts.auxiliaryGroupsInCanonicalOrder(), facts.obligationFactsInCanonicalOrder(),
+			facts.auxiliaryGroupsInCanonicalOrder(), facts.transferAuthoritiesInCanonicalOrder(),
+			facts.obligationFactsInCanonicalOrder(),
 			facts.derivationFingerprint());
 	}
 
@@ -210,8 +209,8 @@ public final class MinStExactPlacementProjector {
 					|| endpoint.inputPosition() != receipt.inputPosition()
 					|| endpoint.producerKey() != receipt.producerKey())
 					continue;
-				if(!authorizesObligationFact(facts, group, endpoint, receipt.requiredPlacement(),
-					receipt.actionSignature()))
+				if(!authorizesTransferFact(facts, group, endpoint,
+					receipt.requiredPlacement(), receipt.actionSignature()))
 					continue;
 				matches.add(new ValidatedObligation(receipt.direction(), receipt.producerKey(),
 					receipt.consumerKey(), facts.analysis().hop(receipt.consumerKey()).orElseThrow().getHopID(),
@@ -234,43 +233,19 @@ public final class MinStExactPlacementProjector {
 			|| group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource;
 	}
 
-	private static boolean authorizesObligationFact(MinStExactCostFacts facts, AuxiliaryGroupFact group,
-		EndpointFact endpoint, PlacementState requiredPlacement, String actionSignature) {
-		boolean factMatch = false;
-		for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder()) {
-			if(!obligation.actionSignature().equals(actionSignature))
-				continue;
-			for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder())
-				if(candidate.consumerKey() == endpoint.consumerKey()
-					&& candidate.inputPosition() == endpoint.inputPosition()
-					&& candidate.requiredPlacement() == requiredPlacement)
-					factMatch = true;
-		}
-		if(!factMatch)
-			return false;
-		List<NeutralPlacementGraph.RelocationAction> actions = facts.analysis().graph()
-			.relocationActions().stream()
-			.filter(action -> action.normalizedSignature().equals(actionSignature)).toList();
-		if(actions.size() != 1)
-			throw new IllegalArgumentException("MINST_PROJECTOR_ACTION_AUTHORITY_"
-				+ (actions.isEmpty() ? "MISSING" : "AMBIGUOUS")
-				+ "|producer=" + group.producerKey().normalizedSignature()
-				+ "|signature=" + actionSignature);
-		NeutralPlacementGraph.RelocationAction action = actions.get(0);
-		NeutralPlacementGraph.Node producerNode = facts.analysis().graph().node(group.producerKey())
-			.orElseThrow();
-		if(!producerNode.valueVersion().equals(action.key().sourceValueVersion()))
-			throw new IllegalArgumentException("MINST_PROJECTOR_ACTION_SOURCE_MISMATCH|producer="
-				+ group.producerKey().normalizedSignature());
-		for(ObligationKey obligation : action.obligations())
-			if(obligation.consumer() == endpoint.consumerKey()
-				&& obligation.inputPosition() == endpoint.inputPosition()
-				&& obligation.requiredPlacement() == requiredPlacement
-				&& obligation.relocationAction().equals(action.key())
-				&& obligation.sourceValueVersion().equals(action.key().sourceValueVersion())
-				&& requiredPlacement.equals(action.key().targetPlacement()))
-				return true;
-		return false;
+	private static boolean authorizesTransferFact(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, EndpointFact endpoint, PlacementState requiredPlacement,
+		String authoritySignature) {
+		List<TransferAuthorityFact> matches = facts.transferAuthoritiesInCanonicalOrder().stream()
+			.filter(authority -> authority.group() == group && authority.endpoint() == endpoint)
+			.filter(authority -> authority.requiredPlacement() == requiredPlacement)
+			.filter(authority -> authority.authoritySignature().equals(authoritySignature))
+			.toList();
+		if(matches.size() > 1)
+			throw new IllegalArgumentException("MINST_PROJECTOR_TRANSFER_AUTHORITY_AMBIGUOUS|producer="
+				+ group.producerKey().normalizedSignature() + "|consumer="
+				+ endpoint.consumerKey().normalizedSignature() + "|input=" + endpoint.inputPosition());
+		return matches.size() == 1;
 	}
 
 	private static long cutObjectiveBits(MinStExactCostFacts facts, List<Long> sourceNodeIds) {

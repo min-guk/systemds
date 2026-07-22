@@ -12,17 +12,22 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Immutable, owner-bound input to the exact MinST selector. */
 public final class MinStExactCostFacts {
 	public enum Direction { UPLOAD, DOWNLOAD }
 	public enum MembershipAuthorityKind { LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE }
+	public enum TransferAuthorityKind { RELOCATION_OBLIGATION, INDEPENDENT_ANCHOR }
 	public enum ContributionKind {
 		CP_UNARY, FED_UNARY, UPLOAD, DOWNLOAD, HARD_EXEC, HARD_OUTPUT,
 		HARD_UPLOAD_OR, HARD_DOWNLOAD_OR, PRICE_UPLOAD_OR, PRICE_DOWNLOAD_OR
@@ -83,14 +88,12 @@ public final class MinStExactCostFacts {
 		private final CandidateRuleFact candidateRuleFact;
 		private final List<CandidateInputState> orderedInputs;
 		private final CapturedInvocationEvidence invocationEvidence;
-		private final List<String> compatibleActionSignatures;
 
 		MembershipRepresentative(CompiledHopKey decisionKey, ExecType execType,
 			FederatedOutput output, PlacementState state, MembershipAuthorityKind authorityKind,
 			DurableAnchorKey durableAnchorOrNull, CandidateRuleFact candidateRuleFactOrNull,
 			List<CandidateInputState> orderedInputs,
-			CapturedInvocationEvidence invocationEvidenceOrNull,
-			List<String> compatibleActionSignatures) {
+			CapturedInvocationEvidence invocationEvidenceOrNull) {
 			this.decisionKey = Objects.requireNonNull(decisionKey, "decisionKey");
 			this.execType = Objects.requireNonNull(execType, "execType");
 			this.output = Objects.requireNonNull(output, "output");
@@ -100,9 +103,6 @@ public final class MinStExactCostFacts {
 			this.candidateRuleFact = candidateRuleFactOrNull;
 			this.orderedInputs = List.copyOf(Objects.requireNonNull(orderedInputs, "orderedInputs"));
 			this.invocationEvidence = invocationEvidenceOrNull;
-			this.compatibleActionSignatures = compatibleActionSignatures.stream()
-				.map(value -> Objects.requireNonNull(value, "compatible action signature"))
-				.distinct().sorted().toList();
 			if(state.execType() != execType || state.output() != output)
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_STATE_MISMATCH");
 			if(output == FederatedOutput.FOUT && (state.fType() == null
@@ -133,9 +133,6 @@ public final class MinStExactCostFacts {
 		public CandidateRuleFact candidateRuleFactOrNull() { return candidateRuleFact; }
 		public List<CandidateInputState> orderedInputs() { return orderedInputs; }
 		public CapturedInvocationEvidence invocationEvidenceOrNull() { return invocationEvidence; }
-		public List<String> compatibleActionSignaturesInCanonicalOrder() {
-			return compatibleActionSignatures;
-		}
 	}
 
 	public static final class EdgeContribution {
@@ -237,6 +234,102 @@ public final class MinStExactCostFacts {
 		public List<EndpointFact> endpointsInCanonicalOrder() { return endpoints; }
 	}
 
+	/** Exact MinST-local authority for one auxiliary transfer endpoint. */
+	public static final class TransferAuthorityFact {
+		private final AuxiliaryGroupFact group;
+		private final EndpointFact endpoint;
+		private final CompiledInputEdgeFact inputEdge;
+		private final TransferAuthorityKind authorityKind;
+		private final PlacementState requiredPlacement;
+		private final String authoritySignature;
+		private final RelocationAction action;
+		private final ObligationKey obligation;
+		private final CompiledInputEdgeFact anchorInputEdge;
+		private final DurableAnchorKey independentAnchor;
+		private final CandidateConsumerProfileFact consumerProfile;
+
+		private TransferAuthorityFact(AuxiliaryGroupFact group, EndpointFact endpoint,
+			CompiledInputEdgeFact inputEdge, TransferAuthorityKind authorityKind,
+			PlacementState requiredPlacement, String authoritySignature,
+			RelocationAction actionOrNull, ObligationKey obligationOrNull,
+			CompiledInputEdgeFact anchorInputEdgeOrNull, DurableAnchorKey independentAnchorOrNull,
+			CandidateConsumerProfileFact consumerProfileOrNull) {
+			this.group = Objects.requireNonNull(group, "group");
+			this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
+			this.inputEdge = Objects.requireNonNull(inputEdge, "inputEdge");
+			this.authorityKind = Objects.requireNonNull(authorityKind, "authorityKind");
+			this.requiredPlacement = Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+			this.authoritySignature = Objects.requireNonNull(authoritySignature, "authoritySignature");
+			this.action = actionOrNull;
+			this.obligation = obligationOrNull;
+			this.anchorInputEdge = anchorInputEdgeOrNull;
+			this.independentAnchor = independentAnchorOrNull;
+			this.consumerProfile = consumerProfileOrNull;
+			if(group.endpointsInCanonicalOrder().stream().noneMatch(candidate -> candidate == endpoint)
+				|| endpoint.producerKey() != group.producerKey()
+				|| inputEdge.producer() != endpoint.producerKey()
+				|| inputEdge.consumer() != endpoint.consumerKey()
+				|| inputEdge.inputPosition() != endpoint.inputPosition()
+				|| requiredPlacement.fType() != group.conversionType())
+				throw new IllegalArgumentException("MINST_EXACT_TRANSFER_AUTHORITY_MISMATCH");
+			if(authorityKind == TransferAuthorityKind.RELOCATION_OBLIGATION) {
+				if(action == null || obligation == null || anchorInputEdge != null
+					|| independentAnchor != null || consumerProfile != null
+					|| action.obligations().stream().noneMatch(candidate -> candidate == obligation)
+					|| obligation.consumer() != endpoint.consumerKey()
+					|| obligation.inputPosition() != endpoint.inputPosition()
+					|| obligation.relocationAction() != action.key()
+					|| obligation.sourceValueVersion() != action.key().sourceValueVersion()
+					|| obligation.requiredPlacement() != action.key().targetPlacement()
+					|| requiredPlacement != obligation.requiredPlacement()
+					|| !authoritySignature.equals(action.normalizedSignature()))
+					throw new IllegalArgumentException("MINST_EXACT_RELOCATION_AUTHORITY_MISMATCH");
+			}
+			else if(authorityKind == TransferAuthorityKind.INDEPENDENT_ANCHOR) {
+				if(group.direction() != Direction.UPLOAD || action != null || obligation != null
+					|| anchorInputEdge == null || independentAnchor == null || consumerProfile == null
+					|| anchorInputEdge.consumer() != endpoint.consumerKey()
+					|| anchorInputEdge.inputPosition() == endpoint.inputPosition()
+					|| independentAnchor.fType() != group.conversionType()
+					|| consumerProfile.key().consumerOccurrence() != endpoint.consumerKey()
+					|| consumerProfile.key().inputPosition() != endpoint.inputPosition()
+					|| consumerProfile.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE
+					|| !consumerProfile.allowedTargetTypes().isEmpty()
+						&& !consumerProfile.allowedTargetTypes().contains(group.conversionType()))
+					throw new IllegalArgumentException("MINST_EXACT_INDEPENDENT_ANCHOR_AUTHORITY_MISMATCH");
+			}
+		}
+
+		static TransferAuthorityFact relocation(AuxiliaryGroupFact group, EndpointFact endpoint,
+			CompiledInputEdgeFact inputEdge, RelocationAction action, ObligationKey obligation) {
+			return new TransferAuthorityFact(group, endpoint, inputEdge,
+				TransferAuthorityKind.RELOCATION_OBLIGATION, obligation.requiredPlacement(),
+				action.normalizedSignature(), action, obligation, null, null, null);
+		}
+
+		static TransferAuthorityFact independentAnchor(AuxiliaryGroupFact group, EndpointFact endpoint,
+			CompiledInputEdgeFact inputEdge, CompiledInputEdgeFact anchorInputEdge,
+			DurableAnchorKey anchor, CandidateConsumerProfileFact profile,
+			PlacementState requiredPlacement, String authoritySignature) {
+			return new TransferAuthorityFact(group, endpoint, inputEdge,
+				TransferAuthorityKind.INDEPENDENT_ANCHOR, requiredPlacement, authoritySignature,
+				null, null, anchorInputEdge, anchor, profile);
+		}
+
+		public AuxiliaryGroupFact group() { return group; }
+		public EndpointFact endpoint() { return endpoint; }
+		public CompiledInputEdgeFact inputEdge() { return inputEdge; }
+		public TransferAuthorityKind authorityKind() { return authorityKind; }
+		public RelocationAction actionOrNull() { return action; }
+		public ObligationKey obligationOrNull() { return obligation; }
+		public CompiledInputEdgeFact anchorInputEdgeOrNull() { return anchorInputEdge; }
+		public DurableAnchorKey independentAnchorOrNull() { return independentAnchor; }
+		public CandidateConsumerProfileFact consumerProfileOrNull() { return consumerProfile; }
+		public Direction direction() { return group.direction(); }
+		public PlacementState requiredPlacement() { return requiredPlacement; }
+		public String authoritySignature() { return authoritySignature; }
+	}
+
 	public static final class ObligationEndpointFact {
 		private final CompiledHopKey consumerKey;
 		private final int inputPosition;
@@ -275,6 +368,7 @@ public final class MinStExactCostFacts {
 	private final List<MembershipRepresentative> membershipRepresentatives;
 	private final List<DirectedEdgeFact> edges;
 	private final List<AuxiliaryGroupFact> groups;
+	private final List<TransferAuthorityFact> transferAuthorities;
 	private final List<ObligationFact> obligations;
 	private final String derivationFingerprint;
 
@@ -282,10 +376,12 @@ public final class MinStExactCostFacts {
 		List<CompiledHopKey> orderedScope, List<DecisionFact> decisionFactsInScopeOrder,
 		List<DirectedEdgeFact> directedEdgesInDerivationOrder,
 		List<AuxiliaryGroupFact> auxiliaryGroupsInCanonicalOrder,
+		List<TransferAuthorityFact> transferAuthoritiesInCanonicalOrder,
 		List<ObligationFact> obligationFactsInCanonicalOrder, String derivationFingerprint) {
 		MinStExactCostFactsProducer.validate(analysis, analysisFingerprint, orderedScope,
 			decisionFactsInScopeOrder, directedEdgesInDerivationOrder,
-			auxiliaryGroupsInCanonicalOrder, obligationFactsInCanonicalOrder,
+			auxiliaryGroupsInCanonicalOrder, transferAuthoritiesInCanonicalOrder,
+			obligationFactsInCanonicalOrder,
 			derivationFingerprint);
 		this.analysis = analysis;
 		this.analysisFingerprint = analysisFingerprint;
@@ -295,6 +391,7 @@ public final class MinStExactCostFacts {
 			analysis, this.decisions);
 		this.edges = List.copyOf(directedEdgesInDerivationOrder);
 		this.groups = List.copyOf(auxiliaryGroupsInCanonicalOrder);
+		this.transferAuthorities = List.copyOf(transferAuthoritiesInCanonicalOrder);
 		this.obligations = List.copyOf(obligationFactsInCanonicalOrder);
 		this.derivationFingerprint = derivationFingerprint;
 	}
@@ -311,6 +408,9 @@ public final class MinStExactCostFacts {
 	}
 	public List<DirectedEdgeFact> directedEdgesInDerivationOrder() { return edges; }
 	public List<AuxiliaryGroupFact> auxiliaryGroupsInCanonicalOrder() { return groups; }
+	public List<TransferAuthorityFact> transferAuthoritiesInCanonicalOrder() {
+		return transferAuthorities;
+	}
 	public List<ObligationFact> obligationFactsInCanonicalOrder() { return obligations; }
 	public String derivationFingerprint() { return derivationFingerprint; }
 }

@@ -19,12 +19,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection.ObligationReceipt;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -149,19 +146,9 @@ public final class MinStExactSelector {
 	private static void addGroupReceipts(List<ObligationReceipt> receipts,
 		MinStExactCostFacts facts, AuxiliaryGroupFact group) {
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
-			List<ObligationReceipt> matches = new ArrayList<>();
-			for(ObligationFact obligation : facts.obligationFactsInCanonicalOrder())
-				for(ObligationEndpointFact candidate : obligation.endpointsInCanonicalOrder()) {
-					if(!candidate.consumerKey().equals(endpoint.consumerKey())
-						|| candidate.inputPosition() != endpoint.inputPosition())
-						continue;
-					NeutralPlacementGraph.RelocationAction action = exactActionForSignature(facts, group,
-						obligation.actionSignature());
-					if(authorizesExactEndpoint(facts, action, group, endpoint, candidate))
-						matches.add(new ObligationReceipt(group.direction(), group.producerKey(),
-							endpoint.consumerKey(), endpoint.inputPosition(), candidate.requiredPlacement(),
-							obligation.actionSignature()));
-				}
+			List<TransferAuthorityFact> matches = facts.transferAuthoritiesInCanonicalOrder().stream()
+				.filter(authority -> authority.group() == group && authority.endpoint() == endpoint)
+				.toList();
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_OBLIGATION_AUTHORITY_"
 					+ (matches.isEmpty() ? "MISSING" : "AMBIGUOUS")
@@ -169,60 +156,11 @@ public final class MinStExactSelector {
 					+ "|producer=" + group.producerKey().normalizedSignature()
 					+ "|consumer=" + endpoint.consumerKey().normalizedSignature()
 					+ "|input=" + endpoint.inputPosition());
-			receipts.add(matches.get(0));
+			TransferAuthorityFact authority = matches.get(0);
+			receipts.add(new ObligationReceipt(group.direction(), group.producerKey(),
+				endpoint.consumerKey(), endpoint.inputPosition(), authority.requiredPlacement(),
+				authority.authoritySignature()));
 		}
-	}
-
-	private static NeutralPlacementGraph.RelocationAction exactActionForSignature(
-		MinStExactCostFacts facts, AuxiliaryGroupFact group, String actionSignature) {
-		List<NeutralPlacementGraph.RelocationAction> actions = facts.analysis().graph()
-			.relocationActions().stream()
-			.filter(action -> action.normalizedSignature().equals(actionSignature))
-			.toList();
-		if(actions.size() != 1)
-			throw new IllegalArgumentException("MINST_EXACT_AUTHORITY_ACTION_"
-				+ (actions.isEmpty() ? "MISSING" : "AMBIGUOUS")
-				+ "|producer=" + group.producerKey().normalizedSignature()
-				+ "|signature=" + actionSignature);
-		NeutralPlacementGraph.RelocationAction action = actions.get(0);
-		if(!facts.analysis().graph().node(group.producerKey()).orElseThrow().valueVersion()
-			.equals(action.key().sourceValueVersion()))
-			throw new IllegalArgumentException("MINST_EXACT_AUTHORITY_ACTION_SOURCE_MISMATCH|producer="
-				+ group.producerKey().normalizedSignature() + "|signature=" + actionSignature);
-		return action;
-	}
-
-	private static boolean authorizesExactEndpoint(MinStExactCostFacts facts,
-		NeutralPlacementGraph.RelocationAction action,
-		AuxiliaryGroupFact group, EndpointFact endpoint, ObligationEndpointFact candidate) {
-		if(!candidate.consumerKey().equals(endpoint.consumerKey())
-			|| candidate.inputPosition() != endpoint.inputPosition()
-			|| candidate.requiredPlacement().fType() != group.conversionType()
-			|| !representativeAuthorizesAction(facts, group, action, candidate.requiredPlacement()))
-			return false;
-		for(ObligationKey obligation : action.obligations())
-			if(obligation.sourceValueVersion().equals(action.key().sourceValueVersion())
-				&& obligation.relocationAction().equals(action.key())
-				&& obligation.consumer().equals(endpoint.consumerKey())
-				&& obligation.inputPosition() == endpoint.inputPosition()
-				&& obligation.requiredPlacement().equals(candidate.requiredPlacement())
-				&& obligation.requiredPlacement().equals(action.key().targetPlacement())
-				&& group.producerKey().equals(endpoint.producerKey()))
-				return true;
-		return false;
-	}
-
-	private static boolean representativeAuthorizesAction(MinStExactCostFacts facts,
-		AuxiliaryGroupFact group, NeutralPlacementGraph.RelocationAction action,
-		PlacementState requiredPlacement) {
-		List<MembershipRepresentative> published = facts.membershipRepresentativesInCanonicalOrder();
-		List<MembershipRepresentative> matches = published.stream()
-			.filter(representative -> representative.decisionKey() == group.producerKey()
-				&& representative.state().equals(requiredPlacement)
-				&& representative.compatibleActionSignaturesInCanonicalOrder()
-					.contains(action.normalizedSignature()))
-			.toList();
-		return matches.size() == 1;
 	}
 
 	private static String membership(ExecType execType, FederatedOutput output) {
