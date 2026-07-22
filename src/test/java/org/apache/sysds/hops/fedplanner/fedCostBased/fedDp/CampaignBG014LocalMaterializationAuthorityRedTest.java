@@ -2,6 +2,7 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -11,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
@@ -30,7 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.F
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailurePoint;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.ObservabilitySnapshot;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -45,9 +47,12 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.FixMethodOrder;
 import org.junit.Test;
+import org.junit.runners.MethodSorters;
 
 /** Executable Task33 RED: selected local materialization authority is canonical, exact, and fail-closed. */
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class CampaignBG014LocalMaterializationAuthorityRedTest {
 	private static final PlacementState FED_FOUT_ROW = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, true);
 	private static final PlacementState FED_FOUT_COL = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.COL, true);
@@ -69,76 +74,130 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 	}
 
 	@Test
-	public void selectedLocalAuthorityChangesTheCanonicalPlanHash() {
+	public void a00_selectedLocalAuthorityChangesTheCanonicalPlanHashBeforeTypedApiContract() {
 		EmissionAwareResult withoutLocal = fixture.result(List.of());
-		EmissionAwareResult withLocal = fixture.result(List.of(fixture.localAction(FType.ROW, fixture.scopeText())));
+		EmissionAwareResult withLocal = fixture.result(List.of(fixture.localAction(fixture.scopeText())));
 
 		Assert.assertNotEquals("TASK33_SELECTED_LOCAL_AUTHORITY_MUST_PARTICIPATE_IN_CANONICAL_HASH",
 			PlacementEmissionTransaction.canonicalPlanHash(withoutLocal),
 			PlacementEmissionTransaction.canonicalPlanHash(withLocal));
+
+		assertFutureTypedLocalMaterializationApi(withLocal);
 	}
 
 	@Test
 	public void selectedLocalAuthorityEmitsOneExactSortedRegistryEntry() {
-		EmissionAwareResult result = fixture.result(List.of(fixture.localAction(FType.ROW, fixture.scopeText())));
+		EmissionAwareResult result = fixture.result(List.of(fixture.localAction(fixture.scopeText())));
+		FederatedLocalMaterializeRegistry.Snapshot before = FederatedLocalMaterializeRegistry.snapshotAll();
 		PlacementEmissionTransaction.emit(fixture.program(), result, FailureInjector.none());
 
-		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> local =
-			FederatedLocalMaterializeRegistry.snapshot(fixture.scopeId());
-		Assert.assertEquals("TASK33_EMIT_MUST_WRITE_EXACTLY_ONE_LOCAL_MATERIALIZATION", 1, local.size());
-		FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec = local.get(fixture.producer().hop().getHopID());
-		Assert.assertNotNull("TASK33_LOCAL_ENTRY_SOURCE_IS_EXACT_PRODUCER", spec);
+		FederatedLocalMaterializeRegistry.LocalMaterializeSpec expectedSpec =
+			new FederatedLocalMaterializeRegistry.LocalMaterializeSpec(fixture.consumerHopIds(),
+				fixture.producerFedFout().fType().name(), fixture.durableProvenance());
+		Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> expectedScopes =
+			new LinkedHashMap<>(before.scopes());
+		Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec> expectedScopeEntries =
+			new LinkedHashMap<>(expectedScopes.getOrDefault(fixture.scopeId(), Map.of()));
+		expectedScopeEntries.put(fixture.producer().hop().getHopID(), expectedSpec);
+		expectedScopes.put(fixture.scopeId(), Map.copyOf(expectedScopeEntries));
+		Assert.assertEquals("TASK33_LOCAL_SNAPSHOTALL_HAS_ONLY_EXPECTED_SCOPE_AND_SOURCE_DELTA",
+			new FederatedLocalMaterializeRegistry.Snapshot(expectedScopes),
+			FederatedLocalMaterializeRegistry.snapshotAll());
+
+		FederatedLocalMaterializeRegistry.LocalMaterializeSpec spec =
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes().get(fixture.scopeId())
+				.get(fixture.producer().hop().getHopID());
+		Assert.assertEquals("TASK33_LOCAL_ENTRY_SOURCE_IS_EXACT_PRODUCER", expectedSpec, spec);
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_SCOPE_IS_EXACT", fixture.scopeId(), fixture.producer().scopeId());
 		Assert.assertEquals("TASK33_LOCAL_ENTRY_CONSUMERS_ARE_EXACT_SORTED",
 			fixture.consumerHopIds(), spec.getConsumerHopIds());
-		Assert.assertEquals("TASK33_LOCAL_ENTRY_FTYPE_IS_EXACT", FType.ROW.name(), spec.getFTypeHint());
-		Assert.assertEquals("TASK33_LOCAL_ENTRY_REASON_IS_EXACT",
-			"placement-transaction:" + fixture.scopeText(), spec.getReason());
+		Assert.assertEquals("TASK33_LOCAL_ENTRY_FTYPE_IS_DERIVED_FROM_PRODUCER_PLACEMENT",
+			fixture.producerFedFout().fType().name(), spec.getFTypeHint());
+		Assert.assertEquals("TASK33_LOCAL_ENTRY_REASON_IS_DURABLE_PROVENANCE",
+			fixture.durableProvenance(), spec.getReason());
 	}
 
 	@Test
 	public void invalidLocalMaterializationAuthorityRejectsBeforeAnyOwnedMutation() {
-		List<NamedAction> invalid = List.of(
-			new NamedAction("producer-lout", fixture.localAction(FType.ROW, fixture.scopeText(), CP_LOUT,
+		TestLocalMaterializationAction valid = fixture.canonicalLocalAction(fixture.scopeText());
+		Object selectedValidAction = futureTypedActionOr(valid);
+		EmissionAwareResult validResult = fixture.result(List.of(selectedValidAction));
+		EmissionAwareResult fedConsumerResult = fixture.result(List.of(selectedValidAction),
+			Map.of(fixture.firstConsumer().key(), fixture.firstConsumerFed()));
+		assertFedConsumerDiffersOnlyByOneSelectedStateOverride(validResult, fedConsumerResult, selectedValidAction);
+		List<NamedResult> invalid = List.of(
+			invalidAction("producer-lout", valid, fixture.canonicalLocalAction(fixture.scopeText(), CP_LOUT,
 				List.of(consumerObligation(fixture.firstConsumer(), 0), consumerObligation(fixture.secondConsumer(), 0)),
-				fixture.producer().key(), fixture.producer().value())),
-			new NamedAction("fed-consumer", fixture.localAction(FType.ROW, fixture.scopeText(), FED_FOUT_ROW,
+				fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			new NamedResult("fed-consumer", fedConsumerResult),
+			invalidAction("null-ftype", valid, fixture.canonicalLocalAction(fixture.scopeText(),
+				new PlacementState(ExecType.FED, FederatedOutput.FOUT, null, true),
 				List.of(consumerObligation(fixture.firstConsumer(), 0), consumerObligation(fixture.secondConsumer(), 0)),
-				fixture.producer().key(), fixture.producer().value(), Map.of(fixture.firstConsumer().key(), FED_FOUT_ROW))),
-			new NamedAction("null-ftype", fixture.localAction(null, fixture.scopeText())),
-			new NamedAction("empty-obligations", fixture.localAction(FType.ROW, fixture.scopeText(), FED_FOUT_ROW,
-				List.of(), fixture.producer().key(), fixture.producer().value())),
-			new NamedAction("partial-obligations", fixture.localAction(FType.ROW, fixture.scopeText(), FED_FOUT_ROW,
-				List.of(consumerObligation(fixture.firstConsumer(), 0)), fixture.producer().key(), fixture.producer().value())),
-			new NamedAction("duplicate-obligations", fixture.localAction(FType.ROW, fixture.scopeText(), FED_FOUT_ROW,
+				fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			invalidAction("required-placement-mismatch", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
+				List.of(new TestLocalMaterializationObligation(fixture.firstConsumer().key(), 0, fixture.firstConsumerFed()),
+					consumerObligation(fixture.secondConsumer(), 0)),
+				fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			invalidAction("empty-obligations", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
+				List.of(), fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			invalidAction("partial-obligations", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
+				List.of(consumerObligation(fixture.firstConsumer(), 0)), fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			invalidAction("duplicate-obligations", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
 				List.of(consumerObligation(fixture.firstConsumer(), 0), consumerObligation(fixture.firstConsumer(), 0),
-					consumerObligation(fixture.secondConsumer(), 0)), fixture.producer().key(), fixture.producer().value())),
-			new NamedAction("blank-scope", fixture.localAction(FType.ROW, " ")),
-			new NamedAction("mismatched-scope", fixture.localAction(FType.ROW, (fixture.scopeId() + 1) + ":main")),
-			new NamedAction("mismatched-provenance", fixture.localAction(FType.ROW, fixture.scopeText(), FED_FOUT_ROW,
+					consumerObligation(fixture.secondConsumer(), 0)), fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			invalidAction("blank-scope", valid, fixture.canonicalLocalAction(" ")),
+			invalidAction("mismatched-scope", valid, fixture.canonicalLocalAction((fixture.scopeId() + 1) + ":main")),
+			invalidAction("source-value-version-mismatch", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
 				List.of(consumerObligation(fixture.firstConsumer(), 0), consumerObligation(fixture.secondConsumer(), 0)),
-				fixture.producer().key(), fixture.firstConsumer().value())),
-			new NamedAction("wrong-input-position", fixture.localAction(FType.ROW, fixture.scopeText(), FED_FOUT_ROW,
+				fixture.producer().key(), fixture.firstConsumer().value(), fixture.durableProvenance())),
+			invalidAction("durable-provenance-mismatch", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
+				List.of(consumerObligation(fixture.firstConsumer(), 0), consumerObligation(fixture.secondConsumer(), 0)),
+				fixture.producer().key(), fixture.producer().value(), "fed-init:Y")),
+			invalidAction("blank-durable-provenance", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
+				List.of(consumerObligation(fixture.firstConsumer(), 0), consumerObligation(fixture.secondConsumer(), 0)),
+				fixture.producer().key(), fixture.producer().value(), " ")),
+			invalidAction("wrong-input-position", valid, fixture.canonicalLocalAction(fixture.scopeText(), fixture.producerFedFout(),
 				List.of(consumerObligation(fixture.firstConsumer(), 1), consumerObligation(fixture.secondConsumer(), 0)),
-				fixture.producer().key(), fixture.producer().value())),
-			new NamedAction("foreign-occurrence", fixture.foreignOccurrenceAction()),
-			new NamedAction("same-program-unselected-virtual-clone", fixture.virtualCloneAction())
+				fixture.producer().key(), fixture.producer().value(), fixture.durableProvenance())),
+			invalidAction("foreign-occurrence", valid, fixture.foreignOccurrenceAction()),
+			invalidAction("same-program-unselected-virtual-clone", valid, fixture.virtualCloneAction())
 		);
-		for(NamedAction candidate : invalid)
-			assertRejectsBeforeMutation(candidate.name(), fixture.result(List.of(candidate.action())));
+		for(NamedResult candidate : invalid)
+			assertRejectsBeforeMutation(candidate.name(), candidate.result());
 	}
 
 	@Test
 	public void scopeAndFTypeDistinctLocalActionsRemainDistinct() {
-		EmissionAwareResult result = fixture.result(List.of(
-			fixture.localAction(FType.ROW, fixture.scopeText()),
-			fixture.localAction(FType.COL, (fixture.scopeId() + 100) + ":main")));
-		PlacementEmissionTransaction.emit(fixture.program(), result, FailureInjector.none());
+		Fixture row = fixture;
+		Fixture col;
+		try { col = fixture(FType.COL); }
+		catch(Exception failure) { throw new AssertionError("TASK33_FIXTURE_REQUIRES_LEGAL_COL_LOCAL_ACTION", failure); }
+		Assert.assertNotEquals("TASK33_ROW_COL_SCOPES_MUST_BE_PROVABLY_DISTINCT", row.scopeId(), col.scopeId());
+		TestLocalMaterializationAction rowAction = row.canonicalLocalAction(row.scopeText());
+		TestLocalMaterializationAction colAction = col.canonicalLocalAction(col.scopeText());
+		Assert.assertEquals("TASK33_ROW_ACTION_KEEPS_MATCHING_FTYPE", FType.ROW, rowAction.fType());
+		Assert.assertEquals("TASK33_COL_ACTION_KEEPS_MATCHING_FTYPE", FType.COL, colAction.fType());
+		Assert.assertNotEquals("TASK33_SCOPE_AND_FTYPE_IDENTITY_MAKE_ACTIONS_DISTINCT", rowAction, colAction);
+		Assert.assertEquals("TASK33_DISTINCT_CANONICAL_ACTIONS_SURVIVE_SET_IDENTITY", 2,
+			Set.of(rowAction, colAction).size());
 
+		PlacementEmissionTransaction.emit(row.program(),
+			row.result(List.of(futureTypedActionOr(rowAction))), FailureInjector.none());
 		Assert.assertEquals("TASK33_SCOPE_DISTINCT_ACTION_SURVIVES", 1,
-			FederatedLocalMaterializeRegistry.snapshot(fixture.scopeId()).size());
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes().getOrDefault(row.scopeId(), Map.of()).size());
+		Assert.assertEquals("TASK33_ROW_FIXTURE_KEEPS_MATCHING_FTYPE", FType.ROW.name(),
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes().get(row.scopeId())
+				.get(row.producer().hop().getHopID()).getFTypeHint());
+
+		PlacementEmissionTransaction.resetForTesting();
+		clearRegistries();
+		PlacementEmissionTransaction.emit(col.program(),
+			col.result(List.of(futureTypedActionOr(colAction))), FailureInjector.none());
 		Assert.assertEquals("TASK33_FTYPE_DISTINCT_ACTION_SURVIVES", 1,
-			FederatedLocalMaterializeRegistry.snapshot(fixture.scopeId() + 100).size());
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes().getOrDefault(col.scopeId(), Map.of()).size());
+		Assert.assertEquals("TASK33_COL_FIXTURE_KEEPS_MATCHING_FTYPE", FType.COL.name(),
+			FederatedLocalMaterializeRegistry.snapshotAll().scopes().get(col.scopeId())
+				.get(col.producer().hop().getHopID()).getFTypeHint());
 	}
 
 	@Test
@@ -147,7 +206,7 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		primeHopMirrors(fixture.analysis());
 		StateSnapshot beforeHopFailure = snapshot(fixture.analysis());
 		assertThrowsAny(() -> PlacementEmissionTransaction.emit(fixture.program(),
-			fixture.result(List.of(fixture.localAction(FType.ROW, fixture.scopeText()))),
+			fixture.result(List.of(fixture.localAction(fixture.scopeText()))),
 			FailureInjector.failAt(FailurePoint.AFTER_FIRST_HOP_MUTATION)));
 		Assert.assertEquals("TASK33_ROLLBACK_AFTER_HOP_MUTATION", beforeHopFailure, snapshot(fixture.analysis()));
 
@@ -157,14 +216,18 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		primeHopMirrors(fixture.analysis());
 		StateSnapshot beforeRegistryFailure = snapshot(fixture.analysis());
 		assertThrowsAny(() -> PlacementEmissionTransaction.emit(fixture.program(),
-			fixture.result(List.of(fixture.localAction(FType.ROW, fixture.scopeText()))),
+			fixture.result(List.of(fixture.localAction(fixture.scopeText()))),
 			FailureInjector.failAt(FailurePoint.AFTER_FIRST_REGISTRY_WRITE)));
 		Assert.assertEquals("TASK33_ROLLBACK_AFTER_LOCAL_REGISTRY_WRITE", beforeRegistryFailure,
 			snapshot(fixture.analysis()));
 	}
 
 	private static Fixture fixture() throws Exception {
-		FixtureProgram program = FixtureProgram.adopt(compileProgram());
+		return fixture(FType.ROW);
+	}
+
+	private static Fixture fixture(FType fType) throws Exception {
+		FixtureProgram program = FixtureProgram.adopt(compileProgram(fType));
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		Occurrence producer = occurrence(analysis, hop -> hop instanceof DataOp data && data.getOp() == OpOpData.FEDERATED
 			&& "X".equals(data.getName()), "producer X");
@@ -175,11 +238,15 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		for(Occurrence consumer : consumers)
 			Assert.assertTrue("TASK33_FIXTURE_CONSUMER_MUST_ACCEPT_CP_LOUT",
 				node(analysis, consumer.key()).legalAlternatives().contains(CP_LOUT));
-		PlacementState producerFedFoutRow = node(analysis, producer.key()).legalAlternatives().stream()
-			.filter(s -> s.execType() == ExecType.FED && s.output() == FederatedOutput.FOUT && s.fType() == FType.ROW)
-			.findFirst().orElseThrow(() -> new AssertionError("TASK33_FIXTURE_PRODUCER_MUST_ACCEPT_FED_FOUT_ROW"));
+		PlacementState producerFedFout = node(analysis, producer.key()).legalAlternatives().stream()
+			.filter(s -> s.execType() == ExecType.FED && s.output() == FederatedOutput.FOUT && s.fType() == fType)
+			.findFirst().orElseThrow(() -> new AssertionError("TASK33_FIXTURE_PRODUCER_MUST_ACCEPT_FED_FOUT_" + fType));
+		PlacementState firstConsumerFed = node(analysis, consumers.get(0).key()).legalAlternatives().stream()
+			.filter(s -> s.execType() == ExecType.FED).findFirst()
+			.orElseThrow(() -> new AssertionError("TASK33_FIXTURE_CONSUMER_MUST_HAVE_LEGAL_FED_ALTERNATIVE"));
 		program.install(analysis);
-		return new Fixture(program, analysis, producer, consumers.get(0), consumers.get(1), producerFedFoutRow);
+		return new Fixture(program, analysis, producer, consumers.get(0), consumers.get(1), producerFedFout,
+			firstConsumerFed, fType);
 	}
 
 	private static boolean isBinaryConsumer(Hop hop) {
@@ -187,11 +254,14 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 			&& "X".equals(data.getName()));
 	}
 
-	private static DMLProgram compileProgram() throws Exception {
+	private static DMLProgram compileProgram(FType fType) throws Exception {
+		String ranges = fType == FType.COL ? "list(list(0,0),list(4,2),list(0,2),list(4,4))"
+			: "list(list(0,0),list(2,2),list(2,0),list(4,2))";
+		int cols = fType == FType.COL ? 4 : 2;
 		String script = "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
-			+ "ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));\n"
-			+ "S1=rand(rows=4,cols=2,seed=7);\n"
-			+ "S2=rand(rows=4,cols=2,seed=8);\n"
+			+ "ranges=" + ranges + ");\n"
+			+ "S1=rand(rows=4,cols=" + cols + ",seed=7);\n"
+			+ "S2=rand(rows=4,cols=" + cols + ",seed=8);\n"
 			+ "Y1=X+S1;\nY2=X-S2;\n"
 			+ "write(Y1,\"/tmp/g005-task33-y1\",format=\"binary\");\n"
 			+ "write(Y2,\"/tmp/g005-task33-y2\",format=\"binary\");\n";
@@ -222,7 +292,7 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 	}
 
 	private static TestLocalMaterializationObligation consumerObligation(Occurrence consumer, int inputPosition) {
-		return new TestLocalMaterializationObligation(consumer.key(), inputPosition);
+		return new TestLocalMaterializationObligation(consumer.key(), inputPosition, CP_LOUT);
 	}
 
 	private static void assertRejectsBeforeMutation(String label, EmissionAwareResult result) {
@@ -230,6 +300,36 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		assertThrowsAny(() -> PlacementEmissionTransaction.emit(((FixtureProgram) result.programOwner()), result,
 			FailureInjector.none()), "TASK33_INVALID_LOCAL_AUTHORITY_MUST_REJECT|" + label);
 		Assert.assertEquals("TASK33_INVALID_LOCAL_AUTHORITY_MUTATED|" + label, before, snapshot(result.analysis()));
+	}
+
+	private NamedResult invalidAction(String label, TestLocalMaterializationAction valid,
+		TestLocalMaterializationAction candidate) {
+		assertOneActionDefect(label, valid, candidate);
+		return new NamedResult(label, fixture.result(List.of(futureTypedActionOr(candidate))));
+	}
+
+	private static void assertFedConsumerDiffersOnlyByOneSelectedStateOverride(EmissionAwareResult valid,
+		EmissionAwareResult candidate, Object identicalAction) {
+		Assert.assertEquals("TASK33_FED_CONSUMER_NEGATIVE_USES_IDENTICAL_VALID_ACTION",
+			List.of(identicalAction), candidate.selectedLocalMaterializations());
+		Assert.assertEquals("TASK33_FED_CONSUMER_NEGATIVE_STARTS_FROM_VALID_ACTION",
+			valid.selectedLocalMaterializations(), candidate.selectedLocalMaterializations());
+		int deltas = 0;
+		for(CompiledHopKey key : valid.selectedStates().keySet())
+			deltas += Objects.equals(valid.selectedStates().get(key), candidate.selectedStates().get(key)) ? 0 : 1;
+		Assert.assertEquals("TASK33_FED_CONSUMER_NEGATIVE_HAS_EXACTLY_ONE_SELECTED_STATE_DEFECT", 1, deltas);
+	}
+
+	private static void assertOneActionDefect(String label, TestLocalMaterializationAction expected,
+		TestLocalMaterializationAction actual) {
+		int deltas = 0;
+		deltas += Objects.equals(expected.statementBlockScope(), actual.statementBlockScope()) ? 0 : 1;
+		deltas += expected.sourceOccurrence() == actual.sourceOccurrence() ? 0 : 1;
+		deltas += Objects.equals(expected.sourceValueVersion(), actual.sourceValueVersion()) ? 0 : 1;
+		deltas += Objects.equals(expected.producerPlacement(), actual.producerPlacement()) ? 0 : 1;
+		deltas += Objects.equals(expected.obligations(), actual.obligations()) ? 0 : 1;
+		deltas += Objects.equals(expected.durableProvenance(), actual.durableProvenance()) ? 0 : 1;
+		Assert.assertEquals("TASK33_INVALID_ACTION_MUST_HAVE_ONE_NAMED_DEFECT|" + label, 1, deltas);
 	}
 
 	private static void assertThrowsAny(Runnable action) {
@@ -302,13 +402,19 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 	}
 
 	private record Fixture(FixtureProgram program, PlacementAnalysis analysis, Occurrence producer,
-		Occurrence firstConsumer, Occurrence secondConsumer, PlacementState producerFedFoutRow) {
+		Occurrence firstConsumer, Occurrence secondConsumer, PlacementState producerFedFout,
+		PlacementState firstConsumerFed, FType fixtureFType) {
 		private EmissionAwareResult result(List<Object> actions) {
+			return result(actions, Map.of());
+		}
+		private EmissionAwareResult result(List<Object> actions, Map<CompiledHopKey, PlacementState> selectedOverrides) {
 			Map<CompiledHopKey, PlacementState> selected = new LinkedHashMap<>();
 			for(Node n : analysis.graph().decisionNodes()) {
-				PlacementState state = n.key() == producer.key() ? producerFedFoutRow
+				PlacementState state = n.key() == producer.key() ? producerFedFout
 					: n.key() == firstConsumer.key() || n.key() == secondConsumer.key() ? CP_LOUT
 					: n.legalAlternatives().contains(CP_LOUT) ? CP_LOUT : n.legalAlternatives().get(0);
+				if(selectedOverrides.containsKey(n.key()))
+					state = selectedOverrides.get(n.key());
 				Assert.assertTrue("TASK33_FIXTURE_SELECTION_MUST_BE_LEGAL", n.legalAlternatives().contains(state));
 				selected.put(n.key(), state);
 			}
@@ -322,52 +428,60 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		private List<Long> consumerHopIds() {
 			return List.of(firstConsumer.hop().getHopID(), secondConsumer.hop().getHopID()).stream().sorted().toList();
 		}
-		private Object localAction(FType fType, String scopeText) {
-			return localAction(fType, scopeText, producerFedFoutRow,
+		private String durableProvenance() { return "fed-init:X"; }
+		private Object localAction(String scopeText) {
+			return futureTypedActionOr(canonicalLocalAction(scopeText));
+		}
+		private TestLocalMaterializationAction canonicalLocalAction(String scopeText) {
+			return canonicalLocalAction(scopeText, producerFedFout,
 				List.of(consumerObligation(firstConsumer, 0), consumerObligation(secondConsumer, 0)),
-				producer.key(), producer.value());
+				producer.key(), producer.value(), durableProvenance());
 		}
-		private Object localAction(FType fType, String scopeText, PlacementState producerState,
-			List<TestLocalMaterializationObligation> obligations, CompiledHopKey source, ValueVersionKey value) {
-			return localAction(fType, scopeText, producerState, obligations, source, value, Map.of());
+		private TestLocalMaterializationAction canonicalLocalAction(String scopeText,
+			PlacementState producerState, List<TestLocalMaterializationObligation> obligations,
+			CompiledHopKey source, ValueVersionKey value, String durableProvenance) {
+			return new TestLocalMaterializationAction(source, value, producerState, obligations, scopeText, durableProvenance);
 		}
-		private Object localAction(FType fType, String scopeText, PlacementState producerState,
-			List<TestLocalMaterializationObligation> obligations, CompiledHopKey source, ValueVersionKey value,
-			Map<CompiledHopKey, PlacementState> selectedOverrides) {
-			TestLocalMaterializationAction fallback = new TestLocalMaterializationAction(scopeText, source, value,
-				producerState, fType, obligations, selectedOverrides);
-			return futureTypedActionOr(fallback);
-		}
-		private Object foreignOccurrenceAction() {
-			Fixture foreign;
-			try { foreign = fixture(); }
-			catch(Exception e) { throw new IllegalStateException(e); }
-			return localAction(FType.ROW, scopeText(), FED_FOUT_ROW,
+		private TestLocalMaterializationAction foreignOccurrenceAction() {
+			ControlRegionKey foreignRegion = new ControlRegionKey(producer.key().programFingerprint() + "|foreign",
+				producer.key().functionNamespace(), producer.key().controlRegion().regionPath(),
+				producer.key().callSitePath(), producer.key().recompileContext());
+			CompiledHopKey foreign = new CompiledHopKey(foreignRegion.programFingerprint(),
+				producer.key().functionNamespace(), producer.key().callSitePath(), producer.key().recompileContext(),
+				foreignRegion, producer.key().emittedHopInstance(), producer.key().canonicalSourceOrigin());
+			Assert.assertNotEquals("TASK33_FOREIGN_OCCURRENCE_MUST_BE_PROVABLY_UNSELECTED",
+				producer.key().normalizedSignature(), foreign.normalizedSignature());
+			return canonicalLocalAction(scopeText(), producerFedFout,
 				List.of(consumerObligation(firstConsumer, 0), consumerObligation(secondConsumer, 0)),
-				foreign.producer().key(), producer.value());
+				foreign, producer.value(), durableProvenance());
 		}
-		private Object virtualCloneAction() {
+		private TestLocalMaterializationAction virtualCloneAction() {
 			CompiledHopKey clone = new CompiledHopKey(producer.key().programFingerprint(), producer.key().functionNamespace(),
 				producer.key().callSitePath(), producer.key().recompileContext(), producer.key().controlRegion(),
 				producer.key().emittedHopInstance() + "|virtual-clone", producer.key().canonicalSourceOrigin());
-			return localAction(FType.ROW, scopeText(), FED_FOUT_ROW,
-				List.of(consumerObligation(firstConsumer, 0), consumerObligation(secondConsumer, 0)), clone, producer.value());
+			return canonicalLocalAction(scopeText(), producerFedFout,
+				List.of(consumerObligation(firstConsumer, 0), consumerObligation(secondConsumer, 0)), clone, producer.value(), durableProvenance());
 		}
 	}
 
-	public record TestLocalMaterializationObligation(CompiledHopKey consumer, int inputPosition) {
+	public record TestLocalMaterializationObligation(CompiledHopKey consumerOccurrence, int inputPosition,
+		PlacementState requiredPlacement) {
 		public TestLocalMaterializationObligation {
-			Objects.requireNonNull(consumer, "consumer");
+			Objects.requireNonNull(consumerOccurrence, "consumerOccurrence");
+			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
 		}
 	}
 
-	public record TestLocalMaterializationAction(String statementBlockScope, CompiledHopKey source,
-		ValueVersionKey sourceValueVersion, PlacementState sourcePlacement, FType fType,
-		List<TestLocalMaterializationObligation> obligations, Map<CompiledHopKey, PlacementState> selectedOverrides) {
+	public record TestLocalMaterializationAction(CompiledHopKey sourceOccurrence, ValueVersionKey sourceValueVersion,
+		PlacementState producerPlacement, List<TestLocalMaterializationObligation> obligations,
+		String statementBlockScope, String durableProvenance) {
 		public TestLocalMaterializationAction {
+			Objects.requireNonNull(sourceOccurrence, "sourceOccurrence");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(producerPlacement, "producerPlacement");
 			obligations = List.copyOf(Objects.requireNonNull(obligations, "obligations"));
-			selectedOverrides = Map.copyOf(Objects.requireNonNull(selectedOverrides, "selectedOverrides"));
 		}
+		private FType fType() { return producerPlacement.fType(); }
 	}
 
 	/** Current NormalizedPlannerResult plus the Task33 raw authority surface intentionally ignored by current production. */
@@ -407,25 +521,108 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		public List<Object> selectedLocalMaterializations() { return selectedLocalMaterializations; }
 	}
 
-	private static Object futureTypedActionOr(TestLocalMaterializationAction fallback) {
-		for(String name : List.of(
-			"org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult$SelectedLocalMaterializationAction",
-			"org.apache.sysds.hops.fedplanner.placement.SelectedLocalMaterializationAction",
-			"org.apache.sysds.hops.fedplanner.placement.LocalMaterializationAction")) {
-			try {
-				Class<?> type = Class.forName(name);
-				for(Constructor<?> ctor : type.getDeclaredConstructors()) {
-					if(ctor.getParameterCount() == 7) {
-						ctor.setAccessible(true);
-						return ctor.newInstance(fallback.statementBlockScope(), fallback.source(),
-							fallback.sourceValueVersion(), fallback.sourcePlacement(), fallback.fType(),
-							fallback.obligations(), fallback.selectedOverrides());
-					}
-				}
+	private static void assertFutureTypedLocalMaterializationApi(EmissionAwareResult result) {
+		try {
+			java.lang.reflect.Method method = NormalizedPlannerResult.class.getMethod("selectedLocalMaterializations");
+			Assert.assertEquals("TASK33_SELECTED_LOCAL_MATERIALIZATIONS_API_RETURNS_LIST",
+				List.class, method.getReturnType());
+			Assert.assertFalse("TASK33_SELECTED_LOCAL_MATERIALIZATIONS_API_IS_ADDITIVE_AND_NONEMPTY",
+				((List<?>) method.invoke(result)).isEmpty());
+			Class<?> actionType = Class.forName(
+				"org.apache.sysds.hops.fedplanner.placement.PlacementIdentity$LocalMaterializationActionKey");
+			Class<?> obligationType = Class.forName(
+				"org.apache.sysds.hops.fedplanner.placement.PlacementIdentity$LocalMaterializationObligation");
+			assertRecordComponents(obligationType, new ExpectedComponent("consumerOccurrence", CompiledHopKey.class),
+				new ExpectedComponent("inputPosition", int.class),
+				new ExpectedComponent("requiredPlacement", PlacementState.class));
+			assertRecordComponents(actionType, new ExpectedComponent("sourceOccurrence", CompiledHopKey.class),
+				new ExpectedComponent("sourceValueVersion", ValueVersionKey.class),
+				new ExpectedComponent("producerPlacement", PlacementState.class),
+				new ExpectedComponent("obligations", List.class),
+				new ExpectedComponent("statementBlockScope", String.class),
+				new ExpectedComponent("durableProvenance", String.class));
+			for(Object action : result.selectedLocalMaterializations()) {
+				Assert.assertTrue("TASK33_LOCAL_ACTION_MUST_BE_REAL_PRODUCTION_TYPED_RECORD",
+					actionType.isInstance(action));
+				Assert.assertFalse("TASK33_LOCAL_ACTION_MUST_NOT_CARRY_DUPLICATE_STANDALONE_FTYPE",
+					List.of(actionType.getRecordComponents()).stream().anyMatch(c -> c.getName().equals("fType")));
+				Object obligations = actionType.getMethod("obligations").invoke(action);
+				Assert.assertTrue("TASK33_LOCAL_ACTION_OBLIGATIONS_MUST_BE_REAL_PRODUCTION_TYPED_RECORDS",
+					((List<?>) obligations).stream().allMatch(obligationType::isInstance));
 			}
-			catch(ReflectiveOperationException | LinkageError ignored) { }
+		}
+		catch(ReflectiveOperationException | LinkageError missingFutureContract) {
+			throw new AssertionError("TASK33_REQUIRES_TYPED_LOCAL_MATERIALIZATION_API_AFTER_HASH_IS_CANONICAL",
+				missingFutureContract);
+		}
+	}
+
+	private static void assertRecordComponents(Class<?> recordType, ExpectedComponent... expected) {
+		Assert.assertTrue("TASK33_LOCAL_AUTHORITY_TYPE_MUST_BE_RECORD|" + recordType.getName(), recordType.isRecord());
+		RecordComponent[] actual = recordType.getRecordComponents();
+		Assert.assertEquals("TASK33_LOCAL_AUTHORITY_RECORD_COMPONENT_COUNT|" + recordType.getName(),
+			expected.length, actual.length);
+		for(int i = 0; i < expected.length; i++) {
+			Assert.assertEquals("TASK33_LOCAL_AUTHORITY_RECORD_COMPONENT_NAME|" + recordType.getName() + "|" + i,
+				expected[i].name(), actual[i].getName());
+			Assert.assertEquals("TASK33_LOCAL_AUTHORITY_RECORD_COMPONENT_TYPE|" + recordType.getName() + "|" + i,
+				expected[i].type(), actual[i].getType());
+		}
+	}
+
+	private record ExpectedComponent(String name, Class<?> type) { }
+
+	private static Object futureTypedActionOr(TestLocalMaterializationAction fallback) {
+		for(String actionName : List.of(
+			"org.apache.sysds.hops.fedplanner.placement.PlacementIdentity$LocalMaterializationActionKey",
+			"org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult$LocalMaterializationActionKey",
+			"org.apache.sysds.hops.fedplanner.placement.LocalMaterializationActionKey")) {
+			for(String obligationName : productionObligationTypeCandidates(actionName)) {
+				try {
+					Class<?> obligationType = Class.forName(obligationName);
+					List<Object> realObligations = new ArrayList<>();
+					for(TestLocalMaterializationObligation obligation : fallback.obligations())
+						realObligations.add(constructProductionObligation(obligationType, obligation));
+					return constructProductionAction(Class.forName(actionName), fallback, realObligations);
+				}
+				catch(ReflectiveOperationException | LinkageError | IllegalArgumentException ignored) { }
+			}
 		}
 		return fallback;
+	}
+
+	private static List<String> productionObligationTypeCandidates(String actionName) {
+		if(actionName.endsWith("$LocalMaterializationActionKey"))
+			return List.of(actionName.replace("$LocalMaterializationActionKey",
+				"$LocalMaterializationObligation"));
+		return List.of(actionName.replace(".LocalMaterializationActionKey", ".LocalMaterializationObligation"));
+	}
+
+	private static Object constructProductionObligation(Class<?> type, TestLocalMaterializationObligation obligation)
+		throws ReflectiveOperationException {
+		assertRecordComponents(type, new ExpectedComponent("consumerOccurrence", CompiledHopKey.class),
+			new ExpectedComponent("inputPosition", int.class),
+			new ExpectedComponent("requiredPlacement", PlacementState.class));
+		Constructor<?> ctor = type.getDeclaredConstructor(CompiledHopKey.class, int.class, PlacementState.class);
+		ctor.setAccessible(true);
+		return ctor.newInstance(obligation.consumerOccurrence(), obligation.inputPosition(),
+			obligation.requiredPlacement());
+	}
+
+	private static Object constructProductionAction(Class<?> type, TestLocalMaterializationAction fallback,
+		List<Object> realObligations) throws ReflectiveOperationException {
+		assertRecordComponents(type, new ExpectedComponent("sourceOccurrence", CompiledHopKey.class),
+			new ExpectedComponent("sourceValueVersion", ValueVersionKey.class),
+			new ExpectedComponent("producerPlacement", PlacementState.class),
+			new ExpectedComponent("obligations", List.class),
+			new ExpectedComponent("statementBlockScope", String.class),
+			new ExpectedComponent("durableProvenance", String.class));
+		Constructor<?> ctor = type.getDeclaredConstructor(CompiledHopKey.class, ValueVersionKey.class,
+			PlacementState.class, List.class, String.class, String.class);
+		ctor.setAccessible(true);
+		return ctor.newInstance(fallback.sourceOccurrence(), fallback.sourceValueVersion(),
+			fallback.producerPlacement(), List.copyOf(realObligations),
+			fallback.statementBlockScope(), fallback.durableProvenance());
 	}
 
 	private record Occurrence(HopOccurrenceProjection projection, ValueVersionKey value) {
@@ -434,7 +631,7 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 		private long scopeId() { return projection.scopeId(); }
 	}
 
-	private record NamedAction(String name, Object action) { }
+	private record NamedResult(String name, EmissionAwareResult result) { }
 	private record HopSnapshot(ExecType exec, ExecType forced, FederatedOutput output, boolean derived) { }
 	private record StateSnapshot(Map<Long, HopSnapshot> hops, FederatedRefedRegistry.Snapshot refed,
 		FederatedFoutMaterializeRegistry.Snapshot fout, FederatedLocalMaterializeRegistry.Snapshot local,

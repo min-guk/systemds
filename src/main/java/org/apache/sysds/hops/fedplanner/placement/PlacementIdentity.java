@@ -273,6 +273,50 @@ public final class PlacementIdentity {
 		}
 	}
 
+	/** Exact consumer edge that requires a local view of one federated producer. */
+	public record LocalMaterializationObligation(CompiledHopKey consumerOccurrence,
+		int inputPosition, PlacementState requiredPlacement)
+		implements Comparable<LocalMaterializationObligation> {
+		public LocalMaterializationObligation {
+			Objects.requireNonNull(consumerOccurrence, "consumerOccurrence");
+			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+		}
+
+		public String normalizedSignature() {
+			return fields(consumerOccurrence.normalizedSignature(), Integer.toString(inputPosition),
+				requiredPlacement.normalizedSignature());
+		}
+
+		@Override
+		public int compareTo(LocalMaterializationObligation that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Complete immutable authority for one LOCAL materialization registry write. */
+	public record LocalMaterializationActionKey(CompiledHopKey sourceOccurrence,
+		ValueVersionKey sourceValueVersion, PlacementState producerPlacement,
+		List<LocalMaterializationObligation> obligations, String statementBlockScope,
+		String durableProvenance) implements Comparable<LocalMaterializationActionKey> {
+		public LocalMaterializationActionKey {
+			Objects.requireNonNull(sourceOccurrence, "sourceOccurrence");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(producerPlacement, "producerPlacement");
+			obligations = List.copyOf(Objects.requireNonNull(obligations, "obligations"));
+		}
+
+		public String normalizedSignature() {
+			return fields(sourceOccurrence.normalizedSignature(), sourceValueVersion.normalizedSignature(),
+				producerPlacement.normalizedSignature(), signatures(obligations),
+				String.valueOf(statementBlockScope), String.valueOf(durableProvenance));
+		}
+
+		@Override
+		public int compareTo(LocalMaterializationActionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
 	private PlacementIdentity() {
 		// utility class
 	}
@@ -357,6 +401,8 @@ public final class PlacementIdentity {
 				strings.add(partition.normalizedSignature());
 			else if(value instanceof CompiledHopKey key)
 				strings.add(key.normalizedSignature());
+			else if(value instanceof LocalMaterializationObligation obligation)
+				strings.add(obligation.normalizedSignature());
 			else
 				throw new IllegalArgumentException("Unsupported identity signature type " + value.getClass());
 		}

@@ -20,7 +20,9 @@ import java.util.Map;
 import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 
@@ -33,7 +35,18 @@ public interface NormalizedPlannerResult {
 
 	Map<CompiledHopKey, PlacementState> selectedStates();
 
+	default Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates() {
+		Map<CompiledHopKey, PlacementEmissionState> result = new java.util.LinkedHashMap<>();
+		selectedStates().forEach((key, state) -> result.put(key, new PlacementEmissionState(state, false)));
+		return Map.copyOf(result);
+	}
+
 	List<RelocationActionKey> selectedRelocations();
+
+	@SuppressWarnings("rawtypes")
+	default List selectedLocalMaterializations() {
+		return List.of();
+	}
 
 	String objectiveCertificate();
 
