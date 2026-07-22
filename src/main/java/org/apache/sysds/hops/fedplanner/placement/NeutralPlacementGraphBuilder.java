@@ -875,9 +875,9 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static List<PlacementState> transientAlternatives(List<PlacementState> alternatives) {
 		Set<PlacementState> result = new java.util.TreeSet<>();
-		result.add(new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false));
 		for(PlacementState state : alternatives)
 			if(isLegalTransient(state)) result.add(state);
+		result.add(new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false));
 		return Collections.unmodifiableList(new ArrayList<>(result));
 	}
 
