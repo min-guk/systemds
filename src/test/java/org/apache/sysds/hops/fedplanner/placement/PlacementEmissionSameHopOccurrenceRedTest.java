@@ -27,6 +27,7 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailureInjector;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
