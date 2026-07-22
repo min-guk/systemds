@@ -13,6 +13,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -50,32 +51,40 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 	private final List<OccurrenceReceipt> occurrences;
 	private final List<ObligationReceipt> obligations;
 	private final boolean appliedStateRequired;
+	private final PlacementEmissionReceipt emissionReceipt;
 
 	private MinStPlacementInput(PlacementAnalysis owner, ProducerReceipt producer,
 		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations,
-		boolean appliedStateRequired) {
+		boolean appliedStateRequired, PlacementEmissionReceipt emissionReceipt) {
 		this.owner = Objects.requireNonNull(owner, "owner");
 		this.producer = Objects.requireNonNull(producer, "producer");
 		this.occurrences = List.copyOf(occurrences);
 		this.obligations = List.copyOf(obligations);
 		this.appliedStateRequired = appliedStateRequired;
+		this.emissionReceipt = emissionReceipt;
 		validateOwnerBinding();
 	}
 
 	public static MinStPlacementInput create(PlacementAnalysis owner, ProducerReceipt producer,
 		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
-		return new MinStPlacementInput(owner, producer, occurrences, obligations, true);
+		return new MinStPlacementInput(owner, producer, occurrences, obligations, true, null);
 	}
 
 	public static MinStPlacementInput createSelected(PlacementAnalysis owner, ProducerReceipt producer,
 		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations) {
-		return new MinStPlacementInput(owner, producer, occurrences, obligations, false);
+		return new MinStPlacementInput(owner, producer, occurrences, obligations, false, null);
+	}
+
+	public MinStPlacementInput withEmissionReceipt(PlacementEmissionReceipt receipt) {
+		return new MinStPlacementInput(owner, producer, occurrences, obligations, false,
+			Objects.requireNonNull(receipt, "receipt"));
 	}
 
 	@Override public PlacementAnalysis analysis() { return owner; }
 	public ProducerReceipt producerReceipt() { return producer; }
 	public List<OccurrenceReceipt> occurrenceReceipts() { return occurrences; }
 	public List<ObligationReceipt> obligationReceipts() { return obligations; }
+	public PlacementEmissionReceipt emissionReceipt() { return emissionReceipt; }
 
 	void validateUnchanged() {
 		validateOwnerBinding();
