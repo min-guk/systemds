@@ -32,6 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -51,7 +52,8 @@ public class MinStLayer2ProjectionLoggerContractTest {
 
 		for(String fixture : List.of("B-01", "B-07", "B-09", "B-16")) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+			PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+				.bindAtFinalHopBoundary(program);
 			MinStPlacementInput input = new FederatedPlanMinSTCut()
 				.rewriteProgram(program, null, null, analysis);
 			MinStPlacementAdapter.Selection selection = invoke(select, analysis, input);
