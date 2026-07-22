@@ -38,6 +38,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationObligation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -100,33 +102,56 @@ public final class PlacementEmissionTransaction {
 
 	public static PlacementEmissionReceipt emit(DMLProgram program, NormalizedPlannerResult result,
 		FailureInjector failureInjector) {
+		return emitInternal(program, result, failureInjector, false);
+	}
+
+	/** Atomically replace one complete full-program authority during dynamic recompilation. */
+	public static PlacementEmissionReceipt replaceCompleteProgram(DMLProgram program,
+		NormalizedPlannerResult result, FailureInjector failureInjector) {
+		return emitInternal(program, result, failureInjector, true);
+	}
+
+	private static PlacementEmissionReceipt emitInternal(DMLProgram program, NormalizedPlannerResult result,
+		FailureInjector failureInjector, boolean replaceExisting) {
 		Objects.requireNonNull(failureInjector, "failureInjector");
 		synchronized(LOCK) {
 			String candidatePlanHash = validateAuthorityAndHash(program, result);
 			CommittedPlan existing = COMMITTED.get(program);
 			if(existing != null) {
-				if(!existing.receipt().planHash().equals(candidatePlanHash))
+				if(existing.receipt().planHash().equals(candidatePlanHash))
+					return new PlacementEmissionReceipt(candidatePlanHash, false, true, 0, 0);
+				if(!replaceExisting)
 					throw new PlacementEmissionException("A different placement plan was already emitted");
-				return new PlacementEmissionReceipt(candidatePlanHash, false, true, 0, 0);
 			}
 			PreparedEmission prepared = prevalidate(program, result);
 
-			Map<Hop, HopSnapshot> hopSnapshots = snapshotHops(prepared.hopWrites());
-			RegistrySnapshots registrySnapshots = RegistrySnapshots.capture();
+			Map<Hop, HopSnapshot> currentHopSnapshots = snapshotHops(prepared.hopWrites());
+			if(existing != null)
+				existing.baselineHops().keySet().forEach(hop -> currentHopSnapshots.putIfAbsent(hop,
+					HopSnapshot.capture(hop)));
+			RegistrySnapshots currentRegistrySnapshots = RegistrySnapshots.capture();
 			Map<DMLProgram, CommittedPlan> receiptSnapshot = new IdentityHashMap<>(COMMITTED);
 			long fallbackSnapshot = runtimeFallbackCount;
 			long repairSnapshot = runtimeRepairCount;
+			Map<Hop, HopSnapshot> baselineHops = existing == null
+				? Collections.unmodifiableMap(new IdentityHashMap<>(currentHopSnapshots)) : existing.baselineHops();
+			RegistrySnapshots baselineRegistries = existing == null
+				? currentRegistrySnapshots : existing.baselineRegistries();
 			try {
+				if(existing != null) {
+					baselineRegistries.restore();
+					restoreHops(baselineHops);
+				}
 				applyHops(prepared.hopWrites(), failureInjector);
 				applyRegistries(prepared.registryWrites(), failureInjector);
 				PlacementEmissionReceipt receipt = new PlacementEmissionReceipt(prepared.planHash(), true, false,
 					prepared.hopWrites().size(), prepared.registryWrites().size());
-				COMMITTED.put(program, new CommittedPlan(receipt));
+				COMMITTED.put(program, new CommittedPlan(receipt, baselineHops, baselineRegistries));
 				return receipt;
 			}
 			catch(RuntimeException | Error failure) {
-				registrySnapshots.restore();
-				restoreHops(hopSnapshots);
+				currentRegistrySnapshots.restore();
+				restoreHops(currentHopSnapshots);
 				COMMITTED.clear();
 				COMMITTED.putAll(receiptSnapshot);
 				runtimeFallbackCount = fallbackSnapshot;
@@ -168,24 +193,31 @@ public final class PlacementEmissionTransaction {
 		String plannerId = requireText(result.plannerId(), "plannerId");
 		String analysisFingerprint = requireText(result.analysisFingerprint(), "analysisFingerprint");
 		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
-		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
-			Objects.requireNonNull(result.selectedStates(), "selectedStates")));
+		Map<CompiledHopKey, PlacementEmissionState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
+			Objects.requireNonNull(result.selectedEmissionStates(), "selectedEmissionStates")));
 		List<RelocationActionKey> relocations = List.copyOf(Objects.requireNonNull(result.selectedRelocations(),
 			"selectedRelocations"));
-		return canonicalPlanHash(plannerId, analysisFingerprint, selected, relocations, objective);
+		List<LocalMaterializationActionKey> locals = typedLocalMaterializations(result);
+		return canonicalPlanHash(plannerId, analysisFingerprint, selected, relocations, locals, objective);
 	}
 
 	private static String canonicalPlanHash(String plannerId, String analysisFingerprint,
-		Map<CompiledHopKey, PlacementState> selected, List<RelocationActionKey> relocations, String objective) {
+		Map<CompiledHopKey, PlacementEmissionState> selected, List<RelocationActionKey> relocations,
+		List<LocalMaterializationActionKey> locals, String objective) {
 		StringBuilder canonical = new StringBuilder().append(plannerId).append('\n')
 			.append(analysisFingerprint).append('\n');
 		selected.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> canonical
 			.append(Objects.requireNonNull(entry.getKey(), "selected state key").normalizedSignature())
-			.append('=').append(Objects.requireNonNull(entry.getValue(), "selected state").normalizedSignature())
+			.append('=').append(Objects.requireNonNull(entry.getValue(), "selected emission state")
+				.placementState().normalizedSignature())
+			.append(entry.getValue().derivedFedFout() ? "|derivedFedFout=true" : "")
 			.append('\n'));
 		relocations.stream().map(key -> Objects.requireNonNull(key, "selected relocation"))
 			.sorted(Comparator.comparing(RelocationActionKey::normalizedSignature))
 			.forEach(relocation -> canonical.append(relocation.normalizedSignature()).append('\n'));
+		locals.stream().map(key -> Objects.requireNonNull(key, "selected local materialization"))
+			.sorted(Comparator.comparing(LocalMaterializationActionKey::normalizedSignature))
+			.forEach(local -> canonical.append("LOCAL=").append(local.normalizedSignature()).append('\n'));
 		canonical.append(objective);
 		return sha256(canonical.toString());
 	}
@@ -197,11 +229,12 @@ public final class PlacementEmissionTransaction {
 		String analysisFingerprint = result.analysisFingerprint();
 		String plannerId = result.plannerId();
 		String objective = result.objectiveCertificate();
-		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
-			result.selectedStates()));
+		Map<CompiledHopKey, PlacementEmissionState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
+			result.selectedEmissionStates()));
 		List<RelocationActionKey> selectedRelocations = List.copyOf(result.selectedRelocations());
+		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
 		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
-			selectedRelocations, objective)))
+			selectedRelocations, selectedLocals, objective)))
 			throw new PlacementEmissionException("Normalized plan changed during prevalidation");
 
 		List<Node> decisionNodes = analysis.graph().decisionNodes();
@@ -209,30 +242,40 @@ public final class PlacementEmissionTransaction {
 			throw new PlacementEmissionException("Selected placement does not cover every decision node");
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences = occurrenceIndex(analysis);
 		Set<CompiledHopKey> selectedIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
-		Set<Hop> emittedHops = Collections.newSetFromMap(new IdentityHashMap<>());
-		List<HopWrite> hopWrites = new ArrayList<>(decisionNodes.size());
+		Map<Hop, HopWrite> writesByHop = new IdentityHashMap<>();
 		for(Node node : decisionNodes) {
-			PlacementState state = exactState(selected, node.key());
-			if(state == null)
+			PlacementEmissionState emissionState = exactEmissionState(selected, node.key());
+			if(emissionState == null)
 				throw new PlacementEmissionException("Selected placement is missing an analysis-owned decision");
+			PlacementState state = emissionState.placementState();
 			if(!node.legalAlternatives().contains(state))
 				throw new PlacementEmissionException("Selected placement contains an illegal state");
+			if(emissionState.derivedFedFout() && (state.execType() != ExecType.FED
+				|| state.output() != FederatedOutput.FOUT))
+				throw new PlacementEmissionException("Derived FED/FOUT authority requires FED/FOUT placement");
 			if("recompile".equals(node.key().recompileContext()) && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
 				throw new PlacementEmissionException("Recompile regions cannot emit CP/FOUT");
 			HopOccurrenceProjection occurrence = occurrences.get(node.key());
-			if(occurrence == null || !emittedHops.add(occurrence.hop()))
-				throw new PlacementEmissionException("Emitted Hop ownership is missing or ambiguous");
+			if(occurrence == null)
+				throw new PlacementEmissionException("Emitted Hop ownership is missing");
+			HopWrite prior = writesByHop.get(occurrence.hop());
+			if(prior != null && (prior.state() != state
+				|| prior.derivedFedFout() != emissionState.derivedFedFout()))
+				throw new PlacementEmissionException("One concrete Hop has conflicting occurrence authority");
 			selectedIdentities.add(node.key());
-			hopWrites.add(new HopWrite(occurrence.hop(), state));
+			writesByHop.putIfAbsent(occurrence.hop(), new HopWrite(occurrence.hop(), state,
+				emissionState.derivedFedFout()));
 		}
 		for(CompiledHopKey key : selected.keySet())
 			if(!selectedIdentities.contains(key))
 				throw new PlacementEmissionException("Selected placement contains a foreign decision key");
 
 		List<RelocationAction> relocations = exactRelocations(analysis, selectedRelocations);
-		List<RegistryWrite> registryWrites = prepareRegistryWrites(analysis, occurrences, relocations);
-		return new PreparedEmission(planHash, List.copyOf(hopWrites), List.copyOf(registryWrites));
+		List<LocalMaterializationActionKey> locals = exactLocalMaterializations(analysis, occurrences,
+			selected, selectedLocals);
+		List<RegistryWrite> registryWrites = prepareRegistryWrites(analysis, occurrences, relocations, locals);
+		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites));
 	}
 
 	private static String validateAuthorityAndHash(DMLProgram program, NormalizedPlannerResult result) {
@@ -246,14 +289,28 @@ public final class PlacementEmissionTransaction {
 		String plannerId = requireText(result.plannerId(), "plannerId");
 		String objective = requireText(result.objectiveCertificate(), "objectiveCertificate");
 		String planHash = requireCanonicalHash(result.normalizedPlanFingerprint());
-		Map<CompiledHopKey, PlacementState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
-			Objects.requireNonNull(result.selectedStates(), "selectedStates")));
+		Map<CompiledHopKey, PlacementEmissionState> selected = Collections.unmodifiableMap(new LinkedHashMap<>(
+			Objects.requireNonNull(result.selectedEmissionStates(), "selectedEmissionStates")));
 		List<RelocationActionKey> selectedRelocations = List.copyOf(Objects.requireNonNull(
 			result.selectedRelocations(), "selectedRelocations"));
+		List<LocalMaterializationActionKey> selectedLocals = typedLocalMaterializations(result);
 		if(!planHash.equals(canonicalPlanHash(plannerId, analysisFingerprint, selected,
-			selectedRelocations, objective)))
+			selectedRelocations, selectedLocals, objective)))
 			throw new PlacementEmissionException("Normalized plan fingerprint does not match canonical content");
 		return planHash;
+	}
+
+	private static List<LocalMaterializationActionKey> typedLocalMaterializations(
+		NormalizedPlannerResult result) {
+		List<?> source = Objects.requireNonNull(result.selectedLocalMaterializations(),
+			"selectedLocalMaterializations");
+		List<LocalMaterializationActionKey> typed = new ArrayList<>(source.size());
+		for(Object value : source) {
+			if(!(value instanceof LocalMaterializationActionKey action))
+				throw new PlacementEmissionException("Selected local materialization has a foreign authority type");
+			typed.add(action);
+		}
+		return List.copyOf(typed);
 	}
 
 	private static Map<CompiledHopKey, HopOccurrenceProjection> occurrenceIndex(PlacementAnalysis analysis) {
@@ -264,11 +321,78 @@ public final class PlacementEmissionTransaction {
 		return occurrences;
 	}
 
-	private static PlacementState exactState(Map<CompiledHopKey, PlacementState> selected,
+	private static PlacementEmissionState exactEmissionState(Map<CompiledHopKey, PlacementEmissionState> selected,
 		CompiledHopKey expected) {
-		for(Map.Entry<CompiledHopKey, PlacementState> entry : selected.entrySet())
+		for(Map.Entry<CompiledHopKey, PlacementEmissionState> entry : selected.entrySet())
 			if(entry.getKey() == expected)
 				return Objects.requireNonNull(entry.getValue(), "selected state");
+		return null;
+	}
+
+	private static List<LocalMaterializationActionKey> exactLocalMaterializations(PlacementAnalysis analysis,
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
+		Map<CompiledHopKey, PlacementEmissionState> selected,
+		List<LocalMaterializationActionKey> actions) {
+		Set<String> seen = new LinkedHashSet<>();
+		List<LocalMaterializationActionKey> resolved = new ArrayList<>();
+		for(LocalMaterializationActionKey action : actions) {
+			Objects.requireNonNull(action, "selected local materialization");
+			if(!seen.add(action.normalizedSignature()))
+				throw new PlacementEmissionException("Selected local materialization is duplicated");
+			HopOccurrenceProjection source = exactOccurrence(occurrences, action.sourceOccurrence());
+			if(source == null || !analysis.isCompiledHopOccurrence(action.sourceOccurrence()))
+				throw new PlacementEmissionException("LOCAL source occurrence is foreign or virtual");
+			Node sourceNode = analysis.graph().node(action.sourceOccurrence()).orElseThrow();
+			if(!sourceNode.valueVersion().equals(action.sourceValueVersion()))
+				throw new PlacementEmissionException("LOCAL source value version differs");
+			PlacementEmissionState sourceState = exactEmissionState(selected, action.sourceOccurrence());
+			if(sourceState == null || sourceState.placementState() != action.producerPlacement()
+				|| action.producerPlacement().execType() != ExecType.FED
+				|| action.producerPlacement().output() != FederatedOutput.FOUT
+				|| action.producerPlacement().fType() == null)
+				throw new PlacementEmissionException("LOCAL producer authority is not exact FED/FOUT");
+			String expectedScope = source.scopeId() + ":" + action.sourceOccurrence().functionNamespace();
+			if(action.statementBlockScope() == null || action.statementBlockScope().isBlank()
+				|| !expectedScope.equals(action.statementBlockScope()))
+				throw new PlacementEmissionException("LOCAL statement-block scope differs");
+			String expectedProvenance = "fed-init:" + action.sourceValueVersion().lexicalVariable();
+			if(action.durableProvenance() == null || action.durableProvenance().isBlank()
+				|| !expectedProvenance.equals(action.durableProvenance()))
+				throw new PlacementEmissionException("LOCAL durable provenance differs");
+			List<LocalMaterializationObligation> expected = analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.producer() == action.sourceOccurrence())
+				.filter(edge -> {
+					PlacementEmissionState consumer = exactEmissionState(selected, edge.consumer());
+					return consumer != null && consumer.placementState().execType() == ExecType.CP
+						&& consumer.placementState().output() == FederatedOutput.LOUT;
+				})
+				.map(edge -> new LocalMaterializationObligation(edge.consumer(), edge.inputPosition(),
+					exactEmissionState(selected, edge.consumer()).placementState())).sorted().toList();
+			List<LocalMaterializationObligation> actual = action.obligations();
+			if(actual.isEmpty() || !actual.equals(actual.stream().sorted().toList())
+				|| actual.stream().distinct().count() != actual.size() || !actual.equals(expected))
+				throw new PlacementEmissionException("LOCAL obligations are not exact, sorted, unique, and complete");
+			for(LocalMaterializationObligation obligation : actual) {
+				if(obligation.inputPosition() < 0
+					|| exactOccurrence(occurrences, obligation.consumerOccurrence()) == null)
+					throw new PlacementEmissionException("LOCAL consumer occurrence is foreign");
+				analysis.requireExactCompiledInputEdge(action.sourceOccurrence(), obligation.consumerOccurrence(),
+					obligation.inputPosition());
+				PlacementEmissionState consumer = exactEmissionState(selected, obligation.consumerOccurrence());
+				if(consumer == null || consumer.placementState() != obligation.requiredPlacement()
+					|| obligation.requiredPlacement().execType() != ExecType.CP
+					|| obligation.requiredPlacement().output() != FederatedOutput.LOUT)
+					throw new PlacementEmissionException("LOCAL consumer placement authority differs");
+			}
+			resolved.add(action);
+		}
+		return resolved;
+	}
+
+	private static HopOccurrenceProjection exactOccurrence(
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, CompiledHopKey key) {
+		for(Map.Entry<CompiledHopKey, HopOccurrenceProjection> entry : occurrences.entrySet())
+			if(entry.getKey() == key) return entry.getValue();
 		return null;
 	}
 
@@ -289,7 +413,8 @@ public final class PlacementEmissionTransaction {
 	}
 
 	private static List<RegistryWrite> prepareRegistryWrites(PlacementAnalysis analysis,
-		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, List<RelocationAction> relocations) {
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, List<RelocationAction> relocations,
+		List<LocalMaterializationActionKey> locals) {
 		List<RegistryWrite> writes = new ArrayList<>();
 		Set<RegistrySlot> slots = new LinkedHashSet<>();
 		for(RelocationAction action : relocations) {
@@ -328,6 +453,17 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException("Multiple relocations target one registry slot");
 			writes.add(write);
 		}
+		for(LocalMaterializationActionKey local : locals) {
+			HopOccurrenceProjection source = exactOccurrence(occurrences, local.sourceOccurrence());
+			List<Long> consumerIds = local.obligations().stream()
+				.map(obligation -> exactOccurrence(occurrences, obligation.consumerOccurrence()).hop().getHopID())
+				.distinct().sorted().toList();
+			RegistryWrite write = RegistryWrite.local(source.scopeId(), source.hop().getHopID(), consumerIds,
+				local.producerPlacement().fType().name(), local.durableProvenance());
+			if(!slots.add(write.slot()))
+				throw new PlacementEmissionException("Multiple actions target one registry slot");
+			writes.add(write);
+		}
 		return writes;
 	}
 
@@ -355,7 +491,7 @@ public final class PlacementEmissionTransaction {
 			write.hop().setExecType(write.state().execType());
 			write.hop().setForcedExecType(write.state().execType());
 			write.hop().setFederatedOutput(write.state().output());
-			write.hop().setFederatedOutputDerived(false);
+			write.hop().setFederatedOutputDerived(write.derivedFedFout());
 			if(i == 0)
 				injector.inject(FailurePoint.AFTER_FIRST_HOP_MUTATION);
 		}
@@ -449,7 +585,7 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
-	private record HopWrite(Hop hop, PlacementState state) { }
+	private record HopWrite(Hop hop, PlacementState state, boolean derivedFedFout) { }
 
 	private record HopSnapshot(ExecType execType, ExecType forcedExecType, FederatedOutput output,
 		boolean outputDerived) {
@@ -471,7 +607,8 @@ public final class PlacementEmissionTransaction {
 
 	private record PreparedEmission(String planHash, List<HopWrite> hopWrites,
 		List<RegistryWrite> registryWrites) { }
-	private record CommittedPlan(PlacementEmissionReceipt receipt) { }
+	private record CommittedPlan(PlacementEmissionReceipt receipt, Map<Hop, HopSnapshot> baselineHops,
+		RegistrySnapshots baselineRegistries) { }
 
 	private static final class PlacementEmissionException extends IllegalStateException {
 		private static final long serialVersionUID = 1L;
