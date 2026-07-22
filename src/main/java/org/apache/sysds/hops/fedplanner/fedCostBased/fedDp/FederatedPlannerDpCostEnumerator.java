@@ -1039,6 +1039,8 @@ public class FederatedPlannerDpCostEnumerator {
 						fedFOutPlan.setFType(derivedFedFout ? cpLogicalFType : oracleLogicalFType);
 						fedFOutPlan.setCpFoutType(cpLogicalFType);
 						fedFOutPlan.setDerivedFedFout(derivedFedFout);
+						fedFOutPlan.setSelectedPlacementState(
+							candidateDecisionReceipt.requireExactState(ExecType.FED, FederatedOutput.FOUT));
 						fOutFedPlanVariants.addFedPlan(fedFOutPlan);
 					}
 
@@ -1049,6 +1051,8 @@ public class FederatedPlannerDpCostEnumerator {
 						fedLOutPlan.setExecType(ExecType.FED);
 						fedLOutPlan.setFType(lOutLogicalFType);
 						fedLOutPlan.setCpFoutType(cpLogicalFType);
+						fedLOutPlan.setSelectedPlacementState(
+							candidateDecisionReceipt.requireExactState(ExecType.FED, FederatedOutput.LOUT));
 						lOutFedPlanVariants.addFedPlan(fedLOutPlan);
 					}
 
@@ -1059,6 +1063,8 @@ public class FederatedPlannerDpCostEnumerator {
 						cpLOutPlan.setExecType(ExecType.CP);
 						cpLOutPlan.setFType(lOutLogicalFType);
 						cpLOutPlan.setCpFoutType(cpLogicalFType);
+						cpLOutPlan.setSelectedPlacementState(
+							candidateDecisionReceipt.requireExactState(ExecType.CP, FederatedOutput.LOUT));
 						lOutFedPlanVariants.addFedPlan(cpLOutPlan);
 					}
 					if (allowCpFoutCandidate) {
@@ -1069,6 +1075,8 @@ public class FederatedPlannerDpCostEnumerator {
 							cpFOutPlan.setFType(cpLogicalFType);
 							cpFOutPlan.setCpFoutType(cpLogicalFType);
 							cpFOutPlan.setFoutMaterializationAccounted(true);
+							cpFOutPlan.setSelectedPlacementState(
+								candidateDecisionReceipt.requireExactState(ExecType.CP, FederatedOutput.FOUT));
 							fOutFedPlanVariants.addFedPlan(cpFOutPlan);
 						}
 

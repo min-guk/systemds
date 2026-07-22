@@ -341,7 +341,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private static final boolean ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION = false;
 	private static final boolean ENABLE_FORCED_TRANSIENT_NEIGHBORHOOD_REEVAL = false;
 	private record SelectedDpState(ExecType execType, FederatedOutput output, FType fType,
-		boolean derivedFedFout) { }
+		boolean derivedFedFout, PlacementState exactState) { }
 
 	@Override
 	public void rewriteProgram(DMLProgram prog, FunctionCallGraph fgraph, FunctionCallSizeInfo fcallSizes) {
@@ -546,10 +546,12 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalStateException("DP selection omitted " + node.key());
 			if(choice == null)
 				continue;
-			List<PlacementState> matches = node.legalAlternatives().stream()
+			PlacementState exact = choice.exactState();
+			if(exact != null && node.legalAlternatives().stream().noneMatch(state -> state == exact))
+				throw new IllegalStateException("DP exact state is foreign to neutral node: " + node.key());
+			List<PlacementState> matches = exact == null ? node.legalAlternatives().stream()
 				.filter(state -> state.execType() == choice.execType() && state.output() == choice.output())
-				.filter(state -> state.fType() == choice.fType())
-				.toList();
+				.filter(state -> state.fType() == choice.fType()).toList() : List.of(exact);
 			if(matches.size() != 1)
 				throw new IllegalStateException("DP selection is not an exact neutral state: " + node.key()
 					+ " choice=" + choice + " legal=" + node.legalAlternatives());
@@ -649,7 +651,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				else if(applyStateToTargetHop)
 					selectedStates.put(origHopId, new SelectedDpState(execType, outType,
 						outType == FederatedOutput.FOUT ? effectivePlan.getCpFoutTypeOrFType() : null,
-						derivedFedFout));
+						derivedFedFout, effectivePlan.getSelectedPlacementState()));
 				if (!applyStateToTargetHop && FederatedPlannerTrace.shouldTrace(targetHop)) {
 					FederatedPlannerTrace.log(targetHop, "DP-Rewrite-SkipVirtualCloneTargetState",
 						String.format(Locale.ROOT,
@@ -744,7 +746,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 			else selectedStates.put(origHopID, new SelectedDpState(execType, outType,
 				outType == FederatedOutput.FOUT ? selectedPlan.getCpFoutTypeOrFType() : null,
-				derivedFedFout));
+				derivedFedFout, selectedPlan.getSelectedPlacementState()));
 			collectDeferredLocalMaterializeRequests(
 				memoTable, selectedPlan, outputDecisions, localMaterializeRequests);
 

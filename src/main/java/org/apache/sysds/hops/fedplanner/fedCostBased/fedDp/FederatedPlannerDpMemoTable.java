@@ -69,6 +69,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
@@ -479,6 +480,7 @@ public class FederatedPlannerDpMemoTable {
 				private FType fType;
 				private FType cpFoutType;
 				private boolean derivedFedFout;
+				private PlacementState selectedPlacementState;
 				private boolean foutMaterializationAccounted;
 
 		public FedPlan(double cumulativeCost, FedPlanVariants fedPlanVariants,
@@ -609,6 +611,15 @@ public class FederatedPlannerDpMemoTable {
 
 				public void setDerivedFedFout(boolean derivedFedFout) {
 					this.derivedFedFout = derivedFedFout;
+				}
+
+				public PlacementState getSelectedPlacementState() {
+					return selectedPlacementState;
+				}
+
+				public void setSelectedPlacementState(PlacementState selectedPlacementState) {
+					this.selectedPlacementState = Objects.requireNonNull(selectedPlacementState,
+						"selectedPlacementState");
 				}
 
 				public boolean isFoutMaterializationAccounted() {

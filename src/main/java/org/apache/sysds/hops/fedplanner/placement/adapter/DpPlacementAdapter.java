@@ -45,6 +45,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.InvocationEvidence;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.TransientForwardEvidence;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
@@ -229,6 +230,8 @@ public final class DpPlacementAdapter {
 		}
 	}
 
+	public record CandidatePlacementArm(ExecType execType, FederatedOutput output) { }
+
 	public record CandidateDecisionReceipt(NeutralEnumerationContext context,
 		CandidateOccurrenceSnapshot candidateSnapshot, long variantOrdinal,
 		List<OracleInputState> orderedOracleInputs, ExecType nativeExec,
@@ -236,7 +239,8 @@ public final class DpPlacementAdapter {
 		ReasonCode reasonCode, ConstructionDisposition disposition,
 		CapturedInvocationEvidence invocationEvidence, Privacy privacy,
 		boolean allowCPLOUT, boolean allowCPFOUT, boolean allowFEDLOUT, boolean allowFEDFOUT,
-		CandidateCapabilityFact capabilityFact) {
+		CandidateCapabilityFact capabilityFact,
+		Map<CandidatePlacementArm, PlacementState> candidateStateCatalog) {
 		public CandidateDecisionReceipt {
 			Objects.requireNonNull(context, "context");
 			Objects.requireNonNull(candidateSnapshot, "candidateSnapshot");
@@ -248,9 +252,18 @@ public final class DpPlacementAdapter {
 			Objects.requireNonNull(invocationEvidence, "invocationEvidence");
 			Objects.requireNonNull(privacy, "privacy");
 			Objects.requireNonNull(capabilityFact, "capabilityFact");
+			candidateStateCatalog = Map.copyOf(Objects.requireNonNull(candidateStateCatalog,
+				"candidateStateCatalog"));
 			if(context != candidateSnapshot.context() || variantOrdinal < 0
 				|| !orderedOracleInputs.equals(candidateSnapshot.orderedOracleInputs()))
 				throw new IllegalArgumentException("Candidate decision receipt identity or order differs");
+		}
+
+		public PlacementState requireExactState(ExecType execType, FederatedOutput output) {
+			PlacementState state = candidateStateCatalog.get(new CandidatePlacementArm(execType, output));
+			if(state == null)
+				throw new IllegalArgumentException("Candidate arm has no exact analysis-owned placement state");
+			return state;
 		}
 	}
 
@@ -434,10 +447,21 @@ public final class DpPlacementAdapter {
 				normalizedCandidateInputs.effectiveNonNullFTypeMap(), context.analysis(),
 				context.analysisFingerprint(), snapshot.parentOccurrence(), orderedInputs,
 				resolved.fact(), invocationEvidence, variantOrdinal));
+		Map<CandidatePlacementArm, PlacementState> catalog = new LinkedHashMap<>();
+		NeutralPlacementGraph.Node node = context.analysis().graph().node(snapshot.parentOccurrence()).orElseThrow();
+		for(PlacementState state : node.legalAlternatives()) {
+			boolean allowed = state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+				? placement.allowCP_LOUT : state.execType() == ExecType.CP && state.output() == FederatedOutput.FOUT
+				? placement.allowCP_FOUT : state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT
+				? placement.allowFED_LOUT : placement.allowFED_FOUT;
+			if(allowed && catalog.putIfAbsent(new CandidatePlacementArm(state.execType(), state.output()), state) != null)
+				throw new IllegalArgumentException("Candidate arm maps to multiple exact legal states");
+		}
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
 			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
-			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT, caps);
+			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT,
+			caps, catalog);
 	}
 
 	public static NeutralEnumerationContext captureNeutralEnumerationContext(PlacementAnalysis analysis,
