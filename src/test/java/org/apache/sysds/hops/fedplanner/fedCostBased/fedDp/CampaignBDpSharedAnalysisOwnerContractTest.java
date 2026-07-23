@@ -103,8 +103,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Fixture fixture = fixture("B-05");
 		AnalysisSnapshot analysisBefore = snapshotAnalysis(fixture.analysis());
 
-		DpInvocationReceipt receipt = new FederatedPlannerDpFedCostBased().rewriteProgram(fixture.program(),
-			new FunctionCallGraph(fixture.program()), null, fixture.analysis());
+		DpInvocationReceipt receipt = fixture.firstReceipt();
 
 		Assert.assertSame(fixture.analysis(), receipt.analysis());
 		Assert.assertSame(fixture.analysis(), receipt.memo().analysis());
@@ -141,14 +140,26 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		Assert.assertEquals(0, counters.repairCount());
 		Assert.assertEquals(0, counters.fallbackCount());
 		Assert.assertEquals(0, counters.doubleApplicationCount());
-		assertSingleCanonicalEmission(receipt, fixture.analysis());
+		DpInvocationReceipt replay = new FederatedPlannerDpFedCostBased().rewriteProgram(fixture.program(),
+			new FunctionCallGraph(fixture.program()), null, fixture.analysis());
+		Assert.assertSame(fixture.analysis(), replay.analysis());
+		Assert.assertSame(fixture.analysis(), replay.memo().analysis());
+		Assert.assertSame(fixture.analysis(), replay.exactSelection().analysis());
+		Assert.assertEquals(0, replay.counters().reenumerationCount());
+		Assert.assertEquals(0, replay.counters().repairCount());
+		Assert.assertEquals(0, replay.counters().fallbackCount());
+		Assert.assertEquals(0, replay.counters().doubleApplicationCount());
+		String firstHash = assertCanonicalEmission(receipt, fixture.analysis(), true, false);
+		String replayHash = assertCanonicalEmission(replay, fixture.analysis(), false, true);
+		Assert.assertEquals("DP_REPLAY_HASH_EQUAL", firstHash, replayHash);
 		assertImmutable(receipt.appliedPlans(), "applied plans");
 		assertImmutable(receipt.additionalRootInvocations(), "additional-root invocations");
 		assertImmutable(receipt.exactSelection().selectedRootPlans(), "selected root plans");
 		assertImmutable(receipt.exactSelection().selectedRootHops(), "selected root hops");
 	}
 
-	private static void assertSingleCanonicalEmission(Object receipt, PlacementAnalysis analysis) {
+	private static String assertCanonicalEmission(Object receipt, PlacementAnalysis analysis,
+		boolean expectedApplied, boolean expectedNoOp) {
 		try {
 			Object normalized = receipt.getClass().getMethod("normalizedResult").invoke(receipt);
 			Assert.assertTrue("DP_NORMALIZED_RESULT_TYPE", normalized instanceof NormalizedPlannerResult);
@@ -160,10 +171,11 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			Object emission = receipt.getClass().getMethod("emissionReceipt").invoke(receipt);
 			Assert.assertEquals("DP_EXACTLY_ONE_EMISSION_HASH", canonical,
 				emission.getClass().getMethod("planHash").invoke(emission));
-			Assert.assertEquals("DP_EMISSION_APPLIED", true,
+			Assert.assertEquals("DP_EMISSION_APPLIED", expectedApplied,
 				emission.getClass().getMethod("applied").invoke(emission));
-			Assert.assertEquals("DP_EMISSION_NOT_NOOP", false,
+			Assert.assertEquals("DP_EMISSION_NOOP", expectedNoOp,
 				emission.getClass().getMethod("noOp").invoke(emission));
+			return canonical;
 		}
 		catch(ReflectiveOperationException e) {
 			throw new AssertionError("DP_TRANSACTION_ENTRYPOINT_CONTRACT_MISSING", e);
@@ -643,7 +655,7 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	}
 
 	@SuppressWarnings("unchecked")
-	private static PlacementAnalysis finalBoundaryOwnerOrDetached(DMLProgram program) throws Exception {
+	private static DpInvocationReceipt finalBoundaryOwnerOrDetached(DMLProgram program) throws Exception {
 		Method boundary;
 		try {
 			boundary = DMLTranslator.class.getMethod("constructLops", DMLProgram.class, Consumer.class);
@@ -652,18 +664,18 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 			throw new AssertionError("CAMPAIGN_B_DP_FINAL_BOUNDARY_API_MISSING", prePatch);
 		}
 		String oldPlanner = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
-		AtomicReference<Object> receipt = new AtomicReference<>();
+		AtomicReference<DpInvocationReceipt> receipt = new AtomicReference<>();
 		try {
 			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 			boundary.invoke(new DMLTranslator(program), program,
 				(Consumer<Object>) value -> Assert.assertTrue("multiple final-boundary receipts",
-					receipt.compareAndSet(null, value)));
+					receipt.compareAndSet(null, (DpInvocationReceipt) value)));
 		}
 		finally {
 			ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, oldPlanner);
 		}
 		Assert.assertNotNull("CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_MISSING", receipt.get());
-		return (PlacementAnalysis) receipt.get().getClass().getMethod("analysis").invoke(receipt.get());
+		return receipt.get();
 	}
 
 	private static AnalysisSnapshot snapshotAnalysis(PlacementAnalysis analysis) {
@@ -804,7 +816,11 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		}
 	}
 
-	private record Fixture(DMLProgram program, PlacementAnalysis analysis) { }
+	private record Fixture(DMLProgram program, DpInvocationReceipt firstReceipt) {
+		private PlacementAnalysis analysis() {
+			return firstReceipt.analysis();
+		}
+	}
 	private record AnalysisSnapshot(PlacementAnalysis analysis,
 		org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph graph, String fingerprint,
 		List<HopOccurrenceProjection> occurrences, List<OccurrenceSnapshot> states) { }
