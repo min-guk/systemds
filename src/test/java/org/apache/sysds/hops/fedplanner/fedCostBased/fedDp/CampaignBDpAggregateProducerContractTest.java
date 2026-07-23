@@ -105,10 +105,11 @@ public class CampaignBDpAggregateProducerContractTest {
 		Assert.assertEquals("final-boundary receipt delivery",1,boundaryDeliveries.get());
 		validateInvocation(boundaryProgram,boundaryBefore,boundaryReceipt.get());
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-05");
+		FunctionCallGraph fgraph=new FunctionCallGraph(program);
 		PlacementAnalysis authority=CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		ProgramSnapshot before=snapshotProgram(program);
 		AtomicReference<Object> receipt=new AtomicReference<>(); AtomicInteger deliveries=new AtomicInteger();
-		withDpPlanner(() -> invoke(entry,new IPAPassRewriteFederatedPlan(),program,new FunctionCallGraph(program),null,
+		withDpPlanner(() -> invoke(entry,new IPAPassRewriteFederatedPlan(),program,fgraph,null,
 			(Consumer<Object>)value->{Assert.assertTrue(receipt.compareAndSet(null,value));deliveries.incrementAndGet();}));
 		Assert.assertEquals("IPA receipt delivery",1,deliveries.get());
 		Assert.assertSame("CAMPAIGN_B_DP_IPA_REPLACED_FINAL_BOUNDARY_OWNER",authority,call(receipt.get(),"analysis"));
