@@ -1682,6 +1682,9 @@ public class FederatedPlannerDpRewireTransTable {
 
 		try {
 			Hop copy = (Hop) hop.clone();
+			copy.resetExecType();
+			copy.clearForcedExecType();
+			copy.setFederatedOutput(FederatedOutput.NONE);
 			copy.getInput().clear();
 			copy.getParent().clear();
 			memo.put(hop.getHopID(), copy);
