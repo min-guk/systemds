@@ -4,6 +4,8 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -277,6 +279,26 @@ public class CampaignBDpAggregateProducerContractTest {
 			if(cause instanceof Exception x)throw x;if(cause instanceof Error x)throw x;throw new AssertionError(cause);}
 	}
 	private static Object call(Object value,String name) throws Exception {return value.getClass().getMethod(name).invoke(value);}
+	private static void requireTypedReceiptAuthority(Object receipt) {
+		Class<?> owner=receipt.getClass(); List<String> missing=new ArrayList<>();
+		requireTypedReceiptAuthority(owner,"deferredOutputDecisionReceipts","DeferredOutputDecisionReceipt",missing);
+		requireTypedReceiptAuthority(owner,"disconnectedCompletionReceipts","DisconnectedCompletionReceipt",missing);
+		Assert.assertTrue("CAMPAIGN_B_DP_TYPED_RECEIPT_AUTHORITY_MISSING|"+String.join(",",missing),missing.isEmpty());
+	}
+	private static void requireTypedReceiptAuthority(Class<?> owner,String accessor,String elementName,List<String> missing) {
+		Class<?> element;
+		try{element=Class.forName(owner.getEnclosingClass().getName()+'$'+elementName);}
+		catch(ClassNotFoundException e){missing.add("type="+elementName);return;}
+		Method method;
+		try{method=owner.getMethod(accessor);}
+		catch(NoSuchMethodException e){missing.add("member="+owner.getName()+'.'+accessor);return;}
+		Assert.assertSame("CAMPAIGN_B_DP_TYPED_RECEIPT_AUTHORITY_RETURN_TYPE|member="+accessor,List.class,method.getReturnType());
+		Type generic=method.getGenericReturnType();
+		Assert.assertTrue("CAMPAIGN_B_DP_TYPED_RECEIPT_AUTHORITY_GENERIC|member="+accessor,
+			generic instanceof ParameterizedType);
+		Assert.assertSame("CAMPAIGN_B_DP_TYPED_RECEIPT_AUTHORITY_ELEMENT|member="+accessor,element,
+			((ParameterizedType)generic).getActualTypeArguments()[0]);
+	}
 
 	@SuppressWarnings("unchecked") private static void validateExact(Object exact,ProducerCase producer,String decision) throws Exception {
 		Assert.assertSame(producer.analysis(),call(exact,"analysis"));Assert.assertSame(producer.memo(),call(exact,"memo"));
@@ -296,7 +318,8 @@ public class CampaignBDpAggregateProducerContractTest {
 			Assert.assertSame(expected.get(i).node(),call(actual,"node"));Assert.assertSame(expected.get(i).exclusion(),call(actual,"exclusion"));}
 	}
 	@SuppressWarnings("unchecked") private static void validateInvocation(DMLProgram program,ProgramSnapshot before,Object receipt) throws Exception {
-		Assert.assertNotNull(receipt); Object analysisObject=call(receipt,"analysis"),memoObject=call(receipt,"memo");
+		Assert.assertNotNull(receipt); requireTypedReceiptAuthority(receipt);
+		Object analysisObject=call(receipt,"analysis"),memoObject=call(receipt,"memo");
 		PlacementAnalysis analysis=(PlacementAnalysis)analysisObject; FederatedPlannerDpMemoTable memo=(FederatedPlannerDpMemoTable)memoObject;
 		FedPlan aggregate=(FedPlan)call(receipt,"legacyOptimalPlan"); Object exact=call(receipt,"exactSelection");
 		Assert.assertSame(analysis,call(exact,"analysis")); Assert.assertSame(memo,call(exact,"memo")); Assert.assertSame(aggregate,call(exact,"legacyOptimalPlan"));
