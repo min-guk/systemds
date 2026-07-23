@@ -9,7 +9,10 @@ import java.lang.reflect.Type;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +36,10 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan;
@@ -120,20 +126,7 @@ public class CampaignBDpAggregateProducerContractTest {
 		Assert.assertEquals("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_RECEIPT_COUNT",1,repeatedDeliveries.get());
 		Assert.assertSame("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_OWNER_CHANGED",call(first,"analysis"),
 			call(repeated.get(),"analysis"));
-		DMLProgram racingProgram=ProductionShadowFixtureFactory.compile("B-05");
-		CountDownLatch ready=new CountDownLatch(4),start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(4);
-		List<Future<Object>> racing=new ArrayList<>();
-		String oldPlanner=ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
-		ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,"compile_cost_based");
-		for(int i=0;i<4;i++) racing.add(pool.submit(()->{ready.countDown();start.await();AtomicReference<Object> value=new AtomicReference<>();
-			invoke(entry,new DMLTranslator(racingProgram),racingProgram,
-				(Consumer<Object>)candidate->{Assert.assertTrue(value.compareAndSet(null,candidate));});return value.get();}));
-		List<Object> receipts=new ArrayList<>();try{ready.await();start.countDown();for(Future<Object> future:racing)receipts.add(future.get());}
-		finally{pool.shutdownNow();ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,oldPlanner);}
-		Object winner=call(receipts.get(0),"analysis");Assert.assertNotNull("CAMPAIGN_B_DP_CAS_WINNER_MISSING",winner);
-		for(Object racingReceipt:receipts)Assert.assertSame("CAMPAIGN_B_DP_CAS_LOSER_PUBLISHED",winner,call(racingReceipt,"analysis"));
-		Field authority=CampaignBDpSharedAnalysisOwnerContractTest.requiredAuthorityField();authority.setAccessible(true);
-		Assert.assertSame("CAMPAIGN_B_DP_CAS_CELL_NOT_WINNER",winner,((AtomicReference<?>)authority.get(racingProgram)).get());
+		validateInvocation(program,before,repeated.get());
 	}
 
 	@Test public void equalCostProducerReceiptRetainsLoutIdentityAndRawBits() throws Exception {
@@ -223,6 +216,8 @@ public class CampaignBDpAggregateProducerContractTest {
 	}
 	private record ApplicationIdentity(FedPlan plan,Hop planningHop,long planningHopId,
 		Hop executableHop,long executableHopId) { }
+	private record ComponentExpectation(int ordinal,List<CompiledHopKey> members,CompiledHopKey sinkRoot,
+		PlacementAnalysis.HopOccurrenceProjection sinkRootOccurrence) { }
 	private record MemoSnapshot(List<Pair<Long,FederatedOutput>> memoKeys,List<FedPlanVariants> variants,
 		List<List<FedPlan>> variantPlans,List<List<Pair<Long,FederatedOutput>>> planEdges,List<Long> costBits,List<Pair<Long,FederatedOutput>> edges,
 		List<Long> additionalRoots,String fingerprint,List<PlacementAnalysis.HopOccurrenceProjection> occurrences,
@@ -351,7 +346,8 @@ public class CampaignBDpAggregateProducerContractTest {
 			Assert.assertTrue("duplicate aggregate plan identity",effectivePlans.add(plan)); Assert.assertTrue("duplicate aggregate planning Hop identity",effectivePlanningHops.add(planningHop)); Assert.assertTrue("duplicate aggregate planning Hop ID",effectivePlanningIds.add(planningHopId));
 			effectiveTuples.add(new PlanningIdentity(plan,planningHop,planningHopId));expectedApplications.add(new ApplicationIdentity(plan,planningHop,planningHopId,executableHop,executableHopId));
 			additional.add(false);}
-		List<String> expectedDispositions=new ArrayList<>(); int appliedAdditional=0,alreadyVisited=0;
+		List<String> expectedDispositions=new ArrayList<>(); List<FedPlan> explicitAppliedPlans=new ArrayList<>();
+		int appliedAdditional=0,alreadyVisited=0;
 		for(int i=0;i<additionalPlans.size();i++){FedPlan plan=additionalPlans.get(i);long planningHopId=additionalIds.get(i);Hop planningHop=plan.getHopRef();
 			Assert.assertNotNull("additional planning Hop",planningHop);Assert.assertEquals("additional planning plan ID",planningHopId,plan.getHopID());Assert.assertEquals("additional planning Hop ID",planningHopId,planningHop.getHopID());
 			long executableHopId=memo.resolveOriginalHopId(planningHopId);Hop executableHop=memo.resolveOriginalHop(planningHopId);Assert.assertNotNull("additional executable Hop resolution id="+planningHopId,executableHop);
@@ -361,7 +357,7 @@ public class CampaignBDpAggregateProducerContractTest {
 			boolean componentCollision=effectivePlans.contains(plan)||effectivePlanningHops.contains(planningHop)||effectivePlanningIds.contains(planningHopId);
 			Assert.assertFalse("recombined/partial additional-root planning identity overlap id="+planningHopId,!exactTupleSeen&&componentCollision);
 			if(exactTupleSeen){expectedDispositions.add("ALREADY_VISITED");alreadyVisited++;}
-			else{expectedDispositions.add("APPLIED");appliedAdditional++;Assert.assertTrue(effectivePlans.add(plan));Assert.assertTrue(effectivePlanningHops.add(planningHop));Assert.assertTrue(effectivePlanningIds.add(planningHopId));effectiveTuples.add(new PlanningIdentity(plan,planningHop,planningHopId));expected.add(plan);additional.add(true);expectedApplications.add(new ApplicationIdentity(plan,planningHop,planningHopId,executableHop,executableHopId));}}
+			else{expectedDispositions.add("APPLIED");appliedAdditional++;Assert.assertTrue(effectivePlans.add(plan));Assert.assertTrue(effectivePlanningHops.add(planningHop));Assert.assertTrue(effectivePlanningIds.add(planningHopId));effectiveTuples.add(new PlanningIdentity(plan,planningHop,planningHopId));expected.add(plan);explicitAppliedPlans.add(plan);additional.add(true);expectedApplications.add(new ApplicationIdentity(plan,planningHop,planningHopId,executableHop,executableHopId));}}
 		List<?> invocations=(List<?>)call(receipt,"additionalRootInvocations"); assertImmutable(invocations,"additionalRootInvocations");
 		Assert.assertEquals("non-virtual additional invocation count",additionalPlans.size(),invocations.size());
 		for(int i=0;i<invocations.size();i++) { Object invocation=invocations.get(i); FedPlan plan=additionalPlans.get(i); long id=additionalIds.get(i);
@@ -372,18 +368,197 @@ public class CampaignBDpAggregateProducerContractTest {
 			Object dispositionValue=call(invocation,"disposition"); Assert.assertEquals("AdditionalRootDisposition",dispositionValue.getClass().getSimpleName());
 			String disposition=String.valueOf(dispositionValue);
 			Assert.assertEquals("independent additional-root disposition",expectedDispositions.get(i),disposition); }
-		List<?> applied=(List<?>)call(receipt,"appliedPlans"); assertImmutable(applied,"appliedPlans"); Assert.assertEquals(expected.size(),applied.size()); Assert.assertFalse(applied.isEmpty());
+		List<?> applied=(List<?>)call(receipt,"appliedPlans"); assertImmutable(applied,"appliedPlans"); Assert.assertFalse(applied.isEmpty());
+		List<?> deferredReceipts=(List<?>)call(receipt,"deferredOutputDecisionReceipts"); assertImmutable(deferredReceipts,"deferredOutputDecisionReceipts");
+		List<?> disconnectedReceipts=(List<?>)call(receipt,"disconnectedCompletionReceipts"); assertImmutable(disconnectedReceipts,"disconnectedCompletionReceipts");
+		Assert.assertEquals("B-05 aggregate/explicit applied prefix",3,expected.size());
+		Assert.assertEquals("B-05 deferred authority receipts",5,deferredReceipts.size());
+		Assert.assertEquals("B-05 disconnected completion receipts",7,disconnectedReceipts.size());
+		Assert.assertEquals("B-05 total applied plans",10,applied.size());
+		Assert.assertEquals("B-05 disconnected applied suffix",7,applied.size()-expected.size());
 		Set<FedPlan> uniquePlans=Collections.newSetFromMap(new IdentityHashMap<>());Set<Hop> uniqueHops=Collections.newSetFromMap(new IdentityHashMap<>());Set<Long> uniqueIds=new java.util.HashSet<>();int observedAdditional=0;
 		for(int i=0;i<expected.size();i++) { Object item=applied.get(i); ApplicationIdentity identity=expectedApplications.get(i); FedPlan plan=identity.plan(); Hop planningHop=identity.planningHop(); long planningHopId=identity.planningHopId(); Assert.assertEquals(i,((Number)call(item,"ordinal")).intValue());
 			Assert.assertEquals(additional.get(i),call(item,"additionalRoot"));if(additional.get(i))observedAdditional++;Assert.assertSame(plan,call(item,"plan"));Assert.assertSame(planningHop,call(item,"planningHop"));
 			Assert.assertEquals(planningHopId,((Number)call(item,"planningHopId")).longValue());Assert.assertSame(identity.executableHop(),call(item,"executableHop"));Assert.assertEquals(identity.executableHopId(),((Number)call(item,"executableHopId")).longValue());Assert.assertEquals(plan.getFedOutType(),call(item,"output"));
 			Assert.assertTrue("duplicate exact plan application",uniquePlans.add(plan));Assert.assertTrue("duplicate exact planning Hop application",uniqueHops.add(planningHop));Assert.assertTrue("duplicate planning Hop ID application",uniqueIds.add(planningHopId));}
 		Assert.assertEquals("effective additional application count",appliedAdditional,observedAdditional);
+		NormalizedPlannerResult normalized=(NormalizedPlannerResult)call(receipt,"normalizedResult");
+		Set<CompiledHopKey> ordinaryKeys=ordinaryNormalizedKeys(analysis,normalized);
+		Set<CompiledHopKey> aggregateRawClosure=planClosure(memo,aggregatePlans);
+		Set<CompiledHopKey> explicitRawClosure=planClosure(memo,explicitAppliedPlans);
+		assertDisjoint("aggregate vs explicit raw memo closure",aggregateRawClosure,explicitRawClosure);
+		Set<CompiledHopKey> aggregateExplicitClosure=new HashSet<>(aggregateRawClosure);aggregateExplicitClosure.addAll(explicitRawClosure);
+		Set<CompiledHopKey> aggregateClosure=new HashSet<>(aggregateRawClosure);aggregateClosure.retainAll(ordinaryKeys);
+		Set<CompiledHopKey> explicitClosure=new HashSet<>(explicitRawClosure);explicitClosure.retainAll(ordinaryKeys);
+		Set<CompiledHopKey> deferredKeys=validateDeferredReceipts(deferredReceipts,analysis,memo,normalized,aggregateExplicitClosure,applied);
+		Set<CompiledHopKey> preCompletionCoverage=new HashSet<>(aggregateExplicitClosure);preCompletionCoverage.addAll(deferredKeys);
+		List<ComponentExpectation> components=disconnectedComponents(analysis,normalized,preCompletionCoverage);
+		expectedApplications.addAll(validateDisconnectedReceipts(disconnectedReceipts,components,applied,
+			expected.size(),analysis,memo,normalized));
+		Set<CompiledHopKey> disconnectedCoverage=new HashSet<>();for(ComponentExpectation component:components)disconnectedCoverage.addAll(component.members());
+		assertDisjoint("aggregate vs deferred",aggregateClosure,deferredKeys);assertDisjoint("aggregate vs disconnected",aggregateClosure,disconnectedCoverage);
+		assertDisjoint("explicit vs deferred",explicitClosure,deferredKeys);assertDisjoint("explicit vs disconnected",explicitClosure,disconnectedCoverage);
+		assertDisjoint("deferred vs disconnected",deferredKeys,disconnectedCoverage);
+		Set<CompiledHopKey> covered=new HashSet<>(aggregateClosure);covered.addAll(explicitClosure);covered.addAll(deferredKeys);covered.addAll(disconnectedCoverage);
+		Assert.assertEquals("ordinary normalized coverage",ordinaryKeys,covered);
 		Object counters=call(receipt,"counters"); assertCount(counters,"enumerationCount",1); assertCount(counters,"exactSelectionCount",1); assertCount(counters,"applicationPhaseCount",1);
 		assertCount(counters,"appliedPlanCount",applied.size()); assertCount(counters,"additionalRootInvocationCount",invocations.size()); assertCount(counters,"additionalRootNoOpCount",alreadyVisited);
 		for(String zero:List.of("internalAnalysisBuildCount","oldOverloadCount","reenumerationCount","repairCount","fallbackCount","doubleApplicationCount"))assertCount(counters,zero,0);
 		ProgramSnapshot after=snapshotProgram(program); assertPlacementMutationsAccounted(before,after,expectedApplications,memo);
 	}
+	private static Set<CompiledHopKey> planClosure(FederatedPlannerDpMemoTable memo,List<FedPlan> roots) {
+		Set<CompiledHopKey> closure=new HashSet<>();Set<FedPlan> seen=Collections.newSetFromMap(new IdentityHashMap<>());
+		ArrayDeque<FedPlan> queue=new ArrayDeque<>(roots);
+		while(!queue.isEmpty()) { FedPlan plan=queue.removeFirst(); if(plan==null||!seen.add(plan))continue;
+			PlacementAnalysis.HopOccurrenceProjection occurrence=memo.requirePlanCarrierOccurrence(plan.getHopRef());
+			closure.add(occurrence.key());
+			for(Pair<Long,FederatedOutput> edge:plan.getChildFedPlans()) { FedPlan child=memo.getFedPlanAfterPrune(edge);
+				Assert.assertNotNull("aggregate/explicit closure edge is absent",child); queue.add(child); }
+		}
+		return closure;
+	}
+	@SuppressWarnings("unchecked") private static Set<CompiledHopKey> validateDeferredReceipts(List<?> receipts,PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable memo,NormalizedPlannerResult normalized,Set<CompiledHopKey> aggregateExplicitClosure,
+		List<?> applied) throws Exception {
+		Set<CompiledHopKey> deferred=new HashSet<>();Set<Object> receiptPlans=Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<Object> appliedPlans=Collections.newSetFromMap(new IdentityHashMap<>());for(Object item:applied)appliedPlans.add(call(item,"plan"));
+		for(int i=0;i<receipts.size();i++) { Object receipt=receipts.get(i);
+			Assert.assertEquals("DeferredOutputDecisionReceipt",receipt.getClass().getSimpleName());
+			Assert.assertEquals("deferred ordinal",i,((Number)call(receipt,"ordinal")).intValue());
+			long decisionHopId=((Number)call(receipt,"decisionHopId")).longValue();long originalHopId=((Number)call(receipt,"originalHopId")).longValue();
+			FederatedOutput desired=(FederatedOutput)call(receipt,"desiredOutput");
+			PlacementAnalysis.HopOccurrenceProjection occurrence=(PlacementAnalysis.HopOccurrenceProjection)call(receipt,"occurrence");
+			CompiledHopKey key=(CompiledHopKey)call(receipt,"key");FedPlan plan=(FedPlan)call(receipt,"plan");Hop planningHop=(Hop)call(receipt,"planningHop");
+			PlacementState state=(PlacementState)call(receipt,"state");boolean derived=(Boolean)call(receipt,"derivedFedFout");
+			Assert.assertTrue("deferred occurrence is not analysis-owned",containsOccurrenceIdentity(analysis,occurrence));
+			Assert.assertEquals("deferred occurrence/key value",occurrence.key(),key);Assert.assertSame("deferred occurrence/planning Hop",occurrence.hop(),planningHop);
+			Assert.assertSame("deferred memo carrier occurrence",occurrence,memo.requirePlanCarrierOccurrence(planningHop));
+			Assert.assertEquals("deferred memo original decision id",originalHopId,memo.resolveOriginalHopId(decisionHopId));
+			Assert.assertEquals("deferred memo original plan id",originalHopId,memo.resolveOriginalHopId(plan.getHopID()));
+			Assert.assertSame("deferred plan carrier Hop",planningHop,plan.getHopRef());Assert.assertEquals("deferred plan carrier id",planningHop.getHopID(),plan.getHopID());
+			Assert.assertEquals("deferred desired output",plan.getFedOutType(),desired);Assert.assertSame("deferred selected state",plan.getSelectedPlacementState(),state);
+			Assert.assertEquals("deferred state exec",plan.getExecType(),state.execType());Assert.assertEquals("deferred state output",desired,state.output());
+			if(state.execType()==ExecType.FED&&state.output()==FederatedOutput.FOUT)Assert.assertEquals("deferred FED/FOUT FType",plan.getFType(),state.fType());
+			Assert.assertEquals("deferred derived FED/FOUT",plan.isDerivedFedFout(),derived);
+			Assert.assertSame("deferred normalized state",state,normalized.selectedStates().get(key));
+			Assert.assertSame("deferred normalized emission state",state,normalized.selectedEmissionStates().get(key).placementState());
+			Assert.assertEquals("deferred normalized derived",derived,normalized.selectedEmissionStates().get(key).derivedFedFout());
+			Assert.assertFalse("deferred overlaps aggregate/explicit closure",aggregateExplicitClosure.contains(key));
+			Assert.assertFalse("deferred receipt is an applied plan",appliedPlans.contains(plan));
+			Assert.assertTrue("duplicate deferred key",deferred.add(key));Assert.assertTrue("duplicate deferred plan",receiptPlans.add(plan));
+		}
+		return deferred;
+	}
+	private static List<ComponentExpectation> disconnectedComponents(PlacementAnalysis analysis,NormalizedPlannerResult normalized,
+		Set<CompiledHopKey> preCompletionCoverage) {
+		Set<CompiledHopKey> remaining=ordinaryNormalizedKeys(analysis,normalized);remaining.removeAll(preCompletionCoverage);
+		Map<CompiledHopKey,Set<CompiledHopKey>> undirected=new LinkedHashMap<>(),directed=new LinkedHashMap<>();
+		for(CompiledHopKey key:sortedKeys(remaining)){undirected.put(key,new LinkedHashSet<>());directed.put(key,new LinkedHashSet<>());}
+		for(PlacementAnalysis.CompiledInputEdgeFact edge:analysis.compiledInputEdgesInCanonicalOrder())addDisconnectedEdge(edge.producer(),edge.consumer(),remaining,undirected,directed);
+		for(PlacementAnalysis.LogicalTransientInputFact edge:analysis.logicalTransientInputsInCanonicalOrder())addDisconnectedEdge(edge.sourceWrite(),edge.targetRead(),remaining,undirected,directed);
+		List<ComponentExpectation> components=new ArrayList<>();Set<CompiledHopKey> seen=new HashSet<>();
+		List<CompiledHopKey> starts=new ArrayList<>(sortedKeys(remaining));Collections.reverse(starts);int componentOrdinal=0;
+		for(CompiledHopKey start:starts)if(seen.add(start)){
+			Set<CompiledHopKey> memberSet=new HashSet<>();ArrayDeque<CompiledHopKey> queue=new ArrayDeque<>();queue.add(start);memberSet.add(start);
+			while(!queue.isEmpty()) { CompiledHopKey key=queue.removeFirst();for(CompiledHopKey next:sortedKeys(undirected.get(key)))if(seen.add(next)){memberSet.add(next);queue.add(next);} }
+			List<CompiledHopKey> members=sortedKeys(memberSet);
+			for(CompiledHopKey sink:sinkRootsByMutualReachability(members,directed))
+				components.add(new ComponentExpectation(componentOrdinal,members,sink,occurrenceByKey(analysis,sink)));
+			componentOrdinal++;
+		}
+		return components;
+	}
+	private static void addDisconnectedEdge(CompiledHopKey producer,CompiledHopKey consumer,Set<CompiledHopKey> remaining,
+		Map<CompiledHopKey,Set<CompiledHopKey>> undirected,Map<CompiledHopKey,Set<CompiledHopKey>> directed) {
+		CompiledHopKey p=findEqualKey(remaining,producer),c=findEqualKey(remaining,consumer);if(p==null||c==null)return;
+		directed.get(p).add(c);undirected.get(p).add(c);undirected.get(c).add(p);
+	}
+	private static List<CompiledHopKey> sinkRootsByMutualReachability(List<CompiledHopKey> members,
+		Map<CompiledHopKey,Set<CompiledHopKey>> directed) {
+		Set<CompiledHopKey> universe=new HashSet<>(members);Map<CompiledHopKey,Set<CompiledHopKey>> reachable=new HashMap<>();
+		for(CompiledHopKey start:members) {
+			Set<CompiledHopKey> reached=new HashSet<>();ArrayDeque<CompiledHopKey> queue=new ArrayDeque<>();queue.add(start);
+			while(!queue.isEmpty()) { CompiledHopKey key=queue.removeFirst();if(!reached.add(key))continue;
+				for(CompiledHopKey next:sortedKeys(directed.getOrDefault(key,Set.of())))if(universe.contains(next))queue.add(next); }
+			reachable.put(start,reached);
+		}
+		List<Set<CompiledHopKey>> strongComponents=new ArrayList<>();Set<CompiledHopKey> assigned=new HashSet<>();
+		for(CompiledHopKey seed:members)if(assigned.add(seed)) {
+			Set<CompiledHopKey> component=new HashSet<>();component.add(seed);
+			for(CompiledHopKey candidate:members)
+				if(!assigned.contains(candidate)&&reachable.get(seed).contains(candidate)&&reachable.get(candidate).contains(seed)) {
+					assigned.add(candidate);component.add(candidate);
+				}
+			strongComponents.add(component);
+		}
+		List<CompiledHopKey> roots=new ArrayList<>();
+		for(Set<CompiledHopKey> component:strongComponents) {
+			boolean sink=true;
+			for(CompiledHopKey member:component)
+				for(CompiledHopKey next:directed.getOrDefault(member,Set.of()))
+					if(universe.contains(next)&&!component.contains(next))sink=false;
+			if(sink)roots.addAll(component);
+		}
+		Collections.sort(roots);Assert.assertFalse("disconnected component has no sink SCC root",roots.isEmpty());
+		return roots;
+	}
+	private static List<ApplicationIdentity> validateDisconnectedReceipts(List<?> receipts,List<ComponentExpectation> components,List<?> applied,int prefix,
+		PlacementAnalysis analysis,FederatedPlannerDpMemoTable memo,NormalizedPlannerResult normalized) throws Exception {
+		List<ApplicationIdentity> independentlyValidated=new ArrayList<>();
+		Assert.assertEquals("independent disconnected component count",components.size(),receipts.size());
+		for(int i=0;i<receipts.size();i++) { Object receipt=receipts.get(i);ComponentExpectation component=components.get(i);
+			Assert.assertEquals("DisconnectedCompletionReceipt",receipt.getClass().getSimpleName());Assert.assertEquals("disconnected ordinal",i,((Number)call(receipt,"ordinal")).intValue());
+			Assert.assertEquals("disconnected component ordinal",component.ordinal(),((Number)call(receipt,"componentOrdinal")).intValue());Assert.assertEquals("disconnected fingerprint",analysis.analysisFingerprint(),call(receipt,"analysisFingerprint"));
+			List<?> memberReceipt=(List<?>)call(receipt,"componentMembers");assertImmutable(memberReceipt,"disconnected.componentMembers");
+			Assert.assertEquals("disconnected component members",component.members(),memberReceipt);Assert.assertEquals("disconnected sink root",component.sinkRoot(),call(receipt,"sinkRoot"));
+			Assert.assertSame("disconnected sink occurrence",component.sinkRootOccurrence(),call(receipt,"sinkRootOccurrence"));
+			Assert.assertEquals("disconnected sink occurrence key",component.sinkRoot(),component.sinkRootOccurrence().key());
+			Assert.assertTrue("disconnected occurrence is not analysis-owned",containsOccurrenceIdentity(analysis,component.sinkRootOccurrence()));
+			PlacementState state=normalized.selectedStates().get(component.sinkRoot());Assert.assertNotNull("disconnected normalized state",state);
+			FedPlan plan=memo.getFedPlanAfterPrune(component.sinkRootOccurrence().hop().getHopID(),state.output());
+			Assert.assertNotNull("disconnected memo plan",plan);
+			Assert.assertSame("disconnected independent plan carrier",component.sinkRootOccurrence(),memo.requirePlanCarrierOccurrence(plan.getHopRef()));
+			Assert.assertSame("disconnected independent selected state",plan.getSelectedPlacementState(),state);
+			Assert.assertSame("disconnected independent emission state",state,normalized.selectedEmissionStates().get(component.sinkRoot()).placementState());
+			Assert.assertEquals("disconnected independent derived",plan.isDerivedFedFout(),normalized.selectedEmissionStates().get(component.sinkRoot()).derivedFedFout());
+			long planningHopId=plan.getHopID();Hop executableHop=memo.resolveOriginalHop(planningHopId);
+			Assert.assertNotNull("disconnected executable Hop",executableHop);
+			independentlyValidated.add(new ApplicationIdentity(plan,plan.getHopRef(),planningHopId,
+				executableHop,memo.resolveOriginalHopId(planningHopId)));
+		}
+		Assert.assertEquals("disconnected applied suffix size",receipts.size(),applied.size()-prefix);
+		for(int i=0;i<receipts.size();i++) {
+			Object receipt=receipts.get(i);Object appliedReceipt=applied.get(prefix+i);
+			ApplicationIdentity expected=independentlyValidated.get(i);
+			Assert.assertEquals("disconnected applied ordinal",prefix+i,((Number)call(receipt,"appliedPlanOrdinal")).intValue());
+			Assert.assertSame("disconnected applied receipt",appliedReceipt,call(receipt,"appliedPlan"));
+			Assert.assertEquals("disconnected applied receipt ordinal",prefix+i,((Number)call(appliedReceipt,"ordinal")).intValue());
+			Assert.assertEquals(Boolean.TRUE,call(appliedReceipt,"additionalRoot"));
+			Assert.assertSame("disconnected applied plan",expected.plan(),call(appliedReceipt,"plan"));
+			Assert.assertSame("disconnected applied planning Hop",expected.planningHop(),call(appliedReceipt,"planningHop"));
+			Assert.assertEquals("disconnected applied planning ID",expected.planningHopId(),((Number)call(appliedReceipt,"planningHopId")).longValue());
+			Assert.assertSame("disconnected applied executable Hop",expected.executableHop(),call(appliedReceipt,"executableHop"));
+			Assert.assertEquals("disconnected applied executable ID",expected.executableHopId(),((Number)call(appliedReceipt,"executableHopId")).longValue());
+			Assert.assertEquals("disconnected applied output",expected.plan().getFedOutType(),call(appliedReceipt,"output"));
+		}
+		return independentlyValidated;
+	}
+	private static Set<CompiledHopKey> ordinaryNormalizedKeys(PlacementAnalysis analysis,NormalizedPlannerResult normalized) {
+		Set<CompiledHopKey> keys=new HashSet<>();
+		for(var node:analysis.graph().decisionNodes())
+			if(node.kind()!=org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+				&&node.kind()!=org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT) {
+				Assert.assertTrue("ordinary decision lacks normalized state",normalized.selectedStates().containsKey(node.key()));
+				keys.add(node.key());
+			}
+		return keys;
+	}
+	private static PlacementAnalysis.HopOccurrenceProjection occurrenceByKey(PlacementAnalysis analysis,CompiledHopKey key) { for(PlacementAnalysis.HopOccurrenceProjection occurrence:analysis.occurrences())if(occurrence.key().equals(key))return occurrence;throw new AssertionError("missing occurrence"); }
+	private static boolean containsOccurrenceIdentity(PlacementAnalysis analysis,PlacementAnalysis.HopOccurrenceProjection occurrence) { return analysis.occurrences().stream().anyMatch(candidate->candidate==occurrence); }
+	private static CompiledHopKey findEqualKey(Set<CompiledHopKey> keys,CompiledHopKey probe) { for(CompiledHopKey key:keys)if(key.equals(probe))return key;return null; }
+	private static List<CompiledHopKey> sortedKeys(Set<CompiledHopKey> keys) { return keys.stream().sorted().toList(); }
+	private static List<CompiledHopKey> sortedKeys(List<CompiledHopKey> keys) { return keys.stream().sorted().toList(); }
+	private static void assertDisjoint(String label,Set<CompiledHopKey> left,Set<CompiledHopKey> right){for(CompiledHopKey key:left)Assert.assertFalse(label+" overlap",right.contains(key));}
 	private static void validateTies(List<?> ties,FederatedPlannerDpMemoTable memo,List<Pair<Long,FederatedOutput>> edges)throws Exception {
 		assertImmutable(ties,"tieReceipts"); Assert.assertEquals(edges.size(),ties.size());
 		for(int i=0;i<edges.size();i++){Pair<Long,FederatedOutput> edge=edges.get(i);long id=edge.getLeft();FedPlan selected=memo.getFedPlanAfterPrune(edge);FedPlan l=memo.getFedPlanAfterPrune(id,FederatedOutput.LOUT),f=memo.getFedPlanAfterPrune(id,FederatedOutput.FOUT);Object tie=ties.get(i);Assert.assertNotNull("selected edge must resolve",selected);Assert.assertEquals(id,((Number)call(tie,"rootHopId")).longValue());
@@ -467,7 +642,10 @@ public class CampaignBDpAggregateProducerContractTest {
 		else{Assert.assertSame(label+" non-clone planning/executable Hop",planningHop,executableHop);Assert.assertEquals(label+" non-clone planning/executable Hop ID",planningHopId,executableHopId);}}
 	private static void assertPlacementMutationsAccounted(ProgramSnapshot before,ProgramSnapshot after,List<ApplicationIdentity> applications,FederatedPlannerDpMemoTable memo){Assert.assertEquals(before.states().size(),after.states().size());Set<Hop>plannedExecutable=Collections.newSetFromMap(new IdentityHashMap<>());Set<FedPlan>seenPlans=Collections.newSetFromMap(new IdentityHashMap<>());ArrayDeque<FedPlan>queue=new ArrayDeque<>();for(ApplicationIdentity application:applications)queue.add(application.plan());while(!queue.isEmpty()){FedPlan plan=queue.removeFirst();if(plan==null||!seenPlans.add(plan))continue;Hop executableHop=memo.resolveOriginalHop(plan.getHopID());Assert.assertNotNull("planned executable Hop",executableHop);plannedExecutable.add(executableHop);for(Pair<Long,FederatedOutput> edge:plan.getChildFedPlans()){FedPlan child=memo.getFedPlanAfterPrune(edge);if(child!=null)queue.add(child);}}
 		for(int i=0;i<before.states().size();i++){HopState a=before.states().get(i),b=after.states().get(i);Assert.assertSame(a.hop(),b.hop());Assert.assertEquals(a.inputIds(),b.inputIds());if(a.exec()!=b.exec()||a.output()!=b.output())Assert.assertTrue("unreceipted executable placement mutation hop="+a.hopId(),plannedExecutable.contains(a.hop()));}
-		for(ApplicationIdentity application:applications){Assert.assertEquals(application.plan().getExecType(),application.planningHop().getForcedExecType());Assert.assertEquals(application.plan().getFedOutType(),application.planningHop().getFederatedOutput());HopState state=after.states().stream().filter(x->x.hop()==application.executableHop()).findFirst().orElseThrow();Assert.assertEquals(application.executableHopId(),state.hopId());Assert.assertEquals(application.plan().getExecType(),state.exec());Assert.assertEquals(application.plan().getFedOutType(),state.output());}}
+		for(ApplicationIdentity application:applications){
+			if(memo.isVirtualClone(application.planningHopId())){Assert.assertNotSame("virtual clone planning/executable Hop",application.planningHop(),application.executableHop());Assert.assertNotEquals("virtual clone planning/executable Hop ID",application.planningHopId(),application.executableHopId());Assert.assertNull("virtual clone forced exec must remain neutral",application.planningHop().getForcedExecType());Assert.assertEquals("virtual clone output must remain neutral",FederatedOutput.NONE,application.planningHop().getFederatedOutput());}
+			else{Assert.assertSame("non-clone planning/executable Hop",application.planningHop(),application.executableHop());Assert.assertEquals("non-clone planning/executable Hop ID",application.planningHopId(),application.executableHopId());Assert.assertEquals(application.plan().getExecType(),application.planningHop().getForcedExecType());Assert.assertEquals(application.plan().getFedOutType(),application.planningHop().getFederatedOutput());}
+			HopState state=after.states().stream().filter(x->x.hop()==application.executableHop()).findFirst().orElseThrow();Assert.assertEquals(application.executableHopId(),state.hopId());Assert.assertEquals(application.plan().getExecType(),state.exec());Assert.assertEquals(application.plan().getFedOutType(),state.output());}}
 	private static void withDpPlanner(Throwing action)throws Exception{String old=ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);try{ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,"compile_cost_based");action.run();}finally{ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER,old);}}
 	@FunctionalInterface private interface Throwing{void run()throws Exception;}
 }
