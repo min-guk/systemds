@@ -127,6 +127,62 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 	}
 
+	public record DeferredOutputDecisionReceipt(int ordinal, long decisionHopId, long originalHopId,
+		FederatedOutput desiredOutput, PlacementAnalysis.HopOccurrenceProjection occurrence,
+		CompiledHopKey key, FederatedPlannerDpMemoTable.FedPlan plan, Hop planningHop,
+		PlacementState state, boolean derivedFedFout) {
+		public DeferredOutputDecisionReceipt {
+			Objects.requireNonNull(desiredOutput, "desiredOutput");
+			Objects.requireNonNull(occurrence, "occurrence");
+			Objects.requireNonNull(key, "key");
+			Objects.requireNonNull(plan, "plan");
+			Objects.requireNonNull(planningHop, "planningHop");
+			Objects.requireNonNull(state, "state");
+			if(ordinal < 0 || decisionHopId < 0 || originalHopId < 0)
+				throw new IllegalArgumentException("Deferred output-decision ordinal or Hop ID is negative");
+			if(occurrence.key() != key || occurrence.hop() != planningHop
+				|| plan.getHopRef() != planningHop || plan.getHopID() != planningHop.getHopID())
+				throw new IllegalArgumentException("Deferred output-decision plan carrier identity differs");
+			if(plan.getSelectedPlacementState() != state || plan.getFedOutType() != desiredOutput
+				|| state.execType() != plan.getExecType() || state.output() != desiredOutput
+				|| state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+					&& state.fType() != plan.getFType()
+				|| derivedFedFout != plan.isDerivedFedFout())
+				throw new IllegalArgumentException("Deferred output-decision selected state differs");
+		}
+	}
+
+	public record DisconnectedCompletionReceipt(int ordinal, int appliedPlanOrdinal,
+		AppliedPlanReceipt appliedPlan, int componentOrdinal, String analysisFingerprint,
+		List<CompiledHopKey> componentMembers, CompiledHopKey sinkRoot,
+		PlacementAnalysis.HopOccurrenceProjection sinkRootOccurrence) {
+		public DisconnectedCompletionReceipt {
+			Objects.requireNonNull(appliedPlan, "appliedPlan");
+			Objects.requireNonNull(analysisFingerprint, "analysisFingerprint");
+			Objects.requireNonNull(componentMembers, "componentMembers");
+			Objects.requireNonNull(sinkRoot, "sinkRoot");
+			Objects.requireNonNull(sinkRootOccurrence, "sinkRootOccurrence");
+			componentMembers = List.copyOf(componentMembers);
+			if(ordinal < 0 || appliedPlanOrdinal < 0 || componentOrdinal < 0
+				|| analysisFingerprint.isBlank())
+				throw new IllegalArgumentException("Disconnected completion ordinal or fingerprint differs");
+			if(appliedPlan.ordinal() != appliedPlanOrdinal || !appliedPlan.additionalRoot()
+				|| sinkRootOccurrence.key() != sinkRoot
+				|| sinkRootOccurrence.hop() != appliedPlan.planningHop()
+				|| appliedPlan.plan().getHopRef() != sinkRootOccurrence.hop())
+				throw new IllegalArgumentException("Disconnected completion applied-plan identity differs");
+			if(componentMembers.isEmpty()
+				|| componentMembers.stream().noneMatch(member -> member == sinkRoot))
+				throw new IllegalArgumentException("Disconnected completion root is outside its component");
+			for(int i = 0; i < componentMembers.size(); i++) {
+				CompiledHopKey member = Objects.requireNonNull(componentMembers.get(i), "componentMember");
+				if(i > 0 && componentMembers.get(i - 1).compareTo(member) >= 0)
+					throw new IllegalArgumentException(
+						"Disconnected completion component members are not sorted and unique");
+			}
+		}
+	}
+
 	public record InvocationCounters(int enumerationCount, int exactSelectionCount,
 		int applicationPhaseCount, int appliedPlanCount, int additionalRootInvocationCount,
 		int additionalRootNoOpCount, int internalAnalysisBuildCount,
@@ -226,6 +282,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable.FedPlan legacyOptimalPlan, DpPlacementAdapter.ExactSelection exactSelection,
 		DpSemanticConsumptionReceipt semanticConsumption,
 		List<AppliedPlanReceipt> appliedPlans, List<AdditionalRootInvocationReceipt> additionalRootInvocations,
+		List<DeferredOutputDecisionReceipt> deferredOutputDecisionReceipts,
+		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts,
 		InvocationCounters counters,
 		String analysisFingerprintBefore, String analysisFingerprintAfter,
 		NormalizedPlannerResult normalizedResult,
@@ -238,6 +296,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			Objects.requireNonNull(exactSelection, "exactSelection");
 			Objects.requireNonNull(semanticConsumption, "semanticConsumption");
 			Objects.requireNonNull(counters, "counters");
+			Objects.requireNonNull(analysisFingerprintBefore, "analysisFingerprintBefore");
+			Objects.requireNonNull(analysisFingerprintAfter, "analysisFingerprintAfter");
 			Objects.requireNonNull(normalizedResult, "normalizedResult");
 			Objects.requireNonNull(emissionReceipt, "emissionReceipt");
 			if(normalizedResult.analysis() != analysis
@@ -245,7 +305,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				throw new IllegalArgumentException("DP normalized result and emission receipt differ");
 			appliedPlans = List.copyOf(appliedPlans);
 			additionalRootInvocations = List.copyOf(additionalRootInvocations);
-			if(analysis != exactSelection.analysis() || memo != exactSelection.memo()
+			deferredOutputDecisionReceipts = List.copyOf(deferredOutputDecisionReceipts);
+			disconnectedCompletionReceipts = List.copyOf(disconnectedCompletionReceipts);
+			if(memo.analysis() != analysis || analysis != exactSelection.analysis() || memo != exactSelection.memo()
 				|| legacyOptimalPlan != exactSelection.legacyOptimalPlan())
 				throw new IllegalArgumentException("DP receipt producer identities differ");
 			if(semanticConsumption.analysis() != analysis
@@ -295,9 +357,88 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				}
 				else noOps++;
 			}
-			for(int i = expectedAppliedOrdinal; i < appliedPlans.size(); i++)
-				if(!appliedPlans.get(i).additionalRoot())
-					throw new IllegalArgumentException("Disconnected completion receipt is unmarked");
+			Set<CompiledHopKey> aggregateExplicitClosure =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<FederatedPlannerDpMemoTable.FedPlan> closurePlans =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			for(int i = 0; i < expectedAppliedOrdinal; i++)
+				collectAppliedPlanClosure(memo, appliedPlans.get(i).plan(),
+					aggregateExplicitClosure, closurePlans);
+			Set<CompiledHopKey> deferredKeys = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<PlacementAnalysis.HopOccurrenceProjection> deferredOccurrences =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<FederatedPlannerDpMemoTable.FedPlan> deferredPlans =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<Long> deferredDecisionHopIds = new HashSet<>();
+			for(int i = 0; i < deferredOutputDecisionReceipts.size(); i++) {
+				DeferredOutputDecisionReceipt receipt = deferredOutputDecisionReceipts.get(i);
+				if(receipt.ordinal() != i || !deferredKeys.add(receipt.key())
+					|| !deferredOccurrences.add(receipt.occurrence())
+					|| !deferredPlans.add(receipt.plan())
+					|| !deferredDecisionHopIds.add(receipt.decisionHopId()))
+					throw new IllegalArgumentException(
+						"Deferred output-decision order or identity is duplicated at ordinal=" + i);
+				if(!containsOccurrenceIdentity(analysis, receipt.occurrence())
+					|| memo.requirePlanCarrierOccurrence(receipt.plan().getHopRef()) != receipt.occurrence()
+					|| memo.resolveOriginalHopId(receipt.decisionHopId()) != receipt.originalHopId()
+					|| memo.resolveOriginalHopId(receipt.plan().getHopID()) != receipt.originalHopId())
+					throw new IllegalArgumentException("Deferred output-decision producer authority differs");
+				PlacementState normalizedState =
+					identityMapValue(normalizedResult.selectedStates(), receipt.key());
+				PlacementEmissionState normalizedEmission =
+					identityMapValue(normalizedResult.selectedEmissionStates(), receipt.key());
+				if(normalizedState != receipt.state() || normalizedEmission == null
+					|| normalizedEmission.placementState() != receipt.state()
+					|| normalizedEmission.derivedFedFout() != receipt.derivedFedFout())
+					throw new IllegalArgumentException("Deferred output-decision normalized state differs");
+				if(aggregateExplicitClosure.contains(receipt.key()))
+					throw new IllegalArgumentException(
+						"Deferred output-decision overlaps aggregate/explicit plan closure");
+			}
+			if(disconnectedCompletionReceipts.size() != appliedPlans.size() - expectedAppliedOrdinal)
+				throw new IllegalArgumentException(
+					"Disconnected completion receipts differ from trailing applied-plan suffix");
+			Set<AppliedPlanReceipt> disconnectedApplied =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<CompiledHopKey> disconnectedRoots =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<PlacementAnalysis.HopOccurrenceProjection> disconnectedOccurrences =
+				Collections.newSetFromMap(new IdentityHashMap<>());
+			int previousComponentOrdinal = -1;
+			for(int i = 0; i < disconnectedCompletionReceipts.size(); i++) {
+				DisconnectedCompletionReceipt receipt = disconnectedCompletionReceipts.get(i);
+				AppliedPlanReceipt applied = appliedPlans.get(expectedAppliedOrdinal + i);
+				if(receipt.ordinal() != i || receipt.appliedPlanOrdinal() != expectedAppliedOrdinal + i
+					|| receipt.appliedPlan() != applied || !applied.additionalRoot()
+					|| !disconnectedApplied.add(applied) || !disconnectedRoots.add(receipt.sinkRoot())
+					|| !disconnectedOccurrences.add(receipt.sinkRootOccurrence())
+					|| receipt.componentOrdinal() < previousComponentOrdinal)
+					throw new IllegalArgumentException(
+						"Disconnected completion order or identity differs at ordinal=" + i);
+				previousComponentOrdinal = receipt.componentOrdinal();
+				if(!analysis.analysisFingerprint().equals(receipt.analysisFingerprint())
+					|| !containsOccurrenceIdentity(analysis, receipt.sinkRootOccurrence())
+					|| memo.requirePlanCarrierOccurrence(applied.plan().getHopRef())
+						!= receipt.sinkRootOccurrence())
+					throw new IllegalArgumentException("Disconnected completion producer authority differs");
+				for(CompiledHopKey member : receipt.componentMembers())
+					if(!containsCompiledKeyIdentity(analysis, member))
+						throw new IllegalArgumentException(
+							"Disconnected completion component contains foreign authority");
+				PlacementState normalizedState =
+					identityMapValue(normalizedResult.selectedStates(), receipt.sinkRoot());
+				PlacementEmissionState normalizedEmission =
+					identityMapValue(normalizedResult.selectedEmissionStates(), receipt.sinkRoot());
+				if(normalizedState != applied.plan().getSelectedPlacementState()
+					|| normalizedEmission == null
+					|| normalizedEmission.placementState() != applied.plan().getSelectedPlacementState()
+					|| normalizedEmission.derivedFedFout() != applied.plan().isDerivedFedFout())
+					throw new IllegalArgumentException("Disconnected completion normalized state differs");
+				if(aggregateExplicitClosure.contains(receipt.sinkRoot())
+					|| deferredKeys.contains(receipt.sinkRoot()))
+					throw new IllegalArgumentException(
+						"Disconnected completion overlaps a pre-completion receipt category");
+			}
 			if(counters.enumerationCount() != 1 || counters.exactSelectionCount() != 1
 				|| counters.applicationPhaseCount() != 1 || counters.appliedPlanCount() != appliedPlans.size()
 				|| counters.additionalRootInvocationCount() != additionalRootInvocations.size()
@@ -307,6 +448,36 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				|| counters.fallbackCount() != 0 || counters.doubleApplicationCount() != 0)
 				throw new IllegalArgumentException("DP invocation counters differ");
 		}
+	}
+
+	private static void collectAppliedPlanClosure(FederatedPlannerDpMemoTable memo,
+		FederatedPlannerDpMemoTable.FedPlan plan, Set<CompiledHopKey> keys,
+		Set<FederatedPlannerDpMemoTable.FedPlan> seen) {
+		if(plan == null || !seen.add(plan))
+			return;
+		keys.add(memo.requirePlanCarrierOccurrence(plan.getHopRef()).key());
+		for(Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
+			FederatedPlannerDpMemoTable.FedPlan child = memo.getFedPlanAfterPrune(childEdge);
+			if(child == null)
+				throw new IllegalArgumentException("Applied plan closure contains an unresolved child edge");
+			collectAppliedPlanClosure(memo, child, keys, seen);
+		}
+	}
+
+	private static boolean containsOccurrenceIdentity(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence) {
+		return analysis.occurrences().stream().anyMatch(candidate -> candidate == occurrence);
+	}
+
+	private static boolean containsCompiledKeyIdentity(PlacementAnalysis analysis, CompiledHopKey key) {
+		return analysis.graph().decisionNodes().stream().anyMatch(node -> node.key() == key);
+	}
+
+	private static <T> T identityMapValue(Map<CompiledHopKey, T> map, CompiledHopKey key) {
+		for(Map.Entry<CompiledHopKey, T> entry : map.entrySet())
+			if(entry.getKey() == key)
+				return entry.getValue();
+		return null;
 	}
 
 	public record DpDynamicInvocationReceipt(PlacementAnalysis analysis,
@@ -766,6 +937,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<CompiledHopKey, SelectedDpState> selectedStates = new IdentityHashMap<>();
 		List<AppliedPlanReceipt> appliedPlans = new ArrayList<>();
 		List<AdditionalRootInvocationReceipt> additionalRootInvocations = new ArrayList<>();
+		List<DeferredOutputDecisionReceipt> deferredOutputDecisionReceipts = new ArrayList<>();
+		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts = new ArrayList<>();
 
 		for(int i = 0; i < exactSelection.selectedRootPlans().size(); i++) {
 			FederatedPlannerDpMemoTable.FedPlan childPlan = exactSelection.selectedRootPlans().get(i);
@@ -811,10 +984,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					seed.getFedOutType(), seed, seedHop, executableHopId, executableHop));
 		}
 
+		Set<CompiledHopKey> aggregateExplicitClosure =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		Set<FederatedPlannerDpMemoTable.FedPlan> closurePlans =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		for(AppliedPlanReceipt appliedPlan : appliedPlans)
+			collectAppliedPlanClosure(memoTable, appliedPlan.plan(), aggregateExplicitClosure, closurePlans);
 		applyDeferredOutputDecisionStates(
-			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
+			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates,
+			Collections.unmodifiableSet(aggregateExplicitClosure), deferredOutputDecisionReceipts);
 		completeDisconnectedDecisionAuthority(analysis, memoTable, outputDecisions, visitedPlanHops,
-			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates, appliedPlans);
+			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates, appliedPlans,
+			disconnectedCompletionReceipts);
 		NormalizedPlannerResult normalized = normalizeDpSelection(analysis, selectedStates, exactSelection);
 		PlacementEmissionReceipt emission = PlacementEmissionTransaction.emit(prog, normalized,
 			PlacementEmissionTransaction.FailureInjector.none());
@@ -826,7 +1007,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		DpSemanticConsumptionReceipt semanticConsumption = DpSemanticConsumptionReceipt.consumed(
 			enumerationResult, analysis, exactSelection, fingerprintBefore, fingerprintAfter);
 		return new DpInvocationReceipt(analysis, memoTable, optimalPlan, exactSelection, semanticConsumption, appliedPlans,
-			additionalRootInvocations, counters,
+			additionalRootInvocations, deferredOutputDecisionReceipts, disconnectedCompletionReceipts, counters,
 			fingerprintBefore, fingerprintAfter, normalized, emission);
 	}
 
@@ -887,9 +1068,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 
 		applyDeferredOutputDecisionStates(
-			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates);
+			memoTable, outputDecisions, rewriteConflictCheckMap, localMaterializeRequests, selectedStates, null, null);
 		completeDisconnectedDecisionAuthority(analysis, memoTable, outputDecisions, visitedPlanHops,
-			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates, null);
+			fTypeMap, rewriteConflictCheckMap, localMaterializeRequests, selectedStates, null, null);
 		DpPlacementAdapter.ExactSelection exactSelection =
 			new DpPlacementAdapter().selectExact(analysis, memoTable, optimalPlan);
 		NormalizedPlannerResult previous = PlacementEmissionTransaction.currentNormalizedResult(prog);
@@ -912,7 +1093,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
 		Map<CompiledHopKey, SelectedDpState> selectedStates,
-		List<AppliedPlanReceipt> appliedPlans) {
+		List<AppliedPlanReceipt> appliedPlans,
+		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts) {
 		List<CompiledHopKey> ordinaryKeys = analysis.graph().decisionNodes().stream()
 			.filter(node -> node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT)
 			.map(node -> node.key()).filter(key -> !selectedStates.containsKey(key)).sorted().toList();
@@ -947,7 +1129,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			completeDisconnectedComponent(analysis, memoTable, component,
 				componentSinkRoots(component.members, outgoing), outputDecisions, visitedPlanHops, fTypeMap,
 				rewriteConflictCheckMap, localMaterializeRequests, selectedStates, ownerIndex, ledger,
-				appliedPlans);
+				appliedPlans, disconnectedCompletionReceipts);
 		ledger.requireInvocationClosed();
 		boolean progressed;
 		do {
@@ -1073,7 +1255,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FType> fTypeMap, Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
 		Map<CompiledHopKey, SelectedDpState> selectedStates, OwnerComponentIndex ownerIndex,
-		TraversalDependencyLedger ledger, List<AppliedPlanReceipt> appliedPlans) {
+		TraversalDependencyLedger ledger, List<AppliedPlanReceipt> appliedPlans,
+		List<DisconnectedCompletionReceipt> disconnectedCompletionReceipts) {
 		List<CompiledHopKey> component = componentId.members;
 		List<FederatedPlannerDpMemoTable.FedPlan> rootPlans = new ArrayList<>();
 		for(CompiledHopKey root : roots) {
@@ -1123,9 +1306,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				long executableHopId = memoTable.resolveOriginalHopId(planningHopId);
 				Hop executableHop = Objects.requireNonNull(memoTable.resolveOriginalHop(planningHopId),
 					"componentCompletion.executableHop");
-				appliedPlans.add(new AppliedPlanReceipt(appliedPlans.size(), true, planningHopId,
+				AppliedPlanReceipt applied = new AppliedPlanReceipt(appliedPlans.size(), true, planningHopId,
 					effectiveRoot.getFedOutType(), effectiveRoot, effectiveRoot.getHopRef(),
-					executableHopId, executableHop));
+					executableHopId, executableHop);
+				appliedPlans.add(applied);
+				if(disconnectedCompletionReceipts != null) {
+					PlacementAnalysis.HopOccurrenceProjection rootOccurrence =
+						memoTable.requirePlanCarrierOccurrence(effectiveRoot.getHopRef());
+					disconnectedCompletionReceipts.add(new DisconnectedCompletionReceipt(
+						disconnectedCompletionReceipts.size(), applied.ordinal(), applied,
+						componentId.ordinal, componentId.fingerprint, componentId.members,
+						rootOccurrence.key(), rootOccurrence));
+				}
 			}
 			rewriteHop(rootPlan, memoTable, localDecisions, localVisited, localFTypes,
 				localConflicts, true, localRequests, localSelected,
@@ -1483,7 +1675,9 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, FederatedOutput> outputDecisions,
 		Map<Long, ConflictEntry> rewriteConflictCheckMap,
 		Map<Long, LocalMaterializeRequest> localMaterializeRequests,
-		Map<CompiledHopKey, SelectedDpState> selectedStates) {
+		Map<CompiledHopKey, SelectedDpState> selectedStates,
+		Set<CompiledHopKey> aggregateExplicitClosure,
+		List<DeferredOutputDecisionReceipt> deferredOutputDecisionReceipts) {
 
 		if (memoTable == null || outputDecisions == null || outputDecisions.isEmpty())
 			return;
@@ -1537,7 +1731,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				applyPlannedHopState(targetHop, execType, outType, derivedFedFout);
 				registerPlannerRecompileState(selectedPlan.getHopRef(), targetHop, execType, outType);
 			}
-			else coalesceSelectedState(selectedStates, selectedKey, proposed);
+			else {
+				coalesceSelectedState(selectedStates, selectedKey, proposed);
+				if(deferredOutputDecisionReceipts != null
+					&& !aggregateExplicitClosure.contains(selectedKey)) {
+					PlacementAnalysis.HopOccurrenceProjection occurrence =
+						memoTable.requirePlanCarrierOccurrence(selectedPlan.getHopRef());
+					deferredOutputDecisionReceipts.add(new DeferredOutputDecisionReceipt(
+						deferredOutputDecisionReceipts.size(), decisionHopID, origHopID, desiredOut,
+						occurrence, selectedKey, selectedPlan, selectedPlan.getHopRef(),
+						proposed.exactState(), proposed.derivedFedFout()));
+				}
+			}
 			collectDeferredLocalMaterializeRequests(
 				memoTable, selectedPlan, outputDecisions, localMaterializeRequests);
 
