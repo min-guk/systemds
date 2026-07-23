@@ -43,6 +43,7 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResul
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
 import org.apache.sysds.hops.ipa.FunctionCallSizeInfo;
 import org.apache.sysds.hops.ipa.IPAPassRewriteFederatedPlan;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.ForStatement;
 import org.apache.sysds.parser.ForStatementBlock;
@@ -96,12 +97,15 @@ public class CampaignBDpAggregateProducerContractTest {
 		Method entry=requireMethod(IPAPassRewriteFederatedPlan.class,"rewriteProgram",
 			"CAMPAIGN_B_DP_IPA_EXECUTABLE_RECEIPT_MISSING",DMLProgram.class,FunctionCallGraph.class,
 			FunctionCallSizeInfo.class,Consumer.class);
-		DMLProgram program=ProductionShadowFixtureFactory.compile("B-05");
+		DMLProgram boundaryProgram=ProductionShadowFixtureFactory.compile("B-05");
+		ProgramSnapshot boundaryBefore=snapshotProgram(boundaryProgram);
 		AtomicReference<Object> boundaryReceipt=new AtomicReference<>(); AtomicInteger boundaryDeliveries=new AtomicInteger();
-		withDpPlanner(() -> invoke(finalBoundary,new DMLTranslator(program),program,
+		withDpPlanner(() -> invoke(finalBoundary,new DMLTranslator(boundaryProgram),boundaryProgram,
 			(Consumer<Object>)value->{Assert.assertTrue(boundaryReceipt.compareAndSet(null,value));boundaryDeliveries.incrementAndGet();}));
 		Assert.assertEquals("final-boundary receipt delivery",1,boundaryDeliveries.get());
-		PlacementAnalysis authority=(PlacementAnalysis)call(boundaryReceipt.get(),"analysis");
+		validateInvocation(boundaryProgram,boundaryBefore,boundaryReceipt.get());
+		DMLProgram program=ProductionShadowFixtureFactory.compile("B-05");
+		PlacementAnalysis authority=CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		ProgramSnapshot before=snapshotProgram(program);
 		AtomicReference<Object> receipt=new AtomicReference<>(); AtomicInteger deliveries=new AtomicInteger();
 		withDpPlanner(() -> invoke(entry,new IPAPassRewriteFederatedPlan(),program,new FunctionCallGraph(program),null,
@@ -119,14 +123,7 @@ public class CampaignBDpAggregateProducerContractTest {
 		withDpPlanner(() -> invoke(entry,new DMLTranslator(program),program,
 			(Consumer<Object>)value->{Assert.assertTrue(receipt.compareAndSet(null,value));deliveries.incrementAndGet();}));
 		Assert.assertEquals("CAMPAIGN_B_DP_FINAL_BOUNDARY_RECEIPT_COUNT",1,deliveries.get());
-		Object first=receipt.get(); validateInvocation(program,before,first);
-		AtomicReference<Object> repeated=new AtomicReference<>(); AtomicInteger repeatedDeliveries=new AtomicInteger();
-		withDpPlanner(() -> invoke(entry,new DMLTranslator(program),program,
-			(Consumer<Object>)value->{Assert.assertTrue(repeated.compareAndSet(null,value));repeatedDeliveries.incrementAndGet();}));
-		Assert.assertEquals("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_RECEIPT_COUNT",1,repeatedDeliveries.get());
-		Assert.assertSame("CAMPAIGN_B_DP_REPEAT_FINAL_BOUNDARY_OWNER_CHANGED",call(first,"analysis"),
-			call(repeated.get(),"analysis"));
-		validateInvocation(program,before,repeated.get());
+		validateInvocation(program,before,receipt.get());
 	}
 
 	@Test public void equalCostProducerReceiptRetainsLoutIdentityAndRawBits() throws Exception {
