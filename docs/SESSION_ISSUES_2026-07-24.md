@@ -237,3 +237,51 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - H08 no-output-anchor rule: preserved; relocation feasibility is separate from consumer anchor ownership.
   - Candidate gates/opcode guards: unchanged; no opcode-specific guard was added.
+
+## Issue: MinST analysis-only bridge mutated immutable placement analyses
+
+- **상태**: 해결. Task46 five-class gate is green after the test-only bridge repair.
+- **환경/조건**: Detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, HEAD before repair `ea67b947693e8382457fbd772f9cc84abf70fd80`; residual failures in `CampaignBAllPlannerAnalysisContractTest` for MinST analysis-only invocation and repeat/concurrency stability.
+- **재현 절차**:
+  - RED: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBAllPlannerAnalysisContractTest#allFourAdaptersConsumeExactSuppliedAnalysisAcrossActualBAndS+sameAdapterRepeatedAndStartBarrierConcurrentCallsAreStable -DtrimStackTrace=false test`
+  - RED log: `/tmp/g005-minst-diagnosis-20260724/minst_residual_repro.log`
+  - Stack probe: `/tmp/g005-minst-diagnosis-20260724/cause_probe.log`
+- **관측 증상**:
+  - Both residual tests failed with `CAMPAIGN_B_RUNTIME_CONTRACT|planner=MIN_ST|field=invoke|reason=IllegalStateException`.
+  - The unsuppressed probe showed the real cause: `java.lang.IllegalStateException: PLACEMENT_ANALYSIS_PROGRAM_STRUCTURE_CHANGED` from `NeutralPlacementGraphBuilder.lambda$buildDetachedAnalysis$3(NeutralPlacementGraphBuilder.java:308)` through `PlacementAnalysis.assertProgramStructureUnchanged(PlacementAnalysis.java:911)`, `MinStPlacementInput.validateUnchanged(MinStPlacementInput.java:120)`, and `MinStPlacementAdapter.select(MinStPlacementAdapter.java:39)`.
+- **원인 분석**:
+  - `MinStAnalysisContractBridge.selectedInput(...)` used the legacy mutable `FederatedPlanMinSTGraph.getOptimalPlan()` directly on Hop objects owned by an immutable `PlacementAnalysis`.
+  - `getOptimalPlan()` writes selected state back to Hops with `setForcedExecType(...)`, `setFederatedOutput(...)`, and `setFederatedOutputDerived(...)` before the test bridge bound the selected carrier.
+  - The analysis-only contract should prove MinST can consume exact selected graph evidence without mutating the supplied `PlacementAnalysis`; global legacy binder semantics are already covered by frozen cost tests and were intentionally left unchanged.
+- **의사결정 근거**: Test bridge repair only. The fix preserves exact legacy graph solve evidence while restoring Hop state before exposing the selected carrier. Production MinST, runtime fallback behavior, immutable analysis guard, TR/TW legality, and planner candidate gates remain unchanged.
+- **해결 요약**:
+  - Replaced the analysis-only bridge binding path with `MinStPlacementInput.createSelected(...)` constructed from the exact selected legacy graph objective, source partition, occurrence receipts, and obligation receipts.
+  - Snapshotted each legacy graph Hop's `forcedExecType`, `federatedOutput`, and `federatedOutputDerived` before `getOptimalPlan()` and restored every field in `finally`.
+  - Added `analysis.assertProgramStructureUnchanged()` after restore in the preparation path.
+  - Removed stale `LegacyMinstOfflineSelectedCapture.bindLegacyPlacementInput(...)` reflection and binder error wording from this analysis-only bridge; legacy binder coverage remains in existing cost self tests.
+  - Hardened the test-only MinST contract wrapper so it preserves the exact existing runtime-contract message while attaching the original cause with `initCause(...)`; this prevents future root-cause opacity like the swallowed `PLACEMENT_ANALYSIS_PROGRAM_STRUCTURE_CHANGED` failure.
+  - Added a focused regression proving B-01 MinST prepare/select preserve Hop-state snapshots and `CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(...)`, and that repeated plus concurrent selections are stable.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/MinStAnalysisContractBridge.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBAllPlannerAnalysisContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED focused: `/tmp/g005-minst-diagnosis-20260724/minst_residual_repro.log` — 2 tests, 2 failures, both MinST `PLACEMENT_ANALYSIS_PROGRAM_STRUCTURE_CHANGED` hidden as runtime-contract invoke failure.
+  - GREEN focused regression: `/tmp/g005-minst-fix-20260724/focused_regression_after_cause.log` — `CampaignBAllPlannerAnalysisContractTest#minStAnalysisOnlyPrepareSelectIsMutationFreeAndRepeatStable`, exit 0.
+  - GREEN focused residuals: `/tmp/g005-minst-fix-20260724/focused_allplanner_after_cause.log` — residual AllPlanner methods plus new regression, exit 0.
+  - GREEN MinST projector/full-path regressions: `/tmp/g005-minst-fix-20260724/minst_projector_fullpath_after_cause.log`, exit 0.
+  - GREEN Task46 five-class gate: `/tmp/g005-minst-fix-20260724/task46_five_class_after_cause.log`, exit 0.
+  - Compile: `/tmp/g005-minst-fix-20260724/test_compile.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005-minst-fix-20260724/diff_check.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - LAN scripts were not part of this focused MinST analysis-only repair and still need the next ordered pass after the DP/Task46 gates remain green.
+  - Pre-existing generated `target` remains dirty/unstaged and intentionally excluded from the commit.
+- **잠재 회귀 위험**:
+  - Risk: a future bridge change could accidentally infer receipts from legal alternatives instead of actual legacy graph solve state. Detection: the regression checks non-empty receipts/obligations and repeat/concurrency stability from the prepared selected carrier; keep selected receipt capture immediately after `getOptimalPlan()` and before restore.
+  - Risk: legacy graph mutation could leak if new Hop state fields are added. Detection: the focused regression compares both explicit Hop state snapshots and full analysis snapshots before/after prepare/select, plus the immutable analysis guard is asserted after restore.
+  - Risk: contract wrappers could hide future root causes. Detection: the MinST bridge preserves the exact assertion message but now attaches the original throwable as the cause.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Candidate-space/opcode guards: unchanged.
+  - Immutable `PlacementAnalysis` guard remains fail-closed; the test-only bridge now restores legacy replay mutation instead of weakening the guard.

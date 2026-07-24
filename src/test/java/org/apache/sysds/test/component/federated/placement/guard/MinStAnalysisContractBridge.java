@@ -22,9 +22,12 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMi
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ObligationReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.OccurrenceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput.ProducerReceipt;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.jgrapht.Graph;
-import org.jgrapht.alg.flow.PushRelabelMFImpl;
 import org.jgrapht.graph.DefaultWeightedEdge;
 
 /** Test-only exact MinST seam: producer identities are validated before normalized evidence is copied. */
@@ -33,15 +36,21 @@ final class MinStAnalysisContractBridge {
 	private static final long SINK = -2L;
 	private static final String ADAPTER = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter";
 	private static final String INPUT = "org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput";
-	private static final String BINDER =
-		"org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.LegacyMinstOfflineSelectedCapture";
 
-	record Handle(Object adapter, Method bindPlacementInput, Method select) { }
+	record Handle(Object adapter, Method select) { }
 	record Selection(PlacementAnalysis analysis, long objectiveBits, List<String> sourcePartition,
 		List<String> receipts, List<String> obligations, String analysisFingerprint) { }
 	record Invocation(PlacementAnalysis analysis, FederatedPlanMinSTGraph graph,
 		long objectiveBits, List<Long> sourcePartition, List<PlacementAnalysis.HopOccurrenceProjection> occurrences,
-		List<SelectedObligation> obligations) { }
+		List<SelectedObligation> obligations, List<OccurrenceReceipt> occurrenceReceipts,
+		List<ObligationReceipt> obligationReceipts) { }
+	record HopState(Hop hop, ExecType forcedExec, FederatedOutput output, boolean derived) {
+		void restore() {
+			hop.setForcedExecType(forcedExec);
+			hop.setFederatedOutput(output);
+			hop.setFederatedOutputDerived(derived);
+		}
+	}
 	record Prepared(Invocation input, Object ownerBound) { }
 	record Applicability(boolean applicable, String reason) {
 		Applicability {
@@ -68,15 +77,12 @@ final class MinStAnalysisContractBridge {
 	static Handle open() {
 		try {
 			Class<?> inputType = Class.forName(INPUT);
-			Method bindInput = Class.forName(BINDER).getMethod("bindLegacyPlacementInput",
-				PlacementAnalysis.class, FederatedPlanMinSTGraph.class);
 			Class<?> adapterType = Class.forName(ADAPTER);
-			return new Handle(adapterType.getConstructor().newInstance(), bindInput,
+			return new Handle(adapterType.getConstructor().newInstance(),
 				adapterType.getMethod("select", PlacementAnalysis.class, inputType));
 		}
 		catch(ReflectiveOperationException e) {
-			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + BINDER
-				+ ".bindLegacyPlacementInput(PlacementAnalysis,FederatedPlanMinSTGraph)->" + ADAPTER
+			throw new AssertionError("CAMPAIGN_B_RUNTIME_ADAPTER_MISSING|planner=MIN_ST|member=" + ADAPTER
 				+ ".select(PlacementAnalysis,MinStPlacementInput)");
 		}
 	}
@@ -86,14 +92,18 @@ final class MinStAnalysisContractBridge {
 	}
 
 	static Prepared prepare(Handle handle, PlacementAnalysis owner) {
+		Objects.requireNonNull(handle, "handle");
 		Invocation input = selectedInput(owner);
 		try {
-			Object ownerBound = handle.bindPlacementInput().invoke(null, owner, input.graph());
+			ProducerReceipt producer = new ProducerReceipt(owner.analysisFingerprint(), input.objectiveBits(),
+				input.sourcePartition());
+			MinStPlacementInput ownerBound = MinStPlacementInput.createSelected(owner, producer,
+				input.occurrenceReceipts(), input.obligationReceipts());
 			if(ownerBound == null) throw new AssertionError("R4_MINST_OWNER_BOUND_INPUT_NULL");
+			owner.assertProgramStructureUnchanged();
 			return new Prepared(input, ownerBound);
 		}
-		catch(InvocationTargetException e) { throw contract("bind", e.getCause()); }
-		catch(ReflectiveOperationException | RuntimeException e) { throw contract("bind", e); }
+		catch(RuntimeException e) { throw contract("bind", e); }
 	}
 
 	static Selection select(Handle handle, Prepared prepared, PlacementAnalysis requested) {
@@ -174,14 +184,66 @@ final class MinStAnalysisContractBridge {
 		}
 		if(vertices.size() < 2) throw new AssertionError("R4_MINST_FIXTURE_TOO_SMALL");
 		graph.addLoopCarryNetEdge(localConsumer.getHopID(), obligationChild.getHopID(), 0.0, 0.0);
-		graph.getOptimalPlan();
-		PushRelabelMFImpl<Long,DefaultWeightedEdge> solver = new PushRelabelMFImpl<>(graph.getGraph());
-		solver.calculateMinCut(SOURCE, SINK);
-		List<Long> source = solver.getSourcePartition().stream().sorted().toList();
-		List<SelectedObligation> obligations = List.copyOf(graph.getSelectedObligations());
-		if(obligations.isEmpty()) throw new AssertionError("R4_MINST_OBLIGATION_FIXTURE_EMPTY");
-		return new Invocation(analysis, graph, Double.doubleToRawLongBits(solver.getCutCapacity()),
-			List.copyOf(source), occurrences, obligations);
+		List<HopState> before = snapshot(vertices.values());
+		Invocation selected;
+		try {
+			// This analysis-only seam consumes exact legacy MinST solve evidence, but the
+			// legacy graph mutates Hop exec/output fields as part of getOptimalPlan().
+			// Snapshot and restore those fields so immutable PlacementAnalysis ownership
+			// remains fail-closed instead of being weakened for test replay.
+			graph.getOptimalPlan();
+			List<Long> source = graph.getSelectedSourcePartitionNodeIds();
+			List<SelectedObligation> obligations = List.copyOf(graph.getSelectedObligations());
+			if(obligations.isEmpty()) throw new AssertionError("R4_MINST_OBLIGATION_FIXTURE_EMPTY");
+			List<OccurrenceReceipt> occurrenceReceipts = occurrenceReceipts(analysis, graph);
+			List<ObligationReceipt> obligationReceipts = obligationReceipts(obligations);
+			selected = new Invocation(analysis, graph, graph.getSelectedCutObjectiveBits(),
+				List.copyOf(source), occurrences, obligations, occurrenceReceipts, obligationReceipts);
+		}
+		finally {
+			for(HopState state : before) state.restore();
+		}
+		analysis.assertProgramStructureUnchanged();
+		return selected;
+	}
+
+	private static List<HopState> snapshot(Iterable<Vertex> vertices) {
+		List<HopState> states = new ArrayList<>();
+		for(Vertex vertex : vertices) {
+			Hop hop = vertex.getHopRef();
+			states.add(new HopState(hop, hop.getForcedExecType(), hop.getFederatedOutput(),
+				hop.isFederatedOutputDerived()));
+		}
+		return List.copyOf(states);
+	}
+
+	private static List<OccurrenceReceipt> occurrenceReceipts(PlacementAnalysis analysis,
+		FederatedPlanMinSTGraph graph) {
+		List<OccurrenceReceipt> occurrences = new ArrayList<>();
+		for(var occurrence : analysis.occurrences()) {
+			Hop hop = analysis.hop(occurrence.key()).orElseThrow();
+			Vertex vertex = graph.getVertex(hop.getHopID());
+			boolean trace = analysis.graph().node(occurrence.key()).orElseThrow().kind()
+				== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_BODY_NON_EMITTED;
+			if(vertex == null && !trace)
+				throw new IllegalArgumentException("MinST selected occurrence is missing: " + occurrence.key());
+			if(vertex != null && (vertex.getHopID() != hop.getHopID() || vertex.getHopRef() != hop))
+				throw new IllegalArgumentException("MinST selected occurrence is foreign: " + occurrence.key());
+			ExecType exec = trace ? null : (hop.getForcedExecType() != null ? hop.getForcedExecType() : hop.getExecType());
+			FederatedOutput output = trace ? FederatedOutput.NONE : hop.getFederatedOutput();
+			if(!trace && (exec == null || output == null))
+				throw new IllegalArgumentException("Selected occurrence has incomplete executable state");
+			occurrences.add(new OccurrenceReceipt(occurrence.key(), hop, hop.getHopID(), hop,
+				hop.getHopID(), exec, output));
+		}
+		return List.copyOf(occurrences);
+	}
+
+	private static List<ObligationReceipt> obligationReceipts(List<SelectedObligation> obligations) {
+		return obligations.stream().map(value ->
+			new ObligationReceipt(value.getKind().name(), value.getChildHopId(), value.getOriginalHopId(),
+				value.getDomainId(), value.getConsumerHopIds(), value.getFType(), value.hasCapability(),
+				value.getCapabilityReason(), value.getReason())).toList();
 	}
 
 	private static Selection normalize(Prepared prepared, Object raw) throws ReflectiveOperationException {
@@ -327,8 +389,10 @@ final class MinStAnalysisContractBridge {
 		catch(UnsupportedOperationException expected) { }
 	}
 	private static AssertionError contract(String field, Throwable cause) {
-		return new AssertionError("CAMPAIGN_B_RUNTIME_CONTRACT|planner=MIN_ST|field=" + field
+		AssertionError error = new AssertionError("CAMPAIGN_B_RUNTIME_CONTRACT|planner=MIN_ST|field=" + field
 			+ "|reason=" + cause.getClass().getSimpleName());
+		error.initCause(cause);
+		return error;
 	}
 	private MinStAnalysisContractBridge() { }
 }

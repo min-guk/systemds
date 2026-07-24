@@ -105,6 +105,41 @@ public class CampaignBAllPlannerAnalysisContractTest {
 		MinStAnalysisContractBridge.verifyFixture(analysis);
 	}
 
+	@Test public void minStAnalysisOnlyPrepareSelectIsMutationFreeAndRepeatStable() throws Exception {
+		PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.build(
+			ProductionShadowFixtureFactory.compile("B-01"));
+		Assert.assertTrue("R4_MINST_B01_APPLICABLE", MinStAnalysisContractBridge.applicability(analysis).applicable());
+		List<String> before = hopStateSnapshot(analysis);
+		List<String> fullBefore = CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis);
+		var handle = MinStAnalysisContractBridge.open();
+		var prepared = MinStAnalysisContractBridge.prepare(handle, analysis);
+		analysis.assertProgramStructureUnchanged();
+		Assert.assertEquals("R4_MINST_PREPARE_MUTATION_FREE", before, hopStateSnapshot(analysis));
+		Assert.assertEquals("R4_MINST_PREPARE_FULLSNAPSHOT", fullBefore,
+			CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis));
+		var first = MinStAnalysisContractBridge.select(handle, prepared, analysis);
+		var second = MinStAnalysisContractBridge.select(handle, prepared, analysis);
+		Assert.assertFalse("R4_MINST_RECEIPTS_EMPTY|B-01", first.receipts().isEmpty());
+		Assert.assertFalse("R4_MINST_OBLIGATIONS_EMPTY|B-01", first.obligations().isEmpty());
+		MinStAnalysisContractBridge.stable(first, second, "R4_MINST_ANALYSIS_ONLY_REPEAT_STABILITY");
+		CountDownLatch ready = new CountDownLatch(4), start = new CountDownLatch(1);
+		var pool = Executors.newFixedThreadPool(4);
+		try {
+			List<Future<MinStAnalysisContractBridge.Selection>> futures = new ArrayList<>();
+			for(int i = 0; i < 4; i++) futures.add(pool.submit(() -> {
+				ready.countDown(); start.await(); return MinStAnalysisContractBridge.select(handle, prepared, analysis);
+			}));
+			ready.await(); start.countDown();
+			for(var future : futures)
+				MinStAnalysisContractBridge.stable(first, future.get(), "R4_MINST_ANALYSIS_ONLY_CONCURRENCY_STABILITY");
+		}
+		finally { pool.shutdownNow(); }
+		analysis.assertProgramStructureUnchanged();
+		Assert.assertEquals("R4_MINST_SELECT_MUTATION_FREE", before, hopStateSnapshot(analysis));
+		Assert.assertEquals("R4_MINST_SELECT_FULLSNAPSHOT", fullBefore,
+			CampaignBPlacementAnalysisFixtureBridge.fullSnapshot(analysis));
+	}
+
 	@Test public void sameAdapterRepeatedAndStartBarrierConcurrentCallsAreStable() throws Exception {
 		List<String> missing = new ArrayList<>();
 		for(var fixture : CampaignBSelectorFixtureBridge.all().stream().filter(c -> Set.of("S-03","S-04","S-06","S-07","S-08-n6").contains(c.id())).toList()) {
@@ -177,6 +212,14 @@ public class CampaignBAllPlannerAnalysisContractTest {
 		}
 		catch(AssertionError e) {recordMissing(missing,id,e);}
 	}
+	private static List<String> hopStateSnapshot(PlacementAnalysis analysis) {
+		return analysis.occurrences().stream().map(occurrence -> {
+			Hop hop = occurrence.hop();
+			return occurrence.key().normalizedSignature() + '|' + hop.getForcedExecType() + '|'
+				+ hop.getFederatedOutput() + '|' + hop.isFederatedOutputDerived();
+		}).sorted().toList();
+	}
+
 	private static R4SharedFedAllAdapterBridge.Selection select(R4SharedFedAllAdapterBridge.Handle h,PlacementAnalysis a) {
 		return h.planner()==R4SharedFedAllAdapterBridge.Planner.HEURISTIC ? R4SharedFedAllAdapterBridge.select(h,a,Set.of())
 			: R4SharedFedAllAdapterBridge.select(h,a);
