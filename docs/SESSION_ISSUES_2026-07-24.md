@@ -744,3 +744,37 @@
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space/opcode guard prohibition: unchanged; no candidate combination is closed.
   - Public B-05/B-09 production-shadow fixtures remain unchanged.
+
+## Issue: Anchor provenance missing-occurrence trap is rejected by PlacementAnalysis construction before observer invocation
+
+- **상태**: 해결 (test-only contract repair).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, 시작 HEAD `85ec93334baf27494b438d2aae2f173592b56b0f`, 사전 상태 ` M target` only. DP-only selector evidence `/run/user/10041/g005-dp-only-85ec-gate-20260724/logs/dp_only_selector.log` reported `tests=112`, `failures=0`, `errors=1`, `skipped=2`.
+- **재현 절차**:
+  - DP-only gate selector log: `/run/user/10041/g005-dp-only-85ec-gate-20260724/logs/dp_only_selector.log`.
+  - Failing method before this repair: `AnchorProvenanceObserverFactoryContractTest#missingOccurrenceKeyFromGraphIsInvalidWithoutMutation`.
+- **관측 증상**:
+  - The sole DP-only gate error was `java.lang.IllegalArgumentException: Occurrence has a foreign graph key` at `AnchorProvenanceObserverFactoryContractTest.java:145`.
+  - The exception was thrown while constructing the malformed `PlacementAnalysis` via `CampaignBPlacementAnalysisFixtureBridge.missingHopProjectionTrap(...)`, before `AnchorProvenanceObserverFactory.observer().observe(...)` could run.
+- **원인 분석**:
+  - `PlacementAnalysis` now fail-closes during construction when an occurrence projection key is not present in the neutral graph. This is the correct authority boundary: malformed analysis ownership cannot be represented as a valid `PlacementAnalysis` object.
+  - The old test contract assumed an impossible intermediate state: a successfully constructed `PlacementAnalysis` whose occurrence list contains a foreign graph key, followed by observer-level invalidation.
+- **의사결정 근거 / Decision boundary**: Test contract only. Production construction invariants remain strict; `PlacementAnalysis` constructor is not weakened, no observer fallback is added, and no planner/runtime behavior changes. The repaired test preserves the original intent by asserting fail-closed construction and source/graph non-mutation.
+- **해결 요약**:
+  - Renamed the obsolete method to `missingOccurrenceKeyFromGraphFailsClosedDuringAnalysisConstructionWithoutMutation`.
+  - Replaced the impossible observer-invocation expectation with an exact construction-failure assertion for `IllegalArgumentException("Occurrence has a foreign graph key")`.
+  - Captured the original valid source analysis before invoking the trap and asserted it remains unchanged after the failed construction.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/AnchorProvenanceObserverFactoryContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Independent pre-review approved the repair shape: `/run/user/10041/g005-anchor-missing-occurrence-contract-review-20260724/G005_ANCHOR_MISSING_OCCURRENCE_CONTRACT_REVIEW_20260724.md` (SHA `512456eb270ea116276e9dd6629e44079285fbe6d2666f9475f15014a8e37001`).
+  - Focused full `AnchorProvenanceObserverFactoryContractTest` was run in isolated clone `/run/user/10041/g005-closure-final-fresh-verify-20260724-7007dbe/repo` with build output redirected to local `/dev/shm/g005-anchor-observer-target-20260724`; XML reported `tests=10`, `failures=0`, `errors=0`, `skipped=0`. Log: `/run/user/10041/g005-anchor-observer-repair-20260724/logs/anchor_observer_full.log`; freshness proof: `/run/user/10041/g005-anchor-observer-repair-20260724/logs/anchor_observer_freshness.txt`.
+  - `mvn -DskipTests test-compile` and `git diff --check` were run against the isolated clone; see the commit evidence artifact for exact paths and SHA256 values.
+- **잔여 이슈**:
+  - None for DP observer construction ownership. This repair does not address later-stage FedAll/Heuristic/MinST/LAN/Docker work by instruction.
+- **잠재 회귀 위험**:
+  - Risk: a future test helper could again attempt to manufacture impossible `PlacementAnalysis` ownership states. Detection: focused observer contract must keep the fail-closed construction assertion and source snapshot non-mutation check green.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - Production authority boundary preserved: invalid occurrence/graph ownership fails at construction.
+  - DP-only scope respected; FedAll/Heuristic/MinST/LAN/Docker not run for this repair.

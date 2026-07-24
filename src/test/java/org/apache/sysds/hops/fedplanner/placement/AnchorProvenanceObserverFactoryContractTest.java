@@ -138,18 +138,20 @@ public class AnchorProvenanceObserverFactoryContractTest {
 	}
 
 	@Test
-	public void missingOccurrenceKeyFromGraphIsInvalidWithoutMutation() throws Exception {
+	public void missingOccurrenceKeyFromGraphFailsClosedDuringAnalysisConstructionWithoutMutation() throws Exception {
 		PlacementAnalysis analysis = compileAnalysis("B-11");
 		SourceBinding source = soleFederatedSource(analysis);
-		PlacementAnalysis trap = CampaignBPlacementAnalysisFixtureBridge
-			.missingHopProjectionTrap(analysis, source.key);
-		AnalysisSnapshot before = AnalysisSnapshot.capture(trap);
+		AnalysisSnapshot before = AnalysisSnapshot.capture(analysis);
 
-		ObservationResult result = observe(trap, source.dataOp);
+		try {
+			CampaignBPlacementAnalysisFixtureBridge.missingHopProjectionTrap(analysis, source.key);
+			Assert.fail("foreign occurrence key trap unexpectedly constructed");
+		}
+		catch(IllegalArgumentException expected) {
+			Assert.assertEquals("Occurrence has a foreign graph key", expected.getMessage());
+		}
 
-		assertEmpty(ObservationState.INVALID_REQUEST, result,
-			"matched placement occurrence is missing from the neutral graph");
-		before.assertUnchanged(trap);
+		before.assertUnchanged(analysis);
 	}
 
 	@Test
