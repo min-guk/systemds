@@ -864,3 +864,55 @@
   - Runtime fallback prohibited: unchanged; no runtime behavior modified.
   - Arbitrary candidate closure prohibited: unchanged; no candidate guard or selector exclusion added.
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile `<CP,FOUT>` constraints: unchanged and not implicated.
+
+## Issue: Heuristic receipt contract required no Hop mutation around successful full emission
+
+- **상태**: 해결 (test-only contract repair in progress for this session).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, 시작 HEAD `4860e741ea2b05e54fdbccc5344acbc4a6eebccc`, 사전 상태 ` M target` only. Heuristic stage only; no `src/main`, fixture, selector, Ignore/Assume, or PUBLIC masking change. Approved pre-implementation review: `/run/user/10041/g005-heuristic-invocation-receipt-preimpl-review-4860e741-20260724/G005_HEURISTIC_INVOCATION_RECEIPT_PREIMPL_REVIEW_4860E741_20260724.md` (SHA `34b9d57137bfb8a9ee230138ff6e5a4694a6e1234c41a08c72179ab987bea969`).
+- **재현 절차**:
+  - Independent isolated baseline report: `/run/user/10041/g005-heuristic-baseline-4860e741-fresh-verify-20260724T144628Z/G005_HEURISTIC_BASELINE_4860E741_FRESH_VERIFICATION_20260724.md` (SHA `5c33ef41980c0b9b3ff7c463e41a57d1c0eebe3432a33f99151e204db087529f`).
+  - Baseline command was run in disposable clone `/dev/shm/g005-heuristic-baseline-4860e741-fresh-verify-20260724T144628Z-build/repo`, not the authoritative `target`.
+  - Baseline focused class: `CampaignBHeuristicInvocationReceiptContractTest`.
+- **관측 증상**:
+  - Baseline result: `tests=3`, `failures=3`, `errors=0`, `skipped=0`.
+  - All failures were `HEURISTIC_ROOT_MUTATED_CONCRETE_HOP_STATE`.
+  - Failure diffs showed successful full rewrite changed concrete Hop placement fields from unset values such as `null|null|NONE` to selected emitted states such as `CP|CP|LOUT`, `FED|FED|FOUT`, and `FED|FED|LOUT`.
+  - An accidental focused Maven run was also made once in the authoritative workspace before the protected-target warning. That run is contaminated/non-acceptance evidence and is not used for validation; after the warning no further Maven/test/probe execution was run in the authoritative repo.
+- **원인 분석**:
+  - The test wrapped accepted `rewriteProgram(..., suppliedAnalysis)` paths in `mutationFree(...)`, but production Heuristic full rewrite intentionally performs selection, normalizes the result, and calls `PlacementEmissionTransaction.emit(...)`.
+  - Successful emission mutates concrete compiled Hop `execType`, `forcedExecType`, `FederatedOutput`, and derived-FOUT fields by design and reports those writes through `emissionReceipt.hopMutations()`.
+  - Selection itself is the non-mutating boundary; full rewrite is the exact-application boundary.
+  - The factory reversed-projection branch reused a program that had already emitted once while expecting first-emission `applied=true/noOp=false` semantics; same-program re-emission is no-op when the plan hash matches.
+- **의사결정 근거 / Decision boundary**: Test contract only. Production planner/runtime behavior is preserved: no runtime fallback, no repair path, no candidate-space closure, no TR/TW `<CP,FOUT>` relaxation, no recompile `<CP,FOUT>` relaxation, and no PUBLIC skip/masking. The repair asserts selection immutability at `TrackingHeuristic.select(...)` and asserts full-rewrite postconditions against normalized emission authority.
+- **해결 요약**:
+  - Moved the mutation-free proof for accepted Heuristic selection into `TrackingHeuristic.select(...)`, including analysis fingerprint, analysis snapshot, concrete Hop fingerprint, and federated registry snapshots.
+  - Replaced accepted full-rewrite `mutationFree(...)` wrappers with an `isolatedEmission(...)` helper that seeds/restores registries and calls `PlacementEmissionTransaction.resetForTesting()` before/after accepted emission assertions.
+  - Added exact post-emission checks for every decision node: selected-emission coverage, legal selected states, and concrete compiled Hop `execType`, `forcedExecType`, `FederatedOutput`, and derived-FOUT equality.
+  - Added receipt checks that `hopMutations()` equals the number of distinct compiled Hop identities and `registryWrites()` equals `selectedRelocations().size() + selectedLocalMaterializations().size()`.
+  - Kept the factory first/repeat assertions as two fresh canonical full-rewrite invocations so they still verify first-emission `applied=true/noOp=false` semantics.
+  - Moved the reversed projection-order comparison to the selection seam: `CampaignBPlacementAnalysisFixtureBridge.withProjectionOrder(...)` constructs an order-varied analysis copy, but it is not rebound into `DMLProgram` as the canonical placement authority required by full rewrite, so sending it through `rewriteProgram(..., analysis)` would fail the authority gate rather than test emission determinism.
+  - Kept null, foreign, legacy, and dynamic rejected routes under mutation-free fail-closed assertions.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBHeuristicInvocationReceiptContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Focused `CampaignBHeuristicInvocationReceiptContractTest` was run in disposable worktree with local target under `/dev/shm` and shared m2 `/run/user/10041/g005-g014-closure-harness-20260724-r2/m2`; authoritative Maven/target were not used.
+  - Evidence root: `/run/user/10041/g005-heuristic-receipt-repair-20260724T150948`.
+  - Command log: `/run/user/10041/g005-heuristic-receipt-repair-20260724T150948/logs/10_focused_class.command`.
+  - Maven log SHA: `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`.
+  - Summary SHA: `f93c29a1e6d71f8b489d9ff8bd868e164d5ddc6f536820e744c00cfaa364fc46`.
+  - XML SHA: `c8f099f5aa79dda1dccb8b6f0d317558cd9a1e801a5d8ddc49c3ada0ae8843b9`.
+  - Result: `tests=3`, `failures=0`, `errors=0`, `skipped=0`.
+- **잔여 이슈**:
+  - None known for this focused Heuristic receipt contract after isolated verification passes. Broader Heuristic successor selectors, LAN, Docker, FedAll/MinST stages remain outside this narrowly approved repair unless separately requested.
+- **잠재 회귀 위험**:
+  - Risk: future tests may again require no post-rewrite Hop mutation despite an applied emission. Detection: keep selection-phase mutation assertions separate from full-rewrite exact-emission-state assertions.
+  - Risk: same-program repeated emission may be mistaken for first emission. Detection: use fresh programs for first-emission assertions or explicitly assert no-op semantics for same-program same-hash repeats.
+  - Risk: virtual/non-compiled decision nodes could be counted as concrete Hop writes. Detection: compute expected `hopMutations()` from distinct `analysis.isCompiledHopOccurrence(...)` Hop identities only.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - P4 transaction semantics preserved: successful full rewrite applies selected placement authority exactly once.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space/opcode guard prohibition: unchanged.
+  - PUBLIC masking/Ignore/Assume prohibited for this non-privacy failure: unchanged.
