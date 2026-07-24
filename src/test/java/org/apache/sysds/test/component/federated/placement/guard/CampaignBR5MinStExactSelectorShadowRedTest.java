@@ -30,6 +30,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
@@ -84,7 +85,7 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
 		CompiledHopKey consumer = keyByHopName(analysis, "Yout1");
 		AuxiliaryGroupFact upload = CampaignBR5MinStExactSelectorShadowRedTest
-			.uploadGroupContaining(facts, consumer);
+			.relocationUploadGroupContaining(facts, consumer);
 		AuxiliaryGroupFact download = CampaignBR5MinStExactSelectorShadowRedTest
 			.transferGroupContaining(facts, Direction.DOWNLOAD, consumer, "X");
 
@@ -250,11 +251,32 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 	private static void addGroupObligations(List<String> result, MinStExactCostFacts facts,
 		AuxiliaryGroupFact group, Direction direction) {
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
-			PlacementState expected = exactGraphRequiredPlacement(facts, group, endpoint);
-			AuthoritativeObligation obligation = authoritativeObligation(facts, group, endpoint, expected);
+			PlacementState required;
+			if(direction == Direction.UPLOAD) {
+				PlacementState expected = exactGraphRequiredPlacement(facts, group, endpoint);
+				AuthoritativeObligation obligation = authoritativeObligation(facts, group, endpoint, expected);
+				required = obligation.endpoint().requiredPlacement();
+			}
+			else
+				required = authoritativeTransferAuthority(facts, group, endpoint).requiredPlacement();
 			result.add(obligationSignature(direction.name(), group.producerKey(), endpoint.consumerKey(),
-				endpoint.inputPosition(), obligation.endpoint().requiredPlacement()));
+				endpoint.inputPosition(), required));
 		}
+	}
+
+	private static TransferAuthorityFact authoritativeTransferAuthority(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, EndpointFact endpoint) {
+		List<TransferAuthorityFact> matches = facts.transferAuthoritiesInCanonicalOrder().stream()
+			.filter(authority -> authority.group() == group && authority.endpoint() == endpoint)
+			.toList();
+		if(matches.size() != 1)
+			throw new AssertionError("R5_MINST_TRANSFER_AUTHORITY_"
+				+ (matches.isEmpty() ? "MISSING" : "AMBIGUOUS")
+				+ "|direction=" + group.direction()
+				+ "|producer=" + group.producerKey().normalizedSignature()
+				+ "|consumer=" + endpoint.consumerKey().normalizedSignature()
+				+ "|input=" + endpoint.inputPosition());
+		return matches.get(0);
 	}
 
 	private static AuthoritativeObligation authoritativeObligation(MinStExactCostFacts facts,
@@ -445,14 +467,34 @@ public class CampaignBR5MinStExactSelectorShadowRedTest {
 			endpoint.inputPosition(), edge.inputPosition());
 	}
 
-	private static AuxiliaryGroupFact uploadGroupContaining(MinStExactCostFacts facts,
+	private static AuxiliaryGroupFact relocationUploadGroupContaining(MinStExactCostFacts facts,
 		CompiledHopKey consumer) {
 		return facts.auxiliaryGroupsInCanonicalOrder().stream()
 			.filter(group -> group.direction() == Direction.UPLOAD)
 			.filter(group -> group.endpointsInCanonicalOrder().stream()
-				.anyMatch(endpoint -> endpoint.consumerKey() == consumer))
+				.anyMatch(endpoint -> endpoint.consumerKey() == consumer
+					&& hasExactRelocationObligation(facts, group, endpoint)))
 			.findFirst().orElseThrow(() -> new AssertionError(
-				"R5_MINST_UPLOAD_GROUP_MISSING|consumer=" + consumer.normalizedSignature()));
+				"R5_MINST_RELOCATION_UPLOAD_GROUP_MISSING|consumer="
+					+ consumer.normalizedSignature()));
+	}
+
+	private static boolean hasExactRelocationObligation(MinStExactCostFacts facts,
+		AuxiliaryGroupFact group, EndpointFact endpoint) {
+		NeutralPlacementGraph.Node producer = facts.analysis().graph().node(group.producerKey())
+			.orElseThrow();
+		for(NeutralPlacementGraph.RelocationAction action : facts.analysis().graph().relocationActions()) {
+			if(!action.key().sourceValueVersion().equals(producer.valueVersion()))
+				continue;
+			for(ObligationKey obligation : action.obligations())
+				if(obligation.consumer() == endpoint.consumerKey()
+					&& obligation.inputPosition() == endpoint.inputPosition()
+					&& obligation.requiredPlacement().equals(action.key().targetPlacement())
+					&& obligation.sourceValueVersion().equals(action.key().sourceValueVersion())
+					&& obligation.relocationAction().equals(action.key()))
+					return true;
+		}
+		return false;
 	}
 
 	private static AuxiliaryGroupFact transferGroupContaining(MinStExactCostFacts facts,

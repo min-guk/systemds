@@ -1054,3 +1054,21 @@
   - Runtime은 planner plan을 그대로 실행하며 fallback/implicit repair를 추가하지 않는다.
   - Runtime-supported candidate를 임의로 닫지 않았고 cost topology를 변경하지 않았다.
   - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 규칙, recompile `<CP,FOUT>` 금지, PUBLIC masking 금지를 유지했다.
+
+## Issue: MinST residual v6d test-contract repairs for BR9/ExactFacts/BR5
+
+- **상태**: 해결
+- **환경/조건**: MinST exact selector/facts residual tests; authoritative repo HEAD `741a683ea04fabad84a1d1f539e00c7372ee550b`; approved contract artifact `/run/user/10041/g005-minst-residual-contract-review-20260724/G005_MINST_RESIDUAL_CONTRACT_REVIEW_20260724.md` SHA `3c842bebc4e2cdbd007cfedebaab1efd61feb7a6d806860191319fdbe52dffd4`.
+- **재현 절차**: Apply the test-only patch, then in a disposable clone run the existing v6d targeted 14-test selector from `/run/user/10041/g005-minst-authority-repair-20260724/production_red_selector.txt`.
+- **관측 증상**: v6d production carrier verification left exactly three assertion failures and zero errors: BR9 expected stale `TIE_UNSPECIFIED` but selector returned `UNIQUE`; ExactFacts expected upload price contribution on `aux -> producerP` but anchorless upload price is `aux -> SINK`; BR5 selected the first upload group for `Yout1`, which was `Fed X` input 0 and had no relocation placement.
+- **원인 분석**: Test contracts/helpers drifted after stricter exact MinST authority modeling. BR9 now has a unique all-CP/LOUT empty-source certificate. Upload price edge tests did not mirror the production durable-source compatibility gate. BR5 helper chose a consumer-only first match instead of a relocation-backed upload endpoint.
+- **해결 요약**: Updated BR9 to assert a unique empty-source all-CP/LOUT projection; updated ExactFacts test helper to mirror exact compatible durable-source routing and expect `SINK` for anchorless uploads; updated BR5 helper to select only upload groups with exact relocation action/obligation identity.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR9MinStEmittedDecisionRedTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBMinStExactFactsBehaviorRedTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR5MinStExactSelectorShadowRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**: Clone-only validation completed after applying the test-only patch in disposable clone `/run/user/10041/g005-closure-final-fresh-verify-20260724-7007dbe/repo` with clone-local target `/dev/shm/g005-fedall-repair-target-20260724`: `git diff --check` clean. The historical selector file contained a stale G014 package and silently omitted that intended class; the corrected 7-entry selector uses `org.apache.sysds.test.component.federated.placement.guard.CampaignBG014MinStHeavyMmUploadAuthorityRedTest` and passed with fresh XML totals `tests=15 failures=0 errors=0 skipped=0` (BR4 contributes 9 tests plus six one-test entries).
+- **잔여 이슈**: None for the approved residual test-only contract after clone validation.
+- **잠재 회귀 위험**: Test helper mirrors must stay aligned with production exact durable-source and relocation identity semantics; detect by targeted 14-test selector and any future failures containing `MINST_OR_PRICE_EDGE`, `MINST_PRICE_TYPED_CONTRIBUTION_MISSING`, or `R5_MINST_AUTHORITY_EXPECTED_PLACEMENT_MISSING`.
+- **의사결정 근거**: 테스트 계약/헬퍼 수정만 수행; oracle/런타임/플래너 production 규칙은 변경하지 않았다.

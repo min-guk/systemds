@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPlacementProjector;
@@ -17,6 +18,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelec
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -43,14 +45,21 @@ public class CampaignBR9MinStEmittedDecisionRedTest {
 			facts.orderedScope());
 		Assert.assertEquals("exact decisions must be emitted-only in canonical order", emittedKeys,
 			facts.decisionFactsInScopeOrder().stream().map(decision -> decision.key()).toList());
-		Assert.assertEquals("genuine equal cut must remain explicit", MinStExactSelection.TIE_UNSPECIFIED,
+		Assert.assertEquals("all-CP/LOUT exact B21 cut must be unique", MinStExactSelection.UNIQUE,
 			selection.tieCertificate());
-		Assert.assertEquals("both exact minimum certificates must be retained", 2,
+		Assert.assertEquals("unique exact minimum certificate must be retained", 1,
 			selection.minimaCertificates().size());
-		Assert.assertTrue("ambiguous selection must not publish states",
-			selection.selectedStatesInScopeOrder().isEmpty());
-		Assert.assertThrows("ambiguous projection must fail closed", IllegalArgumentException.class,
-			() -> MinStExactPlacementProjector.project(facts, selection));
+		Assert.assertEquals("unique exact minimum must be the empty source partition", List.of(),
+			selection.minimaCertificates().get(0));
+		Assert.assertEquals("unique selection must publish one state per emitted decision",
+			facts.decisionFactsInScopeOrder().size(), selection.selectedStatesInScopeOrder().size());
+		selection.selectedStatesInScopeOrder().forEach(state -> {
+			Assert.assertEquals("unique B21 selection must keep CP execution", ExecType.CP,
+				state.execType());
+			Assert.assertEquals("unique B21 selection must keep local output", FederatedOutput.LOUT,
+				state.output());
+		});
+		MinStExactPlacementProjector.project(facts, selection);
 		analysis.assertProgramStructureUnchanged();
 	}
 

@@ -31,9 +31,12 @@ import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -646,7 +649,10 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 					observedConsumers);
 				exactConsumerNodes = observedConsumers;
 				Assert.assertTrue("MINST_OR_PREAD_UNMATCHED_CONSUMERS", unmatchedKeys.isEmpty());
-				assertPriceContributions(edges, aux, producerP, priceBits, persistentReadKey, expectedConsumerKeys);
+				long expectedUploadPriceTarget = hasExactCompatibleDurableSourceForTest(owner, group)
+					? producerP : SINK;
+				assertPriceContributions(edges, aux, expectedUploadPriceTarget, priceBits,
+					persistentReadKey, expectedConsumerKeys);
 			}
 			double max = 0.0;
 			for(Object endpoint : endpoints) {
@@ -660,13 +666,56 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 					"MINST_OR_HARD_EDGE");
 			}
 			Assert.assertEquals("MINST_OR_MAX_PRICE", priceBits, Double.doubleToRawLongBits(max));
+			long expectedPriceTarget = direction.equals("UPLOAD")
+				? (hasExactCompatibleDurableSourceForTest(owner, group) ? producerP : SINK)
+				: aux;
 			assertEdgeCapacity(edges, direction.equals("UPLOAD") ? aux : producerP,
-				direction.equals("UPLOAD") ? producerP : aux, priceBits, "MINST_OR_PRICE_EDGE");
+				expectedPriceTarget, priceBits, "MINST_OR_PRICE_EDGE");
 		}
 		Assert.assertTrue("MINST_OR_MULTI_ENDPOINT_FIXTURE_MISSING", hasMultiEndpointGroup);
 		Assert.assertEquals("MINST_OR_PREAD_FANOUT_GROUP_COUNT", 1, boundFanoutGroups);
 		Assert.assertTrue("MINST_OR_PREAD_BOUND_GROUP_INDEX", boundFanoutIndex >= 0);
 		return boundFanoutIndex;
+	}
+
+	private static boolean hasExactCompatibleDurableSourceForTest(PlacementAnalysis owner,
+		Object group) throws Exception {
+		CompiledHopKey producerKey = (CompiledHopKey)call(group, "producerKey");
+		FType conversionType = (FType)call(group, "conversionType");
+		NeutralPlacementGraph.Node producer = owner.graph().node(producerKey).orElseThrow();
+		Set<DurableAnchorKey> required = new LinkedHashSet<>();
+		for(Object rawEndpoint : list(group, "endpointsInCanonicalOrder")) {
+			CompiledHopKey consumerKey = (CompiledHopKey)call(rawEndpoint, "consumerKey");
+			int inputPosition = ((Number)call(rawEndpoint, "inputPosition")).intValue();
+			Set<DurableAnchorKey> endpointAnchors = new LinkedHashSet<>();
+			for(NeutralPlacementGraph.RelocationAction action : owner.graph().relocationActions())
+				if(action.key().sourceValueVersion().equals(producer.valueVersion())
+					&& action.key().targetPlacement().fType() == conversionType
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == consumerKey
+							&& obligation.inputPosition() == inputPosition))
+					endpointAnchors.add(action.key().durableAnchor());
+			if(endpointAnchors.isEmpty())
+				for(CompiledInputEdgeFact sibling : owner.compiledInputEdgesInCanonicalOrder()) {
+					if(sibling.consumer() != consumerKey || sibling.inputPosition() == inputPosition)
+						continue;
+					NeutralPlacementGraph.Node siblingNode = owner.graph().node(sibling.producer()).orElseThrow();
+					siblingNode.anchors().stream()
+						.filter(anchor -> anchor.fType() == conversionType)
+						.forEach(endpointAnchors::add);
+					owner.graph().relocationActions().stream()
+						.filter(action -> action.key().sourceValueVersion().equals(siblingNode.valueVersion())
+							&& action.key().targetPlacement().fType() == conversionType
+							&& action.obligations().stream().anyMatch(obligation ->
+								obligation.consumer() == consumerKey
+									&& obligation.inputPosition() == sibling.inputPosition()))
+						.map(action -> action.key().durableAnchor()).forEach(endpointAnchors::add);
+				}
+			if(endpointAnchors.isEmpty())
+				return false;
+			required.addAll(endpointAnchors);
+		}
+		return !required.isEmpty() && producer.anchors().containsAll(required);
 	}
 
 	private static int assertB22PreSolveLegality(PlacementAnalysis owner, List<?> decisions,
