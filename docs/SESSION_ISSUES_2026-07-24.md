@@ -517,3 +517,45 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate/opcode guard prohibition: respected; no runtime-supported candidate combination was closed.
+
+## Issue: B07 inlined function-boundary origin projection test required a surviving FunctionOp
+
+- **상태**: 해결. Test-only origin-projection contract now accepts both surviving `FunctionOp` boundaries and compiler-inlined boundary authorities while preserving exact Hop identity checks.
+- **환경/조건**: Isolated shared clone `/run/user/10041/g005-b07-projection-fix-20260724/repo`, detached base `ac95fd035f982da13e0e4ff64f2aeaa1c602a009`; Maven repo/tmp/target under `/run/user/10041/g005-b07-projection-fix-20260724`; fixtures `B-07`, `B-17`, `B-21` from `ProductionShadowFixtureFactory`.
+- **재현 절차**:
+  - Proven RED diagnosis command: `mvn -q -Dmaven.repo.local=/run/user/10041/g005-b07-projection-diagnosis-20260724/m2 -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.PlacementAnalysisOriginProjectionTest#everyGraphKeyProjectsToItsExactIndependentlyTraversedCompiledOrigin test`.
+  - Diagnosis artifact: `/run/user/10041/g005-b07-projection-diagnosis-20260724/G005_B07_ORIGIN_PROJECTION_DIAGNOSIS_20260724.md`, SHA-256 `b7ef01f3bacf8f79f9b47425cfdec67fd58755b0b0f16754163c712b8239f7ca`.
+  - RED log/XML from diagnosis: `/run/user/10041/g005-b07-projection-diagnosis-20260724/red_b07_origin_projection_final.log` and `/run/user/10041/g005-b07-projection-diagnosis-20260724/RED-TEST-org.apache.sysds.hops.fedplanner.placement.PlacementAnalysisOriginProjectionTest.xml`.
+- **관측 증상**:
+  - RED counts: `tests=1 failures=1 errors=0 skipped=0`.
+  - Failure: `B-07 boundary key did not map to a FunctionOp` in `PlacementAnalysisOriginProjectionTest#assertIndependentFunctionBoundary`.
+  - B07 production projection had 23 graph nodes/occurrences for 21 independently traversed Hops; the two synthetic `function-boundary:.defaultNS::f:{input:A,output:B}` projections mapped to exact independently traversed compiler-owned `BinaryOp b(+)` authority `0_B`, not to a surviving `FunctionOp`.
+- **원인 분석**:
+  - The test conflated semantic boundary origin keys with runtime Hop subtype. Production correctly keeps `function-boundary:*` as the semantic source origin, but after compiler inlining the executable authority can be the emitted inlined body/result Hop (`BinaryOp` for B07/B17, `AggUnaryOp` for B21) instead of a `FunctionOp`.
+  - The multiplicity/scope oracle counted synthetic boundaries only for surviving `FunctionOp` occurrences, so it did not independently account for inlined input/output boundary projections attached to exact compiler-owned authority Hops.
+- **의사결정 근거**: Test oracle contract repair only. The independently derived authority comes from `StatementBlock.getInlinedFunctionCallBoundaries()` plus exact statement-block Hop traversal and unique compiler-owned variable matching. Production planner/runtime/oracle behavior is unchanged; no fallback, candidate closure, TR/TW relaxation, or `src/main` change was introduced.
+- **해결 요약**:
+  - Preserved mandatory identity invariant: every projected Hop must be present in the independently traversed Hop identity set.
+  - Kept the existing surviving-`FunctionOp` formal input/output boundary origin checks.
+  - Added independent inlined-boundary derivation from `StatementBlock.InlinedFunctionCallBoundary` metadata, resolving exact input/output compiler-owned variables and selecting the exact authority Hop by identity before comparing production projections.
+  - Updated expected multiplicity/scopes so each inlined synthetic input/output boundary adds one projection to its exact authority Hop. B07 authority multiplicity is now expected as ordinary compiled occurrence + input boundary + output boundary.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysisOriginProjectionTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Formerly RED focused method GREEN: `/run/user/10041/g005-b07-projection-fix-20260724/logs/focused_b07_b17_b21.log` — `PlacementAnalysisOriginProjectionTest#everyGraphKeyProjectsToItsExactIndependentlyTraversedCompiledOrigin`, exit 0, XML `tests=1 failures=0 errors=0 skipped=0`.
+  - Full origin projection class GREEN: `/run/user/10041/g005-b07-projection-fix-20260724/logs/origin_projection_full_class.log` — `PlacementAnalysisOriginProjectionTest`, exit 0, XML `tests=2 failures=0 errors=0 skipped=0`.
+  - Nearby combined gate GREEN: `/run/user/10041/g005-b07-projection-fix-20260724/logs/combined_focused_gate.log` — `PlacementAnalysisOriginProjectionTest`, selected `PlacementAnalysisContractTest` methods, `CampaignBG014PlacementCandidateResolverSliceATest`, and `CampaignBG014PlacementCandidateRuleFactsSliceATest`, exit 0; XML totals `tests=12 failures=0 errors=0 skipped=0` across the four reports.
+  - Compile: `/run/user/10041/g005-b07-projection-fix-20260724/logs/test_compile.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/run/user/10041/g005-b07-projection-fix-20260724/logs/diff_check.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - JVM still emits shared-memory warnings because `/dev/shm` is nearly full; test/build outputs and Maven cache were redirected under `/run/user/10041`, and the warnings did not affect exit status.
+  - No LAN scripts or broader planner suites were run in this isolated repair lane; scope was the proven B07/B17/B21 origin-projection test contract and nearby focused gate.
+- **잠재 회귀 위험**:
+  - Risk: future compiler inlining metadata shape changes could make the test resolve the wrong authority. Detection: helper requires exactly one independently traversed compiler-owned Hop for each inlined input/output variable and exact identity/scope match for every boundary projection.
+  - Risk: duplicate call sites with the same semantic `function-boundary:*` origin could be accidentally collapsed. Detection: the test tracks each expected inlined boundary as a separate identity/scope expectation and removes projections one-for-one.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - No production planner/oracle/runtime code changed; no candidate-space guard was added.

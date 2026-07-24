@@ -4,10 +4,13 @@ package org.apache.sysds.hops.fedplanner.placement;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
@@ -20,6 +23,9 @@ import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.parser.IfStatement;
 import org.apache.sysds.parser.IfStatementBlock;
 import org.apache.sysds.parser.StatementBlock;
+import org.apache.sysds.parser.StatementBlock.InlinedFunctionCallBoundary;
+import org.apache.sysds.parser.StatementBlock.InlinedFunctionInputBoundary;
+import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -33,35 +39,38 @@ public class PlacementAnalysisOriginProjectionTest {
 		for(String fixture : List.of("B-07", "B-17", "B-21")) {
 			DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
 			List<Hop> independentlyTraversed = allHops(program);
+			List<PlacementGraphFingerprint.HopOccurrence> occurrences =
+				PlacementGraphFingerprint.orderedOccurrences(program);
+			List<BoundaryExpectation> inlinedBoundaries = inlinedBoundaryExpectations(occurrences);
 			Map<Hop,List<Long>> expectedScopes = new IdentityHashMap<>();
-			for(PlacementGraphFingerprint.HopOccurrence occurrence
-				: PlacementGraphFingerprint.orderedOccurrences(program)) {
-				int multiplicity = occurrence.hop() instanceof FunctionOp
-					? 1 + ((FunctionOp) occurrence.hop()).getInputVariableNames().length
-						+ ((FunctionOp) occurrence.hop()).getOutputVariableNames().length : 1;
-				for(int i = 0; i < multiplicity; i++)
-					expectedScopes.computeIfAbsent(occurrence.hop(), ignored -> new ArrayList<>())
-						.add(occurrence.block().getSBID());
+			Map<Hop,Integer> expectedMultiplicity = new IdentityHashMap<>();
+			for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
+				addExpectedOccurrence(expectedMultiplicity, expectedScopes, occurrence.hop(), occurrence.block().getSBID());
+				if(occurrence.hop() instanceof FunctionOp) {
+					FunctionOp call = (FunctionOp) occurrence.hop();
+					for(int i = 0; i < call.getInputVariableNames().length + call.getOutputVariableNames().length; i++)
+						addExpectedOccurrence(expectedMultiplicity, expectedScopes, occurrence.hop(), occurrence.block().getSBID());
+				}
 			}
+			for(BoundaryExpectation boundary : inlinedBoundaries)
+				addExpectedOccurrence(expectedMultiplicity, expectedScopes, boundary.authority(), boundary.scopeId());
 			Set<Hop> identities = Collections.newSetFromMap(new IdentityHashMap<>());
 			identities.addAll(independentlyTraversed);
-			Map<Hop,Integer> expectedMultiplicity = new IdentityHashMap<>();
-			for(Hop hop : independentlyTraversed)
-				expectedMultiplicity.put(hop, hop instanceof FunctionOp
-					? 1 + ((FunctionOp) hop).getInputVariableNames().length
-						+ ((FunctionOp) hop).getOutputVariableNames().length : 1);
 
 			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
 			Map<Hop,Integer> actualMultiplicity = new IdentityHashMap<>();
 			Map<Hop,List<Long>> actualScopes = new IdentityHashMap<>();
+			List<BoundaryExpectation> remainingInlinedBoundaries = new ArrayList<>(inlinedBoundaries);
 			for(HopOccurrenceProjection projection : analysis.occurrences()) {
 				Assert.assertTrue(fixture + " projected an identity absent from independent traversal",
 					identities.contains(projection.hop()));
 				actualMultiplicity.merge(projection.hop(), 1, Integer::sum);
 				actualScopes.computeIfAbsent(projection.hop(), ignored -> new ArrayList<>()).add(projection.scopeId());
 				if(projection.key().canonicalSourceOrigin().startsWith("function-boundary:"))
-					assertIndependentFunctionBoundary(fixture, projection);
+					assertIndependentFunctionBoundary(fixture, projection, remainingInlinedBoundaries);
 			}
+			Assert.assertTrue(fixture + " did not project every independently derived inlined boundary: "
+				+ remainingInlinedBoundaries, remainingInlinedBoundaries.isEmpty());
 			Assert.assertEquals(fixture + " concrete Hop/context multiplicity", expectedMultiplicity,
 				actualMultiplicity);
 			Assert.assertEquals(fixture + " exact scope owner count", expectedScopes.size(), actualScopes.size());
@@ -117,17 +126,146 @@ public class PlacementAnalysisOriginProjectionTest {
 		return result;
 	}
 
-	private static void assertIndependentFunctionBoundary(String fixture, HopOccurrenceProjection projection) {
-		Assert.assertTrue(fixture + " boundary key did not map to a FunctionOp",
-			projection.hop() instanceof FunctionOp);
-		FunctionOp call = (FunctionOp) projection.hop();
-		Set<String> expectedOrigins = new java.util.LinkedHashSet<>();
-		for(String input : call.getInputVariableNames())
-			expectedOrigins.add("function-boundary:" + call.getFunctionKey() + ":input:" + input);
-		for(String output : call.getOutputVariableNames())
-			expectedOrigins.add("function-boundary:" + call.getFunctionKey() + ":output:" + output);
-		Assert.assertTrue(fixture + " unknown independently derived function boundary",
-			expectedOrigins.contains(projection.key().canonicalSourceOrigin()));
+	private static void addExpectedOccurrence(Map<Hop,Integer> multiplicity, Map<Hop,List<Long>> scopes,
+		Hop hop, long scopeId) {
+		multiplicity.merge(hop, 1, Integer::sum);
+		scopes.computeIfAbsent(hop, ignored -> new ArrayList<>()).add(scopeId);
+	}
+
+	private static void assertIndependentFunctionBoundary(String fixture, HopOccurrenceProjection projection,
+		List<BoundaryExpectation> remainingInlinedBoundaries) {
+		if(projection.hop() instanceof FunctionOp) {
+			FunctionOp call = (FunctionOp) projection.hop();
+			Set<String> expectedOrigins = new java.util.LinkedHashSet<>();
+			for(String input : call.getInputVariableNames())
+				expectedOrigins.add("function-boundary:" + call.getFunctionKey() + ":input:" + input);
+			for(String output : call.getOutputVariableNames())
+				expectedOrigins.add("function-boundary:" + call.getFunctionKey() + ":output:" + output);
+			Assert.assertTrue(fixture + " unknown independently derived FunctionOp boundary",
+				expectedOrigins.contains(projection.key().canonicalSourceOrigin()));
+			return;
+		}
+
+		for(int i = 0; i < remainingInlinedBoundaries.size(); i++) {
+			BoundaryExpectation boundary = remainingInlinedBoundaries.get(i);
+			if(boundary.matches(projection)) {
+				remainingInlinedBoundaries.remove(i);
+				return;
+			}
+		}
+		Assert.fail(fixture + " boundary key did not map to an independently derived exact FunctionOp "
+			+ "or compiler-inlined authority Hop: " + projection.key().canonicalSourceOrigin()
+			+ " hop=" + projection.hop().getClass().getSimpleName() + ':' + projection.hop().getName()
+			+ " scope=" + projection.scopeId());
+	}
+
+	private record BoundaryExpectation(String origin, Hop authority, long scopeId) {
+		private boolean matches(HopOccurrenceProjection projection) {
+			return origin.equals(projection.key().canonicalSourceOrigin())
+				&& authority == projection.hop() && scopeId == projection.scopeId();
+		}
+	}
+
+	private static List<BoundaryExpectation> inlinedBoundaryExpectations(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences) {
+		List<BoundaryExpectation> result = new ArrayList<>();
+		Set<StatementBlock> expandedBlocks = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(PlacementGraphFingerprint.HopOccurrence occurrence : occurrences) {
+			StatementBlock block = occurrence.block();
+			if(!expandedBlocks.add(block) || block.getInlinedFunctionCallBoundaries().isEmpty())
+				continue;
+			List<Hop> blockHops = occurrences.stream().filter(candidate -> candidate.block() == block)
+				.map(PlacementGraphFingerprint.HopOccurrence::hop).toList();
+			Map<String,InlinedFunctionInputBoundary> inputBindings = new LinkedHashMap<>();
+			Map<String,InlinedFunctionOutputBoundary> outputBindings = new LinkedHashMap<>();
+			for(InlinedFunctionCallBoundary boundary : block.getInlinedFunctionCallBoundaries())
+				for(InlinedFunctionInputBoundary input : boundary.inputs())
+					Assert.assertNull("duplicate independently derived inlined input binding "
+						+ input.boundVariable(), inputBindings.put(input.boundVariable(), input));
+			for(InlinedFunctionCallBoundary boundary : block.getInlinedFunctionCallBoundaries())
+				for(InlinedFunctionOutputBoundary output : boundary.outputs())
+					Assert.assertNull("duplicate independently derived inlined output binding "
+						+ output.targetVariable(), outputBindings.put(output.targetVariable(), output));
+			for(InlinedFunctionCallBoundary call : block.getInlinedFunctionCallBoundaries()) {
+				List<Hop> arguments = new ArrayList<>();
+				for(InlinedFunctionInputBoundary input : call.inputs()) {
+					ResolvedInlinedInput exactInput = resolveInlinedInput(input, inputBindings);
+					arguments.add(exactInput.transientRead()
+						? requireExactDataHop(blockHops, OpOpData.TRANSIENTREAD, exactInput.variable(), call,
+							"input", input.position())
+						: requireExactNamedHop(blockHops, exactInput.variable(), call, "input", input.position()));
+				}
+				List<Hop> results = new ArrayList<>();
+				for(InlinedFunctionOutputBoundary output : call.outputs())
+					results.add(requireExactNamedHop(blockHops, resolveInlinedOutput(output, outputBindings),
+						call, "output", output.position()));
+				Hop authority = results.stream().findFirst()
+					.orElseGet(() -> arguments.stream().findFirst().orElse(null));
+				if(authority == null)
+					continue;
+				for(InlinedFunctionInputBoundary input : call.inputs())
+					result.add(new BoundaryExpectation("function-boundary:" + call.functionKey() + ":input:"
+						+ input.formalVariable(), authority, block.getSBID()));
+				for(InlinedFunctionOutputBoundary output : call.outputs())
+					result.add(new BoundaryExpectation("function-boundary:" + call.functionKey() + ":output:"
+						+ output.formalVariable(), authority, block.getSBID()));
+			}
+		}
+		return result;
+	}
+
+	private record ResolvedInlinedInput(String variable, boolean transientRead) { }
+
+	private static ResolvedInlinedInput resolveInlinedInput(InlinedFunctionInputBoundary input,
+		Map<String,InlinedFunctionInputBoundary> bindings) {
+		String actual = input.actualVariable();
+		if(actual == null)
+			return new ResolvedInlinedInput(input.boundVariable(), false);
+		Set<String> visited = new java.util.LinkedHashSet<>();
+		while(true) {
+			Assert.assertTrue("cyclic independently derived inlined input binding " + visited, visited.add(actual));
+			InlinedFunctionInputBoundary binding = bindings.get(actual);
+			if(binding == null)
+				return new ResolvedInlinedInput(actual, true);
+			if(binding.actualVariable() == null)
+				return new ResolvedInlinedInput(binding.boundVariable(), false);
+			actual = binding.actualVariable();
+		}
+	}
+
+	private static String resolveInlinedOutput(InlinedFunctionOutputBoundary output,
+		Map<String,InlinedFunctionOutputBoundary> bindings) {
+		String variable = output.boundVariable();
+		Set<String> visited = new java.util.LinkedHashSet<>();
+		while(true) {
+			Assert.assertTrue("cyclic independently derived inlined output binding " + visited, visited.add(variable));
+			InlinedFunctionOutputBoundary binding = bindings.get(variable);
+			if(binding == null)
+				return variable;
+			variable = binding.boundVariable();
+		}
+	}
+
+	private static Hop requireExactDataHop(List<Hop> blockHops, OpOpData operation, String name,
+		InlinedFunctionCallBoundary call, String boundary, int position) {
+		List<Hop> matches = blockHops.stream().filter(hop -> hop instanceof DataOp)
+			.filter(hop -> ((DataOp) hop).getOp() == operation)
+			.filter(hop -> name.equals(hop.getName())).toList();
+		return requireOneMatch(matches, call, boundary, position, name + " operation=" + operation);
+	}
+
+	private static Hop requireExactNamedHop(List<Hop> blockHops, String name, InlinedFunctionCallBoundary call,
+		String boundary, int position) {
+		List<Hop> matches = blockHops.stream().filter(hop -> name.equals(hop.getName())).toList();
+		return requireOneMatch(matches, call, boundary, position, name);
+	}
+
+	private static Hop requireOneMatch(List<Hop> matches, InlinedFunctionCallBoundary call, String boundary,
+		int position, String detail) {
+		Assert.assertEquals("inlined function boundary requires one exact independently traversed compiler-owned "
+			+ "authority: " + call.functionKey() + " callStatement=" + call.callStatementPosition()
+			+ ' ' + boundary + '=' + position + " variable=" + detail, 1, matches.size());
+		return matches.get(0);
 	}
 
 	private static List<Hop> allHops(DMLProgram program) {
