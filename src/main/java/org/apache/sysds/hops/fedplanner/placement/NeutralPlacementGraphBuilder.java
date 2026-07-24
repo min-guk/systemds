@@ -1390,7 +1390,7 @@ public final class NeutralPlacementGraphBuilder {
 			catch(Throwable t) {
 				candidateRuleFacts.add(candidateRuleFailureFact(key, inputs, t));
 				PlacementState failure = new PlacementState(ExecType.FED, FederatedOutput.LOUT, firstFType(inputs), false);
-				excluded.putIfAbsent(failure, new Exclusion(failure, ReasonCode.RULE_ERROR,
+				addGlobalExclusion(legal, excluded, new Exclusion(failure, ReasonCode.RULE_ERROR,
 					"RULE_ERROR:" + t.getClass().getSimpleName()));
 				continue;
 			}
@@ -1399,19 +1399,20 @@ public final class NeutralPlacementGraphBuilder {
 			String detail = "inputs=" + inputEvidence(inputs) + "|proof=" + evidence.shapeProof()
 				+ '|' + caps.reason().name() + caps.detail().map(s -> ":" + s).orElse("");
 			if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR)
-				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
+				addGlobalExclusion(legal, excluded, new Exclusion(state, ReasonCode.RULE_ERROR, detail));
 			else if(key.recompileContext().equals("recompile") && state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.FOUT)
-				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
+				addGlobalExclusion(legal, excluded, new Exclusion(state, ReasonCode.RECOMPILE_CP_FOUT, detail));
 			else if(transientAccess && !isLegalTransient(state))
-				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
+				addGlobalExclusion(legal, excluded, new Exclusion(state, ReasonCode.ILLEGAL_TRANSIENT_PLACEMENT, detail));
 			else if(!evidence.shapeProof().missingRequiredFacts().isEmpty())
-				excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNKNOWN_METADATA, detail));
+				addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, state, detail);
 			else if(caps.exec() == ExecType.FED) {
-				legal.add(state);
+				addLegalCandidate(legal, excluded, state);
 				for(FType inputType : inputs)
 					if(isAggregateBinaryVectorInput(hop, shape, inputType))
-						legal.add(new PlacementState(ExecType.FED, FederatedOutput.LOUT, inputType, true));
+						addLegalCandidate(legal, excluded,
+							new PlacementState(ExecType.FED, FederatedOutput.LOUT, inputType, true));
 			}
 		}
 		if(transientAccess)
@@ -1426,11 +1427,36 @@ public final class NeutralPlacementGraphBuilder {
 		if(hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED && anchors.isEmpty()
 			&& exactFederatedSourceType == null) {
 			PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.OTHER, true);
-			excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNSUPPORTED_ANCHOR,
+			addGlobalExclusion(legal, excluded, new Exclusion(state, ReasonCode.UNSUPPORTED_ANCHOR,
 				"Federated source has no exact literal source FType; relocation anchor remains unavailable"));
 		}
 		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
+	}
+
+	static void addGlobalExclusion(Set<PlacementState> legal, Map<PlacementState,Exclusion> excluded,
+		Exclusion exclusion) {
+		legal.remove(exclusion.state());
+		excluded.compute(exclusion.state(), (state, prior) ->
+			prior == null || prior.reasonCode() == ReasonCode.UNKNOWN_METADATA ? exclusion : prior);
+	}
+
+	static void addLegalCandidate(Set<PlacementState> legal,
+		Map<PlacementState,Exclusion> excluded, PlacementState state) {
+		Exclusion prior = excluded.get(state);
+		if(prior != null) {
+			if(prior.reasonCode() == ReasonCode.UNKNOWN_METADATA)
+				excluded.remove(state);
+			else
+				return;
+		}
+		legal.add(state);
+	}
+
+	static void addUnknownMetadataExclusionUnlessProvenLegal(Set<PlacementState> legal,
+		Map<PlacementState,Exclusion> excluded, PlacementState state, String detail) {
+		if(!legal.contains(state))
+			excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNKNOWN_METADATA, detail));
 	}
 
 	private void captureConsumerProfileFacts(Hop consumer, CompiledHopKey consumerKey,

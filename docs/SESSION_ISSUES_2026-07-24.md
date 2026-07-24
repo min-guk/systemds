@@ -1483,6 +1483,48 @@
   - Do not stage, revert, retarget, delete, or deliberately build through the protected authoritative target.
   - Runtime fallback, TRead/TWrite relaxation, and recompile `<CP,FOUT>` remain forbidden.
 
+## Issue: G006 disposable verification clone retained a dangling tracked target symlink and produced a false Maven PASS
+
+- **상태**: 해결
+- **환경/조건**:
+  - Goal/stage: leader-fresh verification of the LogReg builder reconciliation.
+  - Disposable clone: `/run/user/10041/g006-builder-leader-verify-d1dd-20260724/repo`.
+  - Source HEAD: `d1ddcb918d10975adebb8862f254e4a50ebcad9e`.
+  - Checked-out tracked target link pointed to removed path `/dev/shm/g005-p4-post-red-impl-74296759-worker-4-target-20260722T072957Z`.
+- **재현 절차**:
+  - Initial log: `/run/user/10041/g006-builder-leader-verify-d1dd-20260724/builder-placement-gates.log`.
+  - The initial wrapper checked `[ ! -e target ]`; that expression is true for a dangling symlink and therefore failed to reject the tracked link.
+  - Maven returned rc `0`, but `repo/target/surefire-reports` did not exist.
+- **관측 증상**:
+  - The wrapper wrote `RESULT=PASS` from process rc alone and only its final fresh-XML check exposed the missing local target.
+  - No authoritative target link or contents were touched; the clone link targeted a non-existent `/dev/shm` path.
+- **원인 분석**:
+  - `test -e` follows symlinks and is false for a dangling link. The preflight therefore confused “no target entry” with “dangling target symlink”.
+  - Maven rc was insufficient proof that the requested tests executed; fresh Surefire XML was not checked until after the provisional receipt was written.
+- **해결 요약**:
+  - Invalidated the first receipt.
+  - Removed only the disposable clone's local target symlink after exact path/link-text assertions.
+  - Re-ran Maven with both `! -e target` and `! -L target` asserted before execution.
+  - Required a clone-local `target/surefire-reports`, exactly three fresh requested XML files, and parsed zero failures/errors/skips before writing the PASS receipt.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+  - No production source changed for this harness incident.
+- **검증**:
+  - Corrected receipt: `/run/user/10041/g006-builder-leader-verify-d1dd-20260724/receipt.txt`.
+  - Corrected log: `/run/user/10041/g006-builder-leader-verify-d1dd-20260724/builder-placement-gates-leader-rerun.log`.
+  - Fresh result: 18 tests, 0 failures, 0 errors, 0 skipped.
+  - Authoritative protected target link remained `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/target`.
+- **잔여 이슈**:
+  - Every later disposable clone build/test wrapper must reject both existing and dangling target symlinks and validate fresh reports/artifacts, not only process rc.
+- **잠재 회귀 위험**:
+  - Risk: `-e`-only checks recur. Detection: preflight must separately assert `! -L target`.
+  - Risk: Maven returns rc `0` without executing the intended tests. Detection: require fresh exact Surefire XML count and parse suite counters before PASS.
+- **의사결정 근거**:
+  - Corrected only the disposable verification harness. Planner/oracle/Runtime/cost/placement rules were unchanged.
+- **적용 원칙/제약**:
+  - Build/test only after removing the disposable clone-local tracked link with exact assertions.
+  - Never alter the protected authoritative target link.
+
 ## Issue: G006 Docker campaign image-integrity gate compared nondeterministically ordered CLI rows
 
 - **상태**: 진행중
@@ -1583,9 +1625,10 @@
 
 ## Issue: G006 DP LogReg focused test builds a neutral node with the same state both legal and excluded
 
-- **상태**: 진행중
+- **상태**: 해결
 - **환경/조건**:
   - Baseline authoritative HEAD: `c6cd957c000a33408c310b4bc263585ddfbe4af9`, with the k-means prototype removed for the baseline reproduction.
+  - Accepted source parent: `d1ddcb918d10975adebb8862f254e4a50ebcad9e`.
   - Test: `FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate`.
   - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
 - **재현 절차**:
@@ -1595,22 +1638,83 @@
   - `NeutralPlacementGraph.Node` rejected a loop-body LT `BinaryOp` at script line `69:28` with `IllegalArgumentException: Node state is both legal and excluded`.
   - The prior G006 Docker DP/logreg cell nevertheless completed rc `0`, so the focused test and experiment path currently exercise different concrete compilation conditions.
 - **원인 분석**:
-  - Not yet grounded beyond the builder stack: `NeutralPlacementGraphBuilder.closePostCfgPhysicalCandidateDependencies(...)` rebuilt a node whose legal alternatives and exclusions overlap.
+  - `NeutralPlacementGraphBuilder.buildNode(...)` collapsed input-domain-specific evidence into node-level sets.
+  - Input domain `0:null,1:ROW` lacked required column metadata and recorded `FED/FOUT/ROW/shapeDependent=true` as `UNKNOWN_METADATA`.
+  - Another exact input domain `0:ROW,1:ROW` proved the same `PlacementState` legal, but the prior exclusion remained. `NeutralPlacementGraph.Node` correctly rejected the contradictory state.
+  - `UNKNOWN_METADATA` is not a global runtime/policy prohibition: it is evidence that one input domain cannot prove the candidate. A different exact domain may prove the identical state.
   - The failure occurs before DP enumeration and before the canonical-owner change, proven by an exact baseline rerun with that patch removed.
 - **해결 요약**:
-  - No source fix yet. Classified as an independent pre-existing builder/legality defect rather than a regression from the k-means owner-plan change.
+  - Added explicit reconciliation helpers in `NeutralPlacementGraphBuilder`:
+    - a legal domain removes a prior `UNKNOWN_METADATA` exclusion for the same state;
+    - later `UNKNOWN_METADATA` does not exclude an already-proven legal state;
+    - global exclusions remove legality and replace prior `UNKNOWN_METADATA`;
+    - the first already-global exclusion remains deterministic.
+  - All documented global exclusions (`RULE_ERROR`, `RECOMPILE_CP_FOUT`, `ILLEGAL_TRANSIENT_PLACEMENT`, `UNSUPPORTED_ANCHOR`) remain authoritative in either encounter order.
+  - No candidate was closed; the change prevents incomplete evidence from globally vetoing a state another exact domain proves.
 - **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest.java`
   - `docs/SESSION_ISSUES_2026-07-24.md`
 - **검증**:
   - Baseline reproduction log above shows the identical exception at HEAD `c6cd957c` without the k-means prototype.
+  - Disposable-clone builder/placement gate:
+    - `NeutralPlacementGraphBuilderUnknownMetadataReconciliationTest`
+    - `NeutralPlacementGraphCfgCoreTest`
+    - `PlacementAnalysisContractTest`
+    - result rc `0`, log `/tmp/g006_builder_placement_gates_hardened.log`.
+  - The new regression covers `UNKNOWN→legal`, `legal→UNKNOWN`, `global→legal`, `legal→global`, `UNKNOWN→global`, and deterministic `global→global`.
+  - Independent reviewer verdict: `APPROVE`; the earlier `UNKNOWN_METADATA→global` precedence blocker is fixed.
+  - Focused LogReg no longer contains `Node state is both legal and excluded`; it reaches the separate DP boundary-lock defect documented below.
 - **잔여 이슈**:
-  - Inspect the original versus post-CFG node states/exclusions and determine why the focused test differs from the passing Docker logreg cell.
+  - Full LogReg remains blocked by the separate exact boundary-lock disagreement below.
 - **잠재 회귀 위험**:
-  - Risk: later Docker data/control flow reaches the overlapping state and blocks G006. Detection: retain strict per-cell scans and run the focused test after the builder fix.
+  - Risk: a later global exclusion could be erased by domain reconciliation. Detection: the regression explicitly covers both encounter orders and `UNKNOWN_METADATA→global→legal`.
+  - Risk: two global reasons could become nondeterministic. Detection: the first-global-reason regression locks deterministic precedence.
 - **의사결정 근거**:
-  - No rule changed; investigation remains at neutral placement-graph construction.
+  - Neutral placement-graph evidence reconciliation was corrected. Oracle capability, Runtime support, privacy, DP cost selection, TRead/TWrite, and recompile legality were not changed.
 - **적용 원칙/제약**:
   - Do not close candidates arbitrarily; repair the contradictory legality/exclusion receipt at its builder/oracle source.
+  - Recompile `<CP,FOUT>` and transient placement exclusions remain global and fail closed.
+
+## Issue: G006 DP LogReg disconnected completion violates an already-selected exact boundary lock
+
+- **상태**: 진행중
+- **환경/조건**:
+  - Source parent: `d1ddcb918d10975adebb8862f254e4a50ebcad9e` plus the approved builder reconciliation above.
+  - Test: `FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate`.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
+- **재현 절차**:
+  - `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate test`.
+  - Hardened-builder log: `/tmp/g006_logreg_after_hardened_builder.log`.
+  - Exact diagnostic log: `/tmp/g006_dp_conflict_diag4.log`.
+- **관측 증상**:
+  - After the builder invariant is fixed, DP throws `IllegalStateException: DP occurrence has disagreeing exact selections`.
+  - Exact occurrence: `main/0`, `root-1`, `FederatedLogRegPlanningTest.dml:26:0:DataOp:TWrite Y:Y`.
+  - Existing connected-root selection: `FED/FOUT/ROW/SHAPE_INDEPENDENT`, `derivedFedFout=false`.
+  - Disconnected-component proposal: `CP/LOUT/-/SHAPE_INDEPENDENT`, `derivedFedFout=false`.
+- **원인 분석**:
+  - The initial main traversal selects the line-26 `TWrite Y` as `FED/FOUT`.
+  - A later disconnected component rooted in the line-41 conditional assignment traverses through `TRead Y` and reaches that already-selected occurrence as a boundary lock.
+  - The component schedule recognizes the occurrence as a boundary lock but still selects/proposes a different exact plan state; `coalesceSelectedState(...)` correctly fails closed.
+  - A first prototype that forced the boundary state only at rewrite selection left an exact traversal edge unconsumed, proving that late substitution is not a valid repair.
+- **해결 요약**:
+  - No accepted source fix yet. Architecture analysis is evaluating how component root selection and edge scheduling must consume the same exact boundary-lock state before traversal.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Temporary diagnostics were used only in the disposable clone and removed afterward.
+  - Identity diagnostics prove the conflict is two genuinely different exact states, not duplicate/equal `PlacementState` objects.
+- **잔여 이슈**:
+  - Select a component plan that is costed and scheduled under the pre-existing exact boundary lock; rerun LogReg plus disconnected-component/rewire regressions.
+- **잠재 회귀 위험**:
+  - Risk: late child-plan substitution can desynchronize the exact traversal ledger. Detection: retain scheduled/consumed edge multiset closure tests.
+  - Risk: forcing one output bit without exact exec/FType/derived identity can hide a different placement. Detection: require exact `PlacementState` object and derived-FOUT equality at plan selection time.
+- **의사결정 근거**:
+  - This is a DP planner ownership/scheduling defect. Runtime and oracle legality must not be relaxed, and the fail-closed coalescing invariant must remain.
+- **적용 원칙/제약**:
+  - No Runtime fallback or repair.
+  - No arbitrary candidate closure.
+  - TRead/TWrite remains restricted to `<CP,LOUT>` or `<FED,FOUT>`; the existing line-26 boundary selection is `<FED,FOUT>`.
 
 ## Issue: G006 DP LM focused test enumerates a plan with a foreign exact placement carrier
 
@@ -1625,19 +1729,28 @@
 - **관측 증상**:
   - DP enumeration failed in `FederatedPlannerDpMemoTable.validateExactPlacementStates(...)` with `DP plan has a foreign exact placement carrier` for a compiler-temp transpose `ReorgOp` at exact occurrence path `root-0/input-0/input-0/input-0/input-0`.
 - **원인 분석**:
-  - Not yet grounded beyond memo insertion: the enumerator attempted to add a plan whose exact state is not owned by the occurrence to which its carrier projects.
+  - The carrier occurrence itself is exact; `addFedPlanVariants(...)` would have failed earlier if it were foreign.
+  - For the transpose, the exact neutral state is `FED/FOUT/COL` because the native transpose rule flips the row-federated input to column federation.
+  - The enumerator instead stored the logical/projected consumer type (`ROW`) in `FedPlan.fType`, then attached the exact `COL` `PlacementState`. Memo validation correctly rejected the mismatch.
+  - A first typed-arm prototype exposed a second defect: the candidate catalog keyed only by `(exec, output)` collapses exact states with distinct FTypes from different input domains.
+  - Expanding the key to `(exec, output, fType)` was still insufficient because broad exec/output allow booleans could advertise `FED/LOUT` while lookup by `nativeFoutFType` had no matching exact state. Repeated focused results were inconsistent (`native_lout.rc=0`, later `final.rc=1`), so that patch was independently blocked and not integrated.
   - Exact baseline rerun without the k-means canonical-owner patch reproduced the same failure before disconnected-component completion.
 - **해결 요약**:
-  - No source fix yet. Classified as a separate pre-existing enumeration/occurrence-projection defect.
+  - No accepted source fix yet. The active prototype must make candidate availability and exact-state selection consume the same per-input-domain authority, rather than borrowing a node-union state or combining broad allow bits with a later typed lookup.
 - **수정 파일**:
   - `docs/SESSION_ISSUES_2026-07-24.md`
 - **검증**:
   - Baseline reproduction log above records the identical failure at HEAD `c6cd957c` with no k-means source changes.
+  - Rejected patch: `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/g006_lm_dp_exact_state_fix.patch`.
+  - Independent review verdict: `BLOCK`; focused final failure log `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/lm_dp_private_aggregate_final.log`.
 - **잔여 이슈**:
-  - Diagnose the compiler-temp transpose carrier/state origin before the DP LM G006 cell can be trusted.
+  - Capture the failing receipt's exact occurrence, ordered inputs, native capability, legal states, allow bits, and requested exact arm.
+  - Require three consecutive focused LM passes plus DP candidate/memo gates before accepting a replacement patch.
 - **잠재 회귀 위험**:
-  - Risk: the full Docker campaign reaches the same foreign-carrier path. Detection: exact DP LM focused gate plus per-cell strict scan.
+  - Risk: node-union states from another input domain can be selected as if they belonged to the current candidate. Detection: availability/selection agreement regression bound to one exact candidate receipt.
+  - Risk: logical/projected FType overwrites the native exact output FType. Detection: transpose regression must retain the exact `COL` state while keeping projected/boundary type separate.
 - **의사결정 근거**:
-  - No rule changed; the suspected boundary is exact occurrence/state ownership in DP memo insertion.
+  - Repair belongs in DP exact candidate-state modeling/enumeration. Memo validation remains authoritative and must not be weakened.
 - **적용 원칙/제약**:
   - Do not weaken `validateExactPlacementStates`; repair the carrier/state origin so the exact fail-closed invariant remains intact.
+  - Do not close a policy-legal arm merely because the catalog representation is too coarse; make the exact state representation and cost comparison complete.
