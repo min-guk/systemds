@@ -11,14 +11,21 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireConsumerEdge;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -26,6 +33,33 @@ import org.junit.Test;
 
 /** Authoritative compile-time RED for the production post-rewire occurrence snapshot. */
 public class CampaignBG014RewireOccurrenceSnapshotRedTest {
+
+	@Test
+	public void standaloneRuntimeRecompileOccurrenceIsPhysicalProducerNotSemanticClone() {
+		DMLProgram program = standaloneRuntimeRecompileProgram();
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		List<NeutralPlacementGraph.Node> recompileNodes = analysis.graph().nodes().stream()
+			.filter(node -> "recompile".equals(node.key().recompileContext()))
+			.filter(node -> node.valueVersion().versionKind().name().equals("CLONE_RECOMPILE"))
+			.toList();
+		Assert.assertEquals("standalone fixture owns one runtime-recompile occurrence", 1, recompileNodes.size());
+		NeutralPlacementGraph.Node recompiled = recompileNodes.get(0);
+		Assert.assertEquals("standalone runtime recompile should keep its physical producer kind",
+			NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE, recompiled.kind());
+		Assert.assertTrue("standalone runtime recompile must still exclude CP/FOUT",
+			recompiled.exclusions().stream().anyMatch(exclusion ->
+				exclusion.reasonCode() == NeutralPlacementGraph.ReasonCode.RECOMPILE_CP_FOUT));
+		Assert.assertTrue("standalone runtime recompile must not publish clone same-origin constraints",
+			analysis.graph().constraints().stream().noneMatch(constraint ->
+				constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_ORIGIN
+					&& (constraint.left().equals(recompiled.key()) || constraint.right().equals(recompiled.key()))));
+
+		DpInvocationReceipt invocation = invoke(program, "standalone-runtime-recompile");
+		Assert.assertSame("final-boundary DP receipt must own the standalone analysis",
+			program.requirePlacementAnalysisAuthority(), invocation.analysis());
+		Assert.assertTrue("standalone runtime recompile must yield no semantic clone receipt",
+			invocation.semanticConsumption().rewireSnapshot().cloneReceipts().isEmpty());
+	}
 	@Test
 	public void b09PublishesTheExactProductionRewireUniverse() {
 		DpInvocationReceipt invocation = invoke("B-09");
@@ -107,14 +141,22 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 
 	private static DpInvocationReceipt invoke(String id) {
 		try {
-			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+			return invoke(ProductionShadowFixtureFactory.compile(id), id);
+		}
+		catch(Exception e) {
+			throw new AssertionError("Unable to compile G014 rewire fixture " + id, e);
+		}
+	}
+
+	private static DpInvocationReceipt invoke(DMLProgram program, String label) {
+		try {
 			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 			AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
 			try {
 				ConfigurationManager.getDMLConfig().setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 				new DMLTranslator(program).constructLops(program, value -> {
 					if(!receipt.compareAndSet(null, value))
-						throw new AssertionError("G014_REWIRE_MULTIPLE_RECEIPTS");
+						throw new AssertionError("G014_REWIRE_MULTIPLE_RECEIPTS|" + label);
 				});
 			}
 			finally {
@@ -124,8 +166,23 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 			return (DpInvocationReceipt) receipt.get();
 		}
 		catch(Exception e) {
-			throw new AssertionError("Unable to compile G014 rewire fixture " + id, e);
+			throw new AssertionError("Unable to compile G014 rewire fixture " + label, e);
 		}
+	}
+
+	private static DMLProgram standaloneRuntimeRecompileProgram() {
+		DataOp input = new DataOp("G014_STANDALONE_IN", DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, "G014_STANDALONE_IN", 2, 2, 4, 1000);
+		DataOp output = new DataOp("G014_STANDALONE_X", DataType.MATRIX, ValueType.FP64, input,
+			OpOpData.TRANSIENTWRITE, "G014_STANDALONE_X");
+		output.setDim1(2);
+		output.setDim2(2);
+		output.setRequiresRecompile();
+		StatementBlock block = new StatementBlock();
+		block.setHops(new ArrayList<>(List.of(output)));
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(List.of(block)));
+		return program;
 	}
 
 	private static void assertIdentityList(List<?> expected, List<?> actual, String label) {

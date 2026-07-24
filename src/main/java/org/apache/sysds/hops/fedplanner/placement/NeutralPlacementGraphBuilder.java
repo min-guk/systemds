@@ -246,6 +246,7 @@ public final class NeutralPlacementGraphBuilder {
 		candidateRuleDomainKeys = candidateReplay.domainKeys();
 		candidateRuleFacts = candidateReplay.facts();
 		List<LogicalTransientInputFact> logicalTransientInputs = candidateReplay.logicalInputs();
+		nodes = reclassifyStandaloneRecompileOccurrences(occurrences, nodes);
 		nodes = classifyOrphanFunctionBodies(occurrences, nodes);
 		if(nodes.size() != occurrences.size())
 			throw new IllegalStateException("occurrence/node mismatch after CFG closure: "
@@ -1315,6 +1316,31 @@ public final class NeutralPlacementGraphBuilder {
 		}
 	}
 
+	private static List<Node> reclassifyStandaloneRecompileOccurrences(
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes) {
+		List<Node> result = new ArrayList<>(nodes.size());
+		for(int ordinal = 0; ordinal < nodes.size(); ordinal++) {
+			Node node = nodes.get(ordinal);
+			if(node.kind() != NodeKind.CLONE || node.valueVersion().versionKind() != VersionKind.CLONE_RECOMPILE) {
+				result.add(node);
+				continue;
+			}
+			long originCount = nodes.stream()
+				.filter(candidate -> candidate.valueVersion().versionKind() != VersionKind.CLONE_RECOMPILE)
+				.filter(candidate -> candidate.key().canonicalSourceOrigin()
+					.equals(node.key().canonicalSourceOrigin()))
+				.count();
+			if(originCount == 1) {
+				result.add(node);
+				continue;
+			}
+			NodeKind physicalKind = physicalNodeKind(occurrences.get(ordinal).hop());
+			result.add(new Node(node.key(), physicalKind, node.valueVersion(), node.emittedWork(),
+				node.legalAlternatives(), node.exclusions(), node.anchors()));
+		}
+		return List.copyOf(result);
+	}
+
 	private static void addStableOriginConstraints(List<Node> nodes, Set<Constraint> constraints) {
 		for(Node clone : nodes) {
 			if(clone.kind() != NodeKind.CLONE) continue;
@@ -1847,10 +1873,19 @@ public final class NeutralPlacementGraphBuilder {
 	}
 	private static NodeKind nodeKind(Hop h, ValueVersionKey value) {
 		if(value.versionKind() == VersionKind.CLONE_RECOMPILE) return NodeKind.CLONE;
-		if(value.versionKind() == VersionKind.FUNCTION_INPUT) return NodeKind.FUNCTION_INPUT;
-		if(value.versionKind() == VersionKind.LOOP_HEAD_PHI || value.versionKind() == VersionKind.LOOP_BACKEDGE)
+		return physicalNodeKind(h, value);
+	}
+
+	private static NodeKind physicalNodeKind(Hop h) {
+		return physicalNodeKind(h, null);
+	}
+
+	private static NodeKind physicalNodeKind(Hop h, ValueVersionKey value) {
+		if(value != null && value.versionKind() == VersionKind.FUNCTION_INPUT) return NodeKind.FUNCTION_INPUT;
+		if(value != null && (value.versionKind() == VersionKind.LOOP_HEAD_PHI
+			|| value.versionKind() == VersionKind.LOOP_BACKEDGE))
 			return NodeKind.LOOP_PHI;
-		if(value.versionKind() == VersionKind.BRANCH_JOIN_PHI) return NodeKind.BRANCH_JOIN;
+		if(value != null && value.versionKind() == VersionKind.BRANCH_JOIN_PHI) return NodeKind.BRANCH_JOIN;
 		if(isTransientRead(h)) return NodeKind.TRANSIENT_READ;
 		if(isTransientWrite(h)) return NodeKind.TRANSIENT_WRITE;
 		if(isFunctionOutput(h)) return NodeKind.TRANSIENT_WRITE;

@@ -1292,3 +1292,59 @@
 - **적용 원칙/제약**:
   - Ordered gate preserved: LAN completed before Docker.
   - No fallback, implicit repair, partial response acceptance, PUBLIC masking, TRead/TWrite relaxation, or recompile `<CP,FOUT>`.
+
+## Issue: G006 standalone runtime-recompile occurrence misclassified as semantic DP clone
+
+- **상태**: 해결
+- **환경/조건**:
+  - Goal/stage: G006 P5 semantic Docker validation, first paired subset cell.
+  - Authoritative repo: `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, pre-fix HEAD `d500e62ba562621172fed25edea25be07b94cf91`.
+  - Planner/config: DP `mkl-cost` / `compile_cost_based`, Docker `run_LAN_docker.sh`, dataset `P2P2D`, workers `2`, network `lan`, privacy `private-aggregate`.
+  - Exact runtime used by failing cell: `/run/user/10041/g005-lan-build-f649241e1c22-20260724`, JAR SHA256 `a3d79058462e84421bed59b82eb50da1ad0ea6800c0073558b74bd1a9258059b`.
+- **재현 절차**:
+  - G006 first cell command file: `/run/user/10041/g006-paired-semantic-20260724/cells/1_mkl-cost_pca/command.sh`.
+  - Failing workload log: `/home/mchoi/reproducibility/sigmod2021-exdra-p523/experiments/results/fed2/mkl-cost/pca_dataset-P2P2D_coordinator_mkl-cost_g006_1_mkl-cost_pca_20260724T184243_3303677_lan.log`.
+  - Preserved receipt: `/run/user/10041/g006-paired-semantic-20260724/G006_PAIRED_SEMANTIC_DOCKER_SUBSET_RECEIPT_20260724.md`.
+  - Focused diagnostic: `/run/user/10041/g006-clone-runtime-diagnostic-20260724a/run-local.log`.
+  - Added RED unit reproduction: `mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest#standaloneRuntimeRecompileOccurrenceIsPhysicalProducerNotSemanticClone test`.
+- **관측 증상**:
+  - Docker cell failed before workload completion with:
+    - `DpSemanticConstructionException -- REWIRE_CLONE_SAME_ORIGIN_MULTIPLICITY_0`
+    - Stack: `FederatedPlannerDpRewireTransTable.exactCloneReceipts(...)` via `snapshotProductionRewire(...)`.
+  - Diagnostic line identified PCA runtime-recompiled producer:
+    - `scripts/builtin/pca.dml:96:2:org.apache.sysds.hops.TernaryOp:t(ctable):diagonal_matrix`
+    - `VersionKind.CLONE_RECOMPILE`, `NodeKind.CLONE`, and no non-clone same-origin occurrence.
+  - RED evidence in disposable clone: the new standalone runtime-recompile test failed at `CampaignBG014RewireOccurrenceSnapshotRedTest.java:47` because expected physical `TRANSIENT_WRITE`/producer kind was observed as `CLONE`.
+- **원인 분석**:
+  - `NeutralPlacementGraphBuilder` converted every `Hop.requiresRecompile()` occurrence to `VersionKind.CLONE_RECOMPILE` and then unconditionally mapped that version to `NodeKind.CLONE`.
+  - That conflated two cases:
+    1. actual paired recompile clone families, where a recompile occurrence has exactly one non-recompile same canonical source origin and should publish a semantic `CloneReceipt`, and
+    2. standalone runtime-recompile occurrences such as PCA's `ctable` producer, where the physical compiled node itself requires recompile and has no separate same-origin producer.
+  - DP `exactCloneReceipts` correctly fails closed for `NodeKind.CLONE` without one `SAME_ORIGIN` constraint; the bug was the builder's structural classification, not DP receipt validation.
+- **해결 요약**:
+  - Added a post-CFG builder classification pass that only keeps `NodeKind.CLONE` for `CLONE_RECOMPILE` nodes with exactly one non-`CLONE_RECOMPILE` same canonical source origin.
+  - Standalone runtime-recompile occurrences retain `recompile` context and `VersionKind.CLONE_RECOMPILE`, retain `RECOMPILE_CP_FOUT` exclusion, but are reclassified to their physical node kind (`TRANSIENT_WRITE`, `TRANSIENT_READ`, `FUNCTION_CALL`, or `OPERATION`).
+  - Preserved existing B-09 paired-clone behavior: it still has one `NodeKind.CLONE`, one `SAME_ORIGIN` constraint, and one semantic clone receipt.
+  - No DP fallback/repair, candidate closure, Runtime change, privacy relaxation, TRead/TWrite relaxation, or recompile `<CP,FOUT>` allowance was added.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014RewireOccurrenceSnapshotRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED (disposable clone `/run/user/10041/g006-dp-recompile-redgreen-20260724-3350953`): focused standalone test failed before the source fix with `expected:<TRANSIENT_WRITE> but was:<CLONE>`.
+  - GREEN: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest#standaloneRuntimeRecompileOccurrenceIsPhysicalProducerNotSemanticClone test` passed.
+  - GREEN gate: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest test` passed, proving B-09 still publishes one clone receipt and B-05 publishes none.
+  - GREEN gate: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.shadow.CampaignBB09ExplicitRecompileFixtureContractTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest test` passed, preserving B-09 paired clone/exclusion and semantic DP closure behavior.
+- **잔여 이슈**:
+  - The full G006 Docker paired all-four subset must be rerun from scratch with a freshly rebuilt exact runtime before the G006 goal can be accepted.
+  - This issue does not by itself prove all 16 G006 cells; it removes the first-cell structural blocker.
+- **잠재 회귀 위험**:
+  - Risk: a future legitimate clone family with multiple possible non-recompile origins could be reclassified as a physical node instead of failing earlier. Detection: B-09 paired-clone receipt tests plus any future multi-origin fixture should assert its intended structural cardinality explicitly.
+  - Risk: downstream adapters might assume `VersionKind.CLONE_RECOMPILE` always implies `NodeKind.CLONE`. Detection: focused placement/DP gates and trace scans for recompile nodes with `RECOMPILE_CP_FOUT` exclusion but no clone receipt.
+- **의사결정 근거**:
+  - Planner/builder structural model was corrected: semantic clone receipts are reserved for actual paired clone families; standalone runtime-recompile producer occurrences keep recompile legality metadata without becoming DP semantic clones.
+- **적용 원칙/제약**:
+  - Runtime fallback remains forbidden.
+  - DP fail-closed `exactCloneReceipts` was not weakened.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile no-`<CP,FOUT>` constraints remain unchanged.
+  - Privacy/public masking was not changed.
