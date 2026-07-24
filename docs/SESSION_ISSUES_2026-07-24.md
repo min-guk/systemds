@@ -186,3 +186,54 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged and preserved by H03 recurring TWrite/TRead control.
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space closure guard prohibition: respected; no opcode-specific skip/continue guard was added.
+
+## Issue: Relocation feasibility was incorrectly tied to consumer output anchors
+
+- **상태**: 해결 for PlacementEmission/Heuristic relocation feasibility; Task46 five-class gate now has only the expected MinST residual failures.
+- **환경/조건**: Detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, starting HEAD `089fbd6828a976179f05c0d83bed0c23316b05d5`; `NeutralPlacementGraphBuilder` relocation actions; fixture shape `X` as federated ROW and `S` as local full `4x2`, with `Y1/Y2 = X + S` selected as `FED/FOUT/ROW`.
+- **재현 절차**:
+  - Clean RED from verifier: `/tmp/g005_verify_089fbd6828a9_20260724T064755/logs/task46_five_class_gate.log`.
+  - Focused RED replay: `mvn -q -Dtest=PlacementEmissionTransactionRedTest test` -> `/tmp/g005-relocation-evidence-20260724/red_placement_emission_before.log`.
+- **관측 증상**:
+  - `PlacementEmissionTransactionRedTest` failed 6/6 at setup with `P4_FIXTURE_REQUIRES_ONE_SHARED_GRAPH_RELOCATION expected:<1> but was:<0>`.
+  - The verifier Task46 five-class run had 8 failures: 6 PlacementEmission failures from missing relocation actions plus 2 existing MinST failures.
+  - After relocation reappeared, an intermediate provenance run exposed fresh-plan hash instability because relocation scope used nondeterministic raw `SBID:context` (`e100a950...` vs `a48688f9...`).
+- **원인 분석**:
+  - `relocations(...)` derived upload actions only from `consumer.anchors()`. The durable-anchor gate correctly keeps H08/full-local consumers anchorless, but a consumer can still have an exact `FED/FOUT/FType` candidate whose feasibility depends on uploading an `ABSENT_LOCAL` matrix input to an existing `PRESENT` input FederationMap.
+  - Legal alternatives alone are insufficient relocation authority: they do not prove exact ordered input states or identify which existing input anchor supplies the target domain.
+  - Raw statement-block ids are compile-instance metadata and cannot be part of stable normalized plan fingerprints when relocation actions are present.
+- **의사결정 근거**: Planner relocation feasibility was repaired from exact Oracle/candidate evidence while keeping output durable provenance separate. This is not output anchor inheritance, not runtime fallback, not TR/TW relaxation, and not candidate-space closure. The stable scope change uses deterministic `consumer.controlRegion().normalizedSignature()` after validating that the consumer has a builder-owned statement-block scope; this groups only within the exact deterministic control region and does not coalesce relocations across distinct statement blocks, CFG regions, or function contexts.
+- **해결 요약**:
+  - Rebuilt relocation construction from exact `AVAILABLE` `CandidateRuleFact` evidence: native capability must be `FED/FOUT` with `nativeFoutFType` exactly matching one existing `PRESENT` matrix input durable anchor; `profile.producerOutputs()` must include that FType; ordered inputs must expose exactly one distinct present anchor; `ABSENT_LOCAL` matrix input edges become upload obligations.
+  - Kept consumer `Node.anchors()` empty for H08/full-local output while exposing a potential relocation action for local `Z` to the existing A anchor.
+  - Added duplicate protection for compiled matrix input edge positions and relocation obligations, using identity-keyed consumer lookup plus sorted/deduplicated `InputUse` sets.
+  - Changed relocation action scope from nondeterministic raw `SBID:context` to deterministic control-region normalized signature, while retaining the `scopes` lookup as an ownership/null-validation gate.
+  - Strengthened focused durable tests: H08 asserts anchorless `Y` plus exactly one potential relocation with deterministic control-region scope; H09 finds the actual `BinaryOp:b(+):Y` and asserts exact A-anchor identity; H10 scalar/scalar-derived and vector-MM local-only assert no invalid relocation.
+  - Restored H08 self-test to exact nonempty raw relocation semantics (one relocation containing `BinaryOp:b(+):Y` and `FED/FOUT/ROW/SHAPE_DEPENDENT`). No literal refresh was needed after deterministic scope repair.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBDurableAnchorPropagationContractTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR4Heuristic2SelfTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED focused: `/tmp/g005-relocation-evidence-20260724/red_placement_emission_before.log` — `PlacementEmissionTransactionRedTest`, exit 1 with 6/6 missing-relocation setup failures.
+  - PlacementEmission GREEN: `/tmp/g005-relocation-evidence-20260724/placement_emission_final.log` — `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest test`, exit 0.
+  - Durable/self GREEN after final scope assertions: `/tmp/g005-relocation-evidence-20260724/durable_self_after_scope_assert.log` — `CampaignBDurableAnchorPropagationContractTest,CampaignBR4Heuristic2SelfTest`, exit 0.
+  - Heuristic provenance GREEN: `/tmp/g005-relocation-evidence-20260724/heuristic_provenance_final.log` and `/tmp/g005-relocation-evidence-20260724/provenance_after_stable_scope.log`, exit 0.
+  - Heuristic real-vector GREEN: `/tmp/g005-relocation-evidence-20260724/heuristic_real_vector_final.log`, exit 0.
+  - Focused NO_REFED GREEN: `/tmp/g005-relocation-evidence-20260724/focused_no_refed_final.log`, exit 0.
+  - Compile: `/tmp/g005-relocation-evidence-20260724/test_compile_final.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005-relocation-evidence-20260724/diff_check_final2.log` — `git diff --check`, exit 0.
+  - Task46 five-class: `/tmp/g005-relocation-evidence-20260724/task46_five_class_gate_final.log` — 22 tests, 2 failures, 0 errors; failures are only `CampaignBAllPlannerAnalysisContractTest` MinST invocation residuals.
+- **잔여 이슈**:
+  - MinST still fails the Task46 all-planner analysis contract in two places with `CAMPAIGN_B_RUNTIME_CONTRACT|planner=MIN_ST|field=invoke|reason=IllegalStateException`; this pass intentionally did not change MinST.
+  - `target` remains dirty/unstaged as generated/pre-existing state and is intentionally excluded.
+- **잠재 회귀 위험**:
+  - Risk: relocation feasibility could accidentally be inferred from legal alternatives without exact input evidence. Detection: H10 and vector-MM no-relocation controls plus exact `CandidateRuleFact` gating in production.
+  - Risk: deterministic scope could over-coalesce independent consumers. Detection: scope uses full `ControlRegionKey.normalizedSignature()`, and H08 asserts the action scope equals the consumer control region.
+  - Risk: duplicate candidate facts could duplicate obligations. Detection: relocation uses are stored in sorted sets and duplicate compiled matrix input positions fail fast.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - H08 no-output-anchor rule: preserved; relocation feasibility is separate from consumer anchor ownership.
+  - Candidate gates/opcode guards: unchanged; no opcode-specific guard was added.

@@ -46,12 +46,16 @@ public class CampaignBR4Heuristic2SelfTest {
 		}
 	}
 
-	@Test public void h08StructuralDigestIsRepeatStableWithNoRawRelocationsAfterAnchorGate()throws Exception{
+	@Test public void h08StructuralDigestIsRepeatStableWithExactRawRelocationAfterAnchorGate()throws Exception{
 		var a=CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
 		var b=CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
 		Assert.assertEquals(a.structuralDigest(),b.structuralDigest());
 		Assert.assertEquals(CampaignBProvenanceFixtureBridge.literalDescription(a),CampaignBProvenanceFixtureBridge.literalDescription(b));
-		Assert.assertEquals("H-08 Y no longer carries A, so no no-refed raw relocation remains",Set.of(),a.removedRelocations());
+		Assert.assertEquals("H-08 Y remains anchorless but local Z has one exact raw no-refed relocation",1,
+			a.removedRelocations().size());
+		String relocation = a.removedRelocations().iterator().next();
+		Assert.assertTrue(relocation.contains("BinaryOp:b(+):Y"));
+		Assert.assertTrue(relocation.contains("FED/FOUT/ROW/SHAPE_DEPENDENT"));
 	}
 
 	@Test public void positionalAmbiguityIsRejected(){try{CampaignBProvenanceFixtureBridge.requireUnique("H-X","ROLE",List.of(1,2));Assert.fail();}catch(AssertionError e){Assert.assertTrue(String.valueOf(e.getMessage()).contains("FIXTURE_ROLE_AMBIGUOUS"));}}

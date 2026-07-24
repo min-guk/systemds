@@ -274,8 +274,8 @@ public final class NeutralPlacementGraphBuilder {
 		addStableOriginConstraints(nodes, constraints);
 		List<CompiledInputEdgeFact> compiledInputEdges = deriveCompiledInputEdges(occurrences, nodes,
 			ordinalsByBlock);
-		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, nodes,
-			scopes);
+		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
+			nodes, scopes);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
 		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
@@ -1478,37 +1478,26 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
-		List<CompiledInputEdgeFact> compiledInputEdges, List<Node> nodes,
-		Map<CompiledHopKey,Long> scopes) {
+		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
+		List<Node> nodes, Map<CompiledHopKey,Long> scopes) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
-		Map<RelocationGroup,List<InputUse>> uses = new java.util.TreeMap<>();
+		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : compiledInputEdges) {
-			Node source = nodesByKey.get(edge.producer());
-			Node consumer = nodesByKey.get(edge.consumer());
-			if(source == null || consumer == null)
+			if(!nodesByKey.containsKey(edge.producer()) || !nodesByKey.containsKey(edge.consumer()))
 				throw new IllegalStateException("Compiled matrix edge is outside the neutral graph");
-			Long scopeId = scopes.get(consumer.key());
-			if(scopeId == null)
-				throw new IllegalStateException("Relocation consumer has no statement-block scope: " + consumer.key());
-			String scope = scopeId + ":" + consumer.key().recompileContext();
-			for(DurableAnchorKey anchor : consumer.anchors()) {
-				// An input already carrying this durable placement is not an upload source.
-				if(source.anchors().contains(anchor))
-					continue;
-				for(PlacementState target : consumer.legalAlternatives()) {
-					if(target.execType() != ExecType.FED || target.output() != FederatedOutput.FOUT
-						|| target.fType() != anchor.fType())
-						continue;
-					RelocationGroup group = new RelocationGroup(source.valueVersion(), target, anchor, scope);
-					uses.computeIfAbsent(group, ignored -> new ArrayList<>())
-						.add(new InputUse(consumer.key(), edge.inputPosition(), scope));
-				}
-			}
+			CompiledInputEdgeFact prior = matrixEdgesByConsumer
+				.computeIfAbsent(edge.consumer(), ignored -> new java.util.TreeMap<>())
+				.put(edge.inputPosition(), edge);
+			if(prior != null)
+				throw new IllegalStateException("Duplicate compiled matrix edge for consumer input position");
 		}
+		Map<RelocationGroup,Set<InputUse>> uses = new java.util.TreeMap<>();
+		for(CandidateRuleFact fact : candidateRuleFacts)
+			addRelocationUsesFromExactCandidateFact(fact, nodesByKey, matrixEdgesByConsumer, scopes, uses);
 		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
-		for(Map.Entry<RelocationGroup,List<InputUse>> entry : uses.entrySet()) {
+		for(Map.Entry<RelocationGroup,Set<InputUse>> entry : uses.entrySet()) {
 			RelocationGroup group = entry.getKey();
 			Set<CompiledHopKey> consumerSet = new java.util.TreeSet<>();
 			for(InputUse use : entry.getValue()) consumerSet.add(use.consumer());
@@ -1521,6 +1510,70 @@ public final class NeutralPlacementGraphBuilder {
 			result.add(new NeutralPlacementGraph.RelocationAction(key, obligations));
 		}
 		return result;
+	}
+
+	private static void addRelocationUsesFromExactCandidateFact(CandidateRuleFact fact,
+		Map<CompiledHopKey,Node> nodesByKey,
+		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
+		Map<CompiledHopKey,Long> scopes, Map<RelocationGroup,Set<InputUse>> uses) {
+		// Relocations are planner feasibility edges proven by an exact AVAILABLE candidate-rule fact:
+		// one existing PRESENT input FederationMap supplies the anchor domain, while ABSENT_LOCAL
+		// matrix inputs become upload obligations for that same consumer target. This deliberately
+		// does not make the consumer own output anchor provenance and is not a runtime fallback.
+		if(fact.status() != CandidateEvaluationStatus.AVAILABLE || fact.capability() == null
+			|| fact.capability().nativeExec() != ExecType.FED
+			|| fact.capability().nativeOutput() != FederatedOutput.FOUT || !fact.profile().available())
+			return;
+		Node consumer = nodesByKey.get(fact.key().parentOccurrence());
+		if(consumer == null)
+			throw new IllegalStateException("Relocation candidate has no consumer node: "
+				+ fact.key().parentOccurrence());
+		Map<Integer,CompiledInputEdgeFact> matrixEdges = matrixEdgesByConsumer.getOrDefault(consumer.key(), Map.of());
+		Set<DurableAnchorKey> anchors = new java.util.TreeSet<>();
+		List<InputUseSeed> absentMatrixInputs = new ArrayList<>();
+		List<CandidateInputState> inputs = fact.key().orderedInputs();
+		for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
+			CandidateInputState input = inputs.get(inputPosition);
+			CompiledInputEdgeFact edge = matrixEdges.get(inputPosition);
+			if(input.present()) {
+				if(edge == null)
+					return;
+				Node source = nodesByKey.get(edge.producer());
+				List<DurableAnchorKey> matching = source.anchors().stream()
+					.filter(anchor -> anchor.fType() == input.fType()).toList();
+				if(matching.size() != 1)
+					return;
+				anchors.add(matching.get(0));
+			}
+			else if(edge != null) {
+				Node source = nodesByKey.get(edge.producer());
+				absentMatrixInputs.add(new InputUseSeed(source.valueVersion(), consumer.key(),
+					edge.inputPosition()));
+			}
+		}
+		if(anchors.size() != 1 || absentMatrixInputs.isEmpty())
+			return;
+		DurableAnchorKey anchor = anchors.iterator().next();
+		if(!fact.profile().producerOutputs().contains(anchor.fType())
+			|| fact.capability().nativeFoutFType() != anchor.fType())
+			return;
+		List<PlacementState> targets = consumer.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() == anchor.fType()).toList();
+		if(targets.size() != 1)
+			return;
+		Long scopeId = scopes.get(consumer.key());
+		if(scopeId == null)
+			throw new IllegalStateException("Relocation consumer has no statement-block scope: " + consumer.key());
+		// The map lookup above validates that this is a builder-owned statement-block occurrence.
+		// The action scope itself uses the deterministic control-region identity rather than raw SBID,
+		// so equivalent fresh compilations hash the same while distinct CFG/function regions do not coalesce.
+		String scope = consumer.key().controlRegion().normalizedSignature();
+		for(InputUseSeed seed : absentMatrixInputs) {
+			RelocationGroup group = new RelocationGroup(seed.source(), targets.get(0), anchor, scope);
+			uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>())
+				.add(new InputUse(seed.consumer(), seed.position(), scope));
+		}
 	}
 
 	private record RelocationGroup(ValueVersionKey source, PlacementState target,
@@ -1536,7 +1589,18 @@ public final class NeutralPlacementGraphBuilder {
 		}
 	}
 
-	private record InputUse(CompiledHopKey consumer, int position, String scope) { }
+	private record InputUseSeed(ValueVersionKey source, CompiledHopKey consumer, int position) { }
+
+	private record InputUse(CompiledHopKey consumer, int position, String scope) implements Comparable<InputUse> {
+		@Override
+		public int compareTo(InputUse that) {
+			int byConsumer = consumer.compareTo(that.consumer);
+			if(byConsumer != 0)
+				return byConsumer;
+			int byPosition = Integer.compare(position, that.position);
+			return byPosition != 0 ? byPosition : scope.compareTo(that.scope);
+		}
+	}
 
 	private static List<List<FType>> inputDomains(Hop hop, Map<Hop,Node> nodesByHop,
 		PlacementGraphFingerprint.HopOccurrence occurrence,

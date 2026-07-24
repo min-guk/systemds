@@ -6,6 +6,7 @@ import java.util.List;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.parser.DMLProgram;
@@ -20,16 +21,22 @@ public class CampaignBDurableAnchorPropagationContractTest {
 		PlacementAnalysis analysis = analysis(fed() + "s=sum(A);X=matrix(s,4,2);print(sum(X));");
 		assertNoAnchor(onlySourceContains(analysis, "AggUnaryOp:ua(+RC):s"), "sum(A) scalar must not carry durable anchor");
 		assertNoAnchor(onlySourceContains(analysis, "DataGenOp:dg(rand):X"), "matrix(sum(A),...) must not carry durable anchor");
+		Assert.assertTrue("H10 scalar/scalar-derived matrix must not expose relocation", analysis.graph().relocationActions().isEmpty());
 	}
 
 	@Test public void h08FullLocalMatrixOperandDoesNotInheritDurableAnchor() throws Exception {
 		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
-		assertNoAnchor(onlySourceContains(fixture.analysis(), "BinaryOp:b(+):Y"), "A+Z with full local Z must not inherit A anchor");
+		Node y = onlySourceContains(fixture.analysis(), "BinaryOp:b(+):Y");
+		assertNoAnchor(y, "A+Z with full local Z must not inherit A anchor");
+		assertOnePotentialRelocation(fixture.analysis(), y, "A+Z should expose exact potential upload of local Z to existing A anchor");
 	}
 
 	@Test public void h09ScalarBroadcastPreservesDurableAnchor() throws Exception {
 		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-09-INDEPENDENT-ANCHOR-RELEASE");
-		assertOneAnchor(node(fixture.analysis(), fixture.roles().get("Y_INDEPENDENT").normalizedSignature()), "A+1 scalar broadcast should preserve A anchor");
+		Node a = onlySourceContains(fixture.analysis(), "DataOp:Fed A:A");
+		Node y = onlySourceContains(fixture.analysis(), "BinaryOp:b(+):Y");
+		assertOneAnchor(a, "H09 A source should carry exact anchor");
+		Assert.assertEquals("A+1 scalar broadcast should preserve exact A anchor", a.anchors(), y.anchors());
 	}
 
 	@Test public void localVectorBroadcastPreservesWhenOracleKeepsRowDomain() throws Exception {
@@ -40,6 +47,7 @@ public class CampaignBDurableAnchorPropagationContractTest {
 	@Test public void vectorTimesFederatedMatrixLocalOnlyDoesNotInheritDurableAnchor() throws Exception {
 		PlacementAnalysis analysis = analysis(fed() + "v=matrix(1,1,4);Y=v%*%A;print(sum(Y));");
 		assertNoAnchor(onlySourceContains(analysis, "AggBinaryOp:ba(+*)"), "vector x federated-MM local-only output must not inherit A anchor");
+		Assert.assertTrue("vector x federated-MM local-only output must not expose relocation", analysis.graph().relocationActions().isEmpty());
 	}
 
 	@Test public void h03RecurringTWriteTReadPreservesSameDurableAnchor() throws Exception {
@@ -56,6 +64,30 @@ public class CampaignBDurableAnchorPropagationContractTest {
 	@Test public void branchMixedAnchoredAndLocalReachingDefinitionsTerminateAnchor() throws Exception {
 		PlacementAnalysis analysis = analysis(fed() + "X=matrix(1,4,2);if(sum(A)>0){X=A+1;}else{X=matrix(2,4,2);}Y=X+1;print(sum(Y));");
 		assertNoAnchor(onlySourceContains(analysis, "BinaryOp:b(+):Y"), "mixed anchored/local reaching definitions must terminate durable anchor");
+	}
+
+	private static void assertOnePotentialRelocation(PlacementAnalysis analysis, Node consumer, String message) {
+		List<RelocationAction> actions = analysis.graph().relocationActions().stream()
+			.filter(action -> action.key().compatibleConsumers().contains(consumer.key())).toList();
+		Assert.assertEquals(message + " | action count", 1, actions.size());
+		RelocationAction action = actions.get(0);
+		Assert.assertEquals(message + " | one local matrix input obligation", 1, action.obligations().size());
+		var obligation = action.obligations().get(0);
+		Assert.assertEquals(message + " | exact consumer", consumer.key(), obligation.consumer());
+		Assert.assertEquals(message + " | exact local matrix input", 1, obligation.inputPosition());
+		Assert.assertEquals(message + " | obligation uses action target", action.key().targetPlacement(),
+			obligation.requiredPlacement());
+		Assert.assertEquals(message + " | obligation uses action key", action.key(), obligation.relocationAction());
+		Assert.assertEquals(message + " | target matches anchor FType", action.key().durableAnchor().fType(),
+			action.key().targetPlacement().fType());
+		Assert.assertEquals(message + " | exact target", "FED/FOUT/ROW/SHAPE_DEPENDENT",
+			action.key().targetPlacement().normalizedSignature());
+		Assert.assertTrue(message + " | consumer has exact target candidate",
+			consumer.legalAlternatives().contains(action.key().targetPlacement()));
+		Assert.assertTrue(message + " | existing A FederationMap anchor",
+			action.key().durableAnchor().placementId().startsWith("fed-init:A"));
+		Assert.assertEquals(message + " | deterministic exact control-region scope",
+			consumer.key().controlRegion().normalizedSignature(), action.key().statementBlockScope());
 	}
 
 	private static PlacementAnalysis analysis(String script) throws Exception {
