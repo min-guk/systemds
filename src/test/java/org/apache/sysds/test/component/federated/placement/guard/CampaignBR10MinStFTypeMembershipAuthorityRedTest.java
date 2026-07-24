@@ -12,6 +12,8 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelector;
@@ -42,33 +44,51 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			.buildAnalysis(ProductionShadowFixtureFactory.compile("B-11"));
 		String before = immutableSnapshot(analysis);
 		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
-		DecisionFact decision = decisionWithAmbiguousFedFoutMembership(facts);
-		PlacementState expected = expectedRowFedFoutRepresentativeFromExactCandidateRule(analysis, decision);
+		DecisionFact decision = b11FederatedSourceDecision(facts, analysis);
+		List<PlacementState> fedFoutStates = identityDistinctFedFoutStates(decision);
 
 		Assert.assertSame("BR10_B11_FACTS_RETAIN_ANALYSIS_IDENTITY", analysis, facts.analysis());
-		Assert.assertTrue("BR10_B11_FIXTURE_MUST_CONTAIN_IDENTITY_DISTINCT_FED_FOUT_STATES",
-			identityDistinctFedFoutStates(decision).size() > 1);
-		Assert.assertEquals("BR10_B11_EXPECTED_CONCRETE_REPRESENTATIVE", FType.ROW, expected.fType());
-		Assert.assertSame("BR10_B11_EXPECTED_STATE_MUST_BE_RETAINED_BY_DECISION_IDENTITY", expected,
-			identityDistinctFedFoutStates(decision).stream().filter(state -> state == expected).findFirst()
-				.orElseThrow(() -> new AssertionError("BR10_B11_EXPECTED_ROW_STATE_NOT_RETAINED")));
+		Assert.assertEquals("BR10_B11_CURRENT_SOURCE_MUST_HAVE_SINGLE_FED_FOUT_STATE",
+			1, fedFoutStates.size());
+		PlacementState expected = fedFoutStates.get(0);
+		Assert.assertEquals("BR10_B11_CURRENT_SOURCE_AUTHORITY_MUST_BE_ROW", FType.ROW,
+			expected.fType());
+		Assert.assertFalse("BR10_B11_CURRENT_SOURCE_AUTHORITY_MUST_NOT_BE_SHAPE_DEPENDENT",
+			expected.shapeDependent());
+
+		List<MembershipRepresentative> representatives = facts.membershipRepresentativesInCanonicalOrder()
+			.stream()
+			.filter(representative -> representative.decisionKey() == decision.key()
+				&& representative.execType() == ExecType.FED
+				&& representative.output() == FederatedOutput.FOUT)
+			.toList();
+		Assert.assertEquals("BR10_B11_CURRENT_SOURCE_MUST_HAVE_SINGLE_FED_FOUT_AUTHORITY",
+			1, representatives.size());
+		Assert.assertSame("BR10_B11_REPRESENTATIVE_MUST_RETAIN_EXACT_ROW_STATE", expected,
+			representatives.get(0).state());
+		Assert.assertEquals("BR10_B11_REPRESENTATIVE_MUST_BE_DURABLE_SOURCE_AUTHORITY",
+			MembershipAuthorityKind.DURABLE_ANCHOR, representatives.get(0).authorityKind());
 
 		MinStExactSelection selection = MinStExactSelector.select(facts);
-
 		Assert.assertEquals("BR10_B11_SELECTOR_MUST_BE_UNIQUE", MinStExactSelection.UNIQUE,
 			selection.tieCertificate());
 		int index = facts.decisionFactsInScopeOrder().indexOf(decision);
 		Assert.assertTrue("BR10_B11_DECISION_INDEX_MISSING", index >= 0);
-		Assert.assertSame("BR10_B11_SELECTOR_MUST_RETAIN_EXACT_ROW_FED_FOUT_STATE", expected,
-			selection.selectedStatesInScopeOrder().get(index));
+		if(selection.selectedStatesInScopeOrder().get(index).execType() == ExecType.FED
+			&& selection.selectedStatesInScopeOrder().get(index).output() == FederatedOutput.FOUT)
+			Assert.assertSame("BR10_B11_SELECTOR_MUST_USE_ONLY_EXACT_ROW_FED_FOUT_STATE", expected,
+				selection.selectedStatesInScopeOrder().get(index));
 		Assert.assertEquals("BR10_B11_SELECTOR_MUST_NOT_MUTATE_ANALYSIS", before, immutableSnapshot(analysis));
 	}
 
-	private static DecisionFact decisionWithAmbiguousFedFoutMembership(MinStExactCostFacts facts) {
+	private static DecisionFact b11FederatedSourceDecision(MinStExactCostFacts facts,
+		PlacementAnalysis analysis) {
 		return facts.decisionFactsInScopeOrder().stream()
-			.filter(decision -> identityDistinctFedFoutStates(decision).size() > 1)
+			.filter(decision -> analysis.hop(decision.key())
+				.map(hop -> "X".equals(hop.getName())).orElse(false))
+			.filter(decision -> !identityDistinctFedFoutStates(decision).isEmpty())
 			.findFirst().orElseThrow(() -> new AssertionError(
-				"BR10_B11_AMBIGUOUS_FED_FOUT_DECISION_MISSING"));
+				"BR10_B11_SINGLE_ROW_FED_FOUT_DECISION_MISSING"));
 	}
 
 	private static List<PlacementState> identityDistinctFedFoutStates(DecisionFact decision) {

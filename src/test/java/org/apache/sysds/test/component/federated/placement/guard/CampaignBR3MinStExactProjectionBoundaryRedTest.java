@@ -2,6 +2,7 @@
 package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -85,18 +86,22 @@ public class CampaignBR3MinStExactProjectionBoundaryRedTest {
 		CompiledHopKey federatedInput = source.compiledInputEdgesInCanonicalOrder().stream()
 			.filter(edge -> edge.consumer() == consumer && edge.inputPosition() == 0)
 			.map(CompiledInputEdgeFact::producer).findFirst().orElseThrow();
+		Assert.assertNotSame("R3_MINST_SHARED_HOP_TRAP_INPUTS_MUST_BE_DISTINCT",
+			localRead, federatedInput);
 		PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.replaceHop(source,
 			localRead, source.hop(federatedInput).orElseThrow());
-		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
-		Set<String> consumers = new java.util.HashSet<>();
-		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder())
-			if(group.producerKey() == localRead)
-				for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
-					Assert.assertEquals("R3_MINST_CONTEXT_EDGE_POSITION_REDIRECTED", 1,
-						endpoint.inputPosition());
-					consumers.add(analysis.hop(endpoint.consumerKey()).orElseThrow().getName());
-				}
-		Assert.assertEquals("R3_MINST_CONTEXT_EDGE_SET_REDIRECTED", Set.of("Y1", "Y2"), consumers);
+		Method capturedInvocation = MinStExactCostFactsProducer.class.getDeclaredMethod(
+			"capturedInvocationEvidence", PlacementAnalysis.class, CompiledHopKey.class);
+		capturedInvocation.setAccessible(true);
+		InvocationTargetException failure = Assert.assertThrows(
+			"R3_MINST_SHARED_HOP_TRAP_MUST_FAIL_CLOSED_ON_AMBIGUOUS_ANCHOR",
+			InvocationTargetException.class,
+			() -> capturedInvocation.invoke(null, analysis, localRead));
+		Throwable cause = failure.getCause();
+		Assert.assertTrue("R3_MINST_SHARED_HOP_TRAP_WRONG_FAILURE|" + cause,
+			cause instanceof IllegalArgumentException
+				&& cause.getMessage() != null
+				&& cause.getMessage().contains("MINST_EXACT_INVOCATION_ANCHOR_AMBIGUOUS"));
 	}
 
 	@Test
