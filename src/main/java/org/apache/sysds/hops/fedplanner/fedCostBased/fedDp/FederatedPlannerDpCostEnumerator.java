@@ -71,6 +71,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
@@ -919,7 +921,8 @@ public class FederatedPlannerDpCostEnumerator {
 				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToFED.get(j);
 			}
 
-					boolean canSatisfyFedInputs = canSatisfyFederatedInputsFromFTypes(candidateDecisionReceipt);
+					boolean canSatisfyFedInputs = canSatisfyFederatedInputsFromFTypes(
+						candidateDecisionReceipt, effectiveNonNullFTypeMap);
 
 					FType oracleLogicalFType = candidateDecisionReceipt.logicalFType();
 					FType lOutLogicalFType = resolveLoutLogicalFType(oracleLogicalFType);
@@ -1034,54 +1037,69 @@ public class FederatedPlannerDpCostEnumerator {
 						&& (!hasTWriteRequirement || isTReadConsistentWithTWrite(
 								ExecType.CP, FederatedOutput.FOUT, tWriteExec, tWriteOut));
 
-					if (allowFedFoutCandidate) {
-						FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-								fedFoutCost,
-								fOutFedPlanVariants, planChilds);
-						fedFOutPlan.setExecType(ExecType.FED);
-						fedFOutPlan.setFType(derivedFedFout ? cpLogicalFType : oracleLogicalFType);
-						fedFOutPlan.setCpFoutType(cpLogicalFType);
-						fedFOutPlan.setDerivedFedFout(derivedFedFout);
-						fedFOutPlan.setSelectedPlacementState(
-							candidateDecisionReceipt.requireExactState(ExecType.FED, FederatedOutput.FOUT));
-						fOutFedPlanVariants.addFedPlan(fedFOutPlan);
-					}
-
-				if (allowFedLoutCandidate) {
-						FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-								fedLoutCost,
+					for(CandidateEmissionFact emissionFact : candidateDecisionReceipt.allowedEmissionFacts()) {
+						PlacementEmissionState emissionState = emissionFact.emissionState();
+						PlacementState exactState = emissionState.placementState();
+						if(exactState.execType() == ExecType.FED && exactState.output() == FederatedOutput.FOUT
+							&& allowFedFoutCandidate) {
+							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
+								effectiveCollectedFTypes, exactEstimator, baseSelfCost, defaultFedComputeCost, outputMemEstimate,
+								cpUploadMemEstimate, fedOverhead, singleWorkerFedPenalty, fedExecWeight,
+								hopPlacementWeight, numOfWorkers, emissionFact.executionFType(), exactState.fType());
+							double entryFedFoutCost = entryCost.fedSelfCost() + childCostFEDExec
+								+ derivedFedFoutBoundaryCost(emissionState.derivedFedFout(),
+									entryCost.uploadCost(), entryCost.resultDownloadCost());
+							FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+								entryFedFoutCost, fOutFedPlanVariants, planChilds);
+							fedFOutPlan.setExecType(ExecType.FED);
+							fedFOutPlan.setFType(exactState.fType());
+							fedFOutPlan.setCpFoutType(cpLogicalFType);
+							fedFOutPlan.setDerivedFedFout(emissionState.derivedFedFout());
+							fedFOutPlan.setSelectedPlacementState(exactState);
+							fOutFedPlanVariants.addFedPlan(fedFOutPlan);
+						}
+						else if(exactState.execType() == ExecType.FED && exactState.output() == FederatedOutput.LOUT
+							&& allowFedLoutCandidate) {
+							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
+								effectiveCollectedFTypes, exactEstimator, baseSelfCost, defaultFedComputeCost, outputMemEstimate,
+								cpUploadMemEstimate, fedOverhead, singleWorkerFedPenalty, fedExecWeight,
+								hopPlacementWeight, numOfWorkers, emissionFact.executionFType(), exactState.fType());
+							FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+								entryCost.fedSelfCost() + childCostFEDExec + entryCost.resultDownloadCost(),
 								lOutFedPlanVariants, planChilds);
-						fedLOutPlan.setExecType(ExecType.FED);
-						fedLOutPlan.setFType(lOutLogicalFType);
-						fedLOutPlan.setCpFoutType(cpLogicalFType);
-						fedLOutPlan.setSelectedPlacementState(
-							candidateDecisionReceipt.requireExactState(ExecType.FED, FederatedOutput.LOUT));
-						lOutFedPlanVariants.addFedPlan(fedLOutPlan);
-					}
-
-				if (allowCpLoutCandidate) {
-						FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-								cpLoutCost,
-								lOutFedPlanVariants, planChilds);
-						cpLOutPlan.setExecType(ExecType.CP);
-						cpLOutPlan.setFType(lOutLogicalFType);
-						cpLOutPlan.setCpFoutType(cpLogicalFType);
-						cpLOutPlan.setSelectedPlacementState(
-							candidateDecisionReceipt.requireExactState(ExecType.CP, FederatedOutput.LOUT));
-						lOutFedPlanVariants.addFedPlan(cpLOutPlan);
-					}
-					if (allowCpFoutCandidate) {
-						FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-								cpFoutCost,
-								fOutFedPlanVariants, planChilds);
+							fedLOutPlan.setExecType(ExecType.FED);
+							fedLOutPlan.setFType(exactState.fType());
+							fedLOutPlan.setCpFoutType(cpLogicalFType);
+							fedLOutPlan.setSelectedPlacementState(exactState);
+							lOutFedPlanVariants.addFedPlan(fedLOutPlan);
+						}
+						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.LOUT
+							&& allowCpLoutCandidate) {
+							FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+								cpLoutCost, lOutFedPlanVariants, planChilds);
+							cpLOutPlan.setExecType(ExecType.CP);
+							cpLOutPlan.setFType(exactState.fType());
+							cpLOutPlan.setCpFoutType(cpLogicalFType);
+							cpLOutPlan.setSelectedPlacementState(exactState);
+							lOutFedPlanVariants.addFedPlan(cpLOutPlan);
+						}
+						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.FOUT
+							&& allowCpFoutCandidate) {
+							double entryCpUploadCost = hopPlacementWeight
+								* exactEstimator.upload(cpUploadMemEstimate, exactState.fType(), numOfWorkers);
+							double entryCpFoutCost = cpLoutCost
+								+ (tWriteFoutMetadataPassThrough ? 0.0 : entryCpUploadCost);
+							FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
+								entryCpFoutCost, fOutFedPlanVariants, planChilds);
 							cpFOutPlan.setExecType(ExecType.CP);
-							cpFOutPlan.setFType(cpLogicalFType);
-							cpFOutPlan.setCpFoutType(cpLogicalFType);
+							cpFOutPlan.setFType(exactState.fType());
+							cpFOutPlan.setCpFoutType(exactState.fType());
 							cpFOutPlan.setFoutMaterializationAccounted(true);
-							cpFOutPlan.setSelectedPlacementState(
-								candidateDecisionReceipt.requireExactState(ExecType.CP, FederatedOutput.FOUT));
+							cpFOutPlan.setSelectedPlacementState(exactState);
 							fOutFedPlanVariants.addFedPlan(cpFOutPlan);
 						}
+					}
+
 
 				if (FederatedPlannerTrace.shouldTrace(hop)) {
 						String childBreakdown = formatDpChildBreakdown(
@@ -1613,6 +1631,42 @@ public class FederatedPlannerDpCostEnumerator {
 		return hopCommon.getComputeWeight() * hopCommon.getMultiplicity();
 	}
 
+
+	private record FedEntryCost(double fedSelfCost, double resultDownloadCost, double uploadCost) { }
+
+	private static FedEntryCost computeFedEntryCost(Hop hop, List<Hop> exactCollectedHops,
+		List<FType> effectiveCollectedFTypes, FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator,
+		double baseSelfCost, double defaultFedComputeCost, double outputMemEstimate, double uploadMemEstimate, double fedOverhead,
+		double singleWorkerFedPenalty, double fedExecWeight, double hopPlacementWeight, int numOfWorkers,
+		FType executionFType, FType materializationFType) {
+		double genericResultDownloadCost = exactEstimator.download(outputMemEstimate, executionFType, numOfWorkers);
+		double nativeAggUnaryResultDownloadCost =
+			FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
+				hop, executionFType, outputMemEstimate, numOfWorkers, genericResultDownloadCost);
+		double nativeResultDownloadCost = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+			hop, executionFType, outputMemEstimate, numOfWorkers, nativeAggUnaryResultDownloadCost);
+		FederatedCostModel.MixedFedLocalCost mixedFedLocalCost = FederatedCostModel.computeMixedFedLocalCost(
+			hop, exactCollectedHops, effectiveCollectedFTypes, executionFType, baseSelfCost, outputMemEstimate,
+			numOfWorkers);
+		double nativeAggUnaryFedComputeCost = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+			hop, executionFType, defaultFedComputeCost);
+		nativeAggUnaryFedComputeCost = FederatedCostModel.computeNativeFederatedIndexingCost(
+			hop, executionFType, nativeAggUnaryFedComputeCost);
+		double fedComputeCost = mixedFedLocalCost.hasFederatedComputeFloor()
+			? Math.max(nativeAggUnaryFedComputeCost, mixedFedLocalCost.getFederatedComputeFloor())
+			: nativeAggUnaryFedComputeCost;
+		double resultDownloadCost = hopPlacementWeight * (mixedFedLocalCost.hasCoordinatorPhase()
+			? mixedFedLocalCost.getCoordinatorPhaseCost() : nativeResultDownloadCost);
+		double fedSelfCost = fedComputeCost + FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
+			fedOverhead) + singleWorkerFedPenalty
+			+ FederatedCostModel.computeControlDominatedFederatedInstructionCost(hop, executionFType,
+				fedExecWeight, numOfWorkers, false)
+			+ hopPlacementWeight * mixedFedLocalCost.getInputPreparationCost();
+		double uploadCost = hopPlacementWeight
+			* exactEstimator.upload(uploadMemEstimate, materializationFType, numOfWorkers);
+		return new FedEntryCost(fedSelfCost, resultDownloadCost, uploadCost);
+	}
+
 	private static double derivedFedFoutBoundaryCost(boolean derivedFedFout, double cpUploadCost,
 			double resultDownloadCost) {
 		return derivedFedFout ? cpUploadCost + resultDownloadCost : 0.0;
@@ -1645,8 +1699,16 @@ public class FederatedPlannerDpCostEnumerator {
 		return sb.toString();
 	}
 
-	private static boolean canSatisfyFederatedInputsFromFTypes(CandidateDecisionReceipt receipt) {
-		return receipt.allowFEDLOUT() || receipt.allowFEDFOUT();
+	private static boolean canSatisfyFederatedInputsFromFTypes(CandidateDecisionReceipt receipt,
+		Map<Long, FType> effectiveNonNullFTypeMap) {
+		if(!(receipt.allowFEDLOUT() || receipt.allowFEDFOUT()))
+			return false;
+		if(effectiveNonNullFTypeMap != null && !effectiveNonNullFTypeMap.isEmpty())
+			return true;
+		return receipt.context().analysis().graph().node(receipt.candidateSnapshot().parentOccurrence())
+			.map(node -> node.anchors().size() == 1 && node.anchors().get(0).fType() != null
+				&& node.anchors().get(0).fType() != FType.PART && node.anchors().get(0).fType() != FType.OTHER)
+			.orElse(false);
 	}
 
 	private static void logDpBestPlans(Hop hop,

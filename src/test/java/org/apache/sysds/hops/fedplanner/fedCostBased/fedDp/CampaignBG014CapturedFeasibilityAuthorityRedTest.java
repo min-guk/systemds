@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
@@ -31,6 +32,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInp
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
@@ -87,10 +89,37 @@ public class CampaignBG014CapturedFeasibilityAuthorityRedTest {
 		Assert.assertTrue("missing-anchor B-12 live receipt must retain the FED/LOUT arm", captured.allowFEDLOUT());
 		Assert.assertFalse("injected broad input types cannot synthesize exact missing anchor authority",
 			captured.allowFEDFOUT());
+		Assert.assertFalse("B-12 exact missing-anchor input domain must not borrow the graph-union FED state",
+			exactFact(invocation, captured).allowedEmissionStates().stream()
+				.anyMatch(emission -> emission.placementState().execType() == ExecType.FED));
+		Assert.assertFalse("B-12 decision catalog must remain empty of borrowed FED states",
+			captured.allowedEmissionStates().stream()
+				.anyMatch(emission -> emission.placementState().execType() == ExecType.FED));
 		assertLegacyValueOnlyRequestRejectedBeforeMutation(invocation, captured,
 			"B-12 value-only captured requests must not promote missing exact anchor evidence");
 		Assert.assertEquals("reading exact B-12 authority mutated planner/global state", before,
 			plannerState(invocation));
+	}
+
+	@Test
+	public void scalarResultCannotPublishMatrixFoutMaterialization() {
+		DpInvocationReceipt invocation = invoke("B-11");
+		List<CandidateRuleFact> scalarFederatedFacts = invocation.analysis().candidateRuleFacts().orderedFacts()
+			.stream().filter(fact -> invocation.analysis().shapeFact(fact.key().parentOccurrence())
+				.map(shape -> shape.dataType() == DataType.SCALAR).orElse(false))
+			.filter(fact -> fact.capability() != null && fact.capability().nativeExec() == ExecType.FED)
+			.toList();
+
+		Assert.assertFalse("B-11 must exercise a scalar result derived from a federated input",
+			scalarFederatedFacts.isEmpty());
+		for(CandidateRuleFact fact : scalarFederatedFacts) {
+			Assert.assertFalse("scalar candidates cannot publish a matrix FOUT materialization",
+				fact.allowedEmissionStates().stream()
+					.anyMatch(emission -> emission.placementState().output() == FederatedOutput.FOUT));
+			Assert.assertFalse("scalar graph nodes cannot retain a matrix FOUT union state",
+				invocation.analysis().graph().node(fact.key().parentOccurrence()).orElseThrow()
+					.legalAlternatives().stream().anyMatch(state -> state.output() == FederatedOutput.FOUT));
+		}
 	}
 
 	@Test
@@ -175,6 +204,12 @@ public class CampaignBG014CapturedFeasibilityAuthorityRedTest {
 			.requireExact(captured.candidateSnapshot().parentOccurrence(), exactInputs);
 		Assert.assertSame("decision capability must be the exact retained analysis fact",
 			exactFact.capability(), captured.capabilityFact());
+		Assert.assertTrue("decision catalog must be a policy-filtered subset of exact fact emission entries",
+			new LinkedHashSet<>(exactFact.allowedEmissionStates()).containsAll(captured.allowedEmissionStates()));
+		for(PlacementEmissionState emission : captured.allowedEmissionStates())
+			Assert.assertTrue("candidate emission state must be exact graph-owned legal identity",
+				invocation.analysis().graph().node(captured.candidateSnapshot().parentOccurrence()).orElseThrow()
+					.legalAlternatives().stream().anyMatch(state -> state == emission.placementState()));
 		for(int i = 0; i < captured.candidateSnapshot().promotedEntries().size(); i++) {
 			CandidateMapEntry raw = captured.candidateSnapshot().rawEntries().get(i);
 			CandidateMapEntry promoted = captured.candidateSnapshot().promotedEntries().get(i);
@@ -183,6 +218,15 @@ public class CampaignBG014CapturedFeasibilityAuthorityRedTest {
 		}
 		return PlacementCandidateRuleResolver.projectConsumerSafeType(captured.logicalFType(),
 			captured.invocationEvidence().projection());
+	}
+
+	private static CandidateRuleFact exactFact(DpInvocationReceipt invocation, CandidateDecisionReceipt captured) {
+		List<CandidateInputState> exactInputs = captured.orderedOracleInputs().stream()
+			.map(input -> input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
+				: CandidateInputState.present(FType.valueOf(input.name())))
+			.toList();
+		return invocation.analysis().candidateRuleFacts()
+			.requireExact(captured.candidateSnapshot().parentOccurrence(), exactInputs);
 	}
 
 	private static void assertLegacyValueOnlyRequestRejectedBeforeMutation(DpInvocationReceipt invocation,

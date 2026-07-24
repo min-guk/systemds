@@ -33,6 +33,7 @@ import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.ExecPlacementPolicy;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Exclusion;
@@ -55,6 +56,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCon
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateProfileFact;
@@ -223,7 +225,8 @@ public final class NeutralPlacementGraphBuilder {
 			captureConsumerProfileFacts(hop, key, inputShapeFacts,
 				candidateConsumerDomainKeys, candidateConsumerProfileFacts);
 			List<DurableAnchorKey> exactAnchors = occurrenceAnchor == null ? List.of() : List.of(occurrenceAnchor);
-			Node node = buildNode(hop, key, value, exactAnchors, shapeFact, inputShapeFacts,
+			Node node = buildNode(hop, key, value, exactAnchors,
+				Collections.unmodifiableList(new ArrayList<>(inputAnchors)), shapeFact, inputShapeFacts,
 				inputDomains(hop, nodesByHop, occurrence, occurrences, versionKind),
 				candidateRuleDomainKeys, candidateRuleFacts);
 			nodes.add(node);
@@ -783,8 +786,10 @@ public final class NeutralPlacementGraphBuilder {
 			List.of("source-state", "read-anchor"), List.of());
 		List<FType> outputs = state.output() == FederatedOutput.FOUT && state.fType() != null
 			? List.of(state.fType()) : List.of();
+		PlacementEmissionState emissionState = new PlacementEmissionState(state, false);
 		return new CandidateRuleFact(key, CandidateEvaluationStatus.AVAILABLE, capability, shapeProof,
-			new CandidateProfileFact(outputs, ""), "");
+			new CandidateProfileFact(outputs, ""), List.of(new CandidateEmissionFact(emissionState,
+				state.execType() == ExecType.FED ? state.fType() : null)), "");
 	}
 
 	private static boolean sameTransientForwardContext(Node source, Node read) {
@@ -860,8 +865,14 @@ public final class NeutralPlacementGraphBuilder {
 				}
 				List<CandidateRuleKey> replacementKeys = new ArrayList<>();
 				List<CandidateRuleFact> replacementFacts = new ArrayList<>();
+				List<DurableAnchorKey> inputAnchors = hop.getInput().stream()
+					.map(input -> {
+						Node inputNode = exactBlockNodes.get(input);
+						return inputNode != null && inputNode.anchors().size() == 1
+							? inputNode.anchors().get(0) : null;
+					}).toList();
 				Node replacement = buildNode(hop, current.key(), current.valueVersion(), current.anchors(),
-					factsByHop.get(hop), List.copyOf(inputShapes),
+					inputAnchors, factsByHop.get(hop), List.copyOf(inputShapes),
 					inputDomains(hop, exactBlockNodes, occurrence, occurrences,
 						current.valueVersion().versionKind()), replacementKeys, replacementFacts);
 				List<CandidateRuleKey> priorKeys = keysByOrdinal.get(consumerOrdinal);
@@ -1365,7 +1376,8 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
-		NodeShapeFact shape, List<NodeShapeFact> inputShapeFacts, List<List<FType>> inputDomains,
+		List<DurableAnchorKey> inputAnchors, NodeShapeFact shape, List<NodeShapeFact> inputShapeFacts,
+		List<List<FType>> inputDomains,
 		List<CandidateRuleKey> candidateRuleDomainKeys, List<CandidateRuleFact> candidateRuleFacts) {
 		Set<PlacementState> legal = new LinkedHashSet<>();
 		Map<PlacementState,Exclusion> excluded = new java.util.TreeMap<>();
@@ -1377,7 +1389,11 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		boolean transientAccess = isTransientRead(hop) || isTransientWrite(hop);
 		for(List<FType> inputs : inputCombinations(inputDomains)) {
-			candidateRuleDomainKeys.add(new CandidateRuleKey(key, candidateInputStates(inputs)));
+			CandidateRuleKey candidateKey = new CandidateRuleKey(key, candidateInputStates(inputs));
+			candidateRuleDomainKeys.add(candidateKey);
+			Set<CandidateEmissionFact> exactEmissionFacts = new LinkedHashSet<>();
+			if(legal.contains(cp))
+				exactEmissionFacts.add(candidateEmissionFact(exactLegalState(legal, cp), false, null));
 			OpCaps caps;
 			DecisionEvidence evidence;
 			boolean shapeDependent;
@@ -1385,7 +1401,6 @@ public final class NeutralPlacementGraphBuilder {
 				evidence = oracle.decideWithEvidence(hop, inputs, null);
 				caps = evidence.caps();
 				shapeDependent = evidence.shapeDependent();
-				candidateRuleFacts.add(candidateRuleFact(hop, key, inputShapeFacts, inputs, caps, evidence));
 			}
 			catch(Throwable t) {
 				candidateRuleFacts.add(candidateRuleFailureFact(key, inputs, t));
@@ -1408,12 +1423,41 @@ public final class NeutralPlacementGraphBuilder {
 			else if(!evidence.shapeProof().missingRequiredFacts().isEmpty())
 				addUnknownMetadataExclusionUnlessProvenLegal(legal, excluded, state, detail);
 			else if(caps.exec() == ExecType.FED) {
-				addLegalCandidate(legal, excluded, state);
+				PlacementState exactNative = addLegalCandidate(legal, excluded, state);
+				if(exactNative != null)
+					exactEmissionFacts.add(candidateEmissionFact(exactNative, false, outType));
+				if(caps.placement() == FederatedOutput.FOUT && ExecPlacementPolicy.supportsForcedLocalFederatedOutput(hop)) {
+					PlacementState exactLout = addLegalCandidate(legal, excluded,
+						new PlacementState(ExecType.FED, FederatedOutput.LOUT, outType, shapeDependent));
+					if(exactLout != null)
+						exactEmissionFacts.add(candidateEmissionFact(exactLout, false, outType));
+				}
+				DurableAnchorKey materializationAnchor = exactCandidateMaterializationAnchor(
+					anchors, inputAnchors, inputs);
+				FType materializationFType = exactMaterializationFType(shape, materializationAnchor);
+				if(materializationFType != null && !key.recompileContext().equals("recompile")
+					&& !transientAccess && outType != null && outType != FType.PART && outType != FType.OTHER) {
+					PlacementState cpFout = addLegalCandidate(legal, excluded,
+						new PlacementState(ExecType.CP, FederatedOutput.FOUT, materializationFType, shapeDependent));
+					if(cpFout != null)
+						exactEmissionFacts.add(candidateEmissionFact(cpFout, false, null));
+					if(caps.placement() == FederatedOutput.LOUT) {
+						PlacementState derivedFout = addLegalCandidate(legal, excluded,
+							new PlacementState(ExecType.FED, FederatedOutput.FOUT, materializationFType, shapeDependent));
+						if(derivedFout != null)
+							exactEmissionFacts.add(candidateEmissionFact(derivedFout, true, outType));
+					}
+				}
 				for(FType inputType : inputs)
-					if(isAggregateBinaryVectorInput(hop, shape, inputType))
-						addLegalCandidate(legal, excluded,
+					if(isAggregateBinaryVectorInput(hop, shape, inputType)) {
+						PlacementState supplemental = addLegalCandidate(legal, excluded,
 							new PlacementState(ExecType.FED, FederatedOutput.LOUT, inputType, true));
+						if(supplemental != null)
+							exactEmissionFacts.add(candidateEmissionFact(supplemental, false, inputType));
+					}
 			}
+			candidateRuleFacts.add(candidateRuleFact(hop, candidateKey, inputShapeFacts, inputs, caps,
+				evidence, exactEmissionFacts));
 		}
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
@@ -1441,16 +1485,53 @@ public final class NeutralPlacementGraphBuilder {
 			prior == null || prior.reasonCode() == ReasonCode.UNKNOWN_METADATA ? exclusion : prior);
 	}
 
-	static void addLegalCandidate(Set<PlacementState> legal,
+	static PlacementState addLegalCandidate(Set<PlacementState> legal,
 		Map<PlacementState,Exclusion> excluded, PlacementState state) {
 		Exclusion prior = excluded.get(state);
 		if(prior != null) {
 			if(prior.reasonCode() == ReasonCode.UNKNOWN_METADATA)
 				excluded.remove(state);
 			else
-				return;
+				return null;
 		}
 		legal.add(state);
+		return exactLegalState(legal, state);
+	}
+
+	private static PlacementState exactLegalState(Set<PlacementState> legal, PlacementState state) {
+		for(PlacementState candidate : legal)
+			if(candidate.equals(state))
+				return candidate;
+		throw new IllegalStateException("Exact legal state is missing from graph-owned set");
+	}
+
+	private static CandidateEmissionFact candidateEmissionFact(PlacementState state, boolean derivedFedFout,
+		FType executionFType) {
+		return new CandidateEmissionFact(new PlacementEmissionState(state, derivedFedFout), executionFType);
+	}
+
+	private static DurableAnchorKey exactCandidateMaterializationAnchor(List<DurableAnchorKey> outputAnchors,
+		List<DurableAnchorKey> inputAnchors, List<FType> inputs) {
+		Set<DurableAnchorKey> candidates = new java.util.TreeSet<>();
+		if(outputAnchors.size() == 1)
+			candidates.add(outputAnchors.get(0));
+		for(int i = 0; i < inputs.size() && i < inputAnchors.size(); i++) {
+			DurableAnchorKey anchor = inputAnchors.get(i);
+			if(inputs.get(i) != null && anchor != null && anchor.fType() == inputs.get(i))
+				candidates.add(anchor);
+		}
+		return candidates.size() == 1 ? candidates.iterator().next() : null;
+	}
+
+	private static FType exactMaterializationFType(NodeShapeFact shape, DurableAnchorKey anchor) {
+		if(anchor == null || anchor.fType() == null || anchor.fType() == FType.PART
+			|| anchor.fType() == FType.OTHER || shape == null || !shape.knownPositiveMatrix())
+			return null;
+		if(outputGeometryCompatible(shape, anchor))
+			return anchor.fType();
+		// FEDFoutInstruction supports BROADCAST onto an existing worker pool for a known matrix shape.
+		// Scalars and unknown dimensions are closed above because the runtime requires a matrix with known dimensions.
+		return FType.BROADCAST;
 	}
 
 	static void addUnknownMetadataExclusionUnlessProvenLegal(Set<PlacementState> legal,
@@ -1563,8 +1644,9 @@ public final class NeutralPlacementGraphBuilder {
 		return Collections.unmodifiableList(domains);
 	}
 
-	private CandidateRuleFact candidateRuleFact(Hop hop, CompiledHopKey key,
-		List<NodeShapeFact> inputShapeFacts, List<FType> inputs, OpCaps caps, DecisionEvidence evidence) {
+	private CandidateRuleFact candidateRuleFact(Hop hop, CandidateRuleKey key,
+		List<NodeShapeFact> inputShapeFacts, List<FType> inputs, OpCaps caps, DecisionEvidence evidence,
+		Set<CandidateEmissionFact> exactEmissionFacts) {
 		List<CandidateRuleNote> notes = caps.notes().stream()
 			.map(note -> new CandidateRuleNote(note.code(), note.message())).toList();
 		CandidateCapabilityFact capability = new CandidateCapabilityFact(caps.category(), caps.opcode(), caps.exec(),
@@ -1574,9 +1656,8 @@ public final class NeutralPlacementGraphBuilder {
 			new ArrayList<>(proof.requiredFacts()), new ArrayList<>(proof.missingRequiredFacts()));
 		if(caps.reason() == org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.RULE_ERROR) {
 			String failure = "RULE_ERROR" + caps.detail().map(detail -> ":" + detail).orElse("");
-			return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
-				CandidateEvaluationStatus.RULE_ERROR, capability, shapeProof,
-				new CandidateProfileFact(List.of(), failure), failure);
+			return new CandidateRuleFact(key, CandidateEvaluationStatus.RULE_ERROR, capability, shapeProof,
+				new CandidateProfileFact(List.of(), failure), List.of(), failure);
 		}
 		CandidateProfileFact profile;
 		try {
@@ -1588,8 +1669,9 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		CandidateEvaluationStatus status = profile.available() ? CandidateEvaluationStatus.AVAILABLE
 			: CandidateEvaluationStatus.PROFILE_ERROR;
-		return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
-			status, capability, shapeProof, profile, profile.evaluationFailure());
+		return new CandidateRuleFact(key, status, capability, shapeProof, profile,
+			status == CandidateEvaluationStatus.AVAILABLE ? List.copyOf(exactEmissionFacts) : List.of(),
+			profile.evaluationFailure());
 	}
 
 	private static CandidateRuleFact candidateRuleFailureFact(CompiledHopKey key, List<FType> inputs, Throwable t) {
@@ -1597,7 +1679,7 @@ public final class NeutralPlacementGraphBuilder {
 		return new CandidateRuleFact(new CandidateRuleKey(key, candidateInputStates(inputs)),
 			CandidateEvaluationStatus.RULE_ERROR, null,
 			new CandidateShapeProofFact(Map.of(), List.of(), List.of()),
-			new CandidateProfileFact(List.of(), failure), failure);
+			new CandidateProfileFact(List.of(), failure), List.of(), failure);
 	}
 
 	private static List<List<FType>> profileInputDomains(List<NodeShapeFact> inputShapeFacts,

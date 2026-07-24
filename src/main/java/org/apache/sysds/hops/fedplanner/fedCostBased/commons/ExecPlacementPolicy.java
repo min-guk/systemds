@@ -338,7 +338,7 @@ public final class ExecPlacementPolicy {
 		return decision;
 	}
 
-	private static boolean supportsForcedLocalFederatedOutput(Hop hop) {
+	public static boolean supportsForcedLocalFederatedOutput(Hop hop) {
 		if (hop == null || hop.getDataType() == null || !hop.getDataType().isMatrix())
 			return false;
 		if (hop instanceof IndexingOp)

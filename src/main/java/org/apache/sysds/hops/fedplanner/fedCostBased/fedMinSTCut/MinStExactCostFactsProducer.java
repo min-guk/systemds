@@ -52,6 +52,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -154,14 +155,14 @@ public final class MinStExactCostFactsProducer {
 
 		int workers = workerCount(analysis.graph());
 		Map<String,List<OccurrenceProfile>> occurrenceProfiles = occurrenceProfiles(analysis);
+		List<MembershipRepresentative> representatives = membershipRepresentatives(analysis, decisions);
 		EdgeAccumulator accumulator = new EdgeAccumulator();
 		for(DecisionFact decision : decisions)
-			addDecisionEdges(analysis, decision, workers, occurrenceProfiles, accumulator);
+			addDecisionEdges(analysis, decision, representatives, workers, occurrenceProfiles, accumulator);
 		List<AuxiliaryGroupFact> groups = deriveGroups(analysis, orderedScope,
 			decisionsByKey, workers, occurrenceProfiles, accumulator);
 		List<ObligationFact> obligations = deriveObligations(analysis, decisionsByKey);
 		List<DirectedEdgeFact> edges = accumulator.freeze();
-		List<MembershipRepresentative> representatives = membershipRepresentatives(analysis, decisions);
 		List<TransferAuthorityFact> transferAuthorities = transferAuthorities(analysis, groups, representatives);
 		String fingerprint = fingerprint(analysis, orderedScope, decisions, representatives,
 			edges, groups, transferAuthorities, obligations);
@@ -215,13 +216,13 @@ public final class MinStExactCostFactsProducer {
 		MembershipRepresentative anchored = durableRepresentative(analysis, decision, node, states);
 		if(anchored != null)
 			return anchored;
-		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, node, states, previousByKey);
+		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, states, previousByKey);
 		if(captured != null)
 			return captured;
 		MembershipRepresentative relocation = relocationRepresentative(analysis, decision, states);
 		if(relocation != null)
 			return relocation;
-		throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_MISSING|key="
+		throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_UNPROVEN|key="
 			+ decision.key().normalizedSignature() + "|membership="
 			+ membership(first.execType(), first.output()));
 	}
@@ -281,20 +282,26 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static MembershipRepresentative capturedRuleRepresentative(PlacementAnalysis analysis,
-		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states,
+		DecisionFact decision, List<PlacementState> states,
 		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
 		CapturedInvocationEvidence invocation = capturedInvocationEvidence(analysis, decision.key());
 		List<MembershipRepresentative> matches = new ArrayList<>();
+		ExecType membershipExec = states.get(0).execType();
+		FederatedOutput membershipOutput = states.get(0).output();
+		boolean exactFedFoutMembership =
+			membershipExec == ExecType.FED && membershipOutput == FederatedOutput.FOUT;
 		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts()) {
 			if(fact.key().parentOccurrence() != decision.key()
 				|| fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| fact.capability() == null
-				|| !fact.profile().available()
-				|| fact.capability().nativeExec() != ExecType.FED
-				|| fact.capability().nativeOutput() != FederatedOutput.FOUT
-				|| fact.capability().nativeFoutFType() == null
-				|| fact.capability().nativeFoutFType() == FType.OTHER
-				|| fact.capability().nativeFoutFType() == FType.PART)
+				|| !fact.profile().available())
+				continue;
+			if(!exactFedFoutMembership
+				&& (fact.capability().nativeExec() != ExecType.FED
+					|| fact.capability().nativeOutput() != FederatedOutput.FOUT
+					|| fact.capability().nativeFoutFType() == null
+					|| fact.capability().nativeFoutFType() == FType.OTHER
+					|| fact.capability().nativeFoutFType() == FType.PART))
 				continue;
 			CapturedResolution resolution;
 			try {
@@ -307,28 +314,51 @@ public final class MinStExactCostFactsProducer {
 			}
 			if(resolution.fact() != fact)
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_IDENTITY_MISMATCH");
-			FType fType = resolution.logicalFType();
-			if(fType == null || fType == FType.OTHER || fType == FType.PART)
-				continue;
-			boolean shapeDependent = !fact.shapeProof().requiredFacts().isEmpty();
-			Hop decisionHop = analysis.hop(decision.key()).orElseThrow();
-			boolean transientData = decisionHop instanceof DataOp
-				&& (((DataOp)decisionHop).getOp() == OpOpData.TRANSIENTREAD
-					|| ((DataOp)decisionHop).getOp() == OpOpData.TRANSIENTWRITE);
-			List<PlacementState> retained = states.stream().filter(state -> state.fType() == fType
-				&& (transientData || state.shapeDependent() == shapeDependent)).toList();
-			if(retained.size() > 1)
-				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_STATE_AMBIGUOUS|key="
-					+ decision.key().normalizedSignature());
-			if(retained.size() == 1) {
-				PlacementState state = retained.get(0);
-				List<MembershipInputAuthorityFact> inputAuthorities = retainedInputAuthorities(analysis,
-					decision.key(), fact, state, previousByKey);
-				if(inputAuthorities == null)
-					continue;
-				matches.add(new MembershipRepresentative(decision.key(), state.execType(), state.output(), state,
-					MembershipAuthorityKind.CAPTURED_RULE, null, fact, fact.key().orderedInputs(), inputAuthorities, invocation, null, null));
+			PlacementState state;
+			List<CandidateEmissionFact> exactEmissions = fact.allowedEmissionFacts().stream()
+				.filter(emission -> emission.emissionState().placementState().execType() == membershipExec
+					&& emission.emissionState().placementState().output() == membershipOutput)
+				.filter(emission -> states.stream()
+					.anyMatch(candidate -> candidate == emission.emissionState().placementState()))
+				.toList();
+			if(exactEmissions.size() > 1)
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_EMISSION_AMBIGUOUS|key="
+					+ decision.key().normalizedSignature() + "|inputs=" + fact.key().orderedInputs());
+			if(exactEmissions.size() == 1) {
+				CandidateEmissionFact exactEmission = exactEmissions.get(0);
+				if(membershipExec == ExecType.FED
+					&& resolution.logicalFType() != exactEmission.executionFType())
+					throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_EXECUTION_FTYPE_MISMATCH|key="
+						+ decision.key().normalizedSignature() + "|inputs=" + fact.key().orderedInputs());
+				state = exactEmission.emissionState().placementState();
 			}
+			else {
+				if(exactFedFoutMembership)
+					continue;
+				FType fType = resolution.logicalFType();
+				if(fType == null || fType == FType.OTHER || fType == FType.PART)
+					continue;
+				boolean shapeDependent = !fact.shapeProof().requiredFacts().isEmpty();
+				Hop decisionHop = analysis.hop(decision.key()).orElseThrow();
+				boolean transientData = decisionHop instanceof DataOp
+					&& (((DataOp) decisionHop).getOp() == OpOpData.TRANSIENTREAD
+						|| ((DataOp) decisionHop).getOp() == OpOpData.TRANSIENTWRITE);
+				List<PlacementState> retained = states.stream().filter(candidate -> candidate.fType() == fType
+					&& (transientData || candidate.shapeDependent() == shapeDependent)).toList();
+				if(retained.size() > 1)
+					throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_STATE_AMBIGUOUS|key="
+						+ decision.key().normalizedSignature());
+				if(retained.isEmpty())
+					continue;
+				state = retained.get(0);
+			}
+			List<MembershipInputAuthorityFact> inputAuthorities = retainedInputAuthorities(analysis,
+				decision.key(), fact, state, previousByKey);
+			if(inputAuthorities == null)
+				continue;
+			matches.add(new MembershipRepresentative(decision.key(), state.execType(), state.output(), state,
+				MembershipAuthorityKind.CAPTURED_RULE, null, fact, fact.key().orderedInputs(), inputAuthorities,
+				invocation, null, null));
 		}
 		if(matches.isEmpty()) return null;
 		if(matches.size() != 1)
@@ -362,7 +392,8 @@ public final class MinStExactCostFactsProducer {
 						membershipInputAuthoritySignature(edge, producer)));
 				}
 			}
-			else if(!relocationAuthorityForAbsentInput(analysis, edge, retainedState))
+			else if(retainedState.execType() == ExecType.FED
+				&& !relocationAuthorityForAbsentInput(analysis, edge, retainedState))
 				return null;
 		}
 		for(int position = 0; position < inputs.size(); position++) {
@@ -430,6 +461,7 @@ public final class MinStExactCostFactsProducer {
 				signature.append("/C=").append(capability.nativeExec()).append('/')
 					.append(capability.nativeOutput()).append('/')
 					.append(capability.nativeFoutFType());
+			signature.append("|E=").append(candidateEmissionSignatureOrDash(representative));
 			signature.append("|I=").append(representative.invocationEvidenceOrNull());
 		}
 		for(MembershipInputAuthorityFact inputAuthority : representative.inputAuthorityFacts())
@@ -682,7 +714,8 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static void addDecisionEdges(PlacementAnalysis analysis, DecisionFact decision,
-		int workers, Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
+		List<MembershipRepresentative> representatives, int workers,
+		Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
 		Hop hop = analysis.hop(decision.key()).orElseThrow();
 		boolean cp = hasExec(decision, ExecType.CP);
 		boolean fed = hasExec(decision, ExecType.FED);
@@ -690,31 +723,68 @@ public final class MinStExactCostFactsProducer {
 		boolean fout = hasOutput(decision, FederatedOutput.FOUT);
 		boolean fedLout = hasState(decision, ExecType.FED, FederatedOutput.LOUT);
 		boolean cpFout = hasState(decision, ExecType.CP, FederatedOutput.FOUT);
+		CandidateEmissionFact exactFedFout = exactCandidateEmissionFact(analysis, decision,
+			representatives, ExecType.FED, FederatedOutput.FOUT);
+		boolean derivedFedFout = exactFedFout != null
+			&& exactFedFout.emissionState().derivedFedFout();
 
 		double base = cpUnaryCost(hop, executionWeight(occurrenceProfiles, decision.key()));
+		FType executionFType = !fed ? null : exactFedFout == null
+			? requireUniqueExecLayoutType(decision, ExecType.FED) : exactFedFout.executionFType();
+		FType materializationFType = exactFedFout == null ? null
+			: exactFedFout.emissionState().placementState().fType();
+		if(derivedFedFout && fedLout && requireUniqueMembershipLayoutType(decision,
+			ExecType.FED, FederatedOutput.LOUT) != executionFType)
+			throw new IllegalArgumentException("MINST_DERIVED_EXECUTION_LAYOUT_MISMATCH|key="
+				+ decision.key().normalizedSignature());
+		if(derivedFedFout && cpFout && requireUniqueMembershipLayoutType(decision,
+			ExecType.CP, FederatedOutput.FOUT) != materializationFType)
+			throw new IllegalArgumentException("MINST_DERIVED_MATERIALIZATION_LAYOUT_MISMATCH|key="
+				+ decision.key().normalizedSignature());
+		double fedCoordination = !fed ? 0.0 : FederatedCostModel.adjustFedCoordinationCost(
+			hop, executionFType, FederatedCostModel.computeFedCoordinationCost(workers));
 		double fedCost = requireCost(FederatedCostModel.computeFederatedComputeCost(
-			hop, base, workers, false) + FederatedCostModel.computeFedCoordinationCost(workers),
+			hop, base, workers, false) + fedCoordination,
 			"MINST_FED_COST_UNPROVEN");
+		double bytes = derivedFedFout ? estimatedBytes(analysis, decision.key(), hop) : Double.NaN;
+		double derivedDownload = derivedFedFout
+			? requireCost(FederatedCostModel.computeDownloadNetworkCost(bytes,
+				executionFType, workers), "MINST_DERIVED_DOWNLOAD_COST_UNPROVEN")
+			: 0.0;
+		double derivedUpload = derivedFedFout
+			? requireCost(FederatedCostModel.computeUploadNetworkCost(bytes,
+				materializationFType, workers),
+				"MINST_DERIVED_UPLOAD_COST_UNPROVEN")
+			: 0.0;
 		edges.add(SOURCE, decision.computeNodeId(), cp ? base : HARD_LEGALITY,
 			cp ? ContributionKind.CP_UNARY : ContributionKind.HARD_EXEC,
 			decision.key(), null, -1, cp ? "neutral-cp-unary" : "pre-solve-cp-illegal");
 		edges.add(decision.computeNodeId(), SINK, fed ? fedCost : HARD_LEGALITY,
 			fed ? ContributionKind.FED_UNARY : ContributionKind.HARD_EXEC,
 			decision.key(), null, -1, fed ? "neutral-fed-unary" : "pre-solve-fed-illegal");
+		if(derivedFedFout)
+			edges.add(decision.computeNodeId(), SINK, derivedDownload,
+				ContributionKind.DOWNLOAD, decision.key(), null, -1,
+				"derived-fed-fout-execution-download");
 		if(!lout)
 			edges.add(SOURCE, decision.placementNodeId(), HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1, "pre-solve-lout-illegal");
 		if(!fout)
 			edges.add(decision.placementNodeId(), SINK, HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1, "pre-solve-fout-illegal");
+		else if(derivedFedFout)
+			edges.add(decision.placementNodeId(), SINK, derivedUpload,
+				ContributionKind.UPLOAD, decision.key(), null, -1,
+				"derived-fed-fout-materialization-upload");
 
 		if(!fedLout)
 			edges.add(decision.computeNodeId(), decision.placementNodeId(), HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1,
 				"pre-solve-fed-lout-illegal");
-		else {
-			FType fType = requireUniqueLayoutType(decision);
-			double bytes = estimatedBytes(analysis, decision.key(), hop);
+		else if(!derivedFedFout) {
+			FType fType = requireUniqueMembershipLayoutType(decision,
+				ExecType.FED, FederatedOutput.LOUT);
+			bytes = estimatedBytes(analysis, decision.key(), hop);
 			double download = requireCost(FederatedCostModel.computeDownloadNetworkCost(bytes,
 				fType, workers), "MINST_DOWNLOAD_COST_UNPROVEN");
 			edges.add(decision.computeNodeId(), decision.placementNodeId(), download,
@@ -724,9 +794,11 @@ public final class MinStExactCostFactsProducer {
 			edges.add(decision.placementNodeId(), decision.computeNodeId(), HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1,
 				"pre-solve-cp-fout-illegal");
-		else {
-			FType fType = requireUniqueLayoutType(decision);
-			double bytes = estimatedBytes(analysis, decision.key(), hop);
+		else if(!derivedFedFout) {
+			FType fType = requireUniqueMembershipLayoutType(decision,
+				ExecType.CP, FederatedOutput.FOUT);
+			if(!Double.isFinite(bytes))
+				bytes = estimatedBytes(analysis, decision.key(), hop);
 			double upload = requireCost(FederatedCostModel.computeUploadNetworkCost(bytes,
 				fType, workers), "MINST_UPLOAD_COST_UNPROVEN");
 			edges.add(decision.placementNodeId(), decision.computeNodeId(), upload,
@@ -764,8 +836,9 @@ public final class MinStExactCostFactsProducer {
 						new ArrayList<>()).add(new Use(edge, consumerDecision));
 				}
 				if(hasExec(consumerDecision, ExecType.CP)
-					&& hasOutput(producerDecision, FederatedOutput.FOUT)) {
-					FType type = requireUniqueLayoutType(producerDecision);
+					&& hasState(producerDecision, ExecType.FED, FederatedOutput.FOUT)) {
+					FType type = requireUniqueMembershipLayoutType(producerDecision,
+						ExecType.FED, FederatedOutput.FOUT);
 					demands.computeIfAbsent(new GroupDemandKey(Direction.DOWNLOAD, type), ignored ->
 						new ArrayList<>()).add(new Use(edge, consumerDecision));
 				}
@@ -1530,14 +1603,92 @@ public final class MinStExactCostFactsProducer {
 			.anyMatch(state -> state.execType() == exec && state.output() == output);
 	}
 
-	private static FType requireUniqueLayoutType(DecisionFact decision) {
+	private static FType requireUniqueExecLayoutType(DecisionFact decision, ExecType execType) {
 		List<FType> types = decision.legalStatesInCanonicalOrder().stream()
+			.filter(state -> state.execType() == execType)
 			.map(PlacementState::fType).filter(Objects::nonNull).distinct()
 			.sorted(Comparator.comparing(Enum::name)).toList();
 		if(types.size() != 1)
-			throw new IllegalArgumentException("MINST_DECISION_LAYOUT_UNPROVEN|key="
-				+ decision.key().normalizedSignature() + "|types=" + types);
+			throw new IllegalArgumentException("MINST_DECISION_EXEC_LAYOUT_UNPROVEN|key="
+				+ decision.key().normalizedSignature() + "|exec=" + execType + "|types=" + types);
 		return types.get(0);
+	}
+
+	private static FType requireUniqueMembershipLayoutType(DecisionFact decision,
+		ExecType execType, FederatedOutput output) {
+		List<FType> types = decision.legalStatesInCanonicalOrder().stream()
+			.filter(state -> state.execType() == execType && state.output() == output)
+			.map(PlacementState::fType).filter(Objects::nonNull).distinct()
+			.sorted(Comparator.comparing(Enum::name)).toList();
+		if(types.size() != 1)
+			throw new IllegalArgumentException("MINST_DECISION_MEMBERSHIP_LAYOUT_UNPROVEN|key="
+				+ decision.key().normalizedSignature() + "|membership="
+				+ membership(execType, output) + "|types=" + types);
+		return types.get(0);
+	}
+
+	private static CandidateEmissionFact exactCandidateEmissionFact(PlacementAnalysis analysis,
+		DecisionFact decision, List<MembershipRepresentative> representatives,
+		ExecType execType, FederatedOutput output) {
+		List<CandidateEmissionFact> exactFacts = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == decision.key()
+				&& fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.filter(emission -> emission.emissionState().placementState().execType() == execType
+				&& emission.emissionState().placementState().output() == output)
+			.filter(emission -> decision.legalStatesInCanonicalOrder().stream()
+				.anyMatch(state -> state == emission.emissionState().placementState()))
+			.toList();
+		if(exactFacts.size() == 1)
+			return exactFacts.get(0);
+		if(exactFacts.size() > 1)
+			throw new IllegalArgumentException("MINST_EXACT_CANDIDATE_EMISSION_AUTHORITY_AMBIGUOUS|key="
+				+ decision.key().normalizedSignature() + "|membership=" + membership(execType, output));
+		List<MembershipRepresentative> matching = representatives.stream()
+			.filter(representative -> representative.decisionKey() == decision.key()
+				&& representative.execType() == execType && representative.output() == output)
+			.toList();
+		if(matching.isEmpty())
+			return null;
+		if(matching.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_REPRESENTATIVE_AMBIGUOUS|key="
+				+ decision.key().normalizedSignature() + "|membership=" + membership(execType, output));
+		MembershipRepresentative representative = matching.get(0);
+		return representative.candidateRuleFactOrNull() == null
+			? null : exactCandidateEmissionFact(representative);
+	}
+
+	private static CandidateEmissionFact exactCandidateEmissionFact(
+		MembershipRepresentative representative) {
+		CandidateRuleFact fact = representative.candidateRuleFactOrNull();
+		if(fact == null)
+			throw new IllegalArgumentException("MINST_EXACT_CANDIDATE_EMISSION_FACT_MISSING");
+		List<CandidateEmissionFact> matching = fact.allowedEmissionFacts().stream()
+			.filter(emission -> emission.emissionState().placementState() == representative.state())
+			.toList();
+		if(matching.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_CANDIDATE_EMISSION_FACT_"
+				+ (matching.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|key="
+				+ representative.decisionKey().normalizedSignature());
+		return matching.get(0);
+	}
+
+	private static String candidateEmissionSignatureOrDash(
+		MembershipRepresentative representative) {
+		CandidateRuleFact fact = representative.candidateRuleFactOrNull();
+		if(fact == null)
+			return "-";
+		List<CandidateEmissionFact> matching = fact.allowedEmissionFacts().stream()
+			.filter(emission -> emission.emissionState().placementState() == representative.state())
+			.toList();
+		if(matching.size() == 1)
+			return matching.get(0).normalizedSignature();
+		if(matching.isEmpty() && !(representative.execType() == ExecType.FED
+			&& representative.output() == FederatedOutput.FOUT))
+			return "-";
+		throw new IllegalArgumentException("MINST_EXACT_CANDIDATE_EMISSION_FACT_"
+			+ (matching.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|key="
+			+ representative.decisionKey().normalizedSignature());
 	}
 
 	private static long computeNodeId(int scopeIndex) { return 2L * scopeIndex; }
@@ -1958,7 +2109,8 @@ public final class MinStExactCostFactsProducer {
 				normalized.append(":R:").append(representative.candidateRuleFactOrNull().key()
 					.parentOccurrence().normalizedSignature()).append(':')
 					.append(representative.orderedInputs()).append(':')
-					.append(representative.invocationEvidenceOrNull());
+					.append(representative.invocationEvidenceOrNull()).append(':')
+					.append(candidateEmissionSignatureOrDash(representative));
 			for(MembershipInputAuthorityFact inputAuthority : representative.inputAuthorityFacts())
 				normalized.append(":I:")
 					.append(inputAuthority.inputEdge().producer().normalizedSignature()).append('/')
@@ -2061,7 +2213,10 @@ public final class MinStExactCostFactsProducer {
 				.append(fact.shapeProof().requiredFacts()).append(':')
 				.append(fact.shapeProof().missingRequiredFacts())
 				.append(":P:").append(fact.profile().producerOutputs()).append(':')
-				.append(fact.profile().evaluationFailure()).append(":F:").append(fact.failureCode());
+				.append(fact.profile().evaluationFailure()).append(":E:");
+			for(CandidateEmissionFact emission : fact.allowedEmissionFacts())
+				normalized.append('[').append(emission.normalizedSignature()).append(']');
+			normalized.append(":F:").append(fact.failureCode());
 		}
 		for(CandidateConsumerProfileFact fact : analysis.candidateConsumerProfileFacts().orderedFacts())
 			normalized.append("|CC:").append(fact.key().consumerOccurrence().normalizedSignature())

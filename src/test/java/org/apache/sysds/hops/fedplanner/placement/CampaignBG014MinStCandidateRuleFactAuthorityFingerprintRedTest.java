@@ -22,9 +22,11 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
@@ -33,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -58,6 +61,20 @@ public class CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest {
 		}
 	}
 
+	@Test
+	public void mutatedCandidateEmissionAuthorityChangesMinStDerivationFingerprint() throws Exception {
+		DMLProgram program = compileHermeticB11();
+		PlacementAnalysis original = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		CandidateRuleFact mutatedFact = firstAvailableRuleWithFedFoutEmission(original);
+		PlacementAnalysis mutated = reconstructWithOneMutatedEmissionFact(original, program, mutatedFact);
+
+		MinStExactCostFacts originalFacts = MinStExactCostFactsProducer.derive(original, scope(original));
+		MinStExactCostFacts mutatedFacts = MinStExactCostFactsProducer.derive(mutated, scope(mutated));
+		Assert.assertNotEquals(
+			"MINST_EXACT_DERIVATION_MUST_BIND_CANDIDATE_EMISSION_AUTHORITY",
+			originalFacts.derivationFingerprint(), mutatedFacts.derivationFingerprint());
+	}
+
 	private static PlacementAnalysis reconstructWithOneMutatedRuleFact(PlacementAnalysis source,
 		DMLProgram program, CandidateRuleFact target) {
 		List<CandidateRuleFact> facts = new ArrayList<>(source.candidateRuleFacts().orderedFacts().size());
@@ -79,7 +96,38 @@ public class CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest {
 			capability.opcode(), capability.nativeExec(), capability.nativeOutput(), capability.nativeFoutFType(),
 			capability.reasonCode(), capability.detail() + "|authority-mutated", capability.notes());
 		return new CandidateRuleFact(fact.key(), fact.status(), mutatedCapability, fact.shapeProof(),
-			fact.profile(), fact.failureCode());
+			fact.profile(), fact.allowedEmissionFacts(), fact.failureCode());
+	}
+
+	private static PlacementAnalysis reconstructWithOneMutatedEmissionFact(PlacementAnalysis source,
+		DMLProgram program, CandidateRuleFact target) {
+		List<CandidateRuleFact> facts = new ArrayList<>(source.candidateRuleFacts().orderedFacts().size());
+		for(CandidateRuleFact fact : source.candidateRuleFacts().orderedFacts())
+			facts.add(fact == target ? withMutatedEmissionFact(fact) : fact);
+
+		return new PlacementAnalysis(source.graph(), source.occurrences(), source.topLevelStatementBlocks(), program,
+			copyShapeFacts(source), source.analysisFingerprint(), source.heuristicPolicyFacts(),
+			source.candidateRuleDomain().orderedRuleKeys(), facts,
+			source.candidateRuleDomain().orderedConsumerKeys(),
+			source.candidateConsumerProfileFacts().orderedFacts(),
+			source.detachedConsumerProfileFacts().orderedFacts(),
+			source.compiledInputEdgesInCanonicalOrder());
+	}
+
+	private static CandidateRuleFact withMutatedEmissionFact(CandidateRuleFact fact) {
+		List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts());
+		for(int i = 0; i < emissions.size(); i++) {
+			CandidateEmissionFact emission = emissions.get(i);
+			if(emission.emissionState().placementState().execType() == ExecType.FED
+				&& emission.emissionState().placementState().output() == FederatedOutput.FOUT) {
+				emissions.set(i, new CandidateEmissionFact(new PlacementEmissionState(
+					emission.emissionState().placementState(), !emission.emissionState().derivedFedFout()),
+					emission.executionFType()));
+				return new CandidateRuleFact(fact.key(), fact.status(), fact.capability(), fact.shapeProof(),
+					fact.profile(), emissions, fact.failureCode());
+			}
+		}
+		throw new AssertionError("selected fact must publish a FED/FOUT emission");
 	}
 
 	private static CandidateRuleFact firstAvailableRuleWithCapability(PlacementAnalysis analysis) {
@@ -87,6 +135,17 @@ public class CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest {
 			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
 			.filter(fact -> fact.capability() != null)
 			.findFirst().orElseThrow(() -> new AssertionError("B-11 must publish an available candidate rule fact"));
+	}
+
+	private static CandidateRuleFact firstAvailableRuleWithFedFoutEmission(PlacementAnalysis analysis) {
+		return analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+			.filter(fact -> fact.allowedEmissionFacts().stream()
+				.anyMatch(emission -> emission.emissionState().placementState().execType()
+					== ExecType.FED
+					&& emission.emissionState().placementState().output()
+						== FederatedOutput.FOUT))
+			.findFirst().orElseThrow(() -> new AssertionError("B-11 must publish a FED/FOUT emission fact"));
 	}
 
 	private static PlacementShapeFacts copyShapeFacts(PlacementAnalysis analysis) {

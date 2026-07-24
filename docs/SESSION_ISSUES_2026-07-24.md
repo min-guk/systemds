@@ -1709,6 +1709,7 @@
   - BG014 disconnected/aggregate/rewire and aggregate runtime gates: 27 tests, 0 failures/errors/skips; `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/logs/bg014_disconnected_aggregate_rewire_gates.log`.
   - Independent code review: `APPROVE`, 0 findings; fresh component test 2/0 and patch/hash/applicability checks. Evidence: `/tmp/g006-review-evidence-1784923941/`.
   - Leader-fresh disposable worktree at exact parent `a19800f3...`: compile passed and 30/30 focused LogReg/runtime/disconnected/aggregate/rewire tests passed. Summary: `/run/user/10041/g006-logreg-leader-verify-a198-20260724-evidence/xml-summary.txt`; logs in the same `evidence/` directory.
+  - Post-fix DP cross-workload gate passed k-means, PCA, and LogReg private-aggregate 3/3; `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/logs/dp_kmeans_pca_logreg_cross_gate.log`. Accepted fix commit: `ff05a4e50b289ea385234e7e585652cbd7a2387c`.
 - **잔여 이슈**:
   - Fresh exact build plus LAN/Docker validation remain campaign-level work after DP workload fixes.
   - The separate LM per-input-domain exact-state defect remains unresolved.
@@ -1769,48 +1770,82 @@
 
 ## Issue: G006 DP LM focused test enumerates a plan with a foreign exact placement carrier
 
-- **상태**: 진행중
+- **상태**: 해결 (unit/integration 및 DP workload 회귀 검증 완료; campaign LAN/Docker 실행은 후속 단계)
 - **환경/조건**:
-  - Baseline authoritative HEAD: `c6cd957c000a33408c310b4bc263585ddfbe4af9`, k-means prototype removed for baseline reproduction.
-  - Test: `FederatedLMPlanningTest#runLMPlannerDPPrivacyPrivateAggregate`.
-  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
+  - Accepted baseline HEAD: `ff05a4e50b289ea385234e7e585652cbd7a2387c`.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`; cross-planner exact-fact parity는 MinST에서 함께 검증.
+  - Primary reproduction: `FederatedLMPlanningTest#runLMPlannerDPPrivacyPrivateAggregate`.
+  - Build/run discipline: authoritative repository/보호된 `target`에서는 Maven을 실행하지 않고, committed target symlink를 정확히 확인한 뒤 unlink한 disposable clone에서만 검증.
 - **재현 절차**:
   - `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest#runLMPlannerDPPrivacyPrivateAggregate test`.
-  - Baseline log: `/run/user/10041/g006-build-c6cd957c-20260724/baseline-c6cd957-lm-dp-private-aggregate.log`.
+  - 원래 증상 재현 로그: `/run/user/10041/g006-build-c6cd957c-20260724/baseline-c6cd957-lm-dp-private-aggregate.log`.
+  - 최종 exact-authority gate: `/run/user/10041/g006-logs/lm_v3_ff05_final_exact_authority_gate.log`.
+  - 최종 4-workload DP private-aggregate gate: `/run/user/10041/g006-logs/lm_v3_ff05_four_workload_dp_private_aggregate_after_minst_review_fix.log`.
 - **관측 증상**:
-  - DP enumeration failed in `FederatedPlannerDpMemoTable.validateExactPlacementStates(...)` with `DP plan has a foreign exact placement carrier` for a compiler-temp transpose `ReorgOp` at exact occurrence path `root-0/input-0/input-0/input-0/input-0`.
+  - DP enumeration이 `FederatedPlannerDpMemoTable.validateExactPlacementStates(...)`에서 `DP plan has a foreign exact placement carrier`로 실패했다.
+  - LM compiler-temp transpose의 exact native state는 `FED/FOUT/COL`인데, 기존 enumerator가 logical/projected consumer FType `ROW`를 `FedPlan.fType`에 저장하면서 exact `COL` `PlacementState`와 불일치했다.
+  - 단순히 키에 FType을 추가한 초기 prototype은 node-union 상태를 후보별 권한으로 오인했고, broad allow bit와 exact lookup이 서로 다른 상태 집합을 사용했다.
+  - MinST parity 검토 중 scalar/unknown-dimension 결과가 matrix-only `FEDFoutInstruction`을 거짓으로 광고하는 문제와, MinST가 exact emission fact 대신 capability field를 재구성하는 별도 schema gap도 확인됐다.
 - **원인 분석**:
-  - The carrier occurrence itself is exact; `addFedPlanVariants(...)` would have failed earlier if it were foreign.
-  - For the transpose, the exact neutral state is `FED/FOUT/COL` because the native transpose rule flips the row-federated input to column federation.
-  - The enumerator instead stored the logical/projected consumer type (`ROW`) in `FedPlan.fType`, then attached the exact `COL` `PlacementState`. Memo validation correctly rejected the mismatch.
-  - A first typed-arm prototype exposed a second defect: the candidate catalog keyed only by `(exec, output)` collapses exact states with distinct FTypes from different input domains.
-  - Expanding the key to `(exec, output, fType)` was still insufficient because broad exec/output allow booleans could advertise `FED/LOUT` while lookup by `nativeFoutFType` had no matching exact state. Repeated focused results were inconsistent (`native_lout.rc=0`, later `final.rc=1`), so that patch was independently blocked and not integrated.
-  - A second prototype enumerated all node-union `FED/LOUT` states and passed three consecutive focused LM runs, but independent review still blocked it:
-    - the catalog remained node-union scoped and could borrow `FED/LOUT/COL` from a different ordered-input domain such as `[ABSENT_LOCAL,ROW]`;
-    - requiring a native `FED/FOUT` catalog entry could silently close a policy-legal derived `FED/LOUT→FOUT` arm;
-    - distinct `FED/LOUT` FTypes shared one cost despite potentially different compute/transfer estimates;
-    - its candidate key omitted `shapeDependent`, which is part of exact `PlacementState` identity.
-  - Passing focused runs did not establish structural correctness because those regressions did not behaviorally prove per-receipt state scoping, derived-FOUT preservation, per-state costing, or complete exact-state identity.
-  - Exact baseline rerun without the k-means canonical-owner patch reproduced the same failure before disconnected-component completion.
+  - Candidate legality/availability가 ordered-input-domain별 exact receipt가 아니라 node 전체의 union state를 사용해 다른 입력 도메인의 carrier를 빌릴 수 있었다.
+  - Candidate identity가 `exec/output` 중심으로 축약되어 FType, `shapeDependent`, derived 여부, native execution FType을 완전히 구분하지 못했다.
+  - Native federated execution layout과 최종 materialization layout이 하나의 FType으로 합쳐져, 예를 들어 `FED/LOUT/ROW -> FOUT/BROADCAST`처럼 실행과 업로드의 배치가 다른 합법적인 derived 경로를 정확히 표현하거나 비용화할 수 없었다.
+  - Scalar/unknown dimensions는 실제 `FEDFoutInstruction`이 matrix data와 known dimensions를 요구하므로 FOUT을 게시할 수 없지만 neutral graph가 이를 명시적으로 닫지 않았다.
+  - DP만 exact fact를 소비하도록 바꾸면 MinST가 capability fields에서 membership을 다시 추론하여 planner 간 legality/cost authority가 달라졌다. Independent review가 이 HIGH blocker를 발견했다.
 - **해결 요약**:
-  - No accepted source fix yet. The active prototype must make candidate availability and exact-state selection consume the same per-input-domain authority, rather than borrowing a node-union state or combining broad allow bits with a later typed lookup.
+  - `CandidateEmissionFact(PlacementEmissionState, executionFType)`를 불변 exact authority로 도입하고 각 `CandidateRuleFact`가 ordered-input-domain별 exact emission catalog를 소유하도록 변경했다.
+  - Candidate/receipt identity를 exec, output, final FType, `shapeDependent`, derived, execution FType 전체로 구성하고 graph-owned exact `PlacementState` identity를 그대로 DP memo에 전달한다.
+  - Native execution FType과 final materialization FType을 분리했다. FED compute/download는 execution FType, LOUT→FOUT upload는 final materialization FType으로 각각 비용화하며 derived FED/FOUT는 두 boundary 비용을 모두 포함한다.
+  - Existing real anchor만 materialization authority로 사용한다. Exact output/input anchor가 유일할 때만 사용하고, known positive shape mismatch는 `BROADCAST`; scalar/unknown dimensions는 runtime constraint에 따라 FOUT candidate를 게시하지 않는다.
+  - MinST도 exact `CandidateEmissionFact`를 graph-owned state identity로 소비하고 resolver execution FType과 fact를 검증하도록 변경했다. Exact emission signature를 representative proof/derivation fingerprint에 포함하고, derived download/upload 비용을 분리했다.
+  - B22의 runtime-supported `FED/LOUT` candidate는 닫지 않았다. Exact membership과 finite boundary/compute cost로 비교하게 하여 금지된 candidate-space 축소를 피했다.
+  - `validateExactPlacementStates` 및 runtime behavior는 완화하지 않았고 fallback, implicit repair, partial response 선택을 추가하지 않았다.
 - **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/commons/ExecPlacementPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysis.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014CapturedFeasibilityAuthorityRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBMinStExactFactsBehaviorRedTest.java`
   - `docs/SESSION_ISSUES_2026-07-24.md`
 - **검증**:
-  - Baseline reproduction log above records the identical failure at HEAD `c6cd957c` with no k-means source changes.
-  - Rejected patch: `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/g006_lm_dp_exact_state_fix.patch`.
-  - Independent review verdict: `BLOCK`; focused final failure log `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/lm_dp_private_aggregate_final.log`.
-  - Rejected v2 patch: `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/g006_lm_dp_exact_state_fix_v2.patch`, SHA-256 `a1ea14e4a4bfafeb99379b9f9b15528dcfca4d553e3e9a5493beb69eabfb59fe`.
-  - The v2 smoke evidence (`lm_pass_1.rc`, `lm_pass_2.rc`, `lm_pass_3.rc`, and the candidate/memo gate) was GREEN, but independent review verdict remained `BLOCK` for the four structural defects above; it was not integrated.
+  - Final test compile PASS: `/run/user/10041/g006-logs/lm_v3_ff05_final_test_compile.log`.
+  - Exact authority gate PASS: `/run/user/10041/g006-logs/lm_v3_ff05_final_exact_authority_gate.log`.
+    - `CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest`
+    - `CampaignBG014MinStHeavyMmUploadAuthorityRedTest`
+    - `CampaignBMinStExactFactsBehaviorRedTest`
+    - `CampaignBG014CapturedFeasibilityAuthorityRedTest`
+    - `CampaignBDpMemoOwnerContractTest`
+    - `CampaignBG014ProgramDynamicAuthorityParityRedTest`
+    - `FederatedPlannerFallbackIntegrationTest#testDpDerivedFedFoutWhenOracleOnlyAllowsFedLout`
+  - MinST compatibility gate PASS: `/run/user/10041/g006-logs/lm_v3_ff05_minst_cp_fout_compat_gate_3.log`.
+  - All current MinST-named tests: 107 tests, 5 failures; clean `ff05a4e` baseline의 동일 5 failures와 일치.
+    - Current: `/run/user/10041/g006-logs/lm_v3_ff05_all_minst_tests_after_exact_fixes.log`.
+    - Baseline: `/run/user/10041/g006-logs/ff05_baseline_all_minst_tests.log`.
+  - DP package broad gate의 6 failures도 clean `ff05a4e` baseline과 동일했다.
+    - Current: `/run/user/10041/g006-logs/lm_v3_ff05_dp_package_gate.log`.
+    - Baseline: `/run/user/10041/g006-logs/ff05_baseline_dp_six_failures.log`.
+    - Baseline-known exclusions gate PASS: `/run/user/10041/g006-logs/lm_v3_ff05_dp_package_baseline_exclusions_gate.log`.
+  - KMeans, PCA, LogReg, LM DP private-aggregate 4-workload gate PASS: `/run/user/10041/g006-logs/lm_v3_ff05_four_workload_dp_private_aggregate_after_minst_review_fix.log`.
+  - LM focused test 3회 연속 PASS: `/run/user/10041/g006-logs/lm_v3_post_scalar_1.log`, `/run/user/10041/g006-logs/lm_v3_post_scalar_2.log`, `/run/user/10041/g006-logs/lm_v3_post_scalar_3.log`.
+  - Independent review는 최초 MinST schema parity 누락을 `BLOCK`했고, 보완 후 final verdict `APPROVE` (blocking issue 0)로 종료했다.
 - **잔여 이슈**:
-  - Make each exact candidate receipt carry its own input-domain-scoped legal `PlacementState` identities, including `shapeDependent`, rather than rereading node-union alternatives.
-  - Represent and cost native and derived output materialization separately so a policy-legal derived FOUT arm remains enumerable.
-  - Require behavioral regressions for per-domain isolation, derived-FOUT preservation, and per-state cost, then three consecutive focused LM passes plus DP candidate/memo gates before accepting a replacement patch.
+  - Accepted authoritative commit 기준 `run_LAN.sh`와 sealed `run_LAN_docker.sh`를 순서대로 실행해야 한다.
+  - Clean baseline과 동일한 DP 6건/MinST 5건의 기존 실패는 이 변경의 회귀가 아니며 별도 campaign에서 추적한다.
+  - DP 우선 정상화 원칙에 따라 FedAll → Heuristic → MinST 전체 workload 순차 정상화는 후속 목표다.
 - **잠재 회귀 위험**:
-  - Risk: node-union states from another input domain can be selected as if they belonged to the current candidate. Detection: availability/selection agreement regression bound to one exact candidate receipt.
-  - Risk: logical/projected FType overwrites the native exact output FType. Detection: transpose regression must retain the exact `COL` state while keeping projected/boundary type separate.
+  - Risk: 신규 opcode가 execution FType과 materialization FType을 동일하다고 가정하여 derived 비용을 누락할 수 있다. Detection: exact emission signature/fingerprint 테스트와 derived download+upload 비용 회귀를 추가한다.
+  - Risk: anchor ambiguity 또는 unknown shape에서 FOUT이 다시 광고될 수 있다. Detection: scalar/unknown-shape no-FOUT 및 unique-anchor regression을 유지한다.
+  - Risk: 다른 adapter가 exact receipt 대신 node-union capability를 재구성할 수 있다. Detection: planner별 graph-owned state identity와 fingerprint parity gate를 유지한다.
 - **의사결정 근거**:
-  - Repair belongs in DP exact candidate-state modeling/enumeration. Memo validation remains authoritative and must not be weakened.
+  - Oracle/runtime 제약을 완화하지 않고 planner state representation과 DP/MinST cost authority를 수정했다. Scalar/unknown FOUT exclusion만 실제 `FEDFoutInstruction` matrix/known-dimension 제약에 근거한 candidate closure이며, runtime-supported B22는 계속 열어 비용 비교한다.
 - **적용 원칙/제약**:
-  - Do not weaken `validateExactPlacementStates`; repair the carrier/state origin so the exact fail-closed invariant remains intact.
-  - Do not close a policy-legal arm merely because the catalog representation is too coarse; make the exact state representation and cost comparison complete.
+  - Runtime fallback/implicit repair/partial response 금지.
+  - Existing exact federation anchor 없이는 CP→FOUT 또는 LOUT→FOUT 금지.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙은 변경하지 않음.
+  - Runtime-supported 후보를 임의 guard로 닫지 않고 exact state/cost model을 확장하여 비교.
+  - Memo exact-state fail-closed validation은 authority로 유지하고 완화하지 않음.

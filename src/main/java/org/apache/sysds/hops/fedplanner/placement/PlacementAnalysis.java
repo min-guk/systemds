@@ -258,22 +258,57 @@ public final class PlacementAnalysis {
 	}
 
 	/** One exact immutable rule/profile fact captured by the canonical builder pass. */
+	public record CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType) {
+		public CandidateEmissionFact {
+			Objects.requireNonNull(emissionState, "emissionState");
+			PlacementState state = emissionState.placementState();
+			if(state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& executionFType == null)
+				throw new IllegalArgumentException("Federated FOUT candidate requires an exact execution FType");
+			if(state.execType() != ExecType.FED && executionFType != null)
+				throw new IllegalArgumentException("Local candidate emission cannot publish a federated execution FType");
+			if(emissionState.derivedFedFout()
+				&& (state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT))
+				throw new IllegalArgumentException("Derived FOUT authority requires a FED/FOUT emission state");
+		}
+
+		public String normalizedSignature() {
+			return emissionState.normalizedSignature() + "|executionFType="
+				+ (executionFType == null ? "-" : executionFType.name());
+		}
+	}
+
+	/** One exact immutable rule/profile fact captured by the canonical builder pass. */
 	public record CandidateRuleFact(CandidateRuleKey key, CandidateEvaluationStatus status,
 		CandidateCapabilityFact capability, CandidateShapeProofFact shapeProof, CandidateProfileFact profile,
-		String failureCode) {
+		List<CandidateEmissionFact> allowedEmissionFacts, String failureCode) {
 		public CandidateRuleFact {
 			Objects.requireNonNull(key, "key");
 			Objects.requireNonNull(status, "status");
 			Objects.requireNonNull(shapeProof, "shapeProof");
 			Objects.requireNonNull(profile, "profile");
+			allowedEmissionFacts = List.copyOf(Objects.requireNonNull(allowedEmissionFacts,
+				"allowedEmissionFacts"));
 			failureCode = failureCode == null ? "" : failureCode;
 			if(status == CandidateEvaluationStatus.AVAILABLE
-					&& (capability == null || !profile.available() || !failureCode.isEmpty())
+					&& (capability == null || !profile.available() || !failureCode.isEmpty()
+						|| allowedEmissionFacts.isEmpty())
 				|| status == CandidateEvaluationStatus.RULE_ERROR
-					&& (profile.available() || failureCode.isEmpty())
+					&& (profile.available() || failureCode.isEmpty() || !allowedEmissionFacts.isEmpty())
 				|| status == CandidateEvaluationStatus.PROFILE_ERROR
-					&& (capability == null || profile.available() || failureCode.isEmpty()))
+					&& (capability == null || profile.available() || failureCode.isEmpty()
+						|| !allowedEmissionFacts.isEmpty()))
 				throw new IllegalArgumentException("Candidate rule status and evidence differ");
+			Set<PlacementEmissionState> identities = new java.util.HashSet<>();
+			for(CandidateEmissionFact fact : allowedEmissionFacts) {
+				Objects.requireNonNull(fact, "allowed emission fact");
+				if(!identities.add(fact.emissionState()))
+					throw new IllegalArgumentException("Duplicate exact candidate emission state");
+			}
+		}
+
+		public List<PlacementEmissionState> allowedEmissionStates() {
+			return allowedEmissionFacts.stream().map(CandidateEmissionFact::emissionState).toList();
 		}
 	}
 

@@ -729,14 +729,26 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		Assert.assertEquals("MINST_B22_REPAIR_OWNED_DECISION", 1, repairOwned.size());
 		int index = repairOwned.get(0);
 		Object decision = decisions.get(index);
+		boolean hasFedLout = false;
 		for(Object state : list(decision, "legalStatesInCanonicalOrder")) {
 			PlacementState placement = (PlacementState)state;
-			Assert.assertFalse("RAW_STATE_RECEIPT_MISMATCH|B22_Y1_FED_LOUT_MUST_BE_PRE_SOLVE_ILLEGAL",
-				placement.execType().name().equals("FED") && placement.output().name().equals("LOUT"));
+			hasFedLout |= placement.execType().name().equals("FED")
+				&& placement.output().name().equals("LOUT");
 		}
-		assertEdgeCapacity(edges, ((Number)call(decision, "computeNodeId")).longValue(),
-			((Number)call(decision, "placementNodeId")).longValue(), HARD_LEGALITY_BITS,
-			"MINST_B22_PRE_SOLVE_HARD_LEGALITY_EDGE");
+		Assert.assertTrue("RAW_STATE_RECEIPT_MISMATCH|B22_Y1_EXACT_FED_LOUT_MISSING", hasFedLout);
+		long compute = ((Number)call(decision, "computeNodeId")).longValue();
+		long placement = ((Number)call(decision, "placementNodeId")).longValue();
+		boolean priced = false;
+		for(Object edge : edges)
+			if(((Number)call(edge, "fromNodeId")).longValue() == compute
+				&& ((Number)call(edge, "toNodeId")).longValue() == placement) {
+				double capacity = Double.longBitsToDouble(((Number)call(edge, "capacityBits")).longValue());
+				Assert.assertTrue("MINST_B22_EXACT_FED_LOUT_DOWNLOAD_MUST_BE_FINITE",
+					Double.isFinite(capacity) && capacity >= 0.0
+						&& ((Number)call(edge, "capacityBits")).longValue() != HARD_LEGALITY_BITS);
+				priced = true;
+			}
+		Assert.assertTrue("MINST_B22_EXACT_FED_LOUT_DOWNLOAD_EDGE_MISSING", priced);
 		return index;
 	}
 

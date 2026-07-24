@@ -100,6 +100,8 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
@@ -326,6 +328,30 @@ public class FederatedPlannerFallbackIntegrationTest {
 			.findFirst().orElse(null);
 		assertNotNull("The exact aggregate receipt must capture FED/LOUT authority and derived FED/FOUT enablement",
 			receipt);
+		List<CandidateInputState> exactInputs = receipt.orderedOracleInputs().stream()
+			.map(input -> input == org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter
+				.OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
+					: CandidateInputState.present(FType.valueOf(input.name())))
+			.toList();
+		List<CandidateEmissionFact> exactDerivedEntries = invocation.analysis().candidateRuleFacts()
+			.requireExact(receipt.candidateSnapshot().parentOccurrence(), exactInputs).allowedEmissionFacts()
+			.stream().filter(fact -> fact.emissionState().derivedFedFout())
+			.filter(fact -> fact.emissionState().placementState().execType() == ExecType.FED
+				&& fact.emissionState().placementState().output() == FederatedOutput.FOUT)
+			.toList();
+		assertEquals("The exact aggregate input domain must publish one derived FED/FOUT entry",
+			1, exactDerivedEntries.size());
+		CandidateEmissionFact exactDerived = exactDerivedEntries.get(0);
+		assertEquals("Derived FED execution must retain its native ROW execution domain",
+			FType.ROW, exactDerived.executionFType());
+		assertEquals("Shape-changing derived materialization must target BROADCAST on the exact worker pool",
+			FType.BROADCAST, exactDerived.emissionState().placementState().fType());
+		assertTrue("The derived FED/FOUT entry must retain a graph-owned exact placement state",
+			invocation.analysis().graph().node(receipt.candidateSnapshot().parentOccurrence()).orElseThrow()
+				.legalAlternatives().stream()
+				.anyMatch(state -> state == exactDerived.emissionState().placementState()));
+		assertTrue("The policy-filtered receipt must retain the exact derived FED/FOUT entry",
+			receipt.allowedEmissionFacts().stream().anyMatch(fact -> fact == exactDerived));
 		Hop receiptHop = invocation.analysis().hop(receipt.candidateSnapshot().parentOccurrence()).orElse(null);
 		assertTrue("The receipt must resolve to the exact aggregate carrier",
 			receiptHop == targetOccurrence.hop());
@@ -336,6 +362,10 @@ public class FederatedPlannerFallbackIntegrationTest {
 			derived.getHopRef() == targetOccurrence.hop());
 		assertEquals("Selected derived FOUT must be FED-executable", ExecType.FED, derived.getExecType());
 		assertEquals("Selected derived plan must publish FOUT", FederatedOutput.FOUT, derived.getFedOutType());
+		assertEquals("Selected derived plan must retain its exact BROADCAST target",
+			FType.BROADCAST, derived.getFType());
+		assertTrue("Selected derived plan must retain the exact graph-owned placement state",
+			derived.getSelectedPlacementState() == exactDerived.emissionState().placementState());
 		assertTrue("Selected FOUT must be marked as derived from the retained FED/LOUT authority",
 			derived.isDerivedFedFout());
 	}

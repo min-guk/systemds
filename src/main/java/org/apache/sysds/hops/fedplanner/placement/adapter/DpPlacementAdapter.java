@@ -35,6 +35,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRew
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
@@ -382,7 +383,16 @@ public final class DpPlacementAdapter {
 		}
 	}
 
-	public record CandidatePlacementArm(ExecType execType, FederatedOutput output) { }
+	public record CandidatePlacementArm(ExecType execType, FederatedOutput output, FType fType,
+		boolean shapeDependent, boolean derivedFedFout, FType executionFType) {
+		public CandidatePlacementArm(CandidateEmissionFact fact) {
+			this(fact.emissionState().placementState().execType(),
+				fact.emissionState().placementState().output(),
+				fact.emissionState().placementState().fType(),
+				fact.emissionState().placementState().shapeDependent(),
+				fact.emissionState().derivedFedFout(), fact.executionFType());
+		}
+	}
 
 	/** Exact compiler-owned authority for one carrierless synthetic function boundary. */
 	public record SyntheticBoundaryReceipt(PlacementAnalysis analysis,
@@ -443,9 +453,9 @@ public final class DpPlacementAdapter {
 		FederatedOutput nativeOutput, FType nativeFoutFType, FType logicalFType,
 		ReasonCode reasonCode, ConstructionDisposition disposition,
 		CapturedInvocationEvidence invocationEvidence, Privacy privacy,
-		boolean allowCPLOUT, boolean allowCPFOUT, boolean allowFEDLOUT, boolean allowFEDFOUT,
-		CandidateCapabilityFact capabilityFact,
-		Map<CandidatePlacementArm, PlacementState> candidateStateCatalog) {
+			boolean allowCPLOUT, boolean allowCPFOUT, boolean allowFEDLOUT, boolean allowFEDFOUT,
+			CandidateCapabilityFact capabilityFact,
+			Map<CandidatePlacementArm, CandidateEmissionFact> candidateStateCatalog) {
 		public CandidateDecisionReceipt {
 			Objects.requireNonNull(context, "context");
 			Objects.requireNonNull(candidateSnapshot, "candidateSnapshot");
@@ -457,18 +467,43 @@ public final class DpPlacementAdapter {
 			Objects.requireNonNull(invocationEvidence, "invocationEvidence");
 			Objects.requireNonNull(privacy, "privacy");
 			Objects.requireNonNull(capabilityFact, "capabilityFact");
-			candidateStateCatalog = Map.copyOf(Objects.requireNonNull(candidateStateCatalog,
-				"candidateStateCatalog"));
+			candidateStateCatalog = Collections.unmodifiableMap(new LinkedHashMap<>(
+				Objects.requireNonNull(candidateStateCatalog, "candidateStateCatalog")));
 			if(context != candidateSnapshot.context() || variantOrdinal < 0
 				|| !orderedOracleInputs.equals(candidateSnapshot.orderedOracleInputs()))
 				throw new IllegalArgumentException("Candidate decision receipt identity or order differs");
 		}
 
+		public List<PlacementEmissionState> allowedEmissionStates() {
+			return candidateStateCatalog.values().stream()
+				.map(CandidateEmissionFact::emissionState).toList();
+		}
+
+		public List<CandidateEmissionFact> allowedEmissionFacts() {
+			return List.copyOf(candidateStateCatalog.values());
+		}
+
+		public PlacementEmissionState requireExactEmissionState(ExecType execType, FederatedOutput output,
+			FType fType, boolean derivedFedFout) {
+			List<PlacementEmissionState> matches = candidateStateCatalog.values().stream()
+				.map(CandidateEmissionFact::emissionState)
+				.filter(state -> state.placementState().execType() == execType)
+				.filter(state -> state.placementState().output() == output)
+				.filter(state -> state.placementState().fType() == fType)
+				.filter(state -> state.derivedFedFout() == derivedFedFout).toList();
+			if(matches.size() != 1)
+				throw new IllegalArgumentException("Candidate arm has no unique exact emission state");
+			return matches.get(0);
+		}
+
 		public PlacementState requireExactState(ExecType execType, FederatedOutput output) {
-			PlacementState state = candidateStateCatalog.get(new CandidatePlacementArm(execType, output));
-			if(state == null)
-				throw new IllegalArgumentException("Candidate arm has no exact analysis-owned placement state");
-			return state;
+			List<PlacementEmissionState> matches = candidateStateCatalog.values().stream()
+				.map(CandidateEmissionFact::emissionState)
+				.filter(state -> state.placementState().execType() == execType)
+				.filter(state -> state.placementState().output() == output).toList();
+			if(matches.size() != 1)
+				throw new IllegalArgumentException("Candidate arm has no unique exact analysis-owned placement state");
+			return matches.get(0).placementState();
 		}
 	}
 
@@ -756,25 +791,27 @@ public final class DpPlacementAdapter {
 				normalizedCandidateInputs.effectiveNonNullFTypeMap(), context.analysis(),
 				context.analysisFingerprint(), snapshot.parentOccurrence(), orderedInputs,
 				resolved.fact(), invocationEvidence, variantOrdinal));
-		Map<CandidatePlacementArm, PlacementState> catalog = new LinkedHashMap<>();
+		Map<CandidatePlacementArm, CandidateEmissionFact> catalog = new LinkedHashMap<>();
 		NeutralPlacementGraph.Node node = context.analysis().graph().node(snapshot.parentOccurrence()).orElseThrow();
-		for(PlacementState state : node.legalAlternatives()) {
+		for(CandidateEmissionFact emissionFact : resolved.fact().allowedEmissionFacts()) {
+			PlacementEmissionState emissionState = emissionFact.emissionState();
+			PlacementState state = emissionState.placementState();
+			if(node.legalAlternatives().stream().noneMatch(candidate -> candidate == state))
+				throw new IllegalArgumentException("Candidate fact publishes a state outside node legal alternatives");
 			boolean allowed = state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 				? placement.allowCP_LOUT : state.execType() == ExecType.CP && state.output() == FederatedOutput.FOUT
 				? placement.allowCP_FOUT : state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT
 				? placement.allowFED_LOUT : placement.allowFED_FOUT;
-			if(allowed && catalog.putIfAbsent(new CandidatePlacementArm(state.execType(), state.output()), state) != null)
+			if(allowed && catalog.putIfAbsent(new CandidatePlacementArm(emissionFact), emissionFact) != null)
 				throw new IllegalArgumentException("Candidate arm maps to multiple exact legal states");
 		}
 		return new CandidateDecisionReceipt(context, snapshot, variantOrdinal, snapshot.orderedOracleInputs(),
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
 			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
-			catalog.containsKey(new CandidatePlacementArm(ExecType.CP, FederatedOutput.LOUT)),
-			catalog.containsKey(new CandidatePlacementArm(ExecType.CP, FederatedOutput.FOUT)),
-			catalog.containsKey(new CandidatePlacementArm(ExecType.FED, FederatedOutput.LOUT)),
-			catalog.containsKey(new CandidatePlacementArm(ExecType.FED, FederatedOutput.FOUT)),
+			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT,
 			caps, catalog);
 	}
+
 
 	/** Exact catalog lookup for an authorized zero-input/source variant. */
 	public static PlacementState requireExactSourceState(NeutralEnumerationContext context,
