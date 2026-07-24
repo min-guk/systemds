@@ -186,6 +186,30 @@ public final class Rulesets {
     return false;
   }
 
+  private static boolean hasScalarFromList(Collection<FType> types) {
+    if (types == null)
+      return false;
+    for (FType t : types) {
+      if (isScalarLike(t))
+        return true;
+    }
+    return false;
+  }
+
+  private static boolean otherMatrixScalarPair(OpSig sig, List<FType> left, List<FType> right) {
+    return (left != null && left.contains(FType.OTHER) && sig.inputKind(0) == OpSig.InputKind.MATRIX
+        && sig.inputKind(1) == OpSig.InputKind.SCALAR && hasScalarFromList(right))
+        || (right != null && right.contains(FType.OTHER) && sig.inputKind(1) == OpSig.InputKind.MATRIX
+            && sig.inputKind(0) == OpSig.InputKind.SCALAR && hasScalarFromList(left));
+  }
+
+  private static boolean otherMatrixScalarPair(OpSig sig, FType left, FType right) {
+    return (left == FType.OTHER && sig.inputKind(0) == OpSig.InputKind.MATRIX
+        && sig.inputKind(1) == OpSig.InputKind.SCALAR && isScalarLike(right))
+        || (right == FType.OTHER && sig.inputKind(1) == OpSig.InputKind.MATRIX
+            && sig.inputKind(0) == OpSig.InputKind.SCALAR && isScalarLike(left));
+  }
+
   private static boolean matrixScalarPair(FType left, FType right, FType axis) {
     return (matchesAxis(left, axis) && isBroadcastOrScalar(right))
         || (matchesAxis(right, axis) && isBroadcastOrScalar(left));
@@ -3109,6 +3133,12 @@ public final class Rulesets {
         outs.add(FType.ROW);
       if (matrixScalarPair(left, right, FType.COL))
         outs.add(FType.COL);
+      // BinaryMatrixScalarFEDInstruction routes an exact scalar paired with any non-broadcast
+      // federated matrix mapping, including OTHER, and preserves that mapping on the output.
+      // Keep this operation-local; OTHER is still not a durable relocation anchor and is not
+      // globally federated-like.
+      if (otherMatrixScalarPair(sig, left, right))
+        outs.add(FType.OTHER);
       boolean vectorHint = isVectorHint(hint);
       if (vectorHint) {
         boolean leftHasBroadcast = left != null && left.contains(FType.BROADCAST);
@@ -3177,6 +3207,30 @@ public final class Rulesets {
             axis = FType.COL;
           }
         }
+      }
+
+      // Binary matrix-scalar runtime also supports exact OTHER mappings: it dispatches a scalar
+      // paired with any non-broadcast federated matrix through BinaryMatrixScalarFEDInstruction
+      // and copies the original FederationMap type to the output. This intentionally does not
+      // make OTHER a durable anchor or globally federated-like; it only admits the proven
+      // matrix-scalar op.
+      if (axis == null && otherMatrixScalarPair(sig, left, right) && !outerLike) {
+        Guard.Result guard = Guard.eval(sig);
+        if (guard != null && guard.isFail())
+          return guardFallbackBuilder(sig, guard).build();
+        OpCaps.Builder builder = OpCaps.newBuilder()
+            .category(sig.category())
+            .opcode(sig.opcode())
+            .exec(ExecType.FED)
+            .placement(FederatedOutput.FOUT)
+            .fout(true, FType.OTHER)
+            .reason(ReasonCode.OK)
+            .note(ReasonCode.INFO, "OTHER matrix-scalar elemwise preserves source mapping");
+        if (guard == null || guard.isUnknown())
+          builder.note(ReasonCode.REPR_CHANGE_GUARD_UNKNOWN, guardDetail(guard));
+        else
+          appendGuardPassNote(builder, guard);
+        return builder.build();
       }
 
       // FULL is a single-partition federated mapping (one worker holds the entire matrix).

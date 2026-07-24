@@ -22,6 +22,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,14 +30,17 @@ import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.FTypeProfile;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpSig.InputKind;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.Rule;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class RuleBasicsTest {
@@ -87,6 +91,73 @@ public class RuleBasicsTest {
     OpCaps caps = rule.caps(sig, Arrays.asList((FType) null), UNKNOWN_SHAPE);
     assertEquals(ExecType.CP, caps.exec());
     assertEquals(ReasonCode.NOT_FEDERATED_INPUTS, caps.reason());
+  }
+
+  @Test
+  public void binaryElemwiseOtherMatrixScalarProfilesOtherOutput() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig leftScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.SCALAR);
+    OpSig rightScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.SCALAR, InputKind.MATRIX);
+
+    FTypeProfile leftOther = rule.profile(leftScalar,
+        List.of(List.of(FType.OTHER), Collections.singletonList(null)), UNKNOWN_SHAPE);
+    FTypeProfile rightOther = rule.profile(rightScalar,
+        List.of(Collections.singletonList(null), List.of(FType.OTHER)), UNKNOWN_SHAPE);
+
+    assertEquals(List.of(FType.OTHER), leftOther.outputs());
+    assertEquals(List.of(FType.OTHER), rightOther.outputs());
+  }
+
+  @Test
+  public void binaryElemwiseOtherMatrixScalarCapsFedFoutOtherOnlyForExactScalarPair() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig leftScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.SCALAR);
+    OpSig rightScalar = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.SCALAR, InputKind.MATRIX);
+
+    OpCaps leftOther = rule.caps(leftScalar, Arrays.asList(FType.OTHER, null), UNKNOWN_SHAPE);
+    assertEquals(ExecType.FED, leftOther.exec());
+    assertEquals(FederatedOutput.FOUT, leftOther.placement());
+    assertTrue(leftOther.foutEnabled());
+    assertEquals(FType.OTHER, leftOther.foutFType().orElse(null));
+    assertEquals(ReasonCode.OK, leftOther.reason());
+
+    OpCaps rightOther = rule.caps(rightScalar, Arrays.asList(null, FType.OTHER), UNKNOWN_SHAPE);
+    assertEquals(ExecType.FED, rightOther.exec());
+    assertEquals(FederatedOutput.FOUT, rightOther.placement());
+    assertTrue(rightOther.foutEnabled());
+    assertEquals(FType.OTHER, rightOther.foutFType().orElse(null));
+    assertEquals(ReasonCode.OK, rightOther.reason());
+
+    OpCaps otherBroadcast = rule.caps(leftScalar, List.of(FType.OTHER, FType.BROADCAST), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, otherBroadcast.exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, otherBroadcast.reason());
+  }
+
+  @Test
+  public void binaryElemwiseOtherNullRequiresExactScalarInputKind() {
+    Rulesets.BinaryElemwiseRule rule = new Rulesets.BinaryElemwiseRule();
+    OpSig frameOther = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.FRAME);
+    OpSig unknownOther = OpSig.of(OpOp2.PLUS.toString(), OpCategory.BINARY_EWISE, Map.of(),
+        InputKind.MATRIX, InputKind.UNKNOWN);
+
+    FTypeProfile frameProfile = rule.profile(frameOther,
+        List.of(List.of(FType.OTHER), Collections.singletonList(null)), UNKNOWN_SHAPE);
+    FTypeProfile unknownProfile = rule.profile(unknownOther,
+        List.of(List.of(FType.OTHER), Collections.singletonList(null)), UNKNOWN_SHAPE);
+    assertEquals(List.of(), frameProfile.outputs());
+    assertEquals(List.of(), unknownProfile.outputs());
+
+    OpCaps frameCaps = rule.caps(frameOther, Arrays.asList(FType.OTHER, null), UNKNOWN_SHAPE);
+    OpCaps unknownCaps = rule.caps(unknownOther, Arrays.asList(FType.OTHER, null), UNKNOWN_SHAPE);
+    assertEquals(ExecType.CP, frameCaps.exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, frameCaps.reason());
+    assertEquals(ExecType.CP, unknownCaps.exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, unknownCaps.reason());
   }
 
   @Test

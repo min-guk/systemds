@@ -18,9 +18,11 @@
 package org.apache.sysds.hops.fedplanner.rules.bridge;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -151,6 +153,47 @@ public class OracleFacadeTest {
   }
 
   @Test
+  public void binaryOtherMatrixScalarBridgePreservesOtherForBothOrders() {
+    Hop matrix = matrix("X", 4, 4);
+    BinaryOp leftOther = new BinaryOp("leftOther", DataType.MATRIX, ValueType.FP64,
+        OpOp2.PLUS, matrix, new LiteralOp(1.0));
+    OracleFacade.DecisionEvidence leftEvidence =
+        facade.decideWithEvidence(leftOther, Arrays.asList(FTypes.FType.OTHER, null), null);
+    assertEquals(ExecType.FED, leftEvidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, leftEvidence.caps().placement());
+    assertEquals(Optional.of(FType.OTHER), leftEvidence.caps().foutFType());
+    assertEquals(ReasonCode.OK, leftEvidence.caps().reason());
+
+    Hop rightMatrix = matrix("Y", 4, 4);
+    BinaryOp rightOther = new BinaryOp("rightOther", DataType.MATRIX, ValueType.FP64,
+        OpOp2.PLUS, new LiteralOp(1.0), rightMatrix);
+    OracleFacade.DecisionEvidence rightEvidence =
+        facade.decideWithEvidence(rightOther, Arrays.asList(null, FTypes.FType.OTHER), null);
+    assertEquals(ExecType.FED, rightEvidence.caps().exec());
+    assertEquals(FederatedOutput.FOUT, rightEvidence.caps().placement());
+    assertEquals(Optional.of(FType.OTHER), rightEvidence.caps().foutFType());
+    assertEquals(ReasonCode.OK, rightEvidence.caps().reason());
+  }
+
+  @Test
+  public void binaryOtherMatrixBridgeRejectsNonScalarCounterpart() {
+    Hop matrix = matrix("X", 4, 4);
+    Hop frame = frame("F", 4, 4);
+    BinaryOp plus = new BinaryOp("otherFrame", DataType.MATRIX, ValueType.FP64,
+        OpOp2.PLUS, matrix, frame);
+
+    OracleFacade.DecisionEvidence evidence =
+        facade.decideWithEvidence(plus, Arrays.asList(FTypes.FType.OTHER, null), null);
+
+    assertFalse("OTHER + FRAME must not be admitted as BinaryMatrixScalarFEDInstruction",
+        evidence.caps().exec() == ExecType.FED
+            && evidence.caps().placement() == FederatedOutput.FOUT
+            && evidence.caps().foutFType().equals(Optional.of(FType.OTHER)));
+    assertEquals(ExecType.CP, evidence.caps().exec());
+    assertEquals(ReasonCode.NO_FED_INPUT, evidence.caps().reason());
+  }
+
+  @Test
   public void transientWriteProofIgnoresObservationOnlyShapeLogging() {
     Hop input = matrix("input", -1, -1);
     input.setBlocksize(-1);
@@ -203,6 +246,11 @@ public class OracleFacadeTest {
 
   private static DataOp matrix(String name, long rows, long cols) {
     return new DataOp(name, DataType.MATRIX, ValueType.FP64,
+        OpOpData.TRANSIENTREAD, name, rows, cols, rows * cols, 1000);
+  }
+
+  private static DataOp frame(String name, long rows, long cols) {
+    return new DataOp(name, DataType.FRAME, ValueType.STRING,
         OpOpData.TRANSIENTREAD, name, rows, cols, rows * cols, 1000);
   }
 

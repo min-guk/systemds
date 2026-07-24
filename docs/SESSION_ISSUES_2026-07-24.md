@@ -559,3 +559,131 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - No production planner/oracle/runtime code changed; no candidate-space guard was added.
+
+## Issue: B13 OTHER matrix-scalar binary elemwise rule omitted runtime-supported FED/FOUT/OTHER candidate
+
+- **상태**: 해결 (isolated stage-2 Rulesets/bridge repair committed from disposable clone).
+- **환경/조건**: Isolated clone `/run/user/10041/g005-b13-other-rules-execute-20260724/repo` at base `a11ebc20388d0b4043aefdd9c5d3b017f87c086a`; DP planner priority; source/anchor split already proves literal B13 source availability as exact `FED/FOUT/OTHER` while durable anchors remain empty. Verification used a disposable local real `target` directory inside the isolated clone and Java tmp/Maven repo under `/run/user/10041/g005-b13-other-rules-execute-20260724`.
+- **재현 절차**:
+  - Diagnosis artifact: `/run/user/10041/g005-b13-other-capability-probe-20260724/G005_B13_OTHER_CAPABILITY_DIAGNOSIS_20260724.md` (SHA `656e7d059d4f150cda368214295512628c4bc59850594bd55cd4667a800c0141`).
+  - Review blocker artifact: `/run/user/10041/g005-b13-other-rules-review-20260724/G005_B13_OTHER_RULES_CODE_REVIEW_20260724.md` (SHA `60697ad4033fcc485ccad934a3eb574c6016ffc22747c61ecd9d33fe32782a4c`) found the first pass admitted generic non-matrix counterparts and required exact SCALAR binding.
+  - Focused rule command: `MAVEN_OPTS=-Djava.io.tmpdir=/run/user/10041/g005-b13-other-rules-execute-20260724/tmp/rule_basics_other_post mvn -q -Dmaven.repo.local=/run/user/10041/g005-b13-other-rules-execute-20260724/m2 -DskipTests=false -Dtest=org.apache.sysds.test.functions.fedplanner.rules.RuleBasicsTest#binaryElemwiseOtherMatrixScalarProfilesOtherOutput+binaryElemwiseOtherMatrixScalarCapsFedFoutOtherOnlyForExactScalarPair test`.
+  - B13 graph rule-fact command: `MAVEN_OPTS=-Djava.io.tmpdir=/run/user/10041/g005-b13-other-rules-execute-20260724/tmp/b13_rule_fact_post mvn -q -Dmaven.repo.local=/run/user/10041/g005-b13-other-rules-execute-20260724/m2 -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.CampaignBG014B13OtherMatrixScalarRuleFactRedTest test`.
+- **관측 증상**:
+  - Probe showed B13 source `X` legal states included `FED/FOUT/OTHER`, but consumer `Y=X+1` initially had only `CP/LOUT` legal/memo output.
+  - Exact candidate fact `[PRESENT OTHER, ABSENT_LOCAL]` initially reported `cap=BINARY_EWISE:+:CP:LOUT:null:NO_FED_INPUT` and empty producer profile, so the runtime-supported `OTHER + scalar -> OTHER` path never entered DP's neutral graph.
+  - After adding the Rulesets capability, a temporary B13 graph probe still reported `CP/LOUT/NO_FED_INPUT` because `OracleFacade.mapFederatedType(...)` mapped runtime `FType.OTHER` to `null` at the bridge boundary; shape proof required/consulted `{rows, cols}` and had no missing facts, so the remaining defect was not missing shape evidence.
+- **원인 분석**:
+  - `Rulesets.BinaryElemwiseRule.profile(...)` modeled ROW/COL aligned and matrix-scalar cases plus vector BROADCAST, but not exact `OTHER` matrix + scalar.
+  - `Rulesets.BinaryElemwiseRule.caps(...)` computed `hasFedInput` with `isFederatedLike(...)`, which intentionally excludes `OTHER`; therefore `[OTHER, null]` fell through as `NO_FED_INPUT`.
+  - `OracleFacade.mapFederatedType(...)` globally dropped `FType.OTHER`, so operation-local Rulesets support could not be reached from neutral graph facts even when B13 source state was exact `OTHER`. The first bridge repair was then narrowed after review to require the opposite Hop is non-null and exactly `DataType.SCALAR`, not merely non-matrix or unknown.
+  - Runtime evidence in the diagnosis shows `BinaryMatrixScalarFEDInstruction` accepts non-broadcast federated mappings and preserves the input `FederationMap` type, including `OTHER`.
+- **의사결정 근거 / Decision boundary**: Operation-specific Rulesets plus bridge-boundary repair. The change admits the proven matrix-scalar binary elemwise runtime capability for exact `OTHER` sources and maps `OTHER` through the oracle bridge only for binary owners whose opposite input is exactly `DataType.SCALAR`. Direct rules require the opposite `null` FType to be backed by `OpSig.InputKind.SCALAR`. It does not broaden global `isFederatedLike(...)`, does not globally map `OTHER`, does not add `OTHER` to durable anchors/relocations/materialization authority, and does not touch privacy, TR/TW, recompile `<CP,FOUT>`, or runtime fallback behavior.
+- **해결 요약**:
+  - Added local helper predicates for exact `OTHER` matrix + local scalar pairs.
+  - Extended `BinaryElemwiseRule.profile(...)` to publish producer output `OTHER` for either operand ordering when the other operand is exact SCALAR/local-null by `OpSig.InputKind`.
+  - Added a guarded `BinaryElemwiseRule.caps(...)` branch returning `FED/FOUT/OTHER` with `ReasonCode.OK` for exact `OTHER` matrix-scalar pairs, preserving existing guard behavior.
+  - Scoped `OracleFacade` runtime-OTHER mapping to `BinaryOp` matrix-scalar inputs only, requiring the counterpart Hop is non-null and exactly `DataType.SCALAR`; every other `OTHER` runtime type remains mapped to `null`.
+  - Added focused `RuleBasicsTest` coverage for profile output, both operand orderings, negative `OTHER+BROADCAST`, and negative FRAME/UNKNOWN input-kind cases with `[OTHER,null]` to prove the repair is exact SCALAR-only and not a broad `OTHER`/broadcast authorization.
+  - Added `OracleFacadeTest` bridge coverage for both operand orders and a FRAME counterpart negative so bridge mapping cannot admit generic non-matrix operands.
+  - Added B13 neutral-graph rule-fact coverage proving `Y=X+1` exposes legal `FED/FOUT/OTHER`, exact `[PRESENT OTHER, ABSENT_LOCAL]` AVAILABLE capability/profile facts, no durable relocation involving `Y`, and no compiled-graph mutation.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/rules/bridge/OracleFacade.java`
+  - `src/test/java/org/apache/sysds/test/functions/fedplanner/rules/RuleBasicsTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/CampaignBG014B13OtherMatrixScalarRuleFactRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/rules/bridge/OracleFacadeTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Focused new rule tests GREEN after exact-SCALAR amendment: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/rule_basics_other.scalarfix.localtarget.log`; parsed XML `target/surefire-reports/TEST-org.apache.sysds.test.functions.fedplanner.rules.RuleBasicsTest.xml` — 3 tests, 0 failures, 0 errors, 0 skipped.
+  - OracleFacade bridge tests GREEN: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/oracle_facade.scalarfix.localtarget.log`; parsed XML `target/surefire-reports/TEST-org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacadeTest.xml` — full class count recorded in final artifact, 0 failures, 0 errors, 0 skipped.
+  - Nearest guard regression GREEN: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/rulesets_guard.scalarfix.localtarget.log`; parsed XML `target/surefire-reports/TEST-org.apache.sysds.hops.fedplanner.rules.RulesetsGuardTest.xml` — 5 tests, 0 failures, 0 errors, 0 skipped.
+  - B13 source/anchor regression GREEN: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/b13_source_anchor.scalarfix.localtarget.log`; parsed XML `target/surefire-reports/TEST-org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserverFactoryContractTest.xml` — 1 test, 0 failures, 0 errors, 0 skipped. Proves `OTHER` remains unavailable as a durable anchor.
+  - B13 rule-fact/legal-state regression GREEN: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/b13_rule_fact_legal.scalarfix.localtarget.log`; parsed XML `target/surefire-reports/TEST-org.apache.sysds.hops.fedplanner.placement.CampaignBG014B13OtherMatrixScalarRuleFactRedTest.xml` — 1 test, 0 failures, 0 errors, 0 skipped.
+  - Compile GREEN: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/test_compile.scalarfix.localtarget.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check GREEN: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/diff_check.scalarfix.log` — scoped `git diff --check`, exit 0.
+  - Discarded contaminated attempts: `/run/user/10041/g005-b13-other-rules-execute-20260724/logs/rule_basics_other.log`, `b13_rule_fact_legal.clean.log`, and related copy/symlink runs were not counted because they either used the inherited tracked `target` symlink or predated the operation-specific bridge repair.
+- **잔여 이슈**:
+  - Full `RuleBasicsTest` has unrelated pre-existing expectation drift (`quantilePickIncludesQpick`, `fullInputNotTreatedAsScalarLike`) and was not used as acceptance evidence for this focused repair.
+  - LAN, Docker, FedAll, Heuristic, and MinST are later workflow stages and were not run for this isolated DP-priority operation-rule repair.
+- **잠재 회귀 위험**:
+  - Risk: the operation-local `OTHER` branch could be mistaken for durable relocation authority. Detection: keep the B13 anchor regression and no-relocation assertion in the B13 rule-fact test green; review for no changes to durable-anchor helpers/registries.
+  - Risk: the `OracleFacade` bridge could accidentally become a global `OTHER` pass-through. Detection: the bridge predicate requires a binary owner, exact matrix input, and exactly `DataType.SCALAR` counterpart; direct rules require `OpSig.InputKind.SCALAR`; future broadening must have per-operation runtime evidence.
+  - Risk: future runtime changes might narrow `BinaryMatrixScalarFEDInstruction` support. Detection: keep the focused rules/bridge tests paired with runtime capability probes before broadening beyond exact scalar.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space guard prohibition: respected; this opens a runtime-supported candidate instead of closing candidates.
+
+## Issue: Projected-upload selector is a PUBLIC privacy case with relocation authority, not active private DP work
+
+- **상태**: IGNORE_PUBLIC / no code change.
+- **환경/조건**: Decision artifact `/run/user/10041/g005-projected-upload-decision-20260724/G005_PROJECTED_UPLOAD_DECISION_20260724.md` (SHA `79c0a486080b6d7a2554fbc488aaa9ccfb837a31f6797d9ffb4fa790ab7a1f66`); selector `CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest#canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt`; production DP privacy capture and projected-upload fixture.
+- **재현 절차**:
+  - Disposable clone reproduced the selector with a real local `target`: `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_repro_realtarget.log`.
+  - Trace evidence captured in `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_trace_realtarget.log`.
+- **관측 증상**:
+  - The selector failed with `missing target FOUT variants` because it expected a legacy producer-side `CP/FOUT` memo variant for local persistent read `S`.
+  - Probe showed `targetPrivacy=PUBLIC`, `recompile=false`, target legal state only `CP/LOUT`, and `memo FOUT=null` for the local producer.
+  - The neutral graph already contained an exact relocation action/obligation from local `S` to the federated `rbind` consumer's ROW durable anchor.
+- **원인 분석**:
+  - Production `DpPlacementAdapter.captureNeutralEnumerationContext` defaults absent privacy metadata to `Privacy.PUBLIC`; this fixture has PUBLIC privacy in production semantics and falls under the campaign instruction to ignore public privacy-constraint cases.
+  - The failing assertion encodes an obsolete legacy producer `CP/FOUT` memo expectation. Current production authority represents upload feasibility as graph relocation action plus selected parent `FED/FOUT` consumer state, not as a generic local-producer `CP/FOUT` alternative.
+  - The target is `PERSISTENTREAD` and `recompile=false`, so the failure does not implicate TRead/TWrite consistency or recompile `<CP,FOUT>` closure.
+- **의사결정 근거 / Decision boundary**: Selector classification only. No production/test source modification is made for this issue. Do not add generic `CP/FOUT` persistent-read variants, do not relax TR/TW or recompile rules, and do not add runtime fallback. If campaign policy later treats default-PUBLIC differently from syntactically annotated PUBLIC, classify this as test-contract defer rather than production GO_FIX.
+- **해결 요약**:
+  - Classified the selector as `IGNORE_PUBLIC` for the current DP-first campaign.
+  - Preserved existing relocation authority as the correct production model for local-producer upload into an existing durable federated anchor.
+- **수정 파일**:
+  - None for this issue; documentation entry only in `docs/SESSION_ISSUES_2026-07-24.md`.
+- **검증**:
+  - Decision artifact SHA verified: `79c0a486080b6d7a2554fbc488aaa9ccfb837a31f6797d9ffb4fa790ab7a1f66`.
+  - Reproduction log: `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_repro_realtarget.log` — selector failed at the legacy `missing target FOUT variants` expectation.
+  - Trace log: `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_trace_realtarget.log` — finite upload/boundary-share evidence and existing relocation action were observed.
+- **잔여 이슈**:
+  - Future non-PUBLIC analogue should normalize/assert selected graph relocation and obligation evidence instead of fabricating producer `CP/FOUT` memo state.
+  - Trace still showed a parent NaN FOUT cost; it was not the root cause of this selector failure but remains a future non-PUBLIC normalization/NaN cost-stability risk.
+- **잠재 회귀 위험**:
+  - Risk: public-default cases could be accidentally treated as active private fixes. Detection: inspect captured production privacy (`targetPrivacy=PUBLIC`) before changing production for this selector.
+  - Risk: relocation authority could be bypassed by reintroducing producer `CP/FOUT` variants. Detection: keep relocation action/obligation checks as the future non-PUBLIC contract surface.
+- **적용 원칙/제약**:
+  - Public privacy cases are ignored for this campaign.
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space/opcode guard prohibition: unchanged.
+
+## Issue: Tracked `target` symlink contaminated Maven verification across clones
+
+- **상태**: 해결 (session harness/documentation issue; production code unchanged).
+- **환경/조건**: Isolated clone `/run/user/10041/g005-b13-other-rules-execute-20260724/repo`; repository tracks `target` as a symlink inherited from the authoritative workspace. Maven verification was running while other agents/builds could write shared artifacts. `/tmp` remained unsuitable for reliable build output, so verification artifacts were kept under `/run/user/10041`.
+- **재현 절차**:
+  - Initial Maven command without local target replacement: `mvn -q -Dmaven.repo.local=/run/user/10041/g005-b13-other-rules-execute-20260724/m2 -DskipTests=false -Dtest=... test`.
+  - Attempted `-Dproject.build.directory=/run/user/10041/g005-b13-other-rules-execute-20260724/targets/<gate>` did not move this project's effective Maven output away from `<clone>/target`.
+- **관측 증상**:
+  - Maven failed reading `/run/user/10041/g005-b13-other-rules-execute-20260724/repo/target/maven-shared-archive-resources/META-INF/NOTICE` when `target` pointed at shared/missing artifacts.
+  - Earlier focused test XML/logs could have been stale or from the wrong class because the clone inherited a tracked symlink to shared build outputs.
+- **원인 분석**:
+  - Git cloned the tracked `target` symlink, so Maven's default build output was not clone-local.
+  - `-Dproject.build.directory` is ineffective for this POM's build directory in practice; remote resources and surefire still referenced `<clone>/target`.
+- **의사결정 근거 / Decision boundary**: Verification-harness fix only in a disposable isolated clone. The authoritative repository's `target` symlink was not touched; `target` was not staged or committed. This does not change planner/oracle/runtime behavior.
+- **해결 요약**:
+  - Recorded the original symlink target in `/run/user/10041/g005-b13-other-rules-execute-20260724/original-target-symlink.txt`.
+  - Unlinked the tracked symlink only inside the disposable isolated clone and created a real local `target` directory for clean Maven outputs.
+  - Re-ran accepted verification from the local real `target` and parsed surefire XML from that exact directory.
+- **수정 파일**:
+  - None in production/test source for this issue; harness-only filesystem state: `target` appears as deleted in `git status` and must remain unstaged/uncommitted.
+  - Session documentation: `docs/SESSION_ISSUES_2026-07-24.md`.
+- **검증**:
+  - `ls -ld target` showed a real local directory in the disposable clone.
+  - `git status --short target` showed ` D target`; final commit scope checks exclude `target`.
+  - Accepted logs after the harness fix: `rule_basics_other.postbridge.localtarget.log`, `rulesets_guard.scalarfix.localtarget.log`, `b13_source_anchor.scalarfix.localtarget.log`, `b13_rule_fact_legal.scalarfix.localtarget.log`, `test_compile.scalarfix.localtarget.log`, and `diff_check.final.log` under `/run/user/10041/g005-b13-other-rules-execute-20260724/logs`.
+- **잔여 이슈**:
+  - Any future isolated clone created from this repository can inherit the tracked `target` symlink again and must repeat the local-target harness setup before Maven verification.
+- **잠재 회귀 위험**:
+  - Risk: accidentally staging `target` would convert a harness fix into a source change. Detection: always check `git diff --cached --name-only` and `git status --short target` before commit; do not stage `target`.
+  - Risk: stale shared XML could be counted as fresh evidence. Detection: parse surefire XML only from the clone-local real `target/surefire-reports` after the symlink is replaced or from an explicitly isolated source copy.
+- **적용 원칙/제약**:
+  - Verification evidence must be fresh and clone-local.
+  - No authoritative `target` mutation and no staged/committed build artifacts.

@@ -611,12 +611,12 @@ public final class OracleFacade {
     for (int i = 0; i < limit; i++) {
       FTypes.FType rt = (runtimeTypes == null || i >= runtimeSize) ? null : runtimeTypes.get(i);
       Hop hopInput = (hop.getInput() == null || i >= hopInputSize) ? null : hop.getInput().get(i);
-      mapped.add(mapFederatedType(rt, hopInput));
+      mapped.add(mapFederatedType(hop, i, rt, hopInput));
     }
     return mapped;
   }
 
-  private FType mapFederatedType(FTypes.FType runtimeType, Hop input) {
+  private FType mapFederatedType(Hop owner, int inputPosition, FTypes.FType runtimeType, Hop input) {
     if (input != null) {
       DataType dt = input.getDataType();
       if (dt != DataType.MATRIX && dt != DataType.FRAME)
@@ -635,9 +635,21 @@ public final class OracleFacade {
         return FType.PART;
       case BROADCAST:
         return FType.BROADCAST;
+      case OTHER:
+        return isOtherMatrixScalarBinary(owner, inputPosition, input) ? FType.OTHER : null;
       default:
         return null;
     }
+  }
+
+  private static boolean isOtherMatrixScalarBinary(Hop owner, int inputPosition, Hop input) {
+    if (!(owner instanceof BinaryOp) || input == null || input.getDataType() != DataType.MATRIX
+        || owner.getInput() == null || owner.getInput().size() != 2
+        || inputPosition < 0 || inputPosition >= owner.getInput().size())
+      return false;
+    int otherPosition = inputPosition == 0 ? 1 : 0;
+    Hop other = owner.getInput().get(otherPosition);
+    return other != null && other.getDataType() == DataType.SCALAR;
   }
 
   private ShapeHint buildShapeHint(Hop hop) {
