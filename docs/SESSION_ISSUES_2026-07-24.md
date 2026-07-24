@@ -1348,3 +1348,54 @@
   - DP fail-closed `exactCloneReceipts` was not weakened.
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile no-`<CP,FOUT>` constraints remain unchanged.
   - Privacy/public masking was not changed.
+
+## Issue: G006 FunctionOp output carriers missing from DP rewire ownership domain
+
+- **상태**: 해결
+- **환경/조건**:
+  - Goal/stage: G006 DP structural repair after standalone runtime-recompile producer fix.
+  - Authoritative repo: `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, pre-fix HEAD `7813493e65efbb6e39dbc03950a3c574d8ba2581`.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`, PCA workload and hermetic G014 candidate fixtures.
+- **재현 절차**:
+  - Grounded failing path: `FederatedPCAPlanningTest#runPCAPlannerDPPrivacyPrivateAggregate` while DP registers exact Hop refs for PCA `MULTIRETURN_BUILTIN` outputs.
+  - Focused hostile regression: `CampaignBG014CandidateOccurrenceSnapshotRedTest#functionOutputDependenciesAreExactReverseDependenciesAndHostileVariantsReject`.
+  - Fresh disposable verification clone: `/run/user/10041/g006-function-output-final-20260724-3454563`.
+- **관측 증상**:
+  - `registerHopRefs` rejected a concrete PCA `MULTIRETURN_BUILTIN` `DataOp FUNCTIONOUTPUT eigen_values` because the neutral fingerprint occurrence walk followed Hop inputs but not `FunctionOp.getOutputs()`.
+  - After adding output traversal, DP exposed a second invariant: function-output child plans can appear as reverse/execution dependencies of the `FunctionOp` parent, but candidate normalization treated them as arbitrary extra inputs unless they were direct oracle inputs or scalar transient-forward dependencies.
+- **원인 분석**:
+  - `PlacementGraphFingerprint.walkHop` did not enumerate exact non-null `FunctionOp.getOutputs()` carriers, so output carriers lacked exact analysis-owned projections.
+  - `FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot` had semantic input and transient-forward receipts, but no distinct FunctionOp-output receipt domain derived from the production rewire table.
+  - `DpPlacementAdapter` normalized collected child plans only as direct physical inputs, logical transient inputs, or scalar transient forwards; matrix function-output dependencies needed to be retained for DP child indexing/cost while excluded from ordered candidate-oracle input states.
+- **해결 요약**:
+  - Added exact identity-deduped `FunctionOp.getOutputs()` traversal to neutral fingerprint/occurrence enumeration using `function-output-N` topology.
+  - Added `RewireFunctionOutputEdge` receipts from exact analysis-owned `FunctionOp` occurrences to exact output carriers derived from `rewireTable.get(functionCallHopId)`.
+  - Hardened `RewireOccurrenceSnapshot` so function-output receipts require candidate-owned endpoints, a real `FunctionOp` parent, unique edge/output identity, and contiguous deterministic output positions per parent.
+  - Added `FunctionOutputDependencyEntry` to DP candidate snapshots; normalization now accepts only exact rewire-owned function-output dependencies, preserves their selected child plan state/FType for collected-child indexing, and excludes them from ordered candidate-oracle inputs and parent FType maps.
+  - Arbitrary/unreceipted, duplicate, stale, or reordered function-output dependencies continue to fail closed; scalar transient-forward rules were not reused or broadened.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementGraphFingerprint.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpRewireTransTable.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014CandidateOccurrenceSnapshotRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementAnalysisOriginProjectionTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Fresh clone `/run/user/10041/g006-function-output-final-20260724-3454563`: `git diff --check -- . ':!target'` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014CandidateOccurrenceSnapshotRedTest test` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.PlacementAnalysisOriginProjectionTest,org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest test` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.shadow.CampaignBB09ExplicitRecompileFixtureContractTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest test` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest#runPCAPlannerDPPrivacyPrivateAggregate test` passed.
+- **잔여 이슈**:
+  - Full G006 paired all-four / 16-cell Docker validation still needs a fresh runtime build and rerun; this change only closes the DP FunctionOp-output structural blocker.
+  - Other planners remain outside this DP-first repair scope.
+- **잠재 회귀 위험**:
+  - Risk: future FunctionOp rewiring emits duplicate or reordered output carriers. Detection: snapshot constructor receipt-integrity checks and hostile candidate test reject duplicate/non-contiguous positions.
+  - Risk: function-output dependencies leak into parent oracle inputs and alter capability decisions. Detection: candidate snapshot regression asserts oracle inputs exclude function-output dependencies while collected child/FType evidence retains them.
+- **의사결정 근거**:
+  - Planner/adapter ownership model was corrected. Runtime behavior, fallback policy, TRead/TWrite legality, recompile `<CP,FOUT>` legality, privacy handling, and candidate-space closure were not changed.
+- **적용 원칙/제약**:
+  - Runtime fallback remains forbidden.
+  - DP remains fail-closed for arbitrary/unowned auxiliary carriers.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile no-`<CP,FOUT>` constraints remain unchanged.
+  - Privacy/public masking was not changed.

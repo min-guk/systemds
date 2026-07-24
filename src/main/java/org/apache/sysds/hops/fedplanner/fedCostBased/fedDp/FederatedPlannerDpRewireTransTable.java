@@ -136,11 +136,22 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 	}
 
+	public record RewireFunctionOutputEdge(CompiledHopKey functionOccurrence,
+		CompiledHopKey outputOccurrence, int outputPosition) {
+		public RewireFunctionOutputEdge {
+			Objects.requireNonNull(functionOccurrence, "functionOccurrence");
+			Objects.requireNonNull(outputOccurrence, "outputOccurrence");
+			if(outputPosition < 0)
+				throw new IllegalArgumentException("Function-output position must be non-negative");
+		}
+	}
+
 	public record RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,
 		String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
 		List<HopOccurrenceProjection> candidateOccurrences,
 		List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
-		List<RewireConsumerEdge> consumerEdges, List<RewireTransientForwardEdge> transientForwardEdges,
+		List<RewireConsumerEdge> consumerEdges, List<RewireFunctionOutputEdge> functionOutputEdges,
+		List<RewireTransientForwardEdge> transientForwardEdges,
 		Map<Long, Long> cloneToOriginal,
 		Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, Set<Long> activeScopeIds,
 		String enumerationScopeKey) {
@@ -151,8 +162,21 @@ public class FederatedPlannerDpRewireTransTable {
 			Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, String enumerationScopeKey) {
 			this(analysis, program, analysisFingerprint, occurrences,
 				FederatedPlannerDpRewireTransTable.candidateOccurrences(analysis), cloneReceipts,
-				additionalRoots, consumerEdges, List.of(), cloneToOriginal, occurrenceByCarrier, Set.of(),
+				additionalRoots, consumerEdges, List.of(), List.of(), cloneToOriginal, occurrenceByCarrier, Set.of(),
 				enumerationScopeKey);
+		}
+
+		public RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,
+			String analysisFingerprint, List<HopOccurrenceProjection> occurrences,
+			List<HopOccurrenceProjection> candidateOccurrences,
+			List<CloneReceipt> cloneReceipts, List<HopOccurrenceProjection> additionalRoots,
+			List<RewireConsumerEdge> consumerEdges, List<RewireTransientForwardEdge> transientForwardEdges,
+			Map<Long, Long> cloneToOriginal,
+			Map<Hop, HopOccurrenceProjection> occurrenceByCarrier, Set<Long> activeScopeIds,
+			String enumerationScopeKey) {
+			this(analysis, program, analysisFingerprint, occurrences, candidateOccurrences, cloneReceipts,
+				additionalRoots, consumerEdges, List.of(), transientForwardEdges, cloneToOriginal,
+				occurrenceByCarrier, activeScopeIds, enumerationScopeKey);
 		}
 
 		public RewireOccurrenceSnapshot {
@@ -164,6 +188,7 @@ public class FederatedPlannerDpRewireTransTable {
 			Objects.requireNonNull(cloneReceipts, "cloneReceipts");
 			Objects.requireNonNull(additionalRoots, "additionalRoots");
 			Objects.requireNonNull(consumerEdges, "consumerEdges");
+			Objects.requireNonNull(functionOutputEdges, "functionOutputEdges");
 			Objects.requireNonNull(transientForwardEdges, "transientForwardEdges");
 			Objects.requireNonNull(cloneToOriginal, "cloneToOriginal");
 			Objects.requireNonNull(occurrenceByCarrier, "occurrenceByCarrier");
@@ -213,6 +238,21 @@ public class FederatedPlannerDpRewireTransTable {
 					|| !candidateKeysByIdentity.contains(edge.parentOccurrence())
 					|| !candidateKeysByIdentity.contains(edge.childOccurrence()))
 					throw new IllegalArgumentException("Consumer edge endpoint is not active-candidate-owned");
+			Set<RewireFunctionOutputEdge> functionOutputEdgesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+			Map<CompiledHopKey, Integer> previousFunctionOutputPosition = new IdentityHashMap<>();
+			Map<CompiledHopKey, Set<CompiledHopKey>> functionOutputsByParent = new IdentityHashMap<>();
+			for(RewireFunctionOutputEdge edge : functionOutputEdges) {
+				Hop parentHop = analysis.hop(edge.functionOccurrence()).orElse(null);
+				Set<CompiledHopKey> outputs = functionOutputsByParent.computeIfAbsent(edge.functionOccurrence(),
+					ignored -> Collections.newSetFromMap(new IdentityHashMap<>()));
+				int expectedPosition = previousFunctionOutputPosition.getOrDefault(edge.functionOccurrence(), -1) + 1;
+				if(!candidateKeysByIdentity.contains(edge.functionOccurrence())
+					|| !candidateKeysByIdentity.contains(edge.outputOccurrence())
+					|| !(parentHop instanceof FunctionOp) || !functionOutputEdgesByIdentity.add(edge)
+					|| !outputs.add(edge.outputOccurrence()) || edge.outputPosition() != expectedPosition)
+					throw new IllegalArgumentException("Function-output receipt order or ownership differs");
+				previousFunctionOutputPosition.put(edge.functionOccurrence(), edge.outputPosition());
+			}
 			for(RewireTransientForwardEdge edge : transientForwardEdges)
 				if(!candidateKeysByIdentity.contains(edge.writeOccurrence())
 					|| !candidateKeysByIdentity.contains(edge.readOccurrence()))
@@ -263,6 +303,7 @@ public class FederatedPlannerDpRewireTransTable {
 			cloneReceipts = List.copyOf(cloneReceipts);
 			additionalRoots = List.copyOf(additionalRoots);
 			consumerEdges = List.copyOf(consumerEdges);
+			functionOutputEdges = List.copyOf(functionOutputEdges);
 			transientForwardEdges = List.copyOf(transientForwardEdges);
 			cloneToOriginal = Collections.unmodifiableMap(new LinkedHashMap<>(cloneToOriginal));
 			occurrenceByCarrier = Collections.unmodifiableMap(exactCarrierProjection);
@@ -485,6 +526,8 @@ public class FederatedPlannerDpRewireTransTable {
 		PhysicalCloneProjection physicalClones = exactPhysicalCloneMapping(unrollContext.getCloneToOrig(),
 			rewireTable, hopCommonTable, exactByHopId, analysis, activeRewireCarriers,
 			!exactActiveScopeIds.isEmpty());
+		List<RewireFunctionOutputEdge> functionOutputEdges = exactCandidateFunctionOutputEdges(
+			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop, rewireTable);
 		List<RewireTransientForwardEdge> transientForwardEdges = exactCandidateTransientForwardEdges(
 			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop,
 			physicalClones.occurrenceByCloneCarrier(), rewireTable);
@@ -533,8 +576,8 @@ public class FederatedPlannerDpRewireTransTable {
 				"REWIRE_ENUMERATION_SCOPE_MISSING");
 		try {
 			return new RewireOccurrenceSnapshot(analysis, program, analysis.analysisFingerprint(), occurrences,
-				candidateOccurrences, cloneReceipts, additionalRoots, consumerEdges, transientForwardEdges,
-				cloneToOriginal, occurrenceByRootCarrier,
+				candidateOccurrences, cloneReceipts, additionalRoots, consumerEdges, functionOutputEdges,
+				transientForwardEdges, cloneToOriginal, occurrenceByRootCarrier,
 				exactActiveScopeIds, enumerationScopeKey);
 		}
 		catch(IllegalArgumentException ex) {
@@ -601,6 +644,43 @@ public class FederatedPlannerDpRewireTransTable {
 
 	private static boolean isTransientRead(Hop hop) {
 		return hop instanceof DataOp && ((DataOp)hop).getOp() == Types.OpOpData.TRANSIENTREAD;
+	}
+
+	private static List<RewireFunctionOutputEdge> exactCandidateFunctionOutputEdges(
+		PlacementAnalysis analysis, List<HopOccurrenceProjection> candidateOccurrences,
+		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops,
+		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop, Map<Long, List<Hop>> rewireTable) {
+		Set<HopOccurrenceProjection> candidatesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
+		candidatesByIdentity.addAll(candidateOccurrences);
+		List<RewireFunctionOutputEdge> edges = new ArrayList<>();
+		for(HopOccurrenceProjection function : candidateOccurrences) {
+			Hop resolvedFunction = resolvedRewiredHops.get(function);
+			if(resolvedFunction == null)
+				throw semanticFailure(analysis, function, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+					"REWIRE_FUNCTION_OUTPUT_PARENT_UNMAPPABLE");
+			if(!(resolvedFunction instanceof FunctionOp))
+				continue;
+			List<Hop> outputCarriers = rewireTable.get(resolvedFunction.getHopID());
+			if(outputCarriers == null || outputCarriers.isEmpty())
+				continue;
+			Set<HopOccurrenceProjection> seenOutputs = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(int outputPosition = 0; outputPosition < outputCarriers.size(); outputPosition++) {
+				Hop outputCarrier = outputCarriers.get(outputPosition);
+				if(outputCarrier == null)
+					throw semanticFailure(analysis, function, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_FUNCTION_OUTPUT_CARRIER_NULL");
+				HopOccurrenceProjection output = occurrenceByResolvedHop.get(outputCarrier);
+				if(output == null)
+					throw semanticFailure(analysis, function, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
+						"REWIRE_FUNCTION_OUTPUT_UNMAPPABLE");
+				if(!candidatesByIdentity.contains(output) || analysis.hop(output.key()).orElse(null) != output.hop()
+					|| resolvedRewiredHops.get(output) != outputCarrier || !seenOutputs.add(output))
+					throw semanticFailure(analysis, output, ConstructionDisposition.STALE_CONTEXT,
+						"REWIRE_FUNCTION_OUTPUT_CANDIDATE_STALE");
+				edges.add(new RewireFunctionOutputEdge(function.key(), output.key(), outputPosition));
+			}
+		}
+		return List.copyOf(edges);
 	}
 
 	private static List<RewireTransientForwardEdge> exactCandidateTransientForwardEdges(

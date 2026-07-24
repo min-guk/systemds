@@ -19,6 +19,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -26,8 +27,10 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFed
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.CandidateNormalizationFixture;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationObserver;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpCostEnumerator.DpEnumerationResult;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.HopCommon;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireFunctionOutputEdge;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -37,6 +40,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateMapEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.ConstructionDisposition;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.FunctionOutputDependencyEntry;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpSemanticConstructionException;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.MapEntryState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
@@ -228,11 +232,136 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 				List.of(foreignSource.hop()), localType, Map.of(), invocation.memo()));
 	}
 
+	@Test
+	public void functionOutputDependenciesAreExactReverseDependenciesAndHostileVariantsReject() {
+		DpInvocationReceipt invocation = invoke("PCA-MULTIRETURN");
+		PreSelectionSemanticBlock block = invocation.semanticConsumption().semanticBlock();
+		NeutralEnumerationContext base = block.context();
+		FunctionOutputFixture fixture = functionOutputFixture(base, invocation.memo());
+		NeutralEnumerationContext context = base.rewireSnapshot().functionOutputEdges().stream()
+			.anyMatch(edge -> edge == fixture.edge()) ? base : withFunctionOutputs(base, List.of(fixture.edge()));
+		CollectedPlanSelection selection = collectedSelection(fixture.parent(), fixture.output(),
+			fixture.selectedOutputState(), invocation.memo());
+		NormalizedCandidateInputs normalized = org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter
+			.normalizeCandidateInputs(context, fixture.parent(), selection.edges(), selection.hops(), selection.types(),
+				selection.fedInputTypeMap(), invocation.memo());
+		CandidateOccurrenceSnapshot snapshot = normalized.snapshot();
+		Assert.assertEquals(1, snapshot.functionOutputDependencies().size());
+		FunctionOutputDependencyEntry dependency = snapshot.functionOutputDependencies().get(0);
+		Assert.assertSame(fixture.edge(), dependency.functionOutputEdge());
+		Assert.assertSame(snapshot.parentOccurrence(), fixture.edge().functionOccurrence());
+		Assert.assertSame(fixture.edge().outputOccurrence(), dependency.outputOccurrence());
+		Assert.assertTrue("function-output deps stay out of candidate oracle inputs", snapshot.rawEntries().stream()
+			.noneMatch(entry -> entry.occurrence() == dependency.outputOccurrence()));
+		Assert.assertTrue("function-output deps stay out of promoted oracle inputs", snapshot.promotedEntries().stream()
+			.noneMatch(entry -> entry.occurrence() == dependency.outputOccurrence()));
+		Assert.assertEquals(snapshot.promotedEntries().size() + snapshot.logicalEntries().size(),
+			snapshot.orderedOracleInputs().size());
+		Assert.assertTrue("function-output dependency is retained for child indexing",
+			normalized.exactCollectedHops().stream().anyMatch(hop -> hop == fixture.output().hop()));
+		FType expectedOutputType = dependency.selectedOutputState().output() == FederatedOutput.FOUT
+			? dependency.selectedOutputState().fType() : null;
+		int outputPosition = normalized.exactCollectedHops().indexOf(fixture.output().hop());
+		Assert.assertSame(expectedOutputType, normalized.effectiveCollectedFTypes().get(outputPosition));
+		Assert.assertFalse("function-output dependencies are not parent oracle FType inputs",
+			normalized.effectiveNonNullFTypeMap().containsKey(fixture.output().hop().getHopID()));
+
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(context, snapshot.parentOccurrence(), snapshot.rawEntries(),
+			snapshot.promotedEntries(), snapshot.logicalEntries(), snapshot.transientForwardDependencies(),
+			List.of(dependency, dependency), snapshot.orderedOracleInputs(),
+			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		RewireFunctionOutputEdge stale = new RewireFunctionOutputEdge(fixture.edge().functionOccurrence(),
+			fixture.edge().outputOccurrence(), fixture.edge().outputPosition());
+		assertIllegal(() -> new CandidateOccurrenceSnapshot(context, snapshot.parentOccurrence(), snapshot.rawEntries(),
+			snapshot.promotedEntries(), snapshot.logicalEntries(), snapshot.transientForwardDependencies(),
+			List.of(new FunctionOutputDependencyEntry(stale, fixture.output().key(), dependency.collectedPosition(),
+				dependency.selectedOutputState())), snapshot.orderedOracleInputs(),
+			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		assertIllegal(() -> withFunctionOutputs(base, List.of(fixture.edge(), fixture.edge())));
+		assertIllegal(() -> withFunctionOutputs(base, List.of(new RewireFunctionOutputEdge(
+			fixture.edge().functionOccurrence(), fixture.edge().outputOccurrence(), fixture.edge().outputPosition() + 2))));
+		NeutralEnumerationContext withoutFunctionOutputEdges = withFunctionOutputs(base, List.of());
+		assertIllegal(() -> org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter
+			.normalizeCandidateInputs(withoutFunctionOutputEdges, fixture.parent(), selection.edges(), selection.hops(),
+				selection.types(), selection.fedInputTypeMap(), invocation.memo()));
+	}
+
 	private static PlacementState occurrenceState(HopOccurrenceProjection occurrence,
 		NeutralEnumerationContext context) {
 		return context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
 			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 				&& state.fType() == null).findFirst().orElse(null);
+	}
+
+	private static FunctionOutputFixture functionOutputFixture(NeutralEnumerationContext context,
+		FederatedPlannerDpMemoTable memo) {
+		boolean sawProjectableStructuralOutput = false;
+		for(HopOccurrenceProjection parent : context.rewireSnapshot().candidateOccurrences()) {
+			if(!(parent.hop() instanceof FunctionOp))
+				continue;
+			List<Hop> outputs = ((FunctionOp) parent.hop()).getOutputs();
+			for(int position = 0; outputs != null && position < outputs.size(); position++)
+				if(outputs.get(position) != null && context.rewireSnapshot().projectExactCarrier(outputs.get(position)) != null)
+					sawProjectableStructuralOutput = true;
+		}
+		Assert.assertTrue("FunctionOp.getOutputs() carriers must be exact projectable occurrences",
+			sawProjectableStructuralOutput);
+		for(RewireFunctionOutputEdge edge : context.rewireSnapshot().functionOutputEdges()) {
+			HopOccurrenceProjection parent = context.rewireSnapshot().candidateOccurrences().stream()
+				.filter(occurrence -> occurrence.key() == edge.functionOccurrence()).findFirst().orElseThrow();
+			HopOccurrenceProjection output = context.rewireSnapshot().candidateOccurrences().stream()
+				.filter(occurrence -> occurrence.key() == edge.outputOccurrence()).findFirst().orElseThrow();
+			PlacementState selected = selectedPlanState(output, memo);
+			if(selected != null)
+				return new FunctionOutputFixture(parent, output, edge, selected);
+		}
+		throw new AssertionError("fixture must publish an exact, planned rewire-owned FunctionOp output edge");
+	}
+
+	private static PlacementState selectedPlanState(HopOccurrenceProjection occurrence, FederatedPlannerDpMemoTable memo) {
+		FedPlan local = memo.getFedPlanAfterPrune(occurrence.hop().getHopID(), FederatedOutput.LOUT);
+		if(local != null && local.getSelectedPlacementState() != null)
+			return local.getSelectedPlacementState();
+		FedPlan federated = memo.getFedPlanAfterPrune(occurrence.hop().getHopID(), FederatedOutput.FOUT);
+		return federated == null ? null : federated.getSelectedPlacementState();
+	}
+
+	private static CollectedPlanSelection collectedSelection(HopOccurrenceProjection parent,
+		HopOccurrenceProjection functionOutput, PlacementState outputState, FederatedPlannerDpMemoTable memo) {
+		List<Pair<Long, FederatedOutput>> edges = new ArrayList<>();
+		List<Hop> hops = new ArrayList<>();
+		List<FType> types = new ArrayList<>();
+		Map<Long, FType> fedInputTypeMap = new LinkedHashMap<>();
+		for(Hop input : parent.hop().getInput()) {
+			FederatedOutput output = memo.contains(input.getHopID(), FederatedOutput.LOUT)
+				? FederatedOutput.LOUT : FederatedOutput.FOUT;
+			FedPlan plan = memo.getFedPlanAfterPrune(input.getHopID(), output);
+			Assert.assertNotNull("direct function input must have a selected child plan", plan);
+			edges.add(Pair.of(input.getHopID(), output));
+			hops.add(input);
+			FType type = output == FederatedOutput.FOUT ? plan.getFType() : null;
+			types.add(type);
+			if(output == FederatedOutput.FOUT)
+				fedInputTypeMap.put(input.getHopID(), type);
+		}
+		edges.add(Pair.of(functionOutput.hop().getHopID(), outputState.output()));
+		hops.add(functionOutput.hop());
+		types.add(outputState.output() == FederatedOutput.FOUT ? outputState.fType() : null);
+		return new CollectedPlanSelection(List.copyOf(edges), List.copyOf(hops),
+			java.util.Collections.unmodifiableList(new ArrayList<>(types)),
+			java.util.Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap)));
+	}
+
+	private static NeutralEnumerationContext withFunctionOutputs(NeutralEnumerationContext base,
+		List<RewireFunctionOutputEdge> functionOutputEdges) {
+		RewireOccurrenceSnapshot snapshot = base.rewireSnapshot();
+		RewireOccurrenceSnapshot expanded = new RewireOccurrenceSnapshot(snapshot.analysis(), snapshot.program(),
+			snapshot.analysisFingerprint(), snapshot.occurrences(), snapshot.candidateOccurrences(),
+			snapshot.cloneReceipts(), snapshot.additionalRoots(), snapshot.consumerEdges(), functionOutputEdges,
+			snapshot.transientForwardEdges(), snapshot.cloneToOriginal(), snapshot.occurrenceByCarrier(),
+			snapshot.activeScopeIds(), snapshot.enumerationScopeKey());
+		return new NeutralEnumerationContext(base.analysis(), expanded, base.analysisFingerprint(), base.numWorkers(),
+			base.invocationEvidence(), base.privacy());
 	}
 
 	private static NeutralEnumerationContext withForward(NeutralEnumerationContext base,
@@ -400,6 +529,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			DMLProgram program = "B-11".equals(id) || "B-21".equals(id)
 				? CampaignBG014HermeticPlannerFixtureFactory.compile(id)
 				: "B-21-SCALAR".equals(id) ? compileScalarTransientFixture()
+				: "PCA-MULTIRETURN".equals(id) ? compilePcaMultiReturnFixture()
 				: ProductionShadowFixtureFactory.compile(id);
 			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 			AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
@@ -412,6 +542,29 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			return new Fixture(program, (DpInvocationReceipt) receipt.get());
 		}
 		catch(Exception e) { throw new AssertionError("Unable to compile G014 candidate fixture " + id, e); }
+	}
+
+	private static DMLProgram compilePcaMultiReturnFixture() throws Exception {
+		Path data = Files.createTempFile("g014-pca-multireturn-", ".data");
+		Path metadata = Path.of(data.toString() + ".mtd");
+		Files.writeString(data, "");
+		Files.writeString(metadata, "{\"data_type\":\"matrix\",\"value_type\":\"double\","
+			+ "\"format\":\"text\",\"rows\":1000,\"cols\":100,\"nnz\":0,"
+			+ "\"privacy\":\"private-aggregate\"}");
+		data.toFile().deleteOnExit();
+		metadata.toFile().deleteOnExit();
+		String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+		String script = "X_LOCAL=read(\"" + path + "\");\n"
+			+ "X=federated(local_matrix=X_LOCAL,addresses=list(\"localhost:1234\",\"localhost:1235\"),"
+			+ "ranges=list(list(0,0),list(500,100),list(500,0),list(1000,100)));\n"
+			+ "[PC,V]=pca(X=X,K=4,scale=TRUE,center=TRUE);\nwrite(PC,\"/tmp/g014-pca-out\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		return program;
 	}
 
 	private static DMLProgram compileScalarTransientFixture() throws Exception {
@@ -506,6 +659,10 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		String analysisFingerprint, List<HopOccurrenceProjection> occurrences, List<HopState> hops) { }
 	private record ExpectedRawInput(HopOccurrenceProjection child, FederatedOutput output) { }
 	private record ExpectedRawCandidate(HopOccurrenceProjection parent, List<ExpectedRawInput> inputs) { }
+	private record CollectedPlanSelection(List<Pair<Long, FederatedOutput>> edges, List<Hop> hops,
+		List<FType> types, Map<Long, FType> fedInputTypeMap) { }
+	private record FunctionOutputFixture(HopOccurrenceProjection parent, HopOccurrenceProjection output,
+		RewireFunctionOutputEdge edge, PlacementState selectedOutputState) { }
 
 	private static final class TrackingMemo extends FederatedPlannerDpMemoTable {
 		private final List<String> writes = new ArrayList<>();

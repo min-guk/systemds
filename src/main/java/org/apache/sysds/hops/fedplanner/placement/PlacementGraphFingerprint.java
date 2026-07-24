@@ -22,6 +22,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.ForStatement;
@@ -124,6 +125,15 @@ public final class PlacementGraphFingerprint {
 		if(!seen.add(hop)) return;
 		for(int i = 0; i < hop.getInput().size(); i++)
 			walkHop(hop.getInput(i), path, namespace, block, regionPath, topology + "/input-" + i, rows, out, seen);
+		if(hop instanceof FunctionOp) {
+			List<Hop> outputs = ((FunctionOp) hop).getOutputs();
+			for(int i = 0; outputs != null && i < outputs.size(); i++) {
+				Hop output = outputs.get(i);
+				if(output != null)
+					walkHop(output, path, namespace, block, regionPath,
+						topology + "/function-output-" + i, rows, out, seen);
+			}
+		}
 		List<String> inputs = new ArrayList<>();
 		for(int i = 0; i < hop.getInput().size(); i++) inputs.add(i + ":" + structuralKey(hop.getInput(i)));
 		List<String> parents = new ArrayList<>();

@@ -30,6 +30,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireConsumerEdge;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireFunctionOutputEdge;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -150,6 +151,18 @@ public final class DpPlacementAdapter {
 	}
 
 	/** Exact rewire-owned dependency retained for DP indexing but excluded from candidate-oracle inputs. */
+	public record FunctionOutputDependencyEntry(RewireFunctionOutputEdge functionOutputEdge,
+		CompiledHopKey outputOccurrence, int collectedPosition, PlacementState selectedOutputState) {
+		public FunctionOutputDependencyEntry {
+			Objects.requireNonNull(functionOutputEdge, "functionOutputEdge");
+			Objects.requireNonNull(outputOccurrence, "outputOccurrence");
+			Objects.requireNonNull(selectedOutputState, "selectedOutputState");
+			if(outputOccurrence != functionOutputEdge.outputOccurrence() || collectedPosition < 0)
+				throw new IllegalArgumentException("Function-output dependency identity differs");
+		}
+	}
+
+	/** Exact rewire-owned dependency retained for DP indexing but excluded from candidate-oracle inputs. */
 	public record TransientForwardDependencyEntry(RewireTransientForwardEdge forwardEdge,
 		CompiledHopKey sourceOccurrence, int collectedPosition, PlacementState selectedSourceState) {
 		public TransientForwardDependencyEntry {
@@ -165,8 +178,18 @@ public final class DpPlacementAdapter {
 		CompiledHopKey parentOccurrence, List<CandidateMapEntry> rawEntries,
 		List<CandidateMapEntry> promotedEntries, List<LogicalCandidateInputEntry> logicalEntries,
 		List<TransientForwardDependencyEntry> transientForwardDependencies,
+		List<FunctionOutputDependencyEntry> functionOutputDependencies,
 		List<OracleInputState> orderedOracleInputs,
 		ConstructionDisposition disposition, String reasonCode) {
+		public CandidateOccurrenceSnapshot(NeutralEnumerationContext context, CompiledHopKey parentOccurrence,
+			List<CandidateMapEntry> rawEntries, List<CandidateMapEntry> promotedEntries,
+			List<LogicalCandidateInputEntry> logicalEntries,
+			List<TransientForwardDependencyEntry> transientForwardDependencies,
+			List<OracleInputState> orderedOracleInputs, ConstructionDisposition disposition, String reasonCode) {
+			this(context, parentOccurrence, rawEntries, promotedEntries, logicalEntries,
+				transientForwardDependencies, List.of(), orderedOracleInputs, disposition, reasonCode);
+		}
+
 		public CandidateOccurrenceSnapshot {
 			Objects.requireNonNull(context, "context");
 			Objects.requireNonNull(parentOccurrence, "parentOccurrence");
@@ -174,6 +197,7 @@ public final class DpPlacementAdapter {
 			promotedEntries = List.copyOf(promotedEntries);
 			logicalEntries = List.copyOf(logicalEntries);
 			transientForwardDependencies = List.copyOf(transientForwardDependencies);
+			functionOutputDependencies = List.copyOf(functionOutputDependencies);
 			orderedOracleInputs = List.copyOf(orderedOracleInputs);
 			Objects.requireNonNull(disposition, "disposition");
 			Objects.requireNonNull(reasonCode, "reasonCode");
@@ -207,12 +231,30 @@ public final class DpPlacementAdapter {
 			logicalEntries.forEach(entry -> carrierSources.add(entry.sourceOccurrence()));
 			Set<CompiledHopKey> dependencySources = Collections.newSetFromMap(new IdentityHashMap<>());
 			Set<RewireTransientForwardEdge> dependencyEdges = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<CompiledHopKey> functionOutputSources = Collections.newSetFromMap(new IdentityHashMap<>());
+			Set<RewireFunctionOutputEdge> functionOutputDependencyEdges = Collections.newSetFromMap(new IdentityHashMap<>());
+			int previousFunctionOutputPosition = -1;
+			for(FunctionOutputDependencyEntry dependency : functionOutputDependencies) {
+				RewireFunctionOutputEdge edge = dependency.functionOutputEdge();
+				CompiledHopKey output = dependency.outputOccurrence();
+				PlacementState selected = dependency.selectedOutputState();
+				if(edge.functionOccurrence() != parentOccurrence || carrierSources.contains(output)
+					|| !functionOutputSources.add(output) || !functionOutputDependencyEdges.add(edge)
+					|| dependency.collectedPosition() <= previousFunctionOutputPosition
+					|| context.rewireSnapshot().functionOutputEdges().stream().filter(candidate -> candidate == edge).count() != 1
+					|| !ownsCandidateKey(context.analysis(), output)
+					|| context.analysis().graph().node(output).orElseThrow().legalAlternatives().stream()
+						.filter(state -> state == selected).count() != 1)
+					throw new IllegalArgumentException("Function-output dependency ownership differs");
+				previousFunctionOutputPosition = dependency.collectedPosition();
+			}
 			int previousPosition = -1;
 			for(TransientForwardDependencyEntry dependency : transientForwardDependencies) {
 				RewireTransientForwardEdge forward = dependency.forwardEdge();
 				CompiledHopKey source = dependency.sourceOccurrence();
 				PlacementState selected = dependency.selectedSourceState();
 				if(forward.readOccurrence() != parentOccurrence || carrierSources.contains(source)
+					|| functionOutputSources.contains(source)
 					|| !dependencySources.add(source) || !dependencyEdges.add(forward)
 					|| dependency.collectedPosition() <= previousPosition
 					|| context.rewireSnapshot().transientForwardEdges().stream()
@@ -291,6 +333,7 @@ public final class DpPlacementAdapter {
 			int promotedIndex = 0;
 			int logicalIndex = 0;
 			int dependencyIndex = 0;
+			int functionOutputDependencyIndex = 0;
 			for(int i = 0; i < exactCollectedHops.size(); i++) {
 				Hop hop = Objects.requireNonNull(exactCollectedHops.get(i), "exactCollectedHops[" + i + "]");
 				HopOccurrenceProjection projected = snapshot.context().rewireSnapshot().projectExactCarrier(hop);
@@ -310,6 +353,16 @@ public final class DpPlacementAdapter {
 					if(effectiveCollectedFTypes.get(i) != expected)
 						throw new IllegalArgumentException("Normalized logical FType differs from selected source state");
 				}
+				else if(functionOutputDependencyIndex < snapshot.functionOutputDependencies().size()
+					&& projected.key() == snapshot.functionOutputDependencies().get(functionOutputDependencyIndex).outputOccurrence()
+					&& i == snapshot.functionOutputDependencies().get(functionOutputDependencyIndex).collectedPosition()) {
+					PlacementState selected = snapshot.functionOutputDependencies().get(functionOutputDependencyIndex)
+						.selectedOutputState();
+					FType expected = selected.output() == FederatedOutput.FOUT ? selected.fType() : null;
+					if(effectiveCollectedFTypes.get(i) != expected)
+						throw new IllegalArgumentException("Function-output dependency FType differs from selected state");
+					functionOutputDependencyIndex++;
+				}
 				else if(dependencyIndex < snapshot.transientForwardDependencies().size()
 					&& projected.key() == snapshot.transientForwardDependencies().get(dependencyIndex).sourceOccurrence()
 					&& i == snapshot.transientForwardDependencies().get(dependencyIndex).collectedPosition()) {
@@ -319,10 +372,11 @@ public final class DpPlacementAdapter {
 				}
 				else
 					throw new IllegalArgumentException(
-						"Normalized collected dependency has no exact physical, logical, or transient-forward owner");
+						"Normalized collected dependency has no exact physical, logical, function-output, or transient-forward owner");
 			}
 			if(promotedIndex != snapshot.promotedEntries().size()
 				|| logicalIndex != snapshot.logicalEntries().size()
+				|| functionOutputDependencyIndex != snapshot.functionOutputDependencies().size()
 				|| dependencyIndex != snapshot.transientForwardDependencies().size())
 				throw new IllegalArgumentException("Normalized carrier order differs");
 		}
@@ -491,6 +545,7 @@ public final class DpPlacementAdapter {
 		List<CandidateMapEntry> promotedEntries = new ArrayList<>(collectedHops.size());
 		List<LogicalCandidateInputEntry> logicalEntries = new ArrayList<>(1);
 		List<TransientForwardDependencyEntry> transientForwardDependencies = new ArrayList<>(1);
+		List<FunctionOutputDependencyEntry> functionOutputDependencies = new ArrayList<>(1);
 		List<OracleInputState> rawOrderOracleStates = new ArrayList<>(collectedHops.size());
 		List<OracleInputState> orderedOracleInputs = new ArrayList<>(collectedHops.size());
 		List<FType> effectiveCollectedFTypes = new ArrayList<>(collectedFTypes);
@@ -570,6 +625,33 @@ public final class DpPlacementAdapter {
 				logicalEntries.add(new LogicalCandidateInputEntry(fact, occurrence.key(), 0, selected, oracle));
 				continue;
 			}
+			if(remaining == 0) {
+				List<RewireFunctionOutputEdge> outputEdges = context.rewireSnapshot().functionOutputEdges().stream()
+					.filter(functionOutput -> functionOutput.functionOccurrence() == parent.key()
+						&& functionOutput.outputOccurrence() == occurrence.key()).toList();
+				if(!outputEdges.isEmpty()) {
+					if(outputEdges.size() != 1 || functionOutputDependencies.stream()
+						.anyMatch(dependency -> dependency.outputOccurrence() == occurrence.key()))
+						throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+							"FUNCTION_OUTPUT_DEPENDENCY_DUPLICATED");
+					PlacementState selected = childPlan == null ? null : childPlan.getSelectedPlacementState();
+					List<PlacementState> ownedSelections = selected == null ? List.of()
+						: context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
+							.filter(state -> state == selected).toList();
+					FType effectiveType = selected != null && selected.output() == FederatedOutput.FOUT ? selected.fType() : null;
+					if(rawContainsKey || childPlan == null || selected == null || ownedSelections.size() != 1
+						|| edge.getRight() != selected.output() || childPlan.getFedOutType() != selected.output()
+						|| childPlan.getExecType() != selected.execType()
+						|| selected.output() == FederatedOutput.FOUT && childPlan.getFType() != selected.fType()
+						|| collectedType != null && collectedType != effectiveType)
+						throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+							"FUNCTION_OUTPUT_DEPENDENCY_AUTHORITY_DIFFERS");
+					effectiveCollectedFTypes.set(i, effectiveType);
+					functionOutputDependencies.add(new FunctionOutputDependencyEntry(
+						outputEdges.get(0), occurrence.key(), i, ownedSelections.get(0)));
+					continue;
+				}
+			}
 			if(remaining == 0 && sourceHop.getDataType() != Types.DataType.MATRIX
 				&& parentHop.getDataType() != Types.DataType.MATRIX) {
 				List<RewireTransientForwardEdge> forwards = context.rewireSnapshot().transientForwardEdges().stream()
@@ -639,7 +721,7 @@ public final class DpPlacementAdapter {
 		logicalEntries.forEach(entry -> orderedOracleInputs.add(entry.oracleInputState()));
 
 		CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context, parent.key(), rawEntries,
-			promotedEntries, logicalEntries, transientForwardDependencies, orderedOracleInputs,
+			promotedEntries, logicalEntries, transientForwardDependencies, functionOutputDependencies, orderedOracleInputs,
 			ConstructionDisposition.AVAILABLE, "AVAILABLE");
 		return new NormalizedCandidateInputs(snapshot, effectiveMap, effectiveCollectedFTypes, collectedHops);
 	}

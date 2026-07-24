@@ -317,5 +317,11 @@ public class PlacementAnalysisOriginProjectionTest {
 		result.add(hop);
 		for(Hop input : hop.getInput())
 			walkHop(input, result, seen);
+		if(hop instanceof FunctionOp) {
+			List<Hop> outputs = ((FunctionOp) hop).getOutputs();
+			if(outputs != null)
+				for(Hop output : outputs)
+					walkHop(output, result, seen);
+		}
 	}
 }
