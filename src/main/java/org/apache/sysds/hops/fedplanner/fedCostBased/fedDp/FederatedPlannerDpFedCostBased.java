@@ -565,6 +565,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	}
 
 	private record SelectedChildResolution(FederatedPlannerDpMemoTable.FedPlan plan,
+		FederatedPlannerDpMemoTable.FedPlan canonicalOwnerPlan,
 		PlacementAnalysis.HopOccurrenceProjection occurrence, CompiledHopKey key,
 		PlacementState state, boolean derivedFedFout, FederatedOutput selectionInput) { }
 
@@ -726,7 +727,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(owner != null && owner != source) {
 				dependencies.add(child.key());
 				SelectedChildResolution previous = dependencySelections.putIfAbsent(child.key(), child);
-				if(previous != null && (previous.plan() != child.plan()
+				if(previous != null && (previous.canonicalOwnerPlan() != child.canonicalOwnerPlan()
 					|| previous.occurrence() != child.occurrence() || previous.state() != child.state()
 					|| previous.derivedFedFout() != child.derivedFedFout()))
 					throw new IllegalStateException("DP dependency has disagreeing exact selected arms: "
@@ -739,7 +740,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private FederatedPlannerDpMemoTable.FedPlan dependencyPlan(OrdinaryComponentId owner,
 			CompiledHopKey key) {
 			SelectedChildResolution selection = dependencySelections.get(key);
-			return selection != null && ownerIndex.owner(key) == owner ? selection.plan() : null;
+			return selection != null && ownerIndex.owner(key) == owner ? selection.canonicalOwnerPlan() : null;
 		}
 
 		private ExactTraversalEdge consume(OrdinaryComponentId source,
@@ -808,7 +809,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(receipt.analysis != ownerIndex.analysis
 				|| !receipt.fingerprint.equals(ownerIndex.fingerprint)
 				|| receipt.owner != owner || receipt.occurrence != dependency.occurrence()
-				|| receipt.plan != dependency.plan() || receipt.state != dependency.state()
+				|| receipt.plan != dependency.canonicalOwnerPlan() || receipt.state != dependency.state()
 				|| receipt.derivedFedFout != dependency.derivedFedFout())
 				throw new IllegalStateException("DP dependency owner receipt differs: " + key);
 			dependencyCaptures.add(key);
@@ -1456,7 +1457,17 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			memoTable.requirePlanCarrierOccurrence(selected.getHopRef());
 		PlacementState state = Objects.requireNonNull(selected.getSelectedPlacementState(),
 			"DP selected child has no exact placement state");
-		return new SelectedChildResolution(selected, occurrence, occurrence.key(), state,
+		// Virtual/recompile carriers keep their exact raw edge plan, while component ownership
+		// is receipted by the unique analysis-owned carrier plan for the same exact state.
+		FederatedPlannerDpMemoTable.FedPlan canonicalOwnerPlan = selected.getHopRef() == occurrence.hop()
+			? selected : memoTable.getFedPlanAfterPrune(occurrence, state.output());
+		if(canonicalOwnerPlan == null || canonicalOwnerPlan.getHopRef() != occurrence.hop()
+			|| memoTable.requirePlanCarrierOccurrence(canonicalOwnerPlan.getHopRef()) != occurrence
+			|| canonicalOwnerPlan.getSelectedPlacementState() != state
+			|| canonicalOwnerPlan.isDerivedFedFout() != selected.isDerivedFedFout())
+			throw new IllegalStateException("DP selected child lacks an exact canonical owner plan: "
+				+ occurrence.key());
+		return new SelectedChildResolution(selected, canonicalOwnerPlan, occurrence, occurrence.key(), state,
 			selected.isDerivedFedFout(), selectionInput);
 	}
 

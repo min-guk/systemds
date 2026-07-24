@@ -1438,3 +1438,206 @@
   - Runtime fallback remains forbidden.
   - DP remains fail-closed for arbitrary/unowned auxiliary carriers.
   - TRead/TWrite and recompile `<CP,FOUT>` constraints remain unchanged.
+
+## Issue: G006 exact-runtime build wrapper accidentally invoked Maven through the protected authoritative target
+
+- **상태**: 해결
+- **환경/조건**:
+  - Goal/stage: G006 exact accepted-HEAD runtime build after commit `c6cd957c000a33408c310b4bc263585ddfbe4af9`.
+  - Authoritative repo: `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`.
+  - Intended disposable build repo: `/run/user/10041/g006-build-c6cd957c-20260724/repo`.
+  - Protected tracked target link: `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo/target` -> `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/target`.
+- **재현 절차**:
+  - First failing wrapper log: `/run/user/10041/g006-build-c6cd957c-20260724/maven-package.log`.
+  - Corrected disposable-cwd retry log: `/run/user/10041/g006-build-c6cd957c-20260724/maven-package-retry.log`.
+  - Build metadata: `/run/user/10041/g006-build-c6cd957c-20260724/build.meta`.
+- **관측 증상**:
+  - The first wrapper prepared a disposable clone but omitted `cd "$REPO"` before Maven. Because the tool call inherited the authoritative repository as its working directory, Maven wrote through the protected tracked `target` symlink.
+  - The first attempt failed before accepted JAR assembly with `No space left on device`; `build.meta` records `build_rc=1`.
+  - Authoritative source, index, HEAD, and target link text remained intact (`HEAD=c6cd957c...`, empty index, only protected `M target`), but contents behind the external target link were touched.
+- **원인 분석**:
+  - The orchestration wrapper relied on an implicit process working directory instead of binding every build command to the prepared disposable clone.
+  - This was an execution-harness isolation defect, not a planner, Runtime, oracle, or cost-model defect.
+- **해결 요약**:
+  - Freed root space only by deleting obsolete disposable review clones; no authoritative source, target link, or unrelated Docker resources were removed.
+  - Re-ran Maven from the explicit disposable clone cwd and recorded `retry_rc=0`.
+  - Accepted build artifacts are exclusively from the disposable clone at exact HEAD/tree; `SystemDS.jar` SHA256 is `2be2b6a983a5e4bbf5b415eeccd1af1e1f5fa7c87fa6e3046c21e6ea30e23c0e`.
+  - Did not attempt an ungrounded restoration of external target contents because no exact pre-attempt content backup existed; all later validation consumes the sealed disposable runtime instead.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+  - No production source changed for this harness incident.
+- **검증**:
+  - Corrected package command completed with rc `0`; log: `/run/user/10041/g006-build-c6cd957c-20260724/maven-package-retry.log`.
+  - Exact build metadata and artifact manifests are under `/run/user/10041/g006-build-c6cd957c-20260724/`.
+  - Targeted candidate, origin-projection, rewire, B09, DP-closure, and PCA private-aggregate tests passed in the exact disposable build clone.
+  - Authoritative invariants after the incident: exact HEAD retained, index empty, target link text unchanged, and only protected `M target`.
+- **잔여 이슈**:
+  - External target contents cannot be asserted byte-identical to their pre-attempt state because no exact backup was captured.
+  - Future wrappers must make the disposable cwd an explicit command invariant rather than relying on the tool caller's cwd.
+- **잠재 회귀 위험**:
+  - Risk: a later Maven command again runs from the authoritative repo and mutates the protected target. Detection: wrapper preflight must record `pwd`, assert it equals the disposable clone, and reject authoritative `git rev-parse --show-toplevel` before Maven.
+- **의사결정 근거**:
+  - This was corrected at the execution-harness boundary. No planner, oracle, Runtime, privacy, candidate-space, cost, or placement rule was changed.
+- **적용 원칙/제약**:
+  - Build/test only disposable clones.
+  - Do not stage, revert, retarget, delete, or deliberately build through the protected authoritative target.
+  - Runtime fallback, TRead/TWrite relaxation, and recompile `<CP,FOUT>` remain forbidden.
+
+## Issue: G006 Docker campaign image-integrity gate compared nondeterministically ordered CLI rows
+
+- **상태**: 진행중
+- **환경/조건**:
+  - Goal/stage: full G006 16-cell paired semantic Docker campaign at exact HEAD `c6cd957c000a33408c310b4bc263585ddfbe4af9`.
+  - Failed evidence root/project: `/run/user/10041/g006-paired-semantic-c6cd957c-20260724`, `g006sealed20260724a`.
+  - Corrected rerun root/project: `/run/user/10041/g006-paired-semantic-c6cd957c-v2-20260724`, `g006sealed20260724b`.
+  - Matrix order: `mkl-cost` -> `mkl-fout` -> `mkl-heuristic` -> `mkl-min-st-cut`; workloads `pca`, `logreg`, `kmeans`, `lm`; `P2P2D`, two workers, LAN, private-aggregate.
+- **재현 절차**:
+  - Failed wrapper: `/run/user/10041/g006-paired-semantic-c6cd957c-20260724/run_g006_campaign.sh`.
+  - Failed inner runner: `/run/user/10041/g006-paired-semantic-c6cd957c-20260724/run_g006_cells_inner.sh`.
+  - Failure receipt: `/run/user/10041/g006-paired-semantic-c6cd957c-20260724/failures.log`.
+  - False diff: `/run/user/10041/g006-paired-semantic-c6cd957c-20260724/cells/2_mkl-cost_logreg/docker/images.diff`.
+- **관측 증상**:
+  - Cell 1 DP/PCA passed.
+  - Cell 2 DP/logreg workload itself returned rc `0`, produced output/log/instruction statistics, and had zero strict error hits, but the campaign changed its final rc to `97` with `IMAGE_MISMATCH cell=2`.
+  - The diff showed exactly the same nine project image tags and IDs in a different row order; no image ID, creation timestamp, or size changed.
+- **원인 분석**:
+  - `image_capture` concatenated unsorted `docker images` output and compared its text byte-for-byte across cells.
+  - Docker CLI row ordering is not a stable integrity contract, so identical immutable image identities produced a false mismatch.
+  - This was a verifier/harness defect; it did not indicate a SystemDS workload, planner, Runtime, or image mutation failure.
+- **해결 요약**:
+  - Preserved the failed evidence root.
+  - Changed only the disposable campaign runner: it now captures the nine expected services in a fixed service order using `docker image inspect ... --format "${service}\t{{.Id}}"`, comparing immutable IDs rather than display ordering.
+  - Also moved each per-cell `SHA256SUMS` creation after derived scans/numeric summaries and excludes the manifest itself, eliminating a self-hash/incomplete-manifest defect discovered during inspection.
+  - Started a fresh full campaign with a new unique Compose project and evidence root; the corrected harness passed DP/PCA and DP/logreg integrity checks before stopping at the separate DP/k-means planner failure documented below. No production or experiment-harness repository file was changed.
+- **수정 파일**:
+  - `/run/user/10041/g006-paired-semantic-c6cd957c-v2-20260724/run_g006_cells_inner.sh` (disposable evidence runner)
+  - `/run/user/10041/g006-paired-semantic-c6cd957c-v2-20260724/run_g006_campaign.sh` (new evidence/project constants)
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Failed campaign cleanup left zero `g006sealed20260724a` containers/networks/tags.
+  - Failed cell 2 immutable IDs match cell 1 for all nine services; only row order differs in the preserved diff.
+  - Corrected scripts pass `bash -n`; the v2 campaign proved stable image-ID comparison through cells 1-2 and then stopped at the separate DP/k-means planner failure, not an image-integrity failure.
+- **잔여 이슈**:
+  - Rerun all 16 cells from a fresh exact post-fix runtime and inspect semantic parity, strict scans, instruction statistics, and cleanup receipts.
+- **잠재 회귀 위험**:
+  - Risk: a mutable/non-project image is accidentally accepted because only expected service IDs are compared. Detection: wrapper preflight separately records project/base image IDs and requires all nine exact expected services; Compose project is unique and cleanup is scoped to it.
+- **의사결정 근거**:
+  - Verification harness canonicalization was corrected. No oracle, planner, Runtime, cost model, privacy rule, candidate-space gate, or production harness changed.
+- **적용 원칙/제약**:
+  - Evidence checks must compare canonical immutable facts, not nondeterministic presentation order.
+  - Runtime fallback, partial response acceptance, PUBLIC masking, TRead/TWrite relaxation, recompile `<CP,FOUT>`, and arbitrary candidate closure remain forbidden.
+
+## Issue: G006 DP k-means virtual child plan did not canonicalize to its exact disconnected-component owner plan
+
+- **상태**: 해결
+- **환경/조건**:
+  - Goal/stage: G006 full paired Docker campaign, DP `mkl-cost` cell 3 (`kmeans`).
+  - Pre-fix authoritative HEAD: `c6cd957c000a33408c310b4bc263585ddfbe4af9`.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`, `P2P2D`, two federated workers.
+  - Failed campaign root/project: `/run/user/10041/g006-paired-semantic-c6cd957c-v2-20260724`, `g006sealed20260724b`.
+- **재현 절차**:
+  - Docker cell: `/run/user/10041/g006-paired-semantic-c6cd957c-v2-20260724/cells/3_mkl-cost_kmeans`.
+  - Workload log: `results/kmeans_dataset-P2P2D_coordinator_mkl-cost_g006_3_mkl-cost_kmeans_20260724T202240_3517842_lan.log` under that cell.
+  - Exact focused RED: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedKMeansPlanningTest#runKMeansPlannerDPPrivacyPrivateAggregate test`.
+  - RED log: `/run/user/10041/g006-build-c6cd957c-20260724/kmeans-dp-private-aggregate.log`.
+  - Exact receipt diagnostic: `/run/user/10041/g006-build-c6cd957c-20260724/kmeans-dp-receipt-diagnostic.log`.
+- **관측 증상**:
+  - Docker workload returned rc `1` and the focused integration test failed with `IllegalStateException: DP dependency owner receipt differs` for `.builtinNS::m_kmeans` scalar TWrite `term_code` at `scripts/builtin/kmeans.dml:160:8`.
+  - The exact diagnostic proved the dependency and owner receipts had the same analysis-owned occurrence identity, exact `PlacementState` identity (`CP/LOUT`), and `derivedFedFout`, but different raw `FedPlan` identities: physical plan Hop `439` versus virtual planning carrier Hop `1117`.
+  - The virtual plan projected through `memo.requirePlanCarrierOccurrence(...)` to the same exact physical occurrence as the owner plan.
+- **원인 분석**:
+  - `SelectedChildResolution` used one raw `FedPlan` identity for two different authority domains: exact traversal-edge identity and disconnected-component ownership identity.
+  - Recompile/virtual child edges must retain their raw selected plan for schedule/consume receipts, but component ownership is attached to the unique analysis-owned occurrence carrier and exact placement state.
+  - Consequently, a raw virtual child plan and the physical owner plan represented the same exact placement arm but failed `TraversalDependencyLedger.matchDependencyReceipt(...)` solely because their carrier-plan objects differed.
+- **해결 요약**:
+  - Added a separate `canonicalOwnerPlan` to `SelectedChildResolution`.
+  - Physical child plans retain themselves as owner plans. Virtual/recompile child plans resolve the memo's exact analysis-owned occurrence plan for the same output state.
+  - Canonicalization fails closed unless the owner plan exists, uses the exact analysis-owned carrier Hop, projects to the identical occurrence object, shares the exact selected `PlacementState` object, and shares `derivedFedFout`.
+  - Raw child `plan` identity remains unchanged in `ExactTraversalEdge.schedule/consume`; only cross-owner arm agreement, dependency-root selection, and owner-receipt matching use `canonicalOwnerPlan`.
+  - Rejected alternatives:
+    - Removing raw plan identity checks without a canonical receipt progressed only to `Disconnected completion applied-plan identity differs` and was discarded.
+    - Merging FunctionOp output edges into component ownership caused PCA multi-return coverage failure and was discarded.
+    - Merging all transient-forward edges caused matrix `C` component coverage failure and was discarded.
+    - Merging scalar transient-forward edges fixed k-means but incorrectly merged PCA scalar `N` while its selected traversal covered only the read, so it was discarded.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Prototype canonical-owner patch: `/run/user/10041/g006-build-c6cd957c-20260724/kmeans-canonical-owner-plan-prototype6c.patch`, SHA256 `70347ced687f2abe0653e5d662a90ee80f56ab5b41c7b2f0ff44f38d824763ce`.
+  - Final focused GREEN: DP k-means and PCA private-aggregate plus `CampaignBG014CandidateOccurrenceSnapshotRedTest`, `CampaignBG014DisconnectedComponentCompletionRedTest`, `CampaignBG014RewireOccurrenceSnapshotRedTest`, and `CampaignBDpAggregateProducerContractTest` passed; log `/run/user/10041/g006-build-c6cd957c-20260724/canonical-owner-plan-final-focused.log`.
+  - Candidate-domain GREEN: full `CampaignBG014CandidateOccurrenceSnapshotRedTest` passed after physical plans were allowed to retain themselves as canonical owner plans; log `/run/user/10041/g006-build-c6cd957c-20260724/canonical-owner-plan-prototype6b-candidate.log`.
+  - Independent read-only review approved the exact working diff and independently passed k-means/PCA, disconnected/aggregate, candidate/rewire, B-09, and DP closure gates. Evidence: `/run/user/10041/g005-canonical-owner-review-20260724T185129Z/logs`.
+  - PCA DP private-aggregate and DP k-means private-aggregate passed in the four-workload probe. LogReg and LM failed earlier, unchanged baseline defects documented separately below; baseline no-patch reruns reproduced the same failures before reaching this change.
+- **잔여 이슈**:
+  - Fresh exact build and the complete 16-cell G006 Docker rerun remain required for G006 campaign closure.
+  - Existing DP LogReg and LM focused test failures remain separate planner/builder problems and may block later G006 cells.
+- **잠재 회귀 위험**:
+  - Risk: distinct raw virtual plans could be collapsed despite different placement arms. Detection: canonicalization requires identical analysis occurrence, exact state object, and derived flag; raw edge schedule/consume still requires exact raw plan identity.
+  - Risk: an analysis occurrence lacks a physical memo plan for a virtual arm. Detection: new fail-closed `DP selected child lacks an exact canonical owner plan` exception.
+- **의사결정 근거**:
+  - DP planner ownership receipts were corrected. Runtime, oracle legality, cost model, candidate space, privacy policy, TRead/TWrite rules, and recompile `<CP,FOUT>` legality were not changed.
+- **적용 원칙/제약**:
+  - Runtime fallback/repair and partial response acceptance remain forbidden.
+  - Exact raw traversal-edge identity remains fail-closed.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile no-`<CP,FOUT>` constraints remain unchanged.
+
+## Issue: G006 DP LogReg focused test builds a neutral node with the same state both legal and excluded
+
+- **상태**: 진행중
+- **환경/조건**:
+  - Baseline authoritative HEAD: `c6cd957c000a33408c310b4bc263585ddfbe4af9`, with the k-means prototype removed for the baseline reproduction.
+  - Test: `FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate`.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
+- **재현 절차**:
+  - `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate test`.
+  - Baseline log: `/run/user/10041/g006-build-c6cd957c-20260724/baseline-c6cd957-logreg-dp-private-aggregate.log`.
+- **관측 증상**:
+  - `NeutralPlacementGraph.Node` rejected a loop-body LT `BinaryOp` at script line `69:28` with `IllegalArgumentException: Node state is both legal and excluded`.
+  - The prior G006 Docker DP/logreg cell nevertheless completed rc `0`, so the focused test and experiment path currently exercise different concrete compilation conditions.
+- **원인 분석**:
+  - Not yet grounded beyond the builder stack: `NeutralPlacementGraphBuilder.closePostCfgPhysicalCandidateDependencies(...)` rebuilt a node whose legal alternatives and exclusions overlap.
+  - The failure occurs before DP enumeration and before the canonical-owner change, proven by an exact baseline rerun with that patch removed.
+- **해결 요약**:
+  - No source fix yet. Classified as an independent pre-existing builder/legality defect rather than a regression from the k-means owner-plan change.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Baseline reproduction log above shows the identical exception at HEAD `c6cd957c` without the k-means prototype.
+- **잔여 이슈**:
+  - Inspect the original versus post-CFG node states/exclusions and determine why the focused test differs from the passing Docker logreg cell.
+- **잠재 회귀 위험**:
+  - Risk: later Docker data/control flow reaches the overlapping state and blocks G006. Detection: retain strict per-cell scans and run the focused test after the builder fix.
+- **의사결정 근거**:
+  - No rule changed; investigation remains at neutral placement-graph construction.
+- **적용 원칙/제약**:
+  - Do not close candidates arbitrarily; repair the contradictory legality/exclusion receipt at its builder/oracle source.
+
+## Issue: G006 DP LM focused test enumerates a plan with a foreign exact placement carrier
+
+- **상태**: 진행중
+- **환경/조건**:
+  - Baseline authoritative HEAD: `c6cd957c000a33408c310b4bc263585ddfbe4af9`, k-means prototype removed for baseline reproduction.
+  - Test: `FederatedLMPlanningTest#runLMPlannerDPPrivacyPrivateAggregate`.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
+- **재현 절차**:
+  - `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLMPlanningTest#runLMPlannerDPPrivacyPrivateAggregate test`.
+  - Baseline log: `/run/user/10041/g006-build-c6cd957c-20260724/baseline-c6cd957-lm-dp-private-aggregate.log`.
+- **관측 증상**:
+  - DP enumeration failed in `FederatedPlannerDpMemoTable.validateExactPlacementStates(...)` with `DP plan has a foreign exact placement carrier` for a compiler-temp transpose `ReorgOp` at exact occurrence path `root-0/input-0/input-0/input-0/input-0`.
+- **원인 분석**:
+  - Not yet grounded beyond memo insertion: the enumerator attempted to add a plan whose exact state is not owned by the occurrence to which its carrier projects.
+  - Exact baseline rerun without the k-means canonical-owner patch reproduced the same failure before disconnected-component completion.
+- **해결 요약**:
+  - No source fix yet. Classified as a separate pre-existing enumeration/occurrence-projection defect.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Baseline reproduction log above records the identical failure at HEAD `c6cd957c` with no k-means source changes.
+- **잔여 이슈**:
+  - Diagnose the compiler-temp transpose carrier/state origin before the DP LM G006 cell can be trusted.
+- **잠재 회귀 위험**:
+  - Risk: the full Docker campaign reaches the same foreign-carrier path. Detection: exact DP LM focused gate plus per-cell strict scan.
+- **의사결정 근거**:
+  - No rule changed; the suspected boundary is exact occurrence/state ownership in DP memo insertion.
+- **적용 원칙/제약**:
+  - Do not weaken `validateExactPlacementStates`; repair the carrier/state origin so the exact fail-closed invariant remains intact.
