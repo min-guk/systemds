@@ -1390,14 +1390,18 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		if(transientAccess)
 			legal.removeIf(s -> !isLegalTransient(s));
-		if(hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED && anchors.isEmpty()) {
+		FType exactFederatedSourceType = exactFederatedSourceFType(hop, anchors);
+		if(exactFederatedSourceType != null) {
+			// Existing source availability is not relocation authority: a literal fed-init already has its exact
+			// runtime FederationMap, while PART/OTHER remain closed for durable refed/FOUT/local materialization
+			// anchors because the runtime lacks a stable worker/range relocation contract for them.
+			legal.add(new PlacementState(ExecType.FED, FederatedOutput.FOUT, exactFederatedSourceType, false));
+		}
+		if(hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED && anchors.isEmpty()
+			&& exactFederatedSourceType == null) {
 			PlacementState state = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.OTHER, true);
 			excluded.putIfAbsent(state, new Exclusion(state, ReasonCode.UNSUPPORTED_ANCHOR,
-				"Federated source lacks literal durable worker/range provenance"));
-		}
-		else if(hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.FEDERATED) {
-			DurableAnchorKey anchor = anchors.get(0);
-			legal.add(new PlacementState(ExecType.FED, FederatedOutput.FOUT, anchor.fType(), false));
+				"Federated source has no exact literal source FType; relocation anchor remains unavailable"));
 		}
 		return new Node(key, nodeKind(hop, value), value, true, new ArrayList<>(legal),
 			new ArrayList<>(excluded.values()), anchors);
@@ -1569,6 +1573,36 @@ public final class NeutralPlacementGraphBuilder {
 	private static List<DurableAnchorKey> durableAnchor(Hop hop) {
 		if(!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.FEDERATED) return List.of();
 		DataOp data = (DataOp) hop;
+		List<AnchorPartition> partitions = fedInitLiteralPartitions(data);
+		if(partitions.isEmpty()) return List.of();
+		FType type = durableFedInitAnchorFType(data, partitions);
+		if(type == null || type == FType.PART || type == FType.OTHER) return List.of();
+		return List.of(new DurableAnchorKey("fed-init:" + data.getName(), type, partitions));
+	}
+
+	private static FType exactFederatedSourceFType(Hop hop, List<DurableAnchorKey> anchors) {
+		if(!(hop instanceof DataOp) || ((DataOp) hop).getOp() != OpOpData.FEDERATED)
+			return null;
+		if(anchors.size() == 1)
+			return anchors.get(0).fType();
+		if(!anchors.isEmpty())
+			return null;
+		DataOp data = (DataOp) hop;
+		List<AnchorPartition> partitions = fedInitLiteralPartitions(data);
+		return partitions.isEmpty() ? null : exactFedInitSourceFType(data, partitions);
+	}
+
+	private static FType exactFedInitSourceFType(DataOp data, List<AnchorPartition> partitions) {
+		FType type = FederatedPlannerUtils.deriveFedInitFType(data);
+		return type == null ? deriveAnchorFType(partitions) : type;
+	}
+
+	private static FType durableFedInitAnchorFType(DataOp data, List<AnchorPartition> partitions) {
+		FType type = FederatedPlannerUtils.deriveFedInitFType(data);
+		return type == null || type == FType.PART || type == FType.OTHER ? deriveAnchorFType(partitions) : type;
+	}
+
+	private static List<AnchorPartition> fedInitLiteralPartitions(DataOp data) {
 		int addressIndex = data.getParameterIndex(DataExpression.FED_ADDRESSES);
 		int rangeIndex = data.getParameterIndex(DataExpression.FED_RANGES);
 		if(addressIndex < 0 || rangeIndex < 0) return List.of();
@@ -1586,11 +1620,7 @@ public final class NeutralPlacementGraphBuilder {
 				List.of(((LiteralOp) begin.getInput(0)).getLongValue(), ((LiteralOp) begin.getInput(1)).getLongValue()),
 				List.of(((LiteralOp) end.getInput(0)).getLongValue(), ((LiteralOp) end.getInput(1)).getLongValue())));
 		}
-		FType type = FederatedPlannerUtils.deriveFedInitFType(data);
-		if(type == null || type == FType.PART || type == FType.OTHER)
-			type = deriveAnchorFType(partitions);
-		if(type == null || type == FType.PART || type == FType.OTHER) return List.of();
-		return List.of(new DurableAnchorKey("fed-init:" + data.getName(), type, partitions));
+		return List.copyOf(partitions);
 	}
 
 	private static FType deriveAnchorFType(List<AnchorPartition> partitions) {

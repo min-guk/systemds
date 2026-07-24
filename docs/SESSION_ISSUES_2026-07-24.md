@@ -475,3 +475,45 @@
   - Recompile `<CP,FOUT>` 금지: 변경 없음.
   - Candidate-space/opcode guard 금지: 변경 없음.
   - Privacy PUBLIC ignore directive: 적용 없음; privacy/test ignore behavior was not changed.
+
+## Issue: B13 exact federated source availability was conflated with durable relocation anchor eligibility
+
+- **상태**: 진행중 (Stage 1 source/anchor split only; downstream B13 operation-rule follow-up remains out of scope).
+- **환경/조건**: G005 authoritative repo `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, required start HEAD `ac95fd035f982da13e0e4ff64f2aeaa1c602a009`; DP planner priority; B13 hermetic/private-aggregate diagonal `fedinit` ranges; validation copy/build under `/run/user/10041/g005-b13-source-anchor-split-20260724` because `/tmp`/root filesystem was full. Pre-existing dirty files intentionally not edited/staged: `CampaignBG014HermeticPlannerFixtureFactory.java`, `CampaignBG014DpSemanticCampaignBClosureRedTest.java`, and `target`.
+- **재현 절차**:
+  - Focused B13: `_JAVA_OPTIONS=-Djava.io.tmpdir=/run/user/10041/g005-b13-source-anchor-split-20260724/tmp MAVEN_OPTS=-Djava.io.tmpdir=/run/user/10041/g005-b13-source-anchor-split-20260724/tmp mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserverFactoryContractTest#b13ExactOtherSourceIsLegalButStillUnavailableAsDurableAnchor test`
+  - ROW/no-duplicate source regression: same command with `#b11ExactAcceptedFederatedSourceYieldsAvailableRegistrationFact`.
+  - DP semantic probe: same env with `-Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest#applicableFixturesConsumeTheExactFrozenSemanticBlock`.
+- **관측 증상**:
+  - Diagnosis artifact `/run/user/10041/g005-b13-part-source-diagnosis-20260724/G005_B13_PART_SOURCE_STATE_DIAGNOSIS_20260724.md` (SHA `7c4b1672dbdea864eda8a8c0008fb8afb5633b3df3a9e20615f22d4d5e292436`) proved B13 source state vs durable-anchor conflation.
+  - The B13 diagonal literal federated input had no durable anchor because runtime relocation/materialization cannot use `OTHER`, but the builder also omitted the already-existing exact `FED/FOUT/OTHER` source state and exposed a misleading source-state `UNSUPPORTED_ANCHOR` exclusion.
+- **원인 분석**: `NeutralPlacementGraphBuilder.buildNode(...)` used `anchors.isEmpty()` as both “no durable relocation anchor” and “no existing federated source state”. Literal `DataOp FEDERATED` already has an exact FederationMap source even when that map is not eligible as a durable relocation/refed/FOUT/local-materialization anchor.
+- **의사결정 근거**: Planner/source-state rule repair. Exact source availability is an existing runtime source fact; durable anchors remain relocation/materialization metadata. Runtime fallback, TR/TW legality, recompile CP/FOUT prohibition, opcode/candidate guards, Rulesets/OracleFacade/DP enumerator/runtime, and closure helper files remain unchanged.
+- **해결 요약**:
+  - Added a separate exact federated source FType path. A proven durable anchor supplies ROW/COL/FULL/BROADCAST source FType and prevents duplicate `FED/FOUT`; without an anchor, literal fed-init source FType is derived independently and published as exactly one legal `FED/FOUT/<type>` source state.
+  - Kept durable-anchor eligibility closed for `PART`/`OTHER`; `durableAnchor(...)` still falls back through geometry for durable ROW/COL/FULL/BROADCAST recovery and rejects `PART`/`OTHER`.
+  - Resolved the PART-preservation concern by separating helpers: exact source derivation preserves any non-null `FederatedPlannerUtils.deriveFedInitFType(...)` value (including future true `PART`) and uses geometry only when exact derivation is `null`; durable-anchor derivation may still use geometry fallback before rejecting non-durable `PART`/`OTHER`. Current `deriveFedInitFType(...)` returns `OTHER` rather than `PART` for B13 diagonal ranges, so no true-PART fixture exists without changing upstream semantics.
+  - Removed the stale source-state `UNSUPPORTED_ANCHOR` exclusion when exact literal source FType is known.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/AnchorProvenanceObserverFactoryContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Focused B13 source/anchor split GREEN: `/run/user/10041/g005-b13-source-anchor-split-20260724/anchor_observer_focused_copy_2.log` — 1 test, 0 failures/errors. Proves legal exact `FED/FOUT/OTHER`, empty anchors, no stale source `UNSUPPORTED_ANCHOR`, and no relocation action sourced from B13.
+  - Focused B11 source regression GREEN: `/run/user/10041/g005-b13-source-anchor-split-20260724/anchor_observer_b11_copy.log` — 1 test, 0 failures/errors. Proves durable ROW source remains `FED/FOUT/ROW` and has no duplicate `FED/FOUT` state.
+  - Candidate-rule/builder fact suite GREEN: `/run/user/10041/g005-b13-source-anchor-split-20260724/candidate_rule_facts_slice_a_copy.log` — 3 tests, 0 failures/errors.
+  - DP semantic probe GREEN: `/run/user/10041/g005-b13-source-anchor-split-20260724/dp_b13_probe_all_applicable_copy_3.log` — 1 applicable-fixture sweep test, 0 failures/errors; no `SOURCE_EXACT_STATE_UNAVAILABLE` observed and no next B13 operation-rule failure surfaced in this current combined state.
+  - Compile GREEN: `/run/user/10041/g005-b13-source-anchor-split-20260724/test_compile_copy.log` — `mvn -q -DskipTests test-compile`, exit 0 in run-directory copy.
+  - Diff check GREEN: `/run/user/10041/g005-b13-source-anchor-split-20260724/diff_check.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - Stage 1 only. It does not authorize `OTHER` as a durable relocation/materialization anchor and does not implement downstream operation-rule changes.
+  - Full `AnchorProvenanceObserverFactoryContractTest` has an unrelated existing error in `missingOccurrenceKeyFromGraphIsInvalidWithoutMutation` (`Occurrence has a foreign graph key`) when run as a full class in the copied validation tree; this pass did not alter that non-B13 trap behavior.
+  - `/tmp`/root filesystem was full, so Maven validation was performed in a copied tree under `/run/user/10041/g005-b13-source-anchor-split-20260724`; authoritative source diffs and commit were made only in the repo.
+- **잠재 회귀 위험**:
+  - Risk: exact source FType and durable anchor FType could drift for future `PART` support. Detection: B13 exact `OTHER` and B11 exact ROW/no-duplicate tests; add a true-PART fixture if `FederatedPlannerUtils.deriveFedInitFType(...)` begins returning `PART`.
+  - Risk: consumers might accidentally treat legal `FED/FOUT/OTHER` source as relocation authority. Detection: B13 test asserts `anchors().isEmpty()` and no relocation action sourced from the B13 value; durableAnchor still rejects `PART`/`OTHER`.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate/opcode guard prohibition: respected; no runtime-supported candidate combination was closed.

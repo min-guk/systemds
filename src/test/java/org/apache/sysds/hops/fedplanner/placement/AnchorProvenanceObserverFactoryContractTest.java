@@ -24,10 +24,12 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.AnchorForm;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.ObservationResult;
 import org.apache.sysds.hops.fedplanner.placement.AnchorProvenanceObserver.ObservationState;
@@ -38,6 +40,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFac
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
 import org.junit.Test;
@@ -79,6 +82,9 @@ public class AnchorProvenanceObserverFactoryContractTest {
 		PlacementAnalysis analysis = compileAnalysis("B-11");
 		SourceBinding source = soleFederatedSource(analysis);
 		DurableAnchorKey anchor = soleAnchor(source.node);
+		assertExactLegalSourceState(source.node, anchor.fType(), false);
+		Assert.assertEquals("durable source must not duplicate exact FED/FOUT state", 1,
+			fedFoutStateCount(source.node));
 		AnalysisSnapshot before = AnalysisSnapshot.capture(analysis);
 
 		ObservationResult result = observe(analysis, source.dataOp);
@@ -166,10 +172,24 @@ public class AnchorProvenanceObserverFactoryContractTest {
 	}
 
 	@Test
-	public void b13ExactUnsupportedFederatedSourceWithNoAnchorsIsUnavailable() throws Exception {
+	public void b13ExactOtherSourceIsLegalButStillUnavailableAsDurableAnchor() throws Exception {
 		PlacementAnalysis analysis = compileAnalysis("B-13");
 		SourceBinding source = soleFederatedSource(analysis);
-		Assert.assertTrue(source.node.anchors().isEmpty());
+		Assert.assertTrue("B13 diagonal fed-init must not expose a durable relocation anchor",
+			source.node.anchors().isEmpty());
+		assertExactLegalSourceState(source.node, FType.OTHER, false);
+		Assert.assertEquals("B13 exact source must publish exactly one FED/FOUT legal state", 1,
+			fedFoutStateCount(source.node));
+		Assert.assertFalse("B13 exact source must not retain stale source-state UNSUPPORTED_ANCHOR exclusion",
+			source.node.exclusions().stream().anyMatch(exclusion ->
+				exclusion.reasonCode() == NeutralPlacementGraph.ReasonCode.UNSUPPORTED_ANCHOR
+					&& exclusion.state().execType() == ExecType.FED
+					&& exclusion.state().output() == FederatedOutput.FOUT));
+		Assert.assertFalse("B13 source must not authorize relocation actions without a durable anchor",
+			analysis.graph().relocationActions().stream().anyMatch(action ->
+				action.key().sourceValueVersion().equals(source.node.valueVersion())
+					|| action.obligations().stream().anyMatch(obligation ->
+						obligation.sourceValueVersion().equals(source.node.valueVersion()))));
 		AnalysisSnapshot before = AnalysisSnapshot.capture(analysis);
 
 		ObservationResult result = observe(analysis, source.dataOp);
@@ -197,6 +217,17 @@ public class AnchorProvenanceObserverFactoryContractTest {
 		assertEmpty(ObservationState.INVALID_REQUEST, result,
 			"matched source has multiple durable anchors");
 		before.assertUnchanged(ambiguous);
+	}
+
+	private static void assertExactLegalSourceState(Node node, FType fType, boolean shapeDependent) {
+		Assert.assertTrue("node must expose exact legal source state " + fType + " in "
+			+ node.legalAlternatives(), node.legalAlternatives().contains(
+				new PlacementState(ExecType.FED, FederatedOutput.FOUT, fType, shapeDependent)));
+	}
+
+	private static long fedFoutStateCount(Node node) {
+		return node.legalAlternatives().stream().filter(state ->
+			state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT).count();
 	}
 
 	private static ObservationResult observe(PlacementAnalysis analysis, DataOp dataOp) {
