@@ -1849,3 +1849,56 @@
   - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙은 변경하지 않음.
   - Runtime-supported 후보를 임의 guard로 닫지 않고 exact state/cost model을 확장하여 비교.
   - Memo exact-state fail-closed validation은 authority로 유지하고 완화하지 않음.
+
+## Issue: G006 MinST LogReg exact membership reused one graph state across competing input domains
+
+- **상태**: 해결 (targeted test 및 focused Docker 검증 완료; 최종 exact-JAR LAN/16-cell 재실행은 후속 단계)
+- **환경/조건**:
+  - 최초 accepted HEAD: `686dcd5ae55809b9f7f72718c717b476171f78d8`.
+  - Planner/config: MinST `mkl-min-st-cut`, `P2P2D`, 2 workers, LAN, `private-aggregate`.
+  - G006 matrix order: DP -> FedAll -> Heuristic -> MinST; workloads `pca`, `logreg`, `kmeans`, `lm`.
+  - Disposable build clone: `/run/user/10041/g006-lm-v3-ff05-integrate-20260724T232357`; authoritative repository and protected `target` were not built or modified.
+- **재현 절차**:
+  - Full campaign wrapper: `/run/user/10041/g006-paired-semantic-686dcd5-20260725/run_g006_campaign.sh`.
+  - Failing cell command: `/run/user/10041/g006-paired-semantic-686dcd5-20260725/cells/14_mkl-min-st-cut_logreg/command.sh`.
+  - Failure log: `/run/user/10041/g006-paired-semantic-686dcd5-20260725/cells/14_mkl-min-st-cut_logreg/results/logreg_dataset-P2P2D_coordinator_mkl-min-st-cut_g006_14_mkl-min-st-cut_logreg_20260725T003448_3997449_lan.log`.
+  - Local read-only diagnostic: `/tmp/MinStLogRegAmbiguityDiag.java`; output `/tmp/minst_logreg_diag.out`.
+- **관측 증상**:
+  - The exact accepted runtime first passed `run_LAN.sh --conf mkl-cost --alg kmeans`; evidence `/run/user/10041/g006-lan-docker-closure-20260725/lan-validation.txt`.
+  - Docker cells 1-13 passed with output/log/instruction-stat artifacts and zero strict error/fallback hits. Cell 14 failed at compile time with `MINST_EXACT_MEMBERSHIP_RULE_AUTHORITY_AMBIGUOUS` for top-level FunctionOp `m_multiLogReg`, membership `FED/FOUT`.
+  - The graph correctly retained one exact `FED/FOUT/ROW/SHAPE_INDEPENDENT` state, but three available exact `CandidateRuleFact` rows emitted that same graph-owned state with compiled matrix inputs `[ABSENT_LOCAL,PRESENT ROW]`, `[PRESENT ROW,ABSENT_LOCAL]`, and `[PRESENT ROW,PRESENT ROW]`.
+- **원인 분석**:
+  - `capturedRuleRepresentative(...)` admitted all three input-domain rows because absence could be backed by a legal relocation. It then required one row without using the exact FType authority already published by both compiled input producers.
+  - `exactCandidateEmissionFact(...)` independently rescanned every candidate row for the same state. Even after representative selection, that union scan would recreate the same ambiguity and detach cost derivation from the selected exact membership proof.
+  - Globally rejecting absent-input rows is incorrect: targeted heavy-MM tests prove those rows are valid upload alternatives. The candidate space therefore must remain open; only the exact representative for an ambiguous membership should be resolved from stronger input authority.
+- **해결 요약**:
+  - When multiple captured rows claim the same membership, MinST now selects a row only if it is the unique row whose ordered inputs retain every available exact producer FType (durable anchor or unique exact relocation). If zero or multiple rows satisfy that proof, the original fail-closed ambiguity remains.
+  - Valid absent-input/upload candidates remain in the neutral graph and candidate catalog; no runtime-supported candidate is closed.
+  - Exact FED/FOUT cost lookup now consumes the already-unique `MembershipRepresentative` and its retained `CandidateRuleFact`, rather than rescanning the union of all input domains.
+  - Added a `multiLogReg` compilation regression that retains the three competing rows and asserts the unique representative uses `PRESENT ROW` for both compiled matrix inputs.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR10MinStFTypeMembershipAuthorityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Test compile PASS: `/run/user/10041/g006-minst-logreg-fix-20260725/test-compile.log`.
+  - Targeted MinST exact-authority gate PASS, 10 tests / 0 failures / 0 errors: `/run/user/10041/g006-minst-logreg-fix-20260725/targeted-tests-structural-resolution.log`.
+    - `CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest`
+    - `CampaignBG014MinStHeavyMmUploadAuthorityRedTest`
+    - `CampaignBMinStExactFactsBehaviorRedTest`
+    - `CampaignBR10MinStFTypeMembershipAuthorityRedTest`
+  - Focused sealed Docker MinST LogReg PASS: rc `0`, output SHA256 `88e75c65b4a76ba18cb25002758f7e4fe6fbc455c07680cb50b8c95b798a37e6`, exactly one workload log, exactly one instruction-stat CSV, zero strict failure/fallback/repair hits. Evidence root: `/run/user/10041/g006-minst-logreg-fix-20260725/focused-docker`.
+  - Focused Docker project containers, networks, and temporary image tags were removed after the run.
+- **잔여 이슈**:
+  - Commit and integrate the fix, rebuild the new exact accepted JAR, rerun ordered LAN, then rerun all 16 Docker cells from scratch so every accepted cell uses the identical final source/JAR.
+  - The initial 13 passing cells are diagnostic evidence only after this source change; they cannot be combined with the final-JAR acceptance matrix.
+- **잠재 회귀 위험**:
+  - Risk: exact-input tie resolution could accidentally suppress legal upload candidates. Detection: `CampaignBG014MinStHeavyMmUploadAuthorityRedTest` remains in the targeted gate and all candidates remain published; the filter applies only after multiple representatives claim one membership.
+  - Risk: multiple rows still match all exact input authorities. Detection: selection remains fail-closed with `MINST_EXACT_MEMBERSHIP_RULE_AUTHORITY_AMBIGUOUS` rather than using first-match order.
+  - Risk: cost facts drift from the membership proof. Detection: exact emission is resolved only through the unique representative's exact candidate fact and graph-owned state identity.
+- **의사결정 근거**:
+  - MinST planner exact-proof selection and cost authority were corrected. Oracle/runtime support, privacy, TRead/TWrite legality, recompile rules, and candidate availability were not relaxed or narrowed.
+- **적용 원칙/제약**:
+  - Runtime fallback/implicit repair/partial-response acceptance 금지.
+  - Runtime-supported candidate를 임의로 닫지 않고 exact input authority로 representative만 결정.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙은 변경하지 않음.

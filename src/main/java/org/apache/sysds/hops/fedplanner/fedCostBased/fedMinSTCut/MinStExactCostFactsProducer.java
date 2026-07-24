@@ -361,11 +361,37 @@ public final class MinStExactCostFactsProducer {
 				invocation, null, null));
 		}
 		if(matches.isEmpty()) return null;
+		if(matches.size() > 1) {
+			List<MembershipRepresentative> exactInputMatches = matches.stream()
+				.filter(representative -> retainsExactInputAuthorities(analysis, decision.key(),
+					representative.orderedInputs()))
+				.toList();
+			if(exactInputMatches.size() == 1)
+				return exactInputMatches.get(0);
+		}
 		if(matches.size() != 1)
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_AUTHORITY_AMBIGUOUS|key="
 				+ decision.key().normalizedSignature() + "|membership="
 				+ membership(states.get(0).execType(), states.get(0).output()));
 		return matches.get(0);
+	}
+
+	private static boolean retainsExactInputAuthorities(PlacementAnalysis analysis,
+		CompiledHopKey consumer, List<CandidateInputState> inputs) {
+		boolean exactAuthorityFound = false;
+		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			if(edge.consumer() != consumer)
+				continue;
+			if(edge.inputPosition() < 0 || edge.inputPosition() >= inputs.size())
+				return false;
+			FType direct = exactInputAuthorityType(analysis, edge.producer());
+			if(direct == null)
+				continue;
+			exactAuthorityFound = true;
+			if(!inputs.get(edge.inputPosition()).equals(CandidateInputState.present(direct)))
+				return false;
+		}
+		return exactAuthorityFound;
 	}
 
 	private static List<MembershipInputAuthorityFact> retainedInputAuthorities(PlacementAnalysis analysis,
@@ -723,8 +749,8 @@ public final class MinStExactCostFactsProducer {
 		boolean fout = hasOutput(decision, FederatedOutput.FOUT);
 		boolean fedLout = hasState(decision, ExecType.FED, FederatedOutput.LOUT);
 		boolean cpFout = hasState(decision, ExecType.CP, FederatedOutput.FOUT);
-		CandidateEmissionFact exactFedFout = exactCandidateEmissionFact(analysis, decision,
-			representatives, ExecType.FED, FederatedOutput.FOUT);
+		CandidateEmissionFact exactFedFout = exactCandidateEmissionFact(decision, representatives,
+			ExecType.FED, FederatedOutput.FOUT);
 		boolean derivedFedFout = exactFedFout != null
 			&& exactFedFout.emissionState().derivedFedFout();
 
@@ -1627,23 +1653,9 @@ public final class MinStExactCostFactsProducer {
 		return types.get(0);
 	}
 
-	private static CandidateEmissionFact exactCandidateEmissionFact(PlacementAnalysis analysis,
-		DecisionFact decision, List<MembershipRepresentative> representatives,
+	private static CandidateEmissionFact exactCandidateEmissionFact(DecisionFact decision,
+		List<MembershipRepresentative> representatives,
 		ExecType execType, FederatedOutput output) {
-		List<CandidateEmissionFact> exactFacts = analysis.candidateRuleFacts().orderedFacts().stream()
-			.filter(fact -> fact.key().parentOccurrence() == decision.key()
-				&& fact.status() == CandidateEvaluationStatus.AVAILABLE)
-			.flatMap(fact -> fact.allowedEmissionFacts().stream())
-			.filter(emission -> emission.emissionState().placementState().execType() == execType
-				&& emission.emissionState().placementState().output() == output)
-			.filter(emission -> decision.legalStatesInCanonicalOrder().stream()
-				.anyMatch(state -> state == emission.emissionState().placementState()))
-			.toList();
-		if(exactFacts.size() == 1)
-			return exactFacts.get(0);
-		if(exactFacts.size() > 1)
-			throw new IllegalArgumentException("MINST_EXACT_CANDIDATE_EMISSION_AUTHORITY_AMBIGUOUS|key="
-				+ decision.key().normalizedSignature() + "|membership=" + membership(execType, output));
 		List<MembershipRepresentative> matching = representatives.stream()
 			.filter(representative -> representative.decisionKey() == decision.key()
 				&& representative.execType() == execType && representative.output() == output)
