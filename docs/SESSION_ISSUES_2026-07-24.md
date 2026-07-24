@@ -1,0 +1,44 @@
+# Session Issues - 2026-07-24
+
+## Issue: G005 Heuristic fixture rejects recurring value-equal durable anchors
+
+- **Status**: 진행중 / partially resolved in fixture validation; broader Heuristic semantic alignment remains blocked by pre-existing H-10 and selector/exclusion debt.
+- **환경/조건**: Detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, base `d36390a76b385cf1f5a8375662516b27f056db5a`; Heuristic fixture/contract tests under `src/test/java/org/apache/sysds/test/component/federated/placement/guard/`; Maven/JUnit focused runs.
+- **재현 절차**:
+  - RED: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBR4Heuristic2SelfTest#durableAnchorIdentityMayRecurAcrossExactATWriteTReadOccurrences test`
+  - RED evidence: `/tmp/g005-p4-heuristic-fixture-fix-20260724-052111/red-self-h03.log`
+- **관측 증상**:
+  - Before the fixture correction, H-03 fixture construction threw `INVALID_CANDIDATE_PROOF` from `CampaignBProvenanceFixtureBridge.candidateProof(...)` because `valid(...)` required `anchorOccurrences==1`.
+  - The RED log records the failing candidate and `IllegalArgumentException: INVALID_CANDIDATE_PROOF|...:X=CP/FOUT/ROW/SHAPE_DEPENDENT`.
+- **원인 분석**:
+  - `CampaignBProvenanceFixtureBridge.valid(...)` treated graph occurrence count as durable-anchor identity and rejected valid H-03 graphs where the same normalized `DurableAnchorKey` value appears on three exact graph occurrences: A source, TWrite A, and TRead A.
+  - Production `HeuristicPlacementAdapter.policyAnchor(...)` resolves policy anchors by distinct `DurableAnchorKey` record value and upstream lineage, not Java reference identity and not occurrence count.
+- **의사결정 근거**: Test fixture debt only. The correction mirrors production Heuristic policy-anchor resolution by value identity inside test analysis/proof validation. No runtime fallback, no TR/TW relaxation, no planner candidate-space closure, and no `src/main` change.
+- **해결 요약**:
+  - Added a focused H-03 regression proving the selected durable anchor may recur exactly three times across A source/TWrite/TRead while all candidate proofs remain valid.
+  - Replaced the occurrence-count veto in `valid(...)` with analysis-owned policy-anchor resolution: if the graph has one distinct durable anchor value, use it; otherwise collect distinct anchors whose propagating lineage reaches the expected marker and require exactly one. Ambiguous/missing resolution returns invalid via equality check rather than throwing in `valid(...)`.
+  - Updated literal fixture expectations for H-01 through H-08 where the completed fixture now exposes the previously hidden candidate-universe hashes; exclusion hashes remained stable in the captured literal output for the completed fixtures.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBProvenanceFixtureBridge.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR4Heuristic2SelfTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2LiteralExpectations.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED: `/tmp/g005-p4-heuristic-fixture-fix-20260724-052111/red-self-h03.log` — 1 test, 0 failures, 1 error, `INVALID_CANDIDATE_PROOF` as expected.
+  - GREEN focused H-03: `/tmp/g005-p4-heuristic-fixture-fix-20260724-052111/green-h03-regression.log` — command exited 0.
+  - Compile: `/tmp/g005-p4-heuristic-fixture-fix-20260724-052111/test-compile.log` — command exited 0.
+  - Full self test still fails for known/pre-existing non-H03 fixture debts: H-10 `X_MARKER` ambiguity/count=0, H-NEG-UNKNOWN role resolution, and structuralDigest instability. Captured in `/tmp/g005-p4-heuristic-fixture-fix-20260724-052111/self-full.log`.
+  - Heuristic all-ten provenance contract still fails on downstream selector/exclusion alignment (`descendant refederated ... Y`) after the fixture can complete earlier cases. Captured in `/tmp/g005-p4-heuristic-fixture-fix-20260724-052111/heuristic-provenance-allten.log`.
+- **잔여 이슈**:
+  - H-10 same-shape distinct-anchor fixture currently cannot resolve `X_MARKER` with the original role selector (`count=0`); a attempted `canonicalSourceOrigin.endsWith(":X")` selector was reverted because it also produced count=0 and was not a proven exact alternative.
+  - H-10 sibling-anchor negative/ambiguity sentinel was not safely expressible without first repairing H-10 role resolution; existing foreign same-geometry negative remains the non-graph-anchor control.
+  - `unknownShapeFixtureIsRejected()` has a separate role-resolution failure in the full self run.
+  - The production Heuristic selector/exclusion contract still needs a follow-up to align with the completed fixture candidate universe.
+- **잠재 회귀 위험**:
+  - Risk: resolving anchors by value could accidentally accept a same-geometry but non-graph anchor if all identity fields match. Detection: retain the external same-geometry negative with a different placement id and add the H-10 graph sibling negative only after H-10 marker repair.
+  - Risk: fixture literal candidate hashes can drift as hidden proofs become reachable. Detection: exact literal assertions remain active in `fresh(...)`; update goldens only with captured literal evidence.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Planner candidate guards: unchanged; no candidate-space closure added.
+  - Durable anchor identity: Java record value equality is canonical; no `==` reference identity used.

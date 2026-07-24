@@ -29,6 +29,23 @@ public class CampaignBR4Heuristic2SelfTest {
 		}
 	}
 
+	@Test public void durableAnchorIdentityMayRecurAcrossExactATWriteTReadOccurrences()throws Exception{
+		var h3=CampaignBProvenanceFixtureBridge.fresh("H-03-LOOP-RECOMPILE");
+		Assert.assertFalse("H-03 candidate proofs are non-vacuous",h3.candidateProofs().isEmpty());
+		var anchor=h3.candidateProofs().values().iterator().next().anchor();
+		var owners=h3.analysis().graph().nodes().stream().filter(n->n.anchors().stream().anyMatch(anchor::equals))
+			.map(n->n.valueVersion().lexicalVariable()+":"+n.kind()).collect(java.util.stream.Collectors.toList());
+		Assert.assertEquals("A source, TWrite A, and TRead A share the same durable anchor value",3,owners.size());
+		Assert.assertTrue("A source owner present",owners.stream().anyMatch(x->x.equals("A:OPERATION")));
+		Assert.assertTrue("TWrite A owner present",owners.stream().anyMatch(x->x.equals("A:TRANSIENT_WRITE")));
+		Assert.assertTrue("TRead A owner present",owners.stream().anyMatch(x->x.equals("A:TRANSIENT_READ")));
+		for(var p:h3.candidateProofs().values()){
+			var node=h3.analysis().graph().node(p.provenNode()).orElseThrow();
+			Assert.assertTrue("recurring value-equal policy anchor remains valid for "+p.candidate(),
+				CampaignBProvenanceFixtureBridge.valid(h3.analysis(),node,h3.markerKey(),p));
+		}
+	}
+
 	@Test public void positionalAmbiguityIsRejected(){try{CampaignBProvenanceFixtureBridge.requireUnique("H-X","ROLE",List.of(1,2));Assert.fail();}catch(AssertionError e){Assert.assertTrue(String.valueOf(e.getMessage()).contains("FIXTURE_ROLE_AMBIGUOUS"));}}
 
 	@Test public void independentAndEqualShapeAnchorsRemainProvenanceScoped()throws Exception{

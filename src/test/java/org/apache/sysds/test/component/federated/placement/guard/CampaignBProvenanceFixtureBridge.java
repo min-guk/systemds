@@ -126,13 +126,22 @@ final class CampaignBProvenanceFixtureBridge {
 		PlacementState expectedState=new PlacementState(boundary?ExecType.FED:ExecType.CP,FederatedOutput.FOUT,p.anchor().fType(),p.anchor().fType()!=FType.BROADCAST);
 		Hop hop=analysis.hop(n.key()).orElse(null);boolean exactShape=p.supportedFType()==FType.BROADCAST?p.rows()==-1&&p.cols()==-1:
 			hop!=null&&hop.getDataType()==DataType.MATRIX&&hop.getDim1()==p.rows()&&hop.getDim2()==p.cols();
-		long anchorOccurrences=analysis.graph().nodes().stream().flatMap(x->x.anchors().stream()).filter(p.anchor()::equals).count();
-		return p.atom().node().equals(n.key())&&p.atom().state().equals(p.state())&&p.provenNode().equals(n.key())&&p.candidate().equals(atom(n.key(),p.state().normalizedSignature()))&&p.state().equals(expectedState)&&anchorOccurrences==1&&concreteAnchor(p.anchor())&&!selfOrVariableAnchor(p.anchor(),n)&&supported(p.supportedFType())&&p.supportedFType()==p.anchor().fType()
+		DurableAnchorKey resolvedAnchor=resolvedPolicyAnchor(analysis.graph(),expectedMarker);
+		return p.atom().node().equals(n.key())&&p.atom().state().equals(p.state())&&p.provenNode().equals(n.key())&&p.candidate().equals(atom(n.key(),p.state().normalizedSignature()))&&p.state().equals(expectedState)&&p.anchor().equals(resolvedAnchor)&&concreteAnchor(p.anchor())&&!selfOrVariableAnchor(p.anchor(),n)&&supported(p.supportedFType())&&p.supportedFType()==p.anchor().fType()
 			&&exactShape&&validGeometry(p.anchor(),p.rows(),p.cols())&&(p.supportedFType()==FType.BROADCAST?p.shapeBasis()==ShapeBasis.SHAPE_INDEPENDENT_BROADCAST:p.shapeBasis()==ShapeBasis.KNOWN_COMPATIBLE_DIMENSIONS)
 			&&p.relocationKind()==RelocationKind.LOCAL_UPLOAD_EXISTING_DURABLE_ANCHOR&&p.relocation().sourceValueVersion().equals(n.valueVersion())&&p.relocation().durableAnchor().equals(p.anchor())&&p.relocation().targetPlacement().equals(p.state())&&p.relocation().statementBlockScope().equals(n.key().controlRegion().normalizedSignature())&&p.relocation().compatibleConsumers().equals(List.of(n.key()))
 			&&p.obligation().relocationAction().equals(p.relocation())&&p.obligation().consumer().equals(n.key())&&p.obligation().inputPosition()==0&&p.obligation().sourceValueVersion().equals(n.valueVersion())&&p.obligation().requiredPlacement().equals(p.state())&&p.obligation().callRecompileContext().equals(n.key().recompileContext())
 			&&p.obligationReason()==ObligationReason.EXISTING_FEDERATION_MAP_COMPATIBLE&&p.provenanceMarker().equals(expectedMarker)&&p.provenanceValue().equals(n.valueVersion());
 	}
+	private static DurableAnchorKey resolvedPolicyAnchor(NeutralPlacementGraph graph,CompiledHopKey expectedMarker){
+		List<DurableAnchorKey> all=graph.nodes().stream().flatMap(x->x.anchors().stream()).distinct().toList();
+		if(all.size()==1)return all.get(0);
+		List<DurableAnchorKey> upstream=new ArrayList<>();
+		for(var node:graph.nodes())if(!node.anchors().isEmpty()&&closure(graph,node.key()).contains(expectedMarker))upstream.addAll(node.anchors());
+		List<DurableAnchorKey> distinct=upstream.stream().distinct().toList();
+		return distinct.size()==1?distinct.get(0):null;
+	}
+
 	static boolean unknownShapeFixtureIsRejected()throws Exception{
 		String fed="federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)))";
 		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(compile("A="+fed+";X=A+1;print(sum(X));"));
