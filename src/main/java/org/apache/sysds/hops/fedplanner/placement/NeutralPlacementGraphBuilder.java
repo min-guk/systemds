@@ -741,19 +741,49 @@ public final class NeutralPlacementGraphBuilder {
 		NodeShapeFact readShape = factsByHop.get(readOccurrence.hop());
 		if(localStates.size() != 1 || federatedStates.size() != 1 || sourceShape == null || readShape == null)
 			return read;
-		List<FType> logicalDomain = new ArrayList<>();
-		logicalDomain.add(null);
-		source.legalAlternatives().stream()
-			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
-				&& state.fType() == anchor.fType())
-			.map(PlacementState::fType).distinct().sorted(java.util.Comparator.comparing(Enum::name))
-			.forEach(logicalDomain::add);
-		Node replayed = buildNode(readOccurrence.hop(), read.key(), read.valueVersion(), read.anchors(), readShape,
-			List.of(sourceShape), List.of(Collections.unmodifiableList(logicalDomain)), replayedKeys, replayedFacts);
+		PlacementState localState = localStates.get(0);
+		PlacementState federatedState = federatedStates.get(0);
+		Node replayed = buildExactLogicalTransientRead(readOccurrence.hop(), read, source, anchor, localState,
+			federatedState, replayedKeys, replayedFacts);
 		logicalInputs.add(new LogicalTransientInputFact(source.key(), read.key(), 0,
-			source.valueVersion(), read.valueVersion(), anchor, localStates.get(0), federatedStates.get(0),
+			source.valueVersion(), read.valueVersion(), anchor, localState, federatedState,
 			CandidateInputState.absentLocal(), CandidateInputState.present(anchor.fType())));
 		return replayed;
+	}
+
+	private Node buildExactLogicalTransientRead(Hop readHop, Node read, Node source, DurableAnchorKey anchor,
+		PlacementState localState, PlacementState federatedState, List<CandidateRuleKey> replayedKeys,
+		List<CandidateRuleFact> replayedFacts) {
+		List<CandidateInputState> localInput = List.of(CandidateInputState.absentLocal());
+		List<CandidateInputState> federatedInput = List.of(CandidateInputState.present(anchor.fType()));
+		CandidateRuleKey localKey = new CandidateRuleKey(read.key(), localInput);
+		CandidateRuleKey federatedKey = new CandidateRuleKey(read.key(), federatedInput);
+		replayedKeys.add(localKey);
+		replayedFacts.add(logicalTransientReplayFact(readHop, localKey, localState, source, read, anchor));
+		replayedKeys.add(federatedKey);
+		replayedFacts.add(logicalTransientReplayFact(readHop, federatedKey, federatedState, source, read, anchor));
+		return new Node(read.key(), read.kind(), read.valueVersion(), read.emittedWork(),
+			List.of(localState, federatedState), read.exclusions(), read.anchors());
+	}
+
+	private CandidateRuleFact logicalTransientReplayFact(Hop readHop, CandidateRuleKey key, PlacementState state,
+		Node source, Node read, DurableAnchorKey anchor) {
+		String detail = "logical-transient-replay|source=" + source.key().normalizedSignature()
+			+ "|read=" + read.key().normalizedSignature() + "|anchor=" + anchor.normalizedSignature();
+		CandidateCapabilityFact capability = new CandidateCapabilityFact(
+			org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory.OTHER, readHop.getOpString(),
+			state.execType(), state.output(), state.fType(),
+			org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.OK, detail,
+			List.of(new CandidateRuleNote(org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode.INFO,
+				"builder-local logical transient replay from exact source state")));
+		CandidateShapeProofFact shapeProof = new CandidateShapeProofFact(
+			Map.of("logicalTransientReplay", "builder-local", "anchorFType", String.valueOf(anchor.fType()),
+				"source", source.key().normalizedSignature(), "read", read.key().normalizedSignature()),
+			List.of("source-state", "read-anchor"), List.of());
+		List<FType> outputs = state.output() == FederatedOutput.FOUT && state.fType() != null
+			? List.of(state.fType()) : List.of();
+		return new CandidateRuleFact(key, CandidateEvaluationStatus.AVAILABLE, capability, shapeProof,
+			new CandidateProfileFact(outputs, ""), "");
 	}
 
 	private static boolean sameTransientForwardContext(Node source, Node read) {
@@ -807,6 +837,8 @@ public final class NeutralPlacementGraphBuilder {
 		}
 
 		java.util.TreeSet<Integer> worklist = new java.util.TreeSet<>(replay.changedOrdinals());
+		Set<Integer> refinedOrdinals = new HashSet<>(replay.changedOrdinals());
+		Set<Integer> refinementApplied = new HashSet<>();
 		while(!worklist.isEmpty()) {
 			int producerOrdinal = worklist.pollFirst();
 			for(int consumerOrdinal : consumersByProducer.get(producerOrdinal)) {
@@ -838,11 +870,17 @@ public final class NeutralPlacementGraphBuilder {
 				if(!changed)
 					continue;
 				if(!replacement.legalAlternatives().containsAll(current.legalAlternatives())
-					|| !replacementKeys.containsAll(priorKeys))
-					throw new IllegalStateException("Post-CFG physical candidate closure is not monotone");
+					|| !replacementKeys.containsAll(priorKeys)) {
+					if(!refinementApplied.add(consumerOrdinal)
+						|| !isExactAffectedDescendantRefinement(consumerOrdinal, current, replacement, priorKeys,
+							priorFacts, replacementKeys, replacementFacts, occurrences, ordinalsByBlock, nodes,
+							refinedOrdinals))
+						throw new IllegalStateException("Post-CFG physical candidate closure is not monotone");
+				}
 				nodes.set(consumerOrdinal, replacement);
 				keysByOrdinal.set(consumerOrdinal, List.copyOf(replacementKeys));
 				factsByOrdinal.set(consumerOrdinal, List.copyOf(replacementFacts));
+				refinedOrdinals.add(consumerOrdinal);
 				worklist.add(consumerOrdinal);
 			}
 		}
@@ -854,6 +892,96 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		return new CandidateReplay(List.copyOf(nodes), List.copyOf(closedKeys), List.copyOf(closedFacts),
 			replay.logicalInputs(), replay.changedOrdinals());
+	}
+
+
+	private static boolean isExactAffectedDescendantRefinement(int consumerOrdinal, Node current, Node replacement,
+		List<CandidateRuleKey> priorKeys, List<CandidateRuleFact> priorFacts,
+		List<CandidateRuleKey> replacementKeys, List<CandidateRuleFact> replacementFacts,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		Map<StatementBlock,Map<Hop,Integer>> ordinalsByBlock, List<Node> currentNodes,
+		Set<Integer> refinedOrdinals) {
+		Map<CandidateRuleKey,CandidateRuleFact> priorByKey = factsByKey(priorKeys, priorFacts);
+		Map<CandidateRuleKey,CandidateRuleFact> replacementByKey = factsByKey(replacementKeys, replacementFacts);
+		List<CandidateRuleKey> removedKeys = priorKeys.stream()
+			.filter(key -> !replacementByKey.containsKey(key)).toList();
+		List<PlacementState> removedLegal = current.legalAlternatives().stream()
+			.filter(state -> !replacement.legalAlternatives().contains(state)).toList();
+		if(removedKeys.isEmpty() && removedLegal.isEmpty())
+			return replacement.legalAlternatives().containsAll(current.legalAlternatives())
+				&& replacementKeys.containsAll(priorKeys);
+		PlacementGraphFingerprint.HopOccurrence occurrence = occurrences.get(consumerOrdinal);
+		Map<Hop,Integer> blockOrdinals = ordinalsByBlock.get(occurrence.block());
+		if(blockOrdinals == null)
+			return false;
+		for(CandidateRuleKey key : priorKeys) {
+			CandidateRuleFact priorFact = priorByKey.get(key);
+			CandidateRuleFact replacementFact = replacementByKey.get(key);
+			if(replacementFact == null) {
+				if(!hasRefinedPredecessorInvalidation(key, occurrence, blockOrdinals, currentNodes, refinedOrdinals))
+					return false;
+			}
+			else if(!replacementFact.equals(priorFact))
+				return false;
+		}
+		for(PlacementState state : removedLegal)
+			if(removedKeys.stream().map(priorByKey::get).noneMatch(fact -> exactFactPublishesState(fact, state)))
+				return false;
+		return true;
+	}
+
+	private static Map<CandidateRuleKey,CandidateRuleFact> factsByKey(List<CandidateRuleKey> keys,
+		List<CandidateRuleFact> facts) {
+		if(keys.size() != facts.size())
+			throw new IllegalStateException("Candidate rule key/fact count differs during refinement proof");
+		Map<CandidateRuleKey,CandidateRuleFact> indexed = new LinkedHashMap<>();
+		for(int i = 0; i < keys.size(); i++) {
+			CandidateRuleKey key = keys.get(i);
+			CandidateRuleFact fact = facts.get(i);
+			if(fact.key().parentOccurrence() != key.parentOccurrence()
+				|| !fact.key().orderedInputs().equals(key.orderedInputs()))
+				throw new IllegalStateException("Candidate rule key/fact order differs during refinement proof");
+			if(indexed.putIfAbsent(key, fact) != null)
+				throw new IllegalStateException("Duplicate candidate rule key during refinement proof");
+		}
+		return indexed;
+	}
+
+	private static boolean hasRefinedPredecessorInvalidation(CandidateRuleKey key,
+		PlacementGraphFingerprint.HopOccurrence occurrence, Map<Hop,Integer> blockOrdinals, List<Node> currentNodes,
+		Set<Integer> refinedOrdinals) {
+		List<CandidateInputState> inputs = key.orderedInputs();
+		for(int inputPosition = 0; inputPosition < inputs.size() && inputPosition < occurrence.hop().getInput().size();
+			inputPosition++) {
+			Hop input = occurrence.hop().getInput(inputPosition);
+			if(input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			Integer predecessorOrdinal = blockOrdinals.get(input);
+			if(predecessorOrdinal == null || !refinedOrdinals.contains(predecessorOrdinal))
+				continue;
+			if(!candidateInputDomain(currentNodes.get(predecessorOrdinal)).contains(inputs.get(inputPosition)))
+				return true;
+		}
+		return false;
+	}
+
+	private static Set<CandidateInputState> candidateInputDomain(Node predecessor) {
+		Set<CandidateInputState> domain = new LinkedHashSet<>();
+		for(PlacementState state : predecessor.legalAlternatives()) {
+			if(state.fType() == null)
+				domain.add(CandidateInputState.absentLocal());
+			else
+				domain.add(CandidateInputState.present(state.fType()));
+		}
+		return domain;
+	}
+
+	private static boolean exactFactPublishesState(CandidateRuleFact fact, PlacementState state) {
+		if(fact == null || fact.status() != CandidateEvaluationStatus.AVAILABLE || fact.capability() == null)
+			return false;
+		return fact.capability().nativeExec() == state.execType()
+			&& fact.capability().nativeOutput() == state.output()
+			&& fact.capability().nativeFoutFType() == state.fType();
 	}
 
 	private record CandidateReplay(List<Node> nodes, List<CandidateRuleKey> domainKeys,

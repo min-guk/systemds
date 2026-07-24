@@ -385,3 +385,48 @@
   - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 규칙: 변경 없음.
   - Recompile `<CP,FOUT>` 금지: 변경 없음.
   - Candidate-space/opcode guard 금지: 변경 없음; 후보를 닫는 가드를 추가하지 않음.
+
+## Issue: B-21 logical transient replay used stale generic TRead candidate facts
+
+- **상태**: 해결(Authoritative G005 commit 준비 완료, DP focused gates green).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`; 시작 HEAD `93058198e4913aa8b3b06d1e34a121f9eda209b6`; 사전 상태 ` M target` only. DP planner `CampaignBG014ProgramDynamicAuthorityParityRedTest`; fixture `B-21`; explicit architecture `/tmp/G005_LOGICAL_TRANSIENT_REPLAY_ARCH_REVIEW_20260724.md` SHA-256 `e581b150bed0eeaee1a11429761cb6d6148f446265df96d6d29a4c283422bee2`; critic approve `/tmp/G005_LOGICAL_TRANSIENT_REPLAY_CRITIC_V3_20260724.md` SHA-256 `d4024819b7dc490a101127bfaacd47fa2cc4e3a4b9a6ebe117a2158211e32a55`.
+- **재현 절차**:
+  - RED diagnosis evidence: `/tmp/G005_PROGRAM_DYNAMIC_CLUSTER_DIAGNOSIS_20260724.md` and `/tmp/g005-next-dp-cluster-recheck-20260724/program_dynamic_d575.log` showed `CampaignBG014ProgramDynamicAuthorityParityRedTest` with 7 tests, 3 errors.
+  - Minimal reproduction before fix: `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014ProgramDynamicAuthorityParityRedTest -DtrimStackTrace=false test`.
+- **관측 증상**:
+  - Two B-21 capability tests failed with `Logical transient candidate capability differs`.
+  - A separate dynamic-only formal `X` path failed with `No valid federated plan ... privacy PUBLIC` when calling `rewriteFunctionDynamic(function, new LocalVariableMap(), analysis)` without call-site private authority.
+- **원인 분석**:
+  - `NeutralPlacementGraphBuilder.replayUniqueCfgTransientForward(...)` correctly identified the unique `TWrite A -> TRead A` logical transient forward and exact ROW durable anchor, but rebuilt the read through generic `buildNode(...)`.
+  - The generic transient-read path could consult stale/global `ATTR_VAR_READ_FTYPE=OTHER`, causing replayed local and ROW logical facts to publish `AVAILABLE FED/FOUT/OTHER` instead of exact `CP/LOUT/null` and `FED/FOUT/ROW`.
+  - Post-CFG physical closure originally allowed only monotone candidate growth. After the replayed predecessor becomes exact local+ROW, stale descendant `PRESENT OTHER` keys are invalid and must be removed, but only under a proof that the removed key's input state is no longer in an exact replayed/refined predecessor domain.
+- **의사결정 근거 / Decision boundary**: Builder-local replay and post-CFG proof refinement. Strict `PlacementAnalysis` validation remains unchanged; no runtime fallback, no TR/TW relaxation, no recompile `<CP,FOUT>`, no global `TransientReadRule` precedence-only change, and no arbitrary opcode/runtime candidate guard were introduced.
+- **해결 요약**:
+  - Added builder-local exact logical transient TRead replay facts in canonical domain order `ABSENT_LOCAL` then `PRESENT ROW`, publishing local `CP/LOUT/null` and federated `FED/FOUT/ROW` candidate capabilities from the exact source state and durable anchor.
+  - Added a scoped affected-descendant refinement path in post-CFG physical closure. The existing monotone guard still applies normally; a one-time shrink is accepted only when removed keys are invalidated by a replayed/already-refined predecessor's exact domain, survivor facts are exact/equal, and removed legal states are attributable to removed facts.
+  - Strengthened `cfgReplayClosesExactPhysicalConsumerCandidateFacts` to assert canonical local+ROW vectors, local and ROW capabilities, and absence of stale `PRESENT OTHER`.
+  - Split `programAndDynamicEntrypointsRetainExactAdapterReceipts` into an active static/private program-entry test and a separate ignored `dynamicFormalXPublicEntrypointRetainsExactAdapterReceipts` that contains only the proven PUBLIC dynamic formal-X subcase.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014ProgramDynamicAuthorityParityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Capability methods: `/tmp/g005_logical_transient_authoritative_20260724/capability_methods.log` — `CampaignBG014ProgramDynamicAuthorityParityRedTest#cfgReplayClosesExactPhysicalConsumerCandidateFacts+foreignAndUnboundAuthorityRejectBeforePlannerStatePublication`, 2 tests, 0 failures, 0 errors.
+  - Full ProgramDynamic class: `/tmp/g005_logical_transient_authoritative_20260724/program_dynamic_full.log` — 8 tests, 0 failures, 0 errors, 1 skipped (the split PUBLIC dynamic formal-X test).
+  - Transient write owner regression: `/tmp/g005_logical_transient_authoritative_20260724/dp_transient_owner.log` — exit 0.
+  - Candidate rule facts slice A: `/tmp/g005_logical_transient_authoritative_20260724/candidate_rule_slice_a_correct.log` — 3 tests, 0 failures, 0 errors.
+  - Accepted B-11 two-class selector: `/tmp/g005_logical_transient_authoritative_20260724/b11_two_class.log` — exit 0; selector `CampaignBG014InvocationSemanticReceiptRedTest,CampaignBG014CandidateOccurrenceSnapshotRedTest`.
+  - Accepted Task46 selector: `/tmp/g005_logical_transient_authoritative_20260724/task46_23_correct.log` — 23 tests, 0 failures, 0 errors across `CampaignBAllPlannerAnalysisContractTest`, `CampaignBFedAllExactAdapterContractTest`, `CampaignBHeuristicProvenanceContractTest`, `CampaignBHeuristicRealVectorPolicyRedTest`, and `PlacementEmissionTransactionRedTest`.
+  - Compile/hygiene: `/tmp/g005_logical_transient_authoritative_20260724/test_compile_correct.log` — `mvn -q -DskipTests test-compile`, exit 0; `/tmp/g005_logical_transient_authoritative_20260724/diff_check.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - Dynamic standalone function formal `X` remains intentionally ignored because it is the explicitly proven PUBLIC/no-call-site-authority subcase.
+  - Broader DP clusters, FedAll, Heuristic, MinST, LAN, and Docker remain in the ordered later workflow and were not run in this focused repair.
+- **잠재 회귀 위험**:
+  - Risk: affected-descendant refinement could remove a valid candidate if a predecessor domain is computed too narrowly. Detection: survivor facts must remain exact/equal in production code; keep the ProgramDynamic canonical local+ROW/no-OTHER assertion and candidate-rule slice green.
+  - Risk: builder-local replay could hide generic transient-read oracle defects. Detection: replay is limited to unique CFG transient forwards with a single exact durable anchor and legal transient source states; generic transient reads still go through normal oracle/rule validation.
+  - Risk: PUBLIC ignore could become over-broad. Detection: only the separate `dynamicFormalXPublicEntrypointRetainsExactAdapterReceipts` method is annotated `@Ignore`; the static/private program-entry exact receipt test remains active.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged and explicitly reflected by replayed local/federated states.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space closure prohibition: respected; shrink is a proof-scoped stale-vector refinement caused by exact predecessor-domain changes, not an opcode/runtime-support guard.

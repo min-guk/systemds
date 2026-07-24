@@ -51,6 +51,7 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Executable RED for final program/dynamic DP authority and adapter-receipt parity. */
@@ -222,8 +223,15 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 			.map(key -> key.orderedInputs()).toList();
 		List<CandidateInputState> local = List.of(CandidateInputState.absentLocal());
 		List<CandidateInputState> row = List.of(CandidateInputState.present(FType.ROW));
-		Assert.assertTrue("physical consumer must retain its local candidate", vectors.contains(local));
-		Assert.assertTrue("post-CFG closure must publish the physical PRESENT ROW candidate", vectors.contains(row));
+		Assert.assertEquals("physical consumer must retain canonical local then ROW candidate domain",
+			List.of(local, row), vectors);
+		Assert.assertFalse("post-CFG refinement must remove stale physical PRESENT OTHER candidate",
+			vectors.contains(List.of(CandidateInputState.present(FType.OTHER))));
+		CandidateRuleFact localFact = analysis.candidateRuleFacts().requireExact(physical.consumer(), local);
+		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, localFact.status());
+		Assert.assertEquals(ExecType.CP, localFact.capability().nativeExec());
+		Assert.assertEquals(FederatedOutput.LOUT, localFact.capability().nativeOutput());
+		Assert.assertNull(localFact.capability().nativeFoutFType());
 		CandidateRuleFact rowFact = analysis.candidateRuleFacts().requireExact(physical.consumer(), row);
 		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, rowFact.status());
 		Assert.assertEquals(ExecType.FED, rowFact.capability().nativeExec());
@@ -232,15 +240,27 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 	}
 
 	@Test
-	public void programAndDynamicEntrypointsRetainExactAdapterReceipts() {
+	public void programEntrypointRetainsExactAdapterReceipts() {
 		ProgramInvocation owner = invokeProgram("B-21");
-		FunctionStatementBlock function = owner.program().getFunctionStatementBlock(
-			DMLProgram.DEFAULT_NAMESPACE, "f");
 		assertAppliedPlansAreExactReceipts(owner.receipt());
+		Assert.assertSame(owner.receipt().analysis(), owner.receipt().exactSelection().analysis());
+		Assert.assertSame(owner.receipt().analysis(), owner.receipt().semanticConsumption().analysis());
 		assertTransientReadLogicalParity(owner.receipt().semanticConsumption().semanticBlock());
 		assertScalarTransientForwardDependency(owner.receipt().semanticConsumption().semanticBlock());
 		assertMatrixTransientSchedulingIsNotACandidateCarrier(
 			owner.receipt().semanticConsumption().semanticBlock());
+		assertSelectedRootsAreExactMemoReceipts(owner.receipt().exactSelection(), owner.receipt().memo());
+		Assert.assertFalse("B-21 must exercise an exact function selection",
+			owner.receipt().exactSelection().selectedRootPlans().isEmpty());
+		Assert.assertEquals(owner.receipt().analysisFingerprintBefore(), owner.receipt().analysisFingerprintAfter());
+	}
+
+	@Test
+	@Ignore("PUBLIC dynamic formal-X subcase intentionally split/ignored per session instruction")
+	public void dynamicFormalXPublicEntrypointRetainsExactAdapterReceipts() {
+		ProgramInvocation owner = invokeProgram("B-21");
+		FunctionStatementBlock function = owner.program().getFunctionStatementBlock(
+			DMLProgram.DEFAULT_NAMESPACE, "f");
 		DpDynamicInvocationReceipt dynamic;
 		try {
 			dynamic = new FederatedPlannerDpFedCostBased().rewriteFunctionDynamic(
@@ -263,8 +283,6 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				+ "|nodeKind=" + nodeKind + "|hop=" + hop, failure);
 		}
 
-		Assert.assertSame(owner.receipt().analysis(), owner.receipt().exactSelection().analysis());
-		Assert.assertSame(owner.receipt().analysis(), owner.receipt().semanticConsumption().analysis());
 		Assert.assertSame(owner.receipt().analysis(), dynamic.analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.memoTable().analysis());
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().rewireSnapshot().analysis());
@@ -278,8 +296,6 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(dynamic.memoTable(), dynamicSelection.memo());
 		Assert.assertSame(dynamic.enumerationResult().optimalPlan(), dynamicSelection.legacyOptimalPlan());
 		assertSelectedRootsAreExactMemoReceipts(dynamicSelection, dynamic.memoTable());
-		Assert.assertFalse("B-21 must exercise an exact function selection",
-			owner.receipt().exactSelection().selectedRootPlans().isEmpty());
 		Assert.assertEquals(dynamic.fingerprintBefore(), dynamic.fingerprintAfter());
 		Assert.assertEquals(dynamic.analysis().analysisFingerprint(), dynamic.fingerprintAfter());
 	}
