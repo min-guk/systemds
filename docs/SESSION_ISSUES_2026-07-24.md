@@ -1109,3 +1109,47 @@
 - **잔여 이슈**: 이 범위에서는 없음. LAN/Docker 및 이후 planner 순서는 상위 실행 순서에 따라 별도 진행.
 - **잠재 회귀 위험**: private seam signatures may change again; detect via focused `MinStDownloadAuthorityAmbiguityRedTest` plus the exact 23-class MinST selector.
 - **의사결정 근거**: oracle/runtime/planner 규칙은 변경하지 않고, 승인된 production authority boundary에 맞춰 stale test reflection seam만 수정했다.
+
+## Issue: MinST post-commit acceptance gate closure
+
+- **상태**: 해결
+- **환경/조건**:
+  - Authoritative detached repo: `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`.
+  - Accepted HEAD/tree: `d3a284daa1fda0c8f215cc02364322a46e8be225` / `afdacfb455bc35e2b953fe95068be9eb9cfe655e`.
+  - Production authority commit: `741a683ea04fabad84a1d1f539e00c7372ee550b`.
+  - Test-contract commits: `948458e7e77a6786845ab4f57eb419a2d190096f`, `1c810f9bee05225368b71f785117958d0bdb3e6b`, `d3a284daa1fda0c8f215cc02364322a46e8be225`.
+- **재현 절차**:
+  - Independent post-commit receipt: `/run/user/10041/g005-minst-postcommit-d3a284daa1-verify-20260724/G005_MINST_POSTCOMMIT_D3A284DAA1_VERIFICATION_20260724.md`.
+  - Receipt SHA256: `44cd630a2b5fcfb55fb5cf5e6ac3f2cdad73e149a3127759b20c53fcc87c5496`.
+  - Focused selector: `CampaignBMinStInvocationReceiptContractTest,CampaignBMinStFullPathReceiptContractTest`.
+  - Exact gate selector: byte-for-byte `selector.arg` from `/run/user/10041/g005-minst-only-successor-51e1193c-verify-20260724T154759Z/selector.arg`.
+- **관측 증상**:
+  - Baseline exact gate at `51e1193c...` was `71 tests / 1 failure / 13 errors / 0 skips`.
+  - After exact producer membership authority and separated test-contract repairs, the post-commit gate has no failure/error/skip.
+- **원인 분석**:
+  - Production failures came from missing explicit canonical producer membership authority and selected-source proof binding.
+  - Remaining failures were stale BR9/ExactFacts/BR5 assertions/helpers, malformed BR3 shared-Hop fixture expectations, stale BR10 B-11 ambiguity expectations, and a stale private reflection signature in the download-authority test.
+- **해결 요약**:
+  - Production exact-proof carrier was repaired without changing cost topology or runtime behavior.
+  - Each residual test defect was independently diagnosed, repaired in test-only commits, reviewed, and verified.
+  - The final post-commit verifier reset an isolated disposable clone to the exact accepted HEAD and ran focused plus exact gates with fresh XML accounting.
+- **수정 파일**:
+  - Production and test files recorded in the preceding MinST issue sections.
+  - `docs/SESSION_ISSUES_2026-07-24.md`.
+- **검증**:
+  - Focused receipt: `2/2` fresh XML, `6 tests / 0 failures / 0 errors / 0 skips`.
+  - Exact MinST gate: `23/23` fresh XML, `71 tests / 0 failures / 0 errors / 0 skips`.
+  - Selected-source masking scan: 0 `@Ignore`, `Assume`, `@Disabled`, or privacy-PUBLIC masking hits.
+  - `git diff --check -- . ':(exclude)target'`: pass.
+  - Lore trailers for all four accepted commits: contiguous and parseable.
+  - Authoritative invariant: only protected `M target`, empty index, target link unchanged.
+  - Evidence manifest: `/run/user/10041/g005-minst-postcommit-d3a284daa1-verify-20260724/SHA256SUMS`, manifest SHA256 `092bc11ece3f1e534850526e8fc067f94107807c622e285a654687c8ca9dc814`.
+- **잔여 이슈**:
+  - MinST unit/contract acceptance scope has no remaining failures.
+  - Per mandated order, `run_LAN.sh` and then `run_LAN_docker.sh` remain before later Ultragoal stories.
+- **잠재 회귀 위험**:
+  - Risk: future authority seam changes can stale test reflection or proof fingerprints. Detection: rerun focused 6-test receipt plus the exact 23-class/71-test gate with fresh XML checks.
+  - Risk: future fixtures can reintroduce impossible shared-Hop anchors or duplicate B-11 state assumptions. Detection: BR3/BR10 exact fixture contracts in the 71-test gate.
+- **의사결정 근거**:
+  - Planner exact proof state was corrected once; all subsequent residuals were test-only.
+  - Runtime fallback, candidate closure, TRead/TWrite relaxation, recompile `<CP,FOUT>`, PUBLIC masking, and protected target mutation were not used.
