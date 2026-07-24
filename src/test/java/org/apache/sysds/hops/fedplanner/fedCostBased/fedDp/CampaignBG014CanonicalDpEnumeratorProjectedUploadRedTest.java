@@ -37,6 +37,7 @@ import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Behavioral RED for the canonical DP enumerator's CP/FOUT upload boundary. */
@@ -44,6 +45,7 @@ public class CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest {
 	private static final double FALLBACK_PAYLOAD = 4096.0;
 
 	@Test
+	@Ignore("IGNORE_PUBLIC: production-captured targetPrivacy=PUBLIC; see decision artifact SHA 79c0a486080b6d7a2554fbc488aaa9ccfb837a31f6797d9ffb4fa790ab7a1f66")
 	public void canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt() {
 		Fixture fixture = fixture();
 		ProgramState before = snapshotProgram(fixture);

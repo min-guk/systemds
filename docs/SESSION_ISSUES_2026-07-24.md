@@ -618,35 +618,44 @@
 
 ## Issue: Projected-upload selector is a PUBLIC privacy case with relocation authority, not active private DP work
 
-- **상태**: IGNORE_PUBLIC / no code change.
-- **환경/조건**: Decision artifact `/run/user/10041/g005-projected-upload-decision-20260724/G005_PROJECTED_UPLOAD_DECISION_20260724.md` (SHA `79c0a486080b6d7a2554fbc488aaa9ccfb837a31f6797d9ffb4fa790ab7a1f66`); selector `CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest#canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt`; production DP privacy capture and projected-upload fixture.
+- **상태**: IGNORE_PUBLIC / source-level `@Ignore` applied to the single PUBLIC selector.
+- **환경/조건**: Decision artifact `/run/user/10041/g005-projected-upload-decision-20260724/G005_PROJECTED_UPLOAD_DECISION_20260724.md` (SHA `79c0a486080b6d7a2554fbc488aaa9ccfb837a31f6797d9ffb4fa790ab7a1f66`); selector `CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest#canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt`; production DP privacy capture and projected-upload fixture. Current 27-class broad baseline artifact `/run/user/10041/g005-p4-broad-7007-baseline-verify-20260724T113502Z-shmtarget/G005_P4_BROAD_7007_BASELINE_DIAGNOSTIC_20260724.md` (SHA `b2385a1c805ebf2635326609e038b0e82a1048ea663d4f4ba9671130e409afce`) reported `124 tests, 5 failures, 0 errors, 1 skipped` before this selector-level ignore.
 - **재현 절차**:
   - Disposable clone reproduced the selector with a real local `target`: `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_repro_realtarget.log`.
   - Trace evidence captured in `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_trace_realtarget.log`.
+  - Broad 27-class diagnostic baseline at HEAD `7007dbe71e8f74c8c1db36918a0016635fad7ad6`: `/run/user/10041/g005-p4-broad-7007-baseline-verify-20260724T113502Z-shmtarget/G005_P4_BROAD_7007_BASELINE_DIAGNOSTIC_20260724.md`.
 - **관측 증상**:
-  - The selector failed with `missing target FOUT variants` because it expected a legacy producer-side `CP/FOUT` memo variant for local persistent read `S`.
+  - The projected-upload selector failed with `missing target FOUT variants` because it expected a legacy producer-side `CP/FOUT` memo variant for local persistent read `S`.
   - Probe showed `targetPrivacy=PUBLIC`, `recompile=false`, target legal state only `CP/LOUT`, and `memo FOUT=null` for the local producer.
   - The neutral graph already contained an exact relocation action/obligation from local `S` to the federated `rbind` consumer's ROW durable anchor.
+  - The same broad baseline separately reported later-stage non-PUBLIC failures outside this DP/PUBLIC selector: one FedAll root mutation failure and three Heuristic root mutation failures. These remain active, are not ignored here, and are not resolved by this source-level PUBLIC ignore.
 - **원인 분석**:
   - Production `DpPlacementAdapter.captureNeutralEnumerationContext` defaults absent privacy metadata to `Privacy.PUBLIC`; this fixture has PUBLIC privacy in production semantics and falls under the campaign instruction to ignore public privacy-constraint cases.
   - The failing assertion encodes an obsolete legacy producer `CP/FOUT` memo expectation. Current production authority represents upload feasibility as graph relocation action plus selected parent `FED/FOUT` consumer state, not as a generic local-producer `CP/FOUT` alternative.
   - The target is `PERSISTENTREAD` and `recompile=false`, so the failure does not implicate TRead/TWrite consistency or recompile `<CP,FOUT>` closure.
-- **의사결정 근거 / Decision boundary**: Selector classification only. No production/test source modification is made for this issue. Do not add generic `CP/FOUT` persistent-read variants, do not relax TR/TW or recompile rules, and do not add runtime fallback. If campaign policy later treats default-PUBLIC differently from syntactically annotated PUBLIC, classify this as test-contract defer rather than production GO_FIX.
+- **의사결정 근거 / Decision boundary**: Selector classification and test-source accounting only. No production source modification is made for this issue. Do not add generic `CP/FOUT` persistent-read variants, do not relax TR/TW or recompile rules, and do not add runtime fallback. If campaign policy later treats default-PUBLIC differently from syntactically annotated PUBLIC, classify this as test-contract defer rather than production GO_FIX.
 - **해결 요약**:
-  - Classified the selector as `IGNORE_PUBLIC` for the current DP-first campaign.
+  - Added a precise source-level `@Ignore` only to `CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest#canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt`, with the production-captured `targetPrivacy=PUBLIC` reason and decision-artifact SHA.
+  - Kept `CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest#exactEstimatorBindingRejectsCopiedAndForeignEvidenceWithoutMutation` active, preserving exact-estimator ownership coverage.
   - Preserved existing relocation authority as the correct production model for local-producer upload into an existing durable federated anchor.
+  - Source-level ignore intentionally preserves Surefire XML policy accounting (`skipped=1` for this focused class) instead of hiding the class through selector exclusion or deleting coverage.
 - **수정 파일**:
-  - None for this issue; documentation entry only in `docs/SESSION_ISSUES_2026-07-24.md`.
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
 - **검증**:
   - Decision artifact SHA verified: `79c0a486080b6d7a2554fbc488aaa9ccfb837a31f6797d9ffb4fa790ab7a1f66`.
+  - Broad baseline artifact SHA verified: `b2385a1c805ebf2635326609e038b0e82a1048ea663d4f4ba9671130e409afce`; baseline counts before this change were `tests=124 failures=5 errors=0 skipped=1`.
   - Reproduction log: `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_repro_realtarget.log` — selector failed at the legacy `missing target FOUT variants` expectation.
   - Trace log: `/run/user/10041/g005-projected-upload-decision-20260724/logs/projected_upload_trace_realtarget.log` — finite upload/boundary-share evidence and existing relocation action were observed.
+  - Focused post-change class run in isolated clone `/run/user/10041/g005-closure-final-fresh-verify-20260724-7007dbe/repo` with local real `target` reported `tests=2`, `failures=0`, `errors=0`, `skipped=1`; XML path `target/surefire-reports/TEST-org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest.xml`, log `/run/user/10041/g005-public-ignore-verify-20260724/focused_class.log`, freshness proof `/run/user/10041/g005-public-ignore-verify-20260724/focused_freshness.txt`.
 - **잔여 이슈**:
   - Future non-PUBLIC analogue should normalize/assert selected graph relocation and obligation evidence instead of fabricating producer `CP/FOUT` memo state.
   - Trace still showed a parent NaN FOUT cost; it was not the root cause of this selector failure but remains a future non-PUBLIC normalization/NaN cost-stability risk.
+  - Later-stage FedAll/Heuristic failures from the 27-class baseline remain active and separate from this PUBLIC ignore.
 - **잠재 회귀 위험**:
   - Risk: public-default cases could be accidentally treated as active private fixes. Detection: inspect captured production privacy (`targetPrivacy=PUBLIC`) before changing production for this selector.
   - Risk: relocation authority could be bypassed by reintroducing producer `CP/FOUT` variants. Detection: keep relocation action/obligation checks as the future non-PUBLIC contract surface.
+  - Risk: ignore scope could widen and hide active ownership coverage. Detection: grep confirms only `canonicalEnumeratorRecoversNaNUploadFromExactProjectedReceipt` is annotated `@Ignore` in this class, while `exactEstimatorBindingRejectsCopiedAndForeignEvidenceWithoutMutation` remains active and the focused class XML reports two tests with one skip.
 - **적용 원칙/제약**:
   - Public privacy cases are ignored for this campaign.
   - Runtime fallback prohibited: unchanged.
