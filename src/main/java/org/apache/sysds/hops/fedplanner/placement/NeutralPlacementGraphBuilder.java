@@ -201,19 +201,6 @@ public final class NeutralPlacementGraphBuilder {
 				.put(hop, ordinal);
 			ownedHops.add(hop);
 			List<DurableAnchorKey> anchors = durableAnchor(hop);
-			DurableAnchorKey occurrenceAnchor = null;
-			if(!anchors.isEmpty()) occurrenceAnchor = anchors.get(0);
-			else {
-				Set<DurableAnchorKey> inherited = new java.util.TreeSet<>();
-				for(Hop input : hop.getInput())
-					if(anchorProvenance.containsKey(input)) inherited.add(anchorProvenance.get(input));
-				if(inherited.size() == 1) occurrenceAnchor = inherited.iterator().next();
-			}
-			if(occurrenceAnchor == null)
-				anchorProvenance.remove(hop);
-			else
-				anchorProvenance.put(hop, occurrenceAnchor);
-			occurrenceAnchorProvenance.add(occurrenceAnchor);
 			List<NodeShapeFact> inputShapeFacts = new ArrayList<>(hop.getInput().size());
 			for(int inputPosition = 0; inputPosition < hop.getInput().size(); inputPosition++) {
 				NodeShapeFact inputShapeFact = factsByHop.get(hop.getInput(inputPosition));
@@ -223,6 +210,16 @@ public final class NeutralPlacementGraphBuilder {
 				inputShapeFacts.add(inputShapeFact);
 			}
 			inputShapeFacts = List.copyOf(inputShapeFacts);
+			List<DurableAnchorKey> inputAnchors = new ArrayList<>(hop.getInput().size());
+			for(Hop input : hop.getInput())
+				inputAnchors.add(anchorProvenance.get(input));
+			DurableAnchorKey occurrenceAnchor = !anchors.isEmpty() ? anchors.get(0)
+				: inheritableDurableAnchor(hop, shapeFact, inputShapeFacts, inputAnchors);
+			if(occurrenceAnchor == null)
+				anchorProvenance.remove(hop);
+			else
+				anchorProvenance.put(hop, occurrenceAnchor);
+			occurrenceAnchorProvenance.add(occurrenceAnchor);
 			captureConsumerProfileFacts(hop, key, inputShapeFacts,
 				candidateConsumerDomainKeys, candidateConsumerProfileFacts);
 			List<DurableAnchorKey> exactAnchors = occurrenceAnchor == null ? List.of() : List.of(occurrenceAnchor);
@@ -238,7 +235,7 @@ public final class NeutralPlacementGraphBuilder {
 			throw new IllegalStateException("occurrence/node mismatch before CFG closure: "
 				+ occurrences.size() + '/' + nodes.size());
 		nodes = closeCfgValueVersions(occurrences, nodes, values, cfg);
-		AnchorClosure anchorClosure = closeCfgDurableAnchors(nodes, occurrenceAnchorProvenance, cfg);
+		AnchorClosure anchorClosure = closeCfgDurableAnchors(occurrences, nodes, occurrenceAnchorProvenance, cfg, factsByHop);
 		nodes = anchorClosure.nodes();
 		occurrenceAnchorProvenance = anchorClosure.anchors();
 		CandidateReplay candidateReplay = replayUniqueCfgTransientForwards(occurrences, nodes, cfg, factsByHop,
@@ -561,22 +558,16 @@ public final class NeutralPlacementGraphBuilder {
 		return closed;
 	}
 
-	private static AnchorClosure closeCfgDurableAnchors(List<Node> nodes,
-		List<DurableAnchorKey> occurrenceAnchors, CfgAnalysis cfg) {
+	private AnchorClosure closeCfgDurableAnchors(List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		List<Node> nodes, List<DurableAnchorKey> occurrenceAnchors, CfgAnalysis cfg,
+		Map<Hop,NodeShapeFact> factsByHop) {
 		List<Node> closedNodes = new ArrayList<>(nodes.size());
 		List<DurableAnchorKey> closedAnchors = new ArrayList<>(nodes.size());
 		for(int i = 0; i < nodes.size(); i++) {
 			DurableAnchorKey anchor = occurrenceAnchors.get(i);
-			if(anchor == null) {
-				Set<DurableAnchorKey> reaching = new java.util.TreeSet<>();
-				for(int definition : cfg.reachingDefinitions().get(i)) {
-					DurableAnchorKey definitionAnchor = occurrenceAnchors.get(definition);
-					if(definitionAnchor != null)
-						reaching.add(definitionAnchor);
-				}
-				if(reaching.size() == 1)
-					anchor = reaching.iterator().next();
-			}
+			if(anchor == null)
+				anchor = cfgTransientReadAnchor(occurrences.get(i).hop(), factsByHop.get(occurrences.get(i).hop()),
+					cfg.reachingDefinitions().get(i), occurrenceAnchors);
 			Node node = nodes.get(i);
 			closedNodes.add(new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
 				node.legalAlternatives(), node.exclusions(), anchor == null ? List.of() : List.of(anchor)));
@@ -587,6 +578,87 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private record AnchorClosure(List<Node> nodes, List<DurableAnchorKey> anchors) { }
+
+
+	// Durable-anchor propagation preserves an existing FederationMap identity only when the matrix inputs,
+	// output geometry, and Oracle profile all prove the same FType domain; it is not a runtime-capability closure.
+	private DurableAnchorKey cfgTransientReadAnchor(Hop hop, NodeShapeFact outputShape, Set<Integer> reachingDefinitions,
+		List<DurableAnchorKey> occurrenceAnchors) {
+		if(!isTransientRead(hop) || !hop.getInput().isEmpty() || reachingDefinitions.isEmpty())
+			return null;
+		DurableAnchorKey anchor = null;
+		for(int definition : reachingDefinitions) {
+			DurableAnchorKey definitionAnchor = occurrenceAnchors.get(definition);
+			if(definitionAnchor == null)
+				return null;
+			if(anchor == null)
+				anchor = definitionAnchor;
+			else if(!anchor.equals(definitionAnchor))
+				return null;
+		}
+		return anchor != null && outputShape != null && outputShape.dataType().isMatrix()
+			&& outputGeometryCompatible(outputShape, anchor) && oracleConfirmsAnchorDomain(hop,
+				Collections.singletonList(Collections.singletonList(anchor.fType())), anchor) ? anchor : null;
+	}
+
+	private DurableAnchorKey inheritableDurableAnchor(Hop hop, NodeShapeFact outputShape,
+		List<NodeShapeFact> inputShapeFacts, List<DurableAnchorKey> inputAnchors) {
+		if(outputShape == null || !outputShape.dataType().isMatrix())
+			return null;
+		Set<DurableAnchorKey> candidates = new java.util.TreeSet<>();
+		for(int i = 0; i < inputShapeFacts.size(); i++)
+			if(inputShapeFacts.get(i).dataType().isMatrix() && inputAnchors.get(i) != null)
+				candidates.add(inputAnchors.get(i));
+		if(candidates.size() != 1)
+			return null;
+		DurableAnchorKey anchor = candidates.iterator().next();
+		List<List<FType>> domains = new ArrayList<>(inputShapeFacts.size());
+		for(int i = 0; i < inputShapeFacts.size(); i++) {
+			NodeShapeFact inputShape = inputShapeFacts.get(i);
+			DurableAnchorKey inputAnchor = inputAnchors.get(i);
+			if(!inputShape.dataType().isMatrix())
+				domains.add(Collections.singletonList(null));
+			else if(anchor.equals(inputAnchor))
+				domains.add(Collections.singletonList(anchor.fType()));
+			else if(inputAnchor != null || !knownBroadcastableLocalMatrix(inputShape))
+				return null;
+			else
+				domains.add(Collections.singletonList(null));
+		}
+		return outputGeometryCompatible(outputShape, anchor) && oracleConfirmsAnchorDomain(hop, domains, anchor)
+			? anchor : null;
+	}
+
+	private boolean oracleConfirmsAnchorDomain(Hop hop, List<List<FType>> domains, DurableAnchorKey anchor) {
+		FTypeProfile profile = oracle.inferProfile(hop, domains, null);
+		return profile != null && profile.outputs() != null && profile.outputs().contains(anchor.fType());
+	}
+
+	private static boolean knownBroadcastableLocalMatrix(NodeShapeFact shape) {
+		return shape.knownPositiveMatrix() && (shape.rows() == 1 || shape.cols() == 1);
+	}
+
+	private static boolean outputGeometryCompatible(NodeShapeFact outputShape, DurableAnchorKey anchor) {
+		if(!outputShape.knownPositiveMatrix())
+			return true;
+		if(anchor.partitions().isEmpty() || deriveAnchorFType(anchor.partitions()) != anchor.fType())
+			return false;
+		long maxRow = -1, maxCol = -1;
+		for(AnchorPartition partition : anchor.partitions()) {
+			if(partition.begin().size() != 2 || partition.end().size() != 2)
+				return false;
+			long beginRow = partition.begin().get(0), beginCol = partition.begin().get(1);
+			long endRow = partition.end().get(0), endCol = partition.end().get(1);
+			if(beginRow < 0 || beginCol < 0 || endRow <= beginRow || endCol <= beginCol
+				|| endRow > outputShape.rows() || endCol > outputShape.cols())
+				return false;
+			maxRow = Math.max(maxRow, endRow);
+			maxCol = Math.max(maxCol, endCol);
+		}
+		// Fed-init anchors are constructed from exact literal half-open ranges; matching derived FType plus
+		// bounded partitions and max extents proves the output geometry is the same logical matrix.
+		return outputShape.rows() == maxRow && outputShape.cols() == maxCol;
+	}
 
 	private CandidateReplay replayUniqueCfgTransientForwards(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes, CfgAnalysis cfg,

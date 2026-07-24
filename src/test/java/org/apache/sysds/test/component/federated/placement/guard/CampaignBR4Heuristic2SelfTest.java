@@ -46,12 +46,12 @@ public class CampaignBR4Heuristic2SelfTest {
 		}
 	}
 
-	@Test public void h08StructuralDigestIsRepeatStableWithRawRelocationsPreserved()throws Exception{
+	@Test public void h08StructuralDigestIsRepeatStableWithNoRawRelocationsAfterAnchorGate()throws Exception{
 		var a=CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
 		var b=CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
 		Assert.assertEquals(a.structuralDigest(),b.structuralDigest());
 		Assert.assertEquals(CampaignBProvenanceFixtureBridge.literalDescription(a),CampaignBProvenanceFixtureBridge.literalDescription(b));
-		Assert.assertFalse("raw semantic relocation set is still exposed",a.removedRelocations().isEmpty());
+		Assert.assertEquals("H-08 Y no longer carries A, so no no-refed raw relocation remains",Set.of(),a.removedRelocations());
 	}
 
 	@Test public void positionalAmbiguityIsRejected(){try{CampaignBProvenanceFixtureBridge.requireUnique("H-X","ROLE",List.of(1,2));Assert.fail();}catch(AssertionError e){Assert.assertTrue(String.valueOf(e.getMessage()).contains("FIXTURE_ROLE_AMBIGUOUS"));}}

@@ -133,3 +133,56 @@
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space closure only for documented planner-policy proof: no runtime-capability or global-legality claim added.
   - DP/FedAll/MinST, cost model, POM/cache, and runtime execution paths: untouched.
+
+## Issue: Durable anchor propagation required matrix-coherence and canonical hash exactness
+
+- **상태**: 해결. Focused durable-anchor propagation controls, H-08/H-10 literal refreshes, and exact Heuristic normalized-plan fingerprint validation are green.
+- **환경/조건**: Detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`; Heuristic Campaign B guard fixtures; `NO_REFED_POLICY_V1`; durable-anchor propagation in `NeutralPlacementGraphBuilder`.
+- **재현 절차**:
+  - Valid RED: `mvn -q -Dtest=CampaignBDurableAnchorPropagationContractTest test` with selector-safe assertions -> `/tmp/g005-durable-anchor-gate-20260724/red_focused_selectors_fixed.log`.
+  - Broad residual repro before the final test-hash repair: `mvn -q -Dtest=CampaignBHeuristicProvenanceContractTest test` -> `/tmp/g005-durable-anchor-gate-20260724/provenance_contract_current.log`; `mvn -q -Dtest=CampaignBHeuristicRealVectorPolicyRedTest test` -> `/tmp/g005-durable-anchor-gate-20260724/real_vector_policy_current.log`.
+- **관측 증상**:
+  - H-10 `sum(A)` and `matrix(sum(A),...)` incorrectly inherited A's durable anchor even though scalar reductions and scalar-derived matrices are not the same federated matrix identity.
+  - H-08 `A+Z` with full local matrix `Z` incorrectly inherited A's durable anchor and exposed a stale raw no-refed relocation expectation.
+  - `v %*% A` vector-times-federated-matrix produced a local-only matrix but still inherited A's durable anchor.
+  - The broad Heuristic validators failed on exact `normalizedPlanFingerprint` mismatches: provenance all-ten expected `5b8e970f908de3207c3c3c9ef5c98329987057441915bb5f3d06898725d65ab8` but observed `8234db77c65289ca9955cf5e82e90449397b1d6c56297c4b67457451b54818e5`; real-vector expected `caf6e8ad893c1d735c840561daf461f58fd319c924df9c1b39324dcb7508e0f0` but observed `662b4d775b9661e3d72c3fc726266a22395e97fa75386f8beec7548682c1d0c3`.
+- **원인 분석**:
+  - First-pass anchor inheritance used only “exactly one anchored input” and did not require matrix output, matrix-input coherence, broadcastable-local proof, compatible output geometry, or Oracle FType-domain confirmation.
+  - CFG durable-anchor closure collected only non-null reaching-definition anchors; a mixed anchored/local reaching-def set could collapse to one non-null anchor instead of terminating.
+  - The test semantic validator had a stale bespoke plan-hash formula over observability fields, while production `PlacementEmissionTransaction.canonicalPlanHash(...)` hashes planner id, analysis fingerprint, sorted selected emission states, sorted relocations, sorted local materializations, and objective certificate.
+- **의사결정 근거**: Planner/oracle semantic propagation rule and test oracle exactness repair. Durable anchors represent existing `FederationMap` identity and may be propagated only when matrix coherence, output geometry, and Oracle profile prove the same domain. No opcode guard, runtime fallback, TR/TW relaxation, candidate-space shortcut, or runtime support change was introduced.
+- **해결 요약**:
+  - Replaced single-input-anchor inheritance with `inheritableDurableAnchor(...)`: output must be MATRIX; exactly one candidate durable anchor from anchored MATRIX inputs; scalar/non-matrix inputs are ignored through exact `Collections.singletonList(null)` Oracle domains; unanchored MATRIX inputs must have known positive scalar-like/vector geometry; unknown matrix shape is not ignored; output geometry must be compatible with the anchor partitions; Oracle output profile must include the anchor FType.
+  - Reworked CFG TRead closure so zero-input transient reads inherit only when every reaching definition is non-null and all definitions carry the same compatible anchor; mixed anchored/local or distinct-anchor reaching definitions terminate anchor propagation.
+  - Added focused controls for H10 scalar/scalar-derived matrix, H08 full local matrix, H09 scalar broadcast, local vector broadcast, vector-times-federated-MM local-only, H03 recurring TWrite/TRead, and mixed branch reaching definitions.
+  - Refreshed H08/H10 literals from repeat-stable fixture output and changed H08 self-test to assert the exact empty raw relocation set now that `Y` no longer carries A.
+  - Extended the Heuristic reflection bridge with exact canonical hash inputs (`plannerId`, selected emission states, selected local materializations, and `objectiveCertificate`) and updated the semantic validator to independently reconstruct the documented production canonical hash without calling production `canonicalPlanHash(...)`.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBDurableAnchorPropagationContractTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR4Heuristic2SelfTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBHeuristicProvenanceContractTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2AdapterBridge.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2LiteralExpectations.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2SemanticValidator.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Focused durable-anchor GREEN: `/tmp/g005-durable-anchor-gate-20260724/green_focused_current.log` — `mvn -q -Dtest=CampaignBDurableAnchorPropagationContractTest test`, exit 0.
+  - Self/literal GREEN: `/tmp/g005-durable-anchor-gate-20260724/self_test_current.log` and `/tmp/g005-durable-anchor-gate-20260724/focused_self_after_hashfix.log` — repeat-stable H08/H10 and focused controls, exit 0.
+  - Provenance contract GREEN after exact canonical-hash repair: `/tmp/g005-durable-anchor-gate-20260724/provenance_contract_after_emissionhash.log` — `mvn -q -Dtest=CampaignBHeuristicProvenanceContractTest test`, exit 0.
+  - Real-vector policy GREEN after exact canonical-hash repair: `/tmp/g005-durable-anchor-gate-20260724/real_vector_policy_after_hashfix.log` — `mvn -q -Dtest=CampaignBHeuristicRealVectorPolicyRedTest test`, exit 0.
+  - Combined guard suite GREEN: `/tmp/g005-durable-anchor-gate-20260724/all_guard_current.log` — `mvn -q -Dtest=CampaignBDurableAnchorPropagationContractTest,CampaignBR4Heuristic2SelfTest,CampaignBHeuristicProvenanceContractTest,CampaignBHeuristicRealVectorPolicyRedTest test`, exit 0.
+  - Compile: `/tmp/g005-durable-anchor-gate-20260724/test_compile_final.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005-durable-anchor-gate-20260724/diff_check_final.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - This pass did not run LAN scripts or address DP/FedAll/MinST ordering; it was scoped to Heuristic durable-anchor propagation, fixture literals, and exact canonical hash validation.
+  - `target` remains dirty/unstaged as pre-existing generated state and is intentionally not part of the commit.
+- **잠재 회귀 위험**:
+  - Risk: the semantic gate could over-terminate valid local MATRIX broadcasts. Detection: H09 scalar broadcast and explicit local-vector-broadcast controls preserve anchors only when Oracle confirms the ROW domain.
+  - Risk: fail-fast Oracle profile calls now surface defects previously hidden by broad catches. Detection: focused and broad Heuristic guard suites exercise Oracle-confirmed propagation paths.
+  - Risk: canonical hash validator could drift if production hash authority changes. Detection: the test bridge reflects exact public canonical inputs and independently rebuilds the documented field order.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged and preserved by H03 recurring TWrite/TRead control.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space closure guard prohibition: respected; no opcode-specific skip/continue guard was added.
