@@ -8,14 +8,19 @@ package org.apache.sysds.test.component.federated.placement.guard;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.FTypes.FederatedPlanner;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
@@ -48,7 +53,9 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 		assertTypedReceipt(receipt, analysis, planner.selected);
 		Assert.assertEquals("FEDALL_ROOT_ANALYSIS_FINGERPRINT_MUTATION", fingerprintBefore,
 			analysis.analysisFingerprint());
-		Assert.assertEquals("FEDALL_ROOT_HOP_MUTATION", hopStateBefore, hopState(analysis));
+		Assert.assertEquals("FEDALL_ROOT_SELECTION_PHASE_HOP_MUTATION", hopStateBefore,
+			planner.selectionPhaseHopState);
+		assertExactAppliedEmission(receipt, analysis);
 		Assert.assertThrows("FEDALL_ROOT_ASSIGNMENT_MUTABLE", UnsupportedOperationException.class,
 			() -> planner.selected.assignment().clear());
 		Assert.assertThrows("FEDALL_ROOT_RELOCATIONS_MUTABLE", UnsupportedOperationException.class,
@@ -150,6 +157,48 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 		Assert.assertEquals("FEDALL_EMISSION_NOT_NOOP", false, invoke(emission, "noOp"));
 	}
 
+	private static void assertExactAppliedEmission(Object receipt, PlacementAnalysis analysis) throws Exception {
+		Object normalized = invoke(receipt, "normalizedResult");
+		Assert.assertTrue("FEDALL_APPLIED_NORMALIZED_RESULT_TYPE", normalized instanceof NormalizedPlannerResult);
+		Map<CompiledHopKey, PlacementEmissionState> selected =
+			((NormalizedPlannerResult) normalized).selectedEmissionStates();
+		List<Node> decisionNodes = analysis.graph().decisionNodes();
+		Assert.assertEquals("FEDALL_APPLIED_DECISION_COVERAGE", decisionNodes.size(), selected.size());
+		Map<Hop, Boolean> concreteWrites = new IdentityHashMap<>();
+		for(Node node : decisionNodes) {
+			PlacementEmissionState emissionState = exactEmissionState(selected, node.key());
+			Assert.assertNotNull("FEDALL_APPLIED_SELECTED_STATE|"
+				+ node.key().normalizedSignature(), emissionState);
+			Assert.assertTrue("FEDALL_APPLIED_LEGAL_STATE|" + node.key().normalizedSignature(),
+				node.legalAlternatives().contains(emissionState.placementState()));
+			if(!analysis.isCompiledHopOccurrence(node.key()))
+				continue;
+			Hop hop = analysis.hop(node.key()).orElseThrow(AssertionError::new);
+			concreteWrites.put(hop, Boolean.TRUE);
+			Assert.assertEquals("FEDALL_APPLIED_HOP_EXEC|" + node.key().normalizedSignature(),
+				emissionState.placementState().execType(), hop.getExecType());
+			Assert.assertEquals("FEDALL_APPLIED_HOP_FORCED_EXEC|" + node.key().normalizedSignature(),
+				emissionState.placementState().execType(), hop.getForcedExecType());
+			Assert.assertEquals("FEDALL_APPLIED_HOP_OUTPUT|" + node.key().normalizedSignature(),
+				emissionState.placementState().output(), hop.getFederatedOutput());
+			Assert.assertEquals("FEDALL_APPLIED_HOP_DERIVED|" + node.key().normalizedSignature(),
+				emissionState.derivedFedFout(), hop.isFederatedOutputDerived());
+		}
+		Object emission = invoke(receipt, "emissionReceipt");
+		Assert.assertEquals("FEDALL_APPLIED_HOP_MUTATION_COUNT", concreteWrites.size(),
+			invoke(emission, "hopMutations"));
+		Assert.assertEquals("FEDALL_APPLIED_B01_REGISTRY_WRITE_COUNT", 0,
+			invoke(emission, "registryWrites"));
+	}
+
+	private static PlacementEmissionState exactEmissionState(
+		Map<CompiledHopKey, PlacementEmissionState> selected, CompiledHopKey expected) {
+		for(Map.Entry<CompiledHopKey, PlacementEmissionState> entry : selected.entrySet())
+			if(entry.getKey() == expected)
+				return entry.getValue();
+		return null;
+	}
+
 	private static FedAllPlacementAdapter.Result result(Object receipt) throws Exception {
 		Method accessor = receipt.getClass().getMethod("result");
 		Assert.assertEquals("FEDALL_RECEIPT_RESULT_TYPE", FedAllPlacementAdapter.Result.class,
@@ -176,11 +225,18 @@ public class CampaignBFedAllInvocationReceiptContractTest {
 	private static final class TrackingFedAll extends FederatedPlannerFedAll {
 		private int selectionCount;
 		private FedAllPlacementAdapter.Result selected;
+		private List<String> selectionPhaseHopState;
 
 		@Override
 		public FedAllPlacementAdapter.Result select(PlacementAnalysis analysis) {
+			String fingerprintBefore = analysis.analysisFingerprint();
+			List<String> hopStateBefore = hopState(analysis);
 			selectionCount++;
 			selected = super.select(analysis);
+			Assert.assertEquals("FEDALL_SELECT_ANALYSIS_FINGERPRINT_MUTATION", fingerprintBefore,
+				analysis.analysisFingerprint());
+			selectionPhaseHopState = hopState(analysis);
+			Assert.assertEquals("FEDALL_SELECT_HOP_MUTATION", hopStateBefore, selectionPhaseHopState);
 			return selected;
 		}
 	}

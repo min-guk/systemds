@@ -778,3 +778,48 @@
   - Runtime fallback prohibited: unchanged.
   - Production authority boundary preserved: invalid occurrence/graph ownership fails at construction.
   - DP-only scope respected; FedAll/Heuristic/MinST/LAN/Docker not run for this repair.
+
+## Issue: FedAll root receipt test expected no Hop field changes despite applied P4 emission
+
+- **상태**: 해결 (test-only contract repair).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, 시작 HEAD `3beb7d2879891a915afb4e4b6607e8ac3022facd`, 사전 상태 ` M target` only. FedAll stage only; no Heuristic/MinST/LAN/Docker. Diagnosis artifact `/run/user/10041/g005-fedall-diagnosis-20260724/G005_FEDALL_ROOT_HOP_MUTATION_DIAGNOSIS_20260724.md` (SHA `20c3f5f990f673f17781a1a0e990313fd9647db65fa81f539651b197d15d3d14`) and independent review `/run/user/10041/g005-fedall-stage-contract-review-3beb-20260724/G005_FEDALL_STAGE_CONTRACT_REVIEW_3BEB_20260724.md` (SHA `81a59576b2152697ab081dd72b78e9cdb730afeec2db652fdf39b7e1be0e78a3`) approved a test-contract repair, not a production fix and not a PUBLIC ignore.
+- **재현 절차**:
+  - Isolated focused class command: `mvn -q -Dmaven.repo.local=/run/user/10041/g005-g014-closure-harness-20260724-r2/m2 -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBFedAllInvocationReceiptContractTest test`.
+  - Pre-repair reproduction log: `/run/user/10041/g005-fedall-diagnosis-20260724/logs/fedall_contract_repro.log`.
+  - Out-of-tree probe log with selected states, privacy, counters, hashes, and Hop deltas: `/run/user/10041/g005-fedall-diagnosis-20260724/logs/fedall_b01_probe_privacy.log`.
+- **관측 증상**:
+  - Focused pre-repair class result was `tests=3`, `failures=1`, `errors=0`, `skipped=0`.
+  - The sole failing assertion was `FEDALL_ROOT_HOP_MUTATION` in `realFourArgumentRootSelectsExactlyOnceAndReturnsTheExactTypedReceipt`.
+  - Probe showed selection itself was mutation-free, but the full `rewriteProgram(..., analysis)` then applied a P4 emission transaction: `emissionApplied=true`, `emissionNoOp=false`, `emissionHopMutations=8`, `emissionRegistryWrites=0`.
+  - The B-01 normalized hash, canonical hash, and emission hash all matched `637d607700d31d558bd6cdda62bebef64c8fccbacd4da246a1a0d9765323ffe2`; analysis fingerprint stayed `512c1f3857753c0920c03cb4fecd48648d1101e38b804b7a875f93a397b92092`.
+  - Probe privacy was `privacyDistinct=[PUBLIC]`, but the failure boundary was the stale post-emission Hop-state assertion rather than a privacy-constraint planner failure, so the active FedAll test remains enabled and is not annotated with `@Ignore` or gated by `Assume`.
+- **원인 분석**:
+  - The old test conflated selection-phase immutability with full rewrite postconditions. `FederatedPlannerFedAll.rewriteProgram(..., analysis)` is specified to select, normalize, and apply exactly one `PlacementEmissionTransaction`.
+  - A successful non-noop P4 emission must write concrete compiled Hop placement fields to the exact selected emission state. Therefore comparing the post-rewrite Hop state to the unset prestate contradicts the same test's canonical-emission assertion.
+  - `mutationCount=0` in the planner counters means no unexpected repair/fallback mutation path; expected transaction writes are accounted separately by `emissionReceipt.hopMutations()`.
+- **의사결정 근거 / Decision boundary**: Test contract only. No `src/main` change, no runtime fallback, no planner candidate closure, no TR/TW or recompile rule relaxation. The repair preserves selection immutability by asserting Hop state/fingerprint inside `TrackingFedAll.select` after `super.select`, then asserts post-rewrite Hops equal the normalized selected emission authority.
+- **해결 요약**:
+  - Moved the no-mutation assertion to the FedAll selection phase inside `TrackingFedAll.select`, where `super.select(analysis)` must not change Hop state or analysis fingerprint.
+  - Added post-rewrite assertions that every decision node has exact normalized selected-emission coverage and every compiled occurrence Hop's `execType`, `forcedExecType`, `FederatedOutput`, and derived-FOUT bit match its selected `PlacementEmissionState`; virtual/non-compiled decision nodes are validated for coverage/legality but skipped for concrete Hop-field writes.
+  - Asserted the receipt `hopMutations()` equals the number of distinct concrete compiled Hop writes and `registryWrites()` is `0` for B-01's no-relocation all-local plan.
+  - Preserved exact typed receipt, canonical hash, counter, immutability, and active-test coverage.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBFedAllInvocationReceiptContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Acceptance verification used isolated clone `/run/user/10041/g005-closure-final-fresh-verify-20260724-7007dbe/repo` with local target `/dev/shm/g005-fedall-repair-target-20260724`; full `CampaignBFedAllInvocationReceiptContractTest` reported `tests=3`, `failures=0`, `errors=0`, `skipped=0`. Log: `/run/user/10041/g005-fedall-repair-20260724/logs/fedall_contract_full.log`; freshness proof: `/run/user/10041/g005-fedall-repair-20260724/logs/fedall_contract_freshness.txt`.
+  - `mvn -DskipTests test-compile`, `git diff --check`, and Lore trailer parsing are run before acceptance; see commit evidence artifact for exact logs/SHA256.
+  - Storage-blocked verifier note: a prior attempt to create a fresh clone under `/run/user/10041/g005-anchor-observer-repair-20260724/repo` failed with `No space left on device`; that storage failure is non-acceptance evidence and only explains reusing an existing isolated clone with redirected local `/dev/shm` target.
+- **잔여 이슈**:
+  - Later Heuristic failures remain separate and were not run/fixed in this FedAll stage.
+  - FedAll B-15 compatibility remains covered by the same focused class but no broader FedAll/LAN/Docker sweep is performed here by instruction.
+- **잠재 회귀 위험**:
+  - Risk: future edits could again assert no post-rewrite Hop mutation and contradict P4 emission semantics. Detection: keep the selection-phase no-mutation assertion separate from post-rewrite exact-emission-state assertions.
+  - Risk: virtual/non-compiled decision nodes could be incorrectly counted as concrete Hop writes. Detection: count only distinct `analysis.isCompiledHopOccurrence(...)` Hop identities for `hopMutations()`.
+  - Risk: PUBLIC fixture status could be misused to hide a non-privacy assertion failure. Detection: the FedAll test remains active with no `@Ignore`/`Assume`, and docs record PUBLIC as observed context, not the decision boundary.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - P4 transaction semantics preserved: successful full rewrite applies selected placement authority exactly once.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space/opcode guard prohibition: unchanged.
