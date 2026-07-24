@@ -38,6 +38,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EdgeContribution;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipInputAuthorityFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
@@ -48,12 +49,14 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
@@ -118,7 +121,7 @@ public final class MinStExactCostFactsProducer {
 			fail(ValidationReason.RAW_STATE_RECEIPT_MISMATCH,
 				"Decision states differ from the pre-solve legality projection");
 		validateGroups(expected.groups, groups);
-		validateTransferAuthorityOwnership(analysis, groups, transferAuthorities);
+		validateTransferAuthorityOwnership(analysis, groups, transferAuthorities, expected.representatives);
 		if(!sameTransferAuthorities(expected.transferAuthorities, transferAuthorities))
 			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 				"Transfer authority facts differ from the neutral graph");
@@ -159,7 +162,7 @@ public final class MinStExactCostFactsProducer {
 		List<ObligationFact> obligations = deriveObligations(analysis, decisionsByKey);
 		List<DirectedEdgeFact> edges = accumulator.freeze();
 		List<MembershipRepresentative> representatives = membershipRepresentatives(analysis, decisions);
-		List<TransferAuthorityFact> transferAuthorities = transferAuthorities(analysis, groups);
+		List<TransferAuthorityFact> transferAuthorities = transferAuthorities(analysis, groups, representatives);
 		String fingerprint = fingerprint(analysis, orderedScope, decisions, representatives,
 			edges, groups, transferAuthorities, obligations);
 		return new Derivation(List.copyOf(decisions), representatives, edges, groups,
@@ -171,6 +174,7 @@ public final class MinStExactCostFactsProducer {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(decisions, "decisions");
 		List<MembershipRepresentative> result = new ArrayList<>();
+		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey = new IdentityHashMap<>();
 		for(DecisionFact decision : decisions) {
 			NeutralPlacementGraph.Node node = analysis.graph().node(decision.key()).orElseThrow(() ->
 				new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_NODE_MISSING"));
@@ -178,8 +182,11 @@ public final class MinStExactCostFactsProducer {
 			for(PlacementState state : decision.legalStatesInCanonicalOrder())
 				byMembership.computeIfAbsent(membership(state.execType(), state.output()), ignored ->
 					new ArrayList<>()).add(state);
-			for(List<PlacementState> states : byMembership.values())
-				result.add(representative(analysis, decision, node, states));
+			for(List<PlacementState> states : byMembership.values()) {
+				MembershipRepresentative representative = representative(analysis, decision, node, states, previousByKey);
+				result.add(representative);
+				previousByKey.computeIfAbsent(decision.key(), ignored -> new ArrayList<>()).add(representative);
+			}
 		}
 		return List.copyOf(result);
 	}
@@ -193,7 +200,8 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static MembershipRepresentative representative(PlacementAnalysis analysis,
-		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states) {
+		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states,
+		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
 		if(states.isEmpty())
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_MISSING");
 		PlacementState first = states.get(0);
@@ -203,11 +211,11 @@ public final class MinStExactCostFactsProducer {
 
 		if(states.size() == 1 && first.output() == FederatedOutput.LOUT)
 			return new MembershipRepresentative(decision.key(), first.execType(), first.output(), first,
-				MembershipAuthorityKind.LEGAL_SINGLETON, null, null, List.of(), null);
+				MembershipAuthorityKind.LEGAL_SINGLETON, null, null, List.of(), List.of(), null, null, null);
 		MembershipRepresentative anchored = durableRepresentative(analysis, decision, node, states);
 		if(anchored != null)
 			return anchored;
-		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, node, states);
+		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, node, states, previousByKey);
 		if(captured != null)
 			return captured;
 		MembershipRepresentative relocation = relocationRepresentative(analysis, decision, states);
@@ -240,41 +248,53 @@ public final class MinStExactCostFactsProducer {
 				+ decision.key().normalizedSignature());
 		PlacementState state = matching.get(0);
 		return new MembershipRepresentative(decision.key(), state.execType(), state.output(), state,
-			MembershipAuthorityKind.DURABLE_ANCHOR, anchor, null, List.of(), null);
+			MembershipAuthorityKind.DURABLE_ANCHOR, anchor, null, List.of(), List.of(), null, null, null);
 	}
 
 	private static MembershipRepresentative relocationRepresentative(PlacementAnalysis analysis,
 		DecisionFact decision, List<PlacementState> states) {
+		NeutralPlacementGraph.Node node = analysis.graph().node(decision.key()).orElseThrow();
 		List<NeutralPlacementGraph.RelocationAction> actions = analysis.graph().relocationActions().stream()
-			.filter(action -> action.obligations().stream().anyMatch(obligation ->
-				obligation.consumer() == decision.key()
-					&& states.stream().anyMatch(state -> state.equals(obligation.requiredPlacement()))))
+			.filter(action -> action.key().sourceValueVersion().equals(node.valueVersion())
+				&& states.stream().anyMatch(state -> state.equals(action.key().targetPlacement())))
 			.toList();
 		if(actions.isEmpty()) return null;
 		List<PlacementState> retained = states.stream().filter(state -> actions.stream()
-			.anyMatch(action -> action.obligations().stream().anyMatch(obligation ->
-				obligation.consumer() == decision.key() && obligation.requiredPlacement().equals(state)))).toList();
+			.anyMatch(action -> state.equals(action.key().targetPlacement()))).toList();
 		if(retained.size() != 1)
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RELOCATION_STATE_AMBIGUOUS|key="
 				+ decision.key().normalizedSignature());
-		List<DurableAnchorKey> anchors = identityDistinct(actions.stream()
-			.map(action -> action.key().durableAnchor()).toList());
-		if(anchors.size() != 1)
+		PlacementState state = retained.get(0);
+		List<NeutralPlacementGraph.RelocationAction> matchingActions = actions.stream()
+			.filter(action -> action.key().targetPlacement().equals(state)).toList();
+		if(matchingActions.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RELOCATION_ACTION_"
+				+ (matchingActions.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|key="
+				+ decision.key().normalizedSignature());
+		NeutralPlacementGraph.RelocationAction retainedAction = matchingActions.get(0);
+		List<DurableAnchorKey> anchors = identityDistinct(List.of(retainedAction.key().durableAnchor()));
+		if(anchors.size() != 1 || anchors.get(0).fType() != state.fType())
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RELOCATION_ANCHOR_AMBIGUOUS|key="
 				+ decision.key().normalizedSignature());
-		PlacementState state = retained.get(0);
 		return new MembershipRepresentative(decision.key(), state.execType(), state.output(), state,
-			MembershipAuthorityKind.DURABLE_ANCHOR, anchors.get(0), null, List.of(), null);
+			MembershipAuthorityKind.RELOCATION_SOURCE, anchors.get(0), null, List.of(), List.of(), null, retainedAction, null);
 	}
 
 	private static MembershipRepresentative capturedRuleRepresentative(PlacementAnalysis analysis,
-		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states) {
+		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states,
+		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
 		CapturedInvocationEvidence invocation = capturedInvocationEvidence(analysis, decision.key());
 		List<MembershipRepresentative> matches = new ArrayList<>();
 		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts()) {
 			if(fact.key().parentOccurrence() != decision.key()
 				|| fact.status() != CandidateEvaluationStatus.AVAILABLE
-				|| !retainedInputEdgesMatch(analysis, decision.key(), fact))
+				|| fact.capability() == null
+				|| !fact.profile().available()
+				|| fact.capability().nativeExec() != ExecType.FED
+				|| fact.capability().nativeOutput() != FederatedOutput.FOUT
+				|| fact.capability().nativeFoutFType() == null
+				|| fact.capability().nativeFoutFType() == FType.OTHER
+				|| fact.capability().nativeFoutFType() == FType.PART)
 				continue;
 			CapturedResolution resolution;
 			try {
@@ -291,15 +311,23 @@ public final class MinStExactCostFactsProducer {
 			if(fType == null || fType == FType.OTHER || fType == FType.PART)
 				continue;
 			boolean shapeDependent = !fact.shapeProof().requiredFacts().isEmpty();
+			Hop decisionHop = analysis.hop(decision.key()).orElseThrow();
+			boolean transientData = decisionHop instanceof DataOp
+				&& (((DataOp)decisionHop).getOp() == OpOpData.TRANSIENTREAD
+					|| ((DataOp)decisionHop).getOp() == OpOpData.TRANSIENTWRITE);
 			List<PlacementState> retained = states.stream().filter(state -> state.fType() == fType
-				&& state.shapeDependent() == shapeDependent).toList();
+				&& (transientData || state.shapeDependent() == shapeDependent)).toList();
 			if(retained.size() > 1)
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_STATE_AMBIGUOUS|key="
 					+ decision.key().normalizedSignature());
 			if(retained.size() == 1) {
 				PlacementState state = retained.get(0);
+				List<MembershipInputAuthorityFact> inputAuthorities = retainedInputAuthorities(analysis,
+					decision.key(), fact, state, previousByKey);
+				if(inputAuthorities == null)
+					continue;
 				matches.add(new MembershipRepresentative(decision.key(), state.execType(), state.output(), state,
-					MembershipAuthorityKind.CAPTURED_RULE, null, fact, fact.key().orderedInputs(), invocation));
+					MembershipAuthorityKind.CAPTURED_RULE, null, fact, fact.key().orderedInputs(), inputAuthorities, invocation, null, null));
 			}
 		}
 		if(matches.isEmpty()) return null;
@@ -310,23 +338,139 @@ public final class MinStExactCostFactsProducer {
 		return matches.get(0);
 	}
 
-	private static boolean retainedInputEdgesMatch(PlacementAnalysis analysis, CompiledHopKey consumer,
-		CandidateRuleFact fact) {
+	private static List<MembershipInputAuthorityFact> retainedInputAuthorities(PlacementAnalysis analysis,
+		CompiledHopKey consumer, CandidateRuleFact fact, PlacementState retainedState,
+		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
 		List<CompiledInputEdgeFact> edges = analysis.compiledInputEdgesInCanonicalOrder().stream()
 			.filter(edge -> edge.consumer() == consumer).toList();
 		List<CandidateInputState> inputs = fact.key().orderedInputs();
+		List<MembershipInputAuthorityFact> inputAuthorities = new ArrayList<>();
 		for(CompiledInputEdgeFact edge : edges) {
-			if(edge.inputPosition() < 0 || edge.inputPosition() >= inputs.size()) return false;
-			FType exact = exactInputAuthorityType(analysis, edge.producer());
-			if(exact == null || !inputs.get(edge.inputPosition()).equals(CandidateInputState.present(exact)))
-				return false;
+			if(edge.inputPosition() < 0 || edge.inputPosition() >= inputs.size()) return null;
+			if(analysis.requireExactCompiledInputEdge(edge.producer(), edge.consumer(), edge.inputPosition()) != edge)
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_EDGE_FOREIGN");
+			CandidateInputState expected = inputs.get(edge.inputPosition());
+			if(expected.present()) {
+				FType direct = exactInputAuthorityType(analysis, edge.producer());
+				if(direct != null) {
+					if(direct != expected.fType())
+						return null;
+				}
+				else {
+					MembershipRepresentative producer = exactPriorProducerRepresentative(edge, expected.fType(), previousByKey);
+					inputAuthorities.add(new MembershipInputAuthorityFact(edge, edge.inputPosition(), producer,
+						membershipInputAuthoritySignature(edge, producer)));
+				}
+			}
+			else if(!relocationAuthorityForAbsentInput(analysis, edge, retainedState))
+				return null;
 		}
 		for(int position = 0; position < inputs.size(); position++) {
 			final int inputPosition = position;
 			boolean matrixEdge = edges.stream().anyMatch(edge -> edge.inputPosition() == inputPosition);
-			if(!matrixEdge && !inputs.get(position).equals(CandidateInputState.absentLocal())) return false;
+			if(matrixEdge)
+				continue;
+			CandidateInputState expected = inputs.get(position);
+			if(expected.present()) {
+				if(!logicalTransientInputMatches(analysis, consumer, inputPosition, expected, retainedState))
+					return null;
+			}
+			else if(!expected.equals(CandidateInputState.absentLocal()))
+				return null;
 		}
-		return true;
+		return List.copyOf(inputAuthorities);
+	}
+
+	private static MembershipRepresentative exactPriorProducerRepresentative(CompiledInputEdgeFact edge,
+		FType expectedType, IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
+		List<MembershipRepresentative> prior = previousByKey.get(edge.producer());
+		if(prior == null || prior.isEmpty())
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_FORWARD_OR_MISSING|producer="
+				+ edge.producer().normalizedSignature() + "|consumer=" + edge.consumer().normalizedSignature()
+				+ "|input=" + edge.inputPosition());
+		List<MembershipRepresentative> matching = prior.stream()
+			.filter(representative -> representative.authorityKind() != MembershipAuthorityKind.LEGAL_SINGLETON
+				&& representative.execType() == ExecType.FED
+				&& representative.output() == FederatedOutput.FOUT
+				&& representative.state().fType() == expectedType)
+			.toList();
+		if(matching.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_"
+				+ (matching.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|producer="
+				+ edge.producer().normalizedSignature() + "|consumer=" + edge.consumer().normalizedSignature()
+				+ "|input=" + edge.inputPosition() + "|ftype=" + expectedType);
+		return matching.get(0);
+	}
+
+	private static String membershipInputAuthoritySignature(CompiledInputEdgeFact edge,
+		MembershipRepresentative producer) {
+		return "MEMBERSHIP_INPUT|" + edge.producer().normalizedSignature() + '|'
+			+ edge.consumer().normalizedSignature() + '|' + edge.inputPosition() + '|'
+			+ producer.authorityKind() + '|' + producer.state().normalizedSignature() + '|'
+			+ representativeProofSignature(producer);
+	}
+
+	private static String representativeProofSignature(MembershipRepresentative representative) {
+		StringBuilder signature = new StringBuilder("MEMBERSHIP_REP|")
+			.append(representative.decisionKey().normalizedSignature()).append('|')
+			.append(representative.execType()).append('|')
+			.append(representative.output()).append('|')
+			.append(representative.state().normalizedSignature()).append('|')
+			.append(representative.authorityKind());
+		if(representative.durableAnchorOrNull() != null)
+			signature.append("|A=").append(representative.durableAnchorOrNull().normalizedSignature());
+		if(representative.candidateRuleFactOrNull() != null) {
+			CandidateRuleFact fact = representative.candidateRuleFactOrNull();
+			signature.append("|R=")
+				.append(fact.key().parentOccurrence().normalizedSignature()).append('/')
+				.append(fact.key().orderedInputs()).append('/')
+				.append(fact.status());
+			CandidateCapabilityFact capability = fact.capability();
+			if(capability != null)
+				signature.append("/C=").append(capability.nativeExec()).append('/')
+					.append(capability.nativeOutput()).append('/')
+					.append(capability.nativeFoutFType());
+			signature.append("|I=").append(representative.invocationEvidenceOrNull());
+		}
+		for(MembershipInputAuthorityFact inputAuthority : representative.inputAuthorityFacts())
+			signature.append("|D=").append(inputAuthority.inputEdge().producer().normalizedSignature())
+				.append('/').append(inputAuthority.inputEdge().consumer().normalizedSignature())
+				.append('/').append(inputAuthority.inputPosition())
+				.append('/').append(inputAuthority.authoritySignature());
+		if(representative.relocationActionOrNull() != null)
+			signature.append("|L=").append(representative.relocationActionOrNull()
+				.key().normalizedSignature());
+		if(representative.authoritySignatureOrNull() != null)
+			signature.append("|S=").append(representative.authoritySignatureOrNull());
+		return signature.toString();
+	}
+
+	private static boolean relocationAuthorityForAbsentInput(PlacementAnalysis analysis,
+		CompiledInputEdgeFact edge, PlacementState retainedState) {
+		NeutralPlacementGraph.Node producer = analysis.graph().node(edge.producer()).orElseThrow();
+		return analysis.graph().relocationActions().stream().anyMatch(action ->
+			action.key().sourceValueVersion().equals(producer.valueVersion())
+				&& action.key().targetPlacement().equals(retainedState)
+				&& action.key().targetPlacement().fType() == retainedState.fType()
+				&& action.obligations().stream().anyMatch(obligation ->
+					obligation.consumer() == edge.consumer()
+						&& obligation.inputPosition() == edge.inputPosition()
+						&& obligation.sourceValueVersion().equals(producer.valueVersion())
+						&& obligation.requiredPlacement().equals(retainedState)));
+	}
+
+	private static boolean logicalTransientInputMatches(PlacementAnalysis analysis, CompiledHopKey consumer,
+		int inputPosition, CandidateInputState expected, PlacementState retainedState) {
+		List<LogicalTransientInputFact> matches = analysis.logicalTransientInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == consumer && fact.logicalPosition() == inputPosition)
+			.toList();
+		if(matches.size() != 1)
+			return false;
+		LogicalTransientInputFact fact = matches.get(0);
+		if(analysis.requireExactLogicalTransientInput(fact.sourceWrite(), consumer, inputPosition) != fact)
+			return false;
+		return expected.equals(fact.federatedInput())
+			&& fact.federatedSourceState().equals(retainedState);
 	}
 
 	private static FType exactInputAuthorityType(PlacementAnalysis analysis, CompiledHopKey producer) {
@@ -1161,7 +1305,7 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static List<TransferAuthorityFact> transferAuthorities(PlacementAnalysis analysis,
-		List<AuxiliaryGroupFact> groups) {
+		List<AuxiliaryGroupFact> groups, List<MembershipRepresentative> representatives) {
 		List<TransferAuthorityFact> result = new ArrayList<>();
 		for(AuxiliaryGroupFact group : groups) {
 			NeutralPlacementGraph.Node producer = analysis.graph().node(group.producerKey())
@@ -1175,8 +1319,11 @@ public final class MinStExactCostFactsProducer {
 					if(result.size() == authorityCount)
 						addIndependentAnchorAuthorities(analysis, result, group, endpoint, inputEdge);
 				}
-				else
+				else {
 					addDurableSourceAuthorities(result, group, endpoint, inputEdge, producer);
+					if(result.size() == authorityCount)
+						addSelectedSourceLocalMaterializationAuthorities(analysis, result, group, endpoint, inputEdge, producer, representatives);
+				}
 			}
 		}
 		return List.copyOf(result);
@@ -1201,6 +1348,51 @@ public final class MinStExactCostFactsProducer {
 					producer.valueVersion(), anchor, required, signature));
 			}
 		}
+	}
+
+	private static void addSelectedSourceLocalMaterializationAuthorities(PlacementAnalysis analysis,
+		List<TransferAuthorityFact> result, AuxiliaryGroupFact group, EndpointFact endpoint,
+		CompiledInputEdgeFact inputEdge, NeutralPlacementGraph.Node producer,
+		List<MembershipRepresentative> representatives) {
+		if(group.direction() != Direction.DOWNLOAD)
+			return;
+		List<MembershipRepresentative> matching = representatives.stream()
+			.filter(representative -> representative.decisionKey() == group.producerKey()
+				&& representative.execType() == ExecType.FED
+				&& representative.output() == FederatedOutput.FOUT
+				&& representative.state().fType() == group.conversionType()
+				&& selectedSourceMembershipAuthorityKind(representative.authorityKind()))
+			.toList();
+		if(matching.isEmpty())
+			return;
+		if(matching.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_SELECTED_LOCAL_MEMBERSHIP_AMBIGUOUS|key="
+				+ group.producerKey().normalizedSignature());
+		MembershipRepresentative representative = matching.get(0);
+		PlacementState required = representative.state();
+		String provenance = NormalizedPlannerResults.durableLocalProvenance(producer, required);
+		String proof = representativeProofSignature(representative);
+		String signature = selectedSourceLocalMaterializationSignature(group, endpoint, inputEdge,
+			producer.valueVersion(), required, provenance, proof);
+		result.add(TransferAuthorityFact.selectedSourceLocalMaterialization(group, endpoint, inputEdge,
+			producer.valueVersion(), required, signature, proof));
+	}
+
+	private static String selectedSourceLocalMaterializationSignature(AuxiliaryGroupFact group,
+		EndpointFact endpoint, CompiledInputEdgeFact inputEdge, ValueVersionKey source,
+		PlacementState required, String provenance, String producerMembershipProof) {
+		return "SELECTED_SOURCE_LOCAL_MATERIALIZATION|" + group.direction() + '|'
+			+ source.normalizedSignature() + '|'
+			+ inputEdge.producer().normalizedSignature() + '|'
+			+ inputEdge.consumer().normalizedSignature() + '|' + inputEdge.inputPosition() + '|'
+			+ required.normalizedSignature() + '|' + provenance + '|'
+			+ producerMembershipProof + '|' + endpoint.demandCostBits();
+	}
+
+	private static boolean selectedSourceMembershipAuthorityKind(MembershipAuthorityKind kind) {
+		return kind == MembershipAuthorityKind.CAPTURED_RULE
+			|| kind == MembershipAuthorityKind.RELOCATION_SOURCE
+			|| kind == MembershipAuthorityKind.DURABLE_ANCHOR;
 	}
 
 	private static void addRelocationAuthorities(PlacementAnalysis analysis,
@@ -1470,7 +1662,26 @@ public final class MinStExactCostFactsProducer {
 				|| left.durableAnchorOrNull() != right.durableAnchorOrNull()
 				|| left.candidateRuleFactOrNull() != right.candidateRuleFactOrNull()
 				|| !left.orderedInputs().equals(right.orderedInputs())
-				|| !Objects.equals(left.invocationEvidenceOrNull(), right.invocationEvidenceOrNull()))
+				|| !sameMembershipInputAuthorities(left.inputAuthorityFacts(), right.inputAuthorityFacts())
+				|| !Objects.equals(left.invocationEvidenceOrNull(), right.invocationEvidenceOrNull())
+				|| left.relocationActionOrNull() != right.relocationActionOrNull()
+				|| !Objects.equals(left.authoritySignatureOrNull(), right.authoritySignatureOrNull()))
+				return false;
+		}
+		return true;
+	}
+
+	private static boolean sameMembershipInputAuthorities(List<MembershipInputAuthorityFact> expected,
+		List<MembershipInputAuthorityFact> actual) {
+		if(expected.size() != actual.size()) return false;
+		for(int i = 0; i < expected.size(); i++) {
+			MembershipInputAuthorityFact left = expected.get(i), right = actual.get(i);
+			if(left.inputEdge() != right.inputEdge()
+				|| left.inputPosition() != right.inputPosition()
+				|| left.producerRepresentative().decisionKey() != right.producerRepresentative().decisionKey()
+				|| left.producerRepresentative().state() != right.producerRepresentative().state()
+				|| left.producerRepresentative().authorityKind() != right.producerRepresentative().authorityKind()
+				|| !left.authoritySignature().equals(right.authoritySignature()))
 				return false;
 		}
 		return true;
@@ -1510,7 +1721,8 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static void validateTransferAuthorityOwnership(PlacementAnalysis analysis,
-		List<AuxiliaryGroupFact> groups, List<TransferAuthorityFact> authorities) {
+		List<AuxiliaryGroupFact> groups, List<TransferAuthorityFact> authorities,
+		List<MembershipRepresentative> representatives) {
 		if(authorities == null)
 			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 				"Transfer authority facts are missing");
@@ -1535,6 +1747,8 @@ public final class MinStExactCostFactsProducer {
 				case RELOCATION_OBLIGATION -> validateRelocationAuthority(analysis, authority);
 				case INDEPENDENT_ANCHOR -> validateIndependentAnchorAuthority(analysis, authority);
 				case DURABLE_SOURCE -> validateDurableSourceAuthority(analysis, authority);
+				case SELECTED_SOURCE_LOCAL_MATERIALIZATION ->
+					validateSelectedSourceLocalMaterializationAuthority(analysis, authority, representatives);
 			}
 		}
 	}
@@ -1559,6 +1773,39 @@ public final class MinStExactCostFactsProducer {
 			|| !authority.authoritySignature().equals(signature))
 			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 				"Durable-source transfer authority differs from its exact owner");
+	}
+
+	private static void validateSelectedSourceLocalMaterializationAuthority(PlacementAnalysis analysis,
+		TransferAuthorityFact authority, List<MembershipRepresentative> representatives) {
+		NeutralPlacementGraph.Node producer = analysis.graph().node(
+			authority.group().producerKey()).orElseThrow();
+		String proof = authority.producerMembershipProofOrNull();
+		List<MembershipRepresentative> matching = representatives.stream()
+			.filter(representative -> representative.decisionKey() == authority.group().producerKey()
+				&& representative.execType() == ExecType.FED
+				&& representative.output() == FederatedOutput.FOUT
+				&& representative.state().equals(authority.requiredPlacement())
+				&& selectedSourceMembershipAuthorityKind(representative.authorityKind())
+				&& Objects.equals(representativeProofSignature(representative), proof))
+			.toList();
+		String provenance = NormalizedPlannerResults.durableLocalProvenance(producer,
+			authority.requiredPlacement());
+		String signature = selectedSourceLocalMaterializationSignature(authority.group(),
+			authority.endpoint(), authority.inputEdge(), producer.valueVersion(),
+			authority.requiredPlacement(), provenance, proof);
+		if(authority.group().direction() != Direction.DOWNLOAD
+			|| authority.actionOrNull() != null || authority.obligationOrNull() != null
+			|| authority.anchorInputEdgeOrNull() != null
+			|| authority.independentAnchorOrNull() != null
+			|| authority.consumerProfileOrNull() != null
+			|| proof == null || proof.isBlank()
+			|| matching.size() != 1
+			|| authority.requiredPlacement().execType() != ExecType.FED
+			|| authority.requiredPlacement().output() != FederatedOutput.FOUT
+			|| authority.requiredPlacement().fType() != authority.group().conversionType()
+			|| !authority.authoritySignature().equals(signature))
+			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
+				"Selected-source local-materialization transfer authority differs from its exact owner");
 	}
 
 	private static void validateRelocationAuthority(PlacementAnalysis analysis,
@@ -1631,7 +1878,9 @@ public final class MinStExactCostFactsProducer {
 				|| left.obligationOrNull() != right.obligationOrNull()
 				|| left.anchorInputEdgeOrNull() != right.anchorInputEdgeOrNull()
 				|| left.independentAnchorOrNull() != right.independentAnchorOrNull()
-				|| left.consumerProfileOrNull() != right.consumerProfileOrNull())
+				|| left.consumerProfileOrNull() != right.consumerProfileOrNull()
+				|| !Objects.equals(left.producerMembershipProofOrNull(),
+					right.producerMembershipProofOrNull()))
 				return false;
 		}
 		return true;
@@ -1710,6 +1959,20 @@ public final class MinStExactCostFactsProducer {
 					.parentOccurrence().normalizedSignature()).append(':')
 					.append(representative.orderedInputs()).append(':')
 					.append(representative.invocationEvidenceOrNull());
+			for(MembershipInputAuthorityFact inputAuthority : representative.inputAuthorityFacts())
+				normalized.append(":I:")
+					.append(inputAuthority.inputEdge().producer().normalizedSignature()).append('/')
+					.append(inputAuthority.inputEdge().consumer().normalizedSignature()).append('/')
+					.append(inputAuthority.inputPosition()).append('/')
+					.append(inputAuthority.producerRepresentative().decisionKey().normalizedSignature()).append('/')
+					.append(inputAuthority.producerRepresentative().state().normalizedSignature()).append('/')
+					.append(inputAuthority.producerRepresentative().authorityKind()).append('/')
+					.append(inputAuthority.authoritySignature());
+			if(representative.relocationActionOrNull() != null)
+				normalized.append(":L:").append(representative.relocationActionOrNull()
+					.key().normalizedSignature());
+			if(representative.authoritySignatureOrNull() != null)
+				normalized.append(":S:").append(representative.authoritySignatureOrNull());
 		}
 		for(DirectedEdgeFact edge : edges) {
 			normalized.append("|E:").append(edge.fromNodeId()).append('>').append(edge.toNodeId())
@@ -1758,7 +2021,9 @@ public final class MinStExactCostFactsProducer {
 						+ authority.consumerProfileOrNull().key().inputPosition() + "/"
 						+ authority.consumerProfileOrNull().status() + "/"
 						+ authority.consumerProfileOrNull().allowedTargetTypes() + "/"
-						+ authority.consumerProfileOrNull().failureCode());
+						+ authority.consumerProfileOrNull().failureCode()).append(':')
+				.append(authority.producerMembershipProofOrNull() == null ? "-"
+					: authority.producerMembershipProofOrNull());
 		for(ObligationFact obligation : obligations) {
 			normalized.append("|O:").append(obligation.actionSignature());
 			for(ObligationEndpointFact endpoint : obligation.endpointsInCanonicalOrder())

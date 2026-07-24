@@ -963,3 +963,94 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - PUBLIC masking/Ignore/Assume prohibited for this non-privacy failure: unchanged.
+
+## Issue: MinST authority repair accidentally invoked Maven through the authoritative tracked target
+
+- **상태**: 해결 (오염 실행 차단 및 결과 폐기; 동일 production patch의 격리 클론 재검증 완료).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, HEAD `51e1193c334d98c42be78a6029ac359c372dfca4`, tracked `target` symlink `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/target`. MinST production authority repair was uncommitted in `MinStExactCostFacts.java` and `MinStExactCostFactsProducer.java`.
+- **재현 절차**:
+  - 오염 커맨드 경계: authoritative repo에서 `mvn -DskipTests test-compile -q ...`가 실행되기 시작했다.
+  - 탐지 당시 Maven process PID는 `3082003`이었다. Root conductor가 repair agent를 interrupt하고 해당 process를 kill했다.
+  - 재개 시점 점검: `ps -eo pid,ppid,stat,cmd | grep -E '[m]vn|[j]ava'`, `git status --short --branch`, `git diff --cached --name-status`, `readlink target`.
+- **관측 증상**:
+  - 금지된 authoritative build 경로가 잠시 사용되었다. 해당 실행은 acceptance evidence로 사용할 수 없다.
+  - 재개 점검에서는 작업 관련 Maven/Java process가 없었고, index는 비어 있었으며, `target` 링크는 위 절대 경로로 유지되었다.
+  - authoritative worktree에는 허용된 두 production source 수정과 기존 protected `M target`만 있었고, 이후 이 문서 갱신이 추가되었다.
+- **원인 분석**:
+  - repair iteration 중 compile command의 working directory가 disposable clone이 아니라 authoritative repo로 잘못 지정되었다.
+  - tracked `target`이 외부 build directory를 가리키므로 authoritative repo에서 Maven을 실행하면 보호된 build state를 오염시킬 수 있다.
+- **의사결정 근거 / Decision boundary**: Verification hygiene only. 이 실행의 결과는 전부 폐기하며 planner/oracle/runtime 의미 증거로 사용하지 않는다. Production 수정은 승인된 exact-authority 경계 안에서 계속하되, 모든 compile/test는 clone-local `target`을 unlink/repoint한 disposable clone에서만 수행한다.
+- **해결 요약**:
+  - 실행 중 process를 종료하고 repair agent를 interrupt했다.
+  - authoritative HEAD/tree, empty index, protected target link, 허용된 source-only diff를 재확인했다.
+  - repair agent 재개 지침에 authoritative Maven/Java/build 절대 금지, patch export 후 disposable clone 적용, clone-local isolated target 사용을 명시했다.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - 재개 점검에서 user-task Maven process는 없었다. 시스템 Hadoop Java daemon은 본 작업과 무관해 변경하지 않았다.
+  - `git diff --cached --name-status`는 empty였다.
+  - `readlink target`은 `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/target`로 불변이었다.
+  - `git diff --check -- . ':(exclude)target'`는 통과했다.
+  - 동일 patch SHA `acc541bd2d858a71165e8d0227e4c90577864b576ae06af0d57a712a97be3119`를 disposable clone `/run/user/10041/g005-closure-final-fresh-verify-20260724-7007dbe/repo`에 적용해 재검증했다.
+  - Clone-only `mvn -Dtest=CampaignBR4MinStOccurrenceDemandRedTest -DskipTests test-compile`은 `BUILD SUCCESS`였다. 로그: `/run/user/10041/g005-minst-authority-repair-20260724/logs/clone_test_compile_v6d.log`.
+  - Clone-only targeted 14-test run은 `14 tests / 3 failures / 0 errors / 0 skips`였고, authority 오류는 0건이었다. 남은 3건은 독립 리뷰에서 stale test assertion/helper로 판정됐다.
+- **잔여 이슈**:
+  - 이 오염 사고 자체의 잔여 문제는 없다. 다만 MinST 완료를 위해 stale test assertion/helper 3건, BR3/BR10 fixture, focused receipt baseline, exact 23-class/71-test fresh gate가 남아 있다.
+- **잠재 회귀 위험**:
+  - Risk: 이후 agent가 authoritative cwd에서 Maven을 다시 실행해 protected build state를 오염할 수 있다. Detection: 각 compile/test evidence에 disposable clone path와 clone-local target path를 함께 기록하고, acceptance 전 authoritative `target` link/status/index를 재검사한다.
+- **적용 원칙/제약**:
+  - Authoritative `target`은 stage/commit/revert/retarget/delete하지 않는다.
+  - Runtime fallback, candidate closure, TRead/TWrite 완화, recompile `<CP,FOUT>` 완화, PUBLIC masking은 이 사고와 무관하며 모두 금지 상태를 유지한다.
+
+## Issue: MinST exact-cost proof facts lacked explicit producer membership authority
+
+- **상태**: 해결 (production authority model 보정 완료; 독립 v6d code review APPROVE; stale test contract/helper 3건은 별도 test-only 작업으로 분리).
+- **환경/조건**:
+  - Planner: MinST exact-cost path.
+  - Base HEAD: `51e1193c334d98c42be78a6029ac359c372dfca4`.
+  - Exact 23-class gate baseline: `71 tests / 1 failure / 13 errors / 0 skips`.
+  - Targeted authority validation: BR4/BR5/BR9/ExactFacts를 포함한 14-test selector.
+  - 모든 compile/test는 disposable clone `/run/user/10041/g005-closure-final-fresh-verify-20260724-7007dbe/repo`와 isolated clone-local target에서만 수행했다.
+- **재현 절차**:
+  - Baseline receipt: `/run/user/10041/g005-minst-only-successor-51e1193c-verify-20260724T154759Z/G005_MINST_ONLY_SUCCESSOR_51E1193C_VERIFICATION_20260724.md`.
+  - Baseline SHA256: `615a0981d836ce4d242003068451616c397f35ffa88b6323d799c8d9c82187f3`.
+  - Root-cause artifact: `/run/user/10041/g005-minst-red-root-cause-51e1193c-20260724/G005_MINST_RED_ROOT_CAUSE_51E1193C_20260724.md`.
+  - Root-cause SHA256: `4d4754cd01face503971bdaa5efb295c3df798635d7bf5b5319352ffc1ea4862`.
+- **관측 증상**:
+  - Exact MinST proof-fact 생성 중 valid retained physical input에 대해 membership/obligation authority를 증명하지 못해 다수의 fail-closed 오류가 발생했다.
+  - 초기 repair review는 selected-source download authority가 provenance 문자열/법적 상태에 기대고, 숨은 recursive physical-present authority를 허용한다는 두 가지 blocker를 지적했다.
+  - 승인된 v6d patch 이후 targeted 14-test run에서 membership/obligation authority 오류는 0건이 되었고, stale assertion/helper 3건만 남았다.
+- **원인 분석**:
+  - Consumer representative가 producer의 이미 증명된 membership을 정확한 retained edge identity로 전달받는 명시적 carrier가 없었다.
+  - 그 결과 physical-present input authority를 증명하려면 재귀적으로 output authority를 추론하거나 provenance 문자열을 신뢰해야 했으며, 이는 canonical producer-before-consumer proof boundary와 fingerprint completeness를 깨뜨렸다.
+  - Selected-source local materialization transfer도 exact producer membership proof와 직접 결합되지 않았다.
+- **의사결정 근거 / Decision boundary**: Planner exact-proof state만 수정했다. Runtime fallback이나 implicit repair를 추가하지 않고, cost graph/topology/capacity를 변경하지 않은 채 canonical producer-before-consumer membership authority를 명시적으로 모델링했다.
+- **해결 요약**:
+  - `MembershipInputAuthorityFact`를 추가해 exact `CompiledInputEdgeFact`, input position, producer `MembershipRepresentative`, stable signature를 함께 보존했다.
+  - Physical-present authority allowlist를 `CAPTURED_RULE`, `RELOCATION_SOURCE`, `DURABLE_ANCHOR`로 제한하고 duplicate retained edge/position을 fail-closed 처리했다.
+  - 숨은 recursive output-authority 탐색을 제거하고 canonical order의 이전 producer representative와 exact edge identity가 일치할 때만 authority를 전달했다.
+  - Logical transient authority는 retained state와 exact equality를 요구하도록 고정했다.
+  - Selected-source local materialization transfer에 이미 파생된 producer membership proof를 결합하고 equality/fingerprint/validation에 포함했다.
+  - `deriveGroups`, `addGroupEdges`, capacities 등 cost graph topology는 변경하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFacts.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Production patch: `/run/user/10041/g005-minst-authority-repair-20260724/authority-v6d-prod.patch`, SHA256 `acc541bd2d858a71165e8d0227e4c90577864b576ae06af0d57a712a97be3119`.
+  - Clone-only compile: `BUILD SUCCESS`; log `/run/user/10041/g005-minst-authority-repair-20260724/logs/clone_test_compile_v6d.log`.
+  - Clone-only targeted run: `14 tests / 3 failures / 0 errors / 0 skips`; authority errors 0. Log `/run/user/10041/g005-minst-authority-repair-20260724/logs/production_red_targeted_v6d_mvn.log`.
+  - Final independent review: **APPROVE**, 0 findings. Artifact `/run/user/10041/g005-minst-authority-v6d-final-review-20260724/G005_MINST_AUTHORITY_V6D_FINAL_REVIEW_20260724.md`, SHA256 `2d08dd69320bbb29b68c567027cc35210bf0bc55af3320a987e6d82a4270d154`.
+  - `git diff --check -- . ':(exclude)target'` 통과.
+- **잔여 이슈**:
+  - BR9 tie expectation, ExactFacts upload price-edge target, BR5 upload-group helper는 독립 contract review에서 stale test-only defects로 확인됐다.
+  - BR3 ambiguous shared-Hop fixture와 BR10 stale B11 ambiguity fixture는 이후 exact 23-class gate에서 별도 정리한다.
+  - Production authority patch만으로 MinST 전체 완료를 주장하지 않는다.
+- **잠재 회귀 위험**:
+  - Risk: representative signature가 exact compiled edge/state 변경을 놓치면 unrelated producer authority가 재사용될 수 있다. Detection: ambiguity/cycle/duplicate/fingerprint regression tests와 exact 23-class gate를 모두 재실행한다.
+  - Risk: allowlist를 임의 확장하면 PART/OTHER나 anchorless state가 durable authority로 승격될 수 있다. Detection: code review에서 allowlist와 producer membership proof binding을 고정 확인한다.
+  - Risk: proof-fact 추가가 cost graph를 바꾸면 MinST 선택 결과가 의미 없이 변할 수 있다. Detection: edge/group/membership counts와 focused exact-cost assertions를 비교한다.
+- **적용 원칙/제약**:
+  - Runtime은 planner plan을 그대로 실행하며 fallback/implicit repair를 추가하지 않는다.
+  - Runtime-supported candidate를 임의로 닫지 않았고 cost topology를 변경하지 않았다.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 규칙, recompile `<CP,FOUT>` 금지, PUBLIC masking 금지를 유지했다.

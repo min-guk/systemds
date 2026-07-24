@@ -27,8 +27,13 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 /** Immutable, owner-bound input to the exact MinST selector. */
 public final class MinStExactCostFacts {
 	public enum Direction { UPLOAD, DOWNLOAD }
-	public enum MembershipAuthorityKind { LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE }
-	public enum TransferAuthorityKind { RELOCATION_OBLIGATION, INDEPENDENT_ANCHOR, DURABLE_SOURCE }
+	public enum MembershipAuthorityKind {
+		LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, RELOCATION_SOURCE
+	}
+	public enum TransferAuthorityKind {
+		RELOCATION_OBLIGATION, INDEPENDENT_ANCHOR, DURABLE_SOURCE,
+		SELECTED_SOURCE_LOCAL_MATERIALIZATION
+	}
 	public enum ContributionKind {
 		CP_UNARY, FED_UNARY, UPLOAD, DOWNLOAD, HARD_EXEC, HARD_OUTPUT,
 		HARD_UPLOAD_OR, HARD_DOWNLOAD_OR, PRICE_UPLOAD_OR, PRICE_DOWNLOAD_OR
@@ -78,6 +83,41 @@ public final class MinStExactCostFacts {
 		public List<PlacementState> legalStatesInCanonicalOrder() { return legalStates; }
 	}
 
+	/** Exact input-level authority binding a retained rule input to its already-derived producer proof. */
+	public static final class MembershipInputAuthorityFact {
+		private final CompiledInputEdgeFact inputEdge;
+		private final int inputPosition;
+		private final MembershipRepresentative producerRepresentative;
+		private final String authoritySignature;
+
+		MembershipInputAuthorityFact(CompiledInputEdgeFact inputEdge, int inputPosition,
+			MembershipRepresentative producerRepresentative, String authoritySignature) {
+			this.inputEdge = Objects.requireNonNull(inputEdge, "inputEdge");
+			this.inputPosition = inputPosition;
+			this.producerRepresentative = Objects.requireNonNull(producerRepresentative,
+				"producerRepresentative");
+			this.authoritySignature = Objects.requireNonNull(authoritySignature, "authoritySignature");
+			if(inputPosition != inputEdge.inputPosition()
+				|| producerRepresentative.decisionKey() != inputEdge.producer()
+				|| producerRepresentative.execType() != ExecType.FED
+				|| producerRepresentative.output() != FederatedOutput.FOUT
+				|| producerRepresentative.state().fType() == null
+				|| producerRepresentative.state().fType() == FType.OTHER
+				|| producerRepresentative.state().fType() == FType.PART
+				|| !(producerRepresentative.authorityKind() == MembershipAuthorityKind.CAPTURED_RULE
+					|| producerRepresentative.authorityKind() == MembershipAuthorityKind.RELOCATION_SOURCE
+					|| producerRepresentative.authorityKind() == MembershipAuthorityKind.DURABLE_ANCHOR)
+				|| authoritySignature.isBlank())
+				throw new IllegalArgumentException(
+					"MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_MISMATCH");
+		}
+
+		public CompiledInputEdgeFact inputEdge() { return inputEdge; }
+		public int inputPosition() { return inputPosition; }
+		public MembershipRepresentative producerRepresentative() { return producerRepresentative; }
+		public String authoritySignature() { return authoritySignature; }
+	}
+
 	/** Exact pre-solve authority for one cut membership and its retained concrete state. */
 	public static final class MembershipRepresentative {
 		private final CompiledHopKey decisionKey;
@@ -88,13 +128,17 @@ public final class MinStExactCostFacts {
 		private final DurableAnchorKey durableAnchor;
 		private final CandidateRuleFact candidateRuleFact;
 		private final List<CandidateInputState> orderedInputs;
+		private final List<MembershipInputAuthorityFact> inputAuthorityFacts;
 		private final CapturedInvocationEvidence invocationEvidence;
+		private final RelocationAction relocationAction;
+		private final String authoritySignature;
 
 		MembershipRepresentative(CompiledHopKey decisionKey, ExecType execType,
 			FederatedOutput output, PlacementState state, MembershipAuthorityKind authorityKind,
 			DurableAnchorKey durableAnchorOrNull, CandidateRuleFact candidateRuleFactOrNull,
-			List<CandidateInputState> orderedInputs,
-			CapturedInvocationEvidence invocationEvidenceOrNull) {
+			List<CandidateInputState> orderedInputs, List<MembershipInputAuthorityFact> inputAuthorityFacts,
+			CapturedInvocationEvidence invocationEvidenceOrNull,
+			RelocationAction relocationActionOrNull, String authoritySignatureOrNull) {
 			this.decisionKey = Objects.requireNonNull(decisionKey, "decisionKey");
 			this.execType = Objects.requireNonNull(execType, "execType");
 			this.output = Objects.requireNonNull(output, "output");
@@ -103,26 +147,54 @@ public final class MinStExactCostFacts {
 			this.durableAnchor = durableAnchorOrNull;
 			this.candidateRuleFact = candidateRuleFactOrNull;
 			this.orderedInputs = List.copyOf(Objects.requireNonNull(orderedInputs, "orderedInputs"));
+			this.inputAuthorityFacts = List.copyOf(Objects.requireNonNull(inputAuthorityFacts, "inputAuthorityFacts"));
 			this.invocationEvidence = invocationEvidenceOrNull;
+			this.relocationAction = relocationActionOrNull;
+			this.authoritySignature = authoritySignatureOrNull;
 			if(state.execType() != execType || state.output() != output)
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_STATE_MISMATCH");
+			for(int i = 0; i < this.inputAuthorityFacts.size(); i++)
+				for(int j = i + 1; j < this.inputAuthorityFacts.size(); j++)
+					if(this.inputAuthorityFacts.get(i).inputEdge() == this.inputAuthorityFacts.get(j).inputEdge()
+						|| this.inputAuthorityFacts.get(i).inputPosition()
+							== this.inputAuthorityFacts.get(j).inputPosition())
+						throw new IllegalArgumentException(
+							"MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_DUPLICATE");
 			if(output == FederatedOutput.FOUT && (state.fType() == null
 				|| state.fType() == FType.OTHER || state.fType() == FType.PART))
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_FTYPE_NONCONCRETE");
 			if(authorityKind == MembershipAuthorityKind.LEGAL_SINGLETON) {
 				if(durableAnchor != null || candidateRuleFact != null || invocationEvidence != null
-					|| !this.orderedInputs.isEmpty())
+					|| relocationAction != null || authoritySignature != null
+					|| !this.orderedInputs.isEmpty() || !this.inputAuthorityFacts.isEmpty())
 					throw new IllegalArgumentException("MINST_EXACT_SINGLETON_AUTHORITY_MIXED");
 			}
 			else if(authorityKind == MembershipAuthorityKind.DURABLE_ANCHOR) {
 				if(durableAnchor == null || candidateRuleFact != null || invocationEvidence != null
-					|| !this.orderedInputs.isEmpty() || state.fType() != durableAnchor.fType())
+					|| relocationAction != null || authoritySignature != null
+					|| !this.orderedInputs.isEmpty() || !this.inputAuthorityFacts.isEmpty()
+					|| state.fType() != durableAnchor.fType())
 					throw new IllegalArgumentException("MINST_EXACT_ANCHOR_AUTHORITY_MISMATCH");
 			}
-			else if(candidateRuleFact == null || invocationEvidence == null || durableAnchor != null
-				|| candidateRuleFact.key().parentOccurrence() != decisionKey
-				|| !candidateRuleFact.key().orderedInputs().equals(this.orderedInputs))
-				throw new IllegalArgumentException("MINST_EXACT_RULE_AUTHORITY_MISMATCH");
+			else if(authorityKind == MembershipAuthorityKind.CAPTURED_RULE) {
+				if(candidateRuleFact == null || invocationEvidence == null || durableAnchor != null
+					|| relocationAction != null || authoritySignature != null
+					|| candidateRuleFact.key().parentOccurrence() != decisionKey
+					|| !candidateRuleFact.key().orderedInputs().equals(this.orderedInputs)
+					|| this.inputAuthorityFacts.stream().anyMatch(fact -> fact.inputEdge().consumer() != decisionKey))
+					throw new IllegalArgumentException("MINST_EXACT_RULE_AUTHORITY_MISMATCH");
+			}
+			else if(authorityKind == MembershipAuthorityKind.RELOCATION_SOURCE) {
+				if(candidateRuleFact != null || invocationEvidence != null || durableAnchor == null
+					|| relocationAction == null || authoritySignature != null || !this.orderedInputs.isEmpty()
+					|| !this.inputAuthorityFacts.isEmpty()
+					|| relocationAction.key().durableAnchor() != durableAnchor
+					|| !relocationAction.key().targetPlacement().equals(state)
+					|| state.fType() != durableAnchor.fType())
+					throw new IllegalArgumentException("MINST_EXACT_RELOCATION_SOURCE_AUTHORITY_MISMATCH");
+			}
+			else
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_UNKNOWN");
 		}
 
 		public CompiledHopKey decisionKey() { return decisionKey; }
@@ -133,7 +205,10 @@ public final class MinStExactCostFacts {
 		public DurableAnchorKey durableAnchorOrNull() { return durableAnchor; }
 		public CandidateRuleFact candidateRuleFactOrNull() { return candidateRuleFact; }
 		public List<CandidateInputState> orderedInputs() { return orderedInputs; }
+		public List<MembershipInputAuthorityFact> inputAuthorityFacts() { return inputAuthorityFacts; }
 		public CapturedInvocationEvidence invocationEvidenceOrNull() { return invocationEvidence; }
+		public RelocationAction relocationActionOrNull() { return relocationAction; }
+		public String authoritySignatureOrNull() { return authoritySignature; }
 	}
 
 	public static final class EdgeContribution {
@@ -249,6 +324,7 @@ public final class MinStExactCostFacts {
 		private final CompiledInputEdgeFact anchorInputEdge;
 		private final DurableAnchorKey independentAnchor;
 		private final CandidateConsumerProfileFact consumerProfile;
+		private final String producerMembershipProof;
 
 		private TransferAuthorityFact(AuxiliaryGroupFact group, EndpointFact endpoint,
 			CompiledInputEdgeFact inputEdge, ValueVersionKey sourceValueVersion,
@@ -256,7 +332,7 @@ public final class MinStExactCostFacts {
 			PlacementState requiredPlacement, String authoritySignature,
 			RelocationAction actionOrNull, ObligationKey obligationOrNull,
 			CompiledInputEdgeFact anchorInputEdgeOrNull, DurableAnchorKey independentAnchorOrNull,
-			CandidateConsumerProfileFact consumerProfileOrNull) {
+			CandidateConsumerProfileFact consumerProfileOrNull, String producerMembershipProofOrNull) {
 			this.group = Objects.requireNonNull(group, "group");
 			this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
 			this.inputEdge = Objects.requireNonNull(inputEdge, "inputEdge");
@@ -269,6 +345,7 @@ public final class MinStExactCostFacts {
 			this.anchorInputEdge = anchorInputEdgeOrNull;
 			this.independentAnchor = independentAnchorOrNull;
 			this.consumerProfile = consumerProfileOrNull;
+			this.producerMembershipProof = producerMembershipProofOrNull;
 			if(group.endpointsInCanonicalOrder().stream().noneMatch(candidate -> candidate == endpoint)
 				|| endpoint.producerKey() != group.producerKey()
 				|| inputEdge.producer() != endpoint.producerKey()
@@ -278,7 +355,7 @@ public final class MinStExactCostFacts {
 				throw new IllegalArgumentException("MINST_EXACT_TRANSFER_AUTHORITY_MISMATCH");
 			if(authorityKind == TransferAuthorityKind.RELOCATION_OBLIGATION) {
 				if(action == null || obligation == null || anchorInputEdge != null
-					|| independentAnchor != null || consumerProfile != null
+					|| independentAnchor != null || consumerProfile != null || producerMembershipProof != null
 					|| action.obligations().stream().noneMatch(candidate -> candidate == obligation)
 					|| obligation.consumer() != endpoint.consumerKey()
 					|| obligation.inputPosition() != endpoint.inputPosition()
@@ -293,6 +370,7 @@ public final class MinStExactCostFacts {
 			else if(authorityKind == TransferAuthorityKind.INDEPENDENT_ANCHOR) {
 				if(group.direction() != Direction.UPLOAD || action != null || obligation != null
 					|| anchorInputEdge == null || independentAnchor == null || consumerProfile == null
+					|| producerMembershipProof != null
 					|| anchorInputEdge.consumer() != endpoint.consumerKey()
 					|| anchorInputEdge.inputPosition() == endpoint.inputPosition()
 					|| independentAnchor.fType() != group.conversionType()
@@ -303,10 +381,20 @@ public final class MinStExactCostFacts {
 						&& !consumerProfile.allowedTargetTypes().contains(group.conversionType()))
 					throw new IllegalArgumentException("MINST_EXACT_INDEPENDENT_ANCHOR_AUTHORITY_MISMATCH");
 			}
+			else if(authorityKind == TransferAuthorityKind.DURABLE_SOURCE) {
+				if(group.direction() != Direction.DOWNLOAD || action != null || obligation != null
+					|| anchorInputEdge != null || independentAnchor == null || consumerProfile != null
+					|| producerMembershipProof != null
+					|| independentAnchor.fType() != group.conversionType())
+					throw new IllegalArgumentException("MINST_EXACT_DURABLE_SOURCE_AUTHORITY_MISMATCH");
+			}
 			else if(group.direction() != Direction.DOWNLOAD || action != null || obligation != null
-				|| anchorInputEdge != null || independentAnchor == null || consumerProfile != null
-				|| independentAnchor.fType() != group.conversionType())
-				throw new IllegalArgumentException("MINST_EXACT_DURABLE_SOURCE_AUTHORITY_MISMATCH");
+				|| anchorInputEdge != null || independentAnchor != null || consumerProfile != null
+				|| producerMembershipProof == null || producerMembershipProof.isBlank()
+				|| requiredPlacement.execType() != ExecType.FED
+				|| requiredPlacement.output() != FederatedOutput.FOUT)
+				throw new IllegalArgumentException(
+					"MINST_EXACT_SELECTED_LOCAL_MATERIALIZATION_AUTHORITY_MISMATCH");
 		}
 
 		static TransferAuthorityFact relocation(AuxiliaryGroupFact group, EndpointFact endpoint,
@@ -314,7 +402,7 @@ public final class MinStExactCostFacts {
 			RelocationAction action, ObligationKey obligation) {
 			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
 				TransferAuthorityKind.RELOCATION_OBLIGATION, obligation.requiredPlacement(),
-				action.normalizedSignature(), action, obligation, null, null, null);
+				action.normalizedSignature(), action, obligation, null, null, null, null);
 		}
 
 		static TransferAuthorityFact independentAnchor(AuxiliaryGroupFact group, EndpointFact endpoint,
@@ -324,7 +412,7 @@ public final class MinStExactCostFacts {
 			PlacementState requiredPlacement, String authoritySignature) {
 			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
 				TransferAuthorityKind.INDEPENDENT_ANCHOR, requiredPlacement, authoritySignature,
-				null, null, anchorInputEdge, anchor, profile);
+				null, null, anchorInputEdge, anchor, profile, null);
 		}
 
 		static TransferAuthorityFact durableSource(AuxiliaryGroupFact group, EndpointFact endpoint,
@@ -332,7 +420,15 @@ public final class MinStExactCostFacts {
 			DurableAnchorKey anchor, PlacementState requiredPlacement, String authoritySignature) {
 			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
 				TransferAuthorityKind.DURABLE_SOURCE, requiredPlacement, authoritySignature,
-				null, null, null, anchor, null);
+				null, null, null, anchor, null, null);
+		}
+
+		static TransferAuthorityFact selectedSourceLocalMaterialization(AuxiliaryGroupFact group,
+			EndpointFact endpoint, CompiledInputEdgeFact inputEdge, ValueVersionKey sourceValueVersion,
+			PlacementState requiredPlacement, String authoritySignature, String producerMembershipProof) {
+			return new TransferAuthorityFact(group, endpoint, inputEdge, sourceValueVersion,
+				TransferAuthorityKind.SELECTED_SOURCE_LOCAL_MATERIALIZATION, requiredPlacement,
+				authoritySignature, null, null, null, null, null, producerMembershipProof);
 		}
 
 		public AuxiliaryGroupFact group() { return group; }
@@ -345,6 +441,7 @@ public final class MinStExactCostFacts {
 		public CompiledInputEdgeFact anchorInputEdgeOrNull() { return anchorInputEdge; }
 		public DurableAnchorKey independentAnchorOrNull() { return independentAnchor; }
 		public CandidateConsumerProfileFact consumerProfileOrNull() { return consumerProfile; }
+		public String producerMembershipProofOrNull() { return producerMembershipProof; }
 		public Direction direction() { return group.direction(); }
 		public PlacementState requiredPlacement() { return requiredPlacement; }
 		public String authoritySignature() { return authoritySignature; }
