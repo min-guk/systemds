@@ -1153,3 +1153,142 @@
 - **의사결정 근거**:
   - Planner exact proof state was corrected once; all subsequent residuals were test-only.
   - Runtime fallback, candidate closure, TRead/TWrite relaxation, recompile `<CP,FOUT>`, PUBLIC masking, and protected target mutation were not used.
+
+## Issue: `run_LAN.sh` masked result-collection failure on a full local filesystem
+
+- **상태**: 해결
+- **환경/조건**:
+  - Harness: `/home/mchoi/reproducibility/sigmod2021-exdra-p523/wt/placement-metadata/experiments/run_LAN.sh`.
+  - Exact SystemDS HEAD/tree: `f649241e1c22f21f0b3c298004146fbfff18688a` / `697fbc576a7be39d4f5506f3820d614c171f3b8a`.
+  - Exact JAR SHA256: `a3d79058462e84421bed59b82eb50da1ad0ea6800c0073558b74bd1a9258059b`.
+  - Cell: MinST (`mkl-min-st-cut`), 2 workers, `kmeans`, P2P, `private-aggregate`.
+  - Remote topology: coordinator `so002`; workers `so003`, `so004`.
+- **재현 절차**:
+  - Command: `./run_LAN.sh --conf mkl-min-st-cut --alg kmeans`.
+  - First wrapper log: `/run/user/10041/g005-lan-docker-closure-20260724/run_LAN.stdout-stderr.log`.
+  - Second isolated-results wrapper log: `/run/user/10041/g005-lan-docker-closure-20260724/run_LAN.clean.stdout-stderr.log`.
+  - Accepted final wrapper log: `/run/user/10041/g005-lan-docker-closure-20260724/run_LAN.final.stdout-stderr.log`.
+- **관측 증상**:
+  - The workload completed and emitted full `SystemDS Statistics`, but the first two wrapper attempts printed `rsync: ... No space left on device (28)` and `rsync error: error in file IO (code 11)`.
+  - `run_LAN.sh` still returned 0 because it does not use `set -euo pipefail` and its final concurrent `rsync` failures are hidden by the trailing `wait`.
+  - The wrapper also copied all historical remote results rather than only the current run, so the first attempt tried to receive unrelated old instruction-stat files.
+- **원인 분석**:
+  - This was a harness result-collection and host-capacity defect, not a planner or Runtime failure.
+  - The local root filesystem had only 11 MB free because unrelated active Codex SQLite/log state consumed the remaining capacity.
+  - The harness has no run-scoped rsync filter even though `distributedExpNew.sh` writes run-scoped result subdirectories.
+- **해결 요약**:
+  - Built the exact accepted HEAD only in a disposable clone and atomically installed the exact JAR on all three LAN hosts, retaining hard-link backups for restoration.
+  - Reversibly isolated each remote `results` directory and the local harness `results` directory so the unmodified wrapper could transfer only the current run.
+  - Losslessly relocated the 2 GB historical local result tree to `/run/user/10041/g005-local-historical-results-hold-20260724`; byte/file/directory counts matched before and after.
+  - Reran the exact command. Final run `20260724_181454_3254180` returned 0 with no rsync error and transferred both the workload log and the 1.5 MB instruction-stat CSV.
+  - Restored all remote JARs and historical remote result directories, removed isolated remote snapshots after local evidence capture, and confirmed no live SystemDS process.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+  - No SystemDS production/test source or harness source was modified.
+- **검증**:
+  - Final receipt: `/run/user/10041/g005-lan-docker-closure-20260724/LAN_FINAL_VERIFICATION.md`, SHA256 `395244db70fb802a41bb981bcffe9169270fa3c3aba4854d0e48c15dc6c16c23`.
+  - Workload log SHA256: `7f3f4c35094eb55aff117eefcdb7a6cda6761039e2ff9606d4c37e6398061f1e`.
+  - Instruction-stat CSV SHA256: `5a2fdcc0135ed5aec82904ab96a7e18751f2752036611078f22605b121f5d014`.
+  - Final statistics: elapsed `48.508432 s`, planner `0.292189 s`, execution `46.422 s`, federated Read/Put/Get `2/0/2`.
+  - Error/failure/timeout/fallback/repair scan across the accepted wrapper and run result: zero matches.
+  - Both worker input metadata files explicitly contained `"privacy": "private-aggregate"`.
+- **잔여 이슈**:
+  - The harness still returns success after a result-collection failure and still rsyncs all history. This session did not patch the external reproducibility harness.
+  - The preserved historical local result tree remains off-volume while G006/G007 continue; restore it after the Docker campaign when disk capacity permits.
+- **잠재 회귀 위험**:
+  - Risk: a future run may be classified by wrapper rc alone while current-run evidence was not copied. Detection: require a fresh run-scoped workload log and instruction-stat CSV with hashes, plus a zero-match wrapper scan.
+  - Risk: interrupted isolation could strand a `.pre` directory. Detection: pre/post directory existence and byte/file/directory count checks on every host.
+- **의사결정 근거**:
+  - Only harness execution isolation and artifact collection were changed. Planner, oracle, Runtime, candidate space, cost topology, privacy rules, and TRead/TWrite rules were untouched.
+- **적용 원칙/제약**:
+  - A wrapper rc is not accepted without result evidence.
+  - No Runtime fallback/repair or PUBLIC privacy masking was introduced.
+  - The authoritative tracked `target` symlink was never staged, retargeted, deleted, or built through.
+
+## Issue: Docker optional iperf validator race and retained-worker cleanup
+
+- **상태**: workload 해결; harness validator/cleanup limitation 잔여
+- **환경/조건**:
+  - Harness: `run_LAN_docker.sh`, unique project `g005-f649-docker-20260724t162051z`.
+  - Exact read-only runtime mount: `/run/user/10041/g005-lan-build-f649241e1c22-20260724` → `/opt/systemds`.
+  - Exact JAR/launcher SHA256: `a3d79058462e84421bed59b82eb50da1ad0ea6800c0073558b74bd1a9258059b` / `df870a9b6ec191164fd2765f75b546dc0c31aed1d0cc084d952b0750b097ed81`.
+  - Dataset: two 50,000×1,050 P2P partitions, both `private-aggregate`; aggregate SHA256 `5bae279ab97ff72275beda529d74d4f3e7548ead109dfb242a44c47b4fa473d5`.
+- **재현 절차**:
+  - Initial command: `./run_LAN_docker.sh --workers 2 --net-profile ideal --net-target workers --skip-docker-build --keep-containers --conf mkl-min-st-cut --alg kmeans`.
+  - Initial log: `/run/user/10041/g005-lan-docker-closure-20260724/run_LAN_docker.stdout-stderr.log`.
+  - Diagnosis: `/run/user/10041/g005-lan-docker-closure-20260724/docker-first-attempt-diagnosis.txt`.
+  - Accepted retry: add the documented `--skip-net-check` option; log `/run/user/10041/g005-lan-docker-closure-20260724/run_LAN_docker.retry.stdout-stderr.log`.
+- **관측 증상**:
+  - The first attempt exited before SystemDS execution with `iperf3: error - the server has terminated`.
+  - Three iperf directions produced approximately 14–16 Gbit/s, but coordinator→worker1 was parsed as `0.0`; pings and the other three directions completed.
+  - After the successful retry with `--keep-containers`, worker2 still had a worker JVM although the wrapper printed only `Stopping workers worker1`. The shared mounted worker-control state allows one worker's stop action to miss the other.
+- **원인 분석**:
+  - The first failure was inside the optional network measurement validator, not inside planner compilation or Runtime execution.
+  - `net_check.sh` launches short-lived `iperf3 -s -1` servers under a timeout and fails closed on a missing direction; one server terminated during this run.
+  - `startWorker.sh`/`stopWorker.sh` operate against shared harness state inside containers, so per-container stop calls can race or consume shared PID/control information.
+- **해결 요약**:
+  - Verified the exact read-only JAR/launcher hashes and private-aggregate metadata independently inside coordinator, worker1, and worker2 before retry.
+  - Used the harness-supported `--skip-net-check` option only for the flaky external bandwidth validator. `net_apply.sh`/`net_clear.sh`, the ideal-profile cost parameters, worker startup, planner compilation, Runtime execution, and instruction-stat collection still ran.
+  - Accepted retry `g005_f649_docker_retry_20260724T162301Z` completed the workload with rc 0 and zero error/fallback/repair matches.
+  - Retained containers only for post-run fingerprint inspection, then ran `docker compose down` for the unique project. This removed the residual worker JVM, all three containers, and the project network.
+  - Removed only temporary unique image tags; unrelated containers/projects and shared `exdra-*` image tags remained unchanged.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+  - No SystemDS production/test source or Docker harness source was modified.
+- **검증**:
+  - Live-container receipt: `/run/user/10041/g005-lan-docker-closure-20260724/DOCKER_PROVISIONAL_VERIFICATION.md`, SHA256 `472b95a3d0edf8647653bc4d01a7ce88d5bd404c65f8bcce8fe2e5003d6b5fde`.
+  - Workload log SHA256: `1b5867cd8b71e1efdc13878c36d0d57006c8954c0f16a1eb9966f5d258213003`.
+  - Instruction-stat CSV SHA256: `5f11c9091dc0cd560f621da1a37495e81bf7fd21c730b23a91a7d6e339825506`.
+  - Final statistics: elapsed `33.737697 s`, planner `0.412156 s`, execution `31.345 s`, federated Read/Put/Get `2/0/2`.
+  - Each container reported the exact JAR and launcher hashes and a read-only `/opt/systemds` mount.
+  - Cleanup receipt `/run/user/10041/g005-lan-docker-closure-20260724/docker-project-cleanup.txt`: zero residual container/network/tag for the project; unrelated compose project list unchanged.
+- **잔여 이슈**:
+  - `net_check.sh` still has an iperf server/client race or insufficient readiness/lifetime coordination.
+  - `stopWorker.sh` can leave a second worker alive while containers are intentionally retained.
+  - These are external harness issues for later repair; neither remained after project-scoped `compose down`.
+- **잠재 회귀 위험**:
+  - Risk: `--skip-net-check` could hide an actual shaped-profile setup error. Detection: only use it after capturing validator diagnostics and independently verify profile metadata, exact mounts, qdisc clear state, and successful workload evidence. For non-ideal profiles, do not accept without a replacement network proof.
+  - Risk: a retained worker can interfere with a reused project. Detection: use a unique compose project and require zero residual project containers/networks after verification.
+- **의사결정 근거**:
+  - The skipped component was an optional external network validator that failed before SystemDS ran. SystemDS planner/Runtime semantics were not bypassed, repaired, or retried through a fallback path.
+- **적용 원칙/제약**:
+  - Runtime fallback remains forbidden.
+  - The exact same accepted JAR and private-aggregate cell were used after LAN.
+  - Docker cleanup was restricted to the unique project and temporary tags.
+
+## Issue: G005 ordered LAN → Docker closure at exact accepted HEAD
+
+- **상태**: 해결
+- **환경/조건**: G005 transactional-emission acceptance after DP → FedAll → Heuristic → MinST unit/contract closure; authoritative repo `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`.
+- **재현 절차**:
+  - Build exact HEAD once in a disposable clone.
+  - Run accepted LAN cell first: `./run_LAN.sh --conf mkl-min-st-cut --alg kmeans`.
+  - Only after LAN PASS, run the paired Docker cell with the exact read-only runtime and data/config/privacy fingerprints.
+  - Aggregate receipt: `/run/user/10041/g005-lan-docker-closure-20260724/G005_LAN_DOCKER_CLOSURE_20260724.md`.
+- **관측 증상**: Before this gate, MinST unit/contract acceptance was green but the mandated ordered harness closure had not been executed on the accepted code.
+- **원인 분석**: Unit tests prove planner contracts but do not prove exact artifact deployment, remote worker startup, container mounting, run-specific artifact collection, or cleanup.
+- **해결 요약**:
+  - Built and fingerprinted the exact accepted tree.
+  - Proved dependency-set identity across the local build and all three LAN hosts.
+  - Completed a fresh LAN run with run-scoped log and instruction-stat evidence.
+  - Completed the paired Docker run with exact in-container JAR/launcher and privacy fingerprints.
+  - Restored remote runtime state and removed only project-scoped Docker resources.
+- **수정 파일**:
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Aggregate receipt SHA256: `ecd3b698aa4bbbdb424f8d3a35879b374cd3c8fc2470d886b32fdeb5b468b5ed`.
+  - Evidence manifest: `/run/user/10041/g005-lan-docker-closure-20260724/G005_LAN_DOCKER_SHA256SUMS`, SHA256 `01eabd1a26ac277084b41ef956c605c204bddf38e06d13af97ca7fead9af550f`.
+  - LAN and Docker accepted logs both contain full `SystemDS Statistics` and have zero strict failure/fallback/repair matches.
+  - Authoritative repo remained at exact HEAD with only protected `M target`, empty index, and unchanged target link.
+- **잔여 이슈**:
+  - G005 is ready for durable checkpoint.
+  - G006 semantic paired all-four Docker validation remains next; the exact Docker runtime and two-partition dataset are retained for it.
+  - External harness rsync, iperf validation, and retained-worker cleanup limitations remain documented above.
+- **잠재 회귀 위험**:
+  - Risk: later Docker runs use a stale JAR or different data/privacy metadata. Detection: repeat host/container SHA256 checks and data aggregate hash before every accepted run.
+  - Risk: later evidence trusts wrapper rc without run artifacts. Detection: require fresh workload log, instruction-stat CSV, strict issue scan, and cleanup receipt.
+- **의사결정 근거**:
+  - This was an execution/verification closure only. No oracle, planner, Runtime, cost model, candidate space, or policy rule changed.
+- **적용 원칙/제약**:
+  - Ordered gate preserved: LAN completed before Docker.
+  - No fallback, implicit repair, partial response acceptance, PUBLIC masking, TRead/TWrite relaxation, or recompile `<CP,FOUT>`.
