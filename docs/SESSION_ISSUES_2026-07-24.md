@@ -1090,3 +1090,22 @@
 - **잔여 이슈**: None for BR3/BR10 after clone validation. Full gate remains red only because `MinStDownloadAuthorityAmbiguityRedTest` is outside this task ownership and still reflects the old transfer-authorities signature; do not broaden this patch to that test.
 - **잠재 회귀 위험**: Risk: future tests may again construct impossible Hop-only analysis state and expect authority success. Detection: fail-closed messages containing `MINST_EXACT_INVOCATION_ANCHOR_AMBIGUOUS` in BR3. Risk: B-11 may be reused as an ambiguity fixture despite exact source separation. Detection: BR10 single ROW `FED/FOUT` state/representative assertions.
 - **의사결정 근거**: 테스트 fixture/contract만 수정했다. Production authority, selector duplicate/missing membership checks, oracle/runtime behavior, candidate closure, TRead/TWrite, and fallback rules were not changed.
+
+## Issue: MinST download-authority test used stale private reflection signatures
+
+- **상태**: 해결
+- **환경/조건**: MinST exact authority test seam; authoritative repo `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`; HEAD `1c810f9bee05225368b71f785117958d0bdb3e6b`; diagnosis artifact `/run/user/10041/g005-minst-download-authority-signature-diagnosis-20260724/G005_MINST_DOWNLOAD_AUTHORITY_SIGNATURE_DIAGNOSIS_20260724.md` (`sha256=822cbf00ef6f65bd42fab4d2fb2b38de28d8a6c089501644bbc9ec72b660aa8e`).
+- **재현 절차**: disposable clone `/run/user/10041/g005-minst-download-authority-verify-20260724-3198821/repo` with isolated target `/dev/shm/g005-minst-download-authority-target-20260724`; focused command `mvn -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStDownloadAuthorityAmbiguityRedTest test`; gate command copied byte-for-byte from `/run/user/10041/g005-minst-only-successor-51e1193c-verify-20260724T154759Z/selector.arg` as `mvn $(cat selector.arg) test`.
+- **관측 증상**: prior 23-class gate failed only in `MinStDownloadAuthorityAmbiguityRedTest` with `NoSuchMethodException` for obsolete private `MinStExactCostFactsProducer.transferAuthorities(PlacementAnalysis,List)` before semantic assertions could run.
+- **원인 분석**: production v6d authority model intentionally changed private seams to require canonical `MembershipRepresentative` proof carriers: `transferAuthorities(PlacementAnalysis,List,List<MembershipRepresentative>)` and `validateTransferAuthorityOwnership(PlacementAnalysis,List,List,List<MembershipRepresentative>)`. The test still reflected the obsolete signatures and therefore no longer exercised the intended DOWNLOAD/UPLOAD authority contracts.
+- **해결 요약**: test-only helper repair. The test now derives producer-only canonical representatives through production `MinStExactCostFactsProducer.membershipRepresentatives(...)`, passes those representatives to both reflected helpers, and strengthens assertions that DOWNLOAD publishes exact `DURABLE_SOURCE` authority without selected-source fallback/proof while UPLOAD publishes exact relocation authority without durable-source/selected-source fallback. No production overload was restored and no empty representative list was passed blindly.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStDownloadAuthorityAmbiguityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - `git diff --check -- . ':(exclude)target'` in disposable clone: clean (`/run/user/10041/g005-minst-download-authority-repair-20260724/logs/clone_diff_check_pretest.log`).
+  - Focused class: `Tests run: 2, Failures: 0, Errors: 0, Skipped: 0`, `BUILD SUCCESS` (`/run/user/10041/g005-minst-download-authority-repair-20260724/logs/two_test_class_mvn.log`).
+  - Exact MinST gate selector: 23 fresh XML files, `TOTAL: tests=71 failures=0 errors=0 skipped=0`, `BUILD SUCCESS` (`/run/user/10041/g005-minst-download-authority-repair-20260724/logs/gate_23_mvn.log`, manifest `/run/user/10041/g005-minst-download-authority-repair-20260724/logs/gate_23_xml_manifest_totals.txt`).
+- **잔여 이슈**: 이 범위에서는 없음. LAN/Docker 및 이후 planner 순서는 상위 실행 순서에 따라 별도 진행.
+- **잠재 회귀 위험**: private seam signatures may change again; detect via focused `MinStDownloadAuthorityAmbiguityRedTest` plus the exact 23-class MinST selector.
+- **의사결정 근거**: oracle/runtime/planner 규칙은 변경하지 않고, 승인된 production authority boundary에 맞춰 stale test reflection seam만 수정했다.

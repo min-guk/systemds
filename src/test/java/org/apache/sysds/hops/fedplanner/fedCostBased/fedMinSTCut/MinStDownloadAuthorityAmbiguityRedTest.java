@@ -18,6 +18,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityKind;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
@@ -66,6 +67,8 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 			count(authorities, TransferAuthorityKind.DURABLE_SOURCE));
 		Assert.assertEquals("P4_DOWNLOAD_MUST_NOT_PUBLISH_RELOCATION_AUTHORITY", 0L,
 			count(authorities, TransferAuthorityKind.RELOCATION_OBLIGATION));
+		Assert.assertEquals("P4_DOWNLOAD_MUST_NOT_PUBLISH_SELECTED_SOURCE_FALLBACK", 0L,
+			count(authorities, TransferAuthorityKind.SELECTED_SOURCE_LOCAL_MATERIALIZATION));
 		Assert.assertEquals("P4_DOWNLOAD_TRANSFER_AUTHORITY_IS_UNAMBIGUOUS", 1, authorities.size());
 		TransferAuthorityFact authority = authorities.get(0);
 		Assert.assertSame("P4_DOWNLOAD_AUTHORITY_RETAINS_EXACT_INPUT", fixture.input, authority.inputEdge());
@@ -73,6 +76,8 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 			ANCHOR_A, authority.independentAnchorOrNull());
 		Assert.assertSame("P4_DOWNLOAD_AUTHORITY_RETAINS_EXACT_FOUT_STATE",
 			FED_ROW, authority.requiredPlacement());
+		Assert.assertNull("P4_DOWNLOAD_DURABLE_SOURCE_AUTHORITY_IS_ANCHOR_OWNED",
+			authority.producerMembershipProofOrNull());
 		validateProductionOwnership(fixture.analysis, download, authorities);
 		MinStExactCostFacts facts = facts(fixture.analysis, download, authorities);
 		MinStExactSelection selection = MinStExactSelector.select(facts);
@@ -90,18 +95,24 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 	@Test
 	public void uploadStillPrefersExactRelocationOverIndependentFallback() throws Exception {
 		Fixture fixture = fixture();
-		List<TransferAuthorityFact> authorities = productionAuthorities(fixture.analysis, group(Direction.UPLOAD));
+		AuxiliaryGroupFact upload = group(Direction.UPLOAD);
+		List<TransferAuthorityFact> authorities = productionAuthorities(fixture.analysis, upload);
 
 		Assert.assertEquals("P4_UPLOAD_RETAINS_ONE_EXACT_RELOCATION_AUTHORITY", 1L,
 			count(authorities, TransferAuthorityKind.RELOCATION_OBLIGATION));
 		Assert.assertEquals("P4_UPLOAD_SKIPS_INDEPENDENT_FALLBACK_WHEN_RELOCATION_EXISTS", 0L,
 			count(authorities, TransferAuthorityKind.INDEPENDENT_ANCHOR));
+		Assert.assertEquals("P4_UPLOAD_MUST_NOT_PUBLISH_DURABLE_SOURCE_AUTHORITY", 0L,
+			count(authorities, TransferAuthorityKind.DURABLE_SOURCE));
+		Assert.assertEquals("P4_UPLOAD_MUST_NOT_PUBLISH_SELECTED_SOURCE_FALLBACK", 0L,
+			count(authorities, TransferAuthorityKind.SELECTED_SOURCE_LOCAL_MATERIALIZATION));
 		Assert.assertEquals("P4_UPLOAD_TRANSFER_AUTHORITY_IS_UNAMBIGUOUS", 1, authorities.size());
 		TransferAuthorityFact authority = authorities.get(0);
 		Assert.assertSame("P4_UPLOAD_AUTHORITY_RETAINS_EXACT_ACTION",
 			fixture.action, authority.actionOrNull());
 		Assert.assertSame("P4_UPLOAD_AUTHORITY_RETAINS_EXACT_ANCHOR_B",
 			ANCHOR_B, authority.actionOrNull().key().durableAnchor());
+		validateProductionOwnership(fixture.analysis, upload, authorities);
 	}
 
 	private static long count(List<TransferAuthorityFact> authorities, TransferAuthorityKind kind) {
@@ -110,10 +121,12 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 
 	private static void validateProductionOwnership(PlacementAnalysis analysis,
 		AuxiliaryGroupFact group, List<TransferAuthorityFact> authorities) throws Exception {
+		List<MembershipRepresentative> representatives = producerRepresentatives(analysis, group);
 		Method method = MinStExactCostFactsProducer.class.getDeclaredMethod(
-			"validateTransferAuthorityOwnership", PlacementAnalysis.class, List.class, List.class);
+			"validateTransferAuthorityOwnership", PlacementAnalysis.class, List.class,
+			List.class, List.class);
 		method.setAccessible(true);
-		method.invoke(null, analysis, List.of(group), authorities);
+		method.invoke(null, analysis, List.of(group), authorities, representatives);
 	}
 
 	private static void validateProjectorReceipt(MinStExactCostFacts facts,
@@ -163,10 +176,19 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 	@SuppressWarnings("unchecked")
 	private static List<TransferAuthorityFact> productionAuthorities(PlacementAnalysis analysis,
 		AuxiliaryGroupFact group) throws Exception {
+		List<MembershipRepresentative> representatives = producerRepresentatives(analysis, group);
 		Method method = MinStExactCostFactsProducer.class.getDeclaredMethod("transferAuthorities",
-			PlacementAnalysis.class, List.class);
+			PlacementAnalysis.class, List.class, List.class);
 		method.setAccessible(true);
-		return (List<TransferAuthorityFact>)method.invoke(null, analysis, List.of(group));
+		return (List<TransferAuthorityFact>)method.invoke(null, analysis, List.of(group), representatives);
+	}
+
+	private static List<MembershipRepresentative> producerRepresentatives(PlacementAnalysis analysis,
+		AuxiliaryGroupFact group) {
+		Node producer = analysis.graph().node(group.producerKey()).orElseThrow();
+		DecisionFact decision = new DecisionFact(group.producerKey(), 0L,
+			group.producerPlacementNodeId(), producer.legalAlternatives());
+		return MinStExactCostFactsProducer.membershipRepresentatives(analysis, List.of(decision));
 	}
 
 	private static Fixture fixture() throws Exception {
