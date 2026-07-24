@@ -1034,8 +1034,10 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 		// remove existing variable bound to target name
 		Data input2_data = ec.removeVariable(getInput2().getName());
 
-		//cleanup matrix data on fs/hdfs (if necessary)
-		if( input2_data != null )
+		// cleanup matrix data on fs/hdfs (if necessary).  A self-copy (cpvar X X)
+		// removes and rebinds the same Data object; cleaning it here would issue
+		// federated rmvar for the live worker mapping before the variable is reset.
+		if( input2_data != null && input2_data != dd )
 			ec.cleanupDataObject(input2_data);
 
 		// do the actual copy!

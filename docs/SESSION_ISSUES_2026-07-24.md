@@ -1678,43 +1678,94 @@
 
 ## Issue: G006 DP LogReg disconnected completion violates an already-selected exact boundary lock
 
-- **상태**: 진행중
+- **상태**: 해결
 - **환경/조건**:
-  - Source parent: `d1ddcb918d10975adebb8862f254e4a50ebcad9e` plus the approved builder reconciliation above.
+  - Accepted source parent: `a19800f3afd2d82380652237a777fe3db0114d81`.
   - Test: `FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate`.
   - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
 - **재현 절차**:
   - `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate test`.
-  - Hardened-builder log: `/tmp/g006_logreg_after_hardened_builder.log`.
-  - Exact diagnostic log: `/tmp/g006_dp_conflict_diag4.log`.
+  - Hardened-builder RED: `/tmp/g006_logreg_after_hardened_builder.log`.
+  - Exact diagnostic: `/tmp/g006_dp_conflict_diag4.log`.
 - **관측 증상**:
-  - After the builder invariant is fixed, DP throws `IllegalStateException: DP occurrence has disagreeing exact selections`.
-  - Exact occurrence: `main/0`, `root-1`, `FederatedLogRegPlanningTest.dml:26:0:DataOp:TWrite Y:Y`.
-  - Existing connected-root selection: `FED/FOUT/ROW/SHAPE_INDEPENDENT`, `derivedFedFout=false`.
-  - Disconnected-component proposal: `CP/LOUT/-/SHAPE_INDEPENDENT`, `derivedFedFout=false`.
+  - DP threw `IllegalStateException: DP occurrence has disagreeing exact selections` for line-26 `TWrite Y`.
+  - The connected traversal had already selected exact `FED/FOUT/ROW`; a later disconnected component reached the occurrence as a boundary lock but proposed `CP/LOUT`.
 - **원인 분석**:
-  - The initial main traversal selects the line-26 `TWrite Y` as `FED/FOUT`.
-  - A later disconnected component rooted in the line-41 conditional assignment traverses through `TRead Y` and reaches that already-selected occurrence as a boundary lock.
-  - The component schedule recognizes the occurrence as a boundary lock but still selects/proposes a different exact plan state; `coalesceSelectedState(...)` correctly fails closed.
-  - A first prototype that forced the boundary state only at rewrite selection left an exact traversal edge unconsumed, proving that late substitution is not a valid repair.
+  - `TraversalDependencyLedger` retained only boundary occurrence keys, not the already-selected exact `SelectedDpState`.
+  - Child selection therefore chose an output-only preferred arm before schedule construction. Late substitution was invalid because it desynchronized the scheduled/consumed raw traversal edge.
 - **해결 요약**:
-  - No accepted source fix yet. Architecture analysis is evaluating how component root selection and edge scheduling must consume the same exact boundary-lock state before traversal.
+  - Boundary locks now retain the exact `SelectedDpState`.
+  - Child resolution selects a compatible memo arm matching the exact graph-owned `PlacementState` object and `derivedFedFout` bit before schedule construction.
+  - Preferred-hop and occurrence fallback lookups both reject arms incompatible with frozen child output decisions and fail closed if no exact compatible arm exists.
+  - `SelectedChildResolution` records the actual selected raw plan output after substitution; schedule/consume receipts compare that output rather than the stale request input.
+  - `coalesceSelectedState(...)`, raw plan identity, canonical owner-plan identity, and traversal multiset closure remain unchanged and fail closed.
 - **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
   - `docs/SESSION_ISSUES_2026-07-24.md`
 - **검증**:
-  - Temporary diagnostics were used only in the disposable clone and removed afterward.
-  - Identity diagnostics prove the conflict is two genuinely different exact states, not duplicate/equal `PlacementState` objects.
+  - Combined patch: `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/g006_logreg_cpvar_selfcopy_exact_lock.patch`, SHA-256 `3f1108ae373bf81a10115acfbddbecae0c911e89a5db18a0a58b99d055851f23`.
+  - Disposable compile passed: `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/logs/compile_after_selected_output_harden.log`.
+  - Focused LogReg plus runtime regression: 3 tests, 0 failures/errors/skips; `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/logs/targeted_variable_logreg_after_harden.log`.
+  - BG014 disconnected/aggregate/rewire and aggregate runtime gates: 27 tests, 0 failures/errors/skips; `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/logs/bg014_disconnected_aggregate_rewire_gates.log`.
+  - Independent code review: `APPROVE`, 0 findings; fresh component test 2/0 and patch/hash/applicability checks. Evidence: `/tmp/g006-review-evidence-1784923941/`.
+  - Leader-fresh disposable worktree at exact parent `a19800f3...`: compile passed and 30/30 focused LogReg/runtime/disconnected/aggregate/rewire tests passed. Summary: `/run/user/10041/g006-logreg-leader-verify-a198-20260724-evidence/xml-summary.txt`; logs in the same `evidence/` directory.
 - **잔여 이슈**:
-  - Select a component plan that is costed and scheduled under the pre-existing exact boundary lock; rerun LogReg plus disconnected-component/rewire regressions.
+  - Fresh exact build plus LAN/Docker validation remain campaign-level work after DP workload fixes.
+  - The separate LM per-input-domain exact-state defect remains unresolved.
 - **잠재 회귀 위험**:
-  - Risk: late child-plan substitution can desynchronize the exact traversal ledger. Detection: retain scheduled/consumed edge multiset closure tests.
-  - Risk: forcing one output bit without exact exec/FType/derived identity can hide a different placement. Detection: require exact `PlacementState` object and derived-FOUT equality at plan selection time.
+  - Risk: a locked arm could be selected with incompatible child decisions. Detection: both preferred and fallback selection apply `isCompatibleWithChildDecisions(...)`.
+  - Risk: raw schedule/consume identity could drift after substitution. Detection: BG014 exact traversal multiset and aggregate-producer gates remain green.
 - **의사결정 근거**:
-  - This is a DP planner ownership/scheduling defect. Runtime and oracle legality must not be relaxed, and the fail-closed coalescing invariant must remain.
+  - DP planner boundary-state authority and schedule construction were corrected. Runtime capability, oracle legality, cost model, privacy, TRead/TWrite, and recompile legality were not relaxed.
 - **적용 원칙/제약**:
   - No Runtime fallback or repair.
   - No arbitrary candidate closure.
-  - TRead/TWrite remains restricted to `<CP,LOUT>` or `<FED,FOUT>`; the existing line-26 boundary selection is `<FED,FOUT>`.
+  - TRead/TWrite remains `<CP,LOUT>` or `<FED,FOUT>`; recompile `<CP,FOUT>` remains forbidden.
+
+## Issue: G006 Runtime `cpvar X X` destroys the live federated mapping before `uamin(Y)`
+
+- **상태**: 해결
+- **환경/조건**:
+  - Disposable diagnosis/fix clone: `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/repo`.
+  - Source: authoritative parent `a19800f3afd2d82380652237a777fe3db0114d81` plus the exact boundary-lock fix above.
+  - Planner/config: DP `compile_cost_based`, privacy `private-aggregate`.
+  - Runtime instruction sequence includes `FED uamax(Y)`, coordinator `CP cpvar Y Y`, then `FED uamin(Y)`.
+- **재현 절차**:
+  - `mvn -q -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedLogRegPlanningTest#runLogRegPlannerDPPrivacyPrivateAggregate test`.
+  - Causal logs: `/tmp/g006_logreg_uamin_repro_1784922796.log`, `/tmp/g006_logreg_uamin_fedreq_1784922856.log`, `/tmp/g006_logreg_uamin_proginst_1784923001.log`, `/tmp/g006_logreg_uamin_plannertrace_1784923112.log`.
+- **관측 증상**:
+  - `FED uamax(Y)` succeeded using worker variable ID `1`.
+  - Coordinator then executed `CP°cpvar°Y°Y`; worker cleanup removed ID `1`.
+  - Later `FED°uamin°Y...LOUT` sent worker `CP°uamin°1...` and failed with `Variable '1' does not exist in the symbol table`.
+- **원인 분석**:
+  - `VariableCPInstruction.processCopyInstruction` removed and cleaned the target before rebinding the source.
+  - For self-copy, source and target are the identical `Data` object, so cleanup issued `FederationMap.execCleanup`/worker `rmvar` for the live mapping that was immediately rebound on the coordinator.
+  - This is a Runtime variable-alias semantics defect, not missing planner materialization and not missing `uamin` support; `uamax` proved the mapping and instruction support were valid before destructive cleanup.
+- **해결 요약**:
+  - `processCopyInstruction` now skips cleanup only when the removed target object is identical to the source object.
+  - Distinct target replacement still cleans the overwritten target, matching existing `mvvar` alias semantics.
+  - No missing-worker response is ignored and no mapping is recreated implicitly.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/runtime/instructions/cp/VariableCPInstruction.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/VariableCPInstructionFederatedCleanupTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - New component regression proves `cpvar A A` issues zero cleanup calls while `cpvar A B` cleans the old distinct federated target ID exactly once.
+  - Disposable focused component + LogReg suite: 3 tests, 0 failures/errors/skips; `/run/user/10041/g006-logreg-exact-lock-impl-20260724T214258/logs/targeted_variable_logreg_after_harden.log`.
+  - Successful LogReg heavy hitters include `fed_uamax` and `fed_uamin`, proving the same live mapping survives self-copy.
+  - Independent review ran the new component test fresh (2/0) and returned `APPROVE`; `/tmp/g006-review-evidence-1784923941/`.
+  - Leader-fresh disposable worktree compile passed; combined component, LogReg, DP rewire, aggregate runtime, disconnected, and aggregate-producer suite passed 30/30. Summary: `/run/user/10041/g006-logreg-leader-verify-a198-20260724-evidence/xml-summary.txt`.
+- **잔여 이슈**:
+  - Fresh exact build plus LAN/Docker validation remain campaign-level work after DP workload fixes.
+  - The separate LM exact candidate-domain defect remains unresolved.
+- **잠재 회귀 위험**:
+  - Risk: distinct-target cleanup could be lost. Detection: `copyOverDistinctFederatedTargetCleansOldTargetMapping` asserts exactly one cleanup for the old target ID.
+  - Risk: a future alias path could again remove a live worker ID. Detection: `selfCopyFederatedMatrixDoesNotCleanupLiveMapping` asserts object identity, live FederationMap ID, and zero cleanup calls.
+- **의사결정 근거**:
+  - Runtime alias cleanup semantics were corrected at the destructive source. Planner legality, output placement, response aggregation, privacy, and cost selection were not changed.
+- **적용 원칙/제약**:
+  - Runtime fallback and partial-response success masking remain forbidden.
+  - The planner-created `<FED,FOUT>` mapping is preserved exactly; no implicit upload or repair is introduced.
 
 ## Issue: G006 DP LM focused test enumerates a plan with a foreign exact placement carrier
 
@@ -1734,6 +1785,12 @@
   - The enumerator instead stored the logical/projected consumer type (`ROW`) in `FedPlan.fType`, then attached the exact `COL` `PlacementState`. Memo validation correctly rejected the mismatch.
   - A first typed-arm prototype exposed a second defect: the candidate catalog keyed only by `(exec, output)` collapses exact states with distinct FTypes from different input domains.
   - Expanding the key to `(exec, output, fType)` was still insufficient because broad exec/output allow booleans could advertise `FED/LOUT` while lookup by `nativeFoutFType` had no matching exact state. Repeated focused results were inconsistent (`native_lout.rc=0`, later `final.rc=1`), so that patch was independently blocked and not integrated.
+  - A second prototype enumerated all node-union `FED/LOUT` states and passed three consecutive focused LM runs, but independent review still blocked it:
+    - the catalog remained node-union scoped and could borrow `FED/LOUT/COL` from a different ordered-input domain such as `[ABSENT_LOCAL,ROW]`;
+    - requiring a native `FED/FOUT` catalog entry could silently close a policy-legal derived `FED/LOUT→FOUT` arm;
+    - distinct `FED/LOUT` FTypes shared one cost despite potentially different compute/transfer estimates;
+    - its candidate key omitted `shapeDependent`, which is part of exact `PlacementState` identity.
+  - Passing focused runs did not establish structural correctness because those regressions did not behaviorally prove per-receipt state scoping, derived-FOUT preservation, per-state costing, or complete exact-state identity.
   - Exact baseline rerun without the k-means canonical-owner patch reproduced the same failure before disconnected-component completion.
 - **해결 요약**:
   - No accepted source fix yet. The active prototype must make candidate availability and exact-state selection consume the same per-input-domain authority, rather than borrowing a node-union state or combining broad allow bits with a later typed lookup.
@@ -1743,9 +1800,12 @@
   - Baseline reproduction log above records the identical failure at HEAD `c6cd957c` with no k-means source changes.
   - Rejected patch: `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/g006_lm_dp_exact_state_fix.patch`.
   - Independent review verdict: `BLOCK`; focused final failure log `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/lm_dp_private_aggregate_final.log`.
+  - Rejected v2 patch: `/tmp/g006-lm-dp-foreign-state-diag-20260724T205742/evidence/g006_lm_dp_exact_state_fix_v2.patch`, SHA-256 `a1ea14e4a4bfafeb99379b9f9b15528dcfca4d553e3e9a5493beb69eabfb59fe`.
+  - The v2 smoke evidence (`lm_pass_1.rc`, `lm_pass_2.rc`, `lm_pass_3.rc`, and the candidate/memo gate) was GREEN, but independent review verdict remained `BLOCK` for the four structural defects above; it was not integrated.
 - **잔여 이슈**:
-  - Capture the failing receipt's exact occurrence, ordered inputs, native capability, legal states, allow bits, and requested exact arm.
-  - Require three consecutive focused LM passes plus DP candidate/memo gates before accepting a replacement patch.
+  - Make each exact candidate receipt carry its own input-domain-scoped legal `PlacementState` identities, including `shapeDependent`, rather than rereading node-union alternatives.
+  - Represent and cost native and derived output materialization separately so a policy-legal derived FOUT arm remains enumerable.
+  - Require behavioral regressions for per-domain isolation, derived-FOUT preservation, and per-state cost, then three consecutive focused LM passes plus DP candidate/memo gates before accepting a replacement patch.
 - **잠재 회귀 위험**:
   - Risk: node-union states from another input domain can be selected as if they belonged to the current candidate. Detection: availability/selection agreement regression bound to one exact candidate receipt.
   - Risk: logical/projected FType overwrites the native exact output FType. Detection: transpose regression must retain the exact `COL` state while keeping projected/boundary type separate.

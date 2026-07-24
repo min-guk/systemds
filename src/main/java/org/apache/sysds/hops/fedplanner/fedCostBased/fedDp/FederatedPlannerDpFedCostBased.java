@@ -567,7 +567,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 	private record SelectedChildResolution(FederatedPlannerDpMemoTable.FedPlan plan,
 		FederatedPlannerDpMemoTable.FedPlan canonicalOwnerPlan,
 		PlacementAnalysis.HopOccurrenceProjection occurrence, CompiledHopKey key,
-		PlacementState state, boolean derivedFedFout, FederatedOutput selectionInput) { }
+		PlacementState state, boolean derivedFedFout, FederatedOutput selectedOutput) { }
 
 	private static final class ExactTraversalEdge {
 		private final PlacementAnalysis analysis;
@@ -645,7 +645,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 	private static final class TraversalDependencyLedger {
 		private final OwnerComponentIndex ownerIndex;
-		private final Set<CompiledHopKey> boundaryLocks;
+		private final Map<CompiledHopKey, SelectedDpState> boundaryLocks;
 		private final List<ExactTraversalEdge> scheduled = new ArrayList<>();
 		private final Set<CompiledHopKey> dependencies = Collections.newSetFromMap(new IdentityHashMap<>());
 		private final Set<CompiledHopKey> ownerCaptures = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -659,10 +659,79 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private final List<String> consumedOrder = new ArrayList<>();
 
 		private TraversalDependencyLedger(OwnerComponentIndex ownerIndex,
-			Set<CompiledHopKey> boundaryLocks) {
+			Map<CompiledHopKey, SelectedDpState> boundaryLocks) {
 			this.ownerIndex = ownerIndex;
-			this.boundaryLocks = Collections.newSetFromMap(new IdentityHashMap<>());
-			this.boundaryLocks.addAll(boundaryLocks);
+			this.boundaryLocks = new IdentityHashMap<>();
+			this.boundaryLocks.putAll(boundaryLocks);
+		}
+
+		private SelectedDpState boundaryLock(CompiledHopKey key) {
+			return boundaryLocks.get(key);
+		}
+
+		private FederatedPlannerDpMemoTable.FedPlan exactBoundaryPlan(
+			FederatedPlannerDpMemoTable memoTable, PlacementAnalysis.HopOccurrenceProjection occurrence,
+			long preferredHopId, Map<Long, FederatedOutput> outputDecisions) {
+			if(occurrence == null || occurrence != ownerIndex.occurrence(occurrence.key()))
+				throw new IllegalStateException("DP boundary lock lookup lacks exact occurrence authority");
+			SelectedDpState lock = boundaryLock(occurrence.key());
+			if(lock == null)
+				return null;
+			FederatedPlannerDpMemoTable.FedPlan best = exactBoundaryPlanForHop(
+				memoTable, occurrence, preferredHopId, lock, outputDecisions);
+			if(best != null)
+				return best;
+			for(FederatedPlannerDpMemoTable.OccurrencePlanArm arm :
+				memoTable.getExactPlanArmsForOccurrence(occurrence)) {
+				FederatedPlannerDpMemoTable.FedPlan candidate = arm.plan();
+				if(candidate.getSelectedPlacementState() != lock.exactState()
+					|| candidate.isDerivedFedFout() != lock.derivedFedFout()
+					|| !isCompatibleWithChildDecisions(memoTable, candidate, outputDecisions))
+					continue;
+				if(best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
+					|| candidate.getCumulativeCost() == best.getCumulativeCost()
+						&& candidate.getFedOutType() == FederatedOutput.LOUT
+						&& best.getFedOutType() == FederatedOutput.FOUT)
+					best = candidate;
+			}
+			if(best == null)
+				throw new IllegalStateException("DP boundary lock has no exact memo arm: "
+					+ occurrence.key());
+			return best;
+		}
+
+		private FederatedPlannerDpMemoTable.FedPlan exactBoundaryPlanForHop(
+			FederatedPlannerDpMemoTable memoTable, PlacementAnalysis.HopOccurrenceProjection occurrence,
+			long hopId, SelectedDpState lock, Map<Long, FederatedOutput> outputDecisions) {
+			FederatedPlannerDpMemoTable.FedPlan best = null;
+			for(FederatedOutput output : List.of(lock.output(), FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+				FederatedPlannerDpMemoTable.FedPlanVariants variants =
+					memoTable.getFedPlanVariants(Pair.of(hopId, output));
+				if(variants == null || variants.isEmpty())
+					continue;
+				for(FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
+					if(candidate == null || candidate.getSelectedPlacementState() != lock.exactState()
+						|| candidate.isDerivedFedFout() != lock.derivedFedFout()
+						|| memoTable.requirePlanCarrierOccurrence(candidate.getHopRef()) != occurrence
+						|| !isCompatibleWithChildDecisions(memoTable, candidate, outputDecisions))
+						continue;
+					if(best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
+						|| candidate.getCumulativeCost() == best.getCumulativeCost()
+							&& candidate.getFedOutType() == FederatedOutput.LOUT
+							&& best.getFedOutType() == FederatedOutput.FOUT)
+						best = candidate;
+				}
+			}
+			return best;
+		}
+
+		private void verifyBoundaryLock(SelectedChildResolution child) {
+			SelectedDpState lock = boundaryLock(child.key());
+			if(lock == null)
+				return;
+			if(child.state() != lock.exactState() || child.derivedFedFout() != lock.derivedFedFout())
+				throw new IllegalStateException("DP boundary lock selected incompatible child arm: "
+					+ child.key());
 		}
 
 		private void validateAuthority(OrdinaryComponentId source) {
@@ -756,7 +825,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					|| edge.child.plan() != actual.plan() || edge.child.occurrence() != actual.occurrence()
 					|| edge.child.key() != actual.key() || edge.child.state() != actual.state()
 					|| edge.child.derivedFedFout() != actual.derivedFedFout()
-					|| edge.child.selectionInput() != actual.selectionInput())
+					|| edge.child.selectedOutput() != actual.selectedOutput())
 					throw new IllegalStateException("DP exact traversal edge authority differs: source="
 						+ source + " parent=" + parentOccurrence.key() + " ordinal=" + childOrdinal);
 				if(edge.consumed)
@@ -860,7 +929,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		private static String canonicalEdge(ExactTraversalEdge edge) {
 			return "E|" + edge.source.ordinal + "|" + edge.parentOccurrence.key() + "|"
 				+ edge.childOrdinal + "|" + edge.declaration.getKey() + ":" + edge.declaration.getValue()
-				+ "|" + edge.child.key() + "|" + edge.child.selectionInput() + "|"
+				+ "|" + edge.child.key() + "|" + edge.child.selectedOutput() + "|"
 				+ edge.child.state() + "|" + edge.child.derivedFedFout();
 		}
 	}
@@ -1125,7 +1194,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		OwnerComponentIndex ownerIndex = new OwnerComponentIndex(analysis, List.copyOf(components));
 		if(ownerIndex.owners.size() != ordinaryKeys.size())
 			throw new IllegalStateException("DP frozen owner index differs from the ordinary-decision universe");
-		TraversalDependencyLedger ledger = new TraversalDependencyLedger(ownerIndex, selectedStates.keySet());
+		TraversalDependencyLedger ledger = new TraversalDependencyLedger(ownerIndex, selectedStates);
 		for(OrdinaryComponentId component : components)
 			completeDisconnectedComponent(analysis, memoTable, component,
 				componentSinkRoots(component.members, outgoing), outputDecisions, visitedPlanHops, fTypeMap,
@@ -1448,6 +1517,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		FederatedPlannerDpMemoTable memoTable, Pair<Long, FederatedOutput> declaration,
 		FederatedOutput selectionInput, Map<Long, FederatedOutput> outputDecisions,
 		Map<Long, ConflictEntry> conflicts, RewriteMutationMode mutationMode) {
+		return resolveSelectedChild(memoTable, declaration, selectionInput, outputDecisions, conflicts,
+			mutationMode, null);
+	}
+
+	private static SelectedChildResolution resolveSelectedChild(
+		FederatedPlannerDpMemoTable memoTable, Pair<Long, FederatedOutput> declaration,
+		FederatedOutput selectionInput, Map<Long, FederatedOutput> outputDecisions,
+		Map<Long, ConflictEntry> conflicts, RewriteMutationMode mutationMode,
+		TraversalDependencyLedger ledger) {
 		FederatedPlannerDpMemoTable.FedPlan selected = selectRewritePlanVariant(memoTable,
 			declaration.getKey(), selectionInput, declaration.getValue(), null, outputDecisions,
 			conflicts, false, mutationMode);
@@ -1455,6 +1533,16 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return null;
 		PlacementAnalysis.HopOccurrenceProjection occurrence =
 			memoTable.requirePlanCarrierOccurrence(selected.getHopRef());
+		if(ledger != null) {
+			SelectedDpState lock = ledger.boundaryLock(occurrence.key());
+			if(lock != null && (selected.getSelectedPlacementState() != lock.exactState()
+				|| selected.isDerivedFedFout() != lock.derivedFedFout())) {
+				FederatedPlannerDpMemoTable.FedPlan locked = ledger.exactBoundaryPlan(
+					memoTable, occurrence, declaration.getKey(), outputDecisions);
+				selected = locked;
+				occurrence = memoTable.requirePlanCarrierOccurrence(selected.getHopRef());
+			}
+		}
 		PlacementState state = Objects.requireNonNull(selected.getSelectedPlacementState(),
 			"DP selected child has no exact placement state");
 		// Virtual/recompile carriers keep their exact raw edge plan, while component ownership
@@ -1468,7 +1556,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			throw new IllegalStateException("DP selected child lacks an exact canonical owner plan: "
 				+ occurrence.key());
 		return new SelectedChildResolution(selected, canonicalOwnerPlan, occurrence, occurrence.key(), state,
-			selected.isDerivedFedFout(), selectionInput);
+			selected.isDerivedFedFout(), selected.getFedOutType());
 	}
 
 	private static void scheduleTraversalEdges(OrdinaryComponentId component,
@@ -1490,10 +1578,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedOutput selectionInput = outputDecisions.getOrDefault(childOriginalId,
 				declaration.getValue());
 			SelectedChildResolution child = resolveSelectedChild(memoTable, declaration,
-				selectionInput, outputDecisions, conflicts, RewriteMutationMode.CAPTURE_ONLY);
+				selectionInput, outputDecisions, conflicts, RewriteMutationMode.CAPTURE_ONLY, ledger);
 			if(child == null)
 				throw new IllegalStateException("DP exact traversal schedule has no selected child plan: parent="
 					+ parentOccurrence.key() + " ordinal=" + childOrdinal);
+			ledger.verifyBoundaryLock(child);
 			ledger.schedule(component, effectivePlan, parentOccurrence, childOrdinal, declaration, child);
 			FederatedPlannerDpMemoTable.FedPlan effectiveChild = resolveEffectiveRewritePlan(child.plan(),
 				memoTable, outputDecisions, conflicts, false);
@@ -1583,7 +1672,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						throw new IllegalStateException("DP different-owner occurrence lacks exact incoming edge: "
 							+ occurrenceKey);
 				}
-				else if(traversalContext.ledger.boundaryLocks.contains(occurrenceKey))
+				else if(traversalContext.ledger.boundaryLock(occurrenceKey) != null)
 					coalesceSelectedState(selectedStates, occurrenceKey, selectedState(effectivePlan));
 				else
 					throw new IllegalStateException("DP capture encountered an unowned occurrence: " + occurrenceKey);
@@ -1612,7 +1701,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				childFedPlanPair.getValue());
 			SelectedChildResolution childResolution = resolveSelectedChild(memoTable, childFedPlanPair,
 				childDesiredOut, outputDecisions, rewriteConflictCheckMap,
-				selectedStates == null ? RewriteMutationMode.APPLY : RewriteMutationMode.CAPTURE_ONLY);
+				selectedStates == null ? RewriteMutationMode.APPLY : RewriteMutationMode.CAPTURE_ONLY,
+				traversalContext == null ? null : traversalContext.ledger);
 			FederatedPlannerDpMemoTable.FedPlan childPlan = childResolution == null ? null : childResolution.plan();
 				if (childPlan == null) {
 					if(traversalContext != null)
