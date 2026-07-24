@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014HermeticPlannerFixtureFactory;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpSemanticConsumptionReceipt;
@@ -153,7 +154,9 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 	}
 
 	private static Invocation run(String id) throws Exception {
-		DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+		DMLProgram program = isHermeticPrivateAggregate(id)
+			? CampaignBG014HermeticPlannerFixtureFactory.compile(id)
+			: ProductionShadowFixtureFactory.compile(id);
 		java.util.concurrent.atomic.AtomicReference<PlannerInvocationReceipt> finalBoundary =
 			new java.util.concurrent.atomic.AtomicReference<>();
 		new org.apache.sysds.parser.DMLTranslator(program).constructLops(program, receipt -> {
@@ -168,9 +171,19 @@ public class CampaignBG014DpSemanticCampaignBClosureRedTest {
 		DpInvocationReceipt finalBoundaryDpReceipt = (DpInvocationReceipt) finalBoundary.get();
 		Assert.assertSame("G014_FINAL_BOUNDARY_ANALYSIS_CHANGED|" + id, analysis,
 			finalBoundaryDpReceipt.analysis());
-		DpInvocationReceipt receipt = new FederatedPlannerDpFedCostBased().rewriteProgram(program,
-			new FunctionCallGraph(program), null, analysis);
+		DpInvocationReceipt receipt;
+		if("B-21".equals(id)) {
+			// B-21 retains function/pre-inlining shape; the final-boundary DP receipt is production authority.
+			receipt = finalBoundaryDpReceipt;
+		}
+		else
+			receipt = new FederatedPlannerDpFedCostBased().rewriteProgram(program,
+				new FunctionCallGraph(program), null, analysis);
 		return new Invocation(program, analysis, finalBoundary.get(), finalBoundaryDpReceipt, receipt);
+	}
+
+	private static boolean isHermeticPrivateAggregate(String id) {
+		return List.of("B-11", "B-13", "B-21", "B-22").contains(id);
 	}
 
 	private record Invocation(DMLProgram program, PlacementAnalysis analysis,

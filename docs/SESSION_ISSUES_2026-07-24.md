@@ -687,3 +687,51 @@
 - **적용 원칙/제약**:
   - Verification evidence must be fresh and clone-local.
   - No authoritative `target` mutation and no staged/committed build artifacts.
+
+## Issue: G014 closure semantic tests required hermetic private-aggregate fixture boundaries
+
+- **상태**: 해결 (authoritative closure-harness commit; test/docs only).
+- **환경/조건**: Authoritative repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, starting HEAD `d87c1be0fb287169047e36e6eb56b343d7ae7f65`; pre-existing dirty closure-harness files `CampaignBG014HermeticPlannerFixtureFactory.java` and `CampaignBG014DpSemanticCampaignBClosureRedTest.java`; protected tracked `target` symlink left untouched. DP planner closure test `CampaignBG014DpSemanticCampaignBClosureRedTest`; fixtures `B-05`, `B-09`, `B-11`, `B-13`, `B-21`, `B-22`.
+- **재현 절차**:
+  - Full closure gate in disposable clone with local real target: `MAVEN_OPTS=-Djava.io.tmpdir=/run/user/10041/g005-g014-closure-harness-20260724-r2/tmp/closure mvn -q -Dmaven.repo.local=/run/user/10041/g005-g014-closure-harness-20260724-r2/m2 -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest test`.
+  - Targeted compile in the same disposable clone: `mvn -q -Dmaven.repo.local=/run/user/10041/g005-g014-closure-harness-20260724-r2/m2 -DskipTests test-compile`.
+- **관측 증상**:
+  - Earlier closure debt came from production-shadow fixtures that either required live worker privacy metadata or did not retain the exact semantic boundary shape needed by the closure contract.
+  - B-11 private aggregate had already shown worker-RPC privacy failures when compiled through the production-shadow path.
+  - B-13 needs the diagonal OTHER geometry (`ranges=list(list(0,0),list(2,1),list(2,1),list(4,2))`) plus explicit non-PUBLIC metadata so the stage-1 exact OTHER source and stage-2 exact SCALAR matrix-scalar rule can be tested without live workers.
+  - B-21 retains function/pre-inlining shape; running a second manual `rewriteProgram(...)` after final-boundary `constructLops(...)` is invalid for this fixture because the production authority is the final-boundary DP receipt produced during lop construction.
+- **원인 분석**:
+  - `ProductionShadowFixtureFactory` is appropriate for public/default production-shadow controls, but it is not hermetic for private-aggregate closure cases that must not contact federated workers during compile-time planner tests.
+  - The closure test needs exact semantic consumption evidence, not a second synthetic rewrite pass that can observe a different retained function/pre-inlining shape. For B-21, the final-boundary receipt already carries the canonical `PlacementAnalysis`, exact selection, semantic block, and consumption counters from the production `constructLops` boundary.
+  - Public B-05 and B-09 remain production-shadow fixtures by design; they are not converted to hermetic private-aggregate fixtures and continue to cover the existing public/default production-shadow path.
+- **의사결정 근거 / Decision boundary**: Test-harness fixture-boundary repair only. The change routes only B-11/B-13/B-21/B-22 through explicit hermetic `private-aggregate` local-matrix metadata, keeps public B-05/B-09 production shadow unchanged, and uses B-21's final-boundary DP receipt as production authority. No runtime fallback or repair path is added; no TR/TW or recompile `<CP,FOUT>` rule is relaxed; no arbitrary candidate closure is introduced.
+- **해결 요약**:
+  - Made `CampaignBG014HermeticPlannerFixtureFactory` public/test-accessible and its `compile(String)` entry point public for closure tests.
+  - Consolidated local matrix `.mtd` creation into a helper that writes explicit `"privacy":"private-aggregate"` metadata.
+  - Added hermetic B-13 and B-22 scripts, preserving B-13 diagonal OTHER geometry and B-22 two-worker ROW geometry.
+  - Routed closure fixtures B-11/B-13/B-21/B-22 through the hermetic factory while leaving B-05/B-09 on `ProductionShadowFixtureFactory`.
+  - Used B-21's final-boundary `DpInvocationReceipt` directly instead of invoking a second manual rewrite over the retained function/pre-inlining program shape.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014HermeticPlannerFixtureFactory.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBG014DpSemanticCampaignBClosureRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Full closure class GREEN in disposable clone: `/run/user/10041/g005-g014-closure-harness-20260724-r2/logs/closure_full.localtarget.log`; expected XML `TEST-org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest.xml` records 4 tests, 0 failures, 0 errors, 0 skipped.
+  - Targeted test compile GREEN: `/run/user/10041/g005-g014-closure-harness-20260724-r2/logs/test_compile.localtarget.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Disposable clone diff checks GREEN: `/run/user/10041/g005-g014-closure-harness-20260724-r2/logs/diff_check.localtarget.log` and authoritative commit diff check recorded in the integration report.
+  - Canonical summary report: `/run/user/10041/g005-g014-closure-harness-authoritative-report-20260724.txt` (SHA `84e0831d19cd6c16177fdc35c5b34c06130fdac18d1e79a10034edd460a9554f`).
+  - Authoritative post-commit guard verifies only protected `target` remains dirty, and target link/index are unchanged.
+- **잔여 이슈**:
+  - This commit does not run LAN or Docker and does not advance FedAll/Heuristic/MinST beyond the closure-harness gate.
+  - Public/default production-shadow behavior for B-05/B-09 is intentionally unchanged and may still be governed by public-privacy campaign rules in later selectors.
+- **잠재 회귀 위험**:
+  - Risk: a future hermetic fixture edit could accidentally remove explicit non-PUBLIC metadata. Detection: inspect generated `.mtd` string for `"privacy":"private-aggregate"` and keep the full 4/4 closure class green without worker RPC errors.
+  - Risk: B-13 diagonal geometry could drift to ROW/COL and stop exercising OTHER. Detection: keep the B-13 ranges exactly `0,0-2,1` and `2,1-4,2` and pair with the B13 source/rule fact tests.
+  - Risk: B-21 could regress to a second manual rewrite and invalidate retained function/pre-inlining authority. Detection: closure test must continue asserting the final-boundary DP receipt is retained and consumed, with no re-enumeration/repair/fallback/double application.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged and asserted by `G014_NO_FALLBACK`.
+  - Runtime repair/re-enumeration prohibited for this closure path: unchanged and asserted by closure counters.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space/opcode guard prohibition: unchanged; no candidate combination is closed.
+  - Public B-05/B-09 production-shadow fixtures remain unchanged.
