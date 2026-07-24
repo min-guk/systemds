@@ -84,3 +84,52 @@
   - Risk: digest-only relocation projection could hide meaningful semantic relocation changes. Detection: `Fixture.removedRelocations()` remains raw/non-empty and literal/exclusion gates remain active; only exact compiled/recompile SBID prefix is normalized for structuralDigest.
 - **적용 원칙/제약**:
   - No runtime fallback, TR/TW relaxation, candidate-space guard, `src/main`, POM, cache, or production adapter changes.
+
+## Issue: Heuristic NO_REFED graph-normalized descendant exclusions for H01/H02/H03
+
+- **상태**: 해결 for H-01/H-02/H-03 and H-09 independent-control coverage; H-08/H-10 remain upstream fixture/oracle blockers and are intentionally not repaired in this pass.
+- **환경/조건**: Detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, base/head at task start `a3da82202a8af0217a76c710319c9f8c90a4cc3a`; FedHeuristic selector graph under `NO_REFED_POLICY_V1`; focused Maven/JUnit runs against Campaign B Heuristic provenance and real-vector policy tests.
+- **재현 절차**:
+  - RED focused: `mvn -q -Dtest=CampaignBHeuristicProvenanceContractTest#h01DescendantRefederationCandidateIsRemovedFromSelectorGraph test` -> `/tmp/g005-p4-heuristic-no-refed-fix-20260724-red-focused/h01_focused_before.log`
+  - RED all-ten provenance path: `mvn -q -Dtest=CampaignBHeuristicProvenanceContractTest#allTenLiteralFixturesRequireExactStablePolicySelections test` -> `/tmp/g005-p4-heuristic-no-refed-fix-20260724-red/h01_before.log`
+- **관측 증상**:
+  - H-01 selected a descendant refederation candidate for `BinaryOp:b(+):Y`; the synthetic CP/FOUT candidate proof was removed, but the graph-normalized legal descendant `FED/FOUT` candidate remained in the selector graph and could still be selected.
+  - The focused RED log fails with the descendant-refederation assertion for `BinaryOp:b(+):Y`.
+- **원인 분석**:
+  - `HeuristicPlacementAdapter.policyExclusions(...)` emitted graph-normalized FOUT exclusions only when `typedMarkers.contains(marker)` was true.
+  - H-01/H-02/H-03 markers are explicit markers/closure descendants but not typed-demotion markers, so the adapter removed only the raw synthetic CP/FOUT proof while leaving an equivalent legal graph-normalized `FED/FOUT` refederation candidate available.
+- **의사결정 근거**: `NO_REFED_POLICY_V1` is a FedHeuristic planner-policy legality constraint, not a runtime capability claim or global legality rule. The repair keeps the existing proof scope: explicit marker/closure descendant, emitted work, no current anchor, concrete non-self supported durable anchor, compatible known shape, requested `FOUT` matching anchor `FType`, and selector-graph-only removal. Runtime fallback, TR/TW legality, cost model, DP/FedAll/MinST, POM/cache, and runtime code remain unchanged.
+- **해결 요약**:
+  - Removed the `typedMarkers` gate around graph-normalized FOUT exclusion emission in `HeuristicPlacementAdapter.policyExclusions(...)`, while preserving all `candidateProof(...)` preconditions.
+  - Expanded the exact fixture model so raw synthetic exclusions and graph-normalized selector-candidate exclusions are represented separately. Graph-normalized proofs now require the requested state to already be a legal alternative with `FOUT` and an `FType` matching the durable anchor.
+  - Updated H-01/H-02/H-03 literal expectations to the completed exact model and kept H-08/H-10 unchanged because they are blocked outside this policy slice.
+  - Added focused H-01/H-02/H-03/H-09 tests. The H-09 sentinel verifies independent `Y` still has/selects `FED/FOUT` while descendants do not refederate, guarding against overly broad NO_REFED closure.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/HeuristicPlacementAdapter.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBHeuristicProvenanceContractTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBProvenanceFixtureBridge.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2LiteralExpectations.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/R4Heuristic2SemanticValidator.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED focused: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-red-focused/h01_focused_before.log` — focused H-01 failed before the adapter repair with descendant `Y` refederation.
+  - GREEN focused policy: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-green/focused_green_3.log` — `CampaignBHeuristicProvenanceContractTest#h01DescendantRefederationCandidateIsRemovedFromSelectorGraph+...#h02H03DescendantRefederationCandidatesAreRemovedFromSelectorGraph+...#h09IndependentCandidateRetainsFedFoutWhileDescendantsDoNot`, exit 0.
+  - Real-vector full validator residual: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-green/h09_real_vector_exact_after_restore.log` — `CampaignBHeuristicRealVectorPolicyRedTest#independentAnchorReleaseSentinelRemainsGreen` keeps the full semantic validator and fails only on the known normalized-plan-fingerprint mismatch (`expected 3b8169...`, actual `4cf830...`).
+  - Invalidated evidence: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-green/real_vector_policy_3.log` was produced while the H-09 real-vector test used a temporary weakened subset assertion, so it is not admissible as GREEN real-vector evidence.
+  - Compile: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-green/test_compile_final2.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-green/diff_check_final4.log` — `git diff --check`, exit 0.
+  - Residual full provenance: `/tmp/g005-p4-heuristic-no-refed-fix-20260724-green/provenance_contract_2.log` — `mvn -q -Dtest=CampaignBHeuristicProvenanceContractTest test`, exit 1 with known blockers: normalized-plan-fingerprint mismatch and H-10 `X_MARKER` role resolution.
+- **잔여 이슈**:
+  - H-08 is blocked by upstream builder/oracle anchor propagation: `Y=A+Z` wrongly inherits A upstream, and production `candidateProof(...)` correctly refuses anchored nodes via the `node.anchors().isEmpty()` requirement. Do not weaken the proof to cover H-08 locally.
+  - H-10 remains blocked by marker resolution (`X_MARKER` count=0) and is intentionally not changed in this pass.
+  - H-09 normalized-plan-fingerprint debt remains pre-existing and documented; the full `R4Heuristic2SemanticValidator.heuristic(...)` path remains intact and is not weakened to a subset assertion.
+  - Full provenance literal/fingerprint debt remains outside the H-01/H-02/H-03/H-09 NO_REFED policy slice.
+- **잠재 회귀 위험**:
+  - Risk: graph-normalized exclusions could become too broad and remove unrelated independent `FED/FOUT` candidates. Detection: H-09 independent sentinel asserts unrelated `Y` retains and selects `FED/FOUT` while descendants do not refederate.
+  - Risk: fixture proof validation could accept arbitrary FOUT states. Detection: graph-normalized `CandidateAtom` validation now requires existing legal alternatives, output `FOUT`, matching anchor `FType`, and exact encoded selector-candidate equality.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space closure only for documented planner-policy proof: no runtime-capability or global-legality claim added.
+  - DP/FedAll/MinST, cost model, POM/cache, and runtime execution paths: untouched.

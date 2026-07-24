@@ -36,7 +36,10 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Dedicated structural fixtures. Every marker and special role is resolved by typed graph facts. */
 final class CampaignBProvenanceFixtureBridge {
-	record CandidateAtom(CompiledHopKey node,PlacementState state){String normalizedSignature(){return atom(node,state.normalizedSignature());}}
+	record CandidateAtom(CompiledHopKey node,PlacementState state,boolean graphNormalized){
+		CandidateAtom(CompiledHopKey node,PlacementState state){this(node,state,false);}
+		String normalizedSignature(){return graphNormalized?encoded(node.normalizedSignature(),state.normalizedSignature()):atom(node,state.normalizedSignature());}
+	}
 	enum ShapeBasis { KNOWN_COMPATIBLE_DIMENSIONS, SHAPE_INDEPENDENT_BROADCAST, UNTRUSTED_SHAPE_INDEPENDENT_LABEL }
 	enum RelocationKind { LOCAL_UPLOAD_EXISTING_DURABLE_ANCHOR, DOWNLOAD_UNSUPPORTED }
 	enum ObligationReason { EXISTING_FEDERATION_MAP_COMPATIBLE, UNTRUSTED_SHAPE_LABEL }
@@ -69,7 +72,11 @@ final class CampaignBProvenanceFixtureBridge {
 		Map<String,List<String>> base=new LinkedHashMap<>();Map<String,CandidateProof> candidateProofs=new LinkedHashMap<>();Set<String> removed=new LinkedHashSet<>();
 		for(var n:graph.nodes()){
 			Set<String> states=new java.util.TreeSet<>();n.legalAlternatives().stream().map(s->s.normalizedSignature()).forEach(states::add);
-			if(descendants.contains(n.key()))candidateProof(analysis,n,policyAnchor,marker.key()).ifPresent(p->{states.add(p.state().normalizedSignature());removed.add(p.candidate());candidateProofs.put(p.candidate(),p);});
+			if(descendants.contains(n.key())){
+				candidateProof(analysis,n,policyAnchor,marker.key()).ifPresent(p->{states.add(p.state().normalizedSignature());removed.add(p.candidate());candidateProofs.put(p.candidate(),p);});
+				for(PlacementState state:n.legalAlternatives())if(state.output()==FederatedOutput.FOUT)
+					candidateProof(analysis,n,policyAnchor,marker.key(),state,true).ifPresent(p->{removed.add(p.candidate());candidateProofs.put(p.candidate(),p);});
+			}
 			base.put(n.key().normalizedSignature(),List.copyOf(states));
 		}
 		Set<ValueVersionKey> values=new LinkedHashSet<>();for(var n:graph.nodes())if(descendants.contains(n.key()))values.add(n.valueVersion());
@@ -78,7 +85,7 @@ final class CampaignBProvenanceFixtureBridge {
 		validateSpecial(id,graph,marker,descendants,unrelated,independent,roles,anchors,base);
 		if(removed.isEmpty())bad(id,"VACUOUS_NO_REFED_POLICY");
 		if(!candidateProofs.keySet().equals(removed))bad(id,"CANDIDATE_PROOF_BIJECTION");
-		for(String candidate:removed)if(descendants.stream().noneMatch(k->candidate.startsWith(k.normalizedSignature()+"=")))bad(id,"GLOBAL_NO_REFED_REMOVAL");
+		for(String candidate:removed)if(descendants.stream().noneMatch(k->candidate.startsWith(k.normalizedSignature()+"=")||candidate.startsWith(token(k.normalizedSignature())+"|")))bad(id,"GLOBAL_NO_REFED_REMOVAL");
 		String digest=R4Heuristic2Probe.sha256(id+'|'+marker.key().normalizedSignature()+'|'+sorted(descendants)+'|'+sorted(unrelated)+'|'+roles+'|'+anchors+'|'+base+'|'+candidateProofs+'|'+removed+'|'+stableRelocations(graph,values));
 		Fixture fixture=new Fixture(id,program,analysis,marker.key(),marker.valueVersion(),Set.copyOf(descendants),Set.copyOf(unrelated),
 			Set.copyOf(independent),Map.copyOf(roles),Map.copyOf(anchors),Map.copyOf(base),Map.copyOf(candidateProofs),Set.copyOf(removed),Set.copyOf(removedReloc),digest);
@@ -90,13 +97,15 @@ final class CampaignBProvenanceFixtureBridge {
 		if(id.contains("DISTINCT-ANCHORS"))return anchors.get("ANCHOR_A");
 		return requireUnique(id,"POLICY_DURABLE_ANCHOR",graph.nodes().stream().flatMap(n->n.anchors().stream()).distinct().toList());
 	}
-	static java.util.Optional<CandidateProof> candidateProof(PlacementAnalysis analysis,NeutralPlacementGraph.Node n,DurableAnchorKey anchor,CompiledHopKey marker){
+	static java.util.Optional<CandidateProof> candidateProof(PlacementAnalysis analysis,NeutralPlacementGraph.Node n,DurableAnchorKey anchor,CompiledHopKey marker){return candidateProof(analysis,n,anchor,marker,null,false);}
+	static java.util.Optional<CandidateProof> candidateProof(PlacementAnalysis analysis,NeutralPlacementGraph.Node n,DurableAnchorKey anchor,CompiledHopKey marker,PlacementState requestedState,boolean graphNormalized){
 		if(analysis==null||n==null||marker==null||!n.emittedWork()||!n.anchors().isEmpty()||anchor==null||!concreteAnchor(anchor)
 			||selfOrVariableAnchor(anchor,n)||!supported(anchor.fType())||!closure(analysis.graph(),marker).contains(n.key()))return java.util.Optional.empty();
 		Hop hop=analysis.hop(n.key()).orElse(null);long[] shape=compatibleShape(hop,anchor);if(shape==null)return java.util.Optional.empty();
 		boolean boundary=n.kind()==NeutralPlacementGraph.NodeKind.TRANSIENT_READ||n.kind()==NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE||"recompile".equals(n.key().recompileContext());
-		PlacementState state=new PlacementState(boundary?ExecType.FED:ExecType.CP,FederatedOutput.FOUT,anchor.fType(),anchor.fType()!=FType.BROADCAST);
-		CandidateAtom atom=new CandidateAtom(n.key(),state);String candidate=atom.normalizedSignature();RelocationActionKey relocation=new RelocationActionKey(n.valueVersion(),state,anchor,n.key().controlRegion().normalizedSignature(),List.of(n.key()));
+		PlacementState state=requestedState==null?new PlacementState(boundary?ExecType.FED:ExecType.CP,FederatedOutput.FOUT,anchor.fType(),anchor.fType()!=FType.BROADCAST):requestedState;
+		if(state.output()!=FederatedOutput.FOUT||state.fType()!=anchor.fType())return java.util.Optional.empty();
+		CandidateAtom atom=new CandidateAtom(n.key(),state,graphNormalized);String candidate=atom.normalizedSignature();RelocationActionKey relocation=new RelocationActionKey(n.valueVersion(),state,anchor,n.key().controlRegion().normalizedSignature(),List.of(n.key()));
 		ObligationKey obligation=new ObligationKey(n.key(),0,n.valueVersion(),state,relocation,n.key().recompileContext());
 		CandidateProof proof=new CandidateProof(atom,n.key(),state,anchor,anchor.fType(),shape[0],shape[1],anchor.fType()==FType.BROADCAST?ShapeBasis.SHAPE_INDEPENDENT_BROADCAST:ShapeBasis.KNOWN_COMPATIBLE_DIMENSIONS,RelocationKind.LOCAL_UPLOAD_EXISTING_DURABLE_ANCHOR,relocation,obligation,ObligationReason.EXISTING_FEDERATION_MAP_COMPATIBLE,marker,n.valueVersion());
 		if(!valid(analysis,n,marker,proof))throw new IllegalArgumentException("INVALID_CANDIDATE_PROOF|"+candidate);return java.util.Optional.of(proof);
@@ -124,10 +133,12 @@ final class CampaignBProvenanceFixtureBridge {
 		if(p==null||analysis==null||n==null||expectedMarker==null||!closure(analysis.graph(),expectedMarker).contains(n.key()))return false;
 		boolean boundary=n.kind()==NeutralPlacementGraph.NodeKind.TRANSIENT_READ||n.kind()==NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE||"recompile".equals(n.key().recompileContext());
 		PlacementState expectedState=new PlacementState(boundary?ExecType.FED:ExecType.CP,FederatedOutput.FOUT,p.anchor().fType(),p.anchor().fType()!=FType.BROADCAST);
+		boolean exactState=p.atom().graphNormalized()?n.legalAlternatives().contains(p.state())
+			&&p.state().output()==FederatedOutput.FOUT&&p.state().fType()==p.anchor().fType():p.state().equals(expectedState);
 		Hop hop=analysis.hop(n.key()).orElse(null);boolean exactShape=p.supportedFType()==FType.BROADCAST?p.rows()==-1&&p.cols()==-1:
 			hop!=null&&hop.getDataType()==DataType.MATRIX&&hop.getDim1()==p.rows()&&hop.getDim2()==p.cols();
 		DurableAnchorKey resolvedAnchor=resolvedPolicyAnchor(analysis.graph(),expectedMarker);
-		return p.atom().node().equals(n.key())&&p.atom().state().equals(p.state())&&p.provenNode().equals(n.key())&&p.candidate().equals(atom(n.key(),p.state().normalizedSignature()))&&p.state().equals(expectedState)&&p.anchor().equals(resolvedAnchor)&&concreteAnchor(p.anchor())&&!selfOrVariableAnchor(p.anchor(),n)&&supported(p.supportedFType())&&p.supportedFType()==p.anchor().fType()
+		return p.atom().node().equals(n.key())&&p.atom().state().equals(p.state())&&p.provenNode().equals(n.key())&&p.candidate().equals(p.atom().normalizedSignature())&&exactState&&p.anchor().equals(resolvedAnchor)&&concreteAnchor(p.anchor())&&!selfOrVariableAnchor(p.anchor(),n)&&supported(p.supportedFType())&&p.supportedFType()==p.anchor().fType()
 			&&exactShape&&validGeometry(p.anchor(),p.rows(),p.cols())&&(p.supportedFType()==FType.BROADCAST?p.shapeBasis()==ShapeBasis.SHAPE_INDEPENDENT_BROADCAST:p.shapeBasis()==ShapeBasis.KNOWN_COMPATIBLE_DIMENSIONS)
 			&&p.relocationKind()==RelocationKind.LOCAL_UPLOAD_EXISTING_DURABLE_ANCHOR&&p.relocation().sourceValueVersion().equals(n.valueVersion())&&p.relocation().durableAnchor().equals(p.anchor())&&p.relocation().targetPlacement().equals(p.state())&&p.relocation().statementBlockScope().equals(n.key().controlRegion().normalizedSignature())&&p.relocation().compatibleConsumers().equals(List.of(n.key()))
 			&&p.obligation().relocationAction().equals(p.relocation())&&p.obligation().consumer().equals(n.key())&&p.obligation().inputPosition()==0&&p.obligation().sourceValueVersion().equals(n.valueVersion())&&p.obligation().requiredPlacement().equals(p.state())&&p.obligation().callRecompileContext().equals(n.key().recompileContext())
@@ -192,8 +203,10 @@ final class CampaignBProvenanceFixtureBridge {
 	static <T>T requireUnique(String id,String role,List<T>x){if(x.size()!=1)throw new AssertionError("FIXTURE_ROLE_AMBIGUOUS|case="+id+"|role="+role+"|count="+x.size()+"|candidates="+x);return x.get(0);}
 	private static void bad(String id,String role){throw new AssertionError("FIXTURE_ORACLE_INVALID|case="+id+"|role="+role);}
 	private static String atom(CompiledHopKey k,String state){return k.normalizedSignature()+"="+state;}
+	private static String encoded(String key,String state){return token(key)+"|"+token(state);}
+	private static String token(String value){return value.length()+":"+value;}
 	private static List<String> sorted(Set<CompiledHopKey>x){return x.stream().map(CompiledHopKey::normalizedSignature).sorted().toList();}
-	static String literalDescription(Fixture f)throws Exception{Set<String> candidates=new java.util.TreeSet<>();for(var e:f.baseAlternatives().entrySet())for(String s:e.getValue())candidates.add(e.getKey()+"="+s);candidates.removeAll(f.removedCandidates());List<String> exclusions=f.removedCandidates().stream().sorted().map(x->"NO_REFED|"+x+"|proof="+proofSignature(f.candidateProofs().get(x))+"|marker="+f.marker().normalizedSignature()).toList();return "LIT|"+f.id()+"|roles="+f.roles().entrySet().stream().sorted(Map.Entry.comparingByKey()).map(e->e.getKey()+"=>"+e.getValue().normalizedSignature()).toList()+"|anchors="+f.anchors().entrySet().stream().sorted(Map.Entry.comparingByKey()).map(e->e.getKey()+"=>"+e.getValue().normalizedSignature()).toList()+"|d="+f.descendants().size()+":"+R4Heuristic2Probe.sha256(f.descendants().stream().map(x->x.normalizedSignature()).sorted().toList().toString())+"|u="+f.unrelated().size()+":"+R4Heuristic2Probe.sha256(f.unrelated().stream().map(x->x.normalizedSignature()).sorted().toList().toString())+"|c="+candidates.size()+":"+R4Heuristic2Probe.sha256(candidates.toString())+"|e="+exclusions.size()+":"+R4Heuristic2Probe.sha256(exclusions.toString());}
+	static String literalDescription(Fixture f)throws Exception{Set<String> candidates=new java.util.TreeSet<>();for(var e:f.baseAlternatives().entrySet())for(String s:e.getValue()){String atom=e.getKey()+"="+s;if(!f.removedCandidates().contains(atom)&&!f.removedCandidates().contains(encoded(e.getKey(),s)))candidates.add(atom);}List<String> exclusions=f.removedCandidates().stream().sorted().map(x->"NO_REFED|"+x+"|proof="+proofSignature(f.candidateProofs().get(x))+"|marker="+f.marker().normalizedSignature()).toList();return "LIT|"+f.id()+"|roles="+f.roles().entrySet().stream().sorted(Map.Entry.comparingByKey()).map(e->e.getKey()+"=>"+e.getValue().normalizedSignature()).toList()+"|anchors="+f.anchors().entrySet().stream().sorted(Map.Entry.comparingByKey()).map(e->e.getKey()+"=>"+e.getValue().normalizedSignature()).toList()+"|d="+f.descendants().size()+":"+R4Heuristic2Probe.sha256(f.descendants().stream().map(x->x.normalizedSignature()).sorted().toList().toString())+"|u="+f.unrelated().size()+":"+R4Heuristic2Probe.sha256(f.unrelated().stream().map(x->x.normalizedSignature()).sorted().toList().toString())+"|c="+candidates.size()+":"+R4Heuristic2Probe.sha256(candidates.toString())+"|e="+exclusions.size()+":"+R4Heuristic2Probe.sha256(exclusions.toString());}
 	static String proofSignature(CandidateProof p){return p.provenNode().normalizedSignature()+";"+p.anchor().normalizedSignature()+";"+p.supportedFType()+";"+p.rows()+"x"+p.cols()+";"+p.shapeBasis()+";"+p.relocationKind()+";"+p.relocation().normalizedSignature()+";"+p.obligation().normalizedSignature()+";"+p.obligationReason()+";"+p.provenanceMarker().normalizedSignature()+";"+p.provenanceValue().normalizedSignature();}
 	private static DMLProgram compile(String s)throws Exception{DMLProgram p=ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,s,new HashMap<>());DMLTranslator t=new DMLTranslator(p);t.liveVariableAnalysis(p);t.validateParseTree(p);t.constructHops(p);return p;}
 	private static DMLProgram compileReuse()throws Exception{

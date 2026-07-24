@@ -145,8 +145,6 @@ public final class HeuristicPlacementAdapter {
 
 	private static List<String> policyExclusions(PlacementAnalysis analysis, List<CompiledHopKey> markerKeys) {
 		List<String> exclusions = new ArrayList<>();
-		Set<CompiledHopKey> typedMarkers = analysis.heuristicPolicyFacts().demotions().stream()
-			.map(fact -> fact.producer()).collect(java.util.stream.Collectors.toSet());
 		for(CompiledHopKey marker : markerKeys) {
 			Set<CompiledHopKey> descendants = closure(analysis.graph(), Set.of(marker));
 			DurableAnchorKey anchor = policyAnchor(analysis.graph(), Set.of(marker));
@@ -154,11 +152,14 @@ public final class HeuristicPlacementAdapter {
 			for(Node node : analysis.graph().nodes()) {
 				addPolicyExclusion(exclusions, node, markerValue,
 					candidateProof(analysis, node, anchor, marker, descendants, null), false);
-				if(typedMarkers.contains(marker))
-					for(PlacementState state : node.legalAlternatives())
-						if(state.output() == FederatedOutput.FOUT)
-							addPolicyExclusion(exclusions, node, markerValue,
-								candidateProof(analysis, node, anchor, marker, descendants, state), true);
+				// NO_REFED_POLICY_V1 is FedHeuristic planner-policy legality: after a demotion marker,
+				// proven descendants may not regain FOUT by upload/refederation to an existing durable
+				// anchor; this is not a Runtime capability claim and is scoped only to the Heuristic
+				// selector graph.
+				for(PlacementState state : node.legalAlternatives())
+					if(state.output() == FederatedOutput.FOUT)
+						addPolicyExclusion(exclusions, node, markerValue,
+							candidateProof(analysis, node, anchor, marker, descendants, state), true);
 			}
 		}
 		return exclusions.stream().distinct().sorted().toList();
