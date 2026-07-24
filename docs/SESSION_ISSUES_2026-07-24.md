@@ -916,3 +916,50 @@
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space/opcode guard prohibition: unchanged.
   - PUBLIC masking/Ignore/Assume prohibited for this non-privacy failure: unchanged.
+
+## Issue: Heuristic metadata missing-hop RED expected adapter rejection for an unconstructible analysis
+
+- **상태**: 해결 (test-only contract repair).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, 시작 HEAD `5965682222e3e36c2283d82f0b85773ba95105c1`, 사전 상태 ` M target` only. Heuristic metadata gate only; no production, fixture bridge, selector, Ignore/Assume, or PUBLIC masking change. Diagnosis artifact `/run/user/10041/g005-heuristic-metadata-adversarial-diagnosis-20260724/G005_HEURISTIC_METADATA_MISSING_HOP_DIAGNOSIS_59656822_20260724.md` (SHA `040eac075860eb9217a3e85c4f4bbd9986228d5b187da68e853912e38f671980`) and independent review `/run/user/10041/g005-heuristic-metadata-missing-hop-red-review-59656822-20260724/G005_HEURISTIC_METADATA_MISSING_HOP_RED_REVIEW_59656822_20260724.md` (SHA `8d189b9bce1571479b1d033ad1a21e3b83e8be032bcfb0ff0560b6bf26eed12a`) approved a test-only repair.
+- **재현 절차**:
+  - Archived Heuristic successor gate command: `/run/user/10041/g005-heuristic-only-successor-59656822-verify-20260724T151736Z/logs/10_heuristic_successor_gate.command`.
+  - Archived XML: `/run/user/10041/g005-heuristic-only-successor-59656822-verify-20260724T151736Z/xml/TEST-org.apache.sysds.test.component.federated.placement.guard.CampaignBHeuristicMetadataAdversarialRedTest.xml`.
+- **관측 증상**:
+  - Gate result was `Tests run: 41, Failures: 0, Errors: 1, Skipped: 0`.
+  - The failing class result was `CampaignBHeuristicMetadataAdversarialRedTest`: `tests=9`, `failures=0`, `errors=1`, `skipped=0`.
+  - The sole error was `broadcastMissingHopProjectionFailsClosedWithTypedPolicyRejection:102 » IllegalArgument Occurrence has a foreign graph key`.
+  - The exception occurred while building the `BroadcastCase.MISSING_HOP` scenario, before the test reached the expected `R4Heuristic2AdapterBridge.select(...)` typed policy rejection.
+- **원인 분석**:
+  - The old RED assumed an impossible intermediate state: a successfully constructed `PlacementAnalysis` whose graph still owns a key but whose occurrence/Hop projection for that key is missing.
+  - `CampaignBPlacementAnalysisFixtureBridge.missingHopProjectionTrap(...)` intentionally replaces an occurrence key with a dummy foreign key while retaining the original graph.
+  - Current `PlacementAnalysis` construction correctly rejects that malformed graph/occurrence mismatch with `IllegalArgumentException("Occurrence has a foreign graph key")` while deriving compiled input edges.
+  - This matches the already repaired anchor-observer missing-occurrence boundary: malformed analysis ownership fails closed during construction, not later in an observer or adapter.
+- **의사결정 근거 / Decision boundary**: Test contract only. Production `PlacementAnalysis` invariants remain strict; `HeuristicPlacementAdapter` is not changed or weakened; no runtime fallback, repair path, candidate closure, TR/TW `<CP,FOUT>` relaxation, recompile `<CP,FOUT>` relaxation, or PUBLIC/privacy masking is introduced.
+- **해결 요약**:
+  - Renamed the stale test to `broadcastMissingHopProjectionFailsClosedDuringAnalysisConstructionWithoutMutation`.
+  - Built a valid `SAFE_MATRIX` broadcast scenario in the test, captured its snapshot, and invoked the existing `CampaignBPlacementAnalysisFixtureBridge.missingHopProjectionTrap(...)` directly on its analysis/target.
+  - Asserted exact construction-time fail-closed exception type/message: `IllegalArgumentException("Occurrence has a foreign graph key")`.
+  - Asserted the original valid source analysis remains unchanged after the failed construction.
+  - Preserved the other eight adversarial metadata tests unchanged.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBHeuristicMetadataAdversarialRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Focused `CampaignBHeuristicMetadataAdversarialRedTest` was run in a disposable worktree with clone-local `target` under `/dev/shm` and shared m2 `/run/user/10041/g005-g014-closure-harness-20260724-r2/m2`; authoritative Maven/target were not used.
+  - Evidence root: `/run/user/10041/g005-heuristic-metadata-missing-hop-repair-20260724T152532`.
+  - Command log: `/run/user/10041/g005-heuristic-metadata-missing-hop-repair-20260724T152532/logs/10_focused_metadata.command`.
+  - Maven log SHA: `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`.
+  - Summary SHA: `191030e853a93ba27dc52aa331711e7b7698b6d552252e4fa71e7fdbf13668ac`.
+  - XML SHA: `d8fdc927483fedf0275599acc0082ede8038ebb7f6e832a3d87ef70f45dc7d3f`.
+  - Result: `tests=9`, `failures=0`, `errors=0`, `skipped=0`.
+- **잔여 이슈**:
+  - The broader seven-class Heuristic successor gate will be rerun independently later by instruction.
+- **잠재 회귀 위험**:
+  - Risk: future tests may again try to route malformed analysis ownership through adapter-level policy checks. Detection: missing-hop trap tests should assert construction fail-closed unless a valid supported fixture can represent missing Hop projection without a foreign graph key.
+  - Risk: weakening `PlacementAnalysis` could allow graph/occurrence divergence. Detection: this test and the anchor-observer construction-fail-closed test should both require the exact `Occurrence has a foreign graph key` boundary.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - Candidate/opcode guard prohibition: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - PUBLIC masking/Ignore/Assume prohibited for this non-privacy failure: unchanged.

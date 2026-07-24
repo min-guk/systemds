@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.junit.Assert;
 import org.junit.Test;
@@ -98,20 +99,17 @@ public class CampaignBHeuristicMetadataAdversarialRedTest {
 	}
 
 	@Test
-	public void broadcastMissingHopProjectionFailsClosedWithTypedPolicyRejection() throws Exception {
+	public void broadcastMissingHopProjectionFailsClosedDuringAnalysisConstructionWithoutMutation() throws Exception {
 		var scenario = R4HeuristicMetadataFixtureBridge.broadcast(
-			R4HeuristicMetadataFixtureBridge.BroadcastCase.MISSING_HOP);
+			R4HeuristicMetadataFixtureBridge.BroadcastCase.SAFE_MATRIX);
 		var before = scenario.snapshot();
-		try {
-			R4Heuristic2AdapterBridge.select(scenario.analysis(), scenario.markers());
-			Assert.fail("MISSING_HOP_PROJECTION must fail closed with typed policy rejection");
-		}
-		catch(R4Heuristic2AdapterBridge.TypedPolicySafetyRejection rejected) {
-			Assert.assertEquals("org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPolicySafetyException",
-				rejected.causeType());
-			Assert.assertEquals("HEURISTIC_POLICY_SAFETY_REJECTION|reason=MISSING_HOP_PROJECTION",
-				rejected.stableCode());
-		}
+
+		IllegalArgumentException rejected = Assert.assertThrows(
+			"MISSING_HOP_PROJECTION_CONSTRUCTION_FAILS_CLOSED",
+			IllegalArgumentException.class,
+			() -> CampaignBPlacementAnalysisFixtureBridge.missingHopProjectionTrap(
+				scenario.analysis(), scenario.target()));
+		Assert.assertEquals("Occurrence has a foreign graph key", rejected.getMessage());
 		R4Heuristic2Probe.unchanged(before, scenario.snapshot());
 	}
 
