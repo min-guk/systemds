@@ -42,3 +42,45 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - Planner candidate guards: unchanged; no candidate-space closure added.
   - Durable anchor identity: Java record value equality is canonical; no `==` reference identity used.
+
+## Issue: Residual H-NEG unknown-shape and H-08 structural digest fixture repairs
+
+- **Status**: 해결 for H-NEG and H-08 focused fixture checks; H-10 remains unresolved and intentionally unchanged in this pass.
+- **환경/조건**: Same detached G005 repository after amended checkpoint `fe40ef188e9c855ad5f97cb282dc45bdf340db04`; test-only files under `src/test/java/org/apache/sysds/test/component/federated/placement/guard/`.
+- **재현 절차**:
+  - H-10 RED: `CampaignBR4Heuristic2SelfTest#independentAndEqualShapeAnchorsRemainProvenanceScoped` -> `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/red-h10.log`
+  - H-NEG RED: `CampaignBR4Heuristic2SelfTest#missingVarSelfPartUnknownShapeAndUnknownFunctionInputAreRejected` -> `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/red-hneg.log`
+  - H-08 digest RED: `CampaignBR4Heuristic2SelfTest#literalFixturesAreFreshRepeatExactAndDeeplyImmutable` -> `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/red-digest.log`
+- **관측 증상**:
+  - H-NEG used `X=A+1`, so the intended unknown-shape local node was polluted by the federated A lineage and no role matched: `FIXTURE_ROLE_AMBIGUOUS|case=H-NEG-UNKNOWN|role=X_UNKNOWN|count=0`.
+  - H-08 repeat digest failed because raw relocation signatures preserve nondeterministic statement-block scope encodings (`5:compiled` vs `14:compiled`).
+  - H-10 still fails with original selector: `FIXTURE_ROLE_AMBIGUOUS|case=H-10-SAME-SHAPE-DISTINCT-ANCHORS|role=X_MARKER|count=0`. A probe that dropped only `anchors().isEmpty()` reached `VACUOUS_NO_REFED_POLICY`, indicating a separate anchor-propagation/oracle issue; this pass reverted H-10 changes.
+- **원인 분석**:
+  - H-NEG did not construct a genuinely local no-anchor matrix Hop with unknown dimensions; candidate proof rejection could not be attributed to `compatibleShape`.
+  - H-08 structural digest mixed semantic relocation fields with nondeterministic statement-block scope text. The public `Fixture.removedRelocations()` field remains raw by design, but digest comparison needs an internal stable projection.
+  - Prior documentation incorrectly stated completed fixture exclusions stayed stable globally. H-08 exclusion cardinality/hash changed from the earlier stale literal (`e=7`) to the captured current literal (`e=6`) because completing the value-identity fixture path exposed the real relocation/exclusion projection; this was test-fixture debt, not runtime behavior.
+- **의사결정 근거**: Test fixture/oracle repair only. H-NEG now isolates unknown local metadata; H-08 digest uses a digest-only canonical relocation projection. Runtime fallback, TR/TW legality, planner candidate guards, POM/cache, and production adapter code remain unchanged.
+- **해결 요약**:
+  - Replaced H-NEG helper with compiled federated anchor setup plus a manually appended local transient-read/write matrix statement block with `-1x-1` dimensions. Preconditions assert emitted work, no anchors, marker closure, concrete supported non-self anchor, and then `candidateProof(...)` must be empty because shape metadata is unknown.
+  - Added `h08StructuralDigestIsRepeatStableWithRawRelocationsPreserved` to prove H-08 structural digest and literal description repeat stability while preserving non-empty raw relocation exposure.
+  - Structural digest now uses `stableRelocations(...)` only for digest input. It retains source value, target placement, durable anchor, compatible consumers, and consumer recompile contexts, while normalizing only exact `^\d+:(compiled|recompile)$` statement-block scopes to `#:<context>`.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBProvenanceFixtureBridge.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR4Heuristic2SelfTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - H-NEG GREEN: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/green-hneg-final2.log` — command exited 0.
+  - H-08 GREEN: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/green-h08-final2.log` — command exited 0.
+  - Test compile: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/test-compile-final.log` — command exited 0.
+  - Diff check: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/diff-check-final.log` — command exited 0.
+  - Full self residual: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/self-full-residual.log` — 7 tests, 2 failures, both H-10 marker resolution.
+  - Provenance residual: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/provenance-contract-residual.log` — 3 tests, 2 failures: production descendant-refederated Y and H-10 marker.
+  - Real vector residual: `/tmp/g005-p4-heuristic-residual-fix-20260724-054325/real-vector-policy.log` — 3 tests, 1 failure: independent-anchor release fingerprint drift after digest projection.
+- **잔여 이슈**:
+  - H-10 marker/oracle remains unresolved and intentionally unmodified in the second commit.
+  - Production Heuristic descendant-refederated Y failure remains for separate adapter/oracle work.
+  - Real vector independent-anchor fingerprint drift remains to be reconciled with the new digest-only projection.
+- **잠재 회귀 위험**:
+  - Risk: digest-only relocation projection could hide meaningful semantic relocation changes. Detection: `Fixture.removedRelocations()` remains raw/non-empty and literal/exclusion gates remain active; only exact compiled/recompile SBID prefix is normalized for structuralDigest.
+- **적용 원칙/제약**:
+  - No runtime fallback, TR/TW relaxation, candidate-space guard, `src/main`, POM, cache, or production adapter changes.

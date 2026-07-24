@@ -79,7 +79,7 @@ final class CampaignBProvenanceFixtureBridge {
 		if(removed.isEmpty())bad(id,"VACUOUS_NO_REFED_POLICY");
 		if(!candidateProofs.keySet().equals(removed))bad(id,"CANDIDATE_PROOF_BIJECTION");
 		for(String candidate:removed)if(descendants.stream().noneMatch(k->candidate.startsWith(k.normalizedSignature()+"=")))bad(id,"GLOBAL_NO_REFED_REMOVAL");
-		String digest=R4Heuristic2Probe.sha256(id+'|'+marker.key().normalizedSignature()+'|'+sorted(descendants)+'|'+sorted(unrelated)+'|'+roles+'|'+anchors+'|'+base+'|'+candidateProofs+'|'+removed+'|'+removedReloc);
+		String digest=R4Heuristic2Probe.sha256(id+'|'+marker.key().normalizedSignature()+'|'+sorted(descendants)+'|'+sorted(unrelated)+'|'+roles+'|'+anchors+'|'+base+'|'+candidateProofs+'|'+removed+'|'+stableRelocations(graph,values));
 		Fixture fixture=new Fixture(id,program,analysis,marker.key(),marker.valueVersion(),Set.copyOf(descendants),Set.copyOf(unrelated),
 			Set.copyOf(independent),Map.copyOf(roles),Map.copyOf(anchors),Map.copyOf(base),Map.copyOf(candidateProofs),Set.copyOf(removed),Set.copyOf(removedReloc),digest);
 		org.junit.Assert.assertEquals("proof analysis must be mutation-free "+id,analysisFingerprintBefore,analysis.analysisFingerprint());
@@ -142,11 +142,25 @@ final class CampaignBProvenanceFixtureBridge {
 		return distinct.size()==1?distinct.get(0):null;
 	}
 
+	private static List<String> stableRelocations(NeutralPlacementGraph graph,Set<ValueVersionKey> values){
+		return graph.relocationActions().stream().filter(r->values.contains(r.key().sourceValueVersion())).map(r->stableRelocation(r.key())).sorted().toList();
+	}
+	private static String stableRelocation(RelocationActionKey r){
+		return r.sourceValueVersion().normalizedSignature()+"|"+r.targetPlacement().normalizedSignature()+"|"+r.durableAnchor().normalizedSignature()+"|"+stableScope(r.statementBlockScope())+"|"+r.compatibleConsumers().stream().map(CompiledHopKey::normalizedSignature).sorted().toList()+"|"+r.compatibleConsumers().stream().map(CompiledHopKey::recompileContext).sorted().toList();
+	}
+	private static String stableScope(String scope){return scope.replaceFirst("^\\d+:(compiled|recompile)$","#:$1");}
+
 	static boolean unknownShapeFixtureIsRejected()throws Exception{
 		String fed="federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)))";
-		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(compile("A="+fed+";X=A+1;print(sum(X));"));
+		DMLProgram program=compile("A="+fed+";print(sum(A));");
+		ArrayList<StatementBlock> blocks=new ArrayList<>(program.getStatementBlocks());
+		DataOp unknownRead=new DataOp("X_UNKNOWN",DataType.MATRIX,ValueType.FP64,OpOpData.TRANSIENTREAD,"X_UNKNOWN",-1,-1,-1,-1);
+		blocks.add(block(write("X_UNKNOWN_OUT",unknownRead)));program.setStatementBlocks(blocks);
+		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);
 		DurableAnchorKey anchor=requireUnique("H-NEG-UNKNOWN","ANCHOR",analysis.graph().nodes().stream().flatMap(n->n.anchors().stream()).distinct().toList());
-		NeutralPlacementGraph.Node node=one("H-NEG-UNKNOWN","X_UNKNOWN",analysis.graph().nodes().stream().filter(n->n.emittedWork()&&n.anchors().isEmpty()&&n.key().canonicalSourceOrigin()!=null&&n.key().canonicalSourceOrigin().endsWith(":X")&&analysis.hop(n.key()).filter(h->h.getDataType()==DataType.MATRIX&&(h.getDim1()<=0||h.getDim2()<=0)).isPresent()).toList());
+		NeutralPlacementGraph.Node node=one("H-NEG-UNKNOWN","X_UNKNOWN",analysis.graph().nodes().stream().filter(n->n.emittedWork()&&n.anchors().isEmpty()&&"X_UNKNOWN_OUT".equals(n.valueVersion().lexicalVariable())&&analysis.hop(n.key()).filter(h->h.getDataType()==DataType.MATRIX&&h.getDim1()<=0&&h.getDim2()<=0).isPresent()).toList());
+		org.junit.Assert.assertTrue("unknown-shape node is in its marker closure",closure(analysis.graph(),node.key()).contains(node.key()));
+		org.junit.Assert.assertTrue("unknown-shape proof uses concrete supported non-self anchor",concreteAnchor(anchor)&&supported(anchor.fType())&&!selfOrVariableAnchor(anchor,node));
 		String before=analysis.analysisFingerprint();boolean rejected=candidateProof(analysis,node,anchor,node.key()).isEmpty();return rejected&&before.equals(analysis.analysisFingerprint());
 	}
 
