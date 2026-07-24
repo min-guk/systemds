@@ -430,3 +430,48 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged and explicitly reflected by replayed local/federated states.
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space closure prohibition: respected; shrink is a proof-scoped stale-vector refinement caused by exact predecessor-domain changes, not an opcode/runtime-support guard.
+
+## Issue: G011 dynamic canonical analysis owner matcher expected the obsolete five-field receipt
+
+- **상태**: 해결(test/docs-only commit 준비 완료).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`; 시작 HEAD `ee73021e95b5f4e21007cf2b9524288fce51be95`; 사전 상태 ` M target` only. Scope limited to `CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest` source-contract matcher and this session document.
+- **재현 절차**:
+  - RED command: `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest#dynamicWriterBindsCanonicalProgramAnalysisExactlyOnce test`
+  - RED log: `/tmp/g005_g011_dynamic_matcher_fix_20260724/red_exact_method.log`, exit 1.
+- **관측 증상**:
+  - `dynamicWriterBindsCanonicalProgramAnalysisExactlyOnce` failed with assertion `G011_DP_DYNAMIC_CANONICAL_ANALYSIS_OWNER` at `CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest.java:66`.
+- **원인 분석**:
+  - Production already threads the canonical `PlacementAnalysis` through `rewriteFunctionDynamic`, the analysis-owned memo table, dynamic enumeration, normalized result, and placement emission receipt.
+  - The static/source matcher was stale: it required a five-field `new DpDynamicInvocationReceipt(analysis, memoTable, enumerationResult, fingerprintBefore, fingerprintAfter)` shape, but the production record now intentionally has seven fields: `PlacementAnalysis`, memo table, enumeration result, before/after fingerprints, `NormalizedPlannerResult`, and `PlacementEmissionReceipt`.
+  - Because the test matched the old constructor shape, it reported drift even though production ownership was already correct.
+- **의사결정 근거 / Decision boundary**: Test-contract matcher repair only. The change updates exact source-shape assertions to the current seven-field dynamic receipt and constructor identity checks; it does not alter production, privacy behavior, runtime fallback, planner legality, TR/TW consistency, or candidate space.
+- **해결 요약**:
+  - Updated `hasDynamicWriterCanonicalOwner(...)` to require exactly one analysis-owned memo-table construction, the current seven-argument `DpDynamicInvocationReceipt` return, and the seven-field record header.
+  - Added source-shape checks that the receipt constructor verifies `normalizedResult.analysis() == analysis`, emission hash consistency, memo/enumeration semantic ownership identity, and stable before/after analysis fingerprints.
+  - Preserved negative checks forbidding no-analysis memo construction and the old non-receipt dynamic enumerator path.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED baseline: `/tmp/g005_g011_dynamic_matcher_fix_20260724/red_exact_method.log` — exit 1, 1 test, 1 failure, 0 errors, 0 skipped, assertion `G011_DP_DYNAMIC_CANONICAL_ANALYSIS_OWNER`.
+  - Exact fixed method: `/tmp/g005_g011_dynamic_matcher_fix_20260724/exact_method_green.log` — exit 0.
+  - Full facade-removal source contract: `/tmp/g005_g011_dynamic_matcher_fix_20260724/full_oracle_facade_removal.log` — `CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest`, 4 tests, 0 failures, 0 errors, 0 skipped.
+  - Memo owner contract: `/tmp/g005_g011_dynamic_matcher_fix_20260724/memo_owner_contract.log` — `CampaignBDpMemoOwnerContractTest`, 5 tests, 0 failures, 0 errors, 0 skipped.
+  - Shared analysis owner contract: `/tmp/g005_g011_dynamic_matcher_fix_20260724/shared_analysis_owner_contract.log` — `CampaignBDpSharedAnalysisOwnerContractTest`, 10 tests, 0 failures, 0 errors, 0 skipped.
+  - ProgramDynamic regression: `/tmp/g005_g011_dynamic_matcher_fix_20260724/program_dynamic_full.log` — `CampaignBG014ProgramDynamicAuthorityParityRedTest`, 8 tests, 0 failures, 0 errors, 1 skipped (the exact PUBLIC dynamic formal-X subcase).
+  - Compile: `/tmp/g005_g011_dynamic_matcher_fix_20260724/test_compile.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005_g011_dynamic_matcher_fix_20260724/diff_check.log` — `git diff --check`, exit 0.
+  - Source diff proof: `/tmp/g005_g011_dynamic_matcher_fix_20260724/src_main_diff.log` — empty; zero `src/main` changes.
+- **잔여 이슈**:
+  - This repair does not address the remaining ranked DP broad clusters beyond the G011 dynamic source-contract drift.
+  - `target` remains intentionally dirty and must stay unstaged/uncommitted.
+- **잠재 회귀 위험**:
+  - Risk: future `DpDynamicInvocationReceipt` field changes could make the static matcher stale again. Detection: this source-contract test remains intentionally shape-specific and will fail on unreviewed receipt shape drift.
+  - Risk: a future refactor could create a no-analysis memo or alternative dynamic enumerator path while preserving broad substrings. Detection: the matcher still requires exact analysis arguments and forbids no-analysis memo construction plus obsolete `enumerateFunctionDynamic` usage.
+  - Risk: normalized result or emission receipt could stop proving the same canonical analysis. Detection: the matcher now checks constructor identity/hash validations for normalized result, memo table, rewire snapshot, semantic block context, and before/after fingerprints.
+- **적용 원칙/제약**:
+  - Runtime fallback 금지: 변경 없음.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 규칙: 변경 없음.
+  - Recompile `<CP,FOUT>` 금지: 변경 없음.
+  - Candidate-space/opcode guard 금지: 변경 없음.
+  - Privacy PUBLIC ignore directive: 적용 없음; privacy/test ignore behavior was not changed.

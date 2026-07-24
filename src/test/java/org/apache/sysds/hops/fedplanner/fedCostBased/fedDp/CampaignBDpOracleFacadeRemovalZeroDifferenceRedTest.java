@@ -292,7 +292,7 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 			&& sequence(owner, 0, "prog", ".", "requirePlacementAnalysisAuthority", "(", "analysis", ")") >= 0
 			&& sequence(owner, 0, "String", "fingerprintBefore", "=", "analysis", ".",
 				"analysisFingerprint", "(", ")") >= 0
-			&& sequence(owner, 0, "new", "FederatedPlannerDpMemoTable", "(", "analysis", ")") >= 0
+			&& countSequence(owner, "new", "FederatedPlannerDpMemoTable", "(", "analysis", ")") == 1
 			&& sequence(owner, 0, "DpEnumerationResult", "enumerationResult", "=",
 				"FederatedPlannerDpCostEnumerator", ".", "enumerateFunctionDynamicWithReceipts", "(",
 				"function", ",", "memoTable", ",",
@@ -301,8 +301,16 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 				"enumerationResult", ".", "optimalPlan", "(", ")") >= 0
 			&& sequence(owner, 0, "String", "fingerprintAfter", "=", "analysis", ".",
 				"analysisFingerprint", "(", ")") >= 0
+			&& sequence(owner, 0, "NormalizedPlannerResult", "normalized", "=", "normalizeDpSelection", "(",
+				"analysis", ",", "selectedStates", ",", "exactSelection", ",", "previous", ")") >= 0
+			&& sequence(owner, 0, "PlacementEmissionReceipt", "emission", "=",
+				"PlacementEmissionTransaction", ".", "replaceCompleteProgram", "(", "prog", ",",
+				"normalized", ",", "PlacementEmissionTransaction", ".", "FailureInjector", ".",
+				"none", "(", ")", ")") >= 0
+			&& countSequence(owner, "new", "DpDynamicInvocationReceipt", "(") == 1
 			&& sequence(owner, 0, "return", "new", "DpDynamicInvocationReceipt", "(", "analysis", ",",
-				"memoTable", ",", "enumerationResult", ",", "fingerprintBefore", ",", "fingerprintAfter", ")") >= 0
+				"memoTable", ",", "enumerationResult", ",", "fingerprintBefore", ",", "fingerprintAfter",
+				",", "normalized", ",", "emission", ")") >= 0
 			&& sequence(owner, 0, "new", "FederatedPlannerDpMemoTable", "(", ")") < 0
 			&& sequence(owner, 0, "enumerateFunctionDynamic", "(") < 0
 			&& sequence(receiptHeader, 0, "PlacementAnalysis", "analysis") >= 0
@@ -310,6 +318,18 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 			&& sequence(receiptHeader, 0, "DpEnumerationResult", "enumerationResult") >= 0
 			&& sequence(receiptHeader, 0, "String", "fingerprintBefore") >= 0
 			&& sequence(receiptHeader, 0, "String", "fingerprintAfter") >= 0
+			&& sequence(receiptHeader, 0, "NormalizedPlannerResult", "normalizedResult") >= 0
+			&& sequence(receiptHeader, 0, "PlacementEmissionReceipt", "emissionReceipt") >= 0
+			&& sequence(planner, Math.max(0, receipt), "normalizedResult", ".", "analysis", "(", ")",
+				"!", "=", "analysis") >= 0
+			&& sequence(planner, Math.max(0, receipt), "canonicalPlanHash", "(", "normalizedResult", ")",
+				".", "equals", "(", "emissionReceipt", ".", "planHash", "(", ")", ")") >= 0
+			&& sequence(planner, Math.max(0, receipt), "memoTable", ".", "analysis", "(", ")",
+				"!", "=", "analysis") >= 0
+			&& sequence(planner, Math.max(0, receipt), "enumerationResult", ".", "rewireSnapshot", "(", ")",
+				".", "analysis", "(", ")", "!", "=", "analysis") >= 0
+			&& sequence(planner, Math.max(0, receipt), "enumerationResult", ".", "semanticBlock", "(", ")",
+				".", "context", "(", ")", ".", "analysis", "(", ")", "!", "=", "analysis") >= 0
 			&& sequence(planner, Math.max(0, receipt), "fingerprintBefore", ".", "equals", "(",
 				"fingerprintAfter", ")") >= 0;
 	}
