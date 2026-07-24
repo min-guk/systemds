@@ -60,6 +60,37 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 		Assert.assertTrue("standalone runtime recompile must yield no semantic clone receipt",
 			invocation.semanticConsumption().rewireSnapshot().cloneReceipts().isEmpty());
 	}
+
+	@Test
+	public void ambiguousRuntimeRecompileOriginsRemainSemanticCloneAndFailClosed() {
+		DMLProgram program = ambiguousRuntimeRecompileProgram();
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		List<NeutralPlacementGraph.Node> recompileClones = analysis.graph().nodes().stream()
+			.filter(node -> "recompile".equals(node.key().recompileContext()))
+			.filter(node -> node.valueVersion().versionKind().name().equals("CLONE_RECOMPILE"))
+			.filter(node -> node.kind() == NeutralPlacementGraph.NodeKind.CLONE)
+			.toList();
+		Assert.assertEquals("ambiguous same-origin recompile must remain a semantic clone",
+			1, recompileClones.size());
+		NeutralPlacementGraph.Node clone = recompileClones.get(0);
+		Assert.assertTrue("ambiguous clone still carries recompile CP/FOUT exclusion",
+			clone.exclusions().stream().anyMatch(exclusion ->
+				exclusion.reasonCode() == NeutralPlacementGraph.ReasonCode.RECOMPILE_CP_FOUT));
+		Assert.assertTrue("ambiguous clone must not receive a fabricated same-origin constraint",
+			analysis.graph().constraints().stream().noneMatch(constraint ->
+				constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_ORIGIN
+					&& constraint.right().equals(clone.key())));
+
+		try {
+			invoke(program, "ambiguous-runtime-recompile");
+			Assert.fail("ambiguous runtime recompile clone must fail closed during exact clone receipt construction");
+		}
+		catch(AssertionError failure) {
+			Assert.assertTrue("ambiguous runtime recompile must expose clone multiplicity failure: " + failure,
+				failureContains(failure, "REWIRE_CLONE_SAME_ORIGIN_MULTIPLICITY_0")
+					|| failureContains(failure, "DpSemanticConstructionException"));
+		}
+	}
 	@Test
 	public void b09PublishesTheExactProductionRewireUniverse() {
 		DpInvocationReceipt invocation = invoke("B-09");
@@ -183,6 +214,40 @@ public class CampaignBG014RewireOccurrenceSnapshotRedTest {
 		DMLProgram program = new DMLProgram();
 		program.setStatementBlocks(new ArrayList<>(List.of(block)));
 		return program;
+	}
+
+	private static boolean failureContains(Throwable failure, String needle) {
+		for(Throwable cursor = failure; cursor != null; cursor = cursor.getCause())
+			if(String.valueOf(cursor).contains(needle) || String.valueOf(cursor.getMessage()).contains(needle))
+				return true;
+		return false;
+	}
+
+	private static DMLProgram ambiguousRuntimeRecompileProgram() {
+		DataOp firstOrigin = write("G014_AMBIG_X", "G014_AMBIG_IN1", false);
+		DataOp secondOrigin = write("G014_AMBIG_X", "G014_AMBIG_IN2", false);
+		DataOp recompiled = write("G014_AMBIG_X", "G014_AMBIG_IN3", true);
+		DMLProgram program = new DMLProgram();
+		program.setStatementBlocks(new ArrayList<>(List.of(block(firstOrigin), block(secondOrigin), block(recompiled))));
+		return program;
+	}
+
+	private static StatementBlock block(Hop root) {
+		StatementBlock block = new StatementBlock();
+		block.setHops(new ArrayList<>(List.of(root)));
+		return block;
+	}
+
+	private static DataOp write(String outputName, String inputName, boolean recompile) {
+		DataOp input = new DataOp(inputName, DataType.MATRIX, ValueType.FP64,
+			OpOpData.TRANSIENTREAD, inputName, 2, 2, 4, 1000);
+		DataOp output = new DataOp(outputName, DataType.MATRIX, ValueType.FP64, input,
+			OpOpData.TRANSIENTWRITE, outputName);
+		output.setDim1(2);
+		output.setDim2(2);
+		if(recompile)
+			output.setRequiresRecompile();
+		return output;
 	}
 
 	private static void assertIdentityList(List<?> expected, List<?> actual, String label) {

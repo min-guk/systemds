@@ -1322,9 +1322,9 @@
     2. standalone runtime-recompile occurrences such as PCA's `ctable` producer, where the physical compiled node itself requires recompile and has no separate same-origin producer.
   - DP `exactCloneReceipts` correctly fails closed for `NodeKind.CLONE` without one `SAME_ORIGIN` constraint; the bug was the builder's structural classification, not DP receipt validation.
 - **해결 요약**:
-  - Added a post-CFG builder classification pass that only keeps `NodeKind.CLONE` for `CLONE_RECOMPILE` nodes with exactly one non-`CLONE_RECOMPILE` same canonical source origin.
-  - Standalone runtime-recompile occurrences retain `recompile` context and `VersionKind.CLONE_RECOMPILE`, retain `RECOMPILE_CP_FOUT` exclusion, but are reclassified to their physical node kind (`TRANSIENT_WRITE`, `TRANSIENT_READ`, `FUNCTION_CALL`, or `OPERATION`).
-  - Preserved existing B-09 paired-clone behavior: it still has one `NodeKind.CLONE`, one `SAME_ORIGIN` constraint, and one semantic clone receipt.
+  - Added a post-CFG builder classification pass with exact cardinality semantics: zero non-recompile same-origin producers means a standalone runtime-recompile occurrence is reclassified to its physical node kind; one producer remains a paired semantic clone; more than one producer remains `NodeKind.CLONE` so DP `exactCloneReceipts` fails closed instead of silently treating ambiguity as physical.
+  - Standalone runtime-recompile occurrences retain `recompile` context and `VersionKind.CLONE_RECOMPILE`, retain `RECOMPILE_CP_FOUT` exclusion, but are reclassified to their physical node kind (`TRANSIENT_WRITE`, `TRANSIENT_READ`, `FUNCTION_CALL`, or `OPERATION`) only when same-origin producer count is zero.
+  - Preserved existing B-09 paired-clone behavior: it still has one `NodeKind.CLONE`, one `SAME_ORIGIN` constraint, and one semantic clone receipt; ambiguous multi-origin clone families remain fail-closed.
   - No DP fallback/repair, candidate closure, Runtime change, privacy relaxation, TRead/TWrite relaxation, or recompile `<CP,FOUT>` allowance was added.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
@@ -1332,17 +1332,17 @@
   - `docs/SESSION_ISSUES_2026-07-24.md`
 - **검증**:
   - RED (disposable clone `/run/user/10041/g006-dp-recompile-redgreen-20260724-3350953`): focused standalone test failed before the source fix with `expected:<TRANSIENT_WRITE> but was:<CLONE>`.
-  - GREEN: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest#standaloneRuntimeRecompileOccurrenceIsPhysicalProducerNotSemanticClone test` passed.
-  - GREEN gate: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest test` passed, proving B-09 still publishes one clone receipt and B-05 publishes none.
+  - GREEN: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest#standaloneRuntimeRecompileOccurrenceIsPhysicalProducerNotSemanticClone,org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest#ambiguousRuntimeRecompileOriginsRemainSemanticCloneAndFailClosed test` passed, proving zero-origin standalone becomes physical and multi-origin ambiguous remains fail-closed.
+  - GREEN gate: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest test` passed, proving B-09 still publishes one clone receipt, B-05 publishes none, standalone zero-origin publishes no clone receipt, and ambiguous multi-origin does not silently become physical.
   - GREEN gate: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.shadow.CampaignBB09ExplicitRecompileFixtureContractTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest test` passed, preserving B-09 paired clone/exclusion and semantic DP closure behavior.
 - **잔여 이슈**:
   - The full G006 Docker paired all-four subset must be rerun from scratch with a freshly rebuilt exact runtime before the G006 goal can be accepted.
   - This issue does not by itself prove all 16 G006 cells; it removes the first-cell structural blocker.
 - **잠재 회귀 위험**:
-  - Risk: a future legitimate clone family with multiple possible non-recompile origins could be reclassified as a physical node instead of failing earlier. Detection: B-09 paired-clone receipt tests plus any future multi-origin fixture should assert its intended structural cardinality explicitly.
   - Risk: downstream adapters might assume `VersionKind.CLONE_RECOMPILE` always implies `NodeKind.CLONE`. Detection: focused placement/DP gates and trace scans for recompile nodes with `RECOMPILE_CP_FOUT` exclusion but no clone receipt.
+  - Risk: future multi-origin paired-clone fixtures may need a richer origin-disambiguation model. Detection: the added ambiguous multi-origin regression requires fail-closed behavior rather than silent physical reclassification.
 - **의사결정 근거**:
-  - Planner/builder structural model was corrected: semantic clone receipts are reserved for actual paired clone families; standalone runtime-recompile producer occurrences keep recompile legality metadata without becoming DP semantic clones.
+  - Planner/builder structural model was corrected: semantic clone receipts are reserved for actual paired clone families; standalone zero-origin runtime-recompile producer occurrences keep recompile legality metadata without becoming DP semantic clones, while ambiguous multi-origin clone families remain fail-closed.
 - **적용 원칙/제약**:
   - Runtime fallback remains forbidden.
   - DP fail-closed `exactCloneReceipts` was not weakened.

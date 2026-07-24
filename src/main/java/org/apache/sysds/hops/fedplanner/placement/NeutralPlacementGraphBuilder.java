@@ -1330,7 +1330,7 @@ public final class NeutralPlacementGraphBuilder {
 				.filter(candidate -> candidate.key().canonicalSourceOrigin()
 					.equals(node.key().canonicalSourceOrigin()))
 				.count();
-			if(originCount == 1) {
+			if(originCount > 0) {
 				result.add(node);
 				continue;
 			}
