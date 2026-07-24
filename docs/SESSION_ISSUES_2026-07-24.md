@@ -823,3 +823,44 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space/opcode guard prohibition: unchanged.
+
+## Issue: FedAll upload relocation RED still expected derived consumers to own a durable anchor
+
+- **상태**: 해결 (test-only contract repair).
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, 시작 HEAD `6a487d76055a83f4506377ffd3d1f5d267f70f47`, 사전 상태 ` M target` only. FedAll successor gate evidence base `/run/user/10041/g005-fedall-only-successor-6a487d-verify-20260724T142743Z`; no `src/main` changes, no Ignore/Assume, no fixture alteration, no selector exclusion.
+- **재현 절차**:
+  - Fresh successor gate command from evidence: `mvn -q -Dmaven.repo.local=/run/user/10041/g005-g014-closure-harness-20260724-r2/m2 -Dtest=org.apache.sysds.test.component.federated.placement.guard.CampaignBFedAllInvocationReceiptContractTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBFedAllExactAdapterContractTest,org.apache.sysds.test.component.federated.placement.guard.R4SharedFedAllSemanticValidatorTest,org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest,org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphUploadRelocationRedTest test`.
+  - Failure XML: `/run/user/10041/g005-fedall-only-successor-6a487d-verify-20260724T142743Z/xml/TEST-org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphUploadRelocationRedTest.xml`.
+  - Read-only diagnosis artifact: `/run/user/10041/g005-fedall-upload-relocation-diagnosis-20260724/G005_FEDALL_UPLOAD_RELOCATION_DIAGNOSIS_20260724.md` (SHA `81b8f7708bd472aa840e0402a4e842eda1e0a2583f50b1e7ff57fa5dfeeb0ade`). Independent review SHA: `1775d21`.
+- **관측 증상**:
+  - Gate result: `Tests run: 17, Failures: 1, Errors: 0, Skipped: 0`.
+  - The sole failure was `NeutralPlacementGraphUploadRelocationRedTest.localMatrixSharedByFederatedConsumersRequiresOneCanonicalUploadAction` at line 47: `P4_FED_CONSUMERS_SHARE_ONE_DURABLE_ANCHOR expected:<1> but was:<0>`.
+  - Diagnosis probe at exact HEAD showed local `S` selected `CP/LOUT` with no anchor; source `X` selected `FED/FOUT/ROW` with one real `fed-init:X` durable anchor; derived consumers `Y1/Y2` selected legal `FED/FOUT/ROW/SHAPE_DEPENDENT` and had empty `Node.anchors()`; graph contained exactly one local upload relocation with two active obligations; FedAll selected the relocation and it used the real `X` anchor.
+- **원인 분석**:
+  - The test was introduced as a RED before the builder repair and retained one obsolete assertion that relocation-compatible derived consumers should share/own one durable anchor through `consumer.anchors()`.
+  - Accepted builder semantics now separate output anchor ownership from relocation feasibility: durable anchors identify existing real FederationMap placement authority, while CP-to-FOUT upload feasibility is represented by exact `RelocationAction`/`ObligationKey` evidence derived from `AVAILABLE` candidate-rule facts.
+  - Reintroducing consumer anchor inheritance would re-conflate derived FOUT-capable outputs with real durable FederationMap anchors and could weaken the CP→FOUT-only-from-existing-anchor rule.
+- **의사결정 근거 / Decision boundary**: Test contract only. The repair asserts that derived consumers remain anchorless and preserves the existing assertions for real `X` anchor ownership, one canonical upload action, exact compatible consumers/obligations, legal `FED/FOUT` target, shape dependence, active selected obligations, and FedAll-selected relocation. No production planner/oracle/runtime logic was changed.
+- **해결 요약**:
+  - Replaced `P4_FED_CONSUMERS_SHARE_ONE_DURABLE_ANCHOR` with `P4_FED_CONSUMERS_DO_NOT_DUPLICATE_DURABLE_ANCHOR`.
+  - The new assertion requires all derived consumers in the upload fixture to have empty `anchors()`, making the no-output-anchor rule explicit.
+  - Left all relocation-action assertions intact so the test still fails if the graph loses the one shared CP-to-FOUT upload action or if FedAll does not select it.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphUploadRelocationRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Focused full `NeutralPlacementGraphUploadRelocationRedTest`: `mvn -q -Dmaven.repo.local=/run/user/10041/g005-g014-closure-harness-20260724-r2/m2 -Dtest=org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphUploadRelocationRedTest test` -> `tests=2`, `failures=0`, `errors=0`, `skipped=0`.
+  - `mvn -q -Dmaven.repo.local=/run/user/10041/g005-g014-closure-harness-20260724-r2/m2 -DskipTests test-compile` -> exit 0.
+  - `git diff --check` -> exit 0.
+  - `target` remained unstaged/pre-existing dirty state and was intentionally excluded from the commit.
+- **잔여 이슈**:
+  - None for this FedAll upload-relocation assertion. Broader FedAll successor gate and later planner/LAN/Docker stages are outside this narrowly approved repair unless separately requested.
+- **잠재 회귀 위험**:
+  - Risk: future edits might again encode relocation authority as consumer output anchor inheritance. Detection: this test now explicitly requires derived consumers to remain anchorless while verifying the selected upload relocation.
+  - Risk: relocation action construction could regress while the anchorless assertion still passes. Detection: preserved assertions require exactly one shared upload, two exact obligations, legal selected targets, active obligations, and FedAll selection.
+- **적용 원칙/제약**:
+  - CP→FOUT only from a real existing federated anchor/FederationMap: preserved through `upload.key().durableAnchor() == X`'s `fed-init` anchor.
+  - PART/OTHER durable anchors remain forbidden: unchanged.
+  - Runtime fallback prohibited: unchanged; no runtime behavior modified.
+  - Arbitrary candidate closure prohibited: unchanged; no candidate guard or selector exclusion added.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile `<CP,FOUT>` constraints: unchanged and not implicated.

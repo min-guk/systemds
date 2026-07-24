@@ -44,8 +44,8 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 		Assert.assertTrue("P4_UPLOAD_SOURCE_IS_GENUINELY_LOCAL",
 			selected(plan, local, ExecType.CP, FederatedOutput.LOUT));
 		Assert.assertTrue("P4_UPLOAD_SOURCE_HAS_NO_DURABLE_ANCHOR", local.anchors().isEmpty());
-		Assert.assertEquals("P4_FED_CONSUMERS_SHARE_ONE_DURABLE_ANCHOR", 1,
-			consumers.stream().flatMap(node -> node.anchors().stream()).distinct().count());
+		Assert.assertTrue("P4_FED_CONSUMERS_DO_NOT_DUPLICATE_DURABLE_ANCHOR",
+			consumers.stream().allMatch(node -> node.anchors().isEmpty()));
 		Assert.assertEquals("P4_FED_CONSUMER_COUNT", 2, consumers.size());
 		Assert.assertTrue("P4_FED_CONSUMERS_HAVE_LEGAL_SELECTED_FOUT",
 			consumers.stream().allMatch(node -> node.legalAlternatives().contains(plan.selectedStates().get(node.key()))
