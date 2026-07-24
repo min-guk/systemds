@@ -1399,3 +1399,42 @@
   - DP remains fail-closed for arbitrary/unowned auxiliary carriers.
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` and recompile no-`<CP,FOUT>` constraints remain unchanged.
   - Privacy/public masking was not changed.
+
+### Follow-up: Unforgeable FunctionOp output receipt capability
+
+- **상태**: 해결
+- **환경/조건**:
+  - Follow-up to commit `1c47b0624c76fd8ea1923fca76226db6cecf93f7` after independent review.
+  - Same authoritative repo and DP FunctionOp output repair scope.
+- **재현 절차**:
+  - Hostile review case: public `RewireFunctionOutputEdge` constructor let tests or future callers mint an arbitrary function-output edge and pass it into `RewireOccurrenceSnapshot`, allowing a candidate child to be treated as a function-output dependency and excluded from parent oracle inputs.
+- **관측 증상**:
+  - Receipt endpoints/order were checked, but the receipt type itself was publicly constructible.
+  - A forged edge could claim any candidate child as a function-output dependency if it satisfied endpoint/order checks in a custom snapshot.
+- **원인 분석**:
+  - `RewireFunctionOutputEdge` was implemented as a public record. Records expose a public canonical constructor by default, which made the receipt a data tuple instead of a capability minted only by production rewire analysis.
+- **해결 요약**:
+  - Replaced the public record with a `public static final` nested class with a private constructor and public read-only accessors.
+  - Only `FederatedPlannerDpRewireTransTable.exactCandidateFunctionOutputEdges(...)` can mint the receipt capability from production `rewireTable.get(functionCallHopId)` output carriers.
+  - Kept existing snapshot endpoint/order/uniqueness/FunctionOp-parent validation.
+  - Updated hostile tests to prove no public constructors exist, all declared constructors are private, duplicate real receipts fail closed, and unreceipted collected dependencies still fail closed.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpRewireTransTable.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014CandidateOccurrenceSnapshotRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - Fresh clone `/run/user/10041/g006-function-output-capability-20260724-3478869`: `git diff --check -- . ':!target'` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014CandidateOccurrenceSnapshotRedTest test` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.placement.PlacementAnalysisOriginProjectionTest,org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014RewireOccurrenceSnapshotRedTest test` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.shadow.CampaignBB09ExplicitRecompileFixtureContractTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBG014DpSemanticCampaignBClosureRedTest test` passed.
+  - Fresh clone: `MAVEN_OPTS='-Xmx3g' mvn -q -DskipRat -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedPCAPlanningTest#runPCAPlannerDPPrivacyPrivateAggregate test` passed.
+- **잔여 이슈**:
+  - Full G006 paired Docker 16-cell validation remains not run in this follow-up.
+- **잠재 회귀 위험**:
+  - Risk: future code reintroduces public receipt construction or tuple-like equality. Detection: hostile test checks constructor visibility and duplicate identity receipt rejection.
+- **의사결정 근거**:
+  - Receipt domain was corrected as an unforgeable planner capability. This preserves domain separation between production rewire-table output carriers and structural `FunctionOp.getOutputs()` auxiliary carriers.
+- **적용 원칙/제약**:
+  - Runtime fallback remains forbidden.
+  - DP remains fail-closed for arbitrary/unowned auxiliary carriers.
+  - TRead/TWrite and recompile `<CP,FOUT>` constraints remain unchanged.

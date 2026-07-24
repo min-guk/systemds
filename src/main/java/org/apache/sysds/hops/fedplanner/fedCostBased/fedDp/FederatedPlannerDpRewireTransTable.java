@@ -136,14 +136,23 @@ public class FederatedPlannerDpRewireTransTable {
 		}
 	}
 
-	public record RewireFunctionOutputEdge(CompiledHopKey functionOccurrence,
-		CompiledHopKey outputOccurrence, int outputPosition) {
-		public RewireFunctionOutputEdge {
-			Objects.requireNonNull(functionOccurrence, "functionOccurrence");
-			Objects.requireNonNull(outputOccurrence, "outputOccurrence");
+	public static final class RewireFunctionOutputEdge {
+		private final CompiledHopKey functionOccurrence;
+		private final CompiledHopKey outputOccurrence;
+		private final int outputPosition;
+
+		private RewireFunctionOutputEdge(CompiledHopKey functionOccurrence,
+			CompiledHopKey outputOccurrence, int outputPosition) {
+			this.functionOccurrence = Objects.requireNonNull(functionOccurrence, "functionOccurrence");
+			this.outputOccurrence = Objects.requireNonNull(outputOccurrence, "outputOccurrence");
 			if(outputPosition < 0)
 				throw new IllegalArgumentException("Function-output position must be non-negative");
+			this.outputPosition = outputPosition;
 		}
+
+		public CompiledHopKey functionOccurrence() { return functionOccurrence; }
+		public CompiledHopKey outputOccurrence() { return outputOccurrence; }
+		public int outputPosition() { return outputPosition; }
 	}
 
 	public record RewireOccurrenceSnapshot(PlacementAnalysis analysis, DMLProgram program,

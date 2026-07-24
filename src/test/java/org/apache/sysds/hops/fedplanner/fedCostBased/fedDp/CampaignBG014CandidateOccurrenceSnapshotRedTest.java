@@ -1,6 +1,7 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -270,16 +271,13 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 			snapshot.promotedEntries(), snapshot.logicalEntries(), snapshot.transientForwardDependencies(),
 			List.of(dependency, dependency), snapshot.orderedOracleInputs(),
 			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
-		RewireFunctionOutputEdge stale = new RewireFunctionOutputEdge(fixture.edge().functionOccurrence(),
-			fixture.edge().outputOccurrence(), fixture.edge().outputPosition());
-		assertIllegal(() -> new CandidateOccurrenceSnapshot(context, snapshot.parentOccurrence(), snapshot.rawEntries(),
-			snapshot.promotedEntries(), snapshot.logicalEntries(), snapshot.transientForwardDependencies(),
-			List.of(new FunctionOutputDependencyEntry(stale, fixture.output().key(), dependency.collectedPosition(),
-				dependency.selectedOutputState())), snapshot.orderedOracleInputs(),
-			ConstructionDisposition.AVAILABLE, "AVAILABLE"));
+		Assert.assertEquals("Function-output receipts must not be publicly forgeable", 0,
+			Arrays.stream(RewireFunctionOutputEdge.class.getConstructors())
+				.filter(constructor -> Modifier.isPublic(constructor.getModifiers())).count());
+		Assert.assertTrue("Function-output receipt minting must stay private to the rewire table",
+			Arrays.stream(RewireFunctionOutputEdge.class.getDeclaredConstructors())
+				.allMatch(constructor -> Modifier.isPrivate(constructor.getModifiers())));
 		assertIllegal(() -> withFunctionOutputs(base, List.of(fixture.edge(), fixture.edge())));
-		assertIllegal(() -> withFunctionOutputs(base, List.of(new RewireFunctionOutputEdge(
-			fixture.edge().functionOccurrence(), fixture.edge().outputOccurrence(), fixture.edge().outputPosition() + 2))));
 		NeutralEnumerationContext withoutFunctionOutputEdges = withFunctionOutputs(base, List.of());
 		assertIllegal(() -> org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter
 			.normalizeCandidateInputs(withoutFunctionOutputEdges, fixture.parent(), selection.edges(), selection.hops(),
