@@ -1768,12 +1768,14 @@ public class FederatedPlannerDpCostEnumerator {
 	// Creates a dummy root node (fedplan) and selects the FedPlan with the minimum
 	// cost to return.
 	// The dummy root node does not have LOUT or FOUT.
+	private record RootChoice(Hop rootHop, FederatedPlannerDpMemoTable.FedPlan selectedPlan,
+		FederatedOutput selectedOutput, String occurrenceSignature, long selectedCostBits) { }
+
 	private static FederatedPlannerDpMemoTable.FedPlan getMinCostRootFedPlan(Set<Hop> progRootHopSet,
 			FederatedPlannerDpMemoTable memoTable) {
-		double cumulativeCost = 0;
-		List<Pair<Long, FederatedOutput>> rootFedPlanChilds = new ArrayList<>();
+		List<RootChoice> rootChoices = new ArrayList<>();
 
-		// Iterate over each Hop in the progRootHopSet
+		// Iterate over each Hop in the progRootHopSet and preserve the existing independent LOUT/FOUT rule.
 		for (Hop endHop : progRootHopSet) {
 			// Retrieve the pruned FedPlan for LOUT and FOUT from the memo table
 			FederatedPlannerDpMemoTable.FedPlan lOutFedPlan = memoTable.getFedPlanAfterPrune(endHop.getHopID(),
@@ -1788,25 +1790,50 @@ public class FederatedPlannerDpCostEnumerator {
 				continue;
 			}
 
+			FederatedPlannerDpMemoTable.FedPlan selectedPlan;
+			FederatedOutput selectedOutput;
 			if (fOutFedPlan == null) {
-				cumulativeCost += lOutFedPlan.getCumulativeCost();
-				rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.LOUT));
+				selectedPlan = lOutFedPlan;
+				selectedOutput = FederatedOutput.LOUT;
 			} else if (lOutFedPlan == null) {
-				cumulativeCost += fOutFedPlan.getCumulativeCost();
-				rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.FOUT));
+				selectedPlan = fOutFedPlan;
+				selectedOutput = FederatedOutput.FOUT;
 			} else {
 				// Compare the cumulative costs of LOUT and FOUT FedPlans
 				if (lOutFedPlan.getCumulativeCost() <= fOutFedPlan.getCumulativeCost()) {
-					cumulativeCost += lOutFedPlan.getCumulativeCost();
-					rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.LOUT));
+					selectedPlan = lOutFedPlan;
+					selectedOutput = FederatedOutput.LOUT;
 				} else {
-					cumulativeCost += fOutFedPlan.getCumulativeCost();
-					rootFedPlanChilds.add(Pair.of(endHop.getHopID(), FederatedOutput.FOUT));
+					selectedPlan = fOutFedPlan;
+					selectedOutput = FederatedOutput.FOUT;
 				}
 			}
+			String occurrenceSignature = rootOccurrenceSignature(memoTable, selectedPlan.getHopRef());
+			rootChoices.add(new RootChoice(endHop, selectedPlan, selectedOutput, occurrenceSignature,
+				Double.doubleToRawLongBits(selectedPlan.getCumulativeCost())));
+		}
+
+		// HashSet root traversal can permute identical semantic roots and shift the IEEE-754 root objective by 1 ULP.
+		// Key-only ordering is insufficient because B-05 has duplicate full CompiledHopKey + output roots with
+		// different selected costs.  Cost bits order already-selected root terms only; they do not alter candidate
+		// legality or the per-root LOUT/FOUT selection rule above.  Raw Hop ids/identity hashes remain excluded.
+		rootChoices.sort(Comparator.comparing(RootChoice::occurrenceSignature)
+			.thenComparing(RootChoice::selectedOutput)
+			.thenComparingLong(RootChoice::selectedCostBits));
+
+		double cumulativeCost = 0;
+		List<Pair<Long, FederatedOutput>> rootFedPlanChilds = new ArrayList<>();
+		for (RootChoice choice : rootChoices) {
+			cumulativeCost += choice.selectedPlan().getCumulativeCost();
+			rootFedPlanChilds.add(Pair.of(choice.rootHop().getHopID(), choice.selectedOutput()));
 		}
 
 		return new FederatedPlannerDpMemoTable.FedPlan(cumulativeCost, null, rootFedPlanChilds);
+	}
+
+	private static String rootOccurrenceSignature(FederatedPlannerDpMemoTable memoTable, Hop root) {
+		return memoTable.analysis() == null ? ""
+			: memoTable.requirePlanCarrierOccurrence(root).key().normalizedSignature();
 	}
 
 	private static void addUnreferencedTWriteRoots(Set<Hop> progRootHopSet, Set<Long> unRefTwriteSet,

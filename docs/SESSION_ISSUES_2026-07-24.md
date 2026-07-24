@@ -285,3 +285,58 @@
   - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
   - Candidate-space/opcode guards: unchanged.
   - Immutable `PlacementAnalysis` guard remains fail-closed; the test-only bridge now restores legacy replay mutation instead of weakening the guard.
+
+## Issue: B05 DP root objective certificate was nondeterministic under root-set permutation
+
+- **상태**: 해결.
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, starting HEAD `c8c5912e88f43b13b76762da22b3c913a074087d`; DP planner B05 final-boundary/direct replay path; exact review artifacts `/tmp/G005_DP_REPLAY_HASH_DIFF_DIAGNOSIS_20260724.md` (SHA-256 `f2e791c57d67e6b37f9157dcc0fdcf1d05fcacdedb8850c7656f28c5ae1b5a60`), `/tmp/G005_B05_STABLE_ROOT_ORDER_ARCH_REVIEW_20260724.md` (SHA-256 `fb3d8a8a7dedd14ce3d42464fca3b924f5b17469825c6712d2704b2edd8fa067`), and `/tmp/G005_B05_STABLE_ROOT_ORDER_CRITIC_20260724.md` (SHA-256 `369c81cdd4e1f8b7f4b7ad533c782396280b95c32e804929bdb3880c5a25ac8a`).
+- **재현 절차**:
+  - RED regression added before production edit: `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBDpSharedAnalysisOwnerContractTest#b05RootObjectiveFoldIsPermutationDeterministicAndKeepsSelectedRootOrder test`.
+  - RED log: `/tmp/g005-b05-root-objective-fix-20260724/01_red_b05_root_permutation.log`.
+- **관측 증상**:
+  - Broad successor exposed `CampaignBDpRewireOwnerContractTest#b05HasNoCloneClaimsAndPreservesTheRealDpReceipt` as `PlacementEmissionException: A different placement plan was already emitted`.
+  - Hash-diff diagnosis proved selected state, emission state, relocations, and local materialization were identical; only `objectiveCertificate` differed by 1 ULP: `objectiveBits=4545046570301023847` (`7.342956960201264E-5`) vs `objectiveBits=4545046570301023846` (`7.342956960201263E-5`).
+  - The new RED permutation test exercised B05's exact three selected root carriers through `getMinCostRootFedPlan(...)` using all six `LinkedHashSet` insertion-order permutations and failed with both objective raw bits: `[4545046570301023846, 4545046570301023847, 4545046570301023846, 4545046570301023847, 4545046570301023847, 4545046570301023847]`.
+  - The regression also asserts the critical fixture shape: two B05 selected roots share the same full `CompiledHopKey.normalizedSignature()` and selected output but have different selected cumulative-cost raw bits, so key-only sorting cannot satisfy the contract.
+- **원인 분석**:
+  - `FederatedPlannerDpCostEnumerator.getMinCostRootFedPlan(Set<Hop>, FederatedPlannerDpMemoTable)` iterated a `HashSet<Hop>` directly and left-folded selected root costs into a `double` objective.
+  - B05 has three independent selected root costs; different root traversal orders produce the two observed raw objective certificates under IEEE-754 non-associative addition.
+  - Resetting `PlacementEmissionTransaction`, adding `@NotThreadSafe`, excluding or rounding objective bits, or closing candidate combinations would hide the fail-closed transaction signal instead of making planner evidence deterministic.
+- **의사결정 근거**: Planner canonicalization repair. The fix orders already-selected DP root terms before folding the dummy aggregate objective. It does not change runtime behavior, candidate legality, per-root LOUT/FOUT choice, objective hash authority, transaction semantics, TRead/TWrite legality, or recompile rules.
+- **해결 요약**:
+  - Added immutable `RootChoice` records after the existing independent per-root LOUT/FOUT retrieval and selection logic.
+  - Sorted root choices by analysis-owned occurrence signature (`CompiledHopKey.normalizedSignature()` via `memoTable.requirePlanCarrierOccurrence(...)` when the memo has an analysis), selected `FederatedOutput`, then exact selected cumulative-cost raw bits.
+  - Left the existing LOUT-on-equal rule intact (`lOutFedPlan.getCumulativeCost() <= fOutFedPlan.getCumulativeCost()`). The existing `CampaignBDpAggregateProducerContractTest#equalCostProducerReceiptRetainsLoutIdentityAndRawBits` tie contract remained green.
+  - Kept legacy synthetic memo tests without `PlacementAnalysis` from dereferencing null analysis; those tests have a single root or already-selected equal terms and are not the analysis-owned B05 canonicalization surface.
+  - Folded `cumulativeCost` and constructed aggregate child edges only after deterministic sorting. Raw Hop IDs and identity hashes are not comparator keys.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBDpSharedAnalysisOwnerContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - RED before production: `/tmp/g005-b05-root-objective-fix-20260724/01_red_b05_root_permutation.log` — exit 1 with intended `B05_ROOT_OBJECTIVE_BITS_PERMUTATION_STABLE` 1-ULP failure across six permutations.
+  - GREEN permutation regression: `/tmp/g005-b05-root-objective-fix-20260724/19_green_b05_root_permutation_exact6.log` — exact B05 six-permutation root fold, duplicate key/output/different-cost assertion, objective raw bits stable, aggregate child-edge order stable, exit 0.
+  - Shared full: `/tmp/g005-b05-root-objective-fix-20260724/06_shared_full.log` — `CampaignBDpSharedAnalysisOwnerContractTest`, exit 0; now 10/10 after adding the regression.
+  - Rewire full: `/tmp/g005-b05-root-objective-fix-20260724/07_rewire_full.log` — `CampaignBDpRewireOwnerContractTest`, exit 0; 6/6.
+  - B05 method alone: `/tmp/g005-b05-root-objective-fix-20260724/08_b05_method.log` — `CampaignBDpRewireOwnerContractTest#b05HasNoCloneClaimsAndPreservesTheRealDpReceipt`, exit 0.
+  - Four-class DP prefix: `/tmp/g005-b05-root-objective-fix-20260724/09_four_class_prefix.log` — `CampaignBDpAggregateProducerContractTest,CampaignBDpMemoOwnerContractTest,CampaignBDpRewireOwnerContractTest,CampaignBDpSharedAnalysisOwnerContractTest`, exit 0; 32/32 after adding the new Shared test (11 Aggregate + 5 Memo + 6 Rewire + 10 Shared).
+  - Existing tie/LOUT-equal contract: `/tmp/g005-b05-root-objective-fix-20260724/15_aggregate_after_legacy_null_analysis.log` — `CampaignBDpAggregateProducerContractTest`, exit 0; includes `equalCostProducerReceiptRetainsLoutIdentityAndRawBits`.
+  - Exact accepted Task46 gate: `/tmp/g005-b05-root-objective-fix-20260724/18_task46_exact_prior_23_gate.log` and counts `/tmp/g005-b05-root-objective-fix-20260724/18_task46_exact_prior_23_counts.txt` — `CampaignBAllPlannerAnalysisContractTest,CampaignBFedAllExactAdapterContractTest,CampaignBHeuristicProvenanceContractTest,CampaignBHeuristicRealVectorPolicyRedTest,PlacementEmissionTransactionRedTest`, exit 0; 23 tests, 0 failures, 0 errors, 0 skipped.
+  - Compile: `/tmp/g005-b05-root-objective-fix-20260724/12_final_test_compile.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005-b05-root-objective-fix-20260724/13_git_diff_check.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - The intentionally over-broad local discovery selector `/tmp/g005-b05-root-objective-fix-20260724/10_dp_objective_tie_estimator.log` includes unrelated estimator-owner/NaNFallback/upload tests and fails on pre-existing fixture-carrier/FOUT assumptions; this repair does not modify estimator fixtures or production for those unrelated failures.
+  - A mistaken five-class selector including `CampaignBDpEstimatorOwnerContractTest` also fails for the same unrelated reason; the accepted Task46 gate is the 23-test selector above and is green.
+  - LAN and Docker were not run because this pass is still inside focused DP unit gates and the broad 27-class successor remains blocked until remaining clusters are repaired.
+  - Pre-existing tracked `target` symlink remains dirty/unstaged and intentionally excluded.
+- **잠재 회귀 위험**:
+  - Risk: future root aggregation could reintroduce unordered floating-point summation. Detection: the six-permutation B05 regression asserts identical objective raw bits and aggregate edge order.
+  - Risk: a future comparator could regress to key-only ordering and leave duplicate semantic roots unstable. Detection: the regression asserts duplicate full key/output roots with different cost bits.
+  - Risk: sorting could accidentally affect per-root selection semantics. Detection: the regression independently recomputes the existing LOUT/FOUT choice for every aggregate edge, and the AggregateProducer LOUT-equal tie contract remains green.
+  - Risk: legacy synthetic memo tests without `PlacementAnalysis` could be pulled into the analysis-owned comparator path. Detection: AggregateProducer full class remains green while analysis-owned B05 uses the exact occurrence signature bridge.
+- **적용 원칙/제약**:
+  - Runtime fallback prohibited: unchanged.
+  - TRead/TWrite `<CP,LOUT>` or `<FED,FOUT>` rule: unchanged.
+  - Recompile `<CP,FOUT>` prohibition: unchanged.
+  - Candidate-space/opcode guard prohibition: respected; no opcode-specific skip/continue guard was added.
+  - Objective hash authority remains exact; no rounding or hash-field exclusion was introduced.

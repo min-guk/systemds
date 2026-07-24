@@ -9,15 +9,20 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.Hop;
@@ -158,6 +163,69 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		assertImmutable(receipt.exactSelection().selectedRootHops(), "selected root hops");
 	}
 
+	private static void assertDuplicateKeyOutputWithDifferentCostBits(DpInvocationReceipt receipt) {
+		Map<String, LinkedHashSet<Long>> costsByKeyAndOutput = new LinkedHashMap<>();
+		for(FedPlan selected : receipt.exactSelection().selectedRootPlans()) {
+			String key = receipt.memo().requirePlanCarrierOccurrence(selected.getHopRef()).key().normalizedSignature()
+				+ "|" + selected.getFedOutType();
+			costsByKeyAndOutput.computeIfAbsent(key, ignored -> new LinkedHashSet<>())
+				.add(Double.doubleToRawLongBits(selected.getCumulativeCost()));
+		}
+		boolean duplicateKeyOutputDifferentCost = costsByKeyAndOutput.values().stream()
+			.anyMatch(costs -> costs.size() > 1);
+		Assert.assertTrue("B05_ROOT_FIXTURE_MUST_CONTAIN_DUPLICATE_FULL_KEY_AND_OUTPUT_WITH_DIFFERENT_COST_BITS|"
+			+ costsByKeyAndOutput, duplicateKeyOutputDifferentCost);
+	}
+
+	private static void assertRootSelectionPreserved(List<Hop> roots, FedPlan aggregate,
+		FederatedPlannerDpMemoTable memo) {
+		Assert.assertEquals("B05_ROOT_SELECTION_EDGE_COUNT", roots.size(), aggregate.getChildFedPlans().size());
+		for(Pair<Long, FederatedOutput> edge : aggregate.getChildFedPlans()) {
+			FedPlan selected = memo.getFedPlanAfterPrune(edge);
+			Assert.assertNotNull("B05_ROOT_SELECTED_PLAN_PRESENT|edge=" + edge, selected);
+			FedPlan lout = memo.getFedPlanAfterPrune(edge.getLeft(), FederatedOutput.LOUT);
+			FedPlan fout = memo.getFedPlanAfterPrune(edge.getLeft(), FederatedOutput.FOUT);
+			FedPlan expected;
+			if(lout == null) expected = fout;
+			else if(fout == null) expected = lout;
+			else expected = lout.getCumulativeCost() <= fout.getCumulativeCost() ? lout : fout;
+			Assert.assertSame("B05_ROOT_SELECTED_PLAN_PRESERVED|edge=" + edge, expected, selected);
+		}
+	}
+
+	private static FedPlan invokeRootSelection(Set<Hop> roots, FederatedPlannerDpMemoTable memo) throws Exception {
+		Method select = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",
+			Set.class, FederatedPlannerDpMemoTable.class);
+		select.setAccessible(true);
+		try {
+			return (FedPlan) select.invoke(null, roots, memo);
+		}
+		catch(InvocationTargetException e) {
+			Throwable cause = e.getCause();
+			if(cause instanceof Exception x) throw x;
+			if(cause instanceof Error x) throw x;
+			throw new AssertionError(cause);
+		}
+	}
+
+	private static List<List<Hop>> permutations(List<Hop> roots) {
+		List<List<Hop>> result = new ArrayList<>();
+		permute(new ArrayList<>(roots), 0, result);
+		return result;
+	}
+
+	private static void permute(List<Hop> roots, int index, List<List<Hop>> result) {
+		if(index == roots.size()) {
+			result.add(List.copyOf(roots));
+			return;
+		}
+		for(int i = index; i < roots.size(); i++) {
+			java.util.Collections.swap(roots, index, i);
+			permute(roots, index + 1, result);
+			java.util.Collections.swap(roots, index, i);
+		}
+	}
+
 	private static String assertCanonicalEmission(Object receipt, PlacementAnalysis analysis,
 		boolean expectedApplied, boolean expectedNoOp) {
 		try {
@@ -180,6 +248,31 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		catch(ReflectiveOperationException e) {
 			throw new AssertionError("DP_TRANSACTION_ENTRYPOINT_CONTRACT_MISSING", e);
 		}
+	}
+
+	@Test
+	public void b05RootObjectiveFoldIsPermutationDeterministicAndKeepsSelectedRootOrder() throws Exception {
+		Fixture fixture = fixture("B-05");
+		DpInvocationReceipt receipt = fixture.firstReceipt();
+		List<Hop> roots = receipt.exactSelection().selectedRootHops();
+		Assert.assertEquals("B05_ROOT_PERMUTATION_FIXTURE_ROOTS", 3, roots.size());
+		assertDuplicateKeyOutputWithDifferentCostBits(receipt);
+
+		List<List<Hop>> permutations = permutations(roots);
+		Assert.assertEquals("B05_ROOT_PERMUTATION_COUNT", 6, permutations.size());
+		List<Long> objectiveBits = new ArrayList<>();
+		List<List<Pair<Long, FederatedOutput>>> aggregateOrders = new ArrayList<>();
+		for(List<Hop> permutation : permutations) {
+			FedPlan aggregate = invokeRootSelection(new LinkedHashSet<>(permutation), receipt.memo());
+			objectiveBits.add(Double.doubleToRawLongBits(aggregate.getCumulativeCost()));
+			aggregateOrders.add(List.copyOf(aggregate.getChildFedPlans()));
+			assertRootSelectionPreserved(permutation, aggregate, receipt.memo());
+		}
+
+		Assert.assertEquals("B05_ROOT_OBJECTIVE_BITS_PERMUTATION_STABLE|bits=" + objectiveBits,
+			1, new LinkedHashSet<>(objectiveBits).size());
+		Assert.assertEquals("B05_ROOT_AGGREGATE_EDGE_ORDER_PERMUTATION_STABLE|orders=" + aggregateOrders,
+			1, new LinkedHashSet<>(aggregateOrders).size());
 	}
 
 	@Test
