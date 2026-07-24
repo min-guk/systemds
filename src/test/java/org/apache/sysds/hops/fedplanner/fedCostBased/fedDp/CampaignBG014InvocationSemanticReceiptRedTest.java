@@ -60,9 +60,14 @@ public class CampaignBG014InvocationSemanticReceiptRedTest {
 		}
 	}
 
+	private static DMLProgram compileFixture(String id) throws Exception {
+		return "B-11".equals(id) ? CampaignBG014HermeticPlannerFixtureFactory.compile(id)
+			: ProductionShadowFixtureFactory.compile(id);
+	}
+
 	private static DpInvocationReceipt invoke(String id) {
 		try {
-			DMLProgram program = ProductionShadowFixtureFactory.compile(id);
+			DMLProgram program = compileFixture(id);
 			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);
 			AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
 			try {

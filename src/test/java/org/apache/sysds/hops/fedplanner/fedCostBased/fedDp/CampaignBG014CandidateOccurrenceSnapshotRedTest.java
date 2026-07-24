@@ -397,7 +397,8 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 
 	private static Fixture fixture(String id) {
 		try {
-			DMLProgram program = "B-21".equals(id) ? CampaignBG014HermeticPlannerFixtureFactory.compile(id)
+			DMLProgram program = "B-11".equals(id) || "B-21".equals(id)
+				? CampaignBG014HermeticPlannerFixtureFactory.compile(id)
 				: "B-21-SCALAR".equals(id) ? compileScalarTransientFixture()
 				: ProductionShadowFixtureFactory.compile(id);
 			String old = ConfigurationManager.getDMLConfig().getTextValue(DMLConfig.FEDERATED_PLANNER);

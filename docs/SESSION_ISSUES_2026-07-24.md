@@ -340,3 +340,48 @@
   - Recompile `<CP,FOUT>` prohibition: unchanged.
   - Candidate-space/opcode guard prohibition: respected; no opcode-specific skip/continue guard was added.
   - Objective hash authority remains exact; no rounding or hash-field exclusion was introduced.
+
+## Issue: B-11 semantic compile tests used live-worker production fixture without private local metadata
+
+- **상태**: 해결(집중 2-class B-11 semantic selector 기준). Closure class 전체 게이트는 별도 잔여 클러스터로 보존.
+- **환경/조건**: Authoritative detached G005 repository `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`, 시작 HEAD `d5751cf9a53110fecc5dfe9143e14a1c5f466504`, 사전 상태 ` M target` only. DP planner semantic receipt/candidate snapshot tests for `B-11`; privacy classification is explicitly **non-PUBLIC** / `private-aggregate`.
+- **재현 절차**:
+  - 기존 RED 증거(재실행하지 않음): `/tmp/g005_b11_compile_diag_20260724T071745Z/focused_b11.log` — `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014InvocationSemanticReceiptRedTest,org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014CandidateOccurrenceSnapshotRedTest -DfailIfNoTests=false test`, base `d5751cf`, `Tests run: 6, Failures: 4, Errors: 0, Skipped: 0`.
+  - 진단 문서: `/tmp/G005_B11_COMPILE_CLUSTER_DIAGNOSIS_20260724.md`, SHA-256 `4bdb9057780065e41b74d84a46ee24000f25b2502a632a79205333b91631d6c3`.
+- **관측 증상**:
+  - RED focused log showed worker RPC privacy fail-close, e.g. `Connection refused: localhost/127.0.0.1:1235` and `One or more federated workers failed to provide valid privacy constraints for FEDERATED data op 'X'`.
+  - Four failed B-11 semantic methods were the two invocation receipt tests and the two B-11 candidate occurrence snapshot tests; the assertions never reached semantic receipt validation because fixture compilation entered production worker privacy acquisition.
+- **원인 분석**:
+  - B-11 semantic compile tests fell through to `ProductionShadowFixtureFactory.compile("B-11")`.
+  - The production-shadow B-11 fixture uses remote `federated(addresses=list("localhost:1234/X1","localhost:1235/X2"), ...)` with no local matrix metadata and no test workers.
+  - DP rewire correctly fail-closes when worker privacy metadata cannot be retrieved. This is missing/unresolved privacy via failed worker RPC, **not** an explicit PUBLIC fixture and not a reason to ignore under the public-privacy directive.
+- **의사결정 근거 / Decision boundary**: Test fixture boundary repair only. The fix routes compile-only B-11 semantic tests to hermetic local-matrix metadata with `privacy":"private-aggregate"`; it does not weaken production privacy fail-close, does not add runtime fallback, does not relax TR/TW or recompile `<CP,FOUT>` legality, and does not close candidate space.
+- **해결 요약**:
+  - Hermetic B-11 now reads a temp local matrix with an adjacent `.mtd` carrying explicit `"privacy":"private-aggregate"` instead of using an in-memory matrix that would default to PUBLIC-like metadata absence.
+  - The B-11 hermetic fixture preserves the two-worker row partition geometry (`[0:2,0:2]`, `[2:4,0:2]`) and original semantics `Y=X+1; print(sum(Y));`.
+  - The two focused B-11 semantic test classes route only B-11 through `CampaignBG014HermeticPlannerFixtureFactory`; non-B-11 production-shadow coverage is left unchanged.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014HermeticPlannerFixtureFactory.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014InvocationSemanticReceiptRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014CandidateOccurrenceSnapshotRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-24.md`
+- **검증**:
+  - GREEN focused B-11 two-class selector: `/tmp/g005_b11_fixture_fix_20260724/focused_two_class_final.log`, exit 0. Surefire XML counts: invocation `2/2`, candidate snapshot `4/4`; combined `Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`.
+  - Closure class residual probe: `/tmp/g005_b11_fixture_fix_20260724/closure_class_current_residual.log`, exit 1, `Tests run: 4, Failures: 0, Errors: 2, Skipped: 0`; preserved as out-of-scope because fixing the full class requires a separate closure fixture-boundary cluster beyond the accepted B-11 two-class repair.
+  - Directly relevant hermetic fixture probe: `/tmp/g005_b11_fixture_fix_20260724/hermetic_fixture_related.log`, exit 1 because pre-existing probe class `CampaignBG014B21InlinedAuthorityOwnerProbeTest#exposeExactParentInputFactsAndExclusions` intentionally fails with `TASK82_OWNER_PROBE`; `CampaignBG011DpTransientWriteExactOwnerRedTest` in the same selector was `2/2` green.
+  - Compile: `/tmp/g005_b11_fixture_fix_20260724/test_compile.log` — `mvn -q -DskipTests test-compile`, exit 0.
+  - Diff check: `/tmp/g005_b11_fixture_fix_20260724/diff_check.log` — `git diff --check`, exit 0.
+- **잔여 이슈**:
+  - `CampaignBG014DpSemanticCampaignBClosureRedTest` remains red outside this accepted focused cluster: `applicableFixturesConsumeTheExactFrozenSemanticBlock` and `reverseFixtureOrderDoesNotChangePerFixtureSemanticEvidence` still hit remote federated fixture privacy fail-close after the B-11-only route repair. Treat this as a later closure fixture-boundary task, not as evidence that B-11 focused semantic receipt repair failed.
+  - `CampaignBG014B21InlinedAuthorityOwnerProbeTest#exposeExactParentInputFactsAndExclusions` remains an existing diagnostic/probe failure (`TASK82_OWNER_PROBE`) and was not changed.
+  - Pre-existing generated `target` remains dirty and must stay uncommitted.
+- **잠재 회귀 위험**:
+  - Risk: future B-11 fixture edits could silently remove non-PUBLIC metadata and fall back to missing/PUBLIC-like privacy. Detection: inspect the B-11 temp `.mtd` literal for `"privacy":"private-aggregate"` and keep the focused 6-test selector green without worker RPC errors.
+  - Risk: semantic tests could accidentally exercise live-worker privacy acquisition again. Detection: focused logs should not contain `Connection refused` or `failed to provide valid privacy constraints` for B-11.
+  - Risk: over-broad closure repair could mask distinct fixture semantics. Detection: closure class is documented as residual and should receive a separate cluster instead of expanding this B-11 commit.
+- **적용 원칙/제약**:
+  - Runtime fallback 금지: 유지; worker 실패를 PUBLIC이나 성공으로 취급하지 않음.
+  - Privacy fail-open 금지: 유지; 명시적으로 `private-aggregate` 메타데이터를 사용.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 규칙: 변경 없음.
+  - Recompile `<CP,FOUT>` 금지: 변경 없음.
+  - Candidate-space/opcode guard 금지: 변경 없음; 후보를 닫는 가드를 추가하지 않음.
