@@ -1852,7 +1852,7 @@
 
 ## Issue: G006 MinST LogReg exact membership reused one graph state across competing input domains
 
-- **상태**: 해결 (targeted test 및 focused Docker 검증 완료; 최종 exact-JAR LAN/16-cell 재실행은 후속 단계)
+- **상태**: 해결 (targeted test, final exact-JAR LAN, 16-cell Docker 검증 완료)
 - **환경/조건**:
   - 최초 accepted HEAD: `686dcd5ae55809b9f7f72718c717b476171f78d8`.
   - Planner/config: MinST `mkl-min-st-cut`, `P2P2D`, 2 workers, LAN, `private-aggregate`.
@@ -1889,9 +1889,11 @@
     - `CampaignBR10MinStFTypeMembershipAuthorityRedTest`
   - Focused sealed Docker MinST LogReg PASS: rc `0`, output SHA256 `88e75c65b4a76ba18cb25002758f7e4fe6fbc455c07680cb50b8c95b798a37e6`, exactly one workload log, exactly one instruction-stat CSV, zero strict failure/fallback/repair hits. Evidence root: `/run/user/10041/g006-minst-logreg-fix-20260725/focused-docker`.
   - Focused Docker project containers, networks, and temporary image tags were removed after the run.
+  - Final accepted code commit `eb56cbb33d5f469431df1b607d355a98a6282cd6`; exact JAR SHA256 `dbfc7e234137efe99a50bcc7fa7f2137f9f3566bf0304223d2fdd53d67893e01`.
+  - Ordered final-JAR LAN gate PASS: run `20260725_005537_4104537`, one workload log, one instruction-stat CSV, zero strict scan hits; `/run/user/10041/g006-final-eb56cbb-20260725/lan/lan-validation.txt`.
+  - Full final-JAR Docker matrix PASS: 16/16 cells, output parity across all planners, one log/CSV per cell, zero strict scan hits; `/run/user/10041/g006-final-eb56cbb-20260725/docker-16/docker-validation.txt`.
 - **잔여 이슈**:
-  - Commit and integrate the fix, rebuild the new exact accepted JAR, rerun ordered LAN, then rerun all 16 Docker cells from scratch so every accepted cell uses the identical final source/JAR.
-  - The initial 13 passing cells are diagnostic evidence only after this source change; they cannot be combined with the final-JAR acceptance matrix.
+  - 이 이슈와 G006 semantic acceptance 범위에는 없음. 후속 aggregate goal이 명시한 별도 작업만 남는다.
 - **잠재 회귀 위험**:
   - Risk: exact-input tie resolution could accidentally suppress legal upload candidates. Detection: `CampaignBG014MinStHeavyMmUploadAuthorityRedTest` remains in the targeted gate and all candidates remain published; the filter applies only after multiple representatives claim one membership.
   - Risk: multiple rows still match all exact input authorities. Detection: selection remains fail-closed with `MINST_EXACT_MEMBERSHIP_RULE_AUTHORITY_AMBIGUOUS` rather than using first-match order.
@@ -1902,3 +1904,50 @@
   - Runtime fallback/implicit repair/partial-response acceptance 금지.
   - Runtime-supported candidate를 임의로 닫지 않고 exact input authority로 representative만 결정.
   - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙은 변경하지 않음.
+
+## Issue: G006 final accepted-runtime LAN and all-planner Docker closure
+
+- **상태**: 해결
+- **환경/조건**:
+  - Accepted code commit: `eb56cbb33d5f469431df1b607d355a98a6282cd6`; Git tree `32ebcf4c43be6f259aec2a1535fface0b590365a`.
+  - Exact runtime JAR SHA256: `dbfc7e234137efe99a50bcc7fa7f2137f9f3566bf0304223d2fdd53d67893e01`.
+  - Docker matrix: DP -> FedAll -> Heuristic -> MinST; PCA, LogReg, KMeans, LM; `P2P2D`, two workers, LAN, `private-aggregate`.
+  - Disposable runtime clone only; authoritative repository and protected `target` were not built.
+- **재현 절차**:
+  - Build: `mvn -q -DskipTests -DskipITs -Dmaven.javadoc.skip=true -DskipJavadoc=true -DskipJavadocs=true package` in `/run/user/10041/g006-lm-v3-ff05-integrate-20260724T232357`.
+  - LAN: `/run/user/10041/g006-final-eb56cbb-20260725/lan/run-lan-final.sh`.
+  - Docker: `/run/user/10041/g006-final-eb56cbb-20260725/docker-16/run_g006_campaign.sh`.
+  - Aggregate receipt: `/run/user/10041/g006-final-eb56cbb-20260725/G006_FINAL_ACCEPTANCE_20260725.md`.
+- **관측 증상**:
+  - 이전 exact runtime은 Docker 13개 cell 이후 MinST LogReg에서 중단되어 같은 최종 source/JAR로 16개 cell 전체를 증명하지 못했다.
+  - Source fix 이후 focused cell만 성공한 상태였으므로, 이전 13개 결과와 결합하지 않고 ordered LAN과 전체 Docker matrix를 처음부터 다시 실행해야 했다.
+- **원인 분석**:
+  - Acceptance artifact는 동일한 source/JAR/config/data/network identity를 요구한다. Source 변경 전의 성공 cell은 functional diagnosis에는 유효하지만 최종 paired matrix의 일부로 사용할 수 없다.
+  - 따라서 MinST fix를 authoritative code commit에 통합하고 deterministic JAR을 재빌드한 후 전체 순서를 다시 실행했다.
+- **해결 요약**:
+  - Exact accepted code tree에서 JAR을 재빌드하고 runtime/source/library SHA를 고정했다.
+  - 먼저 DP KMeans LAN cell을 실행하고 세 호스트의 active JAR SHA를 검증한 뒤 기존 remote JAR/results를 모두 복원했다.
+  - 그 후 보존된 동일 immutable image IDs를 unique Docker project에 retag하여 16개 cell을 순차 실행했다.
+  - 각 cell은 실행 전 stale result를 삭제하고 run-scoped log, instruction stats, output SHA, image IDs, network profile, strict scan을 캡처했다.
+- **수정 파일**:
+  - Production/test source 추가 수정 없음.
+  - `docs/SESSION_ISSUES_2026-07-24.md` (최종 검증 상태 기록).
+- **검증**:
+  - Final build PASS; JAR SHA above, launcher SHA `df870a9b6ec191164fd2765f75b546dc0c31aed1d0cc084d952b0750b097ed81`; evidence `/run/user/10041/g006-final-eb56cbb-20260725/build`.
+  - LAN PASS: run ID `20260725_005537_4104537`, elapsed `48.007244s`, compile `3.687614s`, execute `44.320s`, one workload log, one instruction-stat CSV, zero strict hits.
+  - Docker PASS: 16/16 rc `0`, 16/16 log count `1`, 16/16 instruction-stat count `1`, 16/16 strict error hits `0`, stable image identity 16/16.
+  - Cross-planner output SHA parity: PCA `4731f232...a03a68`, LogReg `88e75c65...8a37e6`, KMeans `20ee22e1...6c9f2`, LM `071ee542...26808d`.
+  - Cleanup PASS: residual project containers `0`, networks `0`, temporary tags `0`; validator `/run/user/10041/g006-final-eb56cbb-20260725/docker-16/docker-validation.txt`.
+  - Receipt SHA256 `fd6a100d5e805c9c47114005810d3c59e58849d9ca4263e88440e9795ecab84e`; evidence manifest SHA256 `c37cdf4ace97ec7bd70b9bbd645d9aa31fefc0615d02f067979ad8b619bff391`.
+- **잔여 이슈**:
+  - G006 semantic acceptance 범위에는 없음. Aggregate goal이 G008 등 별도 후속 gate를 요구하면 그 goal에서 계속한다.
+- **잠재 회귀 위험**:
+  - Risk: later validation mixes a stale JAR or different config/data/network fingerprints. Detection: repeat wrapper preflight and compare runtime-core, source-tree, harness-config, data-manifest, image, and per-cell network fingerprints.
+  - Risk: harness returns 0 while artifacts are missing. Detection: acceptance validator independently requires one output/log/instruction-stat artifact and zero strict hits for every cell.
+- **의사결정 근거**:
+  - Planner/runtime logic was already fixed and committed; this closure changed documentation only and proved the required exact-runtime execution order and semantic parity.
+- **적용 원칙/제약**:
+  - Runtime fallback/repair/partial response acceptance 금지 유지.
+  - Planner ordering DP -> FedAll -> Heuristic -> MinST 유지.
+  - TRead/TWrite 및 recompile placement rules 변경 없음.
+  - Authoritative protected `target` 미빌드/미스테이징 유지.
