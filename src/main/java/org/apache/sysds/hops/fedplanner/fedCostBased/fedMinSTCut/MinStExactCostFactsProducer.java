@@ -160,7 +160,7 @@ public final class MinStExactCostFactsProducer {
 		for(DecisionFact decision : decisions)
 			addDecisionEdges(analysis, decision, representatives, workers, occurrenceProfiles, accumulator);
 		List<AuxiliaryGroupFact> groups = deriveGroups(analysis, orderedScope,
-			decisionsByKey, workers, occurrenceProfiles, accumulator);
+			decisionsByKey, representatives, workers, occurrenceProfiles, accumulator);
 		List<ObligationFact> obligations = deriveObligations(analysis, decisionsByKey);
 		List<DirectedEdgeFact> edges = accumulator.freeze();
 		List<TransferAuthorityFact> transferAuthorities = transferAuthorities(analysis, groups, representatives);
@@ -174,20 +174,16 @@ public final class MinStExactCostFactsProducer {
 		List<DecisionFact> decisions) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(decisions, "decisions");
+		IdentityHashMap<CompiledHopKey,DecisionFact> decisionsByKey = new IdentityHashMap<>();
+		for(DecisionFact decision : decisions)
+			decisionsByKey.put(decision.key(), decision);
+		MembershipMaterialization materialization = new MembershipMaterialization(analysis, decisionsByKey);
 		List<MembershipRepresentative> result = new ArrayList<>();
-		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey = new IdentityHashMap<>();
 		for(DecisionFact decision : decisions) {
 			NeutralPlacementGraph.Node node = analysis.graph().node(decision.key()).orElseThrow(() ->
 				new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_NODE_MISSING"));
-			Map<String,List<PlacementState>> byMembership = new java.util.TreeMap<>();
-			for(PlacementState state : decision.legalStatesInCanonicalOrder())
-				byMembership.computeIfAbsent(membership(state.execType(), state.output()), ignored ->
-					new ArrayList<>()).add(state);
-			for(List<PlacementState> states : byMembership.values()) {
-				MembershipRepresentative representative = representative(analysis, decision, node, states, previousByKey);
-				result.add(representative);
-				previousByKey.computeIfAbsent(decision.key(), ignored -> new ArrayList<>()).add(representative);
-			}
+			for(List<PlacementState> states : statesByMembership(decision).values())
+				result.add(materialization.materialize(decision, node, states));
 		}
 		return List.copyOf(result);
 	}
@@ -200,9 +196,83 @@ public final class MinStExactCostFactsProducer {
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_STALE_OR_FORGED");
 	}
 
+	private static Map<String,List<PlacementState>> statesByMembership(DecisionFact decision) {
+		Map<String,List<PlacementState>> byMembership = new java.util.TreeMap<>();
+		for(PlacementState state : decision.legalStatesInCanonicalOrder())
+			byMembership.computeIfAbsent(membership(state.execType(), state.output()), ignored ->
+				new ArrayList<>()).add(state);
+		return byMembership;
+	}
+
+	private static final class MembershipMaterialization {
+		private final PlacementAnalysis analysis;
+		private final IdentityHashMap<CompiledHopKey,DecisionFact> decisionsByKey;
+		private final IdentityHashMap<CompiledHopKey,Map<String,MembershipRepresentative>> cache =
+			new IdentityHashMap<>();
+		private final IdentityHashMap<CompiledHopKey,Set<String>> visiting = new IdentityHashMap<>();
+
+		private MembershipMaterialization(PlacementAnalysis analysis,
+			IdentityHashMap<CompiledHopKey,DecisionFact> decisionsByKey) {
+			this.analysis = analysis;
+			this.decisionsByKey = decisionsByKey;
+		}
+
+		private MembershipRepresentative materialize(DecisionFact decision, NeutralPlacementGraph.Node node,
+			List<PlacementState> states) {
+			String membership = membershipKey(states);
+			Map<String,MembershipRepresentative> byMembership = cache.computeIfAbsent(decision.key(),
+				ignored -> new LinkedHashMap<>());
+			MembershipRepresentative cached = byMembership.get(membership);
+			if(cached != null)
+				return cached;
+			Set<String> active = visiting.computeIfAbsent(decision.key(),
+				ignored -> new LinkedHashSet<>());
+			if(!active.add(membership))
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_CYCLE|key="
+					+ decision.key().normalizedSignature() + "|membership=" + membership);
+			try {
+				MembershipRepresentative representative = representative(analysis, decision, node, states, this);
+				byMembership.put(membership, representative);
+				return representative;
+			}
+			finally {
+				active.remove(membership);
+				if(active.isEmpty())
+					visiting.remove(decision.key());
+			}
+		}
+
+		private MembershipRepresentative exactProducer(CompiledHopKey producerKey, FType expectedType) {
+			DecisionFact producerDecision = decisionsByKey.get(producerKey);
+			if(producerDecision == null)
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_PRODUCER_UNSCOPED|producer="
+					+ producerKey.normalizedSignature());
+			NeutralPlacementGraph.Node producerNode = analysis.graph().node(producerKey).orElseThrow(() ->
+				new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_NODE_MISSING"));
+			List<PlacementState> states = statesByMembership(producerDecision)
+				.get(membership(ExecType.FED, FederatedOutput.FOUT));
+			if(states == null || states.isEmpty())
+				return null;
+			MembershipRepresentative representative = materialize(producerDecision, producerNode, states);
+			if(representative.authorityKind() == MembershipAuthorityKind.LEGAL_SINGLETON
+				|| representative.execType() != ExecType.FED
+				|| representative.output() != FederatedOutput.FOUT
+				|| representative.state().fType() != expectedType)
+				return null;
+			return representative;
+		}
+
+		private static String membershipKey(List<PlacementState> states) {
+			if(states.isEmpty())
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_MISSING");
+			PlacementState first = states.get(0);
+			return membership(first.execType(), first.output());
+		}
+	}
+
 	private static MembershipRepresentative representative(PlacementAnalysis analysis,
 		DecisionFact decision, NeutralPlacementGraph.Node node, List<PlacementState> states,
-		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
+		MembershipMaterialization materialization) {
 		if(states.isEmpty())
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_MISSING");
 		PlacementState first = states.get(0);
@@ -216,7 +286,7 @@ public final class MinStExactCostFactsProducer {
 		MembershipRepresentative anchored = durableRepresentative(analysis, decision, node, states);
 		if(anchored != null)
 			return anchored;
-		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, states, previousByKey);
+		MembershipRepresentative captured = capturedRuleRepresentative(analysis, decision, states, materialization);
 		if(captured != null)
 			return captured;
 		MembershipRepresentative relocation = relocationRepresentative(analysis, decision, states);
@@ -283,7 +353,7 @@ public final class MinStExactCostFactsProducer {
 
 	private static MembershipRepresentative capturedRuleRepresentative(PlacementAnalysis analysis,
 		DecisionFact decision, List<PlacementState> states,
-		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
+		MembershipMaterialization materialization) {
 		CapturedInvocationEvidence invocation = capturedInvocationEvidence(analysis, decision.key());
 		List<MembershipRepresentative> matches = new ArrayList<>();
 		ExecType membershipExec = states.get(0).execType();
@@ -353,7 +423,7 @@ public final class MinStExactCostFactsProducer {
 				state = retained.get(0);
 			}
 			List<MembershipInputAuthorityFact> inputAuthorities = retainedInputAuthorities(analysis,
-				decision.key(), fact, state, previousByKey);
+				decision.key(), fact, state, materialization);
 			if(inputAuthorities == null)
 				continue;
 			matches.add(new MembershipRepresentative(decision.key(), state.execType(), state.output(), state,
@@ -396,7 +466,7 @@ public final class MinStExactCostFactsProducer {
 
 	private static List<MembershipInputAuthorityFact> retainedInputAuthorities(PlacementAnalysis analysis,
 		CompiledHopKey consumer, CandidateRuleFact fact, PlacementState retainedState,
-		IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
+		MembershipMaterialization materialization) {
 		List<CompiledInputEdgeFact> edges = analysis.compiledInputEdgesInCanonicalOrder().stream()
 			.filter(edge -> edge.consumer() == consumer).toList();
 		List<CandidateInputState> inputs = fact.key().orderedInputs();
@@ -413,7 +483,7 @@ public final class MinStExactCostFactsProducer {
 						return null;
 				}
 				else {
-					MembershipRepresentative producer = exactPriorProducerRepresentative(edge, expected.fType(), previousByKey);
+					MembershipRepresentative producer = exactProducerRepresentative(edge, expected.fType(), materialization);
 					inputAuthorities.add(new MembershipInputAuthorityFact(edge, edge.inputPosition(), producer,
 						membershipInputAuthoritySignature(edge, producer)));
 				}
@@ -438,25 +508,14 @@ public final class MinStExactCostFactsProducer {
 		return List.copyOf(inputAuthorities);
 	}
 
-	private static MembershipRepresentative exactPriorProducerRepresentative(CompiledInputEdgeFact edge,
-		FType expectedType, IdentityHashMap<CompiledHopKey,List<MembershipRepresentative>> previousByKey) {
-		List<MembershipRepresentative> prior = previousByKey.get(edge.producer());
-		if(prior == null || prior.isEmpty())
-			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_FORWARD_OR_MISSING|producer="
-				+ edge.producer().normalizedSignature() + "|consumer=" + edge.consumer().normalizedSignature()
-				+ "|input=" + edge.inputPosition());
-		List<MembershipRepresentative> matching = prior.stream()
-			.filter(representative -> representative.authorityKind() != MembershipAuthorityKind.LEGAL_SINGLETON
-				&& representative.execType() == ExecType.FED
-				&& representative.output() == FederatedOutput.FOUT
-				&& representative.state().fType() == expectedType)
-			.toList();
-		if(matching.size() != 1)
-			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_"
-				+ (matching.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|producer="
+	private static MembershipRepresentative exactProducerRepresentative(CompiledInputEdgeFact edge,
+		FType expectedType, MembershipMaterialization materialization) {
+		MembershipRepresentative representative = materialization.exactProducer(edge.producer(), expectedType);
+		if(representative == null)
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_MISSING|producer="
 				+ edge.producer().normalizedSignature() + "|consumer=" + edge.consumer().normalizedSignature()
 				+ "|input=" + edge.inputPosition() + "|ftype=" + expectedType);
-		return matching.get(0);
+		return representative;
 	}
 
 	private static String membershipInputAuthoritySignature(CompiledInputEdgeFact edge,
@@ -834,7 +893,8 @@ public final class MinStExactCostFactsProducer {
 
 	private static List<AuxiliaryGroupFact> deriveGroups(PlacementAnalysis analysis,
 		List<CompiledHopKey> orderedScope, IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
-		int workers, Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
+		List<MembershipRepresentative> representatives, int workers,
+		Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
 		List<AuxiliaryGroupFact> result = new ArrayList<>();
 		IdentityHashMap<CompiledHopKey,List<CompiledInputEdgeFact>> edgesByProducer = new IdentityHashMap<>();
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
@@ -857,7 +917,7 @@ public final class MinStExactCostFactsProducer {
 				CompiledHopKey consumerKey = edge.consumer();
 				DecisionFact consumerDecision = decisions.get(consumerKey);
 				if(hasExec(consumerDecision, ExecType.FED) && canUpload(producer)) {
-					FType type = requiredType(analysis, edge);
+					FType type = requiredType(analysis, edge, representatives);
 					demands.computeIfAbsent(new GroupDemandKey(Direction.UPLOAD, type), ignored ->
 						new ArrayList<>()).add(new Use(edge, consumerDecision));
 				}
@@ -1566,7 +1626,29 @@ public final class MinStExactCostFactsProducer {
 			+ required.normalizedSignature() + '|' + endpoint.demandCostBits();
 	}
 
-	private static FType requiredType(PlacementAnalysis analysis, CompiledInputEdgeFact edge) {
+	private static FType exactConsumerInputType(CompiledInputEdgeFact edge,
+		List<MembershipRepresentative> representatives) {
+		List<FType> types = representatives.stream()
+			.filter(representative -> representative.decisionKey() == edge.consumer()
+				&& representative.authorityKind() == MembershipAuthorityKind.CAPTURED_RULE
+				&& representative.execType() == ExecType.FED
+				&& representative.output() == FederatedOutput.FOUT)
+			.filter(representative -> edge.inputPosition() >= 0
+				&& edge.inputPosition() < representative.orderedInputs().size())
+			.map(representative -> representative.orderedInputs().get(edge.inputPosition()))
+			.filter(CandidateInputState::present)
+			.map(CandidateInputState::fType)
+			.distinct().toList();
+		if(types.size() > 1)
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|ambiguous-exact-membership-authority");
+		return types.isEmpty() ? null : types.get(0);
+	}
+
+	private static FType requiredType(PlacementAnalysis analysis, CompiledInputEdgeFact edge,
+		List<MembershipRepresentative> representatives) {
+		FType exact = exactConsumerInputType(edge, representatives);
+		if(exact != null)
+			return exact;
 		Set<FType> structuralLayouts = new LinkedHashSet<>();
 		addPublishedLayouts(analysis.graph().node(edge.producer()).orElseThrow(), structuralLayouts);
 		for(CompiledInputEdgeFact sibling : analysis.compiledInputEdgesInCanonicalOrder()) {

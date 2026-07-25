@@ -101,8 +101,8 @@
   - Focused DP suite log: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-focused-dp-5.log`, rc `1`; same `testDpRewriteKeepsTransientChainConsistentWithFedParentEdge` error reproduced on unmodified HEAD at `/run/user/10041/g007-cutover-control-cfW2Aw/repo/logs/control-dp-rewrite-chain.log`, rc `1`.
   - Durable anchor suite log: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-durable-anchor.log`, rc `1`; the same two failures reproduced on unmodified HEAD at `/run/user/10041/g007-cutover-control-cfW2Aw/repo/logs/control-durable-anchor.log`, rc `1`.
   - Heuristic policy suite log: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-heuristic-policy-locks.log`, rc `1`; heuristic production code was intentionally untouched.
-  - Test compile: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-test-compile.log`, rc `0`.
-  - Diff hygiene: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-diff-check.log`, rc `0`.
+  - Test compile: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-test-compile-final.log`, rc `0`.
+  - Diff hygiene: `/run/user/10041/g007-cutover-green-XTmCcy/repo/logs/g007-diff-check-final.log`, rc `0`.
 - **잔여 이슈**:
   - The broader reviewer suite cannot currently be claimed fully GREEN at HEAD because it contains pre-existing failures outside this G007 cutover cleanup diff.
   - If those suites are required as hard gates, fix or refresh their existing structural oracles/NPE setup in a separate scoped task before treating them as cleanup blockers.
@@ -117,3 +117,60 @@
   - Runtime-supported candidate-space를 닫거나 넓히지 않음.
   - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙 변경 없음.
   - Protected authoritative `target` 미빌드/미스테이징 유지.
+
+## Issue: G007 MinST exact membership input authority was scope-order dependent
+
+- **상태**: 해결 (focused RED reproduced; dependency-safe exact membership materialization and focused GREEN verified in disposable clone)
+- **환경/조건**:
+  - Authoritative repository: `/tmp/g005-p4-task46-iter16-d1-base-20260723T132127Z/repo`.
+  - Scope owned by this lane:
+    - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+    - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/G007MinStForwardMembershipAuthorityRedTest.java`
+    - `docs/SESSION_ISSUES_2026-07-25.md`
+  - Disposable RED root: `/run/user/10041/g007-minst-forward-red2-ZrMkLT/repo`.
+  - Disposable GREEN root: `/run/user/10041/g007-minst-forward-green-13Aday/repo`.
+  - Workload fixture: detached single-worker LogReg script with `Y=(Y<0)+1`, so the relabel producer authority is `FULL` and the canonical consumer `BinaryOp:b(+):Y` appears before producer `BinaryOp:b(<):compiler-temp`.
+- **재현 절차**:
+  - Add `G007MinStForwardMembershipAuthorityRedTest` only, copy it into a clean disposable clone with disposable `target/`, and run:
+    ```bash
+    mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.component.federated.placement.guard.G007MinStForwardMembershipAuthorityRedTest test
+    ```
+- **관측 증상**:
+  - RED result: `Tests run: 1, Failures: 0, Errors: 1, Skipped: 0`.
+  - Failure:
+    `MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_FORWARD_OR_MISSING|producer=...BinaryOp:b(<):compiler-temp|consumer=...BinaryOp:b(+):Y|input=0`.
+  - The focused fixture locks the forward condition before deriving facts: consumer decision index is before producer decision index, and consumer scope index is before producer scope index.
+- **원인 분석**:
+  - `MinStExactCostFactsProducer.membershipRepresentatives` derived membership representatives in returned canonical decision order and used `previousByKey` as the only source for retained producer input authorities.
+  - When an exact consumer rule required a present input whose producer appears later in canonical scope, `exactPriorProducerRepresentative` failed even though the producer authority is derivable from the same neutral analysis.
+  - This made proof materialization depend on scope order rather than on the compiled input dependency graph.
+- **해결 요약**:
+  - Replaced the order-dependent `previousByKey` authority lookup with a cached `MembershipMaterialization` context.
+  - The context recursively materializes the exact `FED/FOUT` producer representative required by a consumer input, caches representatives by identity key and membership, and fails closed on membership cycles or unscoped producers.
+  - The public returned representative list still iterates decisions and membership buckets in the original canonical order; only proof lookup is dependency-safe.
+  - `deriveGroups` now reuses the exact captured-rule input authority type when available before falling back to the previous structural/profile layout proof. This keeps group transfer typing tied to materialized exact proof instead of weakening the profile gate.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/G007MinStForwardMembershipAuthorityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-25.md`
+- **검증**:
+  - RED: `/run/user/10041/g007-minst-forward-red2-ZrMkLT/repo/logs/g007-forward-red.log`, rc `1`, intended `MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_FORWARD_OR_MISSING`.
+  - GREEN focused regression: `/run/user/10041/g007-minst-forward-green-13Aday/repo/logs/g007-forward-green-final.log`, rc `0`.
+  - Adjacent exact membership authority suite: `/run/user/10041/g007-minst-forward-green-13Aday/repo/logs/g007-br10-green.log`, rc `0`.
+  - Test compile: `/run/user/10041/g007-minst-forward-green-13Aday/repo/logs/g007-test-compile-final.log`, rc `0`.
+  - Diff hygiene: `/run/user/10041/g007-minst-forward-green-13Aday/repo/logs/g007-diff-check-final.log`, rc `0`.
+  - Source guard grep for forbidden fallback/partial-response/TR-TW/recompile CP/FOUT markers in the owned producer diff: `/run/user/10041/g007-minst-forward-green-13Aday/repo/logs/g007-source-guard-final.log`, rc `0`.
+- **잔여 이슈**:
+  - Broader planner suites and LAN scripts were not run by this focused lane.
+  - Authoritative `target` already appeared modified at task start; all reported Maven verification evidence is from disposable clones with disposable `target/` directories.
+- **잠재 회귀 위험**:
+  - Risk: recursive membership materialization could hide dependency cycles. Detection: `MembershipMaterialization` tracks active `<CompiledHopKey identity, membership>` derivations and throws `MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_CYCLE` instead of guessing.
+  - Risk: returned representative ordering could drift if recursive producer materialization appended early. Detection: the implementation appends representatives only in the original decision/membership loop; the G007 regression asserts canonical compute IDs for the forward consumer and producer.
+  - Risk: group transfer typing could become detached from exact candidate input proof. Detection: group `requiredType` first consumes exact captured-rule ordered input authority and still falls back to the existing structural/profile proof path when no exact membership authority exists.
+- **의사결정 근거**:
+  - Planner/exact-facts rule fix only: make proof derivation dependency-safe from neutral analysis identities; no runtime fallback, candidate-space closure, partial-response acceptance, TRead/TWrite relaxation, or recompile CP/FOUT relaxation.
+- **적용 원칙/제약**:
+  - Runtime fallback/implicit repair/partial-response acceptance 금지 유지.
+  - Runtime-supported candidate-space를 닫지 않음.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙 변경 없음.
+  - CP→FOUT/FED→LOUT→FOUT 업로드/재배치 가능성은 기존 exact facts/cost path에만 의존하며 새 런타임 보정 없음.
