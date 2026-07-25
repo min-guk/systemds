@@ -23,17 +23,30 @@ public final class MinStExactSelection {
 	private final List<ObligationReceipt> obligationReceiptsInOrder;
 	private final String tieCertificate;
 	private final List<List<Long>> minimumSourcePartitionCertificates;
+	private final List<List<Long>> rawMinimumSourcePartitionCertificates;
 
 	MinStExactSelection(long objectiveBits, List<Long> sourcePartitionNodeIds,
 		List<PlacementState> selectedStatesInScopeOrder,
 		List<ObligationReceipt> obligationReceiptsInOrder, String tieCertificate,
 		List<List<Long>> minimumSourcePartitionCertificates) {
+		this(objectiveBits, sourcePartitionNodeIds, selectedStatesInScopeOrder,
+			obligationReceiptsInOrder, tieCertificate, minimumSourcePartitionCertificates,
+			minimumSourcePartitionCertificates);
+	}
+
+	MinStExactSelection(long objectiveBits, List<Long> sourcePartitionNodeIds,
+		List<PlacementState> selectedStatesInScopeOrder,
+		List<ObligationReceipt> obligationReceiptsInOrder, String tieCertificate,
+		List<List<Long>> minimumSourcePartitionCertificates,
+		List<List<Long>> rawMinimumSourcePartitionCertificates) {
 		this.objectiveBits = objectiveBits;
 		this.sourcePartitionNodeIds = List.copyOf(sourcePartitionNodeIds);
 		this.selectedStatesInScopeOrder = List.copyOf(selectedStatesInScopeOrder);
 		this.obligationReceiptsInOrder = List.copyOf(obligationReceiptsInOrder);
 		this.tieCertificate = Objects.requireNonNull(tieCertificate, "tieCertificate");
 		this.minimumSourcePartitionCertificates = minimumSourcePartitionCertificates.stream()
+			.map(List::copyOf).toList();
+		this.rawMinimumSourcePartitionCertificates = rawMinimumSourcePartitionCertificates.stream()
 			.map(List::copyOf).toList();
 	}
 
@@ -42,8 +55,13 @@ public final class MinStExactSelection {
 	public List<PlacementState> selectedStatesInScopeOrder() { return selectedStatesInScopeOrder; }
 	public List<ObligationReceipt> obligationReceiptsInOrder() { return obligationReceiptsInOrder; }
 	public String tieCertificate() { return tieCertificate; }
+
+	/** One lexicographically representative source partition per exact semantic proof class. */
 	public List<List<Long>> minimumSourcePartitionCertificates() { return minimumSourcePartitionCertificates; }
+	/** Alias for semantic representative certificates retained for existing callers. */
 	public List<List<Long>> minimaCertificates() { return minimumSourcePartitionCertificates; }
+	/** Every raw source partition returned by the exact cut solver before semantic quotienting. */
+	public List<List<Long>> rawMinimumSourcePartitionCertificates() { return rawMinimumSourcePartitionCertificates; }
 
 	/** Immutable authority receipt for a selected upload/download obligation endpoint. */
 	public static final class ObligationReceipt {

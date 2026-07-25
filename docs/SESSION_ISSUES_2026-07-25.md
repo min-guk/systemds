@@ -174,3 +174,40 @@
   - Runtime-supported candidate-space를 닫지 않음.
   - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙 변경 없음.
   - CP→FOUT/FED→LOUT→FOUT 업로드/재배치 가능성은 기존 exact facts/cost path에만 의존하며 새 런타임 보정 없음.
+
+
+## G007 MinST semantic-equivalent raw minima tie (resolved)
+
+- **상태**: 해결
+- **환경/조건**: MinST exact selector; exact cut solver returned multiple raw minimum source partitions with identical objective bits; encountered on `w1/mkl-min-st-cut/logreg/lan` sentinel `g007_logreg_sentinel_cc0b71a_20260725T025628Z_649191` and locked with a synthetic G007 shape using a DOWNLOAD auxiliary with positive price/demand facts and positive producerPlacement→aux / aux→consumerCompute edges. Producer placement is sink and consumer compute is source, so the auxiliary can move source/sink without changing selected placement state or active transfer obligations.
+- **재현 절차**:
+  - Sentinel evidence: matrix run `w1/mkl-min-st-cut/logreg/lan` from prefix `g007_logreg_sentinel_cc0b71a_20260725T025628Z_649191` returned `rc=1`; exact failure evidence directory: `/run/user/10041/g007-prep-20260725/failure-evidence/g007_logreg_sentinel_cc0b71a_20260725T025628Z_649191`.
+  - Exact probe evidence directory: `/run/user/10041/g007-tie-jshell-20260725T030414Z-669999`.
+  - Regression-first synthetic RED in disposable clone `/run/user/10041/g007-semantic-tie-impl-680257/repo`: run `mvn -q -DskipJavadoc -DskipRat -DskipCheckstyle -DskipSpotbugs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelectorTest#semanticEquivalentRawMinimaDifferingOnlyInactiveDownloadAuxiliaryAreUnique test` before the production fix.
+- **관측 증상**:
+  - Sentinel coordinator failed with `MINST_PROJECTOR_NON_UNIQUE_MINIMUM` from `MinStExactPlacementProjector.validateSelection:94`.
+  - Coordinator log SHA: `449aa9e62e6b3678581d9040700eaa1dd09c027888deeb8e8a1717abc21e9977`.
+  - Exact probe showed raw minima `M0=[-6,-5,-4,-3,944,945,992,993]` and `M1=[-5,-4,-3,944,945,992,993]`; they differ only by inactive DOWNLOAD auxiliary node `-6` while producer placement node `947` is sink and semantic selected states/obligations are equal.
+  - Regression-first RED also showed the selector API lacked `rawMinimumSourcePartitionCertificates()` (`cannot find symbol: method rawMinimumSourcePartitionCertificates()`), and the old raw-unique selector model would classify multiple equal raw minima as `TIE_UNSPECIFIED` before comparing selected semantic facts.
+- **원인 분석**: `MinStExactSelector.select` used `solved.unique()` directly, so equal-cost raw minima that differed only in inactive proof/auxiliary nodes were classified as `TIE_UNSPECIFIED` even when they produced byte-/identity-equivalent selected states and obligation receipts. The selector had no separate raw-minima evidence layer, forcing projector-facing certificates to double as raw solver certificates.
+- **해결 요약**: Added a semantic-minimum quotient in `MinStExactSelector`: each raw minimum is mapped to `(objectiveBits, selectedStatesInScopeOrder, obligationReceiptsInOrder)` using identity-aware wrappers for facts-owned `PlacementState`, `CompiledHopKey`, and receipt required-placement objects plus exact input/action fields, then grouped. A single semantic proof class returns `UNIQUE` with the lexicographically smallest raw source partition as the deterministic representative. Multiple semantic classes still return `TIE_UNSPECIFIED`. `minimumSourcePartitionCertificates()` now exposes semantic-class representatives; `rawMinimumSourcePartitionCertificates()` preserves all raw solver minima for audit.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactSelector.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactSelection.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactSelectorTest.java`
+  - `docs/SESSION_ISSUES_2026-07-25.md`
+- **검증**:
+  - RED sentinel: `w1/mkl-min-st-cut/logreg/lan` matrix `rc=1`, coordinator `MINST_PROJECTOR_NON_UNIQUE_MINIMUM`, evidence dir `/run/user/10041/g007-prep-20260725/failure-evidence/g007_logreg_sentinel_cc0b71a_20260725T025628Z_649191`.
+  - RED exact probe: `/run/user/10041/g007-tie-jshell-20260725T030414Z-669999`, raw minima `M0=[-6,-5,-4,-3,944,945,992,993]`, `M1=[-5,-4,-3,944,945,992,993]`, semantic states/obligations equal.
+  - RED synthetic: targeted selector regression failed before production support with missing raw-minima accessor / old raw-unique tie model.
+  - GREEN focused: `mvn -q -DskipJavadoc -DskipRat -DskipCheckstyle -DskipSpotbugs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelectorTest test` passed.
+  - GREEN required suite: `mvn -q -DskipJavadoc -DskipRat -DskipCheckstyle -DskipSpotbugs -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelectorTest,org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCutSolverTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBR7MinStExactPlacementProjectorTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBR8MinStDiagnosticsSeamTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBR9MinStEmittedDecisionRedTest,org.apache.sysds.test.component.federated.placement.guard.G007MinStForwardMembershipAuthorityRedTest,org.apache.sysds.test.component.federated.placement.guard.CampaignBR10MinStFTypeMembershipAuthorityRedTest test` passed.
+  - Independent fresh clone verification: `/run/user/10041/g007-semantic-tie-verify-20260725T032739Z`; `test-compile` PASS and selected tests `29/0/0/0` PASS.
+- **잔여 이슈**: A new exact runtime run plus fresh sentinel and full 336-test validation remain pending; do not treat the focused selector/test-compile evidence as complete workload acceptance.
+- **잠재 회귀 위험**: If future selector semantic keys compare via display strings, structural-only equality for facts-owned identities, or omit objective bits, distinct semantic proof classes could collapse incorrectly; detect with equal-cost decision-state and active-obligation tie tests plus fresh sentinel/full-suite validation.
+- **의사결정 근거**: 플래너/selector certificate semantics were corrected without adding cost edges, closing candidates, changing objective, adding runtime fallback, or relaxing TR/TW/projector/diagnostic rules.
+- **적용 원칙/제약**:
+  - Runtime fallback/implicit repair/partial-response acceptance 금지 유지.
+  - Runtime-supported candidate-space를 닫지 않음.
+  - TRead/TWrite `<CP,LOUT>` 또는 `<FED,FOUT>` 및 recompile `<CP,FOUT>` 금지 규칙 변경 없음.
+  - Projector/diagnostic rejection semantics preserved: multiple semantic proof classes still return `TIE_UNSPECIFIED`; BR7/BR8 forged/nonunique rejection remains locked by focused tests.

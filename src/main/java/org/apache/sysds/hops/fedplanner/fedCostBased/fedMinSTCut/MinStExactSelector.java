@@ -7,8 +7,10 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -34,15 +36,41 @@ public final class MinStExactSelector {
 		MinStExactCostFactsProducer.validateMembershipRepresentatives(facts);
 		MinStExactCutSolver.Result solved = MinStExactCutSolver.solve(facts.sourceNodeId(),
 			facts.sinkNodeId(), decisions(facts), freeNonDecisionNodes(facts), edges(facts));
-		List<List<Long>> minima = solved.minima().stream()
+		List<List<Long>> rawMinima = solved.minima().stream()
 			.map(MinStExactCutSolver.Minimum::sourceNodeIds)
 			.sorted(lexicographicLongLists()).toList();
-		if(!solved.unique())
+		List<SemanticMinimum> semanticMinima = semanticMinima(facts, solved.objectiveBits(), rawMinima);
+		List<List<Long>> semanticCertificates = semanticMinima.stream()
+			.map(SemanticMinimum::representativeSourceNodeIds).toList();
+		if(semanticMinima.size() != 1)
 			return new MinStExactSelection(solved.objectiveBits(), List.of(), List.of(), List.of(),
-				MinStExactSelection.TIE_UNSPECIFIED, minima);
-		List<Long> source = solved.minima().get(0).sourceNodeIds();
-		return new MinStExactSelection(solved.objectiveBits(), source, selectedStates(facts, source),
-			selectedObligations(facts, source), MinStExactSelection.UNIQUE, minima);
+				MinStExactSelection.TIE_UNSPECIFIED, semanticCertificates, rawMinima);
+		SemanticMinimum selected = semanticMinima.get(0);
+		return new MinStExactSelection(solved.objectiveBits(), selected.representativeSourceNodeIds(),
+			selected.selectedStatesInScopeOrder(), selected.obligationReceiptsInOrder(),
+			MinStExactSelection.UNIQUE, semanticCertificates, rawMinima);
+	}
+
+	private static List<SemanticMinimum> semanticMinima(MinStExactCostFacts facts, long objectiveBits,
+		List<List<Long>> rawMinima) {
+		Map<SemanticKey, SemanticMinimum> semantic = new LinkedHashMap<>();
+		for(List<Long> raw : rawMinima) {
+			List<PlacementState> states = selectedStates(facts, raw);
+			List<ObligationReceipt> receipts = selectedObligations(facts, raw);
+			SemanticKey key = new SemanticKey(objectiveBits, stateKeys(states), receiptKeys(receipts));
+			semantic.computeIfAbsent(key, ignored -> new SemanticMinimum(raw, states, receipts));
+		}
+		return List.copyOf(semantic.values());
+	}
+
+	private static List<StateKey> stateKeys(List<PlacementState> states) {
+		return states.stream().map(StateKey::new).toList();
+	}
+
+	private static List<ReceiptKey> receiptKeys(List<ObligationReceipt> receipts) {
+		return receipts.stream().map(receipt -> new ReceiptKey(receipt.direction(), receipt.producerKey(),
+			receipt.consumerKey(), receipt.inputPosition(), receipt.requiredPlacement(),
+			receipt.actionSignature())).toList();
 	}
 
 	private static List<MinStExactCutSolver.Decision> decisions(MinStExactCostFacts facts) {
@@ -188,5 +216,79 @@ public final class MinStExactSelector {
 			}
 			return Integer.compare(left.size(), right.size());
 		};
+	}
+
+	private record SemanticMinimum(List<Long> representativeSourceNodeIds,
+		List<PlacementState> selectedStatesInScopeOrder,
+		List<ObligationReceipt> obligationReceiptsInOrder) {
+		SemanticMinimum {
+			representativeSourceNodeIds = List.copyOf(representativeSourceNodeIds);
+			selectedStatesInScopeOrder = List.copyOf(selectedStatesInScopeOrder);
+			obligationReceiptsInOrder = List.copyOf(obligationReceiptsInOrder);
+		}
+	}
+
+	private record SemanticKey(long objectiveBits, List<StateKey> selectedStatesInScopeOrder,
+		List<ReceiptKey> obligationReceiptsInOrder) {
+		SemanticKey {
+			selectedStatesInScopeOrder = List.copyOf(selectedStatesInScopeOrder);
+			obligationReceiptsInOrder = List.copyOf(obligationReceiptsInOrder);
+		}
+	}
+
+	private static final class StateKey {
+		private final PlacementState state;
+
+		private StateKey(PlacementState state) {
+			this.state = Objects.requireNonNull(state, "state");
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			return other instanceof StateKey that && state == that.state;
+		}
+
+		@Override
+		public int hashCode() {
+			return System.identityHashCode(state);
+		}
+	}
+
+	private static final class ReceiptKey {
+		private final Direction direction;
+		private final CompiledHopKey producerKey;
+		private final CompiledHopKey consumerKey;
+		private final int inputPosition;
+		private final PlacementState requiredPlacement;
+		private final String actionSignature;
+
+		private ReceiptKey(Direction direction, CompiledHopKey producerKey, CompiledHopKey consumerKey,
+			int inputPosition, PlacementState requiredPlacement, String actionSignature) {
+			this.direction = Objects.requireNonNull(direction, "direction");
+			this.producerKey = Objects.requireNonNull(producerKey, "producerKey");
+			this.consumerKey = Objects.requireNonNull(consumerKey, "consumerKey");
+			this.inputPosition = inputPosition;
+			this.requiredPlacement = Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+			this.actionSignature = Objects.requireNonNull(actionSignature, "actionSignature");
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			if(this == other) return true;
+			if(!(other instanceof ReceiptKey that)) return false;
+			return direction == that.direction
+				&& producerKey == that.producerKey
+				&& consumerKey == that.consumerKey
+				&& inputPosition == that.inputPosition
+				&& requiredPlacement == that.requiredPlacement
+				&& actionSignature.equals(that.actionSignature);
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(direction, System.identityHashCode(producerKey),
+				System.identityHashCode(consumerKey), inputPosition,
+				System.identityHashCode(requiredPlacement), actionSignature);
+		}
 	}
 }
