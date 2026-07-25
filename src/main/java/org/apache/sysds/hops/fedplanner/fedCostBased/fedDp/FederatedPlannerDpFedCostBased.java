@@ -505,14 +505,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 	}
 	private static final int MAX_ENUM_INPUTS = 20; // guard against 2^n blowups and shift overflow
-	// Candidate 1: isolate the near-tie transient FOUT bundle widening heuristic
-	// without disabling seed/refine, locked transient propagation, or genuinely
-	// cost-improving transient-family decisions.
-	private static final boolean ENABLE_TRANSIENT_FOUT_BUNDLE_NEAR_TIE = false;
-	private static final double TRANSIENT_FOUT_BUNDLE_TIE_REL_TOL = 2.5e-3;
 	private static final boolean ENABLE_TRANSIENT_FAMILY_SCORING_TRACE = false;
-	private static final boolean ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION = false;
-	private static final boolean ENABLE_FORCED_TRANSIENT_NEIGHBORHOOD_REEVAL = false;
 	private record SelectedDpState(ExecType execType, FederatedOutput output, FType fType,
 		boolean derivedFedFout, PlacementState exactState) { }
 	private enum RewriteMutationMode { APPLY, CAPTURE_ONLY }
@@ -2813,11 +2806,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					&& ((DataOp) hopRef).getOp() == Types.OpOpData.TRANSIENTWRITE;
 					if (lockedChoice != null) {
 						nextDecisions.put(hopID, lockedChoice);
-						if (ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION && isTransientWrite) {
-							for (long tReadHopID : collectTransientReadParents(
-								memoTable, hopID, conflictCheckMap, transientReadParentsCache))
-								nextDecisions.putIfAbsent(tReadHopID, lockedChoice);
-						}
 						continue;
 				}
 
@@ -2861,10 +2849,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 					FederatedOutput chosen;
 					Map<Long, FederatedOutput> tentativeDecisions = null;
-					boolean forceTransientNeighborhoodReeval =
-						ENABLE_FORCED_TRANSIENT_NEIGHBORHOOD_REEVAL
-							&& entry.canChooseLOUT && entry.canChooseFOUT
-							&& isTransientBoundaryNeighborhood(memoTable, hopID, entry);
 					FederatedOutput observedOnlyOut =
 						entry.seenFOUT && !entry.seenLOUT ? FederatedOutput.FOUT :
 						entry.seenLOUT && !entry.seenFOUT ? FederatedOutput.LOUT : null;
@@ -2880,8 +2864,8 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						forceCheaperAlternativeReeval = hasCheaperAlternativeObservedChoice(
 							memoTable, hopID, entry, observedOnlyOut, tentativeDecisions);
 					}
-					boolean forceSeenOnlyReeval = forceTransientNeighborhoodReeval
-						|| forceCompatibleVariantReeval || forceCheaperAlternativeReeval;
+					boolean forceSeenOnlyReeval =
+						forceCompatibleVariantReeval || forceCheaperAlternativeReeval;
 					if (FederatedPlannerTrace.shouldTrace(hopRef) && allowTransientFamilyRefine
 						&& (forceCompatibleVariantReeval || forceCheaperAlternativeReeval)) {
 						FederatedPlannerTrace.log(hopRef, "DP-OutputDecision-Reeval",
@@ -3806,10 +3790,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 
 			Map<Long, FederatedOutput> lockedAlternativeDecisions = new HashMap<>();
 			lockedAlternativeDecisions.put(hopID, alternative);
-			if (ENABLE_LOCKED_TRANSIENT_READ_PROPAGATION) {
-				for (long tReadHopID : collectTransientReadParents(memoTable, hopID, conflictCheckMap))
-					lockedAlternativeDecisions.put(tReadHopID, alternative);
-				}
 				Map<Long, FederatedOutput> simulatedAlternativeDecisions =
 					simulateOutputDecisionsWithLocksCached(
 						memoTable, rootPlan, refinedDecisions, lockedAlternativeDecisions, simulationDecisionCache);
@@ -3948,16 +3928,13 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			boolean rawPrefersAlternative =
 				alternative == FederatedOutput.FOUT
 					&& familyHasCheaperRawAlternative(memoTable, altFamilyHopIDs, alternative);
-			boolean keepFoutOnNearFamilyTie = false;
 			Map<Long, FederatedOutput> bundleAltDecisions = null;
 			DecisionMapScoreBreakdown bundleAltScore = null;
 			LinkedHashSet<Long> feasibleBundleHopIDs = null;
 			// A family-only representation switch can temporarily introduce a
 			// materialization boundary that disappears only after dependent consumers
-			// switch with it. Evaluate the contextually feasible bundle regardless of
-			// whether that partial family state is an exact tie; the final score gate
-			// below still accepts only a complete lower-cost state (or the existing
-			// explicitly enabled near-tie policy).
+			// switch with it. Evaluate the contextually feasible bundle while keeping
+			// acceptance strictly lower-cost.
 			if (alternative == FederatedOutput.FOUT
 				&& bundleHopIDs.size() > familyHopIDs.size()) {
 				feasibleBundleHopIDs = collectContextuallyFeasibleTransientBundleHopIDs(
@@ -3968,15 +3945,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						bundleAltDecisions.put(bundleHopID, FederatedOutput.FOUT);
 					bundleAltScore = computeDecisionMapScoreBreakdown(
 						memoTable, rootPlan, bundleAltDecisions, scoreCache);
-					double relPenalty = Math.abs(currentScore.totalCost) > 1e-9
-						? (bundleAltScore.totalCost - currentScore.totalCost) / Math.abs(currentScore.totalCost)
-						: Double.POSITIVE_INFINITY;
-					keepFoutOnNearFamilyTie =
-						ENABLE_TRANSIENT_FOUT_BUNDLE_NEAR_TIE
-							&& Double.isFinite(bundleAltScore.totalCost)
-							&& bundleAltScore.missingRootCount == 0
-							&& relPenalty >= -1e-9
-							&& relPenalty <= TRANSIENT_FOUT_BUNDLE_TIE_REL_TOL;
 				}
 			}
 			Map<Long, FederatedOutput> candidateDecisions = altDecisions;
@@ -3986,8 +3954,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (bundleAltDecisions != null && bundleAltScore != null
 				&& Double.isFinite(bundleAltScore.totalCost)
 				&& bundleAltScore.missingRootCount == 0
-				&& (keepFoutOnNearFamilyTie
-					|| !Double.isFinite(altScore.totalCost)
+				&& (!Double.isFinite(altScore.totalCost)
 					|| altScore.missingRootCount != 0
 					|| bundleAltScore.totalCost + 1e-9 < altScore.totalCost)) {
 				candidateDecisions = bundleAltDecisions;
@@ -4000,12 +3967,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						&& candidateScore.missingRootCount == 0
 						&& (candidateScore.totalCost + 1e-9 < currentScore.totalCost
 							|| (rawPrefersAlternative
-								&& Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9)
-							|| (applyBundle && keepFoutOnNearFamilyTie));
+								&& Math.abs(candidateScore.totalCost - currentScore.totalCost) <= 1e-9));
 			if (FederatedPlannerTrace.shouldTrace(hopRef)) {
 				FederatedPlannerTrace.log(hopRef, "DP-TransientFamilyRefine", String.format(Locale.ROOT,
 					"iter=%d chosen=%s alt=%s family=%s bundle=%s changed=%d skipped=%d currentTotal=%.6f altTotal=%.6f "
-						+ "bundleAltTotal=%.6f candidate=%s currentMissing=%d altMissing=%d rawPrefersAlt=%s keepNearTie=%s apply=%s "
+						+ "bundleAltTotal=%.6f candidate=%s currentMissing=%d altMissing=%d rawPrefersAlt=%s apply=%s "
 						+ "applyBundle=%s feasibleBundle=%s",
 					iter,
 					chosen,
@@ -4021,7 +3987,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					currentScore.missingRootCount,
 					altScore.missingRootCount,
 					rawPrefersAlternative,
-					keepFoutOnNearFamilyTie,
 					keepAlternative,
 					applyBundle,
 					feasibleBundleHopIDs != null ? feasibleBundleHopIDs : familyHopIDs));
@@ -5795,41 +5760,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		}
 
 		return delta;
-	}
-
-	private static boolean isTransientBoundaryNeighborhood(
-		FederatedPlannerDpMemoTable memoTable, long hopID, ConflictEntry entry) {
-
-		Hop hopRef = memoTable != null ? memoTable.resolveOriginalHop(hopID) : null;
-		if (hopRef == null)
-			return false;
-		if (isTransientBoundaryHop(hopRef))
-			return true;
-
-		if (entry != null && entry.parents != null) {
-			for (FederatedPlannerDpMemoTable.FedPlan parentPlan : entry.parents) {
-				if (parentPlan != null && isTransientBoundaryHop(parentPlan.getHopRef()))
-					return true;
-			}
-		}
-
-		if (memoTable == null || entry == null || entry.memberHopIDs == null)
-			return false;
-		for (long memberHopID : selectDecisionMembers(entry.memberHopIDs, memoTable)) {
-			for (FederatedOutput out : new FederatedOutput[] {FederatedOutput.LOUT, FederatedOutput.FOUT}) {
-				FederatedPlannerDpMemoTable.FedPlan plan = memoTable.getFedPlanAfterPrune(memberHopID, out);
-				if (plan == null || plan.getChildFedPlans() == null)
-					continue;
-				for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
-					if (childEdge == null)
-						continue;
-					Hop childHop = memoTable.resolveOriginalHop(childEdge.getKey());
-					if (isTransientBoundaryHop(childHop))
-						return true;
-				}
-			}
-		}
-		return false;
 	}
 
 	private static boolean requiresCompatibleVariantReevaluation(
