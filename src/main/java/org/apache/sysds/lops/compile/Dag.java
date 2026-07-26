@@ -39,6 +39,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.lops.Data;
 import org.apache.sysds.lops.Federated;
@@ -633,23 +634,17 @@ public class Dag<N extends Lop>
 		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeEntries =
 			FederatedFoutMaterializeRegistry.snapshot(sbId);
 
-		// In some recompilation paths, transient reads may still appear as CP lops even if the
-		// variable is written as FED/FOUT in the same statement block. Refed insertion on such
-		// inputs would fail at runtime because fed_refed requires a local input.
-		// We conservatively treat transient reads of FED/FOUT transient writes as already-federated.
 		Set<String> federatedTransientWrites = new HashSet<>();
 		for (Lop lop : lops) {
 			if (!(lop instanceof Data))
 				continue;
 			Data data = (Data) lop;
-			if (!data.isTransientWrite())
+			if (!data.isTransientWrite() || !data.getFederatedOutput().isForcedFederated())
 				continue;
-			if (data.getFederatedOutput().isForcedFederated()) {
-				OutputParameters out = data.getOutputParameters();
-				String label = (out != null) ? out.getLabel() : null;
-				if (label != null)
-					federatedTransientWrites.add(label);
-			}
+			OutputParameters out = data.getOutputParameters();
+			String label = (out != null) ? out.getLabel() : null;
+			if (label != null)
+				federatedTransientWrites.add(label);
 		}
 
 		Map<Long, Lop> hopToLop = new HashMap<>();
@@ -662,88 +657,218 @@ public class Dag<N extends Lop>
 				hopToLop.put(hopId, lop);
 		}
 
-		boolean inserted = false;
+		// Validate the complete lowering batch before constructing any FederatedRefed Lop. Its
+		// constructor mutates producer outputs, so per-entry validation would permit a later
+		// malformed entry to leave an earlier entry partially applied.
+		List<RefedInsertionPlan> plans = new ArrayList<>();
 		for (Map.Entry<Long, FederatedRefedRegistry.AnchorSpec> e : refedEntries.entrySet()) {
 			long hopId = e.getKey();
-			if (materializeEntries.containsKey(hopId)) {
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("Skipping refed insertion for hop=" + hopId
-						+ " because a fed_fout materialize is already registered");
-				}
+			if (materializeEntries.containsKey(hopId))
 				continue;
-			}
-			FederatedRefedRegistry.AnchorSpec anchorSpec = e.getValue();
-			long anchorHopId = anchorSpec.getAnchorHopId();
-			String anchorKey = anchorSpec.getAnchorKey();
+			FederatedRefedRegistry.AnchorSpec spec = e.getValue();
 			Lop local = hopToLop.get(hopId);
-			Lop anchor = hopToLop.get(anchorHopId);
-			if (local == null || (anchor == null && anchorKey == null)) {
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
-						+ " due to missing lops in current DAG");
-				}
-				continue;
-			}
+			if (local == null)
+				throw new LopsException("fed_refed lowering requires a local lop for hop=" + hopId);
+			List<RefedConsumerEdge> consumers = resolveSelectedRefedConsumers(
+				lops, spec.getConsumerHopIds(), local, hopId);
+			RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
+				lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
 
 			if (!federatedTransientWrites.isEmpty() && local instanceof Data) {
 				Data data = (Data) local;
 				if (data.isTransientRead()) {
 					OutputParameters out = data.getOutputParameters();
 					String label = (out != null) ? out.getLabel() : null;
-					if (label != null && federatedTransientWrites.contains(label)) {
-						if (LOG.isDebugEnabled()) {
-							LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
-								+ " because input is a transient read of a FED/FOUT transient write: " + label);
-						}
-						continue;
-					}
+					if (label != null && federatedTransientWrites.contains(label))
+						throw new LopsException("fed_refed lowering cannot upload transient read of a FED/FOUT"
+							+ " transient write for hop=" + hopId + " label=" + label);
 				}
 			}
+			if (isFederatedMatrixLop(local))
+				throw new LopsException("fed_refed lowering selected an already federated input for hop=" + hopId);
+			plans.add(new RefedInsertionPlan(hopId, local, authority, consumers));
+		}
 
-			// If the "local" lop is already a federated object (e.g., transient read of a federated var),
-			// inserting a refed would fail at runtime because fed_refed expects a local input.
-			if (isFederatedMatrixLop(local)) {
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("Skipping refed insertion for hop=" + hopId + " anchor=" + anchorHopId
-						+ " because input is already federated");
-				}
-				continue;
-			}
-
-			boolean alreadyInserted = local.getOutputs().stream()
-				.anyMatch(out -> out instanceof FederatedRefed);
-			if (alreadyInserted)
-				continue;
-
-			FederatedRefed refed = (anchor != null)
-				? new FederatedRefed(local, anchor, local.getDataType(), local.getValueType())
-				: new FederatedRefed(local, anchorKey, local.getDataType(), local.getValueType());
+		boolean inserted = false;
+		for (RefedInsertionPlan plan : plans) {
+			FederatedRefed refed = plan.authority.anchor != null
+				? new FederatedRefed(plan.local, plan.authority.anchor,
+					plan.local.getDataType(), plan.local.getValueType())
+				: new FederatedRefed(plan.local, plan.authority.anchorKey,
+					plan.local.getDataType(), plan.local.getValueType());
 			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
-			copyOutputParams(refed.getOutputParameters(), local.getOutputParameters());
+			copyOutputParams(refed.getOutputParameters(), plan.local.getOutputParameters());
 			refed.setFederatedOutput(FederatedOutput.FOUT);
+
+			int insertPos = -1;
+			for (RefedConsumerEdge edge : plan.consumers) {
+				for (int i = 0; i < edge.multiplicity; i++) {
+					edge.consumer.replaceInput(plan.local, refed);
+					plan.local.removeOutput(edge.consumer);
+					refed.addOutput(edge.consumer);
+				}
+				assertRefedEdgeConsistency(plan.local, refed, edge.consumer,
+					edge.multiplicity, plan.hopId);
+				int idx = lops.indexOf(edge.consumer);
+				if (idx >= 0 && (insertPos < 0 || idx < insertPos))
+					insertPos = idx;
+			}
+
 			addNode(refed);
 			inserted = true;
-
-			List<Lop> outputs = new ArrayList<>(local.getOutputs());
-			int insertPos = -1;
-			for (Lop out : outputs) {
-				if (out == refed)
-					continue;
-				if (out.getExecType() == ExecType.FED) {
-					out.replaceInput(local, refed);
-					local.removeOutput(out);
-					refed.addOutput(out);
-					int idx = lops.indexOf(out);
-					if (idx >= 0 && (insertPos < 0 || idx < insertPos))
-						insertPos = idx;
-				}
-			}
 			if (insertPos >= 0 && !lops.contains(refed))
 				lops.add(insertPos, refed);
 			else if (!lops.contains(refed))
 				lops.add(refed);
 		}
 		return inserted;
+	}
+
+	private static List<RefedConsumerEdge> resolveSelectedRefedConsumers(List<Lop> lops,
+		List<Long> consumerHopIds, Lop local, long hopId) {
+		if (consumerHopIds == null || consumerHopIds.isEmpty())
+			throw new LopsException("fed_refed lowering requires exact selected consumer hop ids for hop=" + hopId);
+		List<RefedConsumerEdge> consumers = new ArrayList<>();
+		for (Long consumerHopId : consumerHopIds) {
+			if (consumerHopId == null)
+				throw new LopsException("fed_refed lowering encountered a null selected consumer for hop=" + hopId);
+			List<Lop> matchingConsumers = new ArrayList<>();
+			for (Lop candidate : lops) {
+				if (candidate != null && candidate.getHopID() == consumerHopId
+					&& countOccurrences(candidate.getInputs(), local) > 0)
+					matchingConsumers.add(candidate);
+			}
+			if (matchingConsumers.isEmpty())
+				throw new LopsException("fed_refed lowering could not resolve selected consumer hop="
+					+ consumerHopId + " for local hop=" + hopId);
+			if (matchingConsumers.size() != 1)
+				throw new LopsException("fed_refed lowering found ambiguous selected consumer hop="
+					+ consumerHopId + " for local hop=" + hopId + " matches=" + matchingConsumers.size());
+			Lop consumer = matchingConsumers.get(0);
+			int inputMultiplicity = countOccurrences(consumer.getInputs(), local);
+			int outputMultiplicity = countOccurrences(local.getOutputs(), consumer);
+			if (inputMultiplicity != outputMultiplicity)
+				throw new LopsException("fed_refed lowering edge multiplicity mismatch for selected consumer hop="
+					+ consumerHopId + " local hop=" + hopId + " inputs=" + inputMultiplicity
+					+ " outputs=" + outputMultiplicity);
+			consumers.add(new RefedConsumerEdge(consumer, inputMultiplicity));
+		}
+		return consumers;
+	}
+
+	private static RefedAnchorAuthority resolveRefedAnchorAuthority(List<Lop> lops, long anchorHopId,
+		String anchorKey, long hopId) {
+		String durableKey = isConcreteAnchorKey(anchorKey) ? anchorKey : null;
+		List<Lop> liveAnchors = resolveConcreteRefedAnchors(lops, anchorHopId);
+		if (durableKey != null) {
+			for (Lop liveAnchor : liveAnchors) {
+				String liveKey = knownDurableRefedAnchorKey(liveAnchor);
+				if (liveKey != null && !durableKey.equals(liveKey))
+					throw new LopsException("fed_refed lowering found conflicting live/durable anchor authority"
+						+ " for hop=" + hopId + " anchorHop=" + anchorHopId);
+			}
+			// A durable placement signature is independent of transient Lop lifetime and therefore
+			// takes precedence over the Hop-id hint once any known live authority agrees.
+			return new RefedAnchorAuthority(null, durableKey);
+		}
+		if (liveAnchors.size() == 1)
+			return new RefedAnchorAuthority(liveAnchors.get(0), null);
+		if (liveAnchors.size() > 1)
+			throw new LopsException("fed_refed lowering found ambiguous concrete anchor hop="
+				+ anchorHopId + " matches=" + liveAnchors.size());
+		throw new LopsException("fed_refed lowering requires a concrete live anchor or durable non-VAR anchor key"
+			+ " for hop=" + hopId + " anchor=" + anchorHopId);
+	}
+
+	private static List<Lop> resolveConcreteRefedAnchors(List<Lop> lops, long anchorHopId) {
+		if (anchorHopId < 0)
+			return List.of();
+		List<Lop> matches = new ArrayList<>();
+		for (Lop lop : lops) {
+			if (lop != null && lop.getHopID() == anchorHopId && serializesConcreteFederatedAnchor(lop))
+				matches.add(lop);
+		}
+		return matches;
+	}
+
+	private static String knownDurableRefedAnchorKey(Lop anchor) {
+		OutputParameters out = anchor != null ? anchor.getOutputParameters() : null;
+		String label = out != null ? out.getLabel() : null;
+		String key = FederatedPlannerUtils.getFedAnchorKey(label);
+		return isConcreteAnchorKey(key) ? key : null;
+	}
+
+	private static final class RefedInsertionPlan {
+		private final long hopId;
+		private final Lop local;
+		private final RefedAnchorAuthority authority;
+		private final List<RefedConsumerEdge> consumers;
+
+		private RefedInsertionPlan(long hopId, Lop local, RefedAnchorAuthority authority,
+			List<RefedConsumerEdge> consumers) {
+			this.hopId = hopId;
+			this.local = local;
+			this.authority = authority;
+			this.consumers = consumers;
+		}
+	}
+
+	private static final class RefedAnchorAuthority {
+		private final Lop anchor;
+		private final String anchorKey;
+
+		private RefedAnchorAuthority(Lop anchor, String anchorKey) {
+			this.anchor = anchor;
+			this.anchorKey = anchorKey;
+		}
+	}
+
+	private static final class RefedConsumerEdge {
+		private final Lop consumer;
+		private final int multiplicity;
+
+		private RefedConsumerEdge(Lop consumer, int multiplicity) {
+			this.consumer = consumer;
+			this.multiplicity = multiplicity;
+		}
+	}
+
+	private static int countOccurrences(List<Lop> values, Lop target) {
+		int count = 0;
+		if (values != null) {
+			for (Lop value : values)
+				if (value == target)
+					count++;
+		}
+		return count;
+	}
+
+	private static void assertRefedEdgeConsistency(Lop local, FederatedRefed refed, Lop consumer,
+		int rewiredEdges, long hopId) {
+		if (rewiredEdges <= 0)
+			throw new LopsException("fed_refed lowering selected consumer had no local input edge for hop=" + hopId);
+		if (consumer.getInputs().contains(local) || local.getOutputs().contains(consumer))
+			throw new LopsException("fed_refed lowering left stale local edge for hop=" + hopId
+				+ " consumer=" + consumer.getHopID());
+		int refedInputs = countOccurrences(consumer.getInputs(), refed);
+		int refedOutputs = countOccurrences(refed.getOutputs(), consumer);
+		if (refedInputs != rewiredEdges || refedOutputs != rewiredEdges)
+			throw new LopsException("fed_refed lowering inconsistent refed edge count for hop=" + hopId
+				+ " consumer=" + consumer.getHopID() + " inputs=" + refedInputs
+				+ " outputs=" + refedOutputs + " expected=" + rewiredEdges);
+	}
+
+	private static boolean serializesConcreteFederatedAnchor(Lop lop) {
+		OutputParameters out = lop.getOutputParameters();
+		if (out == null || out.getLabel() == null || out.getLabel().isEmpty())
+			return false;
+		boolean runtimeFederated = isConcreteFederatedAnchorLop(lop);
+		if (!runtimeFederated && lop instanceof Data && ((Data) lop).isTransientRead())
+			runtimeFederated = FederatedPlannerUtils.isFedInitVar(out.getLabel())
+				|| FederatedPlannerUtils.getFedAnchorKey(out.getLabel()) != null;
+		if (!runtimeFederated)
+			return false;
+		return lop.getDataType() != DataType.UNKNOWN && lop.getValueType() != ValueType.UNKNOWN;
 	}
 
 		private boolean insertFoutMaterializeLops(List<Lop> lops, StatementBlock sb) {

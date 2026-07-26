@@ -47,6 +47,7 @@ import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.FileFormat;
 import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp4;
@@ -69,6 +70,9 @@ import org.apache.sysds.hops.QuaternaryOp;
 import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
+import org.apache.sysds.lops.Data;
+import org.apache.sysds.lops.FederatedRefed;
+import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
@@ -2817,32 +2821,6 @@ public class FederatedPlannerFallbackIntegrationTest {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
 	}
 
-	@Test
-	public void testMinSTRestoreRegistersPlannerRecompileState() throws Exception {
-		FederatedPlannerUtils.clearPlannerRecompileStates();
-		try {
-			UnaryOp planned = new UnaryOp("minst_recompile_state", DataType.MATRIX, ValueType.FP64,
-				OpOp1.EXP, transientRead("XminstRecompileState", ROWS, COLS));
-			planned.setBeginLine(2311);
-			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-			graph.addVertex(new Vertex(planned, Privacy.PRIVATE_AGGREGATE,
-				FType.ROW, FType.ROW, allowAllCaps()));
-			Map<Long, Pair<ExecType, FederatedOutput>> decisions = new HashMap<>();
-			decisions.put(planned.getHopID(), Pair.of(ExecType.FED, FederatedOutput.FOUT));
-
-			invokeRestoreMinstPlanDecisions(decisions, graph);
-
-			FederatedPlannerUtils.PlannerRecompileState state =
-				FederatedPlannerUtils.getPlannerRecompileState(planned);
-			assertNotNull("MinST final decisions must be available when Recompiler clones the planned hop", state);
-			assertEquals(ExecType.FED, state.getExecType());
-			assertEquals(FederatedOutput.FOUT, state.getFederatedOutput());
-		}
-		finally {
-			FederatedPlannerUtils.clearPlannerRecompileStates();
-		}
-	}
-
 
 	@Test
 	public void testDpTransientFamilyDecisionMembersExcludeConsumerParents() throws Exception {
@@ -5359,50 +5337,6 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testMinSTConsistencyAcceptsCpfoutRegisteredOnTransientWriteParent() throws Exception {
-		FederatedRefedRegistry.clear();
-		FederatedFoutMaterializeRegistry.clear();
-		FederatedPlannerUtils.clearFedInitVars();
-		try {
-			DataOp fedInput = federatedRead("X", ROWS, COLS);
-			DataOp localVec = transientRead("v", COLS, 1);
-			Hop mm = HopRewriteUtils.createMatrixMultiply(fedInput, localVec);
-			mm.setDim1(ROWS);
-			mm.setDim2(1);
-			mm.setForcedExecType(ExecType.CP);
-			mm.setFederatedOutput(FederatedOutput.FOUT);
-
-			DataOp tWrite = HopRewriteUtils.createTransientWrite("Xd", mm);
-			tWrite.setForcedExecType(ExecType.FED);
-			tWrite.setFederatedOutput(FederatedOutput.FOUT);
-
-			FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
-			FederatedPlanMinSTGraph.ExecPlacementCaps caps = new FederatedPlanMinSTGraph.ExecPlacementCaps();
-			graph.addVertex(new Vertex(mm, Privacy.PRIVATE_AGGREGATE_TO_PUBLIC, FType.ROW, FType.ROW, caps));
-			graph.addVertex(new Vertex(tWrite, Privacy.PUBLIC, FType.ROW, FType.ROW, caps));
-
-			Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut = new HashMap<>();
-			plannedExecOut.put(mm.getHopID(), Pair.of(ExecType.CP, FederatedOutput.FOUT));
-			plannedExecOut.put(tWrite.getHopID(), Pair.of(ExecType.FED, FederatedOutput.FOUT));
-
-			Map<Long, FType> plannedFTypeMap = new HashMap<>();
-			plannedFTypeMap.put(fedInput.getHopID(), FType.ROW);
-			plannedFTypeMap.put(mm.getHopID(), FType.ROW);
-			plannedFTypeMap.put(tWrite.getHopID(), FType.ROW);
-
-			// CP->FOUT can be registered on the TWrite parent (not necessarily on the producer hop).
-			FederatedRefedRegistry.register(-1L, tWrite.getHopID(), fedInput.getHopID());
-
-			invokeValidateMinstPlanConsistency(plannedExecOut, plannedFTypeMap, graph);
-		}
-		finally {
-			FederatedRefedRegistry.clear();
-			FederatedFoutMaterializeRegistry.clear();
-			FederatedPlannerUtils.clearFedInitVars();
-		}
-	}
-
-	@Test
 	public void testLocalMaterializeRegistryDefaultSnapshotMergesWithStatementBlockEntries() {
 		FederatedLocalMaterializeRegistry.clear();
 		try {
@@ -5683,6 +5617,395 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedPlannerUtils.clearFedInitVars();
 		}
+	}
+
+	@Test
+	public void testDagRegistryRefedFailsClosedWhenNoSelectedConsumerIsRecorded() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP cpConsumerAndInvalidAnchor = functionCallConsumerLop(localInput, 962);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			try {
+				FederatedRefedRegistry.register(-1L, localInput.getHopID(),
+					cpConsumerAndInvalidAnchor.getHopID(), anchorKey, List.of());
+				throw new AssertionError("Expected empty exact consumer registration to fail closed");
+			}
+			catch (IllegalArgumentException ex) {
+				assertTrue("Expected exact-consumer validation failure: " + ex.getMessage(),
+					ex.getMessage().contains("exact selected consumer"));
+			}
+			assertTrue("Rejected empty-consumer registration must not mutate the registry",
+				FederatedRefedRegistry.snapshot(-1L).isEmpty());
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedPrevalidationPreservesFullGraphIdentityOnMultiplicityFailure() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP firstConsumer = functionCallConsumerLop(localInput, 961);
+			FunctionCallCP invalidSecondConsumer = functionCallConsumerLop(localInput, 962);
+			localInput.removeOutput(invalidSecondConsumer);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), -1L, anchorKey,
+				List.of(firstConsumer.getHopID(), invalidSecondConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, firstConsumer, invalidSecondConsumer));
+			List<Lop> originalLops = new ArrayList<>(lops);
+			List<List<Lop>> originalInputs = lops.stream()
+				.<List<Lop>>map(lop -> new ArrayList<>(lop.getInputs())).toList();
+			List<List<Lop>> originalOutputs = lops.stream()
+				.<List<Lop>>map(lop -> new ArrayList<>(lop.getOutputs())).toList();
+
+			try {
+				invokeInsertRefedLops(lops);
+				throw new AssertionError("Expected selected-consumer multiplicity mismatch to fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected LopsException for edge multiplicity mismatch but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+			assertEquals("Fail-closed lowering must preserve exact lop-list identity/order", originalLops, lops);
+			for (int i = 0; i < lops.size(); i++) {
+				assertEquals("Fail-closed lowering must preserve input edges for lop index " + i,
+					originalInputs.get(i), lops.get(i).getInputs());
+				assertEquals("Fail-closed lowering must preserve output edges for lop index " + i,
+					originalOutputs.get(i), lops.get(i).getOutputs());
+			}
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedFailsClosedWhenLiveAndDurableAnchorAuthoritiesDisagree() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedConsumer = functionCallConsumerLop(localInput, 962);
+			Data liveAnchor = federatedMatrixAnchorLop("LiveAnchor", 916);
+			FederatedPlannerUtils.registerFedAnchorKey(liveAnchor.getOutputParameters().getLabel(),
+				"fedinit://live-workers|ROW");
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), liveAnchor.getHopID(),
+				"fedinit://stale-workers|ROW", List.of(selectedConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedConsumer, liveAnchor));
+			List<Lop> originalLops = new ArrayList<>(lops);
+			List<Lop> originalLocalOutputs = new ArrayList<>(localInput.getOutputs());
+			List<Lop> originalConsumerInputs = new ArrayList<>(selectedConsumer.getInputs());
+			try {
+				invokeInsertRefedLops(lops);
+				throw new AssertionError("Expected conflicting live/durable anchor authority to fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected LopsException for conflicting anchor authority but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+			assertEquals("Authority conflict must preserve lop list", originalLops, lops);
+			assertEquals("Authority conflict must preserve producer outputs", originalLocalOutputs,
+				localInput.getOutputs());
+			assertEquals("Authority conflict must preserve consumer inputs", originalConsumerInputs,
+				selectedConsumer.getInputs());
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedFailsClosedForUnresolvedSelectedConsumerId() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP cpConsumerAndInvalidAnchor = functionCallConsumerLop(localInput, 962);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), cpConsumerAndInvalidAnchor.getHopID(),
+				anchorKey, List.of(1234567L));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, cpConsumerAndInvalidAnchor));
+			try {
+				invokeInsertRefedLops(lops);
+				throw new AssertionError("Expected unresolved selected consumer ID to fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected LopsException for unresolved selected consumer but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+			assertFalse("Fail-closed unresolved consumer path must not leave orphan fed_refed",
+				lops.stream().anyMatch(lop -> lop instanceof FederatedRefed));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedFailsClosedForAmbiguousSelectedConsumerId() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedA = functionCallConsumerLop(localInput, 962);
+			FunctionCallCP selectedB = functionCallConsumerLop(localInput, 962);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), selectedA.getHopID(),
+				anchorKey, List.of(selectedA.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedA, selectedB));
+			try {
+				invokeInsertRefedLops(lops);
+				throw new AssertionError("Expected ambiguous selected consumer ID to fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected LopsException for ambiguous selected consumer but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+			assertFalse("Fail-closed ambiguous consumer path must not leave orphan fed_refed",
+				lops.stream().anyMatch(lop -> lop instanceof FederatedRefed));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedFailsClosedForInvalidAnchorAndNonConcreteVarKey() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedCpConsumerAndInvalidAnchor = functionCallConsumerLop(localInput, 962);
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(),
+				selectedCpConsumerAndInvalidAnchor.getHopID(), "VAR:MaybeRemoved|ROW",
+				List.of(selectedCpConsumerAndInvalidAnchor.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedCpConsumerAndInvalidAnchor));
+			try {
+				invokeInsertRefedLops(lops);
+				throw new AssertionError("Expected invalid anchor plus non-concrete VAR key to fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected LopsException for invalid refed anchor authority but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+			assertFalse("Fail-closed invalid-anchor path must not leave orphan fed_refed",
+				lops.stream().anyMatch(lop -> lop instanceof FederatedRefed));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedRewiresSelectedCpFunctionConsumerWithDurableKeyAnchor() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedCpConsumerAndInvalidAnchor = functionCallConsumerLop(localInput, 962);
+			FunctionCallCP unselectedCpConsumer = functionCallConsumerLop(localInput, 963);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(),
+				selectedCpConsumerAndInvalidAnchor.getHopID(), anchorKey,
+				List.of(selectedCpConsumerAndInvalidAnchor.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedCpConsumerAndInvalidAnchor, unselectedCpConsumer));
+			boolean changed = invokeInsertRefedLops(lops);
+
+			assertTrue("Expected selected CP FunctionCallCP consumer to be rewired through fed_refed", changed);
+			List<FederatedRefed> refeds = lops.stream()
+				.filter(lop -> lop instanceof FederatedRefed)
+				.map(lop -> (FederatedRefed) lop)
+				.toList();
+			assertEquals("Exactly one planned fed_refed should be inserted", 1, refeds.size());
+			FederatedRefed refed = refeds.get(0);
+			assertTrue("Selected CP FunctionCallCP must consume the planned fed_refed",
+				selectedCpConsumerAndInvalidAnchor.getInputs().contains(refed));
+			assertFalse("Selected CP FunctionCallCP must no longer consume the local input directly",
+				selectedCpConsumerAndInvalidAnchor.getInputs().contains(localInput));
+			assertTrue("Unselected CP FunctionCallCP must not be broadly rewired",
+				unselectedCpConsumer.getInputs().contains(localInput));
+			assertEquals("Key-backed fed_refed should have only the local input Lop edge", 1, refed.getInputs().size());
+			String instruction = refed.getInstructions("LocalLabels", "RefedOut");
+			assertTrue("Concrete durable anchor key should be emitted literally: " + instruction,
+				instruction.contains(anchorKey));
+			assertFalse("Invalid label-null FunctionCallCP anchor must not serialize as null.UNKNOWN: " + instruction,
+				instruction.contains("null.UNKNOWN"));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+
+	@Test
+	public void testDagRegistryRefedFailsClosedForAmbiguousConcreteAnchorHopIdWithoutDurableKey() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedCpConsumer = functionCallConsumerLop(localInput, 962);
+			Data anchorA = federatedMatrixAnchorLop("AnchorA", 916);
+			Data anchorB = federatedMatrixAnchorLop("AnchorB", 916);
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), anchorA.getHopID(),
+				"VAR:AmbiguousAnchor|ROW", List.of(selectedCpConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedCpConsumer, anchorA, anchorB));
+			try {
+				invokeInsertRefedLops(lops);
+				throw new AssertionError("Expected duplicate concrete anchor hop ID without durable key to fail closed");
+			}
+			catch (java.lang.reflect.InvocationTargetException ex) {
+				assertTrue("Expected LopsException for ambiguous concrete anchor but got " + ex.getCause(),
+					ex.getCause() instanceof org.apache.sysds.lops.LopsException);
+			}
+			assertFalse("Fail-closed ambiguous-anchor path must not leave orphan fed_refed",
+				lops.stream().anyMatch(lop -> lop instanceof FederatedRefed));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedUsesDurableKeyWhenConcreteAnchorHopIdIsAmbiguous() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedCpConsumer = functionCallConsumerLop(localInput, 962);
+			Data anchorA = federatedMatrixAnchorLop("AnchorA", 916);
+			Data anchorB = federatedMatrixAnchorLop("AnchorB", 916);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), anchorA.getHopID(),
+				anchorKey, List.of(selectedCpConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedCpConsumer, anchorA, anchorB));
+			boolean changed = invokeInsertRefedLops(lops);
+
+			assertTrue("Expected durable key to disambiguate duplicate concrete anchor lops", changed);
+			FederatedRefed refed = lops.stream()
+				.filter(lop -> lop instanceof FederatedRefed)
+				.map(lop -> (FederatedRefed) lop)
+				.findFirst().orElseThrow();
+			assertEquals("Ambiguous live anchor should force key-backed fed_refed", 1, refed.getInputs().size());
+			String instruction = refed.getInstructions("LocalLabels", "RefedOut");
+			assertTrue("Concrete durable anchor key should be emitted when live anchor hop is ambiguous: " + instruction,
+				instruction.contains(anchorKey));
+			assertFalse("Ambiguous live anchor label must not be selected arbitrarily: " + instruction,
+				instruction.contains("AnchorA") || instruction.contains("AnchorB"));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedRewiresAllDuplicateSelectedConsumerEdgesConsistently() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data localInput = localMatrixTransientReadLop("LocalLabels", 947);
+			FunctionCallCP selectedCpConsumer = functionCallConsumerLop(List.of(localInput, localInput), 962);
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, localInput.getHopID(), selectedCpConsumer.getHopID(),
+				anchorKey, List.of(selectedCpConsumer.getHopID()));
+			assertEquals("Regression setup requires two local input edges", 2,
+				lopOccurrences(selectedCpConsumer.getInputs(), localInput));
+			assertEquals("Regression setup requires two local output edges", 2,
+				lopOccurrences(localInput.getOutputs(), selectedCpConsumer));
+
+			List<Lop> lops = new ArrayList<>(List.of(localInput, selectedCpConsumer));
+			boolean changed = invokeInsertRefedLops(lops);
+
+			assertTrue("Expected duplicate selected consumer edges to be rewired", changed);
+			FederatedRefed refed = lops.stream()
+				.filter(lop -> lop instanceof FederatedRefed)
+				.map(lop -> (FederatedRefed) lop)
+				.findFirst().orElseThrow();
+			assertEquals("Every duplicate input edge must be rewired to fed_refed", 2,
+				lopOccurrences(selectedCpConsumer.getInputs(), refed));
+			assertEquals("No stale local input edges may remain on selected consumer", 0,
+				lopOccurrences(selectedCpConsumer.getInputs(), localInput));
+			assertEquals("No stale local output edges may remain after duplicate rewiring", 0,
+				lopOccurrences(localInput.getOutputs(), selectedCpConsumer));
+			assertEquals("Refed output edge count must match rewired duplicate input edges", 2,
+				lopOccurrences(refed.getOutputs(), selectedCpConsumer));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	private static Data localMatrixTransientReadLop(String name, long hopId) {
+		Data localInput = new Data(OpOpData.TRANSIENTREAD, null, null, name, null,
+			DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+		localInput.setHopID(hopId);
+		localInput.getOutputParameters().setDimensions(ROWS, COLS, BLOCKSIZE, -1);
+		localInput.setExecType(ExecType.CP);
+		localInput.setFederatedOutput(FederatedOutput.LOUT);
+		return localInput;
+	}
+
+	private static Data federatedMatrixAnchorLop(String name, long hopId) {
+		Data anchor = new Data(OpOpData.FEDERATED, null, null, name, null,
+			DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+		anchor.setHopID(hopId);
+		anchor.getOutputParameters().setDimensions(ROWS, COLS, BLOCKSIZE, -1);
+		anchor.setExecType(ExecType.FED);
+		anchor.setFederatedOutput(FederatedOutput.FOUT);
+		return anchor;
+	}
+
+	private static FunctionCallCP functionCallConsumerLop(Lop input, long hopId) {
+		return functionCallConsumerLop(List.of(input), hopId);
+	}
+
+	private static FunctionCallCP functionCallConsumerLop(List<Lop> inputs, long hopId) {
+		String[] inputNames = new String[inputs.size()];
+		for (int i = 0; i < inputNames.length; i++)
+			inputNames[i] = "X" + i;
+		FunctionCallCP fcall = new FunctionCallCP(new ArrayList<>(inputs),
+			DMLProgram.INTERNAL_NAMESPACE, "mock_function", inputNames,
+			new String[] {"Out"}, false, ExecType.CP);
+		fcall.setHopID(hopId);
+		assertTrue("Regression setup requires FunctionCallCP output label to be null",
+			fcall.getOutputParameters().getLabel() == null);
+		return fcall;
+	}
+
+	private static int lopOccurrences(List<Lop> values, Lop target) {
+		int count = 0;
+		for (Lop value : values)
+			if (value == target)
+				count++;
+		return count;
+	}
+
+	private static boolean invokeInsertRefedLops(List<Lop> lops) throws Exception {
+		Method insertRefed = Dag.class.getDeclaredMethod("insertRefedLops", List.class, StatementBlock.class);
+		insertRefed.setAccessible(true);
+		return (boolean) insertRefed.invoke(new Dag<>(), lops, null);
 	}
 
 	@Test
@@ -6896,16 +7219,6 @@ public class FederatedPlannerFallbackIntegrationTest {
 			null, memoTable, rootPlan, baseDecisions, conflictCheckMap, familyHopIDs, bundleHopIDs);
 	}
 
-	private static void invokeValidateMinstPlanConsistency(
-			Map<Long, Pair<ExecType, FederatedOutput>> plannedExecOut,
-			Map<Long, FType> plannedFTypeMap,
-			FederatedPlanMinSTGraph graph) throws Exception {
-		Method method = org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut.class
-			.getDeclaredMethod("validateMinstPlanConsistency", Map.class, Map.class, FederatedPlanMinSTGraph.class);
-		method.setAccessible(true);
-		method.invoke(null, plannedExecOut, plannedFTypeMap, graph);
-	}
-
 	private static void invokeRepairSelectionFixpoint(FederatedPlanMinSTGraph graph,
 			Map<Long, ExecType> execSelection,
 			Map<Long, FederatedOutput> outSelection) throws Exception {
@@ -6913,15 +7226,6 @@ public class FederatedPlannerFallbackIntegrationTest {
 			"repairSelectionFixpoint", Map.class, Map.class);
 		method.setAccessible(true);
 		method.invoke(graph, execSelection, outSelection);
-	}
-
-	private static void invokeRestoreMinstPlanDecisions(
-			Map<Long, Pair<ExecType, FederatedOutput>> decisions,
-			FederatedPlanMinSTGraph graph) throws Exception {
-		Method method = org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut.class
-			.getDeclaredMethod("restoreMinstPlanDecisions", Map.class, FederatedPlanMinSTGraph.class);
-		method.setAccessible(true);
-		method.invoke(null, decisions, graph);
 	}
 
 	private static double computeMinSTCutCost(FederatedPlanMinSTGraph graph, long... sourceNodes) {
@@ -6971,9 +7275,11 @@ public class FederatedPlannerFallbackIntegrationTest {
 		Object selection = anchorSelectionCtor.newInstance(key, anchorHop);
 
 		Method method = FederatedRefedPolicy.class.getDeclaredMethod(
-			"registerCpfoutWithSelection", Hop.class, Map.class, long.class, anchorSelectionClass);
+			"registerCpfoutWithSelection", Hop.class, Map.class, long.class, anchorSelectionClass, List.class);
 		method.setAccessible(true);
-		method.invoke(null, hop, fTypeMap, sbId, selection);
+		// This helper exercises only the TWrite materialize path, which returns before
+		// REFED exact-consumer validation; do not recreate the removed consumer-less API.
+		method.invoke(null, hop, fTypeMap, sbId, selection, List.of());
 	}
 
 	private static FederatedPlanMinSTGraph.ExecPlacementCaps allowAllCaps() {

@@ -58,9 +58,14 @@ public final class ExactPlacementRegistration {
 	}
 
 	public record RegisteredUpload(long scopeId, long hopId, long anchorHopId, FType fType,
-		String anchorLabel, String anchorKey) {
+		String anchorLabel, String anchorKey, List<Long> consumerHopIds) {
 		public RegisteredUpload {
 			Objects.requireNonNull(fType, "fType");
+			if(consumerHopIds == null || consumerHopIds.isEmpty())
+				throw new IllegalArgumentException("Exact REFED upload requires exact consumers");
+			if(consumerHopIds.stream().anyMatch(Objects::isNull))
+				throw new IllegalArgumentException("Exact REFED upload consumers must not contain null");
+			consumerHopIds = consumerHopIds.stream().distinct().sorted().toList();
 		}
 	}
 
@@ -96,8 +101,9 @@ public final class ExactPlacementRegistration {
 			Hop anchor = exactAnchor.occurrence().hop();
 			String label = anchor instanceof DataOp ? anchor.getName() : null;
 			String key = runtimeAnchorKey(exactAnchor.durableAnchor());
+			List<Long> consumerHopIds = exactConsumerHopIds(analysis, occurrence, occurrencesByKey);
 			uploads.add(new RegisteredUpload(occurrence.scopeId(), hop.getHopID(), anchor.getHopID(), selectedType,
-				label, key));
+				label, key, consumerHopIds));
 		}
 		return List.copyOf(uploads);
 	}
@@ -133,6 +139,26 @@ public final class ExactPlacementRegistration {
 				+ target.hop().getHopID() + " anchors=" + candidates.stream()
 					.map(candidate -> candidate.occurrence().hop().getHopID()).sorted().toList());
 		return candidates.get(0);
+	}
+
+	private static List<Long> exactConsumerHopIds(PlacementAnalysis analysis, HopOccurrenceProjection target,
+		Map<CompiledHopKey,HopOccurrenceProjection> occurrencesByKey) {
+		List<Long> consumerHopIds = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.producer() == target.key())
+			.map(edge -> occurrencesByKey.get(edge.consumer()))
+			.map(consumer -> {
+				if(consumer == null)
+					throw new DMLRuntimeException("Selected CP/FOUT upload has a foreign exact consumer: hop="
+						+ target.hop().getHopID());
+				return consumer.hop().getHopID();
+			})
+			.distinct()
+			.sorted()
+			.toList();
+		if(consumerHopIds.isEmpty())
+			throw new DMLRuntimeException("Selected CP/FOUT upload requires exact consumers: hop="
+				+ target.hop().getHopID());
+		return consumerHopIds;
 	}
 
 	private static String runtimeAnchorKey(DurableAnchorKey anchor) {
@@ -184,7 +210,7 @@ public final class ExactPlacementRegistration {
 		FederatedLocalMaterializeRegistry.clear();
 		for(RegisteredUpload upload : uploads) {
 			FederatedRefedRegistry.register(upload.scopeId(), upload.hopId(), upload.anchorHopId(),
-				upload.anchorKey());
+				upload.anchorKey(), upload.consumerHopIds());
 			FederatedFoutMaterializeRegistry.register(upload.scopeId(), upload.hopId(), upload.anchorHopId(),
 				upload.fType().name(), upload.anchorLabel(), upload.anchorKey());
 		}

@@ -18,6 +18,7 @@ import java.util.Map;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -29,12 +30,16 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.lops.Lop;
+import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.After;
@@ -132,6 +137,54 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertFalse("P4_RECOMPILE_REGION_CANNOT_EMIT_CP_FOUT",
 			fixture.analysis().occurrences().stream().anyMatch(o -> "recompile".equals(o.key().recompileContext())
 				&& selected(fixture.plan(), o.key(), ExecType.CP, FederatedOutput.FOUT)));
+	}
+
+	@Test
+	public void refedRegistryWritePreservesExactCompatibleConsumerHopIds() throws Exception {
+		PlacementEmissionTransaction.emit(fixture.program(), fixture.plan(), FailureInjector.none());
+		NeutralPlacementGraph.Node local = uniqueNode(fixture.analysis(), "S");
+		RelocationAction upload = fixture.analysis().graph().relocationActions().stream()
+			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion()))
+			.findFirst().orElseThrow();
+		long scope = fixture.analysis().occurrences().stream()
+			.filter(o -> o.key().equals(local.key()))
+			.findFirst().orElseThrow().scopeId();
+		long sourceHopId = fixture.analysis().hop(local.key()).orElseThrow().getHopID();
+		List<Long> expectedConsumerHopIds = upload.key().compatibleConsumers().stream()
+			.map(key -> fixture.analysis().hop(key).orElseThrow().getHopID())
+			.distinct().sorted().toList();
+
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(scope).get(sourceHopId);
+		Assert.assertNotNull("G007_REFED_REGISTRY_WRITE_PRESENT", spec);
+		Assert.assertEquals("G007_REFED_REGISTRY_PRESERVES_EXACT_COMPATIBLE_CONSUMERS",
+			expectedConsumerHopIds, spec.getConsumerHopIds());
+	}
+
+
+	@Test
+	public void emittedTransactionRegistryRefedLowersThroughDagGetJobsToConcreteInstruction() throws Exception {
+		PlacementEmissionTransaction.emit(fixture.program(), fixture.plan(), FailureInjector.none());
+		NeutralPlacementGraph.Node local = uniqueNode(fixture.analysis(), "S");
+		long scope = fixture.analysis().occurrences().stream()
+			.filter(o -> o.key().equals(local.key()))
+			.findFirst().orElseThrow().scopeId();
+		long sourceHopId = fixture.analysis().hop(local.key()).orElseThrow().getHopID();
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(scope).get(sourceHopId);
+		Assert.assertNotNull("G007_NORMAL_DAG_REQUIRES_REFED_REGISTRY_ENTRY", spec);
+		Assert.assertFalse("G007_NORMAL_DAG_REQUIRES_EXACT_REFED_CONSUMERS", spec.getConsumerHopIds().isEmpty());
+
+		List<String> instructions = instructionStringsFromProgram(fixture.program());
+		List<String> refedInstructions = instructions.stream()
+			.filter(instruction -> instruction.contains("fed_refed"))
+			.toList();
+
+		Assert.assertFalse("G007_TRANSACTION_REGISTRY_DAG_LOWERING_EMITS_REFED: "
+			+ instructions, refedInstructions.isEmpty());
+		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTION_USES_CONCRETE_LIVE_ANCHOR_OR_KEY: "
+			+ refedInstructions, refedInstructions.stream().anyMatch(instruction -> instruction.contains("°X·MATRIX")
+				|| (spec.getAnchorKey() != null && instruction.contains(spec.getAnchorKey()))));
+		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTIONS_MUST_NOT_SERIALIZE_NULL_ANCHOR: "
+			+ refedInstructions, refedInstructions.stream().noneMatch(instruction -> instruction.contains("null.UNKNOWN")));
 	}
 
 	@Test
@@ -284,6 +337,21 @@ public class PlacementEmissionTransactionRedTest {
 		return program;
 	}
 
+
+	private static List<String> instructionStringsFromProgram(DMLProgram program) throws Exception {
+		DMLTranslator translator = new DMLTranslator(program);
+		List<String> instructions = new ArrayList<>();
+		for (StatementBlock sb : program.getStatementBlocks()) {
+			translator.constructLops(sb);
+			Dag<Lop> dag = new Dag<>();
+			for (Lop lop : sb.getLops())
+				lop.addToDag(dag);
+			for (Instruction inst : dag.getJobs(sb, ConfigurationManager.getDMLConfig()))
+				instructions.add(inst.getInstructionString());
+		}
+		return instructions;
+	}
+
 	private static NormalizedPlannerResult wrap(NormalizedPlannerResult source, PlacementAnalysis analysis,
 		String analysisFingerprint, Map<CompiledHopKey, PlacementState> states,
 		List<RelocationActionKey> relocations, String planHash) {
@@ -327,7 +395,8 @@ public class PlacementEmissionTransactionRedTest {
 		analysis.occurrences().forEach(o -> scopes.add(o.scopeId()));
 		for(long scope : scopes) {
 			FederatedRefedRegistry.snapshot(scope).forEach((hop, spec) -> rows.add("R|" + scope + '|' + hop
-				+ "|anchor=" + spec.getAnchorHopId() + "|anchorKey=" + spec.getAnchorKey()));
+				+ "|anchor=" + spec.getAnchorHopId() + "|anchorKey=" + spec.getAnchorKey()
+				+ "|consumers=" + spec.getConsumerHopIds()));
 			FederatedFoutMaterializeRegistry.snapshot(scope).forEach((hop, spec) -> rows.add("F|" + scope + '|'
 				+ hop + "|anchor=" + spec.getAnchorHopId() + "|type=" + spec.getFTypeHint() + "|label="
 				+ spec.getAnchorLabel() + "|anchorKey=" + spec.getAnchorKey()));
@@ -339,7 +408,7 @@ public class PlacementEmissionTransactionRedTest {
 	}
 
 	private static void seedRegistries() {
-		FederatedRefedRegistry.register(SEEDED_SCOPE, 11L, 12L, "seed-anchor-key");
+		FederatedRefedRegistry.register(SEEDED_SCOPE, 11L, 12L, "seed-anchor-key", List.of(13L));
 		FederatedFoutMaterializeRegistry.register(SEEDED_SCOPE, 11L, 12L, "ROW", "seed", "seed-anchor-key");
 		FederatedLocalMaterializeRegistry.register(SEEDED_SCOPE, 13L, List.of(14L), "ROW", "seed-local");
 	}

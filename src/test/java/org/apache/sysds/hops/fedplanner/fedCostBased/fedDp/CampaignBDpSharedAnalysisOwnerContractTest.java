@@ -795,7 +795,8 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 		FederatedPlannerUtils.registerFedInitVar(SENTINEL_VAR, FType.ROW, SENTINEL_SIGNATURE);
 		FederatedPlannerUtils.registerFedAnchorKey(SENTINEL_VAR, SENTINEL_ANCHOR);
 		FederatedPlannerUtils.registerPlannerRecompileState(recompileSentinel, ExecType.CP, FederatedOutput.LOUT);
-		FederatedRefedRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_ANCHOR_HOP, SENTINEL_ANCHOR);
+		FederatedRefedRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_ANCHOR_HOP, SENTINEL_ANCHOR,
+			java.util.List.of(SENTINEL_HOP + 1));
 		FederatedFoutMaterializeRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_ANCHOR_HOP,
 			FType.ROW.name(), SENTINEL_VAR, SENTINEL_ANCHOR);
 		FederatedLocalMaterializeRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP,

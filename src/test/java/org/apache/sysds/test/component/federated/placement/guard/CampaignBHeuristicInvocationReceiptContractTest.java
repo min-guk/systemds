@@ -445,7 +445,7 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 			scopes.add(scope);
 			RegistryState original = RegistryState.capture(scopes);
 			try {
-				FederatedRefedRegistry.register(scope, 11L, 101L, "anchor:row");
+				FederatedRefedRegistry.register(scope, 11L, 101L, "anchor:row", java.util.List.of(12L));
 				FederatedFoutMaterializeRegistry.register(scope, 12L, 102L, "ROW",
 					"row-anchor", "anchor:row");
 				FederatedLocalMaterializeRegistry.register(scope, 13L, List.of(14L, 15L),
@@ -543,7 +543,8 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 			for(long scope : scopes) {
 				FederatedRefedRegistry.snapshot(scope).keySet().forEach(hop -> FederatedRefedRegistry.remove(scope, hop));
 				refed.getOrDefault(scope, Map.of()).forEach((hop, spec) ->
-					FederatedRefedRegistry.register(scope, hop, spec.getAnchorHopId(), spec.getAnchorKey()));
+					FederatedRefedRegistry.register(scope, hop, spec.getAnchorHopId(), spec.getAnchorKey(),
+						spec.getConsumerHopIds()));
 				FederatedFoutMaterializeRegistry.snapshot(scope).keySet()
 					.forEach(hop -> FederatedFoutMaterializeRegistry.remove(scope, hop));
 				fout.getOrDefault(scope, Map.of()).forEach((hop, spec) ->

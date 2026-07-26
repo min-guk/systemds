@@ -17,6 +17,8 @@ import java.util.Map;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.R4ExactPrivateCostDpFixtures;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.R4ExactPrivateCostDpFixtures.Fixture;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.R4ExactPrivateCostMinstFixtures;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.ObligationKind;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
@@ -53,8 +55,22 @@ public class R4ExactPrivateCostFixtureLibraryTest {
 		assertField("MS03_CONSUMERS", "2",
 			fixtures.get("C2-MS-03-SHARED-DOWNLOAD").facts().get("consumerCount"));
 		assertTrue(fixtures.get("C2-MS-03-SHARED-DOWNLOAD").obligations().get(0).startsWith("D:"));
-		assertTrue(fixtures.get("C2-MS-04-ANCHORED-UPLOAD").obligations().get(0).startsWith("U:"));
-		assertEquals(2, fixtures.get("C2-MS-04-ANCHORED-UPLOAD").registries().size());
+		var upload = fixtures.get("C2-MS-04-ANCHORED-UPLOAD");
+		assertTrue(upload.obligations().get(0).startsWith("U:"));
+		assertEquals(2, upload.registries().size());
+		var obligation = upload.selectedObligationObjects().stream()
+			.map(org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTGraph.SelectedObligation.class::cast)
+			.filter(candidate -> candidate.getKind() == ObligationKind.U).findFirst().orElseThrow();
+		var refed = upload.registryObjects().stream().filter(FederatedRefedRegistry.AnchorSpec.class::isInstance)
+			.map(FederatedRefedRegistry.AnchorSpec.class::cast).findFirst().orElseThrow();
+		assertEquals("MS04 REFED registry must preserve the selected exact consumer IDs",
+			obligation.getConsumerHopIds(), refed.getConsumerHopIds());
+		var exactChild = upload.producerGraph().getHopRef(obligation.getChildHopId());
+		assertEquals("MS04 must select exactly one direct matrix consumer", 1, refed.getConsumerHopIds().size());
+		var exactConsumer = upload.producerGraph().getHopRef(refed.getConsumerHopIds().get(0));
+		assertTrue("MS04 selected consumer must be matrix-valued", exactConsumer.getDataType().isMatrix());
+		assertTrue("MS04 selected consumer must directly consume the exact child",
+			exactConsumer.getInput().contains(exactChild));
 		assertField("MS05_MISSING_ANCHOR", "CP/LOUT",
 			fixtures.get("C2-MS-05-MISSING-ANCHOR").assignments().get("candidate"));
 		Map<String,String> quartet = fixtures.get("C2-MS-06-STATE-QUARTET").assignments();

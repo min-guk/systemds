@@ -377,7 +377,7 @@ public class CampaignBG014LocalMaterializationAuthorityRedTest {
 	}
 
 	private static void seedRegistries() {
-		FederatedRefedRegistry.register(SEED_SCOPE, 11L, 12L, "seed-anchor");
+		FederatedRefedRegistry.register(SEED_SCOPE, 11L, 12L, "seed-anchor", java.util.List.of(13L));
 		FederatedFoutMaterializeRegistry.register(SEED_SCOPE, 13L, 14L, "ROW", "seed", "seed-anchor");
 		FederatedLocalMaterializeRegistry.register(SEED_SCOPE, 15L, List.of(16L), "COL", "seed-local");
 	}

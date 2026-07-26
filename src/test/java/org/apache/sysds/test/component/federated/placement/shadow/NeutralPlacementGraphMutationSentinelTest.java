@@ -134,7 +134,7 @@ public class NeutralPlacementGraphMutationSentinelTest {
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
 		FederatedLocalMaterializeRegistry.clear();
-		FederatedRefedRegistry.register(SENTINEL_SCOPE, 11L, 101L, "anchor:row");
+		FederatedRefedRegistry.register(SENTINEL_SCOPE, 11L, 101L, "anchor:row", java.util.List.of(12L));
 		FederatedFoutMaterializeRegistry.register(SENTINEL_SCOPE, 12L, 102L, "ROW", "row-anchor", "anchor:row");
 		FederatedLocalMaterializeRegistry.register(SENTINEL_SCOPE, 13L, List.of(14L, 15L), "ROW", "test-sentinel");
 	}

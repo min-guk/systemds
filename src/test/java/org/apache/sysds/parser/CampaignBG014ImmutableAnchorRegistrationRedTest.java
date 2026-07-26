@@ -389,6 +389,7 @@ public class CampaignBG014ImmutableAnchorRegistrationRedTest {
 		Assert.assertEquals(label + "_ANCHOR_LABEL", fixture.anchor().getName(), upload.anchorLabel());
 		Assert.assertEquals(label + "_MUTABLE_GLOBAL_OVERRULED_ANALYSIS", fixture.anchorKey(), upload.anchorKey());
 		Assert.assertNotEquals(label + "_POISON_ACCEPTED", POISON_KEY, upload.anchorKey());
+		Assert.assertFalse(label + "_EXACT_CONSUMERS_MISSING", upload.consumerHopIds().isEmpty());
 	}
 
 	private static void assertCopiedAndForeignAnalysisRejectWithoutRegistryMutation(Fixture fixture,

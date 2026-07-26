@@ -21,8 +21,10 @@ package org.apache.sysds.lops.compile;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeSet;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -60,13 +62,52 @@ public final class FederatedRefedRegistry {
 		}
 	}
 
-	public static void register(long sbId, long hopId, long anchorHopId) {
-		register(sbId, hopId, anchorHopId, null);
+	public static void register(long sbId, long hopId, long anchorHopId, String anchorKey, List<Long> consumerHopIds) {
+		AnchorSpec spec = new AnchorSpec(anchorHopId, anchorKey, consumerHopIds);
+		REFED_ANCHORS.compute(sbId, (scopeId, existingScope) -> {
+			Map<Long, AnchorSpec> scope = existingScope != null ? existingScope : new ConcurrentHashMap<>();
+			scope.compute(hopId, (registeredHopId, existingSpec) ->
+				existingSpec == null ? spec : mergeCompatible(existingSpec, spec, sbId, hopId));
+			return scope;
+		});
 	}
 
-	public static void register(long sbId, long hopId, long anchorHopId, String anchorKey) {
-		REFED_ANCHORS.computeIfAbsent(sbId, k -> new ConcurrentHashMap<>())
-			.put(hopId, new AnchorSpec(anchorHopId, anchorKey));
+	private static AnchorSpec mergeCompatible(AnchorSpec existing, AnchorSpec incoming, long sbId, long hopId) {
+		long existingAnchorHopId = existing.getAnchorHopId();
+		long incomingAnchorHopId = incoming.getAnchorHopId();
+		String existingAnchorKey = normalizeAnchorKey(existing.getAnchorKey());
+		String incomingAnchorKey = normalizeAnchorKey(incoming.getAnchorKey());
+		if(existingAnchorKey != null && incomingAnchorKey != null && !existingAnchorKey.equals(incomingAnchorKey))
+			throw conflictingAuthority(sbId, hopId, existing, incoming);
+		String mergedAnchorKey = existingAnchorKey != null ? existingAnchorKey : incomingAnchorKey;
+		boolean durableKeyProvesEquivalence = isDurableAnchorKey(existingAnchorKey)
+			&& existingAnchorKey.equals(incomingAnchorKey);
+		if(!durableKeyProvesEquivalence && existingAnchorHopId >= 0 && incomingAnchorHopId >= 0
+			&& existingAnchorHopId != incomingAnchorHopId)
+			throw conflictingAuthority(sbId, hopId, existing, incoming);
+		long mergedAnchorHopId;
+		if(durableKeyProvesEquivalence && existingAnchorHopId != incomingAnchorHopId)
+			mergedAnchorHopId = -1L;
+		else
+			mergedAnchorHopId = existingAnchorHopId >= 0 ? existingAnchorHopId : incomingAnchorHopId;
+		TreeSet<Long> mergedConsumers = new TreeSet<>(existing.getConsumerHopIds());
+		mergedConsumers.addAll(incoming.getConsumerHopIds());
+		return new AnchorSpec(mergedAnchorHopId, mergedAnchorKey, List.copyOf(mergedConsumers));
+	}
+
+	private static IllegalArgumentException conflictingAuthority(long sbId, long hopId,
+		AnchorSpec existing, AnchorSpec incoming) {
+		return new IllegalArgumentException("conflicting fed_refed anchor authority for scope=" + sbId
+			+ " hop=" + hopId + " existing=(" + existing.getAnchorHopId() + "," + existing.getAnchorKey()
+			+ ") incoming=(" + incoming.getAnchorHopId() + "," + incoming.getAnchorKey() + ")");
+	}
+
+	private static String normalizeAnchorKey(String anchorKey) {
+		return anchorKey == null || anchorKey.isBlank() ? null : anchorKey;
+	}
+
+	private static boolean isDurableAnchorKey(String anchorKey) {
+		return anchorKey != null && !anchorKey.startsWith("VAR:");
 	}
 
 	public static void remove(long sbId, long hopId) {
@@ -122,16 +163,31 @@ public final class FederatedRefedRegistry {
 
 	private static AnchorSpec copy(AnchorSpec spec) {
 		Objects.requireNonNull(spec, "anchorSpec");
-		return new AnchorSpec(spec.getAnchorHopId(), spec.getAnchorKey());
+		return new AnchorSpec(spec.getAnchorHopId(), spec.getAnchorKey(), spec.getConsumerHopIds());
+	}
+
+	private static List<Long> immutableConsumerIds(List<Long> consumerHopIds) {
+		if (consumerHopIds == null || consumerHopIds.isEmpty())
+			throw new IllegalArgumentException("fed_refed requires at least one exact selected consumer hop id");
+		for (Long consumerHopId : consumerHopIds) {
+			if (consumerHopId == null)
+				throw new IllegalArgumentException("fed_refed consumer hop ids must not contain null");
+		}
+		return consumerHopIds.stream()
+			.distinct()
+			.sorted()
+			.toList();
 	}
 
 	public static final class AnchorSpec {
 		private final long _anchorHopId;
 		private final String _anchorKey;
+		private final List<Long> _consumerHopIds;
 
-		public AnchorSpec(long anchorHopId, String anchorKey) {
+		public AnchorSpec(long anchorHopId, String anchorKey, List<Long> consumerHopIds) {
 			_anchorHopId = anchorHopId;
 			_anchorKey = anchorKey;
+			_consumerHopIds = immutableConsumerIds(consumerHopIds);
 		}
 
 		public long getAnchorHopId() {
@@ -142,18 +198,23 @@ public final class FederatedRefedRegistry {
 			return _anchorKey;
 		}
 
+		public List<Long> getConsumerHopIds() {
+			return _consumerHopIds;
+		}
+
 		@Override
 		public boolean equals(Object obj) {
 			if(this == obj)
 				return true;
 			if(!(obj instanceof AnchorSpec that))
 				return false;
-			return _anchorHopId == that._anchorHopId && Objects.equals(_anchorKey, that._anchorKey);
+			return _anchorHopId == that._anchorHopId && Objects.equals(_anchorKey, that._anchorKey)
+				&& Objects.equals(_consumerHopIds, that._consumerHopIds);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(_anchorHopId, _anchorKey);
+			return Objects.hash(_anchorHopId, _anchorKey, _consumerHopIds);
 		}
 	}
 }

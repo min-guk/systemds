@@ -258,7 +258,7 @@ public final class AnchorProvenanceLifecycleCapture {
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
 		FederatedLocalMaterializeRegistry.clear();
-		FederatedRefedRegistry.register(scope, hop, anchor, "anchor-key");
+		FederatedRefedRegistry.register(scope, hop, anchor, "anchor-key", java.util.List.of(hop + 1));
 		FederatedFoutMaterializeRegistry.register(scope, hop, anchor, "ROW", "anchor", "anchor-key");
 		FederatedLocalMaterializeRegistry.register(scope, hop, List.of(anchor), "ROW", "test-only");
 		var refedSnapshot = FederatedRefedRegistry.snapshot(scope);

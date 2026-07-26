@@ -124,7 +124,8 @@ public class CampaignBG013TypedOwnershipCompatibilityRedTest {
 		clearPublicState();
 		FederatedPlannerUtils.registerFedAnchorKey("G013_SENTINEL", "anchor:G013");
 		seedCpfoutAnchorCache();
-		FederatedRefedRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_HOP + 1, "g013-anchor");
+		FederatedRefedRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_HOP + 1, "g013-anchor",
+			java.util.List.of(SENTINEL_HOP + 2));
 		FederatedFoutMaterializeRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, SENTINEL_HOP + 1,
 			FType.ROW.name(), "g013", "g013-anchor");
 		FederatedLocalMaterializeRegistry.register(SENTINEL_SCOPE, SENTINEL_HOP, List.of(SENTINEL_HOP + 2),

@@ -470,8 +470,9 @@ public final class PlacementEmissionTransaction {
 					fType, key.durableAnchor().placementId(), anchorKey);
 			}
 			else {
+				List<Long> consumerIds = consumers.stream().map(o -> o.hop().getHopID()).distinct().sorted().toList();
 				write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(), anchor.hop().getHopID(),
-					anchorKey);
+					anchorKey, consumerIds);
 			}
 			if(!slots.add(write.slot()))
 				throw new PlacementEmissionException("Multiple relocations target one registry slot");
@@ -565,9 +566,10 @@ public final class PlacementEmissionTransaction {
 
 	private record RegistryWrite(RegistrySlot slot, long anchorHopId, List<Long> consumerHopIds,
 		String fType, String label, String anchorKey, String reason) {
-		private static RegistryWrite refed(long scopeId, long hopId, long anchorHopId, String anchorKey) {
+		private static RegistryWrite refed(long scopeId, long hopId, long anchorHopId, String anchorKey,
+			List<Long> consumers) {
 			return new RegistryWrite(new RegistrySlot(RegistryKind.REFED, scopeId, hopId), anchorHopId,
-				List.of(), null, null, anchorKey, null);
+				List.copyOf(consumers), null, null, anchorKey, null);
 		}
 
 		private static RegistryWrite fout(long scopeId, long hopId, long anchorHopId, String fType,
@@ -585,7 +587,7 @@ public final class PlacementEmissionTransaction {
 		private void apply() {
 			switch(slot.kind()) {
 				case REFED -> FederatedRefedRegistry.register(slot.scopeId(), slot.hopId(), anchorHopId,
-					anchorKey);
+					anchorKey, consumerHopIds);
 				case FOUT -> FederatedFoutMaterializeRegistry.register(slot.scopeId(), slot.hopId(),
 					anchorHopId, fType, label, anchorKey);
 				case LOCAL -> FederatedLocalMaterializeRegistry.register(slot.scopeId(), slot.hopId(),

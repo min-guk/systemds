@@ -15,11 +15,13 @@ import java.util.stream.Collectors;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.LiteralOp;
+import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
@@ -252,7 +254,8 @@ public final class R4ExactPrivateCostMinstFixtures {
 			OpOpData.TRANSIENTREAD, null, 100, 100, 10000, 1000);
 		ExecPlacementCaps cc=new ExecPlacementCaps(); cc.allowFED_LOUT=false; cc.allowFED_FOUT=false;
 		Vertex cv=vertex(child,cc,0,6,4); graph.addVertex(cv); graph.setVertexCost(cv); graph.addExecPlacementResultEdge(cv);
-		Hop fed=new LiteralOp(21L); ExecPlacementCaps fc=new ExecPlacementCaps(); fc.allowCP_LOUT=false; fc.allowCP_FOUT=false;
+		Hop fed=new UnaryOp("fed_consumer",DataType.MATRIX,ValueType.FP64,OpOp1.EXP,child);
+		ExecPlacementCaps fc=new ExecPlacementCaps(); fc.allowCP_LOUT=false; fc.allowCP_FOUT=false;
 		Vertex fv=vertex(fed,fc,100,0,0); graph.addVertex(fv); graph.setVertexCost(fv);
 		graph.addParentChildNetEdge(cv, child.getHopID(), fv, fed.getHopID(), true);
 		Hop local=new LiteralOp(22L); ExecPlacementCaps lc=new ExecPlacementCaps(); lc.allowFED_LOUT=false; lc.allowFED_FOUT=false;
@@ -264,8 +267,11 @@ public final class R4ExactPrivateCostMinstFixtures {
 		graph.setVertexCost(cpFoutVertex); graph.addExecPlacementResultEdge(cpFoutVertex);
 		weighted(graph.getGraph(),SOURCE,FederatedPlanMinSTPlanner.placementId(cpFout.getHopID()),1000);
 		List<Hop> hops=List.of(child,fed,local,cpFout); String[] names={"child","fedConsumer","localConsumer","cpFout"};
-		PlacementAnalysis analysis=analysis(hops);
-		completeOwnerVertices(graph, analysis);
+		// The exact selected consumer owns child as an input. Analyze the consumer root,
+		// not child again as a duplicate root occurrence.
+		List<Hop> analysisRoots=List.of(fed,local,cpFout);
+		PlacementAnalysis selectionAnalysis=analysis(analysisRoots);
+		completeOwnerVertices(graph, selectionAnalysis);
 		Map<Long,FType> fTypes=new LinkedHashMap<>(); fTypes.put(cpFout.getHopID(),FType.BROADCAST);
 		graph.getOptimalPlan(); registerSelectedObligations(graph, fTypes);
 		var obligation=graph.getSelectedObligations().stream().filter(o->o.getKind()==ObligationKind.U).findFirst().orElseThrow();
@@ -275,6 +281,12 @@ public final class R4ExactPrivateCostMinstFixtures {
 		if(refed==null || fout==null) throw new IllegalStateException("missing selected U/CP-FOUT registry refed="
 			+(refed!=null)+" fout="+(fout!=null)+" cpState="+cpFout.getForcedExecType()+"/"+cpFout.getFederatedOutput()
 			+" keys="+FederatedFoutMaterializeRegistry.snapshot(-1L).keySet());
+		if(!fed.getInput().contains(child) || !refed.getConsumerHopIds().equals(List.of(fed.getHopID()))
+			|| !obligation.getConsumerHopIds().equals(refed.getConsumerHopIds()))
+			throw new IllegalStateException("selected U registry must name the exact direct matrix consumer");
+		// Selection stamps the fixture Hops. Bind the retained immutable owner only after
+		// those planned states and registry receipts are final.
+		PlacementAnalysis analysis=analysis(analysisRoots);
 		return new Fixture("C2-MS-04-ANCHORED-UPLOAD",roles(hops,names),canonicalAliases(analysis,hops,names),
 			Map.of("child","CP/LOUT","fedConsumer","FED/FOUT","localConsumer","CP/LOUT","cpFout","CP/FOUT"),
 			List.of("U:child->"+obligation.getConsumerHopIds().size()),

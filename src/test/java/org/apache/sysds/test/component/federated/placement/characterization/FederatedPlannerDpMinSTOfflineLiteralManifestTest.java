@@ -64,7 +64,7 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 
 	private static String capture() throws Exception {
 		String spec = resource(SPEC);
-		assertEquals("b8e8847b8368f8e558be5bd6bed93848470eeab33c72f5b81b7df63ee5144469",
+		assertEquals("d6b14149a4413c82b5c62f04bcbef4043380cb931b916a0c1196d45e0f806e4f",
 			sha256(spec));
 		List<String> rows = new ArrayList<>();
 		rows.add("SCHEMA|g004b-c2-offline-selected-plan-v1");

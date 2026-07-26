@@ -580,7 +580,7 @@ public final class FederatedRefedPolicy {
 							} else {
 								// Register materialization for the TWrite itself (not the input hop),
 								// so the lop compiler can wire the federated value into the write.
-								registerCpfoutWithSelection(hop, fTypeMap, sbId, selection);
+								registerCpfoutWithSelection(hop, fTypeMap, sbId, selection, List.of());
 							}
 						}
 					}
@@ -861,7 +861,7 @@ public final class FederatedRefedPolicy {
 			// while enforcing upstream transient-read/fed-init feasibility.
 			hop.setForcedExecType(ExecType.CP);
 			hop.setFederatedOutput(FederatedOutput.FOUT);
-			validateAndRegisterRequired(hop, fTypeMap, sbId, selection);
+			validateAndRegisterRequired(hop, fTypeMap, sbId, selection, consumers);
 		}
 		finally {
 			hop.setForcedExecType(oldExec);
@@ -947,7 +947,7 @@ public final class FederatedRefedPolicy {
 			parent.setForcedExecType(ExecType.FED);
 			if (fTypeMap != null)
 				fTypeMap.put(parent.getHopID(), hopType);
-			registerCpfoutWithSelection(parent, fTypeMap, sbId, selection);
+			registerCpfoutWithSelection(parent, fTypeMap, sbId, selection, List.of());
 			return true;
 		}
 		return false;
@@ -1038,7 +1038,7 @@ public final class FederatedRefedPolicy {
 					fTypeMap.put(tWrite.getHopID(), fType);
 			}
 			long tWriteSbId = resolveHopSbId(tWrite.getHopID(), sbId);
-			registerCpfoutWithSelection(tWrite, fTypeMap, tWriteSbId, selection);
+			registerCpfoutWithSelection(tWrite, fTypeMap, tWriteSbId, selection, List.of());
 		}
 
 		tRead.setForcedExecType(ExecType.FED);
@@ -1453,7 +1453,9 @@ public final class FederatedRefedPolicy {
 				changed = true;
 			}
 			else if (!anchorHopRuntimeFed && usableAnchorKey) {
-				FederatedRefedRegistry.register(sbId, entry.getKey(), -1, anchorKey);
+				FederatedRefedRegistry.remove(sbId, entry.getKey());
+				FederatedRefedRegistry.register(sbId, entry.getKey(), -1, anchorKey,
+					spec.getConsumerHopIds());
 				changed = true;
 			}
 		}
@@ -1723,6 +1725,14 @@ public final class FederatedRefedPolicy {
 			InputRequirement req = resolveTargetRequirement(hop, input, i, fTypeMap, blockAnchor);
 			boolean runtimeFed = isRuntimeFederatedInput(input, materialize, refed);
 			boolean sourceFed = runtimeFed && isRuntimeFederatedInput(input, null, null);
+			FederatedRefedRegistry.AnchorSpec registeredRefed = refed.get(input.getHopID());
+			if (req != InputRequirement.OPTIONAL && registeredRefed != null) {
+				// A prior traversal may already have established this producer's upload authority.
+				// Preserve the newly encountered exact required edge instead of treating the existing
+				// runtime-federated representation as a reason to skip registration.
+				FederatedRefedRegistry.register(sbId, input.getHopID(), registeredRefed.getAnchorHopId(),
+					registeredRefed.getAnchorKey(), List.of(hop.getHopID()));
+			}
 				if (req == InputRequirement.OPTIONAL) {
 					if (runtimeFed) {
 						// Do not use planned CP->FOUT candidates as anchors; only accept true runtime
@@ -1819,7 +1829,7 @@ public final class FederatedRefedPolicy {
 				else if (!anchorsCompatible(requiredAnchor.key, selection.key))
 				return false;
 			try {
-				validateAndRegisterRequired(input, fTypeMap, sbId, selection);
+				validateAndRegisterRequired(input, fTypeMap, sbId, selection, List.of(hop));
 			}
 			catch (DMLRuntimeException ex) {
 				return false;
@@ -2282,10 +2292,15 @@ public final class FederatedRefedPolicy {
 	 * consume them locally (e.g., broadcast/metadata path) instead of eagerly materializing them.</p>
 	 */
 	private static boolean requiresCpfoutForFedParents(Hop hop, java.util.Map<Long, FType> fTypeMap) {
+		return !requiredFederatedConsumers(hop, fTypeMap).isEmpty();
+	}
+
+	private static List<Hop> requiredFederatedConsumers(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
-			return false;
+			return List.of();
 		if (hop.getDataType() == null || !hop.getDataType().isMatrix())
-			return false;
+			return List.of();
+		List<Hop> consumers = new ArrayList<>();
 		for (Hop parent : hop.getParent()) {
 			if (parent == null)
 				continue;
@@ -2299,20 +2314,23 @@ public final class FederatedRefedPolicy {
 			List<Hop> inputs = parent.getInput();
 			if (inputs == null)
 				continue;
-			int targetIndex = -1;
+			boolean required = false;
 			for (int i = 0; i < inputs.size(); i++) {
-				if (inputs.get(i) == hop) {
-					targetIndex = i;
+				if (inputs.get(i) != hop)
+					continue;
+				InputRequirement req = resolveTargetRequirement(parent, hop, i, fTypeMap, null);
+				if (req == InputRequirement.REQUIRED) {
+					required = true;
 					break;
 				}
 			}
-			if (targetIndex < 0)
-				continue;
-			InputRequirement req = resolveTargetRequirement(parent, hop, targetIndex, fTypeMap, null);
-			if (req == InputRequirement.REQUIRED)
-				return true;
+			if (required)
+				consumers.add(parent);
 		}
-		return false;
+		return consumers.stream()
+			.distinct()
+			.sorted(java.util.Comparator.comparingLong(Hop::getHopID))
+			.toList();
 	}
 
 	private static void registerTransientWriteAnchor(DataOp tWrite, java.util.Map<Long, FType> fTypeMap,
@@ -3380,16 +3398,16 @@ public final class FederatedRefedPolicy {
 					return;
 				}
 			}
-			registerCpfoutWithSelection(hop, fTypeMap, sbId, effectiveSelection);
+			registerCpfoutWithSelection(hop, fTypeMap, sbId, effectiveSelection,
+				requiredFederatedConsumers(hop, fTypeMap));
 		}
 
 	private static void validateAndRegisterRequired(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
-			AnchorSelection selection) {
+			AnchorSelection selection, List<Hop> selectedConsumers) {
 		if (hop == null)
 			return;
 		long scopeId = (sbId >= 0) ? sbId : DEFAULT_SBID;
-		if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID())
-			|| FederatedRefedRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
+		if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
 			return;
 		if (isHeuristicDemotedHop(hop))
 			throw new DMLRuntimeException("Heuristic-demoted vector must remain local (no CP->FOUT refed): hop "
@@ -3424,7 +3442,7 @@ public final class FederatedRefedPolicy {
 					throw new DMLRuntimeException("CP->FOUT refed requires a federated anchor for hop "
 						+ hop.getHopID() + " (" + hop.getOpString() + ")");
 			}
-			registerCpfoutWithSelection(hop, fTypeMap, sbId, effectiveSelection);
+			registerCpfoutWithSelection(hop, fTypeMap, sbId, effectiveSelection, selectedConsumers);
 		}
 
 	private static long resolveHopSbId(long hopId, long fallback) {
@@ -3453,7 +3471,7 @@ public final class FederatedRefedPolicy {
 	}
 
 	private static void registerCpfoutWithSelection(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
-			AnchorSelection selection) {
+			AnchorSelection selection, List<Hop> selectedConsumers) {
 		if (hop == null)
 			return;
 
@@ -3664,7 +3682,8 @@ public final class FederatedRefedPolicy {
 
 			if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
 				return;
-			FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey);
+			FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey,
+				exactRefedConsumerHopIds(hop, selectedConsumers));
 			return;
 		}
 
@@ -3701,7 +3720,24 @@ public final class FederatedRefedPolicy {
 		if (LOG.isDebugEnabled())
 			LOG.debug("CP->FOUT decision: REFED hopID=" + hop.getHopID() + " op=" + hop.getOpString()
 				+ " anchor=" + anchorHop.getHopID());
-		FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey);
+		FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey,
+			exactRefedConsumerHopIds(hop, selectedConsumers));
+	}
+
+	private static List<Long> exactRefedConsumerHopIds(Hop producer, List<Hop> selectedConsumers) {
+		if (producer == null || selectedConsumers == null || selectedConsumers.isEmpty())
+			throw new DMLRuntimeException("CP->FOUT refed requires exact selected consumers for hop "
+				+ (producer != null ? producer.getHopID() : -1));
+		List<Long> consumerHopIds = new ArrayList<>();
+		for (Hop consumer : selectedConsumers) {
+			if (consumer == null || consumer.getInput() == null
+				|| consumer.getInput().stream().noneMatch(input -> input == producer))
+				throw new DMLRuntimeException("CP->FOUT refed selected consumer is not a direct producer consumer: "
+					+ "producer=" + producer.getHopID() + " consumer="
+					+ (consumer != null ? consumer.getHopID() : -1));
+			consumerHopIds.add(consumer.getHopID());
+		}
+		return consumerHopIds.stream().distinct().sorted().toList();
 	}
 
 	private static AnchorSelection selectAnchor(Hop hop, java.util.Map<Long, FType> fTypeMap,

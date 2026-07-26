@@ -26,6 +26,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -137,6 +138,78 @@ public class FederatedRefedPolicyTest {
 		Map<Long, FederatedRefedRegistry.AnchorSpec> snapshot = FederatedRefedRegistry.snapshot(-1);
 		assertTrue("Expected refed registry entry for target hop", snapshot.containsKey(target.getHopID()));
 		assertEquals("Anchor hop mismatch in registry", anchor.getHopID(), snapshot.get(target.getHopID()).getAnchorHopId());
+		assertEquals("Policy registry must preserve the exact FED consumer",
+			List.of(parent.getHopID()), snapshot.get(target.getHopID()).getConsumerHopIds());
+	}
+
+	@Test
+	public void testSequentialCompatibleRefedRegistrationsMergeExactConsumers() {
+		FederatedRefedRegistry.register(-1L, 100L, 200L, "fedinit://workers|ROW", List.of(301L));
+		FederatedRefedRegistry.register(-1L, 100L, 200L, "fedinit://workers|ROW", List.of(302L, 301L));
+
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(-1L).get(100L);
+		assertEquals("Compatible repeated registration must preserve anchor hop", 200L, spec.getAnchorHopId());
+		assertEquals("Compatible repeated registration must preserve durable anchor key",
+			"fedinit://workers|ROW", spec.getAnchorKey());
+		assertEquals("Compatible repeated registration must union exact consumers",
+			List.of(301L, 302L), spec.getConsumerHopIds());
+	}
+
+	@Test
+	public void testEquivalentDurableAuthorityMergesConsumersWithoutStaleHopOverride() {
+		FederatedRefedRegistry.register(-1L, 100L, 200L, "fedinit://workers|ROW", List.of(301L));
+		FederatedRefedRegistry.register(-1L, 100L, 201L, "fedinit://workers|ROW", List.of(302L));
+
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(-1L).get(100L);
+		assertEquals("Equivalent durable authority must discard disagreeing live Hop-id hints", -1L,
+			spec.getAnchorHopId());
+		assertEquals("Equivalent durable authority must merge exact consumers", List.of(301L, 302L),
+			spec.getConsumerHopIds());
+	}
+
+	@Test
+	public void testSequentialPolicyRegistrationsMergeNewExactConsumer() {
+		DataOp localLhs = createLocalMatrix("L", 10, 10);
+		DataOp localRhs = createLocalMatrix("R", 10, 10);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(10);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		BinaryOp firstParent = HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS);
+		firstParent.setForcedExecType(ExecType.FED);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(List.of(firstParent), true, fTypeMap, -1L);
+		assertEquals(List.of(firstParent.getHopID()), FederatedRefedRegistry.snapshot(-1L)
+			.get(target.getHopID()).getConsumerHopIds());
+
+		BinaryOp secondParent = HopRewriteUtils.createBinary(target, anchor, OpOp2.MINUS);
+		secondParent.setForcedExecType(ExecType.FED);
+		FederatedRefedPolicy.registerFromHops(List.of(secondParent), false, fTypeMap, -1L);
+
+		assertEquals("Repeated policy registration must merge the newly selected exact consumer",
+			List.of(firstParent.getHopID(), secondParent.getHopID()).stream().sorted().toList(),
+			FederatedRefedRegistry.snapshot(-1L).get(target.getHopID()).getConsumerHopIds());
+	}
+
+	@Test
+	public void testSequentialConflictingRefedRegistrationFailsWithoutMutation() {
+		FederatedRefedRegistry.register(-1L, 100L, 200L, "fedinit://workers-a|ROW", List.of(301L));
+		Map<Long, FederatedRefedRegistry.AnchorSpec> before = FederatedRefedRegistry.snapshot(-1L);
+
+		try {
+			FederatedRefedRegistry.register(-1L, 100L, 201L, "fedinit://workers-b|ROW", List.of(302L));
+			throw new AssertionError("Expected conflicting repeated anchor authority to fail closed");
+		}
+		catch (IllegalArgumentException ex) {
+			assertTrue("Expected anchor-authority conflict: " + ex.getMessage(),
+				ex.getMessage().contains("conflicting fed_refed anchor authority"));
+		}
+		assertEquals("Rejected conflicting registration must not mutate registry", before,
+			FederatedRefedRegistry.snapshot(-1L));
 	}
 
 	@Test
@@ -441,6 +514,9 @@ public class FederatedRefedPolicyTest {
 		fTypeMap.put(anchor.getHopID(), FType.ROW);
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent, cpParent), true, fTypeMap, -1);
+		assertEquals("Policy registry must select only the FED parent",
+			List.of(fedParent.getHopID()), FederatedRefedRegistry.snapshot(-1)
+				.get(target.getHopID()).getConsumerHopIds());
 		Lop fedLop = fedParent.constructLops();
 		Lop cpLop = cpParent.constructLops();
 		Lop targetLop = target.getLops();

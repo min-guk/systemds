@@ -307,7 +307,7 @@ public class PlacementEmissionDerivedAuthorityRedTest {
 	}
 
 	private static void seedRegistries() {
-		FederatedRefedRegistry.register(9001L, 11L, 12L, "seed-anchor");
+		FederatedRefedRegistry.register(9001L, 11L, 12L, "seed-anchor", java.util.List.of(13L));
 		FederatedFoutMaterializeRegistry.register(9002L, 21L, 22L, "ROW", "seed", "seed-anchor");
 		FederatedLocalMaterializeRegistry.register(9003L, 31L, List.of(32L), "ROW", "seed");
 	}

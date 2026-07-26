@@ -119,7 +119,7 @@ public class PlacementAnalysisContractTest {
 		FederatedFoutMaterializeRegistry.clear();
 		FederatedLocalMaterializeRegistry.clear();
 		try {
-			FederatedRefedRegistry.register(99001L, 11L, 101L, "anchor:row");
+			FederatedRefedRegistry.register(99001L, 11L, 101L, "anchor:row", java.util.List.of(12L));
 			FederatedFoutMaterializeRegistry.register(99001L, 12L, 102L, "ROW", "row-anchor", "anchor:row");
 			FederatedLocalMaterializeRegistry.register(99001L, 13L, List.of(14L, 15L), "ROW", "sentinel");
 			String before = registryFingerprint();

@@ -154,6 +154,7 @@ public class CampaignBG014ExactOccurrenceRegistrationRedTest {
 			Assert.assertEquals("G014_RED1_FTYPE_" + i, FType.ROW, upload.fType());
 			Assert.assertEquals("G014_RED1_ANALYSIS_RUNTIME_AUTHORITY_" + i, runtimeKey(durable), upload.anchorKey());
 			Assert.assertNotEquals("G014_RED1_MUTABLE_GLOBAL_OVERRULED_ANALYSIS_" + i, POISON, upload.anchorKey());
+			Assert.assertFalse("G014_RED1_EXACT_CONSUMERS_MISSING_" + i, upload.consumerHopIds().isEmpty());
 		}
 	}
 
@@ -194,6 +195,8 @@ public class CampaignBG014ExactOccurrenceRegistrationRedTest {
 			Assert.assertEquals("G014_RED1_FOUT_ANCHOR_" + i, anchor, fout.getAnchorHopId());
 			Assert.assertEquals("G014_RED1_REFED_RUNTIME_KEY_" + i, key, refed.getAnchorKey());
 			Assert.assertEquals("G014_RED1_FOUT_RUNTIME_KEY_" + i, key, fout.getAnchorKey());
+			Assert.assertFalse("G014_RED1_REFED_EXACT_CONSUMERS_MISSING_" + i,
+				refed.getConsumerHopIds().isEmpty());
 		}
 	}
 
