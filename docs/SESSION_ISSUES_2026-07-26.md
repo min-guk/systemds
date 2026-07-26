@@ -32,7 +32,7 @@
 - **관측 증상**: 336개 discovery 성공을 증명하는 전이 영수증 없이 pilot lease를 만들 수 있었고, P/S/R의 파생 수치를 변조한 뒤 self-hash를 다시 만들면 일부 ingress를 통과할 수 있었다.
 - **원인 분석**: self-hash 무결성과 의미적 정당성을 혼동했다. 또한 planner-major barrier는 다음 discovery planner만 막았고 discovery 전체 완료와 pilot 시작 사이에는 원자적 계약 경계가 없었다.
 - **해결 요약**:
-  - 정확히 정렬된 336개 canonical latest-success를 재검증하여 self-hashed `systemds-federated-discovery-completion/v1` 영수증 D를 생성한다.
+  - 정확히 정렬된 336개 canonical latest-success를 재검증하여 self-hashed `systemds-federated-discovery-completion/v2` 영수증 D를 생성한다.
   - pilot lease는 D와 그 exact SHA-256이 invocation manifest에 없으면 intent 파일 생성 전에 fail-closed 한다.
   - P는 336 cells, 4×84 barriers, seed 19 Williams pilot schedule, frozen core/privacy/topology/lineage/resource invariants를 의미적으로 재검증한다.
   - S v4는 canonical 120 pilot rows를 포함하고 24 groups×5 repeats, order/identity/evidence uniqueness, Q95/eta/repeat 선택을 builder로 재계산하여 exact equality를 요구한다.
@@ -55,7 +55,7 @@
 ## 이슈 3 — Caller-forged pilot evidence callback 및 pilot allocation 우회
 
 - **상태**: 해결
-- **환경/조건**: P v3 / D v1 / S v4 / R v3 / F v4, local+HDFS exact resume, Docker-only campaign facade.
+- **환경/조건**: P v3 / D v2 / S v4 / R v3 / F v4, local+HDFS exact resume, Docker-only campaign facade.
 - **재현 절차**: 존재하지 않는 pilot path/digest 또는 변경한 invocation hash로 S를 재봉인한 뒤 R/F direct builder를 호출하거나, raw `AtomicEvidenceLedger.begin_attempt` 및 일반 facade `begin`에 pilot 형태 cell을 넘긴다.
 - **관측 증상**: 이전 S semantic rebuild가 no-op validator를 사용하여 수학적으로 일관된 fabricated 120 rows를 수용할 수 있었고, `pilot_class=` 문자열 prefix가 gate 여부를 결정해 phase purpose가 caller-controlled였다. P의 일부 nested numeric alias/extra key도 self-hash 재계산 후 의미 검증이 불완전했다.
 - **원인 분석**: 무결성 hash와 live ledger 존재성 검증의 경계가 분리되지 않았고, pilot phase를 typed API가 아니라 문자열로 추론했다. P validator는 top-level 중심이라 v2 builder가 보장했던 nested schema/type 규칙을 모두 재적용하지 않았다.
@@ -71,3 +71,26 @@
 - **잔여 이슈**: Docker lifecycle driver는 pilot에 `begin_pilot`만 사용하고 R/F는 facade methods만 호출하도록 통합해야 한다.
 - **잠재 회귀 위험**: raw ledger allocation 또는 이전 direct R/F helper를 사용한 외부 호출자는 fail-closed 한다. `CampaignHarnessAdapter.integration_operations` 및 harness integration test로 감지한다.
 - **적용 원칙/의사결정 근거**: planner/runtime 동작이나 candidate space는 변경하지 않고 evidence 및 phase-transition control plane만 강화했다. runtime fallback은 추가하지 않았다.
+
+## 이슈 4 — P builder divergence, allocation capability 노출, discovery invocation 미결합
+
+- **상태**: 해결
+- **환경/조건**: Docker-only campaign P v3, discovery D v2, typed campaign facade, local/HDFS evidence resume.
+- **재현 절차**:
+  1. workload별 artifact path/digest를 중복시키거나 command argv에 leading-space/NUL, tolerance version에 whitespace를 넣고 P self-hash를 재계산한다.
+  2. `str` subclass가 `startswith()`를 거짓으로 반환하도록 만든 pilot cell로 일반 `begin`을 호출하거나 raw `_allocate_attempt`/`_begin_attempt_from_adapter`를 직접 호출한다.
+  3. 동일 P hash 아래 discovery invocation manifest를 임의 변경해 336개 success를 만든 뒤 D를 재봉인한다.
+- **관측 증상**: P validator가 original v2 builder의 distinct-artifact 및 normalized-string 규칙 일부를 재검증하지 않았다. underscore allocation methods는 이름만 private이고 capability 검사가 없었다. D row가 discovery evidence의 invocation hash를 포함하지 않아 P와 다른 명령으로 실행된 success를 구분할 수 없었다.
+- **원인 분석**: semantic validator가 builder의 모든 nested invariant와 동등하지 않았고, allocation authority 및 discovery command lineage가 명시적 데이터 계약이 아니었다.
+- **해결 요약**:
+  - `fed_dmls`, `cp_dmls`, `oracle_files`, `reference_artifacts` 각각의 workload path와 digest가 모두 distinct인지 재검증한다.
+  - command argv는 exact built-in normalized nonempty string이며 leading/trailing whitespace와 NUL을 거부한다. tolerance version 역시 normalized exact string만 허용한다.
+  - ledger/facade allocation 내부 경로에 서로 다른 module-private object capability를 요구한다. public raw allocation 및 capability 없는 underscore 호출은 intent 생성 전에 거부한다.
+  - facade/ledger identity string은 subclass가 아닌 exact built-in `str`만 허용한다. 일반 performance begin은 canonical 또는 변형된 모든 `pilot[_ -]?class` 표기를 거부하고 typed `begin_pilot`만 허용한다.
+  - P와 cell에서 exact `systemds-federated-discovery-invocation/v1` manifest를 파생한다. campaign discovery `begin`은 P, P hash, supplied invocation의 exact equality를 요구한다.
+  - D를 `systemds-federated-discovery-completion/v2`로 올리고 모든 336 row에 `invocation_manifest_sha256`을 포함한다. D builder는 P-derived expected hash와, facade live validator는 local/HDFS evidence hash와 각각 비교한다.
+- **수정 파일**: `atomic_ledger.py`, `determinism_contract.py`, `hdfs_archive.py`, 관련 세 테스트 및 본 문서.
+- **검증**: self-resealed duplicate artifact path/digest, leading/NUL command, whitespace tolerance, mixed D invocation, `Evil(str)`, 변형 pilot 표현, raw internal capability bypass 테스트와 전체 suite/static 검사를 실행한다.
+- **잔여 이슈**: Docker driver는 discovery campaign cell마다 `build_canonical_discovery_invocation(P, cell)` 결과를 그대로 facade `begin`에 전달해야 한다.
+- **잠재 회귀 위험**: 과거 임의 discovery invocation 또는 raw underscore allocation을 사용하던 호출은 fail-closed 한다. campaign harness integration과 D 336-row completion test로 감지한다.
+- **적용 원칙/의사결정 근거**: planner/runtime 및 후보 공간은 변경하지 않았다. P-derived invocation과 evidence lineage를 planner 실행 전에 고정하며 runtime fallback은 추가하지 않았다.

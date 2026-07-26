@@ -16,6 +16,7 @@ from scripts.federated_campaign.atomic_ledger import (
 	DISCOVERY_PUBLICATION_BOUNDARIES,
 	FAILURE_PUBLICATION_BOUNDARIES,
 	AtomicEvidenceLedger,
+	_ALLOCATION_CAPABILITY,
 	DiscoveryKey,
 	InjectedPublicationCrash,
 	LedgerContractError,
@@ -42,6 +43,12 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 				kind="performance", cell="forged-pilot", manifest_hash="a" * 64,
 				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
 				period=1, order="DP>FedAll>Heuristic>MinST",
+			)
+		self.assertFalse(any((self.root / "bypass-ledger" / "intents").rglob("*.json")))
+		with self.assertRaisesRegex(LedgerContractError, "capability"):
+			ledger._begin_attempt_from_adapter(
+				kind="discovery", cell="cell-a", manifest_hash="a" * 64,
+				invocation_manifest={"argv": ["docker"]},
 			)
 		self.assertFalse(any((self.root / "bypass-ledger" / "intents").rglob("*.json")))
 
@@ -150,6 +157,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_shared_performance_diagnostics_are_exact_canonical_and_timing_bound(self):
 		ledger = AtomicEvidenceLedger(self.root / "diagnostic-ledger")
 		lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
@@ -176,6 +184,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			(committed / "bundle_manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 		bad_ledger = AtomicEvidenceLedger(self.root / "bad-diagnostic-ledger")
 		bad_lease = bad_ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell="cell-b", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
@@ -187,6 +196,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			bad_ledger.publish_performance_success(bad_lease, cold, warm, bad_shared)
 		wall_ledger = AtomicEvidenceLedger(self.root / "bad-wall-ledger")
 		wall_lease = wall_ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell="cell-wall", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
@@ -195,6 +205,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			wall_ledger.publish_performance_success(wall_lease, cold, warm, wall_shared)
 		restart_ledger = AtomicEvidenceLedger(self.root / "restart-diagnostic-ledger")
 		restart_lease = restart_ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell="cell-c", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
@@ -327,6 +338,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))
 		lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		ledger.publish_failure(lease, self._failure())
@@ -337,6 +349,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))
 		lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		self.assertEqual(2, lease.key.attempt)
@@ -347,9 +360,11 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_two_process_views_allocate_distinct_monotonic_attempts(self):
 		root = self.root / "ledger"
 		first = AtomicEvidenceLedger(root)._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"process": 1}
 		)
 		second = AtomicEvidenceLedger(root)._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"process": 2}
 		)
 		self.assertEqual((1, 2), (first.key.attempt, second.key.attempt))
@@ -360,6 +375,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		ledgers = (AtomicEvidenceLedger(root), AtomicEvidenceLedger(root))
 		def allocate(index):
 			return ledgers[index]._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 				kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"process": index}
 			)
 		with ThreadPoolExecutor(max_workers=2) as pool:
@@ -370,6 +386,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_discovery_success_is_one_phase_and_performance_api_is_discriminated(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
 		)
 		bundle = self._phase("discovery", "discovery_correctness", 1.0)
@@ -378,6 +395,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		self.assertEqual("discovery", manifest["evidence_kind"])
 		self.assertFalse((committed / "cold").exists())
 		other = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-b", manifest_hash="manifest-a", invocation_manifest={"phase": "wrong"}
 		)
 		with self.assertRaisesRegex(LedgerContractError, "performance AttemptLease"):
@@ -396,6 +414,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 
 		discovery_ledger = AtomicEvidenceLedger(self.root / "resource-discovery-ledger")
 		discovery_lease = discovery_ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		discovery = self._phase("resource-discovery", "discovery_correctness", 1.0)
@@ -405,6 +424,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 
 		performance_ledger = AtomicEvidenceLedger(self.root / "resource-performance-ledger")
 		performance_lease = performance_ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell="cell-p", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
@@ -420,6 +440,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			with self.subTest(boundary=boundary):
 				ledger = AtomicEvidenceLedger(self.root / f"discovery-crash-{index}" / "ledger")
 				lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 					kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"case": boundary}
 				)
 				bundle = self._phase(f"discovery-crash-{index}-bundle", "discovery_correctness", 1.0)
@@ -431,6 +452,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_zero_return_code_semantic_failure_is_valid_failure_evidence(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"semantic": True}
 		)
 		committed = ledger.publish_failure(lease, self._failure("semantic-zero", return_code=0))
@@ -452,6 +474,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_failed_attempt_requires_complete_checksummed_bundle(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest", invocation_manifest={"argv": ["docker"]}
 		)
 		bundle = self._failure("incomplete")
@@ -464,6 +487,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			with self.subTest(boundary=boundary):
 				ledger = AtomicEvidenceLedger(self.root / f"failure-{boundary}" / "ledger")
 				lease = ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 					kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"case": boundary}
 				)
 				with self.assertRaises(InjectedPublicationCrash):

@@ -22,6 +22,7 @@ from typing import Callable, Mapping, Protocol, Sequence, cast
 
 from scripts.federated_campaign.atomic_ledger import (
 	AtomicEvidenceLedger,
+	_ALLOCATION_CAPABILITY,
 	AttemptLease,
 	DiscoveryKey,
 	LedgerContractError,
@@ -38,6 +39,7 @@ from scripts.federated_campaign.determinism_contract import (
 	PILOT_REPRESENTATIVE_WORKLOADS,
 	campaign_cell_ids,
 	build_counterbalanced_schedule,
+	build_canonical_discovery_invocation,
 	build_discovery_completion_receipt,
 	build_campaign_manifest,
 	_build_final_campaign_manifest,
@@ -57,6 +59,19 @@ class ArchiveContractError(RuntimeError):
 
 class InjectedArchiveCrash(RuntimeError):
 	"""Test-only archive crash at an explicit durable boundary."""
+
+
+_FACADE_ALLOCATION_CAPABILITY = object()
+
+
+def _has_exact_json_types(value: object) -> bool:
+	if value is None or type(value) in (str, bool, int, float):
+		return True
+	if type(value) is list:
+		return all(_has_exact_json_types(item) for item in cast(list[object], value))
+	if type(value) is dict:
+		return all(type(key) is str and _has_exact_json_types(item) for key, item in cast(dict[object, object], value).items())
+	return False
 
 
 ARCHIVE_BOUNDARIES = (
@@ -676,11 +691,28 @@ class CampaignHarnessAdapter:
 		lifecycle_replicate: int | None = None,
 		period: int | None = None,
 		order: str | None = None,
+		preregistration_manifest: Mapping[str, object] | None = None,
 		crash_after: str | None = None,
 	) -> AttemptLease:
-		if kind == "performance" and cell.startswith("pilot_class="):
+		if type(kind) is not str or type(cell) is not str or type(manifest_hash) is not str:
+			raise ArchiveContractError("attempt kind/cell/manifest hash require exact built-in strings")
+		if order is not None and type(order) is not str:
+			raise ArchiveContractError("attempt order requires an exact built-in string")
+		if not _has_exact_json_types(invocation_manifest):
+			raise ArchiveContractError("attempt invocation contains non-built-in JSON values")
+		if kind == "performance" and re.search(r"pilot[_ -]?class", cell, re.IGNORECASE):
 			raise ArchiveContractError("pilot identity requires the dedicated begin_pilot surface")
 		if kind == "discovery" and cell in campaign_cell_ids():
+			if preregistration_manifest is None:
+				raise ArchiveContractError("campaign discovery requires exact preregistration P")
+			try:
+				expected_invocation = build_canonical_discovery_invocation(preregistration_manifest, cell)
+			except CampaignContractError as error:
+				raise ArchiveContractError(str(error)) from error
+			if expected_invocation["preregistration_manifest_sha256"] != manifest_hash:
+				raise ArchiveContractError("campaign discovery manifest hash does not bind exact P")
+			if dict(invocation_manifest) != expected_invocation:
+				raise ArchiveContractError("campaign discovery invocation is not the exact P-derived value")
 			planner = next(name for name in CAMPAIGN_PLANNERS if f"planner={name}|" in cell)
 			planner_index = CAMPAIGN_PLANNERS.index(planner)
 			if planner_index > 0:
@@ -688,6 +720,7 @@ class CampaignHarnessAdapter:
 		return self._allocate_attempt(
 			kind=kind, cell=cell, manifest_hash=manifest_hash, invocation_manifest=invocation_manifest,
 			lifecycle_replicate=lifecycle_replicate, period=period, order=order, crash_after=crash_after,
+			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
 		)
 
 	def begin_pilot(
@@ -698,6 +731,10 @@ class CampaignHarnessAdapter:
 		"""Allocate one canonical pilot attempt only after live D revalidation."""
 		if pilot_class not in PILOT_CLASSES or planner not in CAMPAIGN_PLANNERS:
 			raise ArchiveContractError("pilot class/planner is not canonical")
+		if type(pilot_class) is not str or type(planner) is not str or type(profile) is not str or type(preregistration_manifest_sha256) is not str:
+			raise ArchiveContractError("pilot string identity requires exact built-in strings")
+		if not _has_exact_json_types(invocation_manifest):
+			raise ArchiveContractError("pilot invocation contains non-built-in JSON values")
 		if type(workers) is not int or (workers, profile) not in PILOT_REGIMES:
 			raise ArchiveContractError("pilot worker/profile regime is not canonical")
 		if type(pilot_repeat) is not int or pilot_repeat not in range(1, 6):
@@ -720,13 +757,17 @@ class CampaignHarnessAdapter:
 			kind="performance", cell=cell, manifest_hash=preregistration_manifest_sha256,
 			invocation_manifest=invocation_manifest, lifecycle_replicate=pilot_repeat,
 			period=period, order=">".join(order_tuple), crash_after=crash_after,
+			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
 		)
 
 	def _allocate_attempt(
 		self, *, kind: str, cell: str, manifest_hash: str, invocation_manifest: Mapping[str, object],
 		lifecycle_replicate: int | None, period: int | None, order: str | None,
 		crash_after: str | None,
+		_allocation_capability: object | None = None,
 	) -> AttemptLease:
+		if _allocation_capability is not _FACADE_ALLOCATION_CAPABILITY:
+			raise ArchiveContractError("raw facade allocation capability is invalid")
 		base: dict[str, object] = {"kind": kind, "cell": cell, "manifest_hash": manifest_hash}
 		if kind == "performance":
 			base.update({"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order})
@@ -746,6 +787,7 @@ class CampaignHarnessAdapter:
 			order=order,
 			minimum_attempt=max(archive_attempts, default=0) + 1,
 			crash_after=crash_after,
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 		)
 
 	def complete_discovery(self, preregistration_manifest: Mapping[str, object]) -> dict[str, object]:
@@ -774,7 +816,8 @@ class CampaignHarnessAdapter:
 				status = "committed"; location = {"committed_path": str(path)}
 				digest = _sha256(path / "bundle_manifest.json")
 			rows.append({
-				"cell": cell, "identity": identity, "evidence_status": status,
+				"cell": cell, "identity": identity,
+				"invocation_manifest_sha256": evidence.get("invocation_manifest_sha256"), "evidence_status": status,
 				"evidence_sha256": digest, "evidence_location": location,
 			})
 		try:
@@ -805,6 +848,8 @@ class CampaignHarnessAdapter:
 		evidence = decision.evidence
 		if evidence.get("identity") != identity:
 			raise ArchiveContractError("discovery completion latest identity changed")
+		if evidence.get("invocation_manifest_sha256") != row.get("invocation_manifest_sha256"):
+			raise ArchiveContractError("discovery completion invocation identity changed")
 		if row.get("evidence_status") == "archive":
 			if set(location) != {"archive_uri", "archive_sha256"} or row.get("evidence_sha256") != evidence.get("archive_sha256"):
 				raise ArchiveContractError("discovery completion archive evidence changed")

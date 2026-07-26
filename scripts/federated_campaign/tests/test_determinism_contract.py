@@ -23,6 +23,7 @@ from scripts.federated_campaign.determinism_contract import (
 	build_frozen_manifest,
 	build_campaign_manifest,
 	build_campaign_preregistration_manifest,
+	build_canonical_discovery_invocation_hashes,
 	build_discovery_completion_receipt,
 	_build_final_campaign_manifest as build_final_campaign_manifest,
 	_build_pilot_resource_reservation as build_pilot_resource_reservation,
@@ -34,6 +35,7 @@ from scripts.federated_campaign.determinism_contract import (
 	select_campaign_pilot_repeats,
 	validate_campaign_matrix,
 	validate_campaign_preregistration_manifest,
+	validate_discovery_completion_receipt,
 	validate_phase_bundle,
 )
 
@@ -434,9 +436,11 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def _discovery_completion(self, prereg: Mapping[str, object]) -> dict[str, object]:
 		manifest_hash = cast(str, prereg["preregistration_manifest_sha256"])
+		invocation_hashes = build_canonical_discovery_invocation_hashes(prereg)
 		rows = [{
 			"cell": cell,
 			"identity": {"kind": "discovery", "cell": cell, "attempt": 1, "run_token": f"token-{index}", "manifest_hash": manifest_hash},
+			"invocation_manifest_sha256": invocation_hashes[cell],
 			"evidence_status": "committed", "evidence_sha256": f"{index + 1:064x}",
 			"evidence_location": {"committed_path": f"/verified/discovery/{index}"},
 		} for index, cell in enumerate(campaign_cell_ids())]
@@ -523,7 +527,11 @@ class DeterminismContractTest(unittest.TestCase):
 				candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=True
 			).encode()).hexdigest()
 			return candidate
-		for mutation in ("barrier_bool", "pilot_float", "artifact_float", "network_bool", "topology_float", "oracle_extra", "floor_float"):
+		for mutation in (
+			"barrier_bool", "pilot_float", "artifact_float", "network_bool", "topology_float", "oracle_extra",
+			"floor_float", "duplicate_dml_path", "duplicate_dml_digest", "leading_command", "nul_command",
+			"whitespace_tolerance",
+		):
 			candidate = copy.deepcopy(self._campaign_v3_preregistration())
 			if mutation == "barrier_bool": candidate["dimensions"]["planner_major_barriers"][0]["start"] = False
 			elif mutation == "pilot_float": candidate["pilot_preregistration"]["row_count"] = 120.0
@@ -531,7 +539,12 @@ class DeterminismContractTest(unittest.TestCase):
 			elif mutation == "network_bool": candidate["frozen_core"]["network_costs"]["lan"]["latency_ms"] = False
 			elif mutation == "topology_float": candidate["frozen_core"]["topology"]["worker_counts"][0] = 1.0
 			elif mutation == "oracle_extra": candidate["frozen_core"]["oracle_policies"]["kmeans"]["extra"] = 1
-			else: candidate["resource_settings"]["absolute_disk_floor_bytes"] = float(5 * 1024**3)
+			elif mutation == "floor_float": candidate["resource_settings"]["absolute_disk_floor_bytes"] = float(5 * 1024**3)
+			elif mutation == "duplicate_dml_path": candidate["frozen_core"]["artifacts"]["fed_dmls"]["pca"]["path"] = candidate["frozen_core"]["artifacts"]["fed_dmls"]["kmeans"]["path"]
+			elif mutation == "duplicate_dml_digest": candidate["frozen_core"]["artifacts"]["fed_dmls"]["pca"]["sha256"] = candidate["frozen_core"]["artifacts"]["fed_dmls"]["kmeans"]["sha256"]
+			elif mutation == "leading_command": candidate["commands"]["campaign"][0] = " docker"
+			elif mutation == "nul_command": candidate["commands"]["campaign"][0] = "docker\x00"
+			else: candidate["frozen_core"]["tolerance_version"] = " tolerance-v1 "
 			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
 				validate_campaign_preregistration_manifest(reseal(candidate))
 
@@ -550,6 +563,21 @@ class DeterminismContractTest(unittest.TestCase):
 		with self.assertRaises(CampaignContractError):
 			build_discovery_completion_receipt(
 				preregistration_manifest=prereg, discovery_rows=duplicate, evidence_validator=self._exact_row_validator(rows),
+			)
+		forged = copy.deepcopy(completion)
+		forged_rows = _list(forged["discovery_rows"])
+		_dict(forged_rows[200])["invocation_manifest_sha256"] = "f" * 64
+		forged["discovery_rows_sha256"] = hashlib.sha256(json.dumps(
+			forged_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		forged.pop("discovery_completion_sha256")
+		forged["discovery_completion_sha256"] = hashlib.sha256(json.dumps(
+			forged, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		with self.assertRaisesRegex(CampaignContractError, "P-derived"):
+			validate_discovery_completion_receipt(
+				forged, preregistration_manifest=prereg,
+				evidence_validator=self._exact_row_validator(rows),
 			)
 	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
 		def rows(values):

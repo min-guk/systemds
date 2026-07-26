@@ -88,6 +88,7 @@ FAILURE_PUBLICATION_BOUNDARIES = (
 )
 
 ATTEMPT_BOUNDARIES = ("after_intent_fsync",)
+_ALLOCATION_CAPABILITY = object()
 
 class LedgerContractError(ValueError):
 	"""Raised when evidence or identity violates the ledger contract."""
@@ -175,7 +176,7 @@ class AttemptLease:
 
 
 def _validate_text(name: str, value: object) -> None:
-	if not isinstance(value, str) or not value or value.strip() != value:
+	if type(value) is not str or not value or value.strip() != value or "\x00" in value:
 		raise LedgerContractError(f"{name} must be a non-empty normalized string")
 
 
@@ -192,6 +193,8 @@ def _validate_identity(identity: object) -> dict[str, object]:
 	if not isinstance(identity, dict):
 		raise LedgerContractError("record identity must be a JSON object")
 	kind = identity.get("kind")
+	if type(kind) is not str:
+		raise LedgerContractError("record identity kind must be an exact built-in string")
 	try:
 		if kind == "discovery" and set(identity) == {"kind", "cell", "attempt", "run_token", "manifest_hash"}:
 			validated = DiscoveryKey(
@@ -319,8 +322,11 @@ class AtomicEvidenceLedger:
 		order: str | None = None,
 		minimum_attempt: int = 1,
 		crash_after: str | None = None,
+		_allocation_capability: object | None = None,
 	) -> AttemptLease:
 		"""Atomically allocate after CampaignHarnessAdapter validates the phase purpose."""
+		if _allocation_capability is not _ALLOCATION_CAPABILITY:
+			raise LedgerContractError("raw adapter allocation capability is invalid")
 		lock_path = self.root / "attempt-allocation.lock"
 		with lock_path.open("a+b") as lock:
 			fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -348,6 +354,7 @@ class AtomicEvidenceLedger:
 		crash_after: str | None = None,
 	) -> AttemptLease:
 		"""Durably reserve the next monotonic attempt before any process launch."""
+		_validate_text("kind", kind)
 		_validate_text("cell", cell)
 		_validate_text("manifest_hash", manifest_hash)
 		if not isinstance(invocation_manifest, Mapping) or not invocation_manifest:

@@ -12,7 +12,7 @@ from subprocess import CompletedProcess
 from unittest.mock import patch
 from typing import Any, cast
 
-from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
+from scripts.federated_campaign.atomic_ledger import _ALLOCATION_CAPABILITY, AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
 from scripts.federated_campaign.determinism_contract import CAMPAIGN_PLANNERS, build_block_counterbalanced_schedule, build_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
 	ArchiveContractError,
@@ -592,6 +592,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
 		lease = self.ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell=cell,
 			manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=99, period=4, order="WRONG",
@@ -630,6 +631,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		period = order_tuple.index("DP") + 1
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
 		lease = self.ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="performance", cell=cell, manifest_hash="a" * 64, invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=period, order=order,
 		)
@@ -746,12 +748,28 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_empty_or_incomplete_discovery_cannot_allocate_pilot_lease(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
+		class Evil(str):
+			def startswith(self, prefix, *args):
+				return False
+		with self.assertRaisesRegex(ArchiveContractError, "built-in strings"):
+			facade.begin(
+				kind="performance", cell=Evil(cell), manifest_hash="a" * 64,
+				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
+				period=1, order="DP>FedAll>Heuristic>MinST",
+			)
 		with self.assertRaisesRegex(ArchiveContractError, "dedicated begin_pilot"):
 			facade.begin(
 				kind="performance", cell=cell, manifest_hash="a" * 64,
 				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
 				period=1, order="DP>FedAll>Heuristic>MinST",
 			)
+		for disguised in ("x|PILOT_CLASS cheap", "x|pilot-class=cheap"):
+			with self.subTest(disguised=disguised), self.assertRaisesRegex(ArchiveContractError, "dedicated begin_pilot"):
+				facade.begin(
+					kind="performance", cell=disguised, manifest_hash="a" * 64,
+					invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
+					period=1, order="DP>FedAll>Heuristic>MinST",
+				)
 		with self.assertRaisesRegex(ArchiveContractError, "completion schema"):
 			facade.begin_pilot(
 				pilot_class="cheap", planner="DP", workers=1, profile="lan", pilot_repeat=1,
@@ -774,6 +792,12 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
 			)
 		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
+		with self.assertRaisesRegex(ArchiveContractError, "capability"):
+			facade._allocate_attempt(
+				kind="performance", cell="final-cell", manifest_hash="a" * 64,
+				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
+				period=1, order="DP>FedAll>Heuristic>MinST", crash_after=None,
+			)
 
 	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -851,9 +875,21 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_discovery_begin_enforces_previous_global_planner_barrier(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "workers=1|planner=FedAll|workload=kmeans|profile=lan"
-		with patch.object(facade, "assert_planner_barrier", return_value={"verified_cells": 84}) as barrier:
+		prereg = {"preregistration_manifest_sha256": "manifest-a"}
+		invocation = {"schema": "canonical-discovery", "preregistration_manifest_sha256": "manifest-a"}
+		with (
+			patch("scripts.federated_campaign.hdfs_archive.validate_campaign_preregistration_manifest", return_value=prereg),
+			patch("scripts.federated_campaign.hdfs_archive.build_canonical_discovery_invocation", return_value=invocation),
+			patch.object(facade, "assert_planner_barrier", return_value={"verified_cells": 84}) as barrier,
+		):
+			with self.assertRaisesRegex(ArchiveContractError, "P-derived"):
+				facade.begin(
+					kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"schema": "forged"},
+					preregistration_manifest=prereg,
+				)
 			lease = facade.begin(
-				kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
+				kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest=invocation,
+				preregistration_manifest=prereg,
 			)
 		barrier.assert_called_once_with("DP", "manifest-a")
 		self.assertEqual(cell, lease.key.cell)
@@ -863,6 +899,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		adapter = self._adapter(retention=0)
 		adapter.archive(committed)
 		lease = self.ledger._begin_attempt_from_adapter(
+			_allocation_capability=_ALLOCATION_CAPABILITY,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		self.ledger.publish_failure(lease, self._failure("latest-failure"))

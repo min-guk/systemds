@@ -727,6 +727,11 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 	_validate_named_frozen_files("planner_configs", artifacts["planner_configs"], CAMPAIGN_PLANNERS)
 	for name in ("fed_dmls", "cp_dmls", "oracle_files", "reference_artifacts"):
 		_validate_named_frozen_files(name, artifacts[name], CAMPAIGN_WORKLOADS)
+		records = cast(Mapping[str, Mapping[str, object]], artifacts[name])
+		paths = [records[workload]["path"] for workload in CAMPAIGN_WORKLOADS]
+		digests = [records[workload]["sha256"] for workload in CAMPAIGN_WORKLOADS]
+		if len(set(paths)) != len(CAMPAIGN_WORKLOADS) or len(set(digests)) != len(CAMPAIGN_WORKLOADS):
+			raise CampaignContractError(f"{name} must contain distinct workload artifacts")
 	_validate_named_frozen_files("compose_files", artifacts["compose_files"], COMPOSE_SURFACES)
 	_validate_named_frozen_files("runner_files", artifacts["runner_files"], RUNNER_SURFACES)
 	_validate_frozen_tree("dataset", artifacts["dataset"])
@@ -750,7 +755,7 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 	oracle_policies = core["oracle_policies"]
 	if not isinstance(oracle_policies, Mapping) or set(oracle_policies) != set(CAMPAIGN_WORKLOADS):
 		raise CampaignContractError("preregistration oracle policies are invalid")
-	if not isinstance(core["tolerance_version"], str) or not cast(str, core["tolerance_version"]).strip():
+	if type(core["tolerance_version"]) is not str or not cast(str, core["tolerance_version"]) or cast(str, core["tolerance_version"]).strip() != core["tolerance_version"] or "\x00" in cast(str, core["tolerance_version"]):
 		raise CampaignContractError("preregistration tolerance version is invalid")
 	for workload in CAMPAIGN_WORKLOADS:
 		policy = oracle_policies[workload]
@@ -826,7 +831,9 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 	_positive_finite("preregistration combined I/O", resource["max_combined_io_bps"])
 	commands = manifest["commands"]
 	if not isinstance(commands, Mapping) or set(commands) != set(COMMAND_SURFACES) or any(
-		not isinstance(argv, list) or not argv or any(not isinstance(arg, str) or not arg.strip() for arg in argv)
+		not isinstance(argv, list) or not argv or any(
+			type(arg) is not str or not arg or arg.strip() != arg or "\x00" in arg for arg in argv
+		)
 		for argv in commands.values()
 	):
 		raise CampaignContractError("preregistration command surfaces are not exact")
@@ -840,6 +847,41 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 	return manifest
 
 
+def build_canonical_discovery_invocation(
+	preregistration_manifest: Mapping[str, object], cell: str,
+) -> dict[str, object]:
+	"""Derive the only campaign discovery invocation identity accepted for one P/cell."""
+	prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
+	return _canonical_discovery_invocation_from_validated(prereg, cell)
+
+
+def _canonical_discovery_invocation_from_validated(
+	prereg: Mapping[str, object], cell: str,
+) -> dict[str, object]:
+	if type(cell) is not str or cell not in campaign_cell_ids():
+		raise CampaignContractError("discovery invocation cell is not an exact campaign cell")
+	commands = cast(Mapping[str, object], prereg["commands"])
+	return {
+		"schema": "systemds-federated-discovery-invocation/v1",
+		"kind": "discovery",
+		"cell": cell,
+		"preregistration_manifest_sha256": prereg["preregistration_manifest_sha256"],
+		"execution_surface": "docker-only",
+		"command": _canonical_json_value("discovery campaign command", commands["campaign"]),
+	}
+
+
+def build_canonical_discovery_invocation_hashes(
+	preregistration_manifest: Mapping[str, object],
+) -> dict[str, str]:
+	"""Derive all exact per-cell discovery invocation hashes with one P validation."""
+	prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
+	return {
+		cell: _canonical_sha256(_canonical_discovery_invocation_from_validated(prereg, cell))
+		for cell in campaign_cell_ids()
+	}
+
+
 def build_discovery_completion_receipt(
 	*, preregistration_manifest: Mapping[str, object], discovery_rows: Sequence[Mapping[str, object]],
 	evidence_validator: Callable[[Mapping[str, object]], None],
@@ -849,11 +891,15 @@ def build_discovery_completion_receipt(
 	if not callable(evidence_validator) or len(discovery_rows) != 336:
 		raise CampaignContractError("discovery completion requires 336 revalidated rows")
 	expected_cells = list(campaign_cell_ids())
+	expected_invocations = {
+		cell: _canonical_sha256(_canonical_discovery_invocation_from_validated(prereg, cell))
+		for cell in expected_cells
+	}
 	canonical_rows: list[object] = []
 	seen: set[str] = set()
 	for expected_cell, row in zip(expected_cells, discovery_rows):
 		if not isinstance(row, Mapping) or set(row) != {
-			"cell", "identity", "evidence_status", "evidence_sha256", "evidence_location",
+			"cell", "identity", "invocation_manifest_sha256", "evidence_status", "evidence_sha256", "evidence_location",
 		} or row["cell"] != expected_cell:
 			raise CampaignContractError("discovery completion rows are missing, duplicated, or reordered")
 		identity = row["identity"]
@@ -865,6 +911,9 @@ def build_discovery_completion_receipt(
 			raise CampaignContractError("discovery completion attempt is invalid")
 		if identity.get("manifest_hash") != prereg["preregistration_manifest_sha256"]:
 			raise CampaignContractError("discovery completion mixes preregistration lineage")
+		expected_invocation_hash = expected_invocations[expected_cell]
+		if row["invocation_manifest_sha256"] != expected_invocation_hash:
+			raise CampaignContractError("discovery completion invocation does not match P-derived identity")
 		digest = _sha256_text("discovery evidence", row["evidence_sha256"])
 		if digest in seen or row["evidence_status"] not in ("committed", "archive"):
 			raise CampaignContractError("discovery completion evidence is duplicate or unverified")
@@ -875,7 +924,7 @@ def build_discovery_completion_receipt(
 			raise CampaignContractError("discovery completion latest-success revalidation failed") from error
 		canonical_rows.append(_canonical_json_value("discovery completion row", row))
 	receipt: dict[str, object] = {
-		"schema": "systemds-federated-discovery-completion/v1",
+		"schema": "systemds-federated-discovery-completion/v2",
 		"preregistration_manifest_sha256": prereg["preregistration_manifest_sha256"],
 		"cell_count": 336,
 		"planner_major_barriers": cast(Mapping[str, object], prereg["dimensions"])["planner_major_barriers"],
@@ -897,7 +946,7 @@ def validate_discovery_completion_receipt(
 	if set(receipt) != {
 		"schema", "preregistration_manifest_sha256", "cell_count", "planner_major_barriers",
 		"discovery_rows", "discovery_rows_sha256", "discovery_completion_sha256",
-	} or receipt.get("schema") != "systemds-federated-discovery-completion/v1":
+	} or receipt.get("schema") != "systemds-federated-discovery-completion/v2":
 		raise CampaignContractError("discovery completion schema is not exact")
 	digest = _sha256_text("discovery completion", receipt["discovery_completion_sha256"])
 	unsigned = dict(receipt); unsigned.pop("discovery_completion_sha256")
@@ -920,7 +969,7 @@ def validate_discovery_completion_receipt(
 		seen: set[str] = set()
 		for row, cell in zip(rows, campaign_cell_ids()):
 			if not isinstance(row, Mapping) or set(row) != {
-				"cell", "identity", "evidence_status", "evidence_sha256", "evidence_location",
+				"cell", "identity", "invocation_manifest_sha256", "evidence_status", "evidence_sha256", "evidence_location",
 			} or row.get("cell") != cell:
 				raise CampaignContractError("discovery completion canonical order is invalid")
 			identity = row.get("identity")
@@ -930,6 +979,7 @@ def validate_discovery_completion_receipt(
 				raise CampaignContractError("discovery completion identity is invalid")
 			if type(identity.get("attempt")) is not int or cast(int, identity["attempt"]) < 1 or identity.get("manifest_hash") != prereg_hash:
 				raise CampaignContractError("discovery completion lineage is invalid")
+			_sha256_text("discovery completion invocation", row["invocation_manifest_sha256"])
 			row_digest = _sha256_text("discovery completion evidence", row.get("evidence_sha256"))
 			if row_digest in seen or row.get("evidence_status") not in ("committed", "archive"):
 				raise CampaignContractError("discovery completion evidence is duplicate or unverified")
