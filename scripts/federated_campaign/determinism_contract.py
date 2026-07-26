@@ -463,7 +463,11 @@ def _distinct_named_file_records(name: str, files: Mapping[str, Path], expected_
 
 
 def _sha256_text(name: str, value: object) -> str:
-	if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+	if (
+		not isinstance(value, str)
+		or re.fullmatch(r"[0-9a-f]{64}", value) is None
+		or value == "0" * 64
+	):
 		raise CampaignContractError(f"{name} must be a lowercase SHA256 digest")
 	return value
 
@@ -475,6 +479,162 @@ def _positive_finite(name: str, value: object, *, allow_zero: bool = False) -> f
 	if not math.isfinite(number) or number < 0 or (number == 0 and not allow_zero):
 		raise CampaignContractError(f"{name} must be {'non-negative' if allow_zero else 'positive'} and finite")
 	return number
+
+
+def _canonical_json_value(name: str, value: object) -> object:
+	"""Return an isolated, finite, JSON-compatible value or fail closed."""
+	def validate(current: object, location: str) -> None:
+		if current is None or isinstance(current, (str, bool, int)):
+			return
+		if isinstance(current, float):
+			if not math.isfinite(current):
+				raise CampaignContractError(f"{location} contains a non-finite number")
+			return
+		if isinstance(current, list):
+			for index, item in enumerate(current):
+				validate(item, f"{location}[{index}]")
+			return
+		if isinstance(current, Mapping):
+			for key, item in current.items():
+				if not isinstance(key, str) or not key or key.strip() != key:
+					raise CampaignContractError(f"{location} contains an invalid JSON key")
+				validate(item, f"{location}.{key}")
+			return
+		raise CampaignContractError(f"{location} contains a non-JSON value")
+	validate(value, name)
+	return json.loads(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+
+
+def _canonical_sha256(value: object) -> str:
+	return hashlib.sha256(
+		json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+	).hexdigest()
+
+
+_FROZEN_CORE_FIELDS = {
+	"source_commit", "image", "artifacts", "network_costs", "privacy_settings", "jvm_settings",
+	"thread_settings", "endpoints", "topology", "oracle_policies", "tolerance_version",
+}
+_CAMPAIGN_CORE_INPUT_FIELDS = {
+	"source_commit", "source_tree", "image_id", "image_digest", "wrapper", "jar", "planner_configs",
+	"cp_config", "fed_dmls", "cp_dmls", "oracle_files", "oracle_policies", "compose_files", "runner_files",
+	"dataset_root", "data_sidecar", "block_ids", "cell_ids", "network_costs", "privacy_settings",
+	"jvm_settings", "thread_settings", "resource_settings", "commands", "endpoints", "topology",
+	"reference_artifacts", "tolerance_version", "seed_streams",
+}
+_CONSERVATIVE_BOUND_FIELDS = {
+	"remaining_lifecycles", "p95_artifact_bytes", "p95_artifact_inodes", "p95_lifecycle_seconds",
+}
+
+
+def build_campaign_preregistration_manifest(
+	*,
+	campaign_core_inputs: Mapping[str, object],
+	stage_descriptor_sha256: str,
+	cp_lifecycle_descriptor_sha256: str,
+	reference_manifest_sha256: str,
+	conservative_pre_pilot_bounds: Mapping[str, object],
+	pilot_schedule_seed: int = 19,
+) -> dict[str, object]:
+	"""Build immutable pre-pilot manifest P without a post-hoc repeat choice."""
+	if set(campaign_core_inputs) != _CAMPAIGN_CORE_INPUT_FIELDS:
+		raise CampaignContractError("campaign core input schema is not exact")
+	inputs = campaign_core_inputs
+	seed_streams = cast(Mapping[str, object], inputs["seed_streams"])
+	block_ids = cast(Sequence[str], inputs["block_ids"])
+	cell_ids = cast(Sequence[str], inputs["cell_ids"])
+	if set(seed_streams) != set(SEED_STREAMS) or any(
+		type(value) is not int or cast(int, value) < 0 for value in seed_streams.values()
+	):
+		raise CampaignContractError("explicit non-negative integer seed streams are required")
+	validation_schedule = build_block_counterbalanced_schedule(
+		CAMPAIGN_PLANNERS, 3, block_ids, cast(int, seed_streams["schedule"])
+	)
+	validated = build_campaign_manifest(
+		source_commit=cast(str, inputs["source_commit"]), source_tree=Path(cast(Path, inputs["source_tree"])),
+		image_id=cast(str, inputs["image_id"]), image_digest=cast(str, inputs["image_digest"]),
+		wrapper=Path(cast(Path, inputs["wrapper"])), jar=Path(cast(Path, inputs["jar"])),
+		planner_configs=cast(Mapping[str, Path], inputs["planner_configs"]), cp_config=Path(cast(Path, inputs["cp_config"])),
+		fed_dmls=cast(Mapping[str, Path], inputs["fed_dmls"]), cp_dmls=cast(Mapping[str, Path], inputs["cp_dmls"]),
+		oracle_files=cast(Mapping[str, Path], inputs["oracle_files"]),
+		oracle_policies=cast(Mapping[str, Mapping[str, object]], inputs["oracle_policies"]),
+		compose_files=cast(Mapping[str, Path], inputs["compose_files"]),
+		runner_files=cast(Mapping[str, Path], inputs["runner_files"]),
+		dataset_root=Path(cast(Path, inputs["dataset_root"])), data_sidecar=Path(cast(Path, inputs["data_sidecar"])),
+		block_ids=block_ids, cell_ids=cell_ids,
+		network_costs=cast(Mapping[str, object], inputs["network_costs"]),
+		privacy_settings=cast(Mapping[str, object], inputs["privacy_settings"]),
+		jvm_settings=cast(Mapping[str, object], inputs["jvm_settings"]),
+		thread_settings=cast(Mapping[str, object], inputs["thread_settings"]),
+		resource_settings=cast(Mapping[str, object], inputs["resource_settings"]),
+		commands=cast(Mapping[str, object], inputs["commands"]), endpoints=cast(Mapping[str, object], inputs["endpoints"]),
+		topology=cast(Mapping[str, object], inputs["topology"]), block_schedule=validation_schedule,
+		reference_artifacts=cast(Mapping[str, Path], inputs["reference_artifacts"]),
+		tolerance_version=cast(str, inputs["tolerance_version"]), seed_streams=seed_streams, repeats=3,
+	)
+	core = {name: validated[name] for name in _FROZEN_CORE_FIELDS}
+	resource_settings = cast(Mapping[str, object], validated["resource_settings"])
+	commands = cast(Mapping[str, object], validated["commands"])
+	lineage = {
+		"stage_descriptor_sha256": _sha256_text("stage descriptor", stage_descriptor_sha256),
+		"cp_lifecycle_descriptor_sha256": _sha256_text("CP lifecycle descriptor", cp_lifecycle_descriptor_sha256),
+		"reference_manifest_sha256": _sha256_text("reference manifest", reference_manifest_sha256),
+	}
+	if pilot_schedule_seed != 19:
+		raise CampaignContractError("pilot preregistration requires exact schedule seed 19")
+	if set(commands) != set(COMMAND_SURFACES) or any(
+		not isinstance(argv, list) or not argv or any(
+			not isinstance(arg, str) or not arg or arg.strip() != arg or "\x00" in arg for arg in argv
+		) for argv in commands.values()
+	):
+		raise CampaignContractError("commands must contain exact non-empty argv surfaces")
+	if set(resource_settings) != {
+		"absolute_disk_floor_bytes", "required_free_inodes", "wall_time_seconds", "max_io_utilization",
+		"max_combined_io_bps",
+	} or resource_settings["absolute_disk_floor_bytes"] != 5 * 1024**3:
+		raise CampaignContractError("resource settings schema or 5GiB floor is not exact")
+	if type(resource_settings["required_free_inodes"]) is not int or cast(int, resource_settings["required_free_inodes"]) < 1:
+		raise CampaignContractError("resource required_free_inodes must be positive")
+	_positive_finite("resource wall_time_seconds", resource_settings["wall_time_seconds"])
+	io_limit = _positive_finite("resource max_io_utilization", resource_settings["max_io_utilization"])
+	if io_limit > 1:
+		raise CampaignContractError("resource max_io_utilization must be in (0, 1]")
+	_positive_finite("resource max_combined_io_bps", resource_settings["max_combined_io_bps"])
+	if set(conservative_pre_pilot_bounds) != _CONSERVATIVE_BOUND_FIELDS:
+		raise CampaignContractError("conservative pre-pilot bounds schema is not exact")
+	for name in ("remaining_lifecycles", "p95_artifact_bytes", "p95_artifact_inodes"):
+		if type(conservative_pre_pilot_bounds[name]) is not int or cast(int, conservative_pre_pilot_bounds[name]) < 1:
+			raise CampaignContractError(f"conservative bound {name} must be a positive integer")
+	_positive_finite("conservative bound p95_lifecycle_seconds", conservative_pre_pilot_bounds["p95_lifecycle_seconds"])
+	blocks, cells = validate_campaign_matrix(block_ids, cell_ids)
+	pilot_orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, pilot_schedule_seed)
+	manifest: dict[str, object] = {
+		"schema": "systemds-federated-docker-campaign-preregistration/v3",
+		"execution_surface": "docker-only",
+		"lineage": lineage,
+		"frozen_core": core,
+		"seed_streams": {name: seed_streams[name] for name in SEED_STREAMS},
+		"resource_settings": cast(dict[str, object], _canonical_json_value("resource settings", resource_settings)),
+		"commands": cast(dict[str, object], _canonical_json_value("commands", commands)),
+		"dimensions": {
+			"block_ids": list(blocks), "cell_ids": list(cells),
+			"planner_major_barriers": [
+				{"planner": planner, "start": index * 84, "stop": (index + 1) * 84}
+				for index, planner in enumerate(CAMPAIGN_PLANNERS)
+			],
+		},
+		"pilot_preregistration": {
+			"row_count": 120, "repeats": 5, "schedule_seed": 19,
+			"pilot_classes": list(PILOT_CLASSES), "planners": list(CAMPAIGN_PLANNERS),
+			"regimes": [{"workers": workers, "profile": profile} for workers, profile in PILOT_REGIMES],
+			"orders": pilot_orders, "representative_workloads": dict(PILOT_REPRESENTATIVE_WORKLOADS),
+		},
+		"conservative_pre_pilot_bounds": cast(
+			dict[str, object], _canonical_json_value("conservative pre-pilot bounds", conservative_pre_pilot_bounds)
+		),
+	}
+	manifest["preregistration_manifest_sha256"] = _canonical_sha256(manifest)
+	return manifest
 
 
 def build_campaign_manifest(
@@ -716,6 +876,7 @@ def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, obje
 def select_campaign_pilot_repeats(
 	rows: Sequence[Mapping[str, object]], evidence_validator: Callable[[Mapping[str, object]], None],
 	*, expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
+	expected_preregistration_manifest_sha256: str | None = None,
 ) -> dict[str, object]:
 	"""Select one frozen repeat count from the preregistered cross-campaign pilot."""
 	required = {
@@ -727,6 +888,13 @@ def select_campaign_pilot_repeats(
 		raise CampaignContractError("campaign pilot requires an evidence revalidation callback")
 	_sha256_text("expected campaign manifest", expected_manifest_hash)
 	_sha256_text("expected pilot invocation manifest", expected_invocation_manifest_sha256)
+	preregistration_sha256 = _sha256_text(
+		"expected preregistration manifest",
+		expected_manifest_hash if expected_preregistration_manifest_sha256 is None
+		else expected_preregistration_manifest_sha256,
+	)
+	if preregistration_sha256 != expected_manifest_hash:
+		raise CampaignContractError("pilot manifest identity must equal the preregistration manifest identity")
 	if len(rows) != len(PILOT_CLASSES) * len(CAMPAIGN_PLANNERS) * len(PILOT_REGIMES) * 5:
 		raise CampaignContractError("campaign pilot requires the exact preregistered 120-row set")
 	groups: dict[tuple[str, str, int, str, str], list[Mapping[str, object]]] = {}
@@ -759,7 +927,18 @@ def select_campaign_pilot_repeats(
 	diagnostics: list[dict[str, object]] = []
 	deviations: list[float] = []
 	seen_evidence: set[str] = set()
-	for key in sorted(expected_groups):
+	canonical_rows: list[object] = []
+	evidence_inventory: list[dict[str, object]] = []
+	ordered_group_keys = [
+		(
+			pilot_class, planner, workers, profile,
+			f"pilot_class={pilot_class}|workload={PILOT_REPRESENTATIVE_WORKLOADS[pilot_class]}|planner={planner}|workers={workers}|profile={profile}",
+		)
+		for pilot_class in PILOT_CLASSES
+		for planner in CAMPAIGN_PLANNERS
+		for workers, profile in PILOT_REGIMES
+	]
+	for key in ordered_group_keys:
 		group = groups[key]
 		ordered = sorted(group, key=lambda row: int(cast(int, row["pilot_repeat"])))
 		if [row["pilot_repeat"] for row in ordered] != [1, 2, 3, 4, 5]:
@@ -793,6 +972,13 @@ def select_campaign_pilot_repeats(
 			if evidence_digest in seen_evidence:
 				raise CampaignContractError("campaign pilot evidence checksum is duplicated")
 			seen_evidence.add(evidence_digest)
+			canonical_row = _canonical_json_value("campaign pilot row", row)
+			canonical_rows.append(canonical_row)
+			evidence_inventory.append({
+				"cell": row["cell"], "pilot_repeat": row["pilot_repeat"],
+				"evidence_status": row["evidence_status"], "evidence_sha256": evidence_digest,
+				"evidence_location": _canonical_json_value("campaign pilot evidence location", row["evidence_location"]),
+			})
 			value = row["warm_seconds"]
 			values.append(_positive_finite("campaign pilot timing", value))
 			diagnostic_schemas = {
@@ -868,8 +1054,9 @@ def select_campaign_pilot_repeats(
 	q95 = ordered_deviations[index]
 	eta = max(math.log(1.02), q95)
 	selected = 3 if eta <= math.log(1.02) else 5 if eta <= math.log(1.05) else 7
-	return {
-		"schema": "systemds-federated-campaign-pilot/v2", "selection_rule": "eta=max(log(1.02),Q95(abs(log(t/median_group))))",
+	receipt: dict[str, object] = {
+		"schema": "systemds-federated-campaign-pilot/v3", "selection_rule": "eta=max(log(1.02),Q95(abs(log(t/median_group))))",
+		"preregistration_manifest_sha256": preregistration_sha256,
 		"preregistration": {
 			"row_count": 120, "pilot_classes": list(PILOT_CLASSES), "planners": list(CAMPAIGN_PLANNERS),
 			"regimes": [{"workers": workers, "profile": profile} for workers, profile in PILOT_REGIMES],
@@ -878,5 +1065,125 @@ def select_campaign_pilot_repeats(
 			"manifest_hash": expected_manifest_hash,
 			"invocation_manifest_sha256": expected_invocation_manifest_sha256,
 		},
+		"pilot_rows_sha256": _canonical_sha256(canonical_rows),
+		"evidence_digest_inventory": evidence_inventory,
 		"q95": q95, "eta": eta, "selected_repeats": selected, "diagnostics": diagnostics,
 	}
+	receipt["pilot_selection_sha256"] = _canonical_sha256(receipt)
+	return receipt
+
+
+def build_final_campaign_manifest(
+	*,
+	preregistration_manifest: Mapping[str, object],
+	pilot_selection_receipt: Mapping[str, object],
+	pilot_resource_reservation: Mapping[str, object],
+) -> dict[str, object]:
+	"""Build final manifest F solely from P, its pilot receipt, and measured reservation."""
+	prereg = cast(dict[str, object], _canonical_json_value("preregistration manifest", preregistration_manifest))
+	prereg_hash = prereg.get("preregistration_manifest_sha256")
+	if prereg.get("schema") != "systemds-federated-docker-campaign-preregistration/v3" or set(prereg) != {
+		"schema", "execution_surface", "lineage", "frozen_core", "seed_streams", "resource_settings",
+		"commands", "dimensions", "pilot_preregistration", "conservative_pre_pilot_bounds",
+		"preregistration_manifest_sha256",
+	}:
+		raise CampaignContractError("preregistration manifest v3 schema is not exact")
+	_sha256_text("preregistration manifest", prereg_hash)
+	unsigned_prereg = dict(prereg)
+	unsigned_prereg.pop("preregistration_manifest_sha256")
+	if _canonical_sha256(unsigned_prereg) != prereg_hash:
+		raise CampaignContractError("preregistration manifest self-hash is invalid")
+	lineage_value = prereg["lineage"]
+	if not isinstance(lineage_value, dict) or set(lineage_value) != {
+		"stage_descriptor_sha256", "cp_lifecycle_descriptor_sha256", "reference_manifest_sha256",
+	}:
+		raise CampaignContractError("preregistration lineage schema is not exact")
+	for name, digest in lineage_value.items():
+		_sha256_text(f"preregistration lineage {name}", digest)
+
+	selection = cast(dict[str, object], _canonical_json_value("pilot selection", pilot_selection_receipt))
+	if set(selection) != {
+		"schema", "selection_rule", "preregistration_manifest_sha256", "preregistration",
+		"pilot_rows_sha256", "evidence_digest_inventory", "q95", "eta", "selected_repeats",
+		"diagnostics", "pilot_selection_sha256",
+	}:
+		raise CampaignContractError("pilot selection schema is not exact")
+	selection_hash = selection.get("pilot_selection_sha256")
+	_sha256_text("pilot selection", selection_hash)
+	unsigned_selection = dict(selection)
+	unsigned_selection.pop("pilot_selection_sha256", None)
+	if _canonical_sha256(unsigned_selection) != selection_hash:
+		raise CampaignContractError("pilot selection self-hash is invalid")
+	if selection.get("schema") != "systemds-federated-campaign-pilot/v3" or selection.get("preregistration_manifest_sha256") != prereg_hash:
+		raise CampaignContractError("pilot selection does not bind the exact preregistration")
+	_sha256_text("pilot rows", selection["pilot_rows_sha256"])
+	inventory = selection["evidence_digest_inventory"]
+	if not isinstance(inventory, list) or len(inventory) != 120:
+		raise CampaignContractError("pilot evidence digest inventory must contain exact 120 rows")
+	seen_inventory: set[str] = set()
+	for index, item in enumerate(inventory):
+		if not isinstance(item, dict) or set(item) != {
+			"cell", "pilot_repeat", "evidence_status", "evidence_sha256", "evidence_location",
+		}:
+			raise CampaignContractError("pilot evidence digest inventory row schema is not exact")
+		digest = _sha256_text(f"pilot evidence inventory row {index}", item["evidence_sha256"])
+		if digest in seen_inventory:
+			raise CampaignContractError("pilot evidence digest inventory contains a duplicate")
+		seen_inventory.add(digest)
+	selected = selection.get("selected_repeats")
+	if type(selected) is not int or selected not in (3, 5, 7):
+		raise CampaignContractError("pilot selection repeats must be exactly 3, 5, or 7")
+
+	reservation = cast(dict[str, object], _canonical_json_value("pilot resource reservation", pilot_resource_reservation))
+	if set(reservation) != {
+		"schema", "pilot_manifest_hash", "sample_count", "p95_artifact_bytes", "p95_artifact_inodes",
+		"p95_lifecycle_seconds", "margin", "absolute_disk_floor_bytes", "payload_sha256",
+	} or reservation.get("schema") != "g007-pilot-resource-reservation-v1":
+		raise CampaignContractError("pilot resource reservation schema is not exact")
+	reservation_hash = reservation.get("payload_sha256")
+	_sha256_text("pilot resource reservation", reservation_hash)
+	unsigned_reservation = dict(reservation)
+	unsigned_reservation.pop("payload_sha256")
+	if _canonical_sha256(unsigned_reservation) != reservation_hash:
+		raise CampaignContractError("pilot resource reservation self-hash is invalid")
+	if reservation["pilot_manifest_hash"] != prereg_hash or reservation["sample_count"] != 120:
+		raise CampaignContractError("pilot resource reservation does not bind exact preregistration rows")
+	for name in ("p95_artifact_bytes", "p95_artifact_inodes"):
+		if type(reservation[name]) is not int or cast(int, reservation[name]) < 1:
+			raise CampaignContractError(f"pilot resource reservation {name} must be a positive integer")
+	_positive_finite("pilot resource reservation p95_lifecycle_seconds", reservation["p95_lifecycle_seconds"])
+	if _positive_finite("pilot resource reservation margin", reservation["margin"]) < 1.0:
+		raise CampaignContractError("pilot resource reservation margin must be conservative")
+	if reservation["absolute_disk_floor_bytes"] != 5 * 1024**3:
+		raise CampaignContractError("pilot resource reservation must preserve the 5GiB floor")
+
+	dimensions = cast(dict[str, object], prereg["dimensions"])
+	blocks = cast(list[str], dimensions["block_ids"])
+	seed_streams = cast(dict[str, object], prereg["seed_streams"])
+	validated_schedule = build_block_counterbalanced_schedule(
+		CAMPAIGN_PLANNERS, cast(int, selected), blocks, cast(int, seed_streams["schedule"])
+	)
+	final_lineage = {
+		"preregistration_manifest_sha256": prereg_hash,
+		"pilot_selection_sha256": selection_hash,
+		"stage_descriptor_sha256": lineage_value["stage_descriptor_sha256"],
+		"cp_lifecycle_descriptor_sha256": lineage_value["cp_lifecycle_descriptor_sha256"],
+		"reference_manifest_sha256": lineage_value["reference_manifest_sha256"],
+		"pilot_resource_reservation_sha256": reservation_hash,
+	}
+	manifest: dict[str, object] = {
+		"schema": "systemds-federated-docker-campaign/v3", "execution_surface": "docker-only",
+		"lineage": final_lineage,
+		"frozen_core": prereg["frozen_core"], "seed_streams": prereg["seed_streams"],
+		"resource_settings": prereg["resource_settings"], "commands": prereg["commands"],
+		"dimensions": prereg["dimensions"], "pilot_preregistration": prereg["pilot_preregistration"],
+		"conservative_pre_pilot_bounds": prereg["conservative_pre_pilot_bounds"],
+		"pilot_resource_reservation": {
+			"p95_artifact_bytes": reservation["p95_artifact_bytes"],
+			"p95_artifact_inodes": reservation["p95_artifact_inodes"],
+			"p95_lifecycle_seconds": reservation["p95_lifecycle_seconds"],
+		},
+		"selected_repeats": selected, "schedule": validated_schedule,
+	}
+	manifest["manifest_hash"] = _canonical_sha256(manifest)
+	return manifest

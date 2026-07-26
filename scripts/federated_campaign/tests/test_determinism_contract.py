@@ -6,6 +6,7 @@
 import hashlib
 import json
 import math
+import copy
 import statistics
 import tempfile
 import unittest
@@ -21,6 +22,8 @@ from scripts.federated_campaign.determinism_contract import (
 	build_counterbalanced_schedule,
 	build_frozen_manifest,
 	build_campaign_manifest,
+	build_campaign_preregistration_manifest,
+	build_final_campaign_manifest,
 	campaign_block_ids,
 	campaign_cell_ids,
 	check_resource_budget,
@@ -402,6 +405,90 @@ class DeterminismContractTest(unittest.TestCase):
 			with self.assertRaises(CampaignContractError):
 				build_campaign_manifest(**inputs)
 
+	def _campaign_v3_preregistration(self) -> dict[str, Any]:
+		inputs = self._campaign_v2_inputs()
+		inputs.pop("block_schedule"); inputs.pop("repeats")
+		return build_campaign_preregistration_manifest(
+			campaign_core_inputs=inputs,
+			stage_descriptor_sha256="1" * 64,
+			cp_lifecycle_descriptor_sha256="2" * 64,
+			reference_manifest_sha256="3" * 64,
+			conservative_pre_pilot_bounds={
+				"remaining_lifecycles": 2808, "p95_artifact_bytes": 1024,
+				"p95_artifact_inodes": 8, "p95_lifecycle_seconds": 30.0,
+			},
+		)
+
+	def test_campaign_v3_preregistration_binds_lineage_barriers_and_excludes_posthoc_selection(self):
+		prereg = self._campaign_v3_preregistration()
+		self.assertEqual("systemds-federated-docker-campaign-preregistration/v3", prereg["schema"])
+		self.assertNotIn("selected_repeats", prereg)
+		self.assertNotIn("schedule", prereg)
+		dimensions = _dict(prereg["dimensions"])
+		self.assertEqual(336, len(_list(dimensions["cell_ids"])))
+		self.assertEqual([
+			{"planner": "DP", "start": 0, "stop": 84},
+			{"planner": "FedAll", "start": 84, "stop": 168},
+			{"planner": "Heuristic", "start": 168, "stop": 252},
+			{"planner": "MinST", "start": 252, "stop": 336},
+		], dimensions["planner_major_barriers"])
+		pilot = _dict(prereg["pilot_preregistration"])
+		self.assertEqual((120, 5, 19), (pilot["row_count"], pilot["repeats"], pilot["schedule_seed"]))
+		unsigned = dict(prereg); digest = unsigned.pop("preregistration_manifest_sha256")
+		self.assertEqual(digest, hashlib.sha256(json.dumps(
+			unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest())
+
+	def test_campaign_v3_preregistration_rejects_unknown_drift_bool_nonfinite_and_zero_hash(self):
+		inputs = self._campaign_v2_inputs()
+		inputs.pop("block_schedule"); inputs.pop("repeats")
+		base: dict[str, Any] = {
+			"campaign_core_inputs": inputs, "stage_descriptor_sha256": "1" * 64,
+			"cp_lifecycle_descriptor_sha256": "2" * 64, "reference_manifest_sha256": "3" * 64,
+			"conservative_pre_pilot_bounds": {
+				"remaining_lifecycles": 2808, "p95_artifact_bytes": 1024,
+				"p95_artifact_inodes": 8, "p95_lifecycle_seconds": 30.0,
+			},
+		}
+		for mutation in ("extra", "bool", "nan", "zero_hash"):
+			candidate: dict[str, Any] = copy.deepcopy(base)
+			if mutation == "extra": cast(dict[str, Any], candidate["campaign_core_inputs"])["extra"] = 1
+			elif mutation == "bool": cast(dict[str, Any], candidate["conservative_pre_pilot_bounds"])["p95_artifact_bytes"] = True
+			elif mutation == "nan": cast(dict[str, Any], candidate["conservative_pre_pilot_bounds"])["p95_lifecycle_seconds"] = float("nan")
+			else: candidate["stage_descriptor_sha256"] = "0" * 64
+			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
+				build_campaign_preregistration_manifest(**candidate)
+
+	def test_campaign_v3_preregistration_revalidates_raw_core_and_keeps_pilot_seed_distinct(self):
+		inputs = self._campaign_v2_inputs()
+		inputs.pop("block_schedule"); inputs.pop("repeats")
+		inputs["seed_streams"] = dict(inputs["seed_streams"], schedule=31)
+		def build(candidate: dict[str, Any]) -> dict[str, object]:
+			return build_campaign_preregistration_manifest(
+				campaign_core_inputs=candidate, stage_descriptor_sha256="1" * 64,
+				cp_lifecycle_descriptor_sha256="2" * 64, reference_manifest_sha256="3" * 64,
+				conservative_pre_pilot_bounds={
+					"remaining_lifecycles": 2808, "p95_artifact_bytes": 1024,
+					"p95_artifact_inodes": 8, "p95_lifecycle_seconds": 30.0,
+				},
+			)
+		prereg = build(inputs)
+		self.assertEqual(31, _dict(prereg["seed_streams"])["schedule"])
+		self.assertEqual(
+			build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19),
+			_list(_dict(prereg["pilot_preregistration"])["orders"]),
+		)
+		for mutation in ("image", "artifact_path", "privacy", "topology", "oracle"):
+			candidate = dict(inputs)
+			if mutation == "image": candidate["image_digest"] = "mutable:latest"
+			elif mutation == "artifact_path": candidate["jar"] = self.root / "missing.jar"
+			elif mutation == "privacy": candidate["privacy_settings"] = {"public_tests_ignored": True, "runtime_fallback_allowed": True}
+			elif mutation == "topology": candidate["topology"] = dict(cast(dict[str, object], candidate["topology"]), profiles=["lan"])
+			else:
+				policies = dict(cast(dict[str, object], candidate["oracle_policies"])); policies.pop("als")
+				candidate["oracle_policies"] = policies
+			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
+				build(candidate)
 	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
 		def rows(values):
 			return [{
@@ -451,6 +538,13 @@ class DeterminismContractTest(unittest.TestCase):
 		)
 		selection = select(rows)
 		self.assertEqual(3, selection["selected_repeats"])
+		self.assertEqual("systemds-federated-campaign-pilot/v3", selection["schema"])
+		self.assertRegex(cast(str, selection["pilot_rows_sha256"]), r"^[0-9a-f]{64}$")
+		self.assertEqual(120, len(_list(selection["evidence_digest_inventory"])))
+		unsigned_selection = dict(selection); selection_hash = unsigned_selection.pop("pilot_selection_sha256")
+		self.assertEqual(selection_hash, hashlib.sha256(json.dumps(
+			unsigned_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest())
 		diagnostics = _list(selection["diagnostics"])
 		self.assertEqual(24, len(diagnostics))
 		self.assertIn("Q95", cast(str, selection["selection_rule"]))
@@ -528,6 +622,80 @@ class DeterminismContractTest(unittest.TestCase):
 			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 5
 			row["lifecycle"]["warm_seconds"] = row["warm_seconds"]
 		self.assertEqual(7, select(rows)["selected_repeats"])
+
+		prereg = self._campaign_v3_preregistration()
+		prereg_hash = cast(str, prereg["preregistration_manifest_sha256"])
+		for row in rows:
+			cast(dict[str, object], row["identity"])["manifest_hash"] = prereg_hash
+		selection_v3 = select_campaign_pilot_repeats(
+			rows, lambda row: None, expected_manifest_hash=prereg_hash,
+			expected_invocation_manifest_sha256=invocation_hash,
+			expected_preregistration_manifest_sha256=prereg_hash,
+		)
+		reservation: dict[str, object] = {
+			"schema": "g007-pilot-resource-reservation-v1", "pilot_manifest_hash": prereg_hash,
+			"sample_count": 120, "p95_artifact_bytes": 4096, "p95_artifact_inodes": 8,
+			"p95_lifecycle_seconds": 120.0, "margin": 1.20,
+			"absolute_disk_floor_bytes": 5 * 1024**3,
+		}
+		reservation["payload_sha256"] = hashlib.sha256(json.dumps(
+			reservation, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		repeats = cast(int, selection_v3["selected_repeats"])
+		schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, repeats, campaign_block_ids(), 19)
+		final = build_final_campaign_manifest(
+			preregistration_manifest=prereg, pilot_selection_receipt=selection_v3,
+			pilot_resource_reservation=reservation,
+		)
+		self.assertEqual("systemds-federated-docker-campaign/v3", final["schema"])
+		self.assertEqual(repeats, final["selected_repeats"])
+		self.assertEqual(prereg["frozen_core"], final["frozen_core"])
+		self.assertEqual({
+			"preregistration_manifest_sha256", "pilot_selection_sha256", "stage_descriptor_sha256",
+			"cp_lifecycle_descriptor_sha256", "reference_manifest_sha256",
+			"pilot_resource_reservation_sha256",
+		}, set(_dict(final["lineage"])))
+		derived_prereg = json.loads(json.dumps(prereg))
+		derived_prereg["seed_streams"]["schedule"] = 31
+		derived_prereg.pop("preregistration_manifest_sha256")
+		derived_prereg_hash = hashlib.sha256(json.dumps(
+			derived_prereg, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		derived_prereg["preregistration_manifest_sha256"] = derived_prereg_hash
+		derived_selection = json.loads(json.dumps(selection_v3))
+		derived_selection["preregistration_manifest_sha256"] = derived_prereg_hash
+		derived_selection["preregistration"]["manifest_hash"] = derived_prereg_hash
+		derived_selection.pop("pilot_selection_sha256")
+		derived_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
+			derived_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		derived_reservation = json.loads(json.dumps(reservation))
+		derived_reservation["pilot_manifest_hash"] = derived_prereg_hash
+		derived_reservation.pop("payload_sha256")
+		derived_reservation["payload_sha256"] = hashlib.sha256(json.dumps(
+			derived_reservation, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		derived_schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, repeats, campaign_block_ids(), 31)
+		derived_final = build_final_campaign_manifest(
+			preregistration_manifest=derived_prereg, pilot_selection_receipt=derived_selection,
+			pilot_resource_reservation=derived_reservation,
+		)
+		self.assertEqual(derived_schedule, derived_final["schedule"])
+		self.assertEqual(31, _dict(derived_final["schedule"])["seed"])
+		self.assertEqual(19, _dict(derived_final["pilot_preregistration"])["schedule_seed"])
+		for mutation in ("prereg", "selection", "reservation"):
+			candidate_prereg = json.loads(json.dumps(prereg))
+			candidate_selection = json.loads(json.dumps(selection_v3))
+			candidate_reservation = json.loads(json.dumps(reservation))
+			if mutation == "prereg": candidate_prereg["resource_settings"]["required_free_inodes"] += 1
+			elif mutation == "selection": candidate_selection["selected_repeats"] = 3
+			else: candidate_reservation["p95_artifact_bytes"] = 0
+			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
+				build_final_campaign_manifest(
+					preregistration_manifest=candidate_prereg,
+					pilot_selection_receipt=candidate_selection,
+					pilot_resource_reservation=candidate_reservation,
+				)
 
 	def phase_bundle(self, metric_kind="systemds_total_execution_time"):
 		phase = self.root / "phase"
