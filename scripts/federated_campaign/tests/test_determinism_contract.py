@@ -11,7 +11,7 @@ import statistics
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Mapping, cast
 
 from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
@@ -23,6 +23,7 @@ from scripts.federated_campaign.determinism_contract import (
 	build_frozen_manifest,
 	build_campaign_manifest,
 	build_campaign_preregistration_manifest,
+	build_discovery_completion_receipt,
 	build_final_campaign_manifest,
 	build_pilot_resource_reservation,
 	campaign_block_ids,
@@ -32,6 +33,7 @@ from scripts.federated_campaign.determinism_contract import (
 	select_pilot_repeats,
 	select_campaign_pilot_repeats,
 	validate_campaign_matrix,
+	validate_campaign_preregistration_manifest,
 	validate_phase_bundle,
 )
 
@@ -420,6 +422,18 @@ class DeterminismContractTest(unittest.TestCase):
 			},
 		)
 
+	def _discovery_completion(self, prereg: Mapping[str, object]) -> dict[str, object]:
+		manifest_hash = cast(str, prereg["preregistration_manifest_sha256"])
+		rows = [{
+			"cell": cell,
+			"identity": {"kind": "discovery", "cell": cell, "attempt": 1, "run_token": f"token-{index}", "manifest_hash": manifest_hash},
+			"evidence_status": "committed", "evidence_sha256": f"{index + 1:064x}",
+			"evidence_location": {"committed_path": f"/verified/discovery/{index}"},
+		} for index, cell in enumerate(campaign_cell_ids())]
+		return build_discovery_completion_receipt(
+			preregistration_manifest=prereg, discovery_rows=rows, evidence_validator=lambda row: None,
+		)
+
 	def test_campaign_v3_preregistration_binds_lineage_barriers_and_excludes_posthoc_selection(self):
 		prereg = self._campaign_v3_preregistration()
 		self.assertEqual("systemds-federated-docker-campaign-preregistration/v3", prereg["schema"])
@@ -490,6 +504,23 @@ class DeterminismContractTest(unittest.TestCase):
 				candidate["oracle_policies"] = policies
 			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
 				build(candidate)
+
+	def test_discovery_completion_requires_exact_ordered_336_latest_successes(self):
+		prereg = self._campaign_v3_preregistration()
+		completion = self._discovery_completion(prereg)
+		self.assertEqual(336, completion["cell_count"])
+		self.assertEqual(4, len(_list(completion["planner_major_barriers"])))
+		rows = _list(completion["discovery_rows"])
+		with self.assertRaisesRegex(CampaignContractError, "336"):
+			build_discovery_completion_receipt(
+				preregistration_manifest=prereg, discovery_rows=rows[:-1], evidence_validator=lambda row: None,
+			)
+		duplicate = copy.deepcopy(rows)
+		duplicate[1] = duplicate[0]
+		with self.assertRaises(CampaignContractError):
+			build_discovery_completion_receipt(
+				preregistration_manifest=prereg, discovery_rows=duplicate, evidence_validator=lambda row: None,
+			)
 	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
 		def rows(values):
 			return [{
@@ -508,7 +539,9 @@ class DeterminismContractTest(unittest.TestCase):
 		rows = []
 		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
 		representatives = {"cheap": "kmeans", "medium": "logreg", "heavy": "als"}
-		manifest_hash = "a" * 64
+		prereg = self._campaign_v3_preregistration()
+		completion = self._discovery_completion(prereg)
+		manifest_hash = cast(str, prereg["preregistration_manifest_sha256"])
 		invocation_hash = "d" * 64
 		for pilot_class in ("cheap", "medium", "heavy"):
 			for planner in CAMPAIGN_PLANNERS:
@@ -540,10 +573,11 @@ class DeterminismContractTest(unittest.TestCase):
 		select = lambda candidate_rows: select_campaign_pilot_repeats(
 			candidate_rows, lambda row: None, expected_manifest_hash=manifest_hash,
 			expected_invocation_manifest_sha256=invocation_hash,
+			preregistration_manifest=prereg, discovery_completion_receipt=completion,
 		)
 		selection = select(rows)
 		self.assertEqual(3, selection["selected_repeats"])
-		self.assertEqual("systemds-federated-campaign-pilot/v3", selection["schema"])
+		self.assertEqual("systemds-federated-campaign-pilot/v4", selection["schema"])
 		self.assertRegex(cast(str, selection["pilot_rows_sha256"]), r"^[0-9a-f]{64}$")
 		self.assertEqual(120, len(_list(selection["evidence_digest_inventory"])))
 		unsigned_selection = dict(selection); selection_hash = unsigned_selection.pop("pilot_selection_sha256")
@@ -628,16 +662,18 @@ class DeterminismContractTest(unittest.TestCase):
 			row["lifecycle"]["warm_seconds"] = row["warm_seconds"]
 		self.assertEqual(7, select(rows)["selected_repeats"])
 
-		prereg = self._campaign_v3_preregistration()
 		prereg_hash = cast(str, prereg["preregistration_manifest_sha256"])
 		for row in rows:
 			cast(dict[str, object], row["identity"])["manifest_hash"] = prereg_hash
 		selection_v3 = select_campaign_pilot_repeats(
 			rows, lambda row: None, expected_manifest_hash=prereg_hash,
 			expected_invocation_manifest_sha256=invocation_hash,
-			expected_preregistration_manifest_sha256=prereg_hash,
+			preregistration_manifest=prereg, discovery_completion_receipt=completion,
 		)
-		reservation = build_pilot_resource_reservation(pilot_selection_receipt=selection_v3)
+		reservation = build_pilot_resource_reservation(
+			pilot_selection_receipt=selection_v3, preregistration_manifest=prereg,
+			discovery_completion_receipt=completion,
+		)
 		self.assertEqual(1113, reservation["p95_artifact_bytes"])
 		self.assertEqual(25, reservation["p95_artifact_inodes"])
 		self.assertEqual(125.0, reservation["p95_lifecycle_seconds"])
@@ -645,72 +681,83 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, repeats, campaign_block_ids(), 19)
 		final = build_final_campaign_manifest(
 			preregistration_manifest=prereg, pilot_selection_receipt=selection_v3,
-			pilot_resource_reservation=reservation,
+			pilot_resource_reservation=reservation, discovery_completion_receipt=completion,
 		)
-		self.assertEqual("systemds-federated-docker-campaign/v3", final["schema"])
+		self.assertEqual("systemds-federated-docker-campaign/v4", final["schema"])
 		self.assertEqual(repeats, final["selected_repeats"])
 		self.assertEqual(prereg["frozen_core"], final["frozen_core"])
 		self.assertEqual({
 			"preregistration_manifest_sha256", "pilot_selection_sha256", "stage_descriptor_sha256",
 			"cp_lifecycle_descriptor_sha256", "reference_manifest_sha256",
-			"pilot_resource_reservation_sha256",
+			"pilot_resource_reservation_sha256", "discovery_completion_sha256",
 		}, set(_dict(final["lineage"])))
-		derived_prereg = json.loads(json.dumps(prereg))
-		derived_prereg["seed_streams"]["schedule"] = 31
-		derived_prereg.pop("preregistration_manifest_sha256")
-		derived_prereg_hash = hashlib.sha256(json.dumps(
-			derived_prereg, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		forged_prereg = json.loads(json.dumps(prereg))
+		forged_prereg["pilot_preregistration"]["schedule_seed"] = 20
+		forged_prereg.pop("preregistration_manifest_sha256")
+		forged_prereg["preregistration_manifest_sha256"] = hashlib.sha256(json.dumps(
+			forged_prereg, sort_keys=True, separators=(",", ":"), ensure_ascii=True
 		).encode()).hexdigest()
-		derived_prereg["preregistration_manifest_sha256"] = derived_prereg_hash
-		derived_selection = json.loads(json.dumps(selection_v3))
-		derived_selection["preregistration_manifest_sha256"] = derived_prereg_hash
-		derived_selection["preregistration"]["manifest_hash"] = derived_prereg_hash
-		derived_selection.pop("pilot_selection_sha256")
-		derived_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
-			derived_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		with self.assertRaisesRegex(CampaignContractError, "pilot seed/schedule"):
+			validate_campaign_preregistration_manifest(forged_prereg)
+
+		duplicate_selection = json.loads(json.dumps(selection_v3))
+		duplicate_selection["pilot_rows"][1] = duplicate_selection["pilot_rows"][0]
+		duplicate_selection["pilot_rows_sha256"] = hashlib.sha256(json.dumps(
+			duplicate_selection["pilot_rows"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
 		).encode()).hexdigest()
-		derived_reservation = build_pilot_resource_reservation(pilot_selection_receipt=derived_selection)
-		derived_schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, repeats, campaign_block_ids(), 31)
-		derived_final = build_final_campaign_manifest(
-			preregistration_manifest=derived_prereg, pilot_selection_receipt=derived_selection,
-			pilot_resource_reservation=derived_reservation,
-		)
-		self.assertEqual(derived_schedule, derived_final["schedule"])
-		self.assertEqual(31, _dict(derived_final["schedule"])["seed"])
-		self.assertEqual(19, _dict(derived_final["pilot_preregistration"])["schedule_seed"])
-		cross_selection = json.loads(json.dumps(selection_v3))
-		_list(cross_selection["evidence_digest_inventory"])[0]["resource_evidence"]["artifact_bytes"] += 1
-		cross_selection.pop("pilot_selection_sha256")
-		cross_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
-			cross_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		duplicate_selection.pop("pilot_selection_sha256")
+		duplicate_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
+			duplicate_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
 		).encode()).hexdigest()
-		cross_reservation = build_pilot_resource_reservation(pilot_selection_receipt=cross_selection)
-		with self.assertRaisesRegex(CampaignContractError, "bind exact"):
+		with self.assertRaises(CampaignContractError):
+			build_pilot_resource_reservation(
+				pilot_selection_receipt=duplicate_selection, preregistration_manifest=prereg,
+				discovery_completion_receipt=completion,
+			)
+
+		understated = json.loads(json.dumps(reservation))
+		understated["p95_artifact_bytes"] -= 1
+		understated.pop("payload_sha256")
+		understated["payload_sha256"] = hashlib.sha256(json.dumps(
+			understated, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		with self.assertRaisesRegex(CampaignContractError, "exact canonical"):
 			build_final_campaign_manifest(
 				preregistration_manifest=prereg, pilot_selection_receipt=selection_v3,
-				pilot_resource_reservation=cross_reservation,
+				pilot_resource_reservation=understated, discovery_completion_receipt=completion,
 			)
-		aliased_selection = json.loads(json.dumps(selection_v3))
-		_list(aliased_selection["evidence_digest_inventory"])[0]["resource_evidence"]["artifact_inodes"] = True
-		aliased_selection.pop("pilot_selection_sha256")
-		aliased_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
-			aliased_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		alternate_rows = copy.deepcopy(rows)
+		alternate_rows[0]["resource_evidence"]["artifact_bytes"] += 5000
+		alternate_selection = select_campaign_pilot_repeats(
+			alternate_rows, lambda row: None, expected_manifest_hash=prereg_hash,
+			expected_invocation_manifest_sha256=invocation_hash,
+			preregistration_manifest=prereg, discovery_completion_receipt=completion,
+		)
+		alternate_reservation = build_pilot_resource_reservation(
+			pilot_selection_receipt=alternate_selection, preregistration_manifest=prereg,
+			discovery_completion_receipt=completion,
+		)
+		with self.assertRaisesRegex(CampaignContractError, "exact canonical"):
+			build_final_campaign_manifest(
+				preregistration_manifest=prereg, pilot_selection_receipt=selection_v3,
+				pilot_resource_reservation=alternate_reservation, discovery_completion_receipt=completion,
+			)
+
+		cross_completion = self._discovery_completion(self._campaign_v3_preregistration())
+		cross_completion = json.loads(json.dumps(cross_completion))
+		cross_completion["discovery_rows"][0]["evidence_sha256"] = "f" * 64
+		cross_completion["discovery_rows_sha256"] = hashlib.sha256(json.dumps(
+			cross_completion["discovery_rows"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
 		).encode()).hexdigest()
-		with self.assertRaisesRegex(CampaignContractError, "positive integer"):
-			build_pilot_resource_reservation(pilot_selection_receipt=aliased_selection)
-		for mutation in ("prereg", "selection", "reservation"):
-			candidate_prereg = json.loads(json.dumps(prereg))
-			candidate_selection = json.loads(json.dumps(selection_v3))
-			candidate_reservation = json.loads(json.dumps(reservation))
-			if mutation == "prereg": candidate_prereg["resource_settings"]["required_free_inodes"] += 1
-			elif mutation == "selection": candidate_selection["selected_repeats"] = 3
-			else: candidate_reservation["p95_artifact_bytes"] = 0
-			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
-				build_final_campaign_manifest(
-					preregistration_manifest=candidate_prereg,
-					pilot_selection_receipt=candidate_selection,
-					pilot_resource_reservation=candidate_reservation,
-				)
+		cross_completion.pop("discovery_completion_sha256")
+		cross_completion["discovery_completion_sha256"] = hashlib.sha256(json.dumps(
+			cross_completion, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		with self.assertRaisesRegex(CampaignContractError, "lineage"):
+			build_final_campaign_manifest(
+				preregistration_manifest=prereg, pilot_selection_receipt=selection_v3,
+				pilot_resource_reservation=reservation, discovery_completion_receipt=cross_completion,
+			)
 
 	def phase_bundle(self, metric_kind="systemds_total_execution_time"):
 		phase = self.root / "phase"

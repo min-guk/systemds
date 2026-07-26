@@ -34,10 +34,13 @@ from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
 	CAMPAIGN_PLANNERS,
 	campaign_cell_ids,
+	build_discovery_completion_receipt,
 	build_campaign_manifest,
 	build_frozen_manifest,
 	select_pilot_repeats,
 	select_campaign_pilot_repeats,
+	validate_campaign_preregistration_manifest,
+	validate_discovery_completion_receipt,
 	validate_block_counterbalanced_schedule,
 )
 
@@ -644,6 +647,7 @@ class CampaignHarnessAdapter:
 		"select_pilot_repeats",
 		"normalize_resume_row",
 		"assert_planner_barrier",
+		"complete_discovery",
 		"preflight",
 	})
 
@@ -663,6 +667,7 @@ class CampaignHarnessAdapter:
 		lifecycle_replicate: int | None = None,
 		period: int | None = None,
 		order: str | None = None,
+		discovery_completion_receipt: Mapping[str, object] | None = None,
 		crash_after: str | None = None,
 	) -> AttemptLease:
 		if kind == "discovery" and cell in campaign_cell_ids():
@@ -670,6 +675,19 @@ class CampaignHarnessAdapter:
 			planner_index = CAMPAIGN_PLANNERS.index(planner)
 			if planner_index > 0:
 				self.assert_planner_barrier(CAMPAIGN_PLANNERS[planner_index - 1], manifest_hash)
+		if kind == "performance" and cell.startswith("pilot_class="):
+			if discovery_completion_receipt is None:
+				raise ArchiveContractError("pilot attempt requires discovery completion receipt D")
+			try:
+				completion = validate_discovery_completion_receipt(
+					discovery_completion_receipt, evidence_validator=self._verify_discovery_completion_row,
+				)
+			except CampaignContractError as error:
+				raise ArchiveContractError(str(error)) from error
+			if completion["preregistration_manifest_sha256"] != manifest_hash:
+				raise ArchiveContractError("pilot attempt D does not bind exact preregistration")
+			if invocation_manifest.get("discovery_completion_sha256") != completion["discovery_completion_sha256"]:
+				raise ArchiveContractError("pilot invocation must bind exact discovery completion hash")
 		base: dict[str, object] = {"kind": kind, "cell": cell, "manifest_hash": manifest_hash}
 		if kind == "performance":
 			base.update({"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order})
@@ -690,6 +708,76 @@ class CampaignHarnessAdapter:
 			minimum_attempt=max(archive_attempts, default=0) + 1,
 			crash_after=crash_after,
 		)
+
+	def complete_discovery(self, preregistration_manifest: Mapping[str, object]) -> dict[str, object]:
+		"""Revalidate all four planner barriers and seal their exact latest successes as D."""
+		try:
+			prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+		manifest_hash = cast(str, prereg["preregistration_manifest_sha256"])
+		self.assert_planner_barrier(CAMPAIGN_PLANNERS[-1], manifest_hash)
+		rows: list[dict[str, object]] = []
+		for cell in campaign_cell_ids():
+			decision = self.exact_resume(DiscoveryKey(cell, 1, "completion-query", manifest_hash))
+			if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
+				raise ArchiveContractError(f"discovery completion blocked by {cell}")
+			evidence = decision.evidence
+			identity = evidence.get("identity")
+			if not isinstance(identity, dict):
+				raise ArchiveContractError("discovery completion evidence identity is missing")
+			if isinstance(evidence.get("archive_sha256"), str):
+				status = "archive"
+				location = {"archive_uri": evidence["archive_uri"], "archive_sha256": evidence["archive_sha256"]}
+				digest = evidence["archive_sha256"]
+			else:
+				path = Path(cast(str, evidence.get("committed_path")))
+				status = "committed"; location = {"committed_path": str(path)}
+				digest = _sha256(path / "bundle_manifest.json")
+			rows.append({
+				"cell": cell, "identity": identity, "evidence_status": status,
+				"evidence_sha256": digest, "evidence_location": location,
+			})
+		try:
+			return build_discovery_completion_receipt(
+				preregistration_manifest=prereg, discovery_rows=rows,
+				evidence_validator=self._verify_discovery_completion_row,
+			)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+
+	def _verify_discovery_completion_row(self, row: Mapping[str, object]) -> None:
+		identity = row.get("identity")
+		location = row.get("evidence_location")
+		if not isinstance(identity, dict) or not isinstance(location, dict):
+			raise ArchiveContractError("discovery completion identity/location is invalid")
+		try:
+			key = DiscoveryKey(
+				cast(str, identity["cell"]), cast(int, identity["attempt"]),
+				cast(str, identity["run_token"]), cast(str, identity["manifest_hash"]),
+			)
+		except (KeyError, TypeError) as error:
+			raise ArchiveContractError("discovery completion identity is invalid") from error
+		if key.as_dict() != identity:
+			raise ArchiveContractError("discovery completion identity schema is not exact")
+		decision = self.exact_resume(key)
+		if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
+			raise ArchiveContractError("discovery completion row is not canonical latest success")
+		evidence = decision.evidence
+		if evidence.get("identity") != identity:
+			raise ArchiveContractError("discovery completion latest identity changed")
+		if row.get("evidence_status") == "archive":
+			if set(location) != {"archive_uri", "archive_sha256"} or row.get("evidence_sha256") != evidence.get("archive_sha256"):
+				raise ArchiveContractError("discovery completion archive evidence changed")
+			if location.get("archive_uri") != evidence.get("archive_uri") or location.get("archive_sha256") != evidence.get("archive_sha256"):
+				raise ArchiveContractError("discovery completion archive location changed")
+		elif row.get("evidence_status") == "committed":
+			if set(location) != {"committed_path"} or location.get("committed_path") != evidence.get("committed_path"):
+				raise ArchiveContractError("discovery completion committed location changed")
+			if row.get("evidence_sha256") != _sha256(Path(cast(str, location["committed_path"])) / "bundle_manifest.json"):
+				raise ArchiveContractError("discovery completion committed digest changed")
+		else:
+			raise ArchiveContractError("discovery completion evidence status is invalid")
 
 	def publish_performance_success(
 		self,
@@ -774,11 +862,15 @@ class CampaignHarnessAdapter:
 	def select_pilot_repeats(
 		self, rows: Sequence[Mapping[str, object]], *,
 		expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
+		preregistration_manifest: Mapping[str, object],
+		discovery_completion_receipt: Mapping[str, object],
 	) -> dict[str, object]:
 		try:
 			return select_campaign_pilot_repeats(
 				rows, self._verify_pilot_row, expected_manifest_hash=expected_manifest_hash,
 				expected_invocation_manifest_sha256=expected_invocation_manifest_sha256,
+				preregistration_manifest=preregistration_manifest,
+				discovery_completion_receipt=discovery_completion_receipt,
 			)
 		except CampaignContractError as error:
 			raise ArchiveContractError(str(error)) from error

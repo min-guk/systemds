@@ -353,7 +353,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual(
 			{
 				"begin", "publish_discovery_success", "publish_performance_success", "publish_failure", "archive", "exact_resume",
-				"select_pilot_repeats", "normalize_resume_row", "assert_planner_barrier", "preflight",
+				"select_pilot_repeats", "normalize_resume_row", "assert_planner_barrier", "complete_discovery", "preflight",
 			},
 			facade.integration_operations,
 		)
@@ -590,7 +590,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_pilot_evidence_schedule_must_match_preregistered_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		lease = facade.begin(
+		lease = self.ledger.begin_attempt(
 			kind="performance", cell=cell,
 			manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=99, period=4, order="WRONG",
@@ -628,7 +628,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		order = ">".join(order_tuple)
 		period = order_tuple.index("DP") + 1
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		lease = facade.begin(
+		lease = self.ledger.begin_attempt(
 			kind="performance", cell=cell, manifest_hash="a" * 64, invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=period, order=order,
 		)
@@ -742,33 +742,16 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
 		self.assertIn("legacy v1", str(decision.detail))
 
-	def test_harness_adapter_pilot_selection_rejects_forged_exact_120_rows(self):
+	def test_empty_or_incomplete_discovery_cannot_allocate_pilot_lease(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		rows = []
-		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
-		for pilot_class in ("cheap", "medium", "heavy"):
-			representative = {"cheap": "kmeans", "medium": "logreg", "heavy": "als"}[pilot_class]
-			for planner in CAMPAIGN_PLANNERS:
-				for workers, profile in ((1, "lan"), (4, "wan_mid")):
-					cell = f"pilot_class={pilot_class}|workload={representative}|planner={planner}|workers={workers}|profile={profile}"
-					for repeat, order_tuple in enumerate(orders, 1):
-						period = order_tuple.index(planner) + 1
-						identity = PerformanceKey(cell, repeat, period, ">".join(order_tuple), "a" * 64, repeat, f"token-{len(rows)}").as_dict()
-						rows.append({
-							"pilot_class": pilot_class, "workload": representative, "planner": planner, "workers": workers, "profile": profile,
-							"cell": cell, "pilot_repeat": repeat, "warm_seconds": 1.0, "period": period,
-							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
-							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 1, "write_bytes_per_second": 1},
-							"lifecycle": {"cold_seconds": 2, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0},
-							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
-							"identity": identity, "evidence_location": {"committed_path": f"/forged/{len(rows)+1}"},
-							"invocation_manifest_sha256": "d" * 64,
-							"resource_evidence": {"artifact_bytes": 1000, "artifact_inodes": 10, "lifecycle_wall_seconds": 4.0},
-						})
-		with self.assertRaisesRegex(ArchiveContractError, "revalidation"):
-			facade.select_pilot_repeats(
-				rows, expected_manifest_hash="a" * 64, expected_invocation_manifest_sha256="d" * 64,
+		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
+		with self.assertRaisesRegex(ArchiveContractError, "completion receipt D"):
+			facade.begin(
+				kind="performance", cell=cell, manifest_hash="a" * 64,
+				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
+				period=1, order="DP>FedAll>Heuristic>MinST",
 			)
+		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
 
 	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())

@@ -23,3 +23,31 @@
 - **잠재 회귀 위험**: 기존 v2 performance producer가 새 필드를 누락하면 fail-closed된다. shared manifest schema 테스트와 archive-only resume parity 테스트로 감지한다.
 - **의사결정 근거**: planner/runtime 규칙은 변경하지 않았다. runtime fallback 없이 evidence/oracle contract와 archive lifecycle만 강화했다.
 - **적용 원칙/제약**: Docker-only, runtime fallback 금지, stale/partial evidence 금지, 비용 최적화 이전에 실제 측정량을 고정한다.
+
+## 이슈 2 — Discovery→Pilot 전이 및 P/S/R/F 의미 검증 누락
+
+- **상태**: 해결
+- **환경/조건**: Docker-only federated campaign, preregistration P v3, 336-cell discovery, 120-row pilot, HDFS/local exact resume.
+- **재현 절차**: 기존 계약에서 self-hash만 다시 계산한 P/S/R를 입력하거나, discovery ledger가 비어 있는 상태에서 `CampaignHarnessAdapter.begin(kind="performance", cell="pilot_class=...")` 호출.
+- **관측 증상**: 336개 discovery 성공을 증명하는 전이 영수증 없이 pilot lease를 만들 수 있었고, P/S/R의 파생 수치를 변조한 뒤 self-hash를 다시 만들면 일부 ingress를 통과할 수 있었다.
+- **원인 분석**: self-hash 무결성과 의미적 정당성을 혼동했다. 또한 planner-major barrier는 다음 discovery planner만 막았고 discovery 전체 완료와 pilot 시작 사이에는 원자적 계약 경계가 없었다.
+- **해결 요약**:
+  - 정확히 정렬된 336개 canonical latest-success를 재검증하여 self-hashed `systemds-federated-discovery-completion/v1` 영수증 D를 생성한다.
+  - pilot lease는 D와 그 exact SHA-256이 invocation manifest에 없으면 intent 파일 생성 전에 fail-closed 한다.
+  - P는 336 cells, 4×84 barriers, seed 19 Williams pilot schedule, frozen core/privacy/topology/lineage/resource invariants를 의미적으로 재검증한다.
+  - S v4는 canonical 120 pilot rows를 포함하고 24 groups×5 repeats, order/identity/evidence uniqueness, Q95/eta/repeat 선택을 builder로 재계산하여 exact equality를 요구한다.
+  - R v3는 S에서 다시 산출한 nearest-rank P95, margin 1.20, 5GiB floor와 exact equality를 F ingress에서 요구한다.
+  - F v4와 S v4 lineage에 D hash를 포함한다.
+- **수정 파일**:
+  - `scripts/federated_campaign/determinism_contract.py`
+  - `scripts/federated_campaign/hdfs_archive.py`
+  - `scripts/federated_campaign/tests/test_determinism_contract.py`
+  - `scripts/federated_campaign/tests/test_hdfs_archive.py`
+- **검증**: exact/incomplete D, empty-ledger pilot, forged P, duplicate S, understated/cross-pair R 적대 테스트와 전체 campaign contract unittest를 실행한다.
+- **잔여 이슈**: Docker runner가 새 API에 연결되어야 한다. `complete_discovery(P)` 뒤 반환된 D를 pilot invocation manifest의 `discovery_completion_sha256`에 기록하고, S/R/F 호출에 동일한 P와 D를 전달해야 한다.
+- **잠재 회귀 위험**: 기존 v3 S/F 또는 v2 R를 직접 조립하던 호출자는 v4/v3 API로 이행하지 않으면 fail-closed 한다. 전체 harness integration 테스트로 감지한다.
+- **적용 원칙/의사결정 근거**: 런타임 fallback 없이 planner 이전의 evidence/state-transition 계약을 강화했다. 후보군이나 planner/runtime 지원 범위는 변경하지 않았다.
+
+### Docker lifecycle wall producer integration API
+
+`lifecycle_wall_seconds`는 계약 계층이 추정하거나 `cold_seconds + warm_seconds`로 대체하지 않는다. Docker runner가 각 lifecycle의 setup 직전 monotonic timestamp부터 validation, strict teardown, zero-resources 확인 직후까지 직접 측정하여 shared replicate manifest 최상위 필드에 기록해야 한다. Atomic ledger는 caller가 기록한 값을 서명된 bundle manifest의 `resource_evidence.lifecycle_wall_seconds`로 보존하고, HDFS receipt와 exact resume에서 동일 값을 재검증한다. `archive_bytes` 역시 artifact footprint 대체값으로 사용할 수 없다.
