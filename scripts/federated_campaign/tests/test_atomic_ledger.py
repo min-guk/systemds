@@ -163,6 +163,37 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		self.assertEqual("success", latest_summary["status"])
 		self.assertFalse(latest_summary["valid"])
 
+	def test_commit_rename_crash_then_unreadable_manifest_preserves_latest_identity_and_blocks_stale_success(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"), "-old-state")
+		key = DiscoveryKey("cell-a", 2, "token-b", "manifest-a")
+		cold = self._phase("state-crash-cold", "docker_e2e", 2.4)
+		warm = self._phase("state-crash-warm", "systemds_total_execution_time", 1.2)
+		shared = self._shared_manifest(key, cold, warm, "state-crash-shared.json")
+		with self.assertRaises(InjectedPublicationCrash):
+			ledger.publish_success(key, cold, warm, shared, crash_after="after_commit_rename")
+		record_id = hashlib.sha256(
+			json.dumps(key.as_dict(), sort_keys=True, separators=(",", ":")).encode()
+		).hexdigest()
+		latest = ledger.committed / "discovery" / record_id
+		(latest / "bundle_manifest.json").write_bytes(b"{unreadable")
+		restarted = AtomicEvidenceLedger(self.root / "ledger")
+		self.assertIsNone(restarted.latest_discovery_success("cell-a", "manifest-a"))
+		latest_summary = next(
+			record for record in restarted.record_summaries() if record.get("identity", {}).get("attempt") == 2
+		)
+		self.assertEqual("success", latest_summary["status"])
+		self.assertFalse(latest_summary["valid"])
+
+	def test_unidentified_invalid_discovery_directory_fails_closed_against_stale_success(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"), "-known")
+		unknown = ledger.committed / "discovery" / ("f" * 64)
+		unknown.mkdir()
+		(unknown / "bundle_manifest.json").write_bytes(b"unreadable")
+		restarted = AtomicEvidenceLedger(self.root / "ledger")
+		self.assertIsNone(restarted.latest_discovery_success("cell-a", "manifest-a"))
+
 	def test_latest_failed_attempt_never_backfills_older_success(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))

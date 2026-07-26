@@ -30,6 +30,7 @@ _PHASE_ARTIFACTS = (
 
 PUBLICATION_BOUNDARIES = (
 	"after_stage_created",
+	"after_record_state_fsync",
 	*(f"after_cold_{label}_fsync" for _, label in _PHASE_ARTIFACTS),
 	"after_cold_bundle_fsync",
 	*(f"after_warm_{label}_fsync" for _, label in _PHASE_ARTIFACTS),
@@ -221,6 +222,8 @@ class AtomicEvidenceLedger:
 		stage = self.staging / f"{record_id}.{uuid.uuid4().hex}"
 		stage.mkdir()
 		self._crash(crash_after, "after_stage_created")
+		self._write_record_state(stage, identity, "success")
+		self._crash(crash_after, "after_record_state_fsync")
 		self._copy_phase(Path(cold_bundle), stage / "cold", "docker_e2e", "cold", crash_after)
 		self._crash(crash_after, "after_cold_bundle_fsync")
 		self._copy_phase(
@@ -265,6 +268,7 @@ class AtomicEvidenceLedger:
 			raise LedgerContractError(f"committed identity already exists: {destination}")
 		stage = self.staging / f"{record_id}.{uuid.uuid4().hex}"
 		stage.mkdir()
+		self._write_record_state(stage, identity, "failed")
 		manifest = {
 			"schema": "systemds-federated-evidence/v1",
 			"identity": identity,
@@ -282,9 +286,16 @@ class AtomicEvidenceLedger:
 	def latest_discovery_success(self, cell: str, manifest_hash: str) -> dict[str, object] | None:
 		_validate_text("cell", cell)
 		_validate_text("manifest_hash", manifest_hash)
+		inspected = self._inspect_records(self._load_prior_index())
+		if any(
+			Path(str(record.get("path", ""))).parent.name == "discovery"
+			and record.get("identity") == {}
+			for record in inspected
+		):
+			return None
 		records = [
 			record
-			for record in self._inspect_records(self._load_prior_index())
+			for record in inspected
 			if record.get("identity", {}).get("kind") == "discovery"
 			and record.get("identity", {}).get("cell") == cell
 			and record.get("identity", {}).get("manifest_hash") == manifest_hash
@@ -388,6 +399,14 @@ class AtomicEvidenceLedger:
 		if requested == boundary:
 			raise InjectedPublicationCrash(boundary)
 
+	def _write_record_state(self, stage: Path, identity: dict[str, object], status: str) -> None:
+		state = {
+			"schema": "systemds-federated-record-state/v1",
+			"identity": identity,
+			"status": status,
+		}
+		_write_fsynced(stage / "record_state.json", _canonical_bytes(state) + b"\n")
+
 	def _quarantine_orphans(self) -> None:
 		orphans = list(self.staging.iterdir()) + list(self.root.glob(".index.*.tmp"))
 		for orphan in orphans:
@@ -420,6 +439,27 @@ class AtomicEvidenceLedger:
 		return records
 
 	def _inspect_committed(self, record_dir: Path, prior: dict[str, object] | None) -> dict[str, object]:
+		result: dict[str, object] | None = None
+		state_path = record_dir / "record_state.json"
+		if state_path.is_file():
+			try:
+				state = _read_json(state_path, "record state")
+				if set(state) != {"schema", "identity", "status"} or state.get("schema") != "systemds-federated-record-state/v1":
+					raise LedgerContractError("record state schema is invalid")
+				state_identity = _validate_identity(state.get("identity"))
+				state_status = state.get("status")
+				if state_status not in ("success", "failed"):
+					raise LedgerContractError("record state status is invalid")
+				self._validate_record_location(record_dir, state_identity)
+				result = {
+					"path": str(record_dir),
+					"identity": state_identity,
+					"status": state_status,
+					"valid": False,
+					"manifest": {},
+				}
+			except (LedgerContractError, OSError):
+				result = None
 		manifest_path = record_dir / "bundle_manifest.json"
 		try:
 			manifest = _read_json(manifest_path, "bundle manifest")
@@ -429,18 +469,13 @@ class AtomicEvidenceLedger:
 			status = manifest.get("status")
 			if status not in ("success", "failed"):
 				raise LedgerContractError("bundle manifest status is invalid")
-			if record_dir.parent.name != identity["kind"]:
-				raise LedgerContractError("committed kind directory does not match identity")
-			if record_dir.name != hashlib.sha256(_canonical_bytes(identity)).hexdigest():
-				raise LedgerContractError("committed directory does not match identity hash")
-			result: dict[str, object] = {
-				"path": str(record_dir),
-				"identity": identity,
-				"status": status,
-				"valid": False,
-				"manifest": manifest,
-			}
+			self._validate_record_location(record_dir, identity)
+			if result is not None and (result["identity"] != identity or result["status"] != status):
+				return result
+			result = {"path": str(record_dir), "identity": identity, "status": status, "valid": False, "manifest": manifest}
 		except (LedgerContractError, OSError):
+			if result is not None:
+				return result
 			if prior is not None:
 				preserved = dict(prior)
 				preserved["path"] = str(record_dir)
@@ -470,6 +505,12 @@ class AtomicEvidenceLedger:
 			return result
 		except (LedgerContractError, OSError):
 			return result
+
+	def _validate_record_location(self, record_dir: Path, identity: dict[str, object]) -> None:
+		if record_dir.parent.name != identity["kind"]:
+			raise LedgerContractError("committed kind directory does not match identity")
+		if record_dir.name != hashlib.sha256(_canonical_bytes(identity)).hexdigest():
+			raise LedgerContractError("committed directory does not match identity hash")
 
 	def _publish_derived_index(self, crash_after: str | None) -> None:
 		records = self._inspect_records(self._load_prior_index())

@@ -11,7 +11,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey
+from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey
 from scripts.federated_campaign.determinism_contract import build_block_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
 	ArchiveContractError,
@@ -145,6 +145,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"warmup_runs": 1,
 			"measured_warm_runs": 5,
 			"block_schedule": schedule,
+			"expected_block_order": ("b0", "b1", "b2", "b3"),
 		}
 
 	def test_archive_validates_local_commit_before_upload(self):
@@ -260,6 +261,11 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		):
 			with self.assertRaisesRegex(ArchiveContractError, "Permission denied"):
 				backend.exists("hdfs://host/denied")
+		with patch.object(
+			backend, "_run", return_value=CompletedProcess([], 1, stdout="Permission denied", stderr="")
+		):
+			with self.assertRaisesRegex(ArchiveContractError, "Permission denied"):
+				backend.exists("hdfs://host/stdout-denied")
 
 	def test_eviction_rejects_catalog_path_outside_identity_derived_committed_path(self):
 		_, first = self._commit(1, "token-a")
@@ -285,8 +291,10 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				"schedule_row",
 				"preflight_next_lifecycle",
 				"publish_phase_pair",
+				"publish_failure",
 				"archive_published",
 				"resume_discovery",
+				"resume_performance",
 			},
 			facade.integration_operations,
 		)
@@ -320,6 +328,35 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		)
 		committed = facade.publish_phase_pair(key, cold, warm, shared)
 		self.assertEqual(key.as_dict(), self.ledger.validate_committed(committed)["identity"])
+
+	def test_harness_adapter_publishes_failure_without_ledger_reach_through(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		key = DiscoveryKey("cell-a", 1, "token-a", "manifest-a")
+		committed = facade.publish_failure(key, "timeout")
+		summary = next(record for record in self.ledger.record_summaries() if record["path"] == str(committed))
+		self.assertEqual("failed", summary["status"])
+
+	def test_harness_adapter_resumes_exact_performance_identity(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		key = PerformanceKey("cell-a", 3, 2, "FedAll>DP", "manifest-a")
+		cold = self._phase("performance-facade-cold", "docker_e2e", 2.5)
+		warm = self._phase("performance-facade-warm", "systemds_total_execution_time", 1.25)
+		shared = self.root / "performance-facade-shared.json"
+		shared.write_text(
+			json.dumps(
+				{
+					"identity": key.as_dict(),
+					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+				}
+			),
+			encoding="utf-8",
+		)
+		facade.publish_phase_pair(key, cold, warm, shared)
+		self.assertEqual(key.as_dict(), facade.resume_performance(key)["identity"])
+		self.assertIsNone(
+			facade.resume_performance(PerformanceKey("cell-a", 3, 2, "DP>FedAll", "manifest-a"))
+		)
 
 	def test_harness_adapter_archives_and_resumes_verified_discovery(self):
 		_, committed = self._commit(1, "token-a")

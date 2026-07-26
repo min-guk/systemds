@@ -95,6 +95,7 @@ def build_frozen_manifest(
 	warmup_runs: int,
 	measured_warm_runs: int,
 	block_schedule: dict[str, object] | None = None,
+	expected_block_order: Sequence[str] | None = None,
 ) -> dict[str, object]:
 	"""Build a canonical manifest whose hash changes on any frozen input drift."""
 	if seed is None or isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
@@ -108,9 +109,13 @@ def build_frozen_manifest(
 	if measured_warm_runs not in (3, 5, 7):
 		raise CampaignContractError("measured_warm_runs must be exactly 3, 5, or 7")
 	if block_schedule is not None:
+		if expected_block_order is None:
+			raise CampaignContractError("an independent expected block order is required")
 		block_schedule = validate_block_counterbalanced_schedule(
-			block_schedule, planners, measured_warm_runs, seed
+			block_schedule, planners, measured_warm_runs, seed, expected_block_order
 		)
+	elif expected_block_order is not None:
+		raise CampaignContractError("expected block order requires a block schedule")
 
 	manifest: dict[str, object] = {
 		"schema": "systemds-federated-docker-campaign/v1",
@@ -124,6 +129,7 @@ def build_frozen_manifest(
 		"image": {"id": image_id, "digest": image_digest, "prebuilt": True},
 		"worker_mapping": list(workers),
 		"planner_order": list(planners),
+		"block_order": list(expected_block_order) if expected_block_order is not None else None,
 		"seed": seed,
 		"lifecycle": {
 			"compose": "fresh_per_replicate",
@@ -237,7 +243,11 @@ def build_block_counterbalanced_schedule(
 
 
 def validate_block_counterbalanced_schedule(
-	schedule: object, planners: Sequence[str], repeats: int, seed: int
+	schedule: object,
+	planners: Sequence[str],
+	repeats: int,
+	seed: int,
+	expected_block_order: Sequence[str],
 ) -> dict[str, object]:
 	"""Recompute every persisted schedule fact and reject claimed-only balance."""
 	if not isinstance(schedule, dict):
@@ -251,7 +261,10 @@ def validate_block_counterbalanced_schedule(
 		raise CampaignContractError("block schedule block identity is invalid") from error
 	if len(block_ids) != len(blocks):
 		raise CampaignContractError("block schedule block structure is invalid")
-	expected = build_block_counterbalanced_schedule(planners, repeats, block_ids, seed)
+	expected_blocks = _require_nonempty_unique("expected block order", expected_block_order)
+	if block_ids != expected_blocks:
+		raise CampaignContractError("block schedule does not match the independent frozen block order")
+	expected = build_block_counterbalanced_schedule(planners, repeats, expected_blocks, seed)
 	if schedule != expected:
 		raise CampaignContractError("block schedule does not match recomputed Williams rotation")
 	if expected["aggregate_fully_balanced"] is not True:

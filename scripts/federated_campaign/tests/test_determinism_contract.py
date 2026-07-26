@@ -39,7 +39,7 @@ class DeterminismContractTest(unittest.TestCase):
 	def tearDown(self):
 		self.temp_dir.cleanup()
 
-	def manifest(self, seed=7331, block_schedule=None):
+	def manifest(self, seed=7331, block_schedule=None, expected_block_order=None):
 		return build_frozen_manifest(
 			jar=self.root / "systemds.jar",
 			image_id="sha256:image",
@@ -53,6 +53,7 @@ class DeterminismContractTest(unittest.TestCase):
 			warmup_runs=1,
 			measured_warm_runs=5,
 			block_schedule=block_schedule,
+			expected_block_order=expected_block_order,
 		)
 
 	def test_same_inputs_produce_same_manifest_hash(self):
@@ -135,8 +136,9 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		manifest = self.manifest(seed=19, block_schedule=schedule)
+		manifest = self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 		self.assertEqual(schedule, manifest["block_schedule"])
+		self.assertEqual(["b0", "b1", "b2", "b3"], manifest["block_order"])
 
 	def test_frozen_manifest_rejects_forged_aggregate_balance_claim(self):
 		schedule = build_block_counterbalanced_schedule(
@@ -145,7 +147,7 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule["blocks"][0]["runs"][0]["periods"][0]["planner"] = "MinST"
 		schedule["aggregate_fully_balanced"] = True
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
-			self.manifest(seed=19, block_schedule=schedule)
+			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
 	def test_frozen_manifest_rejects_schedule_for_different_planner_order(self):
 		schedule = build_block_counterbalanced_schedule(
@@ -165,6 +167,7 @@ class DeterminismContractTest(unittest.TestCase):
 				warmup_runs=1,
 				measured_warm_runs=5,
 				block_schedule=schedule,
+				expected_block_order=("b0", "b1", "b2", "b3"),
 			)
 
 	def test_frozen_manifest_rejects_forged_aggregate_period_counts(self):
@@ -174,7 +177,7 @@ class DeterminismContractTest(unittest.TestCase):
 		planner = next(iter(schedule["aggregate_period_counts"]["1"]))
 		schedule["aggregate_period_counts"]["1"][planner] += 1
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
-			self.manifest(seed=19, block_schedule=schedule)
+			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
 	def test_frozen_manifest_rejects_forged_directed_carryover_counts(self):
 		schedule = build_block_counterbalanced_schedule(
@@ -183,7 +186,7 @@ class DeterminismContractTest(unittest.TestCase):
 		pair = next(iter(schedule["aggregate_directed_carryover_counts"]))
 		schedule["aggregate_directed_carryover_counts"][pair] += 1
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
-			self.manifest(seed=19, block_schedule=schedule)
+			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
 	def test_frozen_manifest_rejects_forged_block_rotation(self):
 		schedule = build_block_counterbalanced_schedule(
@@ -191,7 +194,7 @@ class DeterminismContractTest(unittest.TestCase):
 		)
 		schedule["blocks"][0]["rotation_start_row"] = 3
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
-			self.manifest(seed=19, block_schedule=schedule)
+			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
 	def test_frozen_manifest_rejects_nontext_block_identity(self):
 		schedule = build_block_counterbalanced_schedule(
@@ -199,7 +202,20 @@ class DeterminismContractTest(unittest.TestCase):
 		)
 		schedule["blocks"][0]["block"] = 7
 		with self.assertRaisesRegex(CampaignContractError, "block"):
-			self.manifest(seed=19, block_schedule=schedule)
+			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
+
+	def test_frozen_manifest_rejects_schedule_missing_a_complete_williams_cycle(self):
+		expected_blocks = tuple(f"b{index}" for index in range(8))
+		truncated_balanced_schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, expected_blocks[:4], 19
+		)
+		self.assertTrue(truncated_balanced_schedule["aggregate_fully_balanced"])
+		with self.assertRaisesRegex(CampaignContractError, "block order"):
+			self.manifest(
+				seed=19,
+				block_schedule=truncated_balanced_schedule,
+				expected_block_order=expected_blocks,
+			)
 
 	def test_block_rotation_persists_block_period_and_order(self):
 		schedule = build_block_counterbalanced_schedule(

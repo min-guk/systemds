@@ -17,9 +17,14 @@ import tarfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Sequence, cast
 
-from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, LedgerContractError, LedgerKey
+from scripts.federated_campaign.atomic_ledger import (
+	AtomicEvidenceLedger,
+	LedgerContractError,
+	LedgerKey,
+	PerformanceKey,
+)
 from scripts.federated_campaign.determinism_contract import (
 	build_frozen_manifest,
 	validate_block_counterbalanced_schedule,
@@ -66,7 +71,7 @@ class HdfsCliBackend:
 		result = self._run("-test", "-e", remote_uri, check=False)
 		if result.returncode == 0:
 			return True
-		if result.returncode == 1 and not result.stderr.strip():
+		if result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip():
 			return False
 		detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
 		raise ArchiveContractError(
@@ -117,7 +122,10 @@ class HdfsArchiveAdapter:
 			manifest = self.ledger.validate_committed(committed)
 		except LedgerContractError as error:
 			raise ArchiveContractError(f"local commit validation failed: {committed}") from error
-		identity = manifest["identity"]
+		identity_value = manifest.get("identity")
+		if not isinstance(identity_value, dict):
+			raise ArchiveContractError("local commit manifest identity is invalid")
+		identity = cast(dict[str, object], identity_value)
 		record_id = committed.name
 		for receipt in self.catalog():
 			if receipt.get("identity") == identity:
@@ -151,7 +159,7 @@ class HdfsArchiveAdapter:
 			archive_path.unlink(missing_ok=True)
 			download_path.unlink(missing_ok=True)
 
-		receipt = {
+		receipt: dict[str, object] = {
 			"schema": "systemds-federated-hdfs-archive/v1",
 			"identity": identity,
 			"archive_uri": remote_final,
@@ -187,7 +195,14 @@ class HdfsArchiveAdapter:
 
 	def latest_discovery_success(self, cell: str, manifest_hash: str) -> dict[str, object] | None:
 		candidates = []
-		for record in self.ledger.record_summaries():
+		local_records = self.ledger.record_summaries()
+		if any(
+			Path(str(record.get("path", ""))).parent.name == "discovery"
+			and record.get("identity") == {}
+			for record in local_records
+		):
+			return None
+		for record in local_records:
 			identity = record.get("identity")
 			if (
 				isinstance(identity, dict)
@@ -217,6 +232,24 @@ class HdfsArchiveAdapter:
 		if len(latest) != 1:
 			raise ArchiveContractError("ambiguous archived latest discovery attempt")
 		receipt = latest[0][2]
+		manifest = self._verify_receipt(receipt)
+		manifest["archive_uri"] = receipt["archive_uri"]
+		manifest["archive_sha256"] = receipt["archive_sha256"]
+		return manifest
+
+	def performance_success(self, key: PerformanceKey) -> dict[str, object] | None:
+		identity = key.as_dict()
+		local = [record for record in self.ledger.record_summaries() if record.get("identity") == identity]
+		if local:
+			if len(local) != 1 or local[0].get("status") != "success" or local[0].get("valid") is not True:
+				return None
+			return self.ledger.performance_success(key)
+		archived = [receipt for receipt in self.catalog() if receipt.get("identity") == identity]
+		if not archived:
+			return None
+		if len(archived) != 1:
+			raise ArchiveContractError("ambiguous archived performance identity")
+		receipt = archived[0]
 		manifest = self._verify_receipt(receipt)
 		manifest["archive_uri"] = receipt["archive_uri"]
 		manifest["archive_sha256"] = receipt["archive_sha256"]
@@ -363,14 +396,18 @@ class HdfsArchiveAdapter:
 class CampaignHarnessAdapter:
 	"""Small explicit integration surface for a Docker campaign harness."""
 
-	integration_operations = {
+	integration_operations: frozenset[str] = frozenset({
 		"freeze_manifest",
 		"schedule_row",
 		"preflight_next_lifecycle",
 		"publish_phase_pair",
+		"publish_failure",
 		"archive_published",
 		"resume_discovery",
-	}
+		"resume_performance",
+	})
+	ledger: AtomicEvidenceLedger
+	archive: HdfsArchiveAdapter
 
 	def __init__(self, ledger: AtomicEvidenceLedger, archive: HdfsArchiveAdapter):
 		if archive.ledger is not ledger:
@@ -379,26 +416,93 @@ class CampaignHarnessAdapter:
 		self.archive = archive
 
 	@staticmethod
-	def freeze_manifest(**frozen_inputs: object) -> dict[str, object]:
-		return build_frozen_manifest(**frozen_inputs)
+	def freeze_manifest(
+		*,
+		jar: Path,
+		image_id: str,
+		image_digest: str,
+		config: Path,
+		dml: Path,
+		dataset_root: Path,
+		worker_mapping: Sequence[str],
+		planner_order: Sequence[str],
+		seed: int,
+		warmup_runs: int,
+		measured_warm_runs: int,
+		block_schedule: dict[str, object] | None = None,
+		expected_block_order: Sequence[str] | None = None,
+	) -> dict[str, object]:
+		return build_frozen_manifest(
+			jar=jar,
+			image_id=image_id,
+			image_digest=image_digest,
+			config=config,
+			dml=dml,
+			dataset_root=dataset_root,
+			worker_mapping=worker_mapping,
+			planner_order=planner_order,
+			seed=seed,
+			warmup_runs=warmup_runs,
+			measured_warm_runs=measured_warm_runs,
+			block_schedule=block_schedule,
+			expected_block_order=expected_block_order,
+		)
 
 	@staticmethod
 	def schedule_row(manifest: dict[str, object], block_id: str, lifecycle_replicate: int) -> dict[str, object]:
+		planner_order = manifest.get("planner_order")
+		block_order = manifest.get("block_order")
+		lifecycle = manifest.get("lifecycle")
+		seed = manifest.get("seed")
+		if (
+			not isinstance(planner_order, list)
+			or not isinstance(block_order, list)
+			or not isinstance(lifecycle, dict)
+			or not isinstance(seed, int)
+			or isinstance(seed, bool)
+		):
+			raise ArchiveContractError("frozen manifest schedule structure is invalid")
+		repeats = cast(dict[str, object], lifecycle).get("measured_warm_runs")
+		if not isinstance(repeats, int) or isinstance(repeats, bool):
+			raise ArchiveContractError("frozen manifest lifecycle repeat count is invalid")
 		schedule = validate_block_counterbalanced_schedule(
 			manifest.get("block_schedule"),
-			manifest.get("planner_order", ()),
-			manifest.get("lifecycle", {}).get("measured_warm_runs"),
-			manifest.get("seed"),
+			cast(list[str], planner_order),
+			repeats,
+			seed,
+			cast(list[str], block_order),
 		)
-		for block in schedule["blocks"]:
+		blocks = schedule.get("blocks")
+		if not isinstance(blocks, list):
+			raise ArchiveContractError("validated block schedule has no blocks")
+		for block in cast(list[dict[str, object]], blocks):
 			if block["block"] == block_id:
-				for run in block["runs"]:
+				runs = block.get("runs")
+				if not isinstance(runs, list):
+					raise ArchiveContractError("validated block schedule has no runs")
+				for run in cast(list[dict[str, object]], runs):
 					if run["lifecycle_replicate"] == lifecycle_replicate:
 						return dict(run)
 		raise ArchiveContractError("requested block schedule row does not exist")
 
-	def preflight_next_lifecycle(self, snapshot_provider: Callable[[], HostResourceSnapshot], **thresholds: object):
-		return self.archive.preflight_next_lifecycle(snapshot_provider, **thresholds)
+	def preflight_next_lifecycle(
+		self,
+		snapshot_provider: Callable[[], HostResourceSnapshot],
+		*,
+		required_free_bytes: int,
+		required_free_inodes: int,
+		required_seconds: float,
+		max_io_utilization: float,
+		max_combined_io_bps: float,
+	) -> HostResourceSnapshot:
+		return self.archive.preflight_next_lifecycle(
+			snapshot_provider,
+			required_free_bytes=required_free_bytes,
+			required_free_inodes=required_free_inodes,
+			required_seconds=required_seconds,
+			max_io_utilization=max_io_utilization,
+			max_combined_io_bps=max_combined_io_bps,
+		)
 
 	def publish_phase_pair(
 		self, key: LedgerKey, cold_bundle: Path, warm_bundle: Path, shared_replicate_manifest: Path
@@ -408,8 +512,14 @@ class CampaignHarnessAdapter:
 	def archive_published(self, committed_path: Path) -> dict[str, object]:
 		return self.archive.archive(committed_path)
 
+	def publish_failure(self, key: LedgerKey, reason: str) -> Path:
+		return self.ledger.publish_failure(key, reason)
+
 	def resume_discovery(self, cell: str, manifest_hash: str) -> dict[str, object] | None:
 		return self.archive.latest_discovery_success(cell, manifest_hash)
+
+	def resume_performance(self, key: PerformanceKey) -> dict[str, object] | None:
+		return self.archive.performance_success(key)
 
 
 def _canonical_bytes(value: object) -> bytes:
