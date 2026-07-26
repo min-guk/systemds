@@ -11,7 +11,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeState
+from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
 from scripts.federated_campaign.determinism_contract import build_block_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
 	ArchiveContractError,
@@ -317,6 +317,10 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"raw_coordinator.log": b"coordinator failed\n",
 			"raw_worker.log": b"worker failed\n",
 			"raw_compose.log": b"compose failed\n",
+			"output.bin": b"partial-output",
+			"semantic_oracle.json": json.dumps({"passed": False}).encode(),
+			"metric.json": json.dumps({"kind": "failure", "seconds": 1.0}).encode(),
+			"parser.json": json.dumps({"passed": False, "diagnostic": "missing metric"}).encode(),
 			"return_code.txt": b"23\n",
 			"scan.json": json.dumps({"timeout": True, "error": True, "fallback": False}).encode(),
 			"command.json": json.dumps({"argv": ["docker", "compose"]}).encode(),
@@ -333,8 +337,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		self.assertEqual(
 			{
-				"begin", "publish_success", "publish_failure", "archive", "exact_resume",
-				"select_pilot_repeats", "normalize_verified_row",
+				"begin", "publish_discovery_success", "publish_performance_success", "publish_failure", "archive", "exact_resume",
+				"select_pilot_repeats", "normalize_resume_row", "assert_planner_barrier", "preflight",
 			},
 			facade.integration_operations,
 		)
@@ -355,13 +359,29 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 		}), encoding="utf-8")
-		committed = facade.publish_success(lease, cold, warm, shared)
+		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		decision = facade.exact_resume(lease.key)
 		self.assertEqual(ResumeState.LATEST_SUCCESS, decision.state)
-		row = facade.normalize_verified_row(decision, 1)
-		self.assertEqual("committed", row["evidence_status"])
-		self.assertEqual(1.25, row["warm_seconds"])
+		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule={"period": 2, "order": "FedAll>DP"}, host_load={"io": 0.01}, lifecycle={"cold": 1, "warm": 1})
+		self.assertTrue(row["valid"])
+		self.assertEqual(1.25, row["metrics"]["warm"]["seconds"])
 		self.assertEqual(lease.key.as_dict(), self.ledger.validate_committed(committed)["identity"])
+
+	def test_facade_discovery_success_normalizes_one_phase_without_schedule(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		lease = facade.begin(
+			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
+		)
+		bundle = self._phase("discovery-facade", "discovery_correctness", 0.5)
+		facade.publish_discovery_success(lease, bundle)
+		decision = facade.exact_resume(lease.key)
+		row = facade.normalize_resume_row(
+			decision, requested_identity=lease.key.as_dict(), schedule=None,
+			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
+		)
+		self.assertTrue(row["valid"])
+		self.assertEqual(0.5, row["metrics"]["discovery"]["seconds"])
+		self.assertIsNone(row["metrics"]["warm"])
 
 	def test_harness_adapter_archives_valid_failure_and_never_stale_backfills(self):
 		_, success = self._commit(1, "token-a")
@@ -375,8 +395,9 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual("failed", receipt["status"])
 		decision = facade.exact_resume(DiscoveryKey("cell-a", 1, "query", "manifest-a"))
 		self.assertEqual(ResumeState.LATEST_FAILED, decision.state)
-		with self.assertRaisesRegex(ArchiveContractError, "latest verified success"):
-			facade.normalize_verified_row(decision, 1)
+		self.assertIsNone(self._adapter(retention=0).latest_discovery_success("cell-a", "manifest-a"))
+		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule=None, host_load={"io": 0.01}, lifecycle={"phase": "discovery"})
+		self.assertTrue(row["failure"])
 
 	def test_harness_adapter_pilot_selection_rejects_unverified_rows(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -384,8 +405,73 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cell": "cell-a", "pilot_repeat": index, "warm_seconds": 1.0,
 			"evidence_status": "claimed", "evidence_sha256": f"{index:064x}",
 		} for index in range(1, 6)]
-		with self.assertRaisesRegex(ArchiveContractError, "committed or archive"):
+		with self.assertRaisesRegex(ArchiveContractError, "schema"):
 			facade.select_pilot_repeats(rows)
+
+	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		snapshot = HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0)
+		self.assertEqual(snapshot, facade.preflight(
+			lambda: snapshot, required_free_bytes=5 * 1024**3, required_free_inodes=10,
+			required_seconds=100, max_io_utilization=0.1, max_combined_io_bps=100,
+		))
+		row = facade.normalize_resume_row(
+			ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, detail="corrupt"),
+			requested_identity=DiscoveryKey("cell-a", 1, "token", "manifest-a").as_dict(),
+			schedule=None, host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
+		)
+		self.assertFalse(row["valid"])
+		self.assertTrue(row["failure"])
+		self.assertEqual("discovery", row["kind"])
+
+	def test_global_unidentified_corruption_blocks_archive_and_same_attempt_disagreement(self):
+		key, committed = self._commit(1, "token-a")
+		adapter = self._adapter(retention=1)
+		adapter.archive(committed)
+		unknown = self.ledger.committed / "discovery" / ("f" * 64)
+		unknown.mkdir()
+		(unknown / "bundle_manifest.json").write_bytes(b"bad")
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, adapter.exact_resume(key).state)
+		(unknown / "bundle_manifest.json").unlink()
+		unknown.rmdir()
+		catalog = json.loads(adapter.catalog_path.read_text(encoding="utf-8"))
+		catalog["entries"][0]["status"] = "failed"
+		adapter.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, adapter.exact_resume(key).state)
+
+	def test_performance_failure_archive_is_never_returned_as_success(self):
+		adapter = self._adapter(retention=0)
+		facade = CampaignHarnessAdapter(self.ledger, adapter)
+		lease = facade.begin(
+			kind="performance", cell="cell-p", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+		)
+		failed = facade.publish_failure(lease, self._failure("performance-failure"))
+		facade.archive(failed)
+		self.assertIsNone(adapter.performance_success(lease.key))
+
+	def test_global_planner_barrier_checks_exact_84_cells_per_completed_planner(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		seen = []
+		def success(key):
+			seen.append(key.cell)
+			return ResumeDecision(ResumeState.LATEST_SUCCESS, 1, {"identity": key.as_dict(), "status": "success"})
+		with patch.object(facade, "exact_resume", side_effect=success):
+			receipt = facade.assert_planner_barrier("FedAll", "manifest-a")
+		self.assertEqual(168, receipt["verified_cells"])
+		self.assertEqual(84, sum("planner=DP|" in cell for cell in seen))
+		self.assertEqual(84, sum("planner=FedAll|" in cell for cell in seen))
+		self.assertFalse(any("planner=Heuristic|" in cell for cell in seen))
+
+	def test_discovery_begin_enforces_previous_global_planner_barrier(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		cell = "workers=1|planner=FedAll|workload=kmeans|profile=lan"
+		with patch.object(facade, "assert_planner_barrier", return_value={"verified_cells": 84}) as barrier:
+			lease = facade.begin(
+				kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
+			)
+		barrier.assert_called_once_with("DP", "manifest-a")
+		self.assertEqual(cell, lease.key.cell)
 
 	def test_latest_local_failure_never_falls_back_to_archived_success(self):
 		_, committed = self._commit(1, "token-a")

@@ -20,7 +20,7 @@ import re
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence, cast
 
 
 class CampaignContractError(ValueError):
@@ -38,6 +38,10 @@ CAMPAIGN_WORKERS = (1, 2, 3, 4)
 CAMPAIGN_PLANNERS = ("DP", "FedAll", "Heuristic", "MinST")
 CAMPAIGN_WORKLOADS = ("kmeans", "pca", "lm", "l2svm", "logreg", "als", "steplm")
 CAMPAIGN_PROFILES = ("lan", "wan_light", "wan_mid")
+COMPOSE_SURFACES = ("base", "campaign")
+RUNNER_SURFACES = ("campaign", "docker", "snapshot", "data_prep")
+COMMAND_SURFACES = ("compose", "campaign", "docker_lifecycle", "systemds_snapshot", "data_prep")
+ENDPOINT_NAMES = ("coordinator", "worker_1", "worker_2", "worker_3", "worker_4")
 
 
 def campaign_block_ids() -> tuple[str, ...]:
@@ -361,7 +365,7 @@ def validate_phase_bundle(phase_dir: Path, expected_metric_kind: str) -> dict[st
 	phase = Path(phase_dir)
 	if not phase.is_dir():
 		raise CampaignContractError(f"phase bundle is missing: {phase}")
-	if expected_metric_kind not in ("docker_e2e", "systemds_total_execution_time"):
+	if expected_metric_kind not in ("discovery_correctness", "docker_e2e", "systemds_total_execution_time"):
 		raise CampaignContractError("unknown expected metric kind")
 
 	paths = {name: phase / name for name in _PHASE_FILES}
@@ -445,6 +449,7 @@ def _named_file_records(name: str, files: Mapping[str, Path], expected_names: Se
 def build_campaign_manifest(
 	*,
 	source_commit: str,
+	source_tree: Path,
 	image_id: str,
 	image_digest: str,
 	wrapper: Path,
@@ -465,6 +470,9 @@ def build_campaign_manifest(
 	jvm_settings: Mapping[str, object],
 	thread_settings: Mapping[str, object],
 	resource_settings: Mapping[str, object],
+	commands: Mapping[str, object],
+	endpoints: Mapping[str, object],
+	topology: Mapping[str, object],
 	block_schedule: dict[str, object],
 	reference_artifacts: Mapping[str, Path],
 	tolerance_version: str,
@@ -494,6 +502,45 @@ def build_campaign_manifest(
 		if not isinstance(value, Mapping) or not value:
 			raise CampaignContractError(f"{name} must be a non-empty frozen mapping")
 	_require_nonempty_unique("tolerance_version", (tolerance_version,))
+	if set(commands) != set(COMMAND_SURFACES) or any(
+		not isinstance(value, list) or not value or any(not isinstance(arg, str) or not arg for arg in value)
+		for value in commands.values()
+	):
+		raise CampaignContractError("commands must contain exact non-empty argv surfaces")
+	if set(endpoints) != set(ENDPOINT_NAMES) or any(not isinstance(value, str) or not value for value in endpoints.values()):
+		raise CampaignContractError("endpoints must contain exact coordinator/worker endpoints")
+	_require_nonempty_unique("endpoints", tuple(cast(str, endpoints[name]) for name in ENDPOINT_NAMES))
+	if set(topology) != {"worker_counts", "profiles", "docker_project"}:
+		raise CampaignContractError("topology schema is not exact")
+	if topology["worker_counts"] != list(CAMPAIGN_WORKERS) or topology["profiles"] != list(CAMPAIGN_PROFILES):
+		raise CampaignContractError("topology dimensions are not exact")
+	_require_nonempty_unique("docker project", (cast(str, topology["docker_project"]),))
+	if set(network_costs) != set(CAMPAIGN_PROFILES) or any(not isinstance(network_costs[name], Mapping) for name in CAMPAIGN_PROFILES):
+		raise CampaignContractError("network costs must define every exact profile")
+	if set(resource_settings) != {"absolute_disk_floor_bytes", "required_free_inodes", "wall_time_seconds", "max_io_utilization", "max_combined_io_bps"}:
+		raise CampaignContractError("resource settings schema is not exact")
+	if resource_settings["absolute_disk_floor_bytes"] != 5 * 1024**3:
+		raise CampaignContractError("resource settings must freeze the 5GiB absolute floor")
+	if privacy_settings != {"public_tests_ignored": True, "runtime_fallback_allowed": False}:
+		raise CampaignContractError("privacy settings must freeze public-test exclusion and forbid runtime fallback")
+	if set(jvm_settings) != {"java_opts", "heap_bytes", "coordinator_fresh"} or jvm_settings["coordinator_fresh"] is not True:
+		raise CampaignContractError("JVM settings schema is not exact")
+	if not isinstance(jvm_settings["java_opts"], list) or not jvm_settings["java_opts"] or not isinstance(jvm_settings["heap_bytes"], int) or cast(int, jvm_settings["heap_bytes"]) <= 0:
+		raise CampaignContractError("JVM values are invalid")
+	if set(thread_settings) != {"blas_threads", "omp_threads", "systemds_threads"}:
+		raise CampaignContractError("thread settings schema is not exact")
+	if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in thread_settings.values()):
+		raise CampaignContractError("thread settings must be positive integers")
+	for profile in CAMPAIGN_PROFILES:
+		cost = network_costs[profile]
+		if not isinstance(cost, Mapping) or set(cost) != {"latency_ms", "bandwidth_mbps"}:
+			raise CampaignContractError(f"network cost schema is not exact for {profile}")
+		latency, bandwidth = cost["latency_ms"], cost["bandwidth_mbps"]
+		if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in (latency, bandwidth)):
+			raise CampaignContractError(f"network costs are invalid for {profile}")
+		latency_value, bandwidth_value = float(cast(int | float, latency)), float(cast(int | float, bandwidth))
+		if not math.isfinite(latency_value) or not math.isfinite(bandwidth_value) or latency_value < 0 or bandwidth_value <= 0:
+			raise CampaignContractError(f"network costs are invalid for {profile}")
 	artifacts = {
 		"wrapper": _file_record(Path(wrapper)),
 		"jar": _file_record(Path(jar)),
@@ -501,12 +548,13 @@ def build_campaign_manifest(
 		"cp_config": _file_record(Path(cp_config)),
 		"fed_dmls": _named_file_records("fed_dmls", fed_dmls, CAMPAIGN_WORKLOADS),
 		"cp_dmls": _named_file_records("cp_dmls", cp_dmls, CAMPAIGN_WORKLOADS),
-		"oracle_files": _named_file_records("oracle_files", oracle_files),
-		"compose_files": _named_file_records("compose_files", compose_files),
-		"runner_files": _named_file_records("runner_files", runner_files),
+		"oracle_files": _named_file_records("oracle_files", oracle_files, CAMPAIGN_WORKLOADS),
+		"compose_files": _named_file_records("compose_files", compose_files, COMPOSE_SURFACES),
+		"runner_files": _named_file_records("runner_files", runner_files, RUNNER_SURFACES),
 		"dataset": _dataset_records(Path(dataset_root)),
 		"data_sidecar": _file_record(Path(data_sidecar)),
-		"reference_artifacts": _named_file_records("reference_artifacts", reference_artifacts),
+		"reference_artifacts": _named_file_records("reference_artifacts", reference_artifacts, CAMPAIGN_WORKLOADS),
+		"source_tree": _dataset_records(Path(source_tree)),
 	}
 	manifest: dict[str, object] = {
 		"schema": "systemds-federated-docker-campaign/v2",
@@ -527,6 +575,9 @@ def build_campaign_manifest(
 		"jvm_settings": dict(jvm_settings),
 		"thread_settings": dict(thread_settings),
 		"resource_settings": dict(resource_settings),
+		"commands": dict(commands),
+		"endpoints": dict(endpoints),
+		"topology": dict(topology),
 		"schedule": validated_schedule,
 		"seed": seed,
 		"repeats": repeats,
@@ -577,4 +628,61 @@ def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, obje
 		"thresholds": {"three": math.log(1.02), "five": math.log(1.05)},
 		"selected_repeats": repeats,
 		"row_evidence_sha256": [str(row["evidence_sha256"]) for row in rows],
+	}
+
+
+def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+	"""Select one frozen repeat count from the preregistered cross-campaign pilot."""
+	required = {
+		"pilot_class", "planner", "workers", "profile", "cell", "pilot_repeat", "warm_seconds",
+		"period", "order", "carryover", "host_load", "lifecycle", "evidence_status", "evidence_sha256",
+	}
+	groups: dict[tuple[object, ...], list[Mapping[str, object]]] = {}
+	for row in rows:
+		if set(row) != required:
+			raise CampaignContractError("campaign pilot row schema is not exact")
+		key = (row["pilot_class"], row["planner"], row["workers"], row["profile"], row["cell"])
+		groups.setdefault(key, []).append(row)
+	if {key[0] for key in groups} != {"cheap", "medium", "heavy"}:
+		raise CampaignContractError("campaign pilot requires cheap, medium, and heavy classes")
+	if {key[1] for key in groups} != set(CAMPAIGN_PLANNERS):
+		raise CampaignContractError("campaign pilot requires every planner")
+	if len({(key[2], key[3]) for key in groups}) < 2:
+		raise CampaignContractError("campaign pilot requires at least two worker/network regimes")
+	diagnostics = []
+	deviations: list[float] = []
+	for key, group in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+		ordered = sorted(group, key=lambda row: int(cast(int, row["pilot_repeat"])))
+		if [row["pilot_repeat"] for row in ordered] != [1, 2, 3, 4, 5]:
+			raise CampaignContractError("each campaign pilot group requires exact repeats 1..5")
+		values = []
+		for row in ordered:
+			if row["evidence_status"] not in ("committed", "archive"):
+				raise CampaignContractError("campaign pilot rows require verified evidence")
+			value = row["warm_seconds"]
+			if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+				raise CampaignContractError("campaign pilot timing is invalid")
+			if not isinstance(row["host_load"], Mapping) or not isinstance(row["lifecycle"], Mapping):
+				raise CampaignContractError("campaign pilot host/lifecycle diagnostics are missing")
+			values.append(float(value))
+		median = statistics.median(values)
+		group_deviations = [abs(math.log(value / median)) for value in values]
+		deviations.extend(group_deviations)
+		diagnostics.append({
+			"pilot_class": key[0], "planner": key[1], "workers": key[2], "profile": key[3], "cell": key[4],
+			"median": median, "mad": statistics.median(abs(value - median) for value in values),
+			"cv": statistics.pstdev(values) / statistics.fmean(values),
+			"first_run_ratio": values[0] / statistics.median(values[1:]),
+			"periods": [row["period"] for row in ordered], "orders": [row["order"] for row in ordered],
+			"carryover": [row["carryover"] for row in ordered],
+			"host_load": [row["host_load"] for row in ordered], "lifecycle": [row["lifecycle"] for row in ordered],
+		})
+	ordered_deviations = sorted(deviations)
+	index = max(0, math.ceil(0.95 * len(ordered_deviations)) - 1)
+	q95 = ordered_deviations[index]
+	eta = max(math.log(1.02), q95)
+	selected = 3 if eta <= math.log(1.02) else 5 if eta <= math.log(1.05) else 7
+	return {
+		"schema": "systemds-federated-campaign-pilot/v2", "selection_rule": "eta=max(log(1.02),Q95(abs(log(t/median_group))))",
+		"q95": q95, "eta": eta, "selected_repeats": selected, "diagnostics": diagnostics,
 	}

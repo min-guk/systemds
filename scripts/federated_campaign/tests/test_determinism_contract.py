@@ -23,6 +23,7 @@ from scripts.federated_campaign.determinism_contract import (
 	check_resource_budget,
 	summarize_variance_pilot,
 	select_pilot_repeats,
+	select_campaign_pilot_repeats,
 	validate_campaign_matrix,
 	validate_phase_bundle,
 )
@@ -292,6 +293,7 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, blocks, 19)
 		return {
 			"source_commit": "a" * 40,
+			"source_tree": self.root / "data",
 			"image_id": "sha256:" + "b" * 64,
 			"image_digest": "systemds@sha256:" + "c" * 64,
 			"wrapper": paths["wrapper"], "jar": paths["jar"],
@@ -299,15 +301,18 @@ class DeterminismContractTest(unittest.TestCase):
 			"cp_config": paths["cp-config"],
 			"fed_dmls": {w: paths[f"fed-{w}"] for w in CAMPAIGN_WORKLOADS},
 			"cp_dmls": {w: paths[f"cp-{w}"] for w in CAMPAIGN_WORKLOADS},
-			"oracle_files": {"semantic": paths["oracle"]},
-			"compose_files": {"campaign": paths["compose"]},
-			"runner_files": {"docker": paths["runner"]},
+			"oracle_files": {w: paths["oracle"] for w in CAMPAIGN_WORKLOADS},
+			"compose_files": {name: paths["compose"] for name in ("base", "campaign")},
+			"runner_files": {name: paths["runner"] for name in ("campaign", "docker", "snapshot", "data_prep")},
 			"dataset_root": self.root / "data", "data_sidecar": paths["sidecar"],
 			"block_ids": blocks, "cell_ids": campaign_cell_ids(),
-			"network_costs": {"lan_latency_ms": 0}, "privacy_settings": {"public_ignored": True},
-			"jvm_settings": {"heap": "8g"}, "thread_settings": {"blas": 1},
-			"resource_settings": {"absolute_floor_bytes": 5 * 1024**3},
-			"block_schedule": schedule, "reference_artifacts": {"cp": paths["reference"]},
+			"network_costs": {name: {"latency_ms": index, "bandwidth_mbps": 1000} for index, name in enumerate(("lan", "wan_light", "wan_mid"))}, "privacy_settings": {"public_tests_ignored": True, "runtime_fallback_allowed": False},
+			"jvm_settings": {"java_opts": ["-Xmx8g"], "heap_bytes": 8 * 1024**3, "coordinator_fresh": True}, "thread_settings": {"blas_threads": 1, "omp_threads": 1, "systemds_threads": 1},
+			"resource_settings": {"absolute_disk_floor_bytes": 5 * 1024**3, "required_free_inodes": 100, "wall_time_seconds": 1000, "max_io_utilization": 0.1, "max_combined_io_bps": 1000},
+			"commands": {name: [name] for name in ("compose", "campaign", "docker_lifecycle", "systemds_snapshot", "data_prep")},
+			"endpoints": {name: f"{name}:8001" for name in ("coordinator", "worker_1", "worker_2", "worker_3", "worker_4")},
+			"topology": {"worker_counts": [1, 2, 3, 4], "profiles": ["lan", "wan_light", "wan_mid"], "docker_project": "g007"},
+			"block_schedule": schedule, "reference_artifacts": {w: paths["reference"] for w in CAMPAIGN_WORKLOADS},
 			"tolerance_version": "oracle-v1", "seed": 19, "repeats": 5,
 		}
 
@@ -319,6 +324,9 @@ class DeterminismContractTest(unittest.TestCase):
 		before = manifest["manifest_hash"]
 		inputs["runner_files"]["docker"].write_text("changed", encoding="utf-8")
 		self.assertNotEqual(before, build_campaign_manifest(**inputs)["manifest_hash"])
+		del inputs["oracle_files"]["als"]
+		with self.assertRaisesRegex(CampaignContractError, "oracle_files"):
+			build_campaign_manifest(**inputs)
 
 	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
 		def rows(values):
@@ -333,6 +341,33 @@ class DeterminismContractTest(unittest.TestCase):
 		bad[3]["pilot_repeat"] = 3
 		with self.assertRaisesRegex(CampaignContractError, "gap"):
 			select_pilot_repeats(bad)
+
+	def test_campaign_pilot_freezes_cross_planner_regime_q95_diagnostics(self):
+		rows = []
+		for pilot_class in ("cheap", "medium", "heavy"):
+			for planner in CAMPAIGN_PLANNERS:
+				for workers, profile in ((1, "lan"), (4, "wan_mid")):
+					cell = f"{pilot_class}-{planner}-{workers}-{profile}"
+					for repeat in range(1, 6):
+						rows.append({
+							"pilot_class": pilot_class, "planner": planner, "workers": workers,
+							"profile": profile, "cell": cell, "pilot_repeat": repeat,
+							"warm_seconds": 100 + (repeat - 3) * 0.5, "period": (repeat - 1) % 4 + 1,
+							"order": "DP>FedAll>Heuristic>MinST", "carryover": "DP>FedAll",
+							"host_load": {"io": 0.01}, "lifecycle": {"cold": 1, "warm": 1},
+							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
+						})
+		selection = select_campaign_pilot_repeats(rows)
+		self.assertEqual(3, selection["selected_repeats"])
+		self.assertEqual(24, len(selection["diagnostics"]))
+		self.assertIn("Q95", selection["selection_rule"])
+		self.assertIn("first_run_ratio", selection["diagnostics"][0])
+		for row in rows:
+			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 2
+		self.assertEqual(5, select_campaign_pilot_repeats(rows)["selected_repeats"])
+		for row in rows:
+			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 5
+		self.assertEqual(7, select_campaign_pilot_repeats(rows)["selected_repeats"])
 
 	def phase_bundle(self, metric_kind="systemds_total_execution_time"):
 		phase = self.root / "phase"

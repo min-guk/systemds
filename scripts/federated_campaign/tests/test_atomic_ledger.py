@@ -7,10 +7,12 @@ import hashlib
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from scripts.federated_campaign.atomic_ledger import (
 	PUBLICATION_BOUNDARIES,
+	DISCOVERY_PUBLICATION_BOUNDARIES,
 	FAILURE_PUBLICATION_BOUNDARIES,
 	AtomicEvidenceLedger,
 	DiscoveryKey,
@@ -67,14 +69,18 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		shared = self._shared_manifest(key, cold, warm, f"shared{suffix}.json")
 		return ledger.publish_success(key, cold, warm, shared)
 
-	def _failure(self, name="failure"):
+	def _failure(self, name="failure", return_code=17):
 		bundle = self.root / name
 		bundle.mkdir(parents=True)
 		files = {
 			"raw_coordinator.log": b"coordinator failed\n",
 			"raw_worker.log": b"worker failed\n",
 			"raw_compose.log": b"compose failed\n",
-			"return_code.txt": b"17\n",
+			"output.bin": b"partial-output",
+			"semantic_oracle.json": json.dumps({"passed": False}).encode(),
+			"metric.json": json.dumps({"kind": "failure", "seconds": 1.0}).encode(),
+			"parser.json": json.dumps({"passed": False, "diagnostic": "missing metric"}).encode(),
+			"return_code.txt": f"{return_code}\n".encode(),
 			"scan.json": json.dumps({"timeout": True, "error": True, "fallback": False}).encode(),
 			"command.json": json.dumps({"argv": ["docker", "compose"]}).encode(),
 			"host_snapshot.json": json.dumps({"free_bytes": 10_000}).encode(),
@@ -234,6 +240,66 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		self.assertEqual(ResumeState.IN_PROGRESS_OR_ABANDONED, ledger.resume_discovery("cell-a", "manifest-a").state)
 		restarted = AtomicEvidenceLedger(self.root / "ledger")
 		self.assertEqual(ResumeState.IN_PROGRESS_OR_ABANDONED, restarted.resume_discovery("cell-a", "manifest-a").state)
+
+	def test_two_process_views_allocate_distinct_monotonic_attempts(self):
+		root = self.root / "ledger"
+		first = AtomicEvidenceLedger(root).begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"process": 1}
+		)
+		second = AtomicEvidenceLedger(root).begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"process": 2}
+		)
+		self.assertEqual((1, 2), (first.key.attempt, second.key.attempt))
+		self.assertNotEqual(first.key.run_token, second.key.run_token)
+
+	def test_concurrent_allocators_are_serialized_by_durable_lock(self):
+		root = self.root / "ledger"
+		ledgers = (AtomicEvidenceLedger(root), AtomicEvidenceLedger(root))
+		def allocate(index):
+			return ledgers[index].begin_attempt(
+				kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"process": index}
+			)
+		with ThreadPoolExecutor(max_workers=2) as pool:
+			leases = list(pool.map(allocate, (0, 1)))
+		self.assertEqual({1, 2}, {lease.key.attempt for lease in leases})
+		self.assertEqual(2, len({lease.key.run_token for lease in leases}))
+
+	def test_discovery_success_is_one_phase_and_performance_api_is_discriminated(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		lease = ledger.begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
+		)
+		bundle = self._phase("discovery", "discovery_correctness", 1.0)
+		committed = ledger.publish_discovery_success(lease, bundle)
+		manifest = ledger.validate_committed(committed)
+		self.assertEqual("discovery", manifest["evidence_kind"])
+		self.assertFalse((committed / "cold").exists())
+		other = ledger.begin_attempt(
+			kind="discovery", cell="cell-b", manifest_hash="manifest-a", invocation_manifest={"phase": "wrong"}
+		)
+		with self.assertRaisesRegex(LedgerContractError, "performance AttemptLease"):
+			ledger.publish_performance_success(other, bundle, bundle, self.root / "missing")
+
+	def test_discovery_success_crash_boundaries_are_fail_closed(self):
+		for index, boundary in enumerate(DISCOVERY_PUBLICATION_BOUNDARIES, start=1):
+			with self.subTest(boundary=boundary):
+				ledger = AtomicEvidenceLedger(self.root / f"discovery-crash-{index}" / "ledger")
+				lease = ledger.begin_attempt(
+					kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"case": boundary}
+				)
+				bundle = self._phase(f"discovery-crash-{index}-bundle", "discovery_correctness", 1.0)
+				with self.assertRaises(InjectedPublicationCrash):
+					ledger.publish_discovery_success(lease, bundle, crash_after=boundary)
+				decision = AtomicEvidenceLedger(ledger.root).resume_discovery("cell-a", "manifest-a")
+				self.assertIn(decision.state, (ResumeState.IN_PROGRESS_OR_ABANDONED, ResumeState.LATEST_SUCCESS))
+
+	def test_zero_return_code_semantic_failure_is_valid_failure_evidence(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		lease = ledger.begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"semantic": True}
+		)
+		committed = ledger.publish_failure(lease, self._failure("semantic-zero", return_code=0))
+		self.assertEqual("failed", ledger.validate_committed(committed, require_success=False)["status"])
 
 	def test_failed_attempt_requires_complete_checksummed_bundle(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")

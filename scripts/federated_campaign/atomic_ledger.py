@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import uuid
+import fcntl
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -34,6 +35,10 @@ FAILURE_ARTIFACTS = (
 	"raw_coordinator.log",
 	"raw_worker.log",
 	"raw_compose.log",
+	"output.bin",
+	"semantic_oracle.json",
+	"metric.json",
+	"parser.json",
 	"return_code.txt",
 	"scan.json",
 	"command.json",
@@ -53,6 +58,19 @@ PUBLICATION_BOUNDARIES = (
 	"after_commit_rename",
 	"after_index_temp_fsync",
 	"after_index_replace",
+)
+
+DISCOVERY_PUBLICATION_BOUNDARIES = (
+	"after_stage_created",
+	"after_record_state_fsync",
+	*(f"after_cold_{label}_fsync" for _, label in _PHASE_ARTIFACTS),
+	"after_cold_bundle_fsync",
+	"after_bundle_manifest_fsync",
+	"after_staging_dir_fsync",
+	"after_commit_rename",
+	"after_index_temp_fsync",
+	"after_index_replace",
+	"after_intent_remove",
 )
 
 FAILURE_PUBLICATION_BOUNDARIES = (
@@ -270,6 +288,33 @@ class AtomicEvidenceLedger:
 		minimum_attempt: int = 1,
 		crash_after: str | None = None,
 	) -> AttemptLease:
+		"""Atomically allocate an attempt across concurrent harness processes."""
+		lock_path = self.root / "attempt-allocation.lock"
+		with lock_path.open("a+b") as lock:
+			fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+			try:
+				return self._begin_attempt_unlocked(
+					kind=kind, cell=cell, manifest_hash=manifest_hash,
+					invocation_manifest=invocation_manifest,
+					lifecycle_replicate=lifecycle_replicate, period=period, order=order,
+					minimum_attempt=minimum_attempt, crash_after=crash_after,
+				)
+			finally:
+				fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+	def _begin_attempt_unlocked(
+		self,
+		*,
+		kind: str,
+		cell: str,
+		manifest_hash: str,
+		invocation_manifest: Mapping[str, object],
+		lifecycle_replicate: int | None = None,
+		period: int | None = None,
+		order: str | None = None,
+		minimum_attempt: int = 1,
+		crash_after: str | None = None,
+	) -> AttemptLease:
 		"""Durably reserve the next monotonic attempt before any process launch."""
 		_validate_text("cell", cell)
 		_validate_text("manifest_hash", manifest_hash)
@@ -324,7 +369,7 @@ class AtomicEvidenceLedger:
 		self._crash(crash_after, "after_intent_fsync")
 		return AttemptLease(key, invocation_hash, intent_path)
 
-	def publish_success(
+	def _publish_phase_pair(
 		self,
 		key: LedgerKey | AttemptLease,
 		cold_bundle: Path,
@@ -365,6 +410,7 @@ class AtomicEvidenceLedger:
 		self._crash(crash_after, "after_stage_created")
 		self._write_record_state(stage, identity, "success")
 		self._crash(crash_after, "after_record_state_fsync")
+		self._crash(crash_after, "after_record_state_fsync")
 		if invocation is not None:
 			_write_fsynced(stage / "invocation_manifest.json", _canonical_bytes(invocation))
 		self._copy_phase(Path(cold_bundle), stage / "cold", "docker_e2e", "cold", crash_after)
@@ -378,7 +424,8 @@ class AtomicEvidenceLedger:
 		self._crash(crash_after, "after_shared_manifest_fsync")
 
 		bundle_manifest = {
-			"schema": "systemds-federated-evidence/v1",
+			"schema": "systemds-federated-evidence/v2" if lease is not None else "systemds-federated-evidence/v1",
+			"evidence_kind": "performance" if lease is not None else None,
 			"identity": identity,
 			"status": "success",
 			"cold_metric": cold_metric,
@@ -399,6 +446,87 @@ class AtomicEvidenceLedger:
 		self._publish_derived_index(crash_after)
 		self._finish_lease(lease, crash_after)
 		return destination
+
+	def publish_success(
+		self,
+		key: LedgerKey,
+		cold_bundle: Path,
+		warm_bundle: Path,
+		shared_replicate_manifest: Path,
+		*,
+		crash_after: str | None = None,
+	) -> Path:
+		"""Legacy v1 publication isolated from durable v2 attempt leases."""
+		if isinstance(key, AttemptLease):
+			raise LedgerContractError("v2 AttemptLease requires the discriminated performance API")
+		return self._publish_phase_pair(
+			key, cold_bundle, warm_bundle, shared_replicate_manifest, crash_after=crash_after
+		)
+
+	def publish_discovery_success(
+		self, lease: AttemptLease, bundle: Path, *, crash_after: str | None = None
+	) -> Path:
+		"""Publish the one-phase correctness result of a discovery attempt."""
+		if not isinstance(lease.key, DiscoveryKey):
+			raise LedgerContractError("discovery success requires a discovery AttemptLease")
+		identity = lease.key.as_dict()
+		invocation = self._validate_lease(lease)
+		metric = self._validate_source_phase(bundle, "discovery_correctness")
+		if crash_after is not None and crash_after not in DISCOVERY_PUBLICATION_BOUNDARIES:
+			raise LedgerContractError(f"unknown crash boundary: {crash_after}")
+		record_id = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
+		kind_dir = self.committed / "discovery"
+		kind_dir.mkdir(exist_ok=True)
+		destination = kind_dir / record_id
+		if destination.exists():
+			record = self._inspect_committed(destination, None)
+			if record.get("valid") is True and record.get("status") == "success":
+				self._finish_lease(lease, crash_after)
+				return destination
+			raise LedgerContractError(f"committed identity collision: {destination}")
+		stage = self.staging / f"{record_id}.{uuid.uuid4().hex}"
+		stage.mkdir()
+		self._crash(crash_after, "after_stage_created")
+		self._write_record_state(stage, identity, "success")
+		self._crash(crash_after, "after_record_state_fsync")
+		if invocation is not None:
+			_write_fsynced(stage / "invocation_manifest.json", _canonical_bytes(invocation))
+		self._copy_phase(Path(bundle), stage / "discovery", "discovery_correctness", "cold", crash_after)
+		self._crash(crash_after, "after_cold_bundle_fsync")
+		manifest = {
+			"schema": "systemds-federated-evidence/v2",
+			"evidence_kind": "discovery",
+			"identity": identity,
+			"status": "success",
+			"discovery_metric": metric,
+			"discovery_checksums_sha256": _sha256(stage / "discovery" / "checksums.json"),
+			"invocation_manifest_sha256": lease.invocation_manifest_sha256,
+		}
+		_write_fsynced(stage / "bundle_manifest.json", _canonical_bytes(manifest) + b"\n")
+		self._crash(crash_after, "after_bundle_manifest_fsync")
+		_fsync_directory(stage)
+		self._crash(crash_after, "after_staging_dir_fsync")
+		os.rename(stage, destination)
+		_fsync_directory(kind_dir)
+		self._crash(crash_after, "after_commit_rename")
+		self._publish_derived_index(crash_after)
+		self._finish_lease(lease, crash_after)
+		return destination
+
+	def publish_performance_success(
+		self,
+		lease: AttemptLease,
+		cold_bundle: Path,
+		warm_bundle: Path,
+		shared_replicate_manifest: Path,
+		*,
+		crash_after: str | None = None,
+	) -> Path:
+		if not isinstance(lease.key, PerformanceKey):
+			raise LedgerContractError("performance success requires a performance AttemptLease")
+		return self._publish_phase_pair(
+			lease, cold_bundle, warm_bundle, shared_replicate_manifest, crash_after=crash_after
+		)
 
 	def publish_failure(
 		self,
@@ -450,7 +578,8 @@ class AtomicEvidenceLedger:
 		_fsync_directory(failure_destination)
 		self._crash(crash_after, "after_failure_bundle_fsync")
 		manifest = {
-			"schema": "systemds-federated-evidence/v1",
+			"schema": "systemds-federated-evidence/v2" if lease is not None else "systemds-federated-evidence/v1",
+			"evidence_kind": str(identity["kind"]) if lease is not None else None,
 			"identity": identity,
 			"status": "failed",
 			"return_code": failure["return_code"],
@@ -473,11 +602,7 @@ class AtomicEvidenceLedger:
 		_validate_text("cell", cell)
 		_validate_text("manifest_hash", manifest_hash)
 		inspected = self._inspect_records(self._load_prior_index())
-		if any(
-			Path(str(record.get("path", ""))).parent.name == "discovery"
-			and record.get("identity") == {}
-			for record in inspected
-		):
+		if any(record.get("identity") == {} for record in inspected):
 			return None
 		records = [
 			record
@@ -516,7 +641,10 @@ class AtomicEvidenceLedger:
 
 	def performance_success(self, key: PerformanceKey) -> dict[str, object] | None:
 		identity = key.as_dict()
-		for record in self._inspect_records(self._load_prior_index()):
+		records = self._inspect_records(self._load_prior_index())
+		if any(record.get("identity") == {} for record in records):
+			return None
+		for record in records:
 			if record.get("identity") == identity:
 				if record.get("status") == "success" and record.get("valid") is True:
 					manifest = dict(record["manifest"])
@@ -630,10 +758,15 @@ class AtomicEvidenceLedger:
 			return_code = int((path / "return_code.txt").read_text(encoding="ascii").strip())
 		except (OSError, UnicodeDecodeError, ValueError) as error:
 			raise LedgerContractError("failure return code is invalid") from error
-		if return_code == 0:
-			raise LedgerContractError("failure return code must be non-zero")
-		for filename in ("scan.json", "command.json", "host_snapshot.json"):
-			_read_json(path / filename, filename)
+		json_values = {
+			filename: _read_json(path / filename, filename)
+			for filename in ("scan.json", "command.json", "host_snapshot.json", "semantic_oracle.json", "metric.json", "parser.json")
+		}
+		semantic_failed = json_values["semantic_oracle.json"].get("passed") is False
+		parser_failed = json_values["parser.json"].get("passed") is False
+		scan_failed = any(json_values["scan.json"].get(marker) is True for marker in ("timeout", "error", "fallback"))
+		if return_code == 0 and not (semantic_failed or parser_failed or scan_failed):
+			raise LedgerContractError("zero-return-code failure requires semantic, parser, or scan failure evidence")
 		return {"return_code": return_code}
 
 	def _validate_source_phase(self, path: Path, metric_kind: str) -> dict[str, object]:
@@ -760,7 +893,7 @@ class AtomicEvidenceLedger:
 		manifest_path = record_dir / "bundle_manifest.json"
 		try:
 			manifest = _read_json(manifest_path, "bundle manifest")
-			if manifest.get("schema") != "systemds-federated-evidence/v1":
+			if manifest.get("schema") not in ("systemds-federated-evidence/v1", "systemds-federated-evidence/v2"):
 				raise LedgerContractError("bundle manifest schema is invalid")
 			identity = _validate_identity(manifest.get("identity"))
 			status = manifest.get("status")
@@ -790,7 +923,19 @@ class AtomicEvidenceLedger:
 				result["valid"] = (
 					manifest.get("return_code") == failure["return_code"]
 					and manifest.get("failure_checksums_sha256") == _sha256(record_dir / "failure" / "checksums.json")
+					and (manifest.get("schema") == "systemds-federated-evidence/v1" or manifest.get("evidence_kind") == identity.get("kind"))
 				)
+				return result
+			if manifest.get("evidence_kind") == "discovery":
+				discovery = self._validate_source_phase(record_dir / "discovery", "discovery_correctness")
+				result["valid"] = (
+					manifest.get("schema") == "systemds-federated-evidence/v2"
+					and identity.get("kind") == "discovery"
+					and manifest.get("discovery_metric") == discovery
+					and manifest.get("discovery_checksums_sha256") == _sha256(record_dir / "discovery" / "checksums.json")
+				)
+				return result
+			if manifest.get("schema") == "systemds-federated-evidence/v2" and manifest.get("evidence_kind") != "performance":
 				return result
 			cold = self._validate_source_phase(record_dir / "cold", "docker_e2e")
 			warm = self._validate_source_phase(record_dir / "warm", "systemds_total_execution_time")

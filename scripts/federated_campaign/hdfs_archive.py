@@ -31,9 +31,12 @@ from scripts.federated_campaign.atomic_ledger import (
 )
 from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
+	CAMPAIGN_PLANNERS,
+	campaign_cell_ids,
 	build_campaign_manifest,
 	build_frozen_manifest,
 	select_pilot_repeats,
+	select_campaign_pilot_repeats,
 	validate_block_counterbalanced_schedule,
 )
 
@@ -246,8 +249,7 @@ class HdfsArchiveAdapter:
 		candidates = []
 		local_records = self.ledger.record_summaries()
 		if any(
-			Path(str(record.get("path", ""))).parent.name == "discovery"
-			and record.get("identity") == {}
+			record.get("identity") == {}
 			for record in local_records
 		):
 			return None
@@ -282,13 +284,18 @@ class HdfsArchiveAdapter:
 			raise ArchiveContractError("ambiguous archived latest discovery attempt")
 		receipt = latest[0][2]
 		manifest = self._verify_receipt(receipt)
+		if manifest.get("status") != "success" or cast(dict[str, object], manifest.get("identity", {})).get("kind") != "discovery":
+			return None
 		manifest["archive_uri"] = receipt["archive_uri"]
 		manifest["archive_sha256"] = receipt["archive_sha256"]
 		return manifest
 
 	def performance_success(self, key: PerformanceKey) -> dict[str, object] | None:
 		identity = key.as_dict()
-		local = [record for record in self.ledger.record_summaries() if record.get("identity") == identity]
+		local_records = self.ledger.record_summaries()
+		if any(record.get("identity") == {} for record in local_records):
+			return None
+		local = [record for record in local_records if record.get("identity") == identity]
 		if local:
 			if len(local) != 1 or local[0].get("status") != "success" or local[0].get("valid") is not True:
 				return None
@@ -300,6 +307,8 @@ class HdfsArchiveAdapter:
 			raise ArchiveContractError("ambiguous archived performance identity")
 		receipt = archived[0]
 		manifest = self._verify_receipt(receipt)
+		if manifest.get("status") != "success" or manifest.get("identity") != identity:
+			return None
 		manifest["archive_uri"] = receipt["archive_uri"]
 		manifest["archive_sha256"] = receipt["archive_sha256"]
 		return manifest
@@ -313,6 +322,8 @@ class HdfsArchiveAdapter:
 			local = self.ledger.resume_performance(key)
 			base_names = ("kind", "cell", "lifecycle_replicate", "period", "order", "manifest_hash")
 		base = {name: identity[name] for name in base_names}
+		if local.state is ResumeState.CORRUPT_OR_AMBIGUOUS:
+			return local
 		archived = [
 			receipt for receipt in self.catalog()
 			if isinstance(receipt.get("identity"), dict)
@@ -334,6 +345,14 @@ class HdfsArchiveAdapter:
 		]
 		if not latest_archived:
 			return local
+		if local.attempt == latest_attempt and local.evidence is not None:
+			local_identity = local.evidence.get("identity")
+			local_status = local.evidence.get("status")
+			if any(
+				receipt.get("identity") != local_identity or receipt.get("status") != local_status
+				for receipt in latest_archived
+			):
+				return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="local/archive same-attempt disagreement")
 		identities = {_canonical_bytes(receipt["identity"]) for receipt in latest_archived}
 		if len(identities) != 1:
 			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="ambiguous archived latest attempt")
@@ -389,7 +408,10 @@ class HdfsArchiveAdapter:
 			if _sha256(download) != expected_hash:
 				raise ArchiveContractError(f"remote archive checksum mismatch: {uri}")
 			record_id = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
-			return self._verify_downloaded_archive(download, identity, record_id)
+			manifest = self._verify_downloaded_archive(download, identity, record_id)
+			if receipt.get("status") != manifest.get("status"):
+				raise ArchiveContractError("archive receipt status disagrees with archived manifest")
+			return manifest
 		except ArchiveContractError:
 			raise
 		except Exception as error:
@@ -494,12 +516,15 @@ class CampaignHarnessAdapter:
 
 	integration_operations: frozenset[str] = frozenset({
 		"begin",
-		"publish_success",
+		"publish_discovery_success",
+		"publish_performance_success",
 		"publish_failure",
 		"archive",
 		"exact_resume",
 		"select_pilot_repeats",
-		"normalize_verified_row",
+		"normalize_resume_row",
+		"assert_planner_barrier",
+		"preflight",
 	})
 
 	def __init__(self, ledger: AtomicEvidenceLedger, archive: HdfsArchiveAdapter):
@@ -520,6 +545,11 @@ class CampaignHarnessAdapter:
 		order: str | None = None,
 		crash_after: str | None = None,
 	) -> AttemptLease:
+		if kind == "discovery" and cell in campaign_cell_ids():
+			planner = next(name for name in CAMPAIGN_PLANNERS if f"planner={name}|" in cell)
+			planner_index = CAMPAIGN_PLANNERS.index(planner)
+			if planner_index > 0:
+				self.assert_planner_barrier(CAMPAIGN_PLANNERS[planner_index - 1], manifest_hash)
 		base: dict[str, object] = {"kind": kind, "cell": cell, "manifest_hash": manifest_hash}
 		if kind == "performance":
 			base.update({"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order})
@@ -541,7 +571,7 @@ class CampaignHarnessAdapter:
 			crash_after=crash_after,
 		)
 
-	def publish_success(
+	def publish_performance_success(
 		self,
 		lease: AttemptLease,
 		cold_bundle: Path,
@@ -550,9 +580,18 @@ class CampaignHarnessAdapter:
 		*,
 		crash_after: str | None = None,
 	) -> Path:
-		return self._ledger.publish_success(
+		if not isinstance(lease, AttemptLease):
+			raise ArchiveContractError("v2 performance publication requires a durable AttemptLease")
+		return self._ledger.publish_performance_success(
 			lease, cold_bundle, warm_bundle, shared_replicate_manifest, crash_after=crash_after
 		)
+
+	def publish_discovery_success(
+		self, lease: AttemptLease, bundle: Path, *, crash_after: str | None = None
+	) -> Path:
+		if not isinstance(lease, AttemptLease):
+			raise ArchiveContractError("v2 discovery publication requires a durable AttemptLease")
+		return self._ledger.publish_discovery_success(lease, bundle, crash_after=crash_after)
 
 	def publish_failure(
 		self,
@@ -561,6 +600,8 @@ class CampaignHarnessAdapter:
 		*,
 		crash_after: str | None = None,
 	) -> Path:
+		if not isinstance(lease, AttemptLease):
+			raise ArchiveContractError("v2 failure publication requires a durable AttemptLease")
 		return self._ledger.publish_failure(lease, failure_bundle, crash_after=crash_after)
 
 	def archive(self, committed_path: Path, *, crash_after: str | None = None) -> dict[str, object]:
@@ -569,14 +610,43 @@ class CampaignHarnessAdapter:
 	def exact_resume(self, key: DiscoveryKey | PerformanceKey) -> ResumeDecision:
 		return self._archive.exact_resume(key)
 
+	def preflight(
+		self, snapshot_provider: Callable[[], HostResourceSnapshot], **requirements: float | int
+	) -> HostResourceSnapshot:
+		return self._archive.preflight_next_lifecycle(
+			snapshot_provider,
+			required_free_bytes=int(requirements["required_free_bytes"]),
+			required_free_inodes=int(requirements["required_free_inodes"]),
+			required_seconds=float(requirements["required_seconds"]),
+			max_io_utilization=float(requirements["max_io_utilization"]),
+			max_combined_io_bps=float(requirements["max_combined_io_bps"]),
+		)
+
+	def assert_planner_barrier(self, planner: str, manifest_hash: str) -> dict[str, object]:
+		if planner not in CAMPAIGN_PLANNERS:
+			raise ArchiveContractError("planner barrier planner is invalid")
+		planner_index = CAMPAIGN_PLANNERS.index(planner)
+		checked = 0
+		for required_planner in CAMPAIGN_PLANNERS[: planner_index + 1]:
+			for cell in campaign_cell_ids():
+				if f"planner={required_planner}|" not in cell:
+					continue
+				decision = self.exact_resume(DiscoveryKey(cell, 1, "barrier-query", manifest_hash))
+				if decision.state is not ResumeState.LATEST_SUCCESS:
+					raise ArchiveContractError(
+						f"planner barrier {planner} blocked by {required_planner} cell {cell}: {decision.state.value}"
+					)
+				checked += 1
+		return {"planner": planner, "prior_planners": list(CAMPAIGN_PLANNERS[:planner_index]), "verified_cells": checked}
+
 	@staticmethod
 	def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
 		try:
-			return select_pilot_repeats(rows)
+			return select_campaign_pilot_repeats(rows)
 		except CampaignContractError as error:
 			raise ArchiveContractError(str(error)) from error
 
-	def normalize_verified_row(self, decision: ResumeDecision, pilot_repeat: int) -> dict[str, object]:
+	def _normalize_verified_row_v1(self, decision: ResumeDecision, pilot_repeat: int) -> dict[str, object]:
 		if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
 			raise ArchiveContractError("only latest verified success evidence can become a pilot row")
 		if isinstance(pilot_repeat, bool) or not isinstance(pilot_repeat, int) or pilot_repeat not in range(1, 6):
@@ -609,6 +679,56 @@ class CampaignHarnessAdapter:
 			"evidence_status": status,
 			"evidence_sha256": digest,
 		}
+
+	def normalize_resume_row(
+		self,
+		decision: ResumeDecision,
+		*,
+		requested_identity: Mapping[str, object],
+		schedule: Mapping[str, object] | None,
+		host_load: Mapping[str, object],
+		lifecycle: Mapping[str, object],
+	) -> dict[str, object]:
+		"""Normalize success, failure, in-progress, and corrupt evidence without dropping identity facts."""
+		evidence = dict(decision.evidence or {})
+		identity_value = evidence.get("identity", dict(requested_identity))
+		if not isinstance(identity_value, dict):
+			raise ArchiveContractError("normalized row identity is invalid")
+		identity = dict(identity_value)
+		kind = identity.get("kind")
+		if kind not in ("discovery", "performance"):
+			raise ArchiveContractError("normalized row kind is invalid")
+		if decision.state in (ResumeState.LATEST_SUCCESS, ResumeState.LATEST_FAILED):
+			if evidence.get("schema") != "systemds-federated-evidence/v2" or evidence.get("evidence_kind") != kind:
+				raise ArchiveContractError("legacy evidence cannot satisfy v2 normalization")
+		row: dict[str, object] = {
+			"schema": "systemds-federated-normalized-row/v2",
+			"kind": kind,
+			"identity": identity,
+			"resume_state": decision.state.value,
+			"valid": decision.state is ResumeState.LATEST_SUCCESS,
+			"failure": decision.state in (ResumeState.LATEST_FAILED, ResumeState.CORRUPT_OR_AMBIGUOUS),
+			"detail": decision.detail,
+			"schedule": dict(schedule) if schedule is not None else None,
+			"metrics": {
+				"discovery": evidence.get("discovery_metric"),
+				"cold": evidence.get("cold_metric"),
+				"warm": evidence.get("warm_metric"),
+				"failure_return_code": evidence.get("return_code"),
+			},
+			"host_load": dict(host_load),
+			"lifecycle": dict(lifecycle),
+			"evidence_location": {
+				"committed_path": evidence.get("committed_path"),
+				"archive_uri": evidence.get("archive_uri"),
+				"archive_sha256": evidence.get("archive_sha256"),
+			},
+		}
+		if kind == "discovery" and schedule is not None:
+			raise ArchiveContractError("discovery rows must not claim a performance schedule")
+		if kind == "performance" and schedule is None:
+			raise ArchiveContractError("performance rows require exact schedule facts")
+		return row
 
 def _canonical_bytes(value: object) -> bytes:
 	return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
