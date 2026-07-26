@@ -882,7 +882,7 @@ def select_campaign_pilot_repeats(
 	required = {
 		"pilot_class", "workload", "planner", "workers", "profile", "cell", "pilot_repeat", "warm_seconds",
 		"period", "order", "carryover", "host_load", "lifecycle", "evidence_status", "evidence_sha256",
-		"identity", "evidence_location", "invocation_manifest_sha256",
+		"identity", "evidence_location", "invocation_manifest_sha256", "resource_evidence",
 	}
 	if not callable(evidence_validator):
 		raise CampaignContractError("campaign pilot requires an evidence revalidation callback")
@@ -978,6 +978,7 @@ def select_campaign_pilot_repeats(
 				"cell": row["cell"], "pilot_repeat": row["pilot_repeat"],
 				"evidence_status": row["evidence_status"], "evidence_sha256": evidence_digest,
 				"evidence_location": _canonical_json_value("campaign pilot evidence location", row["evidence_location"]),
+				"resource_evidence": _validate_pilot_resource_evidence(row["resource_evidence"]),
 			})
 			value = row["warm_seconds"]
 			values.append(_positive_finite("campaign pilot timing", value))
@@ -1073,6 +1074,71 @@ def select_campaign_pilot_repeats(
 	return receipt
 
 
+def _validate_pilot_resource_evidence(value: object) -> dict[str, float | int]:
+	if not isinstance(value, Mapping) or set(value) != {
+		"artifact_bytes", "artifact_inodes", "lifecycle_wall_seconds",
+	}:
+		raise CampaignContractError("pilot resource evidence schema is not exact")
+	result: dict[str, float | int] = {}
+	for name in ("artifact_bytes", "artifact_inodes"):
+		item = value[name]
+		if type(item) is not int or cast(int, item) < 1:
+			raise CampaignContractError(f"pilot resource evidence {name} must be a positive integer")
+		result[name] = cast(int, item)
+	result["lifecycle_wall_seconds"] = _positive_finite(
+		"pilot resource evidence lifecycle_wall_seconds", value["lifecycle_wall_seconds"]
+	)
+	return result
+
+
+def build_pilot_resource_reservation(
+	*, pilot_selection_receipt: Mapping[str, object]
+) -> dict[str, object]:
+	"""Derive R from the exact revalidated evidence inventory committed by selection S."""
+	selection = cast(dict[str, object], _canonical_json_value("pilot selection", pilot_selection_receipt))
+	if set(selection) != {
+		"schema", "selection_rule", "preregistration_manifest_sha256", "preregistration",
+		"pilot_rows_sha256", "evidence_digest_inventory", "q95", "eta", "selected_repeats",
+		"diagnostics", "pilot_selection_sha256",
+	} or selection.get("schema") != "systemds-federated-campaign-pilot/v3":
+		raise CampaignContractError("pilot selection schema is not exact")
+	selection_hash = selection.get("pilot_selection_sha256")
+	_sha256_text("pilot selection", selection_hash)
+	unsigned_selection = dict(selection); unsigned_selection.pop("pilot_selection_sha256", None)
+	if _canonical_sha256(unsigned_selection) != selection_hash:
+		raise CampaignContractError("pilot selection self-hash is invalid")
+	prereg_hash = _sha256_text("pilot preregistration", selection.get("preregistration_manifest_sha256"))
+	rows_hash = _sha256_text("pilot rows", selection.get("pilot_rows_sha256"))
+	inventory = selection.get("evidence_digest_inventory")
+	if not isinstance(inventory, list) or len(inventory) != 120:
+		raise CampaignContractError("pilot resource reservation requires exact 120-row evidence inventory")
+	resources: list[dict[str, float | int]] = []
+	for item in inventory:
+		if not isinstance(item, Mapping) or set(item) != {
+			"cell", "pilot_repeat", "evidence_status", "evidence_sha256", "evidence_location", "resource_evidence",
+		}:
+			raise CampaignContractError("pilot resource inventory row schema is not exact")
+		_sha256_text("pilot resource inventory evidence", item["evidence_sha256"])
+		resources.append(_validate_pilot_resource_evidence(item["resource_evidence"]))
+	def nearest_rank_p95(name: str) -> float | int:
+		values = sorted(resource[name] for resource in resources)
+		return values[math.ceil(0.95 * len(values)) - 1]
+	reservation: dict[str, object] = {
+		"schema": "g007-pilot-resource-reservation-v2",
+		"preregistration_manifest_sha256": prereg_hash,
+		"pilot_selection_sha256": selection_hash,
+		"pilot_rows_sha256": rows_hash,
+		"evidence_inventory_sha256": _canonical_sha256(inventory),
+		"sample_count": 120,
+		"p95_artifact_bytes": nearest_rank_p95("artifact_bytes"),
+		"p95_artifact_inodes": nearest_rank_p95("artifact_inodes"),
+		"p95_lifecycle_seconds": nearest_rank_p95("lifecycle_wall_seconds"),
+		"margin": 1.20, "absolute_disk_floor_bytes": 5 * 1024**3,
+	}
+	reservation["payload_sha256"] = _canonical_sha256(reservation)
+	return reservation
+
+
 def build_final_campaign_manifest(
 	*,
 	preregistration_manifest: Mapping[str, object],
@@ -1123,22 +1189,24 @@ def build_final_campaign_manifest(
 	seen_inventory: set[str] = set()
 	for index, item in enumerate(inventory):
 		if not isinstance(item, dict) or set(item) != {
-			"cell", "pilot_repeat", "evidence_status", "evidence_sha256", "evidence_location",
+			"cell", "pilot_repeat", "evidence_status", "evidence_sha256", "evidence_location", "resource_evidence",
 		}:
 			raise CampaignContractError("pilot evidence digest inventory row schema is not exact")
 		digest = _sha256_text(f"pilot evidence inventory row {index}", item["evidence_sha256"])
 		if digest in seen_inventory:
 			raise CampaignContractError("pilot evidence digest inventory contains a duplicate")
 		seen_inventory.add(digest)
+		_validate_pilot_resource_evidence(item["resource_evidence"])
 	selected = selection.get("selected_repeats")
 	if type(selected) is not int or selected not in (3, 5, 7):
 		raise CampaignContractError("pilot selection repeats must be exactly 3, 5, or 7")
 
 	reservation = cast(dict[str, object], _canonical_json_value("pilot resource reservation", pilot_resource_reservation))
 	if set(reservation) != {
-		"schema", "pilot_manifest_hash", "sample_count", "p95_artifact_bytes", "p95_artifact_inodes",
+		"schema", "preregistration_manifest_sha256", "pilot_selection_sha256", "pilot_rows_sha256",
+		"evidence_inventory_sha256", "sample_count", "p95_artifact_bytes", "p95_artifact_inodes",
 		"p95_lifecycle_seconds", "margin", "absolute_disk_floor_bytes", "payload_sha256",
-	} or reservation.get("schema") != "g007-pilot-resource-reservation-v1":
+	} or reservation.get("schema") != "g007-pilot-resource-reservation-v2":
 		raise CampaignContractError("pilot resource reservation schema is not exact")
 	reservation_hash = reservation.get("payload_sha256")
 	_sha256_text("pilot resource reservation", reservation_hash)
@@ -1146,7 +1214,13 @@ def build_final_campaign_manifest(
 	unsigned_reservation.pop("payload_sha256")
 	if _canonical_sha256(unsigned_reservation) != reservation_hash:
 		raise CampaignContractError("pilot resource reservation self-hash is invalid")
-	if reservation["pilot_manifest_hash"] != prereg_hash or reservation["sample_count"] != 120:
+	if (
+		reservation["preregistration_manifest_sha256"] != prereg_hash
+		or reservation["pilot_selection_sha256"] != selection_hash
+		or reservation["pilot_rows_sha256"] != selection["pilot_rows_sha256"]
+		or reservation["evidence_inventory_sha256"] != _canonical_sha256(selection["evidence_digest_inventory"])
+		or reservation["sample_count"] != 120
+	):
 		raise CampaignContractError("pilot resource reservation does not bind exact preregistration rows")
 	for name in ("p95_artifact_bytes", "p95_artifact_inodes"):
 		if type(reservation[name]) is not int or cast(int, reservation[name]) < 1:

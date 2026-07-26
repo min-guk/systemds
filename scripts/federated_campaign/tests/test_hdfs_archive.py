@@ -313,6 +313,11 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		(victim / "sentinel").write_text("keep", encoding="utf-8")
 		catalog = json.loads(adapter.catalog_path.read_text(encoding="utf-8"))
 		catalog["entries"][0]["local_committed_path"] = str(victim)
+		entry = catalog["entries"][0]
+		entry.pop("receipt_sha256")
+		entry["receipt_sha256"] = hashlib.sha256(json.dumps(
+			entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
 		adapter.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
 		adapter.max_local_raw_bundles = 0
 		_, second = self._commit(2, "token-b")
@@ -370,6 +375,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
 			"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 0, "worker_restart_count": 0},
+			"lifecycle_wall_seconds": 4.5,
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		decision = facade.exact_resume(lease.key)
@@ -383,6 +389,9 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			{"io_utilization": 0.01, "read_bytes_per_second": 10.0, "write_bytes_per_second": 20.0},
 			row["host_load"],
 		)
+		manifest = self.ledger.validate_committed(committed)
+		self.assertEqual(manifest["resource_evidence"], row["resource_evidence"])
+
 		self.assertEqual(1.25, cast(dict[str, object], row["lifecycle"])["warm_seconds"])
 		for alias in (True, 1.0):
 			with self.assertRaisesRegex(ArchiveContractError, "schedule disagrees"):
@@ -423,6 +432,44 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		forged_warm = cast(dict[str, object], forged_metrics["warm"])
 		self.assertEqual(1.25, forged_warm["seconds"])
 		self.assertEqual(lease.key.as_dict(), self.ledger.validate_committed(committed)["identity"])
+
+	def test_interrupted_archive_preserves_exact_resource_evidence_on_archive_only_resume(self):
+		adapter = self._adapter(retention=0)
+		facade = CampaignHarnessAdapter(self.ledger, adapter)
+		lease = facade.begin(
+			kind="performance", cell="resource-cell", manifest_hash="manifest-a",
+			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1, period=1,
+			order="DP>FedAll>Heuristic>MinST",
+		)
+		cold = self._phase("resource-cold", "docker_e2e", 2.5)
+		warm = self._phase("resource-warm", "systemds_total_execution_time", 1.25)
+		shared = self.root / "resource-shared.json"
+		shared.write_text(json.dumps({
+			"identity": lease.key.as_dict(),
+			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+			"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 0, "worker_restart_count": 0},
+			"lifecycle_wall_seconds": 5.0,
+		}), encoding="utf-8")
+		committed = facade.publish_performance_success(lease, cold, warm, shared)
+		resource = self.ledger.validate_committed(committed)["resource_evidence"]
+		with self.assertRaises(InjectedArchiveCrash):
+			facade.archive(committed, crash_after="after_archive_catalog_replace")
+		receipt = facade.archive(committed)
+		self.assertFalse(committed.exists())
+		self.assertEqual(resource, receipt["resource_evidence"])
+		decision = facade.exact_resume(lease.key)
+		self.assertEqual(ResumeState.LATEST_SUCCESS, decision.state)
+		self.assertEqual(resource, cast(dict[str, object], decision.evidence)["resource_evidence"])
+		catalog = json.loads(adapter.catalog_path.read_text(encoding="utf-8"))
+		catalog["entries"][0]["resource_evidence"]["artifact_bytes"] += 1
+		entry = catalog["entries"][0]; entry.pop("receipt_sha256")
+		entry["receipt_sha256"] = hashlib.sha256(json.dumps(
+			entry, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		adapter.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, facade.exact_resume(lease.key).state)
 
 	def test_facade_discovery_success_normalizes_one_phase_without_schedule(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -557,6 +604,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
 			"lifecycle": {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0},
+			"lifecycle_wall_seconds": 4.0,
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		manifest = self.ledger.validate_committed(committed)
@@ -568,6 +616,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
 			"evidence_location": {"committed_path": str(committed)}, "warm_seconds": 1.0,
 			"invocation_manifest_sha256": manifest["invocation_manifest_sha256"],
+			"resource_evidence": manifest["resource_evidence"],
 		}
 		with self.assertRaisesRegex(ArchiveContractError, "scheduling identity"):
 			facade._verify_pilot_row(row)
@@ -593,6 +642,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 			"host_load": canonical_host, "lifecycle": canonical_lifecycle,
+			"lifecycle_wall_seconds": 4.0,
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		manifest = self.ledger.validate_committed(committed)
@@ -606,6 +656,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
 			"identity": lease.key.as_dict(), "evidence_location": {"committed_path": str(committed)},
 			"invocation_manifest_sha256": manifest["invocation_manifest_sha256"],
+			"resource_evidence": manifest["resource_evidence"],
 		}
 		with self.assertRaisesRegex(ArchiveContractError, "diagnostics disagree"):
 			facade._verify_pilot_row(row)
@@ -712,6 +763,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
 							"identity": identity, "evidence_location": {"committed_path": f"/forged/{len(rows)+1}"},
 							"invocation_manifest_sha256": "d" * 64,
+							"resource_evidence": {"artifact_bytes": 1000, "artifact_inodes": 10, "lifecycle_wall_seconds": 4.0},
 						})
 		with self.assertRaisesRegex(ArchiveContractError, "revalidation"):
 			facade.select_pilot_repeats(

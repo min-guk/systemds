@@ -57,7 +57,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		(phase / "checksums.json").write_text(json.dumps(checksums, sort_keys=True), encoding="utf-8")
 		return phase
 
-	def _shared_manifest(self, key, cold, warm, name="shared.json"):
+	def _shared_manifest(self, key, cold, warm, name="shared.json", lifecycle_wall_seconds=None):
 		manifest = {
 			"identity": key.as_dict(),
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
@@ -69,6 +69,8 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 				"coordinator_restart_count": 0, "worker_restart_count": 0,
 			},
 		}
+		if lifecycle_wall_seconds is not None:
+			manifest["lifecycle_wall_seconds"] = lifecycle_wall_seconds
 		path = self.root / name
 		path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 		return path
@@ -143,30 +145,50 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		)
 		cold = self._phase("diagnostic-cold", "docker_e2e", 2.5)
 		warm = self._phase("diagnostic-warm", "systemds_total_execution_time", 1.25)
-		shared = self._shared_manifest(lease.key, cold, warm, "diagnostic-shared.json")
+		shared = self._shared_manifest(lease.key, cold, warm, "diagnostic-shared.json", 4.5)
 		committed = ledger.publish_performance_success(lease, cold, warm, shared)
 		manifest = ledger.validate_committed(committed)
 		self.assertEqual(
 			{"io_utilization": 0.01, "read_bytes_per_second": 10.0, "write_bytes_per_second": 20.0},
 			manifest["host_load"],
 		)
+		resource = cast(dict[str, object], manifest["resource_evidence"])
+		files = [path for path in committed.rglob("*") if path.is_file()]
+		self.assertEqual(sum(path.stat().st_size for path in files), resource["artifact_bytes"])
+		self.assertEqual(len(files), resource["artifact_inodes"])
+		self.assertEqual(4.5, resource["lifecycle_wall_seconds"])
+		for field, alias in (("artifact_bytes", True), ("artifact_inodes", 1.0), ("lifecycle_wall_seconds", float("nan"))):
+			forged = json.loads((committed / "bundle_manifest.json").read_text(encoding="utf-8"))
+			forged["resource_evidence"][field] = alias
+			(committed / "bundle_manifest.json").write_text(json.dumps(forged), encoding="utf-8")
+			with self.subTest(field=field), self.assertRaises(LedgerContractError):
+				ledger.validate_committed(committed)
+			(committed / "bundle_manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 		bad_ledger = AtomicEvidenceLedger(self.root / "bad-diagnostic-ledger")
 		bad_lease = bad_ledger.begin_attempt(
 			kind="performance", cell="cell-b", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
-		bad_shared = self._shared_manifest(bad_lease.key, cold, warm, "bad-diagnostic-shared.json")
+		bad_shared = self._shared_manifest(bad_lease.key, cold, warm, "bad-diagnostic-shared.json", 4.5)
 		bad_value = json.loads(bad_shared.read_text(encoding="utf-8"))
 		bad_value["lifecycle"]["warm_seconds"] = 999
 		bad_shared.write_text(json.dumps(bad_value), encoding="utf-8")
 		with self.assertRaisesRegex(LedgerContractError, "timings disagree"):
 			bad_ledger.publish_performance_success(bad_lease, cold, warm, bad_shared)
+		wall_ledger = AtomicEvidenceLedger(self.root / "bad-wall-ledger")
+		wall_lease = wall_ledger.begin_attempt(
+			kind="performance", cell="cell-wall", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+		)
+		wall_shared = self._shared_manifest(wall_lease.key, cold, warm, "bad-wall-shared.json", 3.0)
+		with self.assertRaisesRegex(LedgerContractError, "lifecycle_wall_seconds"):
+			wall_ledger.publish_performance_success(wall_lease, cold, warm, wall_shared)
 		restart_ledger = AtomicEvidenceLedger(self.root / "restart-diagnostic-ledger")
 		restart_lease = restart_ledger.begin_attempt(
 			kind="performance", cell="cell-c", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
-		restart_shared = self._shared_manifest(restart_lease.key, cold, warm, "restart-diagnostic-shared.json")
+		restart_shared = self._shared_manifest(restart_lease.key, cold, warm, "restart-diagnostic-shared.json", 4.5)
 		restart_value = json.loads(restart_shared.read_text(encoding="utf-8"))
 		restart_value["lifecycle"]["worker_restart_count"] = 999
 		restart_shared.write_text(json.dumps(restart_value), encoding="utf-8")

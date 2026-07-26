@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -163,6 +164,11 @@ class HdfsArchiveAdapter:
 		if not isinstance(identity_value, dict):
 			raise ArchiveContractError("local commit manifest identity is invalid")
 		identity = cast(dict[str, object], identity_value)
+		resource_evidence = manifest.get("resource_evidence")
+		if identity.get("kind") == "performance" and manifest.get("status") == "success":
+			resource_evidence = self._validate_resource_evidence(resource_evidence)
+		elif resource_evidence is not None:
+			raise ArchiveContractError("non-performance archive must not claim performance resource evidence")
 		record_id = committed.name
 		for receipt in self.catalog():
 			if receipt.get("identity") == identity:
@@ -218,7 +224,9 @@ class HdfsArchiveAdapter:
 			"local_committed_path": str(committed),
 			"local_raw_bundle_present": True,
 			"status": manifest.get("status"),
+			"resource_evidence": resource_evidence,
 		}
+		receipt["receipt_sha256"] = hashlib.sha256(_canonical_bytes(receipt)).hexdigest()
 		try:
 			entries = self.catalog()
 			entries.append(receipt)
@@ -229,7 +237,7 @@ class HdfsArchiveAdapter:
 			raise
 		except Exception as error:
 			raise ArchiveContractError(f"archive catalog publication failed for {record_id}") from error
-		return receipt
+		return next(entry for entry in self.catalog() if entry.get("identity") == identity)
 
 	def catalog(self) -> list[dict[str, object]]:
 		if not self.catalog_path.is_file():
@@ -375,12 +383,20 @@ class HdfsArchiveAdapter:
 	@staticmethod
 	def _is_v2_manifest(manifest: Mapping[str, object]) -> bool:
 		identity = manifest.get("identity")
-		return (
+		base_valid = (
 			manifest.get("schema") == "systemds-federated-evidence/v2"
 			and isinstance(identity, dict)
 			and manifest.get("evidence_kind") == identity.get("kind")
 			and isinstance(manifest.get("invocation_manifest_sha256"), str)
 		)
+		if not base_valid:
+			return False
+		if cast(dict[str, object], identity).get("kind") == "performance" and manifest.get("status") == "success":
+			try:
+				HdfsArchiveAdapter._validate_resource_evidence(manifest.get("resource_evidence"))
+			except ArchiveContractError:
+				return False
+		return True
 
 	def _require_v2_resume(self, decision: ResumeDecision) -> ResumeDecision:
 		if decision.state not in (ResumeState.LATEST_SUCCESS, ResumeState.LATEST_FAILED):
@@ -450,22 +466,51 @@ class HdfsArchiveAdapter:
 		return snapshot
 
 	def _verify_receipt(self, receipt: dict[str, object]) -> dict[str, object]:
+		expected_fields = {
+			"schema", "identity", "archive_uri", "archive_sha256", "archive_bytes", "local_committed_path",
+			"local_raw_bundle_present", "status", "resource_evidence", "receipt_sha256",
+		}
+		if set(receipt) != expected_fields or receipt.get("schema") != "systemds-federated-hdfs-archive/v1":
+			raise ArchiveContractError("archive receipt schema is not exact")
+		receipt_hash = receipt.get("receipt_sha256")
+		unsigned = dict(receipt)
+		unsigned.pop("receipt_sha256")
+		if (
+			not isinstance(receipt_hash, str) or re.fullmatch(r"[0-9a-f]{64}", receipt_hash) is None
+			or hashlib.sha256(_canonical_bytes(unsigned)).hexdigest() != receipt_hash
+		):
+			raise ArchiveContractError("archive receipt checksum is invalid")
 		uri = receipt.get("archive_uri")
 		expected_hash = receipt.get("archive_sha256")
 		identity = receipt.get("identity")
-		if not isinstance(uri, str) or not isinstance(expected_hash, str) or not isinstance(identity, dict):
+		archive_bytes = receipt.get("archive_bytes")
+		if (
+			not isinstance(uri, str) or not isinstance(expected_hash, str) or not isinstance(identity, dict)
+			or type(archive_bytes) is not int or cast(int, archive_bytes) < 1
+			or re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None
+			or type(receipt.get("local_raw_bundle_present")) is not bool
+			or receipt.get("status") not in ("success", "failed")
+			or not isinstance(receipt.get("local_committed_path"), str)
+		):
 			raise ArchiveContractError("archive receipt is invalid")
 		if not self.backend.exists(uri):
 			raise ArchiveContractError(f"remote archive is missing: {uri}")
 		download = self.work_root / f"receipt-verify-{uuid.uuid4().hex}.tar"
 		try:
 			self.backend.get(uri, download)
+			if download.stat().st_size != archive_bytes:
+				raise ArchiveContractError(f"remote archive size mismatch: {uri}")
 			if _sha256(download) != expected_hash:
 				raise ArchiveContractError(f"remote archive checksum mismatch: {uri}")
 			record_id = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
 			manifest = self._verify_downloaded_archive(download, identity, record_id)
 			if receipt.get("status") != manifest.get("status"):
 				raise ArchiveContractError("archive receipt status disagrees with archived manifest")
+			manifest_resource = manifest.get("resource_evidence")
+			if receipt.get("resource_evidence") != manifest_resource:
+				raise ArchiveContractError("archive receipt resource evidence disagrees with archived manifest")
+			if manifest_resource is not None:
+				self._validate_resource_evidence(manifest_resource)
 			return manifest
 		except ArchiveContractError:
 			raise
@@ -491,6 +536,24 @@ class HdfsArchiveAdapter:
 			raise ArchiveContractError("downloaded archive manifest/checksum validation failed") from error
 		finally:
 			shutil.rmtree(extract_root, ignore_errors=True)
+
+	@staticmethod
+	def _validate_resource_evidence(value: object) -> dict[str, float | int]:
+		if not isinstance(value, dict) or set(value) != {
+			"artifact_bytes", "artifact_inodes", "lifecycle_wall_seconds",
+		}:
+			raise ArchiveContractError("archive resource evidence schema is not exact")
+		for name in ("artifact_bytes", "artifact_inodes"):
+			if type(value[name]) is not int or cast(int, value[name]) < 1:
+				raise ArchiveContractError(f"archive resource evidence {name} is invalid")
+		wall = value["lifecycle_wall_seconds"]
+		if isinstance(wall, bool) or not isinstance(wall, (int, float)) or not math.isfinite(wall) or wall <= 0:
+			raise ArchiveContractError("archive resource evidence lifecycle wall time is invalid")
+		return {
+			"artifact_bytes": cast(int, value["artifact_bytes"]),
+			"artifact_inodes": cast(int, value["artifact_inodes"]),
+			"lifecycle_wall_seconds": float(wall),
+		}
 
 	@staticmethod
 	def _crash(requested: str | None, boundary: str) -> None:
@@ -532,6 +595,8 @@ class HdfsArchiveAdapter:
 			if local_path.is_dir():
 				shutil.rmtree(local_path)
 			receipt["local_raw_bundle_present"] = False
+			receipt.pop("receipt_sha256", None)
+			receipt["receipt_sha256"] = hashlib.sha256(_canonical_bytes(receipt)).hexdigest()
 			for index, entry in enumerate(entries):
 				if entry.get("archive_uri") == receipt.get("archive_uri"):
 					entries[index] = receipt
@@ -777,6 +842,8 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("pilot invocation manifest binding changed during revalidation")
 		if evidence.get("host_load") != row.get("host_load") or evidence.get("lifecycle") != row.get("lifecycle"):
 			raise ArchiveContractError("pilot diagnostics disagree with checksummed evidence")
+		if evidence.get("resource_evidence") != row.get("resource_evidence"):
+			raise ArchiveContractError("pilot resource evidence disagrees with checksummed evidence")
 		status, digest = row.get("evidence_status"), row.get("evidence_sha256")
 		if status == "committed":
 			if set(location_value) != {"committed_path"} or evidence.get("committed_path") != location_value.get("committed_path"):
@@ -963,6 +1030,7 @@ class CampaignHarnessAdapter:
 			},
 			"host_load": trusted_evidence.get("host_load"),
 			"lifecycle": trusted_evidence.get("lifecycle"),
+			"resource_evidence": trusted_evidence.get("resource_evidence"),
 			"evidence_location": {
 				"committed_path": trusted_evidence.get("committed_path"),
 				"archive_uri": trusted_evidence.get("archive_uri"),

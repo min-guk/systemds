@@ -224,6 +224,21 @@ def _sha256(path: Path) -> str:
 	return digest.hexdigest()
 
 
+def _regular_file_footprint(root: Path, *, exclude: Path | None = None) -> tuple[int, int]:
+	root = Path(root)
+	excluded = exclude.resolve() if exclude is not None else None
+	files: list[Path] = []
+	for path in root.rglob("*"):
+		if path.is_symlink():
+			raise LedgerContractError(f"resource evidence contains a symlink: {path}")
+		if path.is_file():
+			if excluded is None or path.resolve() != excluded:
+				files.append(path)
+		elif not path.is_dir():
+			raise LedgerContractError(f"resource evidence contains a non-regular artifact: {path}")
+	return sum(path.stat().st_size for path in files), len(files)
+
+
 def _fsync_directory(path: Path) -> None:
 	fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 	try:
@@ -391,7 +406,10 @@ class AtomicEvidenceLedger:
 			raise LedgerContractError(f"unknown crash boundary: {crash_after}")
 		cold_metric = self._validate_source_phase(cold_bundle, "docker_e2e")
 		warm_metric = self._validate_source_phase(warm_bundle, "systemds_total_execution_time")
-		shared = self._validate_shared_manifest(shared_replicate_manifest, identity, cold_bundle, warm_bundle)
+		shared = self._validate_shared_manifest(
+			shared_replicate_manifest, identity, cold_bundle, warm_bundle,
+			require_lifecycle_wall_seconds=lease is not None,
+		)
 		self._reject_ambiguous_discovery_attempt(identity)
 
 		record_id = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
@@ -437,7 +455,12 @@ class AtomicEvidenceLedger:
 			"lifecycle": shared["lifecycle"],
 			"invocation_manifest_sha256": lease.invocation_manifest_sha256 if lease is not None else None,
 		}
-		_write_fsynced(stage / "bundle_manifest.json", _canonical_bytes(bundle_manifest) + b"\n")
+		if lease is not None:
+			self._write_resource_bound_manifest(
+				stage, bundle_manifest, cast(float, shared["lifecycle_wall_seconds"])
+			)
+		else:
+			_write_fsynced(stage / "bundle_manifest.json", _canonical_bytes(bundle_manifest) + b"\n")
 		self._crash(crash_after, "after_bundle_manifest_fsync")
 		_fsync_directory(stage)
 		self._crash(crash_after, "after_staging_dir_fsync")
@@ -817,10 +840,14 @@ class AtomicEvidenceLedger:
 			raise LedgerContractError(str(error)) from error
 
 	def _validate_shared_manifest(
-		self, path: Path, identity: dict[str, object], cold: Path, warm: Path
+		self, path: Path, identity: dict[str, object], cold: Path, warm: Path, *,
+		require_lifecycle_wall_seconds: bool = False,
 	) -> dict[str, object]:
 		shared = _read_json(Path(path), "shared replicate manifest")
-		if set(shared) != {"identity", "cold_checksums_sha256", "warm_checksums_sha256", "host_load", "lifecycle"}:
+		expected_fields = {"identity", "cold_checksums_sha256", "warm_checksums_sha256", "host_load", "lifecycle"}
+		if require_lifecycle_wall_seconds:
+			expected_fields.add("lifecycle_wall_seconds")
+		if set(shared) != expected_fields:
 			raise LedgerContractError("shared replicate manifest schema is not exact")
 		if shared.get("identity") != identity:
 			raise LedgerContractError("shared replicate manifest identity mismatch")
@@ -837,11 +864,70 @@ class AtomicEvidenceLedger:
 		warm_metric = self._validate_source_phase(Path(warm), "systemds_total_execution_time")
 		if lifecycle["cold_seconds"] != cold_metric["seconds"] or lifecycle["warm_seconds"] != warm_metric["seconds"]:
 			raise LedgerContractError("shared replicate lifecycle timings disagree with phase evidence")
-		return {
+		result: dict[str, object] = {
 			"identity": identity,
 			**expected,
 			"host_load": host_load,
 			"lifecycle": lifecycle,
+		}
+		if require_lifecycle_wall_seconds:
+			wall_seconds = shared.get("lifecycle_wall_seconds")
+			if (
+				isinstance(wall_seconds, bool) or not isinstance(wall_seconds, (int, float))
+				or not math.isfinite(wall_seconds) or wall_seconds <= 0
+				or float(wall_seconds) < float(lifecycle["cold_seconds"]) + float(lifecycle["warm_seconds"])
+			):
+				raise LedgerContractError("shared replicate lifecycle_wall_seconds is invalid")
+			result["lifecycle_wall_seconds"] = float(wall_seconds)
+		return result
+
+	def _write_resource_bound_manifest(
+		self, stage: Path, manifest: dict[str, object], lifecycle_wall_seconds: float
+	) -> None:
+		"""Bind exact final regular-file footprint without recursive size ambiguity."""
+		manifest_path = stage / "bundle_manifest.json"
+		other_bytes, other_inodes = _regular_file_footprint(stage, exclude=manifest_path)
+		artifact_bytes = other_bytes
+		for _ in range(16):
+			manifest["resource_evidence"] = {
+				"artifact_bytes": artifact_bytes,
+				"artifact_inodes": other_inodes + 1,
+				"lifecycle_wall_seconds": lifecycle_wall_seconds,
+			}
+			contents = _canonical_bytes(manifest) + b"\n"
+			next_bytes = other_bytes + len(contents)
+			if next_bytes == artifact_bytes:
+				_write_fsynced(manifest_path, contents)
+				actual = _regular_file_footprint(stage)
+				if actual != (artifact_bytes, other_inodes + 1):
+					raise LedgerContractError("resource evidence does not match exact committed footprint")
+				return
+			artifact_bytes = next_bytes
+		raise LedgerContractError("resource evidence footprint did not converge")
+
+	@staticmethod
+	def _validate_resource_evidence(
+		value: object, record_dir: Path, lifecycle_wall_seconds: object
+	) -> dict[str, float | int]:
+		fields = {"artifact_bytes", "artifact_inodes", "lifecycle_wall_seconds"}
+		if not isinstance(value, dict) or set(value) != fields:
+			raise LedgerContractError("resource evidence schema is not exact")
+		for name in ("artifact_bytes", "artifact_inodes"):
+			if type(value[name]) is not int or cast(int, value[name]) < 1:
+				raise LedgerContractError(f"resource evidence {name} must be a positive integer")
+		wall = value["lifecycle_wall_seconds"]
+		if (
+			isinstance(wall, bool) or not isinstance(wall, (int, float))
+			or not math.isfinite(wall) or wall <= 0 or wall != lifecycle_wall_seconds
+		):
+			raise LedgerContractError("resource evidence lifecycle wall time is invalid")
+		actual_bytes, actual_inodes = _regular_file_footprint(record_dir)
+		if value["artifact_bytes"] != actual_bytes or value["artifact_inodes"] != actual_inodes:
+			raise LedgerContractError("resource evidence disagrees with exact committed footprint")
+		return {
+			"artifact_bytes": cast(int, value["artifact_bytes"]),
+			"artifact_inodes": cast(int, value["artifact_inodes"]),
+			"lifecycle_wall_seconds": float(wall),
 		}
 
 	@staticmethod
@@ -1038,7 +1124,11 @@ class AtomicEvidenceLedger:
 			cold = self._validate_source_phase(record_dir / "cold", "docker_e2e")
 			warm = self._validate_source_phase(record_dir / "warm", "systemds_total_execution_time")
 			shared_path = record_dir / "shared_replicate_manifest.json"
-			shared = self._validate_shared_manifest(shared_path, identity, record_dir / "cold", record_dir / "warm")
+			is_v2 = manifest.get("schema") == "systemds-federated-evidence/v2"
+			shared = self._validate_shared_manifest(
+				shared_path, identity, record_dir / "cold", record_dir / "warm",
+				require_lifecycle_wall_seconds=is_v2,
+			)
 			checks = {
 				"cold_checksums_sha256": _sha256(record_dir / "cold" / "checksums.json"),
 				"warm_checksums_sha256": _sha256(record_dir / "warm" / "checksums.json"),
@@ -1050,11 +1140,17 @@ class AtomicEvidenceLedger:
 				return result
 			if shared.get("identity") != identity:
 				return result
-			if manifest.get("schema") == "systemds-federated-evidence/v2" and (
+			if is_v2 and (
 				manifest.get("host_load") != shared.get("host_load")
 				or manifest.get("lifecycle") != shared.get("lifecycle")
 			):
 				return result
+			if is_v2:
+				resource = self._validate_resource_evidence(
+					manifest.get("resource_evidence"), record_dir, shared.get("lifecycle_wall_seconds")
+				)
+				if manifest.get("resource_evidence") != resource:
+					return result
 			result["valid"] = True
 			return result
 		except (LedgerContractError, OSError):

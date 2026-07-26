@@ -24,6 +24,7 @@ from scripts.federated_campaign.determinism_contract import (
 	build_campaign_manifest,
 	build_campaign_preregistration_manifest,
 	build_final_campaign_manifest,
+	build_pilot_resource_reservation,
 	campaign_block_ids,
 	campaign_cell_ids,
 	check_resource_budget,
@@ -531,6 +532,10 @@ class DeterminismContractTest(unittest.TestCase):
 							},
 							"evidence_location": {"committed_path": f"/verified/{len(rows)+1}"},
 							"invocation_manifest_sha256": invocation_hash,
+							"resource_evidence": {
+								"artifact_bytes": 1000 + len(rows), "artifact_inodes": 20 + repeat,
+								"lifecycle_wall_seconds": 120.0 + repeat,
+							},
 						})
 		select = lambda candidate_rows: select_campaign_pilot_repeats(
 			candidate_rows, lambda row: None, expected_manifest_hash=manifest_hash,
@@ -632,15 +637,10 @@ class DeterminismContractTest(unittest.TestCase):
 			expected_invocation_manifest_sha256=invocation_hash,
 			expected_preregistration_manifest_sha256=prereg_hash,
 		)
-		reservation: dict[str, object] = {
-			"schema": "g007-pilot-resource-reservation-v1", "pilot_manifest_hash": prereg_hash,
-			"sample_count": 120, "p95_artifact_bytes": 4096, "p95_artifact_inodes": 8,
-			"p95_lifecycle_seconds": 120.0, "margin": 1.20,
-			"absolute_disk_floor_bytes": 5 * 1024**3,
-		}
-		reservation["payload_sha256"] = hashlib.sha256(json.dumps(
-			reservation, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-		).encode()).hexdigest()
+		reservation = build_pilot_resource_reservation(pilot_selection_receipt=selection_v3)
+		self.assertEqual(1113, reservation["p95_artifact_bytes"])
+		self.assertEqual(25, reservation["p95_artifact_inodes"])
+		self.assertEqual(125.0, reservation["p95_lifecycle_seconds"])
 		repeats = cast(int, selection_v3["selected_repeats"])
 		schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, repeats, campaign_block_ids(), 19)
 		final = build_final_campaign_manifest(
@@ -669,12 +669,7 @@ class DeterminismContractTest(unittest.TestCase):
 		derived_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
 			derived_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
 		).encode()).hexdigest()
-		derived_reservation = json.loads(json.dumps(reservation))
-		derived_reservation["pilot_manifest_hash"] = derived_prereg_hash
-		derived_reservation.pop("payload_sha256")
-		derived_reservation["payload_sha256"] = hashlib.sha256(json.dumps(
-			derived_reservation, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-		).encode()).hexdigest()
+		derived_reservation = build_pilot_resource_reservation(pilot_selection_receipt=derived_selection)
 		derived_schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, repeats, campaign_block_ids(), 31)
 		derived_final = build_final_campaign_manifest(
 			preregistration_manifest=derived_prereg, pilot_selection_receipt=derived_selection,
@@ -683,6 +678,26 @@ class DeterminismContractTest(unittest.TestCase):
 		self.assertEqual(derived_schedule, derived_final["schedule"])
 		self.assertEqual(31, _dict(derived_final["schedule"])["seed"])
 		self.assertEqual(19, _dict(derived_final["pilot_preregistration"])["schedule_seed"])
+		cross_selection = json.loads(json.dumps(selection_v3))
+		_list(cross_selection["evidence_digest_inventory"])[0]["resource_evidence"]["artifact_bytes"] += 1
+		cross_selection.pop("pilot_selection_sha256")
+		cross_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
+			cross_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		cross_reservation = build_pilot_resource_reservation(pilot_selection_receipt=cross_selection)
+		with self.assertRaisesRegex(CampaignContractError, "bind exact"):
+			build_final_campaign_manifest(
+				preregistration_manifest=prereg, pilot_selection_receipt=selection_v3,
+				pilot_resource_reservation=cross_reservation,
+			)
+		aliased_selection = json.loads(json.dumps(selection_v3))
+		_list(aliased_selection["evidence_digest_inventory"])[0]["resource_evidence"]["artifact_inodes"] = True
+		aliased_selection.pop("pilot_selection_sha256")
+		aliased_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
+			aliased_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+		).encode()).hexdigest()
+		with self.assertRaisesRegex(CampaignContractError, "positive integer"):
+			build_pilot_resource_reservation(pilot_selection_receipt=aliased_selection)
 		for mutation in ("prereg", "selection", "reservation"):
 			candidate_prereg = json.loads(json.dumps(prereg))
 			candidate_selection = json.loads(json.dumps(selection_v3))
