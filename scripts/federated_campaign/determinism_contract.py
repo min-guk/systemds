@@ -20,7 +20,7 @@ import re
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence, cast
+from typing import Callable, Iterable, Mapping, Sequence, cast
 
 
 class CampaignContractError(ValueError):
@@ -58,11 +58,11 @@ def campaign_block_ids() -> tuple[str, ...]:
 
 
 def campaign_cell_ids() -> tuple[str, ...]:
-	"""Return the frozen 336 cell identities in harness product order."""
+	"""Return four global 84-cell planner barriers in execution order."""
 	return tuple(
 		f"workers={workers}|planner={planner}|workload={workload}|profile={profile}"
-		for workers in CAMPAIGN_WORKERS
 		for planner in CAMPAIGN_PLANNERS
+		for workers in CAMPAIGN_WORKERS
 		for workload in CAMPAIGN_WORKLOADS
 		for profile in CAMPAIGN_PROFILES
 	)
@@ -606,8 +606,8 @@ def build_campaign_manifest(
 		"jar": _file_record(Path(jar)),
 		"planner_configs": _named_file_records("planner_configs", planner_configs, CAMPAIGN_PLANNERS),
 		"cp_config": _file_record(Path(cp_config)),
-		"fed_dmls": _named_file_records("fed_dmls", fed_dmls, CAMPAIGN_WORKLOADS),
-		"cp_dmls": _named_file_records("cp_dmls", cp_dmls, CAMPAIGN_WORKLOADS),
+		"fed_dmls": _distinct_named_file_records("fed_dmls", fed_dmls, CAMPAIGN_WORKLOADS),
+		"cp_dmls": _distinct_named_file_records("cp_dmls", cp_dmls, CAMPAIGN_WORKLOADS),
 		"oracle_files": _distinct_named_file_records("oracle_files", oracle_files, CAMPAIGN_WORKLOADS),
 		"compose_files": _named_file_records("compose_files", compose_files, COMPOSE_SURFACES),
 		"runner_files": _named_file_records("runner_files", runner_files, RUNNER_SURFACES),
@@ -696,12 +696,17 @@ def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, obje
 	}
 
 
-def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+def select_campaign_pilot_repeats(
+	rows: Sequence[Mapping[str, object]], evidence_validator: Callable[[Mapping[str, object]], None]
+) -> dict[str, object]:
 	"""Select one frozen repeat count from the preregistered cross-campaign pilot."""
 	required = {
 		"pilot_class", "planner", "workers", "profile", "cell", "pilot_repeat", "warm_seconds",
 		"period", "order", "carryover", "host_load", "lifecycle", "evidence_status", "evidence_sha256",
+		"identity", "evidence_location",
 	}
+	if not callable(evidence_validator):
+		raise CampaignContractError("campaign pilot requires an evidence revalidation callback")
 	if len(rows) != len(PILOT_CLASSES) * len(CAMPAIGN_PLANNERS) * len(PILOT_REGIMES) * 5:
 		raise CampaignContractError("campaign pilot requires the exact preregistered 120-row set")
 	groups: dict[tuple[str, str, int, str, str], list[Mapping[str, object]]] = {}
@@ -735,6 +740,10 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 			raise CampaignContractError("each campaign pilot group requires exact repeats 1..5")
 		values: list[float] = []
 		for repeat_index, row in enumerate(ordered):
+			try:
+				evidence_validator(row)
+			except Exception as error:
+				raise CampaignContractError("campaign pilot evidence revalidation failed") from error
 			if row["evidence_status"] not in ("committed", "archive"):
 				raise CampaignContractError("campaign pilot rows require verified evidence")
 			evidence_digest = _sha256_text("campaign pilot evidence", row["evidence_sha256"])
@@ -743,14 +752,18 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 			seen_evidence.add(evidence_digest)
 			value = row["warm_seconds"]
 			values.append(_positive_finite("campaign pilot timing", value))
-			if not isinstance(row["host_load"], Mapping) or not row["host_load"] or not isinstance(row["lifecycle"], Mapping) or not row["lifecycle"]:
-				raise CampaignContractError("campaign pilot host/lifecycle diagnostics are missing")
-			for diagnostic_name in ("host_load", "lifecycle"):
-				diagnostic = cast(Mapping[str, object], row[diagnostic_name])
-				if any(not isinstance(name, str) or not name for name in diagnostic):
-					raise CampaignContractError(f"campaign pilot {diagnostic_name} names are invalid")
-				for name, diagnostic_value in diagnostic.items():
-					_positive_finite(f"campaign pilot {diagnostic_name}.{name}", diagnostic_value, allow_zero=True)
+			diagnostic_schemas = {
+				"host_load": {"io_utilization", "read_bytes_per_second", "write_bytes_per_second"},
+				"lifecycle": {"cold_seconds", "warm_seconds", "coordinator_restart_count", "worker_restart_count"},
+			}
+			for diagnostic_name, diagnostic_fields in diagnostic_schemas.items():
+				diagnostic_value = row[diagnostic_name]
+				if not isinstance(diagnostic_value, Mapping) or set(diagnostic_value) != diagnostic_fields:
+					raise CampaignContractError(f"campaign pilot {diagnostic_name} schema is not exact")
+				for name, diagnostic_value_item in diagnostic_value.items():
+					_positive_finite(f"campaign pilot {diagnostic_name}.{name}", diagnostic_value_item, allow_zero=True)
+			if cast(Mapping[str, object], row["lifecycle"])["warm_seconds"] != row["warm_seconds"]:
+				raise CampaignContractError("campaign pilot lifecycle warm_seconds disagrees with measured timing")
 			expected_order_tuple = preregistered_orders[repeat_index]
 			expected_order = ">".join(expected_order_tuple)
 			expected_period = expected_order_tuple.index(key[1]) + 1
@@ -762,6 +775,22 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 		deviations.extend(group_deviations)
 		log_values = [math.log(value) for value in values]
 		overall_log = statistics.fmean(log_values)
+		diagnostic_effects: dict[str, dict[str, dict[str, float]]] = {}
+		for diagnostic_name in ("host_load", "lifecycle"):
+			field_names = sorted(cast(Mapping[str, object], ordered[0][diagnostic_name]))
+			diagnostic_effects[diagnostic_name] = {}
+			for field_name in field_names:
+				field_values = [
+					_positive_finite(
+						f"campaign pilot {diagnostic_name}.{field_name}",
+						cast(Mapping[str, object], row[diagnostic_name])[field_name], allow_zero=True,
+					)
+					for row in ordered
+				]
+				diagnostic_effects[diagnostic_name][field_name] = {
+					"median": statistics.median(field_values),
+					"first_run_delta": field_values[0] - statistics.median(field_values[1:]),
+				}
 		diagnostics.append({
 			"pilot_class": key[0], "planner": key[1], "workers": key[2], "profile": key[3], "cell": key[4],
 			"median": median, "mad": statistics.median(abs(value - median) for value in values),
@@ -776,6 +805,7 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 				"order_log_effect": {str(row["order"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
 				"carryover_log_effect": {str(row["carryover"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
 			},
+			"diagnostic_effects": diagnostic_effects,
 		})
 	ordered_deviations = sorted(deviations)
 	index = max(0, math.ceil(0.95 * len(ordered_deviations)) - 1)

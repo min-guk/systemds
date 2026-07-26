@@ -30,7 +30,20 @@ from scripts.federated_campaign.determinism_contract import (
 )
 
 
+def _dict(value: object) -> dict[str, Any]:
+	assert isinstance(value, dict)
+	return cast(dict[str, Any], value)
+
+
+def _list(value: object) -> list[Any]:
+	assert isinstance(value, list)
+	return cast(list[Any], value)
+
+
 class DeterminismContractTest(unittest.TestCase):
+	temp_dir = cast(tempfile.TemporaryDirectory[str], object())
+	root = cast(Path, object())
+
 	def setUp(self):
 		self.temp_dir = tempfile.TemporaryDirectory()
 		self.root = Path(self.temp_dir.name)
@@ -93,7 +106,7 @@ class DeterminismContractTest(unittest.TestCase):
 			)
 
 	def test_manifest_records_declared_cold_and_warm_lifecycle(self):
-		lifecycle = self.manifest()["lifecycle"]
+		lifecycle = _dict(self.manifest()["lifecycle"])
 		self.assertEqual("docker_e2e", lifecycle["cold_metric"])
 		self.assertEqual("systemds_total_execution_time", lifecycle["warm_metric"])
 		self.assertEqual("fresh", lifecycle["warm_coordinator_jvm"])
@@ -124,8 +137,8 @@ class DeterminismContractTest(unittest.TestCase):
 				schedule = build_block_counterbalanced_schedule(
 					("DP", "FedAll", "Heuristic", "MinST"), repeats, ("b0", "b1", "b2", "b3"), 19
 				)
-				for period_counts in schedule["aggregate_period_counts"].values():
-					self.assertEqual({repeats}, set(period_counts.values()))
+				for period_counts in _dict(schedule["aggregate_period_counts"]).values():
+					self.assertEqual({repeats}, set(_dict(period_counts).values()))
 
 	def test_block_rotation_balances_directed_carryover_aggregate_for_3_5_7_repeats(self):
 		for repeats in (3, 5, 7):
@@ -133,13 +146,13 @@ class DeterminismContractTest(unittest.TestCase):
 				schedule = build_block_counterbalanced_schedule(
 					("DP", "FedAll", "Heuristic", "MinST"), repeats, ("b0", "b1", "b2", "b3"), 19
 				)
-				self.assertEqual({repeats}, set(schedule["aggregate_directed_carryover_counts"].values()))
+				self.assertEqual({repeats}, set(_dict(schedule["aggregate_directed_carryover_counts"]).values()))
 
 	def test_block_rotation_records_unbalanced_within_cell_remainder_honestly(self):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		self.assertTrue(all(block["within_cell_fully_balanced"] is False for block in schedule["blocks"]))
+		self.assertTrue(all(_dict(block)["within_cell_fully_balanced"] is False for block in _list(schedule["blocks"])))
 
 	def test_frozen_manifest_persists_aggregate_balanced_block_schedule(self):
 		schedule = build_block_counterbalanced_schedule(
@@ -153,7 +166,10 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		schedule["blocks"][0]["runs"][0]["periods"][0]["planner"] = "MinST"
+		block = _dict(_list(schedule["blocks"])[0])
+		run = _dict(_list(block["runs"])[0])
+		period = _dict(_list(run["periods"])[0])
+		period["planner"] = "MinST"
 		schedule["aggregate_fully_balanced"] = True
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
 			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
@@ -183,8 +199,9 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		planner = next(iter(schedule["aggregate_period_counts"]["1"]))
-		schedule["aggregate_period_counts"]["1"][planner] += 1
+		period_one = _dict(_dict(schedule["aggregate_period_counts"])["1"])
+		planner = next(iter(period_one))
+		period_one[planner] += 1
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
 			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
@@ -192,8 +209,9 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		pair = next(iter(schedule["aggregate_directed_carryover_counts"]))
-		schedule["aggregate_directed_carryover_counts"][pair] += 1
+		carryover = _dict(schedule["aggregate_directed_carryover_counts"])
+		pair = next(iter(carryover))
+		carryover[pair] += 1
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
 			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
@@ -201,7 +219,7 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		schedule["blocks"][0]["rotation_start_row"] = 3
+		_dict(_list(schedule["blocks"])[0])["rotation_start_row"] = 3
 		with self.assertRaisesRegex(CampaignContractError, "schedule"):
 			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
@@ -209,7 +227,7 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		schedule["blocks"][0]["block"] = 7
+		_dict(_list(schedule["blocks"])[0])["block"] = 7
 		with self.assertRaisesRegex(CampaignContractError, "block"):
 			self.manifest(seed=19, block_schedule=schedule, expected_block_order=("b0", "b1", "b2", "b3"))
 
@@ -230,7 +248,8 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 3, tuple(f"workload=w{i}|workers=1|network=lan" for i in range(4)), 19
 		)
-		first = schedule["blocks"][0]["runs"][0]
+		first_block = _dict(_list(schedule["blocks"])[0])
+		first = _dict(_list(first_block["runs"])[0])
 		self.assertEqual({"lifecycle_replicate", "periods", "order", "williams_row"}, set(first))
 
 	def test_resource_preflight_rejects_disk_below_margin_and_floor(self):
@@ -268,6 +287,10 @@ class DeterminismContractTest(unittest.TestCase):
 		self.assertEqual(336, len(cells))
 		self.assertEqual("workers=1|workload=kmeans|profile=lan", blocks[0])
 		self.assertEqual("workers=4|planner=MinST|workload=steplm|profile=wan_mid", cells[-1])
+		for planner_index, planner in enumerate(CAMPAIGN_PLANNERS):
+			planner_slice = cells[planner_index * 84:(planner_index + 1) * 84]
+			self.assertEqual(84, len(planner_slice))
+			self.assertTrue(all(f"planner={planner}|" in cell for cell in planner_slice))
 		with self.assertRaisesRegex(CampaignContractError, "ordered"):
 			validate_campaign_matrix(tuple(reversed(blocks)), cells)
 		with self.assertRaisesRegex(CampaignContractError, "duplicates"):
@@ -328,7 +351,7 @@ class DeterminismContractTest(unittest.TestCase):
 		inputs = self._campaign_v2_inputs()
 		manifest = build_campaign_manifest(**inputs)
 		self.assertEqual("systemds-federated-docker-campaign/v2", manifest["schema"])
-		self.assertEqual(336, len(manifest["dimensions"]["cell_ids"]))
+		self.assertEqual(336, len(_list(_dict(manifest["dimensions"])["cell_ids"])))
 		before = manifest["manifest_hash"]
 		inputs["runner_files"]["docker"].write_text("changed", encoding="utf-8")
 		self.assertNotEqual(before, build_campaign_manifest(**inputs)["manifest_hash"])
@@ -343,6 +366,14 @@ class DeterminismContractTest(unittest.TestCase):
 			build_campaign_manifest(**inputs)
 		inputs = self._campaign_v2_inputs()
 		inputs["reference_artifacts"]["als"] = inputs["reference_artifacts"]["lm"]
+		with self.assertRaisesRegex(CampaignContractError, "distinct"):
+			build_campaign_manifest(**inputs)
+		inputs = self._campaign_v2_inputs()
+		inputs["fed_dmls"]["als"] = inputs["fed_dmls"]["lm"]
+		with self.assertRaisesRegex(CampaignContractError, "distinct"):
+			build_campaign_manifest(**inputs)
+		inputs = self._campaign_v2_inputs()
+		inputs["cp_dmls"]["als"] = inputs["cp_dmls"]["lm"]
 		with self.assertRaisesRegex(CampaignContractError, "distinct"):
 			build_campaign_manifest(**inputs)
 
@@ -385,35 +416,47 @@ class DeterminismContractTest(unittest.TestCase):
 							"profile": profile, "cell": cell, "pilot_repeat": repeat,
 							"warm_seconds": 100 + (repeat - 3) * 0.5, "period": period,
 							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
-							"host_load": {"io": 0.01}, "lifecycle": {"cold": 1, "warm": 1},
+							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+							"lifecycle": {"cold_seconds": 110, "warm_seconds": 100 + (repeat - 3) * 0.5, "coordinator_restart_count": 1, "worker_restart_count": 1},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
+							"identity": {"kind": "performance", "cell": cell, "attempt": repeat},
+							"evidence_location": {"committed_path": f"/verified/{len(rows)+1}"},
 						})
-		selection = select_campaign_pilot_repeats(rows)
+		select = lambda candidate_rows: select_campaign_pilot_repeats(candidate_rows, lambda row: None)
+		selection = select(rows)
 		self.assertEqual(3, selection["selected_repeats"])
-		self.assertEqual(24, len(selection["diagnostics"]))
-		self.assertIn("Q95", selection["selection_rule"])
-		self.assertIn("first_run_ratio", selection["diagnostics"][0])
-		self.assertIn("effects", selection["diagnostics"][0])
+		diagnostics = _list(selection["diagnostics"])
+		self.assertEqual(24, len(diagnostics))
+		self.assertIn("Q95", cast(str, selection["selection_rule"]))
+		first_diagnostic = _dict(diagnostics[0])
+		self.assertIn("first_run_ratio", first_diagnostic)
+		self.assertIn("effects", first_diagnostic)
+		self.assertEqual(
+			{"io_utilization", "read_bytes_per_second", "write_bytes_per_second"},
+			set(_dict(_dict(first_diagnostic["diagnostic_effects"])["host_load"])),
+		)
 		with self.assertRaisesRegex(CampaignContractError, "120-row"):
-			select_campaign_pilot_repeats(rows[:-1])
+			select(rows[:-1])
 		forged = [dict(row) for row in rows]
 		forged[-1] = dict(forged[0], pilot_repeat=5)
 		with self.assertRaises(CampaignContractError):
-			select_campaign_pilot_repeats(forged)
+			select(forged)
 		bad_digest = [dict(row) for row in rows]
 		bad_digest[0]["evidence_sha256"] = "claimed"
 		with self.assertRaisesRegex(CampaignContractError, "SHA256"):
-			select_campaign_pilot_repeats(bad_digest)
+			select(bad_digest)
 		bad_host = [dict(row) for row in rows]
-		bad_host[0]["host_load"] = {"io": float("nan")}
+		bad_host[0]["host_load"] = {"io_utilization": float("nan"), "read_bytes_per_second": 10, "write_bytes_per_second": 20}
 		with self.assertRaisesRegex(CampaignContractError, "finite"):
-			select_campaign_pilot_repeats(bad_host)
+			select(bad_host)
 		for row in rows:
 			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 2
-		self.assertEqual(5, select_campaign_pilot_repeats(rows)["selected_repeats"])
+			row["lifecycle"]["warm_seconds"] = row["warm_seconds"]
+		self.assertEqual(5, select(rows)["selected_repeats"])
 		for row in rows:
 			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 5
-		self.assertEqual(7, select_campaign_pilot_repeats(rows)["selected_repeats"])
+			row["lifecycle"]["warm_seconds"] = row["warm_seconds"]
+		self.assertEqual(7, select(rows)["selected_repeats"])
 
 	def phase_bundle(self, metric_kind="systemds_total_execution_time"):
 		phase = self.root / "phase"

@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import cast
 
 from scripts.federated_campaign.atomic_ledger import (
 	PUBLICATION_BOUNDARIES,
@@ -24,6 +25,9 @@ from scripts.federated_campaign.atomic_ledger import (
 
 
 class AtomicEvidenceLedgerTest(unittest.TestCase):
+	temp_dir = cast(tempfile.TemporaryDirectory[str], object())
+	root = cast(Path, object())
+
 	def setUp(self):
 		self.temp_dir = tempfile.TemporaryDirectory()
 		self.root = Path(self.temp_dir.name)
@@ -150,7 +154,11 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		key = DiscoveryKey("cell-a", 1, "token-a", "manifest-a")
 		self._publish_discovery(ledger, key)
 		restarted = AtomicEvidenceLedger(self.root / "ledger")
-		self.assertEqual(1, restarted.latest_discovery_success("cell-a", "manifest-a")["identity"]["attempt"])
+		record = restarted.latest_discovery_success("cell-a", "manifest-a")
+		self.assertIsNotNone(record)
+		assert record is not None
+		identity = cast(dict[str, object], record["identity"])
+		self.assertEqual(1, identity["attempt"])
 
 	def test_corrupt_committed_output_is_rejected_on_resume(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
@@ -186,9 +194,10 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		(latest / "warm" / "output.bin").write_bytes(b"corrupt-after-rename")
 		restarted = AtomicEvidenceLedger(self.root / "ledger")
 		self.assertIsNone(restarted.latest_discovery_success("cell-a", "manifest-a"))
-		latest_summary = next(
-			record for record in restarted.record_summaries() if record.get("identity", {}).get("attempt") == 2
-		)
+		latest_summary = next(record for record in restarted.record_summaries() if (
+			isinstance(record.get("identity"), dict)
+			and cast(dict[str, object], record["identity"]).get("attempt") == 2
+		))
 		self.assertEqual("success", latest_summary["status"])
 		self.assertFalse(latest_summary["valid"])
 
@@ -208,9 +217,10 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		(latest / "bundle_manifest.json").write_bytes(b"{unreadable")
 		restarted = AtomicEvidenceLedger(self.root / "ledger")
 		self.assertIsNone(restarted.latest_discovery_success("cell-a", "manifest-a"))
-		latest_summary = next(
-			record for record in restarted.record_summaries() if record.get("identity", {}).get("attempt") == 2
-		)
+		latest_summary = next(record for record in restarted.record_summaries() if (
+			isinstance(record.get("identity"), dict)
+			and cast(dict[str, object], record["identity"]).get("attempt") == 2
+		))
 		self.assertEqual("success", latest_summary["status"])
 		self.assertFalse(latest_summary["valid"])
 
@@ -307,13 +317,15 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		self.assertEqual("semantic_oracle", manifest["failure_category"])
 		self.assertEqual({"passed": False}, manifest["semantic_oracle_summary"])
 		self.assertRegex(str(manifest["semantic_oracle_sha256"]), r"^[0-9a-f]{64}$")
-		self.assertEqual(False, manifest["parser_summary"]["passed"])
-		self.assertIn("timeout", manifest["scan_summary"])
+		parser_summary = cast(dict[str, object], manifest["parser_summary"])
+		scan_summary = cast(dict[str, object], manifest["scan_summary"])
+		self.assertEqual(False, parser_summary["passed"])
+		self.assertIn("timeout", scan_summary)
 
 	def test_bare_key_cannot_publish_v2_failure(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		with self.assertRaisesRegex(LedgerContractError, "durable AttemptLease"):
-			ledger.publish_failure(DiscoveryKey("cell-a", 1, "token", "manifest"), self._failure())  # type: ignore[arg-type]
+			ledger.publish_failure(DiscoveryKey("cell-a", 1, "token", "manifest"), self._failure())  # pyright: ignore[reportArgumentType]
 
 	def test_failed_attempt_requires_complete_checksummed_bundle(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
@@ -364,7 +376,10 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 					ledger.publish_legacy_success_for_migration(new_key, new_cold, new_warm, new_shared, crash_after=boundary)
 				restarted = AtomicEvidenceLedger(case_root / "ledger")
 				record = restarted.latest_discovery_success("cell-a", "manifest-a")
-				self.assertIn(record["identity"]["attempt"], (1, 2))
+				self.assertIsNotNone(record)
+				assert record is not None
+				identity = cast(dict[str, object], record["identity"])
+				self.assertIn(identity["attempt"], (1, 2))
 
 
 if __name__ == "__main__":

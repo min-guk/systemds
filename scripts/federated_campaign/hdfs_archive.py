@@ -663,12 +663,60 @@ class CampaignHarnessAdapter:
 				checked += 1
 		return {"planner": planner, "prior_planners": list(CAMPAIGN_PLANNERS[:planner_index]), "verified_cells": checked}
 
-	@staticmethod
-	def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+	def select_pilot_repeats(self, rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
 		try:
-			return select_campaign_pilot_repeats(rows)
+			return select_campaign_pilot_repeats(rows, self._verify_pilot_row)
 		except CampaignContractError as error:
 			raise ArchiveContractError(str(error)) from error
+
+	def _verify_pilot_row(self, row: Mapping[str, object]) -> None:
+		identity_value = row.get("identity")
+		location_value = row.get("evidence_location")
+		if not isinstance(identity_value, dict) or not isinstance(location_value, dict):
+			raise ArchiveContractError("pilot evidence identity/location is missing")
+		identity = cast(dict[str, object], identity_value)
+		try:
+			key: DiscoveryKey | PerformanceKey
+			if identity.get("kind") == "discovery":
+				key = DiscoveryKey(
+					cast(str, identity["cell"]), cast(int, identity["attempt"]),
+					cast(str, identity["run_token"]), cast(str, identity["manifest_hash"]),
+				)
+			else:
+				key = PerformanceKey(
+					cast(str, identity["cell"]), cast(int, identity["lifecycle_replicate"]), cast(int, identity["period"]),
+					cast(str, identity["order"]), cast(str, identity["manifest_hash"]), cast(int, identity["attempt"]),
+					cast(str, identity["run_token"]),
+				)
+		except (KeyError, TypeError) as error:
+			raise ArchiveContractError("pilot evidence identity is invalid") from error
+		if key.as_dict() != identity:
+			raise ArchiveContractError("pilot evidence identity schema is not exact")
+		decision = self.exact_resume(key)
+		if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
+			raise ArchiveContractError("pilot evidence is not a freshly verified success")
+		evidence = decision.evidence
+		if evidence.get("identity") != identity:
+			raise ArchiveContractError("pilot evidence identity changed during revalidation")
+		status, digest = row.get("evidence_status"), row.get("evidence_sha256")
+		if status == "committed":
+			if set(location_value) != {"committed_path"} or evidence.get("committed_path") != location_value.get("committed_path"):
+				raise ArchiveContractError("pilot committed location is not exact")
+			path = Path(cast(str, location_value["committed_path"]))
+			if digest != _sha256(path / "bundle_manifest.json"):
+				raise ArchiveContractError("pilot committed evidence checksum mismatch")
+		elif status == "archive":
+			if set(location_value) != {"archive_uri", "archive_sha256"}:
+				raise ArchiveContractError("pilot archive location is not exact")
+			if evidence.get("archive_uri") != location_value.get("archive_uri") or evidence.get("archive_sha256") != location_value.get("archive_sha256"):
+				raise ArchiveContractError("pilot archive location changed during revalidation")
+			if digest != location_value.get("archive_sha256"):
+				raise ArchiveContractError("pilot archive checksum mismatch")
+		else:
+			raise ArchiveContractError("pilot evidence status is invalid")
+		warm_metric = evidence.get("warm_metric")
+		if not isinstance(warm_metric, dict) or warm_metric.get("seconds") != row.get("warm_seconds"):
+			raise ArchiveContractError("pilot timing does not match revalidated evidence")
 
 	def _normalize_verified_row_v1(self, decision: ResumeDecision, pilot_repeat: int) -> dict[str, object]:
 		if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
@@ -748,7 +796,9 @@ class CampaignHarnessAdapter:
 			elif not self._archive._is_v2_manifest(evidence):
 				blocker = {"code": "LEGACY_EVIDENCE", "detail": "legacy evidence cannot satisfy v2 normalization"}
 			else:
-				blocker = self._revalidate_normalized_evidence(evidence, identity)
+				blocker, revalidated = self._revalidate_normalized_evidence(evidence, identity)
+				if blocker is None and revalidated is not None:
+					evidence = revalidated
 		else:
 			blocker = {"code": decision.state.value, "detail": decision.detail or "resume evidence is not valid"}
 		verified_success = decision.state is ResumeState.LATEST_SUCCESS and blocker is None
@@ -805,14 +855,14 @@ class CampaignHarnessAdapter:
 
 	def _revalidate_normalized_evidence(
 		self, evidence: Mapping[str, object], identity: Mapping[str, object]
-	) -> dict[str, object] | None:
+	) -> tuple[dict[str, object] | None, dict[str, object] | None]:
 		validated: list[dict[str, object]] = []
 		committed_path = evidence.get("committed_path")
 		if isinstance(committed_path, str):
 			try:
 				validated.append(self._ledger.validate_committed(Path(committed_path), require_success=False))
 			except LedgerContractError as error:
-				return {"code": "LOCAL_REVALIDATION_FAILED", "detail": str(error)}
+				return {"code": "LOCAL_REVALIDATION_FAILED", "detail": str(error)}, None
 		archive_uri, archive_hash = evidence.get("archive_uri"), evidence.get("archive_sha256")
 		if isinstance(archive_uri, str) or isinstance(archive_hash, str):
 			matches = [
@@ -822,21 +872,29 @@ class CampaignHarnessAdapter:
 				and receipt.get("archive_sha256") == archive_hash
 			]
 			if len(matches) != 1:
-				return {"code": "ARCHIVE_RECEIPT_AMBIGUOUS", "detail": "archive evidence lacks one unique verified receipt"}
+				return {"code": "ARCHIVE_RECEIPT_AMBIGUOUS", "detail": "archive evidence lacks one unique verified receipt"}, None
 			try:
 				validated.append(self._archive._verify_receipt(matches[0]))
 			except ArchiveContractError as error:
-				return {"code": "ARCHIVE_REVALIDATION_FAILED", "detail": str(error)}
+				return {"code": "ARCHIVE_REVALIDATION_FAILED", "detail": str(error)}, None
 		if not validated:
-			return {"code": "EVIDENCE_LOCATION_MISSING", "detail": "terminal evidence has no revalidatable location"}
+			return {"code": "EVIDENCE_LOCATION_MISSING", "detail": "terminal evidence has no revalidatable location"}, None
 		for manifest in validated:
 			if (
 				manifest.get("identity") != identity
 				or not self._archive._is_v2_manifest(manifest)
 				or manifest.get("status") != evidence.get("status")
 			):
-				return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "revalidated evidence changed identity, schema, or status"}
-		return None
+				return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "revalidated evidence changed identity, schema, or status"}, None
+		canonical = dict(validated[0])
+		if any(manifest != canonical for manifest in validated[1:]):
+			return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "local and archived manifests disagree"}, None
+		if isinstance(committed_path, str):
+			canonical["committed_path"] = committed_path
+		if isinstance(archive_uri, str) and isinstance(archive_hash, str):
+			canonical["archive_uri"] = archive_uri
+			canonical["archive_sha256"] = archive_hash
+		return None, canonical
 
 def _canonical_bytes(value: object) -> bytes:
 	return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

@@ -10,9 +10,10 @@ import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
+from typing import cast
 
 from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
-from scripts.federated_campaign.determinism_contract import build_block_counterbalanced_schedule
+from scripts.federated_campaign.determinism_contract import CAMPAIGN_PLANNERS, build_block_counterbalanced_schedule, build_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
 	ArchiveContractError,
 	ARCHIVE_BOUNDARIES,
@@ -63,6 +64,11 @@ class FakeHdfsBackend:
 
 
 class HdfsArchiveAdapterTest(unittest.TestCase):
+	temp_dir = cast(tempfile.TemporaryDirectory[str], object())
+	root = cast(Path, object())
+	ledger = cast(AtomicEvidenceLedger, object())
+	backend = cast(FakeHdfsBackend, object())
+
 	def setUp(self):
 		self.temp_dir = tempfile.TemporaryDirectory()
 		self.root = Path(self.temp_dir.name)
@@ -170,8 +176,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_archive_rename_failure_keeps_local_bundle_and_stops(self):
 		_, committed = self._commit(1, "token-a")
 		self.backend.fail_rename = True
+		adapter = self._adapter(retention=0)
 		with self.assertRaisesRegex(ArchiveContractError, "archive"):
-			adapter = self._adapter(retention=0)
 			adapter.archive(committed)
 		self.assertTrue(committed.exists())
 		self.assertEqual([], adapter.catalog())
@@ -364,7 +370,19 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual(ResumeState.LATEST_SUCCESS, decision.state)
 		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule={"period": 2, "order": "FedAll>DP"}, host_load={"io": 0.01}, lifecycle={"cold": 1, "warm": 1})
 		self.assertTrue(row["valid"])
-		self.assertEqual(1.25, row["metrics"]["warm"]["seconds"])
+		metrics = cast(dict[str, object], row["metrics"])
+		warm_metric = cast(dict[str, object], metrics["warm"])
+		self.assertEqual(1.25, warm_metric["seconds"])
+		forged_evidence = dict(decision.evidence or {})
+		forged_evidence["warm_metric"] = {"kind": "systemds_total_execution_time", "seconds": 999999}
+		forged = facade.normalize_resume_row(
+			ResumeDecision(ResumeState.LATEST_SUCCESS, decision.attempt, forged_evidence),
+			requested_identity=lease.key.as_dict(), schedule={"period": 2, "order": "FedAll>DP"},
+			host_load={"io": 0.01}, lifecycle={"cold": 1, "warm": 1},
+		)
+		forged_metrics = cast(dict[str, object], forged["metrics"])
+		forged_warm = cast(dict[str, object], forged_metrics["warm"])
+		self.assertEqual(1.25, forged_warm["seconds"])
 		self.assertEqual(lease.key.as_dict(), self.ledger.validate_committed(committed)["identity"])
 
 	def test_facade_discovery_success_normalizes_one_phase_without_schedule(self):
@@ -380,8 +398,10 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
 		)
 		self.assertTrue(row["valid"])
-		self.assertEqual(0.5, row["metrics"]["discovery"]["seconds"])
-		self.assertIsNone(row["metrics"]["warm"])
+		metrics = cast(dict[str, object], row["metrics"])
+		discovery_metric = cast(dict[str, object], metrics["discovery"])
+		self.assertEqual(0.5, discovery_metric["seconds"])
+		self.assertIsNone(metrics["warm"])
 
 	def test_harness_adapter_archives_valid_failure_and_never_stale_backfills(self):
 		_, success = self._commit(1, "token-a")
@@ -398,10 +418,11 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertIsNone(self._adapter(retention=0).latest_discovery_success("cell-a", "manifest-a"))
 		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule=None, host_load={"io": 0.01}, lifecycle={"phase": "discovery"})
 		self.assertTrue(row["failure"])
-		failure_metrics = row["metrics"]["failure"]
+		metrics = cast(dict[str, object], row["metrics"])
+		failure_metrics = cast(dict[str, object], metrics["failure"])
 		self.assertEqual("process_exit", failure_metrics["category"])
 		self.assertEqual(23, failure_metrics["return_code"])
-		self.assertRegex(failure_metrics["parser_sha256"], r"^[0-9a-f]{64}$")
+		self.assertRegex(cast(str, failure_metrics["parser_sha256"]), r"^[0-9a-f]{64}$")
 
 	def test_normalization_rejects_identity_mismatch_and_revalidates_local_bytes(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -416,14 +437,16 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
 		)
 		self.assertFalse(row["valid"])
-		self.assertEqual("IDENTITY_MISMATCH", row["blocker"]["code"])
+		blocker = cast(dict[str, object], row["blocker"])
+		self.assertEqual("IDENTITY_MISMATCH", blocker["code"])
 		(committed / "discovery" / "output.bin").write_bytes(b"tampered")
 		row = facade.normalize_resume_row(
 			decision, requested_identity=lease.key.as_dict(), schedule=None,
 			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
 		)
 		self.assertFalse(row["valid"])
-		self.assertEqual("LOCAL_REVALIDATION_FAILED", row["blocker"]["code"])
+		blocker = cast(dict[str, object], row["blocker"])
+		self.assertEqual("LOCAL_REVALIDATION_FAILED", blocker["code"])
 
 	def test_duplicate_same_attempt_archive_receipts_are_ambiguous(self):
 		adapter = self._adapter(retention=0)
@@ -446,13 +469,27 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
 		self.assertIn("legacy v1", str(decision.detail))
 
-	def test_harness_adapter_pilot_selection_rejects_unverified_rows(self):
+	def test_harness_adapter_pilot_selection_rejects_forged_exact_120_rows(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		rows = [{
-			"cell": "cell-a", "pilot_repeat": index, "warm_seconds": 1.0,
-			"evidence_status": "claimed", "evidence_sha256": f"{index:064x}",
-		} for index in range(1, 6)]
-		with self.assertRaisesRegex(ArchiveContractError, "120-row"):
+		rows = []
+		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
+		for pilot_class in ("cheap", "medium", "heavy"):
+			for planner in CAMPAIGN_PLANNERS:
+				for workers, profile in ((1, "lan"), (4, "wan_mid")):
+					cell = f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}"
+					for repeat, order_tuple in enumerate(orders, 1):
+						period = order_tuple.index(planner) + 1
+						identity = PerformanceKey(cell, repeat, period, ">".join(order_tuple), "manifest-a", repeat, f"token-{len(rows)}").as_dict()
+						rows.append({
+							"pilot_class": pilot_class, "planner": planner, "workers": workers, "profile": profile,
+							"cell": cell, "pilot_repeat": repeat, "warm_seconds": 1.0, "period": period,
+							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
+							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 1, "write_bytes_per_second": 1},
+							"lifecycle": {"cold_seconds": 2, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1},
+							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
+							"identity": identity, "evidence_location": {"committed_path": f"/forged/{len(rows)+1}"},
+						})
+		with self.assertRaisesRegex(ArchiveContractError, "revalidation"):
 			facade.select_pilot_repeats(rows)
 
 	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
@@ -495,6 +532,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		)
 		failed = facade.publish_failure(lease, self._failure("performance-failure"))
 		facade.archive(failed)
+		self.assertIsInstance(lease.key, PerformanceKey)
+		assert isinstance(lease.key, PerformanceKey)
 		self.assertIsNone(adapter.performance_success(lease.key))
 
 	def test_global_planner_barrier_checks_exact_84_cells_per_completed_planner(self):
