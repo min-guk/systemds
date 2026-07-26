@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import random
+import re
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
@@ -257,6 +258,15 @@ def validate_phase_bundle(phase_dir: Path, expected_metric_kind: str) -> dict[st
 		raise CampaignContractError("metric seconds must be numeric")
 	if not math.isfinite(float(seconds)) or float(seconds) <= 0:
 		raise CampaignContractError("metric seconds must be finite and positive")
+	if expected_metric_kind == "systemds_total_execution_time":
+		raw_log = paths["raw_coordinator.log"].read_text(encoding="utf-8")
+		matches = re.findall(
+			r"^Total execution time:\s+([0-9]+(?:\.[0-9]+)?)\s+sec\.\s*$", raw_log, re.MULTILINE
+		)
+		if len(matches) != 1:
+			raise CampaignContractError("warm phase requires exactly one strict SystemDS Total execution time")
+		if not math.isclose(float(matches[0]), float(seconds), rel_tol=0.0, abs_tol=1e-12):
+			raise CampaignContractError("warm metric record does not match raw SystemDS execution time")
 	return {"kind": expected_metric_kind, "seconds": float(seconds), "return_code": return_code}
 
 

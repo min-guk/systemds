@@ -162,6 +162,15 @@ class DeterminismContractTest(unittest.TestCase):
 		with self.assertRaisesRegex(CampaignContractError, "checksum"):
 			validate_phase_bundle(phase, "systemds_total_execution_time")
 
+	def test_warm_phase_rejects_metric_without_raw_systemds_execution_time(self):
+		phase = self.phase_bundle()
+		(phase / "raw_coordinator.log").write_bytes(b"real 1.25\n")
+		checksums = json.loads((phase / "checksums.json").read_text(encoding="utf-8"))
+		checksums["raw_coordinator.log"] = hashlib.sha256(b"real 1.25\n").hexdigest()
+		(phase / "checksums.json").write_text(json.dumps(checksums, sort_keys=True), encoding="utf-8")
+		with self.assertRaisesRegex(CampaignContractError, "Total execution time"):
+			validate_phase_bundle(phase, "systemds_total_execution_time")
+
 	def test_warm_phase_rejects_elapsed_metric_substitution(self):
 		phase = self.phase_bundle(metric_kind="docker_e2e")
 		with self.assertRaisesRegex(CampaignContractError, "metric"):
