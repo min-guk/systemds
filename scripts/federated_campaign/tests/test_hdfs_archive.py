@@ -15,6 +15,7 @@ from typing import Any, cast
 from scripts.federated_campaign.atomic_ledger import _ALLOCATION_CAPABILITY, AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
 from scripts.federated_campaign.determinism_contract import CAMPAIGN_PLANNERS, build_block_counterbalanced_schedule, build_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
+	_FACADE_ALLOCATION_CAPABILITY,
 	ArchiveContractError,
 	ARCHIVE_BOUNDARIES,
 	CampaignHarnessAdapter,
@@ -77,6 +78,17 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 
 	def tearDown(self):
 		self.temp_dir.cleanup()
+
+	def _begin_raw(self, facade: CampaignHarnessAdapter, **kwargs: Any):
+		"""Privileged plumbing helper; public campaign callers use typed phase APIs."""
+		crash_after = kwargs.pop("crash_after", None)
+		kwargs.setdefault("lifecycle_replicate", None)
+		kwargs.setdefault("period", None)
+		kwargs.setdefault("order", None)
+		return facade._allocate_attempt(
+			**kwargs, crash_after=crash_after,
+			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
+		)
 
 	def _phase(self, name, metric_kind, seconds):
 		phase = self.root / name
@@ -352,7 +364,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		self.assertEqual(
 			{
-				"begin", "begin_pilot", "publish_discovery_success", "publish_performance_success", "publish_failure", "archive", "exact_resume",
+				"begin_discovery", "begin_pilot", "begin_final_performance", "publish_discovery_success", "publish_performance_success", "publish_failure", "archive", "exact_resume",
 				"select_pilot_repeats", "normalize_resume_row", "assert_planner_barrier", "complete_discovery", "preflight",
 				"build_pilot_resource_reservation", "build_final_campaign_manifest",
 			},
@@ -362,7 +374,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 
 	def test_harness_adapter_begins_publishes_and_resumes_exact_attempt(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="performance", cell="cell-a", manifest_hash="manifest-a",
 			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=3, period=1,
 			order="FedAll>DP",
@@ -437,7 +449,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_interrupted_archive_preserves_exact_resource_evidence_on_archive_only_resume(self):
 		adapter = self._adapter(retention=0)
 		facade = CampaignHarnessAdapter(self.ledger, adapter)
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="performance", cell="resource-cell", manifest_hash="manifest-a",
 			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1, period=1,
 			order="DP>FedAll>Heuristic>MinST",
@@ -474,7 +486,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 
 	def test_facade_discovery_success_normalizes_one_phase_without_schedule(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
 		)
 		bundle = self._phase("discovery-facade", "discovery_correctness", 0.5)
@@ -496,7 +508,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		_, success = self._commit(1, "token-a")
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=0))
 		facade.archive(success)
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		failed = facade.publish_failure(lease, self._failure())
@@ -525,7 +537,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 
 	def test_normalization_rejects_identity_mismatch_and_revalidates_local_bytes(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
 		)
 		committed = facade.publish_discovery_success(lease, self._phase("identity-source", "discovery_correctness", 0.5))
@@ -562,7 +574,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			with self.subTest(source=suffix):
 				facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=0 if archive_old else 1))
 				cell = f"cell-stale-{suffix}"
-				first = facade.begin(
+				first = self._begin_raw(facade,
 					kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"attempt": 1}
 				)
 				committed = facade.publish_discovery_success(
@@ -572,7 +584,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 					facade.archive(committed)
 				old_success = facade.exact_resume(first.key)
 				self.assertEqual(ResumeState.LATEST_SUCCESS, old_success.state)
-				second = facade.begin(
+				second = self._begin_raw(facade,
 					kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"attempt": 2}
 				)
 				facade.publish_failure(second, self._failure(f"stale-{suffix}-failure"))
@@ -701,7 +713,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_duplicate_same_attempt_archive_receipts_are_ambiguous(self):
 		adapter = self._adapter(retention=0)
 		facade = CampaignHarnessAdapter(self.ledger, adapter)
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
 		)
 		committed = facade.publish_discovery_success(lease, self._phase("duplicate-archive", "discovery_correctness", 0.5))
@@ -715,7 +727,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 
 	def test_same_attempt_local_and_archive_compare_complete_validated_manifests(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=1))
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
 		)
 		committed = facade.publish_discovery_success(lease, self._phase("coherent-local", "discovery_correctness", 0.5))
@@ -748,48 +760,51 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_empty_or_incomplete_discovery_cannot_allocate_pilot_lease(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		class Evil(str):
-			def startswith(self, prefix, *args):
-				return False
-		with self.assertRaisesRegex(ArchiveContractError, "built-in strings"):
-			facade.begin(
-				kind="performance", cell=Evil(cell), manifest_hash="a" * 64,
-				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
-				period=1, order="DP>FedAll>Heuristic>MinST",
-			)
-		with self.assertRaisesRegex(ArchiveContractError, "dedicated begin_pilot"):
-			facade.begin(
-				kind="performance", cell=cell, manifest_hash="a" * 64,
-				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
-				period=1, order="DP>FedAll>Heuristic>MinST",
-			)
-		for disguised in ("x|PILOT_CLASS cheap", "x|pilot-class=cheap"):
-			with self.subTest(disguised=disguised), self.assertRaisesRegex(ArchiveContractError, "dedicated begin_pilot"):
+		for kind, candidate, invocation in (
+			("performance", cell, {"phase": "pilot"}),
+			("performance", "variance-probe", {"phase": "performance"}),
+			("performance", "arbitrary-final", {"phase": "final"}),
+			("discovery", "arbitrary-discovery", {"phase": "discovery"}),
+		):
+			with self.subTest(cell=candidate), self.assertRaisesRegex(ArchiveContractError, "generic begin is deprecated"):
 				facade.begin(
-					kind="performance", cell=disguised, manifest_hash="a" * 64,
-					invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
+					kind=kind, cell=candidate, manifest_hash="a" * 64,
+					invocation_manifest=invocation, lifecycle_replicate=1,
 					period=1, order="DP>FedAll>Heuristic>MinST",
 				)
 		with self.assertRaisesRegex(ArchiveContractError, "completion schema"):
 			facade.begin_pilot(
 				pilot_class="cheap", planner="DP", workers=1, profile="lan", pilot_repeat=1,
 				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={},
-				invocation_manifest={"argv": ["docker"], "discovery_completion_sha256": "b" * 64},
 			)
 		with self.assertRaisesRegex(ArchiveContractError, "class/planner"):
 			facade.begin_pilot(
 				pilot_class="cheap", planner="CP", workers=1, profile="lan", pilot_repeat=1,
-				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={},
 			)
 		with self.assertRaisesRegex(ArchiveContractError, "regime"):
 			facade.begin_pilot(
 				pilot_class="cheap", planner="DP", workers=cast(Any, True), profile="lan", pilot_repeat=1,
-				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={},
 			)
 		with self.assertRaisesRegex(ArchiveContractError, "exact integer"):
 			facade.begin_pilot(
 				pilot_class="cheap", planner="DP", workers=1, profile="lan", pilot_repeat=cast(Any, 1.0),
-				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={},
+			)
+		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
+		self.assertEqual([], list((self.root / "ledger" / "intents" / "discovery").glob("*.json")))
+		forged_final = {"schema": "systemds-federated-docker-campaign/v4"}
+		forged_final["manifest_hash"] = hashlib.sha256(json.dumps(
+			forged_final, sort_keys=True, separators=(",", ":")
+		).encode()).hexdigest()
+		with self.assertRaises(ArchiveContractError):
+			facade.begin_final_performance(
+				preregistration_manifest={}, discovery_completion_receipt={},
+				pilot_selection_receipt={}, pilot_resource_reservation={},
+				final_campaign_manifest=forged_final,
+				cell="workers=1|planner=DP|workload=kmeans|profile=lan",
+				lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 			)
 		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
 		with self.assertRaisesRegex(ArchiveContractError, "capability"):
@@ -849,7 +864,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_performance_failure_archive_is_never_returned_as_success(self):
 		adapter = self._adapter(retention=0)
 		facade = CampaignHarnessAdapter(self.ledger, adapter)
-		lease = facade.begin(
+		lease = self._begin_raw(facade,
 			kind="performance", cell="cell-p", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 		)
@@ -882,15 +897,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			patch("scripts.federated_campaign.hdfs_archive.build_canonical_discovery_invocation", return_value=invocation),
 			patch.object(facade, "assert_planner_barrier", return_value={"verified_cells": 84}) as barrier,
 		):
-			with self.assertRaisesRegex(ArchiveContractError, "P-derived"):
-				facade.begin(
-					kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"schema": "forged"},
-					preregistration_manifest=prereg,
-				)
-			lease = facade.begin(
-				kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest=invocation,
-				preregistration_manifest=prereg,
-			)
+			lease = facade.begin_discovery(preregistration_manifest=prereg, cell=cell)
 		barrier.assert_called_once_with("DP", "manifest-a")
 		self.assertEqual(cell, lease.key.cell)
 

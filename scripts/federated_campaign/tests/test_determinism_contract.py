@@ -23,6 +23,7 @@ from scripts.federated_campaign.determinism_contract import (
 	build_frozen_manifest,
 	build_campaign_manifest,
 	build_campaign_preregistration_manifest,
+	build_canonical_final_invocation,
 	build_canonical_discovery_invocation_hashes,
 	build_discovery_completion_receipt,
 	_build_final_campaign_manifest as build_final_campaign_manifest,
@@ -36,6 +37,7 @@ from scripts.federated_campaign.determinism_contract import (
 	validate_campaign_matrix,
 	validate_campaign_preregistration_manifest,
 	validate_discovery_completion_receipt,
+	validate_final_campaign_manifest,
 	validate_phase_bundle,
 )
 
@@ -508,11 +510,12 @@ class DeterminismContractTest(unittest.TestCase):
 			build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19),
 			_list(_dict(prereg["pilot_preregistration"])["orders"]),
 		)
-		for mutation in ("image", "artifact_path", "privacy", "topology", "oracle"):
+		for mutation in ("image", "artifact_path", "privacy", "privacy_alias", "topology", "oracle"):
 			candidate = dict(inputs)
 			if mutation == "image": candidate["image_digest"] = "mutable:latest"
 			elif mutation == "artifact_path": candidate["jar"] = self.root / "missing.jar"
 			elif mutation == "privacy": candidate["privacy_settings"] = {"public_tests_ignored": True, "runtime_fallback_allowed": True}
+			elif mutation == "privacy_alias": candidate["privacy_settings"] = {"public_tests_ignored": 1, "runtime_fallback_allowed": 0}
 			elif mutation == "topology": candidate["topology"] = dict(cast(dict[str, object], candidate["topology"]), profiles=["lan"])
 			else:
 				policies = dict(cast(dict[str, object], candidate["oracle_policies"])); policies.pop("als")
@@ -530,7 +533,9 @@ class DeterminismContractTest(unittest.TestCase):
 		for mutation in (
 			"barrier_bool", "pilot_float", "artifact_float", "network_bool", "topology_float", "oracle_extra",
 			"floor_float", "duplicate_dml_path", "duplicate_dml_digest", "leading_command", "nul_command",
-			"whitespace_tolerance",
+			"whitespace_tolerance", "privacy_true_int", "privacy_false_int", "absolute_nul",
+			"absolute_dot_segment", "tree_dot", "tree_double_slash", "tree_backslash",
+			"tree_absolute", "tree_parent", "tree_nul",
 		):
 			candidate = copy.deepcopy(self._campaign_v3_preregistration())
 			if mutation == "barrier_bool": candidate["dimensions"]["planner_major_barriers"][0]["start"] = False
@@ -544,7 +549,19 @@ class DeterminismContractTest(unittest.TestCase):
 			elif mutation == "duplicate_dml_digest": candidate["frozen_core"]["artifacts"]["fed_dmls"]["pca"]["sha256"] = candidate["frozen_core"]["artifacts"]["fed_dmls"]["kmeans"]["sha256"]
 			elif mutation == "leading_command": candidate["commands"]["campaign"][0] = " docker"
 			elif mutation == "nul_command": candidate["commands"]["campaign"][0] = "docker\x00"
-			else: candidate["frozen_core"]["tolerance_version"] = " tolerance-v1 "
+			elif mutation == "whitespace_tolerance": candidate["frozen_core"]["tolerance_version"] = " tolerance-v1 "
+			elif mutation == "privacy_true_int": candidate["frozen_core"]["privacy_settings"]["public_tests_ignored"] = 1
+			elif mutation == "privacy_false_int": candidate["frozen_core"]["privacy_settings"]["runtime_fallback_allowed"] = 0
+			elif mutation == "absolute_nul": candidate["frozen_core"]["artifacts"]["jar"]["path"] += "\x00"
+			elif mutation == "absolute_dot_segment":
+				path = candidate["frozen_core"]["artifacts"]["jar"]["path"]
+				candidate["frozen_core"]["artifacts"]["jar"]["path"] = f"{str(Path(path).parent)}/./{Path(path).name}"
+			else:
+				tree_paths = {
+					"tree_dot": ".", "tree_double_slash": "a//b", "tree_backslash": "a\\b",
+					"tree_absolute": "/a", "tree_parent": "a/../b", "tree_nul": "a\x00b",
+				}
+				candidate["frozen_core"]["artifacts"]["dataset"][0]["relative_path"] = tree_paths[mutation]
 			with self.subTest(mutation=mutation), self.assertRaises(CampaignContractError):
 				validate_campaign_preregistration_manifest(reseal(candidate))
 
@@ -780,6 +797,30 @@ class DeterminismContractTest(unittest.TestCase):
 			"cp_lifecycle_descriptor_sha256", "reference_manifest_sha256",
 			"pilot_resource_reservation_sha256", "discovery_completion_sha256",
 		}, set(_dict(final["lineage"])))
+		self.assertEqual(final, validate_final_campaign_manifest(final))
+		first_cell = campaign_cell_ids()[0]
+		invocation = build_canonical_final_invocation(final, first_cell, 1)
+		self.assertEqual("final_performance", invocation["kind"])
+		self.assertEqual(final["manifest_hash"], invocation["manifest_hash"])
+		first_block = _dict(_list(_dict(final["schedule"])["blocks"])[0])
+		first_run = _dict(_list(first_block["runs"])[0])
+		self.assertEqual(first_run["order"], invocation["order"])
+		self.assertEqual(
+			next(item["period"] for item in _list(first_run["periods"]) if item["planner"] == "DP"),
+			invocation["period"],
+		)
+		for source, field in ((selection_v3, "pilot_selection_sha256"), (reservation, "payload_sha256")):
+			altered = copy.deepcopy(source)
+			altered[field] = "e" * 64
+			with self.subTest(altered_root=field), self.assertRaises(CampaignContractError):
+				build_final_campaign_manifest(
+					preregistration_manifest=prereg,
+					pilot_selection_receipt=altered if field == "pilot_selection_sha256" else selection_v3,
+					pilot_resource_reservation=altered if field == "payload_sha256" else reservation,
+					discovery_completion_receipt=completion,
+					pilot_evidence_validator=self._exact_row_validator(rows),
+					discovery_evidence_validator=self._exact_row_validator(_list(completion["discovery_rows"])),
+				)
 		forged_prereg = json.loads(json.dumps(prereg))
 		forged_prereg["pilot_preregistration"]["schedule_seed"] = 20
 		forged_prereg.pop("preregistration_manifest_sha256")

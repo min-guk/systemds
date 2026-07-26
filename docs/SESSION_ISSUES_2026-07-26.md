@@ -64,11 +64,11 @@
   - R/F direct builders를 private contract helper로 내리고, 지원되는 campaign API를 `CampaignHarnessAdapter.build_pilot_resource_reservation` 및 `build_final_campaign_manifest`로 한정했다. facade가 local/HDFS exact-resume validator를 주입한다.
   - PerformanceKey의 exact key set과 `run_token`, evidence status/location exact schema를 검증한다.
   - `begin_pilot` 전용 typed surface가 class/planner/workers/profile/repeat, Williams order/period, P/D/invocation lineage를 결정한다. 일반 `begin`은 pilot identity를 거부한다.
-  - raw ledger `begin_attempt`는 항상 거부하고 typed facade만 allocation capability를 가진다. final performance는 일반 facade `begin`에서 D 없이 계속 허용한다.
+  - raw ledger `begin_attempt`는 항상 거부하고 typed facade만 allocation capability를 가진다. 이 단계에 남았던 generic final allocation은 아래 이슈 5에서 폐쇄했다.
   - P validator는 artifact/file/tree records, network, privacy, JVM, threads, endpoints, topology, oracle binding, resources, barriers, pilot seed/schedule를 exact nested schema 및 strict int/bool/float 타입으로 재검증한다.
 - **수정 파일**: `atomic_ledger.py`, `determinism_contract.py`, `hdfs_archive.py`, 관련 세 테스트 및 본 문서.
 - **검증**: fabricated path, relabelled invocation, numeric aliases, nested extra key, raw ledger bypass, generic pilot begin, invalid typed pilot identity RED→GREEN 테스트와 전체 suite/static 검사를 수행한다.
-- **잔여 이슈**: Docker lifecycle driver는 pilot에 `begin_pilot`만 사용하고 R/F는 facade methods만 호출하도록 통합해야 한다.
+- **잔여 이슈**: Docker lifecycle driver는 아래 이슈 5의 discovery/pilot/final typed allocation API와 facade R/F methods만 사용하도록 통합해야 한다.
 - **잠재 회귀 위험**: raw ledger allocation 또는 이전 direct R/F helper를 사용한 외부 호출자는 fail-closed 한다. `CampaignHarnessAdapter.integration_operations` 및 harness integration test로 감지한다.
 - **적용 원칙/의사결정 근거**: planner/runtime 동작이나 candidate space는 변경하지 않고 evidence 및 phase-transition control plane만 강화했다. runtime fallback은 추가하지 않았다.
 
@@ -91,6 +91,32 @@
   - D를 `systemds-federated-discovery-completion/v2`로 올리고 모든 336 row에 `invocation_manifest_sha256`을 포함한다. D builder는 P-derived expected hash와, facade live validator는 local/HDFS evidence hash와 각각 비교한다.
 - **수정 파일**: `atomic_ledger.py`, `determinism_contract.py`, `hdfs_archive.py`, 관련 세 테스트 및 본 문서.
 - **검증**: self-resealed duplicate artifact path/digest, leading/NUL command, whitespace tolerance, mixed D invocation, `Evil(str)`, 변형 pilot 표현, raw internal capability bypass 테스트와 전체 suite/static 검사를 실행한다.
-- **잔여 이슈**: Docker driver는 discovery campaign cell마다 `build_canonical_discovery_invocation(P, cell)` 결과를 그대로 facade `begin`에 전달해야 한다.
+- **잔여 이슈**: Docker driver는 discovery campaign cell마다 `begin_discovery(P, cell)`을 호출해야 한다. invocation은 facade 내부에서 파생한다(이슈 5).
 - **잠재 회귀 위험**: 과거 임의 discovery invocation 또는 raw underscore allocation을 사용하던 호출은 fail-closed 한다. campaign harness integration과 D 336-row completion test로 감지한다.
 - **적용 원칙/의사결정 근거**: planner/runtime 및 후보 공간은 변경하지 않았다. P-derived invocation과 evidence lineage를 planner 실행 전에 고정하며 runtime fallback은 추가하지 않았다.
+
+## 이슈 5 — Cell 문자열 기반 phase 추론과 P 경로 정규화 우회
+
+- **상태**: 해결
+- **환경/조건**: Docker-only campaign, P v3 / D v2 / S v4 / R v3 / F v4, local+HDFS typed campaign facade.
+- **재현 절차**:
+  1. generic `begin`에 `variance-probe`, pilot phase invocation, 또는 임의 final-performance cell을 전달한다.
+  2. P의 privacy bool을 `1`/`0`으로 바꾸거나 absolute path에 NUL/`./`, tree path에 `.`, `//`, backslash, absolute/parent/NUL을 넣고 self-hash를 다시 계산한다.
+  3. 독립적으로 self-reseal한 F만 final allocation에 전달하거나 S/R root를 다른 값으로 바꾼다.
+- **관측 증상**: phase 권한이 typed transition이 아니라 cell 정규식과 caller-supplied invocation에 의존했고, Python equality 때문에 `True == 1`, `False == 0` alias가 P 의미 검증을 통과할 수 있었다. absolute/tree path도 canonical text가 아닌 동치 표기를 수용했다. standalone F self-hash는 live pilot/discovery lineage를 증명하지 못한다.
+- **원인 분석**: generic allocation surface가 phase를 추론했고, P validator가 filesystem/POSIX canonical identity와 exact bool identity를 강제하지 않았다. final allocation ingress가 F의 무결성만 확인하면 P/D/S/R의 현재 evidence 존재성과 canonical derivation을 인증할 수 없다.
+- **해결 요약**:
+  - public generic `begin`은 항상 intent 생성 전에 거부한다. 지원 allocation surface를 `begin_discovery(P, cell)`, `begin_pilot(P hash, D, typed identity)`, `begin_final_performance(P,D,S,R,F,cell,repeat,period,order)`로 분리했다.
+  - discovery/pilot/final invocation은 facade/determinism contract가 내부 파생한다. caller는 phase 또는 invocation manifest를 공급할 수 없다.
+  - final allocation은 facade의 live local/HDFS validators로 P/D/S/R에서 F를 다시 만들고 supplied F와 exact equality를 확인한 뒤, F schedule에서 period/order/invocation을 파생한다. standalone self-resealed F는 할당 권한이 없다.
+  - P privacy는 `is True`/`is False` exact identity를 요구한다. frozen absolute path는 NUL 없는 resolved canonical absolute text여야 하며, tree path는 nonempty/non-dot canonical POSIX relative text만 허용한다.
+- **수정 파일**:
+  - `scripts/federated_campaign/determinism_contract.py`
+  - `scripts/federated_campaign/hdfs_archive.py`
+  - `scripts/federated_campaign/tests/test_determinism_contract.py`
+  - `scripts/federated_campaign/tests/test_hdfs_archive.py`
+  - `docs/SESSION_ISSUES_2026-07-26.md`
+- **검증**: generic phase variants no-intent, standalone forged F before pilot, altered S/R roots, self-resealed privacy/path/tree mutations, canonical F invocation/schedule 테스트; 전체 99 unittest, `py_compile`, six-file `basedpyright`, `git diff --check`.
+- **잔여 이슈**: Docker lifecycle driver가 generic `begin` 호출을 세 typed allocation surface로 교체하고 final 시작 시 동일 P/D/S/R/F를 전달해야 한다.
+- **잠재 회귀 위험**: 기존 generic discovery/performance producer는 즉시 fail-closed한다. `integration_operations` exact-set test, no-intent tests, live F rebuild tests로 감지한다.
+- **적용 원칙/의사결정 근거**: planner/runtime 및 candidate space는 변경하지 않고 control-plane phase authority와 evidence lineage만 강화했다. runtime fallback은 추가하지 않았다.

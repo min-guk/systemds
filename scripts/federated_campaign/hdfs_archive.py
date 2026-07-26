@@ -38,8 +38,9 @@ from scripts.federated_campaign.determinism_contract import (
 	PILOT_REGIMES,
 	PILOT_REPRESENTATIVE_WORKLOADS,
 	campaign_cell_ids,
-	build_counterbalanced_schedule,
 	build_canonical_discovery_invocation,
+	build_canonical_final_invocation,
+	build_canonical_pilot_invocation,
 	build_discovery_completion_receipt,
 	build_campaign_manifest,
 	_build_final_campaign_manifest,
@@ -49,6 +50,7 @@ from scripts.federated_campaign.determinism_contract import (
 	select_campaign_pilot_repeats,
 	validate_campaign_preregistration_manifest,
 	validate_discovery_completion_receipt,
+	validate_final_campaign_manifest,
 	validate_block_counterbalanced_schedule,
 )
 
@@ -62,16 +64,6 @@ class InjectedArchiveCrash(RuntimeError):
 
 
 _FACADE_ALLOCATION_CAPABILITY = object()
-
-
-def _has_exact_json_types(value: object) -> bool:
-	if value is None or type(value) in (str, bool, int, float):
-		return True
-	if type(value) is list:
-		return all(_has_exact_json_types(item) for item in cast(list[object], value))
-	if type(value) is dict:
-		return all(type(key) is str and _has_exact_json_types(item) for key, item in cast(dict[object, object], value).items())
-	return False
 
 
 ARCHIVE_BOUNDARIES = (
@@ -659,8 +651,9 @@ class CampaignHarnessAdapter:
 	"""The sole typed lifecycle surface used by the Docker campaign driver."""
 
 	integration_operations: frozenset[str] = frozenset({
-		"begin",
+		"begin_discovery",
 		"begin_pilot",
+		"begin_final_performance",
 		"publish_discovery_success",
 		"publish_performance_success",
 		"publish_failure",
@@ -681,60 +674,42 @@ class CampaignHarnessAdapter:
 		self._ledger = ledger
 		self._archive = archive
 
-	def begin(
-		self,
-		*,
-		kind: str,
-		cell: str,
-		manifest_hash: str,
-		invocation_manifest: Mapping[str, object],
-		lifecycle_replicate: int | None = None,
-		period: int | None = None,
-		order: str | None = None,
-		preregistration_manifest: Mapping[str, object] | None = None,
+	def begin(self, **_ignored: object) -> AttemptLease:
+		raise ArchiveContractError(
+			"generic begin is deprecated; use begin_discovery, begin_pilot, or begin_final_performance"
+		)
+
+	def begin_discovery(
+		self, *, preregistration_manifest: Mapping[str, object], cell: str,
 		crash_after: str | None = None,
 	) -> AttemptLease:
-		if type(kind) is not str or type(cell) is not str or type(manifest_hash) is not str:
-			raise ArchiveContractError("attempt kind/cell/manifest hash require exact built-in strings")
-		if order is not None and type(order) is not str:
-			raise ArchiveContractError("attempt order requires an exact built-in string")
-		if not _has_exact_json_types(invocation_manifest):
-			raise ArchiveContractError("attempt invocation contains non-built-in JSON values")
-		if kind == "performance" and re.search(r"pilot[_ -]?class", cell, re.IGNORECASE):
-			raise ArchiveContractError("pilot identity requires the dedicated begin_pilot surface")
-		if kind == "discovery" and cell in campaign_cell_ids():
-			if preregistration_manifest is None:
-				raise ArchiveContractError("campaign discovery requires exact preregistration P")
-			try:
-				expected_invocation = build_canonical_discovery_invocation(preregistration_manifest, cell)
-			except CampaignContractError as error:
-				raise ArchiveContractError(str(error)) from error
-			if expected_invocation["preregistration_manifest_sha256"] != manifest_hash:
-				raise ArchiveContractError("campaign discovery manifest hash does not bind exact P")
-			if dict(invocation_manifest) != expected_invocation:
-				raise ArchiveContractError("campaign discovery invocation is not the exact P-derived value")
-			planner = next(name for name in CAMPAIGN_PLANNERS if f"planner={name}|" in cell)
-			planner_index = CAMPAIGN_PLANNERS.index(planner)
-			if planner_index > 0:
-				self.assert_planner_barrier(CAMPAIGN_PLANNERS[planner_index - 1], manifest_hash)
+		"""Allocate one canonical discovery cell with identity derived solely from P."""
+		try:
+			prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
+			invocation = build_canonical_discovery_invocation(prereg, cell)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+		manifest_hash = cast(str, prereg["preregistration_manifest_sha256"])
+		planner = next(name for name in CAMPAIGN_PLANNERS if f"planner={name}|" in cell)
+		planner_index = CAMPAIGN_PLANNERS.index(planner)
+		if planner_index > 0:
+			self.assert_planner_barrier(CAMPAIGN_PLANNERS[planner_index - 1], manifest_hash)
 		return self._allocate_attempt(
-			kind=kind, cell=cell, manifest_hash=manifest_hash, invocation_manifest=invocation_manifest,
-			lifecycle_replicate=lifecycle_replicate, period=period, order=order, crash_after=crash_after,
+			kind="discovery", cell=cell, manifest_hash=manifest_hash, invocation_manifest=invocation,
+			lifecycle_replicate=None, period=None, order=None, crash_after=crash_after,
 			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
 		)
 
 	def begin_pilot(
 		self, *, pilot_class: str, planner: str, workers: int, profile: str, pilot_repeat: int,
 		preregistration_manifest_sha256: str, discovery_completion_receipt: Mapping[str, object],
-		invocation_manifest: Mapping[str, object], crash_after: str | None = None,
+		crash_after: str | None = None,
 	) -> AttemptLease:
 		"""Allocate one canonical pilot attempt only after live D revalidation."""
 		if pilot_class not in PILOT_CLASSES or planner not in CAMPAIGN_PLANNERS:
 			raise ArchiveContractError("pilot class/planner is not canonical")
 		if type(pilot_class) is not str or type(planner) is not str or type(profile) is not str or type(preregistration_manifest_sha256) is not str:
 			raise ArchiveContractError("pilot string identity requires exact built-in strings")
-		if not _has_exact_json_types(invocation_manifest):
-			raise ArchiveContractError("pilot invocation contains non-built-in JSON values")
 		if type(workers) is not int or (workers, profile) not in PILOT_REGIMES:
 			raise ArchiveContractError("pilot worker/profile regime is not canonical")
 		if type(pilot_repeat) is not int or pilot_repeat not in range(1, 6):
@@ -747,16 +722,57 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError(str(error)) from error
 		if completion["preregistration_manifest_sha256"] != preregistration_manifest_sha256:
 			raise ArchiveContractError("pilot attempt D does not bind exact preregistration")
-		if invocation_manifest.get("discovery_completion_sha256") != completion["discovery_completion_sha256"]:
-			raise ArchiveContractError("pilot invocation must bind exact discovery completion hash")
 		workload = PILOT_REPRESENTATIVE_WORKLOADS[pilot_class]
 		cell = f"pilot_class={pilot_class}|workload={workload}|planner={planner}|workers={workers}|profile={profile}"
-		order_tuple = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)[pilot_repeat - 1]
-		period = order_tuple.index(planner) + 1
+		try:
+			invocation_manifest = build_canonical_pilot_invocation(
+				preregistration_manifest_sha256=preregistration_manifest_sha256,
+				discovery_completion_sha256=cast(str, completion["discovery_completion_sha256"]),
+				pilot_class=pilot_class, planner=planner, workers=workers, profile=profile,
+				pilot_repeat=pilot_repeat,
+			)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
 		return self._allocate_attempt(
 			kind="performance", cell=cell, manifest_hash=preregistration_manifest_sha256,
 			invocation_manifest=invocation_manifest, lifecycle_replicate=pilot_repeat,
-			period=period, order=">".join(order_tuple), crash_after=crash_after,
+			period=cast(int, invocation_manifest["period"]), order=cast(str, invocation_manifest["order"]),
+			crash_after=crash_after,
+			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
+		)
+
+	def begin_final_performance(
+		self, *, preregistration_manifest: Mapping[str, object],
+		discovery_completion_receipt: Mapping[str, object],
+		pilot_selection_receipt: Mapping[str, object],
+		pilot_resource_reservation: Mapping[str, object],
+		final_campaign_manifest: Mapping[str, object], cell: str,
+		lifecycle_replicate: int, period: int, order: str, crash_after: str | None = None,
+	) -> AttemptLease:
+		"""Rebuild F from live-validated P/D/S/R, then allocate its exact schedule identity."""
+		try:
+			manifest = _build_final_campaign_manifest(
+				preregistration_manifest=preregistration_manifest,
+				pilot_selection_receipt=pilot_selection_receipt,
+				pilot_resource_reservation=pilot_resource_reservation,
+				discovery_completion_receipt=discovery_completion_receipt,
+				pilot_evidence_validator=self._verify_pilot_row,
+				discovery_evidence_validator=self._verify_discovery_completion_row,
+			)
+			provided = validate_final_campaign_manifest(final_campaign_manifest)
+			if provided != manifest:
+				raise CampaignContractError("final campaign manifest is not the live canonical P/D/S/R derivation")
+			invocation = build_canonical_final_invocation(manifest, cell, lifecycle_replicate)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+		if type(period) is not int or period != invocation["period"]:
+			raise ArchiveContractError("final performance period does not match F schedule")
+		if type(order) is not str or order != invocation["order"]:
+			raise ArchiveContractError("final performance order does not match F schedule")
+		return self._allocate_attempt(
+			kind="performance", cell=cell, manifest_hash=cast(str, manifest["manifest_hash"]),
+			invocation_manifest=invocation, lifecycle_replicate=lifecycle_replicate,
+			period=period, order=order, crash_after=crash_after,
 			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
 		)
 

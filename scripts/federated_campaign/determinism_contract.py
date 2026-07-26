@@ -19,7 +19,7 @@ import random
 import re
 import statistics
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Mapping, Sequence, cast
 
 
@@ -641,8 +641,10 @@ def _validate_frozen_file_record(name: str, value: object) -> dict[str, object]:
 	if not isinstance(value, Mapping) or set(value) != {"path", "bytes", "sha256"}:
 		raise CampaignContractError(f"{name} frozen file record schema is not exact")
 	path, size = value["path"], value["bytes"]
-	if not isinstance(path, str) or not path or not Path(path).is_absolute():
+	if type(path) is not str or not path or "\x00" in path or not Path(path).is_absolute():
 		raise CampaignContractError(f"{name} frozen file path is invalid")
+	if str(Path(path).resolve()) != path:
+		raise CampaignContractError(f"{name} frozen file path is not canonical")
 	if type(size) is not int or cast(int, size) < 0:
 		raise CampaignContractError(f"{name} frozen file bytes must be an exact non-negative integer")
 	_sha256_text(f"{name} frozen file", value["sha256"])
@@ -664,8 +666,11 @@ def _validate_frozen_tree(name: str, value: object) -> None:
 		if not isinstance(item, Mapping) or set(item) != {"relative_path", "bytes", "sha256"}:
 			raise CampaignContractError(f"{name} frozen tree record schema is not exact")
 		path, size = item["relative_path"], item["bytes"]
-		if not isinstance(path, str) or not path or path.startswith("/") or ".." in Path(path).parts:
+		if type(path) is not str or not path or path == "." or "\x00" in path or "\\" in path:
 			raise CampaignContractError(f"{name} frozen relative path is invalid")
+		posix_path = PurePosixPath(path)
+		if posix_path.is_absolute() or any(part in ("", ".", "..") for part in posix_path.parts) or posix_path.as_posix() != path:
+			raise CampaignContractError(f"{name} frozen relative path is not canonical")
 		if type(size) is not int or cast(int, size) < 0:
 			raise CampaignContractError(f"{name} frozen bytes must be an exact non-negative integer")
 		_sha256_text(f"{name} frozen tree", item["sha256"])
@@ -714,7 +719,13 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 		r"sha256:[0-9a-f]{64}", cast(str, image["id"])
 	) is None or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", cast(str, image["digest"])) is None:
 		raise CampaignContractError("preregistration image digest is invalid")
-	if core["privacy_settings"] != {"public_tests_ignored": True, "runtime_fallback_allowed": False}:
+	privacy = core["privacy_settings"]
+	if (
+		not isinstance(privacy, Mapping)
+		or set(privacy) != {"public_tests_ignored", "runtime_fallback_allowed"}
+		or privacy["public_tests_ignored"] is not True
+		or privacy["runtime_fallback_allowed"] is not False
+	):
 		raise CampaignContractError("preregistration privacy/runtime-fallback contract is invalid")
 	artifacts = core["artifacts"]
 	if not isinstance(artifacts, Mapping) or set(artifacts) != {
@@ -1090,7 +1101,11 @@ def build_campaign_manifest(
 		raise CampaignContractError("resource settings schema is not exact")
 	if resource_settings["absolute_disk_floor_bytes"] != 5 * 1024**3:
 		raise CampaignContractError("resource settings must freeze the 5GiB absolute floor")
-	if privacy_settings != {"public_tests_ignored": True, "runtime_fallback_allowed": False}:
+	if (
+		set(privacy_settings) != {"public_tests_ignored", "runtime_fallback_allowed"}
+		or privacy_settings["public_tests_ignored"] is not True
+		or privacy_settings["runtime_fallback_allowed"] is not False
+	):
 		raise CampaignContractError("privacy settings must freeze public-test exclusion and forbid runtime fallback")
 	if set(jvm_settings) != {"java_opts", "heap_bytes", "coordinator_fresh"} or jvm_settings["coordinator_fresh"] is not True:
 		raise CampaignContractError("JVM settings schema is not exact")
@@ -1634,3 +1649,116 @@ def _build_final_campaign_manifest(
 	}
 	manifest["manifest_hash"] = _canonical_sha256(manifest)
 	return manifest
+
+
+def build_canonical_pilot_invocation(
+	*, preregistration_manifest_sha256: str, discovery_completion_sha256: str,
+	pilot_class: str, planner: str, workers: int, profile: str, pilot_repeat: int,
+) -> dict[str, object]:
+	"""Derive the complete pilot identity; callers cannot supply a phase manifest."""
+	prereg_hash = _sha256_text("pilot preregistration", preregistration_manifest_sha256)
+	discovery_hash = _sha256_text("pilot discovery completion", discovery_completion_sha256)
+	if type(pilot_class) is not str or pilot_class not in PILOT_CLASSES:
+		raise CampaignContractError("pilot class is not canonical")
+	if type(planner) is not str or planner not in CAMPAIGN_PLANNERS:
+		raise CampaignContractError("pilot planner is not canonical")
+	if type(workers) is not int or type(profile) is not str or (workers, profile) not in PILOT_REGIMES:
+		raise CampaignContractError("pilot regime is not canonical")
+	if type(pilot_repeat) is not int or pilot_repeat not in range(1, 6):
+		raise CampaignContractError("pilot repeat must be exact integer 1..5")
+	workload = PILOT_REPRESENTATIVE_WORKLOADS[pilot_class]
+	order = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)[pilot_repeat - 1]
+	return {
+		"schema": "systemds-federated-pilot-invocation/v1", "kind": "pilot",
+		"preregistration_manifest_sha256": prereg_hash,
+		"discovery_completion_sha256": discovery_hash,
+		"pilot_class": pilot_class, "workload": workload, "planner": planner,
+		"workers": workers, "profile": profile, "pilot_repeat": pilot_repeat,
+		"period": order.index(planner) + 1, "order": ">".join(order),
+	}
+
+
+def validate_final_campaign_manifest(value: Mapping[str, object]) -> dict[str, object]:
+	"""Semantically validate a self-sealed final manifest before allocating work."""
+	manifest = cast(dict[str, object], _canonical_json_value("final campaign manifest", value))
+	expected_fields = {
+		"schema", "execution_surface", "lineage", "frozen_core", "seed_streams",
+		"resource_settings", "commands", "dimensions", "pilot_preregistration",
+		"conservative_pre_pilot_bounds", "pilot_resource_reservation", "selected_repeats",
+		"schedule", "manifest_hash",
+	}
+	if set(manifest) != expected_fields or manifest.get("schema") != "systemds-federated-docker-campaign/v4":
+		raise CampaignContractError("final campaign manifest v4 schema is not exact")
+	if manifest.get("execution_surface") != "docker-only":
+		raise CampaignContractError("final campaign execution surface must be docker-only")
+	digest = _sha256_text("final campaign manifest", manifest["manifest_hash"])
+	unsigned = dict(manifest); unsigned.pop("manifest_hash")
+	if _canonical_sha256(unsigned) != digest:
+		raise CampaignContractError("final campaign manifest self-hash is invalid")
+	lineage = manifest["lineage"]
+	lineage_fields = {
+		"preregistration_manifest_sha256", "pilot_selection_sha256", "discovery_completion_sha256",
+		"stage_descriptor_sha256", "cp_lifecycle_descriptor_sha256", "reference_manifest_sha256",
+		"pilot_resource_reservation_sha256",
+	}
+	if not isinstance(lineage, Mapping) or set(lineage) != lineage_fields:
+		raise CampaignContractError("final campaign lineage schema is not exact")
+	for name, item in lineage.items():
+		_sha256_text(f"final campaign lineage {name}", item)
+	preregistration = {
+		"schema": "systemds-federated-docker-campaign-preregistration/v3",
+		"execution_surface": manifest["execution_surface"],
+		"lineage": {name: lineage[name] for name in (
+			"stage_descriptor_sha256", "cp_lifecycle_descriptor_sha256", "reference_manifest_sha256",
+		)},
+		"frozen_core": manifest["frozen_core"], "seed_streams": manifest["seed_streams"],
+		"resource_settings": manifest["resource_settings"], "commands": manifest["commands"],
+		"dimensions": manifest["dimensions"], "pilot_preregistration": manifest["pilot_preregistration"],
+		"conservative_pre_pilot_bounds": manifest["conservative_pre_pilot_bounds"],
+		"preregistration_manifest_sha256": lineage["preregistration_manifest_sha256"],
+	}
+	validate_campaign_preregistration_manifest(preregistration)
+	repeats = manifest["selected_repeats"]
+	if type(repeats) is not int or repeats not in (3, 5, 7):
+		raise CampaignContractError("final campaign repeats must be exact integer 3, 5, or 7")
+	dimensions = cast(Mapping[str, object], manifest["dimensions"])
+	seeds = cast(Mapping[str, object], manifest["seed_streams"])
+	validate_block_counterbalanced_schedule(
+		cast(dict[str, object], manifest["schedule"]), CAMPAIGN_PLANNERS, repeats,
+		cast(int, seeds["schedule"]), cast(Sequence[str], dimensions["block_ids"]),
+	)
+	reservation = manifest["pilot_resource_reservation"]
+	if not isinstance(reservation, Mapping) or set(reservation) != {
+		"p95_artifact_bytes", "p95_artifact_inodes", "p95_lifecycle_seconds",
+	}:
+		raise CampaignContractError("final campaign resource reservation schema is not exact")
+	for name in ("p95_artifact_bytes", "p95_artifact_inodes"):
+		if type(reservation[name]) is not int or cast(int, reservation[name]) < 1:
+			raise CampaignContractError(f"final campaign resource reservation {name} is invalid")
+	_positive_finite("final campaign p95 lifecycle seconds", reservation["p95_lifecycle_seconds"])
+	return manifest
+
+
+def build_canonical_final_invocation(
+	final_campaign_manifest: Mapping[str, object], cell: str, lifecycle_replicate: int,
+) -> dict[str, object]:
+	"""Derive a final-performance invocation from F and its frozen schedule."""
+	manifest = validate_final_campaign_manifest(final_campaign_manifest)
+	if type(cell) is not str or cell not in campaign_cell_ids():
+		raise CampaignContractError("final campaign cell is not canonical")
+	if type(lifecycle_replicate) is not int or lifecycle_replicate not in range(1, cast(int, manifest["selected_repeats"]) + 1):
+		raise CampaignContractError("final campaign lifecycle replicate is not canonical")
+	parts = dict(part.split("=", 1) for part in cell.split("|"))
+	block_id = f"workers={parts['workers']}|workload={parts['workload']}|profile={parts['profile']}"
+	schedule = cast(Mapping[str, object], manifest["schedule"])
+	blocks = cast(Sequence[Mapping[str, object]], schedule["blocks"])
+	block = next(item for item in blocks if item["block"] == block_id)
+	runs = cast(Sequence[Mapping[str, object]], block["runs"])
+	run = next(item for item in runs if item["lifecycle_replicate"] == lifecycle_replicate)
+	periods = cast(Sequence[Mapping[str, object]], run["periods"])
+	period = next(item["period"] for item in periods if item["planner"] == parts["planner"])
+	return {
+		"schema": "systemds-federated-final-invocation/v1", "kind": "final_performance",
+		"manifest_hash": manifest["manifest_hash"], "cell": cell,
+		"lifecycle_replicate": lifecycle_replicate, "period": period, "order": run["order"],
+	}
