@@ -111,6 +111,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 					"identity": key.as_dict(),
 					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+					"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+					"lifecycle": {"cold_seconds": 2.5 + attempt, "warm_seconds": 1.25 + attempt, "coordinator_restart_count": 1, "worker_restart_count": 1},
 				},
 				sort_keys=True,
 			),
@@ -235,6 +237,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 					"identity": key.as_dict(),
 					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+					"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+					"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 1, "worker_restart_count": 1},
 				}), encoding="utf-8")
 				committed = ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 				adapter = HdfsArchiveAdapter(
@@ -364,6 +368,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"identity": lease.key.as_dict(),
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+			"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 1, "worker_restart_count": 1},
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		decision = facade.exact_resume(lease.key)
@@ -373,6 +379,11 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		metrics = cast(dict[str, object], row["metrics"])
 		warm_metric = cast(dict[str, object], metrics["warm"])
 		self.assertEqual(1.25, warm_metric["seconds"])
+		self.assertEqual(
+			{"io_utilization": 0.01, "read_bytes_per_second": 10.0, "write_bytes_per_second": 20.0},
+			row["host_load"],
+		)
+		self.assertEqual(1.25, cast(dict[str, object], row["lifecycle"])["warm_seconds"])
 		forged_evidence = dict(decision.evidence or {})
 		forged_evidence["warm_metric"] = {"kind": "systemds_total_execution_time", "seconds": 999999}
 		forged = facade.normalize_resume_row(
@@ -485,6 +496,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"identity": lease.key.as_dict(),
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+			"lifecycle": {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1},
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		manifest = self.ledger.validate_committed(committed)
@@ -498,6 +511,58 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		}
 		with self.assertRaisesRegex(ArchiveContractError, "scheduling identity"):
 			facade._verify_pilot_row(row)
+
+	def test_pilot_rejects_caller_forged_diagnostics_against_committed_evidence(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
+		order_tuple = orders[0]
+		order = ">".join(order_tuple)
+		period = order_tuple.index("DP") + 1
+		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
+		lease = facade.begin(
+			kind="performance", cell=cell, manifest_hash="a" * 64, invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=period, order=order,
+		)
+		cold = self._phase("pilot-canonical-cold", "docker_e2e", 2.0)
+		warm = self._phase("pilot-canonical-warm", "systemds_total_execution_time", 1.0)
+		shared = self.root / "pilot-canonical-shared.json"
+		canonical_host = {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20}
+		canonical_lifecycle = {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1}
+		shared.write_text(json.dumps({
+			"identity": lease.key.as_dict(),
+			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+			"host_load": canonical_host, "lifecycle": canonical_lifecycle,
+		}), encoding="utf-8")
+		committed = facade.publish_performance_success(lease, cold, warm, shared)
+		manifest = self.ledger.validate_committed(committed)
+		row = {
+			"pilot_class": "cheap", "workload": "kmeans", "planner": "DP", "workers": 1, "profile": "lan",
+			"cell": cell, "pilot_repeat": 1, "warm_seconds": 1.0, "period": period, "order": order,
+			"carryover": "NONE" if period == 1 else order_tuple[period - 2],
+			"host_load": {"io_utilization": 0.99, "read_bytes_per_second": 999, "write_bytes_per_second": 999},
+			"lifecycle": {"cold_seconds": 999, "warm_seconds": 1.0, "coordinator_restart_count": 99, "worker_restart_count": 99},
+			"evidence_status": "committed",
+			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
+			"identity": lease.key.as_dict(), "evidence_location": {"committed_path": str(committed)},
+			"invocation_manifest_sha256": manifest["invocation_manifest_sha256"],
+		}
+		with self.assertRaisesRegex(ArchiveContractError, "diagnostics disagree"):
+			facade._verify_pilot_row(row)
+		row["host_load"] = manifest["host_load"]
+		row["lifecycle"] = manifest["lifecycle"]
+		facade._verify_pilot_row(row)
+		receipt = facade.archive(committed)
+		row["evidence_status"] = "archive"
+		row["evidence_sha256"] = receipt["archive_sha256"]
+		row["evidence_location"] = {
+			"archive_uri": receipt["archive_uri"], "archive_sha256": receipt["archive_sha256"],
+		}
+		row["host_load"] = {"io_utilization": 0.5, "read_bytes_per_second": 500, "write_bytes_per_second": 500}
+		with self.assertRaisesRegex(ArchiveContractError, "diagnostics disagree"):
+			facade._verify_pilot_row(row)
+		row["host_load"] = manifest["host_load"]
+		facade._verify_pilot_row(row)
 
 	def test_duplicate_same_attempt_archive_receipts_are_ambiguous(self):
 		adapter = self._adapter(retention=0)
@@ -588,6 +653,22 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertFalse(row["valid"])
 		self.assertTrue(row["failure"])
 		self.assertEqual("discovery", row["kind"])
+
+	def test_facade_preflight_does_not_coerce_invalid_requirement_types(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		snapshot = HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0)
+		valid: dict[str, Any] = {
+			"required_free_bytes": 5 * 1024**3, "required_free_inodes": 10, "required_seconds": 100,
+			"max_io_utilization": 0.1, "max_combined_io_bps": 100,
+		}
+		for override in (
+			{"required_free_bytes": True}, {"required_free_bytes": 5.5}, {"required_free_inodes": True},
+			{"required_free_inodes": 1.5}, {"required_seconds": float("nan")},
+		):
+			requirements = dict(valid)
+			requirements.update(override)
+			with self.assertRaises(ArchiveContractError):
+				facade.preflight(lambda: snapshot, **requirements)
 
 	def test_global_unidentified_corruption_blocks_archive_and_same_attempt_disagreement(self):
 		key, committed = self._commit(1, "token-a")

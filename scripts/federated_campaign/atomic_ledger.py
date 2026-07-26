@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import uuid
@@ -432,6 +433,8 @@ class AtomicEvidenceLedger:
 			"cold_checksums_sha256": _sha256(stage / "cold" / "checksums.json"),
 			"warm_checksums_sha256": _sha256(stage / "warm" / "checksums.json"),
 			"shared_replicate_manifest_sha256": _sha256(shared_path),
+			"host_load": shared["host_load"],
+			"lifecycle": shared["lifecycle"],
 			"invocation_manifest_sha256": lease.invocation_manifest_sha256 if lease is not None else None,
 		}
 		_write_fsynced(stage / "bundle_manifest.json", _canonical_bytes(bundle_manifest) + b"\n")
@@ -812,6 +815,8 @@ class AtomicEvidenceLedger:
 		self, path: Path, identity: dict[str, object], cold: Path, warm: Path
 	) -> dict[str, object]:
 		shared = _read_json(Path(path), "shared replicate manifest")
+		if set(shared) != {"identity", "cold_checksums_sha256", "warm_checksums_sha256", "host_load", "lifecycle"}:
+			raise LedgerContractError("shared replicate manifest schema is not exact")
 		if shared.get("identity") != identity:
 			raise LedgerContractError("shared replicate manifest identity mismatch")
 		expected = {
@@ -821,7 +826,51 @@ class AtomicEvidenceLedger:
 		for name, digest in expected.items():
 			if shared.get(name) != digest:
 				raise LedgerContractError(f"shared replicate manifest {name} mismatch")
-		return shared
+		host_load = self._validate_host_load(shared.get("host_load"))
+		lifecycle = self._validate_lifecycle(shared.get("lifecycle"))
+		cold_metric = self._validate_source_phase(Path(cold), "docker_e2e")
+		warm_metric = self._validate_source_phase(Path(warm), "systemds_total_execution_time")
+		if lifecycle["cold_seconds"] != cold_metric["seconds"] or lifecycle["warm_seconds"] != warm_metric["seconds"]:
+			raise LedgerContractError("shared replicate lifecycle timings disagree with phase evidence")
+		return {
+			"identity": identity,
+			**expected,
+			"host_load": host_load,
+			"lifecycle": lifecycle,
+		}
+
+	@staticmethod
+	def _validate_host_load(value: object) -> dict[str, float]:
+		fields = {"io_utilization", "read_bytes_per_second", "write_bytes_per_second"}
+		if not isinstance(value, dict) or set(value) != fields:
+			raise LedgerContractError("shared replicate host_load schema is not exact")
+		result: dict[str, float] = {}
+		for name in fields:
+			item = value[name]
+			if isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) or item < 0:
+				raise LedgerContractError(f"shared replicate host_load.{name} is invalid")
+			result[name] = float(item)
+		if result["io_utilization"] > 1:
+			raise LedgerContractError("shared replicate host_load.io_utilization must be in [0, 1]")
+		return result
+
+	@staticmethod
+	def _validate_lifecycle(value: object) -> dict[str, float | int]:
+		fields = {"cold_seconds", "warm_seconds", "coordinator_restart_count", "worker_restart_count"}
+		if not isinstance(value, dict) or set(value) != fields:
+			raise LedgerContractError("shared replicate lifecycle schema is not exact")
+		result: dict[str, float | int] = {}
+		for name in ("cold_seconds", "warm_seconds"):
+			item = value[name]
+			if isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) or item <= 0:
+				raise LedgerContractError(f"shared replicate lifecycle.{name} is invalid")
+			result[name] = float(item)
+		for name in ("coordinator_restart_count", "worker_restart_count"):
+			item = value[name]
+			if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+				raise LedgerContractError(f"shared replicate lifecycle.{name} is invalid")
+			result[name] = item
+		return result
 
 	def _copy_phase(
 		self,
@@ -995,6 +1044,11 @@ class AtomicEvidenceLedger:
 			if manifest.get("cold_metric") != cold or manifest.get("warm_metric") != warm:
 				return result
 			if shared.get("identity") != identity:
+				return result
+			if manifest.get("schema") == "systemds-federated-evidence/v2" and (
+				manifest.get("host_load") != shared.get("host_load")
+				or manifest.get("lifecycle") != shared.get("lifecycle")
+			):
 				return result
 			result["valid"] = True
 			return result

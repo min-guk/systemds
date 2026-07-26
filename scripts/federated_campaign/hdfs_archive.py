@@ -668,13 +668,25 @@ class CampaignHarnessAdapter:
 	def preflight(
 		self, snapshot_provider: Callable[[], HostResourceSnapshot], **requirements: float | int
 	) -> HostResourceSnapshot:
+		expected = {
+			"required_free_bytes", "required_free_inodes", "required_seconds",
+			"max_io_utilization", "max_combined_io_bps",
+		}
+		if set(requirements) != expected:
+			raise ArchiveContractError("resource preflight requirements schema is not exact")
+		free_bytes = requirements["required_free_bytes"]
+		free_inodes = requirements["required_free_inodes"]
+		if isinstance(free_bytes, bool) or not isinstance(free_bytes, int):
+			raise ArchiveContractError("required free bytes must be an integer")
+		if isinstance(free_inodes, bool) or not isinstance(free_inodes, int):
+			raise ArchiveContractError("required free inodes must be an integer")
 		return self._archive.preflight_next_lifecycle(
 			snapshot_provider,
-			required_free_bytes=int(requirements["required_free_bytes"]),
-			required_free_inodes=int(requirements["required_free_inodes"]),
-			required_seconds=float(requirements["required_seconds"]),
-			max_io_utilization=float(requirements["max_io_utilization"]),
-			max_combined_io_bps=float(requirements["max_combined_io_bps"]),
+			required_free_bytes=free_bytes,
+			required_free_inodes=free_inodes,
+			required_seconds=requirements["required_seconds"],
+			max_io_utilization=requirements["max_io_utilization"],
+			max_combined_io_bps=requirements["max_combined_io_bps"],
 		)
 
 	def assert_planner_barrier(self, planner: str, manifest_hash: str) -> dict[str, object]:
@@ -750,6 +762,8 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("pilot evidence identity changed during revalidation")
 		if evidence.get("invocation_manifest_sha256") != row.get("invocation_manifest_sha256"):
 			raise ArchiveContractError("pilot invocation manifest binding changed during revalidation")
+		if evidence.get("host_load") != row.get("host_load") or evidence.get("lifecycle") != row.get("lifecycle"):
+			raise ArchiveContractError("pilot diagnostics disagree with checksummed evidence")
 		status, digest = row.get("evidence_status"), row.get("evidence_sha256")
 		if status == "committed":
 			if set(location_value) != {"committed_path"} or evidence.get("committed_path") != location_value.get("committed_path"):
@@ -895,10 +909,8 @@ class CampaignHarnessAdapter:
 					"scan_sha256": trusted_evidence.get("scan_sha256"),
 				} if verified_failure else None,
 			},
-			# Host/lifecycle diagnostics are not part of the signed evidence bundle yet.
-			# Never promote caller-supplied values into a normalized evidence row.
-			"host_load": None,
-			"lifecycle": None,
+			"host_load": trusted_evidence.get("host_load"),
+			"lifecycle": trusted_evidence.get("lifecycle"),
 			"evidence_location": {
 				"committed_path": trusted_evidence.get("committed_path"),
 				"archive_uri": trusted_evidence.get("archive_uri"),

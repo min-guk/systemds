@@ -62,6 +62,12 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			"identity": key.as_dict(),
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+			"lifecycle": {
+				"cold_seconds": json.loads((cold / "metric.json").read_text())["seconds"],
+				"warm_seconds": json.loads((warm / "metric.json").read_text())["seconds"],
+				"coordinator_restart_count": 1, "worker_restart_count": 1,
+			},
 		}
 		path = self.root / name
 		path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
@@ -128,6 +134,33 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 		wrong_order = PerformanceKey("cell-a", 3, 2, "DP>FedAll", "manifest-a")
 		self.assertIsNone(ledger.performance_success(wrong_order))
+
+	def test_shared_performance_diagnostics_are_exact_canonical_and_timing_bound(self):
+		ledger = AtomicEvidenceLedger(self.root / "diagnostic-ledger")
+		lease = ledger.begin_attempt(
+			kind="performance", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+		)
+		cold = self._phase("diagnostic-cold", "docker_e2e", 2.5)
+		warm = self._phase("diagnostic-warm", "systemds_total_execution_time", 1.25)
+		shared = self._shared_manifest(lease.key, cold, warm, "diagnostic-shared.json")
+		committed = ledger.publish_performance_success(lease, cold, warm, shared)
+		manifest = ledger.validate_committed(committed)
+		self.assertEqual(
+			{"io_utilization": 0.01, "read_bytes_per_second": 10.0, "write_bytes_per_second": 20.0},
+			manifest["host_load"],
+		)
+		bad_ledger = AtomicEvidenceLedger(self.root / "bad-diagnostic-ledger")
+		bad_lease = bad_ledger.begin_attempt(
+			kind="performance", cell="cell-b", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+		)
+		bad_shared = self._shared_manifest(bad_lease.key, cold, warm, "bad-diagnostic-shared.json")
+		bad_value = json.loads(bad_shared.read_text(encoding="utf-8"))
+		bad_value["lifecycle"]["warm_seconds"] = 999
+		bad_shared.write_text(json.dumps(bad_value), encoding="utf-8")
+		with self.assertRaisesRegex(LedgerContractError, "timings disagree"):
+			bad_ledger.publish_performance_success(bad_lease, cold, warm, bad_shared)
 
 	def test_success_requires_both_complete_phase_bundles(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
