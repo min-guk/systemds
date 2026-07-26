@@ -1255,7 +1255,7 @@ def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, obje
 
 def select_campaign_pilot_repeats(
 	rows: Sequence[Mapping[str, object]], evidence_validator: Callable[[Mapping[str, object]], None],
-	*, expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
+	*, expected_manifest_hash: str,
 	preregistration_manifest: Mapping[str, object], discovery_completion_receipt: Mapping[str, object],
 	discovery_evidence_validator: Callable[[Mapping[str, object]], None],
 ) -> dict[str, object]:
@@ -1273,7 +1273,6 @@ def select_campaign_pilot_repeats(
 		evidence_validator=discovery_evidence_validator,
 	)
 	_sha256_text("expected campaign manifest", expected_manifest_hash)
-	_sha256_text("expected pilot invocation manifest", expected_invocation_manifest_sha256)
 	preregistration_sha256 = cast(str, prereg["preregistration_manifest_sha256"])
 	if preregistration_sha256 != expected_manifest_hash:
 		raise CampaignContractError("pilot manifest identity must equal the preregistration manifest identity")
@@ -1345,8 +1344,14 @@ def select_campaign_pilot_repeats(
 				raise CampaignContractError("campaign pilot evidence schedule identity is invalid")
 			if identity_value.get("manifest_hash") != expected_manifest_hash:
 				raise CampaignContractError("campaign pilot mixes frozen campaign manifests")
-			if row["invocation_manifest_sha256"] != expected_invocation_manifest_sha256:
-				raise CampaignContractError("campaign pilot mixes invocation manifests")
+			expected_invocation = build_canonical_pilot_invocation(
+				preregistration_manifest_sha256=preregistration_sha256,
+				discovery_completion_sha256=cast(str, completion["discovery_completion_sha256"]),
+				pilot_class=key[0], planner=key[1], workers=key[2], profile=key[3],
+				pilot_repeat=cast(int, row["pilot_repeat"]),
+			)
+			if row["invocation_manifest_sha256"] != _canonical_sha256(expected_invocation):
+				raise CampaignContractError("campaign pilot invocation is not its exact P/D-derived typed identity")
 			if row["evidence_status"] not in ("committed", "archive"):
 				raise CampaignContractError("campaign pilot rows require verified evidence")
 			location = row["evidence_location"]
@@ -1457,7 +1462,7 @@ def select_campaign_pilot_repeats(
 			"orders": [list(order) for order in preregistered_orders],
 			"representative_workloads": dict(PILOT_REPRESENTATIVE_WORKLOADS),
 			"manifest_hash": expected_manifest_hash,
-			"invocation_manifest_sha256": expected_invocation_manifest_sha256,
+			"invocation_contract": "per-row P/D-derived typed identity v1",
 		},
 		"pilot_rows": canonical_rows, "pilot_rows_sha256": _canonical_sha256(canonical_rows),
 		"evidence_digest_inventory": evidence_inventory,
@@ -1518,14 +1523,14 @@ def _validate_campaign_pilot_selection(
 	preregistration = selection["preregistration"]
 	if not isinstance(preregistration, Mapping):
 		raise CampaignContractError("pilot selection preregistration is invalid")
-	invocation_hash = _sha256_text("pilot invocation", preregistration.get("invocation_manifest_sha256"))
+	if preregistration.get("invocation_contract") != "per-row P/D-derived typed identity v1":
+		raise CampaignContractError("pilot selection invocation contract is invalid")
 	rows = selection["pilot_rows"]
 	if not isinstance(rows, list) or len(rows) != 120 or _canonical_sha256(rows) != selection["pilot_rows_sha256"]:
 		raise CampaignContractError("pilot selection rows are not exact")
 	rebuilt = select_campaign_pilot_repeats(
 		cast(Sequence[Mapping[str, object]], rows), pilot_evidence_validator,
 		expected_manifest_hash=cast(str, prereg["preregistration_manifest_sha256"]),
-		expected_invocation_manifest_sha256=invocation_hash,
 		preregistration_manifest=prereg, discovery_completion_receipt=completion,
 		discovery_evidence_validator=discovery_evidence_validator,
 	)

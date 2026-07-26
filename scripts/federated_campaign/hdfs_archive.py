@@ -22,7 +22,6 @@ from typing import Callable, Mapping, Protocol, Sequence, cast
 
 from scripts.federated_campaign.atomic_ledger import (
 	AtomicEvidenceLedger,
-	_ALLOCATION_CAPABILITY,
 	AttemptLease,
 	DiscoveryKey,
 	LedgerContractError,
@@ -61,9 +60,6 @@ class ArchiveContractError(RuntimeError):
 
 class InjectedArchiveCrash(RuntimeError):
 	"""Test-only archive crash at an explicit durable boundary."""
-
-
-_FACADE_ALLOCATION_CAPABILITY = object()
 
 
 ARCHIVE_BOUNDARIES = (
@@ -673,6 +669,11 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("harness adapter ledger/archive mismatch")
 		self._ledger = ledger
 		self._archive = archive
+		self.__pending_allocation_authorities: dict[str, dict[str, object]] = {}
+		try:
+			self._ledger._bind_typed_allocation_validator(self.__consume_allocation_authority)
+		except LedgerContractError as error:
+			raise ArchiveContractError(str(error)) from error
 
 	def begin(self, **_ignored: object) -> AttemptLease:
 		raise ArchiveContractError(
@@ -694,10 +695,18 @@ class CampaignHarnessAdapter:
 		planner_index = CAMPAIGN_PLANNERS.index(planner)
 		if planner_index > 0:
 			self.assert_planner_barrier(CAMPAIGN_PLANNERS[planner_index - 1], manifest_hash)
-		return self._allocate_attempt(
+		minimum_attempt = self._minimum_archive_attempt("discovery", cell, manifest_hash, None, None, None)
+		request: dict[str, object] = {
+			"kind": "discovery", "cell": cell, "manifest_hash": manifest_hash,
+			"invocation_manifest": invocation, "lifecycle_replicate": None, "period": None, "order": None,
+			"minimum_attempt": minimum_attempt, "crash_after": crash_after,
+		}
+		nonce = uuid.uuid4().hex
+		authority: dict[str, object] = {"nonce": nonce, "phase": "discovery", "evidence_roots": {"P": manifest_hash}, "request": request}
+		self.__pending_allocation_authorities[nonce] = cast(dict[str, object], json.loads(json.dumps(authority)))
+		return self._ledger._begin_attempt_from_adapter(
 			kind="discovery", cell=cell, manifest_hash=manifest_hash, invocation_manifest=invocation,
-			lifecycle_replicate=None, period=None, order=None, crash_after=crash_after,
-			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
+			minimum_attempt=minimum_attempt, crash_after=crash_after, _allocation_authority=authority,
 		)
 
 	def begin_pilot(
@@ -733,12 +742,27 @@ class CampaignHarnessAdapter:
 			)
 		except CampaignContractError as error:
 			raise ArchiveContractError(str(error)) from error
-		return self._allocate_attempt(
+		period = cast(int, invocation_manifest["period"])
+		order = cast(str, invocation_manifest["order"])
+		minimum_attempt = self._minimum_archive_attempt(
+			"performance", cell, preregistration_manifest_sha256, pilot_repeat, period, order,
+		)
+		request: dict[str, object] = {
+			"kind": "performance", "cell": cell, "manifest_hash": preregistration_manifest_sha256,
+			"invocation_manifest": invocation_manifest, "lifecycle_replicate": pilot_repeat,
+			"period": period, "order": order, "minimum_attempt": minimum_attempt, "crash_after": crash_after,
+		}
+		nonce = uuid.uuid4().hex
+		authority: dict[str, object] = {
+			"nonce": nonce, "phase": "pilot",
+			"evidence_roots": {"P": preregistration_manifest_sha256, "D": completion["discovery_completion_sha256"]},
+			"request": request,
+		}
+		self.__pending_allocation_authorities[nonce] = cast(dict[str, object], json.loads(json.dumps(authority)))
+		return self._ledger._begin_attempt_from_adapter(
 			kind="performance", cell=cell, manifest_hash=preregistration_manifest_sha256,
-			invocation_manifest=invocation_manifest, lifecycle_replicate=pilot_repeat,
-			period=cast(int, invocation_manifest["period"]), order=cast(str, invocation_manifest["order"]),
-			crash_after=crash_after,
-			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
+			invocation_manifest=invocation_manifest, lifecycle_replicate=pilot_repeat, period=period, order=order,
+			minimum_attempt=minimum_attempt, crash_after=crash_after, _allocation_authority=authority,
 		)
 
 	def begin_final_performance(
@@ -769,21 +793,37 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("final performance period does not match F schedule")
 		if type(order) is not str or order != invocation["order"]:
 			raise ArchiveContractError("final performance order does not match F schedule")
-		return self._allocate_attempt(
-			kind="performance", cell=cell, manifest_hash=cast(str, manifest["manifest_hash"]),
-			invocation_manifest=invocation, lifecycle_replicate=lifecycle_replicate,
-			period=period, order=order, crash_after=crash_after,
-			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
+		manifest_hash = cast(str, manifest["manifest_hash"])
+		minimum_attempt = self._minimum_archive_attempt(
+			"performance", cell, manifest_hash, lifecycle_replicate, period, order,
+		)
+		request: dict[str, object] = {
+			"kind": "performance", "cell": cell, "manifest_hash": manifest_hash,
+			"invocation_manifest": invocation, "lifecycle_replicate": lifecycle_replicate,
+			"period": period, "order": order, "minimum_attempt": minimum_attempt, "crash_after": crash_after,
+		}
+		nonce = uuid.uuid4().hex
+		lineage = cast(Mapping[str, object], manifest["lineage"])
+		authority: dict[str, object] = {
+			"nonce": nonce, "phase": "final_performance",
+			"evidence_roots": {
+				"P": lineage["preregistration_manifest_sha256"], "D": lineage["discovery_completion_sha256"],
+				"S": lineage["pilot_selection_sha256"], "R": lineage["pilot_resource_reservation_sha256"],
+				"F": manifest_hash,
+			},
+			"request": request,
+		}
+		self.__pending_allocation_authorities[nonce] = cast(dict[str, object], json.loads(json.dumps(authority)))
+		return self._ledger._begin_attempt_from_adapter(
+			kind="performance", cell=cell, manifest_hash=manifest_hash, invocation_manifest=invocation,
+			lifecycle_replicate=lifecycle_replicate, period=period, order=order,
+			minimum_attempt=minimum_attempt, crash_after=crash_after, _allocation_authority=authority,
 		)
 
-	def _allocate_attempt(
-		self, *, kind: str, cell: str, manifest_hash: str, invocation_manifest: Mapping[str, object],
-		lifecycle_replicate: int | None, period: int | None, order: str | None,
-		crash_after: str | None,
-		_allocation_capability: object | None = None,
-	) -> AttemptLease:
-		if _allocation_capability is not _FACADE_ALLOCATION_CAPABILITY:
-			raise ArchiveContractError("raw facade allocation capability is invalid")
+	def _minimum_archive_attempt(
+		self, kind: str, cell: str, manifest_hash: str, lifecycle_replicate: int | None,
+		period: int | None, order: str | None,
+	) -> int:
 		base: dict[str, object] = {"kind": kind, "cell": cell, "manifest_hash": manifest_hash}
 		if kind == "performance":
 			base.update({"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order})
@@ -793,18 +833,19 @@ class CampaignHarnessAdapter:
 			if isinstance(receipt.get("identity"), dict)
 			and all(cast(dict[str, object], receipt["identity"]).get(name) == value for name, value in base.items())
 		]
-		return self._ledger._begin_attempt_from_adapter(
-			kind=kind,
-			cell=cell,
-			manifest_hash=manifest_hash,
-			invocation_manifest=invocation_manifest,
-			lifecycle_replicate=lifecycle_replicate,
-			period=period,
-			order=order,
-			minimum_attempt=max(archive_attempts, default=0) + 1,
-			crash_after=crash_after,
-			_allocation_capability=_ALLOCATION_CAPABILITY,
-		)
+		return max(archive_attempts, default=0) + 1
+
+	def __consume_allocation_authority(
+		self, authority: object, request: Mapping[str, object],
+	) -> None:
+		if not isinstance(authority, Mapping) or set(authority) != {"nonce", "phase", "evidence_roots", "request"}:
+			raise ArchiveContractError("typed allocation authority schema is invalid")
+		nonce = authority.get("nonce")
+		if type(nonce) is not str:
+			raise ArchiveContractError("typed allocation authority nonce is invalid")
+		expected = self.__pending_allocation_authorities.pop(nonce, None)
+		if expected != authority or authority.get("request") != request:
+			raise ArchiveContractError("typed allocation authority is absent, stale, or mismatched")
 
 	def complete_discovery(self, preregistration_manifest: Mapping[str, object]) -> dict[str, object]:
 		"""Revalidate all four planner barriers and seal their exact latest successes as D."""
@@ -961,14 +1002,13 @@ class CampaignHarnessAdapter:
 
 	def select_pilot_repeats(
 		self, rows: Sequence[Mapping[str, object]], *,
-		expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
+		expected_manifest_hash: str,
 		preregistration_manifest: Mapping[str, object],
 		discovery_completion_receipt: Mapping[str, object],
 	) -> dict[str, object]:
 		try:
 			return select_campaign_pilot_repeats(
 				rows, self._verify_pilot_row, expected_manifest_hash=expected_manifest_hash,
-				expected_invocation_manifest_sha256=expected_invocation_manifest_sha256,
 				preregistration_manifest=preregistration_manifest,
 				discovery_completion_receipt=discovery_completion_receipt,
 				discovery_evidence_validator=self._verify_discovery_completion_row,

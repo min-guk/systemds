@@ -12,12 +12,13 @@ import json
 import math
 import os
 import shutil
+import sys
 import uuid
 import fcntl
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Mapping, cast
+from typing import Callable, Mapping, cast
 
 from scripts.federated_campaign.determinism_contract import CampaignContractError, validate_phase_bundle
 
@@ -88,7 +89,6 @@ FAILURE_PUBLICATION_BOUNDARIES = (
 )
 
 ATTEMPT_BOUNDARIES = ("after_intent_fsync",)
-_ALLOCATION_CAPABILITY = object()
 
 class LedgerContractError(ValueError):
 	"""Raised when evidence or identity violates the ledger contract."""
@@ -286,6 +286,7 @@ class AtomicEvidenceLedger:
 		self.quarantine = self.root / "quarantine"
 		self.intents = self.root / "intents"
 		self.index_path = self.root / "index.json"
+		self.__allocation_validator: Callable[[object, Mapping[str, object]], None] | None = None
 		for path in (self.root, self.staging, self.committed, self.quarantine, self.intents):
 			path.mkdir(parents=True, exist_ok=True)
 		devices = {path.stat().st_dev for path in (self.root, self.staging, self.committed, self.quarantine, self.intents)}
@@ -322,11 +323,16 @@ class AtomicEvidenceLedger:
 		order: str | None = None,
 		minimum_attempt: int = 1,
 		crash_after: str | None = None,
-		_allocation_capability: object | None = None,
+		_allocation_authority: object | None = None,
 	) -> AttemptLease:
-		"""Atomically allocate after CampaignHarnessAdapter validates the phase purpose."""
-		if _allocation_capability is not _ALLOCATION_CAPABILITY:
-			raise LedgerContractError("raw adapter allocation capability is invalid")
+		"""Allocate only when the bound typed facade consumes an exact phase authority."""
+		request: dict[str, object] = {
+			"kind": kind, "cell": cell, "manifest_hash": manifest_hash,
+			"invocation_manifest": dict(invocation_manifest),
+			"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order,
+			"minimum_attempt": minimum_attempt, "crash_after": crash_after,
+		}
+		self._validate_allocation_authority(_allocation_authority, request)
 		lock_path = self.root / "attempt-allocation.lock"
 		with lock_path.open("a+b") as lock:
 			fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -339,6 +345,32 @@ class AtomicEvidenceLedger:
 				)
 			finally:
 				fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+	def _bind_typed_allocation_validator(
+		self, validator: Callable[[object, Mapping[str, object]], None],
+	) -> None:
+		"""Bind exactly one real CampaignHarnessAdapter as this ledger's phase authority."""
+		owner = getattr(validator, "__self__", None)
+		# The adapter module must already be executing to construct an adapter. Looking up its
+		# loaded class avoids a reverse import while retaining exact (non-name-based) identity.
+		adapter_module = sys.modules.get("scripts.federated_campaign.hdfs_archive")
+		expected_class = getattr(adapter_module, "CampaignHarnessAdapter", None)
+		if (
+			expected_class is None
+			or type(owner) is not expected_class
+			or getattr(owner, "_ledger", None) is not self
+			or self.__allocation_validator is not None
+		):
+			raise LedgerContractError("typed allocation validator binding is invalid")
+		self.__allocation_validator = validator
+
+	def _validate_allocation_authority(
+		self, authority: object, request: Mapping[str, object],
+	) -> None:
+		validator = self.__allocation_validator
+		if validator is None:
+			raise LedgerContractError("typed phase allocation authority is missing")
+		validator(authority, request)
 
 	def _begin_attempt_unlocked(
 		self,

@@ -120,3 +120,23 @@
 - **잔여 이슈**: Docker lifecycle driver가 generic `begin` 호출을 세 typed allocation surface로 교체하고 final 시작 시 동일 P/D/S/R/F를 전달해야 한다.
 - **잠재 회귀 위험**: 기존 generic discovery/performance producer는 즉시 fail-closed한다. `integration_operations` exact-set test, no-intent tests, live F rebuild tests로 감지한다.
 - **적용 원칙/의사결정 근거**: planner/runtime 및 candidate space는 변경하지 않고 control-plane phase authority와 evidence lineage만 강화했다. runtime fallback은 추가하지 않았다.
+
+## 이슈 6 — Pilot 120행 invocation identity 충돌 및 facade raw allocation token 우회
+
+- **상태**: 해결
+- **환경/조건**: typed pilot 3 classes × 4 planners × 2 regimes × 5 repeats, P/D/S/R/F pipeline, local/HDFS facade.
+- **재현 절차**:
+  1. `begin_pilot`으로 서로 다른 class/planner/regime/repeat 행을 만들고 S builder에 전달한다. 기존 API는 모든 행에 하나의 `expected_invocation_manifest_sha256`를 요구했다.
+  2. facade module에서 `_FACADE_ALLOCATION_CAPABILITY`를 import하고 `_allocate_attempt`에 임의 performance identity를 전달한다.
+- **관측 증상**: typed pilot invocation은 행마다 schedule/identity가 달라 hash가 달라지므로 단일 shared hash 계약과 양립할 수 없었다. 또한 import 가능한 token을 가진 caller가 P/D/S/R/F typed transition을 건너뛰고 intent를 생성할 수 있었다.
+- **원인 분석**: invocation의 per-row identity와 campaign-wide root를 혼동했고, allocation 정당성을 live phase evidence가 아니라 raw allocator token possession으로 표현했다.
+- **해결 요약**:
+  - S ingress에서 shared invocation hash 입력과 receipt 필드를 삭제했다. 각 행의 P hash, D hash, pilot class/planner/workers/profile/repeat로 `systemds-federated-pilot-invocation/v1`을 내부 재생성하고 exact hash를 검증한다.
+  - S에는 shared hash 대신 명시적 `per-row P/D-derived typed identity v1` 계약 표지만 보존하며, S 재검증도 120행을 동일 방식으로 재계산한다.
+  - facade module token과 raw `_allocate_attempt`, ledger module token을 제거했다. ledger ingress는 실제 `CampaignHarnessAdapter`에 instance-bound validator를 결합하고, facade가 live validation 직후 만든 one-shot exact request authority만 소비한다. authority는 discovery `P`, pilot `P/D`, final `P/D/S/R/F` roots와 완전한 allocation request를 포함하며 stale/mismatch/replay를 거부한다. archive attempt 조회 helper는 read-only이다.
+  - 비-phase 단위 테스트의 raw attempt 생성은 facade 권한 테스트에서 분리하여 ledger fixture로만 격리했다.
+- **수정 파일**: `atomic_ledger.py`, `determinism_contract.py`, `hdfs_archive.py`, 세 contract test 파일, 본 문서.
+- **검증**: 서로 다른 120 canonical invocation hash, forged per-row hash 거부, importable facade/ledger token 및 raw facade allocator 부재, token 없는 direct ledger arbitrary allocation no-intent, typed `begin_pilot×120 → publish×120 → S → R → F → begin_final` 양성 통합 테스트 및 전체 suite/static 검사.
+- **잔여 이슈**: 실제 Docker lifecycle producer가 pilot row별 lease의 `invocation_manifest_sha256`를 그대로 normalized row에 전달해야 한다. shared invocation hash CLI/필드는 제거해야 한다.
+- **잠재 회귀 위험**: 과거 shared invocation hash를 전달하던 caller는 새 facade/selector signature에서 fail-fast한다. 120-row positive integration과 per-row forgery test로 감지한다.
+- **적용 원칙/의사결정 근거**: planner/runtime 또는 후보군은 변경하지 않았다. phase evidence가 allocation 권한을 제공하도록 control-plane 계약만 수정했으며 runtime fallback은 없다.

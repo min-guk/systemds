@@ -24,6 +24,7 @@ from scripts.federated_campaign.determinism_contract import (
 	build_campaign_manifest,
 	build_campaign_preregistration_manifest,
 	build_canonical_final_invocation,
+	build_canonical_pilot_invocation,
 	build_canonical_discovery_invocation_hashes,
 	build_discovery_completion_receipt,
 	_build_final_campaign_manifest as build_final_campaign_manifest,
@@ -617,7 +618,7 @@ class DeterminismContractTest(unittest.TestCase):
 		prereg = self._campaign_v3_preregistration()
 		completion = self._discovery_completion(prereg)
 		manifest_hash = cast(str, prereg["preregistration_manifest_sha256"])
-		invocation_hash = "d" * 64
+		discovery_hash = cast(str, completion["discovery_completion_sha256"])
 		for pilot_class in ("cheap", "medium", "heavy"):
 			for planner in CAMPAIGN_PLANNERS:
 				for workers, profile in ((1, "lan"), (4, "wan_mid")):
@@ -626,6 +627,15 @@ class DeterminismContractTest(unittest.TestCase):
 					for repeat in range(1, 6):
 						order_tuple = orders[repeat - 1]
 						period = order_tuple.index(planner) + 1
+						invocation = build_canonical_pilot_invocation(
+							preregistration_manifest_sha256=manifest_hash,
+							discovery_completion_sha256=discovery_hash,
+							pilot_class=pilot_class, planner=planner, workers=workers,
+							profile=profile, pilot_repeat=repeat,
+						)
+						invocation_hash = hashlib.sha256(json.dumps(
+							invocation, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+						).encode()).hexdigest()
 						rows.append({
 							"pilot_class": pilot_class, "workload": workload, "planner": planner, "workers": workers,
 							"profile": profile, "cell": cell, "pilot_repeat": repeat,
@@ -648,7 +658,6 @@ class DeterminismContractTest(unittest.TestCase):
 						})
 		select = lambda candidate_rows: select_campaign_pilot_repeats(
 			candidate_rows, self._exact_row_validator(rows), expected_manifest_hash=manifest_hash,
-			expected_invocation_manifest_sha256=invocation_hash,
 			preregistration_manifest=prereg, discovery_completion_receipt=completion,
 			discovery_evidence_validator=self._exact_row_validator(_list(completion["discovery_rows"])),
 		)
@@ -691,7 +700,7 @@ class DeterminismContractTest(unittest.TestCase):
 			select(mixed_manifest)
 		mixed_invocation = [dict(row) for row in rows]
 		mixed_invocation[0]["invocation_manifest_sha256"] = "e" * 64
-		with self.assertRaisesRegex(CampaignContractError, "mixes invocation"):
+		with self.assertRaisesRegex(CampaignContractError, "P/D-derived typed identity"):
 			select(mixed_invocation)
 		wrong_workload = [dict(row) for row in rows]
 		wrong_workload[0]["workload"] = "lm"
@@ -744,7 +753,6 @@ class DeterminismContractTest(unittest.TestCase):
 			cast(dict[str, object], row["identity"])["manifest_hash"] = prereg_hash
 		selection_v3 = select_campaign_pilot_repeats(
 			rows, self._exact_row_validator(rows), expected_manifest_hash=prereg_hash,
-			expected_invocation_manifest_sha256=invocation_hash,
 			preregistration_manifest=prereg, discovery_completion_receipt=completion,
 			discovery_evidence_validator=self._exact_row_validator(_list(completion["discovery_rows"])),
 		)
@@ -757,11 +765,9 @@ class DeterminismContractTest(unittest.TestCase):
 		for forgery in ("fabricated_path", "relabelled_invocation"):
 			forged_selection = copy.deepcopy(selection_v3)
 			forged_rows = _list(forged_selection["pilot_rows"])
-			forged_preregistration = _dict(forged_selection["preregistration"])
 			if forgery == "fabricated_path":
 				_dict(forged_rows[0])["evidence_location"] = {"committed_path": "/does/not/exist"}
 			else:
-				forged_preregistration["invocation_manifest_sha256"] = "e" * 64
 				for row in forged_rows:
 					_dict(row)["invocation_manifest_sha256"] = "e" * 64
 			forged_selection["pilot_rows_sha256"] = hashlib.sha256(json.dumps(
@@ -771,7 +777,8 @@ class DeterminismContractTest(unittest.TestCase):
 			forged_selection["pilot_selection_sha256"] = hashlib.sha256(json.dumps(
 				forged_selection, sort_keys=True, separators=(",", ":"), ensure_ascii=True
 			).encode()).hexdigest()
-			with self.subTest(forgery=forgery), self.assertRaisesRegex(CampaignContractError, "revalidation"):
+			expected_error = "revalidation" if forgery == "fabricated_path" else "P/D-derived typed identity"
+			with self.subTest(forgery=forgery), self.assertRaisesRegex(CampaignContractError, expected_error):
 				build_pilot_resource_reservation(
 					pilot_selection_receipt=forged_selection, preregistration_manifest=prereg,
 					discovery_completion_receipt=completion,
@@ -864,7 +871,6 @@ class DeterminismContractTest(unittest.TestCase):
 		alternate_rows[0]["resource_evidence"]["artifact_bytes"] += 5000
 		alternate_selection = select_campaign_pilot_repeats(
 			alternate_rows, self._exact_row_validator(alternate_rows), expected_manifest_hash=prereg_hash,
-			expected_invocation_manifest_sha256=invocation_hash,
 			preregistration_manifest=prereg, discovery_completion_receipt=completion,
 			discovery_evidence_validator=self._exact_row_validator(_list(completion["discovery_rows"])),
 		)

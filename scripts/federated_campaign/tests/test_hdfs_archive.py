@@ -10,12 +10,11 @@ import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
-from typing import Any, cast
+from typing import Any, Mapping, cast
 
-from scripts.federated_campaign.atomic_ledger import _ALLOCATION_CAPABILITY, AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
-from scripts.federated_campaign.determinism_contract import CAMPAIGN_PLANNERS, build_block_counterbalanced_schedule, build_counterbalanced_schedule
+from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, AttemptLease, DiscoveryKey, LedgerContractError, PerformanceKey, ResumeDecision, ResumeState
+from scripts.federated_campaign.determinism_contract import CAMPAIGN_PLANNERS, build_block_counterbalanced_schedule, build_counterbalanced_schedule, campaign_block_ids
 from scripts.federated_campaign.hdfs_archive import (
-	_FACADE_ALLOCATION_CAPABILITY,
 	ArchiveContractError,
 	ARCHIVE_BOUNDARIES,
 	CampaignHarnessAdapter,
@@ -24,6 +23,9 @@ from scripts.federated_campaign.hdfs_archive import (
 	HostResourceSnapshot,
 	InjectedArchiveCrash,
 )
+
+
+_TEST_ALLOCATION_AUTHORITY = object()
 
 
 class FakeHdfsBackend:
@@ -80,15 +82,21 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.temp_dir.cleanup()
 
 	def _begin_raw(self, facade: CampaignHarnessAdapter, **kwargs: Any):
-		"""Privileged plumbing helper; public campaign callers use typed phase APIs."""
+		"""Ledger-fixture plumbing only; it does not exercise facade allocation authority."""
+		_ = facade
 		crash_after = kwargs.pop("crash_after", None)
 		kwargs.setdefault("lifecycle_replicate", None)
 		kwargs.setdefault("period", None)
 		kwargs.setdefault("order", None)
-		return facade._allocate_attempt(
-			**kwargs, crash_after=crash_after,
-			_allocation_capability=_FACADE_ALLOCATION_CAPABILITY,
+		minimum_attempt = facade._minimum_archive_attempt(
+			kwargs["kind"], kwargs["cell"], kwargs["manifest_hash"],
+			kwargs["lifecycle_replicate"], kwargs["period"], kwargs["order"],
 		)
+		with patch.object(self.ledger, "_validate_allocation_authority", return_value=None):
+			return self.ledger._begin_attempt_from_adapter(
+				**kwargs, minimum_attempt=minimum_attempt, crash_after=crash_after,
+				_allocation_authority=_TEST_ALLOCATION_AUTHORITY,
+			)
 
 	def _phase(self, name, metric_kind, seconds):
 		phase = self.root / name
@@ -572,6 +580,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_normalization_rejects_stale_success_after_newer_failure_locally_and_from_archive(self):
 		for suffix, archive_old in (("local", False), ("archive", True)):
 			with self.subTest(source=suffix):
+				self.ledger = AtomicEvidenceLedger(self.root / f"ledger-{suffix}")
+				self.backend = FakeHdfsBackend()
 				facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=0 if archive_old else 1))
 				cell = f"cell-stale-{suffix}"
 				first = self._begin_raw(facade,
@@ -603,8 +613,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_pilot_evidence_schedule_must_match_preregistered_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		lease = self.ledger._begin_attempt_from_adapter(
-			_allocation_capability=_ALLOCATION_CAPABILITY,
+		lease = self._begin_raw(facade,
 			kind="performance", cell=cell,
 			manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=99, period=4, order="WRONG",
@@ -642,8 +651,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		order = ">".join(order_tuple)
 		period = order_tuple.index("DP") + 1
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		lease = self.ledger._begin_attempt_from_adapter(
-			_allocation_capability=_ALLOCATION_CAPABILITY,
+		lease = self._begin_raw(facade,
 			kind="performance", cell=cell, manifest_hash="a" * 64, invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=period, order=order,
 		)
@@ -807,12 +815,96 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
 			)
 		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
-		with self.assertRaisesRegex(ArchiveContractError, "capability"):
-			facade._allocate_attempt(
-				kind="performance", cell="final-cell", manifest_hash="a" * 64,
-				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
-				period=1, order="DP>FedAll>Heuristic>MinST", crash_after=None,
+		self.assertFalse(hasattr(facade, "_allocate_attempt"))
+		module = __import__("scripts.federated_campaign.hdfs_archive", fromlist=["*"])
+		self.assertNotIn("_FACADE_ALLOCATION_CAPABILITY", vars(module))
+
+	def test_typed_pilot_rows_flow_through_selection_resource_final_and_final_begin(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		prereg_hash, completion_hash = "a" * 64, "b" * 64
+		prereg: dict[str, object] = {
+			"preregistration_manifest_sha256": prereg_hash,
+			"dimensions": {"block_ids": list(campaign_block_ids())}, "seed_streams": {"schedule": 19},
+			"lineage": {"stage_descriptor_sha256": "1" * 64, "cp_lifecycle_descriptor_sha256": "2" * 64, "reference_manifest_sha256": "3" * 64},
+			"frozen_core": {}, "resource_settings": {}, "commands": {},
+			"pilot_preregistration": {}, "conservative_pre_pilot_bounds": {},
+		}
+		completion = {"preregistration_manifest_sha256": prereg_hash, "discovery_completion_sha256": completion_hash}
+		rows: list[dict[str, object]] = []
+		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
+		allocation_count = 0
+		def allocate(**kwargs: Any):
+			nonlocal allocation_count
+			allocation_count += 1
+			key = PerformanceKey(
+				kwargs["cell"], kwargs["lifecycle_replicate"], kwargs["period"], kwargs["order"],
+				kwargs["manifest_hash"], 1, f"typed-{allocation_count}",
 			)
+			invocation_hash = hashlib.sha256(json.dumps(
+				kwargs["invocation_manifest"], sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+			).encode()).hexdigest()
+			return AttemptLease(key, invocation_hash, self.root / f"intent-{allocation_count}")
+		with (
+			patch("scripts.federated_campaign.hdfs_archive.validate_discovery_completion_receipt", return_value=completion),
+			patch.object(self.ledger, "_begin_attempt_from_adapter", side_effect=allocate),
+			patch.object(facade, "publish_performance_success", return_value=self.root / "published") as publish,
+			patch.object(facade, "_verify_pilot_row", return_value=None),
+			patch("scripts.federated_campaign.determinism_contract.validate_campaign_preregistration_manifest", return_value=prereg),
+			patch("scripts.federated_campaign.determinism_contract.validate_discovery_completion_receipt", return_value=completion),
+		):
+			for pilot_class, workload in (("cheap", "kmeans"), ("medium", "logreg"), ("heavy", "als")):
+				for planner in CAMPAIGN_PLANNERS:
+					for workers, profile in ((1, "lan"), (4, "wan_mid")):
+						cell = f"pilot_class={pilot_class}|workload={workload}|planner={planner}|workers={workers}|profile={profile}"
+						for repeat in range(1, 6):
+							lease = facade.begin_pilot(
+								pilot_class=pilot_class, planner=planner, workers=workers, profile=profile,
+								pilot_repeat=repeat, preregistration_manifest_sha256=prereg_hash,
+								discovery_completion_receipt=completion,
+							)
+							facade.publish_performance_success(lease, self.root, self.root, self.root)
+							order_tuple = orders[repeat - 1]; period = order_tuple.index(planner) + 1
+							warm_seconds = 100.0 + (repeat - 3) * 0.5
+							rows.append({
+								"pilot_class": pilot_class, "workload": workload, "planner": planner,
+								"workers": workers, "profile": profile, "cell": cell, "pilot_repeat": repeat,
+								"warm_seconds": warm_seconds, "period": period, "order": ">".join(order_tuple),
+								"carryover": "NONE" if period == 1 else order_tuple[period - 2],
+								"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
+								"lifecycle": {"cold_seconds": 2.0, "warm_seconds": warm_seconds, "coordinator_restart_count": 0, "worker_restart_count": 0},
+								"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
+								"identity": lease.key.as_dict(), "evidence_location": {"committed_path": f"/typed/{len(rows)+1}"},
+								"invocation_manifest_sha256": lease.invocation_manifest_sha256,
+								"resource_evidence": {"artifact_bytes": 1000 + len(rows), "artifact_inodes": 20 + repeat, "lifecycle_wall_seconds": 105.0 + repeat},
+							})
+			selection = facade.select_pilot_repeats(
+				rows, expected_manifest_hash=prereg_hash, preregistration_manifest=prereg,
+				discovery_completion_receipt=completion,
+			)
+			reservation = facade.build_pilot_resource_reservation(
+				pilot_selection_receipt=selection, preregistration_manifest=prereg, discovery_completion_receipt=completion,
+			)
+			final = facade.build_final_campaign_manifest(
+				preregistration_manifest=prereg, pilot_selection_receipt=selection,
+				pilot_resource_reservation=reservation, discovery_completion_receipt=completion,
+			)
+			first_block = cast(dict[str, object], cast(list[object], cast(dict[str, object], final["schedule"])["blocks"])[0])
+			run = cast(dict[str, object], cast(list[object], first_block["runs"])[0]); order = cast(str, run["order"])
+			period = next(cast(int, item["period"]) for item in cast(list[dict[str, object]], run["periods"]) if item["planner"] == "DP")
+			invocation = {"schema": "systemds-federated-final-invocation/v1", "kind": "final_performance", "manifest_hash": final["manifest_hash"], "cell": "workers=1|planner=DP|workload=kmeans|profile=lan", "lifecycle_replicate": 1, "period": period, "order": order}
+			with (
+				patch("scripts.federated_campaign.hdfs_archive.validate_final_campaign_manifest", return_value=final),
+				patch("scripts.federated_campaign.hdfs_archive.build_canonical_final_invocation", return_value=invocation),
+			):
+				final_lease = facade.begin_final_performance(
+					preregistration_manifest=prereg, discovery_completion_receipt=completion,
+					pilot_selection_receipt=selection, pilot_resource_reservation=reservation,
+					final_campaign_manifest=final, cell=cast(str, invocation["cell"]),
+					lifecycle_replicate=1, period=period, order=order,
+				)
+		self.assertEqual(120, publish.call_count)
+		self.assertEqual(121, allocation_count)
+		self.assertIsInstance(final_lease.key, PerformanceKey)
 
 	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -901,12 +993,68 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		barrier.assert_called_once_with("DP", "manifest-a")
 		self.assertEqual(cell, lease.key.cell)
 
+	def test_typed_allocation_authority_rejects_replay_mutation_and_rebinding_without_intent(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		intent_root = self.root / "ledger" / "intents"
+		before_bind = len(list(intent_root.rglob("*.json")))
+		with self.assertRaisesRegex(LedgerContractError, "binding"):
+			self.ledger._bind_typed_allocation_validator(lambda _authority, _request: None)
+		with self.assertRaisesRegex((LedgerContractError, ArchiveContractError), "binding"):
+			CampaignHarnessAdapter(self.ledger, self._adapter())
+		self.assertEqual(before_bind, len(list(intent_root.rglob("*.json"))))
+		cell = "workers=1|planner=DP|workload=kmeans|profile=lan"
+		prereg = {"preregistration_manifest_sha256": "manifest-a"}
+		invocation = {"schema": "canonical-discovery", "preregistration_manifest_sha256": "manifest-a"}
+		captured: list[tuple[object, Mapping[str, object]]] = []
+		original_validator = self.ledger._validate_allocation_authority
+		def capture(authority: object, request: Mapping[str, object]) -> None:
+			captured.append((authority, dict(request)))
+			original_validator(authority, request)
+		with (
+			patch("scripts.federated_campaign.hdfs_archive.validate_campaign_preregistration_manifest", return_value=prereg),
+			patch("scripts.federated_campaign.hdfs_archive.build_canonical_discovery_invocation", return_value=invocation),
+			patch.object(self.ledger, "_validate_allocation_authority", side_effect=capture),
+		):
+			facade.begin_discovery(preregistration_manifest=prereg, cell=cell)
+		authority, request = captured[0]
+		intent_count = len(list(intent_root.rglob("*.json")))
+		with self.assertRaisesRegex(ArchiveContractError, "stale"):
+			self.ledger._begin_attempt_from_adapter(
+				kind=cast(str, request["kind"]), cell=cast(str, request["cell"]),
+				manifest_hash=cast(str, request["manifest_hash"]),
+				invocation_manifest=cast(Mapping[str, object], request["invocation_manifest"]),
+				minimum_attempt=cast(int, request["minimum_attempt"]), _allocation_authority=authority,
+			)
+		self.assertEqual(intent_count, len(list(intent_root.rglob("*.json"))))
+
+		ledger = AtomicEvidenceLedger(self.root / "mutated-ledger")
+		mutated_facade = CampaignHarnessAdapter(ledger, HdfsArchiveAdapter(
+			ledger, self.backend, self.root / "mutated-archive", "hdfs://dams-so001:12000/tmp/logs/mchoi-g007-mutated",
+			max_local_raw_bundles=1,
+		))
+		unconsumed: dict[str, object] = {}
+		def intercept(**kwargs: object) -> AttemptLease:
+			unconsumed.update(kwargs)
+			return AttemptLease(DiscoveryKey(cell, 1, "captured", "manifest-a"), "c" * 64, self.root / "captured")
+		with (
+			patch("scripts.federated_campaign.hdfs_archive.validate_campaign_preregistration_manifest", return_value=prereg),
+			patch("scripts.federated_campaign.hdfs_archive.build_canonical_discovery_invocation", return_value=invocation),
+			patch.object(ledger, "_begin_attempt_from_adapter", side_effect=intercept),
+		):
+			mutated_facade.begin_discovery(preregistration_manifest=prereg, cell=cell)
+		with self.assertRaisesRegex(ArchiveContractError, "mismatched"):
+			ledger._begin_attempt_from_adapter(
+				kind="discovery", cell="workers=2|planner=DP|workload=kmeans|profile=lan",
+				manifest_hash="manifest-a", invocation_manifest=invocation,
+				minimum_attempt=1, _allocation_authority=unconsumed["_allocation_authority"],
+			)
+		self.assertFalse(any((self.root / "mutated-ledger" / "intents").rglob("*.json")))
+
 	def test_latest_local_failure_never_falls_back_to_archived_success(self):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter(retention=0)
 		adapter.archive(committed)
-		lease = self.ledger._begin_attempt_from_adapter(
-			_allocation_capability=_ALLOCATION_CAPABILITY,
+		lease = self._begin_raw(CampaignHarnessAdapter(self.ledger, adapter),
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		self.ledger.publish_failure(lease, self._failure("latest-failure"))
