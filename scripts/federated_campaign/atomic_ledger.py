@@ -304,7 +304,23 @@ class AtomicEvidenceLedger:
 		minimum_attempt: int = 1,
 		crash_after: str | None = None,
 	) -> AttemptLease:
-		"""Atomically allocate an attempt across concurrent harness processes."""
+		"""Reject direct campaign allocation; the typed facade owns all phase gates."""
+		raise LedgerContractError("direct ledger attempt allocation is forbidden; use CampaignHarnessAdapter")
+
+	def _begin_attempt_from_adapter(
+		self,
+		*,
+		kind: str,
+		cell: str,
+		manifest_hash: str,
+		invocation_manifest: Mapping[str, object],
+		lifecycle_replicate: int | None = None,
+		period: int | None = None,
+		order: str | None = None,
+		minimum_attempt: int = 1,
+		crash_after: str | None = None,
+	) -> AttemptLease:
+		"""Atomically allocate after CampaignHarnessAdapter validates the phase purpose."""
 		lock_path = self.root / "attempt-allocation.lock"
 		with lock_path.open("a+b") as lock:
 			fcntl.flock(lock.fileno(), fcntl.LOCK_EX)

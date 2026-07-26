@@ -352,8 +352,9 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		self.assertEqual(
 			{
-				"begin", "publish_discovery_success", "publish_performance_success", "publish_failure", "archive", "exact_resume",
+				"begin", "begin_pilot", "publish_discovery_success", "publish_performance_success", "publish_failure", "archive", "exact_resume",
 				"select_pilot_repeats", "normalize_resume_row", "assert_planner_barrier", "complete_discovery", "preflight",
+				"build_pilot_resource_reservation", "build_final_campaign_manifest",
 			},
 			facade.integration_operations,
 		)
@@ -590,7 +591,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_pilot_evidence_schedule_must_match_preregistered_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		lease = self.ledger.begin_attempt(
+		lease = self.ledger._begin_attempt_from_adapter(
 			kind="performance", cell=cell,
 			manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=99, period=4, order="WRONG",
@@ -628,7 +629,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		order = ">".join(order_tuple)
 		period = order_tuple.index("DP") + 1
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		lease = self.ledger.begin_attempt(
+		lease = self.ledger._begin_attempt_from_adapter(
 			kind="performance", cell=cell, manifest_hash="a" * 64, invocation_manifest={"argv": ["docker"]},
 			lifecycle_replicate=1, period=period, order=order,
 		)
@@ -745,11 +746,32 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 	def test_empty_or_incomplete_discovery_cannot_allocate_pilot_lease(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
-		with self.assertRaisesRegex(ArchiveContractError, "completion receipt D"):
+		with self.assertRaisesRegex(ArchiveContractError, "dedicated begin_pilot"):
 			facade.begin(
 				kind="performance", cell=cell, manifest_hash="a" * 64,
 				invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=1,
 				period=1, order="DP>FedAll>Heuristic>MinST",
+			)
+		with self.assertRaisesRegex(ArchiveContractError, "completion schema"):
+			facade.begin_pilot(
+				pilot_class="cheap", planner="DP", workers=1, profile="lan", pilot_repeat=1,
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={},
+				invocation_manifest={"argv": ["docker"], "discovery_completion_sha256": "b" * 64},
+			)
+		with self.assertRaisesRegex(ArchiveContractError, "class/planner"):
+			facade.begin_pilot(
+				pilot_class="cheap", planner="CP", workers=1, profile="lan", pilot_repeat=1,
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
+			)
+		with self.assertRaisesRegex(ArchiveContractError, "regime"):
+			facade.begin_pilot(
+				pilot_class="cheap", planner="DP", workers=cast(Any, True), profile="lan", pilot_repeat=1,
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
+			)
+		with self.assertRaisesRegex(ArchiveContractError, "exact integer"):
+			facade.begin_pilot(
+				pilot_class="cheap", planner="DP", workers=1, profile="lan", pilot_repeat=cast(Any, 1.0),
+				preregistration_manifest_sha256="a" * 64, discovery_completion_receipt={}, invocation_manifest={"x": 1},
 			)
 		self.assertEqual([], list((self.root / "ledger" / "intents" / "performance").glob("*.json")))
 
@@ -840,7 +862,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter(retention=0)
 		adapter.archive(committed)
-		lease = self.ledger.begin_attempt(
+		lease = self.ledger._begin_attempt_from_adapter(
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
 		self.ledger.publish_failure(lease, self._failure("latest-failure"))

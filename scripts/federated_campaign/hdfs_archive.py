@@ -33,10 +33,16 @@ from scripts.federated_campaign.atomic_ledger import (
 from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
 	CAMPAIGN_PLANNERS,
+	PILOT_CLASSES,
+	PILOT_REGIMES,
+	PILOT_REPRESENTATIVE_WORKLOADS,
 	campaign_cell_ids,
+	build_counterbalanced_schedule,
 	build_discovery_completion_receipt,
 	build_campaign_manifest,
+	_build_final_campaign_manifest,
 	build_frozen_manifest,
+	_build_pilot_resource_reservation,
 	select_pilot_repeats,
 	select_campaign_pilot_repeats,
 	validate_campaign_preregistration_manifest,
@@ -639,6 +645,7 @@ class CampaignHarnessAdapter:
 
 	integration_operations: frozenset[str] = frozenset({
 		"begin",
+		"begin_pilot",
 		"publish_discovery_success",
 		"publish_performance_success",
 		"publish_failure",
@@ -648,6 +655,8 @@ class CampaignHarnessAdapter:
 		"normalize_resume_row",
 		"assert_planner_barrier",
 		"complete_discovery",
+		"build_pilot_resource_reservation",
+		"build_final_campaign_manifest",
 		"preflight",
 	})
 
@@ -667,27 +676,57 @@ class CampaignHarnessAdapter:
 		lifecycle_replicate: int | None = None,
 		period: int | None = None,
 		order: str | None = None,
-		discovery_completion_receipt: Mapping[str, object] | None = None,
 		crash_after: str | None = None,
 	) -> AttemptLease:
+		if kind == "performance" and cell.startswith("pilot_class="):
+			raise ArchiveContractError("pilot identity requires the dedicated begin_pilot surface")
 		if kind == "discovery" and cell in campaign_cell_ids():
 			planner = next(name for name in CAMPAIGN_PLANNERS if f"planner={name}|" in cell)
 			planner_index = CAMPAIGN_PLANNERS.index(planner)
 			if planner_index > 0:
 				self.assert_planner_barrier(CAMPAIGN_PLANNERS[planner_index - 1], manifest_hash)
-		if kind == "performance" and cell.startswith("pilot_class="):
-			if discovery_completion_receipt is None:
-				raise ArchiveContractError("pilot attempt requires discovery completion receipt D")
-			try:
-				completion = validate_discovery_completion_receipt(
-					discovery_completion_receipt, evidence_validator=self._verify_discovery_completion_row,
-				)
-			except CampaignContractError as error:
-				raise ArchiveContractError(str(error)) from error
-			if completion["preregistration_manifest_sha256"] != manifest_hash:
-				raise ArchiveContractError("pilot attempt D does not bind exact preregistration")
-			if invocation_manifest.get("discovery_completion_sha256") != completion["discovery_completion_sha256"]:
-				raise ArchiveContractError("pilot invocation must bind exact discovery completion hash")
+		return self._allocate_attempt(
+			kind=kind, cell=cell, manifest_hash=manifest_hash, invocation_manifest=invocation_manifest,
+			lifecycle_replicate=lifecycle_replicate, period=period, order=order, crash_after=crash_after,
+		)
+
+	def begin_pilot(
+		self, *, pilot_class: str, planner: str, workers: int, profile: str, pilot_repeat: int,
+		preregistration_manifest_sha256: str, discovery_completion_receipt: Mapping[str, object],
+		invocation_manifest: Mapping[str, object], crash_after: str | None = None,
+	) -> AttemptLease:
+		"""Allocate one canonical pilot attempt only after live D revalidation."""
+		if pilot_class not in PILOT_CLASSES or planner not in CAMPAIGN_PLANNERS:
+			raise ArchiveContractError("pilot class/planner is not canonical")
+		if type(workers) is not int or (workers, profile) not in PILOT_REGIMES:
+			raise ArchiveContractError("pilot worker/profile regime is not canonical")
+		if type(pilot_repeat) is not int or pilot_repeat not in range(1, 6):
+			raise ArchiveContractError("pilot repeat must be exact integer 1..5")
+		try:
+			completion = validate_discovery_completion_receipt(
+				discovery_completion_receipt, evidence_validator=self._verify_discovery_completion_row,
+			)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+		if completion["preregistration_manifest_sha256"] != preregistration_manifest_sha256:
+			raise ArchiveContractError("pilot attempt D does not bind exact preregistration")
+		if invocation_manifest.get("discovery_completion_sha256") != completion["discovery_completion_sha256"]:
+			raise ArchiveContractError("pilot invocation must bind exact discovery completion hash")
+		workload = PILOT_REPRESENTATIVE_WORKLOADS[pilot_class]
+		cell = f"pilot_class={pilot_class}|workload={workload}|planner={planner}|workers={workers}|profile={profile}"
+		order_tuple = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)[pilot_repeat - 1]
+		period = order_tuple.index(planner) + 1
+		return self._allocate_attempt(
+			kind="performance", cell=cell, manifest_hash=preregistration_manifest_sha256,
+			invocation_manifest=invocation_manifest, lifecycle_replicate=pilot_repeat,
+			period=period, order=">".join(order_tuple), crash_after=crash_after,
+		)
+
+	def _allocate_attempt(
+		self, *, kind: str, cell: str, manifest_hash: str, invocation_manifest: Mapping[str, object],
+		lifecycle_replicate: int | None, period: int | None, order: str | None,
+		crash_after: str | None,
+	) -> AttemptLease:
 		base: dict[str, object] = {"kind": kind, "cell": cell, "manifest_hash": manifest_hash}
 		if kind == "performance":
 			base.update({"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order})
@@ -697,7 +736,7 @@ class CampaignHarnessAdapter:
 			if isinstance(receipt.get("identity"), dict)
 			and all(cast(dict[str, object], receipt["identity"]).get(name) == value for name, value in base.items())
 		]
-		return self._ledger.begin_attempt(
+		return self._ledger._begin_attempt_from_adapter(
 			kind=kind,
 			cell=cell,
 			manifest_hash=manifest_hash,
@@ -871,6 +910,38 @@ class CampaignHarnessAdapter:
 				expected_invocation_manifest_sha256=expected_invocation_manifest_sha256,
 				preregistration_manifest=preregistration_manifest,
 				discovery_completion_receipt=discovery_completion_receipt,
+				discovery_evidence_validator=self._verify_discovery_completion_row,
+			)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+
+	def build_pilot_resource_reservation(
+		self, *, pilot_selection_receipt: Mapping[str, object],
+		preregistration_manifest: Mapping[str, object], discovery_completion_receipt: Mapping[str, object],
+	) -> dict[str, object]:
+		try:
+			return _build_pilot_resource_reservation(
+				pilot_selection_receipt=pilot_selection_receipt,
+				preregistration_manifest=preregistration_manifest,
+				discovery_completion_receipt=discovery_completion_receipt,
+				pilot_evidence_validator=self._verify_pilot_row,
+				discovery_evidence_validator=self._verify_discovery_completion_row,
+			)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
+
+	def build_final_campaign_manifest(
+		self, *, preregistration_manifest: Mapping[str, object], pilot_selection_receipt: Mapping[str, object],
+		pilot_resource_reservation: Mapping[str, object], discovery_completion_receipt: Mapping[str, object],
+	) -> dict[str, object]:
+		try:
+			return _build_final_campaign_manifest(
+				preregistration_manifest=preregistration_manifest,
+				pilot_selection_receipt=pilot_selection_receipt,
+				pilot_resource_reservation=pilot_resource_reservation,
+				discovery_completion_receipt=discovery_completion_receipt,
+				pilot_evidence_validator=self._verify_pilot_row,
+				discovery_evidence_validator=self._verify_discovery_completion_row,
 			)
 		except CampaignContractError as error:
 			raise ArchiveContractError(str(error)) from error

@@ -637,6 +637,43 @@ def build_campaign_preregistration_manifest(
 	return manifest
 
 
+def _validate_frozen_file_record(name: str, value: object) -> dict[str, object]:
+	if not isinstance(value, Mapping) or set(value) != {"path", "bytes", "sha256"}:
+		raise CampaignContractError(f"{name} frozen file record schema is not exact")
+	path, size = value["path"], value["bytes"]
+	if not isinstance(path, str) or not path or not Path(path).is_absolute():
+		raise CampaignContractError(f"{name} frozen file path is invalid")
+	if type(size) is not int or cast(int, size) < 0:
+		raise CampaignContractError(f"{name} frozen file bytes must be an exact non-negative integer")
+	_sha256_text(f"{name} frozen file", value["sha256"])
+	return dict(value)
+
+
+def _validate_named_frozen_files(name: str, value: object, expected_names: Sequence[str]) -> None:
+	if not isinstance(value, Mapping) or set(value) != set(expected_names):
+		raise CampaignContractError(f"{name} frozen file set is not exact")
+	for key in expected_names:
+		_validate_frozen_file_record(f"{name}.{key}", value[key])
+
+
+def _validate_frozen_tree(name: str, value: object) -> None:
+	if not isinstance(value, list) or not value:
+		raise CampaignContractError(f"{name} frozen tree is invalid")
+	paths: list[str] = []
+	for item in value:
+		if not isinstance(item, Mapping) or set(item) != {"relative_path", "bytes", "sha256"}:
+			raise CampaignContractError(f"{name} frozen tree record schema is not exact")
+		path, size = item["relative_path"], item["bytes"]
+		if not isinstance(path, str) or not path or path.startswith("/") or ".." in Path(path).parts:
+			raise CampaignContractError(f"{name} frozen relative path is invalid")
+		if type(size) is not int or cast(int, size) < 0:
+			raise CampaignContractError(f"{name} frozen bytes must be an exact non-negative integer")
+		_sha256_text(f"{name} frozen tree", item["sha256"])
+		paths.append(path)
+	if paths != sorted(paths) or len(set(paths)) != len(paths):
+		raise CampaignContractError(f"{name} frozen tree order is not canonical")
+
+
 def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> dict[str, object]:
 	"""Semantically revalidate P instead of trusting a correctly recomputed self-hash."""
 	manifest = cast(dict[str, object], _canonical_json_value("preregistration manifest", value))
@@ -679,16 +716,64 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 		raise CampaignContractError("preregistration image digest is invalid")
 	if core["privacy_settings"] != {"public_tests_ignored": True, "runtime_fallback_allowed": False}:
 		raise CampaignContractError("preregistration privacy/runtime-fallback contract is invalid")
-	if not isinstance(core["artifacts"], Mapping) or not core["artifacts"]:
+	artifacts = core["artifacts"]
+	if not isinstance(artifacts, Mapping) or set(artifacts) != {
+		"wrapper", "jar", "planner_configs", "cp_config", "fed_dmls", "cp_dmls", "oracle_files",
+		"compose_files", "runner_files", "dataset", "data_sidecar", "reference_artifacts", "source_tree",
+	}:
 		raise CampaignContractError("preregistration frozen artifacts are invalid")
-	if not isinstance(core["network_costs"], Mapping) or set(cast(Mapping[str, object], core["network_costs"])) != set(CAMPAIGN_PROFILES):
+	for name in ("wrapper", "jar", "cp_config", "data_sidecar"):
+		_validate_frozen_file_record(f"artifacts.{name}", artifacts[name])
+	_validate_named_frozen_files("planner_configs", artifacts["planner_configs"], CAMPAIGN_PLANNERS)
+	for name in ("fed_dmls", "cp_dmls", "oracle_files", "reference_artifacts"):
+		_validate_named_frozen_files(name, artifacts[name], CAMPAIGN_WORKLOADS)
+	_validate_named_frozen_files("compose_files", artifacts["compose_files"], COMPOSE_SURFACES)
+	_validate_named_frozen_files("runner_files", artifacts["runner_files"], RUNNER_SURFACES)
+	_validate_frozen_tree("dataset", artifacts["dataset"])
+	_validate_frozen_tree("source_tree", artifacts["source_tree"])
+	network = core["network_costs"]
+	if not isinstance(network, Mapping) or set(network) != set(CAMPAIGN_PROFILES):
 		raise CampaignContractError("preregistration network profiles are invalid")
-	if not isinstance(core["topology"], Mapping) or cast(Mapping[str, object], core["topology"]).get("worker_counts") != list(CAMPAIGN_WORKERS) or cast(Mapping[str, object], core["topology"]).get("profiles") != list(CAMPAIGN_PROFILES):
+	for profile in CAMPAIGN_PROFILES:
+		cost = network[profile]
+		if not isinstance(cost, Mapping) or set(cost) != {"latency_ms", "bandwidth_mbps"}:
+			raise CampaignContractError("preregistration network cost schema is invalid")
+		latency = _positive_finite(f"{profile} latency", cost["latency_ms"], allow_zero=True)
+		bandwidth = _positive_finite(f"{profile} bandwidth", cost["bandwidth_mbps"])
+		if isinstance(cost["latency_ms"], bool) or isinstance(cost["bandwidth_mbps"], bool) or latency < 0 or bandwidth <= 0:
+			raise CampaignContractError("preregistration network cost types are invalid")
+	topology = core["topology"]
+	if not isinstance(topology, Mapping) or set(topology) != {"worker_counts", "profiles", "docker_project"} or topology["worker_counts"] != list(CAMPAIGN_WORKERS) or topology["profiles"] != list(CAMPAIGN_PROFILES):
 		raise CampaignContractError("preregistration topology is invalid")
-	if not isinstance(core["oracle_policies"], Mapping) or set(cast(Mapping[str, object], core["oracle_policies"])) != set(CAMPAIGN_WORKLOADS):
+	if any(type(item) is not int for item in cast(list[object], topology["worker_counts"])) or not isinstance(topology["docker_project"], str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", cast(str, topology["docker_project"])) is None:
+		raise CampaignContractError("preregistration topology types are invalid")
+	oracle_policies = core["oracle_policies"]
+	if not isinstance(oracle_policies, Mapping) or set(oracle_policies) != set(CAMPAIGN_WORKLOADS):
 		raise CampaignContractError("preregistration oracle policies are invalid")
 	if not isinstance(core["tolerance_version"], str) or not cast(str, core["tolerance_version"]).strip():
 		raise CampaignContractError("preregistration tolerance version is invalid")
+	for workload in CAMPAIGN_WORKLOADS:
+		policy = oracle_policies[workload]
+		if not isinstance(policy, Mapping) or set(policy) != {
+			"version", "policy_sha256", "self_drift_a_sha256", "self_drift_b_sha256",
+		} or policy["version"] != core["tolerance_version"]:
+			raise CampaignContractError("preregistration oracle policy schema/version is invalid")
+		for name in ("policy_sha256", "self_drift_a_sha256", "self_drift_b_sha256"):
+			_sha256_text(f"{workload} {name}", policy[name])
+		if policy["self_drift_a_sha256"] != policy["self_drift_b_sha256"]:
+			raise CampaignContractError("preregistration oracle self-drift is invalid")
+		oracle_record = cast(Mapping[str, object], cast(Mapping[str, object], artifacts["oracle_files"])[workload])
+		if policy["policy_sha256"] != oracle_record["sha256"]:
+			raise CampaignContractError("preregistration oracle artifact binding is invalid")
+	jvm = core["jvm_settings"]
+	if not isinstance(jvm, Mapping) or set(jvm) != {"java_opts", "heap_bytes", "coordinator_fresh"} or jvm["coordinator_fresh"] is not True or type(jvm["heap_bytes"]) is not int or cast(int, jvm["heap_bytes"]) < 1 or not isinstance(jvm["java_opts"], list) or not jvm["java_opts"] or any(not isinstance(item, str) or not item.strip() for item in jvm["java_opts"]):
+		raise CampaignContractError("preregistration JVM settings are invalid")
+	threads = core["thread_settings"]
+	if not isinstance(threads, Mapping) or set(threads) != {"blas_threads", "omp_threads", "systemds_threads"} or any(type(item) is not int or cast(int, item) < 1 for item in threads.values()):
+		raise CampaignContractError("preregistration thread settings are invalid")
+	endpoints = core["endpoints"]
+	if not isinstance(endpoints, Mapping) or set(endpoints) != set(ENDPOINT_NAMES) or any(not isinstance(item, str) or re.fullmatch(r"[A-Za-z0-9_.-]+:[1-9][0-9]{0,4}", item) is None or int(item.rsplit(":", 1)[1]) > 65535 for item in endpoints.values()) or len(set(endpoints.values())) != len(ENDPOINT_NAMES):
+		raise CampaignContractError("preregistration endpoints are invalid")
 	dimensions = manifest["dimensions"]
 	expected_barriers = [
 		{"planner": planner, "start": index * 84, "stop": (index + 1) * 84}
@@ -699,6 +784,13 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 	}:
 		raise CampaignContractError("preregistration dimensions schema is not exact")
 	validate_campaign_matrix(cast(Sequence[str], dimensions["block_ids"]), cast(Sequence[str], dimensions["cell_ids"]))
+	barriers = dimensions["planner_major_barriers"]
+	if not isinstance(barriers, list) or any(
+		not isinstance(item, Mapping) or set(item) != {"planner", "start", "stop"}
+		or type(item["start"]) is not int or type(item["stop"]) is not int
+		for item in barriers
+	):
+		raise CampaignContractError("preregistration planner-major barrier types are not exact")
 	if dimensions["planner_major_barriers"] != expected_barriers:
 		raise CampaignContractError("preregistration planner-major barriers are not exact")
 	pilot = manifest["pilot_preregistration"]
@@ -709,6 +801,14 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 		"orders": build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19),
 		"representative_workloads": dict(PILOT_REPRESENTATIVE_WORKLOADS),
 	}
+	if not isinstance(pilot, Mapping) or type(pilot.get("row_count")) is not int or type(pilot.get("repeats")) is not int or type(pilot.get("schedule_seed")) is not int:
+		raise CampaignContractError("preregistration pilot numeric types are not exact")
+	regimes = pilot.get("regimes")
+	if not isinstance(regimes, list) or any(
+		not isinstance(item, Mapping) or set(item) != {"workers", "profile"} or type(item["workers"]) is not int
+		for item in regimes
+	):
+		raise CampaignContractError("preregistration pilot regime types are not exact")
 	if pilot != expected_pilot:
 		raise CampaignContractError("preregistration pilot seed/schedule contract is not exact")
 	resource = manifest["resource_settings"]
@@ -717,6 +817,13 @@ def validate_campaign_preregistration_manifest(value: Mapping[str, object]) -> d
 		"max_combined_io_bps",
 	} or resource["absolute_disk_floor_bytes"] != 5 * 1024**3:
 		raise CampaignContractError("preregistration resource contract is not exact")
+	if type(resource["absolute_disk_floor_bytes"]) is not int or type(resource["required_free_inodes"]) is not int or cast(int, resource["required_free_inodes"]) < 1:
+		raise CampaignContractError("preregistration resource integer types are not exact")
+	_positive_finite("preregistration wall time", resource["wall_time_seconds"])
+	io_limit = _positive_finite("preregistration I/O utilization", resource["max_io_utilization"])
+	if io_limit > 1:
+		raise CampaignContractError("preregistration I/O utilization is invalid")
+	_positive_finite("preregistration combined I/O", resource["max_combined_io_bps"])
 	commands = manifest["commands"]
 	if not isinstance(commands, Mapping) or set(commands) != set(COMMAND_SURFACES) or any(
 		not isinstance(argv, list) or not argv or any(not isinstance(arg, str) or not arg.strip() for arg in argv)
@@ -780,10 +887,12 @@ def build_discovery_completion_receipt(
 
 
 def validate_discovery_completion_receipt(
-	value: Mapping[str, object], *, preregistration_manifest: Mapping[str, object] | None = None,
-	evidence_validator: Callable[[Mapping[str, object]], None] | None = None,
+	value: Mapping[str, object], *, evidence_validator: Callable[[Mapping[str, object]], None],
+	preregistration_manifest: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-	"""Validate D semantics and optionally freshly revalidate every latest success."""
+	"""Validate D semantics and freshly revalidate every latest success."""
+	if not callable(evidence_validator):
+		raise CampaignContractError("discovery completion validation requires a live evidence validator")
 	receipt = cast(dict[str, object], _canonical_json_value("discovery completion", value))
 	if set(receipt) != {
 		"schema", "preregistration_manifest_sha256", "cell_count", "planner_major_barriers",
@@ -825,11 +934,10 @@ def validate_discovery_completion_receipt(
 			if row_digest in seen or row.get("evidence_status") not in ("committed", "archive"):
 				raise CampaignContractError("discovery completion evidence is duplicate or unverified")
 			seen.add(row_digest)
-			if evidence_validator is not None:
-				try:
-					evidence_validator(row)
-				except Exception as error:
-					raise CampaignContractError("discovery completion latest-success revalidation failed") from error
+			try:
+				evidence_validator(row)
+			except Exception as error:
+				raise CampaignContractError("discovery completion latest-success revalidation failed") from error
 		return receipt
 	prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
 	if receipt["preregistration_manifest_sha256"] != prereg["preregistration_manifest_sha256"]:
@@ -837,7 +945,7 @@ def validate_discovery_completion_receipt(
 	rebuilt = build_discovery_completion_receipt(
 		preregistration_manifest=prereg,
 		discovery_rows=cast(Sequence[Mapping[str, object]], receipt["discovery_rows"]),
-		evidence_validator=(lambda row: None) if evidence_validator is None else evidence_validator,
+		evidence_validator=evidence_validator,
 	)
 	if rebuilt != receipt:
 		raise CampaignContractError("discovery completion is not the canonical builder result")
@@ -1084,6 +1192,7 @@ def select_campaign_pilot_repeats(
 	rows: Sequence[Mapping[str, object]], evidence_validator: Callable[[Mapping[str, object]], None],
 	*, expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
 	preregistration_manifest: Mapping[str, object], discovery_completion_receipt: Mapping[str, object],
+	discovery_evidence_validator: Callable[[Mapping[str, object]], None],
 ) -> dict[str, object]:
 	"""Select one frozen repeat count from the preregistered cross-campaign pilot."""
 	required = {
@@ -1096,6 +1205,7 @@ def select_campaign_pilot_repeats(
 	prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
 	completion = validate_discovery_completion_receipt(
 		discovery_completion_receipt, preregistration_manifest=prereg,
+		evidence_validator=discovery_evidence_validator,
 	)
 	_sha256_text("expected campaign manifest", expected_manifest_hash)
 	_sha256_text("expected pilot invocation manifest", expected_invocation_manifest_sha256)
@@ -1153,7 +1263,9 @@ def select_campaign_pilot_repeats(
 		values: list[float] = []
 		for repeat_index, row in enumerate(ordered):
 			identity_value = row["identity"]
-			if not isinstance(identity_value, Mapping):
+			if not isinstance(identity_value, Mapping) or set(identity_value) != {
+				"kind", "cell", "lifecycle_replicate", "period", "order", "manifest_hash", "attempt", "run_token",
+			}:
 				raise CampaignContractError("campaign pilot identity is invalid")
 			if (
 				identity_value.get("kind") != "performance"
@@ -1163,18 +1275,22 @@ def select_campaign_pilot_repeats(
 				or identity_value.get("lifecycle_replicate") != row["pilot_repeat"]
 				or type(identity_value.get("period")) is not int or identity_value.get("period") != row["period"]
 				or identity_value.get("order") != row["order"]
+				or not isinstance(identity_value.get("run_token"), str) or not cast(str, identity_value["run_token"])
 			):
 				raise CampaignContractError("campaign pilot evidence schedule identity is invalid")
 			if identity_value.get("manifest_hash") != expected_manifest_hash:
 				raise CampaignContractError("campaign pilot mixes frozen campaign manifests")
 			if row["invocation_manifest_sha256"] != expected_invocation_manifest_sha256:
 				raise CampaignContractError("campaign pilot mixes invocation manifests")
-			try:
-				evidence_validator(row)
-			except Exception as error:
-				raise CampaignContractError("campaign pilot evidence revalidation failed") from error
 			if row["evidence_status"] not in ("committed", "archive"):
 				raise CampaignContractError("campaign pilot rows require verified evidence")
+			location = row["evidence_location"]
+			if not isinstance(location, Mapping) or (
+				row["evidence_status"] == "committed" and set(location) != {"committed_path"}
+			) or (
+				row["evidence_status"] == "archive" and set(location) != {"archive_uri", "archive_sha256"}
+			):
+				raise CampaignContractError("campaign pilot evidence location/status schema is not exact")
 			evidence_digest = _sha256_text("campaign pilot evidence", row["evidence_sha256"])
 			if evidence_digest in seen_evidence:
 				raise CampaignContractError("campaign pilot evidence checksum is duplicated")
@@ -1215,6 +1331,10 @@ def select_campaign_pilot_repeats(
 			expected_carryover = "NONE" if expected_period == 1 else expected_order_tuple[expected_period - 2]
 			if row["order"] != expected_order or row["period"] != expected_period or row["carryover"] != expected_carryover:
 				raise CampaignContractError("campaign pilot schedule period/order/carryover is not preregistered")
+			try:
+				evidence_validator(row)
+			except Exception as error:
+				raise CampaignContractError("campaign pilot evidence revalidation failed") from error
 		median = statistics.median(values)
 		group_deviations = [abs(math.log(value / median)) for value in values]
 		deviations.extend(group_deviations)
@@ -1299,11 +1419,15 @@ def _validate_pilot_resource_evidence(value: object) -> dict[str, float | int]:
 	return result
 
 
-def validate_campaign_pilot_selection(
+def _validate_campaign_pilot_selection(
 	value: Mapping[str, object], *, preregistration_manifest: Mapping[str, object],
 	discovery_completion_receipt: Mapping[str, object],
+	pilot_evidence_validator: Callable[[Mapping[str, object]], None],
+	discovery_evidence_validator: Callable[[Mapping[str, object]], None],
 ) -> dict[str, object]:
 	"""Recompute S from its signed 120 canonical rows and require exact builder equality."""
+	if not callable(pilot_evidence_validator) or not callable(discovery_evidence_validator):
+		raise CampaignContractError("pilot selection validation requires live evidence validators")
 	selection = cast(dict[str, object], _canonical_json_value("pilot selection", value))
 	expected_fields = {
 		"schema", "selection_rule", "preregistration_manifest_sha256", "discovery_completion_sha256",
@@ -1319,6 +1443,7 @@ def validate_campaign_pilot_selection(
 	prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
 	completion = validate_discovery_completion_receipt(
 		discovery_completion_receipt, preregistration_manifest=prereg,
+		evidence_validator=discovery_evidence_validator,
 	)
 	if (
 		selection["preregistration_manifest_sha256"] != prereg["preregistration_manifest_sha256"]
@@ -1333,24 +1458,29 @@ def validate_campaign_pilot_selection(
 	if not isinstance(rows, list) or len(rows) != 120 or _canonical_sha256(rows) != selection["pilot_rows_sha256"]:
 		raise CampaignContractError("pilot selection rows are not exact")
 	rebuilt = select_campaign_pilot_repeats(
-		cast(Sequence[Mapping[str, object]], rows), lambda row: None,
+		cast(Sequence[Mapping[str, object]], rows), pilot_evidence_validator,
 		expected_manifest_hash=cast(str, prereg["preregistration_manifest_sha256"]),
 		expected_invocation_manifest_sha256=invocation_hash,
 		preregistration_manifest=prereg, discovery_completion_receipt=completion,
+		discovery_evidence_validator=discovery_evidence_validator,
 	)
 	if rebuilt != selection:
 		raise CampaignContractError("pilot selection is not the canonical builder result")
 	return selection
 
 
-def build_pilot_resource_reservation(
+def _build_pilot_resource_reservation(
 	*, pilot_selection_receipt: Mapping[str, object], preregistration_manifest: Mapping[str, object],
 	discovery_completion_receipt: Mapping[str, object],
+	pilot_evidence_validator: Callable[[Mapping[str, object]], None],
+	discovery_evidence_validator: Callable[[Mapping[str, object]], None],
 ) -> dict[str, object]:
 	"""Derive R from the exact revalidated evidence inventory committed by selection S."""
-	selection = validate_campaign_pilot_selection(
+	selection = _validate_campaign_pilot_selection(
 		pilot_selection_receipt, preregistration_manifest=preregistration_manifest,
 		discovery_completion_receipt=discovery_completion_receipt,
+		pilot_evidence_validator=pilot_evidence_validator,
+		discovery_evidence_validator=discovery_evidence_validator,
 	)
 	selection_hash = selection["pilot_selection_sha256"]
 	prereg_hash = _sha256_text("pilot preregistration", selection.get("preregistration_manifest_sha256"))
@@ -1386,31 +1516,38 @@ def build_pilot_resource_reservation(
 	return reservation
 
 
-def build_final_campaign_manifest(
+def _build_final_campaign_manifest(
 	*,
 	preregistration_manifest: Mapping[str, object],
 	pilot_selection_receipt: Mapping[str, object],
 	pilot_resource_reservation: Mapping[str, object],
 	discovery_completion_receipt: Mapping[str, object],
+	pilot_evidence_validator: Callable[[Mapping[str, object]], None],
+	discovery_evidence_validator: Callable[[Mapping[str, object]], None],
 ) -> dict[str, object]:
 	"""Build final manifest F solely from P, its pilot receipt, and measured reservation."""
 	prereg = validate_campaign_preregistration_manifest(preregistration_manifest)
 	prereg_hash = cast(str, prereg["preregistration_manifest_sha256"])
 	completion = validate_discovery_completion_receipt(
 		discovery_completion_receipt, preregistration_manifest=prereg,
+		evidence_validator=discovery_evidence_validator,
 	)
-	selection = validate_campaign_pilot_selection(
+	selection = _validate_campaign_pilot_selection(
 		pilot_selection_receipt, preregistration_manifest=prereg,
 		discovery_completion_receipt=completion,
+		pilot_evidence_validator=pilot_evidence_validator,
+		discovery_evidence_validator=discovery_evidence_validator,
 	)
 	selection_hash = cast(str, selection["pilot_selection_sha256"])
 	selected = cast(int, selection["selected_repeats"])
 	lineage_value = cast(dict[str, object], prereg["lineage"])
 
 	reservation = cast(dict[str, object], _canonical_json_value("pilot resource reservation", pilot_resource_reservation))
-	expected_reservation = build_pilot_resource_reservation(
+	expected_reservation = _build_pilot_resource_reservation(
 		pilot_selection_receipt=selection, preregistration_manifest=prereg,
 		discovery_completion_receipt=completion,
+		pilot_evidence_validator=pilot_evidence_validator,
+		discovery_evidence_validator=discovery_evidence_validator,
 	)
 	if reservation != expected_reservation:
 		raise CampaignContractError("pilot resource reservation is not the exact canonical derivation from S")

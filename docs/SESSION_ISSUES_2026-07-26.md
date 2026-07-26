@@ -51,3 +51,23 @@
 ### Docker lifecycle wall producer integration API
 
 `lifecycle_wall_seconds`는 계약 계층이 추정하거나 `cold_seconds + warm_seconds`로 대체하지 않는다. Docker runner가 각 lifecycle의 setup 직전 monotonic timestamp부터 validation, strict teardown, zero-resources 확인 직후까지 직접 측정하여 shared replicate manifest 최상위 필드에 기록해야 한다. Atomic ledger는 caller가 기록한 값을 서명된 bundle manifest의 `resource_evidence.lifecycle_wall_seconds`로 보존하고, HDFS receipt와 exact resume에서 동일 값을 재검증한다. `archive_bytes` 역시 artifact footprint 대체값으로 사용할 수 없다.
+
+## 이슈 3 — Caller-forged pilot evidence callback 및 pilot allocation 우회
+
+- **상태**: 해결
+- **환경/조건**: P v3 / D v1 / S v4 / R v3 / F v4, local+HDFS exact resume, Docker-only campaign facade.
+- **재현 절차**: 존재하지 않는 pilot path/digest 또는 변경한 invocation hash로 S를 재봉인한 뒤 R/F direct builder를 호출하거나, raw `AtomicEvidenceLedger.begin_attempt` 및 일반 facade `begin`에 pilot 형태 cell을 넘긴다.
+- **관측 증상**: 이전 S semantic rebuild가 no-op validator를 사용하여 수학적으로 일관된 fabricated 120 rows를 수용할 수 있었고, `pilot_class=` 문자열 prefix가 gate 여부를 결정해 phase purpose가 caller-controlled였다. P의 일부 nested numeric alias/extra key도 self-hash 재계산 후 의미 검증이 불완전했다.
+- **원인 분석**: 무결성 hash와 live ledger 존재성 검증의 경계가 분리되지 않았고, pilot phase를 typed API가 아니라 문자열로 추론했다. P validator는 top-level 중심이라 v2 builder가 보장했던 nested schema/type 규칙을 모두 재적용하지 않았다.
+- **해결 요약**:
+  - S 생성/재검증은 pilot 120 rows 및 D 336 rows 모두 live evidence validator를 반드시 호출한다. no-op fallback을 삭제했다.
+  - R/F direct builders를 private contract helper로 내리고, 지원되는 campaign API를 `CampaignHarnessAdapter.build_pilot_resource_reservation` 및 `build_final_campaign_manifest`로 한정했다. facade가 local/HDFS exact-resume validator를 주입한다.
+  - PerformanceKey의 exact key set과 `run_token`, evidence status/location exact schema를 검증한다.
+  - `begin_pilot` 전용 typed surface가 class/planner/workers/profile/repeat, Williams order/period, P/D/invocation lineage를 결정한다. 일반 `begin`은 pilot identity를 거부한다.
+  - raw ledger `begin_attempt`는 항상 거부하고 typed facade만 allocation capability를 가진다. final performance는 일반 facade `begin`에서 D 없이 계속 허용한다.
+  - P validator는 artifact/file/tree records, network, privacy, JVM, threads, endpoints, topology, oracle binding, resources, barriers, pilot seed/schedule를 exact nested schema 및 strict int/bool/float 타입으로 재검증한다.
+- **수정 파일**: `atomic_ledger.py`, `determinism_contract.py`, `hdfs_archive.py`, 관련 세 테스트 및 본 문서.
+- **검증**: fabricated path, relabelled invocation, numeric aliases, nested extra key, raw ledger bypass, generic pilot begin, invalid typed pilot identity RED→GREEN 테스트와 전체 suite/static 검사를 수행한다.
+- **잔여 이슈**: Docker lifecycle driver는 pilot에 `begin_pilot`만 사용하고 R/F는 facade methods만 호출하도록 통합해야 한다.
+- **잠재 회귀 위험**: raw ledger allocation 또는 이전 direct R/F helper를 사용한 외부 호출자는 fail-closed 한다. `CampaignHarnessAdapter.integration_operations` 및 harness integration test로 감지한다.
+- **적용 원칙/의사결정 근거**: planner/runtime 동작이나 candidate space는 변경하지 않고 evidence 및 phase-transition control plane만 강화했다. runtime fallback은 추가하지 않았다.
