@@ -44,6 +44,7 @@ COMMAND_SURFACES = ("compose", "campaign", "docker_lifecycle", "systemds_snapsho
 ENDPOINT_NAMES = ("coordinator", "worker_1", "worker_2", "worker_3", "worker_4")
 PILOT_CLASSES = ("cheap", "medium", "heavy")
 PILOT_REGIMES = ((1, "lan"), (4, "wan_mid"))
+PILOT_REPRESENTATIVE_WORKLOADS = {"cheap": "kmeans", "medium": "logreg", "heavy": "als"}
 SEED_STREAMS = ("schedule", "data_generation", "workload_random")
 
 
@@ -565,7 +566,14 @@ def build_campaign_manifest(
 		raise CampaignContractError("privacy settings must freeze public-test exclusion and forbid runtime fallback")
 	if set(jvm_settings) != {"java_opts", "heap_bytes", "coordinator_fresh"} or jvm_settings["coordinator_fresh"] is not True:
 		raise CampaignContractError("JVM settings schema is not exact")
-	if not isinstance(jvm_settings["java_opts"], list) or not jvm_settings["java_opts"] or not isinstance(jvm_settings["heap_bytes"], int) or cast(int, jvm_settings["heap_bytes"]) <= 0:
+	if (
+		not isinstance(jvm_settings["java_opts"], list)
+		or not jvm_settings["java_opts"]
+		or any(not isinstance(option, str) or not option.strip() for option in cast(list[object], jvm_settings["java_opts"]))
+		or isinstance(jvm_settings["heap_bytes"], bool)
+		or not isinstance(jvm_settings["heap_bytes"], int)
+		or cast(int, jvm_settings["heap_bytes"]) <= 0
+	):
 		raise CampaignContractError("JVM values are invalid")
 	if set(thread_settings) != {"blas_threads", "omp_threads", "systemds_threads"}:
 		raise CampaignContractError("thread settings schema is not exact")
@@ -581,8 +589,14 @@ def build_campaign_manifest(
 		latency_value, bandwidth_value = float(cast(int | float, latency)), float(cast(int | float, bandwidth))
 		if not math.isfinite(latency_value) or not math.isfinite(bandwidth_value) or latency_value < 0 or bandwidth_value <= 0:
 			raise CampaignContractError(f"network costs are invalid for {profile}")
-	for name in ("required_free_inodes", "wall_time_seconds", "max_io_utilization", "max_combined_io_bps"):
-		_positive_finite(f"resource setting {name}", resource_settings[name])
+	inodes = resource_settings["required_free_inodes"]
+	if isinstance(inodes, bool) or not isinstance(inodes, int) or inodes <= 0:
+		raise CampaignContractError("resource setting required_free_inodes must be a positive integer")
+	_positive_finite("resource setting wall_time_seconds", resource_settings["wall_time_seconds"])
+	io_limit = _positive_finite("resource setting max_io_utilization", resource_settings["max_io_utilization"])
+	if io_limit > 1:
+		raise CampaignContractError("resource setting max_io_utilization must be in (0, 1]")
+	_positive_finite("resource setting max_combined_io_bps", resource_settings["max_combined_io_bps"])
 	if set(oracle_policies) != set(CAMPAIGN_WORKLOADS):
 		raise CampaignContractError("oracle_policies must cover every exact workload")
 	validated_policies: dict[str, dict[str, object]] = {}
@@ -697,34 +711,40 @@ def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, obje
 
 
 def select_campaign_pilot_repeats(
-	rows: Sequence[Mapping[str, object]], evidence_validator: Callable[[Mapping[str, object]], None]
+	rows: Sequence[Mapping[str, object]], evidence_validator: Callable[[Mapping[str, object]], None],
+	*, expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
 ) -> dict[str, object]:
 	"""Select one frozen repeat count from the preregistered cross-campaign pilot."""
 	required = {
-		"pilot_class", "planner", "workers", "profile", "cell", "pilot_repeat", "warm_seconds",
+		"pilot_class", "workload", "planner", "workers", "profile", "cell", "pilot_repeat", "warm_seconds",
 		"period", "order", "carryover", "host_load", "lifecycle", "evidence_status", "evidence_sha256",
-		"identity", "evidence_location",
+		"identity", "evidence_location", "invocation_manifest_sha256",
 	}
 	if not callable(evidence_validator):
 		raise CampaignContractError("campaign pilot requires an evidence revalidation callback")
+	_sha256_text("expected campaign manifest", expected_manifest_hash)
+	_sha256_text("expected pilot invocation manifest", expected_invocation_manifest_sha256)
 	if len(rows) != len(PILOT_CLASSES) * len(CAMPAIGN_PLANNERS) * len(PILOT_REGIMES) * 5:
 		raise CampaignContractError("campaign pilot requires the exact preregistered 120-row set")
 	groups: dict[tuple[str, str, int, str, str], list[Mapping[str, object]]] = {}
 	for row in rows:
 		if set(row) != required:
 			raise CampaignContractError("campaign pilot row schema is not exact")
-		pilot_class, planner, workers, profile, cell = (
-			row["pilot_class"], row["planner"], row["workers"], row["profile"], row["cell"]
+		pilot_class, workload, planner, workers, profile, cell = (
+			row["pilot_class"], row["workload"], row["planner"], row["workers"], row["profile"], row["cell"]
 		)
-		if pilot_class not in PILOT_CLASSES or planner not in CAMPAIGN_PLANNERS or (workers, profile) not in PILOT_REGIMES:
+		if (
+			pilot_class not in PILOT_CLASSES or workload != PILOT_REPRESENTATIVE_WORKLOADS.get(cast(str, pilot_class))
+			or planner not in CAMPAIGN_PLANNERS or (workers, profile) not in PILOT_REGIMES
+		):
 			raise CampaignContractError("campaign pilot contains a non-preregistered class/planner/regime")
-		expected_cell = f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}"
+		expected_cell = f"pilot_class={pilot_class}|workload={workload}|planner={planner}|workers={workers}|profile={profile}"
 		if cell != expected_cell:
 			raise CampaignContractError("campaign pilot cell identity is not canonical")
 		key = (cast(str, pilot_class), cast(str, planner), cast(int, workers), cast(str, profile), cast(str, cell))
 		groups.setdefault(key, []).append(row)
 	expected_groups = {
-		(pilot_class, planner, workers, profile, f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}")
+		(pilot_class, planner, workers, profile, f"pilot_class={pilot_class}|workload={PILOT_REPRESENTATIVE_WORKLOADS[pilot_class]}|planner={planner}|workers={workers}|profile={profile}")
 		for pilot_class in PILOT_CLASSES for planner in CAMPAIGN_PLANNERS for workers, profile in PILOT_REGIMES
 	}
 	if set(groups) != expected_groups:
@@ -740,6 +760,13 @@ def select_campaign_pilot_repeats(
 			raise CampaignContractError("each campaign pilot group requires exact repeats 1..5")
 		values: list[float] = []
 		for repeat_index, row in enumerate(ordered):
+			identity_value = row["identity"]
+			if not isinstance(identity_value, Mapping):
+				raise CampaignContractError("campaign pilot identity is invalid")
+			if identity_value.get("manifest_hash") != expected_manifest_hash:
+				raise CampaignContractError("campaign pilot mixes frozen campaign manifests")
+			if row["invocation_manifest_sha256"] != expected_invocation_manifest_sha256:
+				raise CampaignContractError("campaign pilot mixes invocation manifests")
 			try:
 				evidence_validator(row)
 			except Exception as error:
@@ -775,6 +802,11 @@ def select_campaign_pilot_repeats(
 		deviations.extend(group_deviations)
 		log_values = [math.log(value) for value in values]
 		overall_log = statistics.fmean(log_values)
+		def grouped_log_effect(field_name: str) -> dict[str, float]:
+			grouped: dict[str, list[float]] = {}
+			for index, row in enumerate(ordered):
+				grouped.setdefault(str(row[field_name]), []).append(log_values[index] - overall_log)
+			return {name: statistics.fmean(effects) for name, effects in grouped.items()}
 		diagnostic_effects: dict[str, dict[str, dict[str, float]]] = {}
 		for diagnostic_name in ("host_load", "lifecycle"):
 			field_names = sorted(cast(Mapping[str, object], ordered[0][diagnostic_name]))
@@ -801,9 +833,9 @@ def select_campaign_pilot_repeats(
 			"host_load": [row["host_load"] for row in ordered], "lifecycle": [row["lifecycle"] for row in ordered],
 			"effects": {
 				"first_run_log_effect": log_values[0] - statistics.fmean(log_values[1:]),
-				"period_log_effect": {str(row["period"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
-				"order_log_effect": {str(row["order"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
-				"carryover_log_effect": {str(row["carryover"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
+				"period_log_effect": grouped_log_effect("period"),
+				"order_log_effect": grouped_log_effect("order"),
+				"carryover_log_effect": grouped_log_effect("carryover"),
 			},
 			"diagnostic_effects": diagnostic_effects,
 		})
@@ -818,6 +850,9 @@ def select_campaign_pilot_repeats(
 			"row_count": 120, "pilot_classes": list(PILOT_CLASSES), "planners": list(CAMPAIGN_PLANNERS),
 			"regimes": [{"workers": workers, "profile": profile} for workers, profile in PILOT_REGIMES],
 			"orders": [list(order) for order in preregistered_orders],
+			"representative_workloads": dict(PILOT_REPRESENTATIVE_WORKLOADS),
+			"manifest_hash": expected_manifest_hash,
+			"invocation_manifest_sha256": expected_invocation_manifest_sha256,
 		},
 		"q95": q95, "eta": eta, "selected_repeats": selected, "diagnostics": diagnostics,
 	}

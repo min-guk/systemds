@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
-from typing import cast
+from typing import Any, cast
 
 from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeDecision, ResumeState
 from scripts.federated_campaign.determinism_contract import CAMPAIGN_PLANNERS, build_block_counterbalanced_schedule, build_counterbalanced_schedule
@@ -402,6 +402,8 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		discovery_metric = cast(dict[str, object], metrics["discovery"])
 		self.assertEqual(0.5, discovery_metric["seconds"])
 		self.assertIsNone(metrics["warm"])
+		self.assertIsNone(row["host_load"])
+		self.assertIsNone(row["lifecycle"])
 
 	def test_harness_adapter_archives_valid_failure_and_never_stale_backfills(self):
 		_, success = self._commit(1, "token-a")
@@ -423,6 +425,16 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual("process_exit", failure_metrics["category"])
 		self.assertEqual(23, failure_metrics["return_code"])
 		self.assertRegex(cast(str, failure_metrics["parser_sha256"]), r"^[0-9a-f]{64}$")
+		forged_success = facade.normalize_resume_row(
+			ResumeDecision(ResumeState.LATEST_SUCCESS, decision.attempt, dict(decision.evidence or {})),
+			requested_identity=lease.key.as_dict(), schedule=None,
+			host_load={"forged": 999}, lifecycle={"forged": 999},
+		)
+		self.assertFalse(forged_success["valid"])
+		self.assertTrue(forged_success["failure"])
+		self.assertEqual(ResumeState.LATEST_FAILED.value, forged_success["resume_state"])
+		self.assertIsNone(forged_success["host_load"])
+		self.assertIsNone(forged_success["lifecycle"])
 
 	def test_normalization_rejects_identity_mismatch_and_revalidates_local_bytes(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -440,13 +452,52 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		blocker = cast(dict[str, object], row["blocker"])
 		self.assertEqual("IDENTITY_MISMATCH", blocker["code"])
 		(committed / "discovery" / "output.bin").write_bytes(b"tampered")
+		forged_evidence = dict(decision.evidence or {})
+		forged_evidence["discovery_metric"] = {"seconds": 999999}
 		row = facade.normalize_resume_row(
-			decision, requested_identity=lease.key.as_dict(), schedule=None,
-			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
+			ResumeDecision(ResumeState.LATEST_SUCCESS, decision.attempt, forged_evidence),
+			requested_identity=lease.key.as_dict(), schedule=None,
+			host_load={"io": 999999}, lifecycle={"warm": 999999},
 		)
 		self.assertFalse(row["valid"])
 		blocker = cast(dict[str, object], row["blocker"])
 		self.assertEqual("LOCAL_REVALIDATION_FAILED", blocker["code"])
+		metrics = cast(dict[str, object], row["metrics"])
+		self.assertIsNone(metrics["discovery"])
+		self.assertIsNone(metrics["warm"])
+		self.assertIsNone(row["host_load"])
+		self.assertIsNone(row["lifecycle"])
+		location = cast(dict[str, object], row["evidence_location"])
+		self.assertIsNone(location["committed_path"])
+
+	def test_pilot_evidence_schedule_must_match_preregistered_row(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		cell = "pilot_class=cheap|workload=kmeans|planner=DP|workers=1|profile=lan"
+		lease = facade.begin(
+			kind="performance", cell=cell,
+			manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=99, period=4, order="WRONG",
+		)
+		cold = self._phase("pilot-wrong-cold", "docker_e2e", 2.0)
+		warm = self._phase("pilot-wrong-warm", "systemds_total_execution_time", 1.0)
+		shared = self.root / "pilot-wrong-shared.json"
+		shared.write_text(json.dumps({
+			"identity": lease.key.as_dict(),
+			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+		}), encoding="utf-8")
+		committed = facade.publish_performance_success(lease, cold, warm, shared)
+		manifest = self.ledger.validate_committed(committed)
+		row = {
+			"pilot_class": "cheap", "workload": "kmeans", "planner": "DP", "workers": 1, "profile": "lan",
+			"cell": lease.key.cell, "pilot_repeat": 1, "period": 1, "order": "DP>FedAll>Heuristic>MinST",
+			"identity": lease.key.as_dict(), "evidence_status": "committed",
+			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
+			"evidence_location": {"committed_path": str(committed)}, "warm_seconds": 1.0,
+			"invocation_manifest_sha256": manifest["invocation_manifest_sha256"],
+		}
+		with self.assertRaisesRegex(ArchiveContractError, "scheduling identity"):
+			facade._verify_pilot_row(row)
 
 	def test_duplicate_same_attempt_archive_receipts_are_ambiguous(self):
 		adapter = self._adapter(retention=0)
@@ -463,6 +514,32 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
 		self.assertIn("duplicate archived receipts", str(decision.detail))
 
+	def test_same_attempt_local_and_archive_compare_complete_validated_manifests(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=1))
+		lease = facade.begin(
+			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
+		)
+		committed = facade.publish_discovery_success(lease, self._phase("coherent-local", "discovery_correctness", 0.5))
+		facade.archive(committed)
+		phase = committed / "discovery"
+		raw = b"docker_e2e=0.75\n"
+		metric = json.dumps({"kind": "discovery_correctness", "seconds": 0.75}).encode()
+		(phase / "raw_coordinator.log").write_bytes(raw)
+		(phase / "metric.json").write_bytes(metric)
+		checksums = json.loads((phase / "checksums.json").read_text(encoding="utf-8"))
+		checksums["raw_coordinator.log"] = hashlib.sha256(raw).hexdigest()
+		checksums["metric.json"] = hashlib.sha256(metric).hexdigest()
+		(phase / "checksums.json").write_text(json.dumps(checksums, sort_keys=True), encoding="utf-8")
+		manifest = json.loads((committed / "bundle_manifest.json").read_text(encoding="utf-8"))
+		manifest["discovery_metric"] = {"kind": "discovery_correctness", "seconds": 0.75, "return_code": 0}
+		manifest["discovery_checksums_sha256"] = hashlib.sha256((phase / "checksums.json").read_bytes()).hexdigest()
+		(committed / "bundle_manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+		validated_metric = cast(dict[str, object], self.ledger.validate_committed(committed)["discovery_metric"])
+		self.assertEqual(0.75, validated_metric["seconds"])
+		decision = facade.exact_resume(lease.key)
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
+		self.assertIn("same-attempt disagreement", str(decision.detail))
+
 	def test_legacy_v1_local_success_cannot_satisfy_v2_resume(self):
 		key, _ = self._commit(1, "legacy-token")
 		decision = self._adapter().exact_resume(key)
@@ -474,23 +551,27 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		rows = []
 		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
 		for pilot_class in ("cheap", "medium", "heavy"):
+			representative = {"cheap": "kmeans", "medium": "logreg", "heavy": "als"}[pilot_class]
 			for planner in CAMPAIGN_PLANNERS:
 				for workers, profile in ((1, "lan"), (4, "wan_mid")):
-					cell = f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}"
+					cell = f"pilot_class={pilot_class}|workload={representative}|planner={planner}|workers={workers}|profile={profile}"
 					for repeat, order_tuple in enumerate(orders, 1):
 						period = order_tuple.index(planner) + 1
-						identity = PerformanceKey(cell, repeat, period, ">".join(order_tuple), "manifest-a", repeat, f"token-{len(rows)}").as_dict()
+						identity = PerformanceKey(cell, repeat, period, ">".join(order_tuple), "a" * 64, repeat, f"token-{len(rows)}").as_dict()
 						rows.append({
-							"pilot_class": pilot_class, "planner": planner, "workers": workers, "profile": profile,
+							"pilot_class": pilot_class, "workload": representative, "planner": planner, "workers": workers, "profile": profile,
 							"cell": cell, "pilot_repeat": repeat, "warm_seconds": 1.0, "period": period,
 							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
 							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 1, "write_bytes_per_second": 1},
 							"lifecycle": {"cold_seconds": 2, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
 							"identity": identity, "evidence_location": {"committed_path": f"/forged/{len(rows)+1}"},
+							"invocation_manifest_sha256": "d" * 64,
 						})
 		with self.assertRaisesRegex(ArchiveContractError, "revalidation"):
-			facade.select_pilot_repeats(rows)
+			facade.select_pilot_repeats(
+				rows, expected_manifest_hash="a" * 64, expected_invocation_manifest_sha256="d" * 64,
+			)
 
 	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -588,6 +669,40 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				max_combined_io_bps=100,
 			)
 		self.assertEqual("snapshot", self.backend.events[-1][0])
+
+	def test_preflight_rejects_nonfinite_boolean_and_out_of_range_resources(self):
+		adapter = self._adapter()
+		valid: dict[str, Any] = dict(
+			required_free_bytes=100, required_free_inodes=10, required_seconds=100.0,
+			max_io_utilization=0.1, max_combined_io_bps=100.0,
+		)
+		bad_requirements = (
+			{"required_free_bytes": True}, {"required_free_inodes": True}, {"required_free_inodes": 1.5},
+			{"required_seconds": True}, {"required_seconds": float("nan")}, {"max_io_utilization": float("inf")},
+			{"max_io_utilization": 1.1}, {"max_combined_io_bps": float("nan")},
+		)
+		for override in bad_requirements:
+			arguments = dict(valid)
+			arguments.update(override)
+			with self.assertRaises(ArchiveContractError):
+				adapter.preflight_next_lifecycle(
+					lambda: HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0), **arguments,
+				)
+		bad_snapshots = (
+			HostResourceSnapshot(cast(int, True), 100, 1000, 0.01, 0, 0),
+			HostResourceSnapshot(6 * 1024**3, cast(int, True), 1000, 0.01, 0, 0),
+			HostResourceSnapshot(6 * 1024**3, 100, cast(float, True), 0.01, 0, 0),
+			HostResourceSnapshot(6 * 1024**3, 100, float("nan"), 0.01, 0, 0),
+			HostResourceSnapshot(6 * 1024**3, 100, 1000, cast(float, True), 0, 0),
+			HostResourceSnapshot(6 * 1024**3, 100, 1000, float("inf"), 0, 0),
+			HostResourceSnapshot(6 * 1024**3, 100, 1000, 1.1, 0, 0),
+			HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, float("nan"), 0),
+			HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, cast(float, True), 0),
+			HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, float("inf")),
+		)
+		for snapshot in bad_snapshots:
+			with self.assertRaises(ArchiveContractError):
+				adapter.preflight_next_lifecycle(lambda snapshot=snapshot: snapshot, **valid)
 
 
 if __name__ == "__main__":

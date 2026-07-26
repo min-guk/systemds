@@ -344,13 +344,19 @@ class HdfsArchiveAdapter:
 				ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt,
 				detail="duplicate archived receipts for the same latest attempt",
 			)
+		try:
+			archive_manifest = self._verify_receipt(latest_archived[0])
+		except ArchiveContractError as error:
+			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail=str(error))
 		if local.attempt == latest_attempt and local.evidence is not None:
-			local_identity = local.evidence.get("identity")
-			local_status = local.evidence.get("status")
-			if any(
-				receipt.get("identity") != local_identity or receipt.get("status") != local_status
-				for receipt in latest_archived
-			):
+			committed_path = local.evidence.get("committed_path")
+			if not isinstance(committed_path, str):
+				return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="local evidence has no committed path")
+			try:
+				local_manifest = self.ledger.validate_committed(Path(committed_path), require_success=False)
+			except LedgerContractError as error:
+				return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail=f"local evidence validation failed: {error}")
+			if local_manifest != archive_manifest:
 				return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="local/archive same-attempt disagreement")
 		if local.attempt == latest_attempt and local.state in (
 			ResumeState.IN_PROGRESS_OR_ABANDONED,
@@ -358,10 +364,7 @@ class HdfsArchiveAdapter:
 			ResumeState.CORRUPT_OR_AMBIGUOUS,
 		):
 			return self._require_v2_resume(local)
-		try:
-			manifest = self._verify_receipt(latest_archived[0])
-		except ArchiveContractError as error:
-			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail=str(error))
+		manifest = archive_manifest
 		manifest["archive_uri"] = latest_archived[0]["archive_uri"]
 		manifest["archive_sha256"] = latest_archived[0]["archive_sha256"]
 		if not self._is_v2_manifest(manifest):
@@ -401,7 +404,35 @@ class HdfsArchiveAdapter:
 	) -> HostResourceSnapshot:
 		for receipt in self.catalog():
 			self._verify_receipt(receipt)
+		if isinstance(required_free_bytes, bool) or not isinstance(required_free_bytes, int) or required_free_bytes <= 0:
+			raise ArchiveContractError("required free bytes must be a positive integer")
+		if isinstance(required_free_inodes, bool) or not isinstance(required_free_inodes, int) or required_free_inodes <= 0:
+			raise ArchiveContractError("required free inodes must be a positive integer")
+		for name, value in (
+			("required seconds", required_seconds),
+			("maximum I/O utilization", max_io_utilization),
+			("maximum combined I/O throughput", max_combined_io_bps),
+		):
+			if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+				raise ArchiveContractError(f"{name} must be positive and finite")
+		if max_io_utilization > 1:
+			raise ArchiveContractError("maximum I/O utilization must be in (0, 1]")
 		snapshot = snapshot_provider()
+		if (
+			isinstance(snapshot.free_bytes, bool) or not isinstance(snapshot.free_bytes, int) or snapshot.free_bytes < 0
+			or isinstance(snapshot.free_inodes, bool) or not isinstance(snapshot.free_inodes, int) or snapshot.free_inodes < 0
+		):
+			raise ArchiveContractError("host disk snapshot is invalid")
+		for name, value in (
+			("remaining seconds", snapshot.remaining_seconds),
+			("I/O utilization", snapshot.io_utilization),
+			("read throughput", snapshot.read_bytes_per_second),
+			("write throughput", snapshot.write_bytes_per_second),
+		):
+			if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+				raise ArchiveContractError(f"host {name} snapshot is invalid")
+		if snapshot.io_utilization > 1:
+			raise ArchiveContractError("host I/O utilization snapshot must be in [0, 1]")
 		if snapshot.free_bytes < max(required_free_bytes, ABSOLUTE_DISK_FLOOR_BYTES):
 			raise ArchiveContractError("host free-byte resource gate failed")
 		if snapshot.free_inodes < required_free_inodes:
@@ -663,9 +694,15 @@ class CampaignHarnessAdapter:
 				checked += 1
 		return {"planner": planner, "prior_planners": list(CAMPAIGN_PLANNERS[:planner_index]), "verified_cells": checked}
 
-	def select_pilot_repeats(self, rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+	def select_pilot_repeats(
+		self, rows: Sequence[Mapping[str, object]], *,
+		expected_manifest_hash: str, expected_invocation_manifest_sha256: str,
+	) -> dict[str, object]:
 		try:
-			return select_campaign_pilot_repeats(rows, self._verify_pilot_row)
+			return select_campaign_pilot_repeats(
+				rows, self._verify_pilot_row, expected_manifest_hash=expected_manifest_hash,
+				expected_invocation_manifest_sha256=expected_invocation_manifest_sha256,
+			)
 		except CampaignContractError as error:
 			raise ArchiveContractError(str(error)) from error
 
@@ -692,12 +729,27 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("pilot evidence identity is invalid") from error
 		if key.as_dict() != identity:
 			raise ArchiveContractError("pilot evidence identity schema is not exact")
+		if not isinstance(key, PerformanceKey):
+			raise ArchiveContractError("campaign pilot requires performance evidence")
+		expected_cell = (
+			f"pilot_class={row.get('pilot_class')}|workload={row.get('workload')}|planner={row.get('planner')}|"
+			f"workers={row.get('workers')}|profile={row.get('profile')}"
+		)
+		if (
+			key.cell != row.get("cell") or key.cell != expected_cell
+			or key.lifecycle_replicate != row.get("pilot_repeat")
+			or key.period != row.get("period")
+			or key.order != row.get("order")
+		):
+			raise ArchiveContractError("pilot evidence scheduling identity disagrees with preregistered row")
 		decision = self.exact_resume(key)
 		if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
 			raise ArchiveContractError("pilot evidence is not a freshly verified success")
 		evidence = decision.evidence
 		if evidence.get("identity") != identity:
 			raise ArchiveContractError("pilot evidence identity changed during revalidation")
+		if evidence.get("invocation_manifest_sha256") != row.get("invocation_manifest_sha256"):
+			raise ArchiveContractError("pilot invocation manifest binding changed during revalidation")
 		status, digest = row.get("evidence_status"), row.get("evidence_sha256")
 		if status == "committed":
 			if set(location_value) != {"committed_path"} or evidence.get("committed_path") != location_value.get("committed_path"):
@@ -801,46 +853,56 @@ class CampaignHarnessAdapter:
 					evidence = revalidated
 		else:
 			blocker = {"code": decision.state.value, "detail": decision.detail or "resume evidence is not valid"}
-		verified_success = decision.state is ResumeState.LATEST_SUCCESS and blocker is None
-		verified_failure = decision.state is ResumeState.LATEST_FAILED and blocker is None
+		evidence_revalidated = blocker is None
+		canonical_status = evidence.get("status") if evidence_revalidated else None
+		verified_success = canonical_status == "success"
+		verified_failure = canonical_status == "failed"
 		if verified_failure:
 			blocker = {
 				"code": "EXECUTION_FAILURE", "detail": evidence.get("failure_category", "failed execution"),
 			}
+		normalized_state = (
+			ResumeState.LATEST_SUCCESS.value if verified_success
+			else ResumeState.LATEST_FAILED.value if verified_failure
+			else decision.state.value
+		)
+		trusted_evidence = evidence if evidence_revalidated else {}
 		row: dict[str, object] = {
 			"schema": "systemds-federated-normalized-row/v2",
 			"kind": kind,
 			"identity": identity,
-			"resume_state": decision.state.value,
+			"resume_state": normalized_state,
 			"valid": verified_success,
 			"failure": (
-				decision.state in (ResumeState.LATEST_FAILED, ResumeState.CORRUPT_OR_AMBIGUOUS)
+				verified_failure or decision.state is ResumeState.CORRUPT_OR_AMBIGUOUS
 				or (terminal and blocker is not None)
 			),
 			"detail": decision.detail,
 			"blocker": blocker,
 			"schedule": dict(schedule) if schedule is not None else None,
 			"metrics": {
-				"discovery": evidence.get("discovery_metric"),
-				"cold": evidence.get("cold_metric"),
-				"warm": evidence.get("warm_metric"),
+				"discovery": trusted_evidence.get("discovery_metric"),
+				"cold": trusted_evidence.get("cold_metric"),
+				"warm": trusted_evidence.get("warm_metric"),
 				"failure": {
-					"return_code": evidence.get("return_code"),
-					"category": evidence.get("failure_category"),
-					"semantic_oracle": evidence.get("semantic_oracle_summary"),
-					"semantic_oracle_sha256": evidence.get("semantic_oracle_sha256"),
-					"parser": evidence.get("parser_summary"),
-					"parser_sha256": evidence.get("parser_sha256"),
-					"scan": evidence.get("scan_summary"),
-					"scan_sha256": evidence.get("scan_sha256"),
-				} if decision.state is ResumeState.LATEST_FAILED else None,
+					"return_code": trusted_evidence.get("return_code"),
+					"category": trusted_evidence.get("failure_category"),
+					"semantic_oracle": trusted_evidence.get("semantic_oracle_summary"),
+					"semantic_oracle_sha256": trusted_evidence.get("semantic_oracle_sha256"),
+					"parser": trusted_evidence.get("parser_summary"),
+					"parser_sha256": trusted_evidence.get("parser_sha256"),
+					"scan": trusted_evidence.get("scan_summary"),
+					"scan_sha256": trusted_evidence.get("scan_sha256"),
+				} if verified_failure else None,
 			},
-			"host_load": dict(host_load),
-			"lifecycle": dict(lifecycle),
+			# Host/lifecycle diagnostics are not part of the signed evidence bundle yet.
+			# Never promote caller-supplied values into a normalized evidence row.
+			"host_load": None,
+			"lifecycle": None,
 			"evidence_location": {
-				"committed_path": evidence.get("committed_path"),
-				"archive_uri": evidence.get("archive_uri"),
-				"archive_sha256": evidence.get("archive_sha256"),
+				"committed_path": trusted_evidence.get("committed_path"),
+				"archive_uri": trusted_evidence.get("archive_uri"),
+				"archive_sha256": trusted_evidence.get("archive_sha256"),
 			},
 		}
 		if kind == "discovery" and schedule is not None:
@@ -883,9 +945,8 @@ class CampaignHarnessAdapter:
 			if (
 				manifest.get("identity") != identity
 				or not self._archive._is_v2_manifest(manifest)
-				or manifest.get("status") != evidence.get("status")
 			):
-				return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "revalidated evidence changed identity, schema, or status"}, None
+				return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "revalidated evidence changed identity or schema"}, None
 		canonical = dict(validated[0])
 		if any(manifest != canonical for manifest in validated[1:]):
 			return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "local and archived manifests disagree"}, None

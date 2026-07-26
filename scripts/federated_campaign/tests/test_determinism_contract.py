@@ -5,6 +5,8 @@
 
 import hashlib
 import json
+import math
+import statistics
 import tempfile
 import unittest
 from pathlib import Path
@@ -387,6 +389,19 @@ class DeterminismContractTest(unittest.TestCase):
 		with self.assertRaisesRegex(CampaignContractError, "seed streams"):
 			build_campaign_manifest(**inputs)
 
+	def test_campaign_v2_manifest_rejects_unsafe_resource_and_jvm_values(self):
+		for field, value in (("required_free_inodes", True), ("required_free_inodes", 1.5), ("required_free_inodes", 0),
+			("max_io_utilization", float("nan")), ("max_io_utilization", 1.1), ("max_combined_io_bps", float("inf"))):
+			inputs = self._campaign_v2_inputs()
+			inputs["resource_settings"][field] = value
+			with self.assertRaises(CampaignContractError):
+				build_campaign_manifest(**inputs)
+		for field, value in (("heap_bytes", True), ("java_opts", [123]), ("java_opts", [""])):
+			inputs = self._campaign_v2_inputs()
+			inputs["jvm_settings"][field] = value
+			with self.assertRaises(CampaignContractError):
+				build_campaign_manifest(**inputs)
+
 	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
 		def rows(values):
 			return [{
@@ -404,25 +419,33 @@ class DeterminismContractTest(unittest.TestCase):
 	def test_campaign_pilot_freezes_cross_planner_regime_q95_diagnostics(self):
 		rows = []
 		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
+		representatives = {"cheap": "kmeans", "medium": "logreg", "heavy": "als"}
+		manifest_hash = "a" * 64
+		invocation_hash = "d" * 64
 		for pilot_class in ("cheap", "medium", "heavy"):
 			for planner in CAMPAIGN_PLANNERS:
 				for workers, profile in ((1, "lan"), (4, "wan_mid")):
-					cell = f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}"
+					workload = representatives[pilot_class]
+					cell = f"pilot_class={pilot_class}|workload={workload}|planner={planner}|workers={workers}|profile={profile}"
 					for repeat in range(1, 6):
 						order_tuple = orders[repeat - 1]
 						period = order_tuple.index(planner) + 1
 						rows.append({
-							"pilot_class": pilot_class, "planner": planner, "workers": workers,
+							"pilot_class": pilot_class, "workload": workload, "planner": planner, "workers": workers,
 							"profile": profile, "cell": cell, "pilot_repeat": repeat,
 							"warm_seconds": 100 + (repeat - 3) * 0.5, "period": period,
 							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
 							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
 							"lifecycle": {"cold_seconds": 110, "warm_seconds": 100 + (repeat - 3) * 0.5, "coordinator_restart_count": 1, "worker_restart_count": 1},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
-							"identity": {"kind": "performance", "cell": cell, "attempt": repeat},
+							"identity": {"kind": "performance", "cell": cell, "attempt": repeat, "manifest_hash": manifest_hash},
 							"evidence_location": {"committed_path": f"/verified/{len(rows)+1}"},
+							"invocation_manifest_sha256": invocation_hash,
 						})
-		select = lambda candidate_rows: select_campaign_pilot_repeats(candidate_rows, lambda row: None)
+		select = lambda candidate_rows: select_campaign_pilot_repeats(
+			candidate_rows, lambda row: None, expected_manifest_hash=manifest_hash,
+			expected_invocation_manifest_sha256=invocation_hash,
+		)
 		selection = select(rows)
 		self.assertEqual(3, selection["selected_repeats"])
 		diagnostics = _list(selection["diagnostics"])
@@ -449,6 +472,30 @@ class DeterminismContractTest(unittest.TestCase):
 		bad_host[0]["host_load"] = {"io_utilization": float("nan"), "read_bytes_per_second": 10, "write_bytes_per_second": 20}
 		with self.assertRaisesRegex(CampaignContractError, "finite"):
 			select(bad_host)
+		mixed_manifest = [dict(row) for row in rows]
+		mixed_manifest[0]["identity"] = dict(cast(dict[str, object], mixed_manifest[0]["identity"]), manifest_hash="b" * 64)
+		with self.assertRaisesRegex(CampaignContractError, "mixes frozen"):
+			select(mixed_manifest)
+		mixed_invocation = [dict(row) for row in rows]
+		mixed_invocation[0]["invocation_manifest_sha256"] = "e" * 64
+		with self.assertRaisesRegex(CampaignContractError, "mixes invocation"):
+			select(mixed_invocation)
+		wrong_workload = [dict(row) for row in rows]
+		wrong_workload[0]["workload"] = "lm"
+		with self.assertRaisesRegex(CampaignContractError, "non-preregistered"):
+			select(wrong_workload)
+		first_effects = _dict(first_diagnostic["effects"])
+		for field, effect_name in (("period", "period_log_effect"), ("order", "order_log_effect"), ("carryover", "carryover_log_effect")):
+			first_group = [row for row in rows if row["cell"] == first_diagnostic["cell"]]
+			logs = [math.log(cast(float, row["warm_seconds"])) for row in first_group]
+			overall = statistics.fmean(logs)
+			expected: dict[str, list[float]] = {}
+			for index, row in enumerate(first_group):
+				expected.setdefault(str(row[field]), []).append(logs[index] - overall)
+			self.assertEqual(
+				{name: statistics.fmean(values) for name, values in expected.items()},
+				_dict(first_effects[effect_name]),
+			)
 		for row in rows:
 			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 2
 			row["lifecycle"]["warm_seconds"] = row["warm_seconds"]
