@@ -302,6 +302,21 @@ class AtomicEvidenceLedger:
 		manifest["committed_path"] = record["path"]
 		return manifest
 
+	def record_summaries(self) -> list[dict[str, object]]:
+		"""Return current valid/invalid local record facts for archive arbitration."""
+		return self._inspect_records(self._load_prior_index())
+
+	def validate_committed(self, record_dir: Path) -> dict[str, object]:
+		"""Validate a committed-format directory before or after archive transport."""
+		record = self._inspect_committed(Path(record_dir), None)
+		if record.get("valid") is not True or record.get("status") != "success":
+			raise LedgerContractError(f"committed success is invalid: {record_dir}")
+		return dict(record["manifest"])
+
+	def reconcile_index(self) -> None:
+		"""Atomically rebuild the derived local index after verified eviction."""
+		self._replace_index(self._inspect_records(self._load_prior_index()))
+
 	def performance_success(self, key: PerformanceKey) -> dict[str, object] | None:
 		identity = key.as_dict()
 		for record in self._inspect_records(self._load_prior_index()):

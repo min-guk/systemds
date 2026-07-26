@@ -92,6 +92,7 @@ def build_frozen_manifest(
 	seed: int | None,
 	warmup_runs: int,
 	measured_warm_runs: int,
+	block_schedule: dict[str, object] | None = None,
 ) -> dict[str, object]:
 	"""Build a canonical manifest whose hash changes on any frozen input drift."""
 	if seed is None or isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
@@ -104,6 +105,13 @@ def build_frozen_manifest(
 		raise CampaignContractError("the frozen lifecycle requires exactly one cold warm-up run")
 	if measured_warm_runs not in (3, 5, 7):
 		raise CampaignContractError("measured_warm_runs must be exactly 3, 5, or 7")
+	if block_schedule is not None:
+		if block_schedule.get("schema") != "systemds-federated-block-schedule/v1":
+			raise CampaignContractError("block schedule schema is invalid")
+		if block_schedule.get("repeats") != measured_warm_runs:
+			raise CampaignContractError("block schedule repeat count does not match manifest")
+		if block_schedule.get("aggregate_fully_balanced") is not True:
+			raise CampaignContractError("block schedule must be aggregate-balanced before freezing")
 
 	manifest: dict[str, object] = {
 		"schema": "systemds-federated-docker-campaign/v1",
@@ -129,6 +137,7 @@ def build_frozen_manifest(
 			"warm_worker_containers": "reused_from_cold",
 			"warm_cache_state": "worker_container_page_cache_warm",
 		},
+		"block_schedule": json.loads(json.dumps(block_schedule, sort_keys=True)) if block_schedule is not None else None,
 		"required_phase_bundle": [
 			"raw_coordinator_log",
 			"output_artifact",
@@ -144,11 +153,8 @@ def build_frozen_manifest(
 	return manifest
 
 
-def build_counterbalanced_schedule(planners: Sequence[str], replicates: int, seed: int) -> list[list[str]]:
-	"""Return a seeded Williams crossover schedule with balanced carryover."""
+def _williams_rows(planners: Sequence[str], seed: int) -> list[list[str]]:
 	labels = list(_require_nonempty_unique("planners", planners))
-	if isinstance(replicates, bool) or not isinstance(replicates, int) or replicates < 1:
-		raise CampaignContractError("replicates must be a positive integer")
 	if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
 		raise CampaignContractError("schedule seed must be a non-negative integer")
 	random.Random(seed).shuffle(labels)
@@ -162,7 +168,72 @@ def build_counterbalanced_schedule(planners: Sequence[str], replicates: int, see
 	]
 	if count % 2:
 		rows.extend([list(reversed(row)) for row in rows])
+	return rows
+
+
+def build_counterbalanced_schedule(planners: Sequence[str], replicates: int, seed: int) -> list[list[str]]:
+	"""Return seeded Williams rows; partial cycles are not claimed as balanced."""
+	if isinstance(replicates, bool) or not isinstance(replicates, int) or replicates < 1:
+		raise CampaignContractError("replicates must be a positive integer")
+	rows = _williams_rows(planners, seed)
 	return [list(rows[index % len(rows)]) for index in range(replicates)]
+
+
+def build_block_counterbalanced_schedule(
+	planners: Sequence[str], repeats: int, block_ids: Sequence[str], seed: int
+) -> dict[str, object]:
+	"""Rotate partial Williams cycles across blocks and persist exact order facts."""
+	if repeats not in (3, 5, 7):
+		raise CampaignContractError("block schedule repeats must be exactly 3, 5, or 7")
+	blocks = _require_nonempty_unique("block_ids", block_ids)
+	rows = _williams_rows(planners, seed)
+	labels = tuple(rows[0])
+	period_counts = {str(period + 1): {planner: 0 for planner in labels} for period in range(len(labels))}
+	carryover_counts = {f"{left}>{right}": 0 for left in labels for right in labels if left != right}
+	persisted_blocks = []
+	for block_index, block_id in enumerate(blocks):
+		runs = []
+		block_period_counts = {str(period + 1): {planner: 0 for planner in labels} for period in range(len(labels))}
+		for replicate in range(repeats):
+			row_index = (block_index + replicate) % len(rows)
+			order = list(rows[row_index])
+			periods = []
+			for period, planner in enumerate(order, start=1):
+				periods.append({"period": period, "planner": planner})
+				period_counts[str(period)][planner] += 1
+				block_period_counts[str(period)][planner] += 1
+			for left, right in zip(order, order[1:]):
+				carryover_counts[f"{left}>{right}"] += 1
+			runs.append(
+				{
+					"lifecycle_replicate": replicate + 1,
+					"williams_row": row_index,
+					"periods": periods,
+					"order": ">".join(order),
+				}
+			)
+		persisted_blocks.append(
+			{
+				"block": block_id,
+				"rotation_start_row": block_index % len(rows),
+				"within_cell_fully_balanced": all(
+					len(set(counts.values())) == 1 for counts in block_period_counts.values()
+				),
+				"runs": runs,
+			}
+		)
+	return {
+		"schema": "systemds-federated-block-schedule/v1",
+		"seed": seed,
+		"repeats": repeats,
+		"blocks": persisted_blocks,
+		"aggregate_period_counts": period_counts,
+		"aggregate_directed_carryover_counts": carryover_counts,
+		"aggregate_fully_balanced": (
+			all(len(set(counts.values())) == 1 for counts in period_counts.values())
+			and len(set(carryover_counts.values())) == 1
+		),
+	}
 
 
 def check_resource_budget(

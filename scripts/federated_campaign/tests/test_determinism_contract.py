@@ -12,6 +12,7 @@ from pathlib import Path
 from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
 	ResourceSnapshot,
+	build_block_counterbalanced_schedule,
 	build_counterbalanced_schedule,
 	build_frozen_manifest,
 	check_resource_budget,
@@ -38,7 +39,7 @@ class DeterminismContractTest(unittest.TestCase):
 	def tearDown(self):
 		self.temp_dir.cleanup()
 
-	def manifest(self, seed=7331):
+	def manifest(self, seed=7331, block_schedule=None):
 		return build_frozen_manifest(
 			jar=self.root / "systemds.jar",
 			image_id="sha256:image",
@@ -51,6 +52,7 @@ class DeterminismContractTest(unittest.TestCase):
 			seed=seed,
 			warmup_runs=1,
 			measured_warm_runs=5,
+			block_schedule=block_schedule,
 		)
 
 	def test_same_inputs_produce_same_manifest_hash(self):
@@ -105,6 +107,43 @@ class DeterminismContractTest(unittest.TestCase):
 			for left, right in zip(row, row[1:]):
 				pairs[left, right] += 1
 		self.assertEqual({2}, set(pairs.values()))
+
+	def test_block_rotation_balances_periods_aggregate_for_3_5_7_repeats(self):
+		for repeats in (3, 5, 7):
+			with self.subTest(repeats=repeats):
+				schedule = build_block_counterbalanced_schedule(
+					("DP", "FedAll", "Heuristic", "MinST"), repeats, ("b0", "b1", "b2", "b3"), 19
+				)
+				for period_counts in schedule["aggregate_period_counts"].values():
+					self.assertEqual({repeats}, set(period_counts.values()))
+
+	def test_block_rotation_balances_directed_carryover_aggregate_for_3_5_7_repeats(self):
+		for repeats in (3, 5, 7):
+			with self.subTest(repeats=repeats):
+				schedule = build_block_counterbalanced_schedule(
+					("DP", "FedAll", "Heuristic", "MinST"), repeats, ("b0", "b1", "b2", "b3"), 19
+				)
+				self.assertEqual({repeats}, set(schedule["aggregate_directed_carryover_counts"].values()))
+
+	def test_block_rotation_records_unbalanced_within_cell_remainder_honestly(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		self.assertTrue(all(block["within_cell_fully_balanced"] is False for block in schedule["blocks"]))
+
+	def test_frozen_manifest_persists_aggregate_balanced_block_schedule(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		manifest = self.manifest(block_schedule=schedule)
+		self.assertEqual(schedule, manifest["block_schedule"])
+
+	def test_block_rotation_persists_block_period_and_order(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 3, tuple(f"workload=w{i}|workers=1|network=lan" for i in range(4)), 19
+		)
+		first = schedule["blocks"][0]["runs"][0]
+		self.assertEqual({"lifecycle_replicate", "periods", "order", "williams_row"}, set(first))
 
 	def test_resource_preflight_rejects_disk_below_margin_and_floor(self):
 		with self.assertRaisesRegex(CampaignContractError, "disk"):
