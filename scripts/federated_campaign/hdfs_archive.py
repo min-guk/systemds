@@ -19,7 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, LedgerContractError
+from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, LedgerContractError, LedgerKey
+from scripts.federated_campaign.determinism_contract import (
+	build_frozen_manifest,
+	validate_block_counterbalanced_schedule,
+)
 
 
 class ArchiveContractError(RuntimeError):
@@ -59,7 +63,15 @@ class HdfsCliBackend:
 		self._run("-get", remote_uri, str(local_path))
 
 	def exists(self, remote_uri: str) -> bool:
-		return self._run("-test", "-e", remote_uri, check=False).returncode == 0
+		result = self._run("-test", "-e", remote_uri, check=False)
+		if result.returncode == 0:
+			return True
+		if result.returncode == 1 and not result.stderr.strip():
+			return False
+		detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic output"
+		raise ArchiveContractError(
+			f"HDFS existence check failed for {remote_uri} (rc={result.returncode}): {detail}"
+		)
 
 	def delete(self, remote_uri: str) -> None:
 		self._run("-rm", "-f", remote_uri)
@@ -110,7 +122,8 @@ class HdfsArchiveAdapter:
 		for receipt in self.catalog():
 			if receipt.get("identity") == identity:
 				self._verify_receipt(receipt)
-				return receipt
+				self._enforce_retention()
+				return next(entry for entry in self.catalog() if entry.get("identity") == identity)
 
 		operation = uuid.uuid4().hex
 		archive_path = self.work_root / f"archive-{record_id}-{operation}.tar"
@@ -123,13 +136,12 @@ class HdfsArchiveAdapter:
 			archive_bytes = archive_path.stat().st_size
 			self.backend.mkdirs(f"{self.remote_base_uri}/.staging")
 			self.backend.mkdirs(f"{self.remote_base_uri}/committed")
-			if self.backend.exists(remote_final):
-				raise ArchiveContractError(f"archive destination already exists: {remote_final}")
-			self.backend.put(archive_path, remote_stage)
-			self.backend.rename(remote_stage, remote_final)
+			if not self.backend.exists(remote_final):
+				self.backend.put(archive_path, remote_stage)
+				self.backend.rename(remote_stage, remote_final)
 			self.backend.get(remote_final, download_path)
 			if _sha256(download_path) != archive_hash:
-				raise ArchiveContractError("remote archive byte hash mismatch")
+				raise ArchiveContractError(f"archive final-object conflict: {remote_final}")
 			self._verify_downloaded_archive(download_path, identity, record_id)
 		except ArchiveContractError:
 			raise
@@ -148,10 +160,15 @@ class HdfsArchiveAdapter:
 			"local_committed_path": str(committed),
 			"local_raw_bundle_present": True,
 		}
-		entries = self.catalog()
-		entries.append(receipt)
-		self._replace_catalog(entries)
-		self._enforce_retention()
+		try:
+			entries = self.catalog()
+			entries.append(receipt)
+			self._replace_catalog(entries)
+			self._enforce_retention()
+		except ArchiveContractError:
+			raise
+		except Exception as error:
+			raise ArchiveContractError(f"archive catalog publication failed for {record_id}") from error
 		return receipt
 
 	def catalog(self) -> list[dict[str, object]]:
@@ -305,7 +322,7 @@ class HdfsArchiveAdapter:
 		while len(local_entries) > self.max_local_raw_bundles:
 			receipt = local_entries.pop(0)
 			self._verify_receipt(receipt)
-			local_path = Path(str(receipt["local_committed_path"]))
+			local_path = self._validated_eviction_path(receipt)
 			if local_path.is_dir():
 				shutil.rmtree(local_path)
 			receipt["local_raw_bundle_present"] = False
@@ -316,6 +333,22 @@ class HdfsArchiveAdapter:
 			self._replace_catalog(entries)
 			self.ledger.reconcile_index()
 
+	def _validated_eviction_path(self, receipt: dict[str, object]) -> Path:
+		identity = receipt.get("identity")
+		if not isinstance(identity, dict) or identity.get("kind") not in ("discovery", "performance"):
+			raise ArchiveContractError("archive receipt identity cannot derive a committed path")
+		record_id = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
+		committed_root = self.ledger.committed.resolve()
+		expected_raw = self.ledger.committed / str(identity["kind"]) / record_id
+		local_raw = Path(str(receipt.get("local_committed_path", "")))
+		if local_raw.is_symlink() or expected_raw.is_symlink():
+			raise ArchiveContractError("archive receipt local committed path is a symlink")
+		expected = expected_raw.resolve()
+		local_path = local_raw.resolve()
+		if not expected.is_relative_to(committed_root) or local_path != expected:
+			raise ArchiveContractError("archive receipt local committed path is outside its identity-derived path")
+		return local_path
+
 	def _replace_catalog(self, entries: list[dict[str, object]]) -> None:
 		value = {"schema": "systemds-federated-hdfs-catalog/v1", "entries": entries}
 		temp = self.work_root / f".archive-catalog-{uuid.uuid4().hex}.tmp"
@@ -325,6 +358,58 @@ class HdfsArchiveAdapter:
 			os.fsync(handle.fileno())
 		os.replace(temp, self.catalog_path)
 		_fsync_directory(self.work_root)
+
+
+class CampaignHarnessAdapter:
+	"""Small explicit integration surface for a Docker campaign harness."""
+
+	integration_operations = {
+		"freeze_manifest",
+		"schedule_row",
+		"preflight_next_lifecycle",
+		"publish_phase_pair",
+		"archive_published",
+		"resume_discovery",
+	}
+
+	def __init__(self, ledger: AtomicEvidenceLedger, archive: HdfsArchiveAdapter):
+		if archive.ledger is not ledger:
+			raise ArchiveContractError("harness adapter ledger/archive mismatch")
+		self.ledger = ledger
+		self.archive = archive
+
+	@staticmethod
+	def freeze_manifest(**frozen_inputs: object) -> dict[str, object]:
+		return build_frozen_manifest(**frozen_inputs)
+
+	@staticmethod
+	def schedule_row(manifest: dict[str, object], block_id: str, lifecycle_replicate: int) -> dict[str, object]:
+		schedule = validate_block_counterbalanced_schedule(
+			manifest.get("block_schedule"),
+			manifest.get("planner_order", ()),
+			manifest.get("lifecycle", {}).get("measured_warm_runs"),
+			manifest.get("seed"),
+		)
+		for block in schedule["blocks"]:
+			if block["block"] == block_id:
+				for run in block["runs"]:
+					if run["lifecycle_replicate"] == lifecycle_replicate:
+						return dict(run)
+		raise ArchiveContractError("requested block schedule row does not exist")
+
+	def preflight_next_lifecycle(self, snapshot_provider: Callable[[], HostResourceSnapshot], **thresholds: object):
+		return self.archive.preflight_next_lifecycle(snapshot_provider, **thresholds)
+
+	def publish_phase_pair(
+		self, key: LedgerKey, cold_bundle: Path, warm_bundle: Path, shared_replicate_manifest: Path
+	) -> Path:
+		return self.ledger.publish_success(key, cold_bundle, warm_bundle, shared_replicate_manifest)
+
+	def archive_published(self, committed_path: Path) -> dict[str, object]:
+		return self.archive.archive(committed_path)
+
+	def resume_discovery(self, cell: str, manifest_hash: str) -> dict[str, object] | None:
+		return self.archive.latest_discovery_success(cell, manifest_hash)
 
 
 def _canonical_bytes(value: object) -> bytes:

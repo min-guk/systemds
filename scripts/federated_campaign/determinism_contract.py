@@ -72,8 +72,10 @@ def _dataset_records(root: Path) -> list[dict[str, object]]:
 
 def _require_nonempty_unique(name: str, values: Sequence[str]) -> tuple[str, ...]:
 	normalized = tuple(values)
-	if not normalized or any(not value for value in normalized):
-		raise CampaignContractError(f"{name} must be non-empty")
+	if not normalized or any(
+		not isinstance(value, str) or not value or value.strip() != value for value in normalized
+	):
+		raise CampaignContractError(f"{name} must contain normalized non-empty strings")
 	if len(set(normalized)) != len(normalized):
 		raise CampaignContractError(f"{name} must not contain duplicates")
 	return normalized
@@ -106,12 +108,9 @@ def build_frozen_manifest(
 	if measured_warm_runs not in (3, 5, 7):
 		raise CampaignContractError("measured_warm_runs must be exactly 3, 5, or 7")
 	if block_schedule is not None:
-		if block_schedule.get("schema") != "systemds-federated-block-schedule/v1":
-			raise CampaignContractError("block schedule schema is invalid")
-		if block_schedule.get("repeats") != measured_warm_runs:
-			raise CampaignContractError("block schedule repeat count does not match manifest")
-		if block_schedule.get("aggregate_fully_balanced") is not True:
-			raise CampaignContractError("block schedule must be aggregate-balanced before freezing")
+		block_schedule = validate_block_counterbalanced_schedule(
+			block_schedule, planners, measured_warm_runs, seed
+		)
 
 	manifest: dict[str, object] = {
 		"schema": "systemds-federated-docker-campaign/v1",
@@ -226,6 +225,7 @@ def build_block_counterbalanced_schedule(
 		"schema": "systemds-federated-block-schedule/v1",
 		"seed": seed,
 		"repeats": repeats,
+		"planners": list(labels),
 		"blocks": persisted_blocks,
 		"aggregate_period_counts": period_counts,
 		"aggregate_directed_carryover_counts": carryover_counts,
@@ -234,6 +234,29 @@ def build_block_counterbalanced_schedule(
 			and len(set(carryover_counts.values())) == 1
 		),
 	}
+
+
+def validate_block_counterbalanced_schedule(
+	schedule: object, planners: Sequence[str], repeats: int, seed: int
+) -> dict[str, object]:
+	"""Recompute every persisted schedule fact and reject claimed-only balance."""
+	if not isinstance(schedule, dict):
+		raise CampaignContractError("block schedule must be a JSON object")
+	blocks = schedule.get("blocks")
+	if not isinstance(blocks, list) or not blocks:
+		raise CampaignContractError("block schedule blocks are missing")
+	try:
+		block_ids = tuple(block["block"] for block in blocks if isinstance(block, dict))
+	except (KeyError, TypeError) as error:
+		raise CampaignContractError("block schedule block identity is invalid") from error
+	if len(block_ids) != len(blocks):
+		raise CampaignContractError("block schedule block structure is invalid")
+	expected = build_block_counterbalanced_schedule(planners, repeats, block_ids, seed)
+	if schedule != expected:
+		raise CampaignContractError("block schedule does not match recomputed Williams rotation")
+	if expected["aggregate_fully_balanced"] is not True:
+		raise CampaignContractError("block schedule is not aggregate-balanced")
+	return json.loads(json.dumps(expected, sort_keys=True))
 
 
 def check_resource_budget(

@@ -141,6 +141,28 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		restarted = AtomicEvidenceLedger(self.root / "ledger")
 		self.assertIsNone(restarted.latest_discovery_success("cell-a", "manifest-a"))
 
+	def test_commit_rename_crash_then_corruption_preserves_latest_identity_and_blocks_stale_success(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"), "-old")
+		key = DiscoveryKey("cell-a", 2, "token-b", "manifest-a")
+		cold = self._phase("rename-crash-cold", "docker_e2e", 2.4)
+		warm = self._phase("rename-crash-warm", "systemds_total_execution_time", 1.2)
+		shared = self._shared_manifest(key, cold, warm, "rename-crash-shared.json")
+		with self.assertRaises(InjectedPublicationCrash):
+			ledger.publish_success(key, cold, warm, shared, crash_after="after_commit_rename")
+		record_id = hashlib.sha256(
+			json.dumps(key.as_dict(), sort_keys=True, separators=(",", ":")).encode()
+		).hexdigest()
+		latest = ledger.committed / "discovery" / record_id
+		(latest / "warm" / "output.bin").write_bytes(b"corrupt-after-rename")
+		restarted = AtomicEvidenceLedger(self.root / "ledger")
+		self.assertIsNone(restarted.latest_discovery_success("cell-a", "manifest-a"))
+		latest_summary = next(
+			record for record in restarted.record_summaries() if record.get("identity", {}).get("attempt") == 2
+		)
+		self.assertEqual("success", latest_summary["status"])
+		self.assertFalse(latest_summary["valid"])
+
 	def test_latest_failed_attempt_never_backfills_older_success(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))

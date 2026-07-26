@@ -8,11 +8,16 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey
+from scripts.federated_campaign.determinism_contract import build_block_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
 	ArchiveContractError,
+	CampaignHarnessAdapter,
 	HdfsArchiveAdapter,
+	HdfsCliBackend,
 	HostResourceSnapshot,
 )
 
@@ -22,6 +27,7 @@ class FakeHdfsBackend:
 		self.objects = {}
 		self.events = []
 		self.fail_rename = False
+		self.fail_gets = 0
 
 	def mkdirs(self, remote_uri):
 		self.events.append(("mkdirs", remote_uri))
@@ -40,6 +46,9 @@ class FakeHdfsBackend:
 
 	def get(self, remote_uri, local_path):
 		self.events.append(("get", remote_uri))
+		if self.fail_gets:
+			self.fail_gets -= 1
+			raise RuntimeError("get failed")
 		if remote_uri not in self.objects:
 			raise RuntimeError("missing")
 		Path(local_path).write_bytes(self.objects[remote_uri])
@@ -110,6 +119,34 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			max_local_raw_bundles=retention,
 		)
 
+	def _manifest_inputs(self):
+		for relative, contents in {
+			"systemds.jar": b"jar",
+			"config.xml": b"config",
+			"workload.dml": b"print('fixed')",
+			"data/part.csv": b"1,2\n",
+		}.items():
+			path = self.root / relative
+			path.parent.mkdir(parents=True, exist_ok=True)
+			path.write_bytes(contents)
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		return {
+			"jar": self.root / "systemds.jar",
+			"image_id": "sha256:image",
+			"image_digest": "repo@sha256:digest",
+			"config": self.root / "config.xml",
+			"dml": self.root / "workload.dml",
+			"dataset_root": self.root / "data",
+			"worker_mapping": ("worker-1:8001",),
+			"planner_order": ("DP", "FedAll", "Heuristic", "MinST"),
+			"seed": 19,
+			"warmup_runs": 1,
+			"measured_warm_runs": 5,
+			"block_schedule": schedule,
+		}
+
 	def test_archive_validates_local_commit_before_upload(self):
 		_, committed = self._commit(1, "token-a")
 		(committed / "warm" / "output.bin").write_bytes(b"corrupt")
@@ -135,6 +172,46 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			adapter.archive(committed)
 		self.assertTrue(committed.exists())
 		self.assertEqual([], adapter.catalog())
+
+	def test_retry_after_post_rename_get_failure_adopts_exact_final_object(self):
+		_, committed = self._commit(1, "token-a")
+		adapter = self._adapter(retention=0)
+		self.backend.fail_gets = 1
+		with self.assertRaises(ArchiveContractError):
+			adapter.archive(committed)
+		receipt = adapter.archive(committed)
+		self.assertEqual(1, len(adapter.catalog()))
+		self.assertEqual(receipt["archive_sha256"], adapter.catalog()[0]["archive_sha256"])
+		self.assertFalse(committed.exists())
+
+	def test_retry_after_catalog_publication_failure_adopts_exact_final_object(self):
+		_, committed = self._commit(1, "token-a")
+		adapter = self._adapter(retention=0)
+		original = adapter._replace_catalog
+		calls = 0
+		def fail_once(entries):
+			nonlocal calls
+			calls += 1
+			result = original(entries)
+			if calls == 1:
+				raise OSError("catalog fsync failed")
+			return result
+		with patch.object(adapter, "_replace_catalog", side_effect=fail_once):
+			with self.assertRaises(ArchiveContractError):
+				adapter.archive(committed)
+			receipt = adapter.archive(committed)
+		self.assertEqual(1, len(adapter.catalog()))
+		self.assertEqual(receipt["archive_sha256"], adapter.catalog()[0]["archive_sha256"])
+		self.assertFalse(committed.exists())
+
+	def test_retry_rejects_conflicting_existing_final_object(self):
+		_, committed = self._commit(1, "token-a")
+		adapter = self._adapter(retention=1)
+		record_id = committed.name
+		remote = f"{adapter.remote_base_uri}/committed/{record_id}.tar"
+		self.backend.objects[remote] = b"conflicting-object"
+		with self.assertRaisesRegex(ArchiveContractError, "conflict"):
+			adapter.archive(committed)
 
 	def test_remote_corruption_fails_preflight_before_next_lifecycle(self):
 		_, committed = self._commit(1, "token-a")
@@ -171,6 +248,98 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				max_combined_io_bps=100,
 			)
 		self.assertFalse(snapshot_called)
+
+	def test_cli_exists_distinguishes_absence_from_transport_failure(self):
+		backend = HdfsCliBackend("hdfs")
+		with patch.object(
+			backend, "_run", return_value=CompletedProcess([], 1, stdout="", stderr="")
+		):
+			self.assertFalse(backend.exists("hdfs://host/missing"))
+		with patch.object(
+			backend, "_run", return_value=CompletedProcess([], 1, stdout="", stderr="Permission denied")
+		):
+			with self.assertRaisesRegex(ArchiveContractError, "Permission denied"):
+				backend.exists("hdfs://host/denied")
+
+	def test_eviction_rejects_catalog_path_outside_identity_derived_committed_path(self):
+		_, first = self._commit(1, "token-a")
+		adapter = self._adapter(retention=2)
+		adapter.archive(first)
+		victim = self.root / "must-not-delete"
+		victim.mkdir()
+		(victim / "sentinel").write_text("keep", encoding="utf-8")
+		catalog = json.loads(adapter.catalog_path.read_text(encoding="utf-8"))
+		catalog["entries"][0]["local_committed_path"] = str(victim)
+		adapter.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+		adapter.max_local_raw_bundles = 0
+		_, second = self._commit(2, "token-b")
+		with self.assertRaisesRegex(ArchiveContractError, "committed path"):
+			adapter.archive(second)
+		self.assertTrue((victim / "sentinel").is_file())
+
+	def test_harness_adapter_exposes_complete_campaign_integration_surface(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		self.assertEqual(
+			{
+				"freeze_manifest",
+				"schedule_row",
+				"preflight_next_lifecycle",
+				"publish_phase_pair",
+				"archive_published",
+				"resume_discovery",
+			},
+			facade.integration_operations,
+		)
+
+	def test_harness_adapter_freezes_manifest_through_validated_schedule_contract(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		manifest = facade.freeze_manifest(**self._manifest_inputs())
+		self.assertEqual("systemds-federated-docker-campaign/v1", manifest["schema"])
+
+	def test_harness_adapter_returns_exact_persisted_schedule_row(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		manifest = facade.freeze_manifest(**self._manifest_inputs())
+		row = facade.schedule_row(manifest, "b0", 1)
+		self.assertEqual(manifest["block_schedule"]["blocks"][0]["runs"][0], row)
+
+	def test_harness_adapter_publishes_phase_pair(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		key = DiscoveryKey("cell-a", 1, "token-a", "manifest-a")
+		cold = self._phase("facade-cold", "docker_e2e", 2.5)
+		warm = self._phase("facade-warm", "systemds_total_execution_time", 1.25)
+		shared = self.root / "facade-shared.json"
+		shared.write_text(
+			json.dumps(
+				{
+					"identity": key.as_dict(),
+					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+				}
+			),
+			encoding="utf-8",
+		)
+		committed = facade.publish_phase_pair(key, cold, warm, shared)
+		self.assertEqual(key.as_dict(), self.ledger.validate_committed(committed)["identity"])
+
+	def test_harness_adapter_archives_and_resumes_verified_discovery(self):
+		_, committed = self._commit(1, "token-a")
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=0))
+		receipt = facade.archive_published(committed)
+		resumed = facade.resume_discovery("cell-a", "manifest-a")
+		self.assertEqual(receipt["archive_sha256"], resumed["archive_sha256"])
+
+	def test_harness_adapter_applies_resource_and_quiescence_preflight(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		snapshot = HostResourceSnapshot(10_000, 100, 1000, 0.01, 0, 0)
+		result = facade.preflight_next_lifecycle(
+			lambda: snapshot,
+			required_free_bytes=100,
+			required_free_inodes=10,
+			required_seconds=100,
+			max_io_utilization=0.1,
+			max_combined_io_bps=100,
+		)
+		self.assertEqual(snapshot, result)
 
 	def test_latest_local_failure_never_falls_back_to_archived_success(self):
 		_, committed = self._commit(1, "token-a")

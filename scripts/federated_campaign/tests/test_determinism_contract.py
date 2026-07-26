@@ -135,8 +135,71 @@ class DeterminismContractTest(unittest.TestCase):
 		schedule = build_block_counterbalanced_schedule(
 			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
 		)
-		manifest = self.manifest(block_schedule=schedule)
+		manifest = self.manifest(seed=19, block_schedule=schedule)
 		self.assertEqual(schedule, manifest["block_schedule"])
+
+	def test_frozen_manifest_rejects_forged_aggregate_balance_claim(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		schedule["blocks"][0]["runs"][0]["periods"][0]["planner"] = "MinST"
+		schedule["aggregate_fully_balanced"] = True
+		with self.assertRaisesRegex(CampaignContractError, "schedule"):
+			self.manifest(seed=19, block_schedule=schedule)
+
+	def test_frozen_manifest_rejects_schedule_for_different_planner_order(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		with self.assertRaisesRegex(CampaignContractError, "schedule"):
+			build_frozen_manifest(
+				jar=self.root / "systemds.jar",
+				image_id="sha256:image",
+				image_digest="repo@sha256:digest",
+				config=self.root / "SystemDS-config.xml",
+				dml=self.root / "workload.dml",
+				dataset_root=self.root / "data",
+				worker_mapping=("worker-1:8001", "worker-2:8002"),
+				planner_order=("FedAll", "DP", "Heuristic", "MinST"),
+				seed=19,
+				warmup_runs=1,
+				measured_warm_runs=5,
+				block_schedule=schedule,
+			)
+
+	def test_frozen_manifest_rejects_forged_aggregate_period_counts(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		planner = next(iter(schedule["aggregate_period_counts"]["1"]))
+		schedule["aggregate_period_counts"]["1"][planner] += 1
+		with self.assertRaisesRegex(CampaignContractError, "schedule"):
+			self.manifest(seed=19, block_schedule=schedule)
+
+	def test_frozen_manifest_rejects_forged_directed_carryover_counts(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		pair = next(iter(schedule["aggregate_directed_carryover_counts"]))
+		schedule["aggregate_directed_carryover_counts"][pair] += 1
+		with self.assertRaisesRegex(CampaignContractError, "schedule"):
+			self.manifest(seed=19, block_schedule=schedule)
+
+	def test_frozen_manifest_rejects_forged_block_rotation(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		schedule["blocks"][0]["rotation_start_row"] = 3
+		with self.assertRaisesRegex(CampaignContractError, "schedule"):
+			self.manifest(seed=19, block_schedule=schedule)
+
+	def test_frozen_manifest_rejects_nontext_block_identity(self):
+		schedule = build_block_counterbalanced_schedule(
+			("DP", "FedAll", "Heuristic", "MinST"), 5, ("b0", "b1", "b2", "b3"), 19
+		)
+		schedule["blocks"][0]["block"] = 7
+		with self.assertRaisesRegex(CampaignContractError, "block"):
+			self.manifest(seed=19, block_schedule=schedule)
 
 	def test_block_rotation_persists_block_period_and_order(self):
 		schedule = build_block_counterbalanced_schedule(

@@ -440,6 +440,14 @@ class AtomicEvidenceLedger:
 				"valid": False,
 				"manifest": manifest,
 			}
+		except (LedgerContractError, OSError):
+			if prior is not None:
+				preserved = dict(prior)
+				preserved["path"] = str(record_dir)
+				preserved["valid"] = False
+				return preserved
+			return {"path": str(record_dir), "identity": {}, "status": "invalid", "valid": False, "manifest": {}}
+		try:
 			if status == "failed":
 				result["valid"] = isinstance(manifest.get("reason"), str) and bool(manifest["reason"])
 				return result
@@ -461,12 +469,7 @@ class AtomicEvidenceLedger:
 			result["valid"] = True
 			return result
 		except (LedgerContractError, OSError):
-			if prior is not None:
-				preserved = dict(prior)
-				preserved["path"] = str(record_dir)
-				preserved["valid"] = False
-				return preserved
-			return {"path": str(record_dir), "identity": {}, "status": "invalid", "valid": False, "manifest": {}}
+			return result
 
 	def _publish_derived_index(self, crash_after: str | None) -> None:
 		records = self._inspect_records(self._load_prior_index())
