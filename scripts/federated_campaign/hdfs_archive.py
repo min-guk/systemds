@@ -724,6 +724,19 @@ class CampaignHarnessAdapter:
 		if not isinstance(identity_value, dict) or not isinstance(location_value, dict):
 			raise ArchiveContractError("pilot evidence identity/location is missing")
 		identity = cast(dict[str, object], identity_value)
+		if (
+			type(row.get("workers")) is not int
+			or type(row.get("pilot_repeat")) is not int or row.get("pilot_repeat") not in range(1, 6)
+			or type(row.get("period")) is not int or row.get("period") not in range(1, len(CAMPAIGN_PLANNERS) + 1)
+			or any(type(identity.get(name)) is not int for name in ("lifecycle_replicate", "period", "attempt"))
+		):
+			raise ArchiveContractError("pilot integer schedule identity is invalid")
+		lifecycle_value = row.get("lifecycle")
+		if not isinstance(lifecycle_value, Mapping) or any(
+			type(lifecycle_value.get(name)) is not int or lifecycle_value.get(name) != 0
+			for name in ("coordinator_restart_count", "worker_restart_count")
+		):
+			raise ArchiveContractError("pilot lifecycle restart counts must be exact integer zero")
 		try:
 			key: DiscoveryKey | PerformanceKey
 			if identity.get("kind") == "discovery":

@@ -733,8 +733,11 @@ def select_campaign_pilot_repeats(
 		pilot_class, workload, planner, workers, profile, cell = (
 			row["pilot_class"], row["workload"], row["planner"], row["workers"], row["profile"], row["cell"]
 		)
+		pilot_repeat, period = row["pilot_repeat"], row["period"]
 		if (
-			pilot_class not in PILOT_CLASSES or workload != PILOT_REPRESENTATIVE_WORKLOADS.get(cast(str, pilot_class))
+			type(workers) is not int or type(pilot_repeat) is not int or pilot_repeat not in range(1, 6)
+			or type(period) is not int or period not in range(1, len(CAMPAIGN_PLANNERS) + 1)
+			or pilot_class not in PILOT_CLASSES or workload != PILOT_REPRESENTATIVE_WORKLOADS.get(cast(str, pilot_class))
 			or planner not in CAMPAIGN_PLANNERS or (workers, profile) not in PILOT_REGIMES
 		):
 			raise CampaignContractError("campaign pilot contains a non-preregistered class/planner/regime")
@@ -763,6 +766,16 @@ def select_campaign_pilot_repeats(
 			identity_value = row["identity"]
 			if not isinstance(identity_value, Mapping):
 				raise CampaignContractError("campaign pilot identity is invalid")
+			if (
+				identity_value.get("kind") != "performance"
+				or identity_value.get("cell") != row["cell"]
+				or type(identity_value.get("attempt")) is not int or cast(int, identity_value["attempt"]) < 1
+				or type(identity_value.get("lifecycle_replicate")) is not int
+				or identity_value.get("lifecycle_replicate") != row["pilot_repeat"]
+				or type(identity_value.get("period")) is not int or identity_value.get("period") != row["period"]
+				or identity_value.get("order") != row["order"]
+			):
+				raise CampaignContractError("campaign pilot evidence schedule identity is invalid")
 			if identity_value.get("manifest_hash") != expected_manifest_hash:
 				raise CampaignContractError("campaign pilot mixes frozen campaign manifests")
 			if row["invocation_manifest_sha256"] != expected_invocation_manifest_sha256:
@@ -788,11 +801,14 @@ def select_campaign_pilot_repeats(
 				if not isinstance(diagnostic_value, Mapping) or set(diagnostic_value) != diagnostic_fields:
 					raise CampaignContractError(f"campaign pilot {diagnostic_name} schema is not exact")
 				for name, diagnostic_value_item in diagnostic_value.items():
+					if diagnostic_name == "lifecycle" and name in ("coordinator_restart_count", "worker_restart_count"):
+						continue
 					_positive_finite(f"campaign pilot {diagnostic_name}.{name}", diagnostic_value_item, allow_zero=True)
 			if cast(Mapping[str, object], row["lifecycle"])["warm_seconds"] != row["warm_seconds"]:
 				raise CampaignContractError("campaign pilot lifecycle warm_seconds disagrees with measured timing")
 			if any(
-				cast(Mapping[str, object], row["lifecycle"])[name] != 0
+				type(cast(Mapping[str, object], row["lifecycle"])[name]) is not int
+				or cast(Mapping[str, object], row["lifecycle"])[name] != 0
 				for name in ("coordinator_restart_count", "worker_restart_count")
 			):
 				raise CampaignContractError("successful campaign pilot lifecycle restart counts must be zero")

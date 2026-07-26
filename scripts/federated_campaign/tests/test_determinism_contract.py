@@ -438,7 +438,10 @@ class DeterminismContractTest(unittest.TestCase):
 							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
 							"lifecycle": {"cold_seconds": 110, "warm_seconds": 100 + (repeat - 3) * 0.5, "coordinator_restart_count": 0, "worker_restart_count": 0},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
-							"identity": {"kind": "performance", "cell": cell, "attempt": repeat, "manifest_hash": manifest_hash},
+							"identity": {
+								"kind": "performance", "cell": cell, "attempt": repeat, "manifest_hash": manifest_hash,
+								"lifecycle_replicate": repeat, "period": period, "order": ">".join(order_tuple),
+							},
 							"evidence_location": {"committed_path": f"/verified/{len(rows)+1}"},
 							"invocation_manifest_sha256": invocation_hash,
 						})
@@ -484,6 +487,27 @@ class DeterminismContractTest(unittest.TestCase):
 		wrong_workload[0]["workload"] = "lm"
 		with self.assertRaisesRegex(CampaignContractError, "non-preregistered"):
 			select(wrong_workload)
+		for field, alias in (("pilot_repeat", True), ("pilot_repeat", 1.0)):
+			aliased = [dict(row) for row in rows]
+			aliased[0][field] = alias
+			with self.assertRaises(CampaignContractError):
+				select(aliased)
+		period_one_index = next(index for index, row in enumerate(rows) if row["period"] == 1)
+		for alias in (True, 1.0):
+			aliased = [dict(row) for row in rows]
+			aliased[period_one_index]["period"] = alias
+			with self.assertRaises(CampaignContractError):
+				select(aliased)
+		for field, alias in (("coordinator_restart_count", 0.0), ("worker_restart_count", False)):
+			aliased = [dict(row) for row in rows]
+			aliased[0]["lifecycle"] = dict(cast(dict[str, object], aliased[0]["lifecycle"]), **{field: alias})
+			with self.assertRaisesRegex(CampaignContractError, "restart counts"):
+				select(aliased)
+		for field, alias in (("attempt", True), ("lifecycle_replicate", 1.0), ("period", True)):
+			aliased = [dict(row) for row in rows]
+			aliased[0]["identity"] = dict(cast(dict[str, object], aliased[0]["identity"]), **{field: alias})
+			with self.assertRaisesRegex(CampaignContractError, "schedule identity"):
+				select(aliased)
 		first_effects = _dict(first_diagnostic["effects"])
 		for field, effect_name in (("period", "period_log_effect"), ("order", "order_log_effect"), ("carryover", "carryover_log_effect")):
 			first_group = [row for row in rows if row["cell"] == first_diagnostic["cell"]]

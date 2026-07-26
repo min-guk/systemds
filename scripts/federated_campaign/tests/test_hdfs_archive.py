@@ -535,6 +535,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		row = {
 			"pilot_class": "cheap", "workload": "kmeans", "planner": "DP", "workers": 1, "profile": "lan",
 			"cell": lease.key.cell, "pilot_repeat": 1, "period": 1, "order": "DP>FedAll>Heuristic>MinST",
+			"lifecycle": {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0},
 			"identity": lease.key.as_dict(), "evidence_status": "committed",
 			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
 			"evidence_location": {"committed_path": str(committed)}, "warm_seconds": 1.0,
@@ -572,7 +573,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cell": cell, "pilot_repeat": 1, "warm_seconds": 1.0, "period": period, "order": order,
 			"carryover": "NONE" if period == 1 else order_tuple[period - 2],
 			"host_load": {"io_utilization": 0.99, "read_bytes_per_second": 999, "write_bytes_per_second": 999},
-			"lifecycle": {"cold_seconds": 999, "warm_seconds": 1.0, "coordinator_restart_count": 99, "worker_restart_count": 99},
+			"lifecycle": canonical_lifecycle,
 			"evidence_status": "committed",
 			"evidence_sha256": hashlib.sha256((committed / "bundle_manifest.json").read_bytes()).hexdigest(),
 			"identity": lease.key.as_dict(), "evidence_location": {"committed_path": str(committed)},
@@ -594,6 +595,26 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			facade._verify_pilot_row(row)
 		row["host_load"] = manifest["host_load"]
 		facade._verify_pilot_row(row)
+		for field, alias in (("pilot_repeat", True), ("pilot_repeat", 1.0), ("period", True), ("period", 1.0)):
+			original = row[field]
+			row[field] = alias
+			with self.assertRaisesRegex(ArchiveContractError, "integer schedule"):
+				facade._verify_pilot_row(row)
+			row[field] = original
+		for field, alias in (("coordinator_restart_count", 0.0), ("worker_restart_count", False)):
+			lifecycle = dict(cast(dict[str, object], row["lifecycle"]))
+			lifecycle[field] = alias
+			row["lifecycle"] = lifecycle
+			with self.assertRaisesRegex(ArchiveContractError, "exact integer zero"):
+				facade._verify_pilot_row(row)
+			row["lifecycle"] = manifest["lifecycle"]
+		for field, alias in (("attempt", True), ("lifecycle_replicate", 1.0), ("period", True)):
+			identity = dict(cast(dict[str, object], row["identity"]))
+			identity[field] = alias
+			row["identity"] = identity
+			with self.assertRaisesRegex(ArchiveContractError, "integer schedule"):
+				facade._verify_pilot_row(row)
+			row["identity"] = lease.key.as_dict()
 
 	def test_duplicate_same_attempt_archive_receipts_are_ambiguous(self):
 		adapter = self._adapter(retention=0)
