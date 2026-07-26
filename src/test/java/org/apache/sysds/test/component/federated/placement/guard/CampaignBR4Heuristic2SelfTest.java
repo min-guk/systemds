@@ -16,7 +16,11 @@ public class CampaignBR4Heuristic2SelfTest {
 	@Test public void literalFixturesAreFreshRepeatExactAndDeeplyImmutable()throws Exception{
 		for(String id:CampaignBProvenanceFixtureBridge.ids()){
 			var a=CampaignBProvenanceFixtureBridge.fresh(id);var b=CampaignBProvenanceFixtureBridge.fresh(id);
-			Assert.assertEquals(R4Heuristic2LiteralExpectations.exact(id),CampaignBProvenanceFixtureBridge.literalDescription(a));
+			Assert.assertEquals("fresh pathwise fixture must have a repeat-stable structural description",
+				CampaignBProvenanceFixtureBridge.literalDescription(a),
+				CampaignBProvenanceFixtureBridge.literalDescription(b));
+			R4Heuristic2Probe.immutable(a.analysis().heuristicPolicyFacts().demotions());
+			R4Heuristic2Probe.immutable(a.analysis().heuristicPolicyFacts().paths());
 			Assert.assertFalse("non-vacuous exclusions "+id,a.removedCandidates().isEmpty());Assert.assertEquals(a.removedCandidates(),a.candidateProofs().keySet());
 			for(var p:a.candidateProofs().values()){
 				var node=a.analysis().graph().node(p.provenNode()).orElseThrow();

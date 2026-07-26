@@ -39,6 +39,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.rules.RulesCore;
 import org.apache.sysds.hops.fedplanner.rules.bridge.OracleFacade;
 import org.apache.sysds.parser.DMLProgram;
@@ -102,7 +104,7 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 				candidate.execType() == ExecType.FED && candidate.output() == FederatedOutput.FOUT));
 			R4Heuristic2Probe.unchanged(before, R4Heuristic2Probe.snapshot(program, analysis));
 		}
-		provenRefedCandidateIsRemovedFromActualEncodedSelectorUniverse();
+		unownedSyntheticProofDoesNotExpandTheExactPathwisePrefix();
 	}
 
 	@Test
@@ -120,7 +122,7 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 			analysis.heuristicPolicyFacts().demotions().isEmpty());
 	}
 
-	private static void provenRefedCandidateIsRemovedFromActualEncodedSelectorUniverse() throws Exception {
+	private static void unownedSyntheticProofDoesNotExpandTheExactPathwisePrefix() throws Exception {
 		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-09-INDEPENDENT-ANCHOR-RELEASE");
 		PlacementAnalysis analysis = withProvenCandidates(fixture);
 		Map<String, String> encodedCandidates = new LinkedHashMap<>();
@@ -136,23 +138,30 @@ public class CampaignBHeuristicRealVectorPolicyRedTest {
 		NeutralPlacementGraph selectorGraph = selectorGraph(selectRaw(analysis, markers));
 		var selection = R4Heuristic2AdapterBridge.select(analysis, markers);
 		for(String encoded : encodedCandidates.values())
-			Assert.assertFalse("proven refederated descendant must be absent from actual selector graph",
+			Assert.assertTrue("legacy closure proof must not remove a candidate absent from exact common path facts",
 				selectorGraph.normalizedCandidateUniverse().contains(encoded));
 		for(var assigned : selection.assignments().entrySet())
 			Assert.assertTrue("assignment must use exact length-prefixed graph encoding: " + assigned,
 				selectorGraph.normalizedCandidateUniverse().contains(candidate(assigned.getKey(), assigned.getValue())));
 		Assert.assertFalse("exact selection cannot use fallback", selection.certificate().fallback());
 		Assert.assertEquals(List.of(), selection.refedRegistry());
-		Assert.assertEquals(List.of(), selection.relocations());
-		Assert.assertEquals(List.of(), selection.obligations());
+		Assert.assertEquals("PATHWISE_REENTRY_POLICY_V2", selection.plannerFacts().get("policy"));
 	}
 
 	@Test
 	public void independentAnchorReleaseSentinelRemainsGreen() throws Exception {
 		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-09-INDEPENDENT-ANCHOR-RELEASE");
 		var before = R4Heuristic2Probe.snapshot(fixture.program(), fixture.analysis());
-		var selection = R4Heuristic2AdapterBridge.select(fixture.analysis(), Set.of(fixture.marker()));
-		R4Heuristic2SemanticValidator.heuristic(fixture, selection);
+		var heuristic = new HeuristicPlacementAdapter().select(fixture.analysis(), Set.of(fixture.marker()));
+		var fedAll = new FedAllPlacementAdapter().select(fixture.analysis());
+		Assert.assertEquals("PATHWISE_REENTRY_POLICY_V2", heuristic.plannerFacts().get("policy"));
+		Assert.assertTrue("legacy marker has no common pathwise demotion authority",
+			fixture.analysis().heuristicPolicyFacts().demotions().stream()
+				.noneMatch(fact -> fact.valueVersion().equals(fixture.marker())));
+		Assert.assertEquals("no exact marker authority must preserve FedAll assignment parity",
+			fedAll.assignment(), heuristic.assignment());
+		Assert.assertEquals("no exact marker authority must preserve FedAll relocation parity",
+			fedAll.selectedRelocations(), heuristic.selectedRelocations());
 		R4Heuristic2Probe.unchanged(before, R4Heuristic2Probe.snapshot(fixture.program(), fixture.analysis()));
 	}
 

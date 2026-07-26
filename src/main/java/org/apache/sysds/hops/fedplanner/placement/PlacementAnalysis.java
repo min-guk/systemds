@@ -35,6 +35,8 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCategory;
 import org.apache.sysds.parser.DMLProgram;
@@ -477,8 +479,98 @@ public final class PlacementAnalysis {
 		}
 	}
 
+	public enum HeuristicPathEdgeKind { COMPILED_INPUT, CFG_TRANSIENT_FORWARD }
+
+	/** Exact occurrence-to-occurrence edge used to prove one local Heuristic prefix. */
+	public record HeuristicPathEdgeFact(CompiledHopKey producer, CompiledHopKey consumer,
+		int inputPosition, ValueVersionKey sourceValueVersion, ValueVersionKey consumerValueVersion,
+		HeuristicPathEdgeKind kind) implements Comparable<HeuristicPathEdgeFact> {
+		public HeuristicPathEdgeFact {
+			Objects.requireNonNull(producer, "producer");
+			Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Heuristic path input position must be non-negative");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(consumerValueVersion, "consumerValueVersion");
+			Objects.requireNonNull(kind, "kind");
+		}
+
+		@Override public int compareTo(HeuristicPathEdgeFact that) {
+			int producerOrder = producer.compareTo(that.producer);
+			if(producerOrder != 0) return producerOrder;
+			int consumerOrder = consumer.compareTo(that.consumer);
+			if(consumerOrder != 0) return consumerOrder;
+			int positionOrder = Integer.compare(inputPosition, that.inputPosition);
+			return positionOrder != 0 ? positionOrder : kind.compareTo(that.kind);
+		}
+	}
+
+	/**
+	 * Exact common-analysis proof for one path-local LOUT-to-FOUT re-entry. The cost is the
+	 * neutral selector's modeled distinct-relocation unit, not an unmodeled runtime estimate.
+	 */
+	public record HeuristicPathwiseReentryFact(CompiledHopKey localProducer,
+		ValueVersionKey sourceValueVersion, CompiledHopKey consumer, int inputPosition,
+		CompiledHopKey siblingProducer, ValueVersionKey siblingValueVersion, int siblingInputPosition,
+		PlacementState siblingFoutState, DurableAnchorKey durableAnchor,
+		PlacementState consumerFoutState, CandidateRuleFact runtimeCandidate,
+		RelocationActionKey relocationAction, ObligationKey obligation,
+		int modeledDistinctRelocationCost) implements Comparable<HeuristicPathwiseReentryFact> {
+		public HeuristicPathwiseReentryFact {
+			Objects.requireNonNull(localProducer, "localProducer");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0 || siblingInputPosition < 0 || inputPosition == siblingInputPosition)
+				throw new IllegalArgumentException("Heuristic re-entry input positions differ and are non-negative");
+			Objects.requireNonNull(siblingProducer, "siblingProducer");
+			Objects.requireNonNull(siblingValueVersion, "siblingValueVersion");
+			Objects.requireNonNull(siblingFoutState, "siblingFoutState");
+			Objects.requireNonNull(durableAnchor, "durableAnchor");
+			Objects.requireNonNull(consumerFoutState, "consumerFoutState");
+			Objects.requireNonNull(runtimeCandidate, "runtimeCandidate");
+			Objects.requireNonNull(relocationAction, "relocationAction");
+			Objects.requireNonNull(obligation, "obligation");
+			if(modeledDistinctRelocationCost != 1)
+				throw new IllegalArgumentException("One re-entry fact models one distinct relocation unit");
+		}
+
+		@Override public int compareTo(HeuristicPathwiseReentryFact that) {
+			int consumerOrder = consumer.compareTo(that.consumer);
+			if(consumerOrder != 0) return consumerOrder;
+			int positionOrder = Integer.compare(inputPosition, that.inputPosition);
+			return positionOrder != 0 ? positionOrder : relocationAction.compareTo(that.relocationAction);
+		}
+	}
+
+	/** One exact marker-local path projection; no dominance or descendant closure is implied. */
+	public record HeuristicPathFact(HeuristicPolicyFact demotion, List<CompiledHopKey> localPrefix,
+		List<HeuristicPathEdgeFact> edges, List<HeuristicPathwiseReentryFact> reentries)
+		implements Comparable<HeuristicPathFact> {
+		public HeuristicPathFact {
+			Objects.requireNonNull(demotion, "demotion");
+			localPrefix = Objects.requireNonNull(localPrefix, "localPrefix").stream()
+				.map(key -> Objects.requireNonNull(key, "local prefix key"))
+				.distinct().sorted().toList();
+			if(!localPrefix.contains(demotion.producer()))
+				throw new IllegalArgumentException("Heuristic local prefix omits its demotion producer");
+			edges = Objects.requireNonNull(edges, "edges").stream()
+				.map(edge -> Objects.requireNonNull(edge, "path edge")).distinct().sorted().toList();
+			reentries = Objects.requireNonNull(reentries, "reentries").stream()
+				.map(fact -> Objects.requireNonNull(fact, "re-entry fact"))
+				.distinct().sorted().toList();
+		}
+
+		@Override public int compareTo(HeuristicPathFact that) {
+			return demotion.compareTo(that.demotion);
+		}
+	}
+
 	/** Deterministic, deeply immutable set of producer-scoped Heuristic demotions. */
-	public record HeuristicPolicyFacts(List<HeuristicPolicyFact> demotions) {
+	public record HeuristicPolicyFacts(List<HeuristicPolicyFact> demotions, List<HeuristicPathFact> paths) {
+		public HeuristicPolicyFacts(List<HeuristicPolicyFact> demotions) {
+			this(demotions, List.of());
+		}
+
 		public HeuristicPolicyFacts {
 			Objects.requireNonNull(demotions, "demotions");
 			List<HeuristicPolicyFact> sorted = demotions.stream()
@@ -498,6 +590,15 @@ public final class PlacementAnalysis {
 				previous = fact;
 			}
 			demotions = List.copyOf(sorted);
+			paths = Objects.requireNonNull(paths, "paths").stream()
+				.map(path -> Objects.requireNonNull(path, "Heuristic path fact")).sorted().toList();
+			Set<HeuristicPolicyFact> pathDemotions = new java.util.HashSet<>();
+			for(HeuristicPathFact path : paths) {
+				if(!demotions.contains(path.demotion()))
+					throw new IllegalArgumentException("Heuristic path has an unknown demotion");
+				if(!pathDemotions.add(path.demotion()))
+					throw new IllegalArgumentException("Duplicate Heuristic path demotion");
+			}
 		}
 	}
 
@@ -673,6 +774,85 @@ public final class PlacementAnalysis {
 			if(!producer.valueVersion().equals(fact.valueVersion()))
 				throw new IllegalArgumentException("Heuristic policy producer/value pair does not match the analysis graph");
 		}
+		validateHeuristicPaths(analysisKeysByIdentity);
+	}
+
+	private void validateHeuristicPaths(Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		for(HeuristicPathFact path : heuristicPolicyFacts.paths()) {
+			for(CompiledHopKey key : path.localPrefix())
+				if(!analysisKeysByIdentity.containsKey(key))
+					throw new IllegalArgumentException("Heuristic path contains a foreign local-prefix occurrence");
+			for(HeuristicPathEdgeFact edge : path.edges()) {
+				if(!analysisKeysByIdentity.containsKey(edge.producer())
+					|| !analysisKeysByIdentity.containsKey(edge.consumer()))
+					throw new IllegalArgumentException("Heuristic path edge contains a foreign occurrence");
+				NeutralPlacementGraph.Node producer = graph.node(edge.producer()).orElseThrow();
+				NeutralPlacementGraph.Node consumer = graph.node(edge.consumer()).orElseThrow();
+				if(producer.valueVersion() != edge.sourceValueVersion()
+					|| consumer.valueVersion() != edge.consumerValueVersion())
+					throw new IllegalArgumentException("Heuristic path edge value identity differs");
+				if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT)
+					requireExactCompiledInputEdge(edge.producer(), edge.consumer(), edge.inputPosition());
+				else if(producer.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_WRITE
+					|| consumer.kind() != NeutralPlacementGraph.NodeKind.TRANSIENT_READ
+					|| edge.inputPosition() != 0)
+					throw new IllegalArgumentException("Heuristic CFG edge is not an exact transient forward");
+			}
+			for(HeuristicPathwiseReentryFact fact : path.reentries())
+				validateHeuristicReentry(path, fact, analysisKeysByIdentity);
+		}
+	}
+
+	private void validateHeuristicReentry(HeuristicPathFact path, HeuristicPathwiseReentryFact fact,
+		Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		if(!analysisKeysByIdentity.containsKey(fact.localProducer())
+			|| !analysisKeysByIdentity.containsKey(fact.consumer())
+			|| !analysisKeysByIdentity.containsKey(fact.siblingProducer()))
+			throw new IllegalArgumentException("Heuristic re-entry contains a foreign occurrence");
+		if(!path.localPrefix().contains(fact.localProducer()))
+			throw new IllegalArgumentException("Heuristic re-entry source is outside its exact local prefix");
+		NeutralPlacementGraph.Node local = graph.node(fact.localProducer()).orElseThrow();
+		NeutralPlacementGraph.Node sibling = graph.node(fact.siblingProducer()).orElseThrow();
+		NeutralPlacementGraph.Node consumer = graph.node(fact.consumer()).orElseThrow();
+		if(local.valueVersion() != fact.sourceValueVersion()
+			|| sibling.valueVersion() != fact.siblingValueVersion())
+			throw new IllegalArgumentException("Heuristic re-entry value identity differs");
+		requireExactCompiledInputEdge(fact.localProducer(), fact.consumer(), fact.inputPosition());
+		requireExactCompiledInputEdge(fact.siblingProducer(), fact.consumer(), fact.siblingInputPosition());
+		if(!sibling.anchors().contains(fact.durableAnchor())
+			|| !sibling.legalAlternatives().contains(fact.siblingFoutState())
+			|| fact.siblingFoutState().execType() != ExecType.FED
+			|| fact.siblingFoutState().output() != FederatedOutput.FOUT
+			|| fact.siblingFoutState().fType() != fact.durableAnchor().fType())
+			throw new IllegalArgumentException("Heuristic re-entry sibling FOUT authority differs");
+		if(!consumer.legalAlternatives().contains(fact.consumerFoutState())
+			|| fact.consumerFoutState().execType() != ExecType.FED
+			|| fact.consumerFoutState().output() != FederatedOutput.FOUT
+			|| fact.consumerFoutState().fType() != fact.durableAnchor().fType())
+			throw new IllegalArgumentException("Heuristic re-entry consumer FOUT state differs");
+		CandidateRuleFact exactCandidate = candidateRuleFacts.requireExact(fact.consumer(),
+			fact.runtimeCandidate().key().orderedInputs());
+		if(exactCandidate != fact.runtimeCandidate() || exactCandidate.status() != CandidateEvaluationStatus.AVAILABLE
+			|| exactCandidate.capability() == null
+			|| exactCandidate.capability().nativeExec() != fact.consumerFoutState().execType()
+			|| exactCandidate.capability().nativeOutput() != fact.consumerFoutState().output()
+			|| exactCandidate.capability().nativeFoutFType() != fact.consumerFoutState().fType())
+			throw new IllegalArgumentException("Heuristic re-entry runtime candidate differs");
+		if(!fact.relocationAction().sourceValueVersion().equals(fact.sourceValueVersion())
+			|| !fact.relocationAction().targetPlacement().equals(fact.consumerFoutState())
+			|| fact.relocationAction().durableAnchor() != fact.durableAnchor()
+			|| fact.obligation().consumer() != fact.consumer()
+			|| fact.obligation().inputPosition() != fact.inputPosition()
+			|| fact.obligation().relocationAction() != fact.relocationAction())
+			throw new IllegalArgumentException("Heuristic re-entry relocation obligation differs");
+		boolean exactAction = graph.relocationActions().stream().anyMatch(action -> action.key() == fact.relocationAction()
+			&& action.obligations().stream().anyMatch(obligation -> obligation == fact.obligation()));
+		if(!exactAction)
+			throw new IllegalArgumentException("Heuristic re-entry relocation is not analysis-owned");
+		if("recompile".equals(fact.localProducer().recompileContext())
+			|| "recompile".equals(fact.consumer().recompileContext())
+			|| "recompile".equals(fact.siblingProducer().recompileContext()))
+			throw new IllegalArgumentException("Heuristic re-entry cannot cross a recompile occurrence");
 	}
 
 	private List<LogicalTransientInputFact> validateLogicalTransientInputs(

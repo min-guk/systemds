@@ -8,8 +8,11 @@ import java.util.Set;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathwiseReentryFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
@@ -66,16 +69,82 @@ public class CampaignBHeuristicPathwiseReentryTest {
 	}
 
 	@Test
-	public void branchDoesNotSynthesizeMissingCommonRelocationFacts() throws Exception {
+	public void siblingBranchesConsumeOnlyTheirExactCommonRelocationFacts() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(branchScript()));
 		Assert.assertEquals(1, analysis.heuristicPolicyFacts().demotions().size());
-		var marker = analysis.heuristicPolicyFacts().demotions().get(0);
-		var result = new HeuristicPlacementAdapter().select(analysis, Set.of(marker.valueVersion()));
-		Assert.assertEquals("the common analysis exposes no exact branch relocation obligation", "0",
-			result.plannerFacts().get("frontierEdgeCount"));
-		Assert.assertTrue("Heuristic must not synthesize a branch relocation",
-			analysis.graph().relocationActions().stream().map(action -> action.key()).toList()
-				.containsAll(result.selectedRelocations()));
+		var path = analysis.heuristicPolicyFacts().paths().get(0);
+		Assert.assertEquals("both exact sibling branches publish a path-local frontier", 2,
+			path.reentries().size());
+		Assert.assertEquals("each sibling branch has its own exact transient-forward path edge", 2,
+			path.edges().stream().filter(edge -> edge.kind() == HeuristicPathEdgeKind.CFG_TRANSIENT_FORWARD).count());
+		Assert.assertEquals("branch-local consumers must remain distinct exact occurrences", 2,
+			path.reentries().stream().map(HeuristicPathwiseReentryFact::consumer).distinct().count());
+		for(HeuristicPathwiseReentryFact fact : path.reentries())
+			assertExactCommonFact(analysis, fact);
+		var result = new HeuristicPlacementAdapter().select(analysis, Set.of(path.demotion().valueVersion()));
+		Assert.assertEquals("2", result.plannerFacts().get("frontierEdgeCount"));
+		Assert.assertEquals(path.reentries().stream().map(HeuristicPathwiseReentryFact::obligation).sorted().toList(),
+			result.selectedObligations());
+		for(HeuristicPathwiseReentryFact fact : path.reentries()) {
+			Assert.assertEquals(fact.siblingFoutState(), result.assignment().get(fact.siblingProducer()));
+			Assert.assertEquals(fact.consumerFoutState(), result.assignment().get(fact.consumer()));
+		}
+	}
+
+	@Test
+	public void mergeWithUniqueReachingDefinitionPublishesOneExactReentry() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(mergeScript()));
+		var reentryPaths = analysis.heuristicPolicyFacts().paths().stream()
+			.filter(path -> !path.reentries().isEmpty()).toList();
+		Assert.assertEquals("the unique reaching definition must bind one exact merge re-entry path", 1,
+			reentryPaths.size());
+		Assert.assertEquals(1, reentryPaths.get(0).edges().stream()
+			.filter(edge -> edge.kind() == HeuristicPathEdgeKind.CFG_TRANSIENT_FORWARD).count());
+		Assert.assertEquals(1, reentryPaths.get(0).reentries().size());
+		assertExactCommonFact(analysis, reentryPaths.get(0).reentries().get(0));
+		Assert.assertTrue(analysis.graph().nodes().stream()
+			.anyMatch(node -> node.valueVersion().versionKind().name().equals("BRANCH_JOIN_PHI")));
+	}
+
+	@Test
+	public void loopFunctionAndRecompileDoNotPublishUnsupportedPathwiseFacts() throws Exception {
+		PlacementAnalysis loop = assertNoCommonReentry(loopScript());
+		Assert.assertTrue(loop.graph().nodes().stream()
+			.anyMatch(node -> node.key().callSitePath().contains("/loop-body/")));
+		PlacementAnalysis function = assertNoCommonReentry(functionScript());
+		Assert.assertTrue("the canonical named function identity must remain common-owned",
+			function.namedFunctionStatementBlocks().containsKey("foo"));
+		Assert.assertTrue("the exact function call must publish compiler-owned boundary nodes",
+			function.graph().nodes().stream().anyMatch(node ->
+				node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT));
+		Assert.assertTrue("the exact function call must publish compiler-owned boundary nodes",
+			function.graph().nodes().stream().anyMatch(node ->
+				node.kind() == org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT));
+		Assert.assertTrue("function-call candidate legality remains open; only unsupported path upload is withheld",
+			function.graph().nodes().stream()
+				.filter(node -> node.kind()
+					== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_CALL)
+				.flatMap(node -> node.legalAlternatives().stream())
+				.anyMatch(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT));
+		Assert.assertTrue("no common fact may infer a cross-function path from descendants",
+			function.heuristicPolicyFacts().paths().stream().flatMap(path -> path.edges().stream())
+				.noneMatch(edge -> !edge.producer().functionNamespace().equals(edge.consumer().functionNamespace())));
+		DMLProgram recompile = compile(script());
+		PlacementAnalysis before = new NeutralPlacementGraphBuilder().buildAnalysis(recompile);
+		var marker = before.heuristicPolicyFacts().demotions().get(0);
+		before.hop(marker.producer()).orElseThrow().setRequiresRecompile();
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(recompile);
+		Assert.assertTrue("recompile occurrence must remain explicit",
+			analysis.graph().nodes().stream().anyMatch(node -> "recompile".equals(node.key().recompileContext())));
+		Assert.assertTrue("recompile CP/FOUT must retain its explicit oracle reason",
+			analysis.graph().nodes().stream().filter(node -> "recompile".equals(node.key().recompileContext()))
+				.flatMap(node -> node.exclusions().stream()).anyMatch(exclusion ->
+					exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT));
+		Assert.assertTrue("no recompile occurrence may own a pathwise upload fact",
+			analysis.heuristicPolicyFacts().paths().stream().flatMap(path -> path.reentries().stream())
+				.noneMatch(fact -> "recompile".equals(fact.localProducer().recompileContext())
+					|| "recompile".equals(fact.consumer().recompileContext())
+					|| "recompile".equals(fact.siblingProducer().recompileContext())));
 	}
 
 	@Test
@@ -109,6 +178,43 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		return state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT;
 	}
 
+	private static void assertExactCommonFact(PlacementAnalysis analysis, HeuristicPathwiseReentryFact fact) {
+		Assert.assertSame(analysis.requireExactCompiledInputEdge(fact.localProducer(), fact.consumer(),
+			fact.inputPosition()).consumer(), fact.consumer());
+		Assert.assertSame(analysis.requireExactCompiledInputEdge(fact.siblingProducer(), fact.consumer(),
+			fact.siblingInputPosition()).consumer(), fact.consumer());
+		Assert.assertEquals(analysis.graph().node(fact.localProducer()).orElseThrow().valueVersion(),
+			fact.sourceValueVersion());
+		Assert.assertEquals(analysis.graph().node(fact.siblingProducer()).orElseThrow().valueVersion(),
+			fact.siblingValueVersion());
+		Assert.assertTrue(analysis.graph().node(fact.siblingProducer()).orElseThrow().anchors()
+			.contains(fact.durableAnchor()));
+		Assert.assertEquals(fact.durableAnchor().fType(), fact.siblingFoutState().fType());
+		Assert.assertEquals(FederatedOutput.FOUT, fact.siblingFoutState().output());
+		Assert.assertEquals(FederatedOutput.FOUT, fact.consumerFoutState().output());
+		Assert.assertEquals(fact.consumerFoutState().execType(),
+			fact.runtimeCandidate().capability().nativeExec());
+		Assert.assertEquals(fact.consumerFoutState().output(),
+			fact.runtimeCandidate().capability().nativeOutput());
+		Assert.assertEquals(fact.consumerFoutState().fType(),
+			fact.runtimeCandidate().capability().nativeFoutFType());
+		Assert.assertEquals(fact.relocationAction(), fact.obligation().relocationAction());
+		Assert.assertEquals(fact.consumer(), fact.obligation().consumer());
+		Assert.assertEquals(fact.inputPosition(), fact.obligation().inputPosition());
+		Assert.assertEquals(1, fact.modeledDistinctRelocationCost());
+		Assert.assertTrue(analysis.graph().relocationActions().stream()
+			.anyMatch(action -> action.key() == fact.relocationAction()
+				&& action.obligations().stream().anyMatch(obligation -> obligation == fact.obligation())));
+	}
+
+	private static PlacementAnalysis assertNoCommonReentry(String script) throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(script));
+		Assert.assertTrue(analysis.heuristicPolicyFacts().paths().toString(),
+			analysis.heuristicPolicyFacts().paths().stream()
+			.flatMap(path -> path.reentries().stream()).findAny().isEmpty());
+		return analysis;
+	}
+
 	private static String script() {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
@@ -129,6 +235,31 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
 			"v=matrix(1,2,1);", "z=X%*%v;", "w=z+1;", "print(sum(w));") + "\n";
+	}
+
+	private static String mergeScript() {
+		return String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));",
+			"v=matrix(1,2,1);", "z=X%*%v;", "if(sum(v)>0){s=1;}else{s=2;}",
+			"w=z+s;", "y=A*w;", "q=y+1;", "print(sum(q));") + "\n";
+	}
+
+	private static String loopScript() {
+		return String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));",
+			"v=matrix(1,2,1);", "z=X%*%v;", "i=1;", "while(i<2){w=z+1;y=A*w;i=i+1;}",
+			"print(i);") + "\n";
+	}
+
+	private static String functionScript() {
+		return String.join("\n",
+			"foo = function(matrix[double] z, matrix[double] A) return (matrix[double] y) {",
+			"  i=1;", "  while(i<2){w=z+1;y=A*w;i=i+1;}", "}",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
+			"A=federated(addresses=list(\"localhost:1234/A1\",\"localhost:1235/A2\"),ranges=list(list(0,0),list(2,1),list(2,0),list(4,1)));",
+			"v=matrix(1,2,1);", "z=X%*%v;", "y=foo(z,A);", "print(sum(y));") + "\n";
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

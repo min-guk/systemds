@@ -50,6 +50,10 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationAc
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathEdgeKind;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPathwiseReentryFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateConsumerProfileFact;
@@ -303,7 +307,8 @@ public final class NeutralPlacementGraphBuilder {
 		}
 		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(factsByKey, expectedKeys);
 		String analysisFingerprint = analysisFingerprint(graph, projections);
-		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts);
+		HeuristicPolicyFacts heuristicPolicyFacts = heuristicPolicyFacts(graph, projections, shapeFacts,
+			compiledInputEdges, candidateRuleFacts, occurrences, cfg);
 		PlacementAnalysis analysis = new PlacementAnalysis(graph, projections, topLevelStatementBlocks, program, shapeFacts,
 			analysisFingerprint, heuristicPolicyFacts, candidateRuleDomainKeys, candidateRuleFacts,
 			candidateConsumerDomainKeys, candidateConsumerProfileFacts, detachedConsumerProfileFacts,
@@ -351,7 +356,9 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static HeuristicPolicyFacts heuristicPolicyFacts(NeutralPlacementGraph graph,
-		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts) {
+		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
+		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg) {
 		List<HeuristicPolicyFact> demotions = new ArrayList<>();
 		for(HopOccurrenceProjection projection : projections) {
 			Hop hop = projection.hop();
@@ -363,7 +370,184 @@ public final class NeutralPlacementGraphBuilder {
 			if(exactLocalAlternative)
 				demotions.add(new HeuristicPolicyFact(projection.key(), node.valueVersion()));
 		}
-		return new HeuristicPolicyFacts(demotions);
+		return new HeuristicPolicyFacts(demotions, heuristicPaths(graph, projections, shapeFacts, demotions,
+			compiledInputEdges, candidateRuleFacts, occurrences, cfg));
+	}
+
+	private static List<HeuristicPathFact> heuristicPaths(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
+		List<HeuristicPolicyFact> demotions,
+		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences, CfgAnalysis cfg) {
+		Map<CompiledHopKey,List<HeuristicPathEdgeFact>> outgoing = new IdentityHashMap<>();
+		for(CompiledInputEdgeFact edge : compiledInputEdges) {
+			Node producer = graph.node(edge.producer()).orElseThrow();
+			Node consumer = graph.node(edge.consumer()).orElseThrow();
+			outgoing.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(
+				new HeuristicPathEdgeFact(edge.producer(), edge.consumer(), edge.inputPosition(),
+					producer.valueVersion(), consumer.valueVersion(), HeuristicPathEdgeKind.COMPILED_INPUT));
+		}
+		for(HeuristicPathEdgeFact edge : exactCfgHeuristicPathEdges(graph, projections, shapeFacts, occurrences, cfg))
+			outgoing.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge);
+		outgoing.values().forEach(edges -> edges.sort(null));
+
+		List<HeuristicPathFact> paths = new ArrayList<>();
+		for(HeuristicPolicyFact demotion : demotions) {
+			Set<CompiledHopKey> localPrefix = new java.util.TreeSet<>();
+			Set<HeuristicPathEdgeFact> usedEdges = new java.util.TreeSet<>();
+			Set<HeuristicPathwiseReentryFact> reentries = new java.util.TreeSet<>();
+			java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>();
+			localPrefix.add(demotion.producer());
+			pending.add(demotion.producer());
+			while(!pending.isEmpty()) {
+				CompiledHopKey producerKey = pending.removeFirst();
+				for(HeuristicPathEdgeFact edge : outgoing.getOrDefault(producerKey, List.of())) {
+					if(edge.kind() == HeuristicPathEdgeKind.COMPILED_INPUT) {
+						HeuristicPathwiseReentryFact reentry = exactHeuristicReentry(graph, compiledInputEdges,
+							candidateRuleFacts, edge.producer(), edge.consumer(), edge.inputPosition());
+						if(reentry != null) {
+							reentries.add(reentry);
+							continue;
+						}
+					}
+					if(!supportedLocalPathNode(graph, shapeFacts, edge.consumer()))
+						continue;
+					usedEdges.add(edge);
+					if(localPrefix.add(edge.consumer()))
+						pending.addLast(edge.consumer());
+				}
+			}
+			paths.add(new HeuristicPathFact(demotion, new ArrayList<>(localPrefix),
+				new ArrayList<>(usedEdges), new ArrayList<>(reentries)));
+		}
+		return paths.stream().sorted().toList();
+	}
+
+	private static List<HeuristicPathEdgeFact> exactCfgHeuristicPathEdges(NeutralPlacementGraph graph,
+		List<HopOccurrenceProjection> projections, PlacementShapeFacts shapeFacts,
+		List<PlacementGraphFingerprint.HopOccurrence> occurrences,
+		CfgAnalysis cfg) {
+		Map<Hop,HopOccurrenceProjection> projectionsByHop = new IdentityHashMap<>();
+		for(HopOccurrenceProjection projection : projections)
+			projectionsByHop.put(projection.hop(), projection);
+		List<HeuristicPathEdgeFact> edges = new ArrayList<>();
+		for(int readOrdinal = 0; readOrdinal < occurrences.size(); readOrdinal++) {
+			HopOccurrenceProjection readProjection = projectionsByHop.get(occurrences.get(readOrdinal).hop());
+			if(readProjection == null || !isTransientRead(readProjection.hop())
+				|| cfg.reachingDefinitions().get(readOrdinal).size() != 1
+				|| !supportedPathOccurrence(readProjection.key()))
+				continue;
+			int sourceOrdinal = cfg.reachingDefinitions().get(readOrdinal).iterator().next();
+			if(sourceOrdinal < 0 || sourceOrdinal >= occurrences.size())
+				continue;
+			HopOccurrenceProjection sourceProjection = projectionsByHop.get(occurrences.get(sourceOrdinal).hop());
+			Node source = sourceProjection == null ? null : graph.node(sourceProjection.key()).orElse(null);
+			Node read = graph.node(readProjection.key()).orElseThrow();
+			if(sourceProjection == null || !isTransientWrite(sourceProjection.hop())
+				|| !supportedPathOccurrence(sourceProjection.key())
+				|| source == null || !sameTransientForwardContext(source, read)
+				|| !isVector(shapeFacts.shapeFact(sourceProjection.key()).orElse(null))
+				|| !isVector(shapeFacts.shapeFact(readProjection.key()).orElse(null)))
+				continue;
+			edges.add(new HeuristicPathEdgeFact(source.key(), read.key(), 0, source.valueVersion(),
+				read.valueVersion(), HeuristicPathEdgeKind.CFG_TRANSIENT_FORWARD));
+		}
+		return edges.stream().sorted().toList();
+	}
+
+	private static HeuristicPathwiseReentryFact exactHeuristicReentry(NeutralPlacementGraph graph,
+		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
+		CompiledHopKey localProducer,
+		CompiledHopKey consumer, int inputPosition) {
+		if(!supportedPathOccurrence(localProducer) || !supportedPathOccurrence(consumer))
+			return null;
+		Node local = graph.node(localProducer).orElseThrow();
+		Node consumerNode = graph.node(consumer).orElseThrow();
+		// A FunctionOp candidate describes the call instruction, not an exact placement transfer into
+		// the callee CFG. Function-boundary nodes remain the common authority, and pathwise upload is
+		// withheld until a compiler-owned cross-boundary path/relocation contract exists.
+		if(consumerNode.kind() == NodeKind.FUNCTION_CALL)
+			return null;
+		List<HeuristicPathwiseReentryFact> matches = new ArrayList<>();
+		for(NeutralPlacementGraph.RelocationAction action : graph.relocationActions()) {
+			if(action.key().sourceValueVersion() != local.valueVersion())
+				continue;
+			for(ObligationKey obligation : action.obligations()) {
+				if(obligation.consumer() != consumer || obligation.inputPosition() != inputPosition
+					|| obligation.sourceValueVersion() != local.valueVersion()
+					|| obligation.relocationAction() != action.key())
+					continue;
+				for(CandidateRuleFact candidate : candidateRuleFacts)
+					addExactHeuristicReentryMatch(graph, compiledInputEdges, localProducer, consumer, inputPosition,
+						action, obligation, candidate, matches);
+			}
+		}
+		return matches.size() == 1 ? matches.get(0) : null;
+	}
+
+	private static void addExactHeuristicReentryMatch(NeutralPlacementGraph graph,
+		List<CompiledInputEdgeFact> compiledInputEdges, CompiledHopKey localProducer,
+		CompiledHopKey consumer, int inputPosition,
+		NeutralPlacementGraph.RelocationAction action, ObligationKey obligation,
+		CandidateRuleFact candidate, List<HeuristicPathwiseReentryFact> matches) {
+		if(candidate.key().parentOccurrence() != consumer
+			|| candidate.status() != CandidateEvaluationStatus.AVAILABLE || candidate.capability() == null
+			|| candidate.capability().nativeExec() != ExecType.FED
+			|| candidate.capability().nativeOutput() != FederatedOutput.FOUT
+			|| candidate.capability().nativeFoutFType() != action.key().durableAnchor().fType()
+			|| !candidate.profile().available()
+			|| !candidate.profile().producerOutputs().contains(action.key().durableAnchor().fType())
+			|| inputPosition >= candidate.key().orderedInputs().size()
+			|| !candidate.key().orderedInputs().get(inputPosition).equals(CandidateInputState.absentLocal()))
+			return;
+		PlacementState consumerState = action.key().targetPlacement();
+		Node consumerNode = graph.node(consumer).orElseThrow();
+		if(!consumerNode.legalAlternatives().contains(consumerState)
+			|| consumerState.execType() != ExecType.FED || consumerState.output() != FederatedOutput.FOUT
+			|| consumerState.fType() != action.key().durableAnchor().fType())
+			return;
+		List<CompiledInputEdgeFact> siblingEdges = new ArrayList<>();
+		for(int siblingPosition = 0; siblingPosition < candidate.key().orderedInputs().size(); siblingPosition++) {
+			if(siblingPosition == inputPosition
+				|| !candidate.key().orderedInputs().get(siblingPosition)
+					.equals(CandidateInputState.present(action.key().durableAnchor().fType())))
+				continue;
+			for(CompiledInputEdgeFact edge : compiledInputEdges)
+				if(edge.consumer() == consumer && edge.inputPosition() == siblingPosition
+					&& edge.producer() != localProducer && supportedPathOccurrence(edge.producer()))
+					siblingEdges.add(edge);
+		}
+		if(siblingEdges.size() != 1)
+			return;
+		CompiledInputEdgeFact siblingEdge = siblingEdges.get(0);
+		Node sibling = graph.node(siblingEdge.producer()).orElseThrow();
+		List<PlacementState> siblingStates = sibling.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() == action.key().durableAnchor().fType())
+			.filter(state -> sibling.anchors().contains(action.key().durableAnchor())).toList();
+		if(siblingStates.size() != 1)
+			return;
+		matches.add(new HeuristicPathwiseReentryFact(localProducer,
+			graph.node(localProducer).orElseThrow().valueVersion(), consumer, inputPosition,
+			sibling.key(), sibling.valueVersion(), siblingEdge.inputPosition(), siblingStates.get(0),
+			action.key().durableAnchor(), consumerState, candidate, action.key(), obligation, 1));
+	}
+
+	private static boolean supportedLocalPathNode(NeutralPlacementGraph graph,
+		PlacementShapeFacts shapeFacts, CompiledHopKey key) {
+		Node node = graph.node(key).orElseThrow();
+		return supportedPathOccurrence(key) && node.kind() != NodeKind.FUNCTION_CALL
+			&& node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT
+			&& node.kind() != NodeKind.FUNCTION_BODY_NON_EMITTED && isVector(shapeFacts.shapeFact(key).orElse(null));
+	}
+
+	private static boolean supportedPathOccurrence(CompiledHopKey key) {
+		return "main".equals(key.functionNamespace()) && "compiled".equals(key.recompileContext())
+			&& !key.callSitePath().contains("/loop-body/");
+	}
+
+	private static boolean isVector(NodeShapeFact shape) {
+		return shape != null && shape.knownPositiveMatrix() && (shape.rows() == 1 || shape.cols() == 1);
 	}
 
 	private static boolean isAggregateBinaryVectorInput(Hop hop, NodeShapeFact shape, FType inputType) {

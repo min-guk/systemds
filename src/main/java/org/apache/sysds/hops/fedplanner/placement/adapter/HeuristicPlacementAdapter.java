@@ -24,6 +24,8 @@ import java.util.TreeMap;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -48,7 +50,7 @@ public final class HeuristicPlacementAdapter {
 		PolicyView policy = policyView(analysis, markerKeys);
 		List<String> exclusions = policy.exclusions();
 		NeutralPlacementGraph filtered = new NeutralPlacementGraph(
-			filteredNodes(analysis, policy), base.constraints(), base.relocationActions());
+			filteredNodes(analysis, policy), policy.constraints(), base.relocationActions());
 		List<String> candidates = filtered.normalizedCandidateUniverse();
 		PlacementSelection selection = new ExactPlacementSelector().select(filtered);
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
@@ -117,33 +119,24 @@ public final class HeuristicPlacementAdapter {
 	}
 
 	private record PolicyView(Set<CompiledHopKey> markers, Set<CompiledHopKey> localPrefix,
-		Set<FrontierEdge> frontiers, List<String> exclusions) { }
+		Set<FrontierEdge> frontiers, List<Constraint> constraints, List<String> exclusions) { }
 
 	private static PolicyView policyView(PlacementAnalysis analysis, List<CompiledHopKey> requestedMarkers) {
 		Set<CompiledHopKey> typedMarkers = new LinkedHashSet<>();
 		for(var fact : analysis.heuristicPolicyFacts().demotions())
 			if(requestedMarkers.contains(fact.producer())) typedMarkers.add(fact.producer());
-		Set<CompiledHopKey> local = new LinkedHashSet<>(typedMarkers);
+		Set<CompiledHopKey> local = new LinkedHashSet<>();
 		Set<FrontierEdge> frontiers = new java.util.TreeSet<>();
-		java.util.ArrayDeque<CompiledHopKey> pending = new java.util.ArrayDeque<>(typedMarkers);
-		while(!pending.isEmpty()) {
-			CompiledHopKey producer = pending.removeFirst();
-			Node source = analysis.graph().node(producer).orElseThrow();
-			for(var edge : analysis.compiledInputEdgesInCanonicalOrder()) {
-				if(edge.producer() != producer) continue;
-				FrontierEdge frontier = exactFrontier(analysis, producer, source.valueVersion(), edge.consumer(),
-					edge.inputPosition());
-				if(frontier != null) {
-					frontiers.add(frontier);
-					continue;
-				}
-				if(isVector(analysis, edge.consumer()) && local.add(edge.consumer()))
-					pending.addLast(edge.consumer());
-			}
-			for(var logical : analysis.logicalTransientInputsInCanonicalOrder()) {
-				if(logical.sourceWrite() != producer) continue;
-				if(isVector(analysis, logical.targetRead()) && local.add(logical.targetRead()))
-					pending.addLast(logical.targetRead());
+		List<Constraint> constraints = new ArrayList<>(analysis.graph().constraints());
+		for(var path : analysis.heuristicPolicyFacts().paths()) {
+			if(!typedMarkers.contains(path.demotion().producer()))
+				continue;
+			local.addAll(path.localPrefix());
+			for(var fact : path.reentries()) {
+				frontiers.add(new FrontierEdge(fact.sourceValueVersion(), fact.consumer(), fact.inputPosition(),
+					fact.relocationAction()));
+				constraints.add(new Constraint(ConstraintKind.CONJUNCTIVE, fact.siblingProducer(), fact.consumer(),
+					fact.siblingInputPosition(), "pathwise-reentry-sibling"));
 			}
 		}
 		List<String> exclusions = new ArrayList<>();
@@ -159,28 +152,8 @@ public final class HeuristicPlacementAdapter {
 				+ "|input=" + frontier.inputPosition() + "|value=" + frontier.sourceValue().normalizedSignature()
 				+ "|relocation=" + frontier.relocation().normalizedSignature());
 		return new PolicyView(Set.copyOf(typedMarkers), Set.copyOf(local), Set.copyOf(frontiers),
+			constraints.stream().distinct().sorted().toList(),
 			exclusions.stream().sorted().toList());
-	}
-
-	private static FrontierEdge exactFrontier(PlacementAnalysis analysis, CompiledHopKey producer,
-		ValueVersionKey source, CompiledHopKey consumer, int inputPosition) {
-		analysis.requireExactCompiledInputEdge(producer, consumer, inputPosition);
-		List<FrontierEdge> matches = new ArrayList<>();
-		for(var action : analysis.graph().relocationActions())
-			if(action.key().sourceValueVersion().equals(source))
-				for(ObligationKey obligation : action.obligations())
-					if(obligation.consumer() == consumer && obligation.inputPosition() == inputPosition
-						&& obligation.sourceValueVersion().equals(source)
-						&& obligation.relocationAction().equals(action.key())
-						&& obligation.requiredPlacement().equals(action.key().targetPlacement()))
-						matches.add(new FrontierEdge(source, consumer, inputPosition, action.key()));
-		if(matches.size() > 1) throw new HeuristicPolicySafetyException();
-		return matches.isEmpty() ? null : matches.get(0);
-	}
-
-	private static boolean isVector(PlacementAnalysis analysis, CompiledHopKey key) {
-		var shape = analysis.shapeFact(key).orElse(null);
-		return shape != null && shape.knownPositiveMatrix() && (shape.rows() == 1 || shape.cols() == 1);
 	}
 
 	private static String normalizedCandidate(String key, String state) {

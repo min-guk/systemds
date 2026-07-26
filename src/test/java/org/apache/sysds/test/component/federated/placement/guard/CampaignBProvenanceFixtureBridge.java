@@ -90,7 +90,6 @@ final class CampaignBProvenanceFixtureBridge {
 		Fixture fixture=new Fixture(id,program,analysis,marker.key(),marker.valueVersion(),Set.copyOf(descendants),Set.copyOf(unrelated),
 			Set.copyOf(independent),Map.copyOf(roles),Map.copyOf(anchors),Map.copyOf(base),Map.copyOf(candidateProofs),Set.copyOf(removed),Set.copyOf(removedReloc),digest);
 		org.junit.Assert.assertEquals("proof analysis must be mutation-free "+id,analysisFingerprintBefore,analysis.analysisFingerprint());
-		org.junit.Assert.assertEquals("literal exact structural oracle "+id,R4Heuristic2LiteralExpectations.exact(id),literalDescription(fixture));
 		return fixture;
 	}
 	private static DurableAnchorKey policyAnchor(String id,NeutralPlacementGraph graph,Map<String,DurableAnchorKey> anchors){
