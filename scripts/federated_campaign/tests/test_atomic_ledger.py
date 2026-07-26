@@ -67,7 +67,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		cold = self._phase(f"cold{suffix}", "docker_e2e", 2.5)
 		warm = self._phase(f"warm{suffix}", "systemds_total_execution_time", 1.25)
 		shared = self._shared_manifest(key, cold, warm, f"shared{suffix}.json")
-		return ledger.publish_success(key, cold, warm, shared)
+		return ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 
 	def _failure(self, name="failure", return_code=17):
 		bundle = self.root / name
@@ -121,7 +121,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		cold = self._phase("performance-cold", "docker_e2e", 2.5)
 		warm = self._phase("performance-warm", "systemds_total_execution_time", 1.25)
 		shared = self._shared_manifest(key, cold, warm, "performance-shared.json")
-		ledger.publish_success(key, cold, warm, shared)
+		ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 		wrong_order = PerformanceKey("cell-a", 3, 2, "DP>FedAll", "manifest-a")
 		self.assertIsNone(ledger.performance_success(wrong_order))
 
@@ -133,7 +133,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		shared = self.root / "shared.json"
 		shared.write_text("{}", encoding="utf-8")
 		with self.assertRaises(LedgerContractError):
-			ledger.publish_success(key, cold, missing_warm, shared)
+			ledger.publish_legacy_success_for_migration(key, cold, missing_warm, shared)
 
 	def test_success_rejects_stale_shared_manifest_identity(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
@@ -143,7 +143,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		stale_key = DiscoveryKey("cell-a", 1, "token-a", "stale-manifest")
 		shared = self._shared_manifest(stale_key, cold, warm)
 		with self.assertRaisesRegex(LedgerContractError, "identity"):
-			ledger.publish_success(key, cold, warm, shared)
+			ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 
 	def test_committed_success_resumes_only_after_checksum_validation(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
@@ -178,7 +178,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		warm = self._phase("rename-crash-warm", "systemds_total_execution_time", 1.2)
 		shared = self._shared_manifest(key, cold, warm, "rename-crash-shared.json")
 		with self.assertRaises(InjectedPublicationCrash):
-			ledger.publish_success(key, cold, warm, shared, crash_after="after_commit_rename")
+			ledger.publish_legacy_success_for_migration(key, cold, warm, shared, crash_after="after_commit_rename")
 		record_id = hashlib.sha256(
 			json.dumps(key.as_dict(), sort_keys=True, separators=(",", ":")).encode()
 		).hexdigest()
@@ -200,7 +200,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		warm = self._phase("state-crash-warm", "systemds_total_execution_time", 1.2)
 		shared = self._shared_manifest(key, cold, warm, "state-crash-shared.json")
 		with self.assertRaises(InjectedPublicationCrash):
-			ledger.publish_success(key, cold, warm, shared, crash_after="after_commit_rename")
+			ledger.publish_legacy_success_for_migration(key, cold, warm, shared, crash_after="after_commit_rename")
 		record_id = hashlib.sha256(
 			json.dumps(key.as_dict(), sort_keys=True, separators=(",", ":")).encode()
 		).hexdigest()
@@ -226,7 +226,10 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_latest_failed_attempt_never_backfills_older_success(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))
-		ledger.publish_failure(DiscoveryKey("cell-a", 2, "token-b", "manifest-a"), self._failure())
+		lease = ledger.begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
+		)
+		ledger.publish_failure(lease, self._failure())
 		self.assertIsNone(ledger.latest_discovery_success("cell-a", "manifest-a"))
 		self.assertEqual(ResumeState.LATEST_FAILED, ledger.resume_discovery("cell-a", "manifest-a").state)
 
@@ -299,14 +302,28 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"semantic": True}
 		)
 		committed = ledger.publish_failure(lease, self._failure("semantic-zero", return_code=0))
-		self.assertEqual("failed", ledger.validate_committed(committed, require_success=False)["status"])
+		manifest = ledger.validate_committed(committed, require_success=False)
+		self.assertEqual("failed", manifest["status"])
+		self.assertEqual("semantic_oracle", manifest["failure_category"])
+		self.assertEqual({"passed": False}, manifest["semantic_oracle_summary"])
+		self.assertRegex(str(manifest["semantic_oracle_sha256"]), r"^[0-9a-f]{64}$")
+		self.assertEqual(False, manifest["parser_summary"]["passed"])
+		self.assertIn("timeout", manifest["scan_summary"])
+
+	def test_bare_key_cannot_publish_v2_failure(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		with self.assertRaisesRegex(LedgerContractError, "durable AttemptLease"):
+			ledger.publish_failure(DiscoveryKey("cell-a", 1, "token", "manifest"), self._failure())  # type: ignore[arg-type]
 
 	def test_failed_attempt_requires_complete_checksummed_bundle(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		lease = ledger.begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest", invocation_manifest={"argv": ["docker"]}
+		)
 		bundle = self._failure("incomplete")
 		(bundle / "raw_worker.log").unlink()
 		with self.assertRaisesRegex(LedgerContractError, "raw_worker"):
-			ledger.publish_failure(DiscoveryKey("cell-a", 1, "token", "manifest"), bundle)
+			ledger.publish_failure(lease, bundle)
 
 	def test_failure_crash_boundaries_never_publish_partial_valid_failure(self):
 		for boundary in FAILURE_PUBLICATION_BOUNDARIES:
@@ -338,13 +355,13 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 				old_cold = self._phase(f"{boundary}-old-cold", "docker_e2e", 2.5)
 				old_warm = self._phase(f"{boundary}-old-warm", "systemds_total_execution_time", 1.25)
 				old_shared = self._shared_manifest(old_key, old_cold, old_warm, f"{boundary}-old-shared.json")
-				ledger.publish_success(old_key, old_cold, old_warm, old_shared)
+				ledger.publish_legacy_success_for_migration(old_key, old_cold, old_warm, old_shared)
 				new_key = DiscoveryKey("cell-a", 2, "new-token", "manifest-a")
 				new_cold = self._phase(f"{boundary}-new-cold", "docker_e2e", 2.4)
 				new_warm = self._phase(f"{boundary}-new-warm", "systemds_total_execution_time", 1.2)
 				new_shared = self._shared_manifest(new_key, new_cold, new_warm, f"{boundary}-new-shared.json")
 				with self.assertRaises(InjectedPublicationCrash):
-					ledger.publish_success(new_key, new_cold, new_warm, new_shared, crash_after=boundary)
+					ledger.publish_legacy_success_for_migration(new_key, new_cold, new_warm, new_shared, crash_after=boundary)
 				restarted = AtomicEvidenceLedger(case_root / "ledger")
 				record = restarted.latest_discovery_success("cell-a", "manifest-a")
 				self.assertIn(record["identity"]["attempt"], (1, 2))

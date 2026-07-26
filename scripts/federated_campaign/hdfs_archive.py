@@ -332,19 +332,18 @@ class HdfsArchiveAdapter:
 		archive_attempts = [_receipt_attempt(receipt) for receipt in archived]
 		latest_attempt = max([attempt for attempt in (local.attempt, *archive_attempts) if attempt is not None], default=None)
 		if latest_attempt is None:
-			return local
-		if local.attempt == latest_attempt and local.state in (
-			ResumeState.IN_PROGRESS_OR_ABANDONED,
-			ResumeState.LATEST_FAILED,
-			ResumeState.CORRUPT_OR_AMBIGUOUS,
-		):
-			return local
+			return self._require_v2_resume(local)
 		latest_archived = [
 			receipt for receipt in archived
 			if _receipt_attempt(receipt) == latest_attempt
 		]
 		if not latest_archived:
-			return local
+			return self._require_v2_resume(local)
+		if len(latest_archived) != 1:
+			return ResumeDecision(
+				ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt,
+				detail="duplicate archived receipts for the same latest attempt",
+			)
 		if local.attempt == latest_attempt and local.evidence is not None:
 			local_identity = local.evidence.get("identity")
 			local_status = local.evidence.get("status")
@@ -353,17 +352,42 @@ class HdfsArchiveAdapter:
 				for receipt in latest_archived
 			):
 				return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="local/archive same-attempt disagreement")
-		identities = {_canonical_bytes(receipt["identity"]) for receipt in latest_archived}
-		if len(identities) != 1:
-			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="ambiguous archived latest attempt")
+		if local.attempt == latest_attempt and local.state in (
+			ResumeState.IN_PROGRESS_OR_ABANDONED,
+			ResumeState.LATEST_FAILED,
+			ResumeState.CORRUPT_OR_AMBIGUOUS,
+		):
+			return self._require_v2_resume(local)
 		try:
 			manifest = self._verify_receipt(latest_archived[0])
 		except ArchiveContractError as error:
 			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail=str(error))
 		manifest["archive_uri"] = latest_archived[0]["archive_uri"]
 		manifest["archive_sha256"] = latest_archived[0]["archive_sha256"]
+		if not self._is_v2_manifest(manifest):
+			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="legacy v1 archive cannot satisfy v2 resume")
 		state = ResumeState.LATEST_SUCCESS if manifest.get("status") == "success" else ResumeState.LATEST_FAILED
 		return ResumeDecision(state, latest_attempt, manifest)
+
+	@staticmethod
+	def _is_v2_manifest(manifest: Mapping[str, object]) -> bool:
+		identity = manifest.get("identity")
+		return (
+			manifest.get("schema") == "systemds-federated-evidence/v2"
+			and isinstance(identity, dict)
+			and manifest.get("evidence_kind") == identity.get("kind")
+			and isinstance(manifest.get("invocation_manifest_sha256"), str)
+		)
+
+	def _require_v2_resume(self, decision: ResumeDecision) -> ResumeDecision:
+		if decision.state not in (ResumeState.LATEST_SUCCESS, ResumeState.LATEST_FAILED):
+			return decision
+		if decision.evidence is None or not self._is_v2_manifest(decision.evidence):
+			return ResumeDecision(
+				ResumeState.CORRUPT_OR_AMBIGUOUS, decision.attempt,
+				detail="legacy v1 evidence cannot satisfy campaign v2 resume",
+			)
+		return decision
 
 	def preflight_next_lifecycle(
 		self,
@@ -691,30 +715,75 @@ class CampaignHarnessAdapter:
 	) -> dict[str, object]:
 		"""Normalize success, failure, in-progress, and corrupt evidence without dropping identity facts."""
 		evidence = dict(decision.evidence or {})
-		identity_value = evidence.get("identity", dict(requested_identity))
-		if not isinstance(identity_value, dict):
-			raise ArchiveContractError("normalized row identity is invalid")
-		identity = dict(identity_value)
+		identity = dict(requested_identity)
 		kind = identity.get("kind")
 		if kind not in ("discovery", "performance"):
 			raise ArchiveContractError("normalized row kind is invalid")
-		if decision.state in (ResumeState.LATEST_SUCCESS, ResumeState.LATEST_FAILED):
-			if evidence.get("schema") != "systemds-federated-evidence/v2" or evidence.get("evidence_kind") != kind:
-				raise ArchiveContractError("legacy evidence cannot satisfy v2 normalization")
+		try:
+			if kind == "discovery" and set(identity) == {"kind", "cell", "attempt", "run_token", "manifest_hash"}:
+				canonical_identity = DiscoveryKey(
+					cast(str, identity["cell"]), cast(int, identity["attempt"]),
+					cast(str, identity["run_token"]), cast(str, identity["manifest_hash"]),
+				).as_dict()
+			elif kind == "performance" and set(identity) == {
+				"kind", "cell", "lifecycle_replicate", "period", "order", "manifest_hash", "attempt", "run_token"
+			}:
+				canonical_identity = PerformanceKey(
+					cast(str, identity["cell"]), cast(int, identity["lifecycle_replicate"]), cast(int, identity["period"]),
+					cast(str, identity["order"]), cast(str, identity["manifest_hash"]), cast(int, identity["attempt"]),
+					cast(str, identity["run_token"]),
+				).as_dict()
+			else:
+				raise ArchiveContractError("normalized requested identity schema is not exact")
+		except (LedgerContractError, TypeError) as error:
+			raise ArchiveContractError("normalized requested identity is invalid") from error
+		if identity != canonical_identity:
+			raise ArchiveContractError("normalized requested identity is not canonical")
+		blocker: dict[str, object] | None = None
+		terminal = decision.state in (ResumeState.LATEST_SUCCESS, ResumeState.LATEST_FAILED)
+		if terminal:
+			evidence_identity = evidence.get("identity")
+			if evidence_identity != identity:
+				blocker = {"code": "IDENTITY_MISMATCH", "detail": "evidence does not exactly match requested identity"}
+			elif not self._archive._is_v2_manifest(evidence):
+				blocker = {"code": "LEGACY_EVIDENCE", "detail": "legacy evidence cannot satisfy v2 normalization"}
+			else:
+				blocker = self._revalidate_normalized_evidence(evidence, identity)
+		else:
+			blocker = {"code": decision.state.value, "detail": decision.detail or "resume evidence is not valid"}
+		verified_success = decision.state is ResumeState.LATEST_SUCCESS and blocker is None
+		verified_failure = decision.state is ResumeState.LATEST_FAILED and blocker is None
+		if verified_failure:
+			blocker = {
+				"code": "EXECUTION_FAILURE", "detail": evidence.get("failure_category", "failed execution"),
+			}
 		row: dict[str, object] = {
 			"schema": "systemds-federated-normalized-row/v2",
 			"kind": kind,
 			"identity": identity,
 			"resume_state": decision.state.value,
-			"valid": decision.state is ResumeState.LATEST_SUCCESS,
-			"failure": decision.state in (ResumeState.LATEST_FAILED, ResumeState.CORRUPT_OR_AMBIGUOUS),
+			"valid": verified_success,
+			"failure": (
+				decision.state in (ResumeState.LATEST_FAILED, ResumeState.CORRUPT_OR_AMBIGUOUS)
+				or (terminal and blocker is not None)
+			),
 			"detail": decision.detail,
+			"blocker": blocker,
 			"schedule": dict(schedule) if schedule is not None else None,
 			"metrics": {
 				"discovery": evidence.get("discovery_metric"),
 				"cold": evidence.get("cold_metric"),
 				"warm": evidence.get("warm_metric"),
-				"failure_return_code": evidence.get("return_code"),
+				"failure": {
+					"return_code": evidence.get("return_code"),
+					"category": evidence.get("failure_category"),
+					"semantic_oracle": evidence.get("semantic_oracle_summary"),
+					"semantic_oracle_sha256": evidence.get("semantic_oracle_sha256"),
+					"parser": evidence.get("parser_summary"),
+					"parser_sha256": evidence.get("parser_sha256"),
+					"scan": evidence.get("scan_summary"),
+					"scan_sha256": evidence.get("scan_sha256"),
+				} if decision.state is ResumeState.LATEST_FAILED else None,
 			},
 			"host_load": dict(host_load),
 			"lifecycle": dict(lifecycle),
@@ -728,7 +797,46 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("discovery rows must not claim a performance schedule")
 		if kind == "performance" and schedule is None:
 			raise ArchiveContractError("performance rows require exact schedule facts")
+		if kind == "performance" and schedule is not None and (
+			schedule.get("period") != identity.get("period") or schedule.get("order") != identity.get("order")
+		):
+			raise ArchiveContractError("performance row schedule disagrees with requested identity")
 		return row
+
+	def _revalidate_normalized_evidence(
+		self, evidence: Mapping[str, object], identity: Mapping[str, object]
+	) -> dict[str, object] | None:
+		validated: list[dict[str, object]] = []
+		committed_path = evidence.get("committed_path")
+		if isinstance(committed_path, str):
+			try:
+				validated.append(self._ledger.validate_committed(Path(committed_path), require_success=False))
+			except LedgerContractError as error:
+				return {"code": "LOCAL_REVALIDATION_FAILED", "detail": str(error)}
+		archive_uri, archive_hash = evidence.get("archive_uri"), evidence.get("archive_sha256")
+		if isinstance(archive_uri, str) or isinstance(archive_hash, str):
+			matches = [
+				receipt for receipt in self._archive.catalog()
+				if receipt.get("identity") == identity
+				and receipt.get("archive_uri") == archive_uri
+				and receipt.get("archive_sha256") == archive_hash
+			]
+			if len(matches) != 1:
+				return {"code": "ARCHIVE_RECEIPT_AMBIGUOUS", "detail": "archive evidence lacks one unique verified receipt"}
+			try:
+				validated.append(self._archive._verify_receipt(matches[0]))
+			except ArchiveContractError as error:
+				return {"code": "ARCHIVE_REVALIDATION_FAILED", "detail": str(error)}
+		if not validated:
+			return {"code": "EVIDENCE_LOCATION_MISSING", "detail": "terminal evidence has no revalidatable location"}
+		for manifest in validated:
+			if (
+				manifest.get("identity") != identity
+				or not self._archive._is_v2_manifest(manifest)
+				or manifest.get("status") != evidence.get("status")
+			):
+				return {"code": "EVIDENCE_REVALIDATION_MISMATCH", "detail": "revalidated evidence changed identity, schema, or status"}
+		return None
 
 def _canonical_bytes(value: object) -> bytes:
 	return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

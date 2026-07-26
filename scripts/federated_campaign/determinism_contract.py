@@ -42,6 +42,9 @@ COMPOSE_SURFACES = ("base", "campaign")
 RUNNER_SURFACES = ("campaign", "docker", "snapshot", "data_prep")
 COMMAND_SURFACES = ("compose", "campaign", "docker_lifecycle", "systemds_snapshot", "data_prep")
 ENDPOINT_NAMES = ("coordinator", "worker_1", "worker_2", "worker_3", "worker_4")
+PILOT_CLASSES = ("cheap", "medium", "heavy")
+PILOT_REGIMES = ((1, "lan"), (4, "wan_mid"))
+SEED_STREAMS = ("schedule", "data_generation", "workload_random")
 
 
 def campaign_block_ids() -> tuple[str, ...]:
@@ -446,6 +449,30 @@ def _named_file_records(name: str, files: Mapping[str, Path], expected_names: Se
 	return {label: _file_record(Path(files[label])) for label in labels}
 
 
+def _distinct_named_file_records(name: str, files: Mapping[str, Path], expected_names: Sequence[str]) -> dict[str, dict[str, object]]:
+	records = _named_file_records(name, files, expected_names)
+	paths = [str(record["path"]) for record in records.values()]
+	digests = [str(record["sha256"]) for record in records.values()]
+	if len(set(paths)) != len(expected_names) or len(set(digests)) != len(expected_names):
+		raise CampaignContractError(f"{name} must contain {len(expected_names)} distinct workload artifacts")
+	return records
+
+
+def _sha256_text(name: str, value: object) -> str:
+	if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+		raise CampaignContractError(f"{name} must be a lowercase SHA256 digest")
+	return value
+
+
+def _positive_finite(name: str, value: object, *, allow_zero: bool = False) -> float:
+	if isinstance(value, bool) or not isinstance(value, (int, float)):
+		raise CampaignContractError(f"{name} must be numeric")
+	number = float(value)
+	if not math.isfinite(number) or number < 0 or (number == 0 and not allow_zero):
+		raise CampaignContractError(f"{name} must be {'non-negative' if allow_zero else 'positive'} and finite")
+	return number
+
+
 def build_campaign_manifest(
 	*,
 	source_commit: str,
@@ -459,6 +486,7 @@ def build_campaign_manifest(
 	fed_dmls: Mapping[str, Path],
 	cp_dmls: Mapping[str, Path],
 	oracle_files: Mapping[str, Path],
+	oracle_policies: Mapping[str, Mapping[str, object]],
 	compose_files: Mapping[str, Path],
 	runner_files: Mapping[str, Path],
 	dataset_root: Path,
@@ -476,21 +504,24 @@ def build_campaign_manifest(
 	block_schedule: dict[str, object],
 	reference_artifacts: Mapping[str, Path],
 	tolerance_version: str,
-	seed: int,
+	seed_streams: Mapping[str, object],
 	repeats: int,
 ) -> dict[str, object]:
 	"""Freeze every campaign-wide input into one canonical v2 manifest."""
 	if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
 		raise CampaignContractError("source_commit must be an exact 40-character lowercase Git commit")
-	if not image_id.startswith("sha256:") or "@sha256:" not in image_digest:
+	if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", image_digest) is None:
 		raise CampaignContractError("image ID and digest must be immutable sha256 identities")
-	if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
-		raise CampaignContractError("an explicit non-negative integer seed is required")
+	if set(seed_streams) != set(SEED_STREAMS) or any(
+		isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in seed_streams.values()
+	):
+		raise CampaignContractError("explicit non-negative integer seed streams are required")
+	schedule_seed = cast(int, seed_streams["schedule"])
 	if repeats not in (3, 5, 7):
 		raise CampaignContractError("repeats must be exactly 3, 5, or 7")
 	blocks, cells = validate_campaign_matrix(block_ids, cell_ids)
 	validated_schedule = validate_block_counterbalanced_schedule(
-		block_schedule, CAMPAIGN_PLANNERS, repeats, seed, blocks
+		block_schedule, CAMPAIGN_PLANNERS, repeats, schedule_seed, blocks
 	)
 	for name, value in (
 		("network_costs", network_costs),
@@ -503,18 +534,27 @@ def build_campaign_manifest(
 			raise CampaignContractError(f"{name} must be a non-empty frozen mapping")
 	_require_nonempty_unique("tolerance_version", (tolerance_version,))
 	if set(commands) != set(COMMAND_SURFACES) or any(
-		not isinstance(value, list) or not value or any(not isinstance(arg, str) or not arg for arg in value)
+		not isinstance(value, list) or not value or any(
+			not isinstance(arg, str) or not arg or arg.strip() != arg or "\x00" in arg for arg in value
+		)
 		for value in commands.values()
 	):
 		raise CampaignContractError("commands must contain exact non-empty argv surfaces")
-	if set(endpoints) != set(ENDPOINT_NAMES) or any(not isinstance(value, str) or not value for value in endpoints.values()):
+	if set(endpoints) != set(ENDPOINT_NAMES) or any(
+		not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9_.-]+:[1-9][0-9]{0,4}", value) is None
+		for value in endpoints.values()
+	):
 		raise CampaignContractError("endpoints must contain exact coordinator/worker endpoints")
 	_require_nonempty_unique("endpoints", tuple(cast(str, endpoints[name]) for name in ENDPOINT_NAMES))
+	if any(int(cast(str, endpoints[name]).rsplit(":", 1)[1]) > 65535 for name in ENDPOINT_NAMES):
+		raise CampaignContractError("endpoint port is outside the valid range")
 	if set(topology) != {"worker_counts", "profiles", "docker_project"}:
 		raise CampaignContractError("topology schema is not exact")
 	if topology["worker_counts"] != list(CAMPAIGN_WORKERS) or topology["profiles"] != list(CAMPAIGN_PROFILES):
 		raise CampaignContractError("topology dimensions are not exact")
 	_require_nonempty_unique("docker project", (cast(str, topology["docker_project"]),))
+	if re.fullmatch(r"[a-z0-9][a-z0-9_-]*", cast(str, topology["docker_project"])) is None:
+		raise CampaignContractError("docker project is invalid")
 	if set(network_costs) != set(CAMPAIGN_PROFILES) or any(not isinstance(network_costs[name], Mapping) for name in CAMPAIGN_PROFILES):
 		raise CampaignContractError("network costs must define every exact profile")
 	if set(resource_settings) != {"absolute_disk_floor_bytes", "required_free_inodes", "wall_time_seconds", "max_io_utilization", "max_combined_io_bps"}:
@@ -541,6 +581,26 @@ def build_campaign_manifest(
 		latency_value, bandwidth_value = float(cast(int | float, latency)), float(cast(int | float, bandwidth))
 		if not math.isfinite(latency_value) or not math.isfinite(bandwidth_value) or latency_value < 0 or bandwidth_value <= 0:
 			raise CampaignContractError(f"network costs are invalid for {profile}")
+	for name in ("required_free_inodes", "wall_time_seconds", "max_io_utilization", "max_combined_io_bps"):
+		_positive_finite(f"resource setting {name}", resource_settings[name])
+	if set(oracle_policies) != set(CAMPAIGN_WORKLOADS):
+		raise CampaignContractError("oracle_policies must cover every exact workload")
+	validated_policies: dict[str, dict[str, object]] = {}
+	for workload in CAMPAIGN_WORKLOADS:
+		policy = oracle_policies[workload]
+		if set(policy) != {"version", "policy_sha256", "self_drift_a_sha256", "self_drift_b_sha256"}:
+			raise CampaignContractError(f"oracle policy schema is not exact for {workload}")
+		version = policy["version"]
+		if not isinstance(version, str) or not version.strip():
+			raise CampaignContractError(f"oracle policy version is invalid for {workload}")
+		if version != tolerance_version:
+			raise CampaignContractError(f"oracle policy version disagrees with tolerance version for {workload}")
+		policy_hash = _sha256_text(f"oracle policy hash for {workload}", policy["policy_sha256"])
+		drift_a = _sha256_text(f"self-drift A for {workload}", policy["self_drift_a_sha256"])
+		drift_b = _sha256_text(f"self-drift B for {workload}", policy["self_drift_b_sha256"])
+		if drift_a != drift_b:
+			raise CampaignContractError(f"oracle self-drift A/B disagreement for {workload}")
+		validated_policies[workload] = {"version": version, "policy_sha256": policy_hash, "self_drift_a_sha256": drift_a, "self_drift_b_sha256": drift_b}
 	artifacts = {
 		"wrapper": _file_record(Path(wrapper)),
 		"jar": _file_record(Path(jar)),
@@ -548,14 +608,18 @@ def build_campaign_manifest(
 		"cp_config": _file_record(Path(cp_config)),
 		"fed_dmls": _named_file_records("fed_dmls", fed_dmls, CAMPAIGN_WORKLOADS),
 		"cp_dmls": _named_file_records("cp_dmls", cp_dmls, CAMPAIGN_WORKLOADS),
-		"oracle_files": _named_file_records("oracle_files", oracle_files, CAMPAIGN_WORKLOADS),
+		"oracle_files": _distinct_named_file_records("oracle_files", oracle_files, CAMPAIGN_WORKLOADS),
 		"compose_files": _named_file_records("compose_files", compose_files, COMPOSE_SURFACES),
 		"runner_files": _named_file_records("runner_files", runner_files, RUNNER_SURFACES),
 		"dataset": _dataset_records(Path(dataset_root)),
 		"data_sidecar": _file_record(Path(data_sidecar)),
-		"reference_artifacts": _named_file_records("reference_artifacts", reference_artifacts, CAMPAIGN_WORKLOADS),
+		"reference_artifacts": _distinct_named_file_records("reference_artifacts", reference_artifacts, CAMPAIGN_WORKLOADS),
 		"source_tree": _dataset_records(Path(source_tree)),
 	}
+	for workload in CAMPAIGN_WORKLOADS:
+		oracle_record = cast(dict[str, object], cast(dict[str, object], artifacts["oracle_files"])[workload])
+		if validated_policies[workload]["policy_sha256"] != oracle_record["sha256"]:
+			raise CampaignContractError(f"oracle policy hash does not match oracle file for {workload}")
 	manifest: dict[str, object] = {
 		"schema": "systemds-federated-docker-campaign/v2",
 		"execution_surface": "docker-only",
@@ -578,8 +642,9 @@ def build_campaign_manifest(
 		"commands": dict(commands),
 		"endpoints": dict(endpoints),
 		"topology": dict(topology),
+		"oracle_policies": validated_policies,
 		"schedule": validated_schedule,
-		"seed": seed,
+		"seed_streams": {name: seed_streams[name] for name in SEED_STREAMS},
 		"repeats": repeats,
 		"tolerance_version": tolerance_version,
 	}
@@ -637,37 +702,66 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 		"pilot_class", "planner", "workers", "profile", "cell", "pilot_repeat", "warm_seconds",
 		"period", "order", "carryover", "host_load", "lifecycle", "evidence_status", "evidence_sha256",
 	}
-	groups: dict[tuple[object, ...], list[Mapping[str, object]]] = {}
+	if len(rows) != len(PILOT_CLASSES) * len(CAMPAIGN_PLANNERS) * len(PILOT_REGIMES) * 5:
+		raise CampaignContractError("campaign pilot requires the exact preregistered 120-row set")
+	groups: dict[tuple[str, str, int, str, str], list[Mapping[str, object]]] = {}
 	for row in rows:
 		if set(row) != required:
 			raise CampaignContractError("campaign pilot row schema is not exact")
-		key = (row["pilot_class"], row["planner"], row["workers"], row["profile"], row["cell"])
+		pilot_class, planner, workers, profile, cell = (
+			row["pilot_class"], row["planner"], row["workers"], row["profile"], row["cell"]
+		)
+		if pilot_class not in PILOT_CLASSES or planner not in CAMPAIGN_PLANNERS or (workers, profile) not in PILOT_REGIMES:
+			raise CampaignContractError("campaign pilot contains a non-preregistered class/planner/regime")
+		expected_cell = f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}"
+		if cell != expected_cell:
+			raise CampaignContractError("campaign pilot cell identity is not canonical")
+		key = (cast(str, pilot_class), cast(str, planner), cast(int, workers), cast(str, profile), cast(str, cell))
 		groups.setdefault(key, []).append(row)
-	if {key[0] for key in groups} != {"cheap", "medium", "heavy"}:
-		raise CampaignContractError("campaign pilot requires cheap, medium, and heavy classes")
-	if {key[1] for key in groups} != set(CAMPAIGN_PLANNERS):
-		raise CampaignContractError("campaign pilot requires every planner")
-	if len({(key[2], key[3]) for key in groups}) < 2:
-		raise CampaignContractError("campaign pilot requires at least two worker/network regimes")
-	diagnostics = []
+	expected_groups = {
+		(pilot_class, planner, workers, profile, f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}")
+		for pilot_class in PILOT_CLASSES for planner in CAMPAIGN_PLANNERS for workers, profile in PILOT_REGIMES
+	}
+	if set(groups) != expected_groups:
+		raise CampaignContractError("campaign pilot groups do not match the exact preregistration")
+	preregistered_orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
+	diagnostics: list[dict[str, object]] = []
 	deviations: list[float] = []
-	for key, group in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+	seen_evidence: set[str] = set()
+	for key in sorted(expected_groups):
+		group = groups[key]
 		ordered = sorted(group, key=lambda row: int(cast(int, row["pilot_repeat"])))
 		if [row["pilot_repeat"] for row in ordered] != [1, 2, 3, 4, 5]:
 			raise CampaignContractError("each campaign pilot group requires exact repeats 1..5")
-		values = []
-		for row in ordered:
+		values: list[float] = []
+		for repeat_index, row in enumerate(ordered):
 			if row["evidence_status"] not in ("committed", "archive"):
 				raise CampaignContractError("campaign pilot rows require verified evidence")
+			evidence_digest = _sha256_text("campaign pilot evidence", row["evidence_sha256"])
+			if evidence_digest in seen_evidence:
+				raise CampaignContractError("campaign pilot evidence checksum is duplicated")
+			seen_evidence.add(evidence_digest)
 			value = row["warm_seconds"]
-			if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-				raise CampaignContractError("campaign pilot timing is invalid")
-			if not isinstance(row["host_load"], Mapping) or not isinstance(row["lifecycle"], Mapping):
+			values.append(_positive_finite("campaign pilot timing", value))
+			if not isinstance(row["host_load"], Mapping) or not row["host_load"] or not isinstance(row["lifecycle"], Mapping) or not row["lifecycle"]:
 				raise CampaignContractError("campaign pilot host/lifecycle diagnostics are missing")
-			values.append(float(value))
+			for diagnostic_name in ("host_load", "lifecycle"):
+				diagnostic = cast(Mapping[str, object], row[diagnostic_name])
+				if any(not isinstance(name, str) or not name for name in diagnostic):
+					raise CampaignContractError(f"campaign pilot {diagnostic_name} names are invalid")
+				for name, diagnostic_value in diagnostic.items():
+					_positive_finite(f"campaign pilot {diagnostic_name}.{name}", diagnostic_value, allow_zero=True)
+			expected_order_tuple = preregistered_orders[repeat_index]
+			expected_order = ">".join(expected_order_tuple)
+			expected_period = expected_order_tuple.index(key[1]) + 1
+			expected_carryover = "NONE" if expected_period == 1 else expected_order_tuple[expected_period - 2]
+			if row["order"] != expected_order or row["period"] != expected_period or row["carryover"] != expected_carryover:
+				raise CampaignContractError("campaign pilot schedule period/order/carryover is not preregistered")
 		median = statistics.median(values)
 		group_deviations = [abs(math.log(value / median)) for value in values]
 		deviations.extend(group_deviations)
+		log_values = [math.log(value) for value in values]
+		overall_log = statistics.fmean(log_values)
 		diagnostics.append({
 			"pilot_class": key[0], "planner": key[1], "workers": key[2], "profile": key[3], "cell": key[4],
 			"median": median, "mad": statistics.median(abs(value - median) for value in values),
@@ -676,6 +770,12 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 			"periods": [row["period"] for row in ordered], "orders": [row["order"] for row in ordered],
 			"carryover": [row["carryover"] for row in ordered],
 			"host_load": [row["host_load"] for row in ordered], "lifecycle": [row["lifecycle"] for row in ordered],
+			"effects": {
+				"first_run_log_effect": log_values[0] - statistics.fmean(log_values[1:]),
+				"period_log_effect": {str(row["period"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
+				"order_log_effect": {str(row["order"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
+				"carryover_log_effect": {str(row["carryover"]): log_values[index] - overall_log for index, row in enumerate(ordered)},
+			},
 		})
 	ordered_deviations = sorted(deviations)
 	index = max(0, math.ceil(0.95 * len(ordered_deviations)) - 1)
@@ -684,5 +784,10 @@ def select_campaign_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[
 	selected = 3 if eta <= math.log(1.02) else 5 if eta <= math.log(1.05) else 7
 	return {
 		"schema": "systemds-federated-campaign-pilot/v2", "selection_rule": "eta=max(log(1.02),Q95(abs(log(t/median_group))))",
+		"preregistration": {
+			"row_count": 120, "pilot_classes": list(PILOT_CLASSES), "planners": list(CAMPAIGN_PLANNERS),
+			"regimes": [{"workers": workers, "profile": profile} for workers, profile in PILOT_REGIMES],
+			"orders": [list(order) for order in preregistered_orders],
+		},
 		"q95": q95, "eta": eta, "selected_repeats": selected, "diagnostics": diagnostics,
 	}

@@ -410,7 +410,6 @@ class AtomicEvidenceLedger:
 		self._crash(crash_after, "after_stage_created")
 		self._write_record_state(stage, identity, "success")
 		self._crash(crash_after, "after_record_state_fsync")
-		self._crash(crash_after, "after_record_state_fsync")
 		if invocation is not None:
 			_write_fsynced(stage / "invocation_manifest.json", _canonical_bytes(invocation))
 		self._copy_phase(Path(cold_bundle), stage / "cold", "docker_e2e", "cold", crash_after)
@@ -447,7 +446,7 @@ class AtomicEvidenceLedger:
 		self._finish_lease(lease, crash_after)
 		return destination
 
-	def publish_success(
+	def publish_legacy_success_for_migration(
 		self,
 		key: LedgerKey,
 		cold_bundle: Path,
@@ -530,17 +529,15 @@ class AtomicEvidenceLedger:
 
 	def publish_failure(
 		self,
-		key: LedgerKey | AttemptLease,
+		key: AttemptLease,
 		failure_bundle: Path,
 		*,
 		crash_after: str | None = None,
 	) -> Path:
-		if isinstance(key, AttemptLease):
-			lease: AttemptLease | None = key
-			actual_key: LedgerKey = key.key
-		else:
-			lease = None
-			actual_key = key
+		if not isinstance(key, AttemptLease):
+			raise LedgerContractError("campaign v2 failure publication requires a durable AttemptLease")
+		lease: AttemptLease = key
+		actual_key: LedgerKey = key.key
 		identity = actual_key.as_dict()
 		invocation = self._validate_lease(lease)
 		if crash_after is not None and crash_after not in FAILURE_PUBLICATION_BOUNDARIES:
@@ -578,11 +575,18 @@ class AtomicEvidenceLedger:
 		_fsync_directory(failure_destination)
 		self._crash(crash_after, "after_failure_bundle_fsync")
 		manifest = {
-			"schema": "systemds-federated-evidence/v2" if lease is not None else "systemds-federated-evidence/v1",
-			"evidence_kind": str(identity["kind"]) if lease is not None else None,
+			"schema": "systemds-federated-evidence/v2",
+			"evidence_kind": str(identity["kind"]),
 			"identity": identity,
 			"status": "failed",
 			"return_code": failure["return_code"],
+			"failure_category": failure["failure_category"],
+			"semantic_oracle_summary": failure["semantic_oracle_summary"],
+			"semantic_oracle_sha256": failure["semantic_oracle_sha256"],
+			"parser_summary": failure["parser_summary"],
+			"parser_sha256": failure["parser_sha256"],
+			"scan_summary": failure["scan_summary"],
+			"scan_sha256": failure["scan_sha256"],
 			"failure_checksums_sha256": _sha256(failure_destination / "checksums.json"),
 			"invocation_manifest_sha256": lease.invocation_manifest_sha256 if lease is not None else None,
 		}
@@ -604,23 +608,29 @@ class AtomicEvidenceLedger:
 		inspected = self._inspect_records(self._load_prior_index())
 		if any(record.get("identity") == {} for record in inspected):
 			return None
-		records = [
-			record
-			for record in inspected
-			if record.get("identity", {}).get("kind") == "discovery"
-			and record.get("identity", {}).get("cell") == cell
-			and record.get("identity", {}).get("manifest_hash") == manifest_hash
-		]
+		records: list[dict[str, object]] = []
+		for record in inspected:
+			identity_value = record.get("identity")
+			if (
+				isinstance(identity_value, dict)
+				and identity_value.get("kind") == "discovery"
+				and identity_value.get("cell") == cell
+				and identity_value.get("manifest_hash") == manifest_hash
+			):
+				records.append(record)
 		if not records:
 			return None
-		latest_attempt = max(int(record["identity"]["attempt"]) for record in records)
-		latest = [record for record in records if record["identity"]["attempt"] == latest_attempt]
+		latest_attempt = max(_record_attempt(record) for record in records)
+		latest = [record for record in records if _record_attempt(record) == latest_attempt]
 		if len(latest) != 1:
 			return None
 		record = latest[0]
 		if record.get("status") != "success" or record.get("valid") is not True:
 			return None
-		manifest = dict(record["manifest"])
+		manifest_value = record.get("manifest")
+		if not isinstance(manifest_value, dict):
+			return None
+		manifest: dict[str, object] = dict(manifest_value)
 		manifest["committed_path"] = record["path"]
 		return manifest
 
@@ -633,7 +643,10 @@ class AtomicEvidenceLedger:
 		record = self._inspect_committed(Path(record_dir), None)
 		if record.get("valid") is not True or (require_success and record.get("status") != "success"):
 			raise LedgerContractError(f"committed evidence is invalid: {record_dir}")
-		return dict(record["manifest"])
+		manifest = record.get("manifest")
+		if not isinstance(manifest, dict):
+			raise LedgerContractError(f"committed evidence manifest is invalid: {record_dir}")
+		return dict(manifest)
 
 	def reconcile_index(self) -> None:
 		"""Atomically rebuild the derived local index after verified eviction."""
@@ -647,7 +660,10 @@ class AtomicEvidenceLedger:
 		for record in records:
 			if record.get("identity") == identity:
 				if record.get("status") == "success" and record.get("valid") is True:
-					manifest = dict(record["manifest"])
+					manifest_value = record.get("manifest")
+					if not isinstance(manifest_value, dict):
+						return None
+					manifest: dict[str, object] = dict(manifest_value)
 					manifest["committed_path"] = record["path"]
 					return manifest
 				return None
@@ -767,7 +783,24 @@ class AtomicEvidenceLedger:
 		scan_failed = any(json_values["scan.json"].get(marker) is True for marker in ("timeout", "error", "fallback"))
 		if return_code == 0 and not (semantic_failed or parser_failed or scan_failed):
 			raise LedgerContractError("zero-return-code failure requires semantic, parser, or scan failure evidence")
-		return {"return_code": return_code}
+		if return_code != 0:
+			category = "process_exit"
+		elif semantic_failed:
+			category = "semantic_oracle"
+		elif parser_failed:
+			category = "metric_parser"
+		else:
+			category = "runtime_scan"
+		return {
+			"return_code": return_code,
+			"failure_category": category,
+			"semantic_oracle_summary": json_values["semantic_oracle.json"],
+			"semantic_oracle_sha256": _sha256(path / "semantic_oracle.json"),
+			"parser_summary": json_values["parser.json"],
+			"parser_sha256": _sha256(path / "parser.json"),
+			"scan_summary": json_values["scan.json"],
+			"scan_sha256": _sha256(path / "scan.json"),
+		}
 
 	def _validate_source_phase(self, path: Path, metric_kind: str) -> dict[str, object]:
 		try:
@@ -815,7 +848,10 @@ class AtomicEvidenceLedger:
 		if identity["kind"] != "discovery":
 			return
 		for record in self._inspect_records(self._load_prior_index()):
-			other = record.get("identity", {})
+			other_value = record.get("identity")
+			if not isinstance(other_value, dict):
+				continue
+			other: dict[str, object] = other_value
 			if (
 				other.get("kind") == "discovery"
 				and other.get("cell") == identity["cell"]
@@ -922,8 +958,16 @@ class AtomicEvidenceLedger:
 				failure = self._validate_failure_bundle(record_dir / "failure")
 				result["valid"] = (
 					manifest.get("return_code") == failure["return_code"]
+					and manifest.get("failure_category") == failure["failure_category"]
+					and manifest.get("semantic_oracle_summary") == failure["semantic_oracle_summary"]
+					and manifest.get("semantic_oracle_sha256") == failure["semantic_oracle_sha256"]
+					and manifest.get("parser_summary") == failure["parser_summary"]
+					and manifest.get("parser_sha256") == failure["parser_sha256"]
+					and manifest.get("scan_summary") == failure["scan_summary"]
+					and manifest.get("scan_sha256") == failure["scan_sha256"]
 					and manifest.get("failure_checksums_sha256") == _sha256(record_dir / "failure" / "checksums.json")
-					and (manifest.get("schema") == "systemds-federated-evidence/v1" or manifest.get("evidence_kind") == identity.get("kind"))
+					and manifest.get("schema") == "systemds-federated-evidence/v2"
+					and manifest.get("evidence_kind") == identity.get("kind")
 				)
 				return result
 			if manifest.get("evidence_kind") == "discovery":

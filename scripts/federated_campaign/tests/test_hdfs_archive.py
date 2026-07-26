@@ -110,7 +110,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			),
 			encoding="utf-8",
 		)
-		return key, self.ledger.publish_success(key, cold, warm, shared)
+		return key, self.ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 
 	def _adapter(self, retention=1):
 		return HdfsArchiveAdapter(
@@ -230,7 +230,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 				}), encoding="utf-8")
-				committed = ledger.publish_success(key, cold, warm, shared)
+				committed = ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 				adapter = HdfsArchiveAdapter(
 					ledger, self.backend, case / "archive-work",
 					f"hdfs://dams-so001:12000/tmp/logs/mchoi-g007-crash-{index}", max_local_raw_bundles=1,
@@ -398,6 +398,53 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertIsNone(self._adapter(retention=0).latest_discovery_success("cell-a", "manifest-a"))
 		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule=None, host_load={"io": 0.01}, lifecycle={"phase": "discovery"})
 		self.assertTrue(row["failure"])
+		failure_metrics = row["metrics"]["failure"]
+		self.assertEqual("process_exit", failure_metrics["category"])
+		self.assertEqual(23, failure_metrics["return_code"])
+		self.assertRegex(failure_metrics["parser_sha256"], r"^[0-9a-f]{64}$")
+
+	def test_normalization_rejects_identity_mismatch_and_revalidates_local_bytes(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		lease = facade.begin(
+			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
+		)
+		committed = facade.publish_discovery_success(lease, self._phase("identity-source", "discovery_correctness", 0.5))
+		decision = facade.exact_resume(lease.key)
+		wrong = DiscoveryKey("cell-other", lease.key.attempt, lease.key.run_token, "manifest-a").as_dict()
+		row = facade.normalize_resume_row(
+			decision, requested_identity=wrong, schedule=None,
+			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
+		)
+		self.assertFalse(row["valid"])
+		self.assertEqual("IDENTITY_MISMATCH", row["blocker"]["code"])
+		(committed / "discovery" / "output.bin").write_bytes(b"tampered")
+		row = facade.normalize_resume_row(
+			decision, requested_identity=lease.key.as_dict(), schedule=None,
+			host_load={"io": 0.01}, lifecycle={"phase": "discovery"},
+		)
+		self.assertFalse(row["valid"])
+		self.assertEqual("LOCAL_REVALIDATION_FAILED", row["blocker"]["code"])
+
+	def test_duplicate_same_attempt_archive_receipts_are_ambiguous(self):
+		adapter = self._adapter(retention=0)
+		facade = CampaignHarnessAdapter(self.ledger, adapter)
+		lease = facade.begin(
+			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"phase": "discovery"}
+		)
+		committed = facade.publish_discovery_success(lease, self._phase("duplicate-archive", "discovery_correctness", 0.5))
+		facade.archive(committed)
+		catalog = json.loads(adapter.catalog_path.read_text(encoding="utf-8"))
+		catalog["entries"].append(dict(catalog["entries"][0]))
+		adapter.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+		decision = facade.exact_resume(lease.key)
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
+		self.assertIn("duplicate archived receipts", str(decision.detail))
+
+	def test_legacy_v1_local_success_cannot_satisfy_v2_resume(self):
+		key, _ = self._commit(1, "legacy-token")
+		decision = self._adapter().exact_resume(key)
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
+		self.assertIn("legacy v1", str(decision.detail))
 
 	def test_harness_adapter_pilot_selection_rejects_unverified_rows(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -405,7 +452,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cell": "cell-a", "pilot_repeat": index, "warm_seconds": 1.0,
 			"evidence_status": "claimed", "evidence_sha256": f"{index:064x}",
 		} for index in range(1, 6)]
-		with self.assertRaisesRegex(ArchiveContractError, "schema"):
+		with self.assertRaisesRegex(ArchiveContractError, "120-row"):
 			facade.select_pilot_repeats(rows)
 
 	def test_facade_routes_resource_preflight_and_normalizes_explicit_invalid_row(self):
@@ -477,7 +524,10 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter(retention=0)
 		adapter.archive(committed)
-		self.ledger.publish_failure(DiscoveryKey("cell-a", 2, "token-b", "manifest-a"), self._failure("latest-failure"))
+		lease = self.ledger.begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
+		)
+		self.ledger.publish_failure(lease, self._failure("latest-failure"))
 		gets_before = sum(event[0] == "get" for event in self.backend.events)
 		self.assertIsNone(adapter.latest_discovery_success("cell-a", "manifest-a"))
 		self.assertEqual(gets_before, sum(event[0] == "get" for event in self.backend.events))

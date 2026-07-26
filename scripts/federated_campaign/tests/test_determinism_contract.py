@@ -8,6 +8,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 
 from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
@@ -272,10 +273,10 @@ class DeterminismContractTest(unittest.TestCase):
 		with self.assertRaisesRegex(CampaignContractError, "duplicates"):
 			validate_campaign_matrix(blocks, (*cells[:-1], cells[-2]))
 
-	def _campaign_v2_inputs(self):
-		paths = {}
+	def _campaign_v2_inputs(self) -> dict[str, Any]:
+		paths: dict[str, Path] = {}
 		for name in (
-			"wrapper", "jar", "cp-config", "sidecar", "oracle", "compose", "runner", "reference"
+			"wrapper", "jar", "cp-config", "sidecar", "compose", "runner"
 		):
 			path = self.root / f"{name}.bin"
 			path.write_bytes(name.encode())
@@ -285,8 +286,8 @@ class DeterminismContractTest(unittest.TestCase):
 			path.write_text(planner, encoding="utf-8")
 			paths[f"planner-{planner}"] = path
 		for workload in CAMPAIGN_WORKLOADS:
-			for surface in ("fed", "cp"):
-				path = self.root / f"{workload}-{surface}.dml"
+			for surface in ("fed", "cp", "oracle", "reference"):
+				path = self.root / f"{workload}-{surface}.bin"
 				path.write_text(f"{workload}-{surface}", encoding="utf-8")
 				paths[f"{surface}-{workload}"] = path
 		blocks = campaign_block_ids()
@@ -301,7 +302,13 @@ class DeterminismContractTest(unittest.TestCase):
 			"cp_config": paths["cp-config"],
 			"fed_dmls": {w: paths[f"fed-{w}"] for w in CAMPAIGN_WORKLOADS},
 			"cp_dmls": {w: paths[f"cp-{w}"] for w in CAMPAIGN_WORKLOADS},
-			"oracle_files": {w: paths["oracle"] for w in CAMPAIGN_WORKLOADS},
+			"oracle_files": {w: paths[f"oracle-{w}"] for w in CAMPAIGN_WORKLOADS},
+			"oracle_policies": {w: {
+				"version": "oracle-v1",
+				"policy_sha256": hashlib.sha256(paths[f"oracle-{w}"].read_bytes()).hexdigest(),
+				"self_drift_a_sha256": hashlib.sha256(f"{w}-stable".encode()).hexdigest(),
+				"self_drift_b_sha256": hashlib.sha256(f"{w}-stable".encode()).hexdigest(),
+			} for w in CAMPAIGN_WORKLOADS},
 			"compose_files": {name: paths["compose"] for name in ("base", "campaign")},
 			"runner_files": {name: paths["runner"] for name in ("campaign", "docker", "snapshot", "data_prep")},
 			"dataset_root": self.root / "data", "data_sidecar": paths["sidecar"],
@@ -312,8 +319,9 @@ class DeterminismContractTest(unittest.TestCase):
 			"commands": {name: [name] for name in ("compose", "campaign", "docker_lifecycle", "systemds_snapshot", "data_prep")},
 			"endpoints": {name: f"{name}:8001" for name in ("coordinator", "worker_1", "worker_2", "worker_3", "worker_4")},
 			"topology": {"worker_counts": [1, 2, 3, 4], "profiles": ["lan", "wan_light", "wan_mid"], "docker_project": "g007"},
-			"block_schedule": schedule, "reference_artifacts": {w: paths["reference"] for w in CAMPAIGN_WORKLOADS},
-			"tolerance_version": "oracle-v1", "seed": 19, "repeats": 5,
+			"block_schedule": schedule, "reference_artifacts": {w: paths[f"reference-{w}"] for w in CAMPAIGN_WORKLOADS},
+			"tolerance_version": "oracle-v1",
+			"seed_streams": {"schedule": 19, "data_generation": 23, "workload_random": 29}, "repeats": 5,
 		}
 
 	def test_campaign_v2_manifest_hashes_every_campaign_wide_input(self):
@@ -326,6 +334,26 @@ class DeterminismContractTest(unittest.TestCase):
 		self.assertNotEqual(before, build_campaign_manifest(**inputs)["manifest_hash"])
 		del inputs["oracle_files"]["als"]
 		with self.assertRaisesRegex(CampaignContractError, "oracle_files"):
+			build_campaign_manifest(**inputs)
+
+	def test_campaign_v2_manifest_rejects_mutable_or_non_distinct_inputs(self):
+		inputs = self._campaign_v2_inputs()
+		inputs["image_id"] = "sha256:short"
+		with self.assertRaisesRegex(CampaignContractError, "immutable"):
+			build_campaign_manifest(**inputs)
+		inputs = self._campaign_v2_inputs()
+		inputs["reference_artifacts"]["als"] = inputs["reference_artifacts"]["lm"]
+		with self.assertRaisesRegex(CampaignContractError, "distinct"):
+			build_campaign_manifest(**inputs)
+
+	def test_campaign_v2_manifest_rejects_oracle_self_drift_and_bad_seed_streams(self):
+		inputs = self._campaign_v2_inputs()
+		inputs["oracle_policies"]["als"]["self_drift_b_sha256"] = "f" * 64
+		with self.assertRaisesRegex(CampaignContractError, "self-drift"):
+			build_campaign_manifest(**inputs)
+		inputs = self._campaign_v2_inputs()
+		del inputs["seed_streams"]["workload_random"]
+		with self.assertRaisesRegex(CampaignContractError, "seed streams"):
 			build_campaign_manifest(**inputs)
 
 	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
@@ -344,16 +372,19 @@ class DeterminismContractTest(unittest.TestCase):
 
 	def test_campaign_pilot_freezes_cross_planner_regime_q95_diagnostics(self):
 		rows = []
+		orders = build_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, 19)
 		for pilot_class in ("cheap", "medium", "heavy"):
 			for planner in CAMPAIGN_PLANNERS:
 				for workers, profile in ((1, "lan"), (4, "wan_mid")):
-					cell = f"{pilot_class}-{planner}-{workers}-{profile}"
+					cell = f"pilot_class={pilot_class}|planner={planner}|workers={workers}|profile={profile}"
 					for repeat in range(1, 6):
+						order_tuple = orders[repeat - 1]
+						period = order_tuple.index(planner) + 1
 						rows.append({
 							"pilot_class": pilot_class, "planner": planner, "workers": workers,
 							"profile": profile, "cell": cell, "pilot_repeat": repeat,
-							"warm_seconds": 100 + (repeat - 3) * 0.5, "period": (repeat - 1) % 4 + 1,
-							"order": "DP>FedAll>Heuristic>MinST", "carryover": "DP>FedAll",
+							"warm_seconds": 100 + (repeat - 3) * 0.5, "period": period,
+							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
 							"host_load": {"io": 0.01}, "lifecycle": {"cold": 1, "warm": 1},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
 						})
@@ -362,6 +393,21 @@ class DeterminismContractTest(unittest.TestCase):
 		self.assertEqual(24, len(selection["diagnostics"]))
 		self.assertIn("Q95", selection["selection_rule"])
 		self.assertIn("first_run_ratio", selection["diagnostics"][0])
+		self.assertIn("effects", selection["diagnostics"][0])
+		with self.assertRaisesRegex(CampaignContractError, "120-row"):
+			select_campaign_pilot_repeats(rows[:-1])
+		forged = [dict(row) for row in rows]
+		forged[-1] = dict(forged[0], pilot_repeat=5)
+		with self.assertRaises(CampaignContractError):
+			select_campaign_pilot_repeats(forged)
+		bad_digest = [dict(row) for row in rows]
+		bad_digest[0]["evidence_sha256"] = "claimed"
+		with self.assertRaisesRegex(CampaignContractError, "SHA256"):
+			select_campaign_pilot_repeats(bad_digest)
+		bad_host = [dict(row) for row in rows]
+		bad_host[0]["host_load"] = {"io": float("nan")}
+		with self.assertRaisesRegex(CampaignContractError, "finite"):
+			select_campaign_pilot_repeats(bad_host)
 		for row in rows:
 			row["warm_seconds"] = 100 + (row["pilot_repeat"] - 3) * 2
 		self.assertEqual(5, select_campaign_pilot_repeats(rows)["selected_repeats"])
