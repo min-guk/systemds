@@ -112,7 +112,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 					"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
-					"lifecycle": {"cold_seconds": 2.5 + attempt, "warm_seconds": 1.25 + attempt, "coordinator_restart_count": 1, "worker_restart_count": 1},
+					"lifecycle": {"cold_seconds": 2.5 + attempt, "warm_seconds": 1.25 + attempt, "coordinator_restart_count": 0, "worker_restart_count": 0},
 				},
 				sort_keys=True,
 			),
@@ -238,7 +238,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 					"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
-					"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 1, "worker_restart_count": 1},
+					"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 0, "worker_restart_count": 0},
 				}), encoding="utf-8")
 				committed = ledger.publish_legacy_success_for_migration(key, cold, warm, shared)
 				adapter = HdfsArchiveAdapter(
@@ -369,7 +369,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
-			"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 1, "worker_restart_count": 1},
+			"lifecycle": {"cold_seconds": 2.5, "warm_seconds": 1.25, "coordinator_restart_count": 0, "worker_restart_count": 0},
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		decision = facade.exact_resume(lease.key)
@@ -472,7 +472,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		)
 		self.assertFalse(row["valid"])
 		blocker = cast(dict[str, object], row["blocker"])
-		self.assertEqual("LOCAL_REVALIDATION_FAILED", blocker["code"])
+		self.assertEqual("STALE_OR_NONCANONICAL_RESUME_DECISION", blocker["code"])
 		metrics = cast(dict[str, object], row["metrics"])
 		self.assertIsNone(metrics["discovery"])
 		self.assertIsNone(metrics["warm"])
@@ -480,6 +480,37 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertIsNone(row["lifecycle"])
 		location = cast(dict[str, object], row["evidence_location"])
 		self.assertIsNone(location["committed_path"])
+
+	def test_normalization_rejects_stale_success_after_newer_failure_locally_and_from_archive(self):
+		for suffix, archive_old in (("local", False), ("archive", True)):
+			with self.subTest(source=suffix):
+				facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=0 if archive_old else 1))
+				cell = f"cell-stale-{suffix}"
+				first = facade.begin(
+					kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"attempt": 1}
+				)
+				committed = facade.publish_discovery_success(
+					first, self._phase(f"stale-{suffix}-success", "discovery_correctness", 0.5)
+				)
+				if archive_old:
+					facade.archive(committed)
+				old_success = facade.exact_resume(first.key)
+				self.assertEqual(ResumeState.LATEST_SUCCESS, old_success.state)
+				second = facade.begin(
+					kind="discovery", cell=cell, manifest_hash="manifest-a", invocation_manifest={"attempt": 2}
+				)
+				facade.publish_failure(second, self._failure(f"stale-{suffix}-failure"))
+				row = facade.normalize_resume_row(
+					old_success, requested_identity=first.key.as_dict(), schedule=None,
+					host_load={"forged": 999}, lifecycle={"forged": 999},
+				)
+				self.assertFalse(row["valid"])
+				self.assertTrue(row["failure"])
+				self.assertEqual(ResumeState.LATEST_FAILED.value, row["resume_state"])
+				blocker = cast(dict[str, object], row["blocker"])
+				self.assertEqual("STALE_OR_NONCANONICAL_RESUME_DECISION", blocker["code"])
+				metrics = cast(dict[str, object], row["metrics"])
+				self.assertIsNone(metrics["discovery"])
 
 	def test_pilot_evidence_schedule_must_match_preregistered_row(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
@@ -497,7 +528,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
 			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
 			"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
-			"lifecycle": {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1},
+			"lifecycle": {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0},
 		}), encoding="utf-8")
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		manifest = self.ledger.validate_committed(committed)
@@ -527,7 +558,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		warm = self._phase("pilot-canonical-warm", "systemds_total_execution_time", 1.0)
 		shared = self.root / "pilot-canonical-shared.json"
 		canonical_host = {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20}
-		canonical_lifecycle = {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1}
+		canonical_lifecycle = {"cold_seconds": 2.0, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0}
 		shared.write_text(json.dumps({
 			"identity": lease.key.as_dict(),
 			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
@@ -628,7 +659,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 							"cell": cell, "pilot_repeat": repeat, "warm_seconds": 1.0, "period": period,
 							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
 							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 1, "write_bytes_per_second": 1},
-							"lifecycle": {"cold_seconds": 2, "warm_seconds": 1.0, "coordinator_restart_count": 1, "worker_restart_count": 1},
+							"lifecycle": {"cold_seconds": 2, "warm_seconds": 1.0, "coordinator_restart_count": 0, "worker_restart_count": 0},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
 							"identity": identity, "evidence_location": {"committed_path": f"/forged/{len(rows)+1}"},
 							"invocation_manifest_sha256": "d" * 64,

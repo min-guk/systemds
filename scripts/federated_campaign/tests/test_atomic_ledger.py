@@ -66,7 +66,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			"lifecycle": {
 				"cold_seconds": json.loads((cold / "metric.json").read_text())["seconds"],
 				"warm_seconds": json.loads((warm / "metric.json").read_text())["seconds"],
-				"coordinator_restart_count": 1, "worker_restart_count": 1,
+				"coordinator_restart_count": 0, "worker_restart_count": 0,
 			},
 		}
 		path = self.root / name
@@ -161,6 +161,31 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		bad_shared.write_text(json.dumps(bad_value), encoding="utf-8")
 		with self.assertRaisesRegex(LedgerContractError, "timings disagree"):
 			bad_ledger.publish_performance_success(bad_lease, cold, warm, bad_shared)
+		restart_ledger = AtomicEvidenceLedger(self.root / "restart-diagnostic-ledger")
+		restart_lease = restart_ledger.begin_attempt(
+			kind="performance", cell="cell-c", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+		)
+		restart_shared = self._shared_manifest(restart_lease.key, cold, warm, "restart-diagnostic-shared.json")
+		restart_value = json.loads(restart_shared.read_text(encoding="utf-8"))
+		restart_value["lifecycle"]["worker_restart_count"] = 999
+		restart_shared.write_text(json.dumps(restart_value), encoding="utf-8")
+		with self.assertRaisesRegex(LedgerContractError, "resource_invalid"):
+			restart_ledger.publish_performance_success(restart_lease, cold, warm, restart_shared)
+		failure = self._failure("restart-resource-invalid", return_code=0)
+		failure_values = {
+			"semantic_oracle.json": {"passed": True},
+			"parser.json": {"passed": True},
+			"scan.json": {"timeout": False, "error": False, "fallback": False, "resource_invalid": True},
+		}
+		checksums = json.loads((failure / "checksums.json").read_text(encoding="utf-8"))
+		for filename, value in failure_values.items():
+			contents = json.dumps(value).encode()
+			(failure / filename).write_bytes(contents)
+			checksums[filename] = hashlib.sha256(contents).hexdigest()
+		(failure / "checksums.json").write_text(json.dumps(checksums, sort_keys=True), encoding="utf-8")
+		failed = restart_ledger.publish_failure(restart_lease, failure)
+		self.assertEqual("resource_invalid", restart_ledger.validate_committed(failed, require_success=False)["failure_category"])
 
 	def test_success_requires_both_complete_phase_bundles(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")

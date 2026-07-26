@@ -783,11 +783,16 @@ class AtomicEvidenceLedger:
 		}
 		semantic_failed = json_values["semantic_oracle.json"].get("passed") is False
 		parser_failed = json_values["parser.json"].get("passed") is False
-		scan_failed = any(json_values["scan.json"].get(marker) is True for marker in ("timeout", "error", "fallback"))
+		resource_invalid = json_values["scan.json"].get("resource_invalid") is True
+		scan_failed = resource_invalid or any(
+			json_values["scan.json"].get(marker) is True for marker in ("timeout", "error", "fallback")
+		)
 		if return_code == 0 and not (semantic_failed or parser_failed or scan_failed):
 			raise LedgerContractError("zero-return-code failure requires semantic, parser, or scan failure evidence")
 		if return_code != 0:
 			category = "process_exit"
+		elif resource_invalid:
+			category = "resource_invalid"
 		elif semantic_failed:
 			category = "semantic_oracle"
 		elif parser_failed:
@@ -867,8 +872,8 @@ class AtomicEvidenceLedger:
 			result[name] = float(item)
 		for name in ("coordinator_restart_count", "worker_restart_count"):
 			item = value[name]
-			if isinstance(item, bool) or not isinstance(item, int) or item < 0:
-				raise LedgerContractError(f"shared replicate lifecycle.{name} is invalid")
+			if isinstance(item, bool) or not isinstance(item, int) or item != 0:
+				raise LedgerContractError(f"resource_invalid: successful performance lifecycle.{name} must be exactly zero")
 			result[name] = item
 		return result
 

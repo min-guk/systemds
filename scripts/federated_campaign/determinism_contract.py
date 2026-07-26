@@ -791,6 +791,11 @@ def select_campaign_pilot_repeats(
 					_positive_finite(f"campaign pilot {diagnostic_name}.{name}", diagnostic_value_item, allow_zero=True)
 			if cast(Mapping[str, object], row["lifecycle"])["warm_seconds"] != row["warm_seconds"]:
 				raise CampaignContractError("campaign pilot lifecycle warm_seconds disagrees with measured timing")
+			if any(
+				cast(Mapping[str, object], row["lifecycle"])[name] != 0
+				for name in ("coordinator_restart_count", "worker_restart_count")
+			):
+				raise CampaignContractError("successful campaign pilot lifecycle restart counts must be zero")
 			expected_order_tuple = preregistered_orders[repeat_index]
 			expected_order = ">".join(expected_order_tuple)
 			expected_period = expected_order_tuple.index(key[1]) + 1

@@ -828,34 +828,62 @@ class CampaignHarnessAdapter:
 		lifecycle: Mapping[str, object],
 	) -> dict[str, object]:
 		"""Normalize success, failure, in-progress, and corrupt evidence without dropping identity facts."""
-		evidence = dict(decision.evidence or {})
 		identity = dict(requested_identity)
 		kind = identity.get("kind")
 		if kind not in ("discovery", "performance"):
 			raise ArchiveContractError("normalized row kind is invalid")
 		try:
 			if kind == "discovery" and set(identity) == {"kind", "cell", "attempt", "run_token", "manifest_hash"}:
-				canonical_identity = DiscoveryKey(
+				typed_key: DiscoveryKey | PerformanceKey = DiscoveryKey(
 					cast(str, identity["cell"]), cast(int, identity["attempt"]),
 					cast(str, identity["run_token"]), cast(str, identity["manifest_hash"]),
-				).as_dict()
+				)
 			elif kind == "performance" and set(identity) == {
 				"kind", "cell", "lifecycle_replicate", "period", "order", "manifest_hash", "attempt", "run_token"
 			}:
-				canonical_identity = PerformanceKey(
+				typed_key = PerformanceKey(
 					cast(str, identity["cell"]), cast(int, identity["lifecycle_replicate"]), cast(int, identity["period"]),
 					cast(str, identity["order"]), cast(str, identity["manifest_hash"]), cast(int, identity["attempt"]),
 					cast(str, identity["run_token"]),
-				).as_dict()
+				)
 			else:
 				raise ArchiveContractError("normalized requested identity schema is not exact")
 		except (LedgerContractError, TypeError) as error:
 			raise ArchiveContractError("normalized requested identity is invalid") from error
-		if identity != canonical_identity:
+		if identity != typed_key.as_dict():
 			raise ArchiveContractError("normalized requested identity is not canonical")
-		blocker: dict[str, object] | None = None
+		canonical_decision = self.exact_resume(typed_key)
+		supplied_evidence = dict(decision.evidence or {})
+		canonical_evidence = dict(canonical_decision.evidence or {})
+		def evidence_location(value: Mapping[str, object]) -> dict[str, object]:
+			return {
+				name: value[name] for name in ("committed_path", "archive_uri", "archive_sha256") if name in value
+			}
+		decision_mismatch = (
+			decision.state is not canonical_decision.state
+			or decision.attempt != canonical_decision.attempt
+			or supplied_evidence.get("identity") != canonical_evidence.get("identity")
+			or evidence_location(supplied_evidence) != evidence_location(canonical_evidence)
+		)
+		decision = canonical_decision
+		evidence = canonical_evidence
+		blocker: dict[str, object] | None = (
+			{
+				"code": (
+					"IDENTITY_MISMATCH"
+					if supplied_evidence.get("identity") is not None and supplied_evidence.get("identity") != identity
+					else "STALE_OR_NONCANONICAL_RESUME_DECISION"
+				),
+				"detail": (
+					"evidence does not exactly match requested identity"
+					if supplied_evidence.get("identity") is not None and supplied_evidence.get("identity") != identity
+					else "supplied resume decision does not match the freshly resolved canonical latest attempt"
+				),
+			}
+			if decision_mismatch else None
+		)
 		terminal = decision.state in (ResumeState.LATEST_SUCCESS, ResumeState.LATEST_FAILED)
-		if terminal:
+		if terminal and blocker is None:
 			evidence_identity = evidence.get("identity")
 			if evidence_identity != identity:
 				blocker = {"code": "IDENTITY_MISMATCH", "detail": "evidence does not exactly match requested identity"}
@@ -865,7 +893,7 @@ class CampaignHarnessAdapter:
 				blocker, revalidated = self._revalidate_normalized_evidence(evidence, identity)
 				if blocker is None and revalidated is not None:
 					evidence = revalidated
-		else:
+		elif blocker is None:
 			blocker = {"code": decision.state.value, "detail": decision.detail or "resume evidence is not valid"}
 		evidence_revalidated = blocker is None
 		canonical_status = evidence.get("status") if evidence_revalidated else None
@@ -888,7 +916,7 @@ class CampaignHarnessAdapter:
 			"resume_state": normalized_state,
 			"valid": verified_success,
 			"failure": (
-				verified_failure or decision.state is ResumeState.CORRUPT_OR_AMBIGUOUS
+				verified_failure or decision_mismatch or decision.state is ResumeState.CORRUPT_OR_AMBIGUOUS
 				or (terminal and blocker is not None)
 			),
 			"detail": decision.detail,

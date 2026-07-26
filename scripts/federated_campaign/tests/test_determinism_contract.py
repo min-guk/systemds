@@ -436,7 +436,7 @@ class DeterminismContractTest(unittest.TestCase):
 							"warm_seconds": 100 + (repeat - 3) * 0.5, "period": period,
 							"order": ">".join(order_tuple), "carryover": "NONE" if period == 1 else order_tuple[period - 2],
 							"host_load": {"io_utilization": 0.01, "read_bytes_per_second": 10, "write_bytes_per_second": 20},
-							"lifecycle": {"cold_seconds": 110, "warm_seconds": 100 + (repeat - 3) * 0.5, "coordinator_restart_count": 1, "worker_restart_count": 1},
+							"lifecycle": {"cold_seconds": 110, "warm_seconds": 100 + (repeat - 3) * 0.5, "coordinator_restart_count": 0, "worker_restart_count": 0},
 							"evidence_status": "committed", "evidence_sha256": f"{len(rows)+1:064x}",
 							"identity": {"kind": "performance", "cell": cell, "attempt": repeat, "manifest_hash": manifest_hash},
 							"evidence_location": {"committed_path": f"/verified/{len(rows)+1}"},
