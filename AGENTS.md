@@ -42,7 +42,8 @@
 - 테스트에서 **privacy constraint가 public인 케이스는 ignore**로 꺼두고 진행한다.
 - **DP planner만 우선 정상화**한다. (다른 플래너는 뒤 순서)
 - 테스트가 통과할 때까지 **수정 → 테스트 → 반복**한다.
-- 테스트 통과 후, **run_LAN.sh → run_LAN_docker.sh** 순으로 성공할 때까지 반복한다.
+- 테스트 통과 후 실험/검증은 **run_LAN_docker.sh만** 사용해 성공할 때까지 반복한다.
+- 물리 호스트 실행 스크립트 **run_LAN.sh 사용 및 결과의 실험 근거 채택을 금지**한다. 모든 성능 비교는 동일 Docker 조건에서 수행한다.
 - 모든 workload에서 **모든 플래너**를 한 번에 맞추지 않는다.
   - 순서: **DP → FedAll → Heuristic → MinST**
 - FedAll/Heuristic에서 rewire 문제가 반복되면 **DP의 rewire 구조를 참고**해 수정한다.
