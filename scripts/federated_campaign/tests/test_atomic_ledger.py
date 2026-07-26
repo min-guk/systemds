@@ -11,11 +11,13 @@ from pathlib import Path
 
 from scripts.federated_campaign.atomic_ledger import (
 	PUBLICATION_BOUNDARIES,
+	FAILURE_PUBLICATION_BOUNDARIES,
 	AtomicEvidenceLedger,
 	DiscoveryKey,
 	InjectedPublicationCrash,
 	LedgerContractError,
 	PerformanceKey,
+	ResumeState,
 )
 
 
@@ -65,6 +67,25 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		shared = self._shared_manifest(key, cold, warm, f"shared{suffix}.json")
 		return ledger.publish_success(key, cold, warm, shared)
 
+	def _failure(self, name="failure"):
+		bundle = self.root / name
+		bundle.mkdir(parents=True)
+		files = {
+			"raw_coordinator.log": b"coordinator failed\n",
+			"raw_worker.log": b"worker failed\n",
+			"raw_compose.log": b"compose failed\n",
+			"return_code.txt": b"17\n",
+			"scan.json": json.dumps({"timeout": True, "error": True, "fallback": False}).encode(),
+			"command.json": json.dumps({"argv": ["docker", "compose"]}).encode(),
+			"host_snapshot.json": json.dumps({"free_bytes": 10_000}).encode(),
+		}
+		for filename, contents in files.items():
+			(bundle / filename).write_bytes(contents)
+		(bundle / "checksums.json").write_text(json.dumps({
+			filename: hashlib.sha256(contents).hexdigest() for filename, contents in files.items()
+		}, sort_keys=True), encoding="utf-8")
+		return bundle
+
 	def test_discovery_key_contains_exact_identity_fields(self):
 		key = DiscoveryKey("cell-a", 2, "token-a", "manifest-a")
 		self.assertEqual(
@@ -82,6 +103,8 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 				"period": 2,
 				"order": "FedAll>DP",
 				"manifest_hash": "manifest-a",
+				"attempt": 1,
+				"run_token": "legacy-performance-attempt",
 			},
 			key.as_dict(),
 		)
@@ -197,8 +220,39 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 	def test_latest_failed_attempt_never_backfills_older_success(self):
 		ledger = AtomicEvidenceLedger(self.root / "ledger")
 		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))
-		ledger.publish_failure(DiscoveryKey("cell-a", 2, "token-b", "manifest-a"), "timeout")
+		ledger.publish_failure(DiscoveryKey("cell-a", 2, "token-b", "manifest-a"), self._failure())
 		self.assertIsNone(ledger.latest_discovery_success("cell-a", "manifest-a"))
+		self.assertEqual(ResumeState.LATEST_FAILED, ledger.resume_discovery("cell-a", "manifest-a").state)
+
+	def test_begin_attempt_is_durable_monotonic_and_blocks_stale_success(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		self._publish_discovery(ledger, DiscoveryKey("cell-a", 1, "token-a", "manifest-a"))
+		lease = ledger.begin_attempt(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
+		)
+		self.assertEqual(2, lease.key.attempt)
+		self.assertEqual(ResumeState.IN_PROGRESS_OR_ABANDONED, ledger.resume_discovery("cell-a", "manifest-a").state)
+		restarted = AtomicEvidenceLedger(self.root / "ledger")
+		self.assertEqual(ResumeState.IN_PROGRESS_OR_ABANDONED, restarted.resume_discovery("cell-a", "manifest-a").state)
+
+	def test_failed_attempt_requires_complete_checksummed_bundle(self):
+		ledger = AtomicEvidenceLedger(self.root / "ledger")
+		bundle = self._failure("incomplete")
+		(bundle / "raw_worker.log").unlink()
+		with self.assertRaisesRegex(LedgerContractError, "raw_worker"):
+			ledger.publish_failure(DiscoveryKey("cell-a", 1, "token", "manifest"), bundle)
+
+	def test_failure_crash_boundaries_never_publish_partial_valid_failure(self):
+		for boundary in FAILURE_PUBLICATION_BOUNDARIES:
+			with self.subTest(boundary=boundary):
+				ledger = AtomicEvidenceLedger(self.root / f"failure-{boundary}" / "ledger")
+				lease = ledger.begin_attempt(
+					kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"case": boundary}
+				)
+				with self.assertRaises(InjectedPublicationCrash):
+					ledger.publish_failure(lease, self._failure(f"bundle-{boundary}"), crash_after=boundary)
+				restarted = AtomicEvidenceLedger(ledger.root)
+				self.assertNotEqual(ResumeState.LATEST_SUCCESS, restarted.resume_discovery("cell-a", "manifest-a").state)
 
 	def test_orphan_staging_directory_is_quarantined_on_restart(self):
 		ledger_root = self.root / "ledger"

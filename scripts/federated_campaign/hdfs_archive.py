@@ -17,22 +17,44 @@ import tarfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol, Sequence, cast
+from typing import Callable, Mapping, Protocol, Sequence, cast
 
 from scripts.federated_campaign.atomic_ledger import (
 	AtomicEvidenceLedger,
+	AttemptLease,
+	DiscoveryKey,
 	LedgerContractError,
 	LedgerKey,
 	PerformanceKey,
+	ResumeDecision,
+	ResumeState,
 )
 from scripts.federated_campaign.determinism_contract import (
+	CampaignContractError,
+	build_campaign_manifest,
 	build_frozen_manifest,
+	select_pilot_repeats,
 	validate_block_counterbalanced_schedule,
 )
 
 
 class ArchiveContractError(RuntimeError):
 	"""Raised when archive or host-readiness evidence is unsafe."""
+
+
+class InjectedArchiveCrash(RuntimeError):
+	"""Test-only archive crash at an explicit durable boundary."""
+
+
+ARCHIVE_BOUNDARIES = (
+	"after_archive_tar_fsync",
+	"after_archive_put",
+	"after_archive_rename",
+	"after_archive_download_verify",
+	"after_archive_catalog_replace",
+)
+
+ABSOLUTE_DISK_FLOOR_BYTES = 5 * 1024**3
 
 
 class ArchiveBackend(Protocol):
@@ -92,6 +114,16 @@ class HostResourceSnapshot:
 	write_bytes_per_second: float
 
 
+def _receipt_attempt(receipt: Mapping[str, object]) -> int:
+	identity = receipt.get("identity")
+	if not isinstance(identity, dict):
+		raise ArchiveContractError("archive receipt identity is invalid")
+	attempt = identity.get("attempt")
+	if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+		raise ArchiveContractError("archive receipt attempt is invalid")
+	return attempt
+
+
 class HdfsArchiveAdapter:
 	"""Archives complete local rows, verifies remote bytes, then bounds retention."""
 
@@ -116,10 +148,12 @@ class HdfsArchiveAdapter:
 		self.remote_base_uri = remote_base_uri.rstrip("/")
 		self.max_local_raw_bundles = max_local_raw_bundles
 
-	def archive(self, committed_path: Path) -> dict[str, object]:
+	def archive(self, committed_path: Path, *, crash_after: str | None = None) -> dict[str, object]:
 		committed = Path(committed_path)
+		if crash_after is not None and crash_after not in ARCHIVE_BOUNDARIES:
+			raise ArchiveContractError(f"unknown archive crash boundary: {crash_after}")
 		try:
-			manifest = self.ledger.validate_committed(committed)
+			manifest = self.ledger.validate_committed(committed, require_success=False)
 		except LedgerContractError as error:
 			raise ArchiveContractError(f"local commit validation failed: {committed}") from error
 		identity_value = manifest.get("identity")
@@ -136,22 +170,35 @@ class HdfsArchiveAdapter:
 		operation = uuid.uuid4().hex
 		archive_path = self.work_root / f"archive-{record_id}-{operation}.tar"
 		download_path = self.work_root / f"verify-{record_id}-{operation}.tar"
-		remote_stage = f"{self.remote_base_uri}/.staging/{record_id}-{operation}.tar"
+		remote_stage = f"{self.remote_base_uri}/.staging/{record_id}.tar"
 		remote_final = f"{self.remote_base_uri}/committed/{record_id}.tar"
 		try:
 			self._create_deterministic_tar(committed, archive_path)
+			self._crash(crash_after, "after_archive_tar_fsync")
 			archive_hash = _sha256(archive_path)
 			archive_bytes = archive_path.stat().st_size
 			self.backend.mkdirs(f"{self.remote_base_uri}/.staging")
 			self.backend.mkdirs(f"{self.remote_base_uri}/committed")
 			if not self.backend.exists(remote_final):
-				self.backend.put(archive_path, remote_stage)
+				if self.backend.exists(remote_stage):
+					stage_download = self.work_root / f"stage-verify-{record_id}-{operation}.tar"
+					try:
+						self.backend.get(remote_stage, stage_download)
+						if _sha256(stage_download) != archive_hash:
+							raise ArchiveContractError(f"archive staging-object conflict: {remote_stage}")
+					finally:
+						stage_download.unlink(missing_ok=True)
+				else:
+					self.backend.put(archive_path, remote_stage)
+					self._crash(crash_after, "after_archive_put")
 				self.backend.rename(remote_stage, remote_final)
+				self._crash(crash_after, "after_archive_rename")
 			self.backend.get(remote_final, download_path)
 			if _sha256(download_path) != archive_hash:
 				raise ArchiveContractError(f"archive final-object conflict: {remote_final}")
 			self._verify_downloaded_archive(download_path, identity, record_id)
-		except ArchiveContractError:
+			self._crash(crash_after, "after_archive_download_verify")
+		except (ArchiveContractError, InjectedArchiveCrash):
 			raise
 		except Exception as error:
 			raise ArchiveContractError(f"archive transport failed for {record_id}") from error
@@ -167,13 +214,15 @@ class HdfsArchiveAdapter:
 			"archive_bytes": archive_bytes,
 			"local_committed_path": str(committed),
 			"local_raw_bundle_present": True,
+			"status": manifest.get("status"),
 		}
 		try:
 			entries = self.catalog()
 			entries.append(receipt)
 			self._replace_catalog(entries)
+			self._crash(crash_after, "after_archive_catalog_replace")
 			self._enforce_retention()
-		except ArchiveContractError:
+		except (ArchiveContractError, InjectedArchiveCrash):
 			raise
 		except Exception as error:
 			raise ArchiveContractError(f"archive catalog publication failed for {record_id}") from error
@@ -255,6 +304,48 @@ class HdfsArchiveAdapter:
 		manifest["archive_sha256"] = receipt["archive_sha256"]
 		return manifest
 
+	def exact_resume(self, key: DiscoveryKey | PerformanceKey) -> ResumeDecision:
+		identity = key.as_dict()
+		if isinstance(key, DiscoveryKey):
+			local = self.ledger.resume_discovery(key.cell, key.manifest_hash)
+			base_names = ("kind", "cell", "manifest_hash")
+		else:
+			local = self.ledger.resume_performance(key)
+			base_names = ("kind", "cell", "lifecycle_replicate", "period", "order", "manifest_hash")
+		base = {name: identity[name] for name in base_names}
+		archived = [
+			receipt for receipt in self.catalog()
+			if isinstance(receipt.get("identity"), dict)
+			and all(cast(dict[str, object], receipt["identity"]).get(name) == value for name, value in base.items())
+		]
+		archive_attempts = [_receipt_attempt(receipt) for receipt in archived]
+		latest_attempt = max([attempt for attempt in (local.attempt, *archive_attempts) if attempt is not None], default=None)
+		if latest_attempt is None:
+			return local
+		if local.attempt == latest_attempt and local.state in (
+			ResumeState.IN_PROGRESS_OR_ABANDONED,
+			ResumeState.LATEST_FAILED,
+			ResumeState.CORRUPT_OR_AMBIGUOUS,
+		):
+			return local
+		latest_archived = [
+			receipt for receipt in archived
+			if _receipt_attempt(receipt) == latest_attempt
+		]
+		if not latest_archived:
+			return local
+		identities = {_canonical_bytes(receipt["identity"]) for receipt in latest_archived}
+		if len(identities) != 1:
+			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail="ambiguous archived latest attempt")
+		try:
+			manifest = self._verify_receipt(latest_archived[0])
+		except ArchiveContractError as error:
+			return ResumeDecision(ResumeState.CORRUPT_OR_AMBIGUOUS, latest_attempt, detail=str(error))
+		manifest["archive_uri"] = latest_archived[0]["archive_uri"]
+		manifest["archive_sha256"] = latest_archived[0]["archive_sha256"]
+		state = ResumeState.LATEST_SUCCESS if manifest.get("status") == "success" else ResumeState.LATEST_FAILED
+		return ResumeDecision(state, latest_attempt, manifest)
+
 	def preflight_next_lifecycle(
 		self,
 		snapshot_provider: Callable[[], HostResourceSnapshot],
@@ -268,7 +359,7 @@ class HdfsArchiveAdapter:
 		for receipt in self.catalog():
 			self._verify_receipt(receipt)
 		snapshot = snapshot_provider()
-		if snapshot.free_bytes < required_free_bytes:
+		if snapshot.free_bytes < max(required_free_bytes, ABSOLUTE_DISK_FLOOR_BYTES):
 			raise ArchiveContractError("host free-byte resource gate failed")
 		if snapshot.free_inodes < required_free_inodes:
 			raise ArchiveContractError("host inode resource gate failed")
@@ -315,7 +406,7 @@ class HdfsArchiveAdapter:
 			with tarfile.open(archive_path, "r") as archive:
 				archive.extractall(extract_root, filter="data")
 			record_dir = extract_root / str(identity["kind"]) / record_id
-			manifest = self.ledger.validate_committed(record_dir)
+			manifest = self.ledger.validate_committed(record_dir, require_success=False)
 			if manifest.get("identity") != identity:
 				raise ArchiveContractError("downloaded archive identity mismatch")
 			return manifest
@@ -323,6 +414,11 @@ class HdfsArchiveAdapter:
 			raise ArchiveContractError("downloaded archive manifest/checksum validation failed") from error
 		finally:
 			shutil.rmtree(extract_root, ignore_errors=True)
+
+	@staticmethod
+	def _crash(requested: str | None, boundary: str) -> None:
+		if requested == boundary:
+			raise InjectedArchiveCrash(boundary)
 
 	def _create_deterministic_tar(self, record_dir: Path, destination: Path) -> None:
 		arc_root = Path(record_dir.parent.name) / record_dir.name
@@ -394,133 +490,125 @@ class HdfsArchiveAdapter:
 
 
 class CampaignHarnessAdapter:
-	"""Small explicit integration surface for a Docker campaign harness."""
+	"""The sole typed lifecycle surface used by the Docker campaign driver."""
 
 	integration_operations: frozenset[str] = frozenset({
-		"freeze_manifest",
-		"schedule_row",
-		"preflight_next_lifecycle",
-		"publish_phase_pair",
+		"begin",
+		"publish_success",
 		"publish_failure",
-		"archive_published",
-		"resume_discovery",
-		"resume_performance",
+		"archive",
+		"exact_resume",
+		"select_pilot_repeats",
+		"normalize_verified_row",
 	})
-	ledger: AtomicEvidenceLedger
-	archive: HdfsArchiveAdapter
 
 	def __init__(self, ledger: AtomicEvidenceLedger, archive: HdfsArchiveAdapter):
 		if archive.ledger is not ledger:
 			raise ArchiveContractError("harness adapter ledger/archive mismatch")
-		self.ledger = ledger
-		self.archive = archive
+		self._ledger = ledger
+		self._archive = archive
 
-	@staticmethod
-	def freeze_manifest(
-		*,
-		jar: Path,
-		image_id: str,
-		image_digest: str,
-		config: Path,
-		dml: Path,
-		dataset_root: Path,
-		worker_mapping: Sequence[str],
-		planner_order: Sequence[str],
-		seed: int,
-		warmup_runs: int,
-		measured_warm_runs: int,
-		block_schedule: dict[str, object] | None = None,
-		expected_block_order: Sequence[str] | None = None,
-	) -> dict[str, object]:
-		return build_frozen_manifest(
-			jar=jar,
-			image_id=image_id,
-			image_digest=image_digest,
-			config=config,
-			dml=dml,
-			dataset_root=dataset_root,
-			worker_mapping=worker_mapping,
-			planner_order=planner_order,
-			seed=seed,
-			warmup_runs=warmup_runs,
-			measured_warm_runs=measured_warm_runs,
-			block_schedule=block_schedule,
-			expected_block_order=expected_block_order,
-		)
-
-	@staticmethod
-	def schedule_row(manifest: dict[str, object], block_id: str, lifecycle_replicate: int) -> dict[str, object]:
-		planner_order = manifest.get("planner_order")
-		block_order = manifest.get("block_order")
-		lifecycle = manifest.get("lifecycle")
-		seed = manifest.get("seed")
-		if (
-			not isinstance(planner_order, list)
-			or not isinstance(block_order, list)
-			or not isinstance(lifecycle, dict)
-			or not isinstance(seed, int)
-			or isinstance(seed, bool)
-		):
-			raise ArchiveContractError("frozen manifest schedule structure is invalid")
-		repeats = cast(dict[str, object], lifecycle).get("measured_warm_runs")
-		if not isinstance(repeats, int) or isinstance(repeats, bool):
-			raise ArchiveContractError("frozen manifest lifecycle repeat count is invalid")
-		schedule = validate_block_counterbalanced_schedule(
-			manifest.get("block_schedule"),
-			cast(list[str], planner_order),
-			repeats,
-			seed,
-			cast(list[str], block_order),
-		)
-		blocks = schedule.get("blocks")
-		if not isinstance(blocks, list):
-			raise ArchiveContractError("validated block schedule has no blocks")
-		for block in cast(list[dict[str, object]], blocks):
-			if block["block"] == block_id:
-				runs = block.get("runs")
-				if not isinstance(runs, list):
-					raise ArchiveContractError("validated block schedule has no runs")
-				for run in cast(list[dict[str, object]], runs):
-					if run["lifecycle_replicate"] == lifecycle_replicate:
-						return dict(run)
-		raise ArchiveContractError("requested block schedule row does not exist")
-
-	def preflight_next_lifecycle(
+	def begin(
 		self,
-		snapshot_provider: Callable[[], HostResourceSnapshot],
 		*,
-		required_free_bytes: int,
-		required_free_inodes: int,
-		required_seconds: float,
-		max_io_utilization: float,
-		max_combined_io_bps: float,
-	) -> HostResourceSnapshot:
-		return self.archive.preflight_next_lifecycle(
-			snapshot_provider,
-			required_free_bytes=required_free_bytes,
-			required_free_inodes=required_free_inodes,
-			required_seconds=required_seconds,
-			max_io_utilization=max_io_utilization,
-			max_combined_io_bps=max_combined_io_bps,
+		kind: str,
+		cell: str,
+		manifest_hash: str,
+		invocation_manifest: Mapping[str, object],
+		lifecycle_replicate: int | None = None,
+		period: int | None = None,
+		order: str | None = None,
+		crash_after: str | None = None,
+	) -> AttemptLease:
+		base: dict[str, object] = {"kind": kind, "cell": cell, "manifest_hash": manifest_hash}
+		if kind == "performance":
+			base.update({"lifecycle_replicate": lifecycle_replicate, "period": period, "order": order})
+		archive_attempts = [
+			_receipt_attempt(receipt)
+			for receipt in self._archive.catalog()
+			if isinstance(receipt.get("identity"), dict)
+			and all(cast(dict[str, object], receipt["identity"]).get(name) == value for name, value in base.items())
+		]
+		return self._ledger.begin_attempt(
+			kind=kind,
+			cell=cell,
+			manifest_hash=manifest_hash,
+			invocation_manifest=invocation_manifest,
+			lifecycle_replicate=lifecycle_replicate,
+			period=period,
+			order=order,
+			minimum_attempt=max(archive_attempts, default=0) + 1,
+			crash_after=crash_after,
 		)
 
-	def publish_phase_pair(
-		self, key: LedgerKey, cold_bundle: Path, warm_bundle: Path, shared_replicate_manifest: Path
+	def publish_success(
+		self,
+		lease: AttemptLease,
+		cold_bundle: Path,
+		warm_bundle: Path,
+		shared_replicate_manifest: Path,
+		*,
+		crash_after: str | None = None,
 	) -> Path:
-		return self.ledger.publish_success(key, cold_bundle, warm_bundle, shared_replicate_manifest)
+		return self._ledger.publish_success(
+			lease, cold_bundle, warm_bundle, shared_replicate_manifest, crash_after=crash_after
+		)
 
-	def archive_published(self, committed_path: Path) -> dict[str, object]:
-		return self.archive.archive(committed_path)
+	def publish_failure(
+		self,
+		lease: AttemptLease,
+		failure_bundle: Path,
+		*,
+		crash_after: str | None = None,
+	) -> Path:
+		return self._ledger.publish_failure(lease, failure_bundle, crash_after=crash_after)
 
-	def publish_failure(self, key: LedgerKey, reason: str) -> Path:
-		return self.ledger.publish_failure(key, reason)
+	def archive(self, committed_path: Path, *, crash_after: str | None = None) -> dict[str, object]:
+		return self._archive.archive(committed_path, crash_after=crash_after)
 
-	def resume_discovery(self, cell: str, manifest_hash: str) -> dict[str, object] | None:
-		return self.archive.latest_discovery_success(cell, manifest_hash)
+	def exact_resume(self, key: DiscoveryKey | PerformanceKey) -> ResumeDecision:
+		return self._archive.exact_resume(key)
 
-	def resume_performance(self, key: PerformanceKey) -> dict[str, object] | None:
-		return self.archive.performance_success(key)
+	@staticmethod
+	def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+		try:
+			return select_pilot_repeats(rows)
+		except CampaignContractError as error:
+			raise ArchiveContractError(str(error)) from error
 
+	def normalize_verified_row(self, decision: ResumeDecision, pilot_repeat: int) -> dict[str, object]:
+		if decision.state is not ResumeState.LATEST_SUCCESS or decision.evidence is None:
+			raise ArchiveContractError("only latest verified success evidence can become a pilot row")
+		if isinstance(pilot_repeat, bool) or not isinstance(pilot_repeat, int) or pilot_repeat not in range(1, 6):
+			raise ArchiveContractError("pilot_repeat must be one of the preregistered repeats 1..5")
+		evidence = dict(decision.evidence)
+		identity = evidence.get("identity")
+		warm_metric = evidence.get("warm_metric")
+		if not isinstance(identity, dict) or not isinstance(warm_metric, dict):
+			raise ArchiveContractError("verified success lacks identity or warm metric")
+		seconds = warm_metric.get("seconds")
+		if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+			raise ArchiveContractError("verified success warm metric is invalid")
+		archive_hash = evidence.get("archive_sha256")
+		if isinstance(archive_hash, str):
+			status = "archive"
+			digest = archive_hash
+		else:
+			committed_path = evidence.get("committed_path")
+			if not isinstance(committed_path, str):
+				raise ArchiveContractError("verified local success lacks committed path")
+			manifest = self._ledger.validate_committed(Path(committed_path))
+			if manifest.get("identity") != identity:
+				raise ArchiveContractError("verified local success identity changed")
+			status = "committed"
+			digest = _sha256(Path(committed_path) / "bundle_manifest.json")
+		return {
+			"cell": identity.get("cell"),
+			"pilot_repeat": pilot_repeat,
+			"warm_seconds": float(seconds),
+			"evidence_status": status,
+			"evidence_sha256": digest,
+		}
 
 def _canonical_bytes(value: object) -> bytes:
 	return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")

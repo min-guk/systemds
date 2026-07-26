@@ -20,7 +20,7 @@ import re
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 
 class CampaignContractError(ValueError):
@@ -32,6 +32,44 @@ class ResourceSnapshot:
 	free_bytes: int
 	free_inodes: int
 	remaining_seconds: float
+
+
+CAMPAIGN_WORKERS = (1, 2, 3, 4)
+CAMPAIGN_PLANNERS = ("DP", "FedAll", "Heuristic", "MinST")
+CAMPAIGN_WORKLOADS = ("kmeans", "pca", "lm", "l2svm", "logreg", "als", "steplm")
+CAMPAIGN_PROFILES = ("lan", "wan_light", "wan_mid")
+
+
+def campaign_block_ids() -> tuple[str, ...]:
+	"""Return the frozen 84 block identities in matrix order (planner excluded)."""
+	return tuple(
+		f"workers={workers}|workload={workload}|profile={profile}"
+		for workers in CAMPAIGN_WORKERS
+		for workload in CAMPAIGN_WORKLOADS
+		for profile in CAMPAIGN_PROFILES
+	)
+
+
+def campaign_cell_ids() -> tuple[str, ...]:
+	"""Return the frozen 336 cell identities in harness product order."""
+	return tuple(
+		f"workers={workers}|planner={planner}|workload={workload}|profile={profile}"
+		for workers in CAMPAIGN_WORKERS
+		for planner in CAMPAIGN_PLANNERS
+		for workload in CAMPAIGN_WORKLOADS
+		for profile in CAMPAIGN_PROFILES
+	)
+
+
+def validate_campaign_matrix(block_ids: Sequence[str], cell_ids: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+	"""Reject any missing, extra, duplicated, or reordered campaign identity."""
+	blocks = _require_nonempty_unique("campaign block ids", block_ids)
+	cells = _require_nonempty_unique("campaign cell ids", cell_ids)
+	if blocks != campaign_block_ids():
+		raise CampaignContractError("campaign block ids do not match the exact ordered 84-block contract")
+	if cells != campaign_cell_ids():
+		raise CampaignContractError("campaign cell ids do not match the exact ordered 336-cell contract")
+	return blocks, cells
 
 
 _PHASE_FILES = (
@@ -392,4 +430,151 @@ def summarize_variance_pilot(warm_execution_seconds: Iterable[float]) -> dict[st
 		"median": median,
 		"mad": mad,
 		"cv": statistics.pstdev(values) / mean,
+	}
+
+
+def _named_file_records(name: str, files: Mapping[str, Path], expected_names: Sequence[str] | None = None) -> dict[str, dict[str, object]]:
+	if expected_names is not None and set(files) != set(expected_names):
+		raise CampaignContractError(f"{name} must contain the exact names {tuple(expected_names)!r}")
+	if not files:
+		raise CampaignContractError(f"{name} must not be empty")
+	labels = tuple(expected_names) if expected_names is not None else tuple(sorted(files))
+	return {label: _file_record(Path(files[label])) for label in labels}
+
+
+def build_campaign_manifest(
+	*,
+	source_commit: str,
+	image_id: str,
+	image_digest: str,
+	wrapper: Path,
+	jar: Path,
+	planner_configs: Mapping[str, Path],
+	cp_config: Path,
+	fed_dmls: Mapping[str, Path],
+	cp_dmls: Mapping[str, Path],
+	oracle_files: Mapping[str, Path],
+	compose_files: Mapping[str, Path],
+	runner_files: Mapping[str, Path],
+	dataset_root: Path,
+	data_sidecar: Path,
+	block_ids: Sequence[str],
+	cell_ids: Sequence[str],
+	network_costs: Mapping[str, object],
+	privacy_settings: Mapping[str, object],
+	jvm_settings: Mapping[str, object],
+	thread_settings: Mapping[str, object],
+	resource_settings: Mapping[str, object],
+	block_schedule: dict[str, object],
+	reference_artifacts: Mapping[str, Path],
+	tolerance_version: str,
+	seed: int,
+	repeats: int,
+) -> dict[str, object]:
+	"""Freeze every campaign-wide input into one canonical v2 manifest."""
+	if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+		raise CampaignContractError("source_commit must be an exact 40-character lowercase Git commit")
+	if not image_id.startswith("sha256:") or "@sha256:" not in image_digest:
+		raise CampaignContractError("image ID and digest must be immutable sha256 identities")
+	if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+		raise CampaignContractError("an explicit non-negative integer seed is required")
+	if repeats not in (3, 5, 7):
+		raise CampaignContractError("repeats must be exactly 3, 5, or 7")
+	blocks, cells = validate_campaign_matrix(block_ids, cell_ids)
+	validated_schedule = validate_block_counterbalanced_schedule(
+		block_schedule, CAMPAIGN_PLANNERS, repeats, seed, blocks
+	)
+	for name, value in (
+		("network_costs", network_costs),
+		("privacy_settings", privacy_settings),
+		("jvm_settings", jvm_settings),
+		("thread_settings", thread_settings),
+		("resource_settings", resource_settings),
+	):
+		if not isinstance(value, Mapping) or not value:
+			raise CampaignContractError(f"{name} must be a non-empty frozen mapping")
+	_require_nonempty_unique("tolerance_version", (tolerance_version,))
+	artifacts = {
+		"wrapper": _file_record(Path(wrapper)),
+		"jar": _file_record(Path(jar)),
+		"planner_configs": _named_file_records("planner_configs", planner_configs, CAMPAIGN_PLANNERS),
+		"cp_config": _file_record(Path(cp_config)),
+		"fed_dmls": _named_file_records("fed_dmls", fed_dmls, CAMPAIGN_WORKLOADS),
+		"cp_dmls": _named_file_records("cp_dmls", cp_dmls, CAMPAIGN_WORKLOADS),
+		"oracle_files": _named_file_records("oracle_files", oracle_files),
+		"compose_files": _named_file_records("compose_files", compose_files),
+		"runner_files": _named_file_records("runner_files", runner_files),
+		"dataset": _dataset_records(Path(dataset_root)),
+		"data_sidecar": _file_record(Path(data_sidecar)),
+		"reference_artifacts": _named_file_records("reference_artifacts", reference_artifacts),
+	}
+	manifest: dict[str, object] = {
+		"schema": "systemds-federated-docker-campaign/v2",
+		"execution_surface": "docker-only",
+		"source_commit": source_commit,
+		"image": {"id": image_id, "digest": image_digest, "prebuilt": True},
+		"artifacts": artifacts,
+		"dimensions": {
+			"workers": list(CAMPAIGN_WORKERS),
+			"planners": list(CAMPAIGN_PLANNERS),
+			"workloads": list(CAMPAIGN_WORKLOADS),
+			"profiles": list(CAMPAIGN_PROFILES),
+			"block_ids": list(blocks),
+			"cell_ids": list(cells),
+		},
+		"network_costs": dict(network_costs),
+		"privacy_settings": dict(privacy_settings),
+		"jvm_settings": dict(jvm_settings),
+		"thread_settings": dict(thread_settings),
+		"resource_settings": dict(resource_settings),
+		"schedule": validated_schedule,
+		"seed": seed,
+		"repeats": repeats,
+		"tolerance_version": tolerance_version,
+	}
+	canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+	manifest["manifest_hash"] = hashlib.sha256(canonical).hexdigest()
+	return manifest
+
+
+def select_pilot_repeats(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+	"""Freeze 3/5/7 repeats from exactly five preregistered verified pilot rows."""
+	if len(rows) != 5:
+		raise CampaignContractError("pilot selector requires exactly five preregistered rows")
+	cell: str | None = None
+	values: list[float] = []
+	for expected_repeat, row in enumerate(rows, start=1):
+		if not isinstance(row, Mapping) or set(row) != {
+			"cell", "pilot_repeat", "warm_seconds", "evidence_status", "evidence_sha256"
+		}:
+			raise CampaignContractError("pilot row schema is not exact")
+		if row["pilot_repeat"] != expected_repeat:
+			raise CampaignContractError("pilot rows contain a gap, duplicate, or reorder")
+		if row["evidence_status"] not in ("committed", "archive"):
+			raise CampaignContractError("pilot rows require valid committed or archive evidence")
+		digest = row["evidence_sha256"]
+		if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+			raise CampaignContractError("pilot row evidence checksum is invalid")
+		row_cell = row["cell"]
+		if not isinstance(row_cell, str) or not row_cell:
+			raise CampaignContractError("pilot row cell is invalid")
+		if cell is None:
+			cell = row_cell
+		elif cell != row_cell:
+			raise CampaignContractError("pilot rows must describe one exact cell")
+		seconds = row["warm_seconds"]
+		if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not math.isfinite(float(seconds)) or float(seconds) <= 0:
+			raise CampaignContractError("pilot row warm_seconds is invalid")
+		values.append(float(seconds))
+	median = statistics.median(values)
+	q = max(abs(math.log(value / median)) for value in values)
+	repeats = 3 if q <= math.log(1.02) else 5 if q <= math.log(1.05) else 7
+	return {
+		"schema": "systemds-federated-pilot-selection/v1",
+		"cell": cell,
+		"preregistered_repeats": 5,
+		"q": q,
+		"thresholds": {"three": math.log(1.02), "five": math.log(1.05)},
+		"selected_repeats": repeats,
+		"row_evidence_sha256": [str(row["evidence_sha256"]) for row in rows],
 	}

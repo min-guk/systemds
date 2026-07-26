@@ -11,12 +11,19 @@ from pathlib import Path
 
 from scripts.federated_campaign.determinism_contract import (
 	CampaignContractError,
+	CAMPAIGN_PLANNERS,
+	CAMPAIGN_WORKLOADS,
 	ResourceSnapshot,
 	build_block_counterbalanced_schedule,
 	build_counterbalanced_schedule,
 	build_frozen_manifest,
+	build_campaign_manifest,
+	campaign_block_ids,
+	campaign_cell_ids,
 	check_resource_budget,
 	summarize_variance_pilot,
+	select_pilot_repeats,
+	validate_campaign_matrix,
 	validate_phase_bundle,
 )
 
@@ -252,6 +259,80 @@ class DeterminismContractTest(unittest.TestCase):
 		summary = summarize_variance_pilot([10.0, 11.0, 9.0, 10.5, 9.5])
 		self.assertGreater(summary["cv"], 0)
 		self.assertEqual(0.5, summary["mad"])
+
+	def test_campaign_matrix_is_exact_ordered_84_blocks_and_336_cells(self):
+		blocks, cells = validate_campaign_matrix(campaign_block_ids(), campaign_cell_ids())
+		self.assertEqual(84, len(blocks))
+		self.assertEqual(336, len(cells))
+		self.assertEqual("workers=1|workload=kmeans|profile=lan", blocks[0])
+		self.assertEqual("workers=4|planner=MinST|workload=steplm|profile=wan_mid", cells[-1])
+		with self.assertRaisesRegex(CampaignContractError, "ordered"):
+			validate_campaign_matrix(tuple(reversed(blocks)), cells)
+		with self.assertRaisesRegex(CampaignContractError, "duplicates"):
+			validate_campaign_matrix(blocks, (*cells[:-1], cells[-2]))
+
+	def _campaign_v2_inputs(self):
+		paths = {}
+		for name in (
+			"wrapper", "jar", "cp-config", "sidecar", "oracle", "compose", "runner", "reference"
+		):
+			path = self.root / f"{name}.bin"
+			path.write_bytes(name.encode())
+			paths[name] = path
+		for planner in CAMPAIGN_PLANNERS:
+			path = self.root / f"{planner}.xml"
+			path.write_text(planner, encoding="utf-8")
+			paths[f"planner-{planner}"] = path
+		for workload in CAMPAIGN_WORKLOADS:
+			for surface in ("fed", "cp"):
+				path = self.root / f"{workload}-{surface}.dml"
+				path.write_text(f"{workload}-{surface}", encoding="utf-8")
+				paths[f"{surface}-{workload}"] = path
+		blocks = campaign_block_ids()
+		schedule = build_block_counterbalanced_schedule(CAMPAIGN_PLANNERS, 5, blocks, 19)
+		return {
+			"source_commit": "a" * 40,
+			"image_id": "sha256:" + "b" * 64,
+			"image_digest": "systemds@sha256:" + "c" * 64,
+			"wrapper": paths["wrapper"], "jar": paths["jar"],
+			"planner_configs": {p: paths[f"planner-{p}"] for p in CAMPAIGN_PLANNERS},
+			"cp_config": paths["cp-config"],
+			"fed_dmls": {w: paths[f"fed-{w}"] for w in CAMPAIGN_WORKLOADS},
+			"cp_dmls": {w: paths[f"cp-{w}"] for w in CAMPAIGN_WORKLOADS},
+			"oracle_files": {"semantic": paths["oracle"]},
+			"compose_files": {"campaign": paths["compose"]},
+			"runner_files": {"docker": paths["runner"]},
+			"dataset_root": self.root / "data", "data_sidecar": paths["sidecar"],
+			"block_ids": blocks, "cell_ids": campaign_cell_ids(),
+			"network_costs": {"lan_latency_ms": 0}, "privacy_settings": {"public_ignored": True},
+			"jvm_settings": {"heap": "8g"}, "thread_settings": {"blas": 1},
+			"resource_settings": {"absolute_floor_bytes": 5 * 1024**3},
+			"block_schedule": schedule, "reference_artifacts": {"cp": paths["reference"]},
+			"tolerance_version": "oracle-v1", "seed": 19, "repeats": 5,
+		}
+
+	def test_campaign_v2_manifest_hashes_every_campaign_wide_input(self):
+		inputs = self._campaign_v2_inputs()
+		manifest = build_campaign_manifest(**inputs)
+		self.assertEqual("systemds-federated-docker-campaign/v2", manifest["schema"])
+		self.assertEqual(336, len(manifest["dimensions"]["cell_ids"]))
+		before = manifest["manifest_hash"]
+		inputs["runner_files"]["docker"].write_text("changed", encoding="utf-8")
+		self.assertNotEqual(before, build_campaign_manifest(**inputs)["manifest_hash"])
+
+	def test_pilot_selector_uses_preregistered_verified_rows_and_log_thresholds(self):
+		def rows(values):
+			return [{
+				"cell": "cell-a", "pilot_repeat": index, "warm_seconds": value,
+				"evidence_status": "committed", "evidence_sha256": f"{index:064x}",
+			} for index, value in enumerate(values, 1)]
+		self.assertEqual(3, select_pilot_repeats(rows([100, 100.5, 99.5, 101, 99]))["selected_repeats"])
+		self.assertEqual(5, select_pilot_repeats(rows([100, 102.1, 98, 101, 99]))["selected_repeats"])
+		self.assertEqual(7, select_pilot_repeats(rows([100, 110, 95, 101, 99]))["selected_repeats"])
+		bad = rows([100] * 5)
+		bad[3]["pilot_repeat"] = 3
+		with self.assertRaisesRegex(CampaignContractError, "gap"):
+			select_pilot_repeats(bad)
 
 	def phase_bundle(self, metric_kind="systemds_total_execution_time"):
 		phase = self.root / "phase"

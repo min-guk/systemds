@@ -11,14 +11,16 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey
+from scripts.federated_campaign.atomic_ledger import AtomicEvidenceLedger, DiscoveryKey, PerformanceKey, ResumeState
 from scripts.federated_campaign.determinism_contract import build_block_counterbalanced_schedule
 from scripts.federated_campaign.hdfs_archive import (
 	ArchiveContractError,
+	ARCHIVE_BOUNDARIES,
 	CampaignHarnessAdapter,
 	HdfsArchiveAdapter,
 	HdfsCliBackend,
 	HostResourceSnapshot,
+	InjectedArchiveCrash,
 )
 
 
@@ -214,6 +216,31 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		with self.assertRaisesRegex(ArchiveContractError, "conflict"):
 			adapter.archive(committed)
 
+	def test_archive_crash_boundaries_retry_to_one_exact_receipt(self):
+		for index, boundary in enumerate(ARCHIVE_BOUNDARIES, start=1):
+			with self.subTest(boundary=boundary):
+				case = self.root / f"archive-crash-{index}"
+				ledger = AtomicEvidenceLedger(case / "ledger")
+				key = DiscoveryKey(f"cell-{index}", 1, f"token-{index}", "manifest-a")
+				cold = self._phase(f"archive-crash-{index}-cold", "docker_e2e", 2.5)
+				warm = self._phase(f"archive-crash-{index}-warm", "systemds_total_execution_time", 1.25)
+				shared = self.root / f"archive-crash-{index}-shared.json"
+				shared.write_text(json.dumps({
+					"identity": key.as_dict(),
+					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+				}), encoding="utf-8")
+				committed = ledger.publish_success(key, cold, warm, shared)
+				adapter = HdfsArchiveAdapter(
+					ledger, self.backend, case / "archive-work",
+					f"hdfs://dams-so001:12000/tmp/logs/mchoi-g007-crash-{index}", max_local_raw_bundles=1,
+				)
+				with self.assertRaises(InjectedArchiveCrash):
+					adapter.archive(committed, crash_after=boundary)
+				receipt = adapter.archive(committed)
+				self.assertEqual(1, len(adapter.catalog()))
+				self.assertEqual(key.as_dict(), receipt["identity"])
+
 	def test_remote_corruption_fails_preflight_before_next_lifecycle(self):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter()
@@ -221,7 +248,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.backend.objects[receipt["archive_uri"]] = b"corrupt"
 		with self.assertRaisesRegex(ArchiveContractError, "remote"):
 			adapter.preflight_next_lifecycle(
-				lambda: HostResourceSnapshot(10_000, 100, 1000, 0.01, 0, 0),
+				lambda: HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0),
 				required_free_bytes=100,
 				required_free_inodes=10,
 				required_seconds=100,
@@ -238,7 +265,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		def snapshot():
 			nonlocal snapshot_called
 			snapshot_called = True
-			return HostResourceSnapshot(10_000, 100, 1000, 0.01, 0, 0)
+			return HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0)
 		with self.assertRaisesRegex(ArchiveContractError, "missing"):
 			adapter.preflight_next_lifecycle(
 				snapshot,
@@ -283,106 +310,88 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			adapter.archive(second)
 		self.assertTrue((victim / "sentinel").is_file())
 
-	def test_harness_adapter_exposes_complete_campaign_integration_surface(self):
+	def _failure(self, name="failure"):
+		bundle = self.root / name
+		bundle.mkdir()
+		files = {
+			"raw_coordinator.log": b"coordinator failed\n",
+			"raw_worker.log": b"worker failed\n",
+			"raw_compose.log": b"compose failed\n",
+			"return_code.txt": b"23\n",
+			"scan.json": json.dumps({"timeout": True, "error": True, "fallback": False}).encode(),
+			"command.json": json.dumps({"argv": ["docker", "compose"]}).encode(),
+			"host_snapshot.json": json.dumps({"free_bytes": 10_000}).encode(),
+		}
+		for filename, contents in files.items():
+			(bundle / filename).write_bytes(contents)
+		(bundle / "checksums.json").write_text(json.dumps({
+			filename: hashlib.sha256(contents).hexdigest() for filename, contents in files.items()
+		}, sort_keys=True), encoding="utf-8")
+		return bundle
+
+	def test_harness_adapter_exposes_only_typed_sole_driver_surface(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		self.assertEqual(
 			{
-				"freeze_manifest",
-				"schedule_row",
-				"preflight_next_lifecycle",
-				"publish_phase_pair",
-				"publish_failure",
-				"archive_published",
-				"resume_discovery",
-				"resume_performance",
+				"begin", "publish_success", "publish_failure", "archive", "exact_resume",
+				"select_pilot_repeats", "normalize_verified_row",
 			},
 			facade.integration_operations,
 		)
+		self.assertFalse(hasattr(facade, "ledger"))
 
-	def test_harness_adapter_freezes_manifest_through_validated_schedule_contract(self):
+	def test_harness_adapter_begins_publishes_and_resumes_exact_attempt(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		manifest = facade.freeze_manifest(**self._manifest_inputs())
-		self.assertEqual("systemds-federated-docker-campaign/v1", manifest["schema"])
-
-	def test_harness_adapter_returns_exact_persisted_schedule_row(self):
-		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		manifest = facade.freeze_manifest(**self._manifest_inputs())
-		row = facade.schedule_row(manifest, "b0", 1)
-		self.assertEqual(manifest["block_schedule"]["blocks"][0]["runs"][0], row)
-
-	def test_harness_adapter_publishes_phase_pair(self):
-		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		key = DiscoveryKey("cell-a", 1, "token-a", "manifest-a")
+		lease = facade.begin(
+			kind="performance", cell="cell-a", manifest_hash="manifest-a",
+			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=3, period=2,
+			order="FedAll>DP",
+		)
 		cold = self._phase("facade-cold", "docker_e2e", 2.5)
 		warm = self._phase("facade-warm", "systemds_total_execution_time", 1.25)
 		shared = self.root / "facade-shared.json"
-		shared.write_text(
-			json.dumps(
-				{
-					"identity": key.as_dict(),
-					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
-					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
-				}
-			),
-			encoding="utf-8",
-		)
-		committed = facade.publish_phase_pair(key, cold, warm, shared)
-		self.assertEqual(key.as_dict(), self.ledger.validate_committed(committed)["identity"])
+		shared.write_text(json.dumps({
+			"identity": lease.key.as_dict(),
+			"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
+			"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
+		}), encoding="utf-8")
+		committed = facade.publish_success(lease, cold, warm, shared)
+		decision = facade.exact_resume(lease.key)
+		self.assertEqual(ResumeState.LATEST_SUCCESS, decision.state)
+		row = facade.normalize_verified_row(decision, 1)
+		self.assertEqual("committed", row["evidence_status"])
+		self.assertEqual(1.25, row["warm_seconds"])
+		self.assertEqual(lease.key.as_dict(), self.ledger.validate_committed(committed)["identity"])
 
-	def test_harness_adapter_publishes_failure_without_ledger_reach_through(self):
-		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		key = DiscoveryKey("cell-a", 1, "token-a", "manifest-a")
-		committed = facade.publish_failure(key, "timeout")
-		summary = next(record for record in self.ledger.record_summaries() if record["path"] == str(committed))
-		self.assertEqual("failed", summary["status"])
-
-	def test_harness_adapter_resumes_exact_performance_identity(self):
-		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		key = PerformanceKey("cell-a", 3, 2, "FedAll>DP", "manifest-a")
-		cold = self._phase("performance-facade-cold", "docker_e2e", 2.5)
-		warm = self._phase("performance-facade-warm", "systemds_total_execution_time", 1.25)
-		shared = self.root / "performance-facade-shared.json"
-		shared.write_text(
-			json.dumps(
-				{
-					"identity": key.as_dict(),
-					"cold_checksums_sha256": hashlib.sha256((cold / "checksums.json").read_bytes()).hexdigest(),
-					"warm_checksums_sha256": hashlib.sha256((warm / "checksums.json").read_bytes()).hexdigest(),
-				}
-			),
-			encoding="utf-8",
-		)
-		facade.publish_phase_pair(key, cold, warm, shared)
-		self.assertEqual(key.as_dict(), facade.resume_performance(key)["identity"])
-		self.assertIsNone(
-			facade.resume_performance(PerformanceKey("cell-a", 3, 2, "DP>FedAll", "manifest-a"))
-		)
-
-	def test_harness_adapter_archives_and_resumes_verified_discovery(self):
-		_, committed = self._commit(1, "token-a")
+	def test_harness_adapter_archives_valid_failure_and_never_stale_backfills(self):
+		_, success = self._commit(1, "token-a")
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter(retention=0))
-		receipt = facade.archive_published(committed)
-		resumed = facade.resume_discovery("cell-a", "manifest-a")
-		self.assertEqual(receipt["archive_sha256"], resumed["archive_sha256"])
-
-	def test_harness_adapter_applies_resource_and_quiescence_preflight(self):
-		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
-		snapshot = HostResourceSnapshot(10_000, 100, 1000, 0.01, 0, 0)
-		result = facade.preflight_next_lifecycle(
-			lambda: snapshot,
-			required_free_bytes=100,
-			required_free_inodes=10,
-			required_seconds=100,
-			max_io_utilization=0.1,
-			max_combined_io_bps=100,
+		facade.archive(success)
+		lease = facade.begin(
+			kind="discovery", cell="cell-a", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
 		)
-		self.assertEqual(snapshot, result)
+		failed = facade.publish_failure(lease, self._failure())
+		receipt = facade.archive(failed)
+		self.assertEqual("failed", receipt["status"])
+		decision = facade.exact_resume(DiscoveryKey("cell-a", 1, "query", "manifest-a"))
+		self.assertEqual(ResumeState.LATEST_FAILED, decision.state)
+		with self.assertRaisesRegex(ArchiveContractError, "latest verified success"):
+			facade.normalize_verified_row(decision, 1)
+
+	def test_harness_adapter_pilot_selection_rejects_unverified_rows(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		rows = [{
+			"cell": "cell-a", "pilot_repeat": index, "warm_seconds": 1.0,
+			"evidence_status": "claimed", "evidence_sha256": f"{index:064x}",
+		} for index in range(1, 6)]
+		with self.assertRaisesRegex(ArchiveContractError, "committed or archive"):
+			facade.select_pilot_repeats(rows)
 
 	def test_latest_local_failure_never_falls_back_to_archived_success(self):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter(retention=0)
 		adapter.archive(committed)
-		self.ledger.publish_failure(DiscoveryKey("cell-a", 2, "token-b", "manifest-a"), "timeout")
+		self.ledger.publish_failure(DiscoveryKey("cell-a", 2, "token-b", "manifest-a"), self._failure("latest-failure"))
 		gets_before = sum(event[0] == "get" for event in self.backend.events)
 		self.assertIsNone(adapter.latest_discovery_success("cell-a", "manifest-a"))
 		self.assertEqual(gets_before, sum(event[0] == "get" for event in self.backend.events))
@@ -393,7 +402,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		adapter.archive(committed)
 		def snapshot():
 			self.backend.events.append(("snapshot",))
-			return HostResourceSnapshot(10_000, 100, 1000, 0.5, 0, 0)
+			return HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.5, 0, 0)
 		with self.assertRaisesRegex(ArchiveContractError, "quiescence"):
 			adapter.preflight_next_lifecycle(
 				snapshot,
