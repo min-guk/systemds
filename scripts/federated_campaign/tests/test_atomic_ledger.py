@@ -48,7 +48,7 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 			"output.bin": f"output-{name}".encode(),
 			"semantic_oracle.json": json.dumps({"passed": True}).encode(),
 			"return_code.txt": b"0\n",
-			"scan.json": json.dumps({"timeout": False, "error": False, "fallback": False}).encode(),
+			"scan.json": json.dumps({"timeout": False, "error": False, "fallback": False, "resource_invalid": False}).encode(),
 			"metric.json": json.dumps({"kind": metric_kind, "seconds": seconds}).encode(),
 		}
 		for filename, contents in files.items():
@@ -350,6 +350,38 @@ class AtomicEvidenceLedgerTest(unittest.TestCase):
 		)
 		with self.assertRaisesRegex(LedgerContractError, "performance AttemptLease"):
 			ledger.publish_performance_success(other, bundle, bundle, self.root / "missing")
+
+	def test_resource_invalid_scan_cannot_publish_discovery_or_performance_success(self):
+		def mark_resource_invalid(bundle):
+			scan_path = bundle / "scan.json"
+			scan = json.loads(scan_path.read_text(encoding="utf-8"))
+			scan["resource_invalid"] = True
+			contents = json.dumps(scan).encode()
+			scan_path.write_bytes(contents)
+			checksums = json.loads((bundle / "checksums.json").read_text(encoding="utf-8"))
+			checksums["scan.json"] = hashlib.sha256(contents).hexdigest()
+			(bundle / "checksums.json").write_text(json.dumps(checksums, sort_keys=True), encoding="utf-8")
+
+		discovery_ledger = AtomicEvidenceLedger(self.root / "resource-discovery-ledger")
+		discovery_lease = discovery_ledger.begin_attempt(
+			kind="discovery", cell="cell-d", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]}
+		)
+		discovery = self._phase("resource-discovery", "discovery_correctness", 1.0)
+		mark_resource_invalid(discovery)
+		with self.assertRaisesRegex(LedgerContractError, "resource_invalid"):
+			discovery_ledger.publish_discovery_success(discovery_lease, discovery)
+
+		performance_ledger = AtomicEvidenceLedger(self.root / "resource-performance-ledger")
+		performance_lease = performance_ledger.begin_attempt(
+			kind="performance", cell="cell-p", manifest_hash="manifest-a", invocation_manifest={"argv": ["docker"]},
+			lifecycle_replicate=1, period=1, order="DP>FedAll>Heuristic>MinST",
+		)
+		cold = self._phase("resource-performance-cold", "docker_e2e", 2.0)
+		warm = self._phase("resource-performance-warm", "systemds_total_execution_time", 1.0)
+		mark_resource_invalid(warm)
+		shared = self._shared_manifest(performance_lease.key, cold, warm, "resource-performance-shared.json")
+		with self.assertRaisesRegex(LedgerContractError, "resource_invalid"):
+			performance_ledger.publish_performance_success(performance_lease, cold, warm, shared)
 
 	def test_discovery_success_crash_boundaries_are_fail_closed(self):
 		for index, boundary in enumerate(DISCOVERY_PUBLICATION_BOUNDARIES, start=1):

@@ -91,7 +91,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			"output.bin": f"output-{name}".encode(),
 			"semantic_oracle.json": json.dumps({"passed": True}).encode(),
 			"return_code.txt": b"0\n",
-			"scan.json": json.dumps({"timeout": False, "error": False, "fallback": False}).encode(),
+			"scan.json": json.dumps({"timeout": False, "error": False, "fallback": False, "resource_invalid": False}).encode(),
 			"metric.json": json.dumps({"kind": metric_kind, "seconds": seconds}).encode(),
 		}
 		for filename, contents in files.items():
@@ -358,7 +358,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		lease = facade.begin(
 			kind="performance", cell="cell-a", manifest_hash="manifest-a",
-			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=3, period=2,
+			invocation_manifest={"argv": ["docker"]}, lifecycle_replicate=3, period=1,
 			order="FedAll>DP",
 		)
 		cold = self._phase("facade-cold", "docker_e2e", 2.5)
@@ -374,7 +374,7 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		committed = facade.publish_performance_success(lease, cold, warm, shared)
 		decision = facade.exact_resume(lease.key)
 		self.assertEqual(ResumeState.LATEST_SUCCESS, decision.state)
-		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule={"period": 2, "order": "FedAll>DP"}, host_load={"io": 0.01}, lifecycle={"cold": 1, "warm": 1})
+		row = facade.normalize_resume_row(decision, requested_identity=lease.key.as_dict(), schedule={"period": 1, "order": "FedAll>DP"}, host_load={"io": 0.01}, lifecycle={"cold": 1, "warm": 1})
 		self.assertTrue(row["valid"])
 		metrics = cast(dict[str, object], row["metrics"])
 		warm_metric = cast(dict[str, object], metrics["warm"])
@@ -384,11 +384,39 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			row["host_load"],
 		)
 		self.assertEqual(1.25, cast(dict[str, object], row["lifecycle"])["warm_seconds"])
+		for alias in (True, 1.0):
+			with self.assertRaisesRegex(ArchiveContractError, "schedule disagrees"):
+				facade.normalize_resume_row(
+					decision, requested_identity=lease.key.as_dict(), schedule={"period": alias, "order": "FedAll>DP"},
+					host_load={}, lifecycle={},
+				)
+		for attempt_alias in (True, 1.0):
+			aliased = facade.normalize_resume_row(
+				ResumeDecision(ResumeState.LATEST_SUCCESS, cast(int, attempt_alias), dict(decision.evidence or {})),
+				requested_identity=lease.key.as_dict(), schedule={"period": 1, "order": "FedAll>DP"},
+				host_load={}, lifecycle={},
+			)
+			self.assertFalse(aliased["valid"])
+			self.assertEqual(
+				"STALE_OR_NONCANONICAL_RESUME_DECISION", cast(dict[str, object], aliased["blocker"])["code"],
+			)
+		for field, alias in (("attempt", True), ("lifecycle_replicate", 3.0), ("period", 1.0)):
+			aliased_evidence = dict(decision.evidence or {})
+			aliased_identity = dict(cast(dict[str, object], aliased_evidence["identity"]))
+			aliased_identity[field] = alias
+			aliased_evidence["identity"] = aliased_identity
+			aliased = facade.normalize_resume_row(
+				ResumeDecision(ResumeState.LATEST_SUCCESS, decision.attempt, aliased_evidence),
+				requested_identity=lease.key.as_dict(), schedule={"period": 1, "order": "FedAll>DP"},
+				host_load={}, lifecycle={},
+			)
+			self.assertFalse(aliased["valid"])
+			self.assertEqual("IDENTITY_MISMATCH", cast(dict[str, object], aliased["blocker"])["code"])
 		forged_evidence = dict(decision.evidence or {})
 		forged_evidence["warm_metric"] = {"kind": "systemds_total_execution_time", "seconds": 999999}
 		forged = facade.normalize_resume_row(
 			ResumeDecision(ResumeState.LATEST_SUCCESS, decision.attempt, forged_evidence),
-			requested_identity=lease.key.as_dict(), schedule={"period": 2, "order": "FedAll>DP"},
+			requested_identity=lease.key.as_dict(), schedule={"period": 1, "order": "FedAll>DP"},
 			host_load={"io": 0.01}, lifecycle={"cold": 1, "warm": 1},
 		)
 		forged_metrics = cast(dict[str, object], forged["metrics"])

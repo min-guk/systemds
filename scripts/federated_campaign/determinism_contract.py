@@ -396,9 +396,12 @@ def validate_phase_bundle(phase_dir: Path, expected_metric_kind: str) -> dict[st
 	oracle = _read_json_object(paths["semantic_oracle.json"], "semantic oracle")
 	if oracle.get("passed") is not True:
 		raise CampaignContractError("semantic oracle did not pass")
-	scan = _read_json_object(paths["scan.json"], "timeout/error/fallback scan")
-	for marker in ("timeout", "error", "fallback"):
-		if scan.get(marker) is not False:
+	scan = _read_json_object(paths["scan.json"], "timeout/error/fallback/resource scan")
+	scan_fields = {"timeout", "error", "fallback", "resource_invalid"}
+	if set(scan) != scan_fields:
+		raise CampaignContractError("phase success scan schema is not exact")
+	for marker in scan_fields:
+		if type(scan[marker]) is not bool or scan[marker] is not False:
 			raise CampaignContractError(f"phase scan is missing or reports {marker}")
 
 	metric = _read_json_object(paths["metric.json"], "metric record")

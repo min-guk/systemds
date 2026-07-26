@@ -537,7 +537,7 @@ class DeterminismContractTest(unittest.TestCase):
 			"output.bin": b"semantic output",
 			"semantic_oracle.json": json.dumps({"passed": True}).encode(),
 			"return_code.txt": b"0\n",
-			"scan.json": json.dumps({"timeout": False, "error": False, "fallback": False}).encode(),
+			"scan.json": json.dumps({"timeout": False, "error": False, "fallback": False, "resource_invalid": False}).encode(),
 			"metric.json": json.dumps({"kind": metric_kind, "seconds": 1.25}).encode(),
 		}
 		for name, contents in files.items():

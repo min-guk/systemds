@@ -872,10 +872,21 @@ class CampaignHarnessAdapter:
 			return {
 				name: value[name] for name in ("committed_path", "archive_uri", "archive_sha256") if name in value
 			}
+		def exact_optional_identity(left: object, right: object) -> bool:
+			if left is None or right is None:
+				return left is None and right is None
+			if not isinstance(left, Mapping) or not isinstance(right, Mapping) or set(left) != set(right):
+				return False
+			return all(type(left[name]) is type(right[name]) and left[name] == right[name] for name in left)
+		supplied_identity_matches_canonical = exact_optional_identity(
+			supplied_evidence.get("identity"), canonical_evidence.get("identity")
+		)
+		supplied_identity_matches_requested = exact_optional_identity(supplied_evidence.get("identity"), identity)
 		decision_mismatch = (
 			decision.state is not canonical_decision.state
+			or type(decision.attempt) is not type(canonical_decision.attempt)
 			or decision.attempt != canonical_decision.attempt
-			or supplied_evidence.get("identity") != canonical_evidence.get("identity")
+			or not supplied_identity_matches_canonical
 			or evidence_location(supplied_evidence) != evidence_location(canonical_evidence)
 		)
 		decision = canonical_decision
@@ -884,12 +895,12 @@ class CampaignHarnessAdapter:
 			{
 				"code": (
 					"IDENTITY_MISMATCH"
-					if supplied_evidence.get("identity") is not None and supplied_evidence.get("identity") != identity
+					if supplied_evidence.get("identity") is not None and not supplied_identity_matches_requested
 					else "STALE_OR_NONCANONICAL_RESUME_DECISION"
 				),
 				"detail": (
 					"evidence does not exactly match requested identity"
-					if supplied_evidence.get("identity") is not None and supplied_evidence.get("identity") != identity
+					if supplied_evidence.get("identity") is not None and not supplied_identity_matches_requested
 					else "supplied resume decision does not match the freshly resolved canonical latest attempt"
 				),
 			}
@@ -962,10 +973,14 @@ class CampaignHarnessAdapter:
 			raise ArchiveContractError("discovery rows must not claim a performance schedule")
 		if kind == "performance" and schedule is None:
 			raise ArchiveContractError("performance rows require exact schedule facts")
-		if kind == "performance" and schedule is not None and (
-			schedule.get("period") != identity.get("period") or schedule.get("order") != identity.get("order")
-		):
-			raise ArchiveContractError("performance row schedule disagrees with requested identity")
+		if kind == "performance" and schedule is not None:
+			period, order = schedule.get("period"), schedule.get("order")
+			if (
+				type(period) is not int or period not in range(1, len(CAMPAIGN_PLANNERS) + 1)
+				or type(order) is not str
+				or period != identity.get("period") or order != identity.get("order")
+			):
+				raise ArchiveContractError("performance row schedule disagrees with requested identity")
 		return row
 
 	def _revalidate_normalized_evidence(
