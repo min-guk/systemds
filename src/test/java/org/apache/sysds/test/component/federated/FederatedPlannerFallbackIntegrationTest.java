@@ -3682,6 +3682,30 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpPlansAlsWithUnrolledFunctionOutputCarrier() throws Exception {
+		String script = String.join("\n",
+			"X_LOCAL = matrix(1, rows=10, cols=10);",
+			"X = federated(local_matrix=X_LOCAL, addresses=list(\"localhost:8001\"),",
+			"              ranges=list(list(0, 0), list(10, 10)));",
+			"[U, V] = als(X=X, rank=10, regType=\"L2\", reg=0.000001, maxi=10,",
+			"             check=FALSE, thr=0.0001, seed=1389632218, verbose=FALSE);",
+			"write(V, \"tmp/als-dp-dead-output.res\", format=\"csv\");",
+			"");
+
+		DpInvocationReceipt receipt = invokeDpPlannerRewriteScript(script);
+		assertNotNull("DP must plan ALS while preserving the physical carrier for its caller-dead output",
+			receipt);
+		var snapshot = receipt.semanticConsumption().rewireSnapshot();
+		var clonedOutputEdges = snapshot.functionOutputEdges().stream()
+			.filter(edge -> snapshot.occurrenceByCarrier().entrySet().stream().anyMatch(carrier ->
+				carrier.getKey() != carrier.getValue().hop()
+					&& carrier.getValue().key() == edge.outputOccurrence()))
+			.toList();
+		assertFalse("ALS must retain its exact physical-clone output dependency instead of rejecting it as unmappable",
+			clonedOutputEdges.isEmpty());
+	}
+
+	@Test
 	public void testDpResolveOneHopConflictAccountsForSameOutputCompatibleVariantShift() throws Exception {
 		DataOp source = transientRead("XsourceCompat", ROWS, COLS);
 		UnaryOp target = new UnaryOp("targetCompat", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, source);

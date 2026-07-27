@@ -536,7 +536,8 @@ public class FederatedPlannerDpRewireTransTable {
 			rewireTable, hopCommonTable, exactByHopId, analysis, activeRewireCarriers,
 			!exactActiveScopeIds.isEmpty());
 		List<RewireFunctionOutputEdge> functionOutputEdges = exactCandidateFunctionOutputEdges(
-			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop, rewireTable);
+			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop,
+			physicalClones.occurrenceByCloneCarrier(), rewireTable);
 		List<RewireTransientForwardEdge> transientForwardEdges = exactCandidateTransientForwardEdges(
 			analysis, candidateOccurrences, resolvedRewiredHops, occurrenceByResolvedHop,
 			physicalClones.occurrenceByCloneCarrier(), rewireTable);
@@ -658,7 +659,8 @@ public class FederatedPlannerDpRewireTransTable {
 	private static List<RewireFunctionOutputEdge> exactCandidateFunctionOutputEdges(
 		PlacementAnalysis analysis, List<HopOccurrenceProjection> candidateOccurrences,
 		Map<HopOccurrenceProjection, Hop> resolvedRewiredHops,
-		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop, Map<Long, List<Hop>> rewireTable) {
+		Map<Hop, HopOccurrenceProjection> occurrenceByResolvedHop,
+		Map<Hop, HopOccurrenceProjection> occurrenceByCloneCarrier, Map<Long, List<Hop>> rewireTable) {
 		Set<HopOccurrenceProjection> candidatesByIdentity = Collections.newSetFromMap(new IdentityHashMap<>());
 		candidatesByIdentity.addAll(candidateOccurrences);
 		List<RewireFunctionOutputEdge> edges = new ArrayList<>();
@@ -678,12 +680,22 @@ public class FederatedPlannerDpRewireTransTable {
 				if(outputCarrier == null)
 					throw semanticFailure(analysis, function, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 						"REWIRE_FUNCTION_OUTPUT_CARRIER_NULL");
-				HopOccurrenceProjection output = occurrenceByResolvedHop.get(outputCarrier);
+				// Function bodies can expose an unrolled physical output carrier while the
+				// semantic candidate remains the original compiled occurrence. Reuse the
+				// exact clone ownership proven above instead of dropping that dependency.
+				HopOccurrenceProjection directOutput = occurrenceByResolvedHop.get(outputCarrier);
+				HopOccurrenceProjection clonedOutput = occurrenceByCloneCarrier.get(outputCarrier);
+				if(directOutput != null && clonedOutput != null && directOutput != clonedOutput)
+					throw semanticFailure(analysis, function, ConstructionDisposition.DUPLICATE_OCCURRENCE,
+						"REWIRE_FUNCTION_OUTPUT_CARRIER_AMBIGUOUS");
+				HopOccurrenceProjection output = directOutput != null ? directOutput : clonedOutput;
 				if(output == null)
 					throw semanticFailure(analysis, function, ConstructionDisposition.UNMAPPABLE_OCCURRENCE,
 						"REWIRE_FUNCTION_OUTPUT_UNMAPPABLE");
 				if(!candidatesByIdentity.contains(output) || analysis.hop(output.key()).orElse(null) != output.hop()
-					|| resolvedRewiredHops.get(output) != outputCarrier || !seenOutputs.add(output))
+					|| (directOutput != null && resolvedRewiredHops.get(output) != outputCarrier)
+					|| (clonedOutput != null && occurrenceByCloneCarrier.get(outputCarrier) != output)
+					|| !seenOutputs.add(output))
 					throw semanticFailure(analysis, output, ConstructionDisposition.STALE_CONTEXT,
 						"REWIRE_FUNCTION_OUTPUT_CANDIDATE_STALE");
 				edges.add(new RewireFunctionOutputEdge(function.key(), output.key(), outputPosition));

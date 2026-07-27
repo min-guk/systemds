@@ -1,5 +1,27 @@
 # Session Issues — 2026-07-27
 
+## DP ALS function-output rewire rejected an exact unroll clone carrier
+
+- **상태**: 진행중 (코드/회귀 테스트 해결, 새 Docker canary 및 336셀 재실행 대기)
+- **환경/조건**: Docker-only guarded campaign; planner `DP`; privacy public ignore; workload `als`; dataset `P2P2D`; workers `1`; profile `lan`; SystemDS commit `ea77f99dac730e26f20754988e7213298d5277d2`; campaign JAR SHA-256 `ce7ae2ee6dd5f863516b94525b983f9affd5de7ad436765ec60756a54b39b05e`.
+- **재현 절차**: campaign cell `workers=1|planner=DP|workload=als|profile=lan` via immutable stage `g007-stage-fe75ec6a3be60538c39ddbb8b07abb94ba8af560ec809e3b7541018004541bcc`; failure bundle `results/campaign-control/ledger/committed/discovery/af3b2f8a4f9c1d3b76f66f4b468d3c3089bfb2f48a382f6acf3e52c3b5f44635`; hermetic RED: `mvn -q -DskipTests=false -Dtest=FederatedPlannerFallbackIntegrationTest#testDpPlansAlsWithUnrolledFunctionOutputCarrier test` (pre-fix equivalent test log `/tmp/g007-als-dead-output-red.log`).
+- **관측 증상**: coordinator log terminates during final Hop-boundary planning with `DpSemanticConstructionException: REWIRE_FUNCTION_OUTPUT_UNMAPPABLE`; no execution-time footer/output is produced. Campaign correctly stops the discovery barrier without retry. Return-code scan reports no runtime fallback, timeout, resource invalidity, or worker failure.
+- **원인 분석**: ALS expands through `.builtinNS::m_alsCG`; its caller-dead `U` output is still an executable function-body output. Loop unrolling replaces the output TWrite with a physical clone carrier. `exactPhysicalCloneMapping` already proved the clone→compiled-occurrence bijection, and `RewireOccurrenceSnapshot.occurrenceByCarrier` was designed to retain both direct and clone carriers. However, `exactCandidateFunctionOutputEdges` consulted only `occurrenceByResolvedHop`, so it rejected the already-authenticated clone carrier before the snapshot could publish it.
+- **해결 요약**: function-output receipt construction now consumes the same exact `occurrenceByCloneCarrier` ownership projection already used by transient forwarding and root projection. Direct and clone projections must be absent-or-identical; ambiguous ownership remains fail-closed. The semantic output occurrence remains the candidate owner while the physical clone remains the executable carrier. No candidate was closed, no legality rule was weakened, and no runtime fallback was added.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpRewireTransTable.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+  - `docs/SESSION_ISSUES_2026-07-27.md`
+- **검증**:
+  - Hermetic RED reproduced `REWIRE_FUNCTION_OUTPUT_UNMAPPABLE` with the same ALS structure.
+  - Focused GREEN: `FederatedPlannerFallbackIntegrationTest#testDpPlansAlsWithUnrolledFunctionOutputCarrier` passed and asserts that a function-output edge is backed by an exact physical clone projection.
+  - Related GREEN: function-output placeholder, candidate snapshot, rewire snapshot, and DP rewire-table test bundle passed (`/tmp/g007-function-output-rewire-suite-green.log`).
+  - Docker verification remains pending until a fresh immutable JAR/stage is built.
+- **잔여 이슈**: build a fresh JAR, run the exact failed Docker cell as a canary, then restart the full canonical 336-cell campaign from a clean results/ledger namespace because code identity changed.
+- **잠재 회귀 위험**: a clone carrier could be attached to the wrong semantic output or duplicate another output position. Detection: snapshot construction still requires exact candidate ownership, unique output identity, contiguous output positions, and a one-to-one prevalidated clone mapping; the ALS regression asserts the physical clone projection explicitly.
+- **의사결정 근거**: planner rewire ownership was incomplete; the fix extends typed planner evidence already produced by `exactPhysicalCloneMapping`. Oracle capabilities, runtime support, TRead/TWrite legality, and recompile CP→FOUT prohibition are unchanged.
+- **적용 원칙/제약**: planner-first, runtime fallback 금지, 편의상 candidate-space 축소 금지, 함수/loop recompile ownership 유지, Docker-only 검증.
+
 ## Campaign preregistration rejected its own nested-tree inventory
 
 - **상태**: 해결
