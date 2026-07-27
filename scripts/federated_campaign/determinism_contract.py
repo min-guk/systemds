@@ -107,7 +107,10 @@ def _file_record(path: Path) -> dict[str, object]:
 def _dataset_records(root: Path) -> list[dict[str, object]]:
 	if not root.is_dir():
 		raise CampaignContractError(f"dataset root is missing: {root}")
-	files = sorted(path for path in root.rglob("*") if path.is_file())
+	files = sorted(
+		(path for path in root.rglob("*") if path.is_file()),
+		key=lambda path: path.relative_to(root).as_posix(),
+	)
 	if not files:
 		raise CampaignContractError("dataset root contains no files")
 	return [

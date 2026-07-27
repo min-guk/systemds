@@ -382,6 +382,17 @@ class DeterminismContractTest(unittest.TestCase):
 		with self.assertRaisesRegex(CampaignContractError, "oracle_files"):
 			build_campaign_manifest(**inputs)
 
+	def test_campaign_preregistration_accepts_canonical_nested_tree_order(self):
+		(self.root / "data/tree/part-00000").parent.mkdir(parents=True)
+		(self.root / "data/tree/part-00000").write_bytes(b"nested")
+		(self.root / "data/tree.mtd").write_bytes(b"metadata")
+		preregistration = self._campaign_v3_preregistration()
+		validate_campaign_preregistration_manifest(preregistration)
+		for tree_name in ("dataset", "source_tree"):
+			records = _list(_dict(_dict(preregistration["frozen_core"])["artifacts"])[tree_name])
+			paths = [cast(str, _dict(record)["relative_path"]) for record in records]
+			self.assertEqual(sorted(paths), paths)
+
 	def test_campaign_v2_manifest_rejects_mutable_or_non_distinct_inputs(self):
 		inputs = self._campaign_v2_inputs()
 		inputs["image_id"] = "sha256:short"
