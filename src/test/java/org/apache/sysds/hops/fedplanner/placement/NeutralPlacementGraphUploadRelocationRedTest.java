@@ -14,6 +14,7 @@ import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
@@ -25,7 +26,7 @@ import org.apache.sysds.test.component.federated.placement.shadow.ProductionShad
 import org.junit.Assert;
 import org.junit.Test;
 
-/** RED contract for deriving one anchor-scoped CP-to-FOUT upload before exact selection. */
+/** RED contract for exact upload ownership before normalized placement selection. */
 public class NeutralPlacementGraphUploadRelocationRedTest {
 	@Test
 	public void localMatrixSharedByFederatedConsumersRequiresOneCanonicalUploadAction() throws Exception {
@@ -111,6 +112,37 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 				action.sourceValueVersion().equals(source.valueVersion())));
 	}
 
+	@Test
+	public void functionCallPlaceholderDoesNotOwnArgumentRelocations() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compileFunctionFixture());
+		NormalizedPlannerResult plan = new FedAllPlacementAdapter().select(analysis);
+		List<Node> sources = federatedSources(analysis);
+		List<Node> calls = analysis.graph().nodes().stream()
+			.filter(node -> node.kind() == NodeKind.FUNCTION_CALL).toList();
+
+		Assert.assertEquals("P4_FUNCTION_FIXTURE_REQUIRES_TWO_FEDERATED_ARGUMENTS", 2, sources.size());
+		Assert.assertEquals("P4_FUNCTION_FIXTURE_REQUIRES_ONE_CALL_PLACEHOLDER", 1, calls.size());
+		Node call = calls.get(0);
+		Assert.assertEquals("P4_FUNCTION_CALL_RETAINS_BOTH_EXACT_MATRIX_INPUT_EDGES", 2,
+			analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == call.key())
+				.filter(edge -> sources.stream().anyMatch(source -> source.key() == edge.producer())).count());
+		Assert.assertTrue("P4_FUNCTION_FIXTURE_EXPOSES_MIXED_PRESENT_ABSENT_CANDIDATES",
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == call.key())
+				.anyMatch(fact -> fact.key().orderedInputs().stream().anyMatch(input -> input.present())
+					&& fact.key().orderedInputs().stream().anyMatch(input -> !input.present())));
+		Assert.assertTrue("P4_FUNCTION_ARGUMENTS_RETAIN_EXACT_FED_FOUT_PLACEMENT",
+			sources.stream().allMatch(source -> selected(plan, source, ExecType.FED, FederatedOutput.FOUT)));
+		Assert.assertTrue("P4_FUNCTION_PLACEHOLDER_OWNS_NO_CALLER_SIDE_RELOCATION",
+			analysis.graph().relocationActions().stream()
+				.noneMatch(action -> action.obligations().stream()
+					.anyMatch(obligation -> obligation.consumer() == call.key())));
+		Assert.assertTrue("P4_NORMALIZED_PLAN_EMITS_NO_FUNCTION_PLACEHOLDER_RELOCATION",
+			plan.selectedRelocations().stream()
+				.noneMatch(action -> action.compatibleConsumers().contains(call.key())));
+	}
+
 	private static boolean selected(NormalizedPlannerResult plan, Node node, ExecType exec,
 		FederatedOutput output) {
 		PlacementState selected = plan.selectedStates().get(node.key());
@@ -125,13 +157,17 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 	}
 
 	private static Node federatedSource(PlacementAnalysis analysis) {
-		List<Node> matches = analysis.graph().nodes().stream()
-			.filter(node -> analysis.hop(node.key()).orElseThrow() instanceof DataOp data
-				&& data.getOp() == OpOpData.FEDERATED)
-			.toList();
+		List<Node> matches = federatedSources(analysis);
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_FEDERATED_SOURCE", 1, matches.size());
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_DURABLE_ANCHOR", 1, matches.get(0).anchors().size());
 		return matches.get(0);
+	}
+
+	private static List<Node> federatedSources(PlacementAnalysis analysis) {
+		return analysis.graph().nodes().stream()
+			.filter(node -> analysis.hop(node.key()).orElseThrow() instanceof DataOp data
+				&& data.getOp() == OpOpData.FEDERATED)
+			.toList();
 	}
 
 	private static DMLProgram compileFixture() throws Exception {
@@ -141,6 +177,23 @@ public class NeutralPlacementGraphUploadRelocationRedTest {
 			+ "Y1=X+S;\nY2=X-S;\n"
 			+ "write(Y1,\"/tmp/g005-p4-y1\",format=\"binary\");\n"
 			+ "write(Y2,\"/tmp/g005-p4-y2\",format=\"binary\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileFunctionFixture() throws Exception {
+		String script = "X=federated(addresses=list(\"worker1:8001/data/P2P2D_features.data\"),"
+			+ "ranges=list(list(0,0),list(50000,2100)));\n"
+			+ "Y=federated(addresses=list(\"worker1:8001/data/P2P2D_labels.data\"),"
+			+ "ranges=list(list(0,0),list(50000,1)));\n"
+			+ "M=lm(X=X,y=Y,verbose=FALSE,tol=1e-9);\n"
+			+ "write(M,\"/tmp/g007-p4-lm\",format=\"csv\");\n";
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

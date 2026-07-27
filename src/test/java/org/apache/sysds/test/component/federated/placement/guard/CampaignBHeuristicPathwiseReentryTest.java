@@ -126,6 +126,10 @@ public class CampaignBHeuristicPathwiseReentryTest {
 					== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_CALL)
 				.flatMap(node -> node.legalAlternatives().stream())
 				.anyMatch(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT));
+		Assert.assertTrue("function-call placeholders must not own caller-side relocation obligations",
+			function.graph().relocationActions().stream().flatMap(action -> action.obligations().stream())
+				.noneMatch(obligation -> function.graph().node(obligation.consumer()).orElseThrow().kind()
+					== org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_CALL));
 		Assert.assertTrue("no common fact may infer a cross-function path from descendants",
 			function.heuristicPolicyFacts().paths().stream().flatMap(path -> path.edges().stream())
 				.noneMatch(edge -> !edge.producer().functionNamespace().equals(edge.consumer().functionNamespace())));

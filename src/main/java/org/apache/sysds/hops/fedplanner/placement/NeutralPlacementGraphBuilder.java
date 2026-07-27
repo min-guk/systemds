@@ -2004,6 +2004,12 @@ public final class NeutralPlacementGraphBuilder {
 		if(consumer == null)
 			throw new IllegalStateException("Relocation candidate has no consumer node: "
 				+ fact.key().parentOccurrence());
+		// A FunctionOp is a non-executing call-site placeholder, not a runtime consumer that can own
+		// caller-side uploads. Exact transfer authority belongs to the synthetic FUNCTION_INPUT nodes
+		// and the callee CFG. Publishing a relocation here would create reciprocal cross-anchor uploads
+		// for already-federated arguments and lower them as an illegal single-leg fed_refed operation.
+		if(consumer.kind() == NodeKind.FUNCTION_CALL)
+			return;
 		Map<Integer,CompiledInputEdgeFact> matrixEdges = matrixEdgesByConsumer.getOrDefault(consumer.key(), Map.of());
 		Set<DurableAnchorKey> anchors = new java.util.TreeSet<>();
 		List<InputUseSeed> absentMatrixInputs = new ArrayList<>();
