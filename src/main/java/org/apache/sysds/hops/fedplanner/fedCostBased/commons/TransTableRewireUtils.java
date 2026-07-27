@@ -20,7 +20,9 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.commons;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -298,6 +300,7 @@ public final class TransTableRewireUtils {
 		for (int i = 0; i < limit; i++) {
 			Hop inputHop = inputHops.get(i);
 			List<Hop> mappedHops = new ArrayList<>();
+			Set<Hop> mappedHopIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
 
 			if (inputHop instanceof DataOp && ((DataOp) inputHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 				List<Hop> transChildHops = (rewireTable != null) ? rewireTable.get(inputHop.getHopID()) : null;
@@ -307,10 +310,13 @@ public final class TransTableRewireUtils {
 								&& ((DataOp) childHop).getOp() == Types.OpOpData.TRANSIENTREAD) {
 							continue;
 						}
-						mappedHops.add(childHop);
+						if (mappedHopIdentities.add(childHop))
+							mappedHops.add(childHop);
 					}
 					if (mappedHops.isEmpty()) {
-						mappedHops.addAll(transChildHops);
+						for (Hop childHop : transChildHops)
+							if (mappedHopIdentities.add(childHop))
+								mappedHops.add(childHop);
 					}
 				}
 			}
@@ -319,9 +325,9 @@ public final class TransTableRewireUtils {
 				mappedHops.add(inputHop);
 			}
 
-			for (Hop mappedHop : mappedHops) {
-				newFormerTransTable.computeIfAbsent(inputArgs[i], k -> new ArrayList<>()).add(mappedHop);
-			}
+			// A function formal is a new lexical binding. It must shadow an inherited
+			// caller variable with the same name rather than append to that caller binding.
+			newFormerTransTable.put(inputArgs[i], mappedHops);
 		}
 	}
 

@@ -3706,6 +3706,30 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
+	public void testDpPlansSteplmWithSameNamedFormalTransientBinding() throws Exception {
+		String script = String.join("\n",
+			"X_LOCAL = matrix(1, rows=20, cols=5);",
+			"Y_LOCAL = matrix(1, rows=20, cols=1);",
+			"X = federated(local_matrix=X_LOCAL, addresses=list(\"localhost:8001\"),",
+			"              ranges=list(list(0, 0), list(20, 5)));",
+			"Y = federated(local_matrix=Y_LOCAL, addresses=list(\"localhost:8001\"),",
+			"              ranges=list(list(0, 0), list(20, 1)));",
+			"[B, S] = steplm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=20, verbose=FALSE);",
+			"write(B, \"tmp/steplm-dp-repeated-forward.res\", format=\"csv\");",
+			"");
+
+		DpInvocationReceipt receipt = invokeDpPlannerRewriteScript(script);
+		assertNotNull("DP must plan StepLM when a function formal shadows a same-named caller transient",
+			receipt);
+		var forwardEdges = receipt.semanticConsumption().rewireSnapshot().transientForwardEdges();
+		for(int i = 0; i < forwardEdges.size(); i++)
+			for(int j = i + 1; j < forwardEdges.size(); j++)
+				assertFalse("semantic transient-forward ownership must be unique after function input binding",
+					forwardEdges.get(i).writeOccurrence() == forwardEdges.get(j).writeOccurrence()
+						&& forwardEdges.get(i).readOccurrence() == forwardEdges.get(j).readOccurrence());
+	}
+
+	@Test
 	public void testDpResolveOneHopConflictAccountsForSameOutputCompatibleVariantShift() throws Exception {
 		DataOp source = transientRead("XsourceCompat", ROWS, COLS);
 		UnaryOp target = new UnaryOp("targetCompat", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, source);

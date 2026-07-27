@@ -179,6 +179,7 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 		Assert.assertNull(normalized.effectiveCollectedFTypes().get(0));
 		Assert.assertTrue(normalized.effectiveNonNullFTypeMap().isEmpty());
 		assertImmutable(snapshot.transientForwardDependencies());
+		assertIllegal(() -> withForward(base, forward));
 
 		assertIllegal(() -> new CandidateOccurrenceSnapshot(base, parent.key(), List.of(), List.of(), List.of(),
 			List.of(entry, entry), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));

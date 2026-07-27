@@ -21,6 +21,7 @@ package org.apache.sysds.test.component.federated;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -47,6 +48,7 @@ import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.Privacy;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.parser.DataIdentifier;
@@ -64,6 +66,40 @@ public class FederatedPlannerDpRewireTransTableTest {
 	private static final int ROWS = 10;
 	private static final int COLS = 10;
 	private static final int BLOCKSIZE = 1000;
+
+	@Test
+	public void testFunctionInputBindingsShadowCallerScopeAndPreserveDistinctProducers() {
+		DataOp callerS = HopRewriteUtils.createTransientWrite("S", transientRead("callerS", ROWS, COLS));
+		DataOp branchS1 = HopRewriteUtils.createTransientWrite("S", transientRead("branchS1", ROWS, COLS));
+		DataOp branchS2 = HopRewriteUtils.createTransientWrite("S", transientRead("branchS2", ROWS, COLS));
+		DataOp actualS = transientRead("S", ROWS, COLS);
+
+		Map<Long, List<Hop>> rewireTable = new HashMap<>();
+		rewireTable.put(actualS.getHopID(), new ArrayList<>(List.of(branchS1, branchS2, branchS1)));
+		Map<String, List<Hop>> formerTransTable = new HashMap<>();
+		formerTransTable.put("S", new ArrayList<>(List.of(callerS)));
+
+		TransTableRewireUtils.mapFunctionInputsToFormerTransTable(
+			new String[] {"S"}, List.of(actualS), rewireTable, formerTransTable);
+
+		List<Hop> formalBinding = formerTransTable.get("S");
+		assertEquals("A formal parameter must replace the same-named caller binding", 2, formalBinding.size());
+		assertSame("Distinct branch producers must retain their original order", branchS1, formalBinding.get(0));
+		assertSame("Distinct branch producers must remain available to the function body", branchS2,
+			formalBinding.get(1));
+
+		DataOp formalRead = transientRead("S", ROWS, COLS);
+		TransTableRewireUtils.registerTransReadMapping(formalRead.getHopID(), formalBinding, rewireTable);
+		TransTableRewireUtils.registerTransWriteLinks(formalRead, formalBinding, rewireTable, new HashSet<>());
+		assertEquals("The formal read must retain one forward edge per distinct producer", 2,
+			rewireTable.get(formalRead.getHopID()).size());
+		assertEquals("The first producer must retain one reverse edge", 1,
+			rewireTable.get(branchS1.getHopID()).size());
+		assertSame(formalRead, rewireTable.get(branchS1.getHopID()).get(0));
+		assertEquals("The second producer must retain one reverse edge", 1,
+			rewireTable.get(branchS2.getHopID()).size());
+		assertSame(formalRead, rewireTable.get(branchS2.getHopID()).get(0));
+	}
 
 	@Test
 	public void testDpRewireTransHopPrefersDominatingTransientWriteOverStaleOuterMapping() throws Exception {

@@ -262,10 +262,16 @@ public class FederatedPlannerDpRewireTransTable {
 					throw new IllegalArgumentException("Function-output receipt order or ownership differs");
 				previousFunctionOutputPosition.put(edge.functionOccurrence(), edge.outputPosition());
 			}
-			for(RewireTransientForwardEdge edge : transientForwardEdges)
+			Map<CompiledHopKey, Set<CompiledHopKey>> transientReadsByWrite = new IdentityHashMap<>();
+			for(RewireTransientForwardEdge edge : transientForwardEdges) {
 				if(!candidateKeysByIdentity.contains(edge.writeOccurrence())
 					|| !candidateKeysByIdentity.contains(edge.readOccurrence()))
 					throw new IllegalArgumentException("Transient-forward endpoint is not a candidate carrier");
+				Set<CompiledHopKey> reads = transientReadsByWrite.computeIfAbsent(edge.writeOccurrence(),
+					ignored -> Collections.newSetFromMap(new IdentityHashMap<>()));
+				if(!reads.add(edge.readOccurrence()))
+					throw new IllegalArgumentException("Transient-forward semantic ownership is duplicated");
+			}
 
 			Set<Long> semanticCloneIds = new LinkedHashSet<>();
 			for(CloneReceipt receipt : cloneReceipts) {
