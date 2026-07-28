@@ -1008,6 +1008,63 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 		self.assertEqual(84, sum("planner=FedAll|" in cell for cell in seen))
 		self.assertFalse(any("planner=Heuristic|" in cell for cell in seen))
 
+	def test_repeated_same_planner_barrier_reuses_verified_immutable_receipt_scope(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		seen = []
+		def success(key):
+			seen.append(key.cell)
+			return ResumeDecision(ResumeState.LATEST_SUCCESS, 1, {
+				"identity": key.as_dict(), "status": "success",
+			})
+		with (
+			patch.object(facade, "exact_resume", side_effect=success),
+			patch.object(facade._archive, "_receipt_scope_digest", return_value="a" * 64, create=True),
+		):
+			first = facade.assert_planner_barrier("DP", "manifest-a")
+			second = facade.assert_planner_barrier("DP", "manifest-a")
+		self.assertEqual(84, len(seen))
+		self.assertEqual(84, first["verified_cells"])
+		self.assertEqual(first, second)
+
+	def test_immutable_receipt_scope_reuses_one_validated_catalog_index_per_catalog_version(self):
+		key, committed = self._commit(1, "scope-token")
+		adapter = self._adapter(retention=1)
+		adapter.archive(committed)
+		with patch.object(adapter, "catalog", wraps=adapter.catalog) as catalog:
+			first = adapter._receipt_scope_digest((key.as_dict(),))
+			second = adapter._receipt_scope_digest((key.as_dict(),))
+		self.assertRegex(cast(str, first), r"^[0-9a-f]{64}$")
+		self.assertEqual(first, second)
+		self.assertEqual(1, catalog.call_count)
+
+	def test_immutable_receipt_scope_ignores_retention_and_unrelated_catalog_growth(self):
+		first_key, first_committed = self._commit(1, "scope-first")
+		adapter = self._adapter(retention=1)
+		adapter.archive(first_committed)
+		before = adapter._receipt_scope_digest((first_key.as_dict(),))
+		_, second_committed = self._commit(2, "scope-second")
+		adapter.archive(second_committed)
+		after = adapter._receipt_scope_digest((first_key.as_dict(),))
+		self.assertEqual(before, after)
+
+	def test_cached_planner_barrier_fails_closed_when_immutable_receipt_scope_changes(self):
+		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
+		def success(key):
+			return ResumeDecision(ResumeState.LATEST_SUCCESS, 1, {
+				"identity": key.as_dict(), "status": "success",
+			})
+		with (
+			patch.object(facade, "exact_resume", side_effect=success) as resume,
+			patch.object(
+				facade._archive, "_receipt_scope_digest",
+				side_effect=("a" * 64, "b" * 64), create=True,
+			),
+		):
+			facade.assert_planner_barrier("DP", "manifest-a")
+			with self.assertRaisesRegex(ArchiveContractError, "changed after full verification"):
+				facade.assert_planner_barrier("DP", "manifest-a")
+		self.assertEqual(84, resume.call_count)
+
 	def test_discovery_begin_enforces_previous_global_planner_barrier(self):
 		facade = CampaignHarnessAdapter(self.ledger, self._adapter())
 		cell = "workers=1|planner=FedAll|workload=kmeans|profile=lan"

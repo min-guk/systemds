@@ -163,6 +163,10 @@ class HdfsArchiveAdapter:
 		self.catalog_path = self.work_root / "archive_catalog.json"
 		self.remote_base_uri = remote_base_uri.rstrip("/")
 		self.max_local_raw_bundles = max_local_raw_bundles
+		self.__receipt_anchor_index_cache: tuple[
+			tuple[int, int, int, int] | None,
+			dict[bytes, dict[str, object] | None],
+		] | None = None
 
 	def archive(self, committed_path: Path, *, crash_after: str | None = None) -> dict[str, object]:
 		committed = Path(committed_path)
@@ -541,6 +545,60 @@ class HdfsArchiveAdapter:
 		finally:
 			download.unlink(missing_ok=True)
 
+	def _receipt_scope_digest(self, identities: Sequence[Mapping[str, object]]) -> str | None:
+		"""Hash immutable receipt facts for an already fully verified evidence scope.
+
+		Local retention fields and the receipt checksum legitimately change when a
+		raw bundle is evicted.  Remote identity, URI, content hash, byte length,
+		status, and resource evidence do not.  A missing or duplicate archived
+		identity cannot satisfy a cached scope.
+		"""
+		index = self.__receipt_anchor_index()
+		anchors: list[dict[str, object]] = []
+		for requested in identities:
+			identity = dict(requested)
+			anchor = index.get(_canonical_bytes(identity))
+			if anchor is None:
+				return None
+			if anchor.get("identity") != identity:
+				return None
+			anchors.append(anchor)
+		return hashlib.sha256(_canonical_bytes(anchors)).hexdigest()
+
+	def __catalog_version(self) -> tuple[int, int, int, int] | None:
+		try:
+			stat = self.catalog_path.stat()
+		except FileNotFoundError:
+			return None
+		return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+	def __receipt_anchor_index(self) -> dict[bytes, dict[str, object] | None]:
+		for _ in range(3):
+			before = self.__catalog_version()
+			cached = self.__receipt_anchor_index_cache
+			if cached is not None and cached[0] == before:
+				return cached[1]
+			entries = self.catalog()
+			after = self.__catalog_version()
+			if before != after:
+				continue
+			index: dict[bytes, dict[str, object] | None] = {}
+			for receipt in entries:
+				uri, archive_hash, identity, archive_bytes = self._validate_receipt_metadata(receipt)
+				identity_key = _canonical_bytes(identity)
+				anchor: dict[str, object] = {
+					"identity": identity,
+					"archive_uri": uri,
+					"archive_sha256": archive_hash,
+					"archive_bytes": archive_bytes,
+					"status": receipt.get("status"),
+					"resource_evidence": receipt.get("resource_evidence"),
+				}
+				index[identity_key] = None if identity_key in index else anchor
+			self.__receipt_anchor_index_cache = (after, index)
+			return index
+		raise ArchiveContractError("archive catalog changed while building verified receipt index")
+
 	def _verify_downloaded_archive(
 		self, archive_path: Path, identity: dict[str, object], record_id: str
 	) -> dict[str, object]:
@@ -651,6 +709,7 @@ class HdfsArchiveAdapter:
 			os.fsync(handle.fileno())
 		os.replace(temp, self.catalog_path)
 		_fsync_directory(self.work_root)
+		self.__receipt_anchor_index_cache = None
 
 
 class CampaignHarnessAdapter:
@@ -680,6 +739,9 @@ class CampaignHarnessAdapter:
 		self._ledger = ledger
 		self._archive = archive
 		self.__pending_allocation_authorities: dict[str, dict[str, object]] = {}
+		self.__planner_barrier_cache: dict[
+			tuple[str, str], tuple[tuple[dict[str, object], ...], str, dict[str, object]]
+		] = {}
 		try:
 			self._ledger._bind_typed_allocation_validator(self.__consume_allocation_authority)
 		except LedgerContractError as error:
@@ -997,7 +1059,18 @@ class CampaignHarnessAdapter:
 		if planner not in CAMPAIGN_PLANNERS:
 			raise ArchiveContractError("planner barrier planner is invalid")
 		planner_index = CAMPAIGN_PLANNERS.index(planner)
+		cache_key = (planner, manifest_hash)
+		cached = self.__planner_barrier_cache.get(cache_key)
+		if cached is not None:
+			identities, expected_scope, receipt = cached
+			current_scope = self._archive._receipt_scope_digest(identities)
+			if current_scope != expected_scope:
+				raise ArchiveContractError(
+					f"planner barrier {planner} evidence changed after full verification"
+				)
+			return dict(receipt)
 		checked = 0
+		verified_identities: list[dict[str, object]] = []
 		for required_planner in CAMPAIGN_PLANNERS[: planner_index + 1]:
 			for cell in campaign_cell_ids():
 				if f"planner={required_planner}|" not in cell:
@@ -1007,8 +1080,23 @@ class CampaignHarnessAdapter:
 					raise ArchiveContractError(
 						f"planner barrier {planner} blocked by {required_planner} cell {cell}: {decision.state.value}"
 					)
+				if decision.evidence is None or not isinstance(decision.evidence.get("identity"), dict):
+					raise ArchiveContractError(
+						f"planner barrier {planner} has no canonical identity for {required_planner} cell {cell}"
+					)
+				verified_identities.append(dict(cast(dict[str, object], decision.evidence["identity"])))
 				checked += 1
-		return {"planner": planner, "prior_planners": list(CAMPAIGN_PLANNERS[:planner_index]), "verified_cells": checked}
+		receipt: dict[str, object] = {
+			"planner": planner,
+			"prior_planners": list(CAMPAIGN_PLANNERS[:planner_index]),
+			"verified_cells": checked,
+		}
+		scope = self._archive._receipt_scope_digest(verified_identities)
+		if scope is not None:
+			self.__planner_barrier_cache[cache_key] = (
+				tuple(verified_identities), scope, dict(receipt),
+			)
+		return receipt
 
 	def select_pilot_repeats(
 		self, rows: Sequence[Mapping[str, object]], *,
