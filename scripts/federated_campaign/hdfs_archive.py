@@ -430,8 +430,11 @@ class HdfsArchiveAdapter:
 		max_io_utilization: float,
 		max_combined_io_bps: float,
 	) -> HostResourceSnapshot:
+		# Publication, exact-resume/barrier checks, and the final seal retain full
+		# remote round-trip verification.  The per-cell gate only validates the
+		# signed local catalog; re-downloading every prior archive here is O(n^2).
 		for receipt in self.catalog():
-			self._verify_receipt(receipt)
+			_ = self._validate_receipt_metadata(receipt)
 		if isinstance(required_free_bytes, bool) or not isinstance(required_free_bytes, int) or required_free_bytes <= 0:
 			raise ArchiveContractError("required free bytes must be a positive integer")
 		if isinstance(required_free_inodes, bool) or not isinstance(required_free_inodes, int) or required_free_inodes <= 0:
@@ -477,7 +480,10 @@ class HdfsArchiveAdapter:
 			raise ArchiveContractError("host I/O quiescence gate failed")
 		return snapshot
 
-	def _verify_receipt(self, receipt: dict[str, object]) -> dict[str, object]:
+	@staticmethod
+	def _validate_receipt_metadata(
+		receipt: dict[str, object],
+	) -> tuple[str, str, dict[str, object], int]:
 		expected_fields = {
 			"schema", "identity", "archive_uri", "archive_sha256", "archive_bytes", "local_committed_path",
 			"local_raw_bundle_present", "status", "resource_evidence", "receipt_sha256",
@@ -505,6 +511,10 @@ class HdfsArchiveAdapter:
 			or not isinstance(receipt.get("local_committed_path"), str)
 		):
 			raise ArchiveContractError("archive receipt is invalid")
+		return uri, expected_hash, cast(dict[str, object], identity), cast(int, archive_bytes)
+
+	def _verify_receipt(self, receipt: dict[str, object]) -> dict[str, object]:
+		uri, expected_hash, identity, archive_bytes = self._validate_receipt_metadata(receipt)
 		if not self.backend.exists(uri):
 			raise ArchiveContractError(f"remote archive is missing: {uri}")
 		download = self.work_root / f"receipt-verify-{uuid.uuid4().hex}.tar"

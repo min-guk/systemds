@@ -271,22 +271,26 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 				self.assertEqual(1, len(adapter.catalog()))
 				self.assertEqual(key.as_dict(), receipt["identity"])
 
-	def test_remote_corruption_fails_preflight_before_next_lifecycle(self):
+	def test_remote_corruption_is_deferred_from_per_cell_preflight_to_exact_resume(self):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter()
 		receipt = adapter.archive(committed)
 		self.backend.objects[receipt["archive_uri"]] = b"corrupt"
-		with self.assertRaisesRegex(ArchiveContractError, "remote"):
-			adapter.preflight_next_lifecycle(
-				lambda: HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0),
-				required_free_bytes=100,
-				required_free_inodes=10,
-				required_seconds=100,
-				max_io_utilization=0.1,
-				max_combined_io_bps=100,
-			)
+		gets_before = sum(event[0] == "get" for event in self.backend.events)
+		adapter.preflight_next_lifecycle(
+			lambda: HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0),
+			required_free_bytes=100,
+			required_free_inodes=10,
+			required_seconds=100,
+			max_io_utilization=0.1,
+			max_combined_io_bps=100,
+		)
+		self.assertEqual(gets_before, sum(event[0] == "get" for event in self.backend.events))
+		decision = adapter.exact_resume(DiscoveryKey("cell-a", 1, "query", "manifest-a"))
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
+		self.assertIn("remote", decision.detail or "")
 
-	def test_remote_missing_fails_preflight_before_host_snapshot(self):
+	def test_remote_missing_is_deferred_from_per_cell_preflight_to_exact_resume(self):
 		_, committed = self._commit(1, "token-a")
 		adapter = self._adapter()
 		receipt = adapter.archive(committed)
@@ -296,7 +300,32 @@ class HdfsArchiveAdapterTest(unittest.TestCase):
 			nonlocal snapshot_called
 			snapshot_called = True
 			return HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0)
-		with self.assertRaisesRegex(ArchiveContractError, "missing"):
+		adapter.preflight_next_lifecycle(
+			snapshot,
+			required_free_bytes=100,
+			required_free_inodes=10,
+			required_seconds=100,
+			max_io_utilization=0.1,
+			max_combined_io_bps=100,
+		)
+		self.assertTrue(snapshot_called)
+		decision = adapter.exact_resume(DiscoveryKey("cell-a", 1, "query", "manifest-a"))
+		self.assertEqual(ResumeState.CORRUPT_OR_AMBIGUOUS, decision.state)
+		self.assertIn("missing", decision.detail or "")
+
+	def test_corrupt_local_catalog_receipt_still_fails_preflight_before_host_snapshot(self):
+		_, committed = self._commit(1, "token-a")
+		adapter = self._adapter()
+		adapter.archive(committed)
+		catalog = json.loads(adapter.catalog_path.read_text(encoding="utf-8"))
+		catalog["entries"][0]["receipt_sha256"] = "0" * 64
+		adapter.catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+		snapshot_called = False
+		def snapshot():
+			nonlocal snapshot_called
+			snapshot_called = True
+			return HostResourceSnapshot(6 * 1024**3, 100, 1000, 0.01, 0, 0)
+		with self.assertRaisesRegex(ArchiveContractError, "checksum"):
 			adapter.preflight_next_lifecycle(
 				snapshot,
 				required_free_bytes=100,
