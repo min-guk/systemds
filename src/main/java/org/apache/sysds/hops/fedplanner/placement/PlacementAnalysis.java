@@ -27,6 +27,8 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
@@ -1311,6 +1313,18 @@ public final class PlacementAnalysis {
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {
 		return compiledInputEdgesInCanonicalOrder;
+	}
+
+	/**
+	 * A DML {@link FunctionOp} is a coordinator-side call placeholder. Its matrix arguments are
+	 * forwarded through the explicit logical actual/formal boundary and are not consumed locally by
+	 * the call Hop itself. Consequently, a FED/FOUT argument followed by a CP/LOUT call placeholder
+	 * does not imply a FED-to-local matrix materialization.
+	 */
+	public boolean isDmlFunctionCallBoundary(CompiledHopKey key) {
+		Hop owner = hop(Objects.requireNonNull(key, "function call key")).orElseThrow(
+			() -> new IllegalArgumentException("Function call boundary key is outside the analysis"));
+		return owner instanceof FunctionOp function && function.getFunctionType() == FunctionType.DML;
 	}
 
 	public List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder() {

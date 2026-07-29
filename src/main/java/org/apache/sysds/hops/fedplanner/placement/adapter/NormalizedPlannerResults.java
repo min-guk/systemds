@@ -57,6 +57,10 @@ public final class NormalizedPlannerResults {
 				continue;
 			List<LocalMaterializationObligation> obligations = analysis.compiledInputEdgesInCanonicalOrder().stream()
 				.filter(edge -> edge.producer() == node.key())
+				// DML FunctionOp is a logical forwarding boundary. The actual/formal facts carry
+				// placement into the callee; treating the CP call placeholder as a local matrix
+				// consumer invents a full download that the selected plan neither priced nor needs.
+				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
 				.filter(edge -> {
 					PlacementState consumer = selected.get(edge.consumer());
 					return consumer != null && consumer.execType() == org.apache.sysds.common.Types.ExecType.CP

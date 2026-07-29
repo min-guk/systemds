@@ -16,16 +16,21 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -136,6 +141,33 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			PlacementEmissionTransaction.resetForTesting();
 		}
+	}
+
+	@Test
+	public void dmlFunctionCallBoundaryDoesNotMaterializeFederatedArgumentLocally() throws Exception {
+		DMLProgram program = compile(SMALL_FUNCTION_SCRIPT);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		NeutralPlacementGraph.Node call = analysis.graph().decisionNodes().stream()
+			.filter(node -> node.kind() == NodeKind.FUNCTION_CALL)
+			.filter(node -> analysis.hop(node.key()).orElseThrow() instanceof FunctionOp function
+				&& function.getFunctionType() == FunctionType.DML)
+			.findFirst().orElseThrow();
+		PlacementAnalysis.CompiledInputEdgeFact argumentEdge = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == call.key())
+			.filter(edge -> analysis.hop(edge.producer()).orElseThrow().getDataType().isMatrix())
+			.findFirst().orElseThrow();
+		NeutralPlacementGraph.Node argument = analysis.graph().node(argumentEdge.producer()).orElseThrow();
+		PlacementState federatedArgument = argument.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT)
+			.findFirst().orElseThrow();
+		PlacementState localCallPlaceholder = call.legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow();
+
+		NormalizedPlannerResult normalized = NormalizedPlannerResults.create(analysis, "MinST-boundary-regression",
+			Map.of(argument.key(), federatedArgument, call.key(), localCallPlaceholder), "fixture");
+		Assert.assertTrue("A DML FunctionOp is a logical forwarding boundary, not a local matrix consumer",
+			normalized.selectedLocalMaterializations().isEmpty());
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

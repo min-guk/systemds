@@ -386,6 +386,7 @@ public final class PlacementEmissionTransaction {
 				throw new PlacementEmissionException("LOCAL durable provenance differs");
 			List<LocalMaterializationObligation> expected = analysis.compiledInputEdgesInCanonicalOrder().stream()
 				.filter(edge -> edge.producer() == action.sourceOccurrence())
+				.filter(edge -> !analysis.isDmlFunctionCallBoundary(edge.consumer()))
 				.filter(edge -> {
 					PlacementEmissionState consumer = exactEmissionState(selected, edge.consumer());
 					return consumer != null && consumer.placementState().execType() == ExecType.CP
