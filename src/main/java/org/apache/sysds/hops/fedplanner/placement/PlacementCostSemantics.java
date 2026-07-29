@@ -15,6 +15,10 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 
 /** Runtime-independent cost semantics shared by planner-specific models. */
 public final class PlacementCostSemantics {
@@ -62,5 +66,49 @@ public final class PlacementCostSemantics {
 				&& ((FunctionOp)parent).getOutputs().contains(hop))
 				return true;
 		return false;
+	}
+
+	/**
+	 * Exact runtime layout used when a known local matrix is materialized onto an existing
+	 * durable worker pool. Matching geometry preserves the anchor layout; a different known
+	 * geometry is broadcast to that same pool.
+	 */
+	public static FType exactMaterializationFType(NodeShapeFact shape, DurableAnchorKey anchor) {
+		if(anchor == null || anchor.fType() == null || anchor.fType() == FType.PART
+			|| anchor.fType() == FType.OTHER || shape == null || !shape.knownPositiveMatrix())
+			return null;
+		return outputGeometryCompatible(shape, anchor) ? anchor.fType() : FType.BROADCAST;
+	}
+
+	private static boolean outputGeometryCompatible(NodeShapeFact shape, DurableAnchorKey anchor) {
+		if(anchor.partitions().isEmpty() || deriveAnchorFType(anchor.partitions()) != anchor.fType())
+			return false;
+		long maxRow = -1, maxCol = -1;
+		for(AnchorPartition partition : anchor.partitions()) {
+			if(partition.begin().size() != 2 || partition.end().size() != 2)
+				return false;
+			long beginRow = partition.begin().get(0), beginCol = partition.begin().get(1);
+			long endRow = partition.end().get(0), endCol = partition.end().get(1);
+			if(beginRow < 0 || beginCol < 0 || endRow <= beginRow || endCol <= beginCol
+				|| endRow > shape.rows() || endCol > shape.cols())
+				return false;
+			maxRow = Math.max(maxRow, endRow);
+			maxCol = Math.max(maxCol, endCol);
+		}
+		return shape.rows() == maxRow && shape.cols() == maxCol;
+	}
+
+	private static FType deriveAnchorFType(List<AnchorPartition> partitions) {
+		if(partitions.isEmpty()) return null;
+		long maxRow = partitions.stream().mapToLong(p -> p.end().get(0)).max().orElse(-1);
+		long maxCol = partitions.stream().mapToLong(p -> p.end().get(1)).max().orElse(-1);
+		boolean spansRows = partitions.stream().allMatch(p ->
+			p.begin().get(0) == 0 && p.end().get(0) == maxRow);
+		boolean spansCols = partitions.stream().allMatch(p ->
+			p.begin().get(1) == 0 && p.end().get(1) == maxCol);
+		if(spansRows && spansCols) return partitions.size() == 1 ? FType.FULL : FType.BROADCAST;
+		if(spansCols) return FType.ROW;
+		if(spansRows) return FType.COL;
+		return FType.OTHER;
 	}
 }

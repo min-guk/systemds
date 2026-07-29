@@ -221,13 +221,13 @@ public final class MinStExactPlacementProjector {
 		Map<ObligationGroupKey,ObligationGroup> groups = new LinkedHashMap<>();
 		for(ValidatedObligation receipt : validated) {
 			ObligationGroupKey key = new ObligationGroupKey(receipt.direction, receipt.producerKey,
-				receipt.requiredPlacement, receipt.actionSignature);
+				receipt.requiredPlacement, receipt.conversionType, receipt.actionSignature);
 			groups.computeIfAbsent(key, ObligationGroup::new).add(receipt.consumerKey, receipt.consumerHopId);
 		}
 		List<MinStPlacementInput.ObligationReceipt> projected = new ArrayList<>(groups.size());
 		for(ObligationGroup group : groups.values()) {
 			Hop producer = facts.analysis().hop(group.key.producerKey).orElseThrow();
-			FType fType = group.key.requiredPlacement.fType();
+			FType fType = group.key.conversionType;
 			if(fType == null)
 				throw new IllegalArgumentException("MINST_PROJECTOR_NONCONCRETE_FTYPE|producer="
 					+ group.key.producerKey.normalizedSignature());
@@ -261,7 +261,7 @@ public final class MinStExactPlacementProjector {
 					continue;
 				matches.add(new ValidatedObligation(receipt.direction(), receipt.producerKey(),
 					receipt.consumerKey(), facts.analysis().hop(receipt.consumerKey()).orElseThrow().getHopID(),
-					receipt.requiredPlacement(), receipt.actionSignature()));
+					receipt.requiredPlacement(), group.conversionType(), receipt.actionSignature()));
 			}
 		}
 		if(matches.size() != 1)
@@ -319,14 +319,15 @@ public final class MinStExactPlacementProjector {
 
 	private record ValidatedObligation(Direction direction, CompiledHopKey producerKey,
 		CompiledHopKey consumerKey, long consumerHopId, PlacementState requiredPlacement,
-		String actionSignature) { }
+		FType conversionType, String actionSignature) { }
 
 	private record ObligationGroupKey(Direction direction, CompiledHopKey producerKey,
-		PlacementState requiredPlacement, String actionSignature) {
+		PlacementState requiredPlacement, FType conversionType, String actionSignature) {
 		private ObligationGroupKey {
 			Objects.requireNonNull(direction, "direction");
 			Objects.requireNonNull(producerKey, "producerKey");
 			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+			Objects.requireNonNull(conversionType, "conversionType");
 			Objects.requireNonNull(actionSignature, "actionSignature");
 		}
 
@@ -334,13 +335,14 @@ public final class MinStExactPlacementProjector {
 		public boolean equals(Object obj) {
 			return obj instanceof ObligationGroupKey that && direction == that.direction
 				&& producerKey == that.producerKey && requiredPlacement == that.requiredPlacement
+				&& conversionType == that.conversionType
 				&& actionSignature.equals(that.actionSignature);
 		}
 
 		@Override
 		public int hashCode() {
 			return Objects.hash(direction, System.identityHashCode(producerKey),
-				System.identityHashCode(requiredPlacement), actionSignature);
+				System.identityHashCode(requiredPlacement), conversionType, actionSignature);
 		}
 	}
 

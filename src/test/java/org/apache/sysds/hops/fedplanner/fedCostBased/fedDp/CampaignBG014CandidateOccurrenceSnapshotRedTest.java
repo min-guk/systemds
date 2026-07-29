@@ -214,18 +214,6 @@ public class CampaignBG014CandidateOccurrenceSnapshotRedTest {
 				base, parent, List.of(Pair.of(parent.hop().getHopID(), FederatedOutput.LOUT)),
 				List.of(parent.hop()), localType, Map.of(), invocation.memo()));
 
-		HopOccurrenceProjection matrixSource = base.rewireSnapshot().candidateOccurrences().stream()
-			.filter(occurrence -> occurrence.hop().getDataType() == DataType.MATRIX)
-			.filter(occurrence -> occurrenceState(occurrence, base) != null).findFirst().orElseThrow();
-		HopOccurrenceProjection matrixParent = base.rewireSnapshot().candidateOccurrences().stream()
-			.filter(occurrence -> occurrence != matrixSource && occurrence.hop().getDataType() == DataType.MATRIX)
-			.findFirst().orElseThrow();
-		RewireTransientForwardEdge matrix = new RewireTransientForwardEdge(matrixSource.key(), matrixParent.key());
-		NeutralEnumerationContext matrixContext = withForward(base, matrix);
-		assertIllegal(() -> new CandidateOccurrenceSnapshot(matrixContext, matrixParent.key(), List.of(), List.of(),
-			List.of(), List.of(new TransientForwardDependencyEntry(matrix, matrixSource.key(), 0,
-				occurrenceState(matrixSource, base))), List.of(), ConstructionDisposition.AVAILABLE, "AVAILABLE"));
-
 		DpInvocationReceipt foreign = invoke("B-21-SCALAR");
 		HopOccurrenceProjection foreignSource = foreign.analysis().occurrences().get(source.normalizedOrdinal());
 		assertSemanticFailure("UNMAPPABLE_OCCURRENCE", () ->

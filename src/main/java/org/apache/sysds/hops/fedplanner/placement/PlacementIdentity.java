@@ -216,13 +216,23 @@ public final class PlacementIdentity {
 	}
 
 	public record RelocationActionKey(ValueVersionKey sourceValueVersion,
-		PlacementState targetPlacement, DurableAnchorKey durableAnchor,
+		PlacementState targetPlacement, FType materializationFType, DurableAnchorKey durableAnchor,
 		String statementBlockScope, List<CompiledHopKey> compatibleConsumers)
 		implements Comparable<RelocationActionKey> {
+		public RelocationActionKey(ValueVersionKey sourceValueVersion,
+			PlacementState targetPlacement, DurableAnchorKey durableAnchor,
+			String statementBlockScope, List<CompiledHopKey> compatibleConsumers) {
+			this(sourceValueVersion, targetPlacement,
+				Objects.requireNonNull(targetPlacement, "targetPlacement").fType(), durableAnchor,
+				statementBlockScope, compatibleConsumers);
+		}
 
 		public RelocationActionKey {
 			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
 			Objects.requireNonNull(targetPlacement, "targetPlacement");
+			Objects.requireNonNull(materializationFType, "materializationFType");
+			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
+				throw new IllegalArgumentException("Relocation materialization FType is unsupported");
 			Objects.requireNonNull(durableAnchor, "durableAnchor");
 			statementBlockScope = requireText(statementBlockScope, "statementBlockScope");
 			compatibleConsumers = sorted(compatibleConsumers, "compatibleConsumers");
@@ -232,7 +242,7 @@ public final class PlacementIdentity {
 
 		public String normalizedSignature() {
 			return fields(sourceValueVersion.normalizedSignature(), targetPlacement.normalizedSignature(),
-				durableAnchor.normalizedSignature(), statementBlockScope,
+				materializationFType.name(), durableAnchor.normalizedSignature(), statementBlockScope,
 				signatures(compatibleConsumers));
 		}
 

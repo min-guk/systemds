@@ -70,7 +70,7 @@ final class MinStExactCutSolver {
 			minima.add(new Minimum(objectiveBits, source));
 	}
 
-	private static long cutBits(long sourceNodeId, long sinkNodeId, List<Edge> edges,
+	static long cutBits(long sourceNodeId, long sinkNodeId, List<Edge> edges,
 		List<Long> sourceNodeIds) {
 		Set<Long> source = new LinkedHashSet<>(sourceNodeIds);
 		MinStCompensatedCostSum total = new MinStCompensatedCostSum();
@@ -89,7 +89,7 @@ final class MinStExactCutSolver {
 			capacity(edge.capacityBits());
 	}
 
-	private static double capacity(long capacityBits) {
+	static double capacity(long capacityBits) {
 		double capacity = Double.longBitsToDouble(capacityBits);
 		validateCostBits(capacityBits, capacity, "MINST_EXACT_EDGE_CAPACITY_NOT_CANONICAL");
 		return capacity;

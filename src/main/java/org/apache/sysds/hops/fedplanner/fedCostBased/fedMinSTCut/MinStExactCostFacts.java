@@ -99,7 +99,6 @@ public final class MinStExactCostFacts {
 			this.authoritySignature = Objects.requireNonNull(authoritySignature, "authoritySignature");
 			if(inputPosition != inputEdge.inputPosition()
 				|| producerRepresentative.decisionKey() != inputEdge.producer()
-				|| producerRepresentative.execType() != ExecType.FED
 				|| producerRepresentative.output() != FederatedOutput.FOUT
 				|| producerRepresentative.state().fType() == null
 				|| producerRepresentative.state().fType() == FType.OTHER
@@ -350,11 +349,10 @@ public final class MinStExactCostFacts {
 				|| endpoint.producerKey() != group.producerKey()
 				|| inputEdge.producer() != endpoint.producerKey()
 				|| inputEdge.consumer() != endpoint.consumerKey()
-				|| inputEdge.inputPosition() != endpoint.inputPosition()
-				|| requiredPlacement.fType() != group.conversionType())
+				|| inputEdge.inputPosition() != endpoint.inputPosition())
 				throw new IllegalArgumentException("MINST_EXACT_TRANSFER_AUTHORITY_MISMATCH");
 			if(authorityKind == TransferAuthorityKind.RELOCATION_OBLIGATION) {
-				if(action == null || obligation == null || anchorInputEdge != null
+				if(group.direction() != Direction.UPLOAD || action == null || obligation == null || anchorInputEdge != null
 					|| independentAnchor != null || consumerProfile != null || producerMembershipProof != null
 					|| action.obligations().stream().noneMatch(candidate -> candidate == obligation)
 					|| obligation.consumer() != endpoint.consumerKey()
@@ -373,7 +371,7 @@ public final class MinStExactCostFacts {
 					|| producerMembershipProof != null
 					|| anchorInputEdge.consumer() != endpoint.consumerKey()
 					|| anchorInputEdge.inputPosition() == endpoint.inputPosition()
-					|| independentAnchor.fType() != group.conversionType()
+					|| requiredPlacement.fType() != independentAnchor.fType()
 					|| consumerProfile.key().consumerOccurrence() != endpoint.consumerKey()
 					|| consumerProfile.key().inputPosition() != endpoint.inputPosition()
 					|| consumerProfile.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE
@@ -392,7 +390,8 @@ public final class MinStExactCostFacts {
 				|| anchorInputEdge != null || independentAnchor != null || consumerProfile != null
 				|| producerMembershipProof == null || producerMembershipProof.isBlank()
 				|| requiredPlacement.execType() != ExecType.FED
-				|| requiredPlacement.output() != FederatedOutput.FOUT)
+				|| requiredPlacement.output() != FederatedOutput.FOUT
+				|| requiredPlacement.fType() != group.conversionType())
 				throw new IllegalArgumentException(
 					"MINST_EXACT_SELECTED_LOCAL_MATERIALIZATION_AUTHORITY_MISMATCH");
 		}

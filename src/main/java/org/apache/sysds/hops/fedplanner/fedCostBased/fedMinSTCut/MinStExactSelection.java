@@ -56,11 +56,14 @@ public final class MinStExactSelection {
 	public List<ObligationReceipt> obligationReceiptsInOrder() { return obligationReceiptsInOrder; }
 	public String tieCertificate() { return tieCertificate; }
 
-	/** One lexicographically representative source partition per exact semantic proof class. */
+	/** The selected canonical source-reachable minimum-cut certificate. */
 	public List<List<Long>> minimumSourcePartitionCertificates() { return minimumSourcePartitionCertificates; }
-	/** Alias for semantic representative certificates retained for existing callers. */
+	/** Alias retained for existing projector/diagnostics callers. */
 	public List<List<Long>> minimaCertificates() { return minimumSourcePartitionCertificates; }
-	/** Every raw source partition returned by the exact cut solver before semantic quotienting. */
+	/**
+	 * Raw source partitions returned before semantic quotienting. Bounded spaces contain every
+	 * minimum; larger spaces contain the exact inclusion-minimal/maximal minimum-cut witnesses.
+	 */
 	public List<List<Long>> rawMinimumSourcePartitionCertificates() { return rawMinimumSourcePartitionCertificates; }
 
 	/** Immutable authority receipt for a selected upload/download obligation endpoint. */

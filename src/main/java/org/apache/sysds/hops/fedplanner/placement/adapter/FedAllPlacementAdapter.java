@@ -48,8 +48,6 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 /** Exact, mutation-free FedAll policy boundary over one supplied placement analysis. */
 public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<FedAllPlacementAdapter.Result> {
 	private static final String COMPONENT_DERIVATION = "independent-component-envelope";
-	private static final String SEARCH_DERIVATION =
-		"complete-cartesian-enumeration-with-partial-legality-pruning";
 	private final ExactPlacementSelector selector = new ExactPlacementSelector();
 
 	@Override
@@ -62,11 +60,13 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		List<RelocationActionKey> relocations = immutableRelocations(selection.selectedRelocations());
 		Score score = score(analysis.graph(), assignment, relocations, selection.score());
 		List<Bound> bounds = componentBounds(analysis.graph());
-		SearchCounts counts = searchCounts(analysis.graph());
+		long explored = selection.certificate().exploredCount();
+		long pruned = selection.certificate().prunedCount();
 		Certificate certificate = new Certificate(sha256(analysis.graph().normalizedSignature()),
-			assignmentHash(assignment), counts.explored(), counts.pruned(), counts.explored() + counts.pruned(),
+			assignmentHash(assignment), explored, pruned, explored + pruned,
 			score, score, bounds, analysis.graph().nodes().size(), analysis.graph().constraints().size(),
-			structuralComponentCount(analysis.graph()), SEARCH_DERIVATION, "EXHAUSTED", false);
+			structuralComponentCount(analysis.graph()), selection.certificate().boundDerivation(),
+			selection.certificate().terminationReason().name(), false);
 		Result draft = new Result(analysis, assignment, relocations, score, certificate,
 			context.analysisFingerprint(), "canonicalization-pending");
 		return new Result(analysis, assignment, relocations, score, certificate,
@@ -232,69 +232,6 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 		}
 		return components;
 	}
-
-	private static SearchCounts searchCounts(NeutralPlacementGraph graph) {
-		List<Node> nodes = new ArrayList<>(graph.decisionNodes());
-		Collections.sort(nodes);
-		long[] counts = new long[2];
-		countSearch(graph, nodes, 0, new LinkedHashMap<>(), counts);
-		return new SearchCounts(counts[0], counts[1]);
-	}
-
-	private static void countSearch(NeutralPlacementGraph graph, List<Node> nodes, int index,
-		Map<CompiledHopKey, PlacementState> partial, long[] counts) {
-		if(index == nodes.size()) {
-			counts[0]++;
-			return;
-		}
-		Node node = nodes.get(index);
-		List<PlacementState> alternatives = new ArrayList<>(node.legalAlternatives());
-		Collections.sort(alternatives);
-		for(PlacementState state : alternatives) {
-			partial.put(node.key(), state);
-			if(canStillBeLegal(graph, partial)) countSearch(graph, nodes, index + 1, partial, counts);
-			else counts[1]++;
-		}
-		partial.remove(node.key());
-	}
-
-	private static boolean canStillBeLegal(NeutralPlacementGraph graph,
-		Map<CompiledHopKey, PlacementState> partial) {
-		for(Constraint constraint : graph.constraints()) {
-			PlacementState left = partial.get(constraint.left());
-			PlacementState right = partial.get(constraint.right());
-			if(left == null || right == null) continue;
-			switch(constraint.kind()) {
-				case SAME_PLACEMENT:
-					if(!left.equals(right)) return false;
-					break;
-				case SAME_FTYPE:
-					if(!Objects.equals(left.fType(), right.fType())) return false;
-					break;
-				case CONJUNCTIVE:
-					if(violatesConjunctive(constraint, left, right)) return false;
-					break;
-				default:
-					break;
-			}
-		}
-		return true;
-	}
-
-	private static boolean violatesConjunctive(Constraint constraint,
-		PlacementState left, PlacementState right) {
-		String prefix = "forbid-pair:";
-		if(constraint.evidence().startsWith(prefix)) {
-			String[] pair = constraint.evidence().substring(prefix.length()).split("=>", -1);
-			if(pair.length != 2)
-				throw new IllegalArgumentException("invalid conjunctive constraint evidence");
-			return left.normalizedSignature().equals(pair[0]) && right.normalizedSignature().equals(pair[1]);
-		}
-		return right.output() == FederatedOutput.FOUT
-			&& (left.output() != FederatedOutput.FOUT || !Objects.equals(left.fType(), right.fType()));
-	}
-
-	private record SearchCounts(long explored, long pruned) { }
 
 	private static String assignmentHash(Map<CompiledHopKey, PlacementState> assignment) {
 		List<String> lines = assignment.entrySet().stream().map(entry ->

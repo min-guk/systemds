@@ -41,6 +41,7 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.jgrapht.Graph;
 import org.jgrapht.alg.flow.PushRelabelMFImpl;
@@ -307,7 +308,8 @@ public final class LegacyMinstOfflineSelectedCapture {
 
 	private static String captureFullPath(String rowId, String fixture) throws Exception {
 		DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
-		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
 		RetainedFullPath retained = captureFullPath(program, analysis, -1L);
 		return rowId + "|MINST_FULL_OFFLINE_SELECTION|evidence=ACTUAL_RETAINED|seed=" + retained.seed()
 			+ "|fixture=" + fixture + "|selectedStates=" + retained.selectedStates()

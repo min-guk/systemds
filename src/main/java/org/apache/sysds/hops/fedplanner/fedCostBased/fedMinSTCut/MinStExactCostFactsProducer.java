@@ -28,6 +28,7 @@ import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
@@ -46,6 +47,8 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ValidationException;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ValidationReason;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -57,6 +60,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.DetachedConsumerProfileFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
@@ -156,11 +160,24 @@ public final class MinStExactCostFactsProducer {
 		int workers = workerCount(analysis.graph());
 		Map<String,List<OccurrenceProfile>> occurrenceProfiles = occurrenceProfiles(analysis);
 		List<MembershipRepresentative> representatives = membershipRepresentatives(analysis, decisions);
+		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs =
+			effectiveLogicalFunctionInputs(analysis);
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("MinST-ExactFunctionFacts", "logicalFunctionInputs="
+				+ analysis.logicalFunctionInputsInCanonicalOrder().size() + ", logicalTransientInputs="
+				+ analysis.logicalTransientInputsInCanonicalOrder().size() + ", effectiveFunctionInputs="
+				+ effectiveFunctionInputs.size());
 		EdgeAccumulator accumulator = new EdgeAccumulator();
 		for(DecisionFact decision : decisions)
 			addDecisionEdges(analysis, decision, representatives, workers, occurrenceProfiles, accumulator);
+		addNeutralConstraintEdges(analysis, decisionsByKey, representatives, accumulator);
+		addLogicalTransientInputEdges(analysis, decisionsByKey, representatives,
+			effectiveFunctionInputs, accumulator);
+		addLogicalFunctionInputEdges(analysis, decisionsByKey, representatives,
+			effectiveFunctionInputs, workers, occurrenceProfiles, accumulator);
 		List<AuxiliaryGroupFact> groups = deriveGroups(analysis, orderedScope,
-			decisionsByKey, representatives, workers, occurrenceProfiles, accumulator);
+			decisionsByKey, representatives, effectiveFunctionInputs, workers,
+			occurrenceProfiles, accumulator);
 		List<ObligationFact> obligations = deriveObligations(analysis, decisionsByKey);
 		List<DirectedEdgeFact> edges = accumulator.freeze();
 		List<TransferAuthorityFact> transferAuthorities = transferAuthorities(analysis, groups, representatives);
@@ -249,17 +266,76 @@ public final class MinStExactCostFactsProducer {
 					+ producerKey.normalizedSignature());
 			NeutralPlacementGraph.Node producerNode = analysis.graph().node(producerKey).orElseThrow(() ->
 				new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_NODE_MISSING"));
-			List<PlacementState> states = statesByMembership(producerDecision)
-				.get(membership(ExecType.FED, FederatedOutput.FOUT));
-			if(states == null || states.isEmpty())
-				return null;
-			MembershipRepresentative representative = materialize(producerDecision, producerNode, states);
-			if(representative.authorityKind() == MembershipAuthorityKind.LEGAL_SINGLETON
-				|| representative.execType() != ExecType.FED
-				|| representative.output() != FederatedOutput.FOUT
-				|| representative.state().fType() != expectedType)
-				return null;
-			return representative;
+			Map<String,List<PlacementState>> memberships = statesByMembership(producerDecision);
+			List<MembershipRepresentative> matches = new ArrayList<>();
+			for(ExecType execType : List.of(ExecType.CP, ExecType.FED)) {
+				List<PlacementState> states = memberships.get(membership(execType, FederatedOutput.FOUT));
+				if(states == null || states.isEmpty())
+					continue;
+				MembershipRepresentative representative = materialize(producerDecision, producerNode, states);
+				if(representative.authorityKind() != MembershipAuthorityKind.LEGAL_SINGLETON
+					&& representative.output() == FederatedOutput.FOUT
+					&& representative.state().fType() == expectedType)
+					matches.add(representative);
+			}
+			if(matches.size() > 1) {
+				List<MembershipRepresentative> federated = matches.stream()
+					.filter(match -> match.execType() == ExecType.FED).toList();
+				// The dependency is on the producer's FOUT placement membership, shared by
+				// CP/FOUT and FED/FOUT in the two-bit cut. When both execution alternatives
+				// publish the same exact layout, retain the legacy FED/FOUT authority as the
+				// canonical proof; the cut still chooses CP versus FED independently.
+				if(federated.size() == 1)
+					return federated.get(0);
+				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_OUTPUT_AUTHORITY_AMBIGUOUS|producer="
+					+ producerKey.normalizedSignature() + "|ftype=" + expectedType + "|states="
+					+ matches.stream().map(match -> match.state().normalizedSignature()).toList());
+			}
+			return matches.size() == 1 ? matches.get(0) : null;
+		}
+
+		private String describeProducer(CompiledHopKey producerKey) {
+			DecisionFact decision = decisionsByKey.get(producerKey);
+			if(decision == null)
+				return "UNSCOPED";
+			NeutralPlacementGraph.Node node = analysis.graph().node(producerKey).orElse(null);
+			List<String> rules = analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == producerKey)
+				.map(fact -> fact.key().orderedInputs() + "=>" + fact.allowedEmissionFacts().stream()
+					.map(emission -> emission.emissionState().placementState().normalizedSignature()
+						+ "/execFType=" + emission.executionFType()
+						+ "/derived=" + emission.emissionState().derivedFedFout())
+					.toList())
+				.toList();
+			List<String> inputs = analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == producerKey)
+				.map(edge -> {
+					NeutralPlacementGraph.Node input = analysis.graph().node(edge.producer()).orElseThrow();
+					DecisionFact inputDecision = decisionsByKey.get(edge.producer());
+					return edge.inputPosition() + ":" + analysis.hop(edge.producer()).orElseThrow().getOpString()
+						+ "/decision=" + (inputDecision == null ? List.of()
+							: inputDecision.legalStatesInCanonicalOrder().stream()
+								.map(PlacementState::normalizedSignature).toList())
+						+ "/node=" + input.legalAlternatives().stream()
+							.map(PlacementState::normalizedSignature).toList()
+						+ "/anchors=" + input.anchors().stream()
+							.map(DurableAnchorKey::normalizedSignature).toList()
+						+ "/relocations=" + analysis.graph().relocationActions().stream()
+							.filter(action -> action.key().sourceValueVersion().equals(input.valueVersion()))
+							.map(action -> action.key().targetPlacement().normalizedSignature()).toList();
+				})
+				.toList();
+			return "legal=" + decision.legalStatesInCanonicalOrder().stream()
+				.map(PlacementState::normalizedSignature).toList()
+				+ "|nodeLegal=" + (node == null ? List.of() : node.legalAlternatives().stream()
+					.map(PlacementState::normalizedSignature).toList())
+				+ "|anchors=" + (node == null ? List.of() : node.anchors().stream()
+					.map(DurableAnchorKey::normalizedSignature).toList())
+				+ "|relocations=" + analysis.graph().relocationActions().stream()
+					.filter(action -> node != null
+						&& action.key().sourceValueVersion().equals(node.valueVersion()))
+					.map(action -> action.key().targetPlacement().normalizedSignature()).toList()
+				+ "|rules=" + rules + "|inputs=" + inputs;
 		}
 
 		private static String membershipKey(List<PlacementState> states) {
@@ -280,7 +356,8 @@ public final class MinStExactCostFactsProducer {
 			if(state.execType() != first.execType() || state.output() != first.output())
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_KEY_MISMATCH");
 
-		if(states.size() == 1 && first.output() == FederatedOutput.LOUT)
+		if(states.size() == 1 && first.output() == FederatedOutput.LOUT
+			&& first.execType() != ExecType.FED)
 			return new MembershipRepresentative(decision.key(), first.execType(), first.output(), first,
 				MembershipAuthorityKind.LEGAL_SINGLETON, null, null, List.of(), List.of(), null, null, null);
 		MembershipRepresentative anchored = durableRepresentative(analysis, decision, node, states);
@@ -292,9 +369,13 @@ public final class MinStExactCostFactsProducer {
 		MembershipRepresentative relocation = relocationRepresentative(analysis, decision, states);
 		if(relocation != null)
 			return relocation;
+		if(states.size() == 1 && first.output() == FederatedOutput.LOUT)
+			return new MembershipRepresentative(decision.key(), first.execType(), first.output(), first,
+				MembershipAuthorityKind.LEGAL_SINGLETON, null, null, List.of(), List.of(), null, null, null);
 		throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_AUTHORITY_UNPROVEN|key="
 			+ decision.key().normalizedSignature() + "|membership="
-			+ membership(first.execType(), first.output()));
+			+ membership(first.execType(), first.output()) + "|facts="
+			+ materialization.describeProducer(decision.key()));
 	}
 
 	private static MembershipRepresentative durableRepresentative(PlacementAnalysis analysis,
@@ -366,13 +447,6 @@ public final class MinStExactCostFactsProducer {
 				|| fact.capability() == null
 				|| !fact.profile().available())
 				continue;
-			if(!exactFedFoutMembership
-				&& (fact.capability().nativeExec() != ExecType.FED
-					|| fact.capability().nativeOutput() != FederatedOutput.FOUT
-					|| fact.capability().nativeFoutFType() == null
-					|| fact.capability().nativeFoutFType() == FType.OTHER
-					|| fact.capability().nativeFoutFType() == FType.PART))
-				continue;
 			CapturedResolution resolution;
 			try {
 				resolution = PlacementCandidateRuleResolver.resolveCaptured(new CapturedResolutionRequest(
@@ -393,13 +467,16 @@ public final class MinStExactCostFactsProducer {
 				.toList();
 			if(exactEmissions.size() > 1)
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_EMISSION_AMBIGUOUS|key="
-					+ decision.key().normalizedSignature() + "|inputs=" + fact.key().orderedInputs());
+					+ decision.key().normalizedSignature() + "|membership="
+					+ membership(membershipExec, membershipOutput) + "|inputs=" + fact.key().orderedInputs()
+					+ "|emissions=" + exactEmissions.stream()
+						.map(CandidateEmissionFact::normalizedSignature).toList());
 			if(exactEmissions.size() == 1) {
 				CandidateEmissionFact exactEmission = exactEmissions.get(0);
-				if(membershipExec == ExecType.FED
-					&& resolution.logicalFType() != exactEmission.executionFType())
-					throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_EXECUTION_FTYPE_MISMATCH|key="
-						+ decision.key().normalizedSignature() + "|inputs=" + fact.key().orderedInputs());
+				// The resolver's logical FType is a downstream consumer-safe projection. It may be
+				// BROADCAST while the exact runtime emission remains ROW/COL (notably for a formal
+				// function TRead). The builder-owned emission fact is the execution-layout authority;
+				// equating these two different facts rejected legal MinST memberships before solving.
 				state = exactEmission.emissionState().placementState();
 			}
 			else {
@@ -432,36 +509,92 @@ public final class MinStExactCostFactsProducer {
 		}
 		if(matches.isEmpty()) return null;
 		if(matches.size() > 1) {
-			List<MembershipRepresentative> exactInputMatches = matches.stream()
-				.filter(representative -> retainsExactInputAuthorities(analysis, decision.key(),
-					representative.orderedInputs()))
+			int strongestCoverage = matches.stream()
+				.mapToInt(representative -> exactInputAuthorityCoverage(analysis, decision.key(), representative))
+				.max().orElse(-1);
+			List<MembershipRepresentative> strongest = matches.stream()
+				.filter(representative -> exactInputAuthorityCoverage(analysis, decision.key(), representative)
+					== strongestCoverage)
 				.toList();
-			if(exactInputMatches.size() == 1)
-				return exactInputMatches.get(0);
+			// Multiple candidate-domain rows may produce the same MinST membership. Prefer the
+			// unique row proven by the largest exact producer domain: direct anchor/relocation
+			// authority plus recursively materialized producer membership. This changes neither
+			// the legal membership nor its cost; it only prevents an ABSENT_LOCAL hypothesis from
+			// erasing a stronger graph-owned input proof. A true equal-strength tie still fails.
+			if(strongestCoverage > 0 && strongest.size() == 1)
+				return strongest.get(0);
+			if(strongestCoverage > 0) {
+				int strongestNativeFout = strongest.stream()
+					.mapToInt(MinStExactCostFactsProducer::nativeFederatedInputAuthorityCount)
+					.max().orElse(-1);
+				List<MembershipRepresentative> nativeStrongest = strongest.stream()
+					.filter(representative -> nativeFederatedInputAuthorityCount(representative)
+						== strongestNativeFout)
+					.toList();
+				// When two rows cover the same exact inputs, retain the row backed by more
+				// native FED/FOUT producer memberships instead of a CP/FOUT rematerialization.
+				// This is the legacy MinST domain preference and avoids charging/planning a
+				// synthetic refed path when an exact federated producer already exists.
+				if(strongestNativeFout > 0 && nativeStrongest.size() == 1)
+					return nativeStrongest.get(0);
+			}
 		}
 		if(matches.size() != 1)
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_AUTHORITY_AMBIGUOUS|key="
 				+ decision.key().normalizedSignature() + "|membership="
-				+ membership(states.get(0).execType(), states.get(0).output()));
+				+ membership(states.get(0).execType(), states.get(0).output()) + "|matches="
+				+ matches.stream().map(match -> "state=" + match.state().normalizedSignature()
+					+ ",inputs=" + match.orderedInputs()
+					+ ",authorities=" + match.inputAuthorityFacts().stream()
+						.map(MembershipInputAuthorityFact::authoritySignature).toList()).toList());
 		return matches.get(0);
 	}
 
-	private static boolean retainsExactInputAuthorities(PlacementAnalysis analysis,
-		CompiledHopKey consumer, List<CandidateInputState> inputs) {
-		boolean exactAuthorityFound = false;
+	private static int exactInputAuthorityCoverage(PlacementAnalysis analysis,
+		CompiledHopKey consumer, MembershipRepresentative representative) {
+		List<CandidateInputState> inputs = representative.orderedInputs();
+		int coverage = 0;
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(edge.consumer() != consumer)
 				continue;
 			if(edge.inputPosition() < 0 || edge.inputPosition() >= inputs.size())
-				return false;
-			FType direct = exactInputAuthorityType(analysis, edge.producer());
-			if(direct == null)
+				return -1;
+			CandidateInputState expected = inputs.get(edge.inputPosition());
+			if(!expected.present()) {
+				if(!relocationAuthorityForAbsentInput(analysis, edge, representative.state()))
+					return -1;
 				continue;
-			exactAuthorityFound = true;
-			if(!inputs.get(edge.inputPosition()).equals(CandidateInputState.present(direct)))
-				return false;
+			}
+			FType direct = exactInputAuthorityType(analysis, edge.producer());
+			if(direct != null) {
+				if(expected.fType() != direct)
+					return -1;
+				coverage++;
+				continue;
+			}
+			List<MembershipInputAuthorityFact> materialized = representative.inputAuthorityFacts().stream()
+				.filter(authority -> authority.inputEdge() == edge
+					&& authority.inputPosition() == edge.inputPosition())
+				.toList();
+			if(materialized.size() > 1)
+				return -1;
+			if(materialized.size() == 1) {
+				MembershipRepresentative producer = materialized.get(0).producerRepresentative();
+				if(!expected.present() || producer.output() != FederatedOutput.FOUT
+					|| producer.state().fType() != expected.fType())
+					return -1;
+				coverage++;
+			}
 		}
-		return exactAuthorityFound;
+		return coverage;
+	}
+
+	private static int nativeFederatedInputAuthorityCount(MembershipRepresentative representative) {
+		return (int)representative.inputAuthorityFacts().stream()
+			.map(MembershipInputAuthorityFact::producerRepresentative)
+			.filter(producer -> producer.execType() == ExecType.FED
+				&& producer.output() == FederatedOutput.FOUT)
+			.count();
 	}
 
 	private static List<MembershipInputAuthorityFact> retainedInputAuthorities(PlacementAnalysis analysis,
@@ -499,7 +632,8 @@ public final class MinStExactCostFactsProducer {
 				continue;
 			CandidateInputState expected = inputs.get(position);
 			if(expected.present()) {
-				if(!logicalTransientInputMatches(analysis, consumer, inputPosition, expected, retainedState))
+				if(!logicalTransientInputMatches(analysis, consumer, inputPosition, expected, retainedState)
+					&& !logicalFunctionInputMatches(analysis, consumer, inputPosition, expected, retainedState))
 					return null;
 			}
 			else if(!expected.equals(CandidateInputState.absentLocal()))
@@ -514,7 +648,8 @@ public final class MinStExactCostFactsProducer {
 		if(representative == null)
 			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_INPUT_AUTHORITY_MISSING|producer="
 				+ edge.producer().normalizedSignature() + "|consumer=" + edge.consumer().normalizedSignature()
-				+ "|input=" + edge.inputPosition() + "|ftype=" + expectedType);
+				+ "|input=" + edge.inputPosition() + "|ftype=" + expectedType
+				+ "|producerFacts=" + materialization.describeProducer(edge.producer()));
 		return representative;
 	}
 
@@ -590,15 +725,31 @@ public final class MinStExactCostFactsProducer {
 			&& fact.federatedSourceState().equals(retainedState);
 	}
 
+	private static boolean logicalFunctionInputMatches(PlacementAnalysis analysis, CompiledHopKey consumer,
+		int inputPosition, CandidateInputState expected, PlacementState retainedState) {
+		List<LogicalFunctionInputFact> matches = analysis.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == consumer && fact.logicalPosition() == inputPosition)
+			.toList();
+		if(matches.size() != 1)
+			return false;
+		LogicalFunctionInputFact fact = matches.get(0);
+		if(analysis.requireExactLogicalFunctionInput(fact.sourceArgument(), consumer, inputPosition) != fact
+			|| retainedState.execType() != ExecType.FED
+			|| retainedState.output() != FederatedOutput.FOUT)
+			return false;
+		FType sourceType = exactInputAuthorityType(analysis, fact.sourceArgument());
+		return sourceType != null && expected.equals(CandidateInputState.present(sourceType))
+			&& retainedState.fType() == sourceType;
+	}
+
 	private static FType exactInputAuthorityType(PlacementAnalysis analysis, CompiledHopKey producer) {
 		NeutralPlacementGraph.Node node = analysis.graph().node(producer).orElseThrow();
 		List<FType> anchors = node.anchors().stream().map(DurableAnchorKey::fType).distinct().toList();
 		if(anchors.size() == 1) return anchors.get(0);
-		if(anchors.size() > 1) return null;
-		List<FType> relocations = analysis.graph().relocationActions().stream()
-			.filter(action -> action.key().sourceValueVersion().equals(node.valueVersion()))
-			.map(action -> action.key().targetPlacement().fType()).filter(Objects::nonNull).distinct().toList();
-		if(relocations.size() == 1) return relocations.get(0);
+		// A relocation is a conditional future representation if the source is selected LOUT;
+		// it is not current FOUT authority for the producer. Treating it as direct authority
+		// erased the producer membership proof and made consumer rows appear stronger than they
+		// were. Derived producers are resolved recursively through exact membership facts instead.
 		return null;
 	}
 
@@ -756,10 +907,11 @@ public final class MinStExactCostFactsProducer {
 		for(PlacementState state : node.legalAlternatives())
 			if(preSolveLegal(analysis, key, state))
 				legal.add(state);
-		for(NeutralPlacementGraph.RelocationAction action : analysis.graph().relocationActions())
-			if(action.key().sourceValueVersion().equals(node.valueVersion())
-				&& preSolveLegal(analysis, key, action.key().targetPlacement()))
-				legal.add(action.key().targetPlacement());
+		// A relocation target is the required placement of its consumer, not an additional
+		// placement alternative of the source value. Importing the target here conflated the
+		// consumer execution layout, the uploaded-input layout and the worker-pool anchor, and
+		// admitted states that the source node/oracle never published (notably FED/LOUT COL on
+		// a forwarded ROW TRead). Relocations remain explicit auxiliary obligations below.
 		if(legal.isEmpty())
 			throw new IllegalArgumentException("Neutral decision has no pre-solve legal state: " + key);
 		return List.copyOf(legal);
@@ -771,10 +923,6 @@ public final class MinStExactCostFactsProducer {
 			return true;
 		Hop consumer = analysis.hop(consumerKey).orElseThrow(() ->
 			new IllegalArgumentException("MINST_CONSUMER_HOP_UNPROVEN"));
-		for(Hop input : consumer.getInput())
-			if(input != null && input.getDataType() != null && input.getDataType().isMatrix()
-				&& input instanceof DataGenOp)
-				return false;
 		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 			if(edge.consumer() != consumerKey)
 				continue;
@@ -813,34 +961,77 @@ public final class MinStExactCostFactsProducer {
 		boolean derivedFedFout = exactFedFout != null
 			&& exactFedFout.emissionState().derivedFedFout();
 
-		double base = cpUnaryCost(hop, executionWeight(occurrenceProfiles, decision.key()));
+		double execWeight = executionWeight(occurrenceProfiles, decision.key());
+		double base = cpUnaryCost(hop, execWeight);
 		FType executionFType = !fed ? null : exactFedFout == null
-			? requireUniqueExecLayoutType(decision, ExecType.FED) : exactFedFout.executionFType();
-		FType materializationFType = exactFedFout == null ? null
-			: exactFedFout.emissionState().placementState().fType();
-		if(derivedFedFout && fedLout && requireUniqueMembershipLayoutType(decision,
+			? requireExactExecLayoutType(decision, representatives, ExecType.FED)
+			: exactFedFout.executionFType();
+		FType materializationFType = !cpFout ? null : requireExactMembershipLayoutType(
+			decision, representatives, ExecType.CP, FederatedOutput.FOUT);
+		if(derivedFedFout && fedLout && requireExactMembershipLayoutType(decision, representatives,
 			ExecType.FED, FederatedOutput.LOUT) != executionFType)
 			throw new IllegalArgumentException("MINST_DERIVED_EXECUTION_LAYOUT_MISMATCH|key="
 				+ decision.key().normalizedSignature());
-		if(derivedFedFout && cpFout && requireUniqueMembershipLayoutType(decision,
+		if(derivedFedFout && cpFout && requireExactMembershipLayoutType(decision, representatives,
 			ExecType.CP, FederatedOutput.FOUT) != materializationFType)
 			throw new IllegalArgumentException("MINST_DERIVED_MATERIALIZATION_LAYOUT_MISMATCH|key="
 				+ decision.key().normalizedSignature());
-		double fedCoordination = !fed ? 0.0 : FederatedCostModel.adjustFedCoordinationCost(
-			hop, executionFType, FederatedCostModel.computeFedCoordinationCost(workers));
-		double fedCost = requireCost(FederatedCostModel.computeFederatedComputeCost(
-			hop, base, workers, false) + fedCoordination,
-			"MINST_FED_COST_UNPROVEN");
-		double bytes = derivedFedFout ? estimatedBytes(analysis, decision.key(), hop) : Double.NaN;
-		double derivedDownload = derivedFedFout
-			? requireCost(FederatedCostModel.computeDownloadNetworkCost(bytes,
-				executionFType, workers), "MINST_DERIVED_DOWNLOAD_COST_UNPROVEN")
-			: 0.0;
-		double derivedUpload = derivedFedFout
-			? requireCost(FederatedCostModel.computeUploadNetworkCost(bytes,
-				materializationFType, workers),
-				"MINST_DERIVED_UPLOAD_COST_UNPROVEN")
-			: 0.0;
+		boolean federatedSource = hop instanceof DataOp
+			&& ((DataOp)hop).getOp() == OpOpData.FEDERATED;
+		// A federated DataOp defines a FederationMap. Its local_matrix/address/range
+		// operands are construction parameters, not ordinary FED instruction inputs
+		// that require planner-generated CP->FOUT relocation.
+		List<FType> inputFTypes = fed && !federatedSource
+			? exactFedInputTypes(analysis, hop, decision.key(),
+				selectedFedRepresentative(decision, representatives))
+			: List.of();
+		boolean broadcastOnlyFedCompute = fed && !federatedSource
+			&& broadcastOnlyMatrixInputs(hop, inputFTypes);
+		double unitLocalCost = unitLocalCost(hop);
+		double outputBytes = effectiveOutputBytes(analysis, decision.key(), hop);
+		double uploadBytes = effectiveUploadBytes(analysis, decision.key(), hop);
+		double fedCompute = !fed ? 0.0 : FederatedCostModel.computeFederatedComputeCost(
+			hop, base, workers, broadcastOnlyFedCompute);
+		if(fed) {
+			fedCompute = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+				hop, executionFType, fedCompute);
+			fedCompute = FederatedCostModel.computeNativeFederatedIndexingCost(
+				hop, executionFType, fedCompute);
+		}
+		double fedCoordination = !fed || hop instanceof DataOp ? 0.0
+			: FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
+				execWeight * FederatedCostModel.computeFedCoordinationCost(workers));
+		double fedInstructionLatency = !fed ? 0.0
+			: FederatedCostModel.computeControlDominatedFederatedInstructionCost(hop,
+				executionFType, execWeight, workers, broadcastOnlyFedCompute);
+		FederatedCostModel.MixedFedLocalCost mixed = !fed || hop instanceof DataOp
+			? FederatedCostModel.MixedFedLocalCost.none()
+			: FederatedCostModel.computeMixedFedLocalCost(hop,
+				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
+				unitLocalCost, outputBytes, workers);
+		double fedInputPreparation = execWeight * mixed.getInputPreparationCost();
+		double singleWorkerPenalty = !fed ? 0.0
+			: FederatedCostModel.computeSingleWorkerFedExecPenalty(hop, execWeight, workers);
+		double fedCost = requireCost(fedCompute + fedCoordination + fedInstructionLatency
+			+ fedInputPreparation + singleWorkerPenalty, "MINST_FED_COST_UNPROVEN");
+
+		double resultDownloadUnit = FederatedCostModel.computeDownloadNetworkCost(uploadBytes);
+		if(!(hop instanceof DataOp)) {
+			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
+				hop, executionFType, outputBytes, workers, resultDownloadUnit);
+			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+				hop, executionFType, outputBytes, workers, resultDownloadUnit);
+			if(mixed.hasCoordinatorPhase())
+				resultDownloadUnit = mixed.getCoordinatorPhaseCost();
+		}
+		else if(((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE)
+			resultDownloadUnit = 0.0;
+		double resultDownload = requireCost(execWeight * resultDownloadUnit,
+			"MINST_RESULT_DOWNLOAD_COST_UNPROVEN");
+		double resultUpload = !cpFout ? 0.0 : requireCost(execWeight
+			* (FederatedCostModel.computeUploadNetworkCost(uploadBytes, materializationFType, workers)
+				+ FederatedCostModel.computeLocalToFedForwardingPenalty(materializationFType, workers)),
+			"MINST_RESULT_UPLOAD_COST_UNPROVEN");
 		edges.add(SOURCE, decision.computeNodeId(), cp ? base : HARD_LEGALITY,
 			cp ? ContributionKind.CP_UNARY : ContributionKind.HARD_EXEC,
 			decision.key(), null, -1, cp ? "neutral-cp-unary" : "pre-solve-cp-illegal");
@@ -848,7 +1039,7 @@ public final class MinStExactCostFactsProducer {
 			fed ? ContributionKind.FED_UNARY : ContributionKind.HARD_EXEC,
 			decision.key(), null, -1, fed ? "neutral-fed-unary" : "pre-solve-fed-illegal");
 		if(derivedFedFout)
-			edges.add(decision.computeNodeId(), SINK, derivedDownload,
+			edges.add(decision.computeNodeId(), SINK, resultDownload,
 				ContributionKind.DOWNLOAD, decision.key(), null, -1,
 				"derived-fed-fout-execution-download");
 		if(!lout)
@@ -858,7 +1049,7 @@ public final class MinStExactCostFactsProducer {
 			edges.add(decision.placementNodeId(), SINK, HARD_LEGALITY,
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1, "pre-solve-fout-illegal");
 		else if(derivedFedFout)
-			edges.add(decision.placementNodeId(), SINK, derivedUpload,
+			edges.add(decision.placementNodeId(), SINK, resultUpload,
 				ContributionKind.UPLOAD, decision.key(), null, -1,
 				"derived-fed-fout-materialization-upload");
 
@@ -867,12 +1058,7 @@ public final class MinStExactCostFactsProducer {
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1,
 				"pre-solve-fed-lout-illegal");
 		else if(!derivedFedFout) {
-			FType fType = requireUniqueMembershipLayoutType(decision,
-				ExecType.FED, FederatedOutput.LOUT);
-			bytes = estimatedBytes(analysis, decision.key(), hop);
-			double download = requireCost(FederatedCostModel.computeDownloadNetworkCost(bytes,
-				fType, workers), "MINST_DOWNLOAD_COST_UNPROVEN");
-			edges.add(decision.computeNodeId(), decision.placementNodeId(), download,
+			edges.add(decision.computeNodeId(), decision.placementNodeId(), resultDownload,
 				ContributionKind.DOWNLOAD, decision.key(), null, -1, "native-fed-lout-download");
 		}
 		if(!cpFout)
@@ -880,20 +1066,429 @@ public final class MinStExactCostFactsProducer {
 				ContributionKind.HARD_OUTPUT, decision.key(), null, -1,
 				"pre-solve-cp-fout-illegal");
 		else if(!derivedFedFout) {
-			FType fType = requireUniqueMembershipLayoutType(decision,
-				ExecType.CP, FederatedOutput.FOUT);
-			if(!Double.isFinite(bytes))
-				bytes = estimatedBytes(analysis, decision.key(), hop);
-			double upload = requireCost(FederatedCostModel.computeUploadNetworkCost(bytes,
-				fType, workers), "MINST_UPLOAD_COST_UNPROVEN");
-			edges.add(decision.placementNodeId(), decision.computeNodeId(), upload,
+			edges.add(decision.placementNodeId(), decision.computeNodeId(), resultUpload,
 				ContributionKind.UPLOAD, decision.key(), null, -1, "native-cp-fout-upload");
 		}
 	}
 
+	private static MembershipRepresentative selectedFedRepresentative(DecisionFact decision,
+		List<MembershipRepresentative> representatives) {
+		MembershipRepresentative fout = exactMembershipRepresentative(decision, representatives,
+			ExecType.FED, FederatedOutput.FOUT);
+		return fout != null ? fout : Objects.requireNonNull(exactMembershipRepresentative(decision,
+			representatives, ExecType.FED, FederatedOutput.LOUT),
+			"MINST_FED_MEMBERSHIP_REPRESENTATIVE_MISSING");
+	}
+
+	private static List<FType> exactFedInputTypes(PlacementAnalysis analysis, Hop hop,
+		CompiledHopKey consumer, MembershipRepresentative representative) {
+		List<FType> result = new ArrayList<>(hop.getInput().size());
+		for(int position = 0; position < hop.getInput().size(); position++) {
+			CandidateInputState state = position < representative.orderedInputs().size()
+				? representative.orderedInputs().get(position) : null;
+			if(state != null && state.present()) {
+				result.add(state.fType());
+				continue;
+			}
+			Hop input = hop.getInput(position);
+			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix()) {
+				result.add(null);
+				continue;
+			}
+			final int inputPosition = position;
+			CompiledInputEdgeFact edge = analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(candidate -> candidate.consumer() == consumer
+					&& candidate.inputPosition() == inputPosition)
+				.findFirst().orElseThrow(() -> new IllegalArgumentException(
+					"MINST_EXACT_LOCAL_INPUT_EDGE_MISSING|consumer="
+						+ consumer.normalizedSignature() + "|input=" + inputPosition));
+			result.add(exactRelocationMaterializationType(analysis, edge, representative.state()));
+		}
+		return Collections.unmodifiableList(result);
+	}
+
+	private static FType exactRelocationMaterializationType(PlacementAnalysis analysis,
+		CompiledInputEdgeFact edge, PlacementState consumerState) {
+		NeutralPlacementGraph.Node producer = analysis.graph().node(edge.producer()).orElseThrow();
+		List<NeutralPlacementGraph.RelocationAction> actions = analysis.graph().relocationActions().stream()
+			.filter(action -> action.key().sourceValueVersion() == producer.valueVersion()
+				&& action.key().targetPlacement().equals(consumerState))
+			.filter(action -> action.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == edge.consumer()
+					&& obligation.inputPosition() == edge.inputPosition()
+					&& obligation.sourceValueVersion() == producer.valueVersion()
+					&& obligation.requiredPlacement().equals(consumerState)))
+			.toList();
+		if(actions.size() != 1)
+			throw new IllegalArgumentException("MINST_EXACT_LOCAL_INPUT_RELOCATION_"
+				+ (actions.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|producer="
+				+ edge.producer().normalizedSignature() + "|consumer="
+				+ edge.consumer().normalizedSignature() + "|input=" + edge.inputPosition()
+				+ "|state=" + consumerState.normalizedSignature());
+		return exactRelocationMaterializationType(analysis, edge, actions.get(0));
+	}
+
+	private static FType exactRelocationMaterializationType(PlacementAnalysis analysis,
+		CompiledInputEdgeFact edge, NeutralPlacementGraph.RelocationAction action) {
+		FType type = action.key().materializationFType();
+		boolean exactCandidateProof = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == edge.consumer()
+				&& fact.status() == CandidateEvaluationStatus.AVAILABLE
+				&& edge.inputPosition() < fact.key().orderedInputs().size())
+			.filter(fact -> fact.key().orderedInputs().get(edge.inputPosition())
+				.equals(CandidateInputState.present(type)))
+			.anyMatch(fact -> fact.allowedEmissionFacts().stream().anyMatch(emission ->
+				emission.emissionState().placementState().equals(action.key().targetPlacement())));
+		if(!exactCandidateProof) {
+			FType geometryType = PlacementCostSemantics.exactMaterializationFType(
+				analysis.shapeFact(edge.producer()).orElseThrow(() -> new IllegalArgumentException(
+					"MINST_EXACT_LOCAL_INPUT_SHAPE_MISSING|producer="
+						+ edge.producer().normalizedSignature())), action.key().durableAnchor());
+			exactCandidateProof = geometryType == type
+				&& analysis.candidateRuleFacts().orderedFacts().stream()
+					.filter(fact -> fact.key().parentOccurrence() == edge.consumer()
+						&& fact.status() == CandidateEvaluationStatus.AVAILABLE
+						&& edge.inputPosition() < fact.key().orderedInputs().size())
+					.filter(fact -> fact.key().orderedInputs().get(edge.inputPosition())
+						.equals(CandidateInputState.absentLocal()))
+					.anyMatch(fact -> fact.allowedEmissionFacts().stream().anyMatch(emission ->
+						emission.emissionState().placementState().equals(action.key().targetPlacement())));
+		}
+		if(!exactCandidateProof)
+			throw new IllegalArgumentException("MINST_EXACT_LOCAL_INPUT_MATERIALIZATION_UNPROVEN|producer="
+				+ edge.producer().normalizedSignature() + "|consumer="
+				+ edge.consumer().normalizedSignature() + "|input=" + edge.inputPosition()
+				+ "|type=" + type + "|target=" + action.key().targetPlacement().normalizedSignature());
+		return type;
+	}
+
+	private static boolean broadcastOnlyMatrixInputs(Hop hop, List<FType> inputFTypes) {
+		boolean hasMatrix = false;
+		for(int position = 0; position < hop.getInput().size(); position++) {
+			Hop input = hop.getInput(position);
+			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix())
+				continue;
+			hasMatrix = true;
+			FType inputType = position < inputFTypes.size() ? inputFTypes.get(position) : null;
+			if(inputType != null && inputType != FType.BROADCAST)
+				return false;
+		}
+		return hasMatrix;
+	}
+
+	private static double unitLocalCost(Hop hop) {
+		if(hop instanceof DataOp) {
+			OpOpData op = ((DataOp)hop).getOp();
+			return op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE
+				? 0.0 : FederatedCostModel.computeOpCostWithFallback(hop);
+		}
+		return FederatedCostModel.computeLocalIndexingCostWithFallback(hop,
+			FederatedCostModel.computeOpCostWithFallback(hop));
+	}
+
+	private static double effectiveOutputBytes(PlacementAnalysis analysis,
+		CompiledHopKey key, Hop hop) {
+		double bytes = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		return Double.isFinite(bytes) && bytes > 0.0 ? bytes : estimatedBytes(analysis, key, hop);
+	}
+
+	private static double effectiveUploadBytes(PlacementAnalysis analysis,
+		CompiledHopKey key, Hop hop) {
+		double bytes = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
+		return Double.isFinite(bytes) && bytes > 0.0 ? bytes : estimatedBytes(analysis, key, hop);
+	}
+
+	private static void addNeutralConstraintEdges(PlacementAnalysis analysis,
+		IdentityHashMap<CompiledHopKey,DecisionFact> decisions,
+		List<MembershipRepresentative> representatives, EdgeAccumulator edges) {
+		for(Constraint constraint : analysis.graph().constraints()) {
+			DecisionFact left = decisions.get(constraint.left());
+			DecisionFact right = decisions.get(constraint.right());
+			if(left == null || right == null)
+				continue;
+			if(constraint.kind() == ConstraintKind.SAME_PLACEMENT) {
+				validateSamePlacementMemberships(left, right, representatives, constraint);
+				addHardEquality(edges, left.computeNodeId(), right.computeNodeId(),
+					ContributionKind.HARD_EXEC, left.key(), right.key(), constraint.inputPosition(),
+					"neutral-same-placement-exec");
+				addHardEquality(edges, left.placementNodeId(), right.placementNodeId(),
+					ContributionKind.HARD_OUTPUT, left.key(), right.key(), constraint.inputPosition(),
+					"neutral-same-placement-output");
+			}
+			else if(constraint.kind() == ConstraintKind.SAME_FTYPE) {
+				validateFoutTypeCompatibility(left, right, representatives, constraint);
+				addHardEquality(edges, left.placementNodeId(), right.placementNodeId(),
+					ContributionKind.HARD_OUTPUT, left.key(), right.key(), constraint.inputPosition(),
+					"neutral-same-ftype-output");
+			}
+			else if(constraint.kind() == ConstraintKind.CONJUNCTIVE) {
+				List<FType> rightTypes = exactFoutLayoutTypes(right, representatives);
+				List<FType> leftTypes = exactFoutLayoutTypes(left, representatives);
+				if(rightTypes.size() > 1 || leftTypes.size() > 1)
+					throw new IllegalArgumentException("MINST_CONJUNCTIVE_FTYPE_AMBIGUOUS|constraint="
+						+ constraint.normalizedSignature());
+				if(!rightTypes.isEmpty() && !leftTypes.contains(rightTypes.get(0)))
+					edges.add(right.placementNodeId(), SINK, HARD_LEGALITY,
+						ContributionKind.HARD_OUTPUT, right.key(), left.key(), constraint.inputPosition(),
+						"neutral-conjunctive-fout-layout-illegal");
+				else
+					edges.add(right.placementNodeId(), left.placementNodeId(), HARD_LEGALITY,
+						ContributionKind.HARD_OUTPUT, right.key(), left.key(), constraint.inputPosition(),
+						"neutral-conjunctive-fout-requires-left");
+			}
+		}
+	}
+
+	private static void addLogicalTransientInputEdges(PlacementAnalysis analysis,
+		IdentityHashMap<CompiledHopKey,DecisionFact> decisions,
+		List<MembershipRepresentative> representatives,
+		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, EdgeAccumulator edges) {
+		for(LogicalTransientInputFact fact : analysis.logicalTransientInputsInCanonicalOrder()) {
+			if(analysis.requireExactLogicalTransientInput(fact.sourceWrite(), fact.targetRead(),
+				fact.logicalPosition()) != fact)
+				throw new IllegalArgumentException("MINST_LOGICAL_TRANSIENT_INPUT_FOREIGN");
+			// Legacy MinST deliberately resolved function parameters against the caller's
+			// concrete argument before applying ordinary TWrite/TRead consistency.  The
+			// compiler-generated formal binding is transparent, so tying its TWrite to all
+			// downstream reads would invent one amortized materialization point and collapse
+			// the loop-wide FED alternatives that existed before shared preprocessing.
+			if(effectiveFunctionInputs.stream().anyMatch(input -> input.forwardedAuthority() == fact))
+				continue;
+			DecisionFact source = decisions.get(fact.sourceWrite());
+			DecisionFact read = decisions.get(fact.targetRead());
+			if(source == null || read == null)
+				continue;
+			validateSamePlacementMemberships(source, read, representatives, null);
+			addHardEquality(edges, source.computeNodeId(), read.computeNodeId(),
+				ContributionKind.HARD_EXEC, source.key(), read.key(), fact.logicalPosition(),
+				"logical-transient-exec-equality");
+			addHardEquality(edges, source.placementNodeId(), read.placementNodeId(),
+				ContributionKind.HARD_OUTPUT, source.key(), read.key(), fact.logicalPosition(),
+				"logical-transient-placement-equality");
+		}
+	}
+
+	private static List<EffectiveLogicalFunctionInput> effectiveLogicalFunctionInputs(
+		PlacementAnalysis analysis) {
+		List<EffectiveLogicalFunctionInput> result = new ArrayList<>();
+		List<LogicalFunctionInputFact> direct = analysis.logicalFunctionInputsInCanonicalOrder();
+		for(LogicalFunctionInputFact fact : direct) {
+			if(analysis.requireExactLogicalFunctionInput(fact.sourceArgument(), fact.targetRead(),
+				fact.logicalPosition()) != fact)
+				throw new IllegalArgumentException("MINST_LOGICAL_FUNCTION_INPUT_FOREIGN");
+			result.add(new EffectiveLogicalFunctionInput(fact, null, fact.targetRead()));
+		}
+		for(LogicalTransientInputFact transientFact : analysis.logicalTransientInputsInCanonicalOrder()) {
+			List<Constraint> bindings = analysis.graph().constraints().stream()
+				.filter(constraint -> constraint.kind() == ConstraintKind.SAME_PLACEMENT
+					&& "function-input-binding".equals(constraint.evidence())
+					&& constraint.right() == transientFact.sourceWrite())
+				.toList();
+			if(bindings.isEmpty())
+				continue;
+			if(bindings.size() != 1)
+				throw new IllegalArgumentException("MINST_FUNCTION_INPUT_BINDING_AMBIGUOUS|source="
+					+ transientFact.sourceWrite().normalizedSignature());
+			Constraint binding = bindings.get(0);
+			List<LogicalFunctionInputFact> authorities = direct.stream()
+				.filter(fact -> fact.targetRead() == binding.left()).toList();
+			if(authorities.isEmpty())
+				throw new IllegalArgumentException("MINST_FUNCTION_INPUT_FORWARD_AUTHORITY_MISSING|source="
+					+ transientFact.sourceWrite().normalizedSignature() + "|read="
+					+ transientFact.targetRead().normalizedSignature());
+			for(LogicalFunctionInputFact authority : authorities) {
+				FType sourceType = exactInputAuthorityType(analysis, authority.sourceArgument());
+				if(sourceType == null || sourceType != transientFact.federatedFType())
+					throw new IllegalArgumentException("MINST_FUNCTION_INPUT_FORWARD_LAYOUT_MISMATCH|source="
+						+ authority.sourceArgument().normalizedSignature() + "|read="
+						+ transientFact.targetRead().normalizedSignature());
+				result.add(new EffectiveLogicalFunctionInput(authority, transientFact,
+					transientFact.targetRead()));
+			}
+		}
+		return result.stream().sorted(Comparator
+			.comparing((EffectiveLogicalFunctionInput input) -> input.targetRead().normalizedSignature())
+			.thenComparing(input -> input.authority().sourceArgument().normalizedSignature()))
+			.toList();
+	}
+
+	private static void addHardEquality(EdgeAccumulator edges, long left, long right,
+		ContributionKind kind, CompiledHopKey leftKey, CompiledHopKey rightKey,
+		int inputPosition, String provenance) {
+		edges.add(left, right, HARD_LEGALITY, kind, leftKey, rightKey, inputPosition, provenance);
+		edges.add(right, left, HARD_LEGALITY, kind, rightKey, leftKey, inputPosition, provenance);
+	}
+
+	private static void validateSamePlacementMemberships(DecisionFact left, DecisionFact right,
+		List<MembershipRepresentative> representatives, Constraint constraint) {
+		for(ExecType exec : List.of(ExecType.CP, ExecType.FED))
+			for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+				MembershipRepresentative leftRepresentative = exactMembershipRepresentative(
+					left, representatives, exec, output);
+				MembershipRepresentative rightRepresentative = exactMembershipRepresentative(
+					right, representatives, exec, output);
+				if((leftRepresentative == null) != (rightRepresentative == null)
+					|| leftRepresentative != null && !leftRepresentative.state().equals(rightRepresentative.state()))
+					throw new IllegalArgumentException("MINST_SAME_PLACEMENT_MEMBERSHIP_MISMATCH|left="
+						+ left.key().normalizedSignature() + "|right=" + right.key().normalizedSignature()
+						+ "|membership=" + membership(exec, output) + "|constraint="
+						+ (constraint == null ? "logical-transient" : constraint.normalizedSignature()));
+			}
+	}
+
+	private static void validateFoutTypeCompatibility(DecisionFact left, DecisionFact right,
+		List<MembershipRepresentative> representatives, Constraint constraint) {
+		List<FType> leftTypes = exactFoutLayoutTypes(left, representatives);
+		List<FType> rightTypes = exactFoutLayoutTypes(right, representatives);
+		if(leftTypes.size() > 1 || rightTypes.size() > 1 || !leftTypes.equals(rightTypes))
+			throw new IllegalArgumentException("MINST_SAME_FTYPE_MEMBERSHIP_MISMATCH|constraint="
+				+ constraint.normalizedSignature() + "|left=" + leftTypes + "|right=" + rightTypes);
+	}
+
+	/**
+	 * Restore the exact caller-argument edge that legacy MinST received as a temporary physical
+	 * child of a formal TRead. Shared analysis deliberately keeps that relation logical, so MinST
+	 * must encode the same semantics explicitly: a federated formal requires a same-layout FOUT
+	 * caller value, while a local formal downloads a selected FOUT caller value once per call.
+	 */
+	private static void addLogicalFunctionInputEdges(PlacementAnalysis analysis,
+		IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
+		List<MembershipRepresentative> representatives,
+		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, int workers,
+		Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
+		for(EffectiveLogicalFunctionInput input : effectiveFunctionInputs) {
+			LogicalFunctionInputFact fact = input.authority();
+			DecisionFact source = decisions.get(fact.sourceArgument());
+			DecisionFact formal = decisions.get(input.targetRead());
+			if(source == null || formal == null)
+				continue;
+			Hop formalHopForTrace = analysis.hop(formal.key()).orElseThrow();
+			if(FederatedPlannerTrace.shouldTrace(formalHopForTrace))
+				FederatedPlannerTrace.log(formalHopForTrace, "MinST-ExactFunctionInput",
+					"source=" + source.key().normalizedSignature() + ", forwarded="
+						+ (input.forwardedAuthority() != null));
+			String prefix = input.forwardedAuthority() == null
+				? "logical-function" : "logical-function-forwarded";
+			List<FType> formalFoutTypes = exactFoutLayoutTypes(formal, representatives);
+			FType formalFoutType = formalFoutTypes.size() == 1 ? formalFoutTypes.get(0) : null;
+			if(!formalFoutTypes.isEmpty()) {
+				if(formalFoutType == null)
+					throw new IllegalArgumentException("MINST_LOGICAL_FUNCTION_FORMAL_LAYOUT_AMBIGUOUS|key="
+						+ formal.key().normalizedSignature() + "|types=" + formalFoutTypes);
+				FType required = formalFoutType;
+				boolean compatibleSource = source.legalStatesInCanonicalOrder().stream().anyMatch(state ->
+					state.output() == FederatedOutput.FOUT && state.fType() == required);
+				if(!compatibleSource)
+					edges.add(formal.placementNodeId(), SINK, HARD_LEGALITY,
+						ContributionKind.HARD_OUTPUT, formal.key(), source.key(), input.logicalPosition(),
+						prefix + "-fout-source-layout-illegal");
+				else
+					edges.add(formal.placementNodeId(), source.placementNodeId(), HARD_LEGALITY,
+						ContributionKind.HARD_OUTPUT, formal.key(), source.key(), input.logicalPosition(),
+						prefix + "-fout-requires-source-fout");
+			}
+			List<FType> sourceFoutTypes = exactFoutLayoutTypes(source, representatives);
+			if(hasExec(formal, ExecType.CP) && !sourceFoutTypes.isEmpty()) {
+				FType sourceType = exactInputAuthorityType(analysis, source.key());
+				if(sourceType == null && formalFoutType != null && sourceFoutTypes.contains(formalFoutType))
+					sourceType = formalFoutType;
+				if(sourceType == null && sourceFoutTypes.size() == 1)
+					sourceType = sourceFoutTypes.get(0);
+				if(sourceType == null || !sourceFoutTypes.contains(sourceType))
+					throw new IllegalArgumentException("MINST_LOGICAL_FUNCTION_SOURCE_LAYOUT_AMBIGUOUS|key="
+						+ source.key().normalizedSignature() + "|types=" + sourceFoutTypes
+						+ "|formal=" + formalFoutType);
+				Hop sourceHop = analysis.hop(source.key()).orElseThrow();
+				Hop formalHop = analysis.hop(formal.key()).orElseThrow();
+				// A local formal TRead materializes the complete logical matrix at the
+				// coordinator.  Legacy MinST therefore charged the full payload, not the
+				// partition-parallel FED/LOUT result estimate.  Preserve that planner
+				// semantics while keeping the caller edge logical and mutation-free.
+				double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+					formalHop, sourceHop);
+				double callWeight = logicalFunctionCallWeight(occurrenceProfiles, fact);
+				double download = requireCost(callWeight
+					* FederatedCostModel.computeDownloadNetworkCost(bytes),
+					"MINST_LOGICAL_FUNCTION_DOWNLOAD_COST_UNPROVEN");
+				edges.add(source.placementNodeId(), formal.placementNodeId(), download,
+					ContributionKind.DOWNLOAD, source.key(), formal.key(), input.logicalPosition(),
+					prefix + "-fout-to-local-download");
+				// A function-formal TRead is an alias, not a reusable local materialization.
+				// Depending on compiler normalization, the same alias is represented either
+				// directly by LogicalFunctionInputFact or through a generated transient binding.
+				// Legacy MinST charged every CP consumer at that consumer's loop frequency in
+				// both cases, directly against the caller's concrete FOUT authority.
+				for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+					if(edge.producer() != formal.key())
+						continue;
+					DecisionFact consumer = decisions.get(edge.consumer());
+					if(consumer == null || !hasExec(consumer, ExecType.CP))
+						continue;
+					double consumerWeight = forwardingWeight(occurrenceProfiles,
+						edge.consumer(), edge.producer());
+					double consumerDownload = requireCost(consumerWeight
+						* FederatedCostModel.computeDownloadNetworkCost(bytes),
+						"MINST_LOGICAL_FUNCTION_CONSUMER_DOWNLOAD_COST_UNPROVEN");
+					Hop consumerHopForTrace = analysis.hop(consumer.key()).orElseThrow();
+					if(FederatedPlannerTrace.shouldTrace(consumerHopForTrace))
+						FederatedPlannerTrace.log(consumerHopForTrace,
+							"MinST-ExactFunctionConsumer", "source="
+								+ source.key().normalizedSignature() + ", formal="
+								+ formal.key().normalizedSignature() + ", weight="
+								+ consumerWeight + ", download=" + consumerDownload);
+					edges.add(source.placementNodeId(), consumer.computeNodeId(),
+						consumerDownload, ContributionKind.DOWNLOAD, source.key(),
+						consumer.key(), edge.inputPosition(),
+						prefix + "-local-consumer-download");
+				}
+			}
+		}
+	}
+
+	private record EffectiveLogicalFunctionInput(LogicalFunctionInputFact authority,
+		LogicalTransientInputFact forwardedAuthority, CompiledHopKey targetRead) {
+		private EffectiveLogicalFunctionInput {
+			Objects.requireNonNull(authority, "authority");
+			Objects.requireNonNull(targetRead, "targetRead");
+			if(forwardedAuthority != null && forwardedAuthority.targetRead() != targetRead)
+				throw new IllegalArgumentException("Forwarded function input target differs");
+		}
+
+		private int logicalPosition() {
+			return forwardedAuthority == null ? authority.logicalPosition()
+				: forwardedAuthority.logicalPosition();
+		}
+	}
+
+	private static List<FType> exactFoutLayoutTypes(DecisionFact decision,
+		List<MembershipRepresentative> representatives) {
+		return representatives.stream()
+			.filter(representative -> representative.decisionKey() == decision.key()
+				&& representative.output() == FederatedOutput.FOUT)
+			.map(representative -> representative.state().fType())
+			.filter(Objects::nonNull).distinct().sorted(Comparator.comparing(Enum::name)).toList();
+	}
+
+	private static double logicalFunctionCallWeight(Map<String,List<OccurrenceProfile>> profiles,
+		LogicalFunctionInputFact fact) {
+		List<String> paths = fact.boundary().controlRegion().regionPath();
+		String expectedBoundary = "input-" + fact.callInputPosition();
+		if(paths.size() != 2 || !expectedBoundary.equals(paths.get(1)))
+			throw new IllegalArgumentException("MINST_LOGICAL_FUNCTION_BOUNDARY_PATH_UNPROVEN|boundary="
+				+ fact.boundary().normalizedSignature() + "|paths=" + paths);
+		List<OccurrenceProfile> callProfiles = profiles.get(paths.get(0));
+		if(callProfiles == null || callProfiles.isEmpty())
+			throw new IllegalArgumentException("MINST_LOGICAL_FUNCTION_CALL_PATH_UNPROVEN|path=" + paths.get(0));
+		double total = 0.0;
+		for(OccurrenceProfile profile : callProfiles)
+			total += profile.networkWeight;
+		return requirePositiveWeight(total, "MINST_LOGICAL_FUNCTION_CALL_WEIGHT_UNPROVEN");
+	}
+
 	private static List<AuxiliaryGroupFact> deriveGroups(PlacementAnalysis analysis,
 		List<CompiledHopKey> orderedScope, IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
-		List<MembershipRepresentative> representatives, int workers,
+		List<MembershipRepresentative> representatives,
+		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, int workers,
 		Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
 		List<AuxiliaryGroupFact> result = new ArrayList<>();
 		IdentityHashMap<CompiledHopKey,List<CompiledInputEdgeFact>> edgesByProducer = new IdentityHashMap<>();
@@ -901,6 +1496,11 @@ public final class MinStExactCostFactsProducer {
 			if(analysis.requireExactCompiledInputEdge(edge.producer(), edge.consumer(),
 				edge.inputPosition()) != edge)
 				throw new IllegalArgumentException("MINST_COMPILED_EDGE_IDENTITY_UNPROVEN");
+			// FunctionOp is a logical call boundary. Its actual/formal transfer is priced
+			// by LogicalFunctionInputFact; treating the call node itself as a CP matrix
+			// consumer invents an extra download that never exists at runtime.
+			if(analysis.graph().node(edge.consumer()).orElseThrow().kind() == NodeKind.FUNCTION_CALL)
+				continue;
 			if(decisions.containsKey(edge.producer()) && decisions.containsKey(edge.consumer()))
 				edgesByProducer.computeIfAbsent(edge.producer(), ignored -> new ArrayList<>()).add(edge);
 		}
@@ -923,7 +1523,7 @@ public final class MinStExactCostFactsProducer {
 				}
 				if(hasExec(consumerDecision, ExecType.CP)
 					&& hasState(producerDecision, ExecType.FED, FederatedOutput.FOUT)) {
-					FType type = requireUniqueMembershipLayoutType(producerDecision,
+					FType type = requireExactMembershipLayoutType(producerDecision, representatives,
 						ExecType.FED, FederatedOutput.FOUT);
 					demands.computeIfAbsent(new GroupDemandKey(Direction.DOWNLOAD, type), ignored ->
 						new ArrayList<>()).add(new Use(edge, consumerDecision));
@@ -936,16 +1536,22 @@ public final class MinStExactCostFactsProducer {
 					.toList();
 				List<EndpointFact> endpoints = new ArrayList<>(uses.size());
 				double bytes = estimatedBytes(analysis, producerKey, producer);
+				EffectiveLogicalFunctionInput forwardedInput = entry.getKey().direction == Direction.DOWNLOAD
+					? forwardedFunctionInputForTarget(effectiveFunctionInputs, producerKey) : null;
 				double transferCost = entry.getKey().direction == Direction.UPLOAD
 					? FederatedCostModel.computeUploadNetworkCost(bytes, entry.getKey().type, workers)
 						+ FederatedCostModel.computeLocalToFedForwardingPenalty(entry.getKey().type, workers)
-					: FederatedCostModel.computeDownloadNetworkCost(bytes, entry.getKey().type, workers);
+					: forwardedInput != null
+						? FederatedCostModel.computeDownloadNetworkCost(bytes)
+						: FederatedCostModel.computeDownloadNetworkCost(bytes, entry.getKey().type, workers);
 				transferCost = requireCost(transferCost, "MINST_GROUP_TRANSFER_COST_UNPROVEN");
 				double price = Double.NEGATIVE_INFINITY;
 				for(Use use : uses) {
-					double forwardingWeight = forwardingWeight(occurrenceProfiles,
-						use.edge.consumer(), use.edge.producer());
-					double demand = requireCost(forwardingWeight * transferCost,
+					double demandWeight = forwardedInput == null
+						? forwardingWeight(occurrenceProfiles,
+							use.edge.consumer(), use.edge.producer())
+						: logicalFunctionCallWeight(occurrenceProfiles, forwardedInput.authority());
+					double demand = requireCost(demandWeight * transferCost,
 						"MINST_GROUP_DEMAND_COST_UNPROVEN");
 					endpoints.add(new EndpointFact(use.edge.producer(), use.edge.consumer(), use.edge.inputPosition(),
 						use.consumerDecision.computeNodeId(), bits(demand)));
@@ -961,6 +1567,17 @@ public final class MinStExactCostFactsProducer {
 			}
 		}
 		return List.copyOf(result);
+	}
+
+	private static EffectiveLogicalFunctionInput forwardedFunctionInputForTarget(
+		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, CompiledHopKey target) {
+		List<EffectiveLogicalFunctionInput> matches = effectiveFunctionInputs.stream()
+			.filter(input -> input.forwardedAuthority() != null && input.targetRead() == target)
+			.toList();
+		if(matches.size() > 1)
+			throw new IllegalArgumentException("MINST_FUNCTION_INPUT_FORWARD_TARGET_AMBIGUOUS|target="
+				+ target.normalizedSignature());
+		return matches.isEmpty() ? null : matches.get(0);
 	}
 
 	private static double cpUnaryCost(Hop hop, double executionWeight) {
@@ -1414,12 +2031,26 @@ public final class MinStExactCostFactsProducer {
 
 	static boolean hasExactCompatibleDurableSource(PlacementAnalysis analysis, AuxiliaryGroupFact group) {
 		NeutralPlacementGraph.Node producer = analysis.graph().node(group.producerKey()).orElseThrow();
+		// A formal function TRead is a transparent alias of its caller argument.  Shared
+		// preprocessing keeps that relation logical (there is intentionally no physical
+		// Hop child and no copied anchor on the formal node), while legacy MinST saw the
+		// concrete caller argument directly.  If the cut selects the formal as FOUT,
+		// addLogicalFunctionInputEdges has already made the caller FOUT a hard prerequisite;
+		// therefore the caller's exact durable layout is also the transfer authority for
+		// FED consumers of the formal alias.
+		boolean logicalFunctionSource = effectiveLogicalFunctionInputs(analysis).stream()
+			.filter(input -> input.targetRead() == group.producerKey())
+			.map(input -> analysis.graph().node(input.authority().sourceArgument()).orElseThrow())
+			.anyMatch(source -> source.anchors().stream()
+				.anyMatch(anchor -> anchor.fType() == group.conversionType()));
+		if(logicalFunctionSource)
+			return true;
 		Set<DurableAnchorKey> required = new LinkedHashSet<>();
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
 			Set<DurableAnchorKey> endpointAnchors = new LinkedHashSet<>();
 			for(NeutralPlacementGraph.RelocationAction action : analysis.graph().relocationActions())
 				if(action.key().sourceValueVersion().equals(producer.valueVersion())
-					&& action.key().targetPlacement().fType() == group.conversionType()
+					&& action.key().materializationFType() == group.conversionType()
 					&& action.obligations().stream().anyMatch(obligation ->
 						obligation.consumer() == endpoint.consumerKey()
 							&& obligation.inputPosition() == endpoint.inputPosition()))
@@ -1435,7 +2066,7 @@ public final class MinStExactCostFactsProducer {
 						.forEach(endpointAnchors::add);
 					analysis.graph().relocationActions().stream()
 						.filter(action -> action.key().sourceValueVersion().equals(siblingNode.valueVersion())
-							&& action.key().targetPlacement().fType() == group.conversionType()
+							&& action.key().materializationFType() == group.conversionType()
 							&& action.obligations().stream().anyMatch(obligation ->
 								obligation.consumer() == endpoint.consumerKey()
 									&& obligation.inputPosition() == sibling.inputPosition()))
@@ -1558,15 +2189,16 @@ public final class MinStExactCostFactsProducer {
 		List<TransferAuthorityFact> result, AuxiliaryGroupFact group, EndpointFact endpoint,
 		CompiledInputEdgeFact inputEdge, NeutralPlacementGraph.Node producer) {
 		for(NeutralPlacementGraph.RelocationAction action : analysis.graph().relocationActions()) {
-			if(action.key().sourceValueVersion() != producer.valueVersion()
-				|| action.key().targetPlacement().fType() != group.conversionType())
+			if(action.key().sourceValueVersion() != producer.valueVersion())
 				continue;
 			for(ObligationKey obligation : action.obligations())
 				if(obligation.relocationAction() == action.key()
 					&& obligation.sourceValueVersion() == producer.valueVersion()
 					&& obligation.consumer() == endpoint.consumerKey()
 					&& obligation.inputPosition() == endpoint.inputPosition()
-					&& obligation.requiredPlacement() == action.key().targetPlacement())
+					&& obligation.requiredPlacement() == action.key().targetPlacement()
+					&& exactRelocationMaterializationType(analysis, inputEdge, action)
+						== group.conversionType())
 					result.add(TransferAuthorityFact.relocation(group, endpoint, inputEdge,
 						producer.valueVersion(), action, obligation));
 		}
@@ -1596,7 +2228,10 @@ public final class MinStExactCostFactsProducer {
 				throw new IllegalArgumentException("MINST_EXACT_ANCHOR_EDGE_IDENTITY_UNPROVEN");
 			NeutralPlacementGraph.Node siblingNode = analysis.graph().node(sibling.producer()).orElseThrow();
 			for(DurableAnchorKey anchor : siblingNode.anchors()) {
-				if(anchor.fType() != group.conversionType())
+				FType materializationType = PlacementCostSemantics.exactMaterializationFType(
+					analysis.shapeFact(group.producerKey()).orElseThrow(() ->
+						new IllegalArgumentException("MINST_EXACT_UPLOAD_SHAPE_MISSING")), anchor);
+				if(materializationType != group.conversionType())
 					continue;
 				PlacementState required = new PlacementState(ExecType.FED, FederatedOutput.FOUT,
 					anchor.fType(), false);
@@ -1626,27 +2261,71 @@ public final class MinStExactCostFactsProducer {
 			+ required.normalizedSignature() + '|' + endpoint.demandCostBits();
 	}
 
-	private static FType exactConsumerInputType(CompiledInputEdgeFact edge,
+	private static FType exactConsumerInputType(PlacementAnalysis analysis, CompiledInputEdgeFact edge,
 		List<MembershipRepresentative> representatives) {
-		List<FType> types = representatives.stream()
+		List<MembershipRepresentative> exactRepresentatives = representatives.stream()
 			.filter(representative -> representative.decisionKey() == edge.consumer()
 				&& representative.authorityKind() == MembershipAuthorityKind.CAPTURED_RULE
-				&& representative.execType() == ExecType.FED
-				&& representative.output() == FederatedOutput.FOUT)
+				&& representative.execType() == ExecType.FED)
 			.filter(representative -> edge.inputPosition() >= 0
 				&& edge.inputPosition() < representative.orderedInputs().size())
-			.map(representative -> representative.orderedInputs().get(edge.inputPosition()))
-			.filter(CandidateInputState::present)
-			.map(CandidateInputState::fType)
-			.distinct().toList();
+			.toList();
+		Set<FType> representativeTypes = new LinkedHashSet<>();
+		for(MembershipRepresentative representative : exactRepresentatives) {
+			CandidateInputState input = representative.orderedInputs().get(edge.inputPosition());
+			representativeTypes.add(input.present() ? input.fType()
+				: exactRelocationMaterializationType(analysis, edge, representative.state()));
+		}
+		if(representativeTypes.size() > 1)
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN"
+				+ "|ambiguous-exact-membership-representatives|consumer="
+				+ edge.consumer().normalizedSignature() + "|input=" + edge.inputPosition()
+				+ "|types=" + representativeTypes + "|representatives="
+				+ representatives.stream()
+					.filter(representative -> representative.decisionKey() == edge.consumer()
+						&& representative.execType() == ExecType.FED)
+					.map(representative -> representative.state().normalizedSignature()
+						+ "/inputs=" + representative.orderedInputs()
+						+ "/emission=" + candidateEmissionSignatureOrDash(representative))
+					.toList());
+		if(representativeTypes.size() == 1)
+			return representativeTypes.iterator().next();
+		if(!exactRepresentatives.isEmpty())
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN"
+				+ "|exact-membership-input-type-missing|consumer="
+				+ edge.consumer().normalizedSignature() + "|input=" + edge.inputPosition());
+
+		// The exact membership materializer has already resolved competing candidate-domain
+		// rows (for example ROW versus BROADCAST) using graph-owned producer authorities.
+		// Re-introducing every available row here discards that proof and can reject a legal
+		// legacy MinST input after its representative was made unique. Consult raw candidate
+		// facts only when this consumer has no exact FED representative.
+		Set<FType> types = new LinkedHashSet<>();
+		for(CandidateRuleFact fact : analysis.candidateRuleFacts().orderedFacts()) {
+			if(fact.key().parentOccurrence() != edge.consumer()
+				|| fact.status() != CandidateEvaluationStatus.AVAILABLE
+				|| edge.inputPosition() >= fact.key().orderedInputs().size()
+				|| !fact.key().orderedInputs().get(edge.inputPosition()).present()
+				|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
+					emission.emissionState().placementState().execType() == ExecType.FED))
+				continue;
+			types.add(fact.key().orderedInputs().get(edge.inputPosition()).fType());
+		}
 		if(types.size() > 1)
-			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|ambiguous-exact-membership-authority");
-		return types.isEmpty() ? null : types.get(0);
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN"
+				+ "|ambiguous-exact-membership-authority|consumer="
+				+ edge.consumer().normalizedSignature() + "|input=" + edge.inputPosition()
+				+ "|types=" + types + "|representatives=" + representatives.stream()
+					.filter(representative -> representative.decisionKey() == edge.consumer())
+					.map(representative -> representative.authorityKind() + "/"
+						+ representative.state().normalizedSignature() + "/inputs="
+						+ representative.orderedInputs()).toList());
+		return types.isEmpty() ? null : types.iterator().next();
 	}
 
 	private static FType requiredType(PlacementAnalysis analysis, CompiledInputEdgeFact edge,
 		List<MembershipRepresentative> representatives) {
-		FType exact = exactConsumerInputType(edge, representatives);
+		FType exact = exactConsumerInputType(analysis, edge, representatives);
 		if(exact != null)
 			return exact;
 		Set<FType> structuralLayouts = new LinkedHashSet<>();
@@ -1674,7 +2353,11 @@ public final class MinStExactCostFactsProducer {
 				return compatibleLayouts.get(0);
 			if(compatibleLayouts.size() > 1)
 				throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|ambiguous-sibling-layout");
-			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|no-structural-intersection");
+			throw new IllegalArgumentException("MINST_CONSUMER_LAYOUT_UNPROVEN|no-structural-intersection"
+				+ "|producer=" + edge.producer().normalizedSignature()
+				+ "|consumer=" + edge.consumer().normalizedSignature()
+				+ "|input=" + edge.inputPosition() + "|allowed=" + allowed
+				+ "|structural=" + structuralLayouts);
 		}
 		catch(PlacementAnalysis.CandidateRuleLookupException missingProfile) {
 			if(structuralLayouts.size() == 1)
@@ -1711,43 +2394,52 @@ public final class MinStExactCostFactsProducer {
 			.anyMatch(state -> state.execType() == exec && state.output() == output);
 	}
 
-	private static FType requireUniqueExecLayoutType(DecisionFact decision, ExecType execType) {
-		List<FType> types = decision.legalStatesInCanonicalOrder().stream()
-			.filter(state -> state.execType() == execType)
-			.map(PlacementState::fType).filter(Objects::nonNull).distinct()
-			.sorted(Comparator.comparing(Enum::name)).toList();
-		if(types.size() != 1)
-			throw new IllegalArgumentException("MINST_DECISION_EXEC_LAYOUT_UNPROVEN|key="
-				+ decision.key().normalizedSignature() + "|exec=" + execType + "|types=" + types);
-		return types.get(0);
+	private static FType requireExactExecLayoutType(DecisionFact decision,
+		List<MembershipRepresentative> representatives, ExecType execType) {
+		for(FederatedOutput output : List.of(FederatedOutput.FOUT, FederatedOutput.LOUT)) {
+			MembershipRepresentative representative = exactMembershipRepresentative(
+				decision, representatives, execType, output);
+			if(representative == null)
+				continue;
+			CandidateEmissionFact emission = representative.candidateRuleFactOrNull() == null
+				? null : exactCandidateEmissionFact(representative);
+			FType type = emission == null ? representative.state().fType() : emission.executionFType();
+			if(type != null)
+				return type;
+		}
+		throw new IllegalArgumentException("MINST_DECISION_EXEC_LAYOUT_UNPROVEN|key="
+			+ decision.key().normalizedSignature() + "|exec=" + execType);
 	}
 
-	private static FType requireUniqueMembershipLayoutType(DecisionFact decision,
-		ExecType execType, FederatedOutput output) {
-		List<FType> types = decision.legalStatesInCanonicalOrder().stream()
-			.filter(state -> state.execType() == execType && state.output() == output)
-			.map(PlacementState::fType).filter(Objects::nonNull).distinct()
-			.sorted(Comparator.comparing(Enum::name)).toList();
-		if(types.size() != 1)
+	private static FType requireExactMembershipLayoutType(DecisionFact decision,
+		List<MembershipRepresentative> representatives, ExecType execType, FederatedOutput output) {
+		MembershipRepresentative representative = exactMembershipRepresentative(
+			decision, representatives, execType, output);
+		if(representative == null || representative.state().fType() == null)
 			throw new IllegalArgumentException("MINST_DECISION_MEMBERSHIP_LAYOUT_UNPROVEN|key="
-				+ decision.key().normalizedSignature() + "|membership="
-				+ membership(execType, output) + "|types=" + types);
-		return types.get(0);
+				+ decision.key().normalizedSignature() + "|membership=" + membership(execType, output));
+		return representative.state().fType();
+	}
+
+	private static MembershipRepresentative exactMembershipRepresentative(DecisionFact decision,
+		List<MembershipRepresentative> representatives, ExecType execType, FederatedOutput output) {
+		List<MembershipRepresentative> matching = representatives.stream()
+			.filter(representative -> representative.decisionKey() == decision.key()
+				&& representative.execType() == execType && representative.output() == output)
+			.toList();
+		if(matching.size() > 1)
+			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_REPRESENTATIVE_AMBIGUOUS|key="
+				+ decision.key().normalizedSignature() + "|membership=" + membership(execType, output));
+		return matching.isEmpty() ? null : matching.get(0);
 	}
 
 	private static CandidateEmissionFact exactCandidateEmissionFact(DecisionFact decision,
 		List<MembershipRepresentative> representatives,
 		ExecType execType, FederatedOutput output) {
-		List<MembershipRepresentative> matching = representatives.stream()
-			.filter(representative -> representative.decisionKey() == decision.key()
-				&& representative.execType() == execType && representative.output() == output)
-			.toList();
-		if(matching.isEmpty())
+		MembershipRepresentative representative = exactMembershipRepresentative(
+			decision, representatives, execType, output);
+		if(representative == null)
 			return null;
-		if(matching.size() != 1)
-			throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_REPRESENTATIVE_AMBIGUOUS|key="
-				+ decision.key().normalizedSignature() + "|membership=" + membership(execType, output));
-		MembershipRepresentative representative = matching.get(0);
 		return representative.candidateRuleFactOrNull() == null
 			? null : exactCandidateEmissionFact(representative);
 	}
@@ -1980,9 +2672,6 @@ public final class MinStExactCostFactsProducer {
 					!= authority.inputEdge())
 				fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 					"Transfer authority is not retained by its exact owner");
-			if(authority.requiredPlacement().fType() != authority.group().conversionType())
-				fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
-					"Transfer authority identity payload differs from its owner");
 			NeutralPlacementGraph.Node producer = analysis.graph().node(
 				authority.group().producerKey()).orElseThrow();
 			if(authority.sourceValueVersion() != producer.valueVersion())
@@ -2069,6 +2758,8 @@ public final class MinStExactCostFactsProducer {
 			|| obligation.inputPosition() != authority.endpoint().inputPosition()
 			|| obligation.requiredPlacement() != action.key().targetPlacement()
 			|| authority.requiredPlacement() != obligation.requiredPlacement()
+			|| exactRelocationMaterializationType(analysis, authority.inputEdge(), action)
+				!= authority.group().conversionType()
 			|| !authority.authoritySignature().equals(action.normalizedSignature()))
 			fail(ValidationReason.DERIVATION_FINGERPRINT_MISMATCH,
 				"Relocation transfer authority differs from its exact owner");
@@ -2092,9 +2783,12 @@ public final class MinStExactCostFactsProducer {
 			|| profile.status() != CandidateEvaluationStatus.AVAILABLE
 			|| !profile.allowedTargetTypes().isEmpty()
 				&& !profile.allowedTargetTypes().contains(authority.group().conversionType())
-			|| anchor.fType() != authority.group().conversionType()
+			|| PlacementCostSemantics.exactMaterializationFType(
+				analysis.shapeFact(authority.group().producerKey()).orElseThrow(), anchor)
+				!= authority.group().conversionType()
 			|| authority.requiredPlacement().execType() != ExecType.FED
 			|| authority.requiredPlacement().output() != FederatedOutput.FOUT
+			|| authority.requiredPlacement().fType() != anchor.fType()
 			|| authority.requiredPlacement().shapeDependent()
 			|| !authority.authoritySignature().equals(independentAnchorSignature(authority.group(),
 				authority.endpoint(), authority.inputEdge(), authority.sourceValueVersion(), anchorEdge, anchor, profile,

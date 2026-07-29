@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.LegacyDpOfflineSelectedCapture;
@@ -26,7 +27,14 @@ import org.junit.Test;
 
 /** Frozen offline literal selected-plan authority for the DP and MinST adapter cutover. */
 public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
-	private static final String BASE = "5e4253ac87bed98e951054cf586a22a2784779e9";
+	private static final String BASE = "3cb636bed6297d10912b9f6f21ba64ac02f923a4";
+	private static final String PRE_UNIFICATION_BASE = "5e4253ac87bed98e951054cf586a22a2784779e9";
+	private static final Map<String,String> PRE_UNIFICATION_DP_STATE_SHA256 = Map.of(
+		"C2-DP-05-SHARED-DIAMOND", "4caf54bca6566caf043ff0dc52a59f29347429b0b871bbbed398e03a38582384",
+		"C2-DP-06-TRTW-EXACT", "2fdb41a8d20e1c2866305f77a7e185014a0c5cd77fc8e4f555fca6ee3a43a9ce",
+		"C2-X-09-BRANCH-JOIN", "fefcfae780f3c50f49b267cd3a626ded2de0f8ed39d2f45849bfe4a6bfebb6df",
+		"C2-X-10-FUNCTION-CALLSITE", "dc47a1caa40a688ec06a2a632d3d55ec314aa10578aa376f1d2ff00f66933069",
+		"C2-X-11-CLONE-RECOMPILE", "2fdb41a8d20e1c2866305f77a7e185014a0c5cd77fc8e4f555fca6ee3a43a9ce");
 	private static final String ROOT = "/org/apache/sysds/test/component/federated/placement/characterization/";
 	private static final String SPEC = ROOT + "g004b-c2-offline-fixture-spec.tsv";
 	private static final String MANIFEST = ROOT + "g004b-c2-dp-minst-offline-literal.manifest";
@@ -43,6 +51,7 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 		String expected = resource(MANIFEST);
 		assertEquals(resource(DIGEST).trim(), sha256(expected));
 		assertEquals(expected, actual);
+		assertPreUnificationDpExecOutputParity(actual);
 	}
 
 	@Test
@@ -67,8 +76,9 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 		assertEquals("d6b14149a4413c82b5c62f04bcbef4043380cb931b916a0c1196d45e0f806e4f",
 			sha256(spec));
 		List<String> rows = new ArrayList<>();
-		rows.add("SCHEMA|g004b-c2-offline-selected-plan-v1");
+		rows.add("SCHEMA|g004b-c2-offline-selected-plan-v2");
 		rows.add("BASE|" + BASE);
+		rows.add("PRE_UNIFICATION_BASE|" + PRE_UNIFICATION_BASE);
 		rows.add("SPEC_SHA256|" + sha256(spec));
 		rows.add("EVIDENCE|ACTUAL_RETAINED|EXACT_PRIVATE_REPLAY|SYNTHETIC_SELECTOR_FIXTURE|NEUTRAL_GRAPH_EXCLUSION");
 		for(String row : LegacyDpOfflineSelectedCapture.capture()) rows.add(tagPlanner(row, "DP"));
@@ -113,7 +123,7 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 			assertFixture(rows, "C2-X-11-CLONE-RECOMPILE", planner, "recompileCpFout=UNSUPPORTED",
 				"reason=RECOMPILE_CP_FOUT_FORBIDDEN");
 		}
-		rows.subList(4, rows.size()).sort(String::compareTo);
+		rows.subList(5, rows.size()).sort(String::compareTo);
 		String manifest = String.join("\n", rows) + "\n";
 		assertFalse(manifest.contains("Connection refused"));
 		assertFalse(manifest.contains("WORKER_METADATA_UNAVAILABLE"));
@@ -125,6 +135,20 @@ public class FederatedPlannerDpMinSTOfflineLiteralManifestTest {
 		assertTrue(manifest.contains("REGISTRY_FOUT_MATERIALIZE"));
 		assertTrue(manifest.contains("REGISTRY_LOCAL_MATERIALIZE"));
 		return manifest;
+	}
+
+	private static void assertPreUnificationDpExecOutputParity(String manifest) throws Exception {
+		for(Map.Entry<String,String> expected : PRE_UNIFICATION_DP_STATE_SHA256.entrySet()) {
+			String prefix = expected.getKey() + "|planner=DP|";
+			String row = manifest.lines().filter(line -> line.startsWith(prefix)).findFirst()
+				.orElseThrow(() -> new AssertionError("Missing DP parity row " + expected.getKey()));
+			int start = row.indexOf("|selectedStates=");
+			int end = row.indexOf("|selectedPlans=", start);
+			assertTrue("DP selected-state field is missing for " + expected.getKey(), start >= 0 && end > start);
+			String selectedStates = row.substring(start + "|selectedStates=".length(), end);
+			assertEquals("DP Exec/Output selection diverged from pre-unification baseline "
+				+ PRE_UNIFICATION_BASE + " for " + expected.getKey(), expected.getValue(), sha256(selectedStates));
+		}
 	}
 
 	private static void assertFixture(List<String> rows, String id, String planner, String... required) {

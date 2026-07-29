@@ -376,7 +376,11 @@ public final class PlacementAnalysis {
 						&& candidate.key().orderedInputs().size() == orderedInputs.size())
 					.anyMatch(candidate -> sameMultiplicity(candidate.key().orderedInputs(), orderedInputs));
 				throw new CandidateRuleLookupException(reordered ? CandidateLookupFailure.REORDERED_INPUTS
-					: CandidateLookupFailure.MISSING_FACT, "Exact candidate rule fact is missing");
+					: CandidateLookupFailure.MISSING_FACT, "Exact candidate rule fact is missing: parent="
+						+ parentOccurrence.normalizedSignature() + ", requested=" + orderedInputs
+						+ ", available=" + orderedFacts.stream()
+							.filter(candidate -> candidate.key().parentOccurrence() == parentOccurrence)
+							.map(candidate -> candidate.key().orderedInputs().toString()).toList());
 			}
 			if(fact.key().parentOccurrence() != parentOccurrence
 				|| !fact.key().orderedInputs().equals(orderedInputs))
@@ -625,23 +629,34 @@ public final class PlacementAnalysis {
 		public int inputPosition() { return inputPosition; }
 	}
 
+	/** Common identity surface for non-physical candidate inputs. */
+	public interface LogicalCandidateInputFact {
+		CompiledHopKey sourceOccurrence();
+		CompiledHopKey targetRead();
+		int logicalPosition();
+	}
+
 	/** One analysis-owned logical input carried across an exact CFG transient forward. */
 	public record LogicalTransientInputFact(CompiledHopKey sourceWrite, CompiledHopKey targetRead,
 		int logicalPosition, ValueVersionKey sourceValueVersion, ValueVersionKey readValueVersion,
-		DurableAnchorKey anchor, PlacementState localSourceState, PlacementState federatedSourceState,
-		CandidateInputState localInput, CandidateInputState federatedInput) implements Comparable<LogicalTransientInputFact> {
+		DurableAnchorKey anchor, FType federatedFType,
+		PlacementState localSourceState, PlacementState federatedSourceState,
+		CandidateInputState localInput, CandidateInputState federatedInput)
+		implements LogicalCandidateInputFact, Comparable<LogicalTransientInputFact> {
 		public LogicalTransientInputFact {
 			Objects.requireNonNull(sourceWrite, "sourceWrite");
 			Objects.requireNonNull(targetRead, "targetRead");
 			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
 			Objects.requireNonNull(readValueVersion, "readValueVersion");
-			Objects.requireNonNull(anchor, "anchor");
+			Objects.requireNonNull(federatedFType, "federatedFType");
 			Objects.requireNonNull(localSourceState, "localSourceState");
 			Objects.requireNonNull(federatedSourceState, "federatedSourceState");
 			Objects.requireNonNull(localInput, "localInput");
 			Objects.requireNonNull(federatedInput, "federatedInput");
 			if(logicalPosition != 0)
 				throw new IllegalArgumentException("Transient logical input position must be zero");
+			if(anchor != null && anchor.fType() != federatedFType)
+				throw new IllegalArgumentException("Transient logical input anchor layout differs");
 		}
 
 		@Override
@@ -651,6 +666,41 @@ public final class PlacementAnalysis {
 			int positionOrder = Integer.compare(logicalPosition, that.logicalPosition);
 			return positionOrder != 0 ? positionOrder : sourceWrite.compareTo(that.sourceWrite);
 		}
+
+		@Override public CompiledHopKey sourceOccurrence() { return sourceWrite; }
+	}
+
+	/**
+	 * One exact caller argument -> synthetic boundary -> compiled formal-read path.
+	 * This is a logical input edge, not a fabricated physical Hop input.
+	 */
+	public record LogicalFunctionInputFact(CompiledHopKey sourceArgument, CompiledHopKey boundary,
+		CompiledHopKey targetRead, int callInputPosition, int logicalPosition,
+		ValueVersionKey sourceValueVersion, ValueVersionKey boundaryValueVersion,
+		ValueVersionKey readValueVersion)
+		implements LogicalCandidateInputFact, Comparable<LogicalFunctionInputFact> {
+		public LogicalFunctionInputFact {
+			Objects.requireNonNull(sourceArgument, "sourceArgument");
+			Objects.requireNonNull(boundary, "boundary");
+			Objects.requireNonNull(targetRead, "targetRead");
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(boundaryValueVersion, "boundaryValueVersion");
+			Objects.requireNonNull(readValueVersion, "readValueVersion");
+			if(callInputPosition < 0 || logicalPosition != 0)
+				throw new IllegalArgumentException("Function logical input positions differ");
+		}
+
+		@Override
+		public int compareTo(LogicalFunctionInputFact that) {
+			int readOrder = targetRead.compareTo(that.targetRead);
+			if(readOrder != 0) return readOrder;
+			int callOrder = Integer.compare(callInputPosition, that.callInputPosition);
+			if(callOrder != 0) return callOrder;
+			int sourceOrder = sourceArgument.compareTo(that.sourceArgument);
+			return sourceOrder != 0 ? sourceOrder : boundary.compareTo(that.boundary);
+		}
+
+		@Override public CompiledHopKey sourceOccurrence() { return sourceArgument; }
 	}
 
 	/** Stable association between a neutral graph key and its concrete compiled Hop origin. */
@@ -681,6 +731,9 @@ public final class PlacementAnalysis {
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> inputEdgesByIdentity;
 	private final List<LogicalTransientInputFact> logicalTransientInputsInCanonicalOrder;
 	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,LogicalTransientInputFact>>> logicalInputsByIdentity;
+	private final List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder;
+	private final Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>>>
+		logicalFunctionInputsByIdentity;
 	private final DMLProgram programOwner;
 	private final Map<String,FunctionStatementBlock> namedFunctionStatementBlocks;
 	private final Runnable programMutationGuard;
@@ -768,6 +821,10 @@ public final class PlacementAnalysis {
 		this.logicalTransientInputsInCanonicalOrder = validateLogicalTransientInputs(logicalTransientInputs,
 			analysisKeysByIdentity);
 		this.logicalInputsByIdentity = indexLogicalTransientInputs(this.logicalTransientInputsInCanonicalOrder);
+		this.logicalFunctionInputsInCanonicalOrder = validateLogicalFunctionInputs(
+			deriveLogicalFunctionInputs(), analysisKeysByIdentity);
+		this.logicalFunctionInputsByIdentity = indexLogicalFunctionInputs(
+			this.logicalFunctionInputsInCanonicalOrder);
 		for(HeuristicPolicyFact fact : heuristicPolicyFacts.demotions()) {
 			NeutralPlacementGraph.Node producer = graph.node(fact.producer()).orElseThrow(() ->
 				new IllegalArgumentException("Heuristic policy producer is missing from the analysis graph"));
@@ -874,7 +931,11 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Logical transient input endpoints have wrong node kinds");
 			if(source.valueVersion() != fact.sourceValueVersion() || read.valueVersion() != fact.readValueVersion())
 				throw new IllegalArgumentException("Logical transient input value identity differs");
-			if(source.anchors().size() != 1 || read.anchors().size() != 1
+			if(fact.anchor() == null) {
+				if(!source.anchors().isEmpty() || !read.anchors().isEmpty())
+					throw new IllegalArgumentException("Plan-carried logical transient input owns a durable anchor");
+			}
+			else if(source.anchors().size() != 1 || read.anchors().size() != 1
 				|| source.anchors().get(0) != fact.anchor() || !read.anchors().get(0).equals(fact.anchor()))
 				throw new IllegalArgumentException("Logical transient input anchor differs");
 			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
@@ -887,9 +948,9 @@ public final class PlacementAnalysis {
 				|| fact.localSourceState().fType() != null || fact.localSourceState().shapeDependent()
 				|| fact.federatedSourceState().execType() != ExecType.FED
 				|| fact.federatedSourceState().output() != FederatedOutput.FOUT
-				|| fact.federatedSourceState().fType() != fact.anchor().fType()
+				|| fact.federatedSourceState().fType() != fact.federatedFType()
 				|| !fact.localInput().equals(CandidateInputState.absentLocal())
-				|| !fact.federatedInput().equals(CandidateInputState.present(fact.anchor().fType())))
+				|| !fact.federatedInput().equals(CandidateInputState.present(fact.federatedFType())))
 				throw new IllegalArgumentException("Logical transient input state semantics differ");
 			List<List<CandidateInputState>> expected = List.of(List.of(fact.localInput()), List.of(fact.federatedInput()));
 			List<List<CandidateInputState>> actual = candidateRuleDomain.orderedRuleKeys().stream()
@@ -905,12 +966,12 @@ public final class PlacementAnalysis {
 				|| federatedFact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| federatedFact.capability().nativeExec() != ExecType.FED
 				|| federatedFact.capability().nativeOutput() != FederatedOutput.FOUT
-				|| federatedFact.capability().nativeFoutFType() != fact.anchor().fType())
+				|| federatedFact.capability().nativeFoutFType() != fact.federatedFType())
 				throw new IllegalArgumentException("Logical transient candidate capability differs");
 			if(read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.CP
 				&& state.output() == FederatedOutput.LOUT && state.fType() == null)
 				|| read.legalAlternatives().stream().noneMatch(state -> state.execType() == ExecType.FED
-					&& state.output() == FederatedOutput.FOUT && state.fType() == fact.anchor().fType()))
+					&& state.output() == FederatedOutput.FOUT && state.fType() == fact.federatedFType()))
 				throw new IllegalArgumentException("Logical transient read legal tuples differ");
 			if(compiledInputEdgesInCanonicalOrder.stream().anyMatch(edge -> edge.producer() == fact.sourceWrite()
 				&& edge.consumer() == fact.targetRead() && edge.inputPosition() == fact.logicalPosition()))
@@ -932,6 +993,100 @@ public final class PlacementAnalysis {
 				ignored -> new LinkedHashMap<>());
 			if(byPosition.putIfAbsent(fact.logicalPosition(), fact) != null)
 				throw new IllegalArgumentException("Duplicate logical transient input fact");
+		}
+		return Collections.unmodifiableMap(indexed);
+	}
+
+	private List<LogicalFunctionInputFact> deriveLogicalFunctionInputs() {
+		Map<CompiledHopKey,List<Constraint>> incomingArguments = new IdentityHashMap<>();
+		for(Constraint constraint : graph.constraints())
+			if(constraint.kind() == ConstraintKind.CONJUNCTIVE
+				&& (constraint.evidence().startsWith("function-argument:")
+					|| constraint.evidence().startsWith("inlined-function-argument:")))
+				incomingArguments.computeIfAbsent(constraint.right(), ignored -> new java.util.ArrayList<>())
+					.add(constraint);
+		List<LogicalFunctionInputFact> result = new java.util.ArrayList<>();
+		for(Constraint formal : graph.constraints()) {
+			if(formal.kind() != ConstraintKind.SAME_PLACEMENT
+				|| !"function-formal-input".equals(formal.evidence()))
+				continue;
+			List<Constraint> arguments = incomingArguments.getOrDefault(formal.left(), List.of());
+			if(arguments.size() != 1)
+				throw new IllegalArgumentException("Function input boundary has no unique caller argument");
+			Constraint argument = arguments.get(0);
+			NeutralPlacementGraph.Node source = graph.node(argument.left()).orElseThrow();
+			NeutralPlacementGraph.Node boundary = graph.node(formal.left()).orElseThrow();
+			NeutralPlacementGraph.Node read = graph.node(formal.right()).orElseThrow();
+			result.add(new LogicalFunctionInputFact(source.key(), boundary.key(), read.key(),
+				argument.inputPosition(), 0, source.valueVersion(), boundary.valueVersion(), read.valueVersion()));
+		}
+		return result.stream().sorted().toList();
+	}
+
+	private List<LogicalFunctionInputFact> validateLogicalFunctionInputs(
+		List<LogicalFunctionInputFact> supplied, Map<CompiledHopKey,Boolean> analysisKeysByIdentity) {
+		Objects.requireNonNull(supplied, "logicalFunctionInputs");
+		List<LogicalFunctionInputFact> sorted = supplied.stream()
+			.map(fact -> Objects.requireNonNull(fact, "logical function input fact")).sorted().toList();
+		if(!sorted.equals(supplied))
+			throw new IllegalArgumentException("Logical function input facts are not in canonical order");
+		Set<String> identities = new java.util.LinkedHashSet<>();
+		for(LogicalFunctionInputFact fact : sorted) {
+			if(!analysisKeysByIdentity.containsKey(fact.sourceArgument())
+				|| !analysisKeysByIdentity.containsKey(fact.boundary())
+				|| !analysisKeysByIdentity.containsKey(fact.targetRead()))
+				throw new IllegalArgumentException("Logical function input has a foreign occurrence");
+			NeutralPlacementGraph.Node source = graph.node(fact.sourceArgument()).orElseThrow();
+			NeutralPlacementGraph.Node boundary = graph.node(fact.boundary()).orElseThrow();
+			NeutralPlacementGraph.Node read = graph.node(fact.targetRead()).orElseThrow();
+			if(boundary.kind() != NodeKind.FUNCTION_INPUT || read.kind() != NodeKind.TRANSIENT_READ
+				|| read.valueVersion().versionKind() != PlacementIdentity.VersionKind.FUNCTION_INPUT)
+				throw new IllegalArgumentException("Logical function input endpoints have wrong node kinds");
+			if(source.valueVersion() != fact.sourceValueVersion()
+				|| boundary.valueVersion() != fact.boundaryValueVersion()
+				|| read.valueVersion() != fact.readValueVersion())
+				throw new IllegalArgumentException("Logical function input value identity differs");
+			if(!hopsByKey.get(fact.targetRead()).getInput().isEmpty())
+				throw new IllegalArgumentException("Logical function read has physical inputs");
+			long argumentEdges = graph.constraints().stream().filter(constraint ->
+				constraint.kind() == ConstraintKind.CONJUNCTIVE
+					&& constraint.left() == fact.sourceArgument() && constraint.right() == fact.boundary()
+					&& constraint.inputPosition() == fact.callInputPosition()).count();
+			long formalEdges = graph.constraints().stream().filter(constraint ->
+				constraint.kind() == ConstraintKind.SAME_PLACEMENT
+					&& constraint.left() == fact.boundary() && constraint.right() == fact.targetRead()
+					&& "function-formal-input".equals(constraint.evidence())).count();
+			if(argumentEdges != 1 || formalEdges != 1)
+				throw new IllegalArgumentException("Logical function input constraint authority differs");
+			for(PlacementState state : source.legalAlternatives()) {
+				CandidateInputState input;
+				if(state.output() == FederatedOutput.LOUT)
+					input = CandidateInputState.absentLocal();
+				else if(state.output() == FederatedOutput.FOUT && state.fType() != null)
+					input = CandidateInputState.present(state.fType());
+				else
+					continue;
+				candidateRuleFacts.requireExact(fact.targetRead(), List.of(input));
+			}
+			String identity = System.identityHashCode(fact.sourceArgument()) + ":"
+				+ System.identityHashCode(fact.boundary()) + ":" + System.identityHashCode(fact.targetRead())
+				+ ':' + fact.callInputPosition();
+			if(!identities.add(identity))
+				throw new IllegalArgumentException("Duplicate logical function input fact");
+		}
+		return List.copyOf(sorted);
+	}
+
+	private static Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>>>
+		indexLogicalFunctionInputs(List<LogicalFunctionInputFact> facts) {
+		Map<CompiledHopKey,Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>>> indexed =
+			new IdentityHashMap<>();
+		for(LogicalFunctionInputFact fact : facts) {
+			Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>> byRead = indexed.computeIfAbsent(
+				fact.sourceArgument(), ignored -> new IdentityHashMap<>());
+			Map<Integer,List<LogicalFunctionInputFact>> byPosition = byRead.computeIfAbsent(fact.targetRead(),
+				ignored -> new LinkedHashMap<>());
+			byPosition.computeIfAbsent(fact.logicalPosition(), ignored -> new java.util.ArrayList<>()).add(fact);
 		}
 		return Collections.unmodifiableMap(indexed);
 	}
@@ -1031,14 +1186,14 @@ public final class PlacementAnalysis {
 				throw new IllegalArgumentException("Duplicate compiled Hop occurrence identity");
 		Map<CompiledHopKey,Map<Integer,Constraint>> inputsByConsumer = new IdentityHashMap<>();
 		for(Constraint constraint : graph.constraints()) {
-			if(constraint.kind() != ConstraintKind.DOMINATES || !"data-input".equals(constraint.evidence()))
+			if(!isCompiledInputConstraint(constraint))
 				continue;
 			HopOccurrenceProjection producer = occurrencesByIdentity.get(constraint.left());
 			HopOccurrenceProjection consumer = occurrencesByIdentity.get(constraint.right());
 			if(producer == null || consumer == null)
-				throw new IllegalArgumentException("Data-input constraint has a foreign compiled owner");
+				throw new IllegalArgumentException("Compiled-input constraint has a foreign compiled owner");
 			if(constraint.inputPosition() < 0)
-				throw new IllegalArgumentException("Data-input constraint has no exact input position");
+				throw new IllegalArgumentException("Compiled-input constraint has no exact input position");
 			if(producer.hop().getDataType() == null || !producer.hop().getDataType().isMatrix())
 				continue;
 			Map<Integer,Constraint> byPosition = inputsByConsumer.computeIfAbsent(consumer.key(),
@@ -1057,6 +1212,12 @@ public final class PlacementAnalysis {
 			});
 		}
 		return List.copyOf(edges);
+	}
+
+	private static boolean isCompiledInputConstraint(Constraint constraint) {
+		return constraint.kind() == ConstraintKind.DOMINATES && "data-input".equals(constraint.evidence())
+			|| constraint.kind() == ConstraintKind.SAME_PLACEMENT
+				&& "function-input-binding".equals(constraint.evidence());
 	}
 
 	private record EdgeIdentity(CompiledHopKey producer, CompiledHopKey consumer, int inputPosition) { }
@@ -1166,6 +1327,22 @@ public final class PlacementAnalysis {
 		if(fact == null)
 			throw new IllegalArgumentException("Exact logical transient input fact is missing");
 		return fact;
+	}
+
+	public List<LogicalFunctionInputFact> logicalFunctionInputsInCanonicalOrder() {
+		return logicalFunctionInputsInCanonicalOrder;
+	}
+
+	public LogicalFunctionInputFact requireExactLogicalFunctionInput(CompiledHopKey sourceArgument,
+		CompiledHopKey targetRead, int logicalPosition) {
+		Map<CompiledHopKey,Map<Integer,List<LogicalFunctionInputFact>>> byRead =
+			logicalFunctionInputsByIdentity.get(Objects.requireNonNull(sourceArgument, "sourceArgument"));
+		Map<Integer,List<LogicalFunctionInputFact>> byPosition = byRead == null ? null
+			: byRead.get(Objects.requireNonNull(targetRead, "targetRead"));
+		List<LogicalFunctionInputFact> facts = byPosition == null ? null : byPosition.get(logicalPosition);
+		if(facts == null || facts.size() != 1)
+			throw new IllegalArgumentException("Exact logical function input fact is missing or ambiguous");
+		return facts.get(0);
 	}
 
 	public CompiledInputEdgeFact requireExactCompiledInputEdge(CompiledHopKey producer,

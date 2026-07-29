@@ -7,14 +7,14 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerTrace;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
@@ -29,48 +29,142 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Public shadow-mode exact selector over immutable {@link MinStExactCostFacts}. */
 public final class MinStExactSelector {
+	/**
+	 * Exhaustive enumeration is retained only for bounded complete tie certificates.
+	 * The production objective is always the same directed min-cut; larger certificate
+	 * spaces use Push-Relabel and publish the inclusion-minimal/maximal exact minima.
+	 */
+	private static final long MAX_EXHAUSTIVE_CERTIFICATE_PARTITIONS = 1_048_576L;
+
 	public MinStExactSelector() { }
 
 	public static MinStExactSelection select(MinStExactCostFacts facts) {
 		Objects.requireNonNull(facts, "facts");
 		MinStExactCostFactsProducer.validateMembershipRepresentatives(facts);
-		MinStExactCutSolver.Result solved = MinStExactCutSolver.solve(facts.sourceNodeId(),
-			facts.sinkNodeId(), decisions(facts), freeNonDecisionNodes(facts), edges(facts));
+		List<MinStExactCutSolver.Decision> decisions = decisions(facts);
+		List<Long> freeNodes = freeNonDecisionNodes(facts);
+		List<MinStExactCutSolver.Edge> edges = edges(facts);
+		MinStExactCutSolver.Result solved = usesPolynomialSolver(decisions, freeNodes)
+			? MinStPolynomialCutSolver.solve(facts.sourceNodeId(), facts.sinkNodeId(), edges)
+			: MinStExactCutSolver.solve(facts.sourceNodeId(), facts.sinkNodeId(), decisions,
+				freeNodes, edges);
 		List<List<Long>> rawMinima = solved.minima().stream()
 			.map(MinStExactCutSolver.Minimum::sourceNodeIds)
 			.sorted(lexicographicLongLists()).toList();
-		List<SemanticMinimum> semanticMinima = semanticMinima(facts, solved.objectiveBits(), rawMinima);
-		List<List<Long>> semanticCertificates = semanticMinima.stream()
-			.map(SemanticMinimum::representativeSourceNodeIds).toList();
-		if(semanticMinima.size() != 1)
-			return new MinStExactSelection(solved.objectiveBits(), List.of(), List.of(), List.of(),
-				MinStExactSelection.TIE_UNSPECIFIED, semanticCertificates, rawMinima);
-		SemanticMinimum selected = semanticMinima.get(0);
+		List<Long> sourceReachableMinimum = sourceReachableMinimum(rawMinima);
+		List<PlacementState> selectedStates = selectedStates(facts, sourceReachableMinimum);
+		SemanticMinimum selected = new SemanticMinimum(sourceReachableMinimum, selectedStates,
+			selectedObligations(facts, sourceReachableMinimum, selectedStates));
+		traceSelection(facts, selected, solved.objectiveBits(),
+			usesPolynomialSolver(decisions, freeNodes));
 		return new MinStExactSelection(solved.objectiveBits(), selected.representativeSourceNodeIds(),
 			selected.selectedStatesInScopeOrder(), selected.obligationReceiptsInOrder(),
-			MinStExactSelection.UNIQUE, semanticCertificates, rawMinima);
+			MinStExactSelection.UNIQUE, List.of(sourceReachableMinimum), rawMinima);
 	}
 
-	private static List<SemanticMinimum> semanticMinima(MinStExactCostFacts facts, long objectiveBits,
-		List<List<Long>> rawMinima) {
-		Map<SemanticKey, SemanticMinimum> semantic = new LinkedHashMap<>();
-		for(List<Long> raw : rawMinima) {
-			List<PlacementState> states = selectedStates(facts, raw);
-			List<ObligationReceipt> receipts = selectedObligations(facts, raw);
-			SemanticKey key = new SemanticKey(objectiveBits, stateKeys(states), receiptKeys(receipts));
-			semantic.computeIfAbsent(key, ignored -> new SemanticMinimum(raw, states, receipts));
+	/**
+	 * The intersection of all minimum s-t source partitions is the unique
+	 * inclusion-minimal minimum cut. This is exactly the residual source-reachable
+	 * partition returned by the legacy Push-Relabel MinST implementation. The
+	 * polynomial solver publishes the minimum/maximum extrema, so the same
+	 * intersection rule applies to both solver paths without changing the objective.
+	 */
+	private static List<Long> sourceReachableMinimum(List<List<Long>> rawMinima) {
+		if(rawMinima.isEmpty())
+			throw new IllegalArgumentException("MINST_EXACT_NO_MINIMUM_CERTIFICATE");
+		Set<Long> intersection = new LinkedHashSet<>(rawMinima.get(0));
+		for(int index = 1; index < rawMinima.size(); index++)
+			intersection.retainAll(rawMinima.get(index));
+		List<Long> canonical = intersection.stream().sorted().toList();
+		if(!rawMinima.contains(canonical))
+			throw new IllegalArgumentException(
+				"MINST_EXACT_SOURCE_REACHABLE_MINIMUM_NOT_REPRESENTED|intersection=" + canonical);
+		return canonical;
+	}
+
+	private static void traceSelection(MinStExactCostFacts facts, SemanticMinimum selected,
+		long objectiveBits, boolean polynomial) {
+		if(!FederatedPlannerTrace.isEnabled())
+			return;
+		long fed = selected.selectedStatesInScopeOrder().stream()
+			.filter(state -> state.execType() == ExecType.FED).count();
+		long fout = selected.selectedStatesInScopeOrder().stream()
+			.filter(state -> state.output() == FederatedOutput.FOUT).count();
+		FederatedPlannerTrace.logGlobal("MinST-ExactCut", "solver="
+			+ (polynomial ? "PUSH_RELABEL" : "BOUNDED_ENUMERATION")
+			+ ", objective=" + Double.longBitsToDouble(objectiveBits)
+			+ ", decisions=" + facts.decisionFactsInScopeOrder().size()
+			+ ", selectedFed=" + fed + ", selectedFout=" + fout
+			+ ", sourcePartitionSize=" + selected.representativeSourceNodeIds().size());
+		Set<Long> source = new LinkedHashSet<>(selected.representativeSourceNodeIds());
+		for(int index = 0; index < facts.decisionFactsInScopeOrder().size(); index++) {
+			DecisionFact decision = facts.decisionFactsInScopeOrder().get(index);
+			Hop hop = facts.analysis().hop(decision.key()).orElse(null);
+			if(!FederatedPlannerTrace.shouldTrace(hop))
+				continue;
+			PlacementState state = selected.selectedStatesInScopeOrder().get(index);
+			FederatedPlannerTrace.log(hop, "MinST-ExactSelect", "selected="
+				+ state.execType() + '/' + state.output()
+				+ " side[c=" + (source.contains(decision.computeNodeId()) ? 'S' : 'T')
+				+ ",p=" + (source.contains(decision.placementNodeId()) ? 'S' : 'T') + ']'
+				+ " unary[CP=" + edgeCapacity(facts, facts.sourceNodeId(), decision.computeNodeId())
+				+ ",FED=" + edgeCapacity(facts, decision.computeNodeId(), facts.sinkNodeId()) + ']'
+				+ " conv[p->c=" + edgeCapacity(facts, decision.placementNodeId(), decision.computeNodeId())
+				+ ",p->t=" + edgeCapacity(facts, decision.placementNodeId(), facts.sinkNodeId())
+				+ ",c->p=" + edgeCapacity(facts, decision.computeNodeId(), decision.placementNodeId()) + ']'
+				+ " legal=" + decision.legalStatesInCanonicalOrder().stream()
+					.map(candidate -> candidate.execType() + "/" + candidate.output())
+					.distinct().toList());
+			FederatedPlannerTrace.log(hop, "MinST-ExactRules", "facts="
+				+ facts.analysis().candidateRuleFacts().orderedFacts().stream()
+					.filter(fact -> fact.key().parentOccurrence() == decision.key())
+					.map(fact -> "inputs=" + fact.key().orderedInputs()
+						+ ",status=" + fact.status()
+						+ ",cap=" + (fact.capability() == null ? "-"
+							: fact.capability().nativeExec() + "/" + fact.capability().nativeOutput())
+						+ ",emissions=" + fact.allowedEmissionStates().stream()
+							.map(emission -> emission.placementState().execType() + "/"
+								+ emission.placementState().output() + ':'
+								+ emission.placementState().fType())
+							.toList())
+					.toList());
 		}
-		return List.copyOf(semantic.values());
 	}
 
-	private static List<StateKey> stateKeys(List<PlacementState> states) {
-		return states.stream().map(StateKey::new).toList();
+	private static double edgeCapacity(MinStExactCostFacts facts, long from, long to) {
+		return facts.directedEdgesInDerivationOrder().stream()
+			.filter(edge -> edge.fromNodeId() == from && edge.toNodeId() == to)
+			.mapToDouble(edge -> Double.longBitsToDouble(edge.capacityBits())).findFirst().orElse(0.0);
 	}
 
-	private static List<ReceiptKey> receiptKeys(List<ObligationReceipt> receipts) {
-		return receipts.stream().map(receipt -> new ReceiptKey(receipt.direction(), receipt.producerKey(),
-			receipt.consumerKey(), receipt.inputPosition(), receipt.requiredPlacement(),
-			receipt.actionSignature())).toList();
+	static boolean usesPolynomialSolver(MinStExactCostFacts facts) {
+		Objects.requireNonNull(facts, "facts");
+		return usesPolynomialSolver(decisions(facts), freeNonDecisionNodes(facts));
+	}
+
+	private static boolean usesPolynomialSolver(List<MinStExactCutSolver.Decision> decisions,
+		List<Long> freeNodes) {
+		long partitions = 1L;
+		for(MinStExactCutSolver.Decision decision : decisions) {
+			partitions = saturatingMultiply(partitions,
+				decision.legalChoicesInCanonicalOrder().size());
+			if(partitions > MAX_EXHAUSTIVE_CERTIFICATE_PARTITIONS)
+				return true;
+		}
+		for(int index = 0; index < freeNodes.size(); index++) {
+			partitions = saturatingMultiply(partitions, 2L);
+			if(partitions > MAX_EXHAUSTIVE_CERTIFICATE_PARTITIONS)
+				return true;
+		}
+		return false;
+	}
+
+	private static long saturatingMultiply(long left, long right) {
+		if(left == 0L || right == 0L)
+			return 0L;
+		if(left > MAX_EXHAUSTIVE_CERTIFICATE_PARTITIONS / right)
+			return MAX_EXHAUSTIVE_CERTIFICATE_PARTITIONS + 1L;
+		return left * right;
 	}
 
 	private static List<MinStExactCutSolver.Decision> decisions(MinStExactCostFacts facts) {
@@ -157,7 +251,7 @@ public final class MinStExactSelector {
 	}
 
 	private static List<ObligationReceipt> selectedObligations(MinStExactCostFacts facts,
-		List<Long> sourceNodeIds) {
+		List<Long> sourceNodeIds, List<PlacementState> selectedStates) {
 		Set<Long> source = new LinkedHashSet<>(sourceNodeIds);
 		List<ObligationReceipt> receipts = new ArrayList<>();
 		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder()) {
@@ -166,18 +260,27 @@ public final class MinStExactSelector {
 			boolean compatibleProducerSource = producerPlacementSource
 				&& MinStExactCostFactsProducer.hasExactCompatibleDurableSource(facts.analysis(), group);
 			if(group.direction() == Direction.UPLOAD && auxSource && !compatibleProducerSource)
-				addGroupReceipts(receipts, facts, group);
+				addGroupReceipts(receipts, facts, group, selectedStates);
 			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)
-				addGroupReceipts(receipts, facts, group);
+				addGroupReceipts(receipts, facts, group, selectedStates);
 		}
 		return receipts.stream().sorted(receiptComparator()).toList();
 	}
 
 	private static void addGroupReceipts(List<ObligationReceipt> receipts,
-		MinStExactCostFacts facts, AuxiliaryGroupFact group) {
+		MinStExactCostFacts facts, AuxiliaryGroupFact group,
+		List<PlacementState> selectedStates) {
+		PlacementState selectedProducer = selectedState(facts, selectedStates, group.producerKey());
 		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
+			PlacementState selectedConsumer = selectedState(facts, selectedStates, endpoint.consumerKey());
 			List<TransferAuthorityFact> matches = facts.transferAuthoritiesInCanonicalOrder().stream()
 				.filter(authority -> authority.group() == group && authority.endpoint() == endpoint)
+				// One local input can have exact relocation actions for FED/LOUT and
+				// FED/FOUT. The cut has now selected the consumer's full two-bit state,
+				// so retain only the action whose obligation is active for that state.
+				.filter(authority -> group.direction() != Direction.UPLOAD
+					|| authority.actionOrNull() == null
+					|| authority.requiredPlacement().equals(selectedConsumer))
 				.toList();
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_OBLIGATION_AUTHORITY_"
@@ -185,12 +288,30 @@ public final class MinStExactSelector {
 					+ "|direction=" + group.direction()
 					+ "|producer=" + group.producerKey().normalizedSignature()
 					+ "|consumer=" + endpoint.consumerKey().normalizedSignature()
-					+ "|input=" + endpoint.inputPosition());
+					+ "|input=" + endpoint.inputPosition()
+					+ "|selectedProducer=" + selectedProducer.normalizedSignature()
+					+ "|selectedConsumer=" + selectedConsumer.normalizedSignature()
+					+ "|available=" + facts.transferAuthoritiesInCanonicalOrder().stream()
+						.filter(authority -> authority.group() == group && authority.endpoint() == endpoint)
+						.map(authority -> authority.requiredPlacement().normalizedSignature()
+							+ ':' + authority.authoritySignature()).toList());
 			TransferAuthorityFact authority = matches.get(0);
 			receipts.add(new ObligationReceipt(group.direction(), group.producerKey(),
 				endpoint.consumerKey(), endpoint.inputPosition(), authority.requiredPlacement(),
 				authority.authoritySignature()));
 		}
+	}
+
+	private static PlacementState selectedState(MinStExactCostFacts facts,
+		List<PlacementState> selectedStates, CompiledHopKey key) {
+		List<DecisionFact> decisions = facts.decisionFactsInScopeOrder();
+		if(decisions.size() != selectedStates.size())
+			throw new IllegalArgumentException("MINST_EXACT_SELECTED_STATE_CARDINALITY_MISMATCH");
+		for(int index = 0; index < decisions.size(); index++)
+			if(decisions.get(index).key() == key)
+				return selectedStates.get(index);
+		throw new IllegalArgumentException("MINST_EXACT_SELECTED_STATE_MISSING|key="
+			+ key.normalizedSignature());
 	}
 
 	private static String membership(ExecType execType, FederatedOutput output) {
@@ -228,67 +349,4 @@ public final class MinStExactSelector {
 		}
 	}
 
-	private record SemanticKey(long objectiveBits, List<StateKey> selectedStatesInScopeOrder,
-		List<ReceiptKey> obligationReceiptsInOrder) {
-		SemanticKey {
-			selectedStatesInScopeOrder = List.copyOf(selectedStatesInScopeOrder);
-			obligationReceiptsInOrder = List.copyOf(obligationReceiptsInOrder);
-		}
-	}
-
-	private static final class StateKey {
-		private final PlacementState state;
-
-		private StateKey(PlacementState state) {
-			this.state = Objects.requireNonNull(state, "state");
-		}
-
-		@Override
-		public boolean equals(Object other) {
-			return other instanceof StateKey that && state == that.state;
-		}
-
-		@Override
-		public int hashCode() {
-			return System.identityHashCode(state);
-		}
-	}
-
-	private static final class ReceiptKey {
-		private final Direction direction;
-		private final CompiledHopKey producerKey;
-		private final CompiledHopKey consumerKey;
-		private final int inputPosition;
-		private final PlacementState requiredPlacement;
-		private final String actionSignature;
-
-		private ReceiptKey(Direction direction, CompiledHopKey producerKey, CompiledHopKey consumerKey,
-			int inputPosition, PlacementState requiredPlacement, String actionSignature) {
-			this.direction = Objects.requireNonNull(direction, "direction");
-			this.producerKey = Objects.requireNonNull(producerKey, "producerKey");
-			this.consumerKey = Objects.requireNonNull(consumerKey, "consumerKey");
-			this.inputPosition = inputPosition;
-			this.requiredPlacement = Objects.requireNonNull(requiredPlacement, "requiredPlacement");
-			this.actionSignature = Objects.requireNonNull(actionSignature, "actionSignature");
-		}
-
-		@Override
-		public boolean equals(Object other) {
-			if(this == other) return true;
-			if(!(other instanceof ReceiptKey that)) return false;
-			return direction == that.direction
-				&& producerKey == that.producerKey
-				&& consumerKey == that.consumerKey
-				&& inputPosition == that.inputPosition
-				&& requiredPlacement == that.requiredPlacement
-				&& actionSignature.equals(that.actionSignature);
-		}
-
-		@Override
-		public int hashCode() {
-			return Objects.hash(direction, System.identityHashCode(producerKey),
-				System.identityHashCode(consumerKey), inputPosition,
-				System.identityHashCode(requiredPlacement), actionSignature);
-		}
-	}
 }

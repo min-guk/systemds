@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
@@ -22,6 +23,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFed
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpDynamicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlan;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMemoTable.FedPlanVariants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
@@ -77,6 +79,12 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				FederatedPlannerUtils.registerFedInitVar("X", FType.ROW, "g014-stale-x|0,2;");
 				FederatedPlannerUtils.registerFedAnchorKey("X", "g014-stale-x-anchor|ROW");
 				Hop recompileSentinel = compile("B-01").getStatementBlocks().get(0).getHops().get(0);
+				// Keep the stale-state probe source-distinct from every clean control. In particular,
+				// MinST uses B-01 as its clean fallback control below and legitimately republishes
+				// emitted states by stable source signature; sharing that signature would confuse a
+				// fresh publication with restoration of the stale registry entry.
+				recompileSentinel.setBeginLine(900001);
+				recompileSentinel.setEndLine(900001);
 				FederatedPlannerUtils.registerPlannerRecompileState(
 					recompileSentinel, ExecType.CP, FederatedOutput.LOUT);
 				String recompileSignature = FederatedPlannerUtils.plannerRecompileSignature(recompileSentinel);
@@ -247,8 +255,8 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(owner.receipt().analysis(), owner.receipt().semanticConsumption().analysis());
 		assertTransientReadLogicalParity(owner.receipt().semanticConsumption().semanticBlock());
 		assertScalarTransientForwardDependency(owner.receipt().semanticConsumption().semanticBlock());
-		assertMatrixTransientSchedulingIsNotACandidateCarrier(
-			owner.receipt().semanticConsumption().semanticBlock());
+		assertMatrixTransientSchedulingDependency(owner.receipt().semanticConsumption().semanticBlock(),
+			owner.receipt().memo());
 		assertSelectedRootsAreExactMemoReceipts(owner.receipt().exactSelection(), owner.receipt().memo());
 		Assert.assertFalse("B-21 must exercise an exact function selection",
 			owner.receipt().exactSelection().selectedRootPlans().isEmpty());
@@ -289,7 +297,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertSame(dynamic.analysis(), dynamic.enumerationResult().semanticBlock().context().analysis());
 		assertTransientReadLogicalParity(dynamic.enumerationResult().semanticBlock());
 		assertScalarTransientForwardDependency(dynamic.enumerationResult().semanticBlock());
-		assertMatrixTransientSchedulingIsNotACandidateCarrier(dynamic.enumerationResult().semanticBlock());
+		assertMatrixTransientSchedulingDependency(dynamic.enumerationResult().semanticBlock(), dynamic.memoTable());
 		DpPlacementAdapter.ExactSelection dynamicSelection = new DpPlacementAdapter().selectExact(
 			dynamic.analysis(), dynamic.memoTable(), dynamic.enumerationResult().optimalPlan());
 		Assert.assertSame(dynamic.analysis(), dynamicSelection.analysis());
@@ -301,7 +309,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 	}
 
 	@Test
-	public void matrixTransientSchedulingEdgeIsNotACandidateCarrier() {
+	public void matrixTransientSchedulingEdgeIsAnExactNonOracleDependency() {
 		DMLProgram program = compile("B-21");
 		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge.bindAtFinalHopBoundary(program);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
@@ -309,7 +317,7 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 			FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(program, memo, false, analysis);
 		Assert.assertSame(analysis, enumeration.rewireSnapshot().analysis());
 		Assert.assertSame(analysis, enumeration.semanticBlock().context().analysis());
-		assertMatrixTransientSchedulingIsNotACandidateCarrier(enumeration.semanticBlock());
+		assertMatrixTransientSchedulingDependency(enumeration.semanticBlock(), memo);
 		assertTransientReadLogicalParity(enumeration.semanticBlock());
 		assertScalarTransientForwardDependency(enumeration.semanticBlock());
 	}
@@ -336,12 +344,20 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		List<ScalarTransientDependency> dependencies = new ArrayList<>();
 		for(CandidateOccurrenceSnapshot snapshot : block.candidateSnapshots()) {
 			List<?> entries = transientForwardDependencies(snapshot);
-			for(Object entry : entries)
-				dependencies.add(new ScalarTransientDependency(snapshot,
-					invokeAccessor(entry, "forwardEdge", RewireTransientForwardEdge.class),
+			for(Object entry : entries) {
+				RewireTransientForwardEdge edge = invokeAccessor(entry, "forwardEdge",
+					RewireTransientForwardEdge.class);
+				PlacementAnalysis analysis = block.context().analysis();
+				if(analysis.hop(edge.writeOccurrence()).orElseThrow().getDataType()
+						!= org.apache.sysds.common.Types.DataType.SCALAR
+					|| analysis.hop(edge.readOccurrence()).orElseThrow().getDataType()
+						!= org.apache.sysds.common.Types.DataType.SCALAR)
+					continue;
+				dependencies.add(new ScalarTransientDependency(snapshot, edge,
 					invokeAccessor(entry, "sourceOccurrence", CompiledHopKey.class),
 					invokeAccessor(entry, "collectedPosition", Integer.class),
 					invokeAccessor(entry, "selectedSourceState", PlacementState.class)));
+			}
 		}
 		Assert.assertEquals("B-21 must publish exactly one scalar transient-forward dependency receipt",
 			1, dependencies.size());
@@ -380,7 +396,8 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertNull(empty.capability().nativeFoutFType());
 	}
 
-	private static void assertMatrixTransientSchedulingIsNotACandidateCarrier(PreSelectionSemanticBlock block) {
+	private static void assertMatrixTransientSchedulingDependency(PreSelectionSemanticBlock block,
+		FederatedPlannerDpMemoTable memo) {
 		PlacementAnalysis analysis = block.context().analysis();
 		List<RewireTransientForwardEdge> schedulingOnly = block.context().rewireSnapshot().transientForwardEdges()
 			.stream().filter(edge ->
@@ -399,20 +416,46 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		Assert.assertEquals(1, block.context().rewireSnapshot().transientForwardEdges().stream()
 			.filter(edge -> edge == schedulingEdge).count());
 		List<CandidateOccurrenceSnapshot> readCandidates = block.candidateSnapshots().stream()
-			.filter(snapshot -> snapshot.parentOccurrence() == schedulingEdge.readOccurrence()).toList();
-		Assert.assertEquals("scheduling-only matrix read must retain one zero-input candidate", 1,
+			.filter(snapshot -> snapshot.parentOccurrence() == schedulingEdge.readOccurrence())
+			.filter(snapshot -> transientForwardDependencies(snapshot).stream().anyMatch(dependency ->
+				invokeAccessor(dependency, "forwardEdge", RewireTransientForwardEdge.class) == schedulingEdge))
+			.toList();
+		Assert.assertEquals("scheduling-only matrix read must retain one exact dependency candidate", 1,
 			readCandidates.size());
 		CandidateOccurrenceSnapshot read = readCandidates.get(0);
 		Assert.assertTrue(read.rawEntries().isEmpty());
 		Assert.assertTrue(read.promotedEntries().isEmpty());
 		Assert.assertTrue(read.logicalEntries().isEmpty());
-		Assert.assertTrue(transientForwardDependencies(read).isEmpty());
+		Assert.assertEquals(1, transientForwardDependencies(read).size());
+		Object dependency = transientForwardDependencies(read).get(0);
+		Assert.assertSame(schedulingEdge,
+			invokeAccessor(dependency, "forwardEdge", RewireTransientForwardEdge.class));
+		Assert.assertSame(schedulingEdge.writeOccurrence(),
+			invokeAccessor(dependency, "sourceOccurrence", CompiledHopKey.class));
+		Assert.assertEquals(0, invokeAccessor(dependency, "collectedPosition", Integer.class).intValue());
+		PlacementState selected = invokeAccessor(dependency, "selectedSourceState", PlacementState.class);
+		Assert.assertEquals(ExecType.CP, selected.execType());
+		Assert.assertEquals(FederatedOutput.LOUT, selected.output());
+		Assert.assertNull(selected.fType());
 		Assert.assertTrue(read.orderedOracleInputs().isEmpty());
 		CandidateRuleFact empty = analysis.candidateRuleFacts().requireExact(schedulingEdge.readOccurrence(), List.of());
 		Assert.assertEquals(CandidateEvaluationStatus.AVAILABLE, empty.status());
 		Assert.assertEquals(ExecType.CP, empty.capability().nativeExec());
 		Assert.assertEquals(FederatedOutput.LOUT, empty.capability().nativeOutput());
 		Assert.assertNull(empty.capability().nativeFoutFType());
+
+		Hop sourceHop = analysis.hop(schedulingEdge.writeOccurrence()).orElseThrow();
+		Hop readHop = analysis.hop(schedulingEdge.readOccurrence()).orElseThrow();
+		FedPlanVariants variants = memo.getFedPlanVariants(Pair.of(readHop.getHopID(), FederatedOutput.LOUT));
+		Assert.assertNotNull("matrix read must retain a LOUT memo arm", variants);
+		FedPlan readPlan = variants.getFedPlanVariants().stream().filter(plan ->
+			plan.getChildFedPlans().contains(Pair.of(sourceHop.getHopID(), FederatedOutput.LOUT)))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"matrix read memo arm discarded its exact transient-write dependency"));
+		FedPlan sourcePlan = memo.getFedPlanAfterPrune(sourceHop.getHopID(), FederatedOutput.LOUT);
+		Assert.assertNotNull("matrix transient write must retain a LOUT memo arm", sourcePlan);
+		Assert.assertEquals("matrix read cumulative cost must include the exact source dependency",
+			readPlan.getSelfCost() + sourcePlan.getCumulativeCostPerParents(), readPlan.getCumulativeCost(), 1e-12);
 	}
 
 	private static List<?> transientForwardDependencies(CandidateOccurrenceSnapshot snapshot) {

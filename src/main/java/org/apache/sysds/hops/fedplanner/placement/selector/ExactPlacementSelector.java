@@ -33,6 +33,8 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Exhaustive exact selector for the planner-neutral FedAll objective. */
 public final class ExactPlacementSelector implements PlacementSelector {
+	private static final int BRANCH_AND_BOUND_THRESHOLD = 16;
+
 	@Override
 	public PlacementSelection select(NeutralPlacementGraph graph) {
 		Objects.requireNonNull(graph, "graph");
@@ -41,12 +43,16 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		if(search.bestAssignment == null)
 			throw new IllegalStateException("neutral placement graph has no legal total assignment");
 		List<ComponentBound> componentBounds = componentBounds(graph);
+		String derivation = search.branchAndBound
+			? "exact-branch-and-bound-with-partial-legality-pruning"
+			: "complete-cartesian-enumeration-with-partial-legality-pruning";
+		TerminationReason termination = search.branchAndBound
+			? TerminationReason.TIGHT_BOUND_EQUALITY : TerminationReason.EXHAUSTED;
 		PlacementCertificate certificate = new PlacementCertificate(search.bestScore, search.bestScore,
 			search.explored, search.pruned, sha256(search.bestScore.normalizedSignature()),
 			sha256(graph.normalizedSignature()), graph.nodes().size(), graph.constraints().size(),
 			componentBounds.size(), 0, componentBounds,
-			"complete-cartesian-enumeration-with-total-legality-check", "production", -1L,
-			TerminationReason.EXHAUSTED);
+			derivation, "production", -1L, termination);
 		return new PlacementSelection(search.bestAssignment, selectedRelocations(graph, search.bestAssignment),
 			search.bestScore, certificate);
 	}
@@ -55,6 +61,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		private final NeutralPlacementGraph graph;
 		private final List<Node> nodes;
 		private final Map<CompiledHopKey, PlacementState> current = new LinkedHashMap<>();
+		private final boolean branchAndBound;
 		private Map<CompiledHopKey, PlacementState> bestAssignment;
 		private PlacementScore bestScore;
 		private long explored;
@@ -63,19 +70,37 @@ public final class ExactPlacementSelector implements PlacementSelector {
 		private Search(NeutralPlacementGraph graph) {
 			this.graph = graph;
 			validateRelocationSources(graph);
-			nodes = new ArrayList<>(graph.decisionNodes());
-			Collections.sort(nodes);
-			for(Node node : nodes)
+			List<Node> decisions = new ArrayList<>(graph.decisionNodes());
+			for(Node node : decisions)
 				if(node.legalAlternatives().isEmpty())
 					throw new IllegalStateException("selectable graph node has no legal alternatives: " + node.key());
+			branchAndBound = decisions.stream().filter(node -> node.legalAlternatives().size() > 1).count()
+				> BRANCH_AND_BOUND_THRESHOLD;
+			if(branchAndBound) {
+				for(Node node : decisions)
+					if(node.legalAlternatives().size() == 1)
+						current.put(node.key(), node.legalAlternatives().get(0));
+				if(!canStillBeLegal(graph, current))
+					throw new IllegalStateException("neutral placement graph has incompatible fixed states");
+				nodes = decisions.stream().filter(node -> node.legalAlternatives().size() > 1)
+					.sorted((left, right) -> {
+						int degree = Integer.compare(constraintDegree(graph, right.key()),
+							constraintDegree(graph, left.key()));
+						return degree != 0 ? degree : left.compareTo(right);
+					}).toList();
+			}
+			else {
+				Collections.sort(decisions);
+				nodes = List.copyOf(decisions);
+			}
 		}
 
 		private void enumerate(int index) {
+			if(branchAndBound && bestScore != null && cannotBeatIncumbent(index)) {
+				pruned++;
+				return;
+			}
 			if(index == nodes.size()) {
-				if(!isLegal(graph, current)) {
-					pruned++;
-					return;
-				}
 				explored++;
 				PlacementScore candidate = score(graph, current);
 				if(bestScore == null || candidate.compareTo(bestScore) > 0) {
@@ -86,33 +111,58 @@ public final class ExactPlacementSelector implements PlacementSelector {
 			}
 			Node node = nodes.get(index);
 			List<PlacementState> alternatives = new ArrayList<>(node.legalAlternatives());
-			Collections.sort(alternatives);
+			if(branchAndBound)
+				alternatives.sort((left, right) -> {
+					int fed = Boolean.compare(right.execType() == ExecType.FED, left.execType() == ExecType.FED);
+					if(fed != 0) return fed;
+					int fout = Boolean.compare(right.output() == FederatedOutput.FOUT,
+						left.output() == FederatedOutput.FOUT);
+					return fout != 0 ? fout : left.compareTo(right);
+				});
+			else
+				Collections.sort(alternatives);
 			for(PlacementState state : alternatives) {
 				current.put(node.key(), state);
-				enumerate(index + 1);
+				if(canStillBeLegal(graph, current))
+					enumerate(index + 1);
+				else
+					pruned++;
 			}
 			current.remove(node.key());
 		}
+
+		private boolean cannotBeatIncumbent(int index) {
+			int fed = 0;
+			int fout = 0;
+			for(PlacementState state : current.values()) {
+				if(state.execType() == ExecType.FED) fed++;
+				if(state.output() == FederatedOutput.FOUT) fout++;
+			}
+			for(int i = index; i < nodes.size(); i++) {
+				List<PlacementState> alternatives = nodes.get(i).legalAlternatives();
+				if(alternatives.stream().anyMatch(state -> state.execType() == ExecType.FED)) fed++;
+				if(alternatives.stream().anyMatch(state -> state.output() == FederatedOutput.FOUT)) fout++;
+			}
+			return fed < bestScore.emittedFedCount()
+				|| fed == bestScore.emittedFedCount() && fout < bestScore.foutCount();
+		}
 	}
 
-	private static boolean isLegal(NeutralPlacementGraph graph,
-		Map<CompiledHopKey, PlacementState> assignment) {
-		Set<CompiledHopKey> decisionKeys = new LinkedHashSet<>();
-		for(Node node : graph.decisionNodes()) decisionKeys.add(node.key());
-		if(!assignment.keySet().equals(decisionKeys))
-			return false;
+	private static int constraintDegree(NeutralPlacementGraph graph, CompiledHopKey key) {
+		int degree = 0;
+		for(Constraint constraint : graph.constraints())
+			if(constraint.left().equals(key) || constraint.right().equals(key))
+				degree++;
+		return degree;
+	}
+
+	private static boolean canStillBeLegal(NeutralPlacementGraph graph,
+		Map<CompiledHopKey, PlacementState> partial) {
 		for(Constraint constraint : graph.constraints()) {
-			boolean leftDecision = decisionKeys.contains(constraint.left());
-			boolean rightDecision = decisionKeys.contains(constraint.right());
-			if(!leftDecision || !rightDecision) {
-				if(graph.node(constraint.left()).isEmpty() || graph.node(constraint.right()).isEmpty())
-					return false;
-				continue;
-			}
-			PlacementState left = assignment.get(constraint.left());
-			PlacementState right = assignment.get(constraint.right());
+			PlacementState left = partial.get(constraint.left());
+			PlacementState right = partial.get(constraint.right());
 			if(left == null || right == null)
-				return false;
+				continue;
 			if(constraint.kind() == ConstraintKind.SAME_PLACEMENT && !left.equals(right))
 				return false;
 			if(constraint.kind() == ConstraintKind.SAME_FTYPE && !Objects.equals(left.fType(), right.fType()))

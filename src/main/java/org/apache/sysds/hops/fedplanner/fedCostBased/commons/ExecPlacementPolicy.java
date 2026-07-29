@@ -26,6 +26,7 @@ import java.util.Objects;
 import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.BinaryOp;
+import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
@@ -345,7 +346,7 @@ public final class ExecPlacementPolicy {
 			return true;
 		if (hop instanceof ReorgOp && ((ReorgOp) hop).getOp() == Types.ReOrgOp.TRANS)
 			return true;
-		return hop instanceof BinaryOp;
+		return hop instanceof BinaryOp || hop instanceof AggBinaryOp;
 	}
 
 	private static boolean isMultiReturnBuiltinHop(Hop hop) {

@@ -12,16 +12,24 @@ import java.util.List;
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.FunctionOp;
+import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.FederatedCostModel;
+import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelector;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementCostSemantics;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
@@ -132,6 +140,442 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			competingFacts > 1);
 	}
 
+	@Test
+	public void kmeansCpFoutChoosesUniqueMaterializedInputAuthority() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		List<MembershipRepresentative> representatives = facts.membershipRepresentativesInCanonicalOrder()
+			.stream()
+			.filter(representative -> representative.execType() == ExecType.CP
+				&& representative.output() == FederatedOutput.FOUT)
+			.filter(representative -> representative.decisionKey().normalizedSignature()
+				.contains("scripts/builtin/kmeans.dml:155:24:org.apache.sysds.hops.AggBinaryOp"))
+			.toList();
+		Assert.assertEquals("BR10_KMEANS_CP_FOUT_REPRESENTATIVE_MUST_BE_UNIQUE",
+			1, representatives.size());
+		MembershipRepresentative representative = representatives.get(0);
+		Assert.assertEquals("BR10_KMEANS_EXACT_INPUT0_MUST_BE_COL",
+			CandidateInputState.present(FType.COL), representative.orderedInputs().get(0));
+		Assert.assertEquals("BR10_KMEANS_EXACT_INPUT1_MUST_BE_ROW",
+			CandidateInputState.present(FType.ROW), representative.orderedInputs().get(1));
+		Assert.assertEquals("BR10_KMEANS_CP_FOUT_MUST_RETAIN_ONE_EXACT_PRODUCER_AUTHORITY",
+			1, representative.inputAuthorityFacts().size());
+	}
+
+	@Test
+	public void kmeansRefedAggregateBinaryRetainsLegacyFederatedMembership() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		CompiledHopKey key = analysis.graph().decisionNodes().stream()
+			.map(node -> node.key())
+			.filter(candidate -> candidate.normalizedSignature()
+				.contains("scripts/builtin/kmeans.dml:70:30:org.apache.sysds.hops.AggBinaryOp"))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_REFED_AGGBINARY_DECISION_MISSING"));
+		PlacementState fedLout = analysis.graph().node(key).orElseThrow().legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_REFED_AGGBINARY_RAW_FED_LOUT_MISSING"));
+
+		Assert.assertTrue("BR10_KMEANS_LOCAL_INPUT_UPLOAD_MUST_HAVE_EXACT_RELOCATION_AUTHORITY",
+			analysis.graph().relocationActions().stream()
+				.filter(action -> action.key().targetPlacement().equals(fedLout))
+				.flatMap(action -> action.obligations().stream())
+				.anyMatch(obligation -> obligation.consumer() == key
+					&& obligation.inputPosition() == 0));
+
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		DecisionFact decision = facts.decisionFactsInScopeOrder().stream()
+			.filter(candidate -> candidate.key() == key).findFirst().orElseThrow();
+		Assert.assertTrue("BR10_KMEANS_LEGACY_FED_LOUT_MUST_SURVIVE_EXACT_PRE_SOLVE",
+			decision.legalStatesInCanonicalOrder().contains(fedLout));
+	}
+
+	@Test
+	public void kmeansFunctionInputLocalMaterializationRetainsLegacyFullPayloadCost() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		PlacementAnalysis.LogicalFunctionInputFact logicalInput = analysis
+			.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead().normalizedSignature()
+				.contains("scripts/builtin/kmeans.dml:59:16:org.apache.sysds.hops.DataOp:TRead X"))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_FUNCTION_INPUT_TREAD_MISSING"));
+		DecisionFact source = decision(facts, logicalInput.sourceArgument());
+		DecisionFact formal = decision(facts, logicalInput.targetRead());
+		DirectedEdgeFact edge = facts.directedEdgesInDerivationOrder().stream()
+			.filter(candidate -> candidate.fromNodeId() == source.placementNodeId()
+				&& candidate.toNodeId() == formal.placementNodeId())
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_FUNCTION_INPUT_DOWNLOAD_EDGE_MISSING"));
+		double actual = edge.contributionsInDerivationOrder().stream()
+			.filter(contribution -> "logical-function-fout-to-local-download"
+				.equals(contribution.provenance()))
+			.mapToDouble(contribution -> Double.longBitsToDouble(contribution.costBits()))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_FUNCTION_INPUT_DOWNLOAD_CONTRIBUTION_MISSING"));
+		double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+			analysis.hop(logicalInput.targetRead()).orElseThrow(),
+			analysis.hop(logicalInput.sourceArgument()).orElseThrow());
+		double expected = FederatedCostModel.computeDownloadNetworkCost(bytes);
+		Assert.assertEquals("BR10_KMEANS_LOCAL_TREAD_MUST_PAY_FULL_LEGACY_MATERIALIZATION",
+			expected, actual, 0.0);
+	}
+
+	@Test
+	public void kmeansDerivedWorkerPoolRetainsLegacyCpFoutCandidate() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		CompiledHopKey key = decisionKey(analysis,
+			"scripts/builtin/kmeans.dml:213:32:org.apache.sysds.hops.BinaryOp");
+		PlacementState cpFout = analysis.graph().node(key).orElseThrow().legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.CP
+				&& state.output() == FederatedOutput.FOUT)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_DERIVED_WORKER_POOL_CP_FOUT_MISSING"));
+		Assert.assertEquals("BR10_KMEANS_COMPILED_CP_FOUT_MUST_NOT_USE_RECOMPILE_ESCAPE",
+			"compiled", key.recompileContext());
+		Assert.assertTrue("BR10_KMEANS_CP_FOUT_MUST_HAVE_EXACT_CANDIDATE_AUTHORITY",
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == key)
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.anyMatch(emission -> emission.emissionState().placementState() == cpFout));
+	}
+
+	@Test
+	public void kmeansForwardedFunctionInputRetainsLegacyDirectCallerChoice() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans(120));
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		PlacementAnalysis.LogicalTransientInputFact logical = analysis
+			.logicalTransientInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead().normalizedSignature()
+				.contains("scripts/builtin/kmeans.dml:134:16:org.apache.sysds.hops.DataOp:TRead X"))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOGICAL_TRANSIENT_INPUT_MISSING"));
+		CompiledHopKey formalRead = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.right() == logical.sourceWrite())
+			.filter(constraint -> "function-input-binding".equals(constraint.evidence()))
+			.map(constraint -> constraint.left()).findFirst().orElseThrow(() ->
+				new AssertionError("BR10_KMEANS_FORMAL_BINDING_AUTHORITY_MISSING"));
+		PlacementAnalysis.LogicalFunctionInputFact functionInput = analysis
+			.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == formalRead).findFirst().orElseThrow(() ->
+				new AssertionError("BR10_KMEANS_CALLER_ARGUMENT_AUTHORITY_MISSING"));
+		DecisionFact source = decision(facts, functionInput.sourceArgument());
+		DecisionFact read = decision(facts, logical.targetRead());
+		assertContribution(facts, source.placementNodeId(), read.placementNodeId(),
+			"logical-function-forwarded-fout-to-local-download");
+		double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+			analysis.hop(read.key()).orElseThrow(), analysis.hop(source.key()).orElseThrow());
+		double baseDownload = FederatedCostModel.computeDownloadNetworkCost(bytes);
+		List<CompiledInputEdgeFact> readConsumers = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.producer() == read.key()).toList();
+		Assert.assertEquals("BR10_KMEANS_FORWARD_READ_MUST_KEEP_TWO_LOOP_CONSUMERS",
+			2, readConsumers.size());
+		for(CompiledInputEdgeFact edge : readConsumers) {
+			DecisionFact consumer = decision(facts, edge.consumer());
+			Assert.assertEquals("BR10_KMEANS_FORWARD_LOCAL_CONSUMER_MUST_KEEP_LOOP_WEIGHT|consumer="
+				+ edge.consumer().normalizedSignature(), 120.0 * baseDownload,
+				contribution(facts, source.placementNodeId(), consumer.computeNodeId(),
+					"logical-function-forwarded-local-consumer-download"), 0.0);
+		}
+		AuxiliaryGroupFact sharedDownload = facts.auxiliaryGroupsInCanonicalOrder().stream()
+			.filter(group -> group.direction() == Direction.DOWNLOAD && group.producerKey() == read.key())
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_FORWARD_SHARED_LOCAL_MATERIALIZATION_MISSING"));
+		Assert.assertEquals("BR10_KMEANS_FORWARD_LOCAL_MATERIALIZATION_MUST_BE_SHARED_ONCE",
+			baseDownload, Double.longBitsToDouble(sharedDownload.priceBits()), 0.0);
+		CompiledInputEdgeFact loopLocalInput = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.inputPosition() == 0)
+			.filter(edge -> edge.consumer().normalizedSignature()
+				.contains("scripts/builtin/kmeans.dml:155:24:org.apache.sysds.hops.AggBinaryOp"))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOOP_LOCAL_INPUT_MISSING"));
+		AuxiliaryGroupFact loopUpload = facts.auxiliaryGroupsInCanonicalOrder().stream()
+			.filter(group -> group.direction() == Direction.UPLOAD
+				&& group.producerKey() == loopLocalInput.producer())
+			.filter(group -> group.endpointsInCanonicalOrder().stream().anyMatch(endpoint ->
+				endpoint.consumerKey() == loopLocalInput.consumer()
+					&& endpoint.inputPosition() == loopLocalInput.inputPosition()))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOOP_LOCAL_UPLOAD_GROUP_MISSING"));
+		Assert.assertEquals("BR10_KMEANS_LOOP_LOCAL_UPLOAD_MUST_USE_RELOCATION_MATERIALIZATION",
+			FType.COL, loopUpload.conversionType());
+		PlacementState loopConsumerTarget = representative(facts,
+			decision(facts, loopLocalInput.consumer()), ExecType.FED, FederatedOutput.LOUT).state();
+		Assert.assertTrue("BR10_KMEANS_LOOP_LOCAL_UPLOAD_MUST_RETAIN_ROW_TARGET_AUTHORITY",
+			facts.transferAuthoritiesInCanonicalOrder().stream().anyMatch(authority ->
+				authority.group() == loopUpload
+					&& authority.authorityKind() == TransferAuthorityKind.RELOCATION_OBLIGATION
+					&& authority.requiredPlacement().equals(loopConsumerTarget)));
+		Assert.assertFalse("BR10_KMEANS_FORWARDED_FORMAL_MUST_NOT_BE_TIED_TO_COMPILER_BINDING",
+			facts.directedEdgesInDerivationOrder().stream()
+				.flatMap(edge -> edge.contributionsInDerivationOrder().stream())
+				.anyMatch(contribution -> contribution.ownerKey() == logical.sourceWrite()
+					&& contribution.peerKeyOrNull() == logical.targetRead()
+					&& contribution.provenance().startsWith("logical-transient-")));
+
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+		PlacementState readState = selectedState(facts, selection, read);
+		Assert.assertEquals("BR10_KMEANS_LEGACY_LOOP_TREAD_MUST_STAY_FED",
+			ExecType.FED, readState.execType());
+		Assert.assertEquals("BR10_KMEANS_LEGACY_LOOP_TREAD_MUST_KEEP_FOUT",
+			FederatedOutput.FOUT, readState.output());
+		Assert.assertEquals("BR10_KMEANS_LEGACY_LOOP_TREAD_MUST_KEEP_ROW_LAYOUT",
+			FType.ROW, readState.fType());
+		for(CompiledInputEdgeFact edge : readConsumers) {
+			PlacementState consumerState = selectedState(facts, selection,
+				decision(facts, edge.consumer()));
+			Assert.assertEquals("BR10_KMEANS_LEGACY_LOOP_CONSUMER_MUST_STAY_FED|consumer="
+				+ edge.consumer().normalizedSignature(), ExecType.FED, consumerState.execType());
+			Assert.assertEquals("BR10_KMEANS_LEGACY_LOOP_CONSUMER_MUST_KEEP_LOUT|consumer="
+				+ edge.consumer().normalizedSignature(), FederatedOutput.LOUT, consumerState.output());
+		}
+	}
+
+	@Test
+	public void kmeansProductionFunctionInputRetainsLegacyDirectCallerCostAndAuthority() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildAnalysis(compileKMeansWithLiveCentroids(120));
+		PlacementAnalysis.LogicalFunctionInputFact logicalInput = analysis
+			.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead().normalizedSignature()
+				.contains("scripts/builtin/kmeans.dml:59:16:org.apache.sysds.hops.DataOp:TRead X"))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_PRODUCTION_FUNCTION_INPUT_MISSING|available="
+					+ analysis.logicalFunctionInputsInCanonicalOrder().stream()
+						.map(fact -> fact.targetRead().normalizedSignature()).toList()));
+		Assert.assertTrue("BR10_KMEANS_PRODUCTION_FORMAL_MUST_USE_DIRECT_CALLER_AUTHORITY",
+			analysis.logicalTransientInputsInCanonicalOrder().stream()
+				.noneMatch(fact -> fact.targetRead() == logicalInput.targetRead()));
+
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		DecisionFact source = decision(facts, logicalInput.sourceArgument());
+		DecisionFact formal = decision(facts, logicalInput.targetRead());
+		double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
+			analysis.hop(formal.key()).orElseThrow(), analysis.hop(source.key()).orElseThrow());
+		double baseDownload = FederatedCostModel.computeDownloadNetworkCost(bytes);
+		List<CompiledInputEdgeFact> consumers = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.producer() == formal.key()).toList();
+		Assert.assertEquals("BR10_KMEANS_PRODUCTION_FORMAL_MUST_KEEP_DIRECT_CONSUMERS",
+			2, consumers.size());
+		for(CompiledInputEdgeFact edge : consumers) {
+			DecisionFact consumer = decision(facts, edge.consumer());
+			Assert.assertEquals("BR10_KMEANS_PRODUCTION_LOCAL_CONSUMER_MUST_KEEP_DIRECT_WEIGHT|consumer="
+				+ edge.consumer().normalizedSignature(), baseDownload,
+				contribution(facts, source.placementNodeId(), consumer.computeNodeId(),
+					"logical-function-local-consumer-download"), 0.0);
+		}
+
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+		PlacementState formalState = selectedState(facts, selection, formal);
+		Assert.assertEquals("BR10_KMEANS_PRODUCTION_FORMAL_MUST_STAY_FED",
+			ExecType.FED, formalState.execType());
+		Assert.assertEquals("BR10_KMEANS_PRODUCTION_FORMAL_MUST_KEEP_FOUT",
+			FederatedOutput.FOUT, formalState.output());
+		Assert.assertEquals("BR10_KMEANS_PRODUCTION_FORMAL_MUST_KEEP_CALLER_ROW_LAYOUT",
+			FType.ROW, formalState.fType());
+		for(CompiledInputEdgeFact edge : consumers) {
+			PlacementState consumerState = selectedState(facts, selection,
+				decision(facts, edge.consumer()));
+			Assert.assertEquals("BR10_KMEANS_PRODUCTION_LOOP_CONSUMER_MUST_STAY_FED|consumer="
+				+ edge.consumer().normalizedSignature(), ExecType.FED, consumerState.execType());
+			Assert.assertEquals("BR10_KMEANS_PRODUCTION_LOOP_CONSUMER_MUST_KEEP_LOUT|consumer="
+				+ edge.consumer().normalizedSignature(), FederatedOutput.LOUT, consumerState.output());
+		}
+	}
+
+	@Test
+	public void kmeansLoopWeightedNativeResultEdgesRetainLegacySemantics() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		DecisionFact decision = decision(facts, decisionKey(analysis,
+			"scripts/builtin/kmeans.dml:134:22:org.apache.sysds.hops.AggBinaryOp"));
+		Hop hop = analysis.hop(decision.key()).orElseThrow();
+		MembershipRepresentative fedLout = representative(facts, decision,
+			ExecType.FED, FederatedOutput.LOUT);
+		FType executionFType = fedLout.state().fType();
+		List<Hop> inputHops = new java.util.ArrayList<>(hop.getInput());
+		List<FType> inputFTypes = fedLout.orderedInputs().stream()
+			.map(input -> input.present() ? input.fType() : null).toList();
+		double outputBytes = FederatedCostModel.getEffectiveOutputMemEstimate(hop);
+		double uploadBytes = FederatedCostModel.getEffectiveUploadMemEstimate(hop);
+		double genericDownload = FederatedCostModel.computeDownloadNetworkCost(uploadBytes);
+		double nativeUnaryDownload = FederatedCostModel
+			.computeNativeFederatedAggregateUnaryLoutResultCost(hop, executionFType,
+				outputBytes, 2, genericDownload);
+		double nativeDownload = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+			hop, executionFType, outputBytes, 2, nativeUnaryDownload);
+		double unitLocalCost = FederatedCostModel.computeLocalIndexingCostWithFallback(hop,
+			FederatedCostModel.computeOpCostWithFallback(hop));
+		FederatedCostModel.MixedFedLocalCost mixed = FederatedCostModel.computeMixedFedLocalCost(
+			hop, inputHops, inputFTypes, executionFType, unitLocalCost, outputBytes, 2);
+		double expectedDownload = 2.0 * (mixed.hasCoordinatorPhase()
+			? mixed.getCoordinatorPhaseCost() : nativeDownload);
+		FType cpFoutType = representative(facts, decision,
+			ExecType.CP, FederatedOutput.FOUT).state().fType();
+		double expectedUpload = 2.0 * (FederatedCostModel.computeUploadNetworkCost(
+			uploadBytes, cpFoutType, 2)
+			+ FederatedCostModel.computeLocalToFedForwardingPenalty(cpFoutType, 2));
+		Assert.assertEquals("BR10_KMEANS_NATIVE_RESULT_DOWNLOAD_MUST_KEEP_LOOP_WEIGHT",
+			expectedDownload, contribution(facts, decision.computeNodeId(),
+				decision.placementNodeId(), "native-fed-lout-download"), 0.0);
+		Assert.assertEquals("BR10_KMEANS_CP_FOUT_UPLOAD_MUST_KEEP_LOOP_WEIGHT_AND_FORWARDING",
+			expectedUpload, contribution(facts, decision.placementNodeId(),
+				decision.computeNodeId(), "native-cp-fout-upload"), 0.0);
+	}
+
+	@Test
+	public void kmeansControlDominatedFedUnaryRetainsLegacyLatencyFloor() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		DecisionFact decision = decision(facts, decisionKey(analysis,
+			"scripts/builtin/kmeans.dml:213:32:org.apache.sysds.hops.BinaryOp"));
+		Hop hop = analysis.hop(decision.key()).orElseThrow();
+		FType executionFType = representative(facts, decision,
+			ExecType.FED, FederatedOutput.FOUT).candidateRuleFactOrNull()
+			.allowedEmissionFacts().stream()
+			.filter(emission -> emission.emissionState().placementState()
+				== representative(facts, decision, ExecType.FED, FederatedOutput.FOUT).state())
+			.findFirst().orElseThrow().executionFType();
+		double floor = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+			hop, executionFType, RewireConstants.DEFAULT_IF_ELSE_WEIGHT, 2, false);
+		double fedUnary = contribution(facts, decision.computeNodeId(), facts.sinkNodeId(),
+			"neutral-fed-unary");
+		Assert.assertTrue("BR10_KMEANS_CONTROL_DOMINATED_FED_UNARY_MUST_INCLUDE_LATENCY_FLOOR"
+			+ "|floor=" + floor + "|actual=" + fedUnary, fedUnary >= floor);
+	}
+
+	@Test
+	public void kmeansFedUnaryUsesExactBroadcastMaterializationForLocalMatrixInput() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		DecisionFact decision = decision(facts, decisionKey(analysis,
+			"scripts/builtin/kmeans.dml:134:22:org.apache.sysds.hops.AggBinaryOp"));
+		Hop hop = analysis.hop(decision.key()).orElseThrow();
+		MembershipRepresentative fed = representative(facts, decision,
+			ExecType.FED, FederatedOutput.FOUT);
+		CompiledInputEdgeFact localInput = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == decision.key() && edge.inputPosition() == 1)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOCAL_AGGBINARY_INPUT_MISSING"));
+		var producer = analysis.graph().node(localInput.producer()).orElseThrow();
+		var action = analysis.graph().relocationActions().stream()
+			.filter(candidate -> candidate.key().sourceValueVersion() == producer.valueVersion()
+				&& candidate.key().targetPlacement().equals(fed.state()))
+			.filter(candidate -> candidate.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == decision.key() && obligation.inputPosition() == 1))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOCAL_AGGBINARY_RELOCATION_MISSING"));
+		FType materializationType = PlacementCostSemantics.exactMaterializationFType(
+			analysis.shapeFact(localInput.producer()).orElseThrow(), action.key().durableAnchor());
+		Assert.assertEquals("BR10_KMEANS_LOCAL_AGGBINARY_INPUT_MUST_UPLOAD_AS_BROADCAST",
+			FType.BROADCAST, materializationType);
+
+		FType executionFType = fed.candidateRuleFactOrNull().allowedEmissionFacts().stream()
+			.filter(emission -> emission.emissionState().placementState() == fed.state())
+			.findFirst().orElseThrow().executionFType();
+		double cpUnary = contribution(facts, facts.sourceNodeId(), decision.computeNodeId(),
+			"neutral-cp-unary");
+		double unitLocal = FederatedCostModel.computeLocalIndexingCostWithFallback(hop,
+			FederatedCostModel.computeOpCostWithFallback(hop));
+		double executionWeight = cpUnary / unitLocal;
+		List<FType> inputTypes = List.of(FType.ROW, FType.BROADCAST);
+		double fedCompute = FederatedCostModel.computeFederatedComputeCost(hop, cpUnary, 2, false);
+		fedCompute = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+			hop, executionFType, fedCompute);
+		fedCompute = FederatedCostModel.computeNativeFederatedIndexingCost(
+			hop, executionFType, fedCompute);
+		double coordination = FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
+			executionWeight * FederatedCostModel.computeFedCoordinationCost(2));
+		double instruction = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+			hop, executionFType, executionWeight, 2, false);
+		var mixed = FederatedCostModel.computeMixedFedLocalCost(hop,
+			new ArrayList<>(hop.getInput()), inputTypes, executionFType, unitLocal,
+			FederatedCostModel.getEffectiveOutputMemEstimate(hop), 2);
+		double expected = fedCompute + coordination + instruction
+			+ executionWeight * mixed.getInputPreparationCost()
+			+ FederatedCostModel.computeSingleWorkerFedExecPenalty(hop, executionWeight, 2);
+		Assert.assertEquals("BR10_KMEANS_FED_UNARY_MUST_NOT_CHARGE_LOCAL_INPUT_AS_COORDINATOR_PREP",
+			expected, contribution(facts, decision.computeNodeId(), facts.sinkNodeId(),
+				"neutral-fed-unary"), 0.0);
+	}
+
+	@Test
+	public void kmeansUploadGroupUsesExactBroadcastConversionInsteadOfConsumerLayout() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileKMeans());
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		CompiledHopKey consumer = decisionKey(analysis,
+			"scripts/builtin/kmeans.dml:134:22:org.apache.sysds.hops.AggBinaryOp");
+		CompiledInputEdgeFact localInput = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == consumer && edge.inputPosition() == 1)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOCAL_AGGBINARY_INPUT_MISSING"));
+		AuxiliaryGroupFact upload = facts.auxiliaryGroupsInCanonicalOrder().stream()
+			.filter(group -> group.direction() == Direction.UPLOAD
+				&& group.producerKey() == localInput.producer())
+			.filter(group -> group.endpointsInCanonicalOrder().stream().anyMatch(endpoint ->
+				endpoint.consumerKey() == consumer && endpoint.inputPosition() == 1))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_LOCAL_AGGBINARY_UPLOAD_GROUP_MISSING"));
+		Assert.assertEquals("BR10_KMEANS_UPLOAD_MUST_PRICE_ACTUAL_BROADCAST_MATERIALIZATION",
+			FType.BROADCAST, upload.conversionType());
+	}
+
+	private static CompiledHopKey decisionKey(PlacementAnalysis analysis, String signature) {
+		return analysis.graph().decisionNodes().stream().map(node -> node.key())
+			.filter(key -> key.normalizedSignature().contains(signature)).findFirst()
+			.orElseThrow(() -> new AssertionError("BR10_KMEANS_DECISION_MISSING|" + signature));
+	}
+
+	private static MembershipRepresentative representative(MinStExactCostFacts facts,
+		DecisionFact decision, ExecType execType, FederatedOutput output) {
+		return facts.membershipRepresentativesInCanonicalOrder().stream()
+			.filter(candidate -> candidate.decisionKey() == decision.key()
+				&& candidate.execType() == execType && candidate.output() == output)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_REPRESENTATIVE_MISSING|" + execType + '/' + output));
+	}
+
+	private static void assertContribution(MinStExactCostFacts facts, long from, long to,
+		String provenance) {
+		contribution(facts, from, to, provenance);
+	}
+
+	private static double contribution(MinStExactCostFacts facts, long from, long to,
+		String provenance) {
+		return facts.directedEdgesInDerivationOrder().stream()
+			.filter(edge -> edge.fromNodeId() == from && edge.toNodeId() == to)
+			.flatMap(edge -> edge.contributionsInDerivationOrder().stream())
+			.filter(candidate -> provenance.equals(candidate.provenance()))
+			.mapToDouble(candidate -> Double.longBitsToDouble(candidate.costBits()))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_KMEANS_EDGE_CONTRIBUTION_MISSING|" + from + "->" + to + '|' + provenance));
+	}
+
+	private static DecisionFact decision(MinStExactCostFacts facts, CompiledHopKey key) {
+		return facts.decisionFactsInScopeOrder().stream()
+			.filter(candidate -> candidate.key() == key).findFirst().orElseThrow(() ->
+				new AssertionError("BR10_EXACT_DECISION_MISSING|key=" + key.normalizedSignature()));
+	}
+
+	private static PlacementState selectedState(MinStExactCostFacts facts,
+		MinStExactSelection selection, DecisionFact decision) {
+		int index = facts.decisionFactsInScopeOrder().indexOf(decision);
+		if(index < 0)
+			throw new AssertionError("BR10_EXACT_DECISION_INDEX_MISSING|key="
+				+ decision.key().normalizedSignature());
+		return selection.selectedStatesInScopeOrder().get(index);
+	}
+
 	private static DecisionFact b11FederatedSourceDecision(MinStExactCostFacts facts,
 		PlacementAnalysis analysis) {
 		return facts.decisionFactsInScopeOrder().stream()
@@ -239,6 +683,41 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			"m=multiLogReg(X=X,Y=Y,verbose=FALSE,maxi=30,maxii=5,tol=1e-9,icpt=0,"
 				+ "numclasses=2,numrows=N,numcols=D);",
 			"write(m,\"out\",format=\"csv\");") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileKMeans() throws Exception {
+		return compileKMeans(2);
+	}
+
+	private static DMLProgram compileKMeans(int maxIterations) throws Exception {
+		String script = String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(500,100),list(500,0),list(1000,100)));",
+			"[C,Y]=kmeans(X=X,k=4,runs=1,max_iter=" + maxIterations + ",seed=93);") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileKMeansWithLiveCentroids(int maxIterations) throws Exception {
+		String script = String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(500,100),list(500,0),list(1000,100)));",
+			"[C,Y]=kmeans(X=X,k=4,runs=1,max_iter=" + maxIterations + ",seed=93);",
+			"write(C,\"out\",format=\"csv\");") + "\n";
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

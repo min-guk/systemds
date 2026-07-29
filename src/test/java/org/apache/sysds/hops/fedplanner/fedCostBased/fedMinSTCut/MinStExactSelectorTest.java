@@ -9,14 +9,17 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ValueType;
+import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
@@ -53,46 +56,46 @@ public class MinStExactSelectorTest {
 	private static final ValueVersionKey OTHER_VERSION = version("other-version");
 
 	@Test
-	public void semanticEquivalentRawMinimaDifferingOnlyInactiveDownloadAuxiliaryAreUnique() throws Exception {
+	public void semanticEquivalentRawMinimaSelectSourceReachableMinimum() throws Exception {
 		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP));
 		AuxiliaryGroupFact inactiveDownload = new AuxiliaryGroupFact(-3L, Direction.DOWNLOAD, PRODUCER, 1L,
 			FType.ROW, bits(2.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(2.0))));
 		MinStExactCostFacts facts = facts(graph(List.of()), List.of(decision), List.of(
 			edge(-1L, -2L, 1.0), edge(-1L, 2L, 10.0), edge(1L, -3L, 2.0),
-			edge(-3L, 2L, 2.0)), List.of(inactiveDownload), List.of(),
-			List.of(representative(PRODUCER, CP)));
+			edge(-3L, 2L, 2.0)), List.of(inactiveDownload), List.of());
 
 		MinStExactSelection selection = MinStExactSelector.select(facts);
 
 		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
 		Assert.assertEquals(bits(1.0), selection.objectiveBits());
-		Assert.assertEquals("semantic representative must be lexicographically canonical",
-			List.of(-3L, 2L), selection.sourcePartitionNodeIds());
+		Assert.assertEquals("legacy PushRelabel selects the inclusion-minimal source side",
+			List.of(2L), selection.sourcePartitionNodeIds());
 		Assert.assertEquals(List.of(CP), selection.selectedStatesInScopeOrder());
 		Assert.assertTrue(selection.obligationReceiptsInOrder().isEmpty());
-		Assert.assertEquals("projector-facing certificates must expose one semantic proof class",
-			List.of(List.of(-3L, 2L)), selection.minimumSourcePartitionCertificates());
+		Assert.assertEquals("projector-facing certificate must expose the selected canonical cut",
+			List.of(List.of(2L)), selection.minimumSourcePartitionCertificates());
 		Assert.assertEquals("raw evidence must retain both solver minima",
 			List.of(List.of(-3L, 2L), List.of(2L)), selection.rawMinimumSourcePartitionCertificates());
 	}
 
 	@Test
-	public void semanticDistinctEqualCostDecisionStatesRemainTieUnspecified() throws Exception {
+	public void semanticDistinctEqualCostDecisionStatesSelectSourceReachableMinimum() throws Exception {
 		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP, FL));
 		MinStExactCostFacts facts = facts(graph(List.of()), List.of(decision),
-			List.of(edge(-1L, -2L, 1.0)), List.of(), List.of(),
-			List.of(representative(PRODUCER, CP), representative(PRODUCER, FL)));
+			List.of(edge(-1L, -2L, 1.0)), List.of(), List.of());
 
 		MinStExactSelection selection = MinStExactSelector.select(facts);
 
-		Assert.assertEquals(MinStExactSelection.TIE_UNSPECIFIED, selection.tieCertificate());
-		Assert.assertTrue(selection.selectedStatesInScopeOrder().isEmpty());
+		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
+		Assert.assertEquals(List.of(), selection.sourcePartitionNodeIds());
+		Assert.assertEquals(List.of(CP), selection.selectedStatesInScopeOrder());
+		Assert.assertEquals(List.of(List.of()), selection.minimumSourcePartitionCertificates());
 		Assert.assertEquals(List.of(List.of(), List.of(0L)),
-			selection.minimumSourcePartitionCertificates());
+			selection.rawMinimumSourcePartitionCertificates());
 	}
 
 	@Test
-	public void semanticDistinctEqualCostActiveUploadObligationsRemainTieUnspecified() throws Exception {
+	public void semanticDistinctEqualCostActiveUploadObligationsSelectSourceReachableMinimum() throws Exception {
 		RelocationAction action = action(PRODUCER_VERSION, FF, CONSUMER);
 		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP));
 		AuxiliaryGroupFact activeUpload = new AuxiliaryGroupFact(-3L, Direction.UPLOAD, PRODUCER, 1L,
@@ -101,14 +104,16 @@ public class MinStExactSelectorTest {
 		NeutralPlacementGraph graph = graph(List.of(action));
 		MinStExactCostFacts facts = facts(graph, List.of(decision), List.of(
 			edge(-1L, -2L, 1.0), edge(-1L, -3L, 2.0), edge(-3L, -2L, 2.0)),
-			List.of(activeUpload), List.of(obligation), List.of(representative(PRODUCER, CP)));
+			List.of(activeUpload), List.of(obligation));
 
 		MinStExactSelection selection = MinStExactSelector.select(facts);
 
-		Assert.assertEquals(MinStExactSelection.TIE_UNSPECIFIED, selection.tieCertificate());
+		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
+		Assert.assertEquals(List.of(), selection.sourcePartitionNodeIds());
 		Assert.assertTrue(selection.obligationReceiptsInOrder().isEmpty());
+		Assert.assertEquals(List.of(List.of()), selection.minimumSourcePartitionCertificates());
 		Assert.assertEquals(List.of(List.of(), List.of(-3L)),
-			selection.minimumSourcePartitionCertificates());
+			selection.rawMinimumSourcePartitionCertificates());
 	}
 
 	@Test
@@ -195,12 +200,62 @@ public class MinStExactSelectorTest {
 			.map(MinStExactCutSolver.Minimum::sourceNodeIds).toList());
 	}
 
+	@Test(timeout = 5000)
+	public void largeCertificateSpaceUsesPolynomialMinCutWithoutChangingObjective() throws Exception {
+		List<DirectedEdgeFact> edges = new ArrayList<>();
+		edges.add(edge(-1L, -2L, 3.0));
+		for(long node = 10L; node < 31L; node++) {
+			edges.add(edge(-1L, node, 0.0));
+			edges.add(edge(node, -2L, 0.0));
+		}
+		MinStExactCostFacts facts = facts(graph(List.of()), List.of(), edges,
+			List.of(), List.of());
+
+		Assert.assertTrue("2^21 raw certificates must not enter exhaustive production search",
+			MinStExactSelector.usesPolynomialSolver(facts));
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+
+		Assert.assertEquals(bits(3.0), selection.objectiveBits());
+		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
+		Assert.assertEquals(List.of(), selection.sourcePartitionNodeIds());
+		Assert.assertEquals("polynomial certificate keeps exact min/max cut witnesses", 2,
+			selection.rawMinimumSourcePartitionCertificates().size());
+	}
+
+	@Test(timeout = 5000)
+	public void polynomialEqualCostDecisionUsesLegacySourceReachableMinimum() throws Exception {
+		List<DirectedEdgeFact> edges = new ArrayList<>();
+		edges.add(edge(-1L, -2L, 3.0));
+		edges.add(edge(-1L, 0L, 0.0));
+		edges.add(edge(0L, -2L, 0.0));
+		for(long node = 10L; node < 31L; node++) {
+			edges.add(edge(-1L, node, 0.0));
+			edges.add(edge(node, -2L, 0.0));
+		}
+		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP, FL));
+		MinStExactCostFacts facts = facts(graph(List.of()), List.of(decision), edges,
+			List.of(), List.of());
+
+		Assert.assertTrue(MinStExactSelector.usesPolynomialSolver(facts));
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+
+		Assert.assertEquals(bits(3.0), selection.objectiveBits());
+		Assert.assertEquals(MinStExactSelection.UNIQUE, selection.tieCertificate());
+		Assert.assertEquals(List.of(), selection.sourcePartitionNodeIds());
+		Assert.assertEquals(List.of(CP), selection.selectedStatesInScopeOrder());
+		Assert.assertEquals(List.of(List.of()), selection.minimumSourcePartitionCertificates());
+		Assert.assertEquals(2, selection.rawMinimumSourcePartitionCertificates().size());
+	}
+
 	private static MinStExactCostFacts uploadFacts(List<RelocationAction> actions,
 		List<ObligationFact> obligations) throws Exception {
 		AuxiliaryGroupFact group = new AuxiliaryGroupFact(-3L, Direction.UPLOAD, PRODUCER, 1L,
 			FType.ROW, bits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(1.0))));
-		NeutralPlacementGraph graph = graph(actions);
-		return facts(graph, List.of(), List.of(edge(-1L, -3L, 5.0), edge(1L, -2L, 5.0),
+		NeutralPlacementGraph graph = uploadGraph(actions);
+		List<DecisionFact> decisions = List.of(
+			new DecisionFact(PRODUCER, 0L, 1L, List.of(CP)),
+			new DecisionFact(CONSUMER, 2L, 3L, List.of(FF)));
+		return facts(graph, decisions, List.of(edge(-1L, -3L, 5.0), edge(1L, -2L, 5.0),
 			edge(-1L, -2L, 1.0)), List.of(group), obligations);
 	}
 
@@ -208,8 +263,11 @@ public class MinStExactSelectorTest {
 		List<ObligationFact> obligations) throws Exception {
 		AuxiliaryGroupFact group = new AuxiliaryGroupFact(-3L, Direction.DOWNLOAD, PRODUCER, 1L,
 			FType.ROW, bits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(1.0))));
-		NeutralPlacementGraph graph = graph(actions);
-		return facts(graph, List.of(), List.of(edge(-1L, 1L, 5.0), edge(1L, -2L, 1.0),
+		NeutralPlacementGraph graph = downloadGraph(actions);
+		List<DecisionFact> decisions = List.of(
+			new DecisionFact(PRODUCER, 0L, 1L, List.of(FF)),
+			new DecisionFact(CONSUMER, 2L, 3L, List.of(CP)));
+		return facts(graph, decisions, List.of(edge(-1L, 1L, 5.0), edge(1L, -2L, 1.0),
 			edge(-1L, -3L, 1.0), edge(-3L, -2L, 5.0), edge(-1L, -2L, 1.0)),
 			List.of(group), obligations);
 	}
@@ -219,21 +277,33 @@ public class MinStExactSelectorTest {
 			node(CONSUMER, version("consumer-version")), node(OTHER, OTHER_VERSION)), List.of(), actions);
 	}
 
-	private static MinStExactCostFacts facts(NeutralPlacementGraph graph, List<DecisionFact> decisions,
-		List<DirectedEdgeFact> edges, List<AuxiliaryGroupFact> groups,
-		List<ObligationFact> obligations) throws Exception {
-		return facts(graph, decisions, edges, groups, obligations, List.of());
+	private static NeutralPlacementGraph uploadGraph(List<RelocationAction> actions) {
+		return new NeutralPlacementGraph(List.of(node(PRODUCER, PRODUCER_VERSION),
+			node(CONSUMER, version("consumer-version"), FF, List.of(anchor("consumer-anchor"))),
+			node(OTHER, OTHER_VERSION)), List.of(), actions);
+	}
+
+	private static NeutralPlacementGraph downloadGraph(List<RelocationAction> actions) {
+		return new NeutralPlacementGraph(List.of(
+			node(PRODUCER, PRODUCER_VERSION, FF, List.of(anchor("producer-anchor"))),
+			node(CONSUMER, version("consumer-version")), node(OTHER, OTHER_VERSION)), List.of(), actions);
 	}
 
 	private static MinStExactCostFacts facts(NeutralPlacementGraph graph, List<DecisionFact> decisions,
 		List<DirectedEdgeFact> edges, List<AuxiliaryGroupFact> groups,
-		List<ObligationFact> obligations, List<MembershipRepresentative> representatives) throws Exception {
-		PlacementAnalysis analysis = allocate(PlacementAnalysis.class);
-		set(analysis, "graph", graph);
+		List<ObligationFact> obligations) throws Exception {
+		PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph);
+		for(Node node : graph.nodes())
+			if(!node.anchors().isEmpty())
+				analysis = CampaignBPlacementAnalysisFixtureBridge.replaceHop(analysis, node.key(),
+					new DataOp(node.key().emittedHopInstance(), DataType.MATRIX, ValueType.FP64,
+						OpOpData.FEDERATED, node.key().emittedHopInstance(), 4, 4, -1, 1024));
+		List<MembershipRepresentative> representatives =
+			MinStExactCostFactsProducer.membershipRepresentatives(analysis, decisions);
 		MinStExactCostFacts facts = allocate(MinStExactCostFacts.class);
 		set(facts, "analysis", analysis);
-		set(facts, "analysisFingerprint", "test-analysis");
-		set(facts, "orderedScope", List.of(PRODUCER));
+		set(facts, "analysisFingerprint", analysis.analysisFingerprint());
+		set(facts, "orderedScope", decisions.stream().map(DecisionFact::key).toList());
 		set(facts, "decisions", decisions);
 		set(facts, "membershipRepresentatives", representatives);
 		set(facts, "edges", edges);
@@ -296,23 +366,18 @@ public class MinStExactSelectorTest {
 	}
 
 	private static Node node(CompiledHopKey key, ValueVersionKey version) {
-		return new Node(key, NodeKind.OPERATION, version, true, List.of(CP), List.of(), List.of());
+		return node(key, version, CP, List.of());
+	}
+
+	private static Node node(CompiledHopKey key, ValueVersionKey version, PlacementState state,
+		List<DurableAnchorKey> anchors) {
+		return new Node(key, NodeKind.OPERATION, version, true, List.of(state), List.of(), anchors);
 	}
 
 	private static DirectedEdgeFact edge(long from, long to, double capacity) {
 		return new DirectedEdgeFact(from, to, bits(capacity), List.of());
 	}
 
-
-	private static MembershipRepresentative representative(CompiledHopKey key, PlacementState state) {
-		if(state.output() == FederatedOutput.FOUT) {
-			DurableAnchorKey anchor = anchor(key.emittedHopInstance() + "-anchor");
-			return new MembershipRepresentative(key, state.execType(), state.output(), state,
-				MembershipAuthorityKind.DURABLE_ANCHOR, anchor, null, List.of(), List.of(), null, null, null);
-		}
-		return new MembershipRepresentative(key, state.execType(), state.output(), state,
-			MembershipAuthorityKind.LEGAL_SINGLETON, null, null, List.of(), List.of(), null, null, null);
-	}
 
 	private static DurableAnchorKey anchor(String id) {
 		return new DurableAnchorKey(id, FType.ROW, List.of(new AnchorPartition("w", List.of(0L), List.of(1L))));

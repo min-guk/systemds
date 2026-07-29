@@ -39,6 +39,8 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmi
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalCandidateInputFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver;
 import org.apache.sysds.hops.fedplanner.placement.PlacementCandidateRuleResolver.CapturedInvocationEvidence;
@@ -128,7 +130,7 @@ public final class DpPlacementAdapter {
 	}
 
 	/** Separate logical candidate input; never aliases a compiled physical input edge. */
-	public record LogicalCandidateInputEntry(LogicalTransientInputFact fact,
+	public record LogicalCandidateInputEntry(LogicalCandidateInputFact fact,
 		CompiledHopKey sourceOccurrence, int logicalPosition, PlacementState selectedSourceState,
 		OracleInputState oracleInputState) {
 		public LogicalCandidateInputEntry {
@@ -136,18 +138,30 @@ public final class DpPlacementAdapter {
 			Objects.requireNonNull(sourceOccurrence, "sourceOccurrence");
 			Objects.requireNonNull(selectedSourceState, "selectedSourceState");
 			Objects.requireNonNull(oracleInputState, "oracleInputState");
-			if(sourceOccurrence != fact.sourceWrite() || logicalPosition != fact.logicalPosition())
+			if(sourceOccurrence != fact.sourceOccurrence() || logicalPosition != fact.logicalPosition())
 				throw new IllegalArgumentException("Logical candidate input identity differs");
-			if(selectedSourceState == fact.localSourceState()) {
-				if(oracleInputState != OracleInputState.ABSENT_LOCAL)
-					throw new IllegalArgumentException("Local logical source has a federated oracle state");
+			if(fact instanceof LogicalTransientInputFact transientFact) {
+				if(selectedSourceState == transientFact.localSourceState()) {
+					if(oracleInputState != OracleInputState.ABSENT_LOCAL)
+						throw new IllegalArgumentException("Local logical source has a federated oracle state");
+				}
+				else if(selectedSourceState == transientFact.federatedSourceState()) {
+					if(oracleInputState != OracleInputState.valueOf(transientFact.federatedFType().name()))
+						throw new IllegalArgumentException("Federated logical source has a different oracle state");
+				}
+				else
+					throw new IllegalArgumentException("Logical candidate source state is not analysis-owned");
 			}
-			else if(selectedSourceState == fact.federatedSourceState()) {
-				if(oracleInputState != OracleInputState.valueOf(fact.anchor().fType().name()))
-					throw new IllegalArgumentException("Federated logical source has a different oracle state");
+			else if(fact instanceof LogicalFunctionInputFact) {
+				OracleInputState expected = selectedSourceState.output() == FederatedOutput.FOUT
+					&& selectedSourceState.fType() != null
+					? OracleInputState.valueOf(selectedSourceState.fType().name())
+					: OracleInputState.ABSENT_LOCAL;
+				if(oracleInputState != expected)
+					throw new IllegalArgumentException("Function logical source has a different oracle state");
 			}
 			else
-				throw new IllegalArgumentException("Logical candidate source state is not analysis-owned");
+				throw new IllegalArgumentException("Unknown logical candidate fact type");
 		}
 	}
 
@@ -221,10 +235,14 @@ public final class DpPlacementAdapter {
 				rawEntries.stream().map(CandidateMapEntry::oracleInputState).toList());
 			for(int i = 0; i < logicalEntries.size(); i++) {
 				LogicalCandidateInputEntry logical = logicalEntries.get(i);
+				boolean exactFact = logical.fact() instanceof LogicalTransientInputFact transientFact
+					? context.analysis().requireExactLogicalTransientInput(logical.sourceOccurrence(),
+						parentOccurrence, i) == transientFact
+					: logical.fact() instanceof LogicalFunctionInputFact functionFact
+						&& context.analysis().requireExactLogicalFunctionInput(logical.sourceOccurrence(),
+							parentOccurrence, i) == functionFact;
 				if(logical.fact().targetRead() != parentOccurrence || logical.logicalPosition() != i
-					|| context.analysis().requireExactLogicalTransientInput(logical.sourceOccurrence(),
-						parentOccurrence, i) != logical.fact()
-					|| orderedOracleInputs.get(rawEntries.size() + i) != logical.oracleInputState())
+					|| !exactFact || orderedOracleInputs.get(rawEntries.size() + i) != logical.oracleInputState())
 					throw new IllegalArgumentException("Logical candidate input order or identity differs");
 			}
 			Set<CompiledHopKey> carrierSources = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -261,8 +279,6 @@ public final class DpPlacementAdapter {
 					|| context.rewireSnapshot().transientForwardEdges().stream()
 						.filter(edge -> edge == forward).count() != 1
 					|| !ownsCandidateKey(context.analysis(), source)
-					|| context.analysis().hop(source).orElseThrow().getDataType() == Types.DataType.MATRIX
-					|| context.analysis().hop(parentOccurrence).orElseThrow().getDataType() == Types.DataType.MATRIX
 					|| context.analysis().graph().node(source).orElseThrow().legalAlternatives().stream()
 						.filter(state -> state == selected).count() != 1
 					|| selected.execType() != ExecType.CP || selected.output() != FederatedOutput.LOUT
@@ -349,8 +365,8 @@ public final class DpPlacementAdapter {
 				else if(logicalIndex < snapshot.logicalEntries().size()
 					&& projected.key() == snapshot.logicalEntries().get(logicalIndex).sourceOccurrence()) {
 					LogicalCandidateInputEntry logical = snapshot.logicalEntries().get(logicalIndex++);
-					FType expected = logical.selectedSourceState() == logical.fact().federatedSourceState()
-						? logical.fact().anchor().fType() : null;
+					FType expected = logical.oracleInputState() == OracleInputState.ABSENT_LOCAL ? null
+						: FType.valueOf(logical.oracleInputState().name());
 					if(effectiveCollectedFTypes.get(i) != expected)
 						throw new IllegalArgumentException("Normalized logical FType differs from selected source state");
 				}
@@ -613,6 +629,46 @@ public final class DpPlacementAdapter {
 			FedPlan childPlan = memo.getFedPlanAfterPrune(edge);
 			Hop sourceHop = context.analysis().hop(occurrence.key()).orElseThrow();
 			int remaining = remainingPhysicalInputs.getOrDefault(occurrence.key(), 0);
+			List<LogicalFunctionInputFact> functionInputs = context.analysis()
+				.logicalFunctionInputsInCanonicalOrder().stream()
+				.filter(fact -> fact.sourceArgument() == occurrence.key()
+					&& fact.targetRead() == parent.key() && fact.logicalPosition() == 0)
+				.toList();
+			if(remaining == 0 && !functionInputs.isEmpty() && parentHop.getInput().isEmpty()
+				&& context.analysis().graph().node(parent.key()).orElseThrow().kind()
+					== NeutralPlacementGraph.NodeKind.TRANSIENT_READ) {
+				if(functionInputs.size() != 1 || collectedHops.size() != 1 || !logicalEntries.isEmpty()
+					|| childPlan == null || childPlan.getSelectedPlacementState() == null)
+					throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
+						"LOGICAL_FUNCTION_SELECTION_STALE");
+				LogicalFunctionInputFact fact = context.analysis().requireExactLogicalFunctionInput(
+					occurrence.key(), parent.key(), 0);
+				PlacementState selected = childPlan.getSelectedPlacementState();
+				if(context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
+					.noneMatch(state -> state == selected)
+					|| edge.getRight() != selected.output() || childPlan.getExecType() != selected.execType())
+					throw failure(context.analysis(), parent.key(), ConstructionDisposition.FOREIGN_CONTEXT,
+						"LOGICAL_FUNCTION_SOURCE_STATE_FOREIGN");
+				OracleInputState oracle;
+				FType effectiveType;
+				if(selected.output() == FederatedOutput.LOUT) {
+					oracle = OracleInputState.ABSENT_LOCAL;
+					effectiveType = null;
+				}
+				else if(selected.output() == FederatedOutput.FOUT && selected.fType() != null
+					&& selected.fType() != FType.PART && selected.fType() != FType.OTHER) {
+					oracle = OracleInputState.valueOf(selected.fType().name());
+					effectiveType = selected.fType();
+					effectiveMap.put(hop.getHopID(), effectiveType);
+				}
+				else
+					throw failure(context.analysis(), parent.key(),
+						ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA,
+						"LOGICAL_FUNCTION_FED_EDGE_MISMATCH");
+				effectiveCollectedFTypes.set(i, effectiveType);
+				logicalEntries.add(new LogicalCandidateInputEntry(fact, occurrence.key(), 0, selected, oracle));
+				continue;
+			}
 			boolean hasLogicalTransientInput = context.analysis().logicalTransientInputsInCanonicalOrder().stream()
 				.anyMatch(fact -> fact.targetRead() == parent.key());
 			if(remaining == 0 && hasLogicalTransientInput && parentHop.getInput().isEmpty()
@@ -645,12 +701,12 @@ public final class DpPlacementAdapter {
 				}
 				else if(selected == fact.federatedSourceState()) {
 					if(edge.getRight() != FederatedOutput.FOUT || childPlan.getExecType() != ExecType.FED
-						|| childPlan.getFType() != fact.anchor().fType())
+						|| childPlan.getFType() != fact.federatedFType())
 						throw failure(context.analysis(), parent.key(),
 							ConstructionDisposition.UNSUPPORTED_ANCHOR_METADATA,
 							"LOGICAL_TRANSIENT_FED_EDGE_MISMATCH");
-					oracle = OracleInputState.valueOf(fact.anchor().fType().name());
-					effectiveType = fact.anchor().fType();
+					oracle = OracleInputState.valueOf(fact.federatedFType().name());
+					effectiveType = fact.federatedFType();
 					effectiveMap.put(hop.getHopID(), effectiveType);
 				}
 				else
@@ -674,10 +730,11 @@ public final class DpPlacementAdapter {
 						: context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
 							.filter(state -> state == selected).toList();
 					FType effectiveType = selected != null && selected.output() == FederatedOutput.FOUT ? selected.fType() : null;
-					if(rawContainsKey || childPlan == null || selected == null || ownedSelections.size() != 1
+					if(childPlan == null || selected == null || ownedSelections.size() != 1
 						|| edge.getRight() != selected.output() || childPlan.getFedOutType() != selected.output()
 						|| childPlan.getExecType() != selected.execType()
 						|| selected.output() == FederatedOutput.FOUT && childPlan.getFType() != selected.fType()
+						|| rawContainsKey && rawType != effectiveType
 						|| collectedType != null && collectedType != effectiveType)
 						throw failure(context.analysis(), parent.key(), ConstructionDisposition.STALE_CONTEXT,
 							"FUNCTION_OUTPUT_DEPENDENCY_AUTHORITY_DIFFERS");
@@ -687,8 +744,7 @@ public final class DpPlacementAdapter {
 					continue;
 				}
 			}
-			if(remaining == 0 && sourceHop.getDataType() != Types.DataType.MATRIX
-				&& parentHop.getDataType() != Types.DataType.MATRIX) {
+			if(remaining == 0) {
 				List<RewireTransientForwardEdge> forwards = context.rewireSnapshot().transientForwardEdges().stream()
 					.filter(forward -> forward.writeOccurrence() == occurrence.key()
 						&& forward.readOccurrence() == parent.key()).toList();
@@ -700,7 +756,8 @@ public final class DpPlacementAdapter {
 				List<PlacementState> ownedSelections = selected == null ? List.of()
 					: context.analysis().graph().node(occurrence.key()).orElseThrow().legalAlternatives().stream()
 						.filter(selected::equals).toList();
-				if(rawContainsKey || collectedType != null || edge.getRight() != FederatedOutput.LOUT
+				if(rawContainsKey || collectedType != null
+					|| edge.getRight() != FederatedOutput.LOUT
 					|| childPlan == null || childPlan.getExecType() != ExecType.CP || selected == null
 					|| selected.execType() != ExecType.CP || selected.output() != FederatedOutput.LOUT
 					|| selected.fType() != null || ownedSelections.size() != 1)
@@ -797,7 +854,11 @@ public final class DpPlacementAdapter {
 			PlacementEmissionState emissionState = emissionFact.emissionState();
 			PlacementState state = emissionState.placementState();
 			if(node.legalAlternatives().stream().noneMatch(candidate -> candidate == state))
-				throw new IllegalArgumentException("Candidate fact publishes a state outside node legal alternatives");
+				throw new IllegalArgumentException("Candidate fact publishes a state outside node legal alternatives"
+					+ ": occurrence=" + snapshot.parentOccurrence()
+					+ ", emitted=" + state
+					+ ", legal=" + node.legalAlternatives()
+					+ ", reason=" + caps.reasonCode());
 			boolean allowed = state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
 				? placement.allowCP_LOUT : state.execType() == ExecType.CP && state.output() == FederatedOutput.FOUT
 				? placement.allowCP_FOUT : state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT

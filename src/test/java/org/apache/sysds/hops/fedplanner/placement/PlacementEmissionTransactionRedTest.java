@@ -21,6 +21,7 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.FailureInjector;
@@ -383,6 +384,8 @@ public class PlacementEmissionTransactionRedTest {
 				new HopSnapshot(hop.getExecType(), hop.getForcedExecType(), hop.getFederatedOutput(),
 					hop.isFederatedOutputDerived())));
 		return new StateSnapshot(Map.copyOf(hops), registrySnapshot(analysis),
+			new LinkedHashMap<>(FederatedPlannerUtils.snapshotPlannerRecompileStates()),
+			new java.util.TreeSet<>(FederatedPlannerUtils.snapshotAmbiguousPlannerRecompileSignatures()),
 			Map.copyOf(PlacementEmissionTransaction.receiptSnapshotForTesting()),
 			PlacementEmissionTransaction.observabilitySnapshot().runtimeFallbackCount(),
 			PlacementEmissionTransaction.observabilitySnapshot().runtimeRepairCount());
@@ -417,6 +420,7 @@ public class PlacementEmissionTransactionRedTest {
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
 		FederatedLocalMaterializeRegistry.clear();
+		FederatedPlannerUtils.clearPlannerRecompileStates();
 	}
 
 	private static void expectFailure(ThrowingRunnable action) throws Exception {
@@ -466,7 +470,9 @@ public class PlacementEmissionTransactionRedTest {
 		}
 	}
 	private record HopSnapshot(ExecType exec, ExecType forcedExec, FederatedOutput output, boolean derived) { }
-	private record StateSnapshot(Map<Long, HopSnapshot> hops, List<String> registries, Map<?, ?> receipts,
+	private record StateSnapshot(Map<Long, HopSnapshot> hops, List<String> registries,
+		Map<String, FederatedPlannerUtils.PlannerRecompileStateSnapshot> plannerRecompileStates,
+		java.util.Set<String> ambiguousPlannerRecompileSignatures, Map<?, ?> receipts,
 		long fallbackCount, long repairCount) { }
 	@FunctionalInterface private interface ThrowingRunnable { void run() throws Exception; }
 }

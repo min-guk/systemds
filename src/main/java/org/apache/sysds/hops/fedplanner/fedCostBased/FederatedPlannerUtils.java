@@ -603,6 +603,29 @@ public class FederatedPlannerUtils {
 		return Collections.unmodifiableSet(new HashSet<>(AMBIGUOUS_PLANNER_RECOMPILE_STATES));
 	}
 
+	/** Restore one exact planner-recompile registry snapshot for transactional emission rollback/replacement. */
+	public static void restorePlannerRecompileStates(
+		Map<String, PlannerRecompileStateSnapshot> states, Set<String> ambiguousSignatures) {
+		if (states == null || ambiguousSignatures == null)
+			throw new IllegalArgumentException("Planner recompile snapshots must not be null");
+		clearPlannerRecompileStates();
+		for (Entry<String, PlannerRecompileStateSnapshot> entry : states.entrySet()) {
+			String signature = entry.getKey();
+			PlannerRecompileStateSnapshot state = entry.getValue();
+			if (signature == null || signature.isEmpty() || state == null
+				|| state.execType() == null || state.federatedOutput() == null)
+				throw new IllegalArgumentException("Planner recompile snapshot contains an invalid entry");
+			PLANNER_RECOMPILE_STATES.put(signature,
+				new PlannerRecompileState(state.execType(), state.federatedOutput()));
+		}
+		for (String signature : ambiguousSignatures) {
+			if (signature == null || signature.isEmpty())
+				throw new IllegalArgumentException("Ambiguous planner recompile signature must not be blank");
+			PLANNER_RECOMPILE_STATES.remove(signature);
+			AMBIGUOUS_PLANNER_RECOMPILE_STATES.add(signature);
+		}
+	}
+
 	public static void clearFedAnchorKeys() {
 		FED_ANCHOR_KEYS.clear();
 	}

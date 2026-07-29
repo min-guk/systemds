@@ -1321,8 +1321,14 @@ public class FederatedPlannerDpCostEnumerator {
 
 		List<Hop> physicalTransientWrites = collectTransientWriteChildHops(dataOp, childHops);
 		rejectAmbiguousTransientWriteHopIds(dataOp, physicalTransientWrites, capture);
-		List<Hop> tWriteChildHops = collectTransientWriteChildHops(dataOp, childHops, capture);
-		if (tWriteChildHops.isEmpty()) {
+		// A formal function TRead is owned by the exact caller-argument boundary.
+		// The legacy rewire table can also expose the argument's upstream TWrite, but
+		// that is only a scheduling predecessor; choosing it directly erases the
+		// logical candidate input and incorrectly produces a zero-input DP variant.
+		List<Hop> sourceChildHops = collectLogicalFunctionArgumentChildHops(dataOp, capture);
+		if(sourceChildHops.isEmpty())
+			sourceChildHops = collectTransientWriteChildHops(dataOp, childHops, capture);
+		if (sourceChildHops.isEmpty()) {
 			return false;
 		}
 
@@ -1346,8 +1352,8 @@ public class FederatedPlannerDpCostEnumerator {
 		List<Hop> foutSelectedChildHops = new ArrayList<>();
 		double foutCost = baseSelfCost;
 
-		for (Hop tWriteChildHop : tWriteChildHops) {
-			Long childId = tWriteChildHop.getHopID();
+		for (Hop sourceChildHop : sourceChildHops) {
+			Long childId = sourceChildHop.getHopID();
 			FederatedPlannerDpMemoTable.FedPlan loutPlan = memoTable.getFedPlanAfterPrune(childId,
 					FederatedOutput.LOUT);
 			if (loutPlan == null) {
@@ -1365,7 +1371,7 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 				loutCost += loutPlan.getCumulativeCostPerParents();
 				loutChilds.add(Pair.of(childId, FederatedOutput.LOUT));
-				loutSelectedChildHops.add(tWriteChildHop);
+				loutSelectedChildHops.add(sourceChildHop);
 			}
 
 			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(childId,
@@ -1385,7 +1391,7 @@ public class FederatedPlannerDpCostEnumerator {
 				}
 				foutCost += foutPlan.getCumulativeCostPerParents();
 				foutChilds.add(Pair.of(childId, FederatedOutput.FOUT));
-				foutSelectedChildHops.add(tWriteChildHop);
+				foutSelectedChildHops.add(sourceChildHop);
 			}
 		}
 
@@ -1459,6 +1465,27 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 
 		return true;
+	}
+
+	private static List<Hop> collectLogicalFunctionArgumentChildHops(DataOp formalRead,
+		EnumerationCapture capture) {
+		HopOccurrenceProjection read = findOccurrence(capture, formalRead);
+		List<PlacementAnalysis.LogicalFunctionInputFact> facts = capture.context.analysis()
+			.logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == read.key() && fact.logicalPosition() == 0)
+			.toList();
+		if(facts.isEmpty())
+			return List.of();
+		if(facts.size() != 1)
+			throw new IllegalArgumentException("Function-input DP source authority is not unique: "
+				+ read.key().normalizedSignature());
+		PlacementAnalysis.LogicalFunctionInputFact fact = facts.get(0);
+		Hop source = capture.context.analysis().hop(fact.sourceArgument()).orElseThrow(() ->
+			new IllegalArgumentException("Function-input DP source Hop is missing"));
+		HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(source);
+		if(projected == null || projected.key() != fact.sourceArgument())
+			throw new IllegalArgumentException("Function-input DP source carrier differs from analysis authority");
+		return List.of(source);
 	}
 
 	private static void rejectAmbiguousTransientWriteHopIds(DataOp transientRead,
@@ -1547,7 +1574,8 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 	// Rewire forwards are scheduling dependencies, not automatic candidate inputs. Only an exact
-	// neutral owner may enter adapter normalization; an unowned matrix read keeps its zero-input domain.
+	// snapshot-owned edge may enter adapter normalization; the dependency never changes the read's
+	// neutral candidate domain or manufactures a federated input.
 	private static boolean isTransientForwardCandidateCarrier(Hop readHop, Hop writeHop,
 		EnumerationCapture capture) {
 		if(capture == null)
@@ -1568,12 +1596,18 @@ public class FederatedPlannerDpCostEnumerator {
 			throw new IllegalArgumentException("Transient candidate carrier has duplicate logical ownership");
 		if(logicalOwners == 1)
 			return true;
+		long functionOwners = analysis.logicalFunctionInputsInCanonicalOrder().stream().filter(fact ->
+			fact.sourceArgument() == write.key() && fact.targetRead() == read.key()
+				&& fact.logicalPosition() == 0).count();
+		if(functionOwners > 1)
+			throw new IllegalArgumentException("Function-input candidate carrier has duplicate logical ownership");
+		if(functionOwners == 1)
+			return true;
 		long forwardOwners = snapshot.transientForwardEdges().stream().filter(edge ->
 			edge.writeOccurrence() == write.key() && edge.readOccurrence() == read.key()).count();
 		if(forwardOwners > 1)
 			throw new IllegalArgumentException("Transient candidate carrier has duplicate forward ownership");
-		return forwardOwners == 1 && write.hop().getDataType() != Types.DataType.MATRIX
-			&& read.hop().getDataType() != Types.DataType.MATRIX;
+		return forwardOwners == 1;
 	}
 
 	private static Set<Long> collectHopIds(List<Hop> hops) {

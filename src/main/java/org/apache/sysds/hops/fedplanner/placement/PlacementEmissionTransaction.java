@@ -34,6 +34,7 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
@@ -517,6 +518,10 @@ public final class PlacementEmissionTransaction {
 			write.hop().setForcedExecType(write.state().execType());
 			write.hop().setFederatedOutput(write.state().output());
 			write.hop().setFederatedOutputDerived(write.derivedFedFout());
+			// Dynamic function/loop recompilation can rebuild Hops with new IDs. Publish the exact
+			// emitted state by stable source signature so recompilation preserves planner authority.
+			FederatedPlannerUtils.registerPlannerRecompileState(write.hop(),
+				write.state().execType(), write.state().output());
 			if(i == 0)
 				injector.inject(FailurePoint.AFTER_FIRST_HOP_MUTATION);
 		}
@@ -598,13 +603,18 @@ public final class PlacementEmissionTransaction {
 
 	private record RegistrySnapshots(FederatedRefedRegistry.Snapshot refed,
 		FederatedFoutMaterializeRegistry.Snapshot fout,
-		FederatedLocalMaterializeRegistry.Snapshot local) {
+		FederatedLocalMaterializeRegistry.Snapshot local,
+		Map<String, FederatedPlannerUtils.PlannerRecompileStateSnapshot> plannerRecompile,
+		Set<String> ambiguousPlannerRecompile) {
 		private static RegistrySnapshots capture() {
 			return new RegistrySnapshots(FederatedRefedRegistry.snapshotAll(),
-				FederatedFoutMaterializeRegistry.snapshotAll(), FederatedLocalMaterializeRegistry.snapshotAll());
+				FederatedFoutMaterializeRegistry.snapshotAll(), FederatedLocalMaterializeRegistry.snapshotAll(),
+				FederatedPlannerUtils.snapshotPlannerRecompileStates(),
+				FederatedPlannerUtils.snapshotAmbiguousPlannerRecompileSignatures());
 		}
 
 		private void restore() {
+			FederatedPlannerUtils.restorePlannerRecompileStates(plannerRecompile, ambiguousPlannerRecompile);
 			FederatedLocalMaterializeRegistry.restoreAll(local);
 			FederatedFoutMaterializeRegistry.restoreAll(fout);
 			FederatedRefedRegistry.restoreAll(refed);

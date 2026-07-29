@@ -132,6 +132,9 @@ public final class LegacyDpOfflineSelectedCapture {
 
 	private static String captureCompiledFixture(String rowId, String fixture) throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
 		DMLProgram program = ProductionShadowFixtureFactory.compile(fixture);
 		return captureCanonicalFullPath(rowId, fixture, program).serialize();
 	}
