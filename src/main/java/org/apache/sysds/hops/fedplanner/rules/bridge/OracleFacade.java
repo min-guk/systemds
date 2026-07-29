@@ -1,3 +1,20 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.sysds.hops.fedplanner.rules.bridge;
 
 import java.util.ArrayList;
@@ -13,6 +30,7 @@ import java.util.Set;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.Direction;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.FileFormat;
@@ -56,6 +74,7 @@ import org.apache.sysds.runtime.codegen.SpoofMultiAggregate;
 import org.apache.sysds.runtime.codegen.SpoofOperator;
 import org.apache.sysds.runtime.codegen.SpoofOuterProduct;
 import org.apache.sysds.runtime.codegen.SpoofRowwise;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerLogger;
 import org.apache.sysds.common.Types.OpOpDG;
 import org.apache.sysds.parser.DataExpression;
@@ -76,6 +95,9 @@ public final class OracleFacade {
   private static final String ATTR_INNER = "inner";
   private static final String ATTR_OUTER = "outer";
   private static final String ATTR_ALIGN = "align";
+  private static final String ATTR_FORCE_FED = "force_federated";
+  private static final String ATTR_FORCE_LOCAL = "force_local";
+  private static final String ATTR_FORCE_FOUT = "force_fout";
   private static final String ATTR_R_IS_VECTOR = "r_is_vector";
   private static final String ATTR_MMCHAIN_TYPE = "mmchain.type";
   private static final String ATTR_MMCHAIN_WEIGHTED = "mmchain.weighted";
@@ -106,18 +128,39 @@ public final class OracleFacade {
   }
 
   public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes) {
-    return decide(hop, inFTypes, buildShapeHint(hop, inFTypes));
+    return decide(hop, inFTypes, buildShapeHint(hop, inFTypes), null, null);
   }
 
   public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint) {
+    return decide(hop, inFTypes, hint, null, null);
+  }
+
+  /**
+   * Evaluates one planner-requested execution and placement through the common
+   * rule oracle without mutating the input HOP.
+   *
+   * @param hop HOP to evaluate
+   * @param inFTypes selected input layouts
+   * @param requestedExec requested execution site, or {@code null} for the HOP default
+   * @param requestedPlacement requested output placement, or {@code null} for the HOP default
+   * @return the oracle decision for the requested policy
+   */
+  public RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes,
+      ExecType requestedExec, FederatedOutput requestedPlacement) {
+    return decide(hop, inFTypes, buildShapeHint(hop, inFTypes), requestedExec, requestedPlacement);
+  }
+
+  private RulesApi.OpCaps decide(Hop hop, List<FTypes.FType> inFTypes, ShapeHint hint,
+      ExecType requestedExec, FederatedOutput requestedPlacement) {
     Objects.requireNonNull(hop, "hop");
-    OpSig sig = buildSignature(hop);
+    OpSig sig = buildSignature(hop, requestedExec, requestedPlacement);
     List<FType> mapped = mapFederatedTypes(hop, inFTypes);
     ShapeHint effectiveHint = (hint != null)
         ? mergeFullSinglePartitionHint(hint, hop, inFTypes)
         : buildShapeHint(hop, inFTypes);
     logOracleInvocation(hop, sig, mapped, effectiveHint, "begin");
-    RulesApi.OpCaps caps = oracle.decide(sig, mapped, effectiveHint);
+    RulesApi.OpCaps caps = applyPlannerRequest(
+        oracle.decide(sig, mapped, effectiveHint), requestedExec, requestedPlacement);
     logOracleResult(hop, caps);
     return caps;
   }
@@ -136,24 +179,62 @@ public final class OracleFacade {
   public RulesApi.FTypeProfile inferProfile(
       Hop hop, List<List<FType>> inCandidates, ShapeHint hint) {
     Objects.requireNonNull(hop, "hop");
-    OpSig sig = buildSignature(hop);
+    OpSig sig = buildSignature(hop, null, null);
     ShapeHint effectiveHint = (hint != null) ? hint : buildShapeHint(hop, null);
     return inference.infer(sig, inCandidates, effectiveHint);
   }
 
   OpSig describe(Hop hop) {
     Objects.requireNonNull(hop, "hop");
-    return buildSignature(hop);
+    return buildSignature(hop, null, null);
   }
 
-  private OpSig buildSignature(Hop hop) {
+  private OpSig buildSignature(Hop hop, ExecType requestedExec,
+      FederatedOutput requestedPlacement) {
     String opcode = CanonicalOpcode.from(hop);
     OpCategory category = resolveCategory(hop, opcode);
     Map<String,String> attrs = new LinkedHashMap<>();
     attrs.put(ATTR_GUARD_DEFAULT, "allow");
     enrichAttributes(hop, attrs);
+    applyPlannerHints(attrs, requestedExec, requestedPlacement);
     List<InputKind> kinds = inputKinds(hop);
     return new OpSig(opcode, category, attrs, kinds);
+  }
+
+  private static void applyPlannerHints(Map<String,String> attrs, ExecType requestedExec,
+      FederatedOutput requestedPlacement) {
+    if (requestedExec == ExecType.FED) {
+      attrs.remove(ATTR_FORCE_LOCAL);
+      attrs.put(ATTR_FORCE_FED, Boolean.TRUE.toString());
+    }
+    else if (requestedExec == ExecType.CP) {
+      attrs.remove(ATTR_FORCE_FED);
+      attrs.put(ATTR_FORCE_LOCAL, Boolean.TRUE.toString());
+    }
+
+    if (requestedPlacement == FederatedOutput.FOUT)
+      attrs.put(ATTR_FORCE_FOUT, Boolean.TRUE.toString());
+    else if (requestedPlacement != null)
+      attrs.remove(ATTR_FORCE_FOUT);
+  }
+
+  private static RulesApi.OpCaps applyPlannerRequest(RulesApi.OpCaps caps,
+      ExecType requestedExec, FederatedOutput requestedPlacement) {
+    if (caps == null || requestedExec != ExecType.FED
+        || requestedPlacement != FederatedOutput.LOUT || caps.exec() != ExecType.FED
+        || caps.placement() != FederatedOutput.FOUT)
+      return caps;
+
+    RulesApi.OpCaps.Builder builder = RulesApi.OpCaps.newBuilder()
+        .category(caps.category())
+        .opcode(caps.opcode())
+        .exec(ExecType.FED)
+        .placement(FederatedOutput.LOUT)
+        .reason(caps.reason());
+    caps.detail().ifPresent(builder::detail);
+    for (RulesApi.OpCaps.DecisionNote note : caps.notes())
+      builder.note(note.code(), note.message());
+    return builder.build();
   }
 
   private OpCategory resolveCategory(Hop hop, String opcode) {

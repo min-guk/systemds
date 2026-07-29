@@ -25,8 +25,10 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -67,15 +69,17 @@ import org.apache.sysds.runtime.instructions.cp.Data;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /**
- * Baseline federated planner that compiles all hops
- * that support federated execution on federated inputs to
- * forced federated operations.
+ * Baseline federated planner that requests FED/FOUT for every operation with a
+ * federated input, subject to the common rule oracle. If FOUT is unsupported,
+ * it retains FED/LOUT when legal. Purely local operations remain unforced
+ * unless they are selected for direct CP-to-FOUT refederation.
  */
 public class FederatedPlannerFedAll extends AFederatedPlanner {
 	private static final int MAX_LOOP_REWRITE_PASSES = 4;
 
 	private final OracleFacade _oracle;
 	private final Map<Long, Map<List<FType>, OpCaps>> _oracleCache = new HashMap<>();
+	private final Map<Long, Hop> _plannedHops = new LinkedHashMap<>();
 	private int _numWorkers = 0;
 
 	public FederatedPlannerFedAll() {
@@ -89,6 +93,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	{
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		_oracleCache.clear();
+		_plannedHops.clear();
 		_numWorkers = 0;
 		// handle main program
 		Map<String, FType> fedVars = new HashMap<>();
@@ -96,6 +101,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		Map<Long, List<Hop>> globalRewireTable = buildGlobalTransientRewireTable(prog);
 		for(StatementBlock sb : prog.getStatementBlocks())
 			rRewriteStatementBlock(sb, fedVars, fTypeMap, globalRewireTable);
+		markRefedCandidates(fTypeMap);
 		FederatedRefedPolicy.registerFromProgram(prog, fTypeMap);
 	}
 
@@ -103,6 +109,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
 		FederatedPlannerUtils.clearFedInitVars();
 		_oracleCache.clear();
+		_plannedHops.clear();
 		_numWorkers = 0;
 		Map<String, FType> fedVars = new HashMap<>();
 		Map<Long, FType> fTypeMap = new HashMap<>();
@@ -117,6 +124,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		}
 		Map<Long, List<Hop>> globalRewireTable = buildGlobalTransientRewireTable(function);
 		rRewriteStatementBlock(function, fedVars, fTypeMap, globalRewireTable);
+		markRefedCandidates(fTypeMap);
 		FederatedRefedPolicy.registerFromFunction(function, fTypeMap);
 	}
 
@@ -225,6 +233,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 		//process children first
 		for( Hop c : hop.getInput() )
 			rRewriteHop(c, memo, fedVars, fTypeMap, rewireTable, globalRewireTable, program);
+		_plannedHops.put(hop.getHopID(), hop);
 		
 		FType outFType = null;
 		boolean logDecision = true;
@@ -292,28 +301,15 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			}
 		}
 		else { // memoization as processed, but not federated
-			// Clear any stale FED markings from previous rewrite passes.
-			if (hop.getForcedExecType() == ExecType.FED)
+			boolean federatedContext = hasFederatedInput(hop, memo);
+			if( federatedContext ) {
+				// Clear stale FED markings from previous rewrite passes while
+				// leaving unrelated local HOPs entirely unforced.
 				hop.setForcedExecType(ExecType.CP);
-			if (hop.getFederatedOutput() != FederatedOutput.LOUT)
 				hop.setFederatedOutput(FederatedOutput.LOUT);
-			if( shouldGenerateCpfoutCandidate(hop, memo) ) {
-				outFType = inferCpfoutFType(hop, memo, rewireTable);
-				if( outFType != null ) {
-					hop.setFederatedOutput(FederatedOutput.FOUT);
-					FType propagated = getPropagatedFType(hop, outFType);
-					memo.put(hop.getHopID(), propagated);
-					updateFTypeMap(fTypeMap, hop.getHopID(), propagated);
-				}
-				else {
-					memo.put(hop.getHopID(), null);
-					updateFTypeMap(fTypeMap, hop.getHopID(), null);
-				}
 			}
-			else {
-				memo.put(hop.getHopID(), null);
-				updateFTypeMap(fTypeMap, hop.getHopID(), null);
-			}
+			memo.put(hop.getHopID(), null);
+			updateFTypeMap(fTypeMap, hop.getHopID(), null);
 		}
 
 			if( logDecision )
@@ -451,9 +447,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	}
 
 	private boolean allowsFederated(Hop hop, Map<Long, FType> fedHops, Map<Long, List<Hop>> rewireTable) {
-		if (!FederatedRefedPolicy.canSatisfyFederatedInputs(hop, fedHops))
-			return false;
-		OpCaps caps = getOracleCaps(hop, fedHops, rewireTable);
+		OpCaps caps = decideWithPlannerPolicy(hop, collectInputFTypes(hop, fedHops));
 		return caps != null && caps.exec() == ExecType.FED;
 	}
 
@@ -464,8 +458,8 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 
 	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops,
 		Map<Long, List<Hop>> rewireTable) {
-		List<FType> inputFTypes = collectOracleInputFTypes(hop, fedHops, rewireTable);
-		OpCaps caps = getOracleCaps(hop, inputFTypes);
+		List<FType> inputFTypes = collectInputFTypes(hop, fedHops);
+		OpCaps caps = decideWithPlannerPolicy(hop, inputFTypes);
 		if( caps == null )
 			return null;
 		if( caps.foutFType().isPresent() )
@@ -474,6 +468,65 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			return null;
 		FType inferred = OracleUtils.inferFallbackFType(hop, inputFTypes, _oracle, rewireTable);
 		return inferred != null ? inferred : FederatedTypePropagator.getFederatedType(hop, fedHops);
+	}
+
+	private OpCaps decideWithPlannerPolicy(Hop hop, List<FType> inputFTypes) {
+		if( !hasFederatedInput(inputFTypes) )
+			return getOracleCaps(hop, inputFTypes);
+
+		OpCaps preferred = _oracle.decide(hop, inputFTypes, ExecType.FED, FederatedOutput.FOUT);
+		if( preferred.exec() == ExecType.FED && prefersLocalOutput(hop, preferred) )
+			return _oracle.decide(hop, inputFTypes, ExecType.FED, FederatedOutput.LOUT);
+		if( preferred.exec() == ExecType.FED )
+			return preferred;
+
+		// A forced FOUT can be illegal even when FED/LOUT is supported. FedAll
+		// still prefers federated execution over falling back to CP in that case.
+		return _oracle.decide(hop, inputFTypes, ExecType.FED, FederatedOutput.LOUT);
+	}
+
+	protected boolean prefersLocalOutput(Hop hop, OpCaps preferredCaps) {
+		return false;
+	}
+
+	private void markRefedCandidates(Map<Long, FType> fTypeMap) {
+		for( Hop hop : _plannedHops.values() ) {
+			ExecType forcedExec = hop.getForcedExecType();
+			if( (forcedExec != null && forcedExec != ExecType.CP) || !hop.getDataType().isMatrix()
+				|| hop.getFederatedOutput() == FederatedOutput.FOUT || fTypeMap.containsKey(hop.getHopID()) )
+				continue;
+
+			FType candidateFType = FederatedRefedPolicy.getRefedCandidateFType(hop, fTypeMap);
+			if( candidateFType == null || !preservesFederatedParents(hop, candidateFType, fTypeMap) )
+				continue;
+
+			hop.setForcedExecType(ExecType.CP);
+			hop.setFederatedOutput(FederatedOutput.FOUT);
+			fTypeMap.put(hop.getHopID(), candidateFType);
+		}
+	}
+
+	private boolean preservesFederatedParents(Hop hop, FType candidateFType, Map<Long, FType> fTypeMap) {
+		boolean hasFederatedParent = false;
+		for( Hop parent : hop.getParent() ) {
+			if( parent == null || parent.getForcedExecType() != ExecType.FED )
+				continue;
+			hasFederatedParent = true;
+			List<FType> candidateInputs = collectInputFTypes(parent, fTypeMap);
+			int inputIndex = parent.getInput().indexOf(hop);
+			if( inputIndex < 0 )
+				return false;
+			candidateInputs.set(inputIndex, candidateFType);
+			OpCaps caps = _oracle.decide(parent, candidateInputs);
+			if( caps.exec() != ExecType.FED || caps.placement() != parent.getFederatedOutput() )
+				return false;
+			if( caps.placement() == FederatedOutput.FOUT ) {
+				Optional<FType> selectedParentType = Optional.ofNullable(fTypeMap.get(parent.getHopID()));
+				if( !caps.foutFType().equals(selectedParentType) )
+					return false;
+			}
+		}
+		return hasFederatedParent;
 	}
 
 	protected FType getPropagatedFType(Hop hop, FType outFType) {
@@ -589,7 +642,7 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			if( op == OpOpData.TRANSIENTREAD || op == OpOpData.TRANSIENTWRITE )
 				return false;
 		}
-		return FederatedRefedPolicy.canGenerateCpfoutCandidate(hop, memo);
+		return FederatedRefedPolicy.getRefedCandidateFType(hop, memo) != null;
 	}
 
 	private static boolean isRecompileRegion(Hop hop) {
@@ -614,6 +667,15 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 			if (input != null && memo.get(input.getHopID()) != null)
 				return true;
 		}
+		return false;
+	}
+
+	private static boolean hasFederatedInput(List<FType> inputFTypes) {
+		if( inputFTypes == null )
+			return false;
+		for( FType inputFType : inputFTypes )
+			if( inputFType != null )
+				return true;
 		return false;
 	}
 
@@ -686,6 +748,9 @@ public class FederatedPlannerFedAll extends AFederatedPlanner {
 	}
 
 	private FType inferCpfoutFType(Hop hop, Map<Long, FType> memo, Map<Long, List<Hop>> rewireTable) {
+		FType directRefed = FederatedRefedPolicy.getRefedCandidateFType(hop, memo);
+		if( directRefed != null )
+			return directRefed;
 		List<FType> inputFTypes = collectInputFTypes(hop, memo);
 		FType inferred = OracleUtils.inferFallbackFType(hop, inputFTypes, _oracle, rewireTable);
 		FType logical = inferred != null ? inferred : FederatedTypePropagator.getFederatedType(hop, memo);

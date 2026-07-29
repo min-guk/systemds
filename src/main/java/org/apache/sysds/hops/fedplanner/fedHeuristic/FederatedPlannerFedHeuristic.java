@@ -19,82 +19,54 @@
 
 package org.apache.sysds.hops.fedplanner.fedHeuristic;
 
-import java.util.HashMap;
-import java.util.Map;
-
 import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.Hop;
 import org.apache.sysds.hops.fedplanner.FederatedRefedPolicy;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll;
+import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.parser.FunctionStatementBlock;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 
+/**
+ * FedAll policy with early consolidation of row/column vector matrix-multiply
+ * outputs. Both the FOUT candidate and the LOUT alternative are validated by
+ * the common rule oracle.
+ */
 public class FederatedPlannerFedHeuristic extends FederatedPlannerFedAll {
-	private final Map<Long, FType> heuristicFallbackFTypes = new HashMap<>();
-
 	@Override
 	public void rewriteProgram(org.apache.sysds.parser.DMLProgram prog,
 		org.apache.sysds.hops.ipa.FunctionCallGraph fgraph,
 		org.apache.sysds.hops.ipa.FunctionCallSizeInfo fcallSizes) {
-		heuristicFallbackFTypes.clear();
 		FederatedRefedPolicy.clearHeuristicDemotedHops();
 		super.rewriteProgram(prog, fgraph, fcallSizes);
 	}
 
 	@Override
 	public void rewriteFunctionDynamic(FunctionStatementBlock function, LocalVariableMap funcArgs) {
-		heuristicFallbackFTypes.clear();
 		FederatedRefedPolicy.clearHeuristicDemotedHops();
 		super.rewriteFunctionDynamic(function, funcArgs);
 	}
 
 	@Override
-	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops) {
-		FType inferred = super.getFederatedOut(hop, fedHops); // FedAll
-		FType ret = applyHeuristics(hop, inferred);
-		recordHeuristicFallback(hop, inferred, ret);
-		return ret;
-	}
-
-	@Override
-	protected FType getFederatedOut(Hop hop, Map<Long, FType> fedHops,
-		Map<Long, java.util.List<Hop>> rewireTable) {
-		FType inferred = super.getFederatedOut(hop, fedHops, rewireTable); // FedAll
-		FType ret = applyHeuristics(hop, inferred);
-		recordHeuristicFallback(hop, inferred, ret);
-		return ret;
-	}
-
-	@Override
-	protected FType getPropagatedFType(Hop hop, FType outFType) {
-		return outFType;
-	}
-
-	private void recordHeuristicFallback(Hop hop, FType inferred, FType ret) {
-		if( hop == null )
-			return;
-		if( ret == null && inferred != null ) {
-			heuristicFallbackFTypes.put(hop.getHopID(), inferred);
-			FederatedRefedPolicy.markHeuristicDemotedHop(hop.getHopID());
-		}
-		else {
-			heuristicFallbackFTypes.remove(hop.getHopID());
-			FederatedRefedPolicy.unmarkHeuristicDemotedHop(hop.getHopID());
-		}
-	}
-
-	private static FType applyHeuristics(Hop hop, FType ret) {
-		
-		//apply operator-specific heuristics
-		if( hop instanceof AggBinaryOp) {
-			if( (ret == FType.ROW && hop.getDim2()==1) 
-				|| (ret == FType.COL && hop.getDim1()==1) )
-			{
-				ret = null; //get local vectors
+	protected boolean prefersLocalOutput(Hop hop, OpCaps preferredCaps) {
+		boolean localOutput = false;
+		if( hop instanceof AggBinaryOp && preferredCaps.foutFType().isPresent() ) {
+			switch( preferredCaps.foutFType().get() ) {
+				case ROW:
+					localOutput = hop.getDim2() == 1;
+					break;
+				case COL:
+					localOutput = hop.getDim1() == 1;
+					break;
+				default:
+					break;
 			}
 		}
-		
-		return ret;
+
+		if( localOutput )
+			FederatedRefedPolicy.markHeuristicDemotedHop(hop.getHopID());
+		else
+			FederatedRefedPolicy.unmarkHeuristicDemotedHop(hop.getHopID());
+		return localOutput;
 	}
 }

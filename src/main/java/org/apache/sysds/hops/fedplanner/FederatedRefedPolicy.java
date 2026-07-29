@@ -3084,6 +3084,35 @@ public final class FederatedRefedPolicy {
 		return true;
 	}
 
+	/**
+	 * Returns the compatible anchor layout for a direct CP-to-FOUT refederation.
+	 * Unlike {@link #canGenerateCpfoutCandidate(Hop, java.util.Map)}, this method
+	 * requires known identical dimensions because greedy planners use it only
+	 * for layout-preserving refederation, not repartitioning or materialization.
+	 *
+	 * @param hop candidate CP producer
+	 * @param fTypeMap known selected output layouts
+	 * @return compatible anchor layout, or {@code null} if direct refederation is not valid
+	 */
+	public static FType getRefedCandidateFType(Hop hop, java.util.Map<Long, FType> fTypeMap) {
+		if (hop == null || hop.getParent() == null || hop.getParent().isEmpty())
+			return null;
+		AnchorSelection selection = selectAnchor(hop, fTypeMap, false, false, null);
+		if (selection == null || selection.anchorHop == null)
+			return null;
+		try {
+			validateAnchorTypeSupported(hop, selection.anchorHop, fTypeMap);
+		}
+		catch (DMLRuntimeException ex) {
+			return null;
+		}
+		long[] anchorDims = getAnchorDimsIfKnown(selection.anchorHop);
+		if (!hop.dimsKnown() || anchorDims == null
+			|| hop.getDim1() != anchorDims[0] || hop.getDim2() != anchorDims[1])
+			return null;
+		return getKnownFType(selection.anchorHop, fTypeMap);
+	}
+
 	public static boolean canGenerateCpfoutCandidateFromFTypes(Hop hop, java.util.Map<Long, FType> fTypeMap) {
 		if (canGenerateCpfoutCandidate(hop, fTypeMap))
 			return true;

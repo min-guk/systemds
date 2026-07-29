@@ -21,6 +21,7 @@ package org.apache.sysds.test.functions.federated.fedplanning;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -292,6 +293,43 @@ public class FederatedRefedPolicyTest {
 			}
 		}
 		assertTrue("Expected fed_fout instruction for dim mismatch materialize", hasFoutInstruction);
+	}
+
+	@Test
+	public void testDirectRefedCandidateRejectsDimMismatch() {
+		DataOp localLhs = createLocalMatrix("L", 10, 5);
+		DataOp localRhs = createLocalMatrix("R", 10, 5);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(5);
+		target.setForcedExecType(ExecType.CP);
+
+		DataOp anchor = createFederatedInput("A", 10, 4);
+		BinaryOp parent = HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+
+		assertTrue(FederatedRefedPolicy.canGenerateCpfoutCandidate(target, fTypeMap));
+		assertNull(FederatedRefedPolicy.getRefedCandidateFType(target, fTypeMap));
+	}
+
+	@Test
+	public void testDirectRefedCandidateRejectsUnknownDimensions() {
+		DataOp localLhs = createLocalMatrix("L", -1, -1);
+		DataOp localRhs = createLocalMatrix("R", -1, -1);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setForcedExecType(ExecType.CP);
+
+		DataOp anchor = createFederatedInput("A", 10, 10);
+		BinaryOp parent = HopRewriteUtils.createBinary(target, anchor, OpOp2.PLUS);
+		parent.setForcedExecType(ExecType.FED);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+
+		assertNull(FederatedRefedPolicy.getRefedCandidateFType(target, fTypeMap));
 	}
 
 	@Test

@@ -18,6 +18,7 @@
 package org.apache.sysds.hops.fedplanner.rules.bridge;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import java.util.Map;
 import org.apache.sysds.common.Opcodes;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.DataType;
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
@@ -50,6 +52,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesCore.OracleEngine;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.FTypes;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Test;
 
 public class OracleFacadeTest {
@@ -66,6 +69,28 @@ public class OracleFacadeTest {
 
     OpSig sig = facade.describe(mm);
     assertEquals(Opcodes.MMULT.toString(), sig.opcode());
+  }
+
+  @Test
+  public void plannerHintsSelectMMPlacementWithoutMutatingHop() {
+    Hop left = matrix("left", 8, 8);
+    Hop right = matrix("right", 8, 1);
+    AggBinaryOp mm = new AggBinaryOp("mm", DataType.MATRIX, ValueType.FP64,
+        OpOp2.MULT, AggOp.SUM, left, right);
+    List<FTypes.FType> inputTypes = new ArrayList<>();
+    inputTypes.add(FType.ROW);
+    inputTypes.add(null);
+
+    OpCaps fout = facade.decide(mm, inputTypes, ExecType.FED, FederatedOutput.FOUT);
+    OpCaps lout = facade.decide(mm, inputTypes, ExecType.FED, FederatedOutput.LOUT);
+
+    assertEquals(ExecType.FED, fout.exec());
+    assertEquals(FederatedOutput.FOUT, fout.placement());
+    assertEquals(FType.ROW, fout.foutFType().orElse(null));
+    assertEquals(ExecType.FED, lout.exec());
+    assertEquals(FederatedOutput.LOUT, lout.placement());
+    assertNull(mm.getForcedExecType());
+    assertEquals(FederatedOutput.NONE, mm.getFederatedOutput());
   }
 
   @Test
