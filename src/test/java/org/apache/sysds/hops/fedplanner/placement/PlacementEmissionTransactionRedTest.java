@@ -196,6 +196,30 @@ public class PlacementEmissionTransactionRedTest {
 		}
 	}
 
+	@Test
+	public void fullFedInitDurableAnchorMatchesLiveRegisteredAuthority() throws Exception {
+		FixtureProgram program = FixtureProgram.adopt(compileFullRelocationProgram());
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		NeutralPlacementGraph.Node anchor = uniqueNode(analysis, "XF");
+
+		Assert.assertEquals("G007_FULL_FEDINIT_REQUIRES_ONE_DURABLE_ANCHOR", 1, anchor.anchors().size());
+		Assert.assertEquals("G007_FULL_FEDINIT_REQUIRES_FULL_DURABLE_ANCHOR",
+			FType.FULL, anchor.anchors().get(0).fType());
+		DataOp source = (DataOp) analysis.hop(anchor.key()).orElseThrow();
+		FederatedPlannerUtils.registerFedInitVar("XF", FederatedPlannerUtils.deriveFedInitFType(source),
+			FederatedPlannerUtils.deriveFedInitSignature(source));
+		String durableKey = ExactPlacementRegistration.runtimeAnchorKey(anchor.anchors().get(0));
+		String liveKey = FederatedPlannerUtils.getFedAnchorKey("XF");
+		Assert.assertEquals("G007_FULL_FEDINIT_LIVE_AND_DURABLE_AUTHORITY_MUST_MATCH",
+			liveKey, durableKey);
+		FederationMap runtimeMap = FederationUtils.buildAnchorMapFromKey(durableKey);
+		Assert.assertNotNull("G007_FULL_FEDINIT_DURABLE_AUTHORITY_MUST_REBUILD", runtimeMap);
+		String runtimeKey = FederatedPlannerUtils.deriveFedMappingSignature(runtimeMap)
+			+ '|' + runtimeMap.getType().name();
+		Assert.assertEquals("G007_FULL_FEDINIT_COMPILE_AND_RUNTIME_AUTHORITY_MUST_MATCH",
+			liveKey, runtimeKey);
+	}
+
 
 	@Test
 	public void emittedTransactionRegistryRefedLowersThroughDagGetJobsToConcreteInstruction() throws Exception {
@@ -365,6 +389,22 @@ public class PlacementEmissionTransactionRedTest {
 			+ "Y1=X+S;\nY2=X-S;\n"
 			+ "write(Y1,\"/tmp/g005-p4-y1\",format=\"binary\");\n"
 			+ "write(Y2,\"/tmp/g005-p4-y2\",format=\"binary\");\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileFullRelocationProgram() throws Exception {
+		String script = "XF=federated(addresses=list(\"worker1:8001/data/P2P2D_features.data\"),"
+			+ "ranges=list(list(0,0),list(50000,2100)));\n"
+			+ "S=rand(rows=50000,cols=2100,seed=7);\n"
+			+ "Y=XF+S;\n"
+			+ "write(Y,\"/tmp/g007-full-anchor-y\",format=\"binary\");\n";
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);

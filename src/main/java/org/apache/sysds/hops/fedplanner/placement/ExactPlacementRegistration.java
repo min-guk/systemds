@@ -42,6 +42,7 @@ import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.DMLRuntimeException;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Exact final registry owner for plans already selected from one canonical placement analysis. */
@@ -166,7 +167,11 @@ public final class ExactPlacementRegistration {
 		for(var partition : anchor.partitions()) {
 			if(partition.begin().size() != 2 || partition.end().size() != 2)
 				throw new DMLRuntimeException("Runtime federated anchors require exact two-dimensional ranges");
-			key.append(partition.workerId()).append(';');
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			if(worker == null)
+				throw new DMLRuntimeException("Runtime federated anchor has an invalid worker address: "
+					+ partition.workerId());
+			key.append(worker).append(';');
 		}
 		key.append('|');
 		for(var partition : anchor.partitions()) {

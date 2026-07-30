@@ -1142,31 +1142,33 @@ public class FederatedPlannerUtils {
 		for (Hop addr : addrHop.getInput()) {
 			if (!(addr instanceof LiteralOp))
 				return null;
-			sb.append(((LiteralOp) addr).getStringValue()).append(';');
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(
+				((LiteralOp) addr).getStringValue());
+			if (worker == null)
+				return null;
+			sb.append(worker).append(';');
 		}
 		sb.append('|');
 
 		List<Hop> ranges = rangeHop.getInput();
-		if (fType != FType.FULL) {
-			if (ranges == null || ranges.isEmpty() || ranges.size() % 2 != 0)
+		if (ranges == null || ranges.isEmpty() || ranges.size() % 2 != 0)
+			return null;
+		for (int i = 0; i < ranges.size(); i += 2) {
+			Hop beg = ranges.get(i);
+			Hop end = ranges.get(i + 1);
+			Long rl = getLiteralLong(beg, 0);
+			Long cl = getLiteralLong(beg, 1);
+			Long ru = getLiteralLong(end, 0);
+			Long cu = getLiteralLong(end, 1);
+			if (rl == null || cl == null || ru == null || cu == null)
 				return null;
-			for (int i = 0; i < ranges.size(); i += 2) {
-				Hop beg = ranges.get(i);
-				Hop end = ranges.get(i + 1);
-				Long rl = getLiteralLong(beg, 0);
-				Long cl = getLiteralLong(beg, 1);
-				Long ru = getLiteralLong(end, 0);
-				Long cu = getLiteralLong(end, 1);
-				if (rl == null || cl == null || ru == null || cu == null)
-					return null;
-				if (fType == FType.ROW)
-					sb.append(rl).append(',').append(ru).append(';');
-				else if (fType == FType.COL)
-					sb.append(cl).append(',').append(cu).append(';');
-				else
-					sb.append(rl).append(',').append(cl).append(',')
-						.append(ru).append(',').append(cu).append(';');
-			}
+			if (fType == FType.ROW)
+				sb.append(rl).append(',').append(ru).append(';');
+			else if (fType == FType.COL)
+				sb.append(cl).append(',').append(cu).append(';');
+			else
+				sb.append(rl).append(',').append(cl).append(',')
+					.append(ru).append(',').append(cu).append(';');
 		}
 		return sb.toString();
 	}
@@ -1184,24 +1186,25 @@ public class FederatedPlannerUtils {
 			FederatedData data = entry.getValue();
 			if (data == null || data.getAddress() == null)
 				return null;
-			sb.append(data.getAddress().toString()).append(';');
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(data.getAddress());
+			if (worker == null)
+				return null;
+			sb.append(worker).append(';');
 		}
 		sb.append('|');
-		if (fType != FType.FULL) {
-			for (Pair<FederatedRange, FederatedData> entry : entries) {
-				FederatedRange range = entry.getKey();
-				if (range == null || range.getBeginDims().length < 2 || range.getEndDims().length < 2)
-					return null;
-				long[] beg = range.getBeginDims();
-				long[] end = range.getEndDims();
-				if (fType == FType.ROW)
-					sb.append(beg[0]).append(',').append(end[0]).append(';');
-				else if (fType == FType.COL)
-					sb.append(beg[1]).append(',').append(end[1]).append(';');
-				else
-					sb.append(beg[0]).append(',').append(beg[1]).append(',')
-						.append(end[0]).append(',').append(end[1]).append(';');
-			}
+		for (Pair<FederatedRange, FederatedData> entry : entries) {
+			FederatedRange range = entry.getKey();
+			if (range == null || range.getBeginDims().length < 2 || range.getEndDims().length < 2)
+				return null;
+			long[] beg = range.getBeginDims();
+			long[] end = range.getEndDims();
+			if (fType == FType.ROW)
+				sb.append(beg[0]).append(',').append(end[0]).append(';');
+			else if (fType == FType.COL)
+				sb.append(beg[1]).append(',').append(end[1]).append(';');
+			else
+				sb.append(beg[0]).append(',').append(beg[1]).append(',')
+					.append(end[0]).append(',').append(end[1]).append(';');
 		}
 		return sb.toString();
 	}

@@ -219,7 +219,10 @@ public class FederationUtils {
 			FederatedData data = entry.getValue();
 			if (data == null || data.getAddress() == null)
 				return null;
-			sb.append(data.getAddress().toString()).append(';');
+			String worker = canonicalFederatedWorkerAddress(data.getAddress());
+			if (worker == null)
+				return null;
+			sb.append(worker).append(';');
 		}
 		sb.append('|');
 
@@ -259,7 +262,10 @@ public class FederationUtils {
 			FederatedData data = entry.getValue();
 			if (data == null || data.getAddress() == null)
 				return null;
-			sb.append(data.getAddress().toString()).append(';');
+			String worker = canonicalFederatedWorkerAddress(data.getAddress());
+			if (worker == null)
+				return null;
+			sb.append(worker).append(';');
 		}
 		sb.append('|');
 
@@ -377,6 +383,17 @@ public class FederationUtils {
 		return null;
 	}
 
+	public static String canonicalFederatedWorkerAddress(String token) {
+		return canonicalFederatedWorkerAddress(parseAddress(token));
+	}
+
+	public static String canonicalFederatedWorkerAddress(InetSocketAddress address) {
+		if (address == null || address.getHostString() == null || address.getHostString().isBlank()
+			|| address.getPort() < 0)
+			return null;
+		return address.getHostString() + ':' + address.getPort();
+	}
+
 	private static InetSocketAddress parseAddress(String token) {
 		if (token == null)
 			return null;
@@ -386,20 +403,28 @@ public class FederationUtils {
 		int slash = addr.indexOf('/');
 		if (slash >= 0) {
 			String before = addr.substring(0, slash);
+			String after = slash < addr.length() - 1 ? addr.substring(slash + 1) : "";
+			Integer renderedPort = socketPort(after);
 			if (before.contains(":") && !before.isEmpty()) {
 				// fedinit signatures embed host:port/path
 				addr = before;
 			}
-			else if (slash < addr.length() - 1) {
-				// InetSocketAddress#toString -> host/addr:port
-				addr = addr.substring(slash + 1);
+			else if (renderedPort != null) {
+				// InetSocketAddress#toString -> host/addr:port. Preserve the original
+				// host when present so DNS resolution does not change durable identity.
+				addr = (before.isEmpty() ? after : before + ':' + renderedPort);
+			}
+			else if (!before.isEmpty()) {
+				// fedinit address without an explicit port: host/path
+				addr = before;
 			}
 		}
 		int colon = addr.lastIndexOf(':');
-		if (colon <= 0 || colon >= addr.length() - 1)
+		String host = colon > 0 ? addr.substring(0, colon) : addr;
+		String portStr = colon > 0 && colon < addr.length() - 1
+			? addr.substring(colon + 1) : Integer.toString(DMLConfig.DEFAULT_FEDERATED_PORT);
+		if (host.isBlank())
 			return null;
-		String host = addr.substring(0, colon);
-		String portStr = addr.substring(colon + 1);
 		int port;
 		try {
 			port = Integer.parseInt(portStr);
@@ -407,7 +432,24 @@ public class FederationUtils {
 		catch (NumberFormatException ex) {
 			return null;
 		}
+		if (port < 0 || port > 65535)
+			return null;
 		return new InetSocketAddress(host, port);
+	}
+
+	private static Integer socketPort(String renderedAddress) {
+		if (renderedAddress == null || renderedAddress.isEmpty())
+			return null;
+		int colon = renderedAddress.lastIndexOf(':');
+		if (colon < 0 || colon >= renderedAddress.length() - 1)
+			return null;
+		try {
+			int port = Integer.parseInt(renderedAddress.substring(colon + 1));
+			return port >= 0 && port <= 65535 ? port : null;
+		}
+		catch (NumberFormatException ex) {
+			return null;
+		}
 	}
 
 	public static void checkFedMapType(MatrixObject mo) {
