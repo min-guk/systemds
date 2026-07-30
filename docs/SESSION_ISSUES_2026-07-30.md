@@ -348,7 +348,7 @@
 
 ## DP/StepLM 함수 formal TRead 후보와 전역 output decision forest가 서로 닫히지 않음
 
-- **상태**: 진행중 — 첫 immutable Docker canary의 공유 formal 충돌을 hermetic full lifecycle에서 재현했다. 모든 exact caller를 하나의 formal plan으로 비용화한 뒤에도 남던 전역 output-map/plan-edge 불일치와 함수 경계 상태 투영 오류를 구조적으로 수정했으며, StepLM 전체 컴파일과 DP 관련 회귀/package가 통과했다. 새 immutable Docker 단일 셀 검증이 남음
+- **상태**: 해결 — 공유 formal, 전역 output-map/plan-edge, 함수 경계 상태 투영을 구조적으로 닫았고, 후속 runtime recompile의 cost-ignorant placement 변경까지 별도 수정했다. 최종 immutable Docker DP/StepLM 단일 셀은 semantic oracle과 planner-placement 불변식을 모두 통과함
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 전 기준 commit: `356c3b8b07`
@@ -419,14 +419,15 @@
   - 함수 후보/전파/occurrence/dynamic targeted 21건 GREEN: `/tmp/g007-dp-shared-formal-closure-targeted-green-20260730.log`, Maven return code 0(20 success, 기존 조건부 1 skip). 별도 진단 실행에서 legacy `FederatedPlannerFallbackIntegrationTest`의 기존 기준선 실패 13건도 재확인했으며 이번 targeted 결과와 분리했다.
   - DP PCA·LM·LogReg targeted 회귀 GREEN: `/tmp/g007-dp-shared-formal-pca-lm-logreg-20260730.log`, Maven return code 0.
   - 새 package 성공: `/tmp/g007-dp-shared-formal-closure-package-20260730.log`, Maven return code 0.
-  - 첫 Docker canary는 `success=false`였고 teardown은 성공했다. 이 실패를 고친 새 immutable stage의 Docker evidence는 아직 진행 전이다.
+  - 첫 shared-formal Docker canary는 `success=false`였고 teardown은 성공했다. 이후 decision-forest 수정 stage는 semantic/runtime 성공까지 갔지만 runtime recompile이 선택된 placement를 변경하는 별도 결함을 노출했으며, 바로 다음 이슈에서 구조적으로 해결했다.
   - Docker-equivalent full lifecycle RED는 exact `rix`의 `FED/LOUT` 대 `FED/FOUT` 충돌을 재현했다: `/tmp/g007-dp-steplm-decision-map-full-lifecycle-red-20260730.log`.
   - decision-map structural closure만 적용한 중간 실행은 원래 충돌을 제거하고 다음 정확한 경계 오류(`FED/LOUT` source 대 `[CP/LOUT,FED/FOUT]` boundary)를 노출했다: `/tmp/g007-dp-steplm-decision-map-closure-green-attempt1-20260730.log`.
   - 경계 placement 정규화 후 동일 full lifecycle GREEN: `/tmp/g007-dp-steplm-boundary-normalization-attempt1-20260730.log`, Maven return code 0, compile-only runtime program 생성 완료.
   - StepLM 2개 회귀 및 PCA·LM·LogReg, shared function propagation, DP oracle/semantic closure, projected upload, rewire owner 묶음 성공: `/tmp/g007-dp-steplm-decision-closure-regression-suite-20260730.log`, 총 22 tests / 0 failures / 0 errors / 1 조건부 skip.
   - checkstyle/RAT를 포함한 package 성공: `/tmp/g007-dp-steplm-decision-closure-package-20260730.log`, Maven return code 0.
+  - 최종 runtime-placement lock commit `f3bdd2ea18148312b28ec4a25a7d825a00df43db`의 Docker DP/StepLM canary가 `success=true`, semantic oracle `passed=true`, fallback/demotion 0건, teardown resource 0개로 종료했다. 상세 경로와 hash는 다음 이슈에 기록했다.
 - **잔여 이슈**:
-  - 현재 변경을 commit하고 새 immutable stage를 만든 뒤 canonical Docker DP/StepLM 셀을 정확히 한 번 실행해야 한다. 기존 실패 artifact/stage는 재실행하지 않는다.
+  - 이 StepLM 결함에 대한 필수 작업은 남지 않았다. 다음 단계는 기존 검증 artifact를 재사용해 DP 전체 workload 상태를 정리하고, 미검증 DP 셀만 새 immutable Docker discovery로 보충한 뒤 FedAll로 넘어가는 것이다.
   - seed pass에서 active call-site를 확정할 direct rewire argument가 어떤 formal에도 없다면 DP는 의도적으로 fail-closed한다. 실제 workload에서 나타나면 seed dependency 모델을 확장해야 하며 임의 선택으로 우회하면 안 된다.
   - closure pass는 cyclic function-call dependency를 끊기 위해 seed source plan을 사용한다. 새 workload에서 후속 source 재열거로 필요한 output arm이 사라지는 증거가 나오면 bounded convergence를 추가해야 하며, 현재 StepLM lowering에서는 dangling edge가 없음을 검증했다.
 - **잠재 회귀 위험**:
@@ -439,3 +440,77 @@
 - **의사결정 근거/적용 원칙**:
   - 수정 대상은 builder의 후보 폐쇄 순서, DP의 seed/공유-formal closure, output-decision forest의 구조적 실행 가능성 점수, 그리고 synthetic boundary의 값-placement 투영이다. oracle/runtime 지원과 TRead/TWrite 제약은 완화하지 않았다.
   - runtime fallback/암묵 보정, `<CP,FOUT>` 허용, legal candidate 임의 skip/continue는 추가하지 않았다.
+
+## Runtime recompile 관측값이 DP가 선택한 TRead placement를 비용 없이 덮어씀
+
+- **상태**: 해결 — runtime placement map을 검증용 관측값으로 제한하고 planner 선택을 불변식으로 잠근 뒤, 새 immutable Docker DP/StepLM 단일 셀에서 demotion/fallback 0건과 semantic oracle 통과를 확인함
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 결함 재현 commit/stage: `8e1e17363be856a1aa4f47fdd2d88d217f5e4b31` / `/home/mchoi/g007-dp-steplm-decision-closure-stage-20260730-v1/g007-stage-9b4fc78bbf7dbb78e09217c79a317121485a809b7abd614b873c565b0818a156`
+  - 결함 재현 Docker run: `/home/mchoi/g007-dp-steplm-decision-closure-canary-20260730-v1`
+  - 수정 commit: `f3bdd2ea18148312b28ec4a25a7d825a00df43db` (`Preserve planner placement during runtime recompile`)
+  - 플래너/워크로드: DP / StepLM / `P2P2D`, private-aggregate, worker 1, LAN, seed `2026072701`
+  - 실행은 stage-local `run_LAN_docker.sh`만 사용했고 retry 각 1, `continue-on-failure=0`으로 정확히 한 번 수행함
+- **재현 절차**:
+  - 기존 coordinator log: `/home/mchoi/g007-dp-steplm-decision-closure-canary-20260730-v1/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - RED 계약: `/tmp/g007-runtime-placement-contract-red-20260730.log`
+  - 재현 핵심은 runtime map에 federated symbol, 명시적 local symbol, 아예 없는 symbol을 각각 넣고 planner가 선택한 `<CP,LOUT>` 또는 `<FED,FOUT>` TRead가 runtime 등록 과정에서 바뀌는지 검사하는 것이다.
+- **관측 증상**:
+  - 기존 Docker run은 semantic oracle까지 통과했지만 coordinator log에 `RefedRuntimeLocalTReadDemote` 9건과 `RefedUnsatisfiedFedInputDemote` 2건이 있었다.
+  - `X`와 `y`의 planner-selected `<FED,FOUT>` TRead가 phase-2 recompile의 비어 있거나 불완전한 `LocalVariableMap` 때문에 `<CP,LOUT>`으로 바뀌었고, 그 결과 상위 aggregate/reorg도 연쇄 demotion됐다.
+  - 반대 방향으로 runtime에서 federated라고 관측된 symbol은 planner-selected local TRead를 FED/FOUT으로 승격할 수 있었다. 두 방향 모두 비용 최적화가 끝난 뒤 runtime context가 계획을 다시 쓰는 동작이었다.
+  - 이전 run의 SystemDS execution은 `17.178`초였지만 plan mutation이 존재했으므로 성능 근거로 채택할 수 없다.
+- **원인 분석**:
+  - recompiler의 계층적 2단계 재컴파일은 일부 구간에 빈 runtime variable map을 전달한다. 기존 policy는 map 부재/미포함을 “명시적 local”과 구분하지 않았다.
+  - `extractDAGOutputStatistics(...)`가 통계 전달을 위해 만든 `MatrixObject`도 실제 runtime-local 값처럼 보였으며, 이 provenance가 `RecompileStatus`에 남지 않았다.
+  - `FederatedRefedPolicy.registerFromHopsInternal(...)`는 runtime map을 검증 관측값이 아니라 replacement plan처럼 사용해 TRead/TWrite와 downstream FED plan을 승격·강등했다.
+  - 따라서 문제는 DP 비용 모델이나 runtime opcode 미지원이 아니라, planner와 runtime-lowering 사이 authority 경계가 뒤집힌 것이었다.
+- **해결 요약**:
+  - runtime map 의미를 세 상태로 분리했다: key 부재는 unknown, `containsKey(name)`이면서 값 `null`은 명시적 local 관측, non-null FType/signature는 federated 관측이다.
+  - `RecompileStatus`에 placement-unknown 변수 provenance를 추가하고 clone/branch merge에서 보존한다. stats-only output 변수는 runtime placement/signature map에서 제거한다.
+  - runtime context는 선택된 TRead placement를 승격·강등하지 않고 lowering registry만 재구성한다.
+  - runtime 등록 전 planner placement snapshot을 만들고 등록 후 ExecType/FedOut/derived flag가 바뀌지 않았는지 fail-closed 검사한다.
+  - 명시적 runtime-local 관측과 planner-selected FED/FOUT이 실제로 모순이면 CP로 demote하지 않고 `DMLRuntimeException`을 발생시킨다. federated input을 만족하지 못하는 downstream plan도 runtime에서 보정하지 않고 실패시킨다.
+  - 후보군, oracle 합법 상태, 비용 모델, TRead/TWrite 규칙 및 recompile `<CP,FOUT>` 금지는 변경하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/recompile/RecompileStatus.java`
+  - `src/main/java/org/apache/sysds/hops/recompile/Recompiler.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `src/test/java/org/apache/sysds/hops/recompile/RecompileStatusFederatedPlacementTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmFunctionInputCandidateRedTest.java`
+- **검증**:
+  - 4개 신규 runtime placement 계약 GREEN: `/tmp/g007-runtime-placement-contract-green-attempt1-20260730.log`.
+  - `FederatedRefedPolicyTest` 46/46 GREEN: `/tmp/g007-runtime-placement-policy-suite-attempt3-20260730.log`.
+  - policy + `RecompileStatusFederatedPlacementTest` 48/48 GREEN: `/tmp/g007-runtime-placement-unit-suite-attempt1-20260730.log`.
+  - StepLM static lifecycle GREEN: `/tmp/g007-runtime-placement-steplm-static-attempt1-20260730.log`.
+  - 일반 function/loop/predicate recompile suite GREEN: `/tmp/g007-runtime-placement-general-recompile-suite-20260730.log`.
+  - DP 관련 22 tests는 0 failures / 0 errors / 1 조건부 skip: `/tmp/g007-runtime-placement-dp-22-suite-20260730.log`.
+  - checkstyle/RAT 포함 package 성공: `/tmp/g007-runtime-placement-package-attempt1-20260730.log`.
+  - 새 immutable runtime/JAR:
+    - runtime: `/home/mchoi/g007-dp-runtime-placement-lock-runtime-20260730-v1`
+    - JAR SHA-256: `b6574df6b3054b65a37fc6d410d7472a72e3abc8a22bd435c252b199bfc22d47`
+  - 새 immutable stage:
+    - root: `/home/mchoi/g007-dp-runtime-placement-lock-stage-20260730-v1/g007-stage-4c838968a51801a734bf3ca923a524ad3cf38de09e6b30ca358a5ee9a858ffc4`
+    - descriptor SHA-256: `cf9c58b58f53bc32b2ed5c26986f813ea25d7872c7cb87994eda0f1591e4771f`
+    - data/reference tree SHA-256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f` / `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - 최종 Docker canary:
+    - run root: `/home/mchoi/g007-dp-runtime-placement-lock-canary-20260730-v1`
+    - response: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart `0/0`, full lifecycle `106.262822513`초
+    - phase return code `0`; scan의 error/fallback/resource-invalid/timeout 모두 `false`
+    - semantic oracle `passed=true`; AIC와 reference가 `380202.8708510169`로 동일, prediction NRMSE와 objective relative error 모두 `0.0`, support identical
+    - SystemDS total execution `17.278`초, compilation `4.136616`초, FedPlanner `2.104782`초; federated I/O `(Read, Put, Get)=2/0/2102`, Execute `(Inst, UDF)=4202/0`
+    - coordinator log에서 `RefedRuntimeLocalTReadDemote`, `RefedUnsatisfiedFedInputDemote`, fallback/repair marker가 모두 0건
+    - raw coordinator SHA-256 `f6383a2abe3025b2813d7ef4ec6cdc62254640a81e750b8a1554bed0cb576705`; semantic oracle SHA-256 `ccd9aa945df07fe6944268ab423b2a357f9469800142692a291bcc4f7e3b20c8`
+    - 종료 후 compose project `g007dprtplock01`의 container/network/volume은 모두 0개
+  - 기존 mutation run `17.178`초 대비 최종 run은 `17.278`초로 `0.100`초(약 `0.58%`) 높다. 단일 discovery 1회 차이는 noise 범위일 수 있어 정책 성능 우열 근거로 사용하지 않으며, 이번 canary의 판정 대상은 semantic/runtime/placement 계약이다.
+- **잔여 이슈**:
+  - 이 runtime placement mutation 결함에 대한 필수 작업은 남지 않았다.
+  - 네 정책 execution-time 정렬은 동일 immutable stage·고정 seed/data·warm 측정·사전 등록된 순서로 별도 performance pass를 수행해야 판단할 수 있다. discovery 단일 run과 서로 다른 JAR의 시간 비교로 정렬을 주장하지 않는다.
+- **잠재 회귀 위험**:
+  - 실제 runtime-local 값이 unknown으로 잘못 표기되면 잘못된 FED plan을 늦게까지 보존할 수 있다. 명시적 local 관측은 계속 fail-closed하며 신규 policy 계약으로 감지한다.
+  - 새로운 stats-only `MatrixObject` 생성 경로가 unknown provenance 등록을 누락할 수 있다. recompile status 단위 테스트와 function/loop/predicate suite로 감지한다.
+  - lowering registry 재구성이 planner placement를 다시 변경하면 snapshot invariant가 즉시 예외를 발생시키며 Docker scan이 이를 검출한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 비용과 합법성을 판단하고 runtime은 그 계획을 그대로 실행한다는 최상위 원칙을 복원했다.
+  - runtime fallback/암묵 demotion, 후보 임의 폐쇄, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.
