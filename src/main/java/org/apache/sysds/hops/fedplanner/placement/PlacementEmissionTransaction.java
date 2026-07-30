@@ -459,7 +459,7 @@ public final class PlacementEmissionTransaction {
 				consumers.add(consumer);
 			}
 			HopOccurrenceProjection anchor = resolveAnchor(analysis, occurrences, key);
-			String anchorKey = key.durableAnchor().normalizedSignature();
+			String anchorKey = ExactPlacementRegistration.runtimeAnchorKey(key.durableAnchor());
 			String fType = key.targetPlacement().fType() == null ? null : key.targetPlacement().fType().name();
 			RegistryWrite write;
 			if(key.targetPlacement().output() == FederatedOutput.LOUT) {

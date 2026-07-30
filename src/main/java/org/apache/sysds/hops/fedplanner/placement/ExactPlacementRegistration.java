@@ -161,7 +161,7 @@ public final class ExactPlacementRegistration {
 		return consumerHopIds;
 	}
 
-	private static String runtimeAnchorKey(DurableAnchorKey anchor) {
+	static String runtimeAnchorKey(DurableAnchorKey anchor) {
 		StringBuilder key = new StringBuilder();
 		for(var partition : anchor.partitions()) {
 			if(partition.begin().size() != 2 || partition.end().size() != 2)

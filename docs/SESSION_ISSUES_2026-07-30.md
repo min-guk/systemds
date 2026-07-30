@@ -1,0 +1,50 @@
+# Session Issues — 2026-07-30
+
+## 공통 placement emission이 runtime에서 해석할 수 없는 durable anchor key를 기록함
+
+- **상태**: 진행중 — 단위 회귀 테스트 및 관련 테스트 통과, DP/PCA Docker 재검증 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 기준 commit: `a6d66b0f294c059804a67b49d94d53207515bf2e`
+  - 플래너/워크로드: DP / PCA, privacy public 케이스 제외
+  - 기존 Docker 결과: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/05-dp-pca`
+  - 실행 제약: 성능 및 런타임 검증은 `run_LAN_docker.sh`만 사용하며 물리 호스트 `run_LAN.sh` 결과는 채택하지 않음
+- **재현 절차**:
+  - 기존 Docker 로그: `05-dp-pca/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - 단위 RED:
+    - `mvn -q -DskipTests=false -Dtest='org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransactionRedTest#durableAnchorRegistryKeyRoundTripsThroughRuntimeParser' test`
+    - 로그: `/tmp/g007-anchor-runtime-key-red-20260730.log`
+- **관측 증상**:
+  - Docker lowering 실패: `fed_refed lowering found conflicting live/durable anchor authority for hop=209 anchorHop=18`
+  - 추가한 회귀 테스트는 수정 전 `G007_RUNTIME_ANCHOR_KEY_MUST_BE_PARSEABLE`로 실패함.
+- **원인 분석**:
+  - `PlacementEmissionTransaction.prepareRegistryWrites(...)`가 runtime registry의 `anchorKey` 필드에 `DurableAnchorKey.normalizedSignature()`를 기록했다.
+  - 이 값은 planner 내부의 구조적 identity이며, runtime 계약인 `worker ids|ranges|FType` 직렬화가 아니다.
+  - 반면 `ExactPlacementRegistration`은 이미 `FederationUtils.buildAnchorMapFromKey(...)`가 해석할 수 있는 정확한 runtime key serializer를 갖고 있었다.
+  - 따라서 동일 anchor가 live map과 durable registry 양쪽에 존재해도 서로 다른 문자열 authority로 비교되어 lowering conflict가 발생했고, live anchor가 사라진 경우에는 runtime map 재구성도 실패할 수 있었다.
+- **해결 요약**:
+  - 중복 serializer를 새로 만들지 않고 `ExactPlacementRegistration.runtimeAnchorKey(...)`를 package-visible 공통 helper로 재사용했다.
+  - transaction emission도 해당 runtime serializer를 사용하도록 변경했다.
+  - 테스트 fixture는 graph에 존재하는 두 개의 합법 후보 전체가 아니라 실제 선택된 relocation 하나를 검증하도록 갱신했다. 후보 공간은 축소하지 않았다.
+  - registry key를 실제 `FederationUtils.buildAnchorMapFromKey(...)`로 round-trip해 worker/range/FType을 검증하는 회귀 테스트를 추가했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/ExactPlacementRegistration.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransactionRedTest.java`
+- **검증**:
+  - 수정 전 단일 회귀 테스트: 실패(의도한 RED), `/tmp/g007-anchor-runtime-key-red-20260730.log`
+  - 수정 후 단일 회귀 테스트: 성공, `/tmp/g007-anchor-runtime-key-green-20260730.log`
+  - 관련 suite 성공:
+    - `PlacementEmissionTransactionRedTest`
+    - `FederationUtilsRefedReuseLayoutTest`
+    - `CampaignBG014ImmutableAnchorRegistrationRedTest`
+    - `SharedPlannerFunctionPlanPropagationRedTest`
+    - 로그: `/tmp/g007-anchor-related-suite-20260730.log`, `MAVEN_RC=0`
+- **잔여 이슈**:
+  - 새 JAR/불변 Docker stage로 DP/PCA를 정확히 한 번 재실행해 lowering과 runtime 성공을 확인해야 한다.
+  - PCA 성공 후에도 DP/LM의 registry slot 충돌, DP/LogReg의 transient forwarding authority, DP/StepLM의 function-input fact 누락은 별도 원인일 수 있다.
+- **잠재 회귀 위험**:
+  - ROW 이외 COL/FULL/BROADCAST anchor의 차원 직렬화가 달라질 수 있다. 기존 `ExactPlacementRegistration` 경로와 serializer를 공유해 분기를 일원화했고, 관련 runtime layout 테스트 및 이후 Docker workload에서 감지한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 exact placement metadata를 runtime 계약 형식으로 명시하며 runtime fallback이나 암묵적 보정은 추가하지 않았다.
+  - runtime이 지원하는 후보를 닫지 않았고 TRead/TWrite 및 recompile 제약도 변경하지 않았다.

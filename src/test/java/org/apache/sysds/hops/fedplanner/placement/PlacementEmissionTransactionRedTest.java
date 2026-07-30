@@ -40,6 +40,9 @@ import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
+import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -146,6 +149,7 @@ public class PlacementEmissionTransactionRedTest {
 		NeutralPlacementGraph.Node local = uniqueNode(fixture.analysis(), "S");
 		RelocationAction upload = fixture.analysis().graph().relocationActions().stream()
 			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion()))
+			.filter(action -> fixture.plan().selectedRelocations().contains(action.key()))
 			.findFirst().orElseThrow();
 		long scope = fixture.analysis().occurrences().stream()
 			.filter(o -> o.key().equals(local.key()))
@@ -159,6 +163,37 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertNotNull("G007_REFED_REGISTRY_WRITE_PRESENT", spec);
 		Assert.assertEquals("G007_REFED_REGISTRY_PRESERVES_EXACT_COMPATIBLE_CONSUMERS",
 			expectedConsumerHopIds, spec.getConsumerHopIds());
+	}
+
+	@Test
+	public void durableAnchorRegistryKeyRoundTripsThroughRuntimeParser() throws Exception {
+		PlacementEmissionTransaction.emit(fixture.program(), fixture.plan(), FailureInjector.none());
+		NeutralPlacementGraph.Node local = uniqueNode(fixture.analysis(), "S");
+		RelocationAction relocation = fixture.analysis().graph().relocationActions().stream()
+			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion()))
+			.filter(action -> fixture.plan().selectedRelocations().contains(action.key()))
+			.findFirst().orElseThrow();
+		long scope = fixture.analysis().occurrences().stream()
+			.filter(o -> o.key().equals(local.key()))
+			.findFirst().orElseThrow().scopeId();
+		long sourceHopId = fixture.analysis().hop(local.key()).orElseThrow().getHopID();
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(scope).get(sourceHopId);
+
+		Assert.assertNotNull("G007_RUNTIME_ANCHOR_REGISTRY_WRITE_PRESENT", spec);
+		FederationMap rebuilt = FederationUtils.buildAnchorMapFromKey(spec.getAnchorKey());
+		Assert.assertNotNull("G007_RUNTIME_ANCHOR_KEY_MUST_BE_PARSEABLE", rebuilt);
+		Assert.assertEquals("G007_RUNTIME_ANCHOR_FTYPE_ROUND_TRIP",
+			relocation.key().durableAnchor().fType(), rebuilt.getType());
+		Assert.assertEquals("G007_RUNTIME_ANCHOR_PARTITION_COUNT_ROUND_TRIP",
+			relocation.key().durableAnchor().partitions().size(), rebuilt.getSize());
+		FederatedRange[] ranges = rebuilt.getFederatedRanges();
+		for(int i = 0; i < ranges.length; i++) {
+			PlacementIdentity.AnchorPartition partition = relocation.key().durableAnchor().partitions().get(i);
+			Assert.assertEquals("G007_RUNTIME_ANCHOR_ROW_BEGIN_ROUND_TRIP",
+				partition.begin().get(0).longValue(), ranges[i].getBeginDims()[0]);
+			Assert.assertEquals("G007_RUNTIME_ANCHOR_ROW_END_ROUND_TRIP",
+				partition.end().get(0).longValue(), ranges[i].getEndDims()[0]);
+		}
 	}
 
 
@@ -218,7 +253,9 @@ public class PlacementEmissionTransactionRedTest {
 		List<PlacementAnalysis.CompiledInputEdgeFact> localEdges = baseline.compiledInputEdgesInCanonicalOrder()
 			.stream().filter(edge -> edge.producer() == local.key()).toList();
 		List<RelocationAction> uploads = baseline.graph().relocationActions().stream()
-			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion())).toList();
+			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion()))
+			.filter(action -> plan.selectedRelocations().contains(action.key()))
+			.toList();
 
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_TWO_EXACT_LOCAL_INPUTS", 2, localEdges.size());
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_INPUT_POSITION_ONE",
@@ -226,7 +263,7 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertTrue("P4_FIXTURE_REQUIRES_LOCAL_CP_LOUT_SOURCE",
 			selected(plan, local.key(), ExecType.CP, FederatedOutput.LOUT));
 		Assert.assertTrue("P4_FIXTURE_LOCAL_SOURCE_HAS_NO_DURABLE_ANCHOR", local.anchors().isEmpty());
-		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_SHARED_GRAPH_RELOCATION", 1, uploads.size());
+		Assert.assertEquals("P4_FIXTURE_REQUIRES_ONE_SELECTED_SHARED_RELOCATION", 1, uploads.size());
 		RelocationAction upload = uploads.get(0);
 		Assert.assertEquals("P4_FIXTURE_REQUIRES_TWO_EXACT_RELOCATION_OBLIGATIONS", 2,
 			upload.obligations().size());
