@@ -76,6 +76,7 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 					captured.get() instanceof DpInvocationReceipt);
 				assertLinearRegressionFunctionInputClosure((DpInvocationReceipt) captured.get());
 				translator.getRuntimeProgram(program, config);
+				assertFinalRecompileStatesMatchExecutableHops((DpInvocationReceipt) captured.get());
 		}
 		finally {
 			TestUtils.shutdownThreads(worker);
@@ -89,6 +90,26 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 			FederatedRefedRegistry.clear();
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedLocalMaterializeRegistry.clear();
+		}
+	}
+
+	private static void assertFinalRecompileStatesMatchExecutableHops(DpInvocationReceipt receipt) {
+		PlacementAnalysis analysis = receipt.analysis();
+		Set<Integer> callSiteLines = Set.of(98, 133, 172);
+		for(var occurrence : analysis.occurrences()) {
+			var hop = occurrence.hop();
+			if(!callSiteLines.contains(hop.getBeginLine()) || !"y".equals(hop.getName())
+				|| !"TRead y".equals(hop.getOpString()))
+				continue;
+			var state = FederatedPlannerUtils.getPlannerRecompileState(hop);
+			Assert.assertNotNull("StepLM executable y read must retain a recompile state at line "
+				+ hop.getBeginLine(), state);
+			ExecType executableExec = hop.getForcedExecType() != null
+				? hop.getForcedExecType() : hop.getExecType();
+			Assert.assertEquals("Recompile registry must match the final executable y-read exec state at line "
+				+ hop.getBeginLine(), executableExec, state.getExecType());
+			Assert.assertEquals("Recompile registry must match the final executable y-read output state at line "
+				+ hop.getBeginLine(), hop.getFederatedOutput(), state.getFederatedOutput());
 		}
 	}
 

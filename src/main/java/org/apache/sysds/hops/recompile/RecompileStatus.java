@@ -24,7 +24,9 @@ import org.apache.sysds.runtime.controlprogram.ProgramBlock;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 public class RecompileStatus 
 {
@@ -39,6 +41,10 @@ public class RecompileStatus
 	
 	//collection of extracted statistics for control flow reconciliation
 	private final Map<String, DataCharacteristics> _lastTWrites;
+	// MatrixObjects synthesized by statistics propagation carry dimensions only. Their lack of a
+	// FederationMap is not evidence that the runtime value is local, so placement validation must
+	// treat these variable names as unobserved until an actual ExecutionContext value is available.
+	private final Set<String> _unknownFederatedPlacementVars;
 	
 	public RecompileStatus() {
 		this(0, true, ResetType.NO_RESET, false);
@@ -50,6 +56,7 @@ public class RecompileStatus
 	
 	public RecompileStatus(long tid, boolean inplace, ResetType reset, boolean initialCodegen) {
 		_lastTWrites = new HashMap<>();
+		_unknownFederatedPlacementVars = new HashSet<>();
 		_tid = tid;
 		_inplace = inplace;
 		_reset = reset;
@@ -58,6 +65,23 @@ public class RecompileStatus
 	
 	public Map<String, DataCharacteristics> getTWriteStats() {
 		return _lastTWrites;
+	}
+
+	public void markFederatedPlacementUnknown(Iterable<String> variableNames) {
+		if (variableNames == null)
+			return;
+		for (String variableName : variableNames)
+			if (variableName != null && !variableName.isEmpty())
+				_unknownFederatedPlacementVars.add(variableName);
+	}
+
+	public Set<String> getUnknownFederatedPlacementVars() {
+		return _unknownFederatedPlacementVars;
+	}
+
+	public void mergeUnknownFederatedPlacementVars(RecompileStatus that) {
+		if (that != null)
+			_unknownFederatedPlacementVars.addAll(that._unknownFederatedPlacementVars);
 	}
 	
 	public long getTID() {
@@ -97,6 +121,7 @@ public class RecompileStatus
 		RecompileStatus ret = new RecompileStatus(
 			_tid, _inplace, _reset, _initialCodegen);
 		ret._lastTWrites.putAll(_lastTWrites);
+		ret._unknownFederatedPlacementVars.addAll(_unknownFederatedPlacementVars);
 		return ret;
 	}
 }

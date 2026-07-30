@@ -434,6 +434,7 @@ public class Recompiler {
 			logRecompileNewHops(hops, baseHopStates, sb, pred, tid);
 			Map<String, FType> runtimeTypes = new HashMap<>();
 			Map<String, String> runtimeSignatures = buildRuntimeFedSignatures(ec, runtimeTypes);
+			filterUnknownFederatedPlacementObservations(runtimeSignatures, runtimeTypes, status);
 			Map<Long, FType> fTypeMap = buildFederatedTypeMap(hops, runtimeTypes);
 		Set<Hop> fTypeRefreshDone = new HashSet<>();
 		for (Hop hopRoot : hops)
@@ -569,6 +570,18 @@ public class Recompiler {
 				signatures.put(entry.getKey(), sig);
 		}
 		return signatures;
+	}
+
+	static void filterUnknownFederatedPlacementObservations(Map<String, String> runtimeSignatures,
+			Map<String, FType> runtimeTypes, RecompileStatus status) {
+		if (status == null || status.getUnknownFederatedPlacementVars().isEmpty())
+			return;
+		for (String variableName : status.getUnknownFederatedPlacementVars()) {
+			if (runtimeSignatures != null)
+				runtimeSignatures.remove(variableName);
+			if (runtimeTypes != null)
+				runtimeTypes.remove(variableName);
+		}
 	}
 
 	private static Map<Long, HopState> snapshotHopStates(List<Hop> roots) {
@@ -1339,8 +1352,10 @@ public class Recompiler {
 			bpb.setInstructions( tmp );
 			
 			//propagate stats across hops (should be executed on clone of vars)
-			if( status.isInPlace() )
+			if( status.isInPlace() ) {
 				Recompiler.extractDAGOutputStatistics(sb.getHops(), vars);
+				status.markFederatedPlacementUnknown(sb.variablesUpdated().getVariableNames());
+			}
 			
 			//reset recompilation flags (w/ special handling functions)
 			if( ParForProgramBlock.RESET_RECOMPILATION_FLAGs 
@@ -1508,6 +1523,7 @@ public class Recompiler {
 	
 	public static RecompileStatus reconcileUpdatedCallVarsIf( RecompileStatus oldStatus, RecompileStatus callStatusIf, RecompileStatus callStatusElse, StatementBlock sb )
 	{
+		callStatusIf.mergeUnknownFederatedPlacementVars(callStatusElse);
 		for( String varname : sb.variablesUpdated().getVariableNames() )
 		{	
 			DataCharacteristics origVar = oldStatus.getTWriteStats().get(varname);

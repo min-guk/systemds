@@ -900,7 +900,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testRecompileTransientWritePromotionUsesRuntimeSignatureAnchorFallback() {
+	public void testRecompileRuntimeSignatureRegistersRequiredRefedWithoutChangingPlan() {
 		DataOp tRead = createLocalMatrix("samples_vs_runs_map", 3000, 50);
 		tRead.setForcedExecType(ExecType.CP);
 		tRead.setFederatedOutput(FederatedOutput.LOUT);
@@ -928,12 +928,15 @@ public class FederatedRefedPolicyTest {
 			true, fTypeMap, -1,
 			runtimeSignatures, runtimeTypes);
 
-		assertEquals("Expected matching TRead to be promoted to FED via runtime signature anchor fallback",
-			ExecType.FED, tRead.getForcedExecType());
-		assertEquals("Expected matching TRead to become FOUT",
-			FederatedOutput.FOUT, tRead.getFederatedOutput());
-		assertEquals("Expected matching TWrite to be materialized as FOUT",
-			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertEquals("Runtime signature must not override the planner-selected TRead exec type",
+			ExecType.CP, tRead.getForcedExecType());
+		assertEquals("Runtime signature must not override the planner-selected TRead output",
+			FederatedOutput.LOUT, tRead.getFederatedOutput());
+		assertEquals("Runtime lowering must not promote a planner-selected local TWrite",
+			FederatedOutput.LOUT, tWrite.getFederatedOutput());
+		assertTrue("The FED parent must receive an explicit planner-compatible upload input",
+			FederatedRefedRegistry.snapshot(-1).containsKey(tRead.getHopID())
+				|| FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(tRead.getHopID()));
 	}
 
 	@Test
@@ -973,36 +976,29 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testRuntimeSignaturesOverrideStaleTransientReadAnchorKey() {
+	public void testRuntimeFederatedSymbolDoesNotOverridePlannedLocalTransientRead() {
 		DataOp tRead = createLocalMatrix("X", 3000, 50);
-		tRead.setForcedExecType(ExecType.FED);
-		tRead.setFederatedOutput(FederatedOutput.FOUT);
+		tRead.setForcedExecType(ExecType.CP);
+		tRead.setFederatedOutput(FederatedOutput.LOUT);
 
 		Map<Long, FType> fTypeMap = new HashMap<>();
-		fTypeMap.put(tRead.getHopID(), FType.ROW);
-
-		// Simulate stale propagated anchor metadata from a previous block.
-		FederatedPlannerUtils.registerFedAnchorKey("X", "worker1:8001/data/P2P_features_2_1.data;|0,50000;|ROW");
-
 		Map<String, String> runtimeSignatures = new HashMap<>();
-		runtimeSignatures.put("Y",
+		runtimeSignatures.put("X",
 			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,50000;50000,100000;");
 		Map<String, FType> runtimeTypes = new HashMap<>();
-		runtimeTypes.put("Y", FType.ROW);
+		runtimeTypes.put("X", FType.ROW);
 
 		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
 			runtimeSignatures, runtimeTypes);
 
-		assertEquals("Expected runtime signatures to demote stale FED transient read to CP",
+		assertEquals("Runtime observation must not override the planner-selected local TRead exec type",
 			ExecType.CP, tRead.getForcedExecType());
-		assertEquals("Expected runtime signatures to demote stale FED transient read to LOUT",
+		assertEquals("Runtime observation must not override the planner-selected local TRead output",
 			FederatedOutput.LOUT, tRead.getFederatedOutput());
-		assertFalse("Expected stale transient read FType hint to be cleared after runtime demotion",
-			fTypeMap.containsKey(tRead.getHopID()));
 	}
 
 	@Test
-	public void testRuntimeEmptySignaturesDemoteStaleTransientReadAnchorKey() {
+	public void testRuntimeObservedLocalSymbolRejectsPlannedFederatedTransientRead() {
 		DataOp tRead = createLocalMatrix("X", 3000, 50);
 		tRead.setForcedExecType(ExecType.FED);
 		tRead.setFederatedOutput(FederatedOutput.FOUT);
@@ -1010,8 +1006,25 @@ public class FederatedRefedPolicyTest {
 		Map<Long, FType> fTypeMap = new HashMap<>();
 		fTypeMap.put(tRead.getHopID(), FType.ROW);
 
-		// Simulate stale propagated anchor metadata from a previous block.
-		FederatedPlannerUtils.registerFedAnchorKey("X", "worker1:8001/data/P2P_features_2_1.data;|0,50000;|ROW");
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("X", null);
+
+		assertThrows("A runtime-local value cannot satisfy a planner-selected FED/FOUT TRead",
+			DMLRuntimeException.class,
+			() -> FederatedRefedPolicy.registerFromHops(
+				new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
+				runtimeSignatures, runtimeTypes));
+	}
+
+	@Test
+	public void testRuntimeUnobservedSymbolDoesNotDemotePlannedFederatedTransientRead() {
+		DataOp tRead = createLocalMatrix("X", 3000, 50);
+		tRead.setForcedExecType(ExecType.FED);
+		tRead.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(tRead.getHopID(), FType.ROW);
 
 		Map<String, String> runtimeSignatures = new HashMap<>();
 		Map<String, FType> runtimeTypes = new HashMap<>();
@@ -1019,11 +1032,11 @@ public class FederatedRefedPolicyTest {
 		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
 			runtimeSignatures, runtimeTypes);
 
-		assertEquals("Expected empty runtime signatures to demote stale FED transient read to CP",
-			ExecType.CP, tRead.getForcedExecType());
-		assertEquals("Expected empty runtime signatures to demote stale FED transient read to LOUT",
-			FederatedOutput.LOUT, tRead.getFederatedOutput());
-		assertFalse("Expected stale transient read FType hint to be cleared after runtime demotion",
+		assertEquals("An absent runtime observation is unknown, not proof that the value is local",
+			ExecType.FED, tRead.getForcedExecType());
+		assertEquals("Unknown runtime placement must preserve the planner-selected FED output",
+			FederatedOutput.FOUT, tRead.getFederatedOutput());
+		assertTrue("Unknown runtime placement must preserve the planner FType hint",
 			fTypeMap.containsKey(tRead.getHopID()));
 	}
 
@@ -1053,7 +1066,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testRuntimeEmptySignaturesDoNotRepromoteFedInitTransientRead() {
+	public void testRuntimeUnobservedSymbolPreservesFedInitTransientRead() {
 		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW,
 			"worker1:8001/data/P2P_features_2_1.data;worker2:8002/data/P2P_features_2_2.data;|0,50000;50000,100000;");
 
@@ -1070,10 +1083,10 @@ public class FederatedRefedPolicyTest {
 		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(tRead)), true, fTypeMap, -1,
 			runtimeSignatures, runtimeTypes);
 
-		assertEquals("Expected empty runtime signatures to demote stale fed-init transient read to CP",
-			ExecType.CP, tRead.getForcedExecType());
-		assertEquals("Expected empty runtime signatures to demote stale fed-init transient read to LOUT",
-			FederatedOutput.LOUT, tRead.getFederatedOutput());
+		assertEquals("Unknown runtime placement must preserve a planner-selected FED transient read",
+			ExecType.FED, tRead.getForcedExecType());
+		assertEquals("Unknown runtime placement must preserve the planner-selected FOUT",
+			FederatedOutput.FOUT, tRead.getFederatedOutput());
 	}
 
 	@Test

@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -103,6 +104,7 @@ public final class FederatedRefedPolicy {
 	// to local overwrites (e.g., PCA scale() overwriting X), and is used to stabilize CP->FOUT anchors.
 	private static final ThreadLocal<AnchorKey> GLOBAL_SIGNATURE_ANCHOR_KEY = new ThreadLocal<>();
 	private static final ThreadLocal<Set<String>> LOCAL_TR_VARS = new ThreadLocal<>();
+	private static final ThreadLocal<Boolean> RUNTIME_PLAN_LOCKED = new ThreadLocal<>();
 	static {
 		if (ENABLE_TRANSREAD_DEBUG)
 			System.out.println("[TransReadRefedDebug] enabled");
@@ -170,6 +172,63 @@ public final class FederatedRefedPolicy {
 	}
 
 	private FederatedRefedPolicy() {
+	}
+
+	private record RuntimePlannerPlacement(ExecType execType, FederatedOutput output,
+		boolean outputDerived) {
+	}
+
+	private static boolean isRuntimePlanLocked() {
+		return Boolean.TRUE.equals(RUNTIME_PLAN_LOCKED.get());
+	}
+
+	private static Map<Hop, RuntimePlannerPlacement> snapshotRuntimePlannerPlacements(List<Hop> hops) {
+		Map<Hop, RuntimePlannerPlacement> placements = new IdentityHashMap<>();
+		if (hops == null)
+			return placements;
+		for (Hop hop : hops) {
+			if (hop != null)
+				placements.put(hop, new RuntimePlannerPlacement(getPlannedExecType(hop),
+					hop.getFederatedOutput(), hop.isFederatedOutputDerived()));
+		}
+		return placements;
+	}
+
+	private static void assertRuntimePlannerPlacementsUnchanged(
+			Map<Hop, RuntimePlannerPlacement> placements) {
+		if (placements == null || placements.isEmpty())
+			return;
+		for (Map.Entry<Hop, RuntimePlannerPlacement> entry : placements.entrySet()) {
+			Hop hop = entry.getKey();
+			RuntimePlannerPlacement selected = entry.getValue();
+			ExecType actualExec = getPlannedExecType(hop);
+			FederatedOutput actualOutput = hop.getFederatedOutput();
+			boolean actualDerived = hop.isFederatedOutputDerived();
+			if (selected.execType() != actualExec || selected.output() != actualOutput
+				|| selected.outputDerived() != actualDerived) {
+				throw invalidRuntimePlan(hop, "runtime lowering changed planner placement from "
+					+ selected.execType() + "/" + selected.output() + "/derived=" + selected.outputDerived()
+					+ " to " + actualExec + "/" + actualOutput + "/derived=" + actualDerived);
+			}
+		}
+	}
+
+	private static DMLRuntimeException invalidRuntimePlan(Hop hop, String reason) {
+		return new DMLRuntimeException("Invalid planner-selected federated runtime plan: hopID="
+			+ (hop != null ? hop.getHopID() : -1) + " op=" + (hop != null ? hop.getOpString() : "null")
+			+ " name=" + (hop != null ? hop.getName() : "null") + " reason=" + reason);
+	}
+
+	private static boolean hasDominatingPlannedFederatedWrite(DataOp tRead,
+			Map<String, List<DataOp>> writesByName) {
+		if (tRead == null || writesByName == null || tRead.getName() == null)
+			return false;
+		DataOp tWrite = selectMatchingTWrite(writesByName.get(tRead.getName()), tRead);
+		if (tWrite == null || !isWriteDominatingRead(tWrite, tRead))
+			return false;
+		ExecType writeExec = getPlannedExecType(tWrite);
+		return tWrite.getFederatedOutput() == FederatedOutput.FOUT
+			|| (writeExec == ExecType.FED && !tWrite.hasLocalOutput());
 	}
 
 	public record ProgramRegistrationReceipt(PlacementAnalysis analysis,
@@ -345,9 +404,10 @@ public final class FederatedRefedPolicy {
 			java.util.Map<String, FType> runtimeTypes,
 			AnchorSelection fallbackAnchor, boolean conditionalContext,
 			List<Hop> scopeHops) {
-			// In the recompiler path we get the authoritative runtime federation state (signatures/types)
-			// from the current symbol table. Treat a provided (even empty) runtimeSignatures map as
-			// authoritative and reset variable anchor keys to avoid staleness across recompilations.
+			// Runtime maps contain observations, not a replacement plan. A missing variable is unknown;
+			// a runtimeTypes entry with null is an observed local value; a non-null type/signature is an
+			// observed federated value. Recompile may rebuild lowering registries from these observations,
+			// but must never rewrite the planner-selected ExecType/FederatedOutput pair.
 			boolean runtimeContext = (runtimeSignatures != null);
 			Map<Long, Map<Long, FederatedLocalMaterializeRegistry.LocalMaterializeSpec>> preservedLocalMaterialize =
 				snapshotRuntimeLocalMaterialize(clearRegistry, runtimeContext, sbId);
@@ -364,9 +424,11 @@ public final class FederatedRefedPolicy {
 			if (roots == null || roots.isEmpty())
 				return;
 			Set<String> runtimeLocalTransientReads = null;
+			Map<Hop, RuntimePlannerPlacement> runtimePlannerPlacements = Collections.emptyMap();
 			if (runtimeContext) {
 				runtimeLocalTransientReads = new HashSet<>();
 				LOCAL_TR_VARS.set(runtimeLocalTransientReads);
+				RUNTIME_PLAN_LOCKED.set(Boolean.TRUE);
 			}
 
 			try {
@@ -387,6 +449,8 @@ public final class FederatedRefedPolicy {
 			}
 
 			List<Hop> all = collectAllHops(roots);
+			if (runtimeContext)
+				runtimePlannerPlacements = snapshotRuntimePlannerPlacements(all);
 			restoreReachableRuntimeLocalMaterialize(preservedLocalMaterialize, all);
 			if (all != null && !all.isEmpty()) {
 				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
@@ -408,13 +472,11 @@ public final class FederatedRefedPolicy {
 						hopSbIds.put(hop.getHopID(), sbId);
 				}
 			}
-			if (runtimeSignatures != null) {
-				// Use the global transient-write cache to detect variables that will be materialized as
-				// federated (FOUT) within the current (recompiled) hop set. This is crucial for cases
-				// where the runtime symbol table has not yet observed the federated value (because the
-				// write executes later in the same statement block), but subsequent transient reads
-				// should still be compiled as FED/FOUT to avoid repeated local->fed forwarding inside loops
-				// (e.g., X_samples in kmeans).
+			if (runtimeContext) {
+				// Validate observed placement against the selected plan. A dominating planned FOUT TWrite
+				// is an explicit planner-approved transition and may explain why the current symbol-table
+				// value is still local before this block executes. No observation may promote or demote a
+				// TRead: doing so would bypass the cost model and change the selected decision forest.
 				java.util.Map<String, List<DataOp>> globalWrites = GLOBAL_TWRITE_CACHE.get();
 				for (Hop hop : all) {
 					if (!(hop instanceof DataOp))
@@ -425,55 +487,34 @@ public final class FederatedRefedPolicy {
 					String name = dataOp.getName();
 					if (name == null || name.isEmpty())
 						continue;
-					// In runtime recompile, runtimeSignatures are authoritative for current symbol-table
-					// federation state. Stale fed-init markers and propagated anchor keys must be removed
-					// for transient reads that are not federated at runtime.
-					// Runtime federation state is authoritative in recompile. Prefer concrete signatures when
-					// available, but also treat variables with a known runtime federation type as federated
-					// sources even if we cannot derive a stable signature encoding (e.g., derived CP->FOUT
-					// materializations without explicit range metadata).
-					boolean runtimeFed = runtimeSignatures.containsKey(name)
-						|| (runtimeTypes != null && runtimeTypes.containsKey(name) && runtimeTypes.get(name) != null);
-					if (!runtimeFed && globalWrites != null) {
-						List<DataOp> writes = globalWrites.get(name);
-						if (writes != null) {
-							for (DataOp w : writes) {
-								if (w != null && w.getOp() == OpOpData.TRANSIENTWRITE
-										&& w.getFederatedOutput() == FederatedOutput.FOUT) {
-									runtimeFed = true;
-									break;
-								}
-							}
-						}
-						}
-						ExecType planned = getPlannedExecType(hop);
-						if (runtimeFed) {
+					ExecType planned = getPlannedExecType(hop);
+					if (planned != ExecType.FED && hop.getFederatedOutput() == FederatedOutput.FOUT)
+						throw invalidRuntimePlan(hop, "TRead permits only <CP,LOUT> or <FED,FOUT>");
+					boolean observed = runtimeSignatures.containsKey(name)
+						|| (runtimeTypes != null && runtimeTypes.containsKey(name));
+					boolean observedFederated = runtimeSignatures.containsKey(name)
+						|| (runtimeTypes != null && runtimeTypes.get(name) != null);
+					boolean plannedFederatedWrite = hasDominatingPlannedFederatedWrite(dataOp, globalWrites);
+					if (observedFederated || plannedFederatedWrite) {
 						if (runtimeLocalTransientReads != null)
 							runtimeLocalTransientReads.remove(name);
-						if (planned != ExecType.FED) {
-							hop.setForcedExecType(ExecType.FED);
-							hop.setFederatedOutput(FederatedOutput.FOUT);
-						}
 						if (fTypeMap != null && runtimeTypes != null) {
 							FType runtimeType = runtimeTypes.get(name);
 							if (runtimeType != null)
 								fTypeMap.put(hop.getHopID(), runtimeType);
 						}
 					}
-						else {
-							FederatedPlannerUtils.removeFedInitVar(name);
-							FederatedPlannerUtils.removeFedAnchorKey(name);
-							if (planned == ExecType.FED) {
-								logPlannerRefedEvent("RefedRuntimeLocalTReadDemote", hop,
-									"name=" + name + " reason=runtime_symbol_not_federated runtimeTypes="
-										+ (runtimeTypes != null && runtimeTypes.containsKey(name)));
-								if (runtimeLocalTransientReads != null)
-									runtimeLocalTransientReads.add(name);
-								hop.setForcedExecType(ExecType.CP);
-							hop.setFederatedOutput(FederatedOutput.LOUT);
-						}
+					else if (observed) {
+						FederatedPlannerUtils.removeFedInitVar(name);
+						FederatedPlannerUtils.removeFedAnchorKey(name);
+						if (runtimeLocalTransientReads != null)
+							runtimeLocalTransientReads.add(name);
 						if (fTypeMap != null)
 							fTypeMap.remove(hop.getHopID());
+						if (planned == ExecType.FED)
+							throw invalidRuntimePlan(hop,
+								"planner selected FED/FOUT but the runtime symbol is observed local and no "
+									+ "dominating planner-approved FOUT TWrite exists");
 					}
 				}
 			}
@@ -504,8 +545,7 @@ public final class FederatedRefedPolicy {
 			}
 		}
 
-		if (all != null && !all.isEmpty()) {
-			if (!runtimeContext)
+		if (all != null && !all.isEmpty() && !runtimeContext) {
 				propagateTransientFederatedTypes(all, fTypeMap);
 			promoteTransientReadsFromAnchors(all, fTypeMap);
 		}
@@ -572,11 +612,14 @@ public final class FederatedRefedPolicy {
 							if (inputLocal) {
 								AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, true, false, blockAnchor);
 								if (selection == null || selection.key == null) {
-								hop.setFederatedOutput(FederatedOutput.LOUT);
-								if (hop.getForcedExecType() == ExecType.FED)
-									hop.setForcedExecType(ExecType.CP);
-								if (fTypeMap != null)
-									fTypeMap.remove(hop.getHopID());
+									if (runtimeContext)
+										throw invalidRuntimePlan(hop,
+											"selected FOUT TWrite has a local input but no valid federated anchor");
+									hop.setFederatedOutput(FederatedOutput.LOUT);
+									if (hop.getForcedExecType() == ExecType.FED)
+										hop.setForcedExecType(ExecType.CP);
+									if (fTypeMap != null)
+										fTypeMap.remove(hop.getHopID());
 							} else {
 								// Register materialization for the TWrite itself (not the input hop),
 								// so the lop compiler can wire the federated value into the write.
@@ -590,7 +633,7 @@ public final class FederatedRefedPolicy {
 				ExecType exec = getPlannedExecType(hop);
 				if (exec == null)
 					exec = ExecType.CP;
-				if (shouldDemoteAggBinaryFedFout(hop, exec, fTypeMap)) {
+				if (!runtimeContext && shouldDemoteAggBinaryFedFout(hop, exec, fTypeMap)) {
 					logPlannerRefedEvent("RefedAggBinaryFoutDemote", hop,
 						"reason=replicated_inputs_without_transient_fout_demand inputs=" + describeInputs(hop));
 					hop.setFederatedOutput(FederatedOutput.LOUT);
@@ -601,9 +644,13 @@ public final class FederatedRefedPolicy {
 				boolean needsCpfout = requiresCpfoutForFedParents(hop, fTypeMap);
 				if (!needsCpfout) {
 					if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
-						hop.setFederatedOutput(FederatedOutput.LOUT);
-						if (fTypeMap != null)
-							fTypeMap.remove(hop.getHopID());
+						if (runtimeContext)
+							validateAndRegister(hop, fTypeMap, sbId, blockAnchor, true);
+						else {
+							hop.setFederatedOutput(FederatedOutput.LOUT);
+							if (fTypeMap != null)
+								fTypeMap.remove(hop.getHopID());
+						}
 					}
 					continue;
 				}
@@ -616,16 +663,19 @@ public final class FederatedRefedPolicy {
 							+ " needsCpfout=" + needsCpfout);
 					}
 					// TRead must not use CP->FOUT directly; promote matching TWrite instead.
-					if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
+					if (!runtimeContext
+						&& promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
 						continue;
 					if (exec == ExecType.CP && hop.getFederatedOutput() == FederatedOutput.FOUT) {
+						if (runtimeContext)
+							throw invalidRuntimePlan(hop, "TRead permits only <CP,LOUT> or <FED,FOUT>");
 						hop.setFederatedOutput(FederatedOutput.LOUT);
 						if (fTypeMap != null)
 							fTypeMap.remove(hop.getHopID());
 					}
 					continue;
 				}
-				if (registerCpfoutViaTransientWrite(hop, fTypeMap, sbId, blockAnchor))
+				if (!runtimeContext && registerCpfoutViaTransientWrite(hop, fTypeMap, sbId, blockAnchor))
 					continue;
 				if (hop instanceof ReorgOp && exec == ExecType.CP
 					&& hop.getFederatedOutput() == FederatedOutput.FOUT) {
@@ -636,15 +686,21 @@ public final class FederatedRefedPolicy {
 					FType inputFType = getKnownFType(reorgInput, fTypeMap);
 					boolean unsupportedFedInputForReorgFout = (inputFType == FType.FULL);
 					if (!inputRuntimeFed || unsupportedFedInputForReorgFout) {
+						if (runtimeContext)
+							throw invalidRuntimePlan(hop,
+								"selected CP/FOUT reorg has no supported runtime-federated input");
 						hop.setFederatedOutput(FederatedOutput.LOUT);
 						if (fTypeMap != null)
 							fTypeMap.remove(hop.getHopID());
 						continue;
 					}
 				}
-					if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor)) {
-						if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
-							logPlannerRefedEvent("RefedCpfoutCandidateDemote", hop,
+				if (!canGenerateCpfoutCandidate(hop, fTypeMap, blockAnchor)) {
+					if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
+						if (runtimeContext)
+							throw invalidRuntimePlan(hop,
+								"selected FOUT output has no planner-approved CP/FOUT or refed path");
+						logPlannerRefedEvent("RefedCpfoutCandidateDemote", hop,
 								"reason=no_cp_fout_candidate inputs=" + describeInputs(hop));
 							hop.setFederatedOutput(FederatedOutput.LOUT);
 							if (fTypeMap != null)
@@ -653,7 +709,7 @@ public final class FederatedRefedPolicy {
 					continue;
 				}
 				try {
-					validateAndRegister(hop, fTypeMap, sbId, blockAnchor);
+					validateAndRegister(hop, fTypeMap, sbId, blockAnchor, runtimeContext);
 				}
 				catch (RuntimeException ex) {
 					boolean isFout = (hop != null && hop.getFederatedOutput() == FederatedOutput.FOUT);
@@ -677,10 +733,7 @@ public final class FederatedRefedPolicy {
 				}
 			}
 		}
-		// Final cleanup: prevent illegal transient-read placements.
-		// 1) CP/FOUT TRead is illegal -> promote matching TWrite or demote to LOUT.
-		// 2) FED/FOUT TRead backed by local TWrite input without materialization is illegal at runtime
-		//    (FED op receives local matrix) -> demote TRead to CP/LOUT so parent FED candidates can be pruned.
+		// Final planner-time cleanup, or runtime validation for already-selected TRead placements.
 		Map<String, List<DataOp>> transientWritesByName = new HashMap<>();
 		for (Hop candidate : all) {
 			if (!(candidate instanceof DataOp))
@@ -709,8 +762,11 @@ public final class FederatedRefedPolicy {
 						System.out.println("[TransReadRefedDebug] cleanup hop=" + hop.getHopID()
 							+ " trying promote via TWrite");
 					}
-					if (promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
+					if (!runtimeContext
+						&& promoteTransientReadViaTWrite((DataOp) hop, all, fTypeMap, sbId, blockAnchor))
 						continue;
+					if (runtimeContext)
+						throw invalidRuntimePlan(hop, "TRead permits only <CP,LOUT> or <FED,FOUT>");
 					hop.setFederatedOutput(FederatedOutput.LOUT);
 					if (fTypeMap != null)
 						fTypeMap.remove(hop.getHopID());
@@ -732,6 +788,9 @@ public final class FederatedRefedPolicy {
 					boolean inputFederated = tWriteInput != null && isRuntimeFederatedInput(tWriteInput, null, null);
 					boolean hasMaterialize = hasRegisteredTransientWriteMaterialize(sbId, tWrite, materializeSpecs);
 						if (!inputFederated && !hasMaterialize) {
+							if (runtimeContext)
+								throw invalidRuntimePlan(hop,
+									"selected FED/FOUT TRead is backed by a local TWrite without materialization");
 							logPlannerRefedEvent("RefedFedTReadCleanupDemote", hop,
 								"reason=local_twrite_input_without_materialization tWrite="
 									+ tWrite.getHopID() + " tWriteInput="
@@ -752,10 +811,10 @@ public final class FederatedRefedPolicy {
 		int enforcePass = 0;
 		do {
 			boolean demoted = enforceFederatedInputs(all, fTypeMap, sbId, blockAnchor, runtimeContext);
-			boolean pruned = pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
-				boolean twDemoted = demoteStaleTransientWriteFederatedSelections(all,
-					(scopeHops != null && !scopeHops.isEmpty()) ? scopeHops : all, fTypeMap, sbId,
-					conditionalContext);
+			boolean pruned = !runtimeContext && pruneInvalidCpfoutAnchors(all, fTypeMap, sbId);
+			boolean twDemoted = !runtimeContext && demoteStaleTransientWriteFederatedSelections(all,
+				(scopeHops != null && !scopeHops.isEmpty()) ? scopeHops : all, fTypeMap, sbId,
+				conditionalContext);
 			changed = demoted || pruned || twDemoted;
 			enforcePass++;
 			} while (changed && enforcePass < 5);
@@ -768,10 +827,14 @@ public final class FederatedRefedPolicy {
 				registerTransientWriteAnchor((DataOp) hop, fTypeMap, blockAnchor, sbId, conditionalContext);
 			}
 		}
+		if (runtimeContext)
+			assertRuntimePlannerPlacementsUnchanged(runtimePlannerPlacements);
 		}
 		finally {
-			if (runtimeContext)
+			if (runtimeContext) {
 				LOCAL_TR_VARS.remove();
+				RUNTIME_PLAN_LOCKED.remove();
+			}
 		}
 	}
 
@@ -1273,7 +1336,7 @@ public final class FederatedRefedPolicy {
 	}
 
 	private static boolean enforceFederatedInputs(List<Hop> all, java.util.Map<Long, FType> fTypeMap, long sbId,
-			AnchorSelection blockAnchor, boolean allowRuntimeDemotion) {
+			AnchorSelection blockAnchor, boolean failOnInvalidRuntimePlan) {
 		if (all == null || all.isEmpty())
 			return false;
 		boolean demotedAny = false;
@@ -1306,15 +1369,15 @@ public final class FederatedRefedPolicy {
 				if (isFederatedInitDataOp(hop) || isFederatedSourceOp(hop, fTypeMap))
 					continue;
 				if (!ensureRequiredFederatedInputs(hop, fTypeMap, sbId, blockAnchor)) {
-					if (canDemoteUnsatisfiedFedHop(hop)) {
+					if (!failOnInvalidRuntimePlan && canDemoteUnsatisfiedFedHop(hop)) {
 						demoteUnsatisfiedFedHop(hop, fTypeMap, sbId);
 						demotedAny = true;
 						changed = true;
 						continue;
 					}
-					throw new DMLRuntimeException("FED hop has no federated inputs and no CP->FOUT candidate. "
-						+ "hopID=" + hop.getHopID() + " op=" + hop.getOpString()
-						+ " name=" + hop.getName() + " inputs=" + describeInputs(hop));
+					throw invalidRuntimePlan(hop,
+						"FED hop has no federated inputs and no planner-approved CP/FOUT or refed path; inputs="
+							+ describeInputs(hop));
 				}
 			}
 		} while (changed);
@@ -3323,7 +3386,15 @@ public final class FederatedRefedPolicy {
 
 	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
 			AnchorSelection blockAnchor) {
+		validateAndRegister(hop, fTypeMap, sbId, blockAnchor, false);
+	}
+
+	private static void validateAndRegister(Hop hop, java.util.Map<Long, FType> fTypeMap, long sbId,
+			AnchorSelection blockAnchor, boolean failOnInvalidRuntimePlan) {
 		if (isHeuristicDemotedHop(hop)) {
+			if (failOnInvalidRuntimePlan)
+				throw invalidRuntimePlan(hop,
+					"heuristic-demoted hop cannot retain a selected federated output");
 			hop.setFederatedOutput(FederatedOutput.LOUT);
 			if (fTypeMap != null)
 				fTypeMap.remove(hop.getHopID());
@@ -3364,7 +3435,7 @@ public final class FederatedRefedPolicy {
 				selection = new AnchorSelection(globalAnchor, null);
 		}
 		if (selection == null) {
-			if (hop.hasFederatedOutput())
+			if (hop.hasFederatedOutput() || failOnInvalidRuntimePlan)
 				throw new DMLRuntimeException("CP->FOUT refed requires an anchor for hop "
 					+ hop.getHopID() + " (" + hop.getOpString() + ")");
 			if (LOG.isDebugEnabled())
@@ -3375,6 +3446,8 @@ public final class FederatedRefedPolicy {
 		}
 			// Anchor mismatch: multiple incompatible FED parents exist. Do not pick an arbitrary anchor; fall back to local output.
 			if (selection.key == null) {
+				if (failOnInvalidRuntimePlan)
+					throw invalidRuntimePlan(hop, "selected CP/FOUT path has incompatible anchors");
 				if (LOG.isDebugEnabled())
 					LOG.debug("CP->FOUT decision: LOUT (anchor_mismatch) hopID=" + hop.getHopID()
 						+ " op=" + hop.getOpString());
@@ -3388,6 +3461,9 @@ public final class FederatedRefedPolicy {
 				if (selection.key != null && !isVarAnchor(selection.key))
 					effectiveSelection = new AnchorSelection(selection.key, null);
 				else {
+					if (failOnInvalidRuntimePlan)
+						throw invalidRuntimePlan(hop,
+							"selected CP/FOUT path resolved only to a non-federated VAR anchor");
 					if (LOG.isDebugEnabled())
 						LOG.debug("CP->FOUT decision: LOUT (non_runtime_anchor) hopID=" + hop.getHopID()
 							+ " op=" + hop.getOpString()
@@ -3537,7 +3613,8 @@ public final class FederatedRefedPolicy {
 		ExecType plannedExec = getPlannedExecType(hop);
 		boolean isCpToFout = (plannedExec == null || plannedExec == ExecType.CP);
 		if (isCpToFout) {
-			if (!isTransientRead && hop.getFederatedOutput() != FederatedOutput.FOUT)
+			if (!isRuntimePlanLocked() && !isTransientRead
+				&& hop.getFederatedOutput() != FederatedOutput.FOUT)
 				hop.setFederatedOutput(FederatedOutput.FOUT);
 			if (effectiveSelection != null && effectiveSelection.key != null)
 				CPFOUT_ANCHOR_CACHE.put(hop.getHopID(), effectiveSelection.key);
