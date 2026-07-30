@@ -163,26 +163,39 @@ public final class NeutralPlacementGraph {
 		}
 	}
 
-	public record RelocationAction(RelocationActionKey key, List<ObligationKey> obligations)
+	public record RelocationAction(RelocationActionKey key, List<ObligationKey> obligations,
+		List<PlacementState> directSourcePlacements)
 		implements Comparable<RelocationAction> {
+		public RelocationAction(RelocationActionKey key, List<ObligationKey> obligations) {
+			this(key, obligations, List.of());
+		}
 
 		public RelocationAction {
 			Objects.requireNonNull(key, "key");
 			obligations = sorted(obligations, "obligations");
+			directSourcePlacements = sorted(directSourcePlacements, "directSourcePlacements");
 			if(obligations.isEmpty())
 				throw new IllegalArgumentException("A relocation action requires obligations");
 			for(ObligationKey obligation : obligations)
 				if(!key.equals(obligation.relocationAction()))
 					throw new IllegalArgumentException("Obligation refers to a different relocation action");
+			for(PlacementState state : directSourcePlacements)
+				if(state.output() != FederatedOutput.FOUT || state.fType() != key.materializationFType())
+					throw new IllegalArgumentException(
+						"A direct relocation source must be FOUT with the materialization FType");
 		}
 
 		public String normalizedSignature() {
-			return key.normalizedSignature();
+			if(directSourcePlacements.isEmpty())
+				return key.normalizedSignature();
+			return fields(key.normalizedSignature(), "DIRECT_SOURCE_PLACEMENTS",
+				signatures(directSourcePlacements.stream()
+					.map(PlacementState::normalizedSignature).toList()));
 		}
 
 		@Override
 		public int compareTo(RelocationAction that) {
-			return key.compareTo(that.key);
+			return normalizedSignature().compareTo(that.normalizedSignature());
 		}
 	}
 
@@ -229,6 +242,12 @@ public final class NeutralPlacementGraph {
 			if(!source.valueVersion().equals(action.key().sourceValueVersion()))
 				continue;
 			PlacementState sourceState = assignment.get(source.key());
+			// A derived FOUT does not own the anchor value's exact ranges, but the builder may
+			// still prove that its selected layout is already resident on the same durable
+			// worker pool and is accepted directly by every compatible consumer. In that case
+			// emitting FED->LOUT->FOUT/refed would be redundant and contradict the selected plan.
+			if(sourceState != null && action.directSourcePlacements().contains(sourceState))
+				return false;
 			if(sourceState != null && sourceState.output() == FederatedOutput.FOUT
 				&& Objects.equals(sourceState.fType(), action.key().durableAnchor().fType())
 				&& source.anchors().contains(action.key().durableAnchor()))
@@ -404,6 +423,11 @@ public final class NeutralPlacementGraph {
 				throw new IllegalArgumentException("Duplicate relocation action key: " + key);
 			if(!valueVersions.contains(key.sourceValueVersion()))
 				throw new IllegalArgumentException("Relocation source value is absent from graph");
+			for(PlacementState direct : action.directSourcePlacements())
+				if(nodes.stream().filter(node -> node.valueVersion().equals(key.sourceValueVersion()))
+					.noneMatch(node -> node.legalAlternatives().contains(direct)))
+					throw new IllegalArgumentException(
+						"Relocation direct-source placement is absent from its source node");
 			for(CompiledHopKey consumer : key.compatibleConsumers())
 				requireNode(consumer, "relocation consumer");
 			for(ObligationKey obligation : action.obligations()) {

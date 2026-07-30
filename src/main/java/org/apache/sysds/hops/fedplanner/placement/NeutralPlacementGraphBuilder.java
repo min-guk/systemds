@@ -2217,21 +2217,27 @@ public final class NeutralPlacementGraphBuilder {
 			candidateFactsByConsumer.computeIfAbsent(fact.key().parentOccurrence(),
 				ignored -> new ArrayList<>()).add(fact);
 		Map<RelocationGroup,Set<InputUse>> uses = new java.util.TreeMap<>();
+		Map<RelocationGroup,Set<InputUse>> directUses = new java.util.TreeMap<>();
 		for(CandidateRuleFact fact : candidateRuleFacts)
 			addRelocationUsesFromExactCandidateFact(fact, nodesByKey, matrixEdgesByConsumer,
-				workerPoolAnchors, candidateFactsByConsumer, scopes, shapeFacts, uses);
+				workerPoolAnchors, candidateFactsByConsumer, scopes, shapeFacts, uses, directUses);
 		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
 		for(Map.Entry<RelocationGroup,Set<InputUse>> entry : uses.entrySet()) {
 			RelocationGroup group = entry.getKey();
 			Set<CompiledHopKey> consumerSet = new java.util.TreeSet<>();
 			for(InputUse use : entry.getValue()) consumerSet.add(use.consumer());
 			List<CompiledHopKey> consumers = new ArrayList<>(consumerSet);
+			boolean everyUseHasDirectFoutProof = directUses.getOrDefault(group, Set.of())
+				.containsAll(entry.getValue());
+			List<PlacementState> directSourcePlacements = everyUseHasDirectFoutProof
+				? directSourcePlacements(group, nodes, workerPoolAnchors) : List.of();
 			RelocationActionKey key = new RelocationActionKey(group.source(), group.target(),
 				group.materializationFType(), group.anchor(), group.scope(), consumers);
 			List<ObligationKey> obligations = new ArrayList<>();
 			for(InputUse use : entry.getValue()) obligations.add(new ObligationKey(use.consumer(), use.position(),
 				group.source(), group.target(), key, use.scope()));
-			result.add(new NeutralPlacementGraph.RelocationAction(key, obligations));
+			result.add(new NeutralPlacementGraph.RelocationAction(key, obligations,
+				directSourcePlacements));
 		}
 		return result;
 	}
@@ -2243,7 +2249,8 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByConsumer,
 		Map<CompiledHopKey,Long> scopes,
 		Map<CompiledHopKey,NodeShapeFact> shapeFacts,
-		Map<RelocationGroup,Set<InputUse>> uses) {
+		Map<RelocationGroup,Set<InputUse>> uses,
+		Map<RelocationGroup,Set<InputUse>> directUses) {
 		// Relocations are planner feasibility edges proven by an exact AVAILABLE candidate-rule fact:
 		// one existing PRESENT input FederationMap supplies the anchor domain, while ABSENT_LOCAL
 		// matrix inputs become upload obligations for that same consumer target. This deliberately
@@ -2312,13 +2319,15 @@ public final class NeutralPlacementGraphBuilder {
 					continue;
 				RelocationGroup group = new RelocationGroup(seed.source(), target,
 					seed.materializationFType(), anchor, scope);
-				uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>())
-					.add(new InputUse(seed.consumer(), seed.position(), scope));
+				InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
+				uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
+				directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
 			}
 		for(InputUseSeed seed : absentMatrixInputs) {
 			List<PostMaterializationCandidate> materializedCandidates = exactPostMaterializationCandidates(fact,
 				seed.position(), candidateFactsByConsumer.getOrDefault(consumer.key(), List.of()),
 				workerPoolAnchors, anchor, consumer);
+			boolean exactPresentInputProof = !materializedCandidates.isEmpty();
 			if(materializedCandidates.isEmpty()) {
 				CompiledInputEdgeFact edge = matrixEdges.get(seed.position());
 				NodeShapeFact sourceShape = edge == null ? null : shapeFacts.get(edge.producer());
@@ -2327,10 +2336,30 @@ public final class NeutralPlacementGraphBuilder {
 			for(PostMaterializationCandidate materialized : materializedCandidates) {
 				RelocationGroup group = new RelocationGroup(seed.source(), materialized.target(),
 					materialized.materializationFType(), anchor, scope);
-				uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>())
-					.add(new InputUse(seed.consumer(), seed.position(), scope));
+				InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
+				uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
+				if(exactPresentInputProof)
+					directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
 			}
 		}
+	}
+
+	private static List<PlacementState> directSourcePlacements(RelocationGroup group,
+		List<Node> nodes, WorkerPoolAnchorResolver workerPoolAnchors) {
+		List<Node> sources = nodes.stream()
+			.filter(node -> node.valueVersion().equals(group.source()))
+			.filter(Node::emittedWork).toList();
+		if(sources.size() != 1)
+			return List.of();
+		Node source = sources.get(0);
+		Set<DurableAnchorKey> provenPools = workerPoolAnchors.resolve(source.key(),
+			group.materializationFType());
+		if(provenPools.size() != 1 || !provenPools.contains(group.anchor()))
+			return List.of();
+		return source.legalAlternatives().stream()
+			.filter(state -> state.output() == FederatedOutput.FOUT)
+			.filter(state -> state.fType() == group.materializationFType())
+			.sorted().toList();
 	}
 
 	/**
