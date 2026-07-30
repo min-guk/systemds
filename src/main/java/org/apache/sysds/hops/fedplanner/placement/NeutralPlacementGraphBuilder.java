@@ -296,6 +296,35 @@ public final class NeutralPlacementGraphBuilder {
 				compiledInputEdges, origins, factsByHop);
 		nodes = materializationClosure.nodes();
 		candidateRuleFacts = materializationClosure.candidateRuleFacts();
+		boolean functionClosureConverged = false;
+		int maxFunctionClosurePasses = Math.max(1,
+			occurrences.size() * (FType.values().length + 1));
+		for(int pass = 0; pass < maxFunctionClosurePasses; pass++) {
+			FunctionInputCandidateClosure functionInputClosure = closeLogicalFunctionInputCandidates(
+				nodes, candidateRuleDomainKeys, candidateRuleFacts, functionExpansion.constraints(), origins,
+				factsByHop, occurrences.size());
+			nodes = functionInputClosure.nodes();
+			candidateRuleDomainKeys = functionInputClosure.domainKeys();
+			candidateRuleFacts = functionInputClosure.facts();
+			if(functionInputClosure.changedOrdinals().isEmpty()) {
+				functionClosureConverged = true;
+				break;
+			}
+			CandidateReplay functionReplay = closePostCfgPhysicalCandidateDependencies(occurrences,
+				new CandidateReplay(nodes, candidateRuleDomainKeys, candidateRuleFacts,
+					logicalTransientInputs, functionInputClosure.changedOrdinals()),
+				factsByHop, ordinalsByBlock, cfg);
+			nodes = functionReplay.nodes();
+			candidateRuleDomainKeys = functionReplay.domainKeys();
+			candidateRuleFacts = functionReplay.facts();
+			materializationClosure = closeDerivedWorkerPoolMaterializationCandidates(nodes,
+				candidateRuleFacts, compiledInputEdges, origins, factsByHop);
+			nodes = materializationClosure.nodes();
+			candidateRuleFacts = materializationClosure.candidateRuleFacts();
+		}
+		if(!functionClosureConverged)
+			throw new IllegalStateException("Logical function input candidate closure did not converge");
+		nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
 		Map<CompiledHopKey,NodeShapeFact> relocationShapes = new IdentityHashMap<>();
 		for(Node node : nodes) {
 			Hop origin = origins.get(node.key());
@@ -1248,6 +1277,216 @@ public final class NeutralPlacementGraphBuilder {
 	private record CandidateReplay(List<Node> nodes, List<CandidateRuleKey> domainKeys,
 		List<CandidateRuleFact> facts, List<LogicalTransientInputFact> logicalInputs,
 		List<Integer> changedOrdinals) { }
+
+	private record FunctionInputBinding(CompiledHopKey source, CompiledHopKey boundary,
+		CompiledHopKey target) implements Comparable<FunctionInputBinding> {
+		@Override public int compareTo(FunctionInputBinding that) {
+			int targetOrder = target.compareTo(that.target);
+			if(targetOrder != 0) return targetOrder;
+			int sourceOrder = source.compareTo(that.source);
+			return sourceOrder != 0 ? sourceOrder : boundary.compareTo(that.boundary);
+		}
+	}
+
+	private record FunctionInputCandidateClosure(List<Node> nodes, List<CandidateRuleKey> domainKeys,
+		List<CandidateRuleFact> facts, List<Integer> changedOrdinals) { }
+
+	/**
+	 * Replays formal TRead candidates from the final exact caller-argument domains. Function bodies
+	 * are fingerprinted before some call sites, so their first candidate pass cannot see caller states
+	 * discovered by CFG and worker-pool closure. The synthetic argument boundary is the exact graph
+	 * authority; this pass widens neither the oracle nor the runtime and keeps TRead states restricted
+	 * to CP/LOUT and FED/FOUT.
+	 */
+	private FunctionInputCandidateClosure closeLogicalFunctionInputCandidates(List<Node> nodes,
+		List<CandidateRuleKey> domainKeys, List<CandidateRuleFact> facts,
+		List<Constraint> functionConstraints, Map<CompiledHopKey,Hop> origins,
+		Map<Hop,NodeShapeFact> factsByHop, int originalOccurrenceCount) {
+		if(domainKeys.size() != facts.size())
+			throw new IllegalStateException("Candidate rule fact/domain count differs before function replay");
+		Map<CompiledHopKey,Integer> nodeIndexes = new IdentityHashMap<>();
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(int index = 0; index < nodes.size(); index++) {
+			Node node = nodes.get(index);
+			nodeIndexes.put(node.key(), index);
+			nodesByKey.put(node.key(), node);
+		}
+		Map<CompiledHopKey,List<Constraint>> argumentsByBoundary = new IdentityHashMap<>();
+		for(Constraint constraint : functionConstraints)
+			if(constraint.kind() == ConstraintKind.CONJUNCTIVE
+				&& (constraint.evidence().startsWith("function-argument:")
+					|| constraint.evidence().startsWith("inlined-function-argument:")))
+				argumentsByBoundary.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+					.add(constraint);
+		List<FunctionInputBinding> bindings = new ArrayList<>();
+		for(Constraint formal : functionConstraints) {
+			if(formal.kind() != ConstraintKind.SAME_PLACEMENT
+				|| !"function-formal-input".equals(formal.evidence()))
+				continue;
+			List<Constraint> arguments = argumentsByBoundary.getOrDefault(formal.left(), List.of());
+			if(arguments.size() != 1)
+				throw new IllegalStateException("Function input boundary has no unique exact caller argument");
+			Constraint argument = arguments.get(0);
+			if(!nodesByKey.containsKey(argument.left()) || !nodesByKey.containsKey(formal.left())
+				|| !nodesByKey.containsKey(formal.right()))
+				throw new IllegalStateException("Function input replay references a foreign graph node");
+			bindings.add(new FunctionInputBinding(argument.left(), formal.left(), formal.right()));
+		}
+		bindings.sort(null);
+		if(bindings.isEmpty())
+			return new FunctionInputCandidateClosure(List.copyOf(nodes), List.copyOf(domainKeys),
+				List.copyOf(facts), List.of());
+
+		Map<CompiledHopKey,List<Node>> sourcesByTarget = new IdentityHashMap<>();
+		for(FunctionInputBinding binding : bindings)
+			sourcesByTarget.computeIfAbsent(binding.target(), ignored -> new ArrayList<>())
+				.add(nodesByKey.get(binding.source()));
+		Map<CompiledHopKey,List<Integer>> candidateSlots = new IdentityHashMap<>();
+		for(int slot = 0; slot < domainKeys.size(); slot++) {
+			CandidateRuleKey key = domainKeys.get(slot);
+			CandidateRuleFact fact = facts.get(slot);
+			if(key.parentOccurrence() != fact.key().parentOccurrence()
+				|| !key.orderedInputs().equals(fact.key().orderedInputs()))
+				throw new IllegalStateException("Candidate rule fact/domain order differs before function replay");
+			candidateSlots.computeIfAbsent(key.parentOccurrence(), ignored -> new ArrayList<>()).add(slot);
+		}
+
+		List<Node> closedNodes = new ArrayList<>(nodes);
+		Map<CompiledHopKey,List<CandidateRuleKey>> replacementKeys = new IdentityHashMap<>();
+		Map<CompiledHopKey,List<CandidateRuleFact>> replacementFacts = new IdentityHashMap<>();
+		List<Integer> changedOrdinals = new ArrayList<>();
+		for(int ordinal = 0; ordinal < originalOccurrenceCount; ordinal++) {
+			Node current = closedNodes.get(ordinal);
+			List<Node> sources = sourcesByTarget.get(current.key());
+			if(sources == null)
+				continue;
+			Hop readHop = origins.get(current.key());
+			NodeShapeFact readShape = readHop == null ? null : factsByHop.get(readHop);
+			if(current.kind() != NodeKind.TRANSIENT_READ
+				|| current.valueVersion().versionKind() != VersionKind.FUNCTION_INPUT
+				|| readHop == null || readShape == null || !readHop.getInput().isEmpty())
+				throw new IllegalStateException("Function input replay target is not an exact formal TRead");
+			List<FType> exactDomain = logicalFunctionInputDomain(sources);
+			List<CandidateRuleKey> exactKeys = new ArrayList<>();
+			List<CandidateRuleFact> exactFacts = new ArrayList<>();
+			Node replacement = buildNode(readHop, current.key(), current.valueVersion(), current.anchors(),
+				List.of(), readShape, List.of(), List.of(exactDomain), exactKeys, exactFacts);
+			List<Integer> priorSlots = candidateSlots.getOrDefault(current.key(), List.of());
+			if(priorSlots.isEmpty())
+				throw new IllegalStateException("Function input replay target has no original candidate domain");
+			List<CandidateRuleKey> priorKeys = priorSlots.stream().map(domainKeys::get).toList();
+			List<CandidateRuleFact> priorFacts = priorSlots.stream().map(facts::get).toList();
+			closedNodes.set(ordinal, replacement);
+			nodesByKey.put(current.key(), replacement);
+			replacementKeys.put(current.key(), List.copyOf(exactKeys));
+			replacementFacts.put(current.key(), List.copyOf(exactFacts));
+			if(!replacement.equals(current) || !exactKeys.equals(priorKeys) || !exactFacts.equals(priorFacts))
+				changedOrdinals.add(ordinal);
+		}
+
+		for(FunctionInputBinding binding : bindings) {
+			Node source = nodesByKey.get(binding.source());
+			Node target = nodesByKey.get(binding.target());
+			Integer boundaryIndex = nodeIndexes.get(binding.boundary());
+			if(source == null || target == null || boundaryIndex == null)
+				throw new IllegalStateException("Function input replay lost an exact boundary endpoint");
+			Node boundary = closedNodes.get(boundaryIndex);
+			List<PlacementState> alternatives = logicalFunctionBoundaryAlternatives(source, target);
+			Node replacement = new Node(boundary.key(), boundary.kind(), boundary.valueVersion(),
+				boundary.emittedWork(), alternatives, boundary.exclusions(), boundary.anchors());
+			closedNodes.set(boundaryIndex, replacement);
+			nodesByKey.put(binding.boundary(), replacement);
+		}
+
+		List<CandidateRuleKey> closedKeys = new ArrayList<>();
+		List<CandidateRuleFact> closedFacts = new ArrayList<>();
+		Set<CompiledHopKey> replaced = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Node node : closedNodes) {
+			List<CandidateRuleKey> exactKeys = replacementKeys.get(node.key());
+			if(exactKeys != null) {
+				closedKeys.addAll(exactKeys);
+				closedFacts.addAll(replacementFacts.get(node.key()));
+				replaced.add(node.key());
+			}
+			else
+				for(int slot : candidateSlots.getOrDefault(node.key(), List.of())) {
+					closedKeys.add(domainKeys.get(slot));
+					closedFacts.add(facts.get(slot));
+				}
+		}
+		int expectedSize = domainKeys.size() + replacementKeys.entrySet().stream()
+			.mapToInt(entry -> entry.getValue().size()
+				- candidateSlots.getOrDefault(entry.getKey(), List.of()).size()).sum();
+		if(replaced.size() != replacementKeys.size() || closedKeys.size() != expectedSize
+			|| closedFacts.size() != expectedSize)
+			throw new IllegalStateException("Function input replay did not preserve exact candidate ownership");
+		return new FunctionInputCandidateClosure(List.copyOf(closedNodes), List.copyOf(closedKeys),
+			List.copyOf(closedFacts), List.copyOf(changedOrdinals));
+	}
+
+	private static List<FType> logicalFunctionInputDomain(List<Node> sources) {
+		Set<FType> federated = new java.util.TreeSet<>(java.util.Comparator.comparing(Enum::name));
+		boolean local = false;
+		for(Node source : sources)
+			for(PlacementState state : source.legalAlternatives()) {
+				if(state.output() == FederatedOutput.FOUT && state.fType() != null)
+					federated.add(state.fType());
+				else if(state.output() == FederatedOutput.LOUT)
+					local = true;
+			}
+		if(!local && federated.isEmpty())
+			throw new IllegalStateException("Function input caller domain has no representable output placement");
+		List<FType> domain = new ArrayList<>(federated);
+		if(local)
+			domain.add(0, null);
+		return Collections.unmodifiableList(domain);
+	}
+
+	private static List<PlacementState> logicalFunctionBoundaryAlternatives(Node source, Node target) {
+		List<PlacementState> alternatives = new ArrayList<>();
+		for(PlacementState sourceState : source.legalAlternatives()) {
+			boolean targetRetainsTuple = target.legalAlternatives().stream().anyMatch(targetState ->
+				targetState.execType() == sourceState.execType()
+					&& targetState.output() == sourceState.output()
+					&& targetState.fType() == sourceState.fType());
+			if(isLegalTransient(sourceState) && targetRetainsTuple)
+				alternatives.add(sourceState);
+		}
+		if(alternatives.isEmpty())
+			throw new IllegalStateException("Function input boundary has no exact source state legal at its formal read");
+		return List.copyOf(alternatives);
+	}
+
+	/** Retains the final exact source-state objects after post-CFG candidate replay replaces source nodes. */
+	private static List<Node> refreshFunctionOutputBoundaryAlternatives(List<Node> nodes,
+		List<Constraint> functionConstraints) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			nodesByKey.put(node.key(), node);
+		Map<CompiledHopKey,List<CompiledHopKey>> sourcesByBoundary = new IdentityHashMap<>();
+		for(Constraint constraint : functionConstraints)
+			if(constraint.kind() == ConstraintKind.CONJUNCTIVE
+				&& (constraint.evidence().startsWith("function-result:")
+					|| constraint.evidence().startsWith("inlined-function-result:")))
+				sourcesByBoundary.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+					.add(constraint.left());
+		List<Node> refreshed = new ArrayList<>(nodes.size());
+		for(Node node : nodes) {
+			if(node.kind() != NodeKind.FUNCTION_OUTPUT) {
+				refreshed.add(node);
+				continue;
+			}
+			List<CompiledHopKey> sourceKeys = sourcesByBoundary.getOrDefault(node.key(), List.of());
+			if(sourceKeys.size() != 1)
+				throw new IllegalStateException("Function output boundary has no unique exact source");
+			Node source = nodesByKey.get(sourceKeys.get(0));
+			if(source == null)
+				throw new IllegalStateException("Function output boundary references a foreign source");
+			refreshed.add(new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
+				transientAlternatives(source.legalAlternatives()), node.exclusions(), node.anchors()));
+		}
+		return List.copyOf(refreshed);
+	}
 
 	private static FunctionExpansion expandFunctionBoundaryContexts(
 		List<PlacementGraphFingerprint.HopOccurrence> occurrences, List<Node> nodes,

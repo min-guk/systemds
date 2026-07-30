@@ -433,7 +433,11 @@ public final class DpPlacementAdapter {
 			if(boundary.legalAlternatives().stream()
 				.noneMatch(state -> state == selectedEmissionState.placementState()))
 				throw new IllegalArgumentException(
-					"DP synthetic boundary did not retain its exact source state identity");
+					"DP synthetic boundary did not retain its exact source state identity: kind="
+						+ boundary.kind() + ", boundary=" + boundary.key().normalizedSignature()
+						+ ", source=" + sourceKey.normalizedSignature() + ", selected="
+						+ selectedEmissionState.placementState().normalizedSignature() + ", alternatives="
+						+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
 		}
 	}
 

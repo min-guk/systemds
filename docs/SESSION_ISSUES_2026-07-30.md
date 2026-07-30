@@ -345,3 +345,55 @@
 - **의사결정 근거/적용 원칙**:
   - runtime-supported opcode 조합을 편의상 닫은 것이 아니라, scheduling-only edge가 candidate input을 제조할 수 없다는 문서화된 TRead/TWrite·CFG 전역 합법성을 DP 열거에 반영했다.
   - runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용, 비용 기반 후보의 임의 제거는 하지 않았다.
+
+## DP/StepLM 함수 formal TRead 후보가 최종 caller domain을 보지 못함
+
+- **상태**: 진행중 — hermetic RED를 재현하고 함수 입력 클로저 및 DP active call-site authority를 수정했으며, 강화된 StepLM/함수/PCA·LM·LogReg 회귀와 package를 통과함. immutable Docker 단일 셀 검증이 남음
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 전 기준 commit: `356c3b8b07`
+  - 플래너/워크로드: DP / StepLM / 50,000×2,100 features + 50,000×1 labels, private-aggregate, 단일 federated worker
+  - 테스트는 public privacy case를 사용하지 않으며, 성능 검증은 이후 새 immutable stage의 `run_LAN_docker.sh` 단일 셀만 사용함
+- **재현 절차**:
+  - hermetic 회귀: `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpStepLmFunctionInputCandidateRedTest test`
+  - 최초 RED 로그: `/tmp/g007-dp-steplm-function-input-red-20260730.log`
+  - 첫 클로저 후 nested-function RED: `/tmp/g007-dp-steplm-function-input-green-attempt1-20260730.log`
+  - synthetic output identity 진단: `/tmp/g007-dp-steplm-function-input-green-attempt5-20260730.log`
+- **관측 증상**:
+  - 최초에는 `.builtinNS::linear_regression` formal TRead `y`가 `PRESENT/FULL` exact candidate fact를 요청했지만 빌더에는 `ABSENT_LOCAL` fact만 있어 `CandidateRuleLookupException`으로 종료됐다.
+  - 한 번만 formal domain을 재생성하면 실패 위치가 nested `.builtinNS::m_lm`으로 이동했다. 이는 caller→formal 후보 전파가 transitive fixed point를 필요로 함을 보여준다.
+  - 최종 caller 후보를 모두 반영한 뒤에는 같은 compiled `linear_regression` body에 StepLM 내부의 세 call-site가 연결되어 기존 DP의 “source authority 하나” 가정이 모호해졌다.
+  - 함수 입력/물리 후보 replay가 FunctionOp 노드를 교체한 뒤 synthetic FUNCTION_OUTPUT boundary는 이전 `PlacementState` 객체를 계속 보유해 `DP synthetic boundary did not retain its exact source state identity`로 fail-closed했다.
+- **원인 분석**:
+  - neutral builder는 compiled function body occurrence를 일부 caller보다 먼저 fingerprint/build한다. 초기 formal TRead 후보는 아직 CFG/worker-pool/materialization closure로 확정되지 않은 caller source domain만 보고 만들어졌다.
+  - 이후 function boundary constraint는 모든 exact caller를 알고 있었지만 formal TRead의 candidate domain/fact를 다시 계산하지 않았다.
+  - DP는 동일 compiled function body를 active invocation 문맥으로 계획하지만, 공유 분석에는 동일 formal에 대한 여러 exact `LogicalFunctionInputFact`가 존재한다. 기존 코드는 fact 수가 1이 아니면 실패했고 active rewire call-site를 사용하지 않았다.
+  - synthetic output boundary의 alternatives는 확장 시점 source state 객체에 묶여 있었고 후속 replay 후 refresh되지 않았다.
+- **해결 요약**:
+  - final exact caller source placement의 합집합으로 formal TRead input domain을 재구성하고, 기존 `buildNode`/oracle 경로로 candidate keys/facts와 합법 상태를 다시 생성한다.
+  - formal 후보 변경 시 post-CFG physical dependency와 worker-pool materialization closure를 재실행하며 변화가 없어질 때까지 bounded fixed point로 반복한다.
+  - 각 function-input boundary는 해당 exact caller source의 최종 합법 상태 객체를 그대로 보존한다. 모든 replay가 끝난 뒤 function-output boundary도 최종 source 객체로 refresh한다.
+  - DP formal 열거 시 현재 rewire child와 일치하는 exact caller fact가 있으면 그 fact의 `function-callsite-control` owner를 active call-site로 고정한다. 직접 일치하지 않는 다음 formal은 같은 exact call-site의 fact만 사용한다. 임의의 첫 caller 선택은 하지 않으며 authority가 없거나 복수면 계속 fail-closed한다.
+  - synthetic boundary identity 오류에는 kind/boundary/source/selected/alternatives를 포함해 후속 진단 가능성을 높였다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmFunctionInputCandidateRedTest.java`
+- **검증**:
+  - 강화된 StepLM 단일 GREEN: `/tmp/g007-dp-steplm-function-input-green-final-20260730.log`, Maven return code 0.
+  - 회귀는 `linear_regression`의 `X`/`y` 각각에 대해 모든 exact caller state의 합집합과 formal candidate domain이 동일하고, 각 exact fact가 AVAILABLE이며, formal TRead emission이 `<CP,LOUT>` 또는 `<FED,FOUT>`만 게시하고, boundary가 source state identity를 보존함을 검증한다.
+  - 함수 전파/후보 팩트/기존 StepLM 동일명 formal suite 성공: `/tmp/g007-dp-function-closure-targeted-regressions-20260730.log`, Maven return code 0.
+  - DP PCA·LM·LogReg 및 function-output dependency suite 성공: `/tmp/g007-dp-pca-lm-logreg-regressions-20260730.log`, Maven return code 0.
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-steplm-function-closure-package-20260730.log`, Maven return code 0.
+  - Docker evidence는 아직 진행 전이다.
+- **잔여 이슈**:
+  - 변경 commit으로 immutable stage를 만들고 canonical Docker DP/StepLM 셀을 정확히 한 번 실행해야 한다.
+  - active call-site를 확정할 direct rewire argument가 어떤 formal에도 없다면 DP는 의도적으로 fail-closed한다. 실제 workload에서 나타나면 caller context authority 모델을 확장해야 하며 임의 선택으로 우회하면 안 된다.
+- **잠재 회귀 위험**:
+  - 다단 nested function에서 후보 domain이 계속 변하면 fixed-point 상한에서 fail-closed한다. 새 StepLM nested 경로와 기존 function propagation 회귀로 감지한다.
+  - 여러 call-site의 합집합 때문에 formal 후보 수가 늘 수 있으나 이는 비용 후보를 닫지 않고 실제 caller 가능성을 보존하는 동작이다. exact active call-site 선택은 DP rewire authority로 별도 제한한다.
+  - post-CFG source node가 교체되었는데 boundary refresh가 누락되면 identity 오류가 재발한다. 입력 boundary identity assertion과 PCA multi-return function-output regression으로 감지한다.
+- **의사결정 근거/적용 원칙**:
+  - 수정 대상은 builder의 후보 폐쇄 순서와 DP의 exact call-site ownership이다. oracle/runtime 지원, 비용식, TRead/TWrite 제약은 완화하지 않았다.
+  - runtime fallback/암묵 보정, `<CP,FOUT>` 허용, legal candidate 임의 skip/continue는 추가하지 않았다.

@@ -70,8 +70,11 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.HopUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
@@ -150,6 +153,7 @@ public class FederatedPlannerDpCostEnumerator {
 		private final NeutralEnumerationContext context;
 		private final DpEnumerationObserver observer;
 		private final List<CapturedCandidate> candidates = new ArrayList<>();
+		private final Map<String,CompiledHopKey> activeFunctionCalls = new LinkedHashMap<>();
 		private int rawCandidateCount;
 		private EnumerationCapture(NeutralEnumerationContext context, FederatedPlannerDpMemoTable memo,
 			DpEnumerationObserver observer) { this.context = context; this.observer = observer == null ? NO_OP_OBSERVER : observer; }
@@ -167,6 +171,14 @@ public class FederatedPlannerDpCostEnumerator {
 				|| candidate.snapshot() != receipt.candidateSnapshot())
 				throw new IllegalArgumentException("Decision receipt differs from captured candidate");
 			candidates.set(last, new CapturedCandidate(candidate.snapshot(), variantOrdinal, receipt));
+		}
+		private void bindActiveFunctionCall(String functionNamespace, CompiledHopKey call) {
+			CompiledHopKey prior = activeFunctionCalls.putIfAbsent(functionNamespace, call);
+			if(prior != null && prior != call)
+				throw new IllegalArgumentException("DP function body changed its exact active call-site authority");
+		}
+		private CompiledHopKey activeFunctionCall(String functionNamespace) {
+			return activeFunctionCalls.get(functionNamespace);
 		}
 		private PreSelectionSemanticBlock semanticBlock() {
 			Map<CompiledHopKey, Integer> parentOrder = new IdentityHashMap<>();
@@ -1325,7 +1337,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// The legacy rewire table can also expose the argument's upstream TWrite, but
 		// that is only a scheduling predecessor; choosing it directly erases the
 		// logical candidate input and incorrectly produces a zero-input DP variant.
-		List<Hop> sourceChildHops = collectLogicalFunctionArgumentChildHops(dataOp, capture);
+		List<Hop> sourceChildHops = collectLogicalFunctionArgumentChildHops(dataOp, childHops, capture);
 		if(sourceChildHops.isEmpty())
 			sourceChildHops = collectTransientWriteChildHops(dataOp, childHops, capture);
 		if (sourceChildHops.isEmpty()) {
@@ -1478,24 +1490,70 @@ public class FederatedPlannerDpCostEnumerator {
 	}
 
 	private static List<Hop> collectLogicalFunctionArgumentChildHops(DataOp formalRead,
-		EnumerationCapture capture) {
+		List<Hop> currentChildHops, EnumerationCapture capture) {
 		HopOccurrenceProjection read = findOccurrence(capture, formalRead);
-		List<PlacementAnalysis.LogicalFunctionInputFact> facts = capture.context.analysis()
+		List<LogicalFunctionInputFact> facts = capture.context.analysis()
 			.logicalFunctionInputsInCanonicalOrder().stream()
 			.filter(fact -> fact.targetRead() == read.key() && fact.logicalPosition() == 0)
 			.toList();
 		if(facts.isEmpty())
 			return List.of();
-		if(facts.size() != 1)
-			throw new IllegalArgumentException("Function-input DP source authority is not unique: "
+		Map<CompiledHopKey,LogicalFunctionInputFact> factsBySource = new IdentityHashMap<>();
+		for(LogicalFunctionInputFact fact : facts)
+			if(factsBySource.put(fact.sourceArgument(), fact) != null)
+				throw new IllegalArgumentException("Function-input DP source authority is duplicated");
+		List<LogicalFunctionInputFact> activeFacts = new ArrayList<>();
+		Set<CompiledHopKey> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop child : currentChildHops) {
+			HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(child);
+			LogicalFunctionInputFact fact = projected == null ? null
+				: factsBySource.get(projected.key());
+			if(fact != null && retained.add(fact.sourceArgument()))
+				activeFacts.add(fact);
+		}
+		if(activeFacts.size() > 1)
+			throw new IllegalArgumentException("Function-input DP active source authority is not unique: "
 				+ read.key().normalizedSignature());
-		PlacementAnalysis.LogicalFunctionInputFact fact = facts.get(0);
+		LogicalFunctionInputFact fact;
+		if(activeFacts.size() == 1) {
+			fact = activeFacts.get(0);
+			capture.bindActiveFunctionCall(read.key().functionNamespace(),
+				requireExactFunctionCallOwner(capture.context.analysis(), fact));
+		}
+		else {
+			CompiledHopKey activeCall = capture.activeFunctionCall(read.key().functionNamespace());
+			List<LogicalFunctionInputFact> callFacts = activeCall == null ? List.of()
+				: facts.stream().filter(candidate ->
+					requireExactFunctionCallOwner(capture.context.analysis(), candidate) == activeCall).toList();
+			if(callFacts.size() == 1)
+				fact = callFacts.get(0);
+			else if(facts.size() == 1) {
+				fact = facts.get(0);
+				capture.bindActiveFunctionCall(read.key().functionNamespace(),
+					requireExactFunctionCallOwner(capture.context.analysis(), fact));
+			}
+			else
+				throw new IllegalArgumentException("Function-input DP active source authority is missing: "
+					+ read.key().normalizedSignature());
+		}
 		Hop source = capture.context.analysis().hop(fact.sourceArgument()).orElseThrow(() ->
 			new IllegalArgumentException("Function-input DP source Hop is missing"));
 		HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(source);
 		if(projected == null || projected.key() != fact.sourceArgument())
 			throw new IllegalArgumentException("Function-input DP source carrier differs from analysis authority");
 		return List.of(source);
+	}
+
+	private static CompiledHopKey requireExactFunctionCallOwner(PlacementAnalysis analysis,
+		LogicalFunctionInputFact fact) {
+		List<CompiledHopKey> owners = analysis.graph().constraints().stream().filter(constraint ->
+			constraint.kind() == ConstraintKind.DOMINATES
+				&& constraint.right() == fact.boundary()
+				&& "function-callsite-control".equals(constraint.evidence()))
+			.map(Constraint::left).toList();
+		if(owners.size() != 1)
+			throw new IllegalArgumentException("Function-input DP call-site authority is not unique");
+		return owners.get(0);
 	}
 
 	private static void rejectAmbiguousTransientWriteHopIds(DataOp transientRead,
