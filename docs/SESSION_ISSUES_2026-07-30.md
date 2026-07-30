@@ -166,13 +166,16 @@
 
 ## DP/LM virtual child의 canonical owner를 output만으로 선택함
 
-- **상태**: 진행중 — exact-state owner 수정, hermetic 회귀 및 package는 통과했고 새 immutable stage의 Docker 1회 canary가 남음
+- **상태**: 해결 — exact-state owner 수정 후 hermetic 회귀, package, canonical Docker DP/LM canary와 semantic oracle을 모두 통과함
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 기준 commit: `61218a3d35`
   - 플래너/워크로드: DP / LM / `P2P2D`, private-aggregate, 단일-worker FULL 배치
   - 기존 Docker 실패: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm`
-  - 실행 제약: Docker 성능 검증은 `run_LAN_docker.sh`만 사용하며 targeted DP/LM cell은 새 stage에서 한 번만 실행함
+  - 수정 commit: `255a5509a7afa300d8b75d3530b229e03b26232c`
+  - 수정 stage: `/home/mchoi/g007-dp-lm-exact-owner-stage-20260730-v1/g007-stage-4ea9d4930a23970cbfb029ac2b31e2eff3d51702717331ea66a4f24ee12dfdf2`
+  - canonical Docker run: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2`
+  - 실행 제약: Docker 성능 검증은 `run_LAN_docker.sh`만 사용하며 canonical DP/LM cell은 `--salg lm`으로 한 번 실행함
 - **재현 절차**:
   - 기존 Docker DML: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm/tmp/cell-1/discovery-correctness/gen_lm_P2P2D_1.dml`
   - 기존 Docker coordinator log: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm/results/fed1/mkl-cost/lm_dataset-P2P2D_coordinator_mkl-cost_p4v2c13_lan_coordinator1.log`
@@ -213,9 +216,23 @@
     - 패치 역적용 기준선에서도 `CampaignBDpAggregateProducerContractTest` 2건과 `FederatedPCAPlanningTest` 1건이 동일 메시지로 실패함: `/tmp/g007-dp-lm-exact-owner-baseline-failures-20260730.log`
     - 따라서 세 실패는 이번 변경의 신규 회귀가 아님.
   - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-lm-exact-owner-package-20260730.log`, `MAVEN_RC=0`
+  - immutable stage identity:
+    - SystemDS commit: `255a5509a7afa300d8b75d3530b229e03b26232c`
+    - stage id: `4ea9d4930a23970cbfb029ac2b31e2eff3d51702717331ea66a4f24ee12dfdf2`
+    - descriptor sha256: `3fcb1f37fb3f006ca9bfe99cebad63ffcb63dbfed78edd145459a468214cf99d`
+    - JAR sha256: `90adb17a51b8109318d332df4db70b437d66adc5172577908dcfe1d882f9bc44`
+    - data sha256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f`
+    - reference sha256: `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - canonical Docker DP/LM targeted cell 성공:
+    - response: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2/response.json`
+    - 결과: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart 0회
+    - phase scan: error/fallback/resource-invalid/timeout 모두 `false`
+    - semantic oracle: `passed=true`, prediction NRMSE `0.0`, objective relative error `0.0`; output/reference sha256 동일
+    - phase metric: `80.38918997`초; SystemDS total execution `60.038`초, compilation `1.531160`초, FedPlanner `0.365948`초
+    - federated 실행 증거: I/O `(Read, Put, Get)=2/1/2`, Execute `(Inst, UDF)=4/0`, heavy hitter에 `fed_ba+*`, `fed_fedinit`, `fed_r'` 존재
+    - coordinator log 및 전체 artifact에 기존 `Multiple relocations target one registry slot`과 exact-owner fail-closed 오류가 없음
 - **잔여 이슈**:
-  - 새 immutable stage에서 DP/LM Docker targeted cell을 정확히 한 번 실행해 이전 registry-slot 충돌이 현재 planner 결과에서도 제거됐는지 확인해야 한다.
-  - Docker가 다음 독립 오류를 노출하면 동일 cell을 반복하지 않고 로그를 보존한 뒤 hermetic 재현부터 만든다.
+  - 이 DP/LM registry-slot 및 exact-owner 오류 자체의 잔여 이슈는 없음. DP 우선순위의 다음 기존 실패 workload를 별도 hermetic 재현으로 진행한다.
   - 기준선의 aggregate receipt count 2건 및 multi-worker PCA transient-forward authority 1건은 별도 baseline 부채다. 단일-worker PCA Docker canary는 이미 성공했다.
 - **잠재 회귀 위험**:
   - 같은 exact state이지만 child-output signature가 다른 physical arm 중 잘못된 arm을 owner로 고를 수 있다. 현재 global output decisions 호환성과 최소 cumulative cost를 함께 요구하며 LM/KMeans/disconnected 회귀로 감지한다.
@@ -223,3 +240,40 @@
 - **의사결정 근거/적용 원칙**:
   - DP의 기존 비용 최적화와 CP/FED 후보 공간은 유지하고, ownership projection만 exact placement state 기준으로 수정했다.
   - runtime fallback/repair, 후보 임의 폐쇄, TRead/TWrite 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.
+
+## DP/LM canary의 supervised workload를 수동으로 `--alg`에 전달함
+
+- **상태**: 해결 — canonical campaign 분류인 `--salg lm`으로 바로잡았고, 잘못된 실행은 별도 보존한 뒤 정식 canary를 한 번만 실행함
+- **환경/조건**:
+  - 잘못된 수동 실행: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v1`
+  - 정식 실행: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2`
+  - 동일 immutable stage/JAR/data/reference/seed 사용; 두 번째 실행은 첫 실행에서 측정한 동일 LAN net-check cache를 재사용함
+  - 실행 스크립트: stage-local `run_LAN_docker.sh`만 사용함
+- **재현 절차**:
+  - 잘못된 호출은 `--alg lm`, 정식 호출은 `--salg lm`이다.
+  - canonical launcher의 분류 근거: `experiments/tools/campaign_lifecycle.py`가 `lm`, `l2svm`, `logreg`, `steplm`을 `--salg`로 전달한다.
+  - 잘못된 response: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v1/response.json`
+  - 정식 response: `/home/mchoi/g007-dp-lm-exact-owner-canary-20260730-v2/response.json`
+- **관측 증상**:
+  - 첫 실행의 LM 본체는 return code 0으로 완료했고 실제 출력 `tmp/cell-1/discovery-correctness/lm-P2P2D.res`를 생성했다.
+  - 그러나 `run_coordinator_once`는 `only_alg` 경로에서 unsupervised 출력명 `fed_P2P2D_1.res`를 oracle에 넘겨 `Read input file does not exist`가 발생했다.
+  - 첫 실행에서도 SystemDS total execution은 `57.485`초였고 phase scan의 runtime error/fallback/timeout은 모두 `false`였다. 실패는 planner/runtime가 아니라 semantic-oracle 입력 경로 분류였다.
+- **원인 분석**:
+  - LM은 `parameters.sh`의 `SAlgs` 항목이며 실제 runner도 supervised 출력명 `${workload}-${dataset}.res`를 생성한다.
+  - 수동 canary 명령을 작성할 때 canonical `campaign_lifecycle.py`의 `--salg` 분기를 확인하지 않고 `--alg lm`을 사용했다.
+  - harness 자체의 canonical campaign 경로는 이미 올바르므로 소스 수정 대상이 아니다.
+- **해결 요약**:
+  - 잘못된 response와 artifact를 삭제하거나 성공으로 변조하지 않고 그대로 보존했다.
+  - 동일 코드를 재빌드하거나 planner를 수정하지 않고, canonical 분류만 `--salg lm`으로 바로잡아 새 run root에서 정식 canary를 수행했다.
+  - 불필요한 네트워크 재측정을 피하기 위해 직전 동일 LAN/worker/profile의 cache를 복사해 사용했으며 planner cost 입력은 측정값이 아니라 기존 frozen LAN 상수 그대로다.
+- **수정 파일**:
+  - 없음. 실행 인자 분류 오류였고 canonical harness 코드는 이미 정확했다.
+- **검증**:
+  - 정식 response `success=true`, semantic oracle `passed=true`, prediction/objective 오차 `0.0`, teardown resource 0개.
+  - 정식 response argv에 `--salg`, `lm`이 기록되어 canonical launcher 계약과 일치한다.
+- **잔여 이슈**:
+  - 수동 one-cell 실행 시 workload가 `Algs`/`SAlgs` 중 어디에 속하는지 반드시 `campaign_lifecycle.py` 또는 `parameters.sh`에서 확인한다.
+- **잠재 회귀 위험**:
+  - 향후 workload 분류가 바뀌고 canonical launcher와 수동 명령이 다시 어긋날 수 있다. 수동 명령 대신 canonical lifecycle command builder를 우선 사용하고 response argv와 실제 output basename을 함께 검증한다.
+- **의사결정 근거/적용 원칙**:
+  - 실패한 evidence를 가짜 성공으로 바꾸거나 runtime fallback을 추가하지 않았고, 오직 canonical experiment contract에 맞는 호출을 사용했다.
