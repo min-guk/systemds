@@ -277,3 +277,56 @@
   - 향후 workload 분류가 바뀌고 canonical launcher와 수동 명령이 다시 어긋날 수 있다. 수동 명령 대신 canonical lifecycle command builder를 우선 사용하고 response argv와 실제 output basename을 함께 검증한다.
 - **의사결정 근거/적용 원칙**:
   - 실패한 evidence를 가짜 성공으로 바꾸거나 runtime fallback을 추가하지 않았고, 오직 canonical experiment contract에 맞는 호출을 사용했다.
+
+## DP/LogReg branch-join TRead가 scheduling-only forward에서 FED/FOUT을 열거함
+
+- **상태**: 진행중 — hermetic RED 재현, 최소 수정, 관련 회귀 및 package는 통과했고 canonical Docker 단일 셀 검증이 남음
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 전 기준 commit: `9647a6215ce66d9599f4c2aba1566d76d0c0c909`
+  - 플래너/워크로드: DP / LogReg / `P2P2D`, private-aggregate, 단일-worker FULL 배치
+  - 기존 Docker 실패: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/21-dp-logreg`
+  - 실행 제약: 성능 검증은 새 immutable stage의 `run_LAN_docker.sh` 단일 셀만 사용하며 `run_LAN.sh`는 사용하지 않음
+- **재현 절차**:
+  - 기존 Docker DML: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/21-dp-logreg/tmp/cell-1/discovery-correctness/gen_logreg_P2P2D_1.dml`
+  - 기존 coordinator log: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/21-dp-logreg/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - hermetic RED: `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpLogRegTransientForwardRedTest test`
+  - RED 로그: `/tmp/g007-dp-logreg-transient-forward-red-20260730.log`
+  - 상세 진단 RED: `/tmp/g007-dp-logreg-transient-forward-red-detail2-20260730.log`
+- **관측 증상**:
+  - 기존 Docker와 hermetic 회귀 모두 `DpSemanticConstructionException: TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS`로 DP 열거 단계에서 종료됐다.
+  - 실패 source는 builtin `multiLogReg.dml`의 `rowSums_X_sq` TWrite였다.
+  - source에는 `<CP,LOUT>`과 `<FED,FOUT,FULL>`이 모두 합법이었지만, if/else 이후 branch-join의 `rowSums_X_sq` TRead에는 `<CP,LOUT>`만 합법이었다.
+  - 해당 TWrite→TRead 연결은 compiled physical input도 `LogicalTransientInputFact`도 아닌 `RewireTransientForwardEdge` 하나뿐이었다. 즉 실행 순서용 scheduling dependency였지만 DP가 FOUT child arm까지 candidate input처럼 열거했다.
+- **원인 분석**:
+  - `enumerateTransientReadDataOp(...)`는 `allowLOUT/allowFOUT`을 무조건 `true`로 시작했다.
+  - FOUT source plan과 legacy reuse 조건만 만족하면 parent TRead의 neutral legal alternatives 및 exact input authority를 확인하지 않고 FOUT candidate receipt를 구성했다.
+  - `DpPlacementAdapter`는 scheduling-only rewire edge가 candidate oracle input을 제조하지 못하도록 의도적으로 CP/LOUT dependency만 허용하므로, 잘못 만들어진 FOUT receipt를 fail-closed했다.
+  - 비용/메모리 과소평가나 runtime 지원 부족이 아니라, neutral graph가 확정한 branch-join/TRead 전역 합법성과 DP candidate enumeration의 불일치였다.
+- **해결 요약**:
+  - TRead의 `allowLOUT/allowFOUT` 초기값을 exact neutral node가 실제 게시한 `<CP,LOUT>` / `<FED,FOUT>` 상태에서만 가져오도록 변경했다.
+  - FED/FOUT source는 exact compiled physical edge, `LogicalTransientInputFact`, 또는 `LogicalFunctionInputFact` 중 하나가 source→read 관계를 소유할 때만 열거한다.
+  - scheduling-only `RewireTransientForwardEdge`는 기존처럼 의존성과 source cumulative cost를 유지하지만 federated candidate input 권한을 새로 만들지 않는다.
+  - 합법적인 logical/physical FED/FOUT TRead 경로는 그대로 보존하며 비용 모델, 후보 비용 비교, runtime, TRead/TWrite 최상위 제약은 변경하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpLogRegTransientForwardRedTest.java`
+- **검증**:
+  - 새 회귀는 Docker와 동일한 50,000×2,100 LogReg 스크립트/메타데이터를 컴파일하고 DP receipt 및 runtime-program lowering까지 확인한다.
+  - 추가로 `rowSums_X_sq` branch-join scheduling edge가 physical/logical input authority가 아니며, read의 legal state와 DP decision이 CP/LOUT-only임을 receipt로 검증한다.
+  - 단일 GREEN: `/tmp/g007-dp-logreg-transient-authority-asserted-green-20260730.log`, `MAVEN_RC=0`
+  - 관련 GREEN suite: LogReg 회귀, program dynamic/transient authority, candidate occurrence snapshot, DP/LM, DP/PCA
+    - 로그: `/tmp/g007-dp-logreg-targeted-regression-suite-20260730.log`, `MAVEN_RC=0`
+  - 기존 소형 DP LogReg integration 실행 성공:
+    - 로그: `/tmp/g007-dp-logreg-existing-integration-green-20260730.log`, `MAVEN_RC=0`
+    - total execution `1.221`초, federated I/O `(Read, Put, Get)=4/0/5`, federated Execute `(Inst, UDF)=1/0`
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-logreg-transient-authority-package-final-20260730.log`, `MAVEN_RC=0`
+- **잔여 이슈**:
+  - 새 commit/JAR로 immutable stage를 만든 뒤 canonical `--salg logreg` Docker 단일 셀과 semantic oracle을 통과시켜야 한다.
+  - Docker 성공 후 이 항목 상태, stage/JAR hash, 실행시간, federated 통계, teardown evidence를 갱신한다.
+- **잠재 회귀 위험**:
+  - exact logical/physical authority 탐지가 누락되면 합법적인 FED/FOUT TRead 후보를 과도하게 닫을 수 있다.
+  - 감지 방법: logical transient local+FED parity와 function-input 회귀, 기존 DP LogReg integration, 새 Docker semantic oracle을 함께 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime-supported opcode 조합을 편의상 닫은 것이 아니라, scheduling-only edge가 candidate input을 제조할 수 없다는 문서화된 TRead/TWrite·CFG 전역 합법성을 DP 열거에 반영했다.
+  - runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용, 비용 기반 후보의 임의 제거는 하지 않았다.

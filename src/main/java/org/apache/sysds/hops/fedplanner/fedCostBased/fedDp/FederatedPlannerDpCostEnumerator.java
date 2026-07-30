@@ -1339,8 +1339,17 @@ public class FederatedPlannerDpCostEnumerator {
 			? FederatedPlannerDpCostEstimator.legacyHopCost(hopCommon)
 			: exactEstimator.computeHopCost(hopCommon);
 
-		boolean allowLOUT = true;
-		boolean allowFOUT = true;
+		HopOccurrenceProjection readOccurrence = findOccurrence(capture, dataOp);
+		List<PlacementState> readStates = capture.context.analysis().graph().node(readOccurrence.key())
+			.orElseThrow().legalAlternatives();
+		// Rewire transient-forward edges are scheduling dependencies only. They do not
+		// manufacture a logical federated input across an ambiguous CFG join. Enumerate
+		// exactly the TRead/TWrite states already proven by the neutral graph; otherwise
+		// a forward-only edge can incorrectly construct FED/FOUT for a CP/LOUT-only read.
+		boolean allowLOUT = readStates.stream().anyMatch(state -> state.execType() == ExecType.CP
+			&& state.output() == FederatedOutput.LOUT && state.fType() == null);
+		boolean allowFOUT = readStates.stream().anyMatch(state -> state.execType() == ExecType.FED
+			&& state.output() == FederatedOutput.FOUT && state.fType() != null);
 		FType loutFType = null;
 		FType foutFType = null;
 		double loutCost = baseSelfCost;
@@ -1377,6 +1386,7 @@ public class FederatedPlannerDpCostEnumerator {
 			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(childId,
 					FederatedOutput.FOUT);
 			if (foutPlan == null || foutPlan.getFType() == null
+					|| !hasFederatedTransientInputAuthority(dataOp, sourceChildHop, capture)
 					|| !canTransientReadReuseMatchedFoutWrite(dataOp, childId, memoTable)) {
 				allowFOUT = false;
 			}
@@ -1519,6 +1529,26 @@ public class FederatedPlannerDpCostEnumerator {
 		if (FederatedPlannerUtils.hasConcreteMatchedWriteReuseSource(input, tWrite.getName()))
 			return true;
 		return !dependsOnSameTransientRead(input, tWrite.getName(), new HashSet<>());
+	}
+
+	private static boolean hasFederatedTransientInputAuthority(DataOp transientRead, Hop sourceHop,
+		EnumerationCapture capture) {
+		if(transientRead == null || sourceHop == null || capture == null)
+			return false;
+		HopOccurrenceProjection read = findOccurrence(capture, transientRead);
+		HopOccurrenceProjection source = capture.context.rewireSnapshot().projectExactCarrier(sourceHop);
+		if(source == null)
+			return false;
+		PlacementAnalysis analysis = capture.context.analysis();
+		boolean physical = analysis.compiledInputEdgesInCanonicalOrder().stream().anyMatch(fact ->
+			fact.producer() == source.key() && fact.consumer() == read.key());
+		boolean logicalTransient = analysis.logicalTransientInputsInCanonicalOrder().stream().anyMatch(fact ->
+			fact.sourceWrite() == source.key() && fact.targetRead() == read.key()
+				&& fact.logicalPosition() == 0);
+		boolean logicalFunction = analysis.logicalFunctionInputsInCanonicalOrder().stream().anyMatch(fact ->
+			fact.sourceArgument() == source.key() && fact.targetRead() == read.key()
+				&& fact.logicalPosition() == 0);
+		return physical || logicalTransient || logicalFunction;
 	}
 
 	private static boolean dependsOnSameTransientRead(Hop hop, String varName, Set<Long> visited) {
