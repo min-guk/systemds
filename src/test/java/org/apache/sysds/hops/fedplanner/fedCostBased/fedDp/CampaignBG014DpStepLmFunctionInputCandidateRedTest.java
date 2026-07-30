@@ -36,6 +36,7 @@ import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestUtils;
+import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -46,6 +47,7 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 	public void stepLmDpRetainsExactFunctionInputCandidates() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
+		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
 		DMLConfig config = new DMLConfig(oldGlobal);
 		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 		CompilerConfig compiler = OptimizerUtils.constructCompilerConfig(config);
@@ -53,6 +55,7 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 		ConfigurationManager.setLocalConfig(config);
 		ConfigurationManager.setGlobalConfig(compiler);
 		ConfigurationManager.setLocalConfig(compiler);
+		InfrastructureAnalyzer.setLocalMaxMemory(8L * 1024 * 1024 * 1024);
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
 		PlacementEmissionTransaction.resetForTesting();
 		int port = AutomatedTestBase.getRandomAvailablePort();
@@ -80,6 +83,7 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 			ConfigurationManager.setLocalConfig(oldGlobal);
 			ConfigurationManager.setGlobalConfig(oldCompiler);
 			ConfigurationManager.setLocalConfig(oldCompiler);
+			InfrastructureAnalyzer.setLocalMaxMemory(oldLocalMaxMemory);
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			PlacementEmissionTransaction.resetForTesting();
 			FederatedRefedRegistry.clear();
@@ -189,14 +193,12 @@ public class CampaignBG014DpStepLmFunctionInputCandidateRedTest {
 	}
 
 	private static String stepLmScript(int port, Path features, Path labels) {
-		return "N=50000;\n" +
-			"D=2100;\n" +
-			"X=federated(addresses=list(\"" + TestUtils.federatedAddress(port, features.toString()) + "\")," +
-				"ranges=list(list(0,0),list(N,D)));\n" +
-			"Y=federated(addresses=list(\"" + TestUtils.federatedAddress(port, labels.toString()) + "\")," +
-				"ranges=list(list(0,0),list(N,1)));\n" +
-			"[B,S]=steplm(X=X,y=Y,icpt=0,reg=1e-7,tol=1e-7,maxi=20,verbose=FALSE);\n" +
-			"write(B,\"target/g014-dp-steplm-function-input.csv\",format=\"csv\");\n";
+		return "X = federated(addresses=list(\"" + TestUtils.federatedAddress(port, features.toString()) + "\"), " +
+				"ranges=list(list(0, 0), list(50000, 2100)))\n" +
+			"Y = federated(addresses=list(\"" + TestUtils.federatedAddress(port, labels.toString()) + "\"), " +
+				"ranges=list(list(0, 0), list(50000, 1)))\n\n" +
+			"[B, S] = steplm(X=X, y=Y, icpt=0, reg=1e-7, tol=1e-7, maxi=20, verbose=FALSE)\n\n" +
+			"write(B, \"target/g014-dp-steplm-function-input.csv\", format=\"csv\")\n";
 	}
 
 	private static Path matrixMetadata(String path, long rows, long cols, long nnz) throws Exception {

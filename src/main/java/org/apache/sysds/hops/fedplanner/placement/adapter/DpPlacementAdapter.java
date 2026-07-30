@@ -413,31 +413,58 @@ public final class DpPlacementAdapter {
 	/** Exact compiler-owned authority for one carrierless synthetic function boundary. */
 	public record SyntheticBoundaryReceipt(PlacementAnalysis analysis,
 		NeutralPlacementGraph.Node boundary, NeutralPlacementGraph.Constraint authority,
-		CompiledHopKey sourceKey, PlacementEmissionState selectedEmissionState) {
+		CompiledHopKey sourceKey, PlacementEmissionState sourceEmissionState,
+		PlacementEmissionState selectedEmissionState) {
 		public SyntheticBoundaryReceipt {
 			Objects.requireNonNull(analysis, "analysis");
 			Objects.requireNonNull(boundary, "boundary");
 			Objects.requireNonNull(authority, "authority");
 			Objects.requireNonNull(sourceKey, "sourceKey");
+			Objects.requireNonNull(sourceEmissionState, "sourceEmissionState");
 			Objects.requireNonNull(selectedEmissionState, "selectedEmissionState");
 			if(boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
 				&& boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
 				throw new IllegalArgumentException("DP synthetic receipt requires a function boundary");
-			if(analysis.graph().node(boundary.key()).orElse(null) != boundary
-				|| analysis.graph().node(sourceKey).isEmpty())
+			NeutralPlacementGraph.Node source = analysis.graph().node(sourceKey).orElse(null);
+			if(analysis.graph().node(boundary.key()).orElse(null) != boundary || source == null)
 				throw new IllegalArgumentException("DP synthetic receipt contains a foreign graph node");
 			if(authority.kind() != NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
 				|| authority.left() != sourceKey || authority.right() != boundary.key()
 				|| analysis.graph().constraints().stream().noneMatch(candidate -> candidate == authority))
 				throw new IllegalArgumentException("DP synthetic receipt contains foreign authority");
+			if(source.legalAlternatives().stream()
+				.noneMatch(state -> state == sourceEmissionState.placementState()))
+				throw new IllegalArgumentException("DP synthetic receipt source state is not analysis-owned");
 			if(boundary.legalAlternatives().stream()
 				.noneMatch(state -> state == selectedEmissionState.placementState()))
 				throw new IllegalArgumentException(
-					"DP synthetic boundary did not retain its exact source state identity: kind="
+					"DP synthetic boundary did not retain its exact normalized state identity: kind="
 						+ boundary.kind() + ", boundary=" + boundary.key().normalizedSignature()
-						+ ", source=" + sourceKey.normalizedSignature() + ", selected="
+						+ ", source=" + sourceKey.normalizedSignature() + ", sourceState="
+						+ sourceEmissionState.normalizedSignature() + ", selected="
 						+ selectedEmissionState.placementState().normalizedSignature() + ", alternatives="
 						+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
+			PlacementState sourceState = sourceEmissionState.placementState();
+			PlacementState boundaryState = selectedEmissionState.placementState();
+			ExecType expectedExec = sourceState.output() == FederatedOutput.LOUT
+				? ExecType.CP : ExecType.FED;
+			FType expectedFType = sourceState.output() == FederatedOutput.FOUT
+				? sourceState.fType() : null;
+			boolean expectedShapeDependent = sourceState.output() == FederatedOutput.FOUT
+				&& sourceState.shapeDependent();
+			boolean expectedDerivedFedFout = sourceState.output() == FederatedOutput.FOUT
+				&& sourceEmissionState.derivedFedFout();
+			if(sourceState.output() != FederatedOutput.LOUT
+				&& sourceState.output() != FederatedOutput.FOUT
+				|| sourceState.output() == FederatedOutput.FOUT && sourceState.fType() == null
+				|| boundaryState.execType() != expectedExec
+				|| boundaryState.output() != sourceState.output()
+				|| boundaryState.fType() != expectedFType
+				|| boundaryState.shapeDependent() != expectedShapeDependent
+				|| selectedEmissionState.derivedFedFout() != expectedDerivedFedFout)
+				throw new IllegalArgumentException("DP synthetic boundary projection semantics differ: source="
+					+ sourceEmissionState.normalizedSignature() + ", boundary="
+					+ selectedEmissionState.normalizedSignature());
 		}
 	}
 
@@ -464,7 +491,42 @@ public final class DpPlacementAdapter {
 		PlacementEmissionState source = selectedEmissionStates.get(authority.left());
 		if(source == null)
 			return null;
-		return new SyntheticBoundaryReceipt(analysis, boundary, authority, authority.left(), source);
+		PlacementEmissionState selected = normalizeSyntheticBoundaryEmission(boundary, source);
+		return new SyntheticBoundaryReceipt(analysis, boundary, authority, authority.left(), source, selected);
+	}
+
+	/**
+	 * Function boundaries carry value placement, not the producer's execution location. A local
+	 * producer value therefore enters the transient boundary as CP/LOUT even when the producer ran
+	 * in FED mode; a federated value analogously enters as FED/FOUT. The returned state is always the
+	 * exact boundary-owned object, preserving fail-closed analysis identity without admitting the
+	 * forbidden transient tuples FED/LOUT or CP/FOUT.
+	 */
+	private static PlacementEmissionState normalizeSyntheticBoundaryEmission(
+		NeutralPlacementGraph.Node boundary, PlacementEmissionState sourceEmission) {
+		PlacementState source = sourceEmission.placementState();
+		if(source.output() != FederatedOutput.LOUT && source.output() != FederatedOutput.FOUT)
+			throw new IllegalArgumentException("DP synthetic boundary source has no value placement: "
+				+ source.normalizedSignature());
+		if(source.output() == FederatedOutput.FOUT && source.fType() == null)
+			throw new IllegalArgumentException("DP synthetic boundary FOUT source has no exact FType: "
+				+ source.normalizedSignature());
+		ExecType boundaryExec = source.output() == FederatedOutput.LOUT ? ExecType.CP : ExecType.FED;
+		FType boundaryFType = source.output() == FederatedOutput.FOUT ? source.fType() : null;
+		boolean boundaryShapeDependent = source.output() == FederatedOutput.FOUT && source.shapeDependent();
+		List<PlacementState> matches = boundary.legalAlternatives().stream()
+			.filter(state -> state.execType() == boundaryExec)
+			.filter(state -> state.output() == source.output())
+			.filter(state -> state.fType() == boundaryFType)
+			.filter(state -> state.shapeDependent() == boundaryShapeDependent)
+			.toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException("DP synthetic boundary has no unique normalized source state: kind="
+				+ boundary.kind() + ", boundary=" + boundary.key().normalizedSignature()
+				+ ", source=" + sourceEmission.normalizedSignature() + ", alternatives="
+				+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
+		return new PlacementEmissionState(matches.get(0),
+			source.output() == FederatedOutput.FOUT && sourceEmission.derivedFedFout());
 	}
 
 	public record CandidateDecisionReceipt(NeutralEnumerationContext context,

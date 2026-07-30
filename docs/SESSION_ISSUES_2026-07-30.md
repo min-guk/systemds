@@ -346,13 +346,17 @@
   - runtime-supported opcode 조합을 편의상 닫은 것이 아니라, scheduling-only edge가 candidate input을 제조할 수 없다는 문서화된 TRead/TWrite·CFG 전역 합법성을 DP 열거에 반영했다.
   - runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용, 비용 기반 후보의 임의 제거는 하지 않았다.
 
-## DP/StepLM 함수 formal TRead 후보가 최종 caller domain을 보지 못함
+## DP/StepLM 함수 formal TRead 후보와 전역 output decision forest가 서로 닫히지 않음
 
-- **상태**: 진행중 — 첫 immutable Docker canary에서 공유 function formal의 호출별 선택 충돌을 재현했고, 모든 exact caller를 하나의 DP formal plan으로 함께 비용화하도록 수정했다. 강화된 StepLM/함수/PCA·LM·LogReg 회귀와 package가 통과했으며 새 immutable Docker 단일 셀 검증이 남음
+- **상태**: 진행중 — 첫 immutable Docker canary의 공유 formal 충돌을 hermetic full lifecycle에서 재현했다. 모든 exact caller를 하나의 formal plan으로 비용화한 뒤에도 남던 전역 output-map/plan-edge 불일치와 함수 경계 상태 투영 오류를 구조적으로 수정했으며, StepLM 전체 컴파일과 DP 관련 회귀/package가 통과했다. 새 immutable Docker 단일 셀 검증이 남음
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 전 기준 commit: `356c3b8b07`
+  - function-input candidate closure commit: `b78ccf6e132e6f50c60025c492bc21e6cc293261`
+  - shared-formal all-caller closure commit: `b2b7a5a3c3c9e20e9176b0d90c57de12db07ce6e`
   - 플래너/워크로드: DP / StepLM / 50,000×2,100 features + 50,000×1 labels, private-aggregate, 단일 federated worker
+  - 첫 shared-formal immutable stage: `/home/mchoi/g007-dp-steplm-shared-formal-stage-20260730-v1/g007-stage-393f172a5d48a1520c83b941b78efdf455a16f09efc61bccc32778ad18df13d4`
+  - 첫 shared-formal Docker canary: `/home/mchoi/g007-dp-steplm-shared-formal-canary-20260730-v1`
   - 테스트는 public privacy case를 사용하지 않으며, 성능 검증은 이후 새 immutable stage의 `run_LAN_docker.sh` 단일 셀만 사용함
 - **재현 절차**:
   - hermetic 회귀: `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpStepLmFunctionInputCandidateRedTest test`
@@ -361,6 +365,9 @@
   - synthetic output identity 진단: `/tmp/g007-dp-steplm-function-input-green-attempt5-20260730.log`
   - 첫 immutable Docker canary: `/home/mchoi/g007-dp-steplm-function-closure-canary-20260730-v1/results/fed1/mkl-cost/steplm_dataset-P2P2D_coordinator_mkl-cost_g007dpsteplmclosure1_lan_coordinator1.log`
   - 공유 formal 전체-caller 고정 RED: `/tmp/g007-dp-steplm-shared-formal-all-callers-red-20260730.log`
+  - Docker-equivalent full lifecycle RED: `/tmp/g007-dp-steplm-decision-map-full-lifecycle-red-20260730.log`
+  - strict child-edge 진단 trace: `/tmp/g007-dp-steplm-strict-mismatch-trace-red-20260730.log`
+  - decision-map closure 후 경계 투영 RED: `/tmp/g007-dp-steplm-decision-map-closure-green-attempt1-20260730.log`
 - **관측 증상**:
   - 최초에는 `.builtinNS::linear_regression` formal TRead `y`가 `PRESENT/FULL` exact candidate fact를 요청했지만 빌더에는 `ABSENT_LOCAL` fact만 있어 `CandidateRuleLookupException`으로 종료됐다.
   - 한 번만 formal domain을 재생성하면 실패 위치가 nested `.builtinNS::m_lm`으로 이동했다. 이는 caller→formal 후보 전파가 transitive fixed point를 필요로 함을 보여준다.
@@ -368,6 +375,9 @@
   - 함수 입력/물리 후보 replay가 FunctionOp 노드를 교체한 뒤 synthetic FUNCTION_OUTPUT boundary는 이전 `PlacementState` 객체를 계속 보유해 `DP synthetic boundary did not retain its exact source state identity`로 fail-closed했다.
   - 첫 Docker canary에서는 공유 `.builtinNS::linear_regression` formal `X`를 세 call-site에서 다시 방문하면서 첫 방문은 `<CP,LOUT>`, 다른 방문은 `<FED,FOUT>`을 선택했다. rewrite의 `coalesceSelectedState`가 이를 `DP occurrence has disagreeing exact selections`로 올바르게 fail-closed했다.
   - 강화된 고정 RED는 공유 formal의 retained plan이 세 exact caller source를 모두 child edge로 보유해야 한다고 검증했으며, 기존 구현은 첫 active source 하나(`[133]`)만 보유해 기대값(`[133, 422, 298]`)과 달랐다.
+  - all-caller closure 이후 Docker-equivalent full lifecycle은 exact `rix(X_orig)` occurrence에 먼저 `FED/LOUT/FULL`, 나중에 `FED/FOUT/FULL`을 적용하려 해 같은 `DP occurrence has disagreeing exact selections`로 실패했다.
+  - trace에서 전역 decision map은 hop 133을 `FOUT`으로 정했지만 선택된 function-call/TRead plan의 child edge는 같은 hop 133을 `LOUT`으로 요구했다. 기존 score는 missing root와 비용만 비교해, 약 1.284M의 불일치 forest를 약 1.331M의 실행 가능한 LOUT closure보다 선호했다.
+  - forest closure를 적용한 다음에는 source `rix`가 합법적인 `FED/LOUT/FULL`로 확정됐지만 synthetic FUNCTION_INPUT boundary가 producer의 전체 exec tuple을 그대로 요구해 실패했다. boundary의 합법 상태는 최상위 transient 규칙대로 `[CP/LOUT, FED/FOUT]`뿐이었다.
 - **원인 분석**:
   - neutral builder는 compiled function body occurrence를 일부 caller보다 먼저 fingerprint/build한다. 초기 formal TRead 후보는 아직 CFG/worker-pool/materialization closure로 확정되지 않은 caller source domain만 보고 만들어졌다.
   - 이후 function boundary constraint는 모든 exact caller를 알고 있었지만 formal TRead의 candidate domain/fact를 다시 계산하지 않았다.
@@ -375,25 +385,33 @@
   - synthetic output boundary의 alternatives는 확장 시점 source state 객체에 묶여 있었고 후속 replay 후 refresh되지 않았다.
   - active call-site 방식만으로는 컴파일된 formal TRead 하나에 여러 placement를 저장할 수 없다. runtime에도 formal별 단일 placement만 존재하므로, rewrite에서 first-wins로 덮는 대신 planner가 모든 caller가 만족할 수 있는 공통 formal state를 선택해야 한다.
   - 초기 DFS에서 첫 formal을 만날 때 뒤 call-site의 source plan은 아직 memo에 없었다. 따라서 한 번의 active-call traversal만으로는 전체 caller 비용/합법성을 계산할 수 없고, source memo를 준비하는 seed pass와 공유 formal을 재계산하는 closure pass가 필요했다.
+  - 전역 output decision refinement는 후보 map의 누적 비용과 missing root만 점수화했다. 따라서 각 hop의 output choice와 실제 parent plan variant의 child-output edge가 동시에 만족되는지는 최종 rewrite 전까지 검증하지 않았다.
+  - synthetic function boundary는 값의 placement authority인데도 producer의 실행 위치까지 동일해야 한다고 가정했다. `FED/LOUT`은 “FED에서 계산해 local 값을 생성”한 합법 연산 상태지만, transient boundary에서는 같은 local 값을 `CP/LOUT`으로 표현해야 한다.
 - **해결 요약**:
   - final exact caller source placement의 합집합으로 formal TRead input domain을 재구성하고, 기존 `buildNode`/oracle 경로로 candidate keys/facts와 합법 상태를 다시 생성한다.
   - formal 후보 변경 시 post-CFG physical dependency와 worker-pool materialization closure를 재실행하며 변화가 없어질 때까지 bounded fixed point로 반복한다.
-  - 각 function-input boundary는 해당 exact caller source의 최종 합법 상태 객체를 그대로 보존한다. 모든 replay가 끝난 뒤 function-output boundary도 최종 source 객체로 refresh한다.
+  - 각 function-input boundary는 source와 formal에 공통인 합법 transient 상태의 exact graph object를 보존한다. 모든 replay가 끝난 뒤 function-output boundary도 최종 source domain으로 refresh한다.
   - seed pass는 기존 exact active call-site authority로 전체 source memo를 먼저 구성한다. 그 다음 closure pass는 공유 formal마다 canonical `LogicalFunctionInputFact` 전체를 읽고 각 caller의 LOUT/FOUT source arm을 exact candidate adapter로 개별 검증한다.
   - closure pass는 `<CP,LOUT>` 또는 `<FED,FOUT>` formal state만 열거한다. `<CP,LOUT>`은 caller별 LOUT 또는 비용이 포함된 FOUT→LOUT를 선택하고, `<FED,FOUT>`은 모든 caller가 같은 FType의 FOUT을 제공할 때만 생성한다. 모든 caller에 공통으로 가능한 state가 없으면 fail-closed한다.
   - 각 retained shared-formal plan은 canonical caller 순서대로 모든 source edge를 보유하며, source cumulative share와 호출 경계 download share를 모두 누적한다. runtime fallback이나 rewrite first-wins는 추가하지 않았다.
   - closure pass는 seed variant를 carrier별로 정확히 교체하되, 같은 Hop ID를 다른 carrier가 소유한 경우에는 덮어쓰지 않고 fail-closed한다.
   - synthetic boundary identity 오류에는 kind/boundary/source/selected/alternatives를 포함해 후속 진단 가능성을 높였다.
+  - output decision score에 `incompatiblePlanCount`를 추가했다. root/additional-root forest를 순회하며 각 `(exact hop occurrence, desired output)`에 대해 전역 child-output map과 strict-compatible한 plan variant가 있는지 계산한다.
+  - map 선택은 `missing roots → incompatible plans → cumulative cost` 순서로 비교한다. 실행 가능한 forest가 비용 비교보다 우선하며, 동일 구조 안에서는 기존 DP 최소비용 철학을 그대로 유지한다.
+  - multi-write transient normalization 뒤 required-output closure를 다시 실행하고, 최종 decision map에 incompatible plan이 남으면 rewrite에 넘기지 않고 planner에서 fail-closed한다.
+  - synthetic function boundary는 source output이 LOUT이면 boundary-owned `CP/LOUT`, FOUT이면 동일 FType/shape의 boundary-owned `FED/FOUT` exact state로 투영한다. 이는 `<FED,LOUT>`/`<CP,FOUT>` transient 상태를 새로 허용하지 않고 producer 실행 위치와 전달 값 placement를 분리한 것이다.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java`
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpMemoTable.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
   - `src/main/java/org/apache/sysds/hops/fedplanner/placement/adapter/DpPlacementAdapter.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmFunctionInputCandidateRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpStepLmDecisionMapClosureRedTest.java`
 - **검증**:
   - 강화된 StepLM 단일 GREEN: `/tmp/g007-dp-steplm-function-input-green-final-20260730.log`, Maven return code 0.
-  - 회귀는 `linear_regression`의 `X`/`y` 각각에 대해 모든 exact caller state의 합집합과 formal candidate domain이 동일하고, 각 exact fact가 AVAILABLE이며, formal TRead emission이 `<CP,LOUT>` 또는 `<FED,FOUT>`만 게시하고, boundary가 source state identity를 보존함을 검증한다.
+  - 회귀는 `linear_regression`의 `X`/`y` 각각에 대해 모든 exact caller state의 합집합과 formal candidate domain이 동일하고, 각 exact fact가 AVAILABLE이며, formal TRead emission이 `<CP,LOUT>` 또는 `<FED,FOUT>`만 게시하고, boundary가 graph-owned legal transient state identity를 보존함을 검증한다.
   - 함수 전파/후보 팩트/기존 StepLM 동일명 formal suite 성공: `/tmp/g007-dp-function-closure-targeted-regressions-20260730.log`, Maven return code 0.
   - DP PCA·LM·LogReg 및 function-output dependency suite 성공: `/tmp/g007-dp-pca-lm-logreg-regressions-20260730.log`, Maven return code 0.
   - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-steplm-function-closure-package-20260730.log`, Maven return code 0.
@@ -402,14 +420,22 @@
   - DP PCA·LM·LogReg targeted 회귀 GREEN: `/tmp/g007-dp-shared-formal-pca-lm-logreg-20260730.log`, Maven return code 0.
   - 새 package 성공: `/tmp/g007-dp-shared-formal-closure-package-20260730.log`, Maven return code 0.
   - 첫 Docker canary는 `success=false`였고 teardown은 성공했다. 이 실패를 고친 새 immutable stage의 Docker evidence는 아직 진행 전이다.
+  - Docker-equivalent full lifecycle RED는 exact `rix`의 `FED/LOUT` 대 `FED/FOUT` 충돌을 재현했다: `/tmp/g007-dp-steplm-decision-map-full-lifecycle-red-20260730.log`.
+  - decision-map structural closure만 적용한 중간 실행은 원래 충돌을 제거하고 다음 정확한 경계 오류(`FED/LOUT` source 대 `[CP/LOUT,FED/FOUT]` boundary)를 노출했다: `/tmp/g007-dp-steplm-decision-map-closure-green-attempt1-20260730.log`.
+  - 경계 placement 정규화 후 동일 full lifecycle GREEN: `/tmp/g007-dp-steplm-boundary-normalization-attempt1-20260730.log`, Maven return code 0, compile-only runtime program 생성 완료.
+  - StepLM 2개 회귀 및 PCA·LM·LogReg, shared function propagation, DP oracle/semantic closure, projected upload, rewire owner 묶음 성공: `/tmp/g007-dp-steplm-decision-closure-regression-suite-20260730.log`, 총 22 tests / 0 failures / 0 errors / 1 조건부 skip.
+  - checkstyle/RAT를 포함한 package 성공: `/tmp/g007-dp-steplm-decision-closure-package-20260730.log`, Maven return code 0.
 - **잔여 이슈**:
-  - 변경 commit으로 immutable stage를 만들고 canonical Docker DP/StepLM 셀을 정확히 한 번 실행해야 한다.
+  - 현재 변경을 commit하고 새 immutable stage를 만든 뒤 canonical Docker DP/StepLM 셀을 정확히 한 번 실행해야 한다. 기존 실패 artifact/stage는 재실행하지 않는다.
   - seed pass에서 active call-site를 확정할 direct rewire argument가 어떤 formal에도 없다면 DP는 의도적으로 fail-closed한다. 실제 workload에서 나타나면 seed dependency 모델을 확장해야 하며 임의 선택으로 우회하면 안 된다.
   - closure pass는 cyclic function-call dependency를 끊기 위해 seed source plan을 사용한다. 새 workload에서 후속 source 재열거로 필요한 output arm이 사라지는 증거가 나오면 bounded convergence를 추가해야 하며, 현재 StepLM lowering에서는 dangling edge가 없음을 검증했다.
 - **잠재 회귀 위험**:
   - 다단 nested function에서 후보 domain이 계속 변하면 fixed-point 상한에서 fail-closed한다. 새 StepLM nested 경로와 기존 function propagation 회귀로 감지한다.
   - 여러 call-site의 합집합 때문에 formal 후보 수가 늘 수 있으나 이는 비용 후보를 닫지 않고 실제 caller 가능성을 보존하는 동작이다. 최종 shared-formal 선택은 모든 exact caller의 교집합 합법성과 총 경계 비용으로 제한한다.
   - post-CFG source node가 교체되었는데 boundary refresh가 누락되면 identity 오류가 재발한다. 입력 boundary identity assertion과 PCA multi-return function-output regression으로 감지한다.
+  - 구조 일관성을 비용보다 우선하므로, 기존에 더 싸지만 실행 불가능했던 map 대신 더 비싼 실행 가능한 map이 선택될 수 있다. 이는 의도한 DP 계약이며 Docker 실행시간/plan trace에서 비용 추정 오차를 별도로 검증한다.
+  - `incompatiblePlanCount` 순회가 새로운 additional-root/clone 형태를 빠뜨리면 rewrite 충돌이 재발할 수 있다. full lifecycle StepLM 회귀와 최종 fail-closed 검사로 감지한다.
+  - boundary 정규화가 source FType/shape를 잘못 투영하면 FOUT 호출 경계가 깨질 수 있다. exact boundary-owned identity 검사와 함수/PCA 회귀 및 Docker semantic oracle로 감지한다.
 - **의사결정 근거/적용 원칙**:
-  - 수정 대상은 builder의 후보 폐쇄 순서, DP의 seed/공유-formal closure, 기존 DP 비용 공유 helper의 exact 노출이다. oracle/runtime 지원과 TRead/TWrite 제약은 완화하지 않았다.
+  - 수정 대상은 builder의 후보 폐쇄 순서, DP의 seed/공유-formal closure, output-decision forest의 구조적 실행 가능성 점수, 그리고 synthetic boundary의 값-placement 투영이다. oracle/runtime 지원과 TRead/TWrite 제약은 완화하지 않았다.
   - runtime fallback/암묵 보정, `<CP,FOUT>` 허용, legal candidate 임의 skip/continue는 추가하지 않았다.
