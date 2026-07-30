@@ -280,7 +280,7 @@
 
 ## DP/LogReg branch-join TRead가 scheduling-only forward에서 FED/FOUT을 열거함
 
-- **상태**: 진행중 — hermetic RED 재현, 최소 수정, 관련 회귀 및 package는 통과했고 canonical Docker 단일 셀 검증이 남음
+- **상태**: 해결 — hermetic 회귀, 관련 suite/package, immutable stage 검증, canonical Docker 단일 셀과 semantic oracle을 모두 통과함
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 전 기준 commit: `9647a6215ce66d9599f4c2aba1566d76d0c0c909`
@@ -321,9 +321,24 @@
     - 로그: `/tmp/g007-dp-logreg-existing-integration-green-20260730.log`, `MAVEN_RC=0`
     - total execution `1.221`초, federated I/O `(Read, Put, Get)=4/0/5`, federated Execute `(Inst, UDF)=1/0`
   - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-logreg-transient-authority-package-final-20260730.log`, `MAVEN_RC=0`
+  - 구현 commit: `e90ec266018e650e2c07565029d856449ceda8b1` (`Align DP transient reads with exact input authority`)
+  - immutable stage 검증 성공:
+    - stage: `/home/mchoi/g007-dp-logreg-transient-authority-stage-20260730-v1/g007-stage-2c915c723e1146cb55c32f7990bb31f8a4d1bf6224c1cf2b3a6fd4de4a5155f3`
+    - descriptor SHA-256: `85ce4a1f2021d212b602405a8074c786c93549ec52b4a1bdeed78e62ef7072f7`
+    - JAR SHA-256: `8b54837a04c6ce23df31ea6fa73794d7d17a5e71fa6278625cd748620dfcdc76`
+    - data/reference tree SHA-256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f` / `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - canonical Docker 단일 셀 성공:
+    - cell: `workers=1|planner=DP|workload=logreg|profile=lan`, `--salg logreg`, seed `2026072701`, retry 각 1, continue-on-failure 0
+    - run root: `/home/mchoi/g007-dp-logreg-transient-authority-canary-20260730-v1`
+    - response: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart `0/0`, full lifecycle `52.854915699`초
+    - discovery metric `32.277092964`초; SystemDS compilation `3.828234`초, FedPlanner `1.860848`초, execution `9.705`초
+    - semantic oracle `passed=true`; objective relative error `0.0`, probability NRMSE `0.0`, masked classes identical, output/reference SHA-256 `4be690996469f4c23c1da027804e0e6abd0fe033cd45e4a46eb0ef5989b988c5`
+    - runtime scan: error/fallback/resource-invalid/timeout 모두 `false`; `TRANSIENT_FORWARD_DEPENDENCY_AUTHORITY_DIFFERS` 없음
+    - federated I/O `(Read, Put, Get)=2/335/339`, federated Execute `(Inst, UDF)=1013/0`, `fed_fed_refed=335`
+    - 동일 LAN/1-worker의 기존 검증된 net-check cache를 재사용했고 planner cost input은 frozen LAN 상수(`1250 MB/s`, latency `0.001 s`)를 유지함
+    - 종료 후 compose project `g007dplogregauth01`의 container/network/volume 개수는 모두 0
 - **잔여 이슈**:
-  - 새 commit/JAR로 immutable stage를 만든 뒤 canonical `--salg logreg` Docker 단일 셀과 semantic oracle을 통과시켜야 한다.
-  - Docker 성공 후 이 항목 상태, stage/JAR hash, 실행시간, federated 통계, teardown evidence를 갱신한다.
+  - 이 LogReg 결함에 대한 필수 작업은 남지 않았다. 다음 DP 우선순위 workload인 StepLM의 별도 exact-candidate-rule 실패를 독립적으로 분석한다.
 - **잠재 회귀 위험**:
   - exact logical/physical authority 탐지가 누락되면 합법적인 FED/FOUT TRead 후보를 과도하게 닫을 수 있다.
   - 감지 방법: logical transient local+FED parity와 function-input 회귀, 기존 DP LogReg integration, 새 Docker semantic oracle을 함께 확인한다.
