@@ -163,3 +163,63 @@
   - exact anchor identity를 derived value로 위조하지 않고 worker-pool placement metadata를 별도 증명으로 모델링했다.
   - runtime fallback/암묵 보정 없이 planner가 불필요한 relocation을 만들지 않도록 수정했다.
   - runtime이 지원하는 후보를 닫지 않았고 TRead/TWrite 및 recompile 제약도 변경하지 않았다.
+
+## DP/LM virtual child의 canonical owner를 output만으로 선택함
+
+- **상태**: 진행중 — exact-state owner 수정, hermetic 회귀 및 package는 통과했고 새 immutable stage의 Docker 1회 canary가 남음
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 기준 commit: `61218a3d35`
+  - 플래너/워크로드: DP / LM / `P2P2D`, private-aggregate, 단일-worker FULL 배치
+  - 기존 Docker 실패: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm`
+  - 실행 제약: Docker 성능 검증은 `run_LAN_docker.sh`만 사용하며 targeted DP/LM cell은 새 stage에서 한 번만 실행함
+- **재현 절차**:
+  - 기존 Docker DML: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm/tmp/cell-1/discovery-correctness/gen_lm_P2P2D_1.dml`
+  - 기존 Docker coordinator log: `/home/mchoi/g007-four-policy-all-workloads-20260730-v2/13-dp-lm/results/fed1/mkl-cost/lm_dataset-P2P2D_coordinator_mkl-cost_p4v2c13_lan_coordinator1.log`
+  - hermetic 회귀: `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpLmRegistrySlotRedTest test`
+  - 상세 RED 로그: `/tmp/g007-dp-lm-canonical-owner-red-detail-20260730.log`
+- **관측 증상**:
+  - 기존 Docker stage에서는 emission 시 `PlacementEmissionException: Multiple relocations target one registry slot`이 발생했다.
+  - 현재 HEAD를 exact LM 형태의 local federated worker로 재현하자 emission보다 앞서 다음 fail-closed 오류가 발생했다.
+    - `DP selected child lacks an exact canonical owner plan`
+    - virtual selected carrier: hop `750`, `CP/LOUT`, `derived=false`
+    - physical occurrence owner로 잘못 조회된 primary arm: hop `246`, `FED/LOUT/FULL`, `derived=false`
+  - 즉 같은 LOUT bucket 안의 CP와 FED variant가 서로 다른 exact placement state인데도 output만으로 canonical owner를 조회했다.
+- **원인 분석**:
+  - DP memo는 하나의 `(hop, LOUT)` bucket에 `CP/LOUT`과 `FED/LOUT`을 모두 유지한다. 이는 exec type 및 child-output signature가 다른 합법 비용 후보를 보존하기 위한 기존 설계다.
+  - virtual/recompile child를 physical analysis occurrence에 연결하는 `resolveSelectedChild(...)`는 `getFedPlanAfterPrune(occurrence, state.output())`을 사용했다.
+  - 이 API는 해당 output bucket의 primary/최저비용 variant를 반환하므로 virtual child의 exact `PlacementState`와 다른 exec/FType arm을 반환할 수 있다.
+  - 문제는 runtime 지원이나 후보 합법성/비용이 아니라, disconnected-component ownership receipt가 exact state identity 대신 output identity만 사용한 것이다.
+- **해결 요약**:
+  - physical carrier인 경우 기존처럼 selected plan 자체를 owner로 유지한다.
+  - virtual/recompile carrier인 경우 physical occurrence의 동일 output bucket 전체에서 다음 조건을 모두 만족하는 arm만 canonical owner로 선택한다.
+    - exact physical Hop/occurrence identity
+    - 동일한 analysis-owned `PlacementState` 객체
+    - 동일한 `derivedFedFout`
+    - 현재 global child-output decisions와 호환
+  - 복수 exact arm이 남으면 기존 비용 철학대로 cumulative cost가 가장 작은 arm을 선택한다.
+  - exact arm이 없으면 계속 fail-closed하며 runtime fallback, 암묵 보정, candidate guard는 추가하지 않는다.
+  - 기존 예외 메시지에 selected/owner hop, state, derived 비교를 추가해 다음 identity 불일치를 즉시 진단할 수 있게 했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpLmRegistrySlotRedTest.java`
+- **검증**:
+  - 수정 전 hermetic RED: `/tmp/g007-dp-lm-canonical-owner-red-detail-20260730.log`, 의도한 exact-state mismatch로 실패
+  - 수정 후 단일 GREEN: `/tmp/g007-dp-lm-exact-owner-prototype-20260730.log`, `MAVEN_RC=0`
+  - 관련 GREEN suite: LM 회귀, PCA lowering 회귀, DP KMeans private-aggregate, candidate occurrence, disconnected component, rewire occurrence
+    - 로그: `/tmp/g007-dp-lm-exact-owner-green-suite-20260730.log`, `MAVEN_RC=0`
+  - 더 넓은 관련 suite는 28 tests 중 기존 3 failures를 제외한 25 tests가 통과함.
+    - 현재 로그: `/tmp/g007-dp-lm-exact-owner-related-suite-20260730.log`
+    - 패치 역적용 기준선에서도 `CampaignBDpAggregateProducerContractTest` 2건과 `FederatedPCAPlanningTest` 1건이 동일 메시지로 실패함: `/tmp/g007-dp-lm-exact-owner-baseline-failures-20260730.log`
+    - 따라서 세 실패는 이번 변경의 신규 회귀가 아님.
+  - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-dp-lm-exact-owner-package-20260730.log`, `MAVEN_RC=0`
+- **잔여 이슈**:
+  - 새 immutable stage에서 DP/LM Docker targeted cell을 정확히 한 번 실행해 이전 registry-slot 충돌이 현재 planner 결과에서도 제거됐는지 확인해야 한다.
+  - Docker가 다음 독립 오류를 노출하면 동일 cell을 반복하지 않고 로그를 보존한 뒤 hermetic 재현부터 만든다.
+  - 기준선의 aggregate receipt count 2건 및 multi-worker PCA transient-forward authority 1건은 별도 baseline 부채다. 단일-worker PCA Docker canary는 이미 성공했다.
+- **잠재 회귀 위험**:
+  - 같은 exact state이지만 child-output signature가 다른 physical arm 중 잘못된 arm을 owner로 고를 수 있다. 현재 global output decisions 호환성과 최소 cumulative cost를 함께 요구하며 LM/KMeans/disconnected 회귀로 감지한다.
+  - 필요한 physical exact state arm이 pruning에서 사라지면 fail-closed 오류가 다시 발생한다. DP pruning은 LOUT bucket에서 best CP와 best FED를 모두 보존하며 새 LM 회귀가 이를 감지한다.
+- **의사결정 근거/적용 원칙**:
+  - DP의 기존 비용 최적화와 CP/FED 후보 공간은 유지하고, ownership projection만 exact placement state 기준으로 수정했다.
+  - runtime fallback/repair, 후보 임의 폐쇄, TRead/TWrite 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.

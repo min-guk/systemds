@@ -1614,16 +1614,55 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			"DP selected child has no exact placement state");
 		// Virtual/recompile carriers keep their exact raw edge plan, while component ownership
 		// is receipted by the unique analysis-owned carrier plan for the same exact state.
-		FederatedPlannerDpMemoTable.FedPlan canonicalOwnerPlan = selected.getHopRef() == occurrence.hop()
-			? selected : memoTable.getFedPlanAfterPrune(occurrence, state.output());
+		FederatedPlannerDpMemoTable.FedPlan canonicalOwnerPlan = exactCanonicalOwnerPlan(
+			memoTable, occurrence, selected, outputDecisions);
 		if(canonicalOwnerPlan == null || canonicalOwnerPlan.getHopRef() != occurrence.hop()
 			|| memoTable.requirePlanCarrierOccurrence(canonicalOwnerPlan.getHopRef()) != occurrence
 			|| canonicalOwnerPlan.getSelectedPlacementState() != state
 			|| canonicalOwnerPlan.isDerivedFedFout() != selected.isDerivedFedFout())
 			throw new IllegalStateException("DP selected child lacks an exact canonical owner plan: "
-				+ occurrence.key());
+				+ occurrence.key() + " selectedHop=" + selected.getHopRef().getHopID()
+				+ " selectedState=" + state.normalizedSignature()
+				+ " selectedDerived=" + selected.isDerivedFedFout()
+				+ " owner=" + (canonicalOwnerPlan == null ? "null"
+					: "hop=" + canonicalOwnerPlan.getHopRef().getHopID()
+						+ ",sameHop=" + (canonicalOwnerPlan.getHopRef() == occurrence.hop())
+						+ ",state=" + (canonicalOwnerPlan.getSelectedPlacementState() == null ? "null"
+							: canonicalOwnerPlan.getSelectedPlacementState().normalizedSignature())
+						+ ",sameState=" + (canonicalOwnerPlan.getSelectedPlacementState() == state)
+						+ ",derived=" + canonicalOwnerPlan.isDerivedFedFout()));
 		return new SelectedChildResolution(selected, canonicalOwnerPlan, occurrence, occurrence.key(), state,
 			selected.isDerivedFedFout(), selected.getFedOutType());
+	}
+
+	/**
+	 * Resolve a virtual/recompile child to the physical analysis-owned memo arm with the same exact placement state.
+	 * Output alone is insufficient because one LOUT bucket may retain both CP/LOUT and FED/LOUT variants.
+	 */
+	private static FederatedPlannerDpMemoTable.FedPlan exactCanonicalOwnerPlan(
+		FederatedPlannerDpMemoTable memoTable, PlacementAnalysis.HopOccurrenceProjection occurrence,
+		FederatedPlannerDpMemoTable.FedPlan selected,
+		Map<Long, FederatedOutput> outputDecisions) {
+		if(selected.getHopRef() == occurrence.hop())
+			return selected;
+		PlacementState state = Objects.requireNonNull(selected.getSelectedPlacementState(),
+			"DP selected virtual child has no exact placement state");
+		FederatedPlannerDpMemoTable.FedPlanVariants variants = memoTable.getFedPlanVariants(
+			Pair.of(occurrence.hop().getHopID(), state.output()));
+		if(variants == null || variants.isEmpty())
+			return null;
+		FederatedPlannerDpMemoTable.FedPlan best = null;
+		for(FederatedPlannerDpMemoTable.FedPlan candidate : variants.getFedPlanVariants()) {
+			if(candidate == null || candidate.getHopRef() != occurrence.hop()
+				|| memoTable.requirePlanCarrierOccurrence(candidate.getHopRef()) != occurrence
+				|| candidate.getSelectedPlacementState() != state
+				|| candidate.isDerivedFedFout() != selected.isDerivedFedFout()
+				|| !isCompatibleWithChildDecisions(memoTable, candidate, outputDecisions))
+				continue;
+			if(best == null || candidate.getCumulativeCost() < best.getCumulativeCost())
+				best = candidate;
+		}
+		return best;
 	}
 
 	private static void scheduleTraversalEdges(OrdinaryComponentId component,
