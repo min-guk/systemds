@@ -152,11 +152,20 @@ public class FederatedPlannerDpCostEnumerator {
 	private static final class EnumerationCapture {
 		private final NeutralEnumerationContext context;
 		private final DpEnumerationObserver observer;
+		private final boolean sharedFunctionInputClosure;
 		private final List<CapturedCandidate> candidates = new ArrayList<>();
 		private final Map<String,CompiledHopKey> activeFunctionCalls = new LinkedHashMap<>();
 		private int rawCandidateCount;
 		private EnumerationCapture(NeutralEnumerationContext context, FederatedPlannerDpMemoTable memo,
-			DpEnumerationObserver observer) { this.context = context; this.observer = observer == null ? NO_OP_OBSERVER : observer; }
+			DpEnumerationObserver observer) {
+			this(context, memo, observer, false);
+		}
+		private EnumerationCapture(NeutralEnumerationContext context, FederatedPlannerDpMemoTable memo,
+			DpEnumerationObserver observer, boolean sharedFunctionInputClosure) {
+			this.context = context;
+			this.observer = observer == null ? NO_OP_OBSERVER : observer;
+			this.sharedFunctionInputClosure = sharedFunctionInputClosure;
+		}
 		private void capture(CandidateOccurrenceSnapshot snapshot, long variantOrdinal) {
 			candidates.add(new CapturedCandidate(Objects.requireNonNull(snapshot), variantOrdinal, null));
 			rawCandidateCount++;
@@ -214,6 +223,26 @@ public class FederatedPlannerDpCostEnumerator {
 			// LOUT inputs are represented by null FTypes on the legacy dynamic path.
 			collectedFTypes = Collections.unmodifiableList(new ArrayList<>(collectedFTypes));
 			fedInputTypeMap = Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap));
+		}
+	}
+
+	private record SharedLogicalInputArm(LogicalFunctionInputFact fact, Hop source,
+		FederatedOutput sourceOutput, FederatedPlannerDpMemoTable.FedPlan sourcePlan,
+		CandidateDecisionReceipt receipt, double cumulativeShare, double localBoundaryShare) {
+		private SharedLogicalInputArm {
+			Objects.requireNonNull(fact, "fact");
+			Objects.requireNonNull(source, "source");
+			Objects.requireNonNull(sourceOutput, "sourceOutput");
+			Objects.requireNonNull(sourcePlan, "sourcePlan");
+			Objects.requireNonNull(receipt, "receipt");
+			if(source.getHopID() != sourcePlan.getHopID() || sourceOutput != sourcePlan.getFedOutType()
+				|| !Double.isFinite(cumulativeShare) || cumulativeShare < 0.0
+				|| !Double.isFinite(localBoundaryShare) || localBoundaryShare < 0.0)
+				throw new IllegalArgumentException("Shared logical function-input arm is inconsistent");
+		}
+
+		private double costFor(PlacementState formalState) {
+			return cumulativeShare + (formalState.execType() == ExecType.CP ? localBoundaryShare : 0.0);
 		}
 	}
 
@@ -298,24 +327,20 @@ public class FederatedPlannerDpCostEnumerator {
 
 		int numOfWorkers = FederatedWorkerUtils.countDistinctWorkers(fedMap);
 		memoTable.setNumWorkers(numOfWorkers);
-		EnumerationCapture capture = new EnumerationCapture(
-			DpPlacementAdapter.captureNeutralEnumerationContext(
-				analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet), memoTable, observer);
+		NeutralEnumerationContext enumerationContext = DpPlacementAdapter.captureNeutralEnumerationContext(
+			analysis, rewireSnapshot, numOfWorkers, privacyConstraintMap, unRefTwriteSet);
 
 		addUnreferencedTWriteRoots(progRootHopSet, unRefTwriteSet, hopCommonTable);
-		Set<String> fnStack = new HashSet<>();
-		Set<Hop> visitedHops = Collections.newSetFromMap(new IdentityHashMap<>());
-
-		for (StatementBlock sb : analysis.topLevelStatementBlocks()) {
-			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
-		}
-		for (Hop iter1Root : unrollCtx.getIter1Roots()) {
-			if (iter1Root == null)
-				continue;
-			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
-					parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
-		}
+		boolean closeSharedFunctionInputs = hasSharedLogicalFunctionInputs(analysis);
+		if(closeSharedFunctionInputs)
+			enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
+				privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, numOfWorkers,
+				unrollCtx, new EnumerationCapture(enumerationContext, memoTable, NO_OP_OBSERVER));
+		EnumerationCapture capture = new EnumerationCapture(
+			enumerationContext, memoTable, observer, closeSharedFunctionInputs);
+		enumerateProgramPass(prog, memoTable, analysis, hopCommonTable, rewireTable,
+			privacyConstraintMap, parentChildUploadHints, unRefTwriteSet, numOfWorkers,
+			unrollCtx, capture);
 		memoTable.registerAdditionalRootHopIDs(rewireSnapshot, collectPredicateWriteRoots(hopCommonTable));
 
 		PreSelectionSemanticBlock semanticBlock = capture.semanticBlock();
@@ -353,6 +378,32 @@ public class FederatedPlannerDpCostEnumerator {
 		DpEnumerationResult result = new DpEnumerationResult(optimalPlan, rewireSnapshot, semanticBlock);
 		observer.resultPublished(result);
 		return result;
+	}
+
+	private static boolean hasSharedLogicalFunctionInputs(PlacementAnalysis analysis) {
+		Map<CompiledHopKey,Integer> counts = new IdentityHashMap<>();
+		for(LogicalFunctionInputFact fact : analysis.logicalFunctionInputsInCanonicalOrder())
+			if(counts.merge(fact.targetRead(), 1, Integer::sum) > 1)
+				return true;
+		return false;
+	}
+
+	private static void enumerateProgramPass(DMLProgram prog, FederatedPlannerDpMemoTable memoTable,
+		PlacementAnalysis analysis, Map<Long, FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		Map<Long,List<Hop>> rewireTable, Map<Long,Privacy> privacyConstraintMap,
+		Map<Long,Set<Long>> parentChildUploadHints, Set<Long> unRefTwriteSet, int numOfWorkers,
+		FederatedPlannerDpRewireTransTable.UnrollContext unrollCtx, EnumerationCapture capture) {
+		Set<String> fnStack = new HashSet<>();
+		Set<Hop> visitedHops = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(StatementBlock sb : analysis.topLevelStatementBlocks())
+			enumerateStatementBlock(sb, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
+		for(Hop iter1Root : unrollCtx.getIter1Roots()) {
+			if(iter1Root == null)
+				continue;
+			enumerateHopDAG(iter1Root, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+				parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
+		}
 	}
 
 	public static DpEnumerationResult enumerateFunctionDynamicWithReceipts(FunctionStatementBlock function,
@@ -528,8 +579,25 @@ public class FederatedPlannerDpCostEnumerator {
 			Set<Long> unRefTwriteSet,
 			Set<String> fnStack, int numOfWorkers, Set<Hop> visitedHops, EnumerationCapture capture) {
 		// Process all input nodes first if not already in memo table
+		if(capture.sharedFunctionInputClosure && !visitedHops.add(hop))
+			return;
 
 		List<Hop> childHops = new ArrayList<>(hop.getInput());
+		Set<Hop> physicalChildren = Collections.newSetFromMap(new IdentityHashMap<>());
+		physicalChildren.addAll(childHops);
+		FunctionOp dmlFunction = hop instanceof FunctionOp
+			&& ((FunctionOp) hop).getFunctionType() == FunctionType.DML ? (FunctionOp) hop : null;
+		boolean enumerateFunctionBody = false;
+		if(capture.sharedFunctionInputClosure && dmlFunction != null
+			&& !fnStack.contains(dmlFunction.getFunctionKey())) {
+			fnStack.add(dmlFunction.getFunctionKey());
+			enumerateFunctionBody = true;
+			Set<Hop> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+			retained.addAll(childHops);
+			for(Hop prerequisite : collectLogicalFunctionArgumentPrerequisites(dmlFunction, capture))
+				if(retained.add(prerequisite))
+					childHops.add(prerequisite);
+		}
 
 		// Todo: Check if is right
 		if ((hop instanceof DataOp) && ((DataOp) hop).getOp() == Types.OpOpData.TRANSIENTREAD) {
@@ -540,7 +608,14 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 
 		for (Hop inputHop : childHops) {
-			long inputHopID = inputHop.getHopID();
+			if(capture.sharedFunctionInputClosure) {
+				if(physicalChildren.contains(inputHop)
+					|| !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.FOUT)
+						&& !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.LOUT))
+					enumerateHopDAG(inputHop, prog, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
+						parentChildUploadHints, unRefTwriteSet, fnStack, numOfWorkers, visitedHops, capture);
+				continue;
+			}
 			if (!memoTable.containsPlanForCarrier(inputHop, FederatedOutput.FOUT)
 					&& !memoTable.containsPlanForCarrier(inputHop, FederatedOutput.LOUT)) {
 				if (!visitedHops.contains(inputHop)) {
@@ -557,8 +632,11 @@ public class FederatedPlannerDpCostEnumerator {
 			if (fop.getFunctionType() == FunctionType.DML) {
 				String fkey = fop.getFunctionKey();
 
-				if (!fnStack.contains(fkey)) {
+				if (!capture.sharedFunctionInputClosure && !fnStack.contains(fkey)) {
 					fnStack.add(fkey);
+					enumerateFunctionBody = true;
+				}
+				if (enumerateFunctionBody) {
 					if (prog == null) {
 						FederatedPlannerLogger.logWarnMessage(
 								"[FederatedCost] Skipping nested function " + fkey
@@ -582,12 +660,38 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 
 		// Enumerate the federated plan for the current Hop
+		if(capture.sharedFunctionInputClosure)
+			memoTable.removeFedPlanVariantsForCarrier(hop);
 		enumerateHop(hop, memoTable, hopCommonTable, rewireTable, privacyConstraintMap,
 				parentChildUploadHints, unRefTwriteSet, numOfWorkers, capture);
 
 		// FederatedPlannerDpRewireTransTable.logHopInfo(hop, privacyConstraintMap,
 		// "enumerateHopDAG");
 
+	}
+
+	private static List<Hop> collectLogicalFunctionArgumentPrerequisites(FunctionOp function,
+		EnumerationCapture capture) {
+		String functionKey = function.getFunctionKey();
+		Set<CompiledHopKey> retained = Collections.newSetFromMap(new IdentityHashMap<>());
+		List<Hop> prerequisites = new ArrayList<>();
+		for(LogicalFunctionInputFact fact : capture.context.analysis()
+			.logicalFunctionInputsInCanonicalOrder()) {
+			if(!functionKey.equals(fact.targetRead().functionNamespace())
+				|| !retained.add(fact.sourceArgument()))
+				continue;
+			Hop source = capture.context.analysis().hop(fact.sourceArgument()).orElseThrow(() ->
+				new IllegalArgumentException("Function-input DP prerequisite Hop is missing"));
+			HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(source);
+			if(projected == null || projected.key() != fact.sourceArgument())
+				throw new IllegalArgumentException(
+					"Function-input DP prerequisite carrier differs from analysis authority");
+			if(source == function)
+				throw new IllegalArgumentException("Function-input DP prerequisite is self-recursive: "
+					+ functionKey);
+			prerequisites.add(source);
+		}
+		return List.copyOf(prerequisites);
 	}
 
 	/**
@@ -1333,6 +1437,10 @@ public class FederatedPlannerDpCostEnumerator {
 
 		List<Hop> physicalTransientWrites = collectTransientWriteChildHops(dataOp, childHops);
 		rejectAmbiguousTransientWriteHopIds(dataOp, physicalTransientWrites, capture);
+		List<LogicalFunctionInputFact> logicalFunctionInputs = logicalFunctionInputsForFormal(dataOp, capture);
+		if(capture.sharedFunctionInputClosure && logicalFunctionInputs.size() > 1)
+			return enumerateSharedLogicalFunctionRead(dataOp, logicalFunctionInputs, memoTable,
+				hopCommon, numOfWorkers, capture);
 		// A formal function TRead is owned by the exact caller-argument boundary.
 		// The legacy rewire table can also expose the argument's upstream TWrite, but
 		// that is only a scheduling predecessor; choosing it directly erases the
@@ -1489,13 +1597,177 @@ public class FederatedPlannerDpCostEnumerator {
 		return true;
 	}
 
+	private static List<LogicalFunctionInputFact> logicalFunctionInputsForFormal(DataOp formalRead,
+		EnumerationCapture capture) {
+		HopOccurrenceProjection read = findOccurrence(capture, formalRead);
+		return capture.context.analysis().logicalFunctionInputsInCanonicalOrder().stream()
+			.filter(fact -> fact.targetRead() == read.key() && fact.logicalPosition() == 0)
+			.toList();
+	}
+
+	/**
+	 * A compiled DML function body is shared by all of its call sites, so its formal
+	 * TRead has one runtime placement rather than one placement per traversal.  The
+	 * seed pass makes every caller source plan available; this closure pass then
+	 * chooses one exact formal state that every caller can satisfy and charges every
+	 * caller boundary explicitly.
+	 */
+	private static boolean enumerateSharedLogicalFunctionRead(DataOp formalRead,
+		List<LogicalFunctionInputFact> facts, FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.HopCommon hopCommon, int numOfWorkers,
+		EnumerationCapture capture) {
+		HopOccurrenceProjection formalOccurrence = findOccurrence(capture, formalRead);
+		FederatedPlannerDpCostEstimator.ExactEstimator formalEstimator =
+			FederatedPlannerDpCostEstimator.bindExact(
+				capture.context.analysis(), formalOccurrence, memoTable);
+		double baseSelfCost = formalEstimator.computeHopCost(hopCommon);
+		List<List<SharedLogicalInputArm>> armsByFact = new ArrayList<>(facts.size());
+
+		for(int factIndex = 0; factIndex < facts.size(); factIndex++) {
+			LogicalFunctionInputFact fact = facts.get(factIndex);
+			Hop source = capture.context.analysis().hop(fact.sourceArgument()).orElseThrow(() ->
+				new IllegalArgumentException("Shared function-input DP source Hop is missing"));
+			HopOccurrenceProjection projected = capture.context.rewireSnapshot().projectExactCarrier(source);
+			if(projected == null || projected.key() != fact.sourceArgument())
+				throw new IllegalArgumentException(
+					"Shared function-input DP source carrier differs from analysis authority");
+
+			List<SharedLogicalInputArm> factArms = new ArrayList<>(2);
+			for(FederatedOutput sourceOutput : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+				FederatedPlannerDpMemoTable.FedPlan sourcePlan = memoTable.getFedPlanAfterPrune(
+					source.getHopID(), sourceOutput);
+				if(sourcePlan == null)
+					continue;
+				if(memoTable.requirePlanCarrierOccurrence(sourcePlan.getHopRef()) != projected
+					|| sourcePlan.getSelectedPlacementState() == null)
+					throw new IllegalArgumentException(
+						"Shared function-input DP source plan is not exact-analysis-owned");
+
+				long variantOrdinal = Math.addExact(Math.multiplyExact((long) factIndex, 2L),
+					sourceOutput == FederatedOutput.LOUT ? 0L : 1L);
+				CandidateDecisionReceipt receipt = captureConstructedChildSelection(formalRead,
+					List.of(Pair.of(source.getHopID(), sourceOutput)), List.of(source), memoTable,
+					capture, variantOrdinal);
+				FederatedPlannerDpCostEstimator.ExactEstimator sourceEstimator =
+					FederatedPlannerDpCostEstimator.bindExact(
+						capture.context.analysis(), projected, memoTable);
+				double cumulativeShare = sourceOutput == FederatedOutput.LOUT
+					? sourceEstimator.cumulativeShare(sourcePlan)
+					: sourceEstimator.foutCumulativeShare(sourcePlan);
+				double localBoundaryShare = sourceOutput == FederatedOutput.FOUT
+					? sharedLogicalFunctionInputDownloadShare(formalRead, source, sourcePlan,
+						hopCommon, numOfWorkers, sourceEstimator)
+					: 0.0;
+				factArms.add(new SharedLogicalInputArm(fact, source, sourceOutput, sourcePlan,
+					receipt, cumulativeShare, localBoundaryShare));
+			}
+			if(factArms.isEmpty())
+				throw new DMLRuntimeException("No seeded DP source plan for shared function input "
+					+ formalOccurrence.key().normalizedSignature() + " from "
+					+ fact.sourceArgument().normalizedSignature());
+			armsByFact.add(List.copyOf(factArms));
+		}
+
+		List<PlacementState> formalStates = capture.context.analysis().graph()
+			.node(formalOccurrence.key()).orElseThrow().legalAlternatives();
+		LinkedHashSet<FType> formalFoutTypes = new LinkedHashSet<>();
+		for(PlacementState state : formalStates)
+			if(state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() != null)
+				formalFoutTypes.add(state.fType());
+		FType cpFoutType = formalFoutTypes.size() == 1 ? formalFoutTypes.iterator().next() : null;
+		FederatedPlannerDpMemoTable.FedPlanVariants loutVariants =
+			new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.LOUT);
+		FederatedPlannerDpMemoTable.FedPlanVariants foutVariants =
+			new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.FOUT);
+
+		for(PlacementState formalState : formalStates) {
+			if(!isLegalTransientReadState(formalState))
+				continue;
+			double cumulativeCost = baseSelfCost;
+			List<Pair<Long,FederatedOutput>> childEdges = new ArrayList<>(facts.size());
+			boolean feasible = true;
+			for(List<SharedLogicalInputArm> factArms : armsByFact) {
+				SharedLogicalInputArm selected = null;
+				for(SharedLogicalInputArm arm : factArms) {
+					if(!supportsSharedFormalState(arm, formalState))
+						continue;
+					if(selected == null || arm.costFor(formalState) < selected.costFor(formalState))
+						selected = arm;
+				}
+				if(selected == null) {
+					feasible = false;
+					break;
+				}
+				cumulativeCost += selected.costFor(formalState);
+				childEdges.add(Pair.of(selected.source().getHopID(), selected.sourceOutput()));
+			}
+			if(!feasible)
+				continue;
+
+			FederatedPlannerDpMemoTable.FedPlanVariants variants =
+				formalState.output() == FederatedOutput.LOUT ? loutVariants : foutVariants;
+			FederatedPlannerDpMemoTable.FedPlan plan = new FederatedPlannerDpMemoTable.FedPlan(
+				cumulativeCost, variants, childEdges);
+			plan.setExecType(formalState.execType());
+			plan.setFType(formalState.fType());
+			plan.setCpFoutType(formalState.output() == FederatedOutput.FOUT
+				? formalState.fType() : cpFoutType);
+			plan.setSelectedPlacementState(formalState);
+			variants.addFedPlan(plan);
+		}
+
+		boolean hasLout = loutVariants.pruneFedPlans();
+		boolean hasFout = foutVariants.pruneFedPlans();
+		if(!hasLout && !hasFout)
+			throw new DMLRuntimeException("No common exact DP placement can satisfy every caller of shared function input "
+				+ formalOccurrence.key().normalizedSignature());
+		if(hasLout)
+			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), formalOccurrence,
+				FederatedOutput.LOUT, loutVariants);
+		if(hasFout)
+			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), formalOccurrence,
+				FederatedOutput.FOUT, foutVariants);
+		return true;
+	}
+
+	private static double sharedLogicalFunctionInputDownloadShare(DataOp formalRead, Hop source,
+		FederatedPlannerDpMemoTable.FedPlan sourcePlan,
+		FederatedPlannerDpMemoTable.HopCommon formalCommon, int numOfWorkers,
+		FederatedPlannerDpCostEstimator.ExactEstimator sourceEstimator) {
+		if(!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(source)
+			|| sourcePlan.getExecType() == ExecType.CP)
+			return 0.0;
+		double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(formalRead, source);
+		double download = sourceEstimator.download(bytes, sourcePlan.getFType(), numOfWorkers);
+		return sourceEstimator.foutToCpShare(formalRead, download, sourcePlan, formalCommon);
+	}
+
+	private static boolean supportsSharedFormalState(SharedLogicalInputArm arm,
+		PlacementState formalState) {
+		boolean exactStateAllowed = arm.receipt().allowedEmissionFacts().stream()
+			.anyMatch(fact -> fact.emissionState().placementState() == formalState);
+		if(!exactStateAllowed)
+			return false;
+		if(formalState.execType() == ExecType.CP && formalState.output() == FederatedOutput.LOUT)
+			return arm.sourceOutput() == FederatedOutput.LOUT
+				|| arm.sourceOutput() == FederatedOutput.FOUT;
+		return formalState.execType() == ExecType.FED && formalState.output() == FederatedOutput.FOUT
+			&& arm.sourceOutput() == FederatedOutput.FOUT
+			&& arm.sourcePlan().getFType() == formalState.fType();
+	}
+
+	private static boolean isLegalTransientReadState(PlacementState state) {
+		return state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT
+			&& state.fType() == null
+			|| state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+				&& state.fType() != null;
+	}
+
 	private static List<Hop> collectLogicalFunctionArgumentChildHops(DataOp formalRead,
 		List<Hop> currentChildHops, EnumerationCapture capture) {
 		HopOccurrenceProjection read = findOccurrence(capture, formalRead);
-		List<LogicalFunctionInputFact> facts = capture.context.analysis()
-			.logicalFunctionInputsInCanonicalOrder().stream()
-			.filter(fact -> fact.targetRead() == read.key() && fact.logicalPosition() == 0)
-			.toList();
+		List<LogicalFunctionInputFact> facts = logicalFunctionInputsForFormal(formalRead, capture);
 		if(facts.isEmpty())
 			return List.of();
 		Map<CompiledHopKey,LogicalFunctionInputFact> factsBySource = new IdentityHashMap<>();

@@ -172,6 +172,19 @@ public class FederatedPlannerDpMemoTable {
 		hopMemoTable.put(new ImmutablePair<>(hopID, fedOutType), fedPlanVariants);
 	}
 
+	void removeFedPlanVariantsForCarrier(Hop carrier) {
+		Objects.requireNonNull(carrier, "carrier");
+		for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+			Pair<Long,FederatedOutput> coordinate = Pair.of(carrier.getHopID(), output);
+			FedPlanVariants existing = hopMemoTable.get(coordinate);
+			if(existing == null)
+				continue;
+			if(existing.hopCommon == null || existing.hopCommon.getHopRef() != carrier)
+				throw new IllegalStateException("Cannot replace a DP memo coordinate owned by another carrier");
+			hopMemoTable.remove(coordinate);
+		}
+	}
+
 	public FedPlanVariants getFedPlanVariants(Pair<Long, FederatedOutput> fedPlanPair) {
 		return hopMemoTable.get(fedPlanPair);
 	}

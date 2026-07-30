@@ -181,6 +181,11 @@ public class FederatedPlannerDpCostEstimator {
 			return computeCumulativeCostShareForParent(plan.getCumulativeCost(), plan);
 		}
 
+		public double foutCumulativeShare(FederatedPlannerDpMemoTable.FedPlan plan) {
+			estimate(plan);
+			return computeStableTransientReadFoutCumulativeShareForParent(plan, memo);
+		}
+
 		public double forwardingShare(double cost, FederatedPlannerDpMemoTable.FedPlan child,
 			FederatedPlannerDpMemoTable.FedPlan parent) {
 			estimate(child);
@@ -191,6 +196,12 @@ public class FederatedPlannerDpCostEstimator {
 			FederatedPlannerDpMemoTable.FedPlan parentPlan) {
 			estimate(child);
 			return computeParentChildFoutToCpDownloadShare(parent, cost, child, parentPlan);
+		}
+
+		public double foutToCpShare(Hop parent, double cost, FederatedPlannerDpMemoTable.FedPlan child,
+			FederatedPlannerDpMemoTable.HopCommon parentCommon) {
+			estimate(child);
+			return computeParentChildFoutToCpDownloadShare(parent, cost, child, parentCommon, memo);
 		}
 
 		public double stableLocalMaterializationWeight(Hop hop, double weight, boolean concreteSource) {
