@@ -93,12 +93,14 @@
 
 ## DP/PCA가 이미 FOUT인 derived source에 불필요한 `fed_refed`를 선택함
 
-- **상태**: 진행중 — planner/Lowering 통합 회귀 및 package 성공, 새 immutable Docker stage의 1회 canary 대기
+- **상태**: 해결 — 새 immutable stage의 DP/PCA Docker 1회 canary가 lowering·runtime·semantic oracle을 모두 통과함
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 기준 commit: `3ca73b21d27e050040a83666699aceb79675091e`
   - 플래너/워크로드: DP / PCA / `P2P2D`, private-aggregate 입력, 단일-worker FULL 배치
   - Docker stage: `/home/mchoi/g007-anchor-canonical-stage-20260730-v1/g007-stage-7ee60b523433f1fd66a6ab913257a481a6f763d9606fb87e457fb35a82d852e6`
+  - 수정 후 stage: `/home/mchoi/g007-pca-direct-source-stage-20260730-v1/g007-stage-ae144dbccbae8948d16119e1ad1a8b7d3504865d8e7af73c0d3b5fda090bb770`
+  - 수정 후 Docker run: `/home/mchoi/g007-dp-pca-direct-source-canary-20260730-v1`
   - 실행 제약: Docker 성능 실험은 `run_LAN_docker.sh`만 사용하고 각 targeted cell은 실제로 한 번만 실행함
 - **재현 절차**:
   - Docker response: `/home/mchoi/g007-dp-pca-anchor-canonical-canary-20260730-v1/response.json`
@@ -137,8 +139,21 @@
     - 로그: `/tmp/g007-head-baseline-related-suite-20260730.log`
     - 결론: 새 PCA 회귀 1건이 추가로 통과했고 이번 변경이 새 실패를 만들지 않았다.
   - package 성공: `mvn -q -DskipTests package`, `/tmp/g007-pca-direct-source-package-20260730.log`, `MAVEN_RC=0`
+  - immutable stage identity:
+    - SystemDS commit: `8afdfc4692ce31af20d4827b87b7dff542d1b0f8`
+    - stage id: `ae144dbccbae8948d16119e1ad1a8b7d3504865d8e7af73c0d3b5fda090bb770`
+    - JAR sha256: `a57213bcaa730cc3327f2c016fc11fdefe3f2f4f82cc8d7bf30142c0d49151a1`
+    - data sha256: `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f`
+    - reference sha256: `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`
+  - Docker DP/PCA targeted cell을 정확히 한 번 실행함:
+    - response: `/home/mchoi/g007-dp-pca-direct-source-canary-20260730-v1/response.json`
+    - 결과: `success=true`, `teardown_zero_resources=true`, coordinator/worker restart 0회
+    - semantic oracle: `passed=true`, projector relative error `0.0`, reconstruction loss relative error `0.0`
+    - phase metric: `124.933174647`초; SystemDS `Total execution time`: `56.043`초
+    - coordinator log: `/home/mchoi/g007-dp-pca-direct-source-canary-20260730-v1/results/fed1/mkl-cost/pca_dataset-P2P2D_coordinator_mkl-cost_g007pcadirect_pca_dp_lan_lan_coordinator1.log`
+    - 로그에 `fed_refed`, anchor conflict, exception/error가 없고 `FED/FOUT` PCA 경로가 실제로 완료됨
 - **잔여 이슈**:
-  - 새 commit/JAR로 immutable Docker stage를 만든 뒤 DP/PCA targeted cell을 정확히 한 번 재실행해야 한다.
+  - 이 PCA 오류 자체의 잔여 이슈는 없음. 다음 DP 실패 workload는 기존 로그를 먼저 사용해 별도로 분석한다.
   - differential suite의 기존 10건은 기준 commit에서도 동일하게 실패한다. MinST 관련 fixture와 shared graph/selector fixture의 별도 baseline 부채이며 이번 DP/PCA 수정의 신규 회귀는 아니다.
 - **잠재 회귀 위험**:
   - worker-pool provenance가 과도하게 넓게 추론되면 필요한 relocation을 생략할 수 있다. 이를 막기 위해 단일 exact durable pool, 같은 materialization FType, 모든 grouped use의 exact PRESENT proof를 동시에 요구한다.
