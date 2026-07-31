@@ -1,0 +1,75 @@
+# Session Issues — 2026-07-31
+
+## DP 2-worker LM의 선택된 논리 consumer가 MapMultChain에 융합되어 REFED lowering이 실패함
+
+- **상태**: 진행중 — 정확한 RED→GREEN 및 관련 단위/package 검증 완료, 새 immutable Docker 단일 셀 검증 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 전 production commit: `f3bdd2ea18148312b28ec4a25a7d825a00df43db`
+  - 수정 전 문서 HEAD: `80a278f148b78c0b9d5a75c0a89933a3eb4788bb`
+  - 실패 stage: `/home/mchoi/g007-dp-runtime-placement-lock-stage-20260730-v1/g007-stage-4c838968a51801a734bf3ca923a524ad3cf38de09e6b30ca358a5ee9a858ffc4`
+  - 실패 matrix root: `/home/mchoi/g007-all-planners-runtime-placement-lock-f3bdd2e-d60da24-20260731-v2`
+  - 플래너/워크로드: DP / LM / `P2P2D` / 2 workers / LAN / private-aggregate
+  - 고정 seed: `2026072701`
+  - 전체 실행은 stage-local `run_LAN_docker.sh`만 사용했고, 해당 cell은 attempt 1에서 fail-closed함
+- **재현 절차**:
+  - Docker 실패 cell:
+    - `/home/mchoi/g007-all-planners-runtime-placement-lock-f3bdd2e-d60da24-20260731-v2/planners/DP/cells/028-8afe53358302`
+    - raw coordinator: `phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - 정확한 2-worker LM 단위 RED:
+    - `mvn -q -Dcheckstyle.skip -Drat.skip=true -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.CampaignBG014DpLmRegistrySlotRedTest#lmDpTwoWorkersLowersEverySelectedRefedConsumer test`
+    - 로그: `/tmp/g007-dp-lm-two-worker-refed-consumer-red-20260731.log`
+  - Hop/Lop ownership 진단:
+    - 로그: `/tmp/g007-dp-lm-two-worker-refed-consumer-diagnostic-20260731.log`
+- **관측 증상**:
+  - Docker와 단위 RED 모두 동일하게
+    `fed_refed lowering could not resolve selected consumer hop=245 for local hop=265`
+    로 실패했다.
+  - planner registry는 statement-block scope `67`에 local Hop `265`, exact selected consumer Hop `245`, anchor Hop `165`를 기록했다.
+  - Hop `245`는 `AggBinaryOp ba(+*)`이고 local Hop `265`를 직접 입력으로 가진 정확한 논리 consumer였다.
+  - 그러나 `AggBinaryOp` Hop `245`의 Lop은 `null`이었다. 상위 Hop `246`의 `MapMultChain` Lop이 이 부분 그래프를 융합했으며, 실제 Lop edge는 `265(Data) → 246(MapMultChain)`이었다.
+  - 따라서 planner의 논리 edge 선택은 정확했지만, lowering이 consumer Hop ID와 materialized Lop Hop ID가 항상 동일하다고 가정해 실제 물리 edge를 찾지 못했다.
+- **원인 분석**:
+  - placement planner는 최종 Hop 경계에서 exact compiled consumer occurrence를 선택하고 registry에 논리 Hop ID를 기록한다.
+  - Lop construction은 그 이후 실행되며 `AggBinaryOp`의 map-multiply-chain 최적화가 중간 Hop을 별도 Lop으로 만들지 않고 상위 `MapMultChain` Lop 안에 융합한다.
+  - 기존 `Dag.resolveSelectedRefedConsumers(...)`는 같은 Hop ID를 가지면서 local Lop을 직접 입력으로 갖는 Lop만 허용했다.
+  - 즉 후보 정책, 비용 모델, worker 수, seed 또는 runtime 지원 문제가 아니라, planner-selected logical consumer와 Lop fusion의 physical owner 사이에 exact lowering mapping이 없었던 구조적 결함이다.
+- **해결 요약**:
+  - 기존 direct Lop consumer가 존재하면 종전의 exact Hop-ID + direct-edge 규칙을 그대로 사용한다.
+  - direct Lop이 없을 때만 현재 `StatementBlock`의 Hop DAG에서 등록된 consumer Hop ID와 local Hop/Lop identity가 모두 일치하는 정확한 논리 edge를 찾는다.
+  - 그 논리 consumer의 parent 경로를 따라가되, 각 경로에서 처음 materialized된 Lop만 physical fusion owner 후보로 인정한다.
+  - physical owner가 local Lop을 논리 edge와 동일한 multiplicity로 직접 소비하고 현재 Lop DAG에 정확히 하나 존재할 때만 rewiring한다.
+  - 논리 consumer가 모호하거나, physical owner가 0개/복수이거나, 서로 다른 논리 consumer가 한 physical edge로 겹치거나, edge multiplicity가 다르면 계속 fail-closed한다.
+  - 이는 임의의 다른 consumer를 선택하는 fallback이 아니라 planner-selected logical edge의 정확한 fusion owner를 lowering 단계에서 증명하는 구조적 mapping이다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpLmRegistrySlotRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-31.md`
+- **검증**:
+  - 정확한 2-worker LM RED: 1 error, 위 동일 `hop=245/local=265` 메시지.
+  - 수정 후 정확한 단일 GREEN:
+    - `/tmp/g007-dp-lm-two-worker-refed-consumer-green-attempt1-20260731.log`
+    - Maven return code `0`.
+  - 1-worker + 2-worker LM 전체 class GREEN:
+    - `/tmp/g007-dp-lm-registry-slot-suite-green-20260731.log`
+    - Maven return code `0`.
+  - 기존 `testDagRegistryRefed*` fail-closed/authority/multiplicity suite GREEN:
+    - `/tmp/g007-refed-lowering-contract-suite-green-20260731.log`
+    - Maven return code `0`.
+  - PCA, StepLM, LM, placement transaction, runtime placement 관련 묶음 GREEN:
+    - `/tmp/g007-fused-refed-lowering-regression-suite-20260731.log`
+    - Maven return code `0`.
+  - checkstyle/RAT 포함 package GREEN:
+    - `/tmp/g007-fused-refed-lowering-package-20260731.log`
+    - Maven return code `0`.
+- **잔여 이슈**:
+  - 새 source commit/JAR/immutable stage를 만든 뒤 정확한 DP/LM/2-worker/LAN Docker cell을 한 번 실행해 semantic oracle, fallback/demotion 0건, teardown zero-resource를 검증해야 한다.
+  - 단일 셀이 통과하면 이전 v2의 27개 성공 row를 재사용하지 않고 새 campaign identity에서 DP → FedAll → Heuristic → MinST 336 cells를 처음부터 한 번씩 실행해야 한다.
+- **잠재 회귀 위험**:
+  - 새로운 Lop fusion이 하나의 논리 edge를 여러 physical owner로 분기하거나 multiplicity를 바꾸면 exact mapping이 fail-closed할 수 있다.
+  - 감지 방법: 신규 2-worker LM 회귀, 기존 unresolved/ambiguous/multiplicity `fed_refed` 회귀, 전체 Docker matrix에서 첫 구조 실패를 함께 확인한다.
+  - 같은 종류의 fusion이 `FederatedLocalMaterializeRegistry` 경로에 나타날 가능성은 별도 관측 대상이다. 증거 없이 해당 경로를 넓히지 않으며 실제 실패 시 같은 exact-owner 원칙으로 수정한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 선택한 logical consumer identity와 Lop optimizer가 만든 physical owner identity를 명시적으로 연결했다.
+  - 후보군 폐쇄, 비용 우회, runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.
+
