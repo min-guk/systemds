@@ -43,6 +43,9 @@ import org.apache.sysds.lops.MatMultCP;
 import org.apache.sysds.lops.PMMJ;
 import org.apache.sysds.lops.PMapMult;
 import org.apache.sysds.lops.Transform;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
@@ -594,8 +597,10 @@ public class AggBinaryOp extends MultiThreadedHop {
 			Hop h1 = getInput().get(0);
 			Hop h2 = getInput().get(1);
 			int k = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
-			boolean leftTrans = HopRewriteUtils.isTransposeOperation(h1);
-			boolean rightTrans = HopRewriteUtils.isTransposeOperation(h2);
+			boolean leftTrans = HopRewriteUtils.isTransposeOperation(h1)
+				&& !hasPlannerMaterializationBoundary(h1);
+			boolean rightTrans = HopRewriteUtils.isTransposeOperation(h2)
+				&& !hasPlannerMaterializationBoundary(h2);
 			Lop left = !leftTrans ? h1.constructLops() :
 					h1.getInput().get(0).constructLops();
 			Lop right = !rightTrans ? h2.constructLops() :
@@ -629,7 +634,18 @@ public class AggBinaryOp extends MultiThreadedHop {
 		String cla = ConfigurationManager.getDMLConfig().getTextValue("sysds.compressed.linalg");
 		return (et == ExecType.CP || et == ExecType.FED)
 			&& !cla.equals("true") && !cla.equals("cost")
+			&& !hasPlannerMaterializationBoundary(getInput().get(0))
 			&& isLeftTransposeRewriteApplicable(true);
+	}
+
+	private static boolean hasPlannerMaterializationBoundary(Hop input) {
+		long hopId = input.getHopID();
+		// A selected relocation/materialization is an executable plan boundary. Lop-level
+		// transpose fusion must not erase it, otherwise the registry can neither lower the
+		// selected operation nor preserve the planner's costed data movement.
+		return FederatedRefedRegistry.hasEntry(hopId)
+			|| FederatedFoutMaterializeRegistry.hasEntry(hopId)
+			|| FederatedLocalMaterializeRegistry.hasEntry(hopId);
 	}
 
 	private Lop constructCPLopsMMWithLeftTransposeRewrite(ExecType et) {

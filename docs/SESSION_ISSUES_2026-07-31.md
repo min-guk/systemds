@@ -84,3 +84,95 @@
 - **의사결정 근거/적용 원칙**:
   - planner가 선택한 logical consumer identity와 Lop optimizer가 만든 physical owner identity를 명시적으로 연결했다.
   - 후보군 폐쇄, 비용 우회, runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.
+
+## DP 2-worker L2SVM의 REFED source transpose가 Lop fusion으로 사라지고 FED/FOUT cross-anchor relocation이 단일 upload로 lowering됨
+
+- **상태**: 진행중 — 동일 CLI compile RED→GREEN 및 관련 회귀 완료, 새 JAR Docker runtime canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 전 commit: `78a8843bafcfbd4b3aae10919c356c4fd3ce536b`
+  - 수정 전 JAR SHA-256:
+    `dbf8a474eb6b85fd930e493947a45d18012d05199ca2c8c796a6aa88ee2045cb`
+  - 수정 전 immutable stage:
+    `/home/mchoi/g007-dp-l2svm-additional-root-stage-20260731-v1/g007-stage-53693458d2faf07bfdf8ebfb55a41dd9230b0990d50edb2095f2110aa00ad168`
+  - 플래너/워크로드: DP / L2SVM / `P2P2D` / 2 workers / LAN / private-aggregate
+  - 고정 seed: `2026072701`
+  - Docker와 동일한 cost 환경:
+    `MEM_BW=25000`, `NET_BW=1250`, `SERDES_C2W=210`,
+    `SERDES_W2C=14.7`, `LATENCY=0.001`, `FLOPS=2147483648`
+- **재현 절차**:
+  - 실패 Docker canary:
+    `/home/mchoi/g007-dp-l2svm-additional-root-canary-20260731-v1`
+  - raw coordinator:
+    `/home/mchoi/g007-dp-l2svm-additional-root-canary-20260731-v1/phases/cell-1/discovery-correctness/raw_coordinator.log`
+  - 동일 `DMLScript.executeScript` compile-only RED:
+    `mvn -q -Dtest=CampaignBG014DpL2SvmRefedSourceLoweringRedTest test`
+  - RED 로그:
+    `/tmp/g007-dp-l2svm-refed-cli-red-20260731.log`
+- **관측 증상**:
+  - Docker 및 동일 CLI compile 경로가
+    `fed_refed lowering requires a local lop for hop=122`
+    로 실패했다.
+  - scope `55`의 Hop `122`는 L2SVM line 91
+    `g_old = t(X) %*% Y`에서 `t(X)`를 나타내는 `ReorgOp r(r')`였다.
+  - planner가 선택한 source state는 `<FED,FOUT,BROADCAST>`이고, target worker pool로의 relocation이 등록되어 있었다.
+  - 그러나 `AggBinaryOp.constructCPLopsMMWithLeftTransposeRewrite`가
+    `t(X) %*% Y`를 `t(t(Y) %*% X)`로 융합해 Hop `122`의 Lop을 제거했다.
+  - transpose 경계를 보존하면 Hop `122`의 Lop은 존재하지만 이미 `<FED,FOUT>`이므로,
+    기존 `Dag.insertRefedLops`는 local input만 받는 단일 `FederatedRefed`로 내릴 수 없다고 거부했다.
+- **원인 분석**:
+  - 첫 번째 결함은 planner가 비용에 포함하고 registry에 기록한 materialization/relocation 경계를
+    Lop-level transpose fusion이 일반 대수 최적화 경계처럼 제거한 것이다.
+  - 두 번째 결함은 cross-anchor relocation의 source가 이미 federated일 때 필요한
+    명시적 `FED→LOUT→FOUT` 두 단계 lowering이 없었던 것이다.
+  - planner의 후보 선택, seed, 데이터셋, runtime fallback 문제가 아니라,
+    선택된 executable placement boundary 보존과 그 경계의 물리 lowering이 불완전했던 구조적 결함이다.
+- **해결 요약**:
+  - `AggBinaryOp`은 input Hop에 REFED/FOUT/local materialization registry entry가 있으면
+    해당 transpose를 compressed-linalg 또는 left-transpose rewrite로 융합하지 않는다.
+  - `Dag.insertRefedLops`는 selected REFED source Lop이 이미 federated이면
+    명시적 `UnaryCP(PREFETCH, LOUT)`를 먼저 삽입하고, 그 local materialization을
+    `FederatedRefed(FOUT)`의 입력으로 사용한다.
+  - exact selected consumer만 새 FOUT을 소비하도록 rewiring하며,
+    source→LOUT→target FOUT→consumer 순서를 Lop DAG와 linear Lop list 양쪽에 보존한다.
+  - 이 chain은 planner가 사전에 선택하고 비용화한 cross-anchor relocation의 lowering이며
+    runtime이 실패 후 개입하는 fallback/repair가 아니다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/AggBinaryOp.java`
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpL2SvmRefedSourceLoweringRedTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+  - `docs/SESSION_ISSUES_2026-07-31.md`
+- **검증**:
+  - 동일 CLI compile RED:
+    `/tmp/g007-dp-l2svm-refed-cli-red-20260731.log`,
+    `fed_refed lowering requires a local lop for hop=122`.
+  - 수정 후 동일 CLI compile GREEN:
+    `/tmp/g007-dp-l2svm-refed-cli-green-final-20260731.log`,
+    1 test, failure/error 0, total compile `2.787055s`, execution `0.000s`.
+  - 명시적 two-leg lowering 단위 회귀:
+    `/tmp/g007-refed-two-leg-unit-20260731.log`, return code 0.
+  - 기존 left-transpose rewrite 회귀:
+    `/tmp/g007-left-transpose-existing-green-20260731.log`, return code 0.
+  - 기존 REFED fail-closed/authority/multiplicity 및 local-materialize 회귀:
+    `/tmp/g007-dag-refed-regressions-20260731.log`,
+    12 tests, failure/error 0.
+  - DP LM/StepLM 및 placement transaction 회귀:
+    `/tmp/g007-dp-boundary-regressions-20260731.log`,
+    14 tests, failure/error 0.
+- **잔여 이슈**:
+  - 새 commit/JAR/immutable stage를 만든 뒤 동일 DP/L2SVM/2-worker Docker canary에서
+    실제 `PREFETCH → fed_refed` runtime chain과 semantic oracle을 검증해야 한다.
+  - canary가 성공해야만 fresh 336-cell campaign을
+    `DP → FedAll → Heuristic → MinST` 순서로 각 cell 한 번씩 실행한다.
+- **잠재 회귀 위험**:
+  - 선택된 materialization boundary가 있는 transpose에서는 기존 fusion 최적화가 비활성화되므로
+    해당 계획의 instruction shape와 성능이 달라진다. 이는 계획의 데이터 이동을 보존하기 위한 의도된 변화다.
+  - `PREFETCH`의 FED→LOUT runtime support 또는 scheduling dependency가 불완전하면 Docker에서
+    channel/runtime 오류로 드러날 수 있다.
+  - 감지 방법: exact CLI regression, two-leg Lop topology test, 기존 transpose test,
+    DP Docker runtime canary와 coordinator/worker error/fallback scan을 함께 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - 선택된 placement boundary와 사전 비용화된 `FED→LOUT→FOUT` 경로를 그대로 물리화했다.
+  - candidate-space 폐쇄, runtime fallback, 임의 소비자 rewiring, TRead/TWrite 제약 완화,
+    recompile `<CP,FOUT>` 허용은 하지 않았다.

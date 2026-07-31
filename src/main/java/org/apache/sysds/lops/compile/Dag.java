@@ -686,20 +686,32 @@ public class Dag<N extends Lop>
 							+ " transient write for hop=" + hopId + " label=" + label);
 				}
 			}
-			if (isFederatedMatrixLop(local))
-				throw new LopsException("fed_refed lowering selected an already federated input for hop=" + hopId);
-			plans.add(new RefedInsertionPlan(hopId, local, authority, consumers));
+			plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority, consumers));
 		}
 
 		boolean inserted = false;
 		for (RefedInsertionPlan plan : plans) {
+			Lop refedInput = plan.local;
+			UnaryCP localMaterialize = null;
+			if (plan.requiresLocalMaterialization) {
+				// A selected cross-anchor relocation of a FED/FOUT value is the explicit
+				// FED->LOUT->FOUT path costed by the planner, not a runtime repair. Materialize
+				// the selected source locally before uploading it to the target worker pool.
+				localMaterialize = new UnaryCP(plan.local, OpOp1.PREFETCH,
+					plan.local.getDataType(), plan.local.getValueType(), ExecType.CP);
+				localMaterialize.getOutputParameters().setLabel(
+					getNextUniqueVarname(localMaterialize.getDataType()));
+				copyOutputParams(localMaterialize.getOutputParameters(), plan.local.getOutputParameters());
+				localMaterialize.setFederatedOutput(FederatedOutput.LOUT);
+				refedInput = localMaterialize;
+			}
 			FederatedRefed refed = plan.authority.anchor != null
-				? new FederatedRefed(plan.local, plan.authority.anchor,
-					plan.local.getDataType(), plan.local.getValueType())
-				: new FederatedRefed(plan.local, plan.authority.anchorKey,
-					plan.local.getDataType(), plan.local.getValueType());
+				? new FederatedRefed(refedInput, plan.authority.anchor,
+					refedInput.getDataType(), refedInput.getValueType())
+				: new FederatedRefed(refedInput, plan.authority.anchorKey,
+					refedInput.getDataType(), refedInput.getValueType());
 			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
-			copyOutputParams(refed.getOutputParameters(), plan.local.getOutputParameters());
+			copyOutputParams(refed.getOutputParameters(), refedInput.getOutputParameters());
 			refed.setFederatedOutput(FederatedOutput.FOUT);
 
 			int insertPos = -1;
@@ -716,12 +728,20 @@ public class Dag<N extends Lop>
 					insertPos = idx;
 			}
 
+			if (localMaterialize != null)
+				addNode(localMaterialize);
 			addNode(refed);
 			inserted = true;
-			if (insertPos >= 0 && !lops.contains(refed))
+			if (insertPos >= 0 && !lops.contains(refed)) {
+				if (localMaterialize != null && !lops.contains(localMaterialize))
+					lops.add(insertPos++, localMaterialize);
 				lops.add(insertPos, refed);
-			else if (!lops.contains(refed))
+			}
+			else if (!lops.contains(refed)) {
+				if (localMaterialize != null && !lops.contains(localMaterialize))
+					lops.add(localMaterialize);
 				lops.add(refed);
+			}
 		}
 		return inserted;
 	}
@@ -873,13 +893,16 @@ public class Dag<N extends Lop>
 	private static final class RefedInsertionPlan {
 		private final long hopId;
 		private final Lop local;
+		private final boolean requiresLocalMaterialization;
 		private final RefedAnchorAuthority authority;
 		private final List<RefedConsumerEdge> consumers;
 
-		private RefedInsertionPlan(long hopId, Lop local, RefedAnchorAuthority authority,
+		private RefedInsertionPlan(long hopId, Lop local, boolean requiresLocalMaterialization,
+			RefedAnchorAuthority authority,
 			List<RefedConsumerEdge> consumers) {
 			this.hopId = hopId;
 			this.local = local;
+			this.requiresLocalMaterialization = requiresLocalMaterialization;
 			this.authority = authority;
 			this.consumers = consumers;
 		}

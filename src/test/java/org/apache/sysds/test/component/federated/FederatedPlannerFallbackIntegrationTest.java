@@ -74,6 +74,7 @@ import org.apache.sysds.lops.Data;
 import org.apache.sysds.lops.FederatedRefed;
 import org.apache.sysds.lops.FunctionCallCP;
 import org.apache.sysds.lops.Lop;
+import org.apache.sysds.lops.UnaryCP;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -5895,6 +5896,54 @@ public class FederatedPlannerFallbackIntegrationTest {
 				instruction.contains(anchorKey));
 			assertFalse("Invalid label-null FunctionCallCP anchor must not serialize as null.UNKNOWN: " + instruction,
 				instruction.contains("null.UNKNOWN"));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagRegistryRefedRematerializesFederatedSourceBeforeCrossAnchorUpload() throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data federatedSource = federatedMatrixAnchorLop("FederatedSource", 947);
+			FunctionCallCP selectedConsumer = functionCallConsumerLop(federatedSource, 962);
+			String targetAnchorKey = "fedinit://target-workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, federatedSource.getHopID(), -1L,
+				targetAnchorKey, List.of(selectedConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(federatedSource, selectedConsumer));
+			boolean changed = invokeInsertRefedLops(lops);
+
+			assertTrue("Expected selected FED/FOUT source to lower through an explicit relocation chain", changed);
+			FederatedRefed refed = lops.stream()
+				.filter(lop -> lop instanceof FederatedRefed)
+				.map(lop -> (FederatedRefed) lop)
+				.findFirst().orElseThrow();
+			UnaryCP localMaterialize = lops.stream()
+				.filter(lop -> lop instanceof UnaryCP)
+				.map(lop -> (UnaryCP) lop)
+				.filter(lop -> OpOp1.PREFETCH.toString().equals(lop.getOpCode()))
+				.findFirst().orElseThrow();
+
+			assertEquals("FED->LOUT leg must consume the selected federated source",
+				List.of(federatedSource), localMaterialize.getInputs());
+			assertEquals("LOUT->FOUT leg must consume only the explicit local materialization",
+				List.of(localMaterialize), refed.getInputs());
+			assertEquals("The intermediate value must be explicitly local",
+				FederatedOutput.LOUT, localMaterialize.getFederatedOutput());
+			assertEquals("The relocated value must be federated at the target anchor",
+				FederatedOutput.FOUT, refed.getFederatedOutput());
+			assertTrue("Selected consumer must consume the relocated value",
+				selectedConsumer.getInputs().contains(refed));
+			assertFalse("Selected consumer must not retain a stale direct source edge",
+				selectedConsumer.getInputs().contains(federatedSource));
+			assertTrue("Explicit relocation lops must precede their selected consumer",
+				lops.indexOf(federatedSource) < lops.indexOf(localMaterialize)
+					&& lops.indexOf(localMaterialize) < lops.indexOf(refed)
+					&& lops.indexOf(refed) < lops.indexOf(selectedConsumer));
 		}
 		finally {
 			FederatedRefedRegistry.clear();
