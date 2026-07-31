@@ -351,7 +351,7 @@
 
 ## DP ALS runtime recompile이 ROW REFED 앵커 descriptor를 FULL로 변질
 
-- **상태**: 진행중 — 구조적 수정 및 회귀 테스트 GREEN, package/Docker canary 대기
+- **상태**: 해결 — 구조적 수정/회귀/package/정확한 Docker canary GREEN, 새 336-cell campaign 실행중
 - **환경/조건**:
   - 소스 기준 commit: `e1cdba1858ad0e8ff8bcf86ddc1ea25e057cb70f`
   - 실패 campaign:
@@ -404,12 +404,29 @@
     `CampaignBG014DpL2SvmRefedSourceLoweringRedTest`,
     `CampaignBG014DpLogRegTransientForwardRedTest`,
     `FederationUtilsRefedReuseLayoutTest`.
+  - `mvn -q -DskipTests package` return code 0.
+  - 수정 commit: `1b204449bed1ee2e54458ca525ef3a7bdd2b244d`.
+  - staged JAR SHA-256:
+    `7fc2e32896402e5f21491e8b20cd445ae50783a18be741478f5fa9371244383e`.
+  - 새 immutable stage:
+    `/home/mchoi/g007-dp-als-refed-stage-1b20444-20260731-v1/g007-stage-70ba58221cecb1f50d45c9cdadeb6be406d6fdb487b8fbdf0d915a00bb00d286`.
+  - 정확한 DP/ALS/2-worker/LAN Docker canary:
+    `/home/mchoi/g007-dp-als-refed-canary-1b20444-d60da24-20260731-v1`.
+    `execution_seconds=152.057206001`, semantic oracle GREEN
+    (`objective_relative_error=1.499618323978053e-16`,
+    `rowspace_projector_relative_error=0.0`), runtime scan의
+    `error/fallback/resource_invalid/timeout=false`, coordinator/worker restart 0,
+    teardown zero resources.
+  - canary raw statistics에서 `fed_fed_refed=10`을 확인했다. production canary는
+    compile mapping 진단 플래그 없이 실행했으므로 descriptor의 `ROW` 직접 검증은 위 최소
+    회귀가 담당하고, 실제 Docker 성공/semantic equality가 잘못된 `FULL` lowering이 더는
+    실행되지 않음을 검증한다.
 - **잔여 이슈**:
-  - checkstyle/RAT 포함 package build 후 새 immutable stage를 만들어야 한다.
-  - 정확한 DP/ALS/2-worker/LAN Docker canary에서 REFED descriptor가 `ROW`이고
-    runtime이 성공하는지 확인해야 한다.
-  - canary 성공 후 기존 실패 campaign row를 재사용하지 않고 새 336-cell campaign을
-    `DP → FedAll → Heuristic → MinST` 순서로 각 셀 한 번씩 실행한다.
+  - 기존 실패 campaign row를 재사용하지 않는 새 campaign
+    `/home/mchoi/g007-all-planners-refed-anchor-1b20444-d60da24-20260731-v1`에서
+    `DP → FedAll → Heuristic → MinST` 336 cells를 각 한 번씩 실행 중이다.
+  - 전체 성공 후 workload별 planner differentiation 및 허용 오차를 둔
+    `MinST <= DP <= Heuristic, FedAll` 실행시간 정렬을 검증해야 한다.
 - **잠재 회귀 위험**:
   - 여러 concrete source가 다른 worker pool/placement를 가지는 파생 hop에서 임의 anchor가
     선택되면 안 된다. 감지 방법: 기존 anchor compatibility/fail-closed 테스트와 새 runtime
@@ -420,3 +437,60 @@
   - planner가 선택한 합법 ROW relocation을 닫지 않고 실제 FederationMap authority를
     lowering에 정확히 전달했다. runtime fallback, 부분 응답 채택, TRead/TWrite 규칙 완화,
     recompile CP/FOUT 허용, opcode candidate guard 추가는 하지 않았다.
+
+## immutable stage 입력 경로와 hardlink mode가 provenance 검증을 중단
+
+- **상태**: 해결
+- **환경/조건**:
+  - staging tool:
+    `sigmod2021-exdra-p523/experiments/tools/stage_campaign.py`
+  - 대상 SystemDS commit/JAR: `1b204449...` /
+    `7fc2e32896402e5f21491e8b20cd445ae50783a18be741478f5fa9371244383e`
+  - 기존 frozen data/reference 및 harness commit `d60da243...` 재사용
+- **재현 절차**:
+  - 이전 stage의 복사된 `references/`를 `--reference-root`로 사용하면
+    `CP publisher contract identity diverged`.
+  - 원본 content-addressed reference bundle을 사용하고 symlink인 source `target` 아래 JAR를
+    직접 지정하면 `JAR path contains symlink component`.
+  - regular artifact snapshot의 dependency hardlink를 `0444`로 chmod한 직후 원본 canonical
+    reference stage validation은 `staged systemds tree diverged`.
+- **관측 증상**:
+  - evaluator migration은 reference bundle ID를 parent directory 이름으로 인증하므로,
+    stage 안에 복사된 reference 경로는 원본 bundle ID를 보존하지 못했다.
+  - staging은 경로 구성요소의 symlink를 fail-closed로 거부했다.
+  - dependency snapshot은 원본과 같은 inode를 hardlink했으므로 snapshot 쪽 chmod가 링크 수
+    46인 공유 inode 전체의 mode를 `0644 → 0444`로 바꿨다. 콘텐츠 SHA-256은 동일했지만
+    lib/stage tree identity에는 mode가 포함되어 descriptor 검증이 중단됐다.
+- **원인 분석**:
+  - 첫 두 중단은 provenance/path safety 계약을 만족하지 않는 입력 경로 선택이었다.
+  - 세 번째 중단은 hardlink가 콘텐츠뿐 아니라 inode metadata도 공유한다는 점을 무시한
+    artifact 준비 명령 때문이었다.
+- **해결 요약**:
+  - 원본 bundle
+    `g007-reference-bundle-fa7e7d8e.../references`를 사용해 승인된 migration identity를
+    보존했다.
+  - 현재 JAR와 316개 dependency를 symlink가 없는 regular artifact root에 고정했다.
+  - descriptor의 `lib_tree_sha256`를 대상으로 mode를 가상 재계산해 전 파일 `0644`가 정확한
+    원래 계약임을 증명한 뒤 공유 inode mode를 복원했다.
+  - 원본 canonical reference stage와 published reference bundle을 재검증한 후 새 stage를
+    생성했으며, 새 stage descriptor validation과 Docker canary가 모두 통과했다.
+- **수정 파일**:
+  - 소스 코드 수정 없음.
+  - 실험 artifact:
+    `/home/mchoi/g007-systemds-artifact-1b20444-20260731-v1`
+  - 본 세션 이슈 문서만 갱신.
+- **검증**:
+  - 복원 후 lib tree SHA-256:
+    `86c7af015f48e3a6035c907b1d4cb3396a505db2125fe612b8f86e2ebf00979d`.
+  - canonical reference-free stage `3034c6ba...` validate GREEN.
+  - published reference bundle validate GREEN.
+  - 새 stage `70ba5822...` 생성/validate GREEN 및 위 DP ALS Docker canary GREEN.
+- **잔여 이슈**:
+  - campaign 진행 중 artifact/stage dependency inode에 chmod를 다시 적용하지 않는다.
+- **잠재 회귀 위험**:
+  - hardlink source나 어느 staged link에서든 mode/content를 변경하면 같은 inode를 공유하는
+    여러 immutable descriptor가 동시에 깨질 수 있다. 감지 방법: 새 campaign/stage 전
+    `stage_campaign.py validate`와 `lib_tree_sha256`를 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - provenance·symlink·tree identity 검증을 완화하지 않고 정확한 content-addressed source와
+    원래 inode mode를 복원했다. runtime/planner 동작이나 candidate space는 변경하지 않았다.
