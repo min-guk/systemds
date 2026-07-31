@@ -940,6 +940,54 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testRuntimeRecompileDerivedFedSiblingKeepsConcreteRowAnchorType() {
+		DataOp x = createLocalMatrix("X", 50000, 2100);
+		x.setForcedExecType(ExecType.FED);
+		x.setFederatedOutput(FederatedOutput.FOUT);
+
+		UnaryOp derivedFedSibling = HopRewriteUtils.createUnary(x, OpOp1.EXP);
+		derivedFedSibling.setDim1(50000);
+		derivedFedSibling.setDim2(10);
+		derivedFedSibling.setForcedExecType(ExecType.FED);
+		derivedFedSibling.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp u = createLocalMatrix("U", 50000, 10);
+		DataOp rowNonzeros = createLocalMatrix("row_nonzeros", 50000, 1);
+		BinaryOp localRegularization = HopRewriteUtils.createBinary(u, rowNonzeros, OpOp2.MULT);
+		localRegularization.setDim1(50000);
+		localRegularization.setDim2(10);
+		localRegularization.setForcedExecType(ExecType.CP);
+		localRegularization.setFederatedOutput(FederatedOutput.LOUT);
+
+		BinaryOp fedParent = HopRewriteUtils.createBinary(
+			derivedFedSibling, localRegularization, OpOp2.PLUS);
+		fedParent.setDim1(50000);
+		fedParent.setDim2(10);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		String rowSignature =
+			"worker1:8001;worker2:8002;|0,25000;25000,50000;";
+		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW, rowSignature);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(x.getHopID(), FType.ROW);
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("X", rowSignature);
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("X", FType.ROW);
+
+		FederatedRefedPolicy.registerFromHops(
+			new java.util.ArrayList<>(Arrays.asList(fedParent)), true, fTypeMap, 14L,
+			runtimeSignatures, runtimeTypes);
+
+		FederatedRefedRegistry.AnchorSpec refed =
+			FederatedRefedRegistry.snapshot(14L).get(localRegularization.getHopID());
+		assertTrue("Expected the local regularization term to be explicitly refederated", refed != null);
+		assertEquals("A derived FED sibling must retain the concrete source FederationMap type",
+			rowSignature + "|ROW", refed.getAnchorKey());
+	}
+
+	@Test
 	public void testRuntimeSignatureWithoutTypeRegistersCompleteConservativeAnchorKey() {
 		DataOp local = createLocalMatrix("local", 10, 10);
 		Map<String, String> runtimeSignatures = new HashMap<>();

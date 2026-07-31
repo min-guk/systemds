@@ -5377,6 +5377,17 @@ public final class FederatedRefedPolicy {
 			return null;
 		String sig = findFedInitSignature(hop);
 		if (sig != null) {
+			// The signature identifies the concrete upstream FederationMap, whereas the
+			// derived hop's FType describes its logical output and may be unknown (or
+			// different after an operation such as an aggregate).  Reusing the derived
+			// output type for the signature can therefore rewrite a ROW anchor as FULL
+			// during runtime recompile and replicate an aligned local input to every
+			// worker.  Prefer the exact runtime-federated source key whenever it is
+			// reachable; only use the conservative legacy fallback when no typed source
+			// is available.
+			AnchorSelection sourceAnchor = findInputAnchorSelection(hop, fTypeMap);
+			if (sourceAnchor != null && sourceAnchor.key != null)
+				return sourceAnchor.key;
 			FType fType = getKnownFType(hop, fTypeMap);
 			return buildAnchorKeyFromSignature(sig, fType);
 		}

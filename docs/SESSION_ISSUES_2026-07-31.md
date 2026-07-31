@@ -348,3 +348,75 @@
     runtime registry의 단일 source + consumer-set 표현으로 정확히 투영했다.
   - runtime fallback/repair, candidate-space 축소, TRead/TWrite `<CP,FOUT>` 완화,
     recompile `<CP,FOUT>` 허용은 하지 않았다.
+
+## DP ALS runtime recompile이 ROW REFED 앵커 descriptor를 FULL로 변질
+
+- **상태**: 진행중 — 구조적 수정 및 회귀 테스트 GREEN, package/Docker canary 대기
+- **환경/조건**:
+  - 소스 기준 commit: `e1cdba1858ad0e8ff8bcf86ddc1ea25e057cb70f`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-refed-coalesced-e1cdba1-d60da24-20260731-v1`
+  - 실패 cell:
+    `planners/DP/cells/037-968a89ebaac9`
+  - 플래너/워크로드: DP / ALS / `P2P2D` / 2 workers / LAN / private-aggregate
+  - frozen data/seed: 기존 campaign manifest와 동일, ALS seed `1389632218`
+  - 실행 경로: `run_LAN_docker.sh`만 사용
+- **재현 절차**:
+  - 기존 실패 cell과 동일한 rendered DML, metadata, config 및 seed로 Docker 진단 실행:
+    `/home/mchoi/g007-dp-als-two-worker-debug-20260731-v2`
+  - runtime symbol/FederationMap 추적을 추가한 동일 Docker 진단 실행:
+    `/home/mchoi/g007-dp-als-two-worker-debug-20260731-v3`
+  - 최소 RED 회귀:
+    `mvn -q -DskipTests=false -Dtest=org.apache.sysds.test.functions.federated.fedplanning.FederatedRefedPolicyTest#testRuntimeRecompileDerivedFedSiblingKeepsConcreteRowAnchorType test`
+- **관측 증상**:
+  - 최초 compile의 hop `998` REFED는
+    `worker1:8001;worker2:8002;|0,25000;25000,50000;|ROW`였다.
+  - runtime recompile에서는 같은 worker/range signature가 `|FULL`로 바뀌었다.
+  - `FEDRefedInstruction`은 descriptor를 그대로 실행해 로컬 `50000x10` 항을 두 worker에
+    전체 복제했고, worker-local `25000x10` 항과의 elementwise `+`에서
+    `LibMatrixBincell: block sizes not matched`가 발생했다.
+  - runtime symbol `W`의 실제 `FederationMap`은 `ROW`였으므로 runtime 지원 부족이나
+    planner candidate 자체의 불법성이 아니었다.
+- **원인 분석**:
+  - runtime recompile은 planner의 ExecType/FOUT 결정을 복원한 뒤 lowering registry를 재구성한다.
+  - 로컬 정규화 항 hop `998`의 FED parent sibling은 파생 FED 연산이었다.
+    `buildAnchorKey`가 이 sibling에서 upstream fed-init signature를 찾았지만,
+    descriptor 타입에는 concrete source `X`의 `ROW`가 아니라 파생 output hop의
+    알려지지 않은 FType을 사용했다.
+  - 알려지지 않은 타입은 `buildAnchorKeyFromSignature`에서 `FULL`로 보수 변환되어,
+    실제 ROW FederationMap과 모순되는 descriptor가 만들어졌다.
+- **해결 요약**:
+  - 파생 hop에서 fed-init signature가 발견되면 이미 존재하는 runtime-federated input을
+    탐색해 그 concrete source anchor key를 우선 사용한다.
+  - typed concrete source가 없을 때만 기존 conservative fallback을 유지한다.
+  - 따라서 planner의 선택이나 후보군을 바꾸지 않고, lowering descriptor가 실제
+    FederationMap의 worker/range/FType authority를 보존한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `docs/SESSION_ISSUES_2026-07-31.md`
+- **검증**:
+  - 새 회귀는 수정 전 정확히 `expected ROW but was FULL`로 RED였다.
+  - 수정 후 `FederatedRefedPolicyTest` 전체 GREEN.
+  - 다음 관련 회귀 묶음 GREEN:
+    `RecompileStatusFederatedPlacementTest`,
+    `CampaignBG014DpPcaRefedLoweringRedTest`,
+    `CampaignBG014DpL2SvmRefedSourceLoweringRedTest`,
+    `CampaignBG014DpLogRegTransientForwardRedTest`,
+    `FederationUtilsRefedReuseLayoutTest`.
+- **잔여 이슈**:
+  - checkstyle/RAT 포함 package build 후 새 immutable stage를 만들어야 한다.
+  - 정확한 DP/ALS/2-worker/LAN Docker canary에서 REFED descriptor가 `ROW`이고
+    runtime이 성공하는지 확인해야 한다.
+  - canary 성공 후 기존 실패 campaign row를 재사용하지 않고 새 336-cell campaign을
+    `DP → FedAll → Heuristic → MinST` 순서로 각 셀 한 번씩 실행한다.
+- **잠재 회귀 위험**:
+  - 여러 concrete source가 다른 worker pool/placement를 가지는 파생 hop에서 임의 anchor가
+    선택되면 안 된다. 감지 방법: 기존 anchor compatibility/fail-closed 테스트와 새 runtime
+    recompile descriptor 테스트를 함께 유지한다.
+  - concrete source 탐색 비용이 큰 DAG에서 compile time에 영향을 줄 수 있다.
+    감지 방법: 336-cell 결과의 compile time과 package 회귀를 이전 campaign과 비교한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 선택한 합법 ROW relocation을 닫지 않고 실제 FederationMap authority를
+    lowering에 정확히 전달했다. runtime fallback, 부분 응답 채택, TRead/TWrite 규칙 완화,
+    recompile CP/FOUT 허용, opcode candidate guard 추가는 하지 않았다.
