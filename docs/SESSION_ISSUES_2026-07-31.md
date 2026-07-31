@@ -2,11 +2,14 @@
 
 ## DP 2-worker LM의 선택된 논리 consumer가 MapMultChain에 융합되어 REFED lowering이 실패함
 
-- **상태**: 진행중 — 정확한 RED→GREEN 및 관련 단위/package 검증 완료, 새 immutable Docker 단일 셀 검증 대기
+- **상태**: 해결 — 정확한 RED→GREEN, 관련 단위/package, 새 immutable Docker 단일 셀 검증 완료
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 전 production commit: `f3bdd2ea18148312b28ec4a25a7d825a00df43db`
   - 수정 전 문서 HEAD: `80a278f148b78c0b9d5a75c0a89933a3eb4788bb`
+  - 수정 production commit: `6ba2176bc562737268feb4948f2435b9f357ad5e`
+  - 수정 JAR SHA-256: `32c8452181d8400e8a64cb3945d567b3a6dd528c17a00a5bf3230ac43d1d3a60`
+  - 수정 final stage: `/home/mchoi/g007-dp-lm-fused-refed-stage-20260731-v2/g007-stage-6c81232d8ea85f1c6835602f862d4e8d3a79c3d7f1e98137f78de77f4c3f0eab`
   - 실패 stage: `/home/mchoi/g007-dp-runtime-placement-lock-stage-20260730-v1/g007-stage-4c838968a51801a734bf3ca923a524ad3cf38de09e6b30ca358a5ee9a858ffc4`
   - 실패 matrix root: `/home/mchoi/g007-all-planners-runtime-placement-lock-f3bdd2e-d60da24-20260731-v2`
   - 플래너/워크로드: DP / LM / `P2P2D` / 2 workers / LAN / private-aggregate
@@ -62,9 +65,18 @@
   - checkstyle/RAT 포함 package GREEN:
     - `/tmp/g007-fused-refed-lowering-package-20260731.log`
     - Maven return code `0`.
+  - 정확한 DP/LM/2-worker/LAN Docker canary GREEN:
+    - root: `/home/mchoi/g007-dp-lm-fused-refed-canary-20260731-v1`
+    - attempt `1`, execution `110.72060044s`, full lifecycle `133.822947944s`
+    - semantic oracle `passed=true`
+    - runtime scan `error=false`, `fallback=false`, `resource_invalid=false`, `timeout=false`
+    - coordinator/worker restart `0/0`, `teardown_zero_resources=true`
+    - response SHA-256 `6c51d74ab70d8a03df36b48969824b16a672764c304172e379d3b5e8fe84f213`
 - **잔여 이슈**:
-  - 새 source commit/JAR/immutable stage를 만든 뒤 정확한 DP/LM/2-worker/LAN Docker cell을 한 번 실행해 semantic oracle, fallback/demotion 0건, teardown zero-resource를 검증해야 한다.
-  - 단일 셀이 통과하면 이전 v2의 27개 성공 row를 재사용하지 않고 새 campaign identity에서 DP → FedAll → Heuristic → MinST 336 cells를 처음부터 한 번씩 실행해야 한다.
+  - 이 구조 이슈 자체의 잔여 수정은 없다.
+  - 이전 v2의 27개 성공 row를 재사용하지 않는 fresh campaign
+    `/home/mchoi/g007-all-planners-fused-refed-6ba2176-d60da24-20260731-v3`
+    이 `DP → FedAll → Heuristic → MinST` 순서로 336 cells를 각 한 번씩 실행 중이다.
 - **잠재 회귀 위험**:
   - 새로운 Lop fusion이 하나의 논리 edge를 여러 physical owner로 분기하거나 multiplicity를 바꾸면 exact mapping이 fail-closed할 수 있다.
   - 감지 방법: 신규 2-worker LM 회귀, 기존 unresolved/ambiguous/multiplicity `fed_refed` 회귀, 전체 Docker matrix에서 첫 구조 실패를 함께 확인한다.
@@ -72,4 +84,3 @@
 - **의사결정 근거/적용 원칙**:
   - planner가 선택한 logical consumer identity와 Lop optimizer가 만든 physical owner identity를 명시적으로 연결했다.
   - 후보군 폐쇄, 비용 우회, runtime fallback/repair, TRead/TWrite `<CP,FOUT>` 완화, recompile `<CP,FOUT>` 허용은 하지 않았다.
-
