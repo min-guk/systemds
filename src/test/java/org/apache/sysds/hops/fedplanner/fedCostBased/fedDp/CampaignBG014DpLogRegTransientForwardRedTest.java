@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
+import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
@@ -26,6 +27,7 @@ import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.AutomatedTestBase;
 import org.apache.sysds.test.TestUtils;
+import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -62,6 +64,78 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 			TestUtils.shutdownThreads(worker);
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			PlacementEmissionTransaction.resetForTesting();
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
+		}
+	}
+
+	@Test
+	public void logRegDpTwoWorkersCoalescesCompatibleRelocationRegistryAuthority() throws Exception {
+		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
+		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
+		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
+		boolean oldStatistics = DMLScript.STATISTICS;
+		int oldStatisticsCount = DMLScript.STATISTICS_COUNT;
+		int oldSeed = DMLScript.SEED;
+		boolean oldLocalSpark = DMLScript.USE_LOCAL_SPARK_CONFIG;
+		String oldParserPath = DMLScript.DML_FILE_PATH_ANTLR_PARSER;
+		int port1 = AutomatedTestBase.getRandomAvailablePort();
+		int port2 = AutomatedTestBase.getRandomAvailablePort();
+		while(port2 == port1)
+			port2 = AutomatedTestBase.getRandomAvailablePort();
+		Thread worker1 = null;
+		Thread worker2 = null;
+		Path root = Path.of("target/g014-dp-logreg-registry-slot");
+		try {
+			Files.createDirectories(root);
+			Path features1 = matrixMetadata(root.resolve("features-1.data").toString(), 25000, 2100, 50025000);
+			Path features2 = matrixMetadata(root.resolve("features-2.data").toString(), 25000, 2100, 50025000);
+			Path labels1 = matrixMetadata(root.resolve("labels-1.data").toString(), 25000, 1, 25000);
+			Path labels2 = matrixMetadata(root.resolve("labels-2.data").toString(), 25000, 1, 25000);
+			Path script = root.resolve("logreg.dml");
+			Path config = root.resolve("SystemDS-config.xml");
+			Files.writeString(script, logRegScript(
+				List.of(port1, port2), List.of(features1, features2), List.of(labels1, labels2)));
+			Files.writeString(config, dockerCompileConfig(root));
+			worker1 = AutomatedTestBase.startLocalFedWorkerThread(port1, 1000);
+			worker2 = AutomatedTestBase.startLocalFedWorkerThread(port2, 1000);
+			InfrastructureAnalyzer.setLocalMaxMemory(8L * 1024 * 1024 * 1024);
+			boolean success = DMLScript.executeScript(new String[] {
+				"-exec", "singlenode",
+				"-seed", "2026072701",
+				"-f", script.toString(),
+				"-stats", "100",
+				"-config", config.toString()
+			});
+			Assert.assertTrue("The Docker-equivalent two-worker LogReg compile must complete", success);
+			List<FederatedRefedRegistry.AnchorSpec> mergedAuthorities =
+				FederatedRefedRegistry.snapshotAll().scopes().values().stream()
+					.flatMap(scope -> scope.values().stream())
+					.filter(spec -> spec.getAnchorKey() != null && spec.getAnchorKey().endsWith("|ROW"))
+					.filter(spec -> spec.getConsumerHopIds().size() >= 2)
+					.toList();
+			Assert.assertFalse("Compatible consumer-specific relocations must be represented by one exact "
+				+ "REFED source authority", mergedAuthorities.isEmpty());
+			for(FederatedRefedRegistry.AnchorSpec spec : mergedAuthorities)
+				Assert.assertEquals("Merged REFED consumers must remain sorted and deduplicated",
+					spec.getConsumerHopIds().stream().distinct().sorted().toList(),
+					spec.getConsumerHopIds());
+		}
+		finally {
+			TestUtils.shutdownThreads(worker1, worker2);
+			ConfigurationManager.setGlobalConfig(oldGlobal);
+			ConfigurationManager.setLocalConfig(oldGlobal);
+			ConfigurationManager.setGlobalConfig(oldCompiler);
+			ConfigurationManager.setLocalConfig(oldCompiler);
+			InfrastructureAnalyzer.setLocalMaxMemory(oldLocalMaxMemory);
+			DMLScript.STATISTICS = oldStatistics;
+			DMLScript.STATISTICS_COUNT = oldStatisticsCount;
+			DMLScript.SEED = oldSeed;
+			DMLScript.USE_LOCAL_SPARK_CONFIG = oldLocalSpark;
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER = oldParserPath;
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
 			PlacementEmissionTransaction.resetForTesting();
 			FederatedRefedRegistry.clear();
@@ -122,6 +196,32 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 			"m=multiLogReg(X=X,Y=Y,verbose=FALSE,maxi=30,maxii=5,tol=1e-9,icpt=0," +
 				"numclasses=2,numrows=N,numcols=D);\n" +
 			"write(m,\"target/g014-dp-logreg-transient-forward.csv\",format=\"csv\");\n";
+	}
+
+	private static String logRegScript(List<Integer> ports, List<Path> features, List<Path> labels) {
+		return "N=50000;\n" +
+			"D=2100;\n" +
+			"X=federated(addresses=list(\"" + TestUtils.federatedAddress(ports.get(0), features.get(0).toString())
+				+ "\",\"" + TestUtils.federatedAddress(ports.get(1), features.get(1).toString()) + "\"),"
+				+ "ranges=list(list(0,0),list(25000,D),list(25000,0),list(N,D)));\n" +
+			"Y=federated(addresses=list(\"" + TestUtils.federatedAddress(ports.get(0), labels.get(0).toString())
+				+ "\",\"" + TestUtils.federatedAddress(ports.get(1), labels.get(1).toString()) + "\"),"
+				+ "ranges=list(list(0,0),list(25000,1),list(25000,0),list(N,1)));\n" +
+			"Y=(Y<0)+1;\n" +
+			"m=multiLogReg(X=X,Y=Y,verbose=FALSE,maxi=30,maxii=5,tol=1e-9,icpt=0," +
+				"numclasses=2,numrows=N,numcols=D);\n" +
+			"write(m,\"target/g014-dp-logreg-transient-forward-two-workers.csv\",format=\"csv\");\n";
+	}
+
+	private static String dockerCompileConfig(Path root) {
+		return "<root>\n"
+			+ "  <sysds.native.blas>none</sysds.native.blas>\n"
+			+ "  <sysds.local.spark>true</sysds.local.spark>\n"
+			+ "  <sysds.federated.planner>compile_cost_based</sysds.federated.planner>\n"
+			+ "  <sysds.benchmark.compile_only>true</sysds.benchmark.compile_only>\n"
+			+ "  <sysds.scratch>" + root.resolve("scratch") + "</sysds.scratch>\n"
+			+ "  <sysds.localtmpdir>" + root.resolve("localtmp") + "</sysds.localtmpdir>\n"
+			+ "</root>\n";
 	}
 
 	private static Path matrixMetadata(String path, long rows, long cols, long nnz) throws Exception {

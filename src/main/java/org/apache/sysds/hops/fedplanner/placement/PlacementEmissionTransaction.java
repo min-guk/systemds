@@ -441,8 +441,7 @@ public final class PlacementEmissionTransaction {
 	private static List<RegistryWrite> prepareRegistryWrites(PlacementAnalysis analysis,
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, List<RelocationAction> relocations,
 		List<LocalMaterializationActionKey> locals) {
-		List<RegistryWrite> writes = new ArrayList<>();
-		Set<RegistrySlot> slots = new LinkedHashSet<>();
+		Map<RegistrySlot, RegistryWrite> writesBySlot = new LinkedHashMap<>();
 		for(RelocationAction action : relocations) {
 			RelocationActionKey key = action.key();
 			List<Node> sources = analysis.graph().nodes().stream()
@@ -476,9 +475,7 @@ public final class PlacementEmissionTransaction {
 				write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(), anchor.hop().getHopID(),
 					anchorKey, consumerIds);
 			}
-			if(!slots.add(write.slot()))
-				throw new PlacementEmissionException("Multiple relocations target one registry slot");
-			writes.add(write);
+			addRelocationRegistryWrite(writesBySlot, write);
 		}
 		for(LocalMaterializationActionKey local : locals) {
 			HopOccurrenceProjection source = exactOccurrence(occurrences, local.sourceOccurrence());
@@ -487,11 +484,36 @@ public final class PlacementEmissionTransaction {
 				.distinct().sorted().toList();
 			RegistryWrite write = RegistryWrite.local(source.scopeId(), source.hop().getHopID(), consumerIds,
 				local.producerPlacement().fType().name(), local.durableProvenance());
-			if(!slots.add(write.slot()))
+			if(writesBySlot.putIfAbsent(write.slot(), write) != null)
 				throw new PlacementEmissionException("Multiple actions target one registry slot");
-			writes.add(write);
 		}
-		return writes;
+		return List.copyOf(writesBySlot.values());
+	}
+
+	private static void addRelocationRegistryWrite(Map<RegistrySlot, RegistryWrite> writesBySlot,
+		RegistryWrite incoming) {
+		RegistryWrite existing = writesBySlot.putIfAbsent(incoming.slot(), incoming);
+		if(existing == null)
+			return;
+		if(incoming.slot().kind() != RegistryKind.REFED)
+			throw new PlacementEmissionException("Multiple relocations target one registry slot: prior="
+				+ existing + ", incoming=" + incoming);
+		FederatedRefedRegistry.AnchorSpec merged;
+		try {
+			merged = FederatedRefedRegistry.mergeCompatibleAuthority(
+				new FederatedRefedRegistry.AnchorSpec(existing.anchorHopId(), existing.anchorKey(),
+					existing.consumerHopIds()),
+				new FederatedRefedRegistry.AnchorSpec(incoming.anchorHopId(), incoming.anchorKey(),
+					incoming.consumerHopIds()),
+				incoming.slot().scopeId(), incoming.slot().hopId());
+		}
+		catch(IllegalArgumentException ex) {
+			throw new PlacementEmissionException("Multiple REFED relocations target one registry slot with "
+				+ "conflicting authority: " + ex.getMessage());
+		}
+		writesBySlot.put(incoming.slot(), RegistryWrite.refed(incoming.slot().scopeId(),
+			incoming.slot().hopId(), merged.getAnchorHopId(), merged.getAnchorKey(),
+			merged.getConsumerHopIds()));
 	}
 
 	private static HopOccurrenceProjection resolveAnchor(PlacementAnalysis analysis,

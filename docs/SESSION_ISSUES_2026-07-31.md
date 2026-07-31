@@ -87,7 +87,7 @@
 
 ## DP 2-worker L2SVM의 REFED source transpose가 Lop fusion으로 사라지고 FED/FOUT cross-anchor relocation이 단일 upload로 lowering됨
 
-- **상태**: 진행중 — 동일 CLI compile RED→GREEN 및 관련 회귀 완료, 새 JAR Docker runtime canary 대기
+- **상태**: 해결 — 동일 CLI compile RED→GREEN, 관련 회귀/package 및 새 JAR Docker runtime canary 완료
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 전 commit: `78a8843bafcfbd4b3aae10919c356c4fd3ce536b`
@@ -95,6 +95,12 @@
     `dbf8a474eb6b85fd930e493947a45d18012d05199ca2c8c796a6aa88ee2045cb`
   - 수정 전 immutable stage:
     `/home/mchoi/g007-dp-l2svm-additional-root-stage-20260731-v1/g007-stage-53693458d2faf07bfdf8ebfb55a41dd9230b0990d50edb2095f2110aa00ad168`
+  - 수정 production commit: `0a7252ddb14e8eee423481453a5959d010ff014c`
+  - 수정 production tree: `2b79a874b9f2295f7e39a049f5f11d913a7b3de7`
+  - 수정 JAR SHA-256:
+    `76bab583c4fb13e250ed5b2214e02660fc523a6543ba08723b5dc8c1126b0265`
+  - 수정 immutable stage:
+    `/home/mchoi/g007-dp-l2svm-two-leg-stage-20260731-v1/g007-stage-d6baba1f843e55bef07466663f8d4fdf9f694da7546d073ffc1dc388a84cb603`
   - 플래너/워크로드: DP / L2SVM / `P2P2D` / 2 workers / LAN / private-aggregate
   - 고정 seed: `2026072701`
   - Docker와 동일한 cost 환경:
@@ -160,11 +166,30 @@
   - DP LM/StepLM 및 placement transaction 회귀:
     `/tmp/g007-dp-boundary-regressions-20260731.log`,
     14 tests, failure/error 0.
+  - checkstyle/RAT 포함 package:
+    `/tmp/g007-l2svm-two-leg-package-postcommit-20260731.log`,
+    Maven return code 0.
+  - 정확한 DP/L2SVM/2-worker/LAN Docker canary:
+    - root: `/home/mchoi/g007-dp-l2svm-two-leg-canary-20260731-v1`
+    - attempt `1`, execution `140.8391145s`, full lifecycle `164.155430956s`
+    - semantic oracle `passed=true`
+    - runtime scan `error=false`, `fallback=false`, `resource_invalid=false`, `timeout=false`
+    - coordinator/worker restart `0/0`, `teardown_zero_resources=true`
+    - response SHA-256 `fce20ad0e071b626e70851ee1e940c16cfed619aa79d4a9eefabc74530b774ad`
+  - fresh 336-cell matrix의 동일 DP/L2SVM/2-worker/LAN cell도 attempt 1 GREEN:
+    - campaign cell:
+      `/home/mchoi/g007-all-planners-two-leg-refed-0a7252d-d60da24-20260731-v5/planners/DP/cells/031-7413e302c937`
+    - execution `67.590017805s`, full lifecycle `94.863345881s`
+    - semantic oracle `passed=true`
+    - runtime scan 4종 false, restart `0/0`, teardown zero-resource
+    - response SHA-256 `658b517ffb0e31fd992633dc2a8bdd842996fd313dbc629cdb87a697eeb23085`
 - **잔여 이슈**:
-  - 새 commit/JAR/immutable stage를 만든 뒤 동일 DP/L2SVM/2-worker Docker canary에서
-    실제 `PREFETCH → fed_refed` runtime chain과 semantic oracle을 검증해야 한다.
-  - canary가 성공해야만 fresh 336-cell campaign을
-    `DP → FedAll → Heuristic → MinST` 순서로 각 cell 한 번씩 실행한다.
+  - 구조 이슈 자체의 잔여 수정은 없다.
+  - fresh 336-cell campaign
+    `/home/mchoi/g007-all-planners-two-leg-refed-0a7252d-d60da24-20260731-v5`
+    이 `DP → FedAll → Heuristic → MinST` 순서로 각 cell 한 번씩 실행 중이다.
+  - 전 셀 성공 후 planner별 실행시간 그래프와
+    `MinST <= DP <= Heuristic, FedAll` 정렬을 관측·분석해야 한다.
 - **잠재 회귀 위험**:
   - 선택된 materialization boundary가 있는 transpose에서는 기존 fusion 최적화가 비활성화되므로
     해당 계획의 instruction shape와 성능이 달라진다. 이는 계획의 데이터 이동을 보존하기 위한 의도된 변화다.
@@ -175,4 +200,151 @@
 - **의사결정 근거/적용 원칙**:
   - 선택된 placement boundary와 사전 비용화된 `FED→LOUT→FOUT` 경로를 그대로 물리화했다.
   - candidate-space 폐쇄, runtime fallback, 임의 소비자 rewiring, TRead/TWrite 제약 완화,
+    recompile `<CP,FOUT>` 허용은 하지 않았다.
+
+## Fresh 336-cell Docker campaign의 5 GiB resource-floor headroom 부족
+
+- **상태**: 해결 — active source/stage/evidence를 보존하고 재생성 가능한 과거 build output만 정리
+- **환경/조건**:
+  - active campaign:
+    `/home/mchoi/g007-all-planners-two-leg-refed-0a7252d-d60da24-20260731-v5`
+  - stage:
+    `/home/mchoi/g007-dp-l2svm-two-leg-stage-20260731-v1/g007-stage-d6baba1f843e55bef07466663f8d4fdf9f694da7546d073ffc1dc388a84cb603`
+  - Docker-only, planner order `DP → FedAll → Heuristic → MinST`, attempt 1, retry 없음
+- **재현 절차**:
+  - `os.statvfs('/home/mchoi')`로 available bytes와 `5*1024**3` floor를 비교한다.
+  - cleanup receipt:
+    `/home/mchoi/g007-resource-floor-cleanup-20260731-v2.txt`
+- **관측 증상**:
+  - accepted row 7개 시점에 floor 위 headroom은 `44,863,488` bytes뿐이었다.
+  - 당시 campaign file 증가율의 336행 예상치는 약 `107,317,824` bytes여서,
+    코드/semantic 오류가 없어도 후속 셀이 resource gate에서 중단될 상태였다.
+- **원인 분석**:
+  - active campaign이 아니라 과거 임시 verifier clone들의 재생성 가능한 Maven `target/`이
+    local filesystem을 점유했다.
+- **해결 요약**:
+  - 실행 중 프로세스 참조가 없음을 확인한 2026-07-25 임시 verifier clone 3개의
+    `target/`만 제거했다.
+  - repository source/git metadata, active source/JAR/stage, campaign rows/bundles는 보존했다.
+- **수정 파일**:
+  - production source 수정 없음
+  - `/home/mchoi/g007-resource-floor-cleanup-20260731-v2.txt`
+  - 이 문서
+- **검증**:
+  - 확보 공간 `1,054,429,184` bytes.
+  - 정리 후 floor 위 headroom `1,099,124,736` bytes.
+  - receipt SHA-256:
+    `26f637a02df39283051783a2cd929c7b23adfe2b95ac90389558d1cd2d671d15`.
+  - 캠페인은 DP accepted row 8개, failure 0으로 계속 진행했다.
+  - staged JAR SHA-256
+    `76bab583c4fb13e250ed5b2214e02660fc523a6543ba08723b5dc8c1126b0265`
+    및 campaign control checksums를 재검증했다.
+- **잔여 이슈**:
+  - 336셀 동안 headroom을 계속 관측하되 resource floor 자체는 완화하지 않는다.
+- **잠재 회귀 위험**:
+  - 다른 동시 작업이 1 GiB 이상을 소비하면 다시 floor에 접근할 수 있다.
+  - planner checkpoint마다 exact available bytes와 failure rows를 함께 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime/planner/oracle를 완화하지 않고 재생성 가능한 build output만 제거해
+    Docker-only fail-closed 실험 계약을 유지했다.
+
+## DP 2-worker LogReg의 호환 가능한 REFED relocation들이 동일 registry slot에서 충돌
+
+- **상태**: 진행중 — exact CLI RED→GREEN 및 관련 회귀 완료, package/Docker canary/새 336-cell 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 실패 production commit: `0a7252ddb14e8eee423481453a5959d010ff014c`
+  - 실패 JAR SHA-256:
+    `76bab583c4fb13e250ed5b2214e02660fc523a6543ba08723b5dc8c1126b0265`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-two-leg-refed-0a7252d-d60da24-20260731-v5`
+  - 플래너/워크로드: DP / LogReg / `P2P2D` / 2 workers / LAN / private-aggregate
+  - 고정 seed: `2026072701`
+  - Docker와 동일한 cost 환경:
+    `MEM_BW=25000`, `NET_BW=1250`, `SERDES_C2W=210`,
+    `SERDES_W2C=14.7`, `LATENCY=0.001`, `FLOPS=2147483648`
+- **재현 절차**:
+  - 실패 cell:
+    `/home/mchoi/g007-all-planners-two-leg-refed-0a7252d-d60da24-20260731-v5/planners/DP/cells/034-3584d655a836`
+  - 동일 2-worker metadata, 8 GiB coordinator memory, planner config, seed 및 cost 환경을 사용하는
+    `DMLScript.executeScript` compile-only 회귀:
+    `mvn -q -Dtest=CampaignBG014DpLogRegTransientForwardRedTest#logRegDpTwoWorkersCoalescesCompatibleRelocationRegistryAuthority test`
+  - RED 로그:
+    `/tmp/g007-dp-logreg-two-worker-registry-cli-red-20260731.log`
+  - authority 진단 로그:
+    `/tmp/g007-dp-logreg-two-worker-registry-diagnostic-20260731.log`
+- **관측 증상**:
+  - fresh 336-cell single pass는 DP row 34에서
+    `PlacementEmissionException: Multiple relocations target one registry slot`
+    로 fail-closed 중단했다. 이전 33개 성공 row는 새 캠페인에 재사용하지 않는다.
+  - 충돌한 두 write는 정확히 같은
+    `RegistrySlot[kind=REFED, scopeId=48, hopId=419]`,
+    `anchorHopId=1`, durable ROW `anchorKey`를 가졌다.
+  - 차이는 exact selected consumer가 각각 Hop `421`, `1156`이라는 점뿐이었다.
+  - slot 충돌을 해소한 첫 실행에서는 receipt 검증이 raw memo closure의 TWrite를
+    실제 적용 traversal로 오인해
+    `Disconnected completion overlaps a pre-completion receipt category`
+    로 추가 실패했다.
+- **원인 분석**:
+  - planner는 두 consumer에 필요한 relocation을 각각 선택하고 비용화했으며 두 authority는 충돌하지 않았다.
+  - runtime registry 표현은 source slot 하나와 exact consumer ID 목록 하나이므로,
+    emission transaction이 같은 durable authority의 consumer별 action을 prevalidation에서
+    하나의 write로 합쳐야 했다. 기존 코드는 모든 중복 slot을 무조건 거부했다.
+  - DP receipt는 적용 시 output-decision variant/visited 경계에 따라 실제로 순회한 key 집합이 아니라
+    raw pruned memo child edge를 재귀한 closure로 category를 판정했다.
+    따라서 raw closure에는 있지만 실제 root traversal에서 적용되지 않은 LogReg function-body
+    TWrite가 disconnected completion과 잘못 충돌했다.
+- **해결 요약**:
+  - `FederatedRefedRegistry`의 기존 conflict/consumer-union 규칙을
+    pure non-mutating `mergeCompatibleAuthority`로 공개했다.
+  - placement emission은 stable slot map을 만들고, 중복 REFED slot만 위 규칙으로 사전 병합한다.
+    durable anchor가 다르면 여전히 mutation 전에 fail-closed하며,
+    FOUT/LOCAL 중복 slot은 기존처럼 거부한다.
+  - 두 consumer ID는 정렬·중복 제거된 단일 REFED write에 보존된다.
+  - DP invocation receipt는 root/additional-root 단계가 실제 capture한
+    canonical `appliedTraversalKeys`를 기록하고, deferred/disconnected category의
+    disjointness와 normalized authority를 이 exact 집합으로 검증한다.
+  - stale contract test의 고정 receipt 개수는 제거하고,
+    exact applied/deferred/disconnected partition의 불변성·완전성 검증으로 교체했다.
+    baseline commit에서도 해당 고정 개수는 이미 실패함을 별도 detached worktree로 확인했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/lops/compile/FederatedRefedRegistry.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpLogRegTransientForwardRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBDpAggregateProducerContractTest.java`
+  - `docs/SESSION_ISSUES_2026-07-31.md`
+- **검증**:
+  - exact Docker-equivalent 2-worker LogReg compile GREEN:
+    `/tmp/g007-dp-logreg-two-worker-registry-cli-green-v2-20260731.log`,
+    Maven return code 0, compile `4.735853s`, execution `0.000s`.
+  - full LogReg regression class under exact Docker cost environment:
+    `/tmp/g007-dp-logreg-full-class-exact-cost-green-20260731.log`,
+    Maven return code 0.
+  - placement transaction, same-Hop occurrence, registry merge 및 applied traversal receipt:
+    `/tmp/g007-dp-registry-core-regressions-default-cost-v2-20260731.log`,
+    69 tests, failure/error 0.
+  - DP LM/L2SVM/PCA 및 derived-authority 회귀:
+    `/tmp/g007-dp-lm-l2svm-pca-emission-regressions-20260731.log`,
+    Maven return code 0.
+  - REFED fail-closed/authority/rematerialization/duplicate-consumer integration 회귀:
+    `/tmp/g007-refed-fallback-integration-regressions-20260731.log`,
+    Maven return code 0.
+  - 수정 전 commit의 stale fixed-count contract도 별도 worktree에서 동일하게 실패:
+    `/tmp/g007-baseline-aggregate-receipt-test.log`.
+- **잔여 이슈**:
+  - checkstyle/RAT 포함 package, 새 immutable stage, 정확한 DP/LogReg/2-worker/LAN
+    Docker runtime canary를 완료해야 한다.
+  - canary 성공 후 기존 33개 row를 버리고, 새 root에서
+    `DP → FedAll → Heuristic → MinST` 336 cells를 각 한 번씩 실행해야 한다.
+- **잠재 회귀 위험**:
+  - 동일 source slot의 action들이 다른 durable anchor를 가질 때 잘못 합쳐지면 authority가 손상될 수 있다.
+    감지 방법: registry conflict 회귀와 transaction prevalidation/rollback 테스트를 유지한다.
+  - raw memo closure와 actual traversal이 다른 경우 receipt category 수가 달라질 수 있다.
+    감지 방법: 고정 개수가 아니라 exact category disjointness, analysis identity,
+    normalized coverage 및 canonical ordering을 검증한다.
+- **의사결정 근거/적용 원칙**:
+  - 선택된 합법 relocation을 닫지 않고, planner가 비용화한 두 exact consumer obligation을
+    runtime registry의 단일 source + consumer-set 표현으로 정확히 투영했다.
+  - runtime fallback/repair, candidate-space 축소, TRead/TWrite `<CP,FOUT>` 완화,
     recompile `<CP,FOUT>` 허용은 하지 않았다.

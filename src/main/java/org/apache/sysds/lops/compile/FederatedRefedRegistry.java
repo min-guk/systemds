@@ -67,12 +67,23 @@ public final class FederatedRefedRegistry {
 		REFED_ANCHORS.compute(sbId, (scopeId, existingScope) -> {
 			Map<Long, AnchorSpec> scope = existingScope != null ? existingScope : new ConcurrentHashMap<>();
 			scope.compute(hopId, (registeredHopId, existingSpec) ->
-				existingSpec == null ? spec : mergeCompatible(existingSpec, spec, sbId, hopId));
+				existingSpec == null ? spec : mergeCompatibleAuthority(existingSpec, spec, sbId, hopId));
 			return scope;
 		});
 	}
 
-	private static AnchorSpec mergeCompatible(AnchorSpec existing, AnchorSpec incoming, long sbId, long hopId) {
+	/**
+	 * Purely validates and merges two REFED authorities for one registry slot.
+	 *
+	 * <p>This method performs no registry mutation. Placement emission uses it
+	 * during transaction prevalidation so compatible consumer-specific
+	 * relocations can be represented by one source entry without weakening the
+	 * registry's conflicting-authority checks.</p>
+	 */
+	public static AnchorSpec mergeCompatibleAuthority(AnchorSpec existing, AnchorSpec incoming,
+		long sbId, long hopId) {
+		Objects.requireNonNull(existing, "existing");
+		Objects.requireNonNull(incoming, "incoming");
 		long existingAnchorHopId = existing.getAnchorHopId();
 		long incomingAnchorHopId = incoming.getAnchorHopId();
 		String existingAnchorKey = normalizeAnchorKey(existing.getAnchorKey());
