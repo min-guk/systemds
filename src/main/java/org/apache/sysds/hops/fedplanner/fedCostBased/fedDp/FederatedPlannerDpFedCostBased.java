@@ -3043,29 +3043,49 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 
 			if (allowTransientFamilyRefine) {
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "chosen", decisionMapScoreCache);
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				nextDecisions = alignTransientReadsWithProducerDecisions(
 					memoTable, conflictCheckMap, nextDecisions, transientReadParentsCache, iter);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "aligned-1", decisionMapScoreCache);
 				nextDecisions = refineTransientFamilyDecisions(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "transient-family",
+					decisionMapScoreCache);
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				nextDecisions = alignTransientReadsWithProducerDecisions(
 					memoTable, conflictCheckMap, nextDecisions, transientReadParentsCache, iter);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "aligned-2", decisionMapScoreCache);
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, decisionMapScoreCache);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "required-closure-1",
+					decisionMapScoreCache);
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				nextDecisions = alignTransientReadsWithProducerDecisions(
 					memoTable, conflictCheckMap, nextDecisions, transientReadParentsCache, iter);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "aligned-3", decisionMapScoreCache);
 				nextDecisions = normalizeMultiWriteTransientVariableFamilies(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, lockedDecisions, iter,
 					simulationDecisionCache, decisionMapScoreCache);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "multi-write-normalize",
+					decisionMapScoreCache);
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				// Multi-write normalization may change a producer after the first closure pass.
 				// Re-close the resulting map before scoring it: rewrite cannot assign one exact
 				// compiled occurrence both the inherited edge state and a deferred global state.
 				nextDecisions = refineRequiredOutputClosureDecisions(
 					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, decisionMapScoreCache);
+				traceDecisionMapRefinementStage(
+					memoTable, rootPlan, conflictCheckMap, nextDecisions, iter, "required-closure-2",
+					decisionMapScoreCache);
 				nextDecisions = applyLockedOutputDecisions(nextDecisions, lockedDecisions);
 				logDecisionMapScoreBreakdown(
 					memoTable, rootPlan, conflictCheckMap, decisions, nextDecisions, iter, decisionMapScoreCache);
@@ -4170,6 +4190,35 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return refinedDecisions;
 	}
 
+	private static void traceDecisionMapRefinementStage(
+		FederatedPlannerDpMemoTable memoTable,
+		FederatedPlannerDpMemoTable.FedPlan rootPlan,
+		Map<Long, ConflictEntry> conflictCheckMap,
+		Map<Long, FederatedOutput> decisions,
+		int iter,
+		String stage,
+		DecisionMapScoreCache scoreCache) {
+
+		if (!FederatedPlannerTrace.isEnabled() || memoTable == null || rootPlan == null
+			|| conflictCheckMap == null || conflictCheckMap.isEmpty())
+			return;
+
+		LinkedHashMap<Long, FederatedOutput> tracedDecisions = new LinkedHashMap<>();
+		for (long hopID : conflictCheckMap.keySet()) {
+			Hop hopRef = memoTable.resolveOriginalHop(hopID);
+			if (FederatedPlannerTrace.shouldTrace(hopRef))
+				tracedDecisions.put(hopID, decisions != null ? decisions.get(hopID) : null);
+		}
+		if (tracedDecisions.isEmpty())
+			return;
+
+		DecisionMapScoreBreakdown score =
+			computeDecisionMapScoreBreakdown(memoTable, rootPlan, decisions, scoreCache);
+		FederatedPlannerTrace.logGlobal("DP-DecisionMap-Stage", String.format(Locale.ROOT,
+			"iter=%d stage=%s missing=%d incompatible=%d total=%.6f decisions=%s",
+			iter, stage, score.missingRootCount, score.incompatiblePlanCount, score.totalCost, tracedDecisions));
+	}
+
 	private static void logDecisionMapScoreBreakdown(
 		FederatedPlannerDpMemoTable memoTable,
 		FederatedPlannerDpMemoTable.FedPlan rootPlan,
@@ -4200,13 +4249,15 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			FederatedPlannerTrace.log(traceHop, "DP-DecisionMap-Score", String.format(Locale.ROOT,
 				"iter=%d currentTotal=%.6f nextTotal=%.6f currentMain=%.6f nextMain=%.6f "
 					+ "currentAdditional=%.6f nextAdditional=%.6f currentVirtual=%.6f nextVirtual=%.6f "
-					+ "currentMissing=%d nextMissing=%d currentRoots=%d nextRoots=%d",
+					+ "currentMissing=%d nextMissing=%d currentIncompatible=%d nextIncompatible=%d "
+					+ "currentRoots=%d nextRoots=%d",
 				iter,
 				currentScore.totalCost, nextScore.totalCost,
 				currentScore.mainRootCost, nextScore.mainRootCost,
 				currentScore.additionalRootCost, nextScore.additionalRootCost,
 				currentScore.virtualAdditionalRootCost, nextScore.virtualAdditionalRootCost,
 				currentScore.missingRootCount, nextScore.missingRootCount,
+				currentScore.incompatiblePlanCount, nextScore.incompatiblePlanCount,
 				currentScore.rootContributions.size(), nextScore.rootContributions.size()));
 			for (RootContribution contribution : nextScore.rootContributions.values()) {
 				if (!contribution.additionalRoot && !contribution.virtualClone)
@@ -4336,6 +4387,18 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				memoTable, state.getKey(), state.getValue(), outputDecisions);
 			if (selectedPlan == null) {
 				incompatiblePlans++;
+				Hop hopRef = memoTable.resolveOriginalHop(state.getKey());
+				if (FederatedPlannerTrace.shouldTrace(hopRef)) {
+					long origHopID = memoTable.resolveOriginalHopId(state.getKey());
+					FederatedPlannerDpMemoTable.FedPlanVariants variants =
+						memoTable.getFedPlanVariants(Pair.of(state.getKey(), state.getValue()));
+					FederatedPlannerTrace.log(hopRef, "DP-DecisionMap-Incompatible", String.format(Locale.ROOT,
+						"concrete=%d original=%d desired=%s decision=%s variants=%d",
+						state.getKey(), origHopID, state.getValue(),
+						outputDecisions != null ? outputDecisions.get(origHopID) : null,
+						variants != null && variants.getFedPlanVariants() != null
+							? variants.getFedPlanVariants().size() : 0));
+				}
 				selectedPlan = memoTable.getFedPlanAfterPrune(state.getKey(), state.getValue());
 			}
 			if (selectedPlan == null || selectedPlan.getChildFedPlans() == null)
