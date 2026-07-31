@@ -1967,6 +1967,14 @@ public final class FederatedRefedPolicy {
 				String anchorKey = FederatedPlannerUtils.getFedAnchorKey(name);
 				if (anchorKey != null && !isVarAnchorKey(anchorKey))
 					return true;
+				// A runtime-recompiled TRead of a dominating selected FED/FOUT TWrite reads the
+				// federated symbol-table value established by that write. The TWrite input (or its
+				// explicit materialization) is the physical conversion owner; registering REFED on
+				// the TRead would instead upload a value that is already federated and violates the
+				// exact <FED,FOUT> transient forwarding plan.
+				if (isRuntimePlanLocked()
+					&& hasDominatingPlannedFederatedWrite(dataOp, GLOBAL_TWRITE_CACHE.get()))
+					return true;
 				// During FED-input enforcement we may register a refed/materialize upload for this
 				// transient read in the same statement block. In that case the input is valid for
 				// FED execution, even if the read itself stays planned as CP/LOUT.

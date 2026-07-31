@@ -619,8 +619,8 @@
 
 ## FedAll StepLM의 exact selector가 독립 placement 성분을 전역 Cartesian으로 열거
 
-- **상태**: 진행중 — 첫 admissible-bound 수정의 실제 Docker 실패를 봉인했고, 성분별 exact
-  구조 수정의 RED→GREEN 회귀/package까지 완료; 새 Docker canary 대기
+- **상태**: 해결 — 성분별 exact 구조 수정이 실제 Docker에서 compile 병목을 제거함을 확인;
+  이후 드러난 함수 재컴파일 TRead REFED 오류는 다음 독립 이슈에서 추적
 - **환경/조건**:
   - 최초 실패 소스 commit/JAR: `b5e0c6534b31b495d35167e357fc61b3861e8821` /
     `c30681bbe2f5168a6ecb33491b032c5b5aa451340741e7573d9a7163ad2450aa`
@@ -700,12 +700,15 @@
     `CampaignBFedAllExactAdapterContractTest`.
   - `git diff --check` GREEN, `mvn -q -DskipTests package` return code 0; 성분 수정 working-tree
     JAR SHA-256 `8b01a2310081030047a8b457993a7eb1c67d6b259064a5dc3b3364cadddd0dae`.
+  - 성분 수정 commit `f885bc02f67fa1396bc03242f0a57a1c94fed733`의 새 immutable stage
+    `/home/mchoi/g007-fedall-component-stage-f885bc0-20260731-v1/`
+    `g007-stage-dbc6a27358af1d432b71282165f749ced0213fe43481063901149f1bddb84391`에서
+    동일 FedAll/StepLM/1-worker/LAN canary를 실행했다. initial compile `2.649928`초,
+    FedPlanner `0.632131`초로 완료되어 과거 520/1,435초 exact-search 정체는 재현되지 않았다.
+    이 attempt는 이후 함수 재컴파일의 독립 TRead REFED 오류로 실패했으며 아래 이슈에 불변 보존했다.
 - **잔여 이슈**:
-  - 성분 수정 commit과 새 immutable stage를 만든 뒤, 과거 실패와 정확히 같은
-    FedAll/StepLM/1-worker/LAN Docker canary를 새 stage의 attempt 1로 실행해
-    compile/runtime/semantic oracle을 확인한다.
-  - canary 성공 후 zero-row 336-cell campaign을 새 경로에서 DP → FedAll → Heuristic → MinST로
-    다시 시작한다. 모든 과거 DP/FedAll 성공 row는 backfill하지 않는다.
+  - exact selector 이슈 자체의 잔여 작업은 없다. 아래 독립 TRead REFED 수정의 새 immutable
+    Docker canary가 성공한 뒤에만 zero-row 336-cell campaign을 시작한다.
 - **잠재 회귀 위험**:
   - relocation activation에 관여하는 source/consumer를 분해에서 누락하면 relocation 수를 성분별로
     잘못 최소화할 수 있다. 감지 방법: 모든 동일 value-version decision source와 obligation consumer를
@@ -720,3 +723,75 @@
   - runtime capability나 candidate space를 축소하지 않고 exact objective의 독립성을 증명할 수 있는
     성분만 분해했다. runtime fallback/repair, TRead/TWrite 완화, recompile CP/FOUT 허용,
     opcode별 skip/continue는 추가하지 않았다.
+
+## FedAll StepLM 함수 재컴파일이 FED/FOUT TWrite의 TRead에 REFED upload를 중복 등록
+
+- **상태**: 진행중 — 실제 실패를 불변 봉인하고 RED→GREEN 통합 회귀, 관련 policy 회귀,
+  package를 완료; 새 commit과 Docker canary 대기
+- **환경/조건**:
+  - 소스 commit/JAR: `f885bc02f67fa1396bc03242f0a57a1c94fed733` /
+    `8b01a2310081030047a8b457993a7eb1c67d6b259064a5dc3b3364cadddd0dae`
+  - immutable stage:
+    `/home/mchoi/g007-fedall-component-stage-f885bc0-20260731-v1/`
+    `g007-stage-dbc6a27358af1d432b71282165f749ced0213fe43481063901149f1bddb84391`
+  - 실패 canary:
+    `/home/mchoi/g007-fedall-steplm-component-canary-f885bc0-d60da24-20260731-v1`
+  - 플래너/워크로드: FedAll / StepLM / 1 worker / LAN / private-aggregate / `mkl-fout`
+  - 실행 경로: 위 immutable stage의 `run_LAN_docker.sh`, exact cell attempt 1
+- **재현 절차**:
+  - 위 stage에서 과거와 동일한 FedAll/StepLM/1-worker/LAN cell을 한 번 실행한다.
+  - 소형 결정적 통합 회귀:
+    `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedAll.`
+    `CampaignBG014FedAllStepLmTransientReadRefedRedTest test`.
+  - 회귀는 seed `2026072701`, private-aggregate binary matrix, 실제 local federated worker,
+    `compile_fed_all`, 실제 built-in `steplm`과 `DMLScript.executeScript`를 사용해 함수 runtime
+    recompile 경로를 통과한다.
+- **관측 증상**:
+  - selector 수정 후 initial compile은 `2.649928`초, FedPlanner는 `0.632131`초로 정상 종료했다.
+  - 실행 `126.967`초 뒤 함수 재컴파일에서 다음 오류가 발생했다:
+    `fed_refed lowering cannot upload transient read of a FED/FOUT transient write for hop=394 label=X_global`.
+  - response는 `success=false`, `failure_category=runtime_scan`, `return_code=1`,
+    `teardown_zero_resources=true`였다. 따라서 compile-time exact-search 문제와 구분되는 독립 실패다.
+- **원인 분석**:
+  - runtime recompile은 `FederatedRefedPolicy.registerFromHops(... runtimeContext ...)`를 호출한다.
+  - runtime validation은 이미 `hasDominatingPlannedFederatedWrite(...)`로 선택된 FED/FOUT TWrite의
+    지배 lineage를 인정하지만, `isRuntimeFederatedInput`의 `TRANSIENTREAD` 분기는 같은 lineage를
+    federated input으로 인정하지 않았다.
+  - 그 결과 required-FED consumer가 이미 FED/FOUT symbol-table value를 읽는 TRead를 local input으로
+    오인하고 TRead 자체에 REFED upload를 등록했다. 실제 conversion owner는 지배 TWrite의 input 또는
+    그 explicit materialization이어야 하므로 lowering 단계가 중복 upload를 fail-closed했다.
+- **해결 요약**:
+  - runtime plan이 locked이고 해당 TRead에 지배하는 선택된 FED/FOUT TWrite가 있으면
+    `isRuntimeFederatedInput`이 그 TRead를 이미 federated인 symbol-table read로 인정한다.
+  - placement를 바꾸거나 runtime에서 보정하지 않으며, TRead에 새 upload를 만들지 않는다.
+    물리 conversion은 선택된 TWrite input/명시적 materialization이 계속 소유한다.
+  - TRead/TWrite 허용쌍은 그대로 `<FED,FOUT>`이고, `<CP,FOUT>`이나 recompile 예외를 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/`
+    `CampaignBG014FedAllStepLmTransientReadRefedRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-31.md`
+- **검증**:
+  - 생산 hunk를 제거하면 소형 실제 StepLM 회귀가 동일 `hop=394`, `X_global` lowering 예외로 RED였다.
+  - hunk를 복원하면 함수 recompile, federated instruction 실행, 결과 write까지 완료하며 GREEN이다.
+  - fresh 통합/회귀 suite 50/50 GREEN:
+    `FederatedRefedPolicyTest` 47, DP StepLM decision-map closure 1,
+    DP StepLM function-input candidate 1, 새 FedAll StepLM transient-read 1.
+  - `git diff --check` GREEN, `mvn -q -DskipTests package` return code 0;
+    working-tree JAR SHA-256
+    `b21567c392883a126844ce8bf7b561d6f1de5f5734d89e904e41a72983db8d64`.
+- **잔여 이슈**:
+  - 수정 commit/JAR의 새 immutable artifact/stage를 만들고, 동일 exact canary를 attempt 1로 한 번만
+    실행해 runtime/semantic oracle과 zero-resource teardown을 확인한다.
+  - 성공한 경우에만 새 zero-row 336-cell campaign을 DP → FedAll → Heuristic → MinST 순서로 시작한다.
+    실패하면 canary를 수정/재사용하거나 retry/backfill하지 않고 새 원인을 분석한다.
+- **잠재 회귀 위험**:
+  - 이름이 같은 TWrite가 dominance 밖에 있는 경우 TRead를 잘못 federated로 볼 위험이 있다.
+    감지 방법: 기존 `hasDominatingPlannedFederatedWrite`의 hop/statement-block lineage 판정을 재사용하고
+    runtime-plan-lock 조건을 유지하며 `FederatedRefedPolicyTest`와 실제 function recompile 회귀를 유지한다.
+  - TWrite input materialization이 누락되면 TRead upload를 제거한 뒤 실제 데이터가 없을 수 있다.
+    감지 방법: 새 Docker canary에서 결과 semantic oracle과 federated instruction execution을 함께 확인하고,
+    runtime fallback 없이 TWrite 쪽 explicit materialization receipt를 검증한다.
+- **의사결정 근거/적용 원칙**:
+  - 오라클/플래너의 동일 lineage 판단 불일치를 바로잡았다. runtime fallback/repair, TRead/TWrite 규칙
+    완화, recompile `<CP,FOUT>` 허용, candidate-space 축소는 하지 않았다.
