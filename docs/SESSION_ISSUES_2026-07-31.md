@@ -503,3 +503,88 @@
 - **의사결정 근거/적용 원칙**:
   - provenance·symlink·tree identity 검증을 완화하지 않고 정확한 content-addressed source와
     원래 inode mode를 복원했다. runtime/planner 동작이나 candidate space는 변경하지 않았다.
+
+## DP PCA 4-worker에서 하나의 exact occurrence가 CP/LOUT와 FED/FOUT로 이중 선택
+
+- **상태**: 진행중 — 구조 수정/회귀/package GREEN, 새 immutable Docker canary 및 336-cell campaign 대기
+- **환경/조건**:
+  - 실패 소스 commit/JAR: `1b204449bed1ee2e54458ca525ef3a7bdd2b244d` /
+    `7fc2e32896402e5f21491e8b20cd445ae50783a18be741478f5fa9371244383e`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-refed-anchor-1b20444-d60da24-20260731-v1`
+  - 실패 cell:
+    `planners/DP/cells/067-2208e5356221`
+  - 플래너/워크로드: DP / PCA / 4 row-partition workers / LAN / private-aggregate
+  - 고정 데이터/seed: campaign manifest의 PCA dataset 및 seed를 그대로 사용
+  - 실행 경로: stage-local `run_LAN_docker.sh`만 사용, exact cell 1회
+- **재현 절차**:
+  - campaign manifest 순서상 67번째 cell을 실행하면 compile 단계에서 중단한다.
+  - 최소 Docker-equivalent RED 회귀:
+    `mvn -q -Dskip.license.check=true -Dskip.spotless.check=true `
+    `-Dtest=CampaignBG014DpPcaRefedLoweringRedTest#`
+    `pcaDpFourRowPartitionsKeepOneExactSelectionPerOccurrence test`
+  - RED 로그:
+    `/tmp/g007-dp-pca-4worker-selection-red-20260731.log`.
+- **관측 증상**:
+  - `.builtinNS::m_pca`의 centered `X` hop `b(-)` 한 occurrence가 한 부모 경로에서는
+    `CP/LOUT`, 다른 부모 경로에서는 `FED/FOUT/ROW`로 선택됐다.
+  - rewrite는 한 emitted occurrence에 두 exact state를 적용할 수 없으므로
+    `DP occurrence has disagreeing exact selections`로 정확히 fail-closed했다.
+  - 기존 decision-map score는 output decision이 없는 hop에 대해 각 incoming edge의 output을
+    독립적으로 상속했다. 따라서 두 raw `(hopID, output)` 경로는 각각 합법으로 계산됐지만,
+    합친 forest는 실행 불가능했다.
+  - 동일 fixture가 기본 비용 상수에서는 통과하고 Docker LAN 비용 상수에서만 재현되어,
+    rand/seed/dataset/cache 문제가 아니라 비용 선택 뒤 구조 closure 누락임을 확인했다.
+- **원인 분석**:
+  - DP memo에는 LOUT/FOUT 두 합법 후보가 모두 존재했고, runtime capability나 oracle이 후보를
+    잘못 닫은 문제는 아니었다.
+  - `countIncompatibleDecisionMapPlans`가 required-output 좌표의 존재만 검사하고,
+    서로 다른 root/parent traversal이 같은 `CompiledHopKey`에 어떤 exact
+    `PlacementState`를 선택했는지는 합치지 않았다.
+  - output map에 해당 original hop 결정이 누락되면 rewrite까지 내려간 뒤에야 identity 충돌을
+    발견했으며, refinement는 이를 비용 비교 대상으로 다시 올릴 정보가 없었다.
+- **해결 요약**:
+  - decision-map 구조 점수 traversal에서 analysis-owned `CompiledHopKey`별 exact
+    `SelectedDpState`를 identity 기준으로 합친다. 같은 occurrence의 exec/output/FType 또는
+    derived bit가 다르면 구조적 incompatibility로 계산하고 original hop ID를 receipt로 남긴다.
+  - 새 exact-occurrence refinement는 충돌 hop마다 `<LOUT,FOUT>` 두 output을 모두 명시적으로
+    적용해 기존 complete-forest 구조 점수와 전체 비용으로 평가한다.
+  - 구조 incompatibility를 실제로 줄이는 후보만 채택하고, 여러 합법 후보가 동일하게 구조를
+    닫으면 기존 total-cost 비교로 선택한다. 각 채택은 incompatibility를 엄격히 줄이므로
+    반복은 유한하며, 해결 후보가 없으면 기존 최종 executable guard가 fail-closed한다.
+  - analysis가 없는 legacy synthetic memo unit fixture에는 occurrence identity가 존재하지 않으므로
+    기존 좌표 기반 검증을 유지한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/`
+    `FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/`
+    `CampaignBG014DpPcaRefedLoweringRedTest.java`
+  - `docs/SESSION_ISSUES_2026-07-31.md`
+- **검증**:
+  - 새 회귀는 수정 전 Docker와 동일한 centered-X exact-selection 예외로 RED였다.
+  - 수정 후 exact 회귀 및 클래스 전체 GREEN:
+    `/tmp/g007-dp-pca-4worker-selection-green-attempt3-20260731.log`,
+    `/tmp/g007-dp-pca-regression-class-20260731.log`.
+  - trace에서 충돌 hop `270`을 명시적 `LOUT`으로 닫아
+    `incompatibleBefore=1`, `incompatibleAfter=0`임을 확인:
+    `/tmp/g007-dp-pca-4worker-selection-trace-green-20260731.log`.
+  - StepLM/LM/L2SVM/LogReg/disconnected/refed-policy 인접 회귀 61개 GREEN:
+    `/tmp/g007-dp-exact-selection-related-regressions-20260731.log`.
+  - `mvn -q -DskipTests package` return code 0:
+    `/tmp/g007-dp-exact-selection-package-20260731.log`.
+- **잔여 이슈**:
+  - 변경을 commit하고 새 JAR/content-addressed immutable stage를 만들어야 한다.
+  - 과거 실패 campaign은 수정하거나 이어서 쓰지 않는다. 새 stage에서 정확한
+    DP/PCA/4-worker/LAN canary를 1회 실행해 runtime/semantic oracle을 통과한 뒤,
+    새 336-cell campaign을 `DP → FedAll → Heuristic → MinST` 순서로 각 cell 1회 실행한다.
+- **잠재 회귀 위험**:
+  - 여러 exact conflict를 차례로 닫을 때 앞선 선택이 뒤 conflict의 비용/합법성을 바꿀 수 있다.
+    감지 방법: 매 단계 complete-forest score를 다시 계산하고 incompatibility가 엄격히 감소할
+    때만 채택하며, 최종 guard와 multi-root/function/loop 회귀를 유지한다.
+  - 동일 output이지만 서로 다른 exec/FType exact state가 충돌하는 경우 output-only map으로
+    해결되지 않을 수 있다. 감지 방법: exact-state identity score는 이 경우도 계속 fail-closed하며,
+    향후 발생 시 state 표현 확장으로 해결하고 candidate guard나 runtime fallback은 추가하지 않는다.
+- **의사결정 근거/적용 원칙**:
+  - 합법 후보를 닫지 않고 기존 DP의 비용 기반 철학으로 두 placement를 비교해 하나의 executable
+    occurrence state를 명시했다. runtime fallback/repair, TRead/TWrite 규칙 완화,
+    recompile `<CP,FOUT>` 허용, opcode별 skip/continue 가드는 추가하지 않았다.
