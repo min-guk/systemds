@@ -726,8 +726,8 @@
 
 ## FedAll StepLM 함수 재컴파일이 FED/FOUT TWrite의 TRead에 REFED upload를 중복 등록
 
-- **상태**: 진행중 — 실제 실패를 불변 봉인하고 RED→GREEN 통합 회귀, 관련 policy 회귀,
-  package를 완료; 새 commit과 Docker canary 대기
+- **상태**: 해결 — commit/package와 새 immutable Docker canary까지 통과; 동일 stage의 새
+  zero-row 336-cell campaign 진행중
 - **환경/조건**:
   - 소스 commit/JAR: `f885bc02f67fa1396bc03242f0a57a1c94fed733` /
     `8b01a2310081030047a8b457993a7eb1c67d6b259064a5dc3b3364cadddd0dae`
@@ -780,11 +780,24 @@
   - `git diff --check` GREEN, `mvn -q -DskipTests package` return code 0;
     working-tree JAR SHA-256
     `b21567c392883a126844ce8bf7b561d6f1de5f5734d89e904e41a72983db8d64`.
+  - 수정 commit: `7fac50ddfdfb5159ad97652dbbb3dcd51154eb38`.
+  - 새 immutable artifact/stage:
+    `/home/mchoi/g007-systemds-artifact-7fac50d-20260731-v1`,
+    `/home/mchoi/g007-fedall-tread-stage-7fac50d-20260731-v1/`
+    `g007-stage-ae3713c53aee682ae72f93e39e40e59bfdeef32e1820216c83c652b14a2f2456`.
+    stage identity는 source commit `7fac50d`, 위 JAR SHA, harness `d60da24`, 기존 고정 data/reference
+    tree를 결합하며 descriptor validation을 통과했다.
+  - 동일 exact FedAll/StepLM/1-worker/LAN canary를 새 경로
+    `/home/mchoi/g007-fedall-steplm-tread-canary-7fac50d-d60da24-20260731-v1`에서 attempt 1로
+    한 번만 실행해 PASS: execution `100.185535482`초, full lifecycle `120.774761823`초,
+    semantic oracle/runtime scan clean, coordinator/worker restart 0/0, zero-resource teardown true.
 - **잔여 이슈**:
-  - 수정 commit/JAR의 새 immutable artifact/stage를 만들고, 동일 exact canary를 attempt 1로 한 번만
-    실행해 runtime/semantic oracle과 zero-resource teardown을 확인한다.
-  - 성공한 경우에만 새 zero-row 336-cell campaign을 DP → FedAll → Heuristic → MinST 순서로 시작한다.
-    실패하면 canary를 수정/재사용하거나 retry/backfill하지 않고 새 원인을 분석한다.
+  - canary 성공 뒤 새 zero-row campaign
+    `/home/mchoi/g007-all-planners-tread-7fac50d-d60da24-20260731-v1`을 시작했다.
+    DP → FedAll → Heuristic → MinST 순서, 336개 exact cell, attempt 1, retry/backfill 없음,
+    `run_LAN_docker.sh` 전용 조건으로 완료 여부를 감시한다.
+  - 실패하면 현재 campaign을 불변 보존하고 실패 cell을 재실행하지 않은 채 구조 원인을 분석한다.
+    모두 성공하면 plan fingerprint/정책 차이와 실행시간 정렬을 검증하고 그래프를 생성한다.
 - **잠재 회귀 위험**:
   - 이름이 같은 TWrite가 dominance 밖에 있는 경우 TRead를 잘못 federated로 볼 위험이 있다.
     감지 방법: 기존 `hasDominatingPlannedFederatedWrite`의 hop/statement-block lineage 판정을 재사용하고
