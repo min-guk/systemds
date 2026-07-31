@@ -6231,6 +6231,22 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 					memoTable, childHopID, desiredChildOut, outputDecisions);
 				if (childPlan == null)
 					childPlan = memoTable.getFedPlanAfterPrune(childHopID, desiredChildOut);
+
+				// The selected parent edge proves that this concrete occurrence is part
+				// of the plan forest even when the current family-wide decision has no
+				// variant for the occurrence. Retain the member before traversal stops,
+				// so the next feasibility refresh rejects that impossible family choice.
+				// This records planner evidence only; it does not create or execute a
+				// fallback plan.
+				ConflictEntry entry = conflictCheckMap.get(childOrigHopID);
+				if (entry == null) {
+					conflictCheckMap.put(childOrigHopID,
+						new ConflictEntry(childOut, current, childHopID, childPlan));
+				}
+				else {
+					entry.addUsage(childOut, current, childHopID, childPlan);
+				}
+
 				if (childPlan == null) {
 					String msg = "NULL FedPlan for hop " + childHopID
 						+ " as child of hop " + (currentHop != null ? currentHop.getHopID() : -1)
@@ -6239,15 +6255,6 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 						throw new DMLRuntimeException(msg);
 					FederatedPlannerLogger.logNullFedPlanError(childHopID, msg);
 					continue;
-				}
-
-				ConflictEntry entry = conflictCheckMap.get(childOrigHopID);
-				if (entry == null) {
-					conflictCheckMap.put(childOrigHopID,
-						new ConflictEntry(childOut, current, childHopID, childPlan));
-				}
-				else {
-					entry.addUsage(childOut, current, childHopID, childPlan);
 				}
 
 				queue.add(childPlan);
