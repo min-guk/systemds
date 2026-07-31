@@ -431,9 +431,9 @@
     canary가 cache/network 준비를 선행한 warm-primary 실행 순서의 관측값이다. 전체 matrix
     완료 전에는 이 차이를 planner 성능 정렬의 근거로 사용하지 않는다.
 - **잔여 이슈**:
-  - 기존 실패 campaign row를 재사용하지 않는 새 campaign
-    `/home/mchoi/g007-all-planners-refed-anchor-1b20444-d60da24-20260731-v1`에서
-    `DP → FedAll → Heuristic → MinST` 336 cells를 각 한 번씩 실행 중이다.
+  - 이 campaign은 이후 DP/PCA/4-worker/LAN 67번째 cell의 exact-occurrence 충돌로
+    fail-closed했으며, 성공 row를 재사용하지 않고 아래 `b5e0c65` 새 campaign으로
+    supersede했다.
   - 전체 성공 후 workload별 planner differentiation 및 허용 오차를 둔
     `MinST <= DP <= Heuristic, FedAll` 실행시간 정렬을 검증해야 한다.
 - **잠재 회귀 위험**:
@@ -506,7 +506,7 @@
 
 ## DP PCA 4-worker에서 하나의 exact occurrence가 CP/LOUT와 FED/FOUT로 이중 선택
 
-- **상태**: 진행중 — 구조 수정/회귀/package GREEN, 새 immutable Docker canary 및 336-cell campaign 대기
+- **상태**: 해결 — 구조 수정/회귀/package/정확한 Docker canary GREEN, 새 336-cell campaign 실행중
 - **환경/조건**:
   - 실패 소스 commit/JAR: `1b204449bed1ee2e54458ca525ef3a7bdd2b244d` /
     `7fc2e32896402e5f21491e8b20cd445ae50783a18be741478f5fa9371244383e`
@@ -517,6 +517,8 @@
   - 플래너/워크로드: DP / PCA / 4 row-partition workers / LAN / private-aggregate
   - 고정 데이터/seed: campaign manifest의 PCA dataset 및 seed를 그대로 사용
   - 실행 경로: stage-local `run_LAN_docker.sh`만 사용, exact cell 1회
+  - 수정 소스 commit/JAR: `b5e0c6534b31b495d35167e357fc61b3861e8821` /
+    `c30681bbe2f5168a6ecb33491b032c5b5aa451340741e7573d9a7163ad2450aa`
 - **재현 절차**:
   - campaign manifest 순서상 67번째 cell을 실행하면 compile 단계에서 중단한다.
   - 최소 Docker-equivalent RED 회귀:
@@ -568,15 +570,41 @@
   - trace에서 충돌 hop `270`을 명시적 `LOUT`으로 닫아
     `incompatibleBefore=1`, `incompatibleAfter=0`임을 확인:
     `/tmp/g007-dp-pca-4worker-selection-trace-green-20260731.log`.
-  - StepLM/LM/L2SVM/LogReg/disconnected/refed-policy 인접 회귀 61개 GREEN:
-    `/tmp/g007-dp-exact-selection-related-regressions-20260731.log`.
-  - `mvn -q -DskipTests package` return code 0:
-    `/tmp/g007-dp-exact-selection-package-20260731.log`.
+  - PCA/StepLM/LM/L2SVM/LogReg/disconnected/refed-policy 최종 인접 회귀 묶음 GREEN:
+    `/tmp/g007-dp-exact-selection-final-regressions-20260731.log`.
+  - checkstyle/RAT를 포함한 최종 package return code 0:
+    `/tmp/g007-dp-exact-selection-final-package-20260731.log`.
+  - 수정 commit: `b5e0c6534b31b495d35167e357fc61b3861e8821`.
+  - 새 immutable stage:
+    `/home/mchoi/g007-dp-pca-exact-stage-b5e0c65-20260731-v1/`
+    `g007-stage-9b2137baa293710725b0d230eac246249c7d7c41507eb06950a323b7d65e934f`.
+    stage descriptor file SHA-256는
+    `69cf712d6cedc9458bd67dc75d8a9355cbd85f59f7472aa7357a756d6bfdbe3f`,
+    internal descriptor SHA-256는
+    `27933aa4e1215f849004873ba7cba41756ce168f18ded178ec91c5b9389bb96e`이다.
+  - 정확한 DP/PCA/4-worker/LAN Docker canary:
+    `/home/mchoi/g007-dp-pca-exact-canary-b5e0c65-d60da24-20260731-v1`.
+    `execution_seconds=221.391120826`, `full_lifecycle_seconds=249.237654198`,
+    projector relative error `0.0`, reconstruction-loss relative error
+    `2.859380401866628e-16`, runtime scan 4종 false, restart 0/0, teardown zero로 GREEN이다.
+    raw statistics에서 `fed_fed_refed=2`도 확인했다.
+  - 과거 실패 campaign의 성공 row는 재사용하지 않았다. 새 zero-row campaign
+    `/home/mchoi/g007-all-planners-exact-closure-b5e0c65-d60da24-20260731-v1`을
+    2026-07-31T16:36:43Z에 시작했다. master manifest SHA-256는
+    `cf6839ca8681390e2d0db2cd35eac6017f0b40bb13895e3a3f1df8fda2a4c3a4`,
+    seed는 `2026072701`, 순서는 `DP → FedAll → Heuristic → MinST`, 각 exact cell은
+    1회이고 retry/backfill은 없다. PID `2331044`에서 stage-local
+    `run_LAN_docker.sh`만 사용해 실행 중이다.
+  - 첫 campaign cell `workers=1|planner=DP|workload=kmeans|profile=lan`은 attempt 1에서
+    `execution_seconds=92.004711617`, `full_lifecycle_seconds=112.57700064`로 GREEN이다.
+    semantic oracle은 ARI `1.0`, SSE relative error `0.0`, full ID domain valid이며,
+    scan 4종 false, restart 0/0, teardown zero이다. 이어서 두 번째 WAN-light cell이
+    자동 실행되기 시작해 planner-major 순서도 실제 프로세스에서 확인했다.
 - **잔여 이슈**:
-  - 변경을 commit하고 새 JAR/content-addressed immutable stage를 만들어야 한다.
-  - 과거 실패 campaign은 수정하거나 이어서 쓰지 않는다. 새 stage에서 정확한
-    DP/PCA/4-worker/LAN canary를 1회 실행해 runtime/semantic oracle을 통과한 뒤,
-    새 336-cell campaign을 `DP → FedAll → Heuristic → MinST` 순서로 각 cell 1회 실행한다.
+  - 새 campaign의 336개 cell이 모두 runtime/semantic oracle을 통과하는지 감시한다.
+    실패하면 해당 campaign은 immutable하게 보존하고 retry/backfill 없이 구조 원인을 분석한다.
+  - 전체 성공 후 모든 workload에서 네 planner의 실제 plan 차이와 허용 오차를 둔
+    `MinST <= DP <= Heuristic, FedAll` 실행시간 정렬을 검증한다.
 - **잠재 회귀 위험**:
   - 여러 exact conflict를 차례로 닫을 때 앞선 선택이 뒤 conflict의 비용/합법성을 바꿀 수 있다.
     감지 방법: 매 단계 complete-forest score를 다시 계산하고 incompatibility가 엄격히 감소할
