@@ -62,6 +62,56 @@ public class CampaignBG014DpL2SvmCloneFamilyDecisionRedTest {
 			booleanField(family, "canChooseLOUT"));
 	}
 
+	@Test
+	public void outputDecisionsIncludeAndCloseVirtualAdditionalRootFamily() throws Exception {
+		Hop originalRoot = new LiteralOp("originalRoot");
+		Hop cloneRoot = new LiteralOp("cloneRoot");
+		Hop originalChild = new LiteralOp("originalChild");
+		Hop cloneChild = new LiteralOp("cloneChild");
+		Hop ordinaryParent = new LiteralOp("ordinaryParent");
+		Hop aggregate = new LiteralOp("aggregate");
+
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
+		memo.registerCloneMapping(Map.of(
+			cloneRoot.getHopID(), originalRoot.getHopID(),
+			cloneChild.getHopID(), originalChild.getHopID()));
+		memo.registerAdditionalRootHopIDs(List.of(cloneRoot));
+
+		add(memo, originalChild, FederatedOutput.LOUT, ExecType.CP, List.of(), 1.0);
+		add(memo, originalChild, FederatedOutput.FOUT, ExecType.FED, List.of(), 100.0);
+		add(memo, cloneChild, FederatedOutput.LOUT, ExecType.CP, List.of(), 1.0);
+		add(memo, cloneChild, FederatedOutput.FOUT, ExecType.FED, List.of(), 100.0);
+
+		add(memo, originalRoot, FederatedOutput.LOUT, ExecType.CP,
+			List.of(Pair.of(originalChild.getHopID(), FederatedOutput.LOUT)), 2.0);
+		add(memo, originalRoot, FederatedOutput.FOUT, ExecType.FED,
+			List.of(Pair.of(originalChild.getHopID(), FederatedOutput.FOUT)), 1.0);
+		add(memo, cloneRoot, FederatedOutput.LOUT, ExecType.CP,
+			List.of(Pair.of(cloneChild.getHopID(), FederatedOutput.LOUT)), 2.0);
+		add(memo, cloneRoot, FederatedOutput.FOUT, ExecType.FED,
+			List.of(Pair.of(cloneChild.getHopID(), FederatedOutput.FOUT)), 1.0);
+		add(memo, ordinaryParent, FederatedOutput.LOUT, ExecType.CP,
+			List.of(Pair.of(originalChild.getHopID(), FederatedOutput.LOUT)), 1.0);
+
+		FedPlan rootPlan = plan(aggregate, FederatedOutput.LOUT, ExecType.CP,
+			List.of(Pair.of(ordinaryParent.getHopID(), FederatedOutput.LOUT)));
+
+		Map<Long, FederatedOutput> decisions = computeOutputDecisions(memo, rootPlan);
+		Assert.assertEquals("The virtual additional root must receive a family-wide output decision",
+			FederatedOutput.LOUT, decisions.get(originalRoot.getHopID()));
+		Assert.assertEquals("The selected root and child outputs must be closed together",
+			FederatedOutput.LOUT, decisions.get(originalChild.getHopID()));
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Long, FederatedOutput> computeOutputDecisions(
+		FederatedPlannerDpMemoTable memo, FedPlan root) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"computeOutputDecisions", FederatedPlannerDpMemoTable.class, FedPlan.class);
+		method.setAccessible(true);
+		return (Map<Long, FederatedOutput>) method.invoke(null, memo, root);
+	}
+
 	@SuppressWarnings("unchecked")
 	private static Map<Long, Object> collectConflicts(FederatedPlannerDpMemoTable memo, FedPlan root,
 		Map<Long, FederatedOutput> decisions) throws Exception {
@@ -94,8 +144,13 @@ public class CampaignBG014DpL2SvmCloneFamilyDecisionRedTest {
 
 	private static FedPlan add(FederatedPlannerDpMemoTable memo, Hop hop, FederatedOutput output,
 		ExecType exec, List<Pair<Long, FederatedOutput>> children) {
+		return add(memo, hop, output, exec, children, 1.0);
+	}
+
+	private static FedPlan add(FederatedPlannerDpMemoTable memo, Hop hop, FederatedOutput output,
+		ExecType exec, List<Pair<Long, FederatedOutput>> children, double cumulativeCost) {
 		FedPlanVariants variants = variants(hop, output);
-		FedPlan plan = new FedPlan(1.0, variants, children);
+		FedPlan plan = new FedPlan(cumulativeCost, variants, children);
 		plan.setExecType(exec);
 		plan.setFType(FType.ROW);
 		variants.addFedPlan(plan);
