@@ -617,93 +617,106 @@
     occurrence state를 명시했다. runtime fallback/repair, TRead/TWrite 규칙 완화,
     recompile `<CP,FOUT>` 허용, opcode별 skip/continue 가드는 추가하지 않았다.
 
-## FedAll StepLM의 exact selector가 FED/FOUT·relocation 동률 공간을 지수 전수 열거
+## FedAll StepLM의 exact selector가 독립 placement 성분을 전역 Cartesian으로 열거
 
-- **상태**: 진행중 — 원인 확정, RED→GREEN 회귀와 package 성공; 새 Docker canary 대기
+- **상태**: 진행중 — 첫 admissible-bound 수정의 실제 Docker 실패를 봉인했고, 성분별 exact
+  구조 수정의 RED→GREEN 회귀/package까지 완료; 새 Docker canary 대기
 - **환경/조건**:
-  - 실패 소스 commit/JAR: `b5e0c6534b31b495d35167e357fc61b3861e8821` /
+  - 최초 실패 소스 commit/JAR: `b5e0c6534b31b495d35167e357fc61b3861e8821` /
     `c30681bbe2f5168a6ecb33491b032c5b5aa451340741e7573d9a7163ad2450aa`
-  - 실패 campaign:
+  - 최초 실패 campaign:
     `/home/mchoi/g007-all-planners-exact-closure-b5e0c65-d60da24-20260731-v1`
-  - 실패 cell: `planners/FedAll/cells/019-1bdf672e0374`
-  - 플래너/워크로드: FedAll / StepLM / 1 worker / LAN / private-aggregate /
-    `mkl-fout`
-  - 실행 경로: immutable stage의 `run_LAN_docker.sh`; exact cell attempt 1
+  - 최초 실패 cell: `planners/FedAll/cells/019-1bdf672e0374`
+  - 첫 bound 수정 commit/JAR: `5a804b0a539a95116d04540a2c3a6d94cf358c9b` /
+    `7b4462c4fda72b5d359cf59fbba5c16eaf7ecd37e5d3efe07597c2acc1573260`
+  - 첫 수정 canary:
+    `/home/mchoi/g007-fedall-steplm-tie-canary-5a804b0-d60da24-20260731-v1`
+  - 플래너/워크로드: FedAll / StepLM / 1 worker / LAN / private-aggregate / `mkl-fout`
+  - 실행 경로: immutable stage의 `run_LAN_docker.sh`; 각 stage에서 exact cell attempt 1만 실행
 - **재현 절차**:
-  - 위 campaign은 DP 84/84를 모두 통과한 뒤 FedAll 18개 cell을 통과했다.
-  - 19번째 FedAll StepLM LAN cell에서 coordinator Java가 20분 이상 CPU 약 102%를 사용하면서
-    output/statistics를 만들지 않았다.
-  - 비파괴 thread dump:
-    `jcmd 3223280 Thread.print -l >`
+  - 최초 campaign은 DP 84/84를 통과한 뒤 FedAll 18개 cell을 통과했고, 19번째 StepLM LAN
+    cell에서 coordinator가 output/statistics 없이 20분 이상 CPU를 소비했다.
+  - 최초 thread dump:
     `/tmp/g007-fedall-steplm-jstack-20260731T211444Z.txt`
     (SHA-256 `41a5678d0e0bb9035a44b46525e81c3b2c6bc1b90de381be1e315d2047c48d54`).
-  - 동일 결함의 bounded RED:
+  - relocation/signature lower bound를 추가한 `5a804b0` stage로 동일 exact canary를 새 attempt 1로
+    실행했지만 같은 compile 단계에서 다시 진행하지 못했다.
+  - 두 번째 thread dump:
+    `/tmp/g007-fedall-steplm-jstack-5a804b0-20260731T214216Z.txt`
+    (SHA-256 `eba42e38caf3a8f3b486cfe0ca0314802e31624df06271a5416bba032a7aa8bf`).
+  - 구조 결함의 bounded RED:
     `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.placement.selector.`
     `ExactPlacementSelectorBranchAndBoundTest test`.
 - **관측 증상**:
-  - main thread는 `ExactPlacementSelector.canStillBeLegal`과
-    `ExactPlacementSelector$Search.enumerate`의 20단계 이상 재귀에만 머물렀다.
-  - stack 상위 호출은 `FedAllPlacementAdapter.select → FederatedPlannerFedAll.select`였고,
-    runtime FED instruction은 아직 시작되지 않았다.
-  - process는 idle/deadlock이 아니라 사용자 CPU를 계속 소비했다. 1,435.666초 뒤 구조 원인
-    보존을 위해 Java에 SIGTERM을 보내 attempt 1을 실패로 봉인했다. campaign은 DP 84 success,
-    FedAll 18 success + 1 failure에서 종료됐고 성공 row를 재사용하지 않는다.
-  - harness response의 `semantic_oracle` 분류는 SIGTERM으로 output이 비어 생긴 후속 분류이며,
-    실제 최초 원인은 compile-time exact search 폭발이다.
-  - 기존 synthetic 동률 회귀에서 동일 목적 점수의 17개 이진 선택은 131,072개 완전 assignment를
-    탐색했고, relocation 동률 variant도 같은 Cartesian 확장을 보였다.
+  - 두 dump 모두 main thread가 `ExactPlacementSelector.canStillBeLegal`과
+    `ExactPlacementSelector$Search.enumerate`의 20단계 이상 재귀에 머물렀다. 상위 호출은
+    `FedAllPlacementAdapter.select → FederatedPlannerFedAll.select`였고 runtime FED instruction은
+    시작되지 않았다.
+  - 최초 attempt는 1,435.666초, 첫 수정 canary는 520.678초 뒤 SIGTERM으로 실패를 봉인했다.
+    두 response의 `semantic_oracle`은 output 부재의 후속 분류이고 최초 원인은 compile-time
+    exact search 폭발이다. 첫 수정 canary는 `teardown_zero_resources=true`이다.
+  - 첫 bound 수정은 17개 독립 FED/FOUT·relocation 동률 synthetic case를 2^17 전수 열거하지
+    않게 만들었지만 실제 StepLM에는 충분하지 않았다.
+  - 새 18-decision RED는 9개의 서로 독립적인 2-node CONJUNCTIVE 성분으로 구성되며, 기존 구현은
+    각 성분의 합법 선택을 전역 곱으로 결합해 `exploredCount < 100` 계약을 실패했다.
 - **원인 분석**:
-  - 기존 branch-and-bound는 FED count와 FOUT count의 nodewise upper bound만 사용했다.
-  - incumbent와 FED/FOUT 수가 같은 subtree는 distinct relocation 수나 stable normalized signature가
-    더 나을 수 있다는 이유로 하나도 prune하지 않았다.
-  - FedAll의 exact 철학 자체가 문제가 아니라, 이미 계산 가능한 admissible relocation lower bound와
-    lexicographic lower bound를 certificate search가 사용하지 않은 것이 원인이다.
+  - 기존 branch-and-bound의 FED/FOUT upper bound는 아직 배치되지 않은 각 node가 서로 독립적으로
+    최선 state를 취할 수 있다고 계산한다. SAME_PLACEMENT/SAME_FTYPE/CONJUNCTIVE 제약으로 그 상한이
+    도달 불가능한 경우에도 전역 incumbent와 같아질 때까지 큰 subtree를 제거하지 못한다.
+  - relocation/signature lower bound는 완전히 동률인 synthetic 공간에는 유효했지만, 여러 작은
+    제약/relocation 성분의 조합에서는 각 성분의 합법 optimum을 전역 Cartesian으로 다시 열거했다.
+  - FedAll objective나 candidate universe가 아니라 exact solver의 문제 분해 부재가 실제 원인이다.
 - **해결 요약**:
   - candidate universe, legality, score 순서
     `(FED 수 → FOUT 수 → distinct relocation 최소 → normalized signature 최소)`는 그대로 유지했다.
-  - partial assignment에서 어떤 completion도 피할 수 없는 relocation만 세는 하한을 추가했다.
-    consumer state가 이미 required placement이거나 모든 남은 legal state가 action을 요구하고,
-    source의 현재/남은 legal state가 동일 durable anchor를 직접 충족할 수 없을 때만 센다.
-  - 남은 각 node의 lexicographically smallest legal state와 빈 relocation suffix로 모든 completion의
-    normalized-signature 하한을 만든다.
-  - FED/FOUT upper bound가 incumbent와 같고 relocation 하한도 incumbent와 같을 때, 이 최소 서명조차
-    incumbent보다 낫지 않은 subtree만 prune한다. 따라서 후보를 닫거나 근사하지 않고 exact proof를
-    유지한다.
-  - selector contract의 오래된 raw Cartesian-size assertion은 독립 exhaustive oracle의 실제
-    explored/pruned certificate와 비교하도록 바로잡았다. CP/LOUT relocation synthetic fixture는
-    명시적 materialization FType을 전달해 현재 typed constructor 계약을 만족시켰다.
+  - 16개 초과 multi-alternative production graph는 실제 state 의존성으로 연결 성분을 만든다.
+    selector가 합법성에 사용하는 SAME_PLACEMENT/SAME_FTYPE/CONJUNCTIVE edge와, 각 relocation의 모든
+    decision source 및 decision obligation consumer를 같은 성분으로 연결한다.
+  - 각 성분을 기존 branch-and-bound로 **정확히** 풀고 assignment를 병합한다. FED/FOUT 수와 서로
+    겹치지 않는 relocation action 수는 성분별 가산이고, stable signature는 정렬된 성분 assignment의
+    deterministic merge이므로 성분별 lexicographic optimum의 병합이 전역 optimum이다.
+  - action participant가 둘 이상의 성분에 남으면 fail-closed하며, 병합 뒤 전체 graph legality와
+    전체 relocation/score를 다시 계산한다. 따라서 잘못된 분해를 성공으로 인정하지 않는다.
+  - 16개 이하 fixture는 종전 complete Cartesian enumeration을 유지해 독립 exhaustive oracle의
+    assignment와 certificate counter를 그대로 비교한다.
+  - 첫 수정의 admissible relocation lower bound와 optimistic signature lower bound도 성분 내부에서
+    유지한다. 후보 skip/continue나 runtime 보정은 추가하지 않았다.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/fedplanner/placement/selector/ExactPlacementSelector.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/placement/selector/`
     `ExactPlacementSelectorBranchAndBoundTest.java`
-  - `src/test/java/org/apache/sysds/test/component/federated/placement/selector/`
+  - 첫 수정에서 함께 변경:
+    `src/test/java/org/apache/sysds/test/component/federated/placement/selector/`
     `ExactPlacementSelectorContractTest.java`
   - `docs/SESSION_ISSUES_2026-07-31.md`
 - **검증**:
-  - 새 2개 회귀는 수정 전 각각 131,072개 search와 2^17 relocation tie 확장으로 RED였다
-    (test class 9.334초, 2 failures).
-  - 수정 후 branch-and-bound class는 3/3 GREEN, 0.265초. equal-score case는 explored 1,
-    relocation case는 explored 100 미만이며 exact selected assignment/relocation을 검증한다.
-  - 독립 selector oracle과 FedAll exact adapter 계약을 포함한 14 tests GREEN:
+  - 첫 수정의 2개 회귀는 수정 전 각각 131,072개 search와 2^17 relocation tie 확장으로 RED였고,
+    수정 후 정확한 assignment/relocation을 유지하면서 100개 미만 탐색으로 GREEN이었다.
+  - 새 독립-성분 회귀는 성분 분해 전 `exploredCount < 100`에서 RED, 구조 수정 후 9 FED/FOUT,
+    각 pair의 forbid-pair 합법성 및 stable CP-left/FED-right tie를 모두 확인하며 GREEN이다.
+  - 현재 branch-and-bound class 4/4와 독립 selector oracle/FedAll exact adapter를 포함한 15 tests
+    GREEN:
     `ExactPlacementSelectorBranchAndBoundTest`, `ExactPlacementSelectorContractTest`,
     `CampaignBFedAllExactAdapterContractTest`.
-  - `mvn -q -DskipTests package` return code 0; working-tree JAR SHA-256
-    `7b4462c4fda72b5d359cf59fbba5c16eaf7ecd37e5d3efe07597c2acc1573260`.
+  - `git diff --check` GREEN, `mvn -q -DskipTests package` return code 0; 성분 수정 working-tree
+    JAR SHA-256 `8b01a2310081030047a8b457993a7eb1c67d6b259064a5dc3b3364cadddd0dae`.
 - **잔여 이슈**:
-  - 수정 commit과 immutable stage를 만든 뒤, 과거 실패와 정확히 같은 FedAll/StepLM/1-worker/LAN
-    Docker canary를 attempt 1로 실행해 compile/runtime/semantic oracle을 확인한다.
+  - 성분 수정 commit과 새 immutable stage를 만든 뒤, 과거 실패와 정확히 같은
+    FedAll/StepLM/1-worker/LAN Docker canary를 새 stage의 attempt 1로 실행해
+    compile/runtime/semantic oracle을 확인한다.
   - canary 성공 후 zero-row 336-cell campaign을 새 경로에서 DP → FedAll → Heuristic → MinST로
-    다시 시작한다. 과거 DP/FedAll 성공 row는 backfill하지 않는다.
+    다시 시작한다. 모든 과거 DP/FedAll 성공 row는 backfill하지 않는다.
 - **잠재 회귀 위험**:
-  - relocation 하한이 direct source 가능성을 누락하면 unsafe prune이 될 수 있다. 감지 방법:
-    `NeutralPlacementGraph.isRelocationActive`와 동일한 direct-source/anchor 조건을 사용하고,
-    독립 exhaustive oracle fixtures 및 새 relocation-tie fixture를 유지한다.
-  - signature 하한이 실제 completion보다 크게 계산되면 stable tie 선택이 바뀔 수 있다. 감지 방법:
-    아직 선택되지 않은 node에는 무조건 smallest legal state, relocation에는 무조건 빈 suffix를 사용해
-    의도적으로 느슨한 하한을 유지하고 insertion-order/repeat/oracle 계약을 실행한다.
-  - 큰 graph에서 매 search node마다 action/obligation을 순회하는 비용이 남을 수 있다. 감지 방법:
-    동일 StepLM Docker canary의 compile 종료 여부와 full matrix의 planner compile 시간을 확인한다.
+  - relocation activation에 관여하는 source/consumer를 분해에서 누락하면 relocation 수를 성분별로
+    잘못 최소화할 수 있다. 감지 방법: 모든 동일 value-version decision source와 obligation consumer를
+    연결하고 action owner 단일성 assert, 병합 뒤 전체 `isRelocationActive` score 재계산을 유지한다.
+  - 성분별 stable signature 최소화가 전역 tie를 바꿀 위험은 assignment key 정렬/병합 규칙이 바뀔
+    때 생긴다. 감지 방법: production-size stable tie 회귀, insertion-order 반복 계약, 소형 독립
+    exhaustive oracle 계약을 유지한다.
+  - 실제 StepLM의 active dependency가 하나의 큰 성분이라면 이번 분해만으로 충분하지 않을 수 있다.
+    감지 방법: 새 immutable stage의 동일 exact Docker canary 한 번으로 compile 종료 여부를 확인하고,
+    실패 시 해당 attempt를 재사용하지 않고 새 thread dump를 근거로 같은 exact solver를 추가 개선한다.
 - **의사결정 근거/적용 원칙**:
-  - runtime capability나 candidate space를 축소하지 않고 exact objective의 admissible bound만 강화했다.
-    runtime fallback/repair, TRead/TWrite 완화, recompile CP/FOUT 허용, opcode별 skip/continue는 추가하지
-    않았다.
+  - runtime capability나 candidate space를 축소하지 않고 exact objective의 독립성을 증명할 수 있는
+    성분만 분해했다. runtime fallback/repair, TRead/TWrite 완화, recompile CP/FOUT 허용,
+    opcode별 skip/continue는 추가하지 않았다.
