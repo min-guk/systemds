@@ -11,8 +11,13 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
@@ -27,6 +32,8 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 		new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
 	private static final PlacementState FED =
 		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+	private static final PlacementState FED_COL =
+		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.COL, false);
 
 	@Test
 	public void productionSizeSearchProvesTheExactFedAllMaximumWithoutCartesianExpansion() {
@@ -57,5 +64,61 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 			selection.certificate().terminationReason());
 		Assert.assertEquals(1, selection.certificate().exploredCount());
 		Assert.assertTrue(selection.certificate().prunedCount() > 0);
+	}
+
+	@Test
+	public void productionSizeEqualObjectiveTiesUseTheStableSignatureBound() {
+		List<Node> nodes = equalObjectiveNodes("exact-selector-equal-ties");
+
+		PlacementSelection selection = new ExactPlacementSelector().select(
+			new NeutralPlacementGraph(nodes, List.of(), List.of()));
+
+		Assert.assertEquals(17, selection.score().emittedFedCount());
+		Assert.assertEquals(17, selection.score().foutCount());
+		Assert.assertEquals(0, selection.score().distinctRelocationCount());
+		Assert.assertTrue(selection.assignment().values().stream().allMatch(FED_COL::equals));
+		Assert.assertEquals("equal-score ties must not expand the 2^17 Cartesian product", 1,
+			selection.certificate().exploredCount());
+		Assert.assertTrue(selection.certificate().prunedCount() > 0);
+	}
+
+	@Test
+	public void productionSizeRelocationTiesUseAnAdmissibleRelocationLowerBound() {
+		String fingerprint = "exact-selector-relocation-ties";
+		List<Node> nodes = equalObjectiveNodes(fingerprint);
+		List<CompiledHopKey> consumers = nodes.stream().map(Node::key).toList();
+		DurableAnchorKey anchor = new DurableAnchorKey("exact-selector-anchor", FType.COL,
+			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(1L, 1L))));
+		RelocationActionKey actionKey = new RelocationActionKey(nodes.get(0).valueVersion(),
+			FED_COL, anchor, "exact-selector-scope", consumers);
+		List<ObligationKey> obligations = new ArrayList<>();
+		for(int i = 0; i < nodes.size(); i++)
+			obligations.add(new ObligationKey(nodes.get(i).key(), i, nodes.get(0).valueVersion(),
+				FED_COL, actionKey, "exact-selector-scope"));
+
+		PlacementSelection selection = new ExactPlacementSelector().select(new NeutralPlacementGraph(
+			nodes, List.of(), List.of(new RelocationAction(actionKey, obligations))));
+
+		Assert.assertEquals(0, selection.score().distinctRelocationCount());
+		Assert.assertTrue(selection.assignment().values().stream().allMatch(FED::equals));
+		Assert.assertTrue(selection.selectedRelocations().isEmpty());
+		Assert.assertTrue("relocation ties must not expand the 2^17 Cartesian product",
+			selection.certificate().exploredCount() < 100);
+		Assert.assertTrue(selection.certificate().prunedCount() > 0);
+	}
+
+	private static List<Node> equalObjectiveNodes(String fingerprint) {
+		List<Node> nodes = new ArrayList<>();
+		for(int i = 0; i < 17; i++) {
+			ControlRegionKey region = new ControlRegionKey(fingerprint, "main", List.of("sb"),
+				"main", "compiled");
+			CompiledHopKey key = new CompiledHopKey(fingerprint, "main", "main", "compiled", region,
+				"hop-" + i, "hop-" + i);
+			ValueVersionKey value = new ValueVersionKey(fingerprint, "v" + i, region, i,
+				VersionKind.ORDINARY, List.of());
+			nodes.add(new Node(key, NodeKind.OPERATION, value, true,
+				List.of(FED_COL, FED), List.of(), List.of()));
+		}
+		return nodes;
 	}
 }

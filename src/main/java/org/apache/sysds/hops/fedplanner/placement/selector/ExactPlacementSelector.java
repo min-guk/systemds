@@ -143,9 +143,97 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				if(alternatives.stream().anyMatch(state -> state.execType() == ExecType.FED)) fed++;
 				if(alternatives.stream().anyMatch(state -> state.output() == FederatedOutput.FOUT)) fout++;
 			}
-			return fed < bestScore.emittedFedCount()
-				|| fed == bestScore.emittedFedCount() && fout < bestScore.foutCount();
+			if(fed < bestScore.emittedFedCount())
+				return true;
+			if(fed > bestScore.emittedFedCount())
+				return false;
+			if(fout < bestScore.foutCount())
+				return true;
+			if(fout > bestScore.foutCount())
+				return false;
+			int relocationLowerBound = unavoidableRelocationCount(graph, current);
+			if(relocationLowerBound > bestScore.distinctRelocationCount())
+				return true;
+			if(relocationLowerBound < bestScore.distinctRelocationCount())
+				return false;
+			return optimisticSignature(index).compareTo(bestScore.normalizedSignature()) >= 0;
 		}
+
+		/**
+		 * Returns a lexicographic lower bound for every completion of the current
+		 * partial assignment. Candidate legality and relocation actions are omitted
+		 * deliberately: choosing the smallest state for each remaining node and an
+		 * empty relocation suffix can only make the signature smaller.
+		 */
+		private String optimisticSignature(int index) {
+			Map<CompiledHopKey, PlacementState> optimistic = new LinkedHashMap<>(current);
+			for(int i = index; i < nodes.size(); i++)
+				optimistic.put(nodes.get(i).key(), Collections.min(nodes.get(i).legalAlternatives()));
+			return normalizedSignature(optimistic, Set.of());
+		}
+	}
+
+	/**
+	 * Counts relocation actions that every completion of {@code partial} must
+	 * select. This is an admissible lower bound: an action is counted only after
+	 * a consumer requirement is unavoidable and no selected or remaining source
+	 * placement can satisfy the same durable anchor directly.
+	 */
+	private static int unavoidableRelocationCount(NeutralPlacementGraph graph,
+		Map<CompiledHopKey, PlacementState> partial) {
+		int count = 0;
+		for(RelocationAction action : graph.relocationActions())
+			if(relocationRequirementIsUnavoidable(graph, action, partial)
+				&& !sourceCanAvoidRelocation(graph, action, partial))
+				count++;
+		return count;
+	}
+
+	private static boolean relocationRequirementIsUnavoidable(NeutralPlacementGraph graph,
+		RelocationAction action, Map<CompiledHopKey, PlacementState> partial) {
+		for(var obligation : action.obligations()) {
+			Node consumer = graph.node(obligation.consumer()).orElseThrow();
+			if(!consumer.emittedWork())
+				continue;
+			PlacementState selected = partial.get(consumer.key());
+			if(selected != null) {
+				if(selected.equals(obligation.requiredPlacement()))
+					return true;
+				continue;
+			}
+			Set<PlacementState> triggeringStates = new LinkedHashSet<>();
+			for(var candidate : action.obligations())
+				if(candidate.consumer().equals(consumer.key()))
+					triggeringStates.add(candidate.requiredPlacement());
+			if(triggeringStates.containsAll(consumer.legalAlternatives()))
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean sourceCanAvoidRelocation(NeutralPlacementGraph graph,
+		RelocationAction action, Map<CompiledHopKey, PlacementState> partial) {
+		for(Node source : graph.decisionNodes()) {
+			if(!source.valueVersion().equals(action.key().sourceValueVersion()))
+				continue;
+			PlacementState selected = partial.get(source.key());
+			if(selected != null) {
+				if(isDirectRelocationSource(source, action, selected))
+					return true;
+			}
+			else if(source.legalAlternatives().stream()
+				.anyMatch(state -> isDirectRelocationSource(source, action, state)))
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean isDirectRelocationSource(Node source, RelocationAction action,
+		PlacementState state) {
+		return action.directSourcePlacements().contains(state)
+			|| state.output() == FederatedOutput.FOUT
+				&& Objects.equals(state.fType(), action.key().durableAnchor().fType())
+				&& source.anchors().contains(action.key().durableAnchor());
 	}
 
 	private static int constraintDegree(NeutralPlacementGraph graph, CompiledHopKey key) {

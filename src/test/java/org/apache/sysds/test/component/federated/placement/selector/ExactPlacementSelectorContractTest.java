@@ -181,8 +181,10 @@ public class ExactPlacementSelectorContractTest {
 			Assert.assertEquals(fixture.id(), expected.derivation(),
 				readText(bound, "derivation", "boundDerivation"));
 		}
-		Assert.assertEquals(fixture.id(), independentAssignmentUniverseSize(graph),
-			certificate.exploredCount() + certificate.prunedCount());
+		Assert.assertEquals(fixture.id(), oracle.getCertificate().getExploredCount(),
+			certificate.exploredCount());
+		Assert.assertEquals(fixture.id(), oracle.getCertificate().getPrunedCount(),
+			certificate.prunedCount());
 		Assert.assertTrue(fixture.id(), List.of("EXHAUSTED", "TIGHT_BOUND_EQUALITY")
 			.contains(certificate.terminationReason().name()));
 		Assert.assertEquals(fixture.id(), certificate.incumbentScore(), certificate.finalUpperBound());
@@ -328,7 +330,8 @@ public class ExactPlacementSelectorContractTest {
 		DurableAnchorKey anchor = new DurableAnchorKey("decision-red-anchor",
 			org.apache.sysds.hops.fedplanner.FTypes.FType.ROW,
 			List.of(new AnchorPartition("worker", List.of(0L, 0L), List.of(1L, 1L))));
-		RelocationActionKey actionKey = new RelocationActionKey(source, CP, anchor, "decision-red-scope",
+		RelocationActionKey actionKey = new RelocationActionKey(source, CP,
+			org.apache.sysds.hops.fedplanner.FTypes.FType.ROW, anchor, "decision-red-scope",
 			List.of(consumer));
 		ObligationKey obligation = new ObligationKey(consumer, 0, source, CP, actionKey, "decision-red-scope");
 		return new NeutralPlacementGraph(List.of(decision, trace),
