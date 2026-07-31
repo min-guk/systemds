@@ -421,6 +421,15 @@
     compile mapping 진단 플래그 없이 실행했으므로 descriptor의 `ROW` 직접 검증은 위 최소
     회귀가 담당하고, 실제 Docker 성공/semantic equality가 잘못된 `FULL` lowering이 더는
     실행되지 않음을 검증한다.
+  - 새 336-cell campaign의 과거 실패와 정확히 같은 37번째 cell
+    `workers=2|planner=DP|workload=als|profile=lan`도 `execution_seconds=79.878206907`로
+    GREEN. semantic oracle의 objective relative error는
+    `1.499618323978053e-16`, rowspace projector relative error는 `0.0`이며,
+    scan 4종 false, restart 0/0, teardown zero이다. 이어지는 WAN-light cell도
+    `91.716257418`초로 통과해 campaign이 과거 실패 경계를 넘어 진행 중이다.
+  - canary `152.057206001`초와 campaign LAN `79.878206907`초 차이는 동일 stage에서
+    canary가 cache/network 준비를 선행한 warm-primary 실행 순서의 관측값이다. 전체 matrix
+    완료 전에는 이 차이를 planner 성능 정렬의 근거로 사용하지 않는다.
 - **잔여 이슈**:
   - 기존 실패 campaign row를 재사용하지 않는 새 campaign
     `/home/mchoi/g007-all-planners-refed-anchor-1b20444-d60da24-20260731-v1`에서
