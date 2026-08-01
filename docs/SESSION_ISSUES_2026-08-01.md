@@ -241,7 +241,7 @@
 
 ## user-systemd launcher가 Docker 보조 그룹을 상속하지 않음
 
-- **상태**: 해결 — 실패 root 동결 후 `sg docker`를 사용하는 새 zero-row service 실행 중
+- **상태**: 해결 — 실패 root 동결 후 sg docker launcher 검증 완료
 - **환경/조건**:
   - 실패 root: `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v4`
   - 대체 root: `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v5`
@@ -269,9 +269,85 @@
   - v5 launch receipt가 같은 service identity/version, zero-row prelaunch proof, wrapper hash,
     campaign manifest `80361b628fc453d78d8e752bb61fab18ad635dc0f267399071409b1bc917a277`을 봉인한다.
   - v5는 동일 stage/JAR/harness/seed/order와 Docker-only runner로 DP 첫 셀부터 시작했다.
-- **잔여 이슈**: v5 전체 336셀의 완료/실패를 감시한다.
+- **잔여 이슈**: v5는 이후 사용자 무중복 지시에 따라 중지·동결됐으며 결과에 채택하지 않는다.
 - **잠재 회귀 위험**:
   - host의 Docker group/socket 정책이 바뀌면 preflight가 실패한다.
   - 감지 방법: 각 launch receipt에 service identity와 Docker API version을 필수로 남긴다.
 - **의사결정 근거/적용 원칙**: launcher 권한 문제를 planner/runtime 변경으로 덮지 않고 실행 경계를 바로잡았다.
   실패 campaign 결과는 재사용하지 않았으며 retry/backfill/fallback도 추가하지 않았다.
+
+
+## 이미 완료된 campaign 셀을 다시 실행한 v5 중지와 무중복 continuation 전환
+
+- **상태**: 해결 — v5 동결/제외, 정확한 미실행 241셀 v6 실행 중
+- **환경/조건**:
+  - 채택할 기존 성공 root:
+    /home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v3
+  - 취소·제외 root:
+    /home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v5
+  - 무중복 continuation root:
+    /home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v6
+  - 동일 SystemDS commit/JAR:
+    705b8dbb62f52bc98ceb4d0fd3a39405f8e581c0 /
+    19968f40e8b337eaedf6299c9485a8cce1bdd571620fa07bb6578449ae1353d8
+  - 동일 harness/data/seed:
+    d60da243b22e3752183c37679013fde1232c9638 /
+    0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f /
+    2026072701
+  - Docker-only run_LAN_docker.sh, 셀당 1회, retry 없음.
+- **재현 절차**:
+  - v5 실행 중 planners/DP/rows.jsonl과 v3의 DP rows를 cell id로 비교한다.
+  - v6의 control/prelaunch-no-duplicate-proof.json과 campaign-manifest.json을 검증한다.
+  - 실행 service: systemctl --user show g007-remaining-705b8db-v6.service
+- **관측 증상**:
+  - v5는 v3에서 이미 성공한 DP 셀을 처음부터 다시 실행해 4개 성공 row를 만들었다.
+  - 다섯 번째 DP 셀은 사용자 중지로 failure_category=process_exit response만 남았고
+    durable row는 생성되지 않았다.
+  - 이는 최신 사용자 지시인 “이전에 돌렸던 것은 중복 실행하지 않는다”와 불필요한 실험 시간 최소화에 어긋났다.
+- **원인 분석**:
+  - 이전 운영 정책이 외부 interrupt마다 새 zero-row 336 campaign을 강제해,
+    동일 binary/data/seed로 이미 검증된 성공 셀까지 폐기하고 다시 실행했다.
+  - planner/runtime 문제가 아니라 campaign provenance/재개 정책 문제였다.
+- **해결 요약**:
+  - v5 service를 중지하고 project-owned Docker container/network/volume이 0임을 확인했다.
+  - v5에 immutable CAMPAIGN_CANCELLED.json을 추가했다. 성공 DP 4개는 v3와 중복이므로
+    최종 evidence에서 명시적으로 제외했다.
+  - v3의 response hash, semantic oracle, scan, metric을 다시 검증해 DP 84개와 FedAll 11개,
+    총 95개만 authenticated historical completion registry로 봉인했다.
+  - canonical 336 universe에서 이 95개를 정확히 뺀 241개만 v6에 동결했다:
+    DP 0, FedAll 73, Heuristic 84, MinST 84. 교집합/누락/extra는 모두 0이다.
+  - v6 runner는 기존 성공 response가 row append 직전에 남은 경우 실행 없이 row만 복구한다.
+    request만 남거나 실패 response가 남은 경우에는 재실행하지 않고 fail-closed한다.
+  - 최종 336 결과는 v3+v6 provenance를 셀별로 기록하며, 단일 연속 wall-clock campaign이라고
+    표현하지 않는다.
+- **수정 파일**:
+  - production source 수정 없음.
+  - v5: CAMPAIGN_CANCELLED.json
+  - v6: campaign-manifest.json, base-completed.json, cells/*.json,
+    bin/run_remaining_discovery.py, bin/finalize_composite.py, run.sh,
+    bin/service-wrapper.sh, control/launch evidence.
+  - 이 문서.
+- **검증**:
+  - v5 service inactive/dead, g007-sel-* Docker resource 0.
+  - v5 성공 row 4개는 모두 v3 DP cell set의 부분집합이고 최종 composite 제외가 봉인됐다.
+  - v6 prelaunch proof:
+    historical 95, new 241, combined 336, intersection/missing/extra 0.
+  - planner별 validate-only:
+    FedAll 73, Heuristic 84, MinST 84, historical overlap 0.
+  - v6 첫 request는 이미 완료된 DP나 FedAll 1~11이 아니라
+    workers=1|planner=FedAll|workload=l2svm|profile=wan_mid 이다.
+  - service identity는 gid=10001(docker)이며 Docker server 29.6.1 접근에 성공했다.
+- **잔여 이슈**:
+  - v6의 241개 신규 셀을 순서대로 완료해야 한다.
+  - 완료 뒤 v3+v6 exact 336 unique-cell composite, oracle/fallback/restart/teardown,
+    execution-time 정렬을 검증하고 그래프를 갱신해야 한다.
+- **잠재 회귀 위험**:
+  - 서로 다른 wall-clock session을 합치므로 host load/cache drift가 timing 분산에 영향을 줄 수 있다.
+    감지 방법: 동일 stage/JAR/data/seed/network identity를 강제하고 provenance를 유지하며,
+    timing은 stitched continuation임을 명시하고 이상치는 planner semantic/plan evidence와 분리해 분석한다.
+  - service가 response/row 경계에서 중단될 수 있다.
+    감지 방법: 성공 response는 hash 검증 후 실행 없이 복구하고, 그 외 orphan은 재실행하지 않고 실패시킨다.
+- **의사결정 근거/적용 원칙**:
+  - 최신 사용자 지시를 현재 실험 운영 정책으로 적용하되, 과거 결과를 무검증 backfill하지 않고
+    동일 immutable identity의 성공 response만 hash/oracle/scan 검증 후 provenance와 함께 재사용한다.
+  - planner/runtime/fallback/candidate-space/TR-TW/recompile 규칙은 변경하지 않았다.
