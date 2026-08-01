@@ -2,10 +2,11 @@
 
 ## FedAll LogReg transient-read REFED가 downstream 동일명 TWrite 때문에 차단됨
 
-- **상태**: 진행중 — 구조 수정 및 63개 타깃 회귀/package GREEN, 동일 실패 셀 Docker canary 대기
+- **상태**: 해결 — 구조 수정, 63개 타깃 회귀/package, 동일 실패 셀 Docker canary GREEN
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 production commit: `705b8dbb62f52bc98ceb4d0fd3a39405f8e581c0`
+  - 수정 commit: `097c17f7ab674606fe7af10d192179245f19492e`
   - 실패 campaign:
     `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v6`
   - 실패 cell:
@@ -63,10 +64,38 @@
     `/tmp/g007-fedall-logreg-transient-package-20260801.log`.
   - package JAR SHA-256:
     `d694e41695c60b5f97f0986e83cf92874727300ec7cac9b9372b6c720c7d910e`.
+  - immutable Docker stage:
+    `/home/mchoi/g007-fedall-logreg-tread-stage-097c17f-20260801-v1/g007-stage-a9529cfeece01693ba612b0b0f75e3f457a9b526950b0caa91ad34143f012b19`.
+    - SystemDS commit `097c17f7ab674606fe7af10d192179245f19492e`
+    - JAR SHA-256 `d694e41695c60b5f97f0986e83cf92874727300ec7cac9b9372b6c720c7d910e`
+    - harness commit `d60da243b22e3752183c37679013fde1232c9638`
+    - data tree SHA-256 `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f`
+    - stage-local validator GREEN, executable `run_LAN_docker.sh` 1개, `run_LAN.sh` 0개
+  - 동일 실패 셀 Docker canary:
+    `/home/mchoi/g007-fedall-logreg-tread-canary-097c17f-d60da24-20260801-v1`.
+    - `execution_seconds=108.843893619`, full lifecycle `131.97439209s`
+    - semantic oracle PASS, objective relative error `6.007185538722004e-16`
+    - scan의 `error/fallback/resource_invalid/timeout=false`
+    - coordinator/worker restart `0/0`, teardown zero resources, 잔여 Docker resource `0`
+    - coordinator instruction statistics에서 `fed_fed_refed=424`, `prefetch=30`으로 실제 relocation
+      lowering이 실행됐고 기존 예외 없이 완료됨을 확인했다.
+  - no-duplicate continuation:
+    `/home/mchoi/g007-all-planners-transient-refed-097c17f-d60da24-20260801-v1`.
+    - 성공한 기존 117셀과 위 canary 1셀을 완료 레지스트리에 봉인해 총 `118`셀을 제외했다.
+    - 잔여 exact set은 FedAll `50`, Heuristic `84`, MinST `84`, 총 `218`셀이며 기존 완료 집합과
+      교집합 `0`, 합집합 `336`을 prelaunch에서 검증했다.
+    - planner 순서 `FedAll → Heuristic → MinST`, 셀당 attempt `1`, retry `NONE`, seed `2026072701`이다.
+    - campaign unit `g007-remaining-097c17f-v1.service`와 5분 주기 read-only monitor unit
+      `g007-monitor-097c17f-v1.service`를 user systemd로 실행했다.
+    - 최초 새 요청은 canary 다음 canonical cell인
+      `workers=2|planner=FedAll|workload=logreg|profile=wan_light`이다.
 - **잔여 이슈**:
-  - 새 immutable stage에서 동일 실패 cell Docker canary를 통과시켜 compile뿐 아니라 실제 runtime,
-    semantic oracle, fallback/restart/teardown을 검증해야 한다.
-  - canary가 성공한 뒤 기존 성공 117셀을 제외한 새-binary continuation만 실행한다.
+  - 구조 결함과 동일 실패 셀 검증은 해결됐다.
+  - continuation `218`셀의 완료/실패를 주기적으로 감시하고, 실패 시 retry 없이 해당 새 결함을
+    분석한다.
+  - stitched matrix의 117셀은 commit `705b8db`/JAR `19968f…`, canary와 잔여 218셀은 commit
+    `097c17f`/JAR `d694e4…`이다. 중복 금지 때문에 재측정하지 않았으므로 최종 결과는 cell-level
+    binary provenance를 반드시 유지하며, homogeneous single-binary 336셀 결과로 해석하지 않는다.
 - **잠재 회귀 위험**:
   - 잘못 등록된 REFED가 실제 dominating FED/FOUT TWrite의 TRead에 남는다면 불필요한 download/upload가
     생길 수 있다. 기존 StepLM exact regression과 Docker coordinator instruction scan으로 감지한다.
