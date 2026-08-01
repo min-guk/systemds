@@ -238,3 +238,40 @@
   - 감지 방법: service state, progress/row 증가, campaign exit-code, failure file, Docker resource를 함께 확인한다.
 - **의사결정 근거/적용 원칙**: 외부 interrupt도 기존 결과에 이어 붙이지 않고 새 zero-row root로만
   대체한다. runtime fallback, planner 수정, 후보 축소, TRead/TWrite 완화는 하지 않았다.
+
+## user-systemd launcher가 Docker 보조 그룹을 상속하지 않음
+
+- **상태**: 해결 — 실패 root 동결 후 `sg docker`를 사용하는 새 zero-row service 실행 중
+- **환경/조건**:
+  - 실패 root: `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v4`
+  - 대체 root: `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v5`
+  - 실패 셀: `workers=1|planner=DP|workload=kmeans|profile=lan`
+- **재현 절차**:
+  - shell에서 Docker 접근이 되는 상태로 plain user-systemd service를 시작해 stage-local
+    `run_LAN_docker.sh`를 실행한다.
+- **관측 증상**:
+  - v4 첫 셀은 51.35초 뒤 `failure_category=resource_invalid`, return code 1로 종료됐다.
+  - stderr에는 Docker socket에 대한 `permission denied`가 반복됐고 response의
+    `teardown_zero_resources`도 검증 불가로 false였다.
+  - 외부 권한이 있는 shell에서 같은 compose project를 열거한 결과 실제 생성된 container/network/volume은 0개였다.
+- **원인 분석**:
+  - 현재 shell은 `groups=employees,docker`지만 user-systemd manager는 `groups=employees`만 보유했다.
+  - 따라서 persistent launcher 선택은 맞았으나 Docker API에 접근할 보조 그룹이 service에 전달되지 않았다.
+  - SystemDS planner/runtime은 시작되지 않았으므로 planner 결함이 아니다.
+- **해결 요약**:
+  - v4를 `CAMPAIGN_FAILED.json`과 함께 동결하고 재개/백필하지 않았다.
+  - 새 v5 service는 frozen `service-wrapper.sh`를 `/usr/bin/sg docker -c`로 실행한다.
+  - wrapper는 캠페인 전에 service identity와 Docker server version을 기록하고, 접근 실패 시 실험을 시작하지 않는다.
+- **수정 파일**: production source 수정 없음. 이 문서와 v4/v5 campaign control artifact만 추가.
+- **검증**:
+  - 독립 transient service에서 `sg docker` identity가
+    `gid=10001(docker) groups=10001(docker),5500(employees)`이고 Docker server `29.6.1` 접근에 성공했다.
+  - v5 launch receipt가 같은 service identity/version, zero-row prelaunch proof, wrapper hash,
+    campaign manifest `80361b628fc453d78d8e752bb61fab18ad635dc0f267399071409b1bc917a277`을 봉인한다.
+  - v5는 동일 stage/JAR/harness/seed/order와 Docker-only runner로 DP 첫 셀부터 시작했다.
+- **잔여 이슈**: v5 전체 336셀의 완료/실패를 감시한다.
+- **잠재 회귀 위험**:
+  - host의 Docker group/socket 정책이 바뀌면 preflight가 실패한다.
+  - 감지 방법: 각 launch receipt에 service identity와 Docker API version을 필수로 남긴다.
+- **의사결정 근거/적용 원칙**: launcher 권한 문제를 planner/runtime 변경으로 덮지 않고 실행 경계를 바로잡았다.
+  실패 campaign 결과는 재사용하지 않았으며 retry/backfill/fallback도 추가하지 않았다.
