@@ -193,3 +193,48 @@
   - 감지 방법: pane/process 존재, progress/rows 증가, cell response hash, residual Docker resource를 함께 확인한다.
 - **의사결정 근거/적용 원칙**: 실패 campaign은 immutable하게 보존하고 backfill하지 않으며,
   실제 측정이 시작되지 않은 launcher failure도 새 manifest/root로만 재시도한다.
+
+## tmux campaign이 외부 KeyboardInterrupt로 FedAll 셀 도중 종료됨
+
+- **상태**: 운영 복구 완료 — 중단 root 동결 및 resource 정리 후 새 zero-row campaign 실행 중
+- **환경/조건**:
+  - 중단된 root:
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v3`
+  - 대체 root:
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v4`
+  - 동일 immutable stage/JAR/harness/seed와 `DP → FedAll → Heuristic → MinST` 순서.
+  - Docker-only, 셀당 attempt 1, retry/backfill 없음.
+- **재현 절차**:
+  - v3 실행 중 command/tool turn을 외부에서 중단한다.
+  - `planners/FedAll/launcher.stderr.log`와 현재 셀의 request/response 존재 여부를 확인한다.
+- **관측 증상**:
+  - DP는 84/84, FedAll은 11/84까지 정상 완료됐다.
+  - 다음 셀 `workers=1|planner=FedAll|workload=l2svm|profile=wan_mid`는 request만 생성됐고
+    response와 row는 생성되지 않았다.
+  - FedAll launcher traceback은 stage-local `run_LAN_docker.sh`를 기다리는
+    `subprocess.run(...)`에서 `KeyboardInterrupt`로 끝났다.
+  - planner/runtime 실패 response는 없었고, 중단 시점 Docker coordinator/worker가 남아 있었다.
+- **원인 분석**:
+  - exact cell의 SystemDS/Docker 실패가 아니라 장시간 tmux process가 외부 interrupt 신호를 받은
+    실행 lifetime 문제다. 따라서 완료된 95개 row를 새 campaign에 섞거나 현재 셀만 재시도하면
+    one-pass campaign 계약을 위반한다.
+- **해결 요약**:
+  - v3에 additive `CAMPAIGN_FAILED.json`을 기록하고 재개/백필 불가로 동결했다.
+  - 중단 셀의 Docker containers/network/volumes를 제거하고 zero-resource teardown을 확인했다.
+  - 동일 입력과 binary identity로 완전히 빈 v4를 생성했다. v4 manifest SHA-256은
+    `f7bbb0e3c68f97548b06a92509e8414aee353cd4e70ccbbee33596962347c1c8`이다.
+  - command session과 lifetime을 분리하기 위해 v4를 user-systemd service
+    `g007-336-705b8db-v4.service`로 실행했다. 플래너/런타임/실험 조건은 바꾸지 않았다.
+- **수정 파일**: production source 수정 없음. 이 문서와 campaign control/evidence artifact만 추가.
+- **검증**:
+  - v3 failure descriptor는 DP 84, FedAll 11, 응답 없는 12번째 request와 traceback hash를 봉인한다.
+  - v3 teardown 후 해당 project의 Docker resource가 0개다.
+  - v4 launch 전 rows/requests/responses가 각각 0이고 `planners/`가 없음을 증명했다.
+  - v4는 authenticated stage descriptor, JAR hash, stage-local `run_LAN_docker.sh`, campaign seed를
+    다시 검증한 뒤 DP 첫 셀부터 실행을 시작했다.
+- **잔여 이슈**: v4 336셀 완료/실패 여부를 10분 간격의 read-only 점검으로 감시한다.
+- **잠재 회귀 위험**:
+  - user-systemd manager 또는 host가 종료되면 service도 중단될 수 있다.
+  - 감지 방법: service state, progress/row 증가, campaign exit-code, failure file, Docker resource를 함께 확인한다.
+- **의사결정 근거/적용 원칙**: 외부 interrupt도 기존 결과에 이어 붙이지 않고 새 zero-row root로만
+  대체한다. runtime fallback, planner 수정, 후보 축소, TRead/TWrite 완화는 하지 않았다.
