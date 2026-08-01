@@ -171,6 +171,50 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		Assert.assertEquals(fedAll.selectedRelocations(), heuristic.selectedRelocations());
 	}
 
+	@Test
+	public void lmLocalPrefixProjectsDirectRelocationSourcesIntoTheFilteredGraph() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(compile(lmScript()));
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
+			analysis.heuristicPolicyFacts().demotions().stream().map(fact -> fact.valueVersion())
+				.collect(java.util.stream.Collectors.toSet());
+		Assert.assertFalse("LM must exercise the typed Heuristic demotion policy", markers.isEmpty());
+		Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey> localPrefix =
+			analysis.heuristicPolicyFacts().paths().stream()
+				.filter(path -> markers.contains(path.demotion().valueVersion()))
+				.flatMap(path -> path.localPrefix().stream())
+				.collect(java.util.stream.Collectors.toSet());
+		var conflictingBaseActions = analysis.graph().relocationActions().stream()
+			.filter(action -> !action.directSourcePlacements().isEmpty())
+			.filter(action -> analysis.graph().nodes().stream()
+				.anyMatch(node -> node.valueVersion().equals(action.key().sourceValueVersion())
+					&& localPrefix.contains(node.key())))
+			.toList();
+		Assert.assertFalse("LM must contain a direct-source proof whose source becomes path-local",
+			conflictingBaseActions.isEmpty());
+
+		var result = new HeuristicPlacementAdapter().select(analysis, markers);
+		Assert.assertEquals("relocation keys must survive policy projection",
+			analysis.graph().relocationActions().stream().map(action -> action.key()).sorted().toList(),
+			result.selectorGraph().relocationActions().stream().map(action -> action.key()).sorted().toList());
+		for(var action : result.selectorGraph().relocationActions()) {
+			Set<org.apache.sysds.hops.fedplanner.placement.PlacementState> legalSourceStates =
+				result.selectorGraph().nodes().stream()
+					.filter(node -> node.valueVersion().equals(action.key().sourceValueVersion()))
+					.flatMap(node -> node.legalAlternatives().stream())
+					.collect(java.util.stream.Collectors.toSet());
+			Assert.assertTrue("direct-source metadata must be a subset of the filtered source universe",
+				legalSourceStates.containsAll(action.directSourcePlacements()));
+		}
+		for(var baseAction : conflictingBaseActions) {
+			var projected = result.selectorGraph().relocationActions().stream()
+				.filter(action -> action.key().equals(baseAction.key())).findFirst().orElseThrow();
+			Assert.assertEquals("policy projection must preserve exact obligations",
+				baseAction.obligations(), projected.obligations());
+			Assert.assertTrue("filtered local source cannot retain an impossible direct-FOUT bypass",
+				projected.directSourcePlacements().isEmpty());
+		}
+	}
+
 	private static org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey owner(
 		PlacementAnalysis analysis,
 		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey value) {
@@ -239,6 +283,15 @@ public class CampaignBHeuristicPathwiseReentryTest {
 		return String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(2,2),list(2,0),list(4,2)));",
 			"v=matrix(1,2,1);", "z=X%*%v;", "w=z+1;", "print(sum(w));") + "\n";
+	}
+
+	private static String lmScript() {
+		return String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(500000,1050),list(500000,0),list(1000000,1050)));",
+			"Y=federated(addresses=list(\"localhost:1234/Y1\",\"localhost:1235/Y2\"),"
+				+ "ranges=list(list(0,0),list(500000,1),list(500000,0),list(1000000,1)));",
+			"m=lm(X=X,y=Y,verbose=FALSE,tol=1e-9);", "print(sum(m));") + "\n";
 	}
 
 	private static String mergeScript() {

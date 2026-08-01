@@ -28,6 +28,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constrai
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
@@ -49,8 +50,9 @@ public final class HeuristicPlacementAdapter {
 		List<CompiledHopKey> markerKeys = markerKeys(base, demotionMarkers);
 		PolicyView policy = policyView(analysis, markerKeys);
 		List<String> exclusions = policy.exclusions();
-		NeutralPlacementGraph filtered = new NeutralPlacementGraph(
-			filteredNodes(analysis, policy), policy.constraints(), base.relocationActions());
+		List<Node> filteredNodes = filteredNodes(analysis, policy);
+		NeutralPlacementGraph filtered = new NeutralPlacementGraph(filteredNodes, policy.constraints(),
+			projectRelocations(filteredNodes, base.relocationActions()));
 		List<String> candidates = filtered.normalizedCandidateUniverse();
 		PlacementSelection selection = new ExactPlacementSelector().select(filtered);
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
@@ -175,6 +177,28 @@ public final class HeuristicPlacementAdapter {
 				legal, node.exclusions(), node.anchors()));
 		}
 		return List.copyOf(nodes);
+	}
+
+	private static List<RelocationAction> projectRelocations(List<Node> nodes,
+		List<RelocationAction> relocations) {
+		Map<ValueVersionKey, Set<PlacementState>> legalBySourceValue = new LinkedHashMap<>();
+		for(Node node : nodes)
+			legalBySourceValue.computeIfAbsent(node.valueVersion(), ignored -> new LinkedHashSet<>())
+				.addAll(node.legalAlternatives());
+		List<RelocationAction> projected = new ArrayList<>(relocations.size());
+		for(RelocationAction action : relocations) {
+			Set<PlacementState> legalSourceStates = legalBySourceValue.getOrDefault(
+				action.key().sourceValueVersion(), Set.of());
+			// A direct-source placement is a shortcut proving that relocation is unnecessary when
+			// that exact source state is selected. The Heuristic policy may deliberately remove the
+			// FOUT source state from its local prefix. Retaining the shortcut after that projection
+			// would reference a state outside the selector graph; deleting the relocation itself would
+			// instead hide the required and costed local-to-federated boundary.
+			List<PlacementState> directSources = action.directSourcePlacements().stream()
+				.filter(legalSourceStates::contains).toList();
+			projected.add(new RelocationAction(action.key(), action.obligations(), directSources));
+		}
+		return List.copyOf(projected);
 	}
 
 	private static boolean isTransient(NeutralPlacementGraph graph, CompiledHopKey key) {
