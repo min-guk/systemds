@@ -460,10 +460,11 @@
 
 ## FedAll ALS runtime recompile에서 exact REFED edge와 rewrite placement가 active clone에서 소실됨
 
-- **상태**: 진행중 — 구조 수정과 소스 회귀/package 완료, 동일 실패 셀 Docker canary 대기
+- **상태**: 해결 — 소스 회귀/package와 동일 실패 셀 Docker canary GREEN, 무중복 continuation 실행 중
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 binary commit: `097c17f7ab674606fe7af10d192179245f19492e`
+  - 수정 binary commit: `056caca33fb4466df0770fd9944e9fa6b433d9ae`
   - 실패 campaign:
     `/home/mchoi/g007-all-planners-transient-refed-097c17f-d60da24-20260801-v1`
   - 실패 cell:
@@ -472,6 +473,12 @@
     `/home/mchoi/g007-all-planners-transient-refed-097c17f-d60da24-20260801-v1/planners/FedAll/cells/037-6ca280212863`
   - Docker-only `run_LAN_docker.sh`, `mkl-fout`, private-aggregate, seed `2026072701`,
     attempt `1`, retry 없음.
+  - 수정 stage:
+    `/home/mchoi/g007-fedall-als-runtime-refed-stage-056caca-20260801-v1/g007-stage-8a3e65e41136663149dce515d4e31ffc75f986ed1ed241cac3a75b3989cd16b8`
+  - 동일 실패 셀 canary:
+    `/home/mchoi/g007-fedall-als-runtime-refed-canary-056caca-d60da24-20260801-v1`
+  - 무중복 continuation:
+    `/home/mchoi/g007-all-planners-als-runtime-refed-056caca-d60da24-20260801-v1`
 - **재현 절차**:
   - 실패 cell의 `response.json`에 봉인된 stage-local `run_LAN_docker.sh` argv를 실행한다.
   - exact source regression:
@@ -505,6 +512,12 @@
   - `Recompiler`가 Lop을 실제로 생성한 active `hops`를 `Dag.getJobs(...)`에 전달하고,
     fused selected-consumer resolution도 그 exact logical roots를 검색한다. 기존 public `getJobs`와
     private `insertRefedLops(List, StatementBlock)` 진입점은 호환 오버로드로 보존했다.
+  - 실패 campaign은 `CAMPAIGN_FAILED.json`으로 동결하고 실패 셀을 재개하거나 재시도하지 않았다.
+    이전 성공 `118`셀과 해당 campaign의 성공 FedAll `2`셀만 hash/oracle/scan을 재검증해 채택했다.
+  - 수정 commit/JAR의 immutable stage를 만들고, 이전에 실패한 ALS `lan` 셀 하나만 attempt 1로
+    Docker canary 실행했다. canary 성공을 121번째 exact completion으로 등록했다.
+  - canonical 336에서 이 `121`셀을 정확히 제외한 `215`셀만 continuation으로 동결했다:
+    FedAll `47`, Heuristic `84`, MinST `84`. 실행 순서는 `FedAll → Heuristic → MinST`이다.
   - runtime fallback/repair, 후보 폐쇄, TRead/TWrite 규칙 완화, recompile `<CP,FOUT>` 허용은 추가하지 않았다.
 - **수정 파일**:
   - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
@@ -515,6 +528,7 @@
   - `src/test/java/org/apache/sysds/hops/rewrite/RewriteWeightedDivMMPlannerPlacementTest.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllAlsRuntimeRecompileRefedRedTest.java`
   - `docs/SESSION_ISSUES_2026-08-01.md`
+  - repo 외 immutable stage/canary/continuation control artifact는 위 환경 경로에 보존했다.
 - **검증**:
   - exact ALS integration, WDIVMM placement, policy, placement transaction, recompile placement 묶음
     `62/62` GREEN:
@@ -528,10 +542,31 @@
   - checkstyle/RAT 포함 `mvn -q -DskipTests package` 성공:
     `/tmp/g007-fedall-als-runtime-refed-package-20260801.log`.
   - package JAR SHA-256: `6cddc0e300b432ad07ac653bfa282ac9d8d332cef1cd722bd78dd94f43de83cc`.
+  - 수정 소스 commit: `056caca33fb4466df0770fd9944e9fa6b433d9ae`.
+  - immutable stage validator가 source/JAR/harness/data/reference tree와 runner inventory를 exact 검증했다.
+    stage에는 executable `run_LAN_docker.sh`가 정확히 하나 있고 `run_LAN.sh`는 없다.
+  - 동일 실패 ALS `lan` canary는 return/runner exit `0`, semantic oracle PASS,
+    objective relative error `1.499618323978053e-16`, row-space projector relative error `0.0`이었다.
+  - canary runtime evidence는 `fed_wdivmm=72`, `fed_fed_refed=114`, `fed_fed_fout=92`,
+    recompiled statement block `324`였고 error/fallback/resource-invalid/timeout scan은 모두 false였다.
+    coordinator/worker restart는 `0/0`, teardown 후 project-owned Docker resource도 `0`이다.
+  - canary `execution_seconds=155.498795845`, full lifecycle `178.628715044`,
+    SystemDS total execution `51.537 sec`였다. 성공 row/response/metric/oracle hash를 봉인했다.
+  - continuation prelaunch proof는 historical `121` + new `215` = canonical `336`,
+    intersection/missing/extra `0/0/0`이다. 실패 ALS `lan` 셀은 canary로 완료 집합에 있으며
+    남은 셀에 포함되지 않는다.
+  - planner별 validate-only는 FedAll `47`, Heuristic `84`, MinST `84` 모두 PASS했다.
+    셀별 attempt `1`, retry 없음, 고정 seed/data, stage-local Docker runner만 허용한다.
+  - launch 시 campaign/monitor systemd user service가 모두 active/running이고 첫 신규 셀은
+    `workers=2|planner=FedAll|workload=als|profile=wan_light`이다.
 - **잔여 이슈**:
-  - 새 commit/JAR로 immutable stage를 만들고 동일 실패 Docker cell 하나만 canary로 검증한다.
-  - canary가 성공하면 기존 성공 `120`셀과 canary를 exact completion registry로 제외하고,
-    남은 canonical cell만 `FedAll → Heuristic → MinST` 순서로 한 번씩 실행한다.
+  - continuation의 신규 `215`셀을 순서대로 완료해야 한다. monitor service가 300초 간격으로
+    service/result/failure/Docker/disk 상태를 기록하며, 실패 시 재시도 없이 fail-closed한다.
+  - 전 셀 성공 뒤 exact `336` unique-cell composite, semantic oracle, fallback/restart/teardown,
+    execution-time 정렬을 검증하고 그래프를 갱신해야 한다.
+  - 최종 결과는 단일 binary campaign이 아니라 셀별 검증된 stitched provenance이다:
+    `117`셀은 `705b8db`, `3`셀은 `097c17f`, `216`셀은 `056caca`이다. 단일 연속 실행이나
+    homogeneous binary 결과로 표현하지 않는다.
 - **잠재 회귀 위험**:
   - direct WDIVMM이 교체되는 원식과 완전히 같은 physical output boundary가 아닌 경우 placement 상속이
     잘못될 수 있다. 감지 방법: direct 형태만 허용하는 단위 회귀와 transpose-wrapped 별도 검증을 유지한다.
@@ -541,6 +576,9 @@
   - observed-local TRead에 stale receipt가 들어가면 불필요한 upload가 가능하다. 감지 방법:
     receipt map은 현재 placement transaction에서 선택된 exact hop ID만 허용하고, registry 없는 symbol
     classification이 local임을 단위 테스트로 유지한다.
+  - launch 시 `/home/mchoi`가 위치한 filesystem의 여유 공간이 약 `5.6 GiB`로 낮다.
+    감지 방법: monitor snapshot에 `df`를 포함하고 공간 부족 또는 orphan Docker artifact가 생기면
+    현재 셀을 실패 처리한 뒤 provenance가 검증된 불필요 artifact만 별도 정리 계획으로 제거한다.
 - **의사결정 근거/적용 원칙**:
   - planner가 선택·비용화한 exact edge를 rewrite와 lowering이 보존하도록 compiler 경계를 수정했다.
     runtime fallback이나 암묵적 보정이 아니며, `<CP,LOUT>/<FED,FOUT>` TRead/TWrite 규칙과
