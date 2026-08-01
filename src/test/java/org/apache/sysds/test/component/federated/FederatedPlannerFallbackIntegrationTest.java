@@ -5951,6 +5951,64 @@ public class FederatedPlannerFallbackIntegrationTest {
 		}
 	}
 
+	@Test
+	public void testDagRegistryRefedRematerializesTransientReadOfFederatedWriteBeforeCrossAnchorUpload()
+		throws Exception {
+		FederatedRefedRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			Data transientRead = localMatrixTransientReadLop("Y", 947);
+			String sourceAnchorKey = "fedinit://source-workers/0,10;10,20|ROW";
+			FederatedPlannerUtils.registerFedAnchorKey("Y", sourceAnchorKey);
+			UnaryCP selectedConsumer = new UnaryCP(transientRead, OpOp1.ABS,
+				DataType.MATRIX, ValueType.FP64, ExecType.FED);
+			selectedConsumer.setHopID(962);
+			selectedConsumer.getOutputParameters().setDimensions(ROWS, COLS, BLOCKSIZE, -1);
+			selectedConsumer.setFederatedOutput(FederatedOutput.FOUT);
+
+			// The same-name FED/FOUT write is downstream of the selected consumer, so it is not the
+			// producer of this transient read. Lowering must use the registered runtime anchor instead
+			// of rejecting the read solely because a later TWrite has the same variable name.
+			Data laterFederatedWrite = new Data(OpOpData.TRANSIENTWRITE, selectedConsumer, null, "Y", null,
+				DataType.MATRIX, ValueType.FP64, FileFormat.BINARY);
+			laterFederatedWrite.setHopID(963);
+			laterFederatedWrite.getOutputParameters().setDimensions(ROWS, COLS, BLOCKSIZE, -1);
+			laterFederatedWrite.setExecType(ExecType.FED);
+			laterFederatedWrite.setFederatedOutput(FederatedOutput.FOUT);
+
+			String targetAnchorKey = "fedinit://target-workers/0,10;10,20|ROW";
+			FederatedRefedRegistry.register(-1L, transientRead.getHopID(), -1L,
+				targetAnchorKey, List.of(selectedConsumer.getHopID()));
+
+			List<Lop> lops = new ArrayList<>(List.of(transientRead, selectedConsumer, laterFederatedWrite));
+			boolean changed = invokeInsertRefedLops(lops);
+
+			assertTrue("Expected selected transient FED/FOUT value to lower through explicit relocation", changed);
+			FederatedRefed refed = lops.stream()
+				.filter(lop -> lop instanceof FederatedRefed)
+				.map(lop -> (FederatedRefed) lop)
+				.findFirst().orElseThrow();
+			UnaryCP localMaterialize = lops.stream()
+				.filter(lop -> lop instanceof UnaryCP)
+				.map(lop -> (UnaryCP) lop)
+				.filter(lop -> OpOp1.PREFETCH.toString().equals(lop.getOpCode()))
+				.findFirst().orElseThrow();
+
+			assertEquals("FED transient symbol must be explicitly materialized before relocation",
+				List.of(transientRead), localMaterialize.getInputs());
+			assertEquals("fed_refed must consume only the explicit local materialization",
+				List.of(localMaterialize), refed.getInputs());
+			assertEquals(FederatedOutput.LOUT, localMaterialize.getFederatedOutput());
+			assertEquals(FederatedOutput.FOUT, refed.getFederatedOutput());
+			assertTrue(selectedConsumer.getInputs().contains(refed));
+			assertFalse(selectedConsumer.getInputs().contains(transientRead));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
 
 	@Test
 	public void testDagRegistryRefedFailsClosedForAmbiguousConcreteAnchorHopIdWithoutDurableKey() throws Exception {

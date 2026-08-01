@@ -1,5 +1,82 @@
 # Session issues — 2026-08-01
 
+## FedAll LogReg transient-read REFED가 downstream 동일명 TWrite 때문에 차단됨
+
+- **상태**: 진행중 — 구조 수정 및 63개 타깃 회귀/package GREEN, 동일 실패 셀 Docker canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 실패 production commit: `705b8dbb62f52bc98ceb4d0fd3a39405f8e581c0`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v6`
+  - 실패 cell:
+    `workers=2|planner=FedAll|workload=logreg|profile=lan`
+  - cell directory:
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v6/planners/FedAll/cells/034-f298c274aba8`
+  - Docker-only `run_LAN_docker.sh`, `mkl-fout`, private-aggregate, seed `2026072701`,
+    attempt `1`, retry 없음
+- **재현 절차**:
+  - campaign cell의 `response.json`에 기록된 stage-local `run_LAN_docker.sh` argv를 실행한다.
+  - source regression:
+    `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedAll.CampaignBG014FedAllLogRegTransientReadRelocationRedTest test`
+  - RED 로그:
+    `/tmp/g007-fedall-logreg-transient-relocation-cli-red-20260801.log`.
+- **관측 증상**:
+  - Docker cell은 wall `81.57284879684448s`, return code `1`로 종료됐다.
+  - runtime-program 생성 중
+    `fed_refed lowering cannot upload transient read of a FED/FOUT transient write for hop=191 label=Y`
+    예외가 발생했다.
+  - 실패 시점 누적 유효 결과는 DP `84/84`, FedAll `33/84`, 전체 `117/336`이며,
+    oracle failure와 runtime fallback은 성공 row에서 모두 `0`이다.
+- **원인 분석**:
+  - FedAll은 builtin `multiLogReg` 내부 TRead `Y`(hop 191)를 CP/LOUT로 선택하고,
+    FED/FOUT consumer로 보내기 위한 exact REFED relocation을 선택·비용화했다.
+  - 이 TRead의 runtime symbol에는 durable federated anchor가 있어 기존 lowering이 명시적
+    `PREFETCH(FED→LOUT) → fed_refed(LOUT→FOUT)` 경로를 만들 수 있다.
+  - 그러나 `Dag.insertRefedLops()`가 현재 Lop batch의 모든 FED/FOUT transient write 이름을 모은 뒤,
+    같은 이름의 TRead를 무조건 거부했다. 실제로 발견된 TWrite `Y`(hop 195)는 hop 191의 producer가
+    아니라 그 값을 사용한 뒤 실행되는 downstream write이므로 이름만 같은 false positive였다.
+  - candidate-space, 비용 모델, 데이터/seed 또는 runtime fallback 문제가 아니라, 이미 합법적으로
+    선택된 relocation을 lowering의 name-only guard가 차단한 문제다.
+- **해결 요약**:
+  - producer 지배관계나 symbol version을 표현하지 못하는 name-only transient-write guard를 제거했다.
+  - selected source가 실제 FED 값인지는 기존 `isFederatedMatrixLop()`가 exec/output placement와
+    transient-read durable anchor를 기준으로 판단한다. FED이면 planner가 비용화한 명시적
+    `FED→LOUT→FOUT`, local이면 직접 `LOUT→FOUT` lowering을 유지한다.
+  - 기존 runtime-recompile StepLM 경로에서 dominating FED/FOUT TWrite가 실제 owner인 경우는
+    `FederatedRefedPolicy.hasDominatingPlannedFederatedWrite()`가 중복 REFED 등록을 막는 기존 구조를
+    그대로 보존했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllLogRegTransientReadRelocationRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-01.md`
+- **검증**:
+  - synthetic downstream-same-name-TWrite RED→GREEN:
+    `/tmp/g007-fedall-logreg-transient-lowering-unit-green-20260801.log`.
+  - exact LogReg와 기존 StepLM owner regression `2/2` GREEN:
+    `/tmp/g007-fedall-logreg-steplm-targeted-green-20260801.log`.
+  - selected DAG REFED tests 12, `FederatedRefedPolicyTest` 47,
+    `FederatedDagLocalMaterializeTest` 1, 이전 L2SVM exact regression 1이 모두 GREEN:
+    `/tmp/g007-fedall-transient-relocation-broad-green-20260801.log`.
+  - 총 63개 distinct 타깃 테스트가 failure/error `0`이다.
+  - checkstyle/RAT를 포함한 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-fedall-logreg-transient-package-20260801.log`.
+  - package JAR SHA-256:
+    `d694e41695c60b5f97f0986e83cf92874727300ec7cac9b9372b6c720c7d910e`.
+- **잔여 이슈**:
+  - 새 immutable stage에서 동일 실패 cell Docker canary를 통과시켜 compile뿐 아니라 실제 runtime,
+    semantic oracle, fallback/restart/teardown을 검증해야 한다.
+  - canary가 성공한 뒤 기존 성공 117셀을 제외한 새-binary continuation만 실행한다.
+- **잠재 회귀 위험**:
+  - 잘못 등록된 REFED가 실제 dominating FED/FOUT TWrite의 TRead에 남는다면 불필요한 download/upload가
+    생길 수 있다. 기존 StepLM exact regression과 Docker coordinator instruction scan으로 감지한다.
+  - transient-read anchor registry가 stale이면 FED source를 local로 오판할 수 있다. source/target anchor가
+    다른 synthetic test와 exact LogReg/StepLM/L2SVM 회귀로 감지한다.
+- **의사결정 근거/적용 원칙**:
+  - candidate를 닫거나 runtime에서 보정하지 않고, planner가 선택·비용화한 exact relocation을
+    anchor-aware lowering으로 그대로 실행한다. TRead/TWrite placement 규칙과 recompile `<CP,FOUT>` 금지는
+    완화하지 않았다.
+
 ## FedAll L2SVM의 선택된 REFED source가 ternary-aggregate fusion으로 소실됨
 
 - **상태**: 해결 — exact CLI RED→GREEN, 유효한 broad 회귀·package·동일 실패 셀 Docker canary 완료

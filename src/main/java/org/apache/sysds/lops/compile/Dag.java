@@ -636,19 +636,6 @@ public class Dag<N extends Lop>
 		Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materializeEntries =
 			FederatedFoutMaterializeRegistry.snapshot(sbId);
 
-		Set<String> federatedTransientWrites = new HashSet<>();
-		for (Lop lop : lops) {
-			if (!(lop instanceof Data))
-				continue;
-			Data data = (Data) lop;
-			if (!data.isTransientWrite() || !data.getFederatedOutput().isForcedFederated())
-				continue;
-			OutputParameters out = data.getOutputParameters();
-			String label = (out != null) ? out.getLabel() : null;
-			if (label != null)
-				federatedTransientWrites.add(label);
-		}
-
 		Map<Long, Lop> hopToLop = new HashMap<>();
 		for (Lop lop : lops) {
 			long hopId = lop.getHopID();
@@ -676,16 +663,6 @@ public class Dag<N extends Lop>
 			RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
 				lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
 
-			if (!federatedTransientWrites.isEmpty() && local instanceof Data) {
-				Data data = (Data) local;
-				if (data.isTransientRead()) {
-					OutputParameters out = data.getOutputParameters();
-					String label = (out != null) ? out.getLabel() : null;
-					if (label != null && federatedTransientWrites.contains(label))
-						throw new LopsException("fed_refed lowering cannot upload transient read of a FED/FOUT"
-							+ " transient write for hop=" + hopId + " label=" + label);
-				}
-			}
 			plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority, consumers));
 		}
 
