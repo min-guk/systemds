@@ -35,6 +35,9 @@ import org.apache.sysds.lops.PartialAggregate;
 import org.apache.sysds.lops.TernaryAggregate;
 import org.apache.sysds.lops.UAggOuterChain;
 import org.apache.sysds.lops.UnaryCP;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.runtime.controlprogram.context.SparkExecutionContext;
 import org.apache.sysds.runtime.meta.DataCharacteristics;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
@@ -488,7 +491,28 @@ public class AggUnaryOp extends MultiThreadedHop
 				}
 			}
 		}
-		return ret;
+		return ret && !hasTernaryAggregatePlannerBoundary(getInput().get(0));
+	}
+
+	private static boolean hasTernaryAggregatePlannerBoundary(Hop aggregateInput) {
+		if(hasPlannerMaterializationBoundary(aggregateInput))
+			return true;
+		if(aggregateInput instanceof BinaryOp && ((BinaryOp) aggregateInput).getOp() == OpOp2.MULT)
+			for(Hop input : aggregateInput.getInput())
+				if(HopRewriteUtils.isBinary(input, OpOp2.MULT, OpOp2.POW)
+					&& hasPlannerMaterializationBoundary(input))
+					return true;
+		return false;
+	}
+
+	private static boolean hasPlannerMaterializationBoundary(Hop hop) {
+		long hopId = hop.getHopID();
+		// A selected relocation/materialization is an executable plan boundary. The
+		// ternary-aggregate rewrite must not erase an intermediate result whose exact
+		// movement was selected and costed by the planner.
+		return FederatedRefedRegistry.hasEntry(hopId)
+			|| FederatedFoutMaterializeRegistry.hasEntry(hopId)
+			|| FederatedLocalMaterializeRegistry.hasEntry(hopId);
 	}
 	
 	private static boolean isCompareOperator(OpOp2 opOp2)
