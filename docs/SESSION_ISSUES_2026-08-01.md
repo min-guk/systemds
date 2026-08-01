@@ -460,7 +460,7 @@
 
 ## FedAll ALS runtime recompile에서 exact REFED edge와 rewrite placement가 active clone에서 소실됨
 
-- **상태**: 해결 — 소스 회귀/package와 동일 실패 셀 Docker canary GREEN, 무중복 continuation 실행 중
+- **상태**: 해결 — 소스 회귀/package와 동일 실패 셀 Docker canary GREEN, 무중복 continuation 첫 신규 셀 GREEN 후 실행 중
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 binary commit: `097c17f7ab674606fe7af10d192179245f19492e`
@@ -559,9 +559,15 @@
     셀별 attempt `1`, retry 없음, 고정 seed/data, stage-local Docker runner만 허용한다.
   - launch 시 campaign/monitor systemd user service가 모두 active/running이고 첫 신규 셀은
     `workers=2|planner=FedAll|workload=als|profile=wan_light`이다.
+  - 2026-08-01 19:12 CEST 기준 첫 신규 `FedAll/ALS/wan_light` 셀도 attempt `1`로 GREEN이다:
+    execution `171.0869408 sec`, lifecycle `194.236032956 sec`, oracle PASS,
+    fallback false, restart `0/0`, teardown zero resources. response SHA-256은
+    `6128fd7f025d71de1637e0a43a4837fdc4fbf99bb7f9b5d280b76e9c8d1eca35`이다.
+    service는 다음 미실행 셀 `FedAll/ALS/wan_mid`로 자동 진행했다.
 - **잔여 이슈**:
-  - continuation의 신규 `215`셀을 순서대로 완료해야 한다. monitor service가 300초 간격으로
-    service/result/failure/Docker/disk 상태를 기록하며, 실패 시 재시도 없이 fail-closed한다.
+  - continuation의 신규 `215`셀을 순서대로 완료해야 한다. 위 시각 기준 `1/215`가 완료되어
+    `214`셀이 남았다. monitor service가 300초 간격으로 service/result/failure/Docker/disk 상태를
+    기록하며, 실패 시 재시도 없이 fail-closed한다.
   - 전 셀 성공 뒤 exact `336` unique-cell composite, semantic oracle, fallback/restart/teardown,
     execution-time 정렬을 검증하고 그래프를 갱신해야 한다.
   - 최종 결과는 단일 binary campaign이 아니라 셀별 검증된 stitched provenance이다:
