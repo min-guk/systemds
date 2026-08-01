@@ -2,7 +2,7 @@
 
 ## FedAll L2SVM의 선택된 REFED source가 ternary-aggregate fusion으로 소실됨
 
-- **상태**: 진행중 — exact CLI RED→GREEN, 유효한 broad 회귀 및 package 완료, Docker canary 대기
+- **상태**: 해결 — exact CLI RED→GREEN, 유효한 broad 회귀·package·동일 실패 셀 Docker canary 완료
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 production commit: `7fac50ddfdfb5159ad97652dbbb3dcd51154eb38`
@@ -84,12 +84,26 @@
     `mvn -q -DskipTests package`, `/tmp/g007-fedall-l2svm-package-20260801.log`, return code `0`.
   - package JAR SHA-256:
     `19968f40e8b337eaedf6299c9485a8cce1bdd571620fa07bb6578449ae1353d8`.
-  - 새 immutable Docker canary 결과는 완료 즉시 이 항목에 추가한다.
+  - immutable stage:
+    `/home/mchoi/g007-fedall-l2svm-ternary-stage-705b8db-20260801-v2/g007-stage-0597ebfb0ffa034b659dfa055b9dd64fd5b1c9f671b7d8c6414257bd81b8ba40`.
+    - SystemDS commit `705b8dbb62f52bc98ceb4d0fd3a39405f8e581c0`
+    - JAR SHA-256 `19968f40e8b337eaedf6299c9485a8cce1bdd571620fa07bb6578449ae1353d8`
+    - harness commit `d60da243b22e3752183c37679013fde1232c9638`
+    - descriptor internal SHA-256 `9ed046583b1f2cf5ced5a830fa81d47d7cda2b942f1edb3a1b3536bbbb9f7748`
+  - 동일 실패 셀 Docker canary:
+    `/home/mchoi/g007-fedall-l2svm-ternary-canary-705b8db-d60da24-20260801-v1`.
+    `execution_seconds=150.762147597`, semantic oracle PASS, scan의
+    `error/fallback/resource_invalid/timeout=false`, coordinator/worker restart `0/0`,
+    teardown zero resources를 확인했다.
+  - canary coordinator log에는 `fed_fed_refed`가 `2491`회 기록되어, 수정 뒤 실제 FedAll 계획이
+    REFED lowering을 수행하면서도 기존 `lop=null` 예외 없이 끝났음을 확인했다.
 - **잔여 이슈**:
-  - 새 commit/JAR로 immutable stage를 만들고 정확히 한 번의
-    FedAll/L2SVM/2-worker/LAN Docker canary를 통과해야 한다.
-  - canary 성공 뒤 새 zero-row 336-cell campaign을 `DP → FedAll → Heuristic → MinST` 순서로
-    각 cell 한 번씩 실행해야 한다. 과거 실패 campaign은 재시작/보충하지 않는다.
+  - 구조적 결함과 동일 실패 셀 검증은 해결됐다.
+  - 전체 범위 검증은 새 zero-row campaign
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v3`
+    (manifest SHA-256 `9e151d703d7874ef18c17b708d39f73b9dace995e0f4253ca7598137874726be`)
+    에서 `DP → FedAll → Heuristic → MinST`, 336셀, 셀당 1회, retry 없음으로 진행 중이다.
+    이 campaign이 실패하면 재시작/보충하지 않고 새 root에서만 구조적으로 재검증한다.
 - **잠재 회귀 위험**:
   - 선택된 materialization boundary가 있는 sum-product 식에서는 ternary fusion이 비활성화되어
     instruction shape와 성능이 달라진다. 이는 선택된 계획 경계를 실행하기 위한 의도된 변화다.
@@ -101,3 +115,81 @@
   - planner가 선택·비용화한 exact placement movement를 보존했다.
   - candidate-space 폐쇄, runtime fallback/repair, TRead/TWrite 제약 완화,
     recompile `<CP,FOUT>` 허용은 하지 않았다.
+
+
+## CP reference lifecycle의 publisher contract와 현재 harness validator 불일치
+
+- **상태**: 해결
+- **환경/조건**:
+  - 최초 실패 stage home:
+    `/home/mchoi/g007-fedall-l2svm-ternary-stage-705b8db-20260801-v1`
+  - 현재 harness commit: `d60da243b22e3752183c37679013fde1232c9638`
+  - 재사용할 canonical reference bundle:
+    `/home/mchoi/g007-campaign-stage-4426f23-e96b504-20260728/g007-reference-bundles/g007-reference-bundle-fa7e7d8ef9298e7f10c1f0e1f902dbc6d6dc95ca4d89136b6935c3ca65ab4312/references`
+- **재현 절차**:
+  - 현재 harness의 `tools/stage_campaign.py`를 호출하면서 위 reference를 검증한다.
+  - stage builder 파일 자체의 SHA-256은 기존 publisher stage와 동일한
+    `f850f1915f4289b2f0c20d414d167967c3433bef601fa74710e9a784de2cc881`이다.
+- **관측 증상**:
+  - stage 생성은 `ERROR: CP publisher contract identity diverged`로 중단됐다.
+  - lifecycle descriptor가 봉인한 `cp_reference_lifecycle.py` SHA-256은
+    `efda6ba6985dec664945067f9eb98153c177ca4f86b67326e991b31d500f6c85`이고,
+    현재 harness 파일은 `ef1f4888551793975488d186e6be46aa3df04bbb02a4d9b4dff3e6ea1b876acb`였다.
+- **원인 분석**:
+  - reference bundle은 생성 시점의 publisher 구현과 계약 hash를 descriptor에 포함한다.
+  - stage builder는 자신의 `tools` 경로에서 validator를 import하므로, 최신 evaluator migration을 포함한
+    현재 validator를 사용하면 과거 publisher identity와 정확히 같지 않아 fail-closed했다.
+  - copied stage의 `references` 디렉터리는 canonical content-addressed bundle parent/data sibling 계약도
+    만족하지 않으므로 검증 입력으로 사용하면 안 된다.
+- **해결 요약**:
+  - 검증을 완화하거나 reference를 재생성하지 않았다.
+  - descriptor가 요구하는 정확한 publisher validator를 포함한 원 publisher stage의
+    byte-identical `stage_campaign.py`를 사용하고, 입력은 canonical content-addressed bundle의
+    `references`와 인증된 data sibling을 사용했다.
+  - builder가 export한 실제 campaign harness는 계속 현재 clean commit `d60da24`이며,
+    SystemDS source/JAR도 현재 `705b8db`/`19968f…`로 독립 봉인됐다.
+- **수정 파일**: production source 수정 없음. 실패/성공 stage artifact와 이 문서만 기록.
+- **검증**:
+  - `validate_published_bundle()`가 bundle id, descriptor, publisher hash, data inventory,
+    reference payload inventory, hardlink identity를 모두 통과했다.
+  - 새 stage `g007-stage-0597…`의 stage-local `stage_campaign.py validate`가 통과했다.
+  - stage 안 `run_LAN_docker.sh`는 executable이고 `run_LAN.sh`는 0개다.
+- **잔여 이슈**: 없음. 이후 stage는 성공한 `v2`만 사용한다.
+- **잠재 회귀 위험**:
+  - 다른 reference bundle에는 다른 publisher contract가 봉인될 수 있다.
+  - 감지 방법: 반드시 canonical bundle root를 사용하고 lifecycle validator와 stage descriptor 검증을
+    둘 다 통과시킨다. hash 불일치를 migration 없이 무시하지 않는다.
+- **의사결정 근거/적용 원칙**: 동일 데이터/reference 재사용은 내용 주소와 publisher 계약을 모두
+  인증해야 하며, 검증 우회나 불필요한 CP reference 재실행보다 봉인된 원 계약을 재현한다.
+
+## 비-persistent launcher에서 336-cell campaign child가 첫 응답 전에 종료됨
+
+- **상태**: 해결 — 실패 root 동결, 새 persistent tmux campaign 실행 중
+- **환경/조건**:
+  - 종료된 root:
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v2`
+  - 후속 root:
+    `/home/mchoi/g007-all-planners-ternary-705b8db-d60da24-20260801-v3`
+  - 동일 stage/JAR/harness/seed, planner order `DP → FedAll → Heuristic → MinST`.
+- **재현 절차**:
+  - 일반 command-exec 세션에서 `nohup run.sh &`로 child를 분리하고 command 세션을 종료한다.
+- **관측 증상**:
+  - launch receipt와 DP manifest, 첫 request는 생성됐지만 child process가 사라졌다.
+  - 첫 cell runner stdout/stderr는 0 bytes, response/row/metric은 없고 campaign 소유 Docker resource도 0개였다.
+- **원인 분석**:
+  - campaign 코드 오류나 Docker 실패 로그는 없었다. command-exec 세션 종료와 함께 detached child가
+    정리되는 실행 표면이므로, 장시간 작업의 lifetime을 보장하지 못했다.
+- **해결 요약**:
+  - 종료된 `v2`를 재실행/보충하지 않고 failure/correction receipt와 함께 동결했다.
+  - 새 zero-row `v3`를 detached tmux session `g007_336_705b8db_v3`에서 시작했다.
+  - v3 manifest는 336셀, attempt 1, retry NONE, Docker-only, 동일 stage identity를 다시 검증한다.
+- **수정 파일**: production source 수정 없음. campaign control artifact와 이 문서만 기록.
+- **검증**:
+  - tmux pane → `run.sh` → `run_selected_discovery.py` → stage-local `run_LAN_docker.sh` process tree가 유지된다.
+  - 첫 DP cell의 frozen data 검증 및 Docker coordinator/worker 기동을 확인했다.
+- **잔여 이슈**: v3가 완료될 때까지 tmux/process, row cardinality, failure file, Docker teardown을 감시한다.
+- **잠재 회귀 위험**:
+  - tmux session 또는 host가 종료되면 해당 campaign도 실패한다.
+  - 감지 방법: pane/process 존재, progress/rows 증가, cell response hash, residual Docker resource를 함께 확인한다.
+- **의사결정 근거/적용 원칙**: 실패 campaign은 immutable하게 보존하고 backfill하지 않으며,
+  실제 측정이 시작되지 않은 launcher failure도 새 manifest/root로만 재시도한다.
