@@ -2089,11 +2089,29 @@ public class RewriteAlgebraicSimplificationDynamic extends HopRewriteRule
 		
 		//relink new hop into original position
 		if( hnew != null ) {
+			// Runtime recompilation may discover this fusion only after the federated
+			// planner selected the equivalent matrix-multiply producer. A direct
+			// WDIVMM replacement is the same physical output boundary, so preserve the
+			// exact selected placement on that replacement. Do not use a synthetic
+			// source-position signature: it would alias unrelated rewrite-created
+			// WDIVMM hops. Transpose-wrapped variants are intentionally excluded
+			// because their inner/outer placement states require separate translation.
+			if( hnew instanceof QuaternaryOp )
+				inheritExactReplacementPlacement(hi, hnew);
 			HopRewriteUtils.replaceChildReference(parent, hi, hnew, pos);
 			hi = hnew;
 		}
 		
 		return hi;
+	}
+
+	private static void inheritExactReplacementPlacement(Hop replaced, Hop replacement) {
+		if( replaced == null || replacement == null )
+			return;
+		replacement.setExecType(replaced.getExecType());
+		replacement.setForcedExecType(replaced.getForcedExecType());
+		replacement.setFederatedOutput(replaced.getFederatedOutput());
+		replacement.setFederatedOutputDerived(replaced.isFederatedOutputDerived());
 	}
 
 	private static Hop simplifyWeightedCrossEntropy(Hop parent, Hop hi, int pos) 

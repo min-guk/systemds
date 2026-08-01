@@ -188,6 +188,16 @@ public class Dag<N extends Lop>
 	 * @return list of instructions
 	 */
 	public ArrayList<Instruction> getJobs(StatementBlock sb, DMLConfig config) {
+		return getJobs(sb, config, sb != null ? sb.getHops() : null);
+	}
+
+	/**
+	 * Compiles this Lop DAG while resolving exact planner-selected Hop edges against the
+	 * Hop DAG that actually produced these Lops. Runtime recompilation passes a deep-copied
+	 * and dynamically rewritten DAG here; the statement block still owns the immutable base
+	 * DAG and therefore cannot identify rewrite-created or clone-specific Hop occurrences.
+	 */
+	public ArrayList<Instruction> getJobs(StatementBlock sb, DMLConfig config, List<Hop> logicalHopRoots) {
 		if (config != null) {
 			scratch = config.getTextValue(DMLConfig.SCRATCH_SPACE) + "/";
 		}
@@ -196,7 +206,7 @@ public class Dag<N extends Lop>
 		List<Lop> node_v = dl.linearize(nodes);
 		boolean modified = insertLocalMaterializeLops(node_v, sb);
 		modified |= prefetchFederated(node_v);
-		modified |= insertRefedLops(node_v, sb);
+		modified |= insertRefedLops(node_v, sb, logicalHopRoots);
 		modified |= insertFoutMaterializeLops(node_v, sb);
 
 		// The default linearizer for CP/Spark relies on lop IDs (creation order) to satisfy dependencies.
@@ -626,6 +636,10 @@ public class Dag<N extends Lop>
 	}
 
 	private boolean insertRefedLops(List<Lop> lops, StatementBlock sb) {
+		return insertRefedLops(lops, sb, sb != null ? sb.getHops() : null);
+	}
+
+	private boolean insertRefedLops(List<Lop> lops, StatementBlock sb, List<Hop> logicalHopRoots) {
 		if (FederatedRefedRegistry.isEmpty())
 			return false;
 
@@ -659,7 +673,7 @@ public class Dag<N extends Lop>
 			if (local == null)
 				throw new LopsException("fed_refed lowering requires a local lop for hop=" + hopId);
 			List<RefedConsumerEdge> consumers = resolveSelectedRefedConsumers(
-				lops, spec.getConsumerHopIds(), local, hopId, sb);
+				lops, spec.getConsumerHopIds(), local, hopId, logicalHopRoots);
 			RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
 				lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
 
@@ -724,7 +738,7 @@ public class Dag<N extends Lop>
 	}
 
 	private static List<RefedConsumerEdge> resolveSelectedRefedConsumers(List<Lop> lops,
-			List<Long> consumerHopIds, Lop local, long hopId, StatementBlock sb) {
+			List<Long> consumerHopIds, Lop local, long hopId, List<Hop> logicalHopRoots) {
 		if (consumerHopIds == null || consumerHopIds.isEmpty())
 			throw new LopsException("fed_refed lowering requires exact selected consumer hop ids for hop=" + hopId);
 		List<RefedConsumerEdge> consumers = new ArrayList<>();
@@ -740,7 +754,7 @@ public class Dag<N extends Lop>
 			}
 			if (matchingConsumers.isEmpty())
 				matchingConsumers.addAll(resolveFusedSelectedRefedConsumers(
-					lops, sb, consumerHopId, local, hopId));
+					lops, logicalHopRoots, consumerHopId, local, hopId));
 			if (matchingConsumers.isEmpty())
 				throw new LopsException("fed_refed lowering could not resolve selected consumer hop="
 					+ consumerHopId + " for local hop=" + hopId);
@@ -762,12 +776,12 @@ public class Dag<N extends Lop>
 		return consumers;
 	}
 
-	private static List<Lop> resolveFusedSelectedRefedConsumers(List<Lop> lops, StatementBlock sb,
+	private static List<Lop> resolveFusedSelectedRefedConsumers(List<Lop> lops, List<Hop> logicalHopRoots,
 			long consumerHopId, Lop local, long hopId) {
-		if (sb == null || sb.getHops() == null || sb.getHops().isEmpty())
+		if (logicalHopRoots == null || logicalHopRoots.isEmpty())
 			return List.of();
 
-		List<Hop> logicalConsumers = collectStatementBlockHops(sb).stream()
+		List<Hop> logicalConsumers = collectLogicalHops(logicalHopRoots).stream()
 			.filter(hop -> hop.getHopID() == consumerHopId)
 			.filter(hop -> countLogicalInputs(hop, local, hopId) > 0)
 			.toList();
@@ -803,10 +817,10 @@ public class Dag<N extends Lop>
 		return List.copyOf(physicalConsumers);
 	}
 
-	private static List<Hop> collectStatementBlockHops(StatementBlock sb) {
+	private static List<Hop> collectLogicalHops(List<Hop> roots) {
 		List<Hop> result = new ArrayList<>();
 		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-		ArrayDeque<Hop> pending = new ArrayDeque<>(sb.getHops());
+		ArrayDeque<Hop> pending = new ArrayDeque<>(roots);
 		while (!pending.isEmpty()) {
 			Hop hop = pending.removeFirst();
 			if (hop == null || !visited.add(hop))

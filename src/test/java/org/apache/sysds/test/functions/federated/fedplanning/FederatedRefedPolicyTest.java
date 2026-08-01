@@ -940,6 +940,39 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testRuntimeObservedLocalTransientReadUsesExactRefedEdgeForFedParent() {
+		DataOp localState = createLocalMatrix("S", 3000, 50);
+		localState.setForcedExecType(ExecType.CP);
+		localState.setFederatedOutput(FederatedOutput.LOUT);
+
+		UnaryOp fedParent = HopRewriteUtils.createUnary(localState, OpOp1.EXP);
+		fedParent.setDim1(3000);
+		fedParent.setDim2(50);
+		fedParent.setForcedExecType(ExecType.FED);
+		fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		Map<String, String> runtimeSignatures = new HashMap<>();
+		runtimeSignatures.put("X",
+			"worker1:8001/data/X_1;worker2:8002/data/X_2;|0,1500;1500,3000;");
+		Map<String, FType> runtimeTypes = new HashMap<>();
+		runtimeTypes.put("X", FType.ROW);
+		runtimeTypes.put("S", null);
+
+		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(fedParent)),
+			true, fTypeMap, 16L, runtimeSignatures, runtimeTypes);
+
+		FederatedRefedRegistry.AnchorSpec refed =
+			FederatedRefedRegistry.snapshot(16L).get(localState.getHopID());
+		assertTrue("The observed-local TRead must retain an exact REFED edge for its selected FED consumer",
+			refed != null && refed.getConsumerHopIds().equals(Arrays.asList(fedParent.getHopID())));
+		assertEquals("REFED lowering must not change the TRead placement marker",
+			ExecType.CP, localState.getForcedExecType());
+		assertEquals("REFED lowering must keep the TRead output local",
+			FederatedOutput.LOUT, localState.getFederatedOutput());
+	}
+
+	@Test
 	public void testRuntimeRecompileDerivedFedSiblingKeepsConcreteRowAnchorType() {
 		DataOp x = createLocalMatrix("X", 50000, 2100);
 		x.setForcedExecType(ExecType.FED);

@@ -466,7 +466,7 @@ public class Recompiler {
 		
 		// generate runtime instructions (incl piggybacking)
 		ArrayList<Instruction> newInst = dag
-			.getJobs(sb, ConfigurationManager.getDMLConfig());
+			.getJobs(sb, ConfigurationManager.getDMLConfig(), hops);
 		
 		// explain recompiled (and potentially deep copied) DAG, but
 		// defer the explain of instructions after additional modifications

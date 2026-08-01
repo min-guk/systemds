@@ -457,3 +457,91 @@
   - 최신 사용자 지시를 현재 실험 운영 정책으로 적용하되, 과거 결과를 무검증 backfill하지 않고
     동일 immutable identity의 성공 response만 hash/oracle/scan 검증 후 provenance와 함께 재사용한다.
   - planner/runtime/fallback/candidate-space/TR-TW/recompile 규칙은 변경하지 않았다.
+
+## FedAll ALS runtime recompile에서 exact REFED edge와 rewrite placement가 active clone에서 소실됨
+
+- **상태**: 진행중 — 구조 수정과 소스 회귀/package 완료, 동일 실패 셀 Docker canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 실패 binary commit: `097c17f7ab674606fe7af10d192179245f19492e`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-transient-refed-097c17f-d60da24-20260801-v1`
+  - 실패 cell:
+    `workers=2|planner=FedAll|workload=als|profile=lan`
+  - cell directory:
+    `/home/mchoi/g007-all-planners-transient-refed-097c17f-d60da24-20260801-v1/planners/FedAll/cells/037-6ca280212863`
+  - Docker-only `run_LAN_docker.sh`, `mkl-fout`, private-aggregate, seed `2026072701`,
+    attempt `1`, retry 없음.
+- **재현 절차**:
+  - 실패 cell의 `response.json`에 봉인된 stage-local `run_LAN_docker.sh` argv를 실행한다.
+  - exact source regression:
+    `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedAll.CampaignBG014FedAllAlsRuntimeRecompileRefedRedTest test`.
+  - 핵심 단위 회귀:
+    `RewriteWeightedDivMMPlannerPlacementTest`와
+    `FederatedRefedPolicyTest#testRuntimeObservedLocalTransientReadUsesExactRefedEdgeForFedParent`를 실행한다.
+- **관측 증상**:
+  - ALS builtin `m_alsCG`, lines `125-127`의 runtime recompile에서 다음 fail-closed 예외가 발생했다:
+    `Invalid planner-selected federated runtime plan: hopID=1069 op=b(*) name=parsertemp259 reason=FED hop has no federated inputs and no planner-approved CP/FOUT or refed path; inputs=[1058:TRead S:MATRIX:CP, 1053:b(+):MATRIX:FED]`.
+  - 실패 cell은 `failure_category=runtime_scan`, return code `1`이었고 teardown은 zero resources였다.
+  - 실패 시점의 채택 가능한 누적 성공은 이전 registry `118`셀과 새 FedAll `2`셀, 총 `120/336`이다.
+    실패 cell 자체는 성공 row로 기록되지 않았다.
+- **원인 분석**:
+  1. runtime dynamic rewrite가 선택된 matrix-multiply를 direct WDIVMM `QuaternaryOp`으로 교체하면서
+     원래 Hop의 exact exec/output placement를 replacement에 전달하지 않았다.
+  2. planner는 local transient read `S`에서 FED parent로 가는 exact REFED consumer edge를 재도출했지만,
+     runtime validation은 `LOCAL_TR_VARS`의 observed-local 판정을 lowering receipt보다 먼저 적용해
+     해당 edge의 명시적 federated representation을 무시했다. `S`의 source placement 자체는
+     올바른 `<CP,LOUT>`이다.
+  3. 위 두 문제를 수정한 뒤에는 logical consumer hop `1069`가 ternary-aggregate lowering에 융합되어
+     직접 Lop consumer가 없었다. 기존 fused-consumer resolver는 immutable 원본 `StatementBlock.getHops()`를
+     검색했기 때문에 runtime deep-copy/dynamic rewrite가 만든 hop ID `1058/1069`를 찾지 못했다.
+     즉 registry가 지워진 문제가 아니라 active recompiled Hop DAG와 lowering lookup DAG가 달랐다.
+- **해결 요약**:
+  - direct WDIVMM replacement에 한해 교체되는 Hop의 exec type, forced exec type, federated output과
+    derived marker를 정확히 상속한다. transpose-wrapped 변형이나 source-position 기반 유사 매칭은 하지 않는다.
+  - runtime validation에 explicit materialize/REFED registry가 전달된 경우, observed-local symbol 판정보다
+    exact hop receipt를 먼저 인정한다. TRead `S`는 계속 `<CP,LOUT>`이며 선택된 consumer edge에만
+    `fed_refed` representation이 생긴다. registry 없는 판정은 계속 local이다.
+  - `Recompiler`가 Lop을 실제로 생성한 active `hops`를 `Dag.getJobs(...)`에 전달하고,
+    fused selected-consumer resolution도 그 exact logical roots를 검색한다. 기존 public `getJobs`와
+    private `insertRefedLops(List, StatementBlock)` 진입점은 호환 오버로드로 보존했다.
+  - runtime fallback/repair, 후보 폐쇄, TRead/TWrite 규칙 완화, recompile `<CP,FOUT>` 허용은 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/recompile/Recompiler.java`
+  - `src/main/java/org/apache/sysds/hops/rewrite/RewriteAlgebraicSimplificationDynamic.java`
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `src/test/java/org/apache/sysds/hops/rewrite/RewriteWeightedDivMMPlannerPlacementTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllAlsRuntimeRecompileRefedRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-01.md`
+- **검증**:
+  - exact ALS integration, WDIVMM placement, policy, placement transaction, recompile placement 묶음
+    `62/62` GREEN:
+    `/tmp/g007-fedall-refed-core-suites-20260801.log`.
+  - exact Dag REFED fail-closed/rewire contract `12/12` GREEN:
+    `/tmp/g007-fedall-dag-refed-contract-green-20260801.log`.
+  - ALS integration은 runtime recompile `84`회, `fed_wdivmm=24`, `fed_fed_refed=42`,
+    `fed_fed_fout=28`을 실행했고 runtime fallback/repair `0/0`을 assertion으로 확인했다.
+  - 전체 legacy `FederatedPlannerFallbackIntegrationTest`의 실패 `14`건은 이 문서에 이미 기록된
+    unmodified-HEAD 기준선과 동일하다. 이번 변경이 닿는 exact Dag subset `12`건은 별도 GREEN이다.
+  - checkstyle/RAT 포함 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-fedall-als-runtime-refed-package-20260801.log`.
+  - package JAR SHA-256: `6cddc0e300b432ad07ac653bfa282ac9d8d332cef1cd722bd78dd94f43de83cc`.
+- **잔여 이슈**:
+  - 새 commit/JAR로 immutable stage를 만들고 동일 실패 Docker cell 하나만 canary로 검증한다.
+  - canary가 성공하면 기존 성공 `120`셀과 canary를 exact completion registry로 제외하고,
+    남은 canonical cell만 `FedAll → Heuristic → MinST` 순서로 한 번씩 실행한다.
+- **잠재 회귀 위험**:
+  - direct WDIVMM이 교체되는 원식과 완전히 같은 physical output boundary가 아닌 경우 placement 상속이
+    잘못될 수 있다. 감지 방법: direct 형태만 허용하는 단위 회귀와 transpose-wrapped 별도 검증을 유지한다.
+  - active Hop roots와 Lop DAG가 다른 rewrite 단계에서 전달되면 fused edge를 잘못 찾을 수 있다.
+    감지 방법: exact hop ID와 logical-input multiplicity를 모두 요구하고 unresolved/ambiguous ID는
+    기존처럼 fail-closed한다.
+  - observed-local TRead에 stale receipt가 들어가면 불필요한 upload가 가능하다. 감지 방법:
+    receipt map은 현재 placement transaction에서 선택된 exact hop ID만 허용하고, registry 없는 symbol
+    classification이 local임을 단위 테스트로 유지한다.
+- **의사결정 근거/적용 원칙**:
+  - planner가 선택·비용화한 exact edge를 rewrite와 lowering이 보존하도록 compiler 경계를 수정했다.
+    runtime fallback이나 암묵적 보정이 아니며, `<CP,LOUT>/<FED,FOUT>` TRead/TWrite 규칙과
+    recompile `<CP,FOUT>` 금지를 그대로 유지한다.

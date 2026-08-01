@@ -1956,6 +1956,13 @@ public final class FederatedRefedPolicy {
 				String name = dataOp.getName();
 				if (name == null)
 					return false;
+				// An observed-local symbol remains <CP,LOUT>, but an exact lowering receipt may
+				// create a federated representation for selected consumer edges. Honor that
+				// explicit REFED/FOUT authority before classifying the source symbol itself as
+				// local. Calls without lowering registries still correctly report the source as local.
+				if ((materialize != null && materialize.containsKey(input.getHopID()))
+					|| (refed != null && refed.containsKey(input.getHopID())))
+					return true;
 				Set<String> runtimeLocalTransientReads = LOCAL_TR_VARS.get();
 				if (runtimeLocalTransientReads != null && runtimeLocalTransientReads.contains(name))
 					return false;
@@ -1974,12 +1981,6 @@ public final class FederatedRefedPolicy {
 				// exact <FED,FOUT> transient forwarding plan.
 				if (isRuntimePlanLocked()
 					&& hasDominatingPlannedFederatedWrite(dataOp, GLOBAL_TWRITE_CACHE.get()))
-					return true;
-				// During FED-input enforcement we may register a refed/materialize upload for this
-				// transient read in the same statement block. In that case the input is valid for
-				// FED execution, even if the read itself stays planned as CP/LOUT.
-				if ((materialize != null && materialize.containsKey(input.getHopID()))
-					|| (refed != null && refed.containsKey(input.getHopID())))
 					return true;
 				// Otherwise, a transient read is runtime-federated only if planned as FED/FOUT.
 				ExecType exec = getPlannedExecType(input);
