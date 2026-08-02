@@ -91,6 +91,7 @@ import org.apache.sysds.parser.StatementBlock.InlinedFunctionInputBoundary;
 import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -293,7 +294,7 @@ public final class NeutralPlacementGraphBuilder {
 			ordinalsByBlock);
 		CandidateMaterializationClosure materializationClosure =
 			closeDerivedWorkerPoolMaterializationCandidates(nodes, candidateRuleFacts,
-				compiledInputEdges, origins, factsByHop);
+				compiledInputEdges, logicalTransientInputs, origins, factsByHop);
 		nodes = materializationClosure.nodes();
 		candidateRuleFacts = materializationClosure.candidateRuleFacts();
 		boolean functionClosureConverged = false;
@@ -318,7 +319,7 @@ public final class NeutralPlacementGraphBuilder {
 			candidateRuleDomainKeys = functionReplay.domainKeys();
 			candidateRuleFacts = functionReplay.facts();
 			materializationClosure = closeDerivedWorkerPoolMaterializationCandidates(nodes,
-				candidateRuleFacts, compiledInputEdges, origins, factsByHop);
+				candidateRuleFacts, compiledInputEdges, logicalTransientInputs, origins, factsByHop);
 			nodes = materializationClosure.nodes();
 			candidateRuleFacts = materializationClosure.candidateRuleFacts();
 		}
@@ -333,7 +334,7 @@ public final class NeutralPlacementGraphBuilder {
 				relocationShapes.put(node.key(), shape);
 		}
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
-			nodes, scopes, relocationShapes);
+			nodes, logicalTransientInputs, scopes, relocationShapes);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
 		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
@@ -2345,7 +2346,8 @@ public final class NeutralPlacementGraphBuilder {
 	 */
 	private static CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
 		List<Node> nodes, List<CandidateRuleFact> candidateRuleFacts,
-		List<CompiledInputEdgeFact> compiledInputEdges, Map<CompiledHopKey,Hop> origins,
+		List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> logicalTransientInputs,
+		Map<CompiledHopKey,Hop> origins,
 		Map<Hop,NodeShapeFact> factsByHop) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
@@ -2353,7 +2355,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer =
 			matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
 		WorkerPoolAnchorResolver resolver = new WorkerPoolAnchorResolver(nodesByKey,
-			matrixEdgesByConsumer, candidateRuleFacts);
+			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs);
 		Map<CompiledHopKey,List<Integer>> factIndexesByNode = new IdentityHashMap<>();
 		for(int index = 0; index < candidateRuleFacts.size(); index++)
 			factIndexesByNode.computeIfAbsent(candidateRuleFacts.get(index).key().parentOccurrence(),
@@ -2381,7 +2383,8 @@ public final class NeutralPlacementGraphBuilder {
 					|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
 						emission.emissionState().placementState().execType() == ExecType.FED))
 					continue;
-				List<DurableAnchorKey> anchors = resolver.resolveCandidateInputs(fact).stream().toList();
+				List<DurableAnchorKey> anchors = resolver
+					.resolveSameFullWorkerPoolCandidateInputs(fact).stream().toList();
 				if(anchors.size() != 1)
 					continue;
 				DurableAnchorKey anchor = anchors.get(0);
@@ -2406,9 +2409,10 @@ public final class NeutralPlacementGraphBuilder {
 			}
 			if(nodeAnchors.size() != 1 || shapeDependencies.size() != 1)
 				continue;
+			DurableAnchorKey materializationAnchor = nodeAnchors.iterator().next();
 			NodeShapeFact shape = factsByHop.get(hop);
 			FType materializationFType = exactMaterializationFType(shape,
-				nodeAnchors.iterator().next());
+				materializationAnchor);
 			if(materializationFType == null)
 				continue;
 			PlacementState cpFout = new PlacementState(ExecType.CP, FederatedOutput.FOUT,
@@ -2436,7 +2440,7 @@ public final class NeutralPlacementGraphBuilder {
 					.filter(derivedFout::equals).findFirst().orElseThrow();
 			closedNodes.set(nodeIndex, closedNode);
 			for(Map.Entry<Integer,DurableAnchorKey> entry : exactAnchors.entrySet()) {
-				if(!entry.getValue().equals(nodeAnchors.iterator().next()))
+				if(!entry.getValue().equals(materializationAnchor))
 					continue;
 				CandidateRuleFact fact = closedFacts.get(entry.getKey());
 				List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts());
@@ -2473,7 +2477,8 @@ public final class NeutralPlacementGraphBuilder {
 
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
-		List<Node> nodes, Map<CompiledHopKey,Long> scopes,
+		List<Node> nodes, List<LogicalTransientInputFact> logicalTransientInputs,
+		Map<CompiledHopKey,Long> scopes,
 		Map<CompiledHopKey,NodeShapeFact> shapeFacts) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
@@ -2481,7 +2486,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer =
 			matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
 		WorkerPoolAnchorResolver workerPoolAnchors = new WorkerPoolAnchorResolver(nodesByKey,
-			matrixEdgesByConsumer, candidateRuleFacts);
+			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs);
 		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByConsumer = new IdentityHashMap<>();
 		for(CandidateRuleFact fact : candidateRuleFacts)
 			candidateFactsByConsumer.computeIfAbsent(fact.key().parentOccurrence(),
@@ -2663,7 +2668,8 @@ public final class NeutralPlacementGraphBuilder {
 			FType materializationFType = materializedInputs.get(inputPosition).fType();
 			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
 				continue;
-			Set<DurableAnchorKey> resolved = workerPoolAnchors.resolveCandidateInputs(candidate);
+			Set<DurableAnchorKey> resolved = workerPoolAnchors
+				.resolveSameFullWorkerPoolCandidateInputs(candidate);
 			if(resolved.size() != 1 || !resolved.contains(anchor))
 				continue;
 			for(CandidateEmissionFact emission : candidate.allowedEmissionFacts()) {
@@ -2716,17 +2722,26 @@ public final class NeutralPlacementGraphBuilder {
 		private final Map<CompiledHopKey,Node> nodesByKey;
 		private final Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer;
 		private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByProducer = new IdentityHashMap<>();
+		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead =
+			new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Map<FType,Set<DurableAnchorKey>>> memo = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<FType>> active = new IdentityHashMap<>();
 
 		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
 			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
-			List<CandidateRuleFact> candidateRuleFacts) {
+			List<CandidateRuleFact> candidateRuleFacts,
+			List<LogicalTransientInputFact> logicalTransientInputs) {
 			this.nodesByKey = nodesByKey;
 			this.matrixEdgesByConsumer = matrixEdgesByConsumer;
 			for(CandidateRuleFact fact : candidateRuleFacts)
 				candidateFactsByProducer.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
 					.add(fact);
+			for(LogicalTransientInputFact fact : logicalTransientInputs)
+				logicalTransientInputsByRead.computeIfAbsent(fact.targetRead(),
+					ignored -> new java.util.EnumMap<>(FType.class))
+					.computeIfAbsent(fact.federatedFType(), ignored -> new ArrayList<>()).add(fact);
+			logicalTransientInputsByRead.values().forEach(byType ->
+				byType.values().forEach(facts -> facts.sort(null)));
 		}
 
 		private Set<DurableAnchorKey> resolve(CompiledHopKey producer, FType fType) {
@@ -2743,7 +2758,8 @@ public final class NeutralPlacementGraphBuilder {
 				Set<DurableAnchorKey> resolved = directAnchors(producer, fType);
 				if(resolved.isEmpty())
 					resolved = derivedAnchors(producer, fType);
-				Set<DurableAnchorKey> immutable = Collections.unmodifiableSet(new java.util.TreeSet<>(resolved));
+				Set<DurableAnchorKey> immutable = Collections.unmodifiableSet(
+					new java.util.TreeSet<>(resolved));
 				byType.put(fType, immutable);
 				return immutable;
 			}
@@ -2800,6 +2816,89 @@ public final class NeutralPlacementGraphBuilder {
 					return Set.of();
 			}
 			return hasPresentMatrixInput && candidate != null ? candidate : Set.of();
+		}
+
+		/**
+		 * Resolves the shared runtime worker pool for exact multi-FULL candidates whose inputs have
+		 * different value/range anchors. The proof is deliberately narrower than value-anchor
+		 * propagation: it requires an exact transient TWrite-to-TRead fact, one durable anchor per
+		 * input, and identical canonical worker endpoints. ROW/COL and different endpoints remain
+		 * unresolved, so this cannot invent a placement or act as a runtime fallback.
+		 */
+		private Set<DurableAnchorKey> resolveSameFullWorkerPoolCandidateInputs(CandidateRuleFact fact) {
+			Set<DurableAnchorKey> exact = resolveCandidateInputs(fact);
+			if(!exact.isEmpty())
+				return exact;
+			Map<Integer,CompiledInputEdgeFact> inputsByPosition = matrixEdgesByConsumer
+				.getOrDefault(fact.key().parentOccurrence(), Map.of());
+			boolean usedLogicalTransientInput = false;
+			boolean usedDistinctAnchor = false;
+			int presentMatrixInputs = 0;
+			DurableAnchorKey workerPoolAnchor = null;
+			List<CandidateInputState> inputs = fact.key().orderedInputs();
+			for(int inputPosition = 0; inputPosition < inputs.size(); inputPosition++) {
+				CandidateInputState input = inputs.get(inputPosition);
+				if(!input.present())
+					continue;
+				if(input.fType() != FType.FULL)
+					return exact;
+				presentMatrixInputs++;
+				CompiledInputEdgeFact edge = inputsByPosition.get(inputPosition);
+				if(edge == null)
+					return exact;
+				Set<DurableAnchorKey> inputAnchors = resolve(edge.producer(), input.fType());
+				if(inputAnchors.isEmpty()) {
+					inputAnchors = resolveLogicalTransientInput(edge.producer(), input.fType());
+					usedLogicalTransientInput |= !inputAnchors.isEmpty();
+				}
+				if(inputAnchors.size() != 1)
+					return exact;
+				DurableAnchorKey inputAnchor = inputAnchors.iterator().next();
+				if(workerPoolAnchor == null)
+					workerPoolAnchor = inputAnchor;
+				else {
+					if(!sameWorkerPool(workerPoolAnchor, inputAnchor))
+						return exact;
+					usedDistinctAnchor |= !workerPoolAnchor.equals(inputAnchor);
+				}
+			}
+			return presentMatrixInputs > 1 && usedLogicalTransientInput && usedDistinctAnchor
+				? Set.of(workerPoolAnchor) : exact;
+		}
+
+		private Set<DurableAnchorKey> resolveLogicalTransientInput(CompiledHopKey producer,
+			FType fType) {
+			Set<DurableAnchorKey> result = new java.util.TreeSet<>();
+			for(LogicalTransientInputFact fact : logicalTransientInputsByRead.getOrDefault(producer, Map.of())
+				.getOrDefault(fType, List.of())) {
+				if(fact.anchor() != null)
+					result.add(fact.anchor());
+				result.addAll(resolve(fact.sourceWrite(), fType));
+			}
+			return result;
+		}
+
+		private static boolean sameWorkerPool(DurableAnchorKey left, DurableAnchorKey right) {
+			if(left.equals(right))
+				return true;
+			// FULL means the complete logical input resides on one worker. Different variables
+			// legitimately have different placement ids and matrix ranges, but are directly
+			// composable when their canonical worker endpoint is identical. The oracle still
+			// owns operation/FType legality; this check only proves the shared runtime pool.
+			List<String> leftWorkers = canonicalWorkers(left);
+			return left.fType() == FType.FULL && right.fType() == FType.FULL
+				&& !leftWorkers.isEmpty() && leftWorkers.equals(canonicalWorkers(right));
+		}
+
+		private static List<String> canonicalWorkers(DurableAnchorKey anchor) {
+			List<String> workers = new ArrayList<>(anchor.partitions().size());
+			for(AnchorPartition partition : anchor.partitions()) {
+				String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+				if(worker == null)
+					return List.of();
+				workers.add(worker);
+			}
+			return List.copyOf(workers);
 		}
 
 		private static boolean emitsFout(CandidateRuleFact fact, FType fType) {

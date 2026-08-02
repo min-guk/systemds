@@ -275,6 +275,92 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 	}
 
 	@Test
+	public void l2svmStateDependentInputMaterializationRemainsExactlyCostable() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileL2Svm());
+		CompiledHopKey key = decisionKey(analysis,
+			"scripts/builtin/l2svm.dml:91:19:org.apache.sysds.hops.AggBinaryOp:ba(+*):g_old");
+		List<PlacementState> legal = analysis.graph().node(key).orElseThrow().legalAlternatives();
+		PlacementState fedLout = legal.stream()
+			.filter(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.LOUT)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_L2SVM_NATIVE_FED_LOUT_MISSING|legal=" + legal.stream()
+					.map(PlacementState::normalizedSignature).toList()));
+		PlacementState fedFout = legal.stream()
+			.filter(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.FOUT)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_L2SVM_DERIVED_FED_FOUT_MISSING|legal=" + legal.stream()
+					.map(PlacementState::normalizedSignature).toList()));
+
+		Assert.assertTrue("BR10_L2SVM_FIXTURE_MUST_RETAIN_NATIVE_FULL_INPUT",
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == key)
+				.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				.filter(fact -> fact.key().orderedInputs().size() > 1)
+				.filter(fact -> fact.key().orderedInputs().get(1)
+					.equals(CandidateInputState.present(FType.FULL)))
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.anyMatch(emission -> emission.emissionState().placementState() == fedLout));
+		Assert.assertTrue("BR10_L2SVM_FIXTURE_MUST_RETAIN_DERIVED_LOCAL_INPUT_RELOCATION",
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == key)
+				.filter(fact -> fact.status() == CandidateEvaluationStatus.AVAILABLE)
+				.filter(fact -> fact.key().orderedInputs().size() > 1)
+				.filter(fact -> fact.key().orderedInputs().get(1)
+					.equals(CandidateInputState.absentLocal()))
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.anyMatch(emission -> emission.emissionState().placementState() == fedFout
+					&& emission.emissionState().derivedFedFout()));
+		CompiledInputEdgeFact localInput = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == key && edge.inputPosition() == 1)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_L2SVM_LOCAL_AGGBINARY_INPUT_MISSING"));
+		var producer = analysis.graph().node(localInput.producer()).orElseThrow();
+		var derivedRelocations = analysis.graph().relocationActions().stream()
+			.filter(action -> action.key().sourceValueVersion() == producer.valueVersion()
+				&& action.key().targetPlacement().equals(fedFout))
+			.filter(action -> action.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == key && obligation.inputPosition() == 1))
+			.toList();
+		Assert.assertEquals("BR10_L2SVM_DERIVED_INPUT_RELOCATION_MUST_BE_UNIQUE",
+			1, derivedRelocations.size());
+		Assert.assertEquals("BR10_L2SVM_DERIVED_OUTPUT_MUST_RETAIN_NATIVE_FULL_INPUT_LAYOUT",
+			FType.FULL, derivedRelocations.get(0).key().materializationFType());
+
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+		Assert.assertTrue("BR10_L2SVM_SELECTED_G_OLD_MUST_BE_LEGAL",
+			legal.contains(selectedState(facts, selection, decision(facts, key))));
+	}
+
+	@Test
+	public void l2svmDifferentFullWorkersDoNotInventSharedPoolAuthority() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileL2Svm("localhost:1235/Y1"));
+		CompiledHopKey key = decisionKey(analysis,
+			"scripts/builtin/l2svm.dml:91:19:org.apache.sysds.hops.AggBinaryOp:ba(+*):g_old");
+		PlacementState fedFout = analysis.graph().node(key).orElseThrow().legalAlternatives().stream()
+			.filter(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.FOUT)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_L2SVM_DIFFERENT_WORKER_FIXTURE_MUST_RETAIN_DERIVED_FOUT"));
+		CompiledInputEdgeFact localInput = analysis.compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == key && edge.inputPosition() == 1)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_L2SVM_DIFFERENT_WORKER_LOCAL_INPUT_MISSING"));
+		var producer = analysis.graph().node(localInput.producer()).orElseThrow();
+		Assert.assertFalse("BR10_L2SVM_DIFFERENT_WORKERS_MUST_NOT_SHARE_FULL_POOL_AUTHORITY",
+			analysis.graph().relocationActions().stream()
+				.filter(action -> action.key().sourceValueVersion() == producer.valueVersion()
+					&& action.key().targetPlacement().equals(fedFout))
+				.filter(action -> action.obligations().stream().anyMatch(obligation ->
+					obligation.consumer() == key && obligation.inputPosition() == 1))
+				.anyMatch(action -> action.key().materializationFType() == FType.FULL));
+	}
+
+	@Test
 	public void kmeansForwardedFunctionInputRetainsLegacyDirectCallerChoice() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildDetachedAnalysis(compileKMeans(120));
@@ -733,6 +819,28 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			"Y=federated(addresses=list(\"localhost:1234/Y1\"),"
 				+ "ranges=list(list(0,0),list(50000,1)));",
 			"m=lm(X=X,y=Y,verbose=FALSE,tol=1e-9);",
+			"write(m,\"out\",format=\"csv\");") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
+	private static DMLProgram compileL2Svm() throws Exception {
+		return compileL2Svm("localhost:1234/Y1");
+	}
+
+	private static DMLProgram compileL2Svm(String yAddress) throws Exception {
+		String script = String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\"),"
+				+ "ranges=list(list(0,0),list(50000,2100)));",
+			"Y=federated(addresses=list(\"" + yAddress + "\"),"
+				+ "ranges=list(list(0,0),list(50000,1)));",
+			"m=l2svm(X=X,Y=Y,verbose=FALSE,epsilon=1e-22,maxIterations=30);",
 			"write(m,\"out\",format=\"csv\");") + "\n";
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());

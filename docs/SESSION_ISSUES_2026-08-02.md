@@ -382,3 +382,122 @@
 - **의사결정 근거/적용 원칙**:
   - provenance gate를 완화하지 않고 정확한 원본/canonical 경로를 제공했다. 런타임·플래너 정책에는
     변화가 없다.
+
+## MinST L2SVM에서 서로 다른 FULL 값 앵커의 동일 worker-pool 권한을 잃음
+
+- **상태**: 진행중 — planner 구조 수정·양/음성 소스 회귀·package 완료, 새 immutable Docker canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 수정 기준 commit: `c3d42ec58b19e1847505b69a65692c2d8181e02b`
+  - 실패 binary commit: `823bc4bd3d7a0849610fd05b89b0ca4e6141b7c0`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-minst-lm-derived-fout-823bc4b-d60da24-20260802-v1`
+  - 실패 cell: `workers=1|planner=MinST|workload=l2svm|profile=lan`
+  - cell directory:
+    `/home/mchoi/g007-all-planners-minst-lm-derived-fout-823bc4b-d60da24-20260802-v1/planners/MinST/cells/010-6036d8b2cfe3`
+  - Docker-only `run_LAN_docker.sh`, private-aggregate, seed/data `2026072701`, attempt `1`, retry 없음.
+- **재현 절차**:
+  - 위 cell의 `response.json`과 `raw_coordinator.log`를 확인한다. coordinator는 workload 실행 전
+    MinST exact-facts 생성 단계에서 종료한다.
+  - production-shape source RED:
+    `mvn -q -DskipRat -Dcheckstyle.skip -Dspotless.check.skip=true -Dtest=CampaignBR10MinStFTypeMembershipAuthorityRedTest#l2svmStateDependentInputMaterializationRemainsExactlyCostable test`.
+  - fixture는 X=`localhost:1234/X1` FULL, Y=`localhost:1234/Y1` FULL로 두 값의 exact range/placement
+    identity는 다르지만 실제 worker endpoint는 동일하게 구성한다.
+- **관측 증상**:
+  - planner exception:
+    `MINST_CONSUMER_LAYOUT_UNPROVEN|ambiguous-exact-membership-representatives`.
+  - 실패 지점은 builtin L2SVM의 `g_old` (`AggBinaryOp ba(+*)`) input `1`이며, 동일 compute membership의
+    대표 후보가 다음처럼 서로 다른 input materialization type을 보고했다.
+    - derived `FED/FOUT/BROADCAST`: `[PRESENT FULL, ABSENT_LOCAL]`, relocation=`BROADCAST`
+    - native `FED/LOUT/FULL`: `[PRESENT FULL, PRESENT FULL]`, input layout=`FULL`
+  - 실패 response SHA-256:
+    `af27979df9ce987ad7ce4e73def3b38181ff09ffede37909cda01321c7d6b107`.
+  - campaign은 historical `259` + 신규 LM `2` = exact 성공 `261/336`에서 봉인했다. 실패 셀은 성공
+    집합에 포함하지 않았고 재시도하지 않았다. `CAMPAIGN_FAILED.json` SHA-256은
+    `b3a24407af0f73e8b909f5095b18943570d268524e2d9fd587f80ec32732d302`, stop 후 validation은
+    `c72238c1c9823e3aa065018cfa6d07726628edd5efb3958f4e745486b143a092`이며 remaining은 `75`다.
+- **원인 분석**:
+  1. `WorkerPoolAnchorResolver.resolveCandidateInputs`는 모든 PRESENT input의 `DurableAnchorKey`를 exact
+     equality로 교집합했다.
+  2. `g_old` input0 X는 direct/derived 경로로 `fed-init:X/FULL`을 찾았지만, input1 Y는 이전 branch의
+     TWrite에서 현재 TRead로 전달된 `LogicalTransientInputFact`였다. 이 fact의 inline anchor는 null이고,
+     sourceWrite 경로를 따라가야 `fed-init:Y/FULL`을 찾을 수 있다.
+  3. X/Y는 placement id와 matrix range가 달라 exact value anchor로는 당연히 다르지만,
+     `FederationUtils.canonicalFederatedWorkerAddress` 기준으로 둘 다 `localhost:1234`의 동일 단일 worker
+     pool이다. exact value identity와 worker-pool identity를 동일시한 교집합이 합법한 PRESENT 후보를
+     누락했다.
+  4. 업로드 후 PRESENT 후보를 못 찾자 sparse-domain pre-materialization 경로가 Y의 geometry만 보고
+     `BROADCAST`를 선택했다. 그 결과 native FULL 입력 후보와 derived FOUT 후보의 MinST membership
+     representative가 충돌했다.
+- **해결 요약**:
+  - 기존 exact anchor 교집합을 우선 유지한다. exact 결과가 비어 있을 때만 제한된
+    `resolveSameFullWorkerPoolCandidateInputs` 증명을 수행한다.
+  - 이 증명은 다음 조건을 모두 요구한다.
+    1. PRESENT matrix input이 두 개 이상이고 모두 `FULL`이다.
+    2. 적어도 한 input은 exact `LogicalTransientInputFact`의 targetRead→sourceWrite 경로를 실제로
+       사용해야 한다.
+    3. 각 input에서 exact durable anchor가 하나만 나와야 한다.
+    4. 서로 다른 value anchor가 존재해야 하며, 모든 canonical worker endpoint 목록이 동일해야 한다.
+  - 위 조건이 증명되면 candidate input 순서의 첫 exact anchor를 deterministic worker-pool 대표로
+    사용한다. closure와 post-materialization 후보 해석이 같은 authority를 사용하므로 `[FULL,FULL]`
+    후보에도 기존 derived FOUT이 유지되고 input1 relocation은 `FULL`로 비용화된다.
+  - 다른 endpoint(`localhost:1235/Y1`)에서는 FULL worker-pool authority를 만들지 않는 음성 회귀를
+    추가했다.
+  - runtime fallback/repair, candidate-space skip/continue guard, TRead/TWrite 완화, recompile
+    `<CP,FOUT>` 허용은 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR10MinStFTypeMembershipAuthorityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-02.md`
+- **검증**:
+  - 수정 전 MinST exact-facts RED:
+    `/tmp/g007-minst-l2svm-state-dependent-red-c3d42ec-20260802.log`, SHA-256
+    `900ff9f00e231d508bde57d560fb9e02f02c94254affd78c86b8249c9a685be5`.
+  - 더 좁은 relocation layout RED:
+    `/tmp/g007-minst-l2svm-derived-input-layout-red-c3d42ec-20260802.log`, SHA-256
+    `f513f05b452ae4c676d6cea01296659e5748f7b5f0ace19d87763886574ba965`.
+  - 단일 양성 L2SVM 회귀 GREEN:
+    `/tmp/g007-minst-l2svm-worker-pool-narrow-green-wip-20260802.log`, SHA-256
+    `e9fce3994870afe90aee93d0f357fe6bd356cbb86a04c5b4ade8c09f216a28fb`.
+  - 동일 endpoint 양성 + 다른 endpoint 음성 회귀를 포함한 BR10 전체 GREEN:
+    `/tmp/g007-minst-l2svm-br10-positive-negative-green-wip-20260802.log`, SHA-256
+    `bc4bff63fd498f553e7c4748dc57f0c40c43e0e8d5d8e2d6640081e12b85f88b`.
+  - MinST PCA/selector/heavy-MM/forward-membership/CFG identity 집중 suite GREEN:
+    `/tmp/g007-minst-l2svm-focused-green-wip2-20260802.log`, SHA-256
+    `38590d2362e0523cd62a9f20e7f98c80fd844577dfd853e3ea8e22dc2f26c268`.
+  - 원래 선택한 10-class/67-test suite는 수정본에서 `62` GREEN + 기존 failure `5`였다:
+    `/tmp/g007-minst-l2svm-focused-baseline-parity-wip-20260802.log`, SHA-256
+    `b1811c9e6cfb957cd2c6c829a5847ee796a4b0b49a141fdcc30e69f4994d7e78`.
+    clean `c3d42ec58b` 임시 worktree에서도 동일 5개 method가 전부 실패했다:
+    `/tmp/g007-c3d42ec-baseline-five-20260802.log`, SHA-256
+    `33ac59e64dcd113ddb5469a59eb4fb2ab64e3ba77d97fca1cdda4af5350efc38`.
+    따라서 이번 수정이 추가한 회귀 failure/error는 0이다.
+  - checkstyle/RAT/compile을 포함한 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-minst-l2svm-package-wip-20260802.log`, SHA-256
+    `93c5a1f2231900312aff12ae9a0427294532bc79605199267c0a82887c831e70`.
+  - 최종 정리 후 BR10 전체와 package를 다시 실행해 모두 성공했다:
+    `/tmp/g007-minst-l2svm-br10-final-green-20260802.log` SHA-256
+    `019d56727ca8abf8157221b9daaf58ad767d97d32f5dc8913e2fe6b562f861f9`,
+    `/tmp/g007-minst-l2svm-package-final-20260802.log` SHA-256
+    `d2e5b05f9989805d3b86bcbc5094a7aaaafed71ea2b5232f42e98719701bfab6`.
+- **잔여 이슈**:
+  - 수정본을 commit하고 fresh real JAR/immutable stage를 생성한다. 이전 실패 binary/stage/campaign은
+    재사용하지 않는다.
+  - 동일 실패 L2SVM cell을 새 root에서 attempt `1`, retry 없음으로 Docker canary 실행한다.
+  - canary 성공 후 exact 성공 집합 `262`와 canonical remaining `74`의 overlap `0`, union `336`을
+    검증하고, 새 unfinished-only MinST continuation을 실행한다.
+  - 전 `336` unique cell 성공 뒤 semantic/fallback/restart/teardown, execution-time 정렬 및 그래프를
+    최종 감사한다.
+- **잠재 회귀 위험**:
+  - 같은 host:port라도 분산 ROW/COL partition 또는 여러 worker 순서가 다른 값을 합치면 안 된다.
+    감지 방법: 이 증명은 `FULL/FULL`에만 제한하고 canonical endpoint 목록 exact equality를 요구한다.
+  - logical transient source가 여러 exact anchor를 내면 임의 선택하면 안 된다. 감지 방법:
+    input별 anchor cardinality가 정확히 1이 아니면 기존 empty/exact 결과를 유지해 fail-closed한다.
+  - 다른 endpoint를 같은 pool로 잘못 합치면 FULL relocation이 나타날 수 있다. 감지 방법:
+    `l2svmDifferentFullWorkersDoNotInventSharedPoolAuthority` 음성 회귀를 유지한다.
+  - clean HEAD에서 이미 실패하는 5개 assertion은 별도 기존 부채다. 감지 방법: baseline과 수정본의
+    exact failure method 집합을 비교하고 신규 failure/error가 생기면 stage를 만들지 않는다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 실제로 공유하는 worker endpoint와 exact value/range identity를 planner state에서 분리해
+    모델링했다. 합법 후보를 닫거나 runtime에서 보정하지 않고, planner가 업로드 전 정확한 transient
+    provenance와 worker-pool identity를 증명해 비용에 반영한다는 최상위 원칙을 적용했다.
