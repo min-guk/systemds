@@ -555,14 +555,10 @@ public final class MinStExactCostFactsProducer {
 				.filter(emission -> states.stream()
 					.anyMatch(candidate -> candidate == emission.emissionState().placementState()))
 				.toList();
-			if(exactEmissions.size() > 1)
-				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_EMISSION_AMBIGUOUS|key="
-					+ decision.key().normalizedSignature() + "|membership="
-					+ membership(membershipExec, membershipOutput) + "|inputs=" + fact.key().orderedInputs()
-					+ "|emissions=" + exactEmissions.stream()
-						.map(CandidateEmissionFact::normalizedSignature).toList());
-			if(exactEmissions.size() == 1) {
-				CandidateEmissionFact exactEmission = exactEmissions.get(0);
+			if(!exactEmissions.isEmpty()) {
+				CandidateEmissionFact exactEmission = exactEmissions.size() == 1
+					? exactEmissions.get(0)
+					: selectCostDominatedInternalEmission(analysis, decision, fact, exactEmissions);
 				// The resolver's logical FType is a downstream consumer-safe projection. It may be
 				// BROADCAST while the exact runtime emission remains ROW/COL (notably for a formal
 				// function TRead). The builder-owned emission fact is the execution-layout authority;
@@ -639,6 +635,91 @@ public final class MinStExactCostFactsProducer {
 						.map(MembershipInputAuthorityFact::authoritySignature).toList()).toList());
 		return matches.get(0);
 	}
+
+	/**
+	 * Projects runtime-supported execution arms that have the same externally visible
+	 * {@code FED/LOUT} membership onto MinST's two-bit decision.
+	 *
+	 * <p>A local output erases the worker layout before any downstream consumer observes
+	 * the value.  If the exact candidate row also fixes every matrix input to an existing
+	 * federated representation, the arms differ only in the internal execution layout.
+	 * Their producer/consumer cut obligations are therefore identical and the arm with
+	 * the lowest complete FED-unary plus local-result cost is a dominated internal choice.
+	 * Neutral analysis and DP keep every arm; this projection only chooses the exact arm
+	 * represented by MinST's coarser membership.  A cost tie is resolved by the least
+	 * shape-dependent exact proof and then by the canonical emission signature.</p>
+	 *
+	 * <p>Do not extend this reduction to FOUT or to rows with coordinator-local matrix
+	 * inputs.  Those alternatives can change downstream placement or shared relocation
+	 * costs and require an expanded cut state rather than a local tie-break.</p>
+	 */
+	private static CandidateEmissionFact selectCostDominatedInternalEmission(
+		PlacementAnalysis analysis, DecisionFact decision, CandidateRuleFact fact,
+		List<CandidateEmissionFact> exactEmissions) {
+		boolean fedLout = exactEmissions.stream().allMatch(emission -> {
+			PlacementState state = emission.emissionState().placementState();
+			return state.execType() == ExecType.FED && state.output() == FederatedOutput.LOUT
+				&& !emission.emissionState().derivedFedFout() && emission.executionFType() != null;
+		});
+		if(!fedLout)
+			throw internalEmissionAmbiguity(decision, fact, exactEmissions,
+				"non-local-or-derived-membership-requires-expanded-cut-state");
+		Hop hop = analysis.hop(decision.key()).orElseThrow(() ->
+			new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_HOP_MISSING"));
+		List<FType> inputFTypes = exactPresentFedInputTypes(hop, fact);
+		if(inputFTypes == null)
+			throw internalEmissionAmbiguity(decision, fact, exactEmissions,
+				"local-matrix-input-requires-global-relocation-cost");
+		int workers = workerCount(analysis.graph());
+		if(workers <= 0)
+			throw internalEmissionAmbiguity(decision, fact, exactEmissions,
+				"worker-count-unproven");
+		List<CostedInternalEmission> costed = exactEmissions.stream()
+			.map(emission -> new CostedInternalEmission(emission,
+				fedCostProjection(analysis, decision.key(), hop, inputFTypes,
+					emission.executionFType(), workers, 1.0).fedLoutCost()))
+			.sorted(Comparator.comparingDouble(CostedInternalEmission::cost)
+				.thenComparing(cost -> cost.emission().emissionState().placementState().shapeDependent())
+				.thenComparing(cost -> cost.emission().normalizedSignature()))
+			.toList();
+		CandidateEmissionFact selected = costed.get(0).emission();
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("MinST-InternalEmissionReduction", "key="
+				+ decision.key().normalizedSignature() + ", inputs=" + fact.key().orderedInputs()
+				+ ", costs=" + costed.stream().map(cost -> cost.emission().normalizedSignature()
+					+ '@' + cost.cost()).toList() + ", selected=" + selected.normalizedSignature());
+		return selected;
+	}
+
+	private static List<FType> exactPresentFedInputTypes(Hop hop, CandidateRuleFact fact) {
+		List<CandidateInputState> inputs = fact.key().orderedInputs();
+		List<FType> result = new ArrayList<>(hop.getInput().size());
+		for(int position = 0; position < hop.getInput().size(); position++) {
+			Hop input = hop.getInput(position);
+			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix()) {
+				result.add(null);
+				continue;
+			}
+			if(position >= inputs.size() || !inputs.get(position).present()
+				|| inputs.get(position).fType() == null)
+				return null;
+			result.add(inputs.get(position).fType());
+		}
+		return List.copyOf(result);
+	}
+
+	private static IllegalArgumentException internalEmissionAmbiguity(DecisionFact decision,
+		CandidateRuleFact fact, List<CandidateEmissionFact> exactEmissions, String reason) {
+		return new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_RULE_EMISSION_AMBIGUOUS|key="
+			+ decision.key().normalizedSignature() + "|membership="
+			+ membership(exactEmissions.get(0).emissionState().placementState().execType(),
+				exactEmissions.get(0).emissionState().placementState().output())
+			+ "|inputs=" + fact.key().orderedInputs() + "|projection=" + reason
+			+ "|emissions=" + exactEmissions.stream()
+				.map(CandidateEmissionFact::normalizedSignature).toList());
+	}
+
+	private record CostedInternalEmission(CandidateEmissionFact emission, double cost) { }
 
 	private static int exactInputAuthorityCoverage(PlacementAnalysis analysis,
 		CompiledHopKey consumer, MembershipRepresentative representative) {
@@ -1082,49 +1163,14 @@ public final class MinStExactCostFactsProducer {
 			? exactFedInputTypes(analysis, hop, decision.key(),
 				selectedFedRepresentative(decision, representatives))
 			: List.of();
-		boolean broadcastOnlyFedCompute = fed && !federatedSource
-			&& broadcastOnlyMatrixInputs(hop, inputFTypes);
-		double unitLocalCost = unitLocalCost(hop);
 		double outputBytes = effectiveOutputBytes(analysis, decision.key(), hop);
 		double uploadBytes = effectiveUploadBytes(analysis, decision.key(), hop);
-		double fedCompute = !fed ? 0.0 : FederatedCostModel.computeFederatedComputeCost(
-			hop, base, workers, broadcastOnlyFedCompute);
-		if(fed) {
-			fedCompute = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
-				hop, executionFType, fedCompute);
-			fedCompute = FederatedCostModel.computeNativeFederatedIndexingCost(
-				hop, executionFType, fedCompute);
-		}
-		double fedCoordination = !fed || hop instanceof DataOp ? 0.0
-			: FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
-				execWeight * FederatedCostModel.computeFedCoordinationCost(workers));
-		double fedInstructionLatency = !fed ? 0.0
-			: FederatedCostModel.computeControlDominatedFederatedInstructionCost(hop,
-				executionFType, execWeight, workers, broadcastOnlyFedCompute);
-		FederatedCostModel.MixedFedLocalCost mixed = !fed || hop instanceof DataOp
-			? FederatedCostModel.MixedFedLocalCost.none()
-			: FederatedCostModel.computeMixedFedLocalCost(hop,
-				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
-				unitLocalCost, outputBytes, workers);
-		double fedInputPreparation = execWeight * mixed.getInputPreparationCost();
-		double singleWorkerPenalty = !fed ? 0.0
-			: FederatedCostModel.computeSingleWorkerFedExecPenalty(hop, execWeight, workers);
-		double fedCost = requireCost(fedCompute + fedCoordination + fedInstructionLatency
-			+ fedInputPreparation + singleWorkerPenalty, "MINST_FED_COST_UNPROVEN");
-
-		double resultDownloadUnit = FederatedCostModel.computeDownloadNetworkCost(uploadBytes);
-		if(!(hop instanceof DataOp)) {
-			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
-				hop, executionFType, outputBytes, workers, resultDownloadUnit);
-			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
-				hop, executionFType, outputBytes, workers, resultDownloadUnit);
-			if(mixed.hasCoordinatorPhase())
-				resultDownloadUnit = mixed.getCoordinatorPhaseCost();
-		}
-		else if(((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE)
-			resultDownloadUnit = 0.0;
-		double resultDownload = requireCost(execWeight * resultDownloadUnit,
-			"MINST_RESULT_DOWNLOAD_COST_UNPROVEN");
+		FedCostProjection fedProjection = fed
+			? fedCostProjection(hop, inputFTypes, executionFType, workers, execWeight,
+				base, outputBytes, uploadBytes)
+			: FedCostProjection.none();
+		double fedCost = fedProjection.fedUnaryCost();
+		double resultDownload = fedProjection.resultDownloadCost();
 		double resultUpload = !cpFout ? 0.0 : requireCost(execWeight
 			* (FederatedCostModel.computeUploadNetworkCost(uploadBytes, materializationFType, workers)
 				+ FederatedCostModel.computeLocalToFedForwardingPenalty(materializationFType, workers)),
@@ -1165,6 +1211,74 @@ public final class MinStExactCostFactsProducer {
 		else if(!derivedFedFout) {
 			edges.add(decision.placementNodeId(), decision.computeNodeId(), resultUpload,
 				ContributionKind.UPLOAD, decision.key(), null, -1, "native-cp-fout-upload");
+		}
+	}
+
+	private static FedCostProjection fedCostProjection(PlacementAnalysis analysis,
+		CompiledHopKey key, Hop hop, List<FType> inputFTypes, FType executionFType,
+		int workers, double executionWeight) {
+		double base = cpUnaryCost(hop, executionWeight);
+		return fedCostProjection(hop, inputFTypes, executionFType, workers, executionWeight,
+			base, effectiveOutputBytes(analysis, key, hop), effectiveUploadBytes(analysis, key, hop));
+	}
+
+	/** Shared exact FED arm cost used both by cut edges and by safe internal-arm reduction. */
+	private static FedCostProjection fedCostProjection(Hop hop, List<FType> inputFTypes,
+		FType executionFType, int workers, double executionWeight, double base,
+		double outputBytes, double uploadBytes) {
+		if(executionFType == null)
+			throw new IllegalArgumentException("MINST_FED_EXECUTION_LAYOUT_UNPROVEN");
+		boolean federatedSource = hop instanceof DataOp
+			&& ((DataOp)hop).getOp() == OpOpData.FEDERATED;
+		boolean broadcastOnlyFedCompute = !federatedSource
+			&& broadcastOnlyMatrixInputs(hop, inputFTypes);
+		double fedCompute = FederatedCostModel.computeFederatedComputeCost(
+			hop, base, workers, broadcastOnlyFedCompute);
+		fedCompute = FederatedCostModel.computeNativeFederatedAggregateUnaryCost(
+			hop, executionFType, fedCompute);
+		fedCompute = FederatedCostModel.computeNativeFederatedIndexingCost(
+			hop, executionFType, fedCompute);
+		double fedCoordination = hop instanceof DataOp ? 0.0
+			: FederatedCostModel.adjustFedCoordinationCost(hop, executionFType,
+				executionWeight * FederatedCostModel.computeFedCoordinationCost(workers));
+		double fedInstructionLatency = FederatedCostModel
+			.computeControlDominatedFederatedInstructionCost(hop, executionFType,
+				executionWeight, workers, broadcastOnlyFedCompute);
+		FederatedCostModel.MixedFedLocalCost mixed = hop instanceof DataOp
+			? FederatedCostModel.MixedFedLocalCost.none()
+			: FederatedCostModel.computeMixedFedLocalCost(hop,
+				new ArrayList<>(hop.getInput()), inputFTypes, executionFType,
+				unitLocalCost(hop), outputBytes, workers);
+		double fedInputPreparation = executionWeight * mixed.getInputPreparationCost();
+		double singleWorkerPenalty = FederatedCostModel.computeSingleWorkerFedExecPenalty(
+			hop, executionWeight, workers);
+		double fedCost = requireCost(fedCompute + fedCoordination + fedInstructionLatency
+			+ fedInputPreparation + singleWorkerPenalty, "MINST_FED_COST_UNPROVEN");
+
+		double resultDownloadUnit = FederatedCostModel.computeDownloadNetworkCost(uploadBytes);
+		if(!(hop instanceof DataOp)) {
+			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggregateUnaryLoutResultCost(
+				hop, executionFType, outputBytes, workers, resultDownloadUnit);
+			resultDownloadUnit = FederatedCostModel.computeNativeFederatedAggBinaryLoutResultCost(
+				hop, executionFType, outputBytes, workers, resultDownloadUnit);
+			if(mixed.hasCoordinatorPhase())
+				resultDownloadUnit = mixed.getCoordinatorPhaseCost();
+		}
+		else if(((DataOp)hop).getOp() == OpOpData.TRANSIENTWRITE)
+			resultDownloadUnit = 0.0;
+		double resultDownload = requireCost(executionWeight * resultDownloadUnit,
+			"MINST_RESULT_DOWNLOAD_COST_UNPROVEN");
+		return new FedCostProjection(fedCost, resultDownload);
+	}
+
+	private record FedCostProjection(double fedUnaryCost, double resultDownloadCost) {
+		private static FedCostProjection none() {
+			return new FedCostProjection(0.0, 0.0);
+		}
+
+		private double fedLoutCost() {
+			return requireCost(fedUnaryCost + resultDownloadCost,
+				"MINST_FED_LOUT_COST_UNPROVEN");
 		}
 	}
 

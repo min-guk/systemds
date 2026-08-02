@@ -649,7 +649,7 @@
 
 ## MinST KMeans의 파생 FED/FOUT worker-pool 계보가 upload reuse에서 소실됨
 
-- **상태**: 진행중 — planner 수정·focused/package·fresh Docker canary 완료, 중복 없는 잔여 MinST `62`셀 실행 중
+- **상태**: 해결 — planner 수정·focused/package·fresh Docker canary 및 후속 `8`셀 성공, 별도 L2SVM 이슈에서 continuation 동결
 - **환경/조건**:
   - planner `MinST` (`compile_min_st_cut`), workload `kmeans`, workers `2`, profile `lan`.
   - Docker-only `run_LAN_docker.sh`, private-aggregate frozen P2P2D, seed/data `2026072701`.
@@ -738,17 +738,16 @@
     MinST `62`, overlap `0`, union `336`을 확인했고 274개 모두 attempt `1`, oracle pass, fallback 없음,
     restart `0/0`, teardown 성공으로 재검증했다. 감사 receipt SHA-256은
     `343bd853ddb5c56ef77dab9966f71e3703d214baf7b98280947e4394f7e66ecf`이다.
-  - continuation은 user-systemd `g007-minst-e4f6bad-v1.service`를 `sg docker` 경계로 실행 중이며,
-    `g007-monitor-e4f6bad-v1.service`가 120초 주기로 감시한다. 첫 요청은 정확히
-    `workers=2|planner=MinST|workload=kmeans|profile=wan_light`, attempt `1`이고 launch receipt SHA-256은
-    `8208a6186c5ce74e36d60bb0abfc8bd2e75763bac2518dd7d7ffea438342132a`이다.
+  - continuation은 첫 요청 `workers=2|planner=MinST|workload=kmeans|profile=wan_light`부터 KMeans WAN 2셀,
+    PCA 3셀, LM 3셀을 모두 attempt `1`로 성공했다. 그 다음 L2SVM LAN 셀에서 별도 planner ambiguity가
+    드러나 base `274` + 신규 `8` = `282/336`에서 즉시 동결했다. KMeans 수정 binary에서 KMeans 관련
+    후속 실패는 없었다.
   - 실행 직전 274셀 그래프/인증 CSV는
     `docs/experiments/minst-continuation-2026-08-02-interim-274/`에 생성했다. four-planner matched `22`에서
     exact 정렬 `0/22`, 5% tolerance 정렬 `1/22`, median ratio(DP=1)는 FedAll `1.184`, Heuristic
     `1.182`, MinST `1.659`다. 여러 봉인 binary를 잇는 중간 진단값이므로 final 성능 근거가 아니다.
 - **잔여 이슈**:
-  - 현재 binary에서 remaining `62`셀을 각각 attempt `1`, retry 없이 완료한다. 실패하면 root를 봉인하고
-    같은 cell/binary를 재시도하지 않은 채 별도 원인을 분석한다.
+  - KMeans 자체의 잔여 문제는 관측되지 않았다. campaign 전체의 다음 중단 원인은 아래 L2SVM 이슈로 분리한다.
   - 전체 `336` 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 만든다.
 - **잠재 회귀 위험**:
   - 여러 FOUT input이 동일 FType이지만 서로 다른 worker/range anchor를 가질 때 하나로 오인하면 잘못된 reuse가
@@ -760,3 +759,104 @@
 - **의사결정 근거/적용 원칙**:
   - runtime이 지원하는 후보를 닫지 않고, 기존 exact membership authority가 이미 가진 placement 메타데이터를
     upload 비용/재사용 모델까지 보존했다. 즉 비용 모델과 상태 표현을 고쳤으며 runtime fallback은 추가하지 않았다.
+
+## MinST L2SVM의 동일 FED/LOUT membership에 여러 exact execution emission이 존재함
+
+- **상태**: 진행중 — 구조 수정·exact/focused/package 검증 완료, fresh Docker canary와 remaining-only continuation 대기
+- **환경/조건**:
+  - planner `MinST` (`compile_min_st_cut`), workload `l2svm`, workers `2`, profile `lan`.
+  - Docker-only `run_LAN_docker.sh`, private-aggregate frozen P2P2D, seed/data `2026072701`.
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-minst-kmeans-derived-anchor-e4f6bad-d60da24-20260802-v1`.
+  - 실패 cell:
+    `workers=2|planner=MinST|workload=l2svm|profile=lan`, attempt `1`, retry 없음.
+- **재현 절차**:
+  - Docker 실패 로그:
+    `planners/MinST/cells/031-dfeab00ca29d/phases/cell-1/discovery-correctness/raw_coordinator.log`.
+  - Docker-shape exact CLI RED:
+    `mvn -q -Dcheckstyle.skip=true -Drat.skip=true \
+    -Dtest=CampaignBG014MinStL2SvmInternalEmissionCostRedTest test`.
+  - 회귀는 Docker와 같은 50,000x2,100 feature, 50,000x1 label의 두 ROW worker, builtin `l2svm`,
+    `maxIterations=30`, LAN cost profile, compile-only, seed `2026072701`을 사용한다.
+- **관측 증상**:
+  - planner exception:
+    `MINST_EXACT_MEMBERSHIP_RULE_EMISSION_AMBIGUOUS|...l2svm.dml:120:18:...AggBinaryOp:ba(+*):out|membership=FED/LOUT|inputs=[PRESENT COL, PRESENT ROW]`.
+  - 동일 exact input rule이 다음 세 runtime-supported emission을 게시했다.
+    `FED/LOUT/COL/SHAPE_INDEPENDENT(exec COL)`,
+    `FED/LOUT/COL/SHAPE_DEPENDENT(exec COL)`,
+    `FED/LOUT/ROW/SHAPE_DEPENDENT(exec ROW)`.
+  - Docker response/raw coordinator SHA-256은 각각
+    `18da941de2e01aa02bd3a40e0902c3f80afe94047196c9b319fdf2a5fad57aca` /
+    `2130888bff893023a00dd32ea34a3b58f020ea5ceed478c699efa80af2e1c1f5`이다.
+  - 실패 campaign은 historical `274` + 신규 성공 `8` = `282/336`에서 봉인했고 remaining은 `54`다.
+    같은 binary/cell은 재시도하지 않았다. `CAMPAIGN_FAILED.json` SHA-256은
+    `277ff96c06139b932de2916bf54e5757739fc4fe522919200d6400c7a61d3a1b`, stop 후 validate-only
+    receipt SHA-256은 `0a772d9017c35b4343ca90439188a4d9907868ec6b56b28076a9913704e64bf7`이다.
+    service/container/network는 모두 종료돼 residual Docker resource가 `0`이다.
+- **원인 분석**:
+  1. neutral builder는 같은 `[COL, ROW]` 입력에서 runtime이 지원하는 COL/ROW aggregate-binary 실행 arm을
+     모두 exact emission으로 보존한다. 이는 후보 중복이나 oracle 오류가 아니다.
+  2. DP는 각 `CandidateEmissionFact`를 독립적으로 비용 계산해 같은 외부 placement 안에서도 비교한다.
+  3. MinST의 현재 cut은 hop마다 exec bit와 output bit만 가지므로, `FED/LOUT` 안의 execution FType과
+     shape-proof 차이를 별도 cut label로 표현하지 않는다.
+  4. 기존 `capturedRuleRepresentative`는 이 coarse membership에 exact emission이 반드시 하나라고 가정해,
+     합법한 세 arm을 비용 비교하기 전에 ambiguity로 중단했다.
+  5. 이 cell의 세 arm은 exact input authority와 모든 cut boundary obligation이 동일하고 결과가 LOUT에서
+     coordinator-local 값으로 materialize돼 내부 FType이 downstream에서 소거된다. 공유 FED cost model로
+     계산한 `FED unary + local result` 비용도 세 arm 모두 `6.049673132863985`로 동일했다.
+- **해결 요약**:
+  - neutral graph와 DP의 세 후보는 그대로 유지한다. MinST에서만 외부에 동일한 `FED/LOUT` membership을
+    나타내는 내부 arm을 완전 비용으로 비교해 dominated arm을 projection한다.
+  - 안전 조건을 `FED/LOUT`, non-derived, exact execution FType 존재, 모든 matrix input이 이미 PRESENT인
+    candidate row로 제한했다. FOUT 또는 local matrix input relocation이 섞인 경우는 비용 공유/배치가 달라질
+    수 있으므로 임의 선택하지 않고 expanded cut state가 필요하다는 ambiguity를 계속 발생시킨다.
+  - `addDecisionEdges`의 기존 FED unary/result-download 계산을 `fedCostProjection`으로 추출하고 내부 arm 비교도
+    정확히 같은 함수로 계산한다. unit occurrence weight를 사용해 비교하며 모든 항이 동일한 양의 occurrence
+    weight에 선형이므로 순위가 보존된다.
+  - 비용 동률은 더 적은 shape 전제를 요구하는 exact arm을 우선하고, 그 뒤 canonical emission signature로
+    결정한다. L2SVM target은 `COL/SHAPE_INDEPENDENT`를 선택했다.
+  - runtime fallback/repair, opcode/candidate skip guard, TRead/TWrite 완화, recompile `<CP,FOUT>` 허용은
+    추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStL2SvmInternalEmissionCostRedTest.java`
+  - `docs/experiments/minst-continuation-2026-08-02-interim-282/*`
+  - `docs/SESSION_ISSUES_2026-08-02.md`
+- **검증**:
+  - exact Docker-shape CLI RED:
+    `/tmp/g007-minst-l2svm-internal-emission-cli-red-e4f6bad-20260802.log`, SHA-256
+    `d064e25f95d52b0341dc357df26a6f07d81d4eaf141a343ee0181b4338723453`.
+  - 동일 CLI GREEN:
+    `/tmp/g007-minst-l2svm-internal-emission-cli-green-20260802.log`, SHA-256
+    `3dc7865cdcaaa9b712d45c9a788f7595b822fceca3e7bfb060010b0a0cc50af8`.
+  - trace에서 세 exact arm 비용과 canonical 선택을 확인했다:
+    `/tmp/g007-minst-l2svm-internal-emission-trace2-20260802.log`, SHA-256
+    `5a7dd95cd9a12cf60bc5fb0ec7645a0f8790216e7ffb058df9583164f60d9066`.
+  - L2SVM/KMeans/StepLM/heavy-MM/BR10/forward/selector/PCA focused suite `37/37` pass:
+    `/tmp/g007-minst-l2svm-internal-emission-focused-green-final-20260802.log`, SHA-256
+    `4a723bdf4a1fe7e440ce8e092d54241d71137cfd2560f09c4514a6455ba88586`.
+  - 별도 `MinStDownloadAuthorityAmbiguityRedTest` 2건은 수정 전 `e4f6bad`에서도 동일하게 실패했다.
+    baseline 로그 `/tmp/g007-baseline-e4f6bad-download-authority-20260802.log`, SHA-256
+    `5c8b54d01562b9fba2db3972e8c4d027f0b54a5687d16875f8cd23a218c5567c`이므로 신규 회귀가 아니다.
+  - checkstyle/RAT/compile을 포함한 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-minst-l2svm-internal-emission-package-20260802.log`, SHA-256
+    `34a7ef59ff6b4ea2fe03b908d4cbc2d8f120afa3609fbccd73166635f62bded9`.
+  - 인증된 중간 결과/그래프는 `docs/experiments/minst-continuation-2026-08-02-interim-282/`에 고정했다.
+    unique `282`, overlap `0`, DP/FedAll/Heuristic 각 `84`, MinST `30`, four-planner matched `30`이다.
+    exact 정렬은 `0/30`, 5% tolerance 정렬은 `4/30`, median ratio(DP=1)는 FedAll `1.417`, Heuristic
+    `1.395`, MinST `1.509`이며 여러 binary를 잇는 불완전 진단값이므로 final 성능 근거가 아니다.
+- **잔여 이슈**:
+  - 수정 commit에서 real target package를 다시 만들고 새 immutable Docker stage를 구성한다.
+  - 동일 실패 셀을 fresh binary의 canary attempt `1`로 한 번만 실행한다. 성공하면 historical `282`와 겹치지
+    않는 remaining `54`셀만 이어가고, 실패하면 새 root를 다시 봉인한다.
+  - 전체 `336` 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 만든다.
+- **잠재 회귀 위험**:
+  - local input relocation이 포함된 arm을 같은 방식으로 축약하면 공유 upload 비용을 잘못 국소 최적화할 수 있다.
+    감지 방법: 모든 matrix input의 exact PRESENT 검사를 유지하고, 해당 형태는 expanded cut 모델 없이 통과시키지 않는다.
+  - FOUT arm을 축약하면 downstream worker/range placement가 달라질 수 있다. 감지 방법: reduction을 FED/LOUT로만
+    제한하고 non-local membership ambiguity 회귀를 유지한다.
+  - cost helper 추출이 기존 MinST edge 가격을 바꾸면 기존 계획이 변할 수 있다. 감지 방법: BR10의 exact edge
+    contribution assertions와 focused suite, Docker semantic oracle을 계속 실행한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime-supported 후보를 닫지 않고 neutral/DP 후보군을 보존했다. MinST cut에서 downstream에 관측되지 않는
+    내부 실행 arm만 동일 공유 비용 모델로 부분 최소화했으며, 전역 배치 비용이 섞이는 경우는 fail-closed한다.
