@@ -104,7 +104,10 @@ public class FederatedPlannerDpCostEstimator {
 		FederatedPlannerDpMemoTable memo, FederatedPlannerDpMemoTable.FedPlan plan) {
 		public EstimatorRequest {
 			if (analysis == null || occurrence == null || memo == null || plan == null)
-				throw new IllegalArgumentException("Estimator request fields must not be null");
+				throw new IllegalArgumentException("Estimator request fields must not be null: analysis="
+					+ (analysis != null) + " occurrence=" + (occurrence != null)
+					+ " memo=" + (memo != null) + " plan=" + (plan != null)
+					+ (occurrence == null ? "" : " occurrenceKey=" + occurrence.key().normalizedSignature()));
 		}
 	}
 

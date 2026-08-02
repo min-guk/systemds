@@ -97,6 +97,7 @@ public final class MinStExactCostFactsProducer {
 	private static final long SOURCE = -1L;
 	private static final long SINK = -2L;
 	private static final double HARD_LEGALITY = 1e15;
+	private static final long MAX_EXACT_ROW_VARIANT_COMBINATIONS = 4096L;
 	private static final Object MAIN_OCCURRENCE_CONTEXT = new Object();
 
 	/** Immutable exact-row choice used by a separately costed MinST projection variant. */
@@ -124,39 +125,19 @@ public final class MinStExactCostFactsProducer {
 
 	static PlannedSelection deriveAndSelectBest(PlacementAnalysis analysis,
 		List<CompiledHopKey> orderedScope) {
-		MinStExactCostFacts facts = derive(analysis, orderedScope);
-		MinStExactSelection selection = MinStExactSelector.select(facts);
-		List<RepresentativePreference> retained = new ArrayList<>();
-		for(int iteration = 0; iteration < orderedScope.size(); iteration++) {
-			PlannedSelection best = new PlannedSelection(facts, selection);
-			Set<String> attempted = new LinkedHashSet<>();
-			for(RepresentativePreference candidate : compatibleNativeLocalPreferences(facts, selection)) {
-				String signature = preferenceSignature(candidate);
-				if(retained.stream().anyMatch(existing -> samePreferenceMembership(existing, candidate))
-					|| !attempted.add(signature))
-					continue;
-				List<RepresentativePreference> variantPreferences = new ArrayList<>(retained);
-				variantPreferences.add(candidate);
-				MinStExactCostFacts variantFacts = derive(analysis, orderedScope,
-					List.copyOf(variantPreferences));
-				MinStExactSelection variantSelection = MinStExactSelector.select(variantFacts);
-				if(!preferenceSatisfied(variantFacts, variantSelection, candidate))
-					continue;
-				PlannedSelection variant = new PlannedSelection(variantFacts, variantSelection);
-				if(betterPlan(variant, best))
-					best = variant;
-			}
-			if(best.facts() == facts)
-				return best;
-			facts = best.facts();
-			selection = best.selection();
-			retained = new ArrayList<>(facts.representativePreferences());
-			if(FederatedPlannerTrace.isEnabled())
-				FederatedPlannerTrace.logGlobal("MinST-ExactRowVariantSelected", "preferences="
-					+ retained.stream().map(MinStExactCostFactsProducer::preferenceSignature).toList()
-					+ ", objective=" + Double.longBitsToDouble(selection.objectiveBits()));
-		}
-		throw new IllegalArgumentException("MINST_EXACT_ROW_REFINEMENT_NON_CONVERGENT");
+		MinStExactCostFacts baselineFacts = derive(analysis, orderedScope);
+		List<List<RepresentativePreference>> groups = nativeLocalPreferenceGroups(baselineFacts);
+		PlannedSelection best = MinStExactVariantSearch.select(groups,
+			MAX_EXACT_ROW_VARIANT_COMBINATIONS,
+			preferences -> evaluatePreferenceVariant(analysis, orderedScope, preferences),
+			MinStExactCostFactsProducer::comparePlans);
+		if(FederatedPlannerTrace.isEnabled())
+			FederatedPlannerTrace.logGlobal("MinST-ExactRowVariantGlobalSearch", "groups="
+				+ groups.size() + ", combinations=" + exactCombinationCount(groups)
+				+ ", selected=" + best.facts().representativePreferences().stream()
+					.map(MinStExactCostFactsProducer::preferenceSignature).toList()
+				+ ", objective=" + Double.longBitsToDouble(best.selection().objectiveBits()));
+		return best;
 	}
 
 	static record PlannedSelection(MinStExactCostFacts facts, MinStExactSelection selection) {
@@ -177,33 +158,52 @@ public final class MinStExactCostFactsProducer {
 			derivation.transferAuthorities, derivation.obligations, derivation.fingerprint);
 	}
 
-	private static boolean betterPlan(PlannedSelection candidate, PlannedSelection current) {
+	private static int comparePlans(PlannedSelection candidate, PlannedSelection current) {
 		double candidateObjective = Double.longBitsToDouble(candidate.selection().objectiveBits());
 		double currentObjective = Double.longBitsToDouble(current.selection().objectiveBits());
 		int objectiveOrder = Double.compare(candidateObjective, currentObjective);
-		if(objectiveOrder < 0)
-			return true;
-		return objectiveOrder == 0
-			&& candidate.selection().obligationReceiptsInOrder().size()
-				< current.selection().obligationReceiptsInOrder().size();
+		if(objectiveOrder != 0)
+			return objectiveOrder;
+		return Integer.compare(candidate.selection().obligationReceiptsInOrder().size(),
+			current.selection().obligationReceiptsInOrder().size());
 	}
 
-	private static List<RepresentativePreference> compatibleNativeLocalPreferences(
-		MinStExactCostFacts facts, MinStExactSelection selection) {
+	private static java.util.Optional<PlannedSelection> evaluatePreferenceVariant(
+		PlacementAnalysis analysis, List<CompiledHopKey> orderedScope,
+		List<RepresentativePreference> preferences) {
+		try {
+			MinStExactCostFacts facts = derive(analysis, orderedScope, preferences);
+			MinStExactSelection selection = MinStExactSelector.select(facts);
+			if(preferences.stream().allMatch(preference -> preferenceSatisfied(facts, selection, preference))) {
+				// A variant is a candidate plan, not merely a lower cut value.  Validate the
+				// exact downstream projection before it can win the global comparison.
+				MinStExactPlacementProjector.project(facts, selection);
+				return java.util.Optional.of(new PlannedSelection(facts, selection));
+			}
+			return java.util.Optional.empty();
+		}
+		catch(IllegalArgumentException ex) {
+			String message = ex.getMessage();
+			if(message != null && (message.startsWith("MINST_EXACT_REPRESENTATIVE_PREFERENCE_")
+				|| message.startsWith("MINST_EXACT_DECISION_AUTHORITY_EMPTY")
+				|| message.startsWith("MINST_EXACT_MEMBERSHIP_AUTHORITY_UNPROVEN")
+				|| message.startsWith("MINST_EXACT_OBLIGATION_AUTHORITY_MISSING")
+				|| message.startsWith("MINST_CONSUMER_LAYOUT_UNPROVEN")))
+				return java.util.Optional.empty();
+			throw ex;
+		}
+	}
+
+	private static List<List<RepresentativePreference>> nativeLocalPreferenceGroups(
+		MinStExactCostFacts facts) {
 		PlacementAnalysis analysis = facts.analysis();
-		IdentityHashMap<CompiledHopKey,PlacementState> selected = new IdentityHashMap<>();
-		for(int index = 0; index < facts.decisionFactsInScopeOrder().size(); index++)
-			selected.put(facts.decisionFactsInScopeOrder().get(index).key(),
-				selection.selectedStatesInScopeOrder().get(index));
-		List<RepresentativePreference> result = new ArrayList<>();
+		Map<String,List<RepresentativePreference>> groups = new java.util.TreeMap<>();
 		for(DecisionFact decision : facts.decisionFactsInScopeOrder()) {
-			PlacementState selectedConsumer = selected.get(decision.key());
-			if(selectedConsumer.execType() != ExecType.FED
-				|| selectedConsumer.output() != FederatedOutput.LOUT)
-				continue;
-			// A native-local variant is representable by the existing two-bit cut only
-			// when every FED membership of this consumer is LOUT. Mixed FED/LOUT and
-			// FED/FOUT rows require an expanded state and remain on the baseline path.
+			// The two-bit cut can compare these exact rows without changing the meaning
+			// of another FED membership only when every FED state is LOUT.  A mixed
+			// FED/LOUT + FED/FOUT decision requires a genuinely expanded state model;
+			// fail-closed coverage for that separate space is documented and tested rather
+			// than being mislabeled as part of this exact variant search.
 			if(analysis.graph().node(decision.key()).orElseThrow().legalAlternatives().stream()
 				.anyMatch(state -> state.execType() == ExecType.FED
 					&& state.output() == FederatedOutput.FOUT))
@@ -221,38 +221,40 @@ public final class MinStExactCostFactsProducer {
 					.toList();
 				for(CandidateEmissionFact emission : emissions) {
 					boolean hasNativeLocalMatrix = false;
-					boolean compatible = true;
 					for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
 						if(edge.consumer() != decision.key())
 							continue;
 						if(edge.inputPosition() < 0
-							|| edge.inputPosition() >= fact.key().orderedInputs().size()) {
-							compatible = false;
-							break;
-						}
+							|| edge.inputPosition() >= fact.key().orderedInputs().size())
+							throw new IllegalArgumentException("MINST_EXACT_NATIVE_LOCAL_INPUT_POSITION_INVALID");
 						CandidateInputState expected = fact.key().orderedInputs().get(edge.inputPosition());
-						PlacementState producer = selected.get(edge.producer());
-						if(producer == null) {
-							compatible = false;
-							break;
-						}
-						if(expected.present())
-							compatible &= producer.output() == FederatedOutput.FOUT
-								&& producer.fType() == expected.fType();
-						else {
+						if(!expected.present())
 							hasNativeLocalMatrix = true;
-							compatible &= producer.output() == FederatedOutput.LOUT;
-						}
 					}
-					if(compatible && hasNativeLocalMatrix)
-						result.add(new RepresentativePreference(decision.key(), ExecType.FED,
+					if(hasNativeLocalMatrix) {
+						RepresentativePreference preference = new RepresentativePreference(
+							decision.key(), ExecType.FED,
 							FederatedOutput.LOUT, fact.key().orderedInputs(),
-							emission.emissionState().placementState()));
+							emission.emissionState().placementState());
+						groups.computeIfAbsent(decision.key().normalizedSignature() + '|'
+							+ membership(ExecType.FED, FederatedOutput.LOUT), ignored -> new ArrayList<>())
+							.add(preference);
+					}
 				}
 			}
 		}
-		return result.stream().sorted(Comparator.comparing(
-			MinStExactCostFactsProducer::preferenceSignature)).toList();
+		return groups.values().stream().map(group -> group.stream()
+			.collect(java.util.stream.Collectors.toMap(
+				MinStExactCostFactsProducer::preferenceSignature, preference -> preference,
+				(left, right) -> left, java.util.TreeMap::new))
+			.values().stream().toList()).toList();
+	}
+
+	private static long exactCombinationCount(List<List<RepresentativePreference>> groups) {
+		long count = 1L;
+		for(List<RepresentativePreference> group : groups)
+			count = Math.multiplyExact(count, group.size() + 1L);
+		return count;
 	}
 
 	private static boolean preferenceSatisfied(MinStExactCostFacts facts,
@@ -265,6 +267,13 @@ public final class MinStExactCostFactsProducer {
 		if(consumer == null || consumer.execType() != preference.execType()
 			|| consumer.output() != preference.output())
 			return false;
+		List<MembershipRepresentative> representatives = facts.membershipRepresentativesInCanonicalOrder().stream()
+			.filter(representative -> representative.decisionKey() == preference.decisionKey()
+				&& representative.execType() == preference.execType()
+				&& representative.output() == preference.output()).toList();
+		if(representatives.size() != 1 || representatives.get(0).state() != preference.state()
+			|| !representatives.get(0).orderedInputs().equals(preference.orderedInputs()))
+			return false;
 		for(CompiledInputEdgeFact edge : facts.analysis().compiledInputEdgesInCanonicalOrder()) {
 			if(edge.consumer() != preference.decisionKey())
 				continue;
@@ -276,12 +285,6 @@ public final class MinStExactCostFactsProducer {
 				return false;
 		}
 		return true;
-	}
-
-	private static boolean samePreferenceMembership(RepresentativePreference left,
-		RepresentativePreference right) {
-		return left.decisionKey() == right.decisionKey() && left.execType() == right.execType()
-			&& left.output() == right.output();
 	}
 
 	private static String preferenceSignature(RepresentativePreference preference) {

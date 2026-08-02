@@ -16,6 +16,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpMem
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
@@ -46,7 +47,7 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		assertChild(receipt.childCosts().get(0), fixture.children().get(0), graph.childPlans().get(0),
 			FederatedOutput.LOUT, 0x1.0p0, 0x1.0p-4);
 		assertChild(receipt.childCosts().get(1), fixture.children().get(1), graph.childPlans().get(1),
-			FederatedOutput.FOUT, 0x1.0p1, 0x1.8p-4);
+			FederatedOutput.LOUT, 0x1.0p1, 0x1.8p-4);
 		assertUnmodifiable(receipt.childCosts());
 		assertSnapshotSame(before, snapshot(fixture, graph));
 	}
@@ -91,14 +92,14 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(fixture.analysis());
 		FedPlan left = plan(fixture.children().get(0).hop(), FederatedOutput.LOUT, ExecType.CP,
 			0x1.0p0, 0x1.0p-5, 0x1.0p-4, List.of());
-		FedPlan right = plan(fixture.children().get(1).hop(), FederatedOutput.FOUT, ExecType.FED,
+		FedPlan right = plan(fixture.children().get(1).hop(), FederatedOutput.LOUT, ExecType.CP,
 			0x1.0p1, 0x1.8p-5, 0x1.8p-4, List.of());
 		register(memo, fixture.children().get(0), left);
 		register(memo, fixture.children().get(1), right);
 		List<Pair<Long, FederatedOutput>> childEdges = List.of(
 			Pair.of(fixture.children().get(0).hop().getHopID(), FederatedOutput.LOUT),
-			Pair.of(fixture.children().get(1).hop().getHopID(), FederatedOutput.FOUT));
-		FedPlan root = plan(fixture.root().hop(), FederatedOutput.FOUT, ExecType.FED,
+			Pair.of(fixture.children().get(1).hop().getHopID(), FederatedOutput.LOUT));
+		FedPlan root = plan(fixture.root().hop(), FederatedOutput.LOUT, ExecType.CP,
 			0x1.8p2, 0x1.0p-4, 0x1.0p-3, childEdges);
 		register(memo, fixture.root(), root);
 		return new PlanGraph(memo, root, List.of(left, right));
@@ -119,6 +120,16 @@ public class CampaignBDpEstimatorOwnerContractTest {
 
 	private static void register(FederatedPlannerDpMemoTable memo, HopOccurrenceProjection occurrence,
 		FedPlan plan) {
+		PlacementState exact = memo.analysis().graph().node(occurrence.key()).orElseThrow()
+			.legalAlternatives().stream()
+			.filter(state -> state.execType() == plan.getExecType()
+				&& state.output() == plan.getFedOutType())
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"owner fixture plan is not legal for exact occurrence: " + occurrence.key()
+					+ " exec=" + plan.getExecType() + " output=" + plan.getFedOutType()));
+		plan.setSelectedPlacementState(exact);
+		if(plan.getExecType() == ExecType.FED && plan.getFedOutType() == FederatedOutput.FOUT)
+			plan.setFType(exact.fType());
 		FedPlanVariants variants = new FedPlanVariants(
 			new HopCommon(occurrence.hop(), 1, 1, 1, 1, List.of()), plan.getFedOutType());
 		variants.getFedPlanVariants().add(plan);

@@ -41,7 +41,6 @@ import org.apache.sysds.runtime.instructions.cp.ReshapeCPInstruction;
 import org.apache.sysds.runtime.instructions.spark.MatrixReshapeSPInstruction;
 import org.apache.sysds.runtime.lineage.LineageItem;
 import org.apache.sysds.runtime.lineage.LineageItemUtils;
-import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.matrix.operators.Operator;
 
 public class ReshapeFEDInstruction extends UnaryFEDInstruction {
@@ -106,10 +105,9 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 				final int fCols = cols;
 				final boolean fByRow = byRow;
 
-				if(!mo1.isFederated()) {
-					executeLocalReshape(ec, fRows, fCols, fByRow);
-					return;
-				}
+				if(!mo1.isFederated())
+					throw new DMLRuntimeException("FED reshape requires a planner-provided federated input; "
+						+ "runtime CP fallback is forbidden. inst=" + instString);
 				if(mo1.getNumColumns() * mo1.getNumRows() != fRows * fCols)
 					throw new DMLRuntimeException("Reshape matrix requires consistent numbers of input/output cells (" 
 						+ mo1.getNumRows() + ":" + mo1.getNumColumns() + ", " + fRows + ":" + fCols + ").");
@@ -130,18 +128,9 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 			//execute at federated site
 			FederatedRequest[] fr1 = FederationUtils.callInstruction(newInstString, output, id,
 				new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()}, InstructionUtils.getExecType(instString));
-			Future<FederatedResponse>[] ffr;
-			try {
-				mo1.getFedMapping().execute(getTID(), true, tmp);
-				ffr = mo1.getFedMapping().execute(getTID(), true, fr1, new FederatedRequest[0]);
-			}
-				catch (DMLRuntimeException ex) {
-					if(isMissingFedVarFailure(ex)) {
-						executeLocalReshape(ec, fRows, fCols, fByRow);
-						return;
-					}
-					throw ex;
-				}
+			mo1.getFedMapping().execute(getTID(), true, tmp);
+			Future<FederatedResponse>[] ffr =
+				mo1.getFedMapping().execute(getTID(), true, fr1, new FederatedRequest[0]);
 
 			// set new fed map
 				FederationMap reshapedFedMap = mo1.getFedMapping().copyWithNewID(fr1[0].getID());
@@ -175,42 +164,14 @@ public class ReshapeFEDInstruction extends UnaryFEDInstruction {
 		}
 	}
 
-	private void executeLocalReshape(ExecutionContext ec, int rows, int cols, boolean byRow) {
-		MatrixBlock in = ec.getMatrixInput(input1.getName());
-		MatrixBlock out = in.reshape(rows, cols, byRow);
-		ec.releaseMatrixInput(input1.getName());
-		ec.setMatrixOutput(output.getName(), out);
-	}
-
-	private static boolean isMissingFedVarFailure(Throwable ex) {
-		Throwable cur = ex;
-		while(cur != null) {
-			String msg = cur.getMessage();
-			if(msg != null && (msg.contains("Unknown variable") || msg.contains("does not exist")))
-				return true;
-			cur = cur.getCause();
-		}
-		return false;
-	}
-
 	private static int resolveDim(ExecutionContext ec, CPOperand dimOp) {
-		try {
-			return (int) ec.getScalarInput(dimOp).getLongValue();
-		}
-		catch (Exception ex) {
-			return -1;
-		}
+		return (int) ec.getScalarInput(dimOp).getLongValue();
 	}
 
 	private boolean resolveByRow(ExecutionContext ec) {
-		try {
-			BooleanObject byRow = (BooleanObject) ec
-				.getScalarInput(_opByRow.getName(), Types.ValueType.BOOLEAN, _opByRow.isLiteral());
-			return byRow.getBooleanValue();
-		}
-		catch (Exception ex) {
-			return true;
-		}
+		BooleanObject byRow = (BooleanObject) ec
+			.getScalarInput(_opByRow.getName(), Types.ValueType.BOOLEAN, _opByRow.isLiteral());
+		return byRow.getBooleanValue();
 	}
 
 	// replace old reshape values for each worker

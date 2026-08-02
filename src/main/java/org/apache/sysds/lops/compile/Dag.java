@@ -215,177 +215,11 @@ public class Dag<N extends Lop>
 		// emit instructions with "null" operands due to missing labels on not-yet-processed inputs).
 		node_v = linearizeTopological(modified ? dl.linearize(nodes) : node_v);
 
-		modified |= insertImplicitRefedForFedOps(node_v);
-		if (modified)
-			node_v = linearizeTopological(dl.linearize(nodes));
-
 		// do greedy grouping of operations
 		ArrayList<Instruction> inst = doPlainInstructionGen(sb, node_v);
 
 		// cleanup instruction (e.g., create packed rmvar instructions)
 		return cleanupInstructions(inst);
-	}
-
-	/**
-	 * Safety net: FED lops require federated matrix inputs with a federation map. If the planner leaves
-	 * any matrix inputs as local, execution will either fail (no anchor) or implicitly rely on runtime
-	 * fallbacks for local matrix inputs (which can break alignment assumptions). We fix this by inserting
-	 * {@link FederatedRefed} lops that upload local matrix inputs to the federated sites, anchored on a
-	 * stable federated variable when possible.
-	 */
-	private boolean insertImplicitRefedForFedOps(List<Lop> lops) {
-		if (lops == null || lops.isEmpty())
-			return false;
-
-		boolean inserted = false;
-		for (int i = 0; i < lops.size(); i++) {
-			Lop lop = lops.get(i);
-			if (lop == null || lop.getExecType() != ExecType.FED)
-				continue;
-			// FED init/materialize/refed ops are self-contained or already provide a mapping.
-			if (lop instanceof Federated || lop instanceof FederatedRefed || lop instanceof FederatedFoutMaterialize)
-				continue;
-
-			// Prefer an existing federated input of this lop as anchor; otherwise fall back to a prior
-			// federated matrix in the DAG (legacy behavior for missing-anchor situations).
-			Lop anchor = findFederatedAnchorInInputs(lop, null);
-			if (anchor == null) {
-				Lop localMatrixInput = findLocalMatrixInput(lop);
-				if (localMatrixInput == null)
-					continue;
-				anchor = findFederatedAnchorBefore(lops, i, localMatrixInput);
-				if (anchor == null)
-					continue;
-
-				FederatedRefed refed = new FederatedRefed(localMatrixInput, anchor,
-					localMatrixInput.getDataType(), localMatrixInput.getValueType());
-				refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
-				copyOutputParams(refed.getOutputParameters(), localMatrixInput.getOutputParameters());
-				refed.setFederatedOutput(FederatedOutput.FOUT);
-				addNode(refed);
-
-				lop.replaceInput(localMatrixInput, refed);
-				localMatrixInput.removeOutput(lop);
-				refed.addOutput(lop);
-
-				if (!lops.contains(refed))
-					lops.add(i, refed);
-				inserted = true;
-				i++; // skip newly inserted refed
-				continue;
-			}
-
-			// Anchor exists: upload any remaining local matrix inputs (except scalar-like 1x1 matrices)
-			// so FED execution does not depend on runtime fallbacks for local matrices.
-			List<Lop> inputs = new ArrayList<>(lop.getInputs());
-			for (Lop input : inputs) {
-				if (input == null || input == anchor)
-					continue;
-				if (input.getDataType() == null || !input.getDataType().isMatrix())
-					continue;
-				if (isFederatedMatrixLop(input))
-					continue;
-				if (isScalarLikeMatrixLop(input))
-					continue;
-
-				FederatedRefed refed = new FederatedRefed(input, anchor, input.getDataType(), input.getValueType());
-				refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
-				copyOutputParams(refed.getOutputParameters(), input.getOutputParameters());
-				refed.setFederatedOutput(FederatedOutput.FOUT);
-				addNode(refed);
-
-				lop.replaceInput(input, refed);
-				input.removeOutput(lop);
-				refed.addOutput(lop);
-
-				if (!lops.contains(refed))
-					lops.add(i, refed);
-				inserted = true;
-				i++; // skip newly inserted refed
-			}
-		}
-
-		return inserted;
-	}
-
-	private static boolean hasFederatedMatrixInput(Lop lop) {
-		if (lop == null)
-			return false;
-		List<Lop> inputs = lop.getInputs();
-		if (inputs == null)
-			return false;
-		for (Lop input : inputs) {
-			if (isFederatedMatrixLop(input))
-				return true;
-		}
-		return false;
-	}
-
-	private static Lop findLocalMatrixInput(Lop lop) {
-		List<Lop> inputs = (lop != null) ? lop.getInputs() : null;
-		if (inputs == null)
-			return null;
-		for (Lop input : inputs) {
-			if (input == null || !input.getDataType().isMatrix())
-				continue;
-			if (!isFederatedMatrixLop(input))
-				return input;
-		}
-		return null;
-	}
-
-	private static Lop findFederatedAnchorBefore(List<Lop> lops, int endExclusive, Lop exclude) {
-		Lop fallback = null;
-		for (int j = endExclusive - 1; j >= 0; j--) {
-			Lop cand = lops.get(j);
-			if (cand == null || cand == exclude)
-				continue;
-			if (!isFederatedMatrixLop(cand))
-				continue;
-			// Prefer stable anchors that represent actual federated variables (fed-init/TR/FEDERATED Data lops)
-			// over intermediate broadcast/materialize outputs which can lead to unintended BROADCAST anchoring.
-			if (cand instanceof Data) {
-				OpOpData op = ((Data) cand).getOperationType();
-				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
-					return cand;
-			}
-			if (fallback == null)
-				fallback = cand;
-		}
-		return fallback;
-	}
-
-	private static Lop findFederatedAnchorInInputs(Lop lop, Lop exclude) {
-		if (lop == null)
-			return null;
-		List<Lop> inputs = lop.getInputs();
-		if (inputs == null || inputs.isEmpty())
-			return null;
-
-		Lop fallback = null;
-		for (Lop in : inputs) {
-			if (in == null || in == exclude)
-				continue;
-			if (!isFederatedMatrixLop(in))
-				continue;
-			if (in instanceof Data) {
-				OpOpData op = ((Data) in).getOperationType();
-				if (op == OpOpData.TRANSIENTREAD || op == OpOpData.FEDERATED)
-					return in;
-			}
-			if (fallback == null)
-				fallback = in;
-		}
-		return fallback;
-	}
-
-	private static boolean isScalarLikeMatrixLop(Lop lop) {
-		if (lop == null || lop.getDataType() == null || !lop.getDataType().isMatrix())
-			return false;
-		OutputParameters out = lop.getOutputParameters();
-		if (out == null)
-			return false;
-		return out.getNumRows() == 1 && out.getNumCols() == 1;
 	}
 
 	private static boolean isFederatedMatrixLop(Lop lop) {
@@ -1065,21 +899,21 @@ public class Dag<N extends Lop>
 				}
 
 				if (anchor != null && materializeInput != null && isReachable(materializeInput, anchor)) {
-					Lop fallbackAnchor = findFallbackAnchor(lops, materializeInput);
-						if (fallbackAnchor != null) {
-							if (LOG_LOP_MAPPING)
-								System.out.printf("CP->FOUT anchor cycle: hop=%d anchorHop=%d fallbackHop=%d%n",
-									hopId, anchorHopId, fallbackAnchor.getHopID());
-							anchor = fallbackAnchor;
-							anchorKey = null;
-						}
-						else {
-							if (LOG_LOP_MAPPING)
-								System.out.printf("CP->FOUT insert skip: hop=%d anchorCycle=true sbId=%d%n",
-									hopId, sbId);
-							continue;
-						}
+					// The selected live anchor cannot be an output descendant of the value being uploaded:
+					// wiring that Lop edge would create a cycle. Preserve the planner's exact placement
+					// authority through its durable key when available. Never substitute an unrelated
+					// FED/FOUT Lop here because that silently changes both feasibility and transfer cost.
+					if (isConcreteAnchorKey(anchorKey)) {
+						if (LOG_LOP_MAPPING)
+							System.out.printf("CP->FOUT anchor cycle: hop=%d anchorHop=%d usingAnchorKey=%s%n",
+								hopId, anchorHopId, anchorKey);
+						anchor = null;
 					}
+					else {
+						throw new LopsException("CP->FOUT lowering cannot use cyclic selected anchor hop="
+							+ anchorHopId + " for hop=" + hopId + " without a durable placement key");
+					}
+				}
 
 				boolean alreadyInserted = isSelectedFederatedTWrite
 					? (materializeInput instanceof FederatedRefed || materializeInput instanceof FederatedFoutMaterialize)
@@ -1417,26 +1251,7 @@ public class Dag<N extends Lop>
 		return false;
 	}
 
-	private static Lop findFallbackAnchor(List<Lop> lops, Lop materializeInput) {
-		if (lops == null || lops.isEmpty())
-			return null;
-		for (Lop candidate : lops) {
-			if (candidate == null || candidate == materializeInput)
-				continue;
-			if (candidate.getExecType() != ExecType.FED)
-				continue;
-			if (candidate.getFederatedOutput() != FederatedOutput.FOUT)
-				continue;
-			OutputParameters out = candidate.getOutputParameters();
-			if (out == null || out.getLabel() == null)
-				continue;
-			if (isReachable(materializeInput, candidate))
-				continue;
-			return candidate;
-		}
-		return null;
-	}
-	
+
 	private ArrayList<Instruction> doPlainInstructionGen(StatementBlock sb, List<Lop> nodes)
 	{
 		//prepare basic instruction sets

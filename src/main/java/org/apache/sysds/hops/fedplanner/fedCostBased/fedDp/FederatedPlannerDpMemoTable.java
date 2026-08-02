@@ -207,7 +207,19 @@ public class FederatedPlannerDpMemoTable {
 
 	public FedPlan getFedPlanAfterPrune(HopOccurrenceProjection occurrence, FederatedOutput federatedOutput) {
 		assertOwnedOccurrence(occurrence);
-		return getFedPlanAfterPrune(occurrence.hop().getHopID(), federatedOutput);
+		FedPlan best = null;
+		boolean hasExplicitCarrier = false;
+		for(Map.Entry<Hop, HopOccurrenceProjection> entry : occurrenceByPlanCarrier.entrySet()) {
+			if(entry.getValue() != occurrence)
+				continue;
+			hasExplicitCarrier = true;
+			FedPlan candidate = getFedPlanAfterPrune(entry.getKey().getHopID(), federatedOutput);
+			if(candidate != null && (best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
+				|| candidate.getCumulativeCost() == best.getCumulativeCost()
+					&& candidate.getHopID() < best.getHopID()))
+				best = candidate;
+		}
+		return hasExplicitCarrier ? best : getFedPlanAfterPrune(occurrence.hop().getHopID(), federatedOutput);
 	}
 
 	public Hop resolveExecutableHop(HopOccurrenceProjection occurrence) {
@@ -253,26 +265,20 @@ public class FederatedPlannerDpMemoTable {
 	/** Returns the canonically ordered pruned LOUT/FOUT arms for one exact occurrence. */
 	public List<OccurrencePlanArm> getExactPlanArmsForOccurrence(HopOccurrenceProjection occurrence) {
 		assertOwnedOccurrence(occurrence);
-		Hop carrier = null;
-		for(Map.Entry<Hop, HopOccurrenceProjection> entry : occurrenceByPlanCarrier.entrySet()) {
-			if(entry.getValue() != occurrence)
-				continue;
-			if(carrier != null && carrier != entry.getKey())
-				throw new IllegalStateException("Ambiguous exact memo carriers for " + occurrence.key());
-			carrier = entry.getKey();
-		}
-		if(carrier == null)
-			return List.of();
-
-		List<OccurrencePlanArm> arms = new ArrayList<>(2);
-		for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
-			FedPlan plan = getFedPlanAfterPrune(carrier.getHopID(), output);
-			if(plan == null)
-				continue;
-			if(plan.getHopRef() != carrier || requirePlanCarrierOccurrence(plan.getHopRef()) != occurrence)
-				throw new IllegalStateException("Foreign exact memo carrier for " + occurrence.key());
-			arms.add(new OccurrencePlanArm(occurrence, carrier, output, plan));
-		}
+		List<Hop> carriers = occurrenceByPlanCarrier.entrySet().stream()
+			.filter(entry -> entry.getValue() == occurrence).map(Map.Entry::getKey)
+			.sorted(Comparator.comparingLong(Hop::getHopID)).toList();
+		List<OccurrencePlanArm> arms = new ArrayList<>(Math.max(2, carriers.size() * 2));
+		Set<FedPlan> seenPlans = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop carrier : carriers)
+			for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+				FedPlan plan = getFedPlanAfterPrune(carrier.getHopID(), output);
+				if(plan == null || !seenPlans.add(plan))
+					continue;
+				if(plan.getHopRef() != carrier || requirePlanCarrierOccurrence(plan.getHopRef()) != occurrence)
+					throw new IllegalStateException("Foreign exact memo carrier for " + occurrence.key());
+				arms.add(new OccurrencePlanArm(occurrence, carrier, output, plan));
+			}
 		return List.copyOf(arms);
 	}
 

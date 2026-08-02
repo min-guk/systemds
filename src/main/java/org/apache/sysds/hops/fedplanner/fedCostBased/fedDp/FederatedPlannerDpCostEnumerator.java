@@ -1252,7 +1252,7 @@ public class FederatedPlannerDpCostEnumerator {
 				FederatedOutput.LOUT, lOutFedPlanVariants);
 			FederatedPlannerDpCostEstimator.estimateExact(new FederatedPlannerDpCostEstimator.EstimatorRequest(
 				capture.context.analysis(), hopOccurrence, memoTable,
-				memoTable.getFedPlanAfterPrune(hopOccurrence, FederatedOutput.LOUT)));
+				memoTable.getFedPlanAfterPrune(hop.getHopID(), FederatedOutput.LOUT)));
 		}
 		if (hasFOutPlan) {
 			fOutFedPlanVariants.pruneFedPlans();
@@ -1260,7 +1260,7 @@ public class FederatedPlannerDpCostEnumerator {
 				FederatedOutput.FOUT, fOutFedPlanVariants);
 			FederatedPlannerDpCostEstimator.estimateExact(new FederatedPlannerDpCostEstimator.EstimatorRequest(
 				capture.context.analysis(), hopOccurrence, memoTable,
-				memoTable.getFedPlanAfterPrune(hopOccurrence, FederatedOutput.FOUT)));
+				memoTable.getFedPlanAfterPrune(hop.getHopID(), FederatedOutput.FOUT)));
 		}
 		logDpBestPlans(hop, lOutFedPlanVariants, fOutFedPlanVariants, hasLOutPlan, hasFOutPlan);
 	

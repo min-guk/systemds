@@ -166,10 +166,11 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if(ordinal < 0 || appliedPlanOrdinal < 0 || componentOrdinal < 0
 				|| analysisFingerprint.isBlank())
 				throw new IllegalArgumentException("Disconnected completion ordinal or fingerprint differs");
+			// The applied plan may be carried by an unrolled/recompile clone.  The
+			// enclosing invocation receipt, which owns the memo authority, verifies
+			// that this physical carrier maps to sinkRootOccurrence exactly.
 			if(appliedPlan.ordinal() != appliedPlanOrdinal || !appliedPlan.additionalRoot()
-				|| sinkRootOccurrence.key() != sinkRoot
-				|| sinkRootOccurrence.hop() != appliedPlan.planningHop()
-				|| appliedPlan.plan().getHopRef() != sinkRootOccurrence.hop())
+				|| sinkRootOccurrence.key() != sinkRoot)
 				throw new IllegalArgumentException("Disconnected completion applied-plan identity differs");
 			if(componentMembers.isEmpty()
 				|| componentMembers.stream().noneMatch(member -> member == sinkRoot))
@@ -2924,7 +2925,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			if (lockedDecisions != null && !lockedDecisions.isEmpty())
 				nextDecisions.putAll(lockedDecisions);
 
-			for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+			for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 				long hopID = e.getKey();
 				ConflictEntry entry = e.getValue();
 
@@ -3241,6 +3242,21 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		return mergedDecisions;
 	}
 
+	/**
+	 * Conflict refinements are stateful: an accepted candidate becomes the input
+	 * to the next candidate.  HashMap bucket order changes when otherwise
+	 * identical HOP IDs receive a different absolute offset, which previously
+	 * changed the selected plan.  HOPs are allocated producer-first, so ascending
+	 * IDs provide a stable producer-to-consumer order without removing candidates.
+	 */
+	private static List<Map.Entry<Long, ConflictEntry>> sortedConflictEntries(
+		Map<Long, ConflictEntry> conflictCheckMap) {
+		if(conflictCheckMap == null || conflictCheckMap.isEmpty())
+			return List.of();
+		return conflictCheckMap.entrySet().stream()
+			.sorted(Map.Entry.comparingByKey()).toList();
+	}
+
 	private static Map<Long, FederatedOutput> alignTransientReadsWithProducerDecisions(
 		FederatedPlannerDpMemoTable memoTable,
 		Map<Long, ConflictEntry> conflictCheckMap,
@@ -3253,7 +3269,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return decisions;
 
 		Map<Long, FederatedOutput> alignedDecisions = new HashMap<>(decisions);
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long tWriteHopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(tWriteHopID);
 			if (!(hopRef instanceof DataOp)
@@ -3317,7 +3333,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		Map<Long, ConflictEntry> normalizationConflictCheckMap =
 			collectConflictsSingleBFS(memoTable, rootPlan, normalizedDecisions);
 		refreshConflictChoiceFeasibility(normalizationConflictCheckMap, memoTable);
-		for (Map.Entry<Long, ConflictEntry> e : normalizationConflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(normalizationConflictCheckMap)) {
 			long tReadHopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(tReadHopID);
 			if (!(hopRef instanceof DataOp)
@@ -3493,7 +3509,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
 		final int numWorkers = Math.max(1, memoTable.getNumWorkers());
 
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long hopID = e.getKey();
 			ConflictEntry entry = e.getValue();
 			if (entry == null || !entry.canChooseFOUT)
@@ -3573,7 +3589,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			}
 		}
 
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long hopID = e.getKey();
 			ConflictEntry entry = e.getValue();
 			if (entry == null || !entry.canChooseLOUT || !entry.canChooseFOUT)
@@ -4015,7 +4031,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			computeDecisionMapScoreBreakdown(memoTable, rootPlan, refinedDecisions, scoreCache);
 		Map<Long, LinkedHashSet<Long>> parentGraph = buildConflictParentGraph(memoTable, conflictCheckMap);
 
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long hopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(hopID);
 			if (!(hopRef instanceof DataOp)
@@ -5028,7 +5044,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		if (memoTable == null || rootPlan == null || conflictCheckMap == null || nextDecisions == null)
 			return;
 
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long hopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(hopID);
 			if (!(hopRef instanceof DataOp)
@@ -5101,7 +5117,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 			return;
 
 		Map<Long, LinkedHashSet<Long>> parentGraph = buildConflictParentGraph(memoTable, conflictCheckMap);
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long hopID = e.getKey();
 			Hop hopRef = memoTable.resolveOriginalHop(hopID);
 			if (!(hopRef instanceof DataOp)
@@ -5335,7 +5351,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 		LinkedHashMap<Long, LinkedHashSet<Long>> parentGraph = new LinkedHashMap<>();
 		if (memoTable == null || conflictCheckMap == null || conflictCheckMap.isEmpty())
 			return parentGraph;
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long childHopID = e.getKey();
 			ConflictEntry entry = e.getValue();
 			if (entry == null || entry.parents == null || entry.parents.isEmpty())
@@ -5848,7 +5864,7 @@ public class FederatedPlannerDpFedCostBased extends AFederatedPlanner {
 				return cached;
 		}
 
-		for (Map.Entry<Long, ConflictEntry> e : conflictCheckMap.entrySet()) {
+		for (Map.Entry<Long, ConflictEntry> e : sortedConflictEntries(conflictCheckMap)) {
 			long hopID = e.getKey();
 			ConflictEntry entry = e.getValue();
 			if (entry == null || entry.memberHopIDs == null || entry.memberHopIDs.isEmpty())

@@ -21,9 +21,8 @@ package org.apache.sysds.runtime.instructions.fed;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
-
-import org.apache.sysds.runtime.instructions.cp.BooleanObject;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -34,6 +33,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
@@ -43,6 +43,7 @@ import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedResponse;
 import org.apache.sysds.runtime.controlprogram.federated.FederationMap;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.InstructionUtils;
 import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.junit.Test;
@@ -66,22 +67,123 @@ public class FEDLocalMaterializeUtilTest {
 		}
 	}
 
-	@Test
-	public void testNormalizeOtherSingleWorkerAnchorToFull() {
-		FederationMap map = federationMap(FType.OTHER,
-			new long[][][] {{{0, 0}, {100, 20}}});
+	private static class ChannelCloseThenSuccessMap extends NoOpFederationMap {
+		private int executeCalls;
 
-		assertEquals(FType.FULL, FEDLocalMaterializeUtil.normalizeSupportedAnchorType(map));
-		assertEquals(FType.FULL, map.getType());
+		ChannelCloseThenSuccessMap(long id, List<Pair<FederatedRange, FederatedData>> fedMap, FType type) {
+			super(id, fedMap, type);
+		}
+
+		@Override
+		@SuppressWarnings("unchecked")
+		public Future<FederatedResponse>[] execute(long tid, boolean wait, FederatedRequest... fr) {
+			executeCalls++;
+			if(executeCalls == 1)
+				throw new DMLRuntimeException("channel closed");
+			return (Future<FederatedResponse>[]) new Future<?>[0];
+		}
 	}
 
 	@Test
-	public void testNormalizeOtherRowPartitionedAnchor() {
+	public void testOtherSingleWorkerAnchorIsNotRepairedToFull() {
+		FederationMap map = federationMap(FType.OTHER,
+			new long[][][] {{{0, 0}, {100, 20}}});
+
+		assertEquals(FType.OTHER, FEDLocalMaterializeUtil.declaredAnchorType(map));
+		assertEquals(FType.OTHER, map.getType());
+	}
+
+	@Test
+	public void testSingleWorkerFullMaterializationRetainsFullType() {
+		assertEquals(FType.FULL,
+			FEDLocalMaterializeUtil.normalizeReplicatedMapType(FType.FULL, FType.FULL, 1));
+	}
+
+	@Test
+	public void testMultiWorkerFullMaterializationIsRejectedInsteadOfRelabelledBroadcast() {
+		assertThrows(DMLRuntimeException.class,
+			() -> FEDLocalMaterializeUtil.normalizeReplicatedMapType(FType.FULL, FType.FULL, 2));
+		assertEquals(FType.BROADCAST,
+			FEDLocalMaterializeUtil.normalizeReplicatedMapType(FType.FULL, FType.BROADCAST, 2));
+	}
+
+	@Test
+	public void testMalformedMultiWorkerFullAnchorIsRejected() {
+		FederationMap map = federationMap(FType.FULL,
+			new long[][][] {{{0, 0}, {10, 2}}, {{0, 0}, {10, 2}}});
+
+		assertThrows(DMLRuntimeException.class, () -> FEDLocalMaterializeUtil.declaredAnchorType(map));
+	}
+
+	@Test
+	public void testExistingFederatedReuseRequiresExactTypeCardinalityAndRanges() {
+		FederationMap singletonFull = federationMap(FType.FULL,
+			new long[][][] {{{0, 0}, {10, 2}}});
+		FederationMap singletonBroadcast = federationMap(FType.BROADCAST,
+			new long[][][] {{{0, 0}, {10, 2}}});
+		assertTrue(FEDLocalMaterializeUtil.matchesPlannedLayout(singletonFull, singletonFull,
+			FType.FULL, FType.FULL, 10, 2));
+		assertTrue(FEDLocalMaterializeUtil.matchesPlannedLayout(singletonFull, singletonBroadcast,
+			FType.FULL, FType.BROADCAST, 10, 2));
+
+		FederationMap replicated = federationMap(FType.BROADCAST,
+			new long[][][] {{{0, 0}, {10, 2}}, {{0, 0}, {10, 2}}});
+		FederationMap twoWorkerAnchor = federationMap(FType.BROADCAST,
+			new long[][][] {{{0, 0}, {10, 2}}, {{0, 0}, {10, 2}}});
+		assertFalse("A multi-worker broadcast cannot be relabelled FULL",
+			FEDLocalMaterializeUtil.matchesPlannedLayout(replicated, twoWorkerAnchor,
+				FType.FULL, FType.FULL, 10, 2));
+
+		FederationMap rowAnchor = federatedAnchor(FType.ROW,
+			new long[][][] {{{0, 0}, {3, 2}}, {{3, 0}, {10, 2}}}).getFedMapping();
+		FederationMap wrongRowRanges = federationMap(FType.ROW,
+			new long[][][] {{{0, 0}, {5, 2}}, {{5, 0}, {10, 2}}});
+		assertFalse("Equal ROW labels do not prove exact anchor alignment",
+			FEDLocalMaterializeUtil.matchesPlannedLayout(wrongRowRanges, rowAnchor,
+				FType.ROW, FType.ROW, 10, 2));
+		assertTrue(FEDLocalMaterializeUtil.matchesPlannedLayout(rowAnchor, rowAnchor,
+			FType.ROW, FType.ROW, 10, 2));
+	}
+
+	@Test
+	public void testUndersizedRowAndColPlacementsAreRejectedInsteadOfChangedToBroadcast() {
+		FederationMap rowAnchor = federationMap(FType.ROW,
+			new long[][][] {{{0, 0}, {1, 10}}, {{1, 0}, {2, 10}}});
+		FederationMap colAnchor = federationMap(FType.COL,
+			new long[][][] {{{0, 0}, {10, 1}}, {{0, 1}, {10, 2}}});
+		MatrixObject oneByTen = ExecutionContext.createMatrixObject(new MatrixBlock(1, 10, 1.0));
+		MatrixObject tenByOne = ExecutionContext.createMatrixObject(new MatrixBlock(10, 1, 1.0));
+
+		assertThrows(DMLRuntimeException.class,
+			() -> FEDLocalMaterializeUtil.materializeLocalToAnchor(
+				1, oneByTen, rowAnchor, FType.ROW, FType.ROW, 1, 10));
+		assertThrows(DMLRuntimeException.class,
+			() -> FEDLocalMaterializeUtil.materializeLocalToAnchor(
+				1, tenByOne, colAnchor, FType.COL, FType.COL, 10, 1));
+	}
+
+	@Test
+	public void testMaterializationPreservesExactUnevenAnchorRangesForSameShape() {
+		FederationMap rowAnchor = federatedAnchor(FType.ROW,
+			new long[][][] {{{0, 0}, {3, 2}}, {{3, 0}, {10, 2}}}).getFedMapping();
+		MatrixObject local = ExecutionContext.createMatrixObject(new MatrixBlock(10, 2, 1.0));
+
+		FederationMap materialized = FEDLocalMaterializeUtil.materializeLocalToAnchor(
+			1, local, rowAnchor, FType.ROW, FType.ROW, 10, 2);
+
+		assertEquals(3, materialized.getFederatedRanges()[0].getEndDims()[0]);
+		assertEquals(3, materialized.getFederatedRanges()[1].getBeginDims()[0]);
+		assertTrue(FEDLocalMaterializeUtil.matchesPlannedLayout(materialized, rowAnchor,
+			FType.ROW, FType.ROW, 10, 2));
+	}
+
+	@Test
+	public void testOtherRowShapedAnchorIsNotRepairedToRow() {
 		FederationMap map = federationMap(FType.OTHER,
 			new long[][][] {{{0, 0}, {50, 20}}, {{50, 0}, {100, 20}}});
 
-		assertEquals(FType.ROW, FEDLocalMaterializeUtil.normalizeSupportedAnchorType(map));
-		assertEquals(FType.ROW, map.getType());
+		assertEquals(FType.OTHER, FEDLocalMaterializeUtil.declaredAnchorType(map));
+		assertEquals(FType.OTHER, map.getType());
 	}
 
 	@Test
@@ -89,7 +191,7 @@ public class FEDLocalMaterializeUtilTest {
 		FederationMap map = federationMap(FType.OTHER,
 			new long[][][] {{{0, 0}, {50, 10}}, {{50, 10}, {100, 20}}});
 
-		assertEquals(FType.OTHER, FEDLocalMaterializeUtil.normalizeSupportedAnchorType(map));
+		assertEquals(FType.OTHER, FEDLocalMaterializeUtil.declaredAnchorType(map));
 		assertEquals(FType.OTHER, map.getType());
 	}
 
@@ -119,7 +221,7 @@ public class FEDLocalMaterializeUtilTest {
 	}
 
 	@Test
-	public void testContainsFallsBackToCpWhenTargetMaterializedLocal() {
+	public void testContainsRejectsLocalTargetInsteadOfFallingBackToCp() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 		MatrixBlock mb = new MatrixBlock(2, 2, false);
 		mb.allocateDenseBlock();
@@ -129,13 +231,13 @@ public class FEDLocalMaterializeUtilTest {
 		String inst = InstructionUtils.concatOperands("FED", "contains",
 			"pattern=Infinity", "target=X", "k=1",
 			InstructionUtils.concatOperandParts("out", DataType.SCALAR.name(), "BOOLEAN"));
-		ParameterizedBuiltinFEDInstruction.parseInstruction(inst).processInstruction(ec);
-
-		assertTrue(((BooleanObject) ec.getVariable("out")).getBooleanValue());
+		assertThrows("FED contains must reject a local target instead of silently executing CP",
+			RuntimeException.class,
+			() -> ParameterizedBuiltinFEDInstruction.parseInstruction(inst).processInstruction(ec));
 	}
 
 	@Test
-	public void testReorgLocalInputFoutFallsBackToCpThenUploadsToUniqueAnchor() {
+	public void testReorgLocalInputDoesNotExecuteCpOrUseUnrelatedAnchor() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 		ec.setAutoCreateVars(true);
 		MatrixBlock mb = new MatrixBlock(2, 3, false);
@@ -149,14 +251,60 @@ public class FEDLocalMaterializeUtilTest {
 			InstructionUtils.concatOperandParts("X", DataType.MATRIX.name(), ValueType.FP64.name()),
 			InstructionUtils.concatOperandParts("Y", DataType.MATRIX.name(), ValueType.FP64.name()),
 			"1", "FOUT");
-		ReorgFEDInstruction.parseInstruction(inst).processInstruction(ec);
+		assertThrows("FED reorg must reject a local input instead of stealing an unrelated worker pool",
+			RuntimeException.class, () -> ReorgFEDInstruction.parseInstruction(inst).processInstruction(ec));
+	}
 
-		MatrixObject out = ec.getMatrixObject("Y");
-		assertTrue(out.isFederated());
-		assertEquals(FType.BROADCAST, out.getFedMapping().getType());
-		assertEquals(2, out.getFedMapping().getSize());
-		assertEquals(3, out.getNumRows());
-		assertEquals(2, out.getNumColumns());
+	@Test
+	public void testRefedDoesNotStealUnrelatedFederatedWorkerPoolWhenAnchorIsLocal() {
+		String anchorName = "MissingSelectedAnchor_20260802";
+		FederationUtils.removeAnchorMap(anchorName);
+		FederationUtils.removeAnchorKey(anchorName);
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setAutoCreateVars(true);
+		ec.setVariable("X", ExecutionContext.createMatrixObject(new MatrixBlock(2, 3, 1.0)));
+		ec.setVariable(anchorName, ExecutionContext.createMatrixObject(new MatrixBlock(2, 3, 1.0)));
+		ec.setVariable("UnrelatedPool", federatedAnchor(FType.ROW,
+			new long[][][] {{{0, 0}, {10, 3}}, {{10, 0}, {20, 3}}}));
+		ec.setVariable("Y", ExecutionContext.createMatrixObject(new MatrixBlock()));
+
+		String inst = InstructionUtils.concatOperands("FED", "fed_refed",
+			InstructionUtils.concatOperandParts("X", DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts(anchorName, DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts("Y", DataType.MATRIX.name(), ValueType.FP64.name()));
+		assertThrows("fed_refed must require its selected anchor instead of stealing an unrelated worker pool",
+			RuntimeException.class, () -> FEDRefedInstruction.parseInstruction(inst).processInstruction(ec));
+	}
+
+	@Test
+	public void testRefedDoesNotImplicitlyDownloadAndUploadIncompatibleFederatedInput() {
+		FederationUtils.clearRefedReuseCache();
+		try {
+			ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+			ec.setAutoCreateVars(true);
+			MatrixObject input = ExecutionContext.createMatrixObject(new MatrixBlock(2, 3, 1.0));
+			input.setFileName("NoImplicitRefedFallbackInput_20260802");
+			FederatedRange inputRange = new FederatedRange(new long[] {0, 0}, new long[] {2, 3});
+			FederatedData inputData = new FederatedData(DataType.MATRIX,
+				new InetSocketAddress("localhost", 16001), null);
+			input.setFedMapping(new NoOpFederationMap(81,
+				List.of(Pair.of(inputRange, inputData)), FType.FULL));
+			ec.setVariable("IncompatibleFed", input);
+			ec.setVariable("SelectedAnchor", federatedAnchor(FType.FULL,
+				new long[][][] {{{0, 0}, {2, 3}}}));
+			ec.setVariable("RefedOut", ExecutionContext.createMatrixObject(new MatrixBlock()));
+
+			String inst = InstructionUtils.concatOperands("FED", "fed_refed",
+				InstructionUtils.concatOperandParts("IncompatibleFed", DataType.MATRIX.name(), ValueType.FP64.name()),
+				InstructionUtils.concatOperandParts("SelectedAnchor", DataType.MATRIX.name(), ValueType.FP64.name()),
+				InstructionUtils.concatOperandParts("RefedOut", DataType.MATRIX.name(), ValueType.FP64.name()));
+			assertThrows("An incompatible federated source must be lowered through an explicit FED->LOUT->FOUT "
+				+ "plan, not repaired inside fed_refed", RuntimeException.class,
+				() -> FEDRefedInstruction.parseInstruction(inst).processInstruction(ec));
+		}
+		finally {
+			FederationUtils.clearRefedReuseCache();
+		}
 	}
 
 	@Test
@@ -171,6 +319,21 @@ public class FEDLocalMaterializeUtilTest {
 		assertTrue(FEDLocalMaterializeUtil.hasLocalFederatedData(new FederationMap(1, entries, FType.ROW)));
 		assertFalse(FEDLocalMaterializeUtil.hasLocalFederatedData(federationMap(FType.ROW,
 			new long[][][] {{{0, 0}, {10, 1}}, {{10, 0}, {20, 1}}})));
+	}
+
+	@Test
+	public void testMaterializationDoesNotRetryAfterChannelClosure() {
+		List<Pair<FederatedRange, FederatedData>> entries = new ArrayList<>();
+		entries.add(Pair.of(new FederatedRange(new long[] {0, 0}, new long[] {2, 3}),
+			new FederatedData(DataType.MATRIX, new InetSocketAddress("localhost", 15000), null)));
+		ChannelCloseThenSuccessMap anchor = new ChannelCloseThenSuccessMap(1, entries, FType.FULL);
+		MatrixObject local = ExecutionContext.createMatrixObject(new MatrixBlock(2, 3, 1.0));
+
+		assertThrows("A failed planned upload must invalidate the run instead of silently retrying",
+			DMLRuntimeException.class,
+			() -> FEDLocalMaterializeUtil.materializeLocalToAnchor(
+				1, local, anchor, FType.FULL, FType.FULL, 2, 3));
+		assertEquals("A single experiment cell must issue the upload only once", 1, anchor.executeCalls);
 	}
 
 	private static FederationMap federationMap(FType type, long[][][] ranges) {

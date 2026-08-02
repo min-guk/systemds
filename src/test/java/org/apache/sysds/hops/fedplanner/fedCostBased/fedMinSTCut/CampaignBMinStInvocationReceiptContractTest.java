@@ -43,7 +43,7 @@ public class CampaignBMinStInvocationReceiptContractTest {
 		"/org/apache/sysds/test/component/federated/placement/characterization/"
 			+ "g004b-c2-dp-minst-offline-literal.manifest";
 	private static final String OFFLINE_MANIFEST_SHA256 =
-		"b36e0fea27173a814a0099fae61cd69f426f12e5d20f48357fc233812cf9d8c9";
+		"343f5828b092f2264d92609d480aea621afabb6b2200a41351897cf4c4a79f7c";
 	private static final String B09_CLONE_PREDECESSOR =
 		"input-0:64:6736da1dbbc6a6a05e3213f3c83cebba5d53ed0c6e6a3c7947c99d83ebe0f09f|2:M1|"
 			+ "105:64:6736da1dbbc6a6a05e3213f3c83cebba5d53ed0c6e6a3c7947c99d83ebe0f09f|4:main|"

@@ -56,116 +56,6 @@ public class FEDRefedInstruction extends FEDInstruction {
 		return new FEDRefedInstruction(input, anchor, output, parts[0], str);
 	}
 
-	private static boolean matchesMaterializeToAnchorLayout(FederationMap inMap, FederationMap anchorMap,
-		FType materializeType, long rlen, long clen) {
-		if (inMap == null || anchorMap == null)
-			return false;
-		int numWorkers = anchorMap.getSize();
-		if (numWorkers <= 0 || inMap.getSize() != numWorkers)
-			return false;
-
-		FederatedRange[] inRanges = inMap.getFederatedRanges();
-		FederatedData[] inData = inMap.getFederatedData();
-		FederatedData[] anchorData = anchorMap.getFederatedData();
-		if (inRanges.length != numWorkers || inData.length != numWorkers || anchorData.length != numWorkers)
-			return false;
-
-		long[] rowBeg = new long[numWorkers];
-		long[] rowEnd = new long[numWorkers];
-		long[] colBeg = new long[numWorkers];
-		long[] colEnd = new long[numWorkers];
-		if (materializeType == FType.FULL) {
-			for (int i = 0; i < numWorkers; i++) {
-				rowBeg[i] = 0;
-				rowEnd[i] = rlen;
-				colBeg[i] = 0;
-				colEnd[i] = clen;
-			}
-		}
-		else if (materializeType == FType.ROW) {
-			long base = rlen / numWorkers;
-			long rem = rlen % numWorkers;
-			long pos = 0;
-			for (int i = 0; i < numWorkers; i++) {
-				long size = base + (i < rem ? 1 : 0);
-				rowBeg[i] = pos;
-				rowEnd[i] = pos + size;
-				colBeg[i] = 0;
-				colEnd[i] = clen;
-				pos += size;
-			}
-		}
-		else if (materializeType == FType.COL) {
-			long base = clen / numWorkers;
-			long rem = clen % numWorkers;
-			long pos = 0;
-			for (int i = 0; i < numWorkers; i++) {
-				long size = base + (i < rem ? 1 : 0);
-				rowBeg[i] = 0;
-				rowEnd[i] = rlen;
-				colBeg[i] = pos;
-				colEnd[i] = pos + size;
-				pos += size;
-			}
-		}
-		else {
-			return false;
-		}
-
-		for (int i = 0; i < numWorkers; i++) {
-			if (inData[i] == null || anchorData[i] == null || !inData[i].getAddress().equals(anchorData[i].getAddress()))
-				return false;
-			FederatedRange range = inRanges[i];
-			if (range == null)
-				return false;
-			long[] begin = range.getBeginDims();
-			long[] end = range.getEndDims();
-			if (begin == null || end == null || begin.length < 2 || end.length < 2)
-				return false;
-			if (begin[0] != rowBeg[i] || end[0] != rowEnd[i] || begin[1] != colBeg[i] || end[1] != colEnd[i])
-				return false;
-		}
-
-		return true;
-	}
-
-	private static FederationMap findUniqueWorkerPoolAnchor(ExecutionContext ec) {
-		if (ec == null)
-			return null;
-		org.apache.sysds.runtime.controlprogram.LocalVariableMap vars = ec.getVariables();
-		if (vars == null || vars.keySet().isEmpty())
-			return null;
-
-		java.util.HashSet<java.net.InetSocketAddress> pool = null;
-		FederationMap anchor = null;
-
-		for (String name : vars.keySet()) {
-			org.apache.sysds.runtime.instructions.cp.Data dat = vars.get(name);
-			if (!(dat instanceof MatrixObject))
-				continue;
-			MatrixObject mo = (MatrixObject) dat;
-			if (!mo.isFederated() || mo.getFedMapping() == null || mo.getFedMapping().getSize() == 0)
-				continue;
-			FederationMap map = mo.getFedMapping();
-			java.util.HashSet<java.net.InetSocketAddress> workers = new java.util.HashSet<>();
-			for (FederatedData d : map.getFederatedData()) {
-				if (d != null && d.getAddress() != null)
-					workers.add(d.getAddress());
-			}
-			if (workers.isEmpty())
-				continue;
-			if (pool == null) {
-				pool = workers;
-				anchor = map;
-			}
-			else if (!pool.equals(workers)) {
-				return null;
-			}
-		}
-
-		return anchor;
-	}
-
 	@Override
 	public void processInstruction(ExecutionContext ec) {
 		MatrixObject in = ec.getMatrixObject(_input);
@@ -185,13 +75,9 @@ public class FEDRefedInstruction extends FEDInstruction {
 						anchorMap = derived;
 						FederationUtils.registerAnchorMap(_anchor.getName(), anchorMap);
 					}
-					else {
-						FederationMap any = findUniqueWorkerPoolAnchor(ec);
-						if (any != null)
-							anchorMap = any;
-						else
-							throw new DMLRuntimeException("fed_refed requires a federated anchor: " + _anchor.getName());
-					}
+					else
+						throw new DMLRuntimeException("fed_refed requires its selected federated anchor: "
+							+ _anchor.getName());
 				}
 			}
 		}
@@ -213,7 +99,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 			}
 		}
 
-		FType fType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchorMap);
+		FType fType = FEDLocalMaterializeUtil.declaredAnchorType(anchorMap);
 		if (fType == FType.PART || fType == FType.OTHER)
 			throw new DMLRuntimeException("fed_refed does not support anchor type " + fType);
 
@@ -223,108 +109,60 @@ public class FEDRefedInstruction extends FEDInstruction {
 			FederationMap inMap = in.getFedMapping();
 			if (inMap == null || inMap.getSize() == 0)
 				throw new DMLRuntimeException("fed_refed expects a non-empty federated input map: " + _input.getName());
-			try {
-				// Ensure the input is hosted on the same worker pool as the anchor.
-				java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
-				for (FederatedData d : inMap.getFederatedData())
-					inWorkers.add(d.getAddress());
-				java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
-				for (FederatedData d : anchorMap.getFederatedData())
-					anchorWorkers.add(d.getAddress());
-				if (!inWorkers.equals(anchorWorkers))
-					throw new DMLRuntimeException("fed_refed cannot reuse federated input " + _input.getName()
-						+ " because its worker pool differs from anchor " + _anchor.getName());
+			// Ensure the input is hosted on the same worker pool as the anchor.
+			java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
+			for (FederatedData d : inMap.getFederatedData())
+				inWorkers.add(d.getAddress());
+			java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
+			for (FederatedData d : anchorMap.getFederatedData())
+				anchorWorkers.add(d.getAddress());
+			if (!inWorkers.equals(anchorWorkers))
+				throw new DMLRuntimeException("fed_refed cannot reuse federated input " + _input.getName()
+					+ " because its worker pool differs from anchor " + _anchor.getName());
 
-				// Determine output dimensions if not already known.
-				if (rlen < 0 || clen < 0) {
-					long maxR = 0, maxC = 0;
-					for (FederatedRange range : inMap.getFederatedRanges()) {
-						if (range == null)
-							continue;
-						long[] end = range.getEndDims();
-						if (end != null && end.length >= 2) {
-							maxR = Math.max(maxR, end[0]);
-							maxC = Math.max(maxC, end[1]);
-						}
+			// Determine output dimensions if not already known.
+			if (rlen < 0 || clen < 0) {
+				long maxR = 0, maxC = 0;
+				for (FederatedRange range : inMap.getFederatedRanges()) {
+					if (range == null)
+						continue;
+					long[] end = range.getEndDims();
+					if (end != null && end.length >= 2) {
+						maxR = Math.max(maxR, end[0]);
+						maxC = Math.max(maxC, end[1]);
 					}
-					rlen = maxR;
-					clen = maxC;
 				}
-				if (rlen < 0 || clen < 0)
-					throw new DMLRuntimeException("fed_refed requires known output dimensions: rlen=" + rlen + " clen=" + clen);
-
-				long maxRow = anchorMap.getMaxIndexInRange(0);
-				long maxCol = anchorMap.getMaxIndexInRange(1);
-
-				// If the federated input already matches the desired refederation layout, treat fed_refed as a no-op.
-				if (maxRow == rlen && maxCol == clen && (fType == FType.ROW || fType == FType.COL)) {
-					boolean aligned = inMap.getType() == fType
-						&& inMap.getSize() == anchorMap.getSize()
-						&& inMap.isAligned(anchorMap, false);
-					if (!aligned)
-						throw new DMLRuntimeException("fed_refed cannot refederate federated input " + _input.getName()
-							+ " to anchor " + _anchor.getName() + " because it is not aligned");
-					MatrixObject out = ec.getMatrixObject(_output);
-					out.setFedMapping(inMap);
-					out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-					if (DEBUG_KMEANS) {
-						System.out.println("[DBG-KMEANS] fed_refed reuse-fed in=" + _input.getName()
-							+ " out=" + _output.getName()
-							+ " dims=" + rlen + "x" + clen
-							+ " anchor=" + _anchor.getName()
-							+ " type=" + inMap.getType());
-					}
-					return;
-				}
-
-				int numWorkers = anchorMap.getSize();
-				FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
-				FType mapType = materializeType;
-				if (materializeType == FType.ROW && rlen < numWorkers) {
-					materializeType = FType.FULL;
-					mapType = FType.BROADCAST;
-				}
-				else if (materializeType == FType.COL && clen < numWorkers) {
-					materializeType = FType.FULL;
-					mapType = FType.BROADCAST;
-				}
-				FType expectedType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
-				FType inType = inMap.getType();
-				boolean compatible = (inType == expectedType)
-					|| (expectedType == FType.BROADCAST && (inType == FType.FULL || inType == FType.BROADCAST))
-					|| (expectedType == FType.FULL && inType == FType.BROADCAST);
-				if (!compatible)
-					throw new DMLRuntimeException("fed_refed cannot reuse federated input " + _input.getName()
-						+ " of type " + inType + " for anchor " + _anchor.getName() + " type " + expectedType);
-
-				if (!matchesMaterializeToAnchorLayout(inMap, anchorMap, materializeType, rlen, clen))
-					throw new DMLRuntimeException("fed_refed cannot reuse federated input " + _input.getName()
-						+ " because it does not match expected refederation layout for anchor " + _anchor.getName());
-
-				MatrixObject out = ec.getMatrixObject(_output);
-				FederationMap outMap = (inType == expectedType)
-					? inMap
-					: new FederationMap(inMap.getID(), inMap.getMap(), expectedType);
-				out.setFedMapping(outMap);
-				out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-				if (DEBUG_KMEANS) {
-					System.out.println("[DBG-KMEANS] fed_refed reuse-fed in=" + _input.getName()
-						+ " out=" + _output.getName()
-						+ " dims=" + rlen + "x" + clen
-						+ " anchor=" + _anchor.getName()
-						+ " type=" + outMap.getType());
-				}
-				return;
+				rlen = maxR;
+				clen = maxC;
 			}
-			catch (DMLRuntimeException ex) {
-				// Fallback: materialize federated input to local and upload according to anchor layout.
-				// This supports safe re-federation for cases where the existing federation map is not reusable.
-				if (DEBUG_KMEANS) {
-					System.out.println("[DBG-KMEANS] fed_refed materialize-fed fallback in=" + _input.getName()
-						+ " anchor=" + _anchor.getName()
-						+ " reason=" + ex.getMessage());
-				}
+			if (rlen < 0 || clen < 0)
+				throw new DMLRuntimeException("fed_refed requires known output dimensions: rlen=" + rlen + " clen=" + clen);
+
+			int numWorkers = anchorMap.getSize();
+			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
+			FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
+			FType expectedType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
+			FType inType = inMap.getType();
+			boolean compatible = FEDLocalMaterializeUtil.matchesPlannedLayout(
+				inMap, anchorMap, materializeType, expectedType, rlen, clen);
+			if (!compatible)
+				throw new DMLRuntimeException("fed_refed cannot reuse federated input " + _input.getName()
+					+ " of type " + inType + " for anchor " + _anchor.getName() + " type " + expectedType);
+
+			MatrixObject out = ec.getMatrixObject(_output);
+			FederationMap outMap = (inType == expectedType)
+				? inMap
+				: new FederationMap(inMap.getID(), inMap.getMap(), expectedType);
+			out.setFedMapping(outMap);
+			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
+			if (DEBUG_KMEANS) {
+				System.out.println("[DBG-KMEANS] fed_refed reuse-fed in=" + _input.getName()
+					+ " out=" + _output.getName()
+					+ " dims=" + rlen + "x" + clen
+					+ " anchor=" + _anchor.getName()
+					+ " type=" + outMap.getType());
 			}
+			return;
 		}
 		if (rlen < 0 || clen < 0) {
 			MatrixBlock block = in.acquireRead();
@@ -352,15 +190,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 		}
 		else {
 			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
-			FType mapType = materializeType;
-			if (materializeType == FType.ROW && rlen < numWorkers) {
-				materializeType = FType.FULL;
-				mapType = FType.BROADCAST;
-			}
-			else if (materializeType == FType.COL && clen < numWorkers) {
-				materializeType = FType.FULL;
-				mapType = FType.BROADCAST;
-			}
+			FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
 			cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
 			layoutSig = FederationUtils.deriveMaterializedLayoutSignature(anchorMap, cacheMapType, rlen, clen);
 		}
@@ -392,17 +222,9 @@ public class FEDRefedInstruction extends FEDInstruction {
 
 		if (maxRow != rlen || maxCol != clen) {
 			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
-			FType mapType = materializeType;
-			if (materializeType == FType.ROW && rlen < anchorMap.getSize()) {
-				materializeType = FType.FULL;
-				mapType = FType.BROADCAST;
-			}
-			else if (materializeType == FType.COL && clen < anchorMap.getSize()) {
-				materializeType = FType.FULL;
-				mapType = FType.BROADCAST;
-			}
+			FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
 			out.setFedMapping(FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), in, anchorMap,
-				materializeType, mapType, rlen, clen, false, "fed_refed"));
+				materializeType, mapType, rlen, clen));
 			out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
 			FederationUtils.putRefedReuseMap(inputKey, inputUniqueId, inputMutationVersion,
 				rlen, clen, nnz, layoutSig, cacheMapType, out.getFedMapping());

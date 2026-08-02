@@ -88,43 +88,11 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 	}
 
 	protected IndexRange getIndexRange(ExecutionContext ec) {
-		// NOTE: For federated instructions, scalar operands might be patched via
-		// Instruction.updateLabels (¶_VarX¶ -> "2") while retaining isLiteral=false
-		// (as encoded by Lop.prepScalarOperand for non-CP exec types). In such cases,
-		// ExecutionContext.getScalarInput would try to resolve a variable named "2".
-		// Hence, we add a robustness fallback to interpret numeric strings as literals.
 		return new IndexRange( // rl, ru, cl, ru
-			(int) (getScalarIndexValue(ec, rowLower) - 1),
-			(int) (getScalarIndexValue(ec, rowUpper) - 1),
-			(int) (getScalarIndexValue(ec, colLower) - 1),
-			(int) (getScalarIndexValue(ec, colUpper) - 1));
-	}
-
-	private static long getScalarIndexValue(ExecutionContext ec, CPOperand operand) {
-		try {
-			return ec.getScalarInput(operand).getLongValue();
-		}
-		catch(DMLRuntimeException ex) {
-			String name = operand.getName();
-			if(operand.isScalar() && !operand.isLiteral() && isNumericLiteral(name) && !ec.containsVariable(name))
-				return ec.getScalarInput(name, operand.getValueType(), true).getLongValue();
-			throw ex;
-		}
-	}
-
-	private static boolean isNumericLiteral(String value) {
-		if(value == null || value.isEmpty())
-			return false;
-		char c0 = value.charAt(0);
-		if(!Character.isDigit(c0) && c0 != '-' && c0 != '+')
-			return false;
-		try {
-			Double.parseDouble(value);
-			return true;
-		}
-		catch(NumberFormatException e) {
-			return false;
-		}
+			(int) (ec.getScalarInput(rowLower).getLongValue() - 1),
+			(int) (ec.getScalarInput(rowUpper).getLongValue() - 1),
+			(int) (ec.getScalarInput(colLower).getLongValue() - 1),
+			(int) (ec.getScalarInput(colUpper).getLongValue() - 1));
 	}
 
 	public static IndexingFEDInstruction parseInstruction(IndexingCPInstruction instr) {
@@ -204,18 +172,6 @@ public final class IndexingFEDInstruction extends UnaryFEDInstruction {
 			leftIndexing(ec);
 	}
 
-
-	private static String createCPOperandString(ExecutionContext ec, CPOperand operand) {
-		if(operand.isLiteral())
-			return InstructionUtils.createLiteralOperand(operand.getName(), operand.getValueType());
-
-		String name = operand.getName();
-		if(isNumericLiteral(name) && !ec.containsVariable(name))
-			return InstructionUtils.createLiteralOperand(name, operand.getValueType());
-
-		return InstructionUtils.concatOperandParts(
-			name, operand.getDataType().name(), operand.getValueType().name(), String.valueOf(false));
-	}
 
 	private void rightIndexing(ExecutionContext ec)
 	{

@@ -1080,7 +1080,7 @@
 
 ## worker=1 FULL 입력의 CP/FOUT reorg가 planner 후처리에서 잘못 제거됨
 
-- **상태**: 해결 — planner/runtime capability parity 및 one-range FULL transpose 실행 회귀 통과; fresh Docker canary 대기
+- **상태**: 코드/회귀 해결, 전체 실험 미검증 — planner/runtime capability parity 및 one-range FULL transpose 실행 회귀 통과; fresh Docker 336-cell 검증 대기
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`, 기준 HEAD `b73e51d0e4`.
   - 대상: 모든 planner가 공유하는 `FederatedRefedPolicy`와 `ReorgFEDInstruction`; 특히 worker `1`의
@@ -1135,7 +1135,7 @@
 
 ## MinST 전역 최적성의 범위와 shadow authority 검증이 분리되어 있지 않았음
 
-- **상태**: 해결 — 독립 exhaustive cut oracle과 production selector 일치 포함 focused `52/52` PASS; wall-clock 최적성은 별도 관측 대상으로 명시
+- **상태**: 인코딩된 목적함수 검증 완료, 전체 plan-space/실측 최적성 미검증 — 독립 exhaustive cut oracle과 production selector 일치 포함 focused `52/52` PASS
 - **환경/조건**:
   - MinST exact two-bit state: compute `CP/FED`, output `LOUT/FOUT`, neutral graph의 legal states와 directed
     upload/download/compute cost edges.
@@ -1168,6 +1168,9 @@
   - focused suite `52/52` PASS. BR5 actual-root fixture에서 독립 exhaustive objective bits, source partition,
     selected states, obligation receipts가 production selector와 byte/identity 수준으로 일치했다.
 - **잔여 이슈**:
+  - 현재 exact-row variant search는 mixed `FED/LOUT`+`FED/FOUT` membership을 2-bit cut으로 정직하게 표현할 수
+    없는 경우 baseline에 남긴다. 따라서 **전체 physical legal plan space의 전역 최적성은 아직 증명되지 않았다**.
+  - variant 조합이 `4096`을 넘으면 fail-closed한다. 실제 7개 workload가 이 경계를 밟지 않는지 Docker 로그로 확인한다.
   - Docker에서 MinST가 DP보다 느린 셀은 곧바로 selector 오류로 단정하지 않고, 동일 binary/seed/data 조건에서
     selected fingerprint와 modeled objective를 먼저 비교한 뒤 cost estimate 오차를 분석한다.
 - **잠재 회귀 위험**:
@@ -1180,7 +1183,7 @@
 
 ## Docker discovery metric이 SystemDS 실행시간 대신 lifecycle wall-clock을 기록함
 
-- **상태**: 해결 — 모든 phase의 성능 metric을 `systemds_total_execution_time`으로 통일; 새 homogeneous 336-cell 실행 대기
+- **상태**: 측정 계약 해결, worker fluctuation 미검증 — 모든 phase의 성능 metric을 `systemds_total_execution_time`으로 통일; 새 homogeneous 336-cell 실행 대기
 - **환경/조건**:
   - harness: `/home/mchoi/g007-harness-exdra-only-20260729-v1/sigmod2021-exdra-p523`, 기준 HEAD `d60da243`.
   - 폐기 campaign: `/home/mchoi/g007-all-planners-minst-native-local-e18d326-d60da24-20260802-v1`, 완료 `298/336`.
@@ -1226,3 +1229,144 @@
 - **의사결정 근거/적용 원칙**:
   - planner 후보/비용을 성능 그래프에 맞추지 않고 측정 경계를 바로잡았다. data/seed 고정과 Docker-only,
     no-retry/no-stitching 원칙을 강화했다.
+
+## FED reorg가 planner 오류를 CP 실행·missing-variable 재초기화로 은폐함
+
+- **상태**: 코드/회귀 해결, Docker 미검증 — runtime CP fallback과 missing-variable 재시도 삭제; fresh canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`, 기준 HEAD `20c82a8ccc`.
+  - 대상: `ReorgFEDInstruction`의 local input 처리와 transpose missing-variable 재시도.
+- **재현 절차**:
+  - `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip -Dtest=ReorgFEDInstructionFullTest test`.
+- **관측 증상**:
+  - FED reorg가 local `MatrixObject`를 받으면 예외 대신 CP instruction으로 변환해 실행한다.
+  - FOUT이면 실행 컨텍스트에서 임의의 unique worker-pool anchor를 찾아 결과를 FULL로 업로드한다.
+  - transpose가 worker의 missing-variable 오류를 받으면 local value를 같은 ID로 재업로드하거나 source path를
+    다시 읽고 한 차례 재시도한다.
+- **원인 분석**:
+  - 과거 MinST upload/download obligation을 실행 가능하게 만들면서 planner legality 결함을 runtime repair로
+    흡수한 코드가 남았다. 그 결과 성공 로그가 실제로 합법한 planner plan을 증명하지 못한다.
+- **해결 요약**:
+  - local input이 CP로 실행되지 않고 fail-fast해야 한다는 behavioral 회귀를 추가했다.
+  - CP 변환 fallback과 missing-variable reinit/retry를 삭제했고, Docker 실패가 나면 planner의 placement 또는
+    lifetime/rewire 모델에서 원인을 수정한다.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/runtime/instructions/fed/ReorgFEDInstructionFullTest.java`
+  - `src/main/java/org/apache/sysds/runtime/instructions/fed/ReorgFEDInstruction.java`
+- **검증**:
+  - `FederatedPlannerFallbackIntegrationTest`를 포함한 critical gate `289/289` PASS:
+    `/tmp/g007-critical-source-gate-r4-20260802.log`, SHA-256
+    `b98e72556a9292a7ddc320efef6838835ce2f9d3b2c7d7c5259d59ad751e7d42`.
+  - 수정/신규 테스트 전체 gate `194` 실행, `192` PASS, PUBLIC privacy `2` ignored, failure/error `0`:
+    `/tmp/g007-modified-tests-gate-r1-20260802.log`, SHA-256
+    `f4074c92a9fb676394abc27ebb92ecda5cefd199f8bca3b9ec1cb52db967897e`.
+- **잔여 이슈**:
+  - reorg 이외 FED instruction의 이름뿐인 fallback이 명시적 planned relocation인지 암묵 repair인지 분류해야 한다.
+  - fail-fast 복구 뒤 KMeans/PCA worker 1–4에서 드러나는 planner 불법 경로를 수정해야 한다.
+- **잠재 회귀 위험**:
+  - 기존 실험이 fallback에 의존했다면 새 Docker canary가 실패한다. 이는 runtime 우회로 되돌리지 않고 planner
+    candidate/rewire/lifetime 오류로 추적한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime fallback 금지와 “planner가 실행 가능성을 판정하고 runtime은 plan을 그대로 실행” 원칙을 적용한다.
+
+## DP conflict refinement가 절대 Hop ID와 HashMap 순서에 따라 다른 plan을 선택함
+
+- **상태**: 코드/회귀 해결, worker scaling 실험 미검증
+- **환경/조건**:
+  - DP multi-write/transient-variable fixture의 동일 DAG. 첫 Hop ID가 `0`이면 FOUT, 더미 Hop 13개 뒤 `13`이면
+    LOUT을 선택했고 전체 test class 실행에서는 `3453`부터 시작해 같은 실패가 재현됐다.
+- **재현 절차**:
+  - 수정 전 offset-13 회귀:
+    `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip -Dtest=FederatedPlannerFallbackIntegrationTest#testDpMultiWriteTransientVariableUsesOneExecutableRepresentation test`.
+  - RED 로그: `/tmp/g007-dp-multiwrite-offset13-red-r1-20260802.log`.
+- **관측 증상**:
+  - 구조/비용/입력 placement가 같은데 전역 Hop ID offset만 바꾸면 DP의 accepted refinement와 최종 output placement가
+    달라졌다. 이는 seed/data/cache가 아니라 planner 내부 iteration-order 비결정성이었다.
+- **원인 분석**:
+  - `conflictCheckMap`은 `HashMap`인데, refinement 단계가 `entrySet()` 순서로 앞 후보를 적용한 뒤 그 변경 상태를
+    다음 후보 평가의 입력으로 사용했다. Long hash bucket wrap에 따라 producer/consumer 처리 순서가 달라졌다.
+- **해결 요약**:
+  - conflict normalization/refinement/parent-graph 순회를 모두 ascending Hop ID의 producer-first canonical order로
+    통일했다. 후보를 닫거나 비용을 바꾸지 않고 동일 상태 전이를 동일 순서로 수행한다.
+  - 회귀 fixture가 13개 dummy LiteralOp을 먼저 할당해 과거 bucket wrap을 고정적으로 재현하도록 했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/FederatedPlannerFallbackIntegrationTest.java`
+- **검증**:
+  - offset-13 GREEN: `/tmp/g007-dp-multiwrite-offset13-green-r1-20260802.log`, SHA-256
+    `edc8d35623ef3b5bdbbf28491b2a7624c1b8e3502b34ec0aa1ae61ac754cb9c0`.
+  - full critical gate `289/289` PASS 및 DP owner/estimator gate `51` PASS + PUBLIC `2` ignored:
+    `/tmp/g007-dp-owner-estimator-gate-r2-20260802.log`, SHA-256
+    `8c7a4dab4e08b145b1b937992ede411cc117c2ace10a1657387632e9f9d51d0c`.
+- **잔여 이슈**:
+  - 이 수정은 planner plan의 run-order 결정성을 보장하지만 worker 수에 따른 실제 runtime 곡선의 단조성은 보장하지
+    않는다. 동일 immutable Docker pass에서 fingerprint 변화와 execution time을 분리해 판정해야 한다.
+- **잠재 회귀 위험**:
+  - producer-first가 아닌 별도 dependency가 refinement에 숨어 있으면 정렬만으로 semantic ordering을 표현하지 못할 수
+    있다. 감지: 전역 Hop ID offset/전체 class order 회귀와 336-cell instruction fingerprint를 함께 유지한다.
+- **의사결정 근거/적용 원칙**:
+  - supported candidate를 닫지 않고 planner state transition의 비결정성만 제거했다.
+
+## DP exact estimator가 동일 occurrence의 복수 physical carrier를 하나로 축약함
+
+- **상태**: 코드/회귀 해결, ALS Docker 미검증
+- **환경/조건**:
+  - 함수/loop unrolling으로 하나의 semantic occurrence가 여러 executable Hop carrier를 갖는 ALS DP fixture.
+- **재현 절차**:
+  - ALS carrier receipt 회귀 실행. GREEN 로그:
+    `/tmp/g007-als-carrier-receipt-fix-r6-20260802.log`.
+- **관측 증상**:
+  - exact estimator가 semantic occurrence의 원래 Hop ID로 pruned plan을 조회하고, memo arm API는 physical carrier가
+    둘이면 ambiguous로 실패했다. 그 결과 합법한 unrolled clone plan이 누락되거나 null estimator request가 발생했다.
+- **원인 분석**:
+  - semantic occurrence와 executable carrier를 1:1로 가정했다. 실제 function/loop lowering에서는 occurrence 1개에
+    carrier N개가 가능하다.
+- **해결 요약**:
+  - enumerator는 현재 실행 carrier Hop ID로 exact plan을 요청한다.
+  - occurrence 조회는 등록된 모든 carrier의 LOUT/FOUT arm을 canonical Hop-ID 순으로 반환하고, 동일 output의 선택은
+    cumulative cost 최소/동률 Hop ID 최소로 결정한다.
+  - enclosing memo authority가 있는 unrolled clone carrier를 합법 completion receipt로 인정한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEnumerator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpCostEstimator.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpMemoTable.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/FederatedPlannerDpFedCostBased.java`
+- **검증**:
+  - ALS focused GREEN과 critical `289/289`, DP owner/estimator gate failure/error `0`.
+- **잔여 이슈**:
+  - ALS worker 1–4 Docker 셀에서 carrier selection과 warm/cold fingerprint가 동일한지 확인한다.
+- **잠재 회귀 위험**:
+  - 여러 carrier가 서로 다른 실행 의미를 갖는데 semantic occurrence가 잘못 합쳐진 경우 cheapest 선택이 부정확할 수
+    있다. 감지: owner-bound occurrence identity, carrier Hop identity, exact placement state를 receipt에서 동시에 검사한다.
+- **의사결정 근거/적용 원칙**:
+  - plan-space 축소 없이 실제 executable carrier 공간을 memo/estimator에 복원했다.
+
+## 단일 336-cell Docker pass의 중복·측정·provenance 계약 부재
+
+- **상태**: 하네스 구현/단위 검증 완료, 본 실험 미실행
+- **환경/조건**:
+  - `3 profiles × 7 workloads × 4 workers × 4 planners = 336` private-aggregate cells.
+  - 각 logical cell은 cold/setup 1회와 fresh coordinator JVM warm 1회이며, warm SystemDS execution time만 primary다.
+- **관측 증상**:
+  - 과거 결과는 여러 source JAR과 lifecycle/discovery metric이 섞였고, 중단 후 수동 재개 시 이미 실행한 셀을 다시
+    돌릴 위험이 있었다.
+- **해결 요약**:
+  - manifest의 exact ordered prefix만 resume 가능하고 logical cell마다 attempt `1`, retry `NONE`을 강제하는 runner를
+    추가했다. planner 순서는 `DP → FedAll → Heuristic → MinST`, 각 planner는 KMeans/PCA 24-cell canary가 먼저다.
+  - `run_LAN_docker.sh`만 허용하고 물리 `run_LAN.sh`가 stage에 존재하면 fail-closed한다.
+  - cold/warm instruction fingerprint 동일성, seed/data/JAR/harness hashes, fresh no-cache network receipt, semantic oracle,
+    fallback/error/timeout/resource scan, restart `0/0`, clean teardown를 cell row에 인증한다.
+- **수정 파일**:
+  - harness `experiments/tools/run_one_pass_performance.py`
+  - harness `experiments/tests/test_one_pass_performance.py`
+  - harness `experiments/code/distributedExpNew.sh`
+  - harness `experiments/tests/test_g007_harness.py`
+- **검증**:
+  - one-pass runner `6/6` PASS, main harness `51/51` PASS, Python compile/bash syntax/git diff check PASS.
+- **잔여 이슈**:
+  - clean source/harness commits로 immutable stage를 만들고 첫 24개 DP KMeans/PCA canary부터 한 번씩만 실행한다.
+- **잠재 회귀 위험**:
+  - 실패한 logical cell은 같은 output root에서 재시도할 수 없다. 원인을 수정하면 새 immutable commit/stage/output으로
+    전체 campaign을 다시 정의해야 하므로, canary 24개에서 fail-fast 검증을 먼저 수행한다.
+- **의사결정 근거/적용 원칙**:
+  - 데이터/seed 고정만으로는 부족한 JAR, network, metric phase, container lifecycle, plan fingerprint를 함께 고정했다.

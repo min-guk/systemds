@@ -29,8 +29,9 @@ final class CampaignBLiteralAuthority {
 	record LedgerRow(Diff diff,String proof,String artifact,String nonCausation) { }
 
 	static List<Row> parse(String manifest)throws Exception{
-		String[] lines=manifest.split("\\R");if(lines.length!=38||!lines[0].equals("SCHEMA|g004b-c2-offline-selected-plan-v1"))throw new AssertionError("R4_LITERAL_SCHEMA");
-		List<Row> out=new ArrayList<>();for(int i=4;i<lines.length;i++)out.add(parseRow(lines[i]));
+		String[] lines=manifest.split("\\R");if(lines.length!=39||!lines[0].equals("SCHEMA|g004b-c2-offline-selected-plan-v2")
+			||!lines[4].equals("EVIDENCE|ACTUAL_RETAINED|EXACT_PRIVATE_REPLAY|SYNTHETIC_SELECTOR_FIXTURE|NEUTRAL_GRAPH_EXCLUSION"))throw new AssertionError("R4_LITERAL_SCHEMA");
+		List<Row> out=new ArrayList<>();for(int i=5;i<lines.length;i++)out.add(parseRow(lines[i]));
 		Set<String> groups=new LinkedHashSet<>();for(Row r:out)groups.add(r.fixture()+'|'+r.planner());if(groups.size()!=22)throw new AssertionError("R4_LITERAL_GROUPS|"+groups.size());return List.copyOf(out);
 	}
 	static List<Expected> group(List<Row> rows)throws Exception{Map<String,List<Row>>g=new LinkedHashMap<>();for(Row r:rows)g.computeIfAbsent(r.planner()+'|'+r.fixture(),x->new ArrayList<>()).add(r);List<Expected>o=new ArrayList<>();for(var e:g.entrySet())o.add(expected(e.getValue()));return List.copyOf(o);}

@@ -136,7 +136,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 		int numWorkers = anchorMap.getSize();
 		if (numWorkers <= 0)
 			throw new DMLRuntimeException("fed_fout cannot materialize: no federated parent/worker pool (empty anchor map)");
-		FType anchorType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchorMap);
+		FType anchorType = FEDLocalMaterializeUtil.declaredAnchorType(anchorMap);
 		if (anchorType == FType.PART || anchorType == FType.OTHER)
 			throw new DMLRuntimeException("fed_fout does not support anchor type " + anchorType);
 
@@ -148,24 +148,24 @@ public class FEDFoutInstruction extends FEDInstruction {
 				throw new DMLRuntimeException("fed_fout does not support ftype " + outTypeHint);
 
 			FederationMap inMap = in.getFedMapping();
-				if (inMap == null || inMap.getSize() == 0)
-					throw new DMLRuntimeException("fed_fout expects a non-empty federated input map: " + _input.getName());
-				boolean hasLocalFedData = FEDLocalMaterializeUtil.hasLocalFederatedData(inMap);
+			if (inMap == null || inMap.getSize() == 0)
+				throw new DMLRuntimeException("fed_fout expects a non-empty federated input map: " + _input.getName());
+			boolean hasLocalFedData = FEDLocalMaterializeUtil.hasLocalFederatedData(inMap);
 
-				// Ensure the input is hosted on the same worker pool as the anchor.
-				if (!hasLocalFedData) {
-					java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
-					for (Pair<FederatedRange, FederatedData> e : inMap.getMap())
-						inWorkers.add(e.getValue().getAddress());
-					java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
-					for (Pair<FederatedRange, FederatedData> e : anchorMap.getMap())
-						anchorWorkers.add(e.getValue().getAddress());
-					if (!inWorkers.equals(anchorWorkers))
-						throw new DMLRuntimeException("fed_fout cannot reuse federated input " + _input.getName()
-							+ " because its worker pool differs from anchor " + _anchor.getName());
-				}
+			// Ensure the input is hosted on the same worker pool as the anchor.
+			if (!hasLocalFedData) {
+				java.util.HashSet<java.net.InetSocketAddress> inWorkers = new java.util.HashSet<>();
+				for (Pair<FederatedRange, FederatedData> e : inMap.getMap())
+					inWorkers.add(e.getValue().getAddress());
+				java.util.HashSet<java.net.InetSocketAddress> anchorWorkers = new java.util.HashSet<>();
+				for (Pair<FederatedRange, FederatedData> e : anchorMap.getMap())
+					anchorWorkers.add(e.getValue().getAddress());
+				if (!inWorkers.equals(anchorWorkers))
+					throw new DMLRuntimeException("fed_fout cannot reuse federated input " + _input.getName()
+						+ " because its worker pool differs from anchor " + _anchor.getName());
+			}
 
-				// Determine output dimensions if not already known.
+			// Determine output dimensions if not already known.
 			if (rlen < 0 || clen < 0) {
 				long maxR = 0, maxC = 0;
 				for (Pair<FederatedRange, FederatedData> e : inMap.getMap()) {
@@ -184,42 +184,36 @@ public class FEDFoutInstruction extends FEDInstruction {
 			if (rlen < 0 || clen < 0)
 				throw new DMLRuntimeException("fed_fout requires known output dimensions: rlen=" + rlen + " clen=" + clen);
 
-				// If the input is already federated, treat fed_fout as a no-op provided the types are compatible.
-				FType inType = inMap.getType();
-				FType mapType = (outTypeHint == FType.BROADCAST) ? FType.BROADCAST : outTypeHint;
-					boolean compatible = (inType == mapType)
-						|| (mapType == FType.BROADCAST && (inType == FType.FULL || inType == FType.BROADCAST));
-					// BROADCAST is a special case of FULL replication; allow cheap metadata conversion.
-					compatible |= (mapType == FType.FULL && inType == FType.BROADCAST);
-					if (compatible && !hasLocalFedData) {
-						MatrixObject out = ec.getMatrixObject(_output);
-						FederationMap outMap = (inType == mapType)
-							? inMap
-						: new FederationMap(inMap.getID(), inMap.getMap(), mapType);
-					out.setFedMapping(outMap);
-					out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
-					if (DEBUG_KMEANS) {
-						System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
-							+ " out=" + _output.getName()
-							+ " dims=" + rlen + "x" + clen
-							+ " hint=" + outTypeHint
-							+ " mapType=" + outMap.getType()
-							+ " reuseFed=true"
-							+ " inst=" + instString);
-					}
-					return;
-				}
-
-				// Fallback: materialize the federated input to local and upload according to the
-				// requested fout type. This handles cases such as ROW/COL -> BROADCAST which are
-				// not representable as a pure metadata conversion.
+			// If the input is already federated, reuse it only when the exact worker/range
+			// layout selected by the planner is already present. Type-only reuse would
+			// silently turn a missing relocation into a runtime repair.
+			FType inType = inMap.getType();
+			FType mapType = (outTypeHint == FType.BROADCAST) ? FType.BROADCAST : outTypeHint;
+			FType materializeType = mapType == FType.BROADCAST ? FType.FULL : mapType;
+			boolean compatible = FEDLocalMaterializeUtil.matchesPlannedLayout(
+				inMap, anchorMap, materializeType, mapType, rlen, clen);
+			if (compatible && !hasLocalFedData) {
+				MatrixObject out = ec.getMatrixObject(_output);
+				FederationMap outMap = (inType == mapType)
+					? inMap
+					: new FederationMap(inMap.getID(), inMap.getMap(), mapType);
+				out.setFedMapping(outMap);
+				out.getDataCharacteristics().set(rlen, clen, in.getBlocksize(), in.getNnz());
 				if (DEBUG_KMEANS) {
-					System.out.println("[DBG-KMEANS] fed_fout materialize-fed in=" + _input.getName()
+					System.out.println("[DBG-KMEANS] fed_fout in=" + _input.getName()
+						+ " out=" + _output.getName()
 						+ " dims=" + rlen + "x" + clen
-						+ " inType=" + inType + " outType=" + mapType
-						+ " anchor=" + _anchor.getName()
+						+ " hint=" + outTypeHint
+						+ " mapType=" + outMap.getType()
+						+ " reuseFed=true"
 						+ " inst=" + instString);
 				}
+				return;
+			}
+
+			throw new DMLRuntimeException("fed_fout cannot repair federated input " + _input.getName()
+				+ " from type " + inType + " to " + mapType
+				+ "; planner must emit explicit FED->LOUT->FOUT relocation. inst=" + instString);
 		}
 		if (rlen < 0 || clen < 0) {
 			MatrixBlock block = in.acquireRead();
@@ -243,15 +237,6 @@ public class FEDFoutInstruction extends FEDInstruction {
 		final boolean broadcastOut = (outTypeHint == FType.BROADCAST);
 		FType mapType = broadcastOut ? FType.BROADCAST : outTypeHint;
 		FType materializeType = broadcastOut ? FType.FULL : outTypeHint;
-
-		if (materializeType == FType.ROW && rlen < numWorkers) {
-			materializeType = FType.FULL;
-			mapType = FType.BROADCAST;
-		}
-		else if (materializeType == FType.COL && clen < numWorkers) {
-			materializeType = FType.FULL;
-			mapType = FType.BROADCAST;
-		}
 
 		FType cacheMapType = FEDLocalMaterializeUtil.normalizeReplicatedMapType(materializeType, mapType, numWorkers);
 		String layoutSig = FederationUtils.deriveMaterializedLayoutSignature(anchorMap, cacheMapType, rlen, clen);
@@ -287,7 +272,7 @@ public class FEDFoutInstruction extends FEDInstruction {
 		}
 
 		FederationMap outMap = FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), in, anchorMap,
-			materializeType, mapType, rlen, clen, true, "fed_fout");
+			materializeType, mapType, rlen, clen);
 
 		MatrixObject out = ec.getMatrixObject(_output);
 		out.setFedMapping(outMap);

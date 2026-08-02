@@ -293,9 +293,9 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 				ec.setMatrixOutput(output.getName(), FederationUtils.aggMatrix(aop, response, base.getFedMapping()));
 			}
 			}
-			else if(_fedOut != null && _fedOut.isForcedLocal()) {
-				executeForcedLocalFallback(ec);
-			}
+			else if(_fedOut != null && _fedOut.isForcedLocal())
+				throw new DMLRuntimeException("FED aggregate ternary requires a planner-provided federated input; "
+					+ "runtime CP fallback is forbidden. inst=" + instString);
 			else {
 				if(mo3 == null)
 					throw new DMLRuntimeException("Federated AggregateTernary not supported with the "
@@ -304,27 +304,6 @@ public class AggregateTernaryFEDInstruction extends ComputationFEDInstruction {
 			throw new DMLRuntimeException("Federated AggregateTernary not supported with the "
 				+ "following federated objects: " + mo1.isFederated() + ":" + mo1.getFedMapping() + " "
 				+ mo2.isFederated() + ":" + mo2.getFedMapping() + mo3.isFederated() + ":" + mo3.getFedMapping());
-			}
-		}
-
-		private void executeForcedLocalFallback(ExecutionContext ec) {
-			MatrixBlock matBlock1 = ec.getMatrixInput(input1.getName());
-			MatrixBlock matBlock2 = ec.getMatrixInput(input2.getName());
-			MatrixBlock matBlock3 = input3.isLiteral() ? null : ec.getMatrixInput(input3.getName());
-			try {
-				AggregateTernaryOperator abOp = (AggregateTernaryOperator) _optr;
-				MatrixBlock ret = MatrixBlock.aggregateTernaryOperations(matBlock1, matBlock2, matBlock3,
-					new MatrixBlock(), abOp, true);
-				if(output.getDataType().isScalar())
-					ec.setScalarOutput(output.getName(), new DoubleObject(ret.get(0, 0)));
-				else
-					ec.setMatrixOutput(output.getName(), ret);
-			}
-			finally {
-				ec.releaseMatrixInput(input1.getName());
-				ec.releaseMatrixInput(input2.getName());
-				if(!input3.isLiteral())
-					ec.releaseMatrixInput(input3.getName());
 			}
 		}
 

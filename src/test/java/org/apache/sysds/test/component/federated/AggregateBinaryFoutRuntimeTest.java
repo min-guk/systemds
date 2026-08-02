@@ -37,6 +37,7 @@ import org.apache.sysds.runtime.controlprogram.LocalVariableMap;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedData;
+import org.apache.sysds.runtime.controlprogram.federated.FederatedLocalData;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRange;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest;
 import org.apache.sysds.runtime.controlprogram.federated.FederatedRequest.RequestType;
@@ -173,6 +174,24 @@ public class AggregateBinaryFoutRuntimeTest {
 			RuntimeException.class, () -> runForcedFoutMatMult(ec));
 	}
 
+	@Test
+	public void testLocalBackedFederationMapRequiresExplicitPlannerRelocation() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		MatrixObject localBacked = localBackedFederatedMatrix("L", 2, 3, 61, FType.FULL);
+		ec.setVariable("L", localBacked);
+		ec.setVariable("R", federatedMatrix("R", 3, 4, 62, FType.FULL, 1));
+		ec.setVariable("O", new MatrixObject(ValueType.FP64, "O",
+			new MetaData(new MatrixCharacteristics(2, 4, 1024))));
+
+		assertThrows("FED aggregate binary must not upload a local-backed FederationMap implicitly; "
+			+ "the planner must emit fed_refed/fed_fout first", RuntimeException.class,
+			() -> runForcedFoutMatMult(ec));
+		assertEquals("A failed FED instruction must not replace the planner-supplied input mapping", 61,
+			localBacked.getFedMapping().getID());
+		assertTrue("A failed FED instruction must leave the local-backed map untouched",
+			localBacked.getFedMapping().getMap().get(0).getRight() instanceof FederatedLocalData);
+	}
+
 	private static void runForcedFoutMatMult(ExecutionContext ec) {
 		String inst = InstructionUtils.concatOperands(
 			"FED", "ba+*",
@@ -211,6 +230,17 @@ public class AggregateBinaryFoutRuntimeTest {
 			entries.add(Pair.of(range, data));
 		}
 		matrix.setFedMapping(new NoOpFederationMap(id, entries, type));
+		return matrix;
+	}
+
+	private static MatrixObject localBackedFederatedMatrix(String name, int rows, int cols, long id, FType type) {
+		MatrixObject matrix = new MatrixObject(ValueType.FP64, name,
+			new MetaData(new MatrixCharacteristics(rows, cols, 1024, rows * cols)));
+		matrix.acquireModify(new MatrixBlock(rows, cols, 1.0));
+		matrix.release();
+		FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {rows, cols});
+		matrix.setFedMapping(new FederationMap(id,
+			List.of(Pair.of(range, new FederatedLocalData(id, matrix))), type));
 		return matrix;
 	}
 }

@@ -19,9 +19,7 @@
 
 package org.apache.sysds.test.component.federated;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThrows;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -66,7 +64,7 @@ public class FEDFoutInstructionBroadcastFallbackTest {
 	}
 
 	@Test
-	public void testRowHintFallbackProducesBroadcastMapType() {
+	public void testUndersizedRowHintIsRejectedInsteadOfChangedToBroadcast() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 
 		MatrixObject in = localMatrix("X", 1, 10);
@@ -85,17 +83,12 @@ public class FEDFoutInstructionBroadcastFallbackTest {
 			InstructionUtils.concatOperandParts("Y", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
 			"ROW");
 		FEDFoutInstruction parsed = FEDFoutInstruction.parseInstruction(inst);
-		parsed.processInstruction(ec);
-
-		MatrixObject result = ec.getMatrixObject("Y");
-		assertTrue(result.isFederated());
-		assertNotNull(result.getFedMapping());
-		assertEquals("Expected BROADCAST map type for ROW hint fallback", FType.BROADCAST, result.getFedMapping().getType());
-		assertEquals("Expected output to contain one entry per worker", 4, result.getFedMapping().getSize());
+		assertThrows("The runtime must not replace the planner-selected ROW placement with BROADCAST",
+			RuntimeException.class, () -> parsed.processInstruction(ec));
 	}
 
 	@Test
-	public void testColHintFallbackProducesBroadcastMapType() {
+	public void testUndersizedColHintIsRejectedInsteadOfChangedToBroadcast() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 
 		MatrixObject in = localMatrix("X", 10, 1);
@@ -114,13 +107,33 @@ public class FEDFoutInstructionBroadcastFallbackTest {
 			InstructionUtils.concatOperandParts("Y", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
 			"COL");
 		FEDFoutInstruction parsed = FEDFoutInstruction.parseInstruction(inst);
-		parsed.processInstruction(ec);
+		assertThrows("The runtime must not replace the planner-selected COL placement with BROADCAST",
+			RuntimeException.class, () -> parsed.processInstruction(ec));
+	}
 
-		MatrixObject result = ec.getMatrixObject("Y");
-		assertTrue(result.isFederated());
-		assertNotNull(result.getFedMapping());
-		assertEquals("Expected BROADCAST map type for COL hint fallback", FType.BROADCAST, result.getFedMapping().getType());
-		assertEquals("Expected output to contain one entry per worker", 4, result.getFedMapping().getSize());
+	@Test
+	public void testFederatedInputRepartitionRequiresExplicitPlannerMaterialization() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		MatrixObject in = localMatrix("X", 2, 3);
+		FederatedRange range = new FederatedRange(new long[] {0, 0}, new long[] {2, 3});
+		FederatedData data = new FederatedData(Types.DataType.MATRIX,
+			new InetSocketAddress("localhost", 14000), "dummy");
+		in.setFedMapping(new NoOpFederationMap(91, List.of(Pair.of(range, data)), FType.ROW));
+
+		ec.setVariable("X", in);
+		ec.setVariable("A", federatedAnchor("A", 1));
+		ec.setVariable("Y", new MatrixObject(ValueType.FP64, "Y",
+			new MetaData(new MatrixCharacteristics(-1, -1, 1024))));
+
+		String inst = InstructionUtils.concatOperands(
+			"FED", "fed_fout",
+			InstructionUtils.concatOperandParts("X", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts("A", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
+			InstructionUtils.concatOperandParts("Y", Types.DataType.MATRIX.name(), ValueType.FP64.name()),
+			"COL");
+		assertThrows("FED->LOUT->FOUT must be represented explicitly by the planner instead of being "
+			+ "hidden inside fed_fout", RuntimeException.class,
+			() -> FEDFoutInstruction.parseInstruction(inst).processInstruction(ec));
 	}
 
 	private static MatrixObject localMatrix(String name, int rows, int cols) {

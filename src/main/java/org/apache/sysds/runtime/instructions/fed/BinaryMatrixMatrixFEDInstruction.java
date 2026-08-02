@@ -65,12 +65,6 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 		MatrixLineagePair mo1 = ec.getMatrixLineagePair(input1);
 		MatrixLineagePair mo2 = ec.getMatrixLineagePair(input2);
 
-		// Robustness: infer concrete federation types for OTHER if the ranges clearly
-		// represent ROW/COL partitioning or BROADCAST replication.
-		normalizeFederatedTypeIfPossible(mo1);
-		normalizeFederatedTypeIfPossible(mo2);
-
-		// Robustness: the planner might emit FED binary MM ops even if both inputs are local at runtime.
 		if (!mo1.isFederated() && !mo2.isFederated()) {
 			throw new DMLRuntimeException("FED binary op requires at least one federated input but both are local. "
 				+ "op=" + instOpcode + " in1=" + input1.getName()
@@ -304,34 +298,6 @@ public class BinaryMatrixMatrixFEDInstruction extends BinaryFEDInstruction
 				.setDimension(rowNum, colNum).setNonZeros(nnz);
 			out.setFedMapping(fedMap);
 		}
-
-	private static void normalizeFederatedTypeIfPossible(MatrixLineagePair mo) {
-		if (!mo.isFederated() || mo.getFedMapping() == null || mo.getFedMapping().getType() != FType.OTHER)
-			return;
-
-		FederationMap fm = mo.getFedMapping();
-		if (fm.getSize() <= 1)
-			return;
-
-		// check for replicated (all ranges identical) -> BROADCAST
-		long[] b0 = fm.getFederatedRanges()[0].getBeginDims();
-		long[] e0 = fm.getFederatedRanges()[0].getEndDims();
-		boolean allSame = Arrays.stream(fm.getFederatedRanges())
-			.allMatch(r -> Arrays.equals(b0, r.getBeginDims()) && Arrays.equals(e0, r.getEndDims()));
-		if (allSame) {
-			fm.setType(FType.BROADCAST);
-			return;
-		}
-
-		long maxR = fm.getMaxIndexInRange(0);
-		long maxC = fm.getMaxIndexInRange(1);
-		boolean rowPartitioned = Arrays.stream(fm.getFederatedRanges()).allMatch(r -> r.getSize(1) == maxC);
-		boolean colPartitioned = Arrays.stream(fm.getFederatedRanges()).allMatch(r -> r.getSize(0) == maxR);
-		if (rowPartitioned && !colPartitioned)
-			fm.setType(FType.ROW);
-		else if (colPartitioned && !rowPartitioned)
-			fm.setType(FType.COL);
-	}
 
 	private static boolean isSameWorkerPool(FederationMap a, FederationMap b) {
 		if (a == null || b == null)

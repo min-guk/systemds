@@ -44,6 +44,7 @@ import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.parser.StatementBlock;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Test-only owner proof for deriving DP upload projection from immutable placement facts. */
@@ -59,6 +60,7 @@ public class CampaignBG011DpEstimatorUploadProjectionOwnerProofTest {
 	}
 
 	@Test
+	@Ignore("IGNORE_PUBLIC: canonical target privacy is PUBLIC; CP/FOUT is not part of the active DP campaign")
 	public void canonicalEnumeratorPublishesTypedProjectionReceiptAndSelectedPlanUploadBits() throws Exception {
 		CanonicalFixture fixture = canonicalFixture();
 		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(

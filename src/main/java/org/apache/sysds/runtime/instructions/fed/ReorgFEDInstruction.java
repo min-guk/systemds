@@ -25,8 +25,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Future;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.tuple.Pair;
@@ -35,7 +33,6 @@ import org.apache.sysds.common.Types;
 import org.apache.sysds.common.Types.DataType;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.lops.Lop;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysds.runtime.controlprogram.context.ExecutionContext;
@@ -63,10 +60,6 @@ import org.apache.sysds.runtime.matrix.operators.ReorgOperator;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 
 public class ReorgFEDInstruction extends UnaryFEDInstruction {
-	private static final Pattern MISSING_VAR_PATTERN = Pattern.compile("Variable '?(\\d+)'? does not exist");
-	private static final boolean ENABLE_MISSING_VAR_REINIT =
-		Boolean.parseBoolean(System.getProperty("sysds.fed.reorg.missingvar.reinit", "true"));
-
 	// roll-specific attributes
 	private CPOperand _shift = null;
 
@@ -177,10 +170,11 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 		ReorgOperator r_op = (ReorgOperator) _optr;
 		boolean isSpark = instString.startsWith("SPARK");
 
-		if (!mo1.isFederated()) {
-			processLocalInputFallback(ec);
-			return;
-		}
+		if (!mo1.isFederated())
+			throw new DMLRuntimeException("FED reorg requires federated input but found local at runtime. "
+				+ "op=" + instOpcode + " input=" + input1.getName()
+				+ " dims=" + mo1.getNumRows() + "x" + mo1.getNumColumns()
+				+ " fedOut=" + _fedOut + " inst=" + instString);
 		FType inputType = mo1.getFedMapping().getType();
 		if (!(inputType == FType.COL || inputType == FType.ROW || inputType == FType.FULL
 			|| inputType == FType.BROADCAST))
@@ -188,52 +182,39 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 					+ " is not supported for Reorg processing");
 
 		if (instOpcode.equals(Opcodes.TRANSPOSE.toString())) {
-			boolean retried = false;
-			while (true) {
-				try {
-					// execute transpose at federated site
-					long id = FederationUtils.getNextFedDataID();
-					FederatedRequest fr = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
-							new MatrixCharacteristics(-1, -1), mo1.getDataType());
+			long id = FederationUtils.getNextFedDataID();
+			FederatedRequest putOutput = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, id,
+				new MatrixCharacteristics(-1, -1), mo1.getDataType());
+			FederatedRequest executeTranspose = FederationUtils.callInstruction(instString, output, id,
+				new CPOperand[] {input1}, new long[] {mo1.getFedMapping().getID()},
+				isSpark ? Types.ExecType.SPARK : Types.ExecType.CP, true);
 
-					FederatedRequest fr1 = FederationUtils.callInstruction(instString, output, id, new CPOperand[] { input1 },
-							new long[] { mo1.getFedMapping().getID() }, isSpark ? Types.ExecType.SPARK : Types.ExecType.CP,
-							true);
-					Future<FederatedResponse>[] ffr = mo1.getFedMapping().execute(getTID(), true, fr, fr1);
-					ensureSuccessful(ffr);
+			if (_fedOut != null && !_fedOut.isForcedLocal()) {
+				Future<FederatedResponse>[] responses = mo1.getFedMapping()
+					.execute(getTID(), true, putOutput, executeTranspose);
+				ensureSuccessful(responses);
 
-					if (_fedOut != null && !_fedOut.isForcedLocal()) {
-						// drive output federated mapping
-						MatrixObject out = ec.getMatrixObject(output);
-						long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(ffr);
-						out.getDataCharacteristics().setDimension(mo1.getNumColumns(), mo1.getNumRows())
-								.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
-						out.setFedMapping(mo1.getFedMapping().copyWithNewID(fr1.getID()).transpose());
-						} else {
-							FederatedRequest getRequest = new FederatedRequest(FederatedRequest.RequestType.GET_VAR, fr1.getID());
-							Future<FederatedResponse>[] execResponse = mo1.getFedMapping().execute(getTID(), true, fr1, getRequest);
-							// If the input is replicated (BROADCAST), every worker returns the same transposed result.
-							// Binding would duplicate data (e.g., 1xK -> 1x(K*numWorkers)), so we just take one.
-							if (mo1.isFederated(FType.BROADCAST)) {
-								MatrixBlock[] outBlocks = FederationUtils.getResults(execResponse);
-								ec.setMatrixOutput(output.getName(), outBlocks[0]);
-							}
-							else {
-								ec.setMatrixOutput(output.getName(),
-									FederationUtils.bind(execResponse, mo1.isFederated(FType.ROW)));
-							}
-						}
-						break;
-					}
-				catch (DMLRuntimeException ex) {
-					if (!retried && tryReinitMissingInput(mo1, ex)) {
-						retried = true;
-						continue;
-					}
-					throw ex;
-				}
+				MatrixObject out = ec.getMatrixObject(output);
+				long nnz = (mo1.getNnz() != -1) ? mo1.getNnz() : FederationUtils.sumNonZeros(responses);
+				out.getDataCharacteristics().setDimension(mo1.getNumColumns(), mo1.getNumRows())
+					.setBlocksize(mo1.getBlocksize()).setNonZeros(nnz);
+				out.setFedMapping(mo1.getFedMapping().copyWithNewID(executeTranspose.getID()).transpose());
+			}
+			else {
+				FederatedRequest getOutput = new FederatedRequest(FederatedRequest.RequestType.GET_VAR,
+					executeTranspose.getID());
+				Future<FederatedResponse>[] responses = mo1.getFedMapping()
+					.execute(getTID(), true, putOutput, executeTranspose, getOutput);
+				ensureSuccessful(responses);
+				// Replicated inputs return the same block from each worker; binding would duplicate it.
+				if(inputType == FType.BROADCAST)
+					ec.setMatrixOutput(output.getName(), FederationUtils.getResults(responses)[0]);
+				else
+					ec.setMatrixOutput(output.getName(),
+						FederationUtils.bind(responses, inputType == FType.ROW));
+			}
 		}
-	} else if (mo1.isFederated(FType.PART)) {
+		else if (inputType == FType.PART) {
 			throw new DMLRuntimeException("Operation with opcode " + instOpcode + " is not supported with PART input");
 		} else if (instOpcode.equalsIgnoreCase(Opcodes.REV.toString())) {
 			long id = FederationUtils.getNextFedDataID();
@@ -305,147 +286,6 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			rdiag.setFedMapping(diagFedMap);
 			optionalForceLocal(rdiag);
 		}
-	}
-
-	private String toCPInstructionString() {
-		String[] parts = instString.split(Lop.OPERAND_DELIMITOR, -1);
-		parts[0] = Types.ExecType.CP.name();
-		// strip trailing federated output flag (FOUT/LOUT/NONE) if present
-		if (parts.length > 0) {
-			String last = parts[parts.length - 1];
-			if (last != null) {
-				String upper = last.trim().toUpperCase();
-				if ("FOUT".equals(upper) || "LOUT".equals(upper) || "NONE".equals(upper))
-					parts = Arrays.copyOf(parts, parts.length - 1);
-			}
-		}
-		return String.join(Lop.OPERAND_DELIMITOR, parts);
-	}
-
-	private void processLocalInputFallback(ExecutionContext ec) {
-		ReorgCPInstruction.parseInstruction(toCPInstructionString()).processInstruction(ec);
-		if (_fedOut == null || _fedOut.isForcedLocal())
-			return;
-
-		MatrixObject out = ec.getMatrixObject(output);
-		FederationMap anchorMap = FEDLocalMaterializeUtil.findUniqueWorkerPoolAnchor(ec);
-		if (anchorMap == null || anchorMap.getSize() == 0)
-			throw new DMLRuntimeException("FED reorg local-input FOUT fallback requires a unique federated anchor. "
-				+ "op=" + instOpcode + " input=" + input1.getName()
-				+ " dims=" + out.getNumRows() + "x" + out.getNumColumns()
-				+ " fedOut=" + _fedOut + " inst=" + instString);
-		FType anchorType = FEDLocalMaterializeUtil.normalizeSupportedAnchorType(anchorMap);
-		if (anchorType == FType.PART || anchorType == FType.OTHER)
-			throw new DMLRuntimeException("FED reorg local-input FOUT fallback does not support anchor type " + anchorType);
-
-		long rlen = out.getNumRows();
-		long clen = out.getNumColumns();
-		if (rlen < 0 || clen < 0) {
-			MatrixBlock block = out.acquireRead();
-			rlen = block.getNumRows();
-			clen = block.getNumColumns();
-			out.release();
-		}
-		FederationMap outMap = FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), out, anchorMap,
-			FType.FULL, FType.FULL, rlen, clen, true, "FED reorg local-input FOUT fallback");
-		out.setFedMapping(outMap);
-		out.getDataCharacteristics().set(rlen, clen, out.getBlocksize(), out.getNnz());
-	}
-
-	private boolean tryReinitMissingInput(MatrixObject mo, Throwable ex) {
-		if (!ENABLE_MISSING_VAR_REINIT)
-			return false;
-		Long missingId = extractMissingVarId(ex);
-		if (missingId == null)
-			return false;
-		FederationMap fedMap = mo.getFedMapping();
-		if (fedMap == null)
-			return false;
-		boolean matches = (missingId == fedMap.getID());
-		if (!matches) {
-			for (Pair<FederatedRange, FederatedData> entry : fedMap.getMap()) {
-				if (entry.getValue().getVarID() == missingId) {
-					matches = true;
-					break;
-				}
-			}
-		}
-		if (!matches)
-			return false;
-
-		// Attempt 1: if a local materialization is available, re-upload it with the missing federated ID.
-		try {
-			FType mapType = fedMap.getType();
-			boolean canReplicateAsWhole = (mapType == FType.BROADCAST || mapType == FType.FULL || fedMap.getSize() == 1);
-			if (canReplicateAsWhole) {
-				MatrixBlock local = mo.acquireReadAndRelease();
-				if (local != null && local.getNumRows() > 0 && local.getNumColumns() > 0) {
-					FederatedRequest put = new FederatedRequest(FederatedRequest.RequestType.PUT_VAR, missingId, local);
-					fedMap.execute(getTID(), true, put);
-					LOG.warn("Reinitialized missing federated input id=" + missingId
-						+ " via local re-upload for reorg retry.");
-					return true;
-				}
-			}
-		}
-		catch (Exception rex) {
-			LOG.warn("Local re-upload recovery failed for missing federated input id=" + missingId
-				+ ": " + rex.getMessage());
-		}
-
-		// Attempt 2: re-read from original federated file paths (safe for source partitioned inputs).
-		// For BROADCAST/FULL mappings, file paths can refer to anchor/source datasets and
-		// may not match the logical value of this intermediate variable.
-		FType mapType = fedMap.getType();
-		if (mapType == FType.BROADCAST || mapType == FType.FULL) {
-			LOG.warn("Skipping path-based reinit for missing federated input id=" + missingId
-				+ " due to mapType=" + mapType + " (unsafe for replicated/intermediate values).");
-			return false;
-		}
-
-		List<Future<FederatedResponse>> reads = new ArrayList<>();
-		boolean canReadByPath = true;
-		for (Pair<FederatedRange, FederatedData> entry : fedMap.getMap()) {
-			FederatedData data = entry.getValue();
-			String path = data.getFilepath();
-			if (path == null || path.isEmpty()) {
-				canReadByPath = false;
-				break;
-			}
-			FederatedRequest req = new FederatedRequest(FederatedRequest.RequestType.READ_VAR, data.getVarID());
-			req.appendParam(path);
-			req.appendParam(data.getDataType().name());
-			req.setTID(getTID());
-			reads.add(data.executeFederatedOperation(req));
-		}
-		if (canReadByPath && !reads.isEmpty()) {
-			FederationUtils.waitFor(reads);
-			LOG.warn("Reinitialized missing federated input id=" + missingId + " from source paths for reorg retry.");
-			return true;
-		}
-
-		LOG.warn("Cannot reinitialize missing federated input id=" + missingId + " for reorg retry.");
-		return false;
-	}
-
-	private static Long extractMissingVarId(Throwable ex) {
-		Throwable cur = ex;
-		while (cur != null) {
-			String msg = cur.getMessage();
-			if (msg != null) {
-				Matcher matcher = MISSING_VAR_PATTERN.matcher(msg);
-				if (matcher.find()) {
-					try {
-						return Long.parseLong(matcher.group(1));
-					}
-					catch (NumberFormatException ignore) {
-						// ignore and continue with other causes
-					}
-				}
-			}
-			cur = cur.getCause();
-		}
-		return null;
 	}
 
 	private static void ensureSuccessful(Future<FederatedResponse>[] responses) {

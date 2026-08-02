@@ -22,6 +22,8 @@ package org.apache.sysds.test.component.federated;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Constructor;
@@ -105,6 +107,7 @@ import org.apache.sysds.hops.fedplanner.rules.RulesApi.ShapeHint;
 import org.apache.sysds.hops.fedplanner.rules.Rulesets;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
@@ -146,7 +149,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		"");
 
 	@Test
-	public void testFedAllCpfoutChain() throws Exception {
+	public void testFedAllKeepsNativeFederatedChain() throws Exception {
 		Map<String, String> args = new HashMap<>();
 		args.put("$X1", "localhost:1234/tmp/fedall/X1");
 		args.put("$X2", "localhost:1235/tmp/fedall/X2");
@@ -155,6 +158,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		args.put("$W", "tmp/fedall/W");
 
 		DMLProgram prog = parseAndRewrite(FEDALL_SCRIPT, args, "compile_fed_all");
+		PlannerInvocationReceipt invocation = invokePlannerOnRewrittenProgram(prog, "compile_fed_all");
 		List<Hop> roots = collectRoots(prog);
 		List<Hop> allHops = collectAllHops(roots);
 
@@ -167,12 +171,18 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertNotNull("Expected Y=t(X) hop", yHop);
 		assertNotNull("Expected Z=X+Y hop", zHop);
 		assertNotNull("Expected W=Z*X hop", wHop);
-		assertEquals("Expected CP->FOUT on Z", FederatedOutput.FOUT, zHop.getFederatedOutput());
-		assertEquals("Expected FED output on W", FederatedOutput.FOUT, wHop.getFederatedOutput());
+		assertTrue("The test must exercise the FedAll planner rather than inspect pre-planner HOPs",
+			invocation instanceof org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt);
+		assertEquals("FedAll should preserve the native FED/FOUT plus instead of inserting CP->FOUT",
+			ExecType.FED, zHop.getForcedExecType());
+		assertEquals(FederatedOutput.FOUT, zHop.getFederatedOutput());
+		assertEquals("FedAll should keep the downstream multiply federated",
+			ExecType.FED, wHop.getForcedExecType());
+		assertEquals(FederatedOutput.FOUT, wHop.getFederatedOutput());
 	}
 
 	@Test
-	public void testDpFallbackFTypeForCpfout() throws Exception {
+	public void testDpDoesNotInventCpfoutFromHintOnlyInputs() throws Exception {
 		DataOp left = federatedRead("XrowFallback", ROWS, COLS, FType.ROW);
 		DataOp right = federatedRead("YcolFallback", ROWS, COLS, FType.COL);
 		BinaryOp plus = new BinaryOp("plus", DataType.MATRIX, ValueType.FP64, OpOp2.PLUS, left, right);
@@ -181,13 +191,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 		DpPublicEnumeration dp = enumerateSyntheticDp(plus);
 
 		FedPlan selected = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("DP memo should publish a selected CP/FOUT fallback plan for binary plus", selected);
-		assertEquals("Expected selected CP/FOUT fallback execution", ExecType.CP, selected.getExecType());
-		assertEquals("Expected ROW fallback FType for ROW/COL mismatch inputs", FType.ROW, selected.getFType());
+		assertNull("Fed-init name/type hints are not durable FederationMap anchors and must not"
+			+ " authorize CP->FOUT materialization", selected);
+		assertNotNull("Failing closed on CP->FOUT must retain the legal local alternative",
+			dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.LOUT));
 	}
 
 	@Test
-	public void testDpOracleCpfoutFallbackForMixedLocalAndFederatedInputs() throws Exception {
+	public void testDpDoesNotPublishCpfoutWithoutExactAnchorForMixedInputs() throws Exception {
 		DataOp localLeft = transientRead("LocalLeft", ROWS, 1);
 		DataOp fedRight = federatedRead("FedRight", ROWS, 1, FType.ROW);
 		BinaryOp cbind = new BinaryOp("cbindMixed", DataType.MATRIX, ValueType.FP64, OpOp2.CBIND, localLeft, fedRight);
@@ -196,12 +207,10 @@ public class FederatedPlannerFallbackIntegrationTest {
 		DpPublicEnumeration dp = enumerateSyntheticDp(cbind);
 
 		FedPlanVariants variants = dp.memo().getFedPlanVariants(Pair.of(cbind.getHopID(), FederatedOutput.FOUT));
-		assertNotNull("DP enumeration should publish real FOUT variants for mixed local/federated cbind", variants);
-		assertFalse("Expected at least one real FOUT variant for mixed local/federated cbind",
-			variants.getFedPlanVariants().isEmpty());
-		FedPlan selected = dp.memo().getFedPlanAfterPrune(cbind.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("Expected selected CP/FOUT memo plan for mixed local/federated cbind", selected);
-		assertEquals("Expected selected cbind FOUT plan to come from CP fallback", ExecType.CP, selected.getExecType());
+		assertNull("A mixed-input shape hint without exact FederationMap placement must not"
+			+ " publish a CP/FOUT memo coordinate", variants);
+		assertNotNull("The mixed-input cbind must retain its legal CP/LOUT plan",
+			dp.memo().getFedPlanAfterPrune(cbind.getHopID(), FederatedOutput.LOUT));
 	}
 
 	@Test
@@ -971,7 +980,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpPromoteLocalFedInputHintsUsesCpFoutTypeWhenAnchorExists() throws Exception {
+	public void testDpDoesNotPromoteLocalFoutFromNameOnlyAnchorHint() throws Exception {
 		DataOp source = federatedRead("XpromotedSource", ROWS, COLS, FType.ROW);
 		DataOp tWrite = HopRewriteUtils.createTransientWrite("PromotedRow", source);
 		DataOp localVec = transientRead("PromotedRow", ROWS, COLS);
@@ -988,18 +997,17 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertNotNull("Public rewire snapshot must retain the local-vector occurrence", localOccurrence);
 		FedPlan localLout = dp.memo().getFedPlanAfterPrune(localVec.getHopID(), FederatedOutput.LOUT);
 		assertNotNull("Production transient rewire must publish the local LOUT plan", localLout);
-		assertEquals("The real local LOUT producer must retain its ROW CP/FOUT projection",
-			FType.ROW, localLout.getCpFoutType());
+		assertNull("A transient variable name and FType hint are not an exact FederationMap anchor",
+			localLout.getCpFoutType());
 		CandidateDecisionReceipt plusReceipt = dp.result().semanticBlock().candidateDecisionReceipts().stream()
 			.filter(value -> value.candidateSnapshot().parentOccurrence() == plusOccurrence.key())
 			.filter(value -> value.candidateSnapshot().promotedEntries().stream()
 				.anyMatch(entry -> entry.occurrence() == localOccurrence.key()
 					&& entry.edgePosition() == 0 && entry.rawFType() == FType.ROW))
 			.findFirst().orElse(null);
-		assertNotNull("NormalizedCandidateInputs receipt should expose localVec's promoted ROW cpFoutType evidence",
-			plusReceipt);
+		assertNull("Hint-only input evidence must not be promoted into CP/FOUT authority", plusReceipt);
 		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("Anchor/local-vector candidate should retain a public CP/FOUT plan after normalization", plusFout);
+		assertNull("The parent must not receive a CP/FOUT plan without an exact anchor", plusFout);
 	}
 
 	@Test
@@ -2607,8 +2615,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 	@Test
 	public void testDpRewriteMirrorsCloneFamilyStateToVirtualMembers() throws Exception {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
-		DataOp origChild = transientRead("XorigRewriteState", ROWS, COLS);
-		DataOp cloneChild = transientRead("XcloneRewriteState", ROWS, COLS);
+		DataOp origChild = federatedRead("XorigRewriteState", ROWS, COLS, FType.BROADCAST);
+		DataOp cloneChild = federatedRead("XcloneRewriteState", ROWS, COLS, FType.BROADCAST);
 		UnaryOp origParent = new UnaryOp("u_orig_rewrite_state", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, origChild);
 		UnaryOp cloneParent = new UnaryOp("u_clone_rewrite_state", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, cloneChild);
 		DataOp dummyRoot = transientRead("RootRewriteState", 1, 1);
@@ -2628,12 +2636,12 @@ public class FederatedPlannerFallbackIntegrationTest {
 		hopCommonTable.put(cloneParent.getHopID(), cloneParentCommon);
 		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
 
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		addCustomPlan(memoTable, origChildCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 20.0);
+		FederatedPlannerDpMemoTable memoTable = analysisBoundMemo(origParent, cloneParent, dummyRoot);
+		addCustomPlan(memoTable, origChildCommon, FederatedOutput.LOUT, ExecType.CP, FType.BROADCAST, 20.0);
 		FedPlan origFoutPlan = addCustomPlan(memoTable, origChildCommon,
-			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 10.0);
-		addCustomPlan(memoTable, cloneChildCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1000.0);
-		addCustomPlan(memoTable, cloneChildCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 5.0);
+			FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST, 10.0);
+		addCustomPlan(memoTable, cloneChildCommon, FederatedOutput.LOUT, ExecType.CP, FType.BROADCAST, 1000.0);
+		addCustomPlan(memoTable, cloneChildCommon, FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST, 5.0);
 		addPlanWithChildren(memoTable, origParentCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0,
 			List.of(Pair.of(origChild.getHopID(), FederatedOutput.FOUT)));
 		addPlanWithChildren(memoTable, cloneParentCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0,
@@ -2671,50 +2679,25 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpVirtualCloneRewriteDoesNotOverwriteConflictingOriginalState() throws Exception {
-		FederatedPlannerUtils.clearPlannerRecompileStates();
-		DataOp input = transientRead("XvirtualCloneStateGuard", ROWS, COLS);
+	public void testDpExactStateRejectsIllegalVirtualCloneOwnerPlan() {
+		DataOp input = federatedRead("XvirtualCloneStateGuard", ROWS, COLS, FType.BROADCAST);
 		UnaryOp origParent = new UnaryOp("orig_virtual_clone_state_guard", DataType.MATRIX, ValueType.FP64,
 			OpOp1.EXP, input);
 		UnaryOp cloneParent = new UnaryOp("clone_virtual_clone_state_guard", DataType.MATRIX, ValueType.FP64,
 			OpOp1.EXP, input);
-		origParent.setBeginLine(1981);
-		cloneParent.setBeginLine(1982);
-
-		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
-		HopCommon origCommon = registerHopCommon(hopCommonTable, origParent);
-		HopCommon cloneCommon = new HopCommon(cloneParent, 1.0, 50.0, 50.0, 1,
-			List.of(Pair.of(999L, 50.0)));
-		hopCommonTable.put(cloneParent.getHopID(), cloneCommon);
-
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		addCustomPlan(memoTable, origCommon, FederatedOutput.LOUT, ExecType.FED, FType.ROW, 1.0);
-		FedPlan cloneCpPlan = addCustomPlan(memoTable, cloneCommon,
-			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
-		memoTable.registerHopRefs(hopCommonTable);
-		memoTable.registerCloneMapping(Map.of(cloneParent.getHopID(), origParent.getHopID()));
-
-		origParent.setForcedExecType(ExecType.FED);
-		origParent.setFederatedOutput(FederatedOutput.LOUT);
-		FederatedPlannerUtils.registerPlannerRecompileState(
-			origParent, ExecType.FED, FederatedOutput.LOUT);
-
-		FederatedPlannerDpFedCostBased planner = new FederatedPlannerDpFedCostBased();
-		invokeDpRewriteHopWithConflictMap(
-			planner, cloneCpPlan, memoTable, new HashMap<>(), new HashMap<>());
-
-		assertEquals("A virtual clone with conflicting state must not overwrite"
-			+ " the executable original hop state selected earlier",
-			ExecType.FED, origParent.getForcedExecType());
-		assertEquals(FederatedOutput.LOUT, origParent.getFederatedOutput());
-		FederatedPlannerUtils.clearPlannerRecompileStates();
+		FederatedPlannerDpMemoTable memoTable = analysisBoundMemo(origParent, cloneParent);
+		HopCommon origCommon = new HopCommon(origParent, 1.0, 1.0, 1.0, 1, List.of());
+		assertThrows("A clone-family test must not inject a FED/LOUT owner state that the exact"
+			+ " neutral authority rejected", IllegalArgumentException.class,
+			() -> addCustomPlan(memoTable, origCommon,
+				FederatedOutput.LOUT, ExecType.FED, FType.BROADCAST, 1.0));
 	}
 
 	@Test
 	public void testDpDeferredOutputDecisionStampsUnvisitedExecutableHop() throws Exception {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
 		try {
-			DataOp fedInput = federatedRead("XdeferredDecisionState", ROWS, COLS);
+			DataOp fedInput = federatedRead("XdeferredDecisionState", ROWS, COLS, FType.BROADCAST);
 			UnaryOp sideBranchConsumer = new UnaryOp("deferred_side_branch_consumer",
 				DataType.MATRIX, ValueType.FP64, OpOp1.EXP, fedInput);
 			sideBranchConsumer.setDim1(ROWS);
@@ -2726,8 +2709,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 			HopCommon fedInputCommon = registerHopCommon(hopCommonTable, fedInput);
 			HopCommon sideBranchCommon = registerHopCommon(hopCommonTable, sideBranchConsumer);
 
-			FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-			addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 0.0);
+			FederatedPlannerDpMemoTable memoTable = analysisBoundMemo(sideBranchConsumer);
+			addCustomPlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST, 0.0);
 			addPlanWithChildren(memoTable, sideBranchCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 10.0,
 				List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
 			memoTable.registerHopRefs(hopCommonTable);
@@ -2754,7 +2737,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpDeferredOutputDecisionDoesNotOverwriteExistingSelectedState() throws Exception {
+	public void testDpDeferredOutputDecisionReplacesStaleExecutableState() throws Exception {
 		FederatedPlannerUtils.clearPlannerRecompileStates();
 		try {
 			UnaryOp executableHop = new UnaryOp("deferred_existing_state_guard",
@@ -2765,7 +2748,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 			Map<Long, HopCommon> hopCommonTable = new HashMap<>();
 			HopCommon hopCommon = registerHopCommon(hopCommonTable, executableHop);
-			FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+			FederatedPlannerDpMemoTable memoTable = analysisBoundMemo(executableHop);
 			addCustomPlan(memoTable, hopCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
 			memoTable.registerHopRefs(hopCommonTable);
 
@@ -2780,9 +2763,9 @@ public class FederatedPlannerFallbackIntegrationTest {
 			invokeApplyDeferredOutputDecisionStates(
 				memoTable, outputDecisions, new HashMap<Long, Object>(), new LinkedHashMap<Long, Object>());
 
-			assertEquals("Deferred side-branch stamping must not overwrite a concrete selected rewrite state",
-				ExecType.FED, executableHop.getForcedExecType());
-			assertEquals(FederatedOutput.FOUT, executableHop.getFederatedOutput());
+			assertEquals("The exact deferred plan must replace stale mutable Hop state",
+				ExecType.CP, executableHop.getForcedExecType());
+			assertEquals(FederatedOutput.LOUT, executableHop.getFederatedOutput());
 		}
 		finally {
 			FederatedPlannerUtils.clearPlannerRecompileStates();
@@ -3027,6 +3010,10 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 	@Test
 	public void testDpMultiWriteTransientVariableUsesOneExecutableRepresentation() throws Exception {
+		// Straddle the HashMap bucket boundary that exposed absolute-HOP-ID-dependent
+		// conflict traversal before decision refinements were explicitly ordered.
+		for(int i = 0; i < 13; i++)
+			new LiteralOp(i);
 		DataOp firstWrite = transientWrite("PmultiWriteFamily", ROWS, COLS);
 		DataOp laterWrite = transientWrite("PmultiWriteFamily", ROWS, COLS);
 		DataOp unusedVariantWrite = transientWrite("PmultiWriteFamily", ROWS, COLS);
@@ -3580,7 +3567,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpRewriteKeepsTransientChainConsistentWithFedParentEdge() throws Exception {
+	public void testDpExactStateRejectsDisconnectedSyntheticFederatedTransientChain() {
 		DataOp fedInput = federatedRead("Xin", ROWS, COLS);
 		DataOp tWrite = HopRewriteUtils.createTransientWrite("P", fedInput);
 		DataOp tRead = transientRead("P", ROWS, COLS);
@@ -3598,40 +3585,15 @@ public class FederatedPlannerFallbackIntegrationTest {
 		HopCommon tReadCommon = registerHopCommon(hopCommonTable, tRead);
 		HopCommon rightIndexCommon = registerHopCommon(hopCommonTable, rightIndex);
 
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		addSinglePlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
+		FederatedPlannerDpMemoTable memoTable = analysisBoundMemo(rightIndex, tWrite);
+		addSinglePlan(memoTable, fedInputCommon, FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST);
 		addPlanWithChildren(memoTable, tWriteCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0,
 			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
-		addPlanWithChildren(memoTable, tWriteCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 2.0,
-			List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT)));
-		addPlanWithChildren(memoTable, tReadCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 3.0,
-			List.of(Pair.of(tWrite.getHopID(), FederatedOutput.LOUT)));
-		FedPlan tReadFoutPlan = addPlanWithChildren(memoTable, tReadCommon,
-			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 4.0,
-			List.of(Pair.of(tWrite.getHopID(), FederatedOutput.FOUT)));
-		addPlanWithChildren(memoTable, rightIndexCommon, FederatedOutput.LOUT, ExecType.CP, FType.BROADCAST, 5.0,
-			List.of(Pair.of(tRead.getHopID(), FederatedOutput.LOUT)));
-		FedPlan rightIndexFoutPlan = addPlanWithChildren(memoTable, rightIndexCommon,
-			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 6.0,
-			List.of(Pair.of(tRead.getHopID(), FederatedOutput.FOUT)));
-		memoTable.registerHopRefs(hopCommonTable);
-
-		FederatedPlannerDpFedCostBased planner = new FederatedPlannerDpFedCostBased();
-		Map<Long, FederatedOutput> conflictingOutputDecisions = new HashMap<>();
-		conflictingOutputDecisions.put(tRead.getHopID(), FederatedOutput.LOUT);
-
-		invokeDpRewriteHop(planner, rightIndexFoutPlan, memoTable, conflictingOutputDecisions);
-
-		assertEquals("FED rightIndex parent must keep its selected FOUT chain executable",
-			FederatedOutput.FOUT, rightIndex.getFederatedOutput());
-		assertEquals("Transient read must follow the selected FED parent edge rather than rewrite to local",
-			FederatedOutput.FOUT, tRead.getFederatedOutput());
-		assertEquals("Upstream transient write must stay aligned with the selected transient read",
-			FederatedOutput.FOUT, tWrite.getFederatedOutput());
-		assertEquals("Transient read should remain FED-executable under the selected parent chain",
-			ExecType.FED, tRead.getForcedExecType());
-		assertEquals("The synthetic FED transient-read plan should still be present",
-			FederatedOutput.FOUT, tReadFoutPlan.getFedOutType());
+		assertThrows("A disconnected synthetic TWrite/TRead graph must not manufacture a FED/FOUT"
+			+ " chain outside exact transient-family authority", IllegalArgumentException.class,
+			() -> addPlanWithChildren(memoTable, tWriteCommon,
+				FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST, 2.0,
+				List.of(Pair.of(fedInput.getHopID(), FederatedOutput.FOUT))));
 	}
 
 
@@ -4326,7 +4288,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpSeenOnlyOutputReevaluatesCheaperAlternativePlan()
+	public void testDpSeenOnlyChildDoesNotOverrideRequiredParentClosure()
 		throws Exception {
 		DataOp target = transientRead("seenOnlyCheaperAlternative", 1000, 1000);
 		UnaryOp parent = new UnaryOp("parentSeenOnlyCheaperAlternative", DataType.MATRIX, ValueType.FP64,
@@ -4358,9 +4320,9 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		Map<Long, FederatedOutput> decisions = invokeComputeOutputDecisions(memoTable, dummyRootPlan);
 
-		assertEquals("A seen-only LOUT edge must still be re-evaluated when the memoized FOUT"
-				+ " alternative is cheaper under the same DP cost model",
-			FederatedOutput.FOUT, decisions.get(target.getHopID()));
+		assertEquals("A cheaper child-only FOUT arm must not replace the LOUT representation"
+				+ " required by the selected executable parent closure",
+			FederatedOutput.LOUT, decisions.get(target.getHopID()));
 	}
 
 	@Test
@@ -4431,7 +4393,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpRewireProducesUploadHintForConsumerWhenProducerIsCpfout() throws Exception {
+	public void testDpRewireDoesNotProduceUploadPlanFromHintOnlyAnchor() throws Exception {
 		DataOp producerInput = transientRead("CpfoutProducerInput", ROWS, COLS);
 		UnaryOp producer = new UnaryOp("cpfoutProducer", DataType.MATRIX, ValueType.FP64, OpOp1.EXP, producerInput);
 		producer.setDim1(ROWS);
@@ -4452,28 +4414,14 @@ public class FederatedPlannerFallbackIntegrationTest {
 					&& edge.childOccurrence() == producerOccurrence.key() && edge.inputPosition() == 1));
 
 		FedPlan producerFout = dp.memo().getFedPlanAfterPrune(producer.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("Production enumeration must publish the CP/FOUT producer", producerFout);
-		assertEquals("Producer plan must be CP/FOUT", ExecType.CP, producerFout.getExecType());
-		assertEquals("Producer plan must publish FOUT", FederatedOutput.FOUT, producerFout.getFedOutType());
+		assertNull("A hint-only federated input must not authorize a CP/FOUT producer", producerFout);
 		FedPlan consumerFout = dp.memo().getFedPlanAfterPrune(consumer.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("FED consumer must retain a FOUT candidate", consumerFout);
-
-		Map<Long, HopCommon> table = hopCommonTableFor(producerInput, producer, fedAnchor, consumer);
-		List<Hop> fOUTOnlyinputHops = new ArrayList<>(List.of(producer));
-		List<Double> forwarding = collectDpFoutOnlyForwardingCostToFED(
-			dp.memo(), table, table.get(consumer.getHopID()), fOUTOnlyinputHops, 1);
-		assertEquals("CP/FOUT producer should be the exact FOUT-only consumer input", producer,
-			fOUTOnlyinputHops.get(0));
-		assertEquals("CP/FOUT producer -> FED consumer must publish one upload forwarding entry",
-			1, forwarding.size());
-		assertTrue("Production CP/FOUT producer must account for its upload at the producer boundary",
-			producerFout.isFoutMaterializationAccounted());
-		assertEquals("An already materialized CP/FOUT producer must not be charged a second upload at its FED consumer",
-			0.0, forwarding.get(0), 1e-9);
+		assertNull("The dependent consumer must also fail closed rather than inherit an unexecutable"
+			+ " FOUT edge", consumerFout);
 	}
 
 	@Test
-	public void testDpRewireProducesUploadHintForTransientReadOptionalInput() throws Exception {
+	public void testDpRewireDoesNotFederateOptionalTransientReadWithoutExactAnchor() throws Exception {
 		DataOp fed = federatedRead("XrewireHint", ROWS, COLS, FType.ROW);
 		DataOp tWrite = HopRewriteUtils.createTransientWrite("TrewireHint", fed);
 		DataOp tRead = transientRead("TrewireHint", ROWS, COLS);
@@ -4484,14 +4432,9 @@ public class FederatedPlannerFallbackIntegrationTest {
 		DpPublicEnumeration dp = enumerateSyntheticDp(tWrite, plus);
 
 		FedPlan tReadFout = dp.memo().getFedPlanAfterPrune(tRead.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("Producer-generated rewire evidence should produce a transient-read FOUT plan", tReadFout);
-		assertTrue("tRead FOUT plan should retain the rewire-derived tWrite/FOUT child edge",
-			tReadFout.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == tWrite.getHopID()
-				&& edge.getValue() == FederatedOutput.FOUT));
+		assertNull("A producer name/FType hint must not create a federated transient-read plan", tReadFout);
 		FedPlan plusFout = dp.memo().getFedPlanAfterPrune(plus.getHopID(), FederatedOutput.FOUT);
-		assertNotNull("Transient-read consumer should retain a FOUT candidate from producer rewire evidence", plusFout);
-		assertTrue("consumer FOUT plan should reference tRead through rewire-derived forwarding evidence",
-			plusFout.getChildFedPlans().stream().anyMatch(edge -> edge.getKey() == tRead.getHopID()));
+		assertNull("The OPTIONAL consumer must not inherit FOUT from unanchored rewire evidence", plusFout);
 	}
 
 	@Test
@@ -4900,8 +4843,8 @@ public class FederatedPlannerFallbackIntegrationTest {
 	}
 
 	@Test
-	public void testDpRewritePropagatesDerivedFedFoutFlag() throws Exception {
-		DataOp child = transientRead("X");
+	public void testDpExactStateRejectsIllegalDerivedFedFoutInjection() {
+		DataOp child = federatedRead("XderivedRewrite", ROWS, COLS, FType.BROADCAST);
 		UnaryOp parent = HopRewriteUtils.createUnary(child, OpOp1.EXP);
 		parent.setDim1(ROWS);
 		parent.setDim2(COLS);
@@ -4910,25 +4853,20 @@ public class FederatedPlannerFallbackIntegrationTest {
 		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
 		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
 
-		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
-		addSinglePlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW);
+		FederatedPlannerDpMemoTable memoTable = analysisBoundMemo(parent);
+		addSinglePlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.BROADCAST);
 
 		FedPlanVariants parentVariants = new FedPlanVariants(parentCommon, FederatedOutput.FOUT);
 		FedPlan parentPlan = new FedPlan(0.0, parentVariants,
 			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
 		parentPlan.setExecType(ExecType.FED);
-		parentPlan.setFType(FType.ROW);
+		parentPlan.setFType(FType.BROADCAST);
 		parentPlan.setDerivedFedFout(true);
 		parentVariants.addFedPlan(parentPlan);
-		memoTable.addFedPlanVariants(parent.getHopID(), FederatedOutput.FOUT, parentVariants);
-		memoTable.registerHopRefs(hopCommonTable);
-
-		assertFalse("Precondition: derived marker should start unset", parent.isFederatedOutputDerived());
-		invokeDpRewriteHop(new FederatedPlannerDpFedCostBased(), parentPlan, memoTable);
-		assertEquals("Expected FED output on rewritten parent", FederatedOutput.FOUT, parent.getFederatedOutput());
-		assertEquals("Expected FED exec on rewritten parent", ExecType.FED, parent.getForcedExecType());
-		assertTrue("Derived FED/FOUT candidate must propagate to Hop rewrite state",
-			parent.isFederatedOutputDerived());
+		assertThrows("The exact neutral authority must reject a hand-injected derived FED/FOUT"
+			+ " state for an occurrence whose oracle exposes only CP/LOUT",
+			IllegalArgumentException.class,
+			() -> registerTestPlanVariants(memoTable, parentVariants, parentPlan, FederatedOutput.FOUT));
 	}
 
 	@Test
@@ -5664,6 +5602,108 @@ public class FederatedPlannerFallbackIntegrationTest {
 		finally {
 			FederatedRefedRegistry.clear();
 			FederatedFoutMaterializeRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagFoutMaterializeUsesDurableKeyInsteadOfUnplannedCycleFallback() {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			String anchorKey = "fedinit://workers/0,10;10,20|ROW";
+			DataOp localInput = transientRead("CycleLocal", ROWS, COLS);
+			localInput.setForcedExecType(ExecType.CP);
+			localInput.setFederatedOutput(FederatedOutput.LOUT);
+
+			DataOp fedSeed = federatedRead("SelectedPoolSeed", ROWS, COLS);
+			fedSeed.setForcedExecType(ExecType.FED);
+			fedSeed.setFederatedOutput(FederatedOutput.FOUT);
+
+			BinaryOp cyclicAnchor = HopRewriteUtils.createBinary(localInput, fedSeed, OpOp2.PLUS);
+			cyclicAnchor.setDim1(ROWS);
+			cyclicAnchor.setDim2(COLS);
+			cyclicAnchor.setForcedExecType(ExecType.FED);
+			cyclicAnchor.setFederatedOutput(FederatedOutput.FOUT);
+
+			DataOp unrelatedLeft = federatedRead("UnrelatedPoolLeft", ROWS, COLS);
+			DataOp unrelatedRight = federatedRead("UnrelatedPoolRight", ROWS, COLS);
+			BinaryOp unrelatedAnchor = HopRewriteUtils.createBinary(unrelatedLeft, unrelatedRight, OpOp2.PLUS);
+			unrelatedAnchor.setDim1(ROWS);
+			unrelatedAnchor.setDim2(COLS);
+			unrelatedAnchor.setForcedExecType(ExecType.FED);
+			unrelatedAnchor.setFederatedOutput(FederatedOutput.FOUT);
+
+			BinaryOp root = HopRewriteUtils.createBinary(cyclicAnchor, unrelatedAnchor, OpOp2.PLUS);
+			root.setDim1(ROWS);
+			root.setDim2(COLS);
+			root.setForcedExecType(ExecType.FED);
+			root.setFederatedOutput(FederatedOutput.FOUT);
+
+			FederatedFoutMaterializeRegistry.register(-1L, localInput.getHopID(), cyclicAnchor.getHopID(),
+				"ROW", "SelectedPoolSeed", anchorKey);
+
+			Lop rootLop = root.constructLops();
+			String unrelatedLabel = unrelatedAnchor.getLops().getOutputParameters().getLabel();
+			Dag<Lop> dag = new Dag<>();
+			rootLop.addToDag(dag);
+			String foutInstruction = dag.getJobs(null, ConfigurationManager.getDMLConfig()).stream()
+				.map(Instruction::getInstructionString)
+				.filter(inst -> inst.contains("fed_fout"))
+				.findFirst()
+				.orElse(null);
+
+			assertNotNull("Expected the planned CP->FOUT materialization", foutInstruction);
+			assertTrue("A cyclic live anchor must fall back only to its own durable placement key: "
+				+ foutInstruction, foutInstruction.contains(anchorKey));
+			assertFalse("DAG lowering must not substitute an unrelated runtime anchor: " + foutInstruction,
+				foutInstruction.contains(Lop.OPERAND_DELIMITOR + unrelatedLabel));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
+			FederatedPlannerUtils.clearFedInitVars();
+		}
+	}
+
+	@Test
+	public void testDagDoesNotInsertUnplannedRefedWhenRegistryIsEmpty() {
+		FederatedRefedRegistry.clear();
+		FederatedFoutMaterializeRegistry.clear();
+		FederatedLocalMaterializeRegistry.clear();
+		FederatedPlannerUtils.clearFedInitVars();
+		try {
+			DataOp localInput = transientRead("UnplannedLocal", ROWS, COLS);
+			localInput.setForcedExecType(ExecType.CP);
+			localInput.setFederatedOutput(FederatedOutput.LOUT);
+
+			DataOp federatedInput = transientRead("ExistingFederated", ROWS, COLS);
+			federatedInput.setForcedExecType(ExecType.FED);
+			federatedInput.setFederatedOutput(FederatedOutput.FOUT);
+
+			BinaryOp fedParent = HopRewriteUtils.createBinary(localInput, federatedInput, OpOp2.PLUS);
+			fedParent.setDim1(ROWS);
+			fedParent.setDim2(COLS);
+			fedParent.setForcedExecType(ExecType.FED);
+			fedParent.setFederatedOutput(FederatedOutput.FOUT);
+
+			Lop parentLop = fedParent.constructLops();
+			Dag<Lop> dag = new Dag<>();
+			parentLop.addToDag(dag);
+			List<String> instructions = dag.getJobs(null, ConfigurationManager.getDMLConfig()).stream()
+				.map(Instruction::getInstructionString)
+				.collect(java.util.stream.Collectors.toList());
+
+			assertFalse("DAG lowering must not invent an unplanned fed_refed relocation: " + instructions,
+				instructions.stream().anyMatch(inst -> inst.contains("fed_refed")));
+		}
+		finally {
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
 			FederatedPlannerUtils.clearFedInitVars();
 		}
 	}
@@ -6439,15 +6479,25 @@ public class FederatedPlannerFallbackIntegrationTest {
 	private record DpPublicEnumeration(FederatedPlannerDpMemoTable memo, DpEnumerationResult result, List<Hop> allHops) { }
 
 	private static DpPublicEnumeration enumerateSyntheticDp(Hop... roots) throws Exception {
+		DMLProgram prog = syntheticProgram(roots);
+		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
+		return new DpPublicEnumeration(memo, result, collectAllHops(List.of(roots)));
+	}
+
+	private static DMLProgram syntheticProgram(Hop... roots) {
 		DMLProgram prog = new DMLProgram();
 		StatementBlock sb = new StatementBlock();
 		sb.setHops(new ArrayList<>(List.of(roots)));
 		sb.setDMLProg(prog);
 		prog.addStatementBlock(sb);
-		PlacementAnalysis analysis = bindSyntheticPlacementAnalysis(prog);
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
-		DpEnumerationResult result = FederatedPlannerDpCostEnumerator.enumerateProgramWithReceipts(prog, memo, false, analysis);
-		return new DpPublicEnumeration(memo, result, collectAllHops(List.of(roots)));
+		return prog;
+	}
+
+	private static FederatedPlannerDpMemoTable analysisBoundMemo(Hop... roots) {
+		return new FederatedPlannerDpMemoTable(
+			bindSyntheticPlacementAnalysis(syntheticProgram(roots)));
 	}
 
 	private static DpPublicEnumeration enumerateDpScript(String script) throws Exception {
@@ -6558,6 +6608,23 @@ public class FederatedPlannerFallbackIntegrationTest {
 			dmlt.rewriteHopsDAG(prog);
 			return prog;
 		} finally {
+			ConfigurationManager.setGlobalConfig(oldConfig);
+			ConfigurationManager.setLocalConfig(oldConfig);
+		}
+	}
+
+	private static PlannerInvocationReceipt invokePlannerOnRewrittenProgram(DMLProgram prog, String planner) {
+		DMLConfig oldConfig = ConfigurationManager.getDMLConfig();
+		DMLConfig newConfig = new DMLConfig(oldConfig);
+		newConfig.setTextValue(DMLConfig.FEDERATED_PLANNER, planner);
+		ConfigurationManager.setGlobalConfig(newConfig);
+		ConfigurationManager.setLocalConfig(newConfig);
+		AtomicReference<PlannerInvocationReceipt> receipt = new AtomicReference<>();
+		try {
+			new DMLTranslator(prog).constructLops(prog, value -> receipt.compareAndSet(null, value));
+			return receipt.get();
+		}
+		finally {
 			ConfigurationManager.setGlobalConfig(oldConfig);
 			ConfigurationManager.setLocalConfig(oldConfig);
 		}
@@ -6706,7 +6773,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		plan.setExecType(execType);
 		plan.setFType(fType);
 		variants.addFedPlan(plan);
-		memoTable.addFedPlanVariants(hopCommon.getHopRef().getHopID(), fedOutType, variants);
+		registerTestPlanVariants(memoTable, variants, plan, fedOutType);
 		return plan;
 	}
 
@@ -6717,7 +6784,7 @@ public class FederatedPlannerFallbackIntegrationTest {
 		plan.setExecType(execType);
 		plan.setFType(fType);
 		variants.addFedPlan(plan);
-		memoTable.addFedPlanVariants(hopCommon.getHopRef().getHopID(), fedOutType, variants);
+		registerTestPlanVariants(memoTable, variants, plan, fedOutType);
 		return plan;
 	}
 
@@ -6729,8 +6796,34 @@ public class FederatedPlannerFallbackIntegrationTest {
 		plan.setExecType(execType);
 		plan.setFType(fType);
 		variants.addFedPlan(plan);
-		memoTable.addFedPlanVariants(hopCommon.getHopRef().getHopID(), fedOutType, variants);
+		registerTestPlanVariants(memoTable, variants, plan, fedOutType);
 		return plan;
+	}
+
+	private static void registerTestPlanVariants(FederatedPlannerDpMemoTable memoTable,
+			FedPlanVariants variants, FedPlan plan, FederatedOutput fedOutType) {
+		if(memoTable.analysis() == null) {
+			memoTable.addFedPlanVariants(plan.getHopID(), fedOutType, variants);
+			return;
+		}
+		List<HopOccurrenceProjection> matches = memoTable.analysis().occurrences().stream()
+			.filter(value -> value.hop() == plan.getHopRef()).toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException("Test plan carrier must have one exact occurrence: hop="
+				+ plan.getHopID() + " occurrences=" + matches.size());
+		HopOccurrenceProjection occurrence = matches.get(0);
+		List<PlacementState> legal = memoTable.analysis().graph().node(occurrence.key()).orElseThrow()
+			.legalAlternatives();
+		PlacementState exact = legal.stream()
+			.filter(state -> state.execType() == plan.getExecType() && state.output() == fedOutType)
+			.filter(state -> plan.getExecType() != ExecType.FED || fedOutType != FederatedOutput.FOUT
+				|| state.fType() == plan.getFType())
+			.findFirst().orElseThrow(() -> new IllegalArgumentException(
+				"Test plan tuple is not legal for exact occurrence: hop=" + plan.getHopID()
+					+ " exec=" + plan.getExecType() + " out=" + fedOutType + " ftype=" + plan.getFType()
+					+ " legal=" + legal));
+		plan.setSelectedPlacementState(exact);
+		memoTable.addFedPlanVariants(occurrence, fedOutType, variants);
 	}
 
 	private static Map<Long, HopCommon> hopCommonTableFor(Hop... hops) {
@@ -7034,9 +7127,13 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedPlannerDpMemoTable.class,
 			Map.class,
 			Map.class,
-			Map.class);
+			Map.class,
+			Map.class,
+			Set.class,
+			List.class);
 		method.setAccessible(true);
-		method.invoke(null, memoTable, outputDecisions, conflictMap, localMaterializeRequests);
+		method.invoke(null, memoTable, outputDecisions, conflictMap, localMaterializeRequests,
+			null, null, null);
 	}
 
 	@SuppressWarnings("unchecked")
