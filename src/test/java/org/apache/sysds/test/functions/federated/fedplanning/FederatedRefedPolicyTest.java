@@ -36,6 +36,7 @@ import org.apache.sysds.common.Types.OpOp1;
 import org.apache.sysds.common.Types.OpOp2;
 import org.apache.sysds.common.Types.OpOp3;
 import org.apache.sysds.common.Types.OpOpData;
+import org.apache.sysds.common.Types.ReOrgOp;
 import org.apache.sysds.common.Types.ValueType;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
@@ -43,6 +44,7 @@ import org.apache.sysds.hops.AggBinaryOp;
 import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.ReorgOp;
 import org.apache.sysds.hops.TernaryOp;
 import org.apache.sysds.hops.UnaryOp;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
@@ -140,6 +142,30 @@ public class FederatedRefedPolicyTest {
 		assertEquals("Anchor hop mismatch in registry", anchor.getHopID(), snapshot.get(target.getHopID()).getAnchorHopId());
 		assertEquals("Policy registry must preserve the exact FED consumer",
 			List.of(parent.getHopID()), snapshot.get(target.getHopID()).getConsumerHopIds());
+	}
+
+	@Test
+	public void testSingleWorkerFullTransposeIsNotDemotedFromPlannedFout() {
+		DataOp full = createFederatedInput("X", 10, 10);
+		ReorgOp transpose = new ReorgOp("tX", DataType.MATRIX, ValueType.FP64, ReOrgOp.TRANS, full);
+		transpose.setForcedExecType(ExecType.CP);
+		transpose.setFederatedOutput(FederatedOutput.FOUT);
+		AggBinaryOp consumer = HopRewriteUtils.createMatrixMultiply(transpose, full);
+		consumer.setForcedExecType(ExecType.FED);
+		consumer.setFederatedOutput(FederatedOutput.FOUT);
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(full.getHopID(), FType.FULL);
+		fTypeMap.put(transpose.getHopID(), FType.FULL);
+		fTypeMap.put(consumer.getHopID(), FType.FULL);
+
+		FederatedRefedPolicy.registerFromHops(List.of(consumer), true, fTypeMap, -1L);
+
+		assertEquals("A single-range FULL input is supported by ReorgFEDInstruction and must not close the FOUT plan",
+			FederatedOutput.FOUT, transpose.getFederatedOutput());
+		assertTrue("The selected FULL transpose must have an explicit planner-owned FOUT lowering receipt",
+			FederatedFoutMaterializeRegistry.snapshot(-1L).containsKey(transpose.getHopID())
+				|| FederatedRefedRegistry.snapshot(-1L).containsKey(transpose.getHopID()));
 	}
 
 	@Test

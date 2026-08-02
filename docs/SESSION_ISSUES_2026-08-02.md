@@ -1043,7 +1043,7 @@
 
 ## 중간 성능 그래프가 실행환경×워크로드 3×7 비교 형식을 따르지 않음
 
-- **상태**: 해결 — 인증된 294-cell 스냅샷을 3행×7열 단일 그래프로 재생성
+- **상태**: 폐기/진단용 — 3행×7열 형식은 맞지만 서로 다른 binary와 Docker lifecycle metric을 섞어 성능 근거로 사용할 수 없음
 - **환경/조건**:
   - Docker-only stitched snapshot `294/336`: DP/FedAll/Heuristic 각 `84`, MinST `42`.
   - campaign root:
@@ -1070,9 +1070,159 @@
   - 인증 CSV는 294개 unique canonical cell이고 SHA-256은
     `d295b37a8313ef93709b3a467643994ad83c8c513314fff802cd9669fad6cf0d`이다.
 - **잔여 이슈**:
-  - 이 파일은 캠페인 진행 중 동결한 중간 스냅샷이다. 336개 성공 후 같은 3×7 형식으로 최종 그래프를 재생성한다.
+  - 이 파일은 캠페인 진행 중 동결한 진단 스냅샷일 뿐이며 성능 비교에서 제외한다. 동일 immutable binary와
+    `systemds_total_execution_time`으로 새 336개가 성공한 뒤 같은 3×7 형식으로 최종 그래프를 재생성한다.
 - **잠재 회귀 위험**:
   - 실행 중인 rows 파일을 직접 읽으면 그래프 데이터와 제목 cardinality가 달라질 수 있다. 감지/방지: 먼저
     immutable JSONL snapshot을 만들고 그 snapshot row 수와 CSV unique 수를 검증한다.
 - **의사결정 근거/적용 원칙**:
   - 측정값이나 planner 결과는 변경하지 않고 인증된 Docker 결과의 시각화 구조만 바로잡았다.
+
+## worker=1 FULL 입력의 CP/FOUT reorg가 planner 후처리에서 잘못 제거됨
+
+- **상태**: 해결 — planner/runtime capability parity 및 one-range FULL transpose 실행 회귀 통과; fresh Docker canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`, 기준 HEAD `b73e51d0e4`.
+  - 대상: 모든 planner가 공유하는 `FederatedRefedPolicy`와 `ReorgFEDInstruction`; 특히 worker `1`의
+    single-range `FType.FULL` 입력.
+  - privacy public 케이스는 실험/회귀 대상에서 제외하며 Docker 실험은 `run_LAN_docker.sh`만 사용한다.
+- **재현 절차**:
+  - planner 회귀:
+    `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip -Dtest=FederatedRefedPolicyTest#testSingleWorkerFullTransposeIsNotDemotedFromPlannedFout,FederatedRefedPolicyReorgCapabilityTest test`.
+  - runtime 회귀:
+    `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip -Dtest=ReorgFEDInstructionFullTest test`.
+- **관측 증상**:
+  - rules/runtime는 transpose/rev/roll/diag에서 FULL을 정상 layout으로 취급했지만,
+    `FederatedRefedPolicy.registerFromHops(...)`의 CP/FOUT reorg 후처리만 `inputFType == FULL`을
+    `unsupportedFedInputForReorgFout`으로 분류했다.
+  - 따라서 worker=1에서 이미 합법하게 선택된 FOUT 계획이 lowering 직전에 LOUT으로 demote될 수 있었고,
+    후속 FED consumer가 다시 업로드하거나 더 보수적인 계획으로 수렴할 수 있었다.
+- **원인 분석**:
+  - `FType.isType(ROW/COL)`의 alias semantics 때문에 runtime은 FULL을 암묵적으로 허용했지만 planner 정책은
+    과거의 “ROW/COL only” 설명을 기준으로 FULL을 명시적으로 닫았다. 같은 capability를 서로 다른 방식으로
+    표현한 것이 drift의 원인이다.
+- **해결 요약**:
+  - planner reorg input capability를 ROW/COL/FULL/BROADCAST로 명시하고 PART/OTHER만 거부한다.
+  - runtime gate도 alias 판정 대신 같은 exact FType 집합을 직접 검사하게 해 parity를 코드상 명시했다.
+  - single-range FULL `FederationMap`을 실제로 transpose해 출력이 `FULL`, range `1`, shape `3x2`로 유지되는
+    runtime 회귀와, 선택된 CP/FOUT transpose가 후처리에서 demote되지 않고 planner-owned lowering receipt를
+    남기는 회귀를 추가했다.
+  - 이는 worker-count 특례가 아니라 실제 runtime capability 복구이며 runtime-supported candidate를 닫지 않는다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`
+  - `src/main/java/org/apache/sysds/runtime/instructions/fed/ReorgFEDInstruction.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicyReorgCapabilityTest.java`
+  - `src/test/java/org/apache/sysds/runtime/instructions/fed/ReorgFEDInstructionFullTest.java`
+  - `src/test/java/org/apache/sysds/test/functions/federated/fedplanning/FederatedRefedPolicyTest.java`
+  - `src/test/java/org/apache/sysds/test/functions/fedplanner/rules/RulesetsReorgTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/rules/RulesetsUnaryTest.java`
+- **검증**:
+  - FULL/runtime/rules 및 MinST exactness를 묶은 focused suite `52/52` PASS. 로그
+    `/tmp/g007-worker1-full-minst-exact-focused-20260802.log`, SHA-256
+    `03ae01d4811ae1510c13c52ecc611cf8b5c6da33d7344a01e1119b6530a51b2a`.
+  - one-range FULL runtime test는 실제 `ReorgFEDInstruction.processInstruction(...)`을 실행하며 단순 문자열/정적
+    검사가 아니다.
+- **잔여 이슈**:
+  - 새 immutable JAR로 KMeans worker=1 Docker canary를 planner 순서 `DP → FedAll → Heuristic → MinST`로
+    각각 한 번 실행해 실제 instruction fingerprint와 execution time을 확인한다.
+- **잠재 회귀 위험**:
+  - 다중 range를 FULL로 잘못 분류하면 복제/partition 의미가 섞일 수 있다. 감지: one-range FULL 회귀와 기존
+    FULL/BROADCAST 분류 회귀를 함께 유지하고, Docker descriptor의 worker/range 수를 검사한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 이미 지원하는 exact FULL 조합을 planner가 닫던 drift를 제거했다. fallback, TRead/TWrite 완화,
+    recompile `<CP,FOUT>` 허용 또는 worker-count heuristic은 추가하지 않았다.
+
+## MinST 전역 최적성의 범위와 shadow authority 검증이 분리되어 있지 않았음
+
+- **상태**: 해결 — 독립 exhaustive cut oracle과 production selector 일치 포함 focused `52/52` PASS; wall-clock 최적성은 별도 관측 대상으로 명시
+- **환경/조건**:
+  - MinST exact two-bit state: compute `CP/FED`, output `LOUT/FOUT`, neutral graph의 legal states와 directed
+    upload/download/compute cost edges.
+  - 주요 회귀: `MinStExactCutSolverTest`, `MinStExactSelectorTest`, `MinStExactTwoDecisionOracleTest`,
+    `CampaignBR5MinStExactSelectorShadowRedTest`, `CampaignBR10MinStFTypeMembershipAuthorityRedTest`,
+    KMeans grouped upload와 L2SVM native-local cost 회귀.
+- **재현 절차**:
+  - 위 7개 MinST test class를 한 Maven invocation에서 실행한다. BR5 fixture는 production selector를 호출하기 전에
+    최대 1,000,000개의 모든 legal source partition을 독립 열거해 objective bits를 계산한다.
+- **관측 증상**:
+  - 최초 fresh run에서 BR5의 authority-only 보조 검사가 한 endpoint에 존재하는
+    `FED/LOUT/ROW`와 `FED/FOUT/ROW` upload authority를 선택 상태 없이 하나로 축약해
+    `R5_MINST_AUTHORITY_EXPECTED_PLACEMENT_AMBIGUOUS`로 실패했다.
+  - production selector는 이미 cut이 고른 exact consumer state로 두 authority를 구분하고 있었으므로 solver
+    objective 오류가 아니라 stale shadow fixture 오류였다.
+- **원인 분석**:
+  - helper가 과거의 “endpoint당 required placement 하나” 가정을 사용했다. exact-state 모델에서는 같은 endpoint가
+    서로 다른 합법 consumer membership마다 별도 relocation authority를 갖는 것이 정상이다.
+- **해결 요약**:
+  - shadow comparison은 source partition에서 선택된 producer/consumer state를 독립 복원한 뒤 그 state와 정확히
+    일치하는 transfer authority 하나를 요구한다.
+  - 별도 authority coverage 검사는 모든 published authority의 required placement가 해당 decision의 legal state이며,
+    relocation action/obligation identity가 neutral graph와 정확히 일치하는지 검사한다.
+  - production selector/cost graph는 변경하지 않았다. MinST의 보장 범위는 **인코딩된 legal-state 비용 목적함수의
+    전역 최소 cut**이다. 실제 wall-clock은 비용 모델의 정확도와 시스템 noise에 의존하므로 “항상 실측 최단”을
+    수학적으로 보장하지 않는다.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR5MinStExactSelectorShadowRedTest.java`
+- **검증**:
+  - focused suite `52/52` PASS. BR5 actual-root fixture에서 독립 exhaustive objective bits, source partition,
+    selected states, obligation receipts가 production selector와 byte/identity 수준으로 일치했다.
+- **잔여 이슈**:
+  - Docker에서 MinST가 DP보다 느린 셀은 곧바로 selector 오류로 단정하지 않고, 동일 binary/seed/data 조건에서
+    selected fingerprint와 modeled objective를 먼저 비교한 뒤 cost estimate 오차를 분석한다.
+- **잠재 회귀 위험**:
+  - representative preference variant가 향후 2-bit로 표현 불가능한 conditional input row를 포함하면 각 variant는
+    exact여도 전체 physical-state 공간을 포괄하지 못할 수 있다. 감지: baseline을 항상 보존하고 exhaustive small
+    fixture, variant objective/obligation 비교 및 fail-closed conflict 검사를 유지한다.
+- **의사결정 근거/적용 원칙**:
+  - global optimal의 수학적 대상을 명확히 하고 독립 oracle을 복구했다. 실제 성능 정렬을 만들기 위한 candidate
+    closure나 workload 예외는 추가하지 않았다.
+
+## Docker discovery metric이 SystemDS 실행시간 대신 lifecycle wall-clock을 기록함
+
+- **상태**: 해결 — 모든 phase의 성능 metric을 `systemds_total_execution_time`으로 통일; 새 homogeneous 336-cell 실행 대기
+- **환경/조건**:
+  - harness: `/home/mchoi/g007-harness-exdra-only-20260729-v1/sigmod2021-exdra-p523`, 기준 HEAD `d60da243`.
+  - 폐기 campaign: `/home/mchoi/g007-all-planners-minst-native-local-e18d326-d60da24-20260802-v1`, 완료 `298/336`.
+- **재현 절차**:
+  - 과거 discovery bundle의 `metric.json`과 같은 cell의 `raw_coordinator.log` 내 strict
+    `Total execution time: ... sec.` 및 response descriptor의 `full_lifecycle_seconds`를 비교한다.
+  - harness 회귀: `python3 -m unittest discover -s tests -p 'test_*.py'`.
+- **관측 증상**:
+  - discovery phase는 `(time.time_ns() - started_ns)`를 metric으로 저장해 Docker 생성, network shaping, oracle,
+    teardown 시간을 포함했고 warm phase만 SystemDS raw execution time을 사용했다.
+  - KMeans worker=1 raw SystemDS 시간은 DP/MinST가 LAN `18.900/18.728s`, WAN-light `30.847/30.926s`,
+    WAN-mid `83.957/85.399s`로 유사했으나 lifecycle metric 기반 그래프에서는 planner/worker 순서와 무관한
+    외부 overhead가 크게 섞여 “DP/MinST가 비정상적으로 느리고 worker 수에 따라 요동”하는 것처럼 보였다.
+  - 과거 298개는 15개 source commit/JAR에서 이어 붙인 결과이므로 metric 수정만으로도 최종 비교에 사용할 수 없다.
+- **원인 분석**:
+  - correctness discovery의 end-to-end duration과 algorithm execution time을 같은 `seconds` 필드에 넣은 측정 계약
+    오류가 주원인이다. worker 증가에 따른 runtime은 통신/직렬화/plan-switch threshold 때문에 단조 감소가
+    보장되지 않지만, lifecycle noise를 y축에 넣으면 이 현상을 훨씬 크게 왜곡한다.
+- **해결 요약**:
+  - `phase_bundle.py`가 discovery/cold/warm 모두 raw log의 정확히 한 개 `Total execution time`을 파싱해
+    `systemds_total_execution_time`으로 기록한다.
+  - setup→teardown 전체 시간은 기존 response descriptor의 `full_lifecycle_seconds`에만 남겨 성능 y축과 분리한다.
+  - 과거 root에 `SUPERSEDED_FOR_PERFORMANCE.json`을 기록하고 `superseded-do-not-resume-or-plot`으로 고정했다.
+    새 결과는 동일 source commit/JAR/harness/data/seed의 immutable stage에서 336개를 각각 한 번만 실행한다.
+- **수정 파일**:
+  - harness `experiments/tools/phase_bundle.py`
+  - harness `experiments/tests/test_g007_harness.py`
+  - harness `experiments/tests/test_campaign_lifecycle.py`
+  - harness `experiments/docs/SEED_AND_DATA_FREEZE.md`
+  - 폐기 campaign `SUPERSEDED_FOR_PERFORMANCE.json`
+- **검증**:
+  - discovery fixture가 시작/종료 ns와 무관하게 raw `1.25 sec.`를 그대로 저장하는 회귀 PASS.
+  - harness 전체 `121/121` PASS; lifecycle suite `28/28`, main harness suite `51/51` PASS.
+  - 폐기 marker SHA-256 `56c0f566fc2ce987bcfa77972afde40de27ef76d6bf636e53f6bf1fe5c529a67`.
+- **잔여 이슈**:
+  - 새 source/harness commit으로 immutable stage를 만들고 KMeans worker=1 canary를 planner 순서대로 실행한 뒤,
+    exact 336-cell discovery를 한 번만 수행한다. 완료 전에는 정렬 결론이나 최종 3×7 그래프를 발표하지 않는다.
+- **잠재 회귀 위험**:
+  - raw log에 timing line이 0개/2개 이상이면 잘못된 값을 고를 수 있다. 감지: phase pass 조건은 strict timing line
+    cardinality `1`과 positive finite seconds를 요구하고 실패 bundle을 보존한다.
+  - 실제 runtime은 worker 증가에 따라 약간 비단조일 수 있다. 감지: 동일 plan fingerprint 반복성, restart `0/0`,
+    resource/timeout/fallback scan과 network profile receipt를 별도로 검증하며 곡선을 인위적으로 정렬하지 않는다.
+- **의사결정 근거/적용 원칙**:
+  - planner 후보/비용을 성능 그래프에 맞추지 않고 측정 경계를 바로잡았다. data/seed 고정과 Docker-only,
+    no-retry/no-stitching 원칙을 강화했다.

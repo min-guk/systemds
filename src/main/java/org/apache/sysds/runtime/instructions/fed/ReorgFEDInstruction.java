@@ -181,8 +181,10 @@ public class ReorgFEDInstruction extends UnaryFEDInstruction {
 			processLocalInputFallback(ec);
 			return;
 		}
-		if (!(mo1.isFederated(FType.COL) || mo1.isFederated(FType.ROW) || mo1.isFederated(FType.BROADCAST)))
-			throw new DMLRuntimeException("Federation type " + mo1.getFedMapping().getType()
+		FType inputType = mo1.getFedMapping().getType();
+		if (!(inputType == FType.COL || inputType == FType.ROW || inputType == FType.FULL
+			|| inputType == FType.BROADCAST))
+			throw new DMLRuntimeException("Federation type " + inputType
 					+ " is not supported for Reorg processing");
 
 		if (instOpcode.equals(Opcodes.TRANSPOSE.toString())) {

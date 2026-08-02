@@ -210,7 +210,7 @@ public class RulesetsUnaryTest {
             false,
             null,
             ReasonCode.PARTITION_FORBIDDEN,
-            "ReorgFEDInstruction supports only ROW or COL partitioned input",
+            "ReorgFEDInstruction supports ROW, COL, FULL, or BROADCAST input",
             null));
 
     for (Scenario sc : scenarios) {

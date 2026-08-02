@@ -684,8 +684,7 @@ public final class FederatedRefedPolicy {
 					boolean inputRuntimeFed = reorgInput != null
 						&& isRuntimeFederatedInput(reorgInput, null, null);
 					FType inputFType = getKnownFType(reorgInput, fTypeMap);
-					boolean unsupportedFedInputForReorgFout = (inputFType == FType.FULL);
-					if (!inputRuntimeFed || unsupportedFedInputForReorgFout) {
+					if (!inputRuntimeFed || !isRuntimeFederatedReorgInputTypeSupported(inputFType)) {
 						if (runtimeContext)
 							throw invalidRuntimePlan(hop,
 								"selected CP/FOUT reorg has no supported runtime-federated input");
@@ -3313,6 +3312,19 @@ public final class FederatedRefedPolicy {
 		return FederatedPlannerUtils.isFedInitVar(name)
 			? FederatedPlannerUtils.getFedInitFType(name)
 			: null;
+	}
+
+	/**
+	 * Mirrors the concrete input-type capability of {@code ReorgFEDInstruction}.
+	 * FULL is the normal one-worker federation layout and is therefore a legal
+	 * runtime-federated reorg input; rejecting it here silently erased valid
+	 * worker=1 FOUT plans after selection. A null planning hint retains the
+	 * existing behavior for a runtime-federated input whose concrete map supplies
+	 * the type during lowering.
+	 */
+	static boolean isRuntimeFederatedReorgInputTypeSupported(FType type) {
+		return type == null || type == FType.ROW || type == FType.COL
+			|| type == FType.FULL || type == FType.BROADCAST;
 	}
 
 	private static boolean canGenerateCpfoutCandidate(Hop hop, java.util.Map<Long, FType> fTypeMap,

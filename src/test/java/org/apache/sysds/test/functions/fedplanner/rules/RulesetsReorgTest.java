@@ -49,7 +49,7 @@ public class RulesetsReorgTest {
             ExecType.FED, FederatedOutput.FOUT, true, FType.ROW, ReasonCode.OK, null, true),
         Scenario.of("rev-part", ReOrgOp.REV.toString(), Map.of(), List.of(FType.PART),
             ExecType.CP, FederatedOutput.LOUT, false, null, ReasonCode.PARTITION_FORBIDDEN,
-            "ReorgFEDInstruction supports only ROW or COL partitioned input", false),
+            "ReorgFEDInstruction supports ROW, COL, FULL, or BROADCAST input", false),
         Scenario.of("roll-full", ReOrgOp.ROLL.toString(), Map.of(), List.of(FType.FULL),
             ExecType.FED, FederatedOutput.FOUT, true, FType.FULL, ReasonCode.OK, null, true),
         Scenario.of("diag-broadcast", ReOrgOp.DIAG.toString(), Map.of(), List.of(FType.BROADCAST),

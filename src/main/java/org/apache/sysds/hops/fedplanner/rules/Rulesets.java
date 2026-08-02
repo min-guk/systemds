@@ -1371,7 +1371,7 @@ public final class Rulesets {
 
   /**
    * Reorg ops (transpose/rev/roll/diag). Runtime parity:
-   * ReorgFEDInstruction.java:197-282 (ROW/COL only; PART/FULL rejected).
+   * ROW/COL/FULL/BROADCAST are supported; PART/OTHER are rejected.
    */
   public static final class ReorgUnaryRule extends BaseRule {
     private static final Set<String> OPCODES = Set.of(
@@ -1380,7 +1380,7 @@ public final class Rulesets {
         ReOrgOp.REV.toString(),
         ReOrgOp.ROLL.toString());
     private static final String REORG_AXIS_ONLY_DETAIL =
-        "ReorgFEDInstruction supports only ROW or COL partitioned input";
+        "ReorgFEDInstruction supports ROW, COL, FULL, or BROADCAST input";
 
     @Override public OpCategory category() { return OpCategory.REORG; }
     @Override public Set<String> opcodes() { return OPCODES; }
