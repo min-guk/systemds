@@ -649,7 +649,7 @@
 
 ## MinST KMeans의 파생 FED/FOUT worker-pool 계보가 upload reuse에서 소실됨
 
-- **상태**: 해결, fresh Docker canary/remaining-only continuation 검증 대기
+- **상태**: 진행중 — planner 수정·focused/package·fresh Docker canary 완료, 중복 없는 잔여 MinST `62`셀 실행 중
 - **환경/조건**:
   - planner `MinST` (`compile_min_st_cut`), workload `kmeans`, workers `2`, profile `lan`.
   - Docker-only `run_LAN_docker.sh`, private-aggregate frozen P2P2D, seed/data `2026072701`.
@@ -702,6 +702,7 @@
   - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
   - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest.java`
   - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR10MinStFTypeMembershipAuthorityRedTest.java`
+  - `docs/experiments/minst-continuation-2026-08-02-interim-274/*`
   - `docs/SESSION_ISSUES_2026-08-02.md`
 - **검증**:
   - Docker-equivalent LAN cost RED:
@@ -716,9 +717,38 @@
   - anchor/download/fingerprint fixture 6건은 수정 전 commit `93d91d6`에서도 동일하게 실패했다.
     baseline 로그 `/tmp/g007-baseline-93d91d6-anchor-audit.log`, SHA-256
     `81fda1fd4f507fa5ccc0e08db51f914c0c760143ecf365e3458e5c74d0d775f3`이므로 이번 변경의 신규 회귀가 아니다.
+  - 수정은 commit `e4f6bad51de3212ac4641e97df33cf0a63a6f2fd`로 봉인했다. clean detached worktree에서
+    real target package를 다시 만들고 별도 no-symlink artifact snapshot으로 옮긴 JAR SHA-256은
+    `2f01c8511e4ac51d4d9475c367bbb3c0b766fd7b0d83ba8baf9ccbcb7613ff31`이다. package 로그 SHA-256은
+    `a54bbe20a5c9377da6f1f24337bea0ce20d29e18ee7abb6443f4315cbc9c7c03`이다.
+  - immutable stage
+    `/home/mchoi/g007-minst-kmeans-derived-anchor-stage-e4f6bad-20260802-v1/g007-stage-9c6ac9593edd9ab30074778b7d990750ff2f6e8a925fb6a284bb80689c28854f`
+    검증을 통과했다. data/reference tree는 각각
+    `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f` /
+    `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`, executable
+    `run_LAN_docker.sh`는 정확히 `1`, `run_LAN.sh`는 `0`이다.
+  - 동일 실패 셀 `workers=2|planner=MinST|workload=kmeans|profile=lan`을 fresh Docker canary attempt `1`,
+    retry 없음으로 실행해 성공했다. execution `121.080435112s`, full lifecycle `144.39978494s`, semantic
+    oracle pass, scan error/fallback/resource-invalid/timeout 전부 false, restart `0/0`, teardown resource
+    `0/0`이다. response SHA-256은
+    `0616c3220170a6222e0275cc2dab38149c08742e4c44d1e76c52c6ad6c28375f`이다.
+  - 새 continuation root는
+    `/home/mchoi/g007-all-planners-minst-kmeans-derived-anchor-e4f6bad-d60da24-20260802-v1`이다.
+    독립 사전 감사에서 historical success `274`(DP/FedAll/Heuristic `84`씩, MinST `22`), remaining
+    MinST `62`, overlap `0`, union `336`을 확인했고 274개 모두 attempt `1`, oracle pass, fallback 없음,
+    restart `0/0`, teardown 성공으로 재검증했다. 감사 receipt SHA-256은
+    `343bd853ddb5c56ef77dab9966f71e3703d214baf7b98280947e4394f7e66ecf`이다.
+  - continuation은 user-systemd `g007-minst-e4f6bad-v1.service`를 `sg docker` 경계로 실행 중이며,
+    `g007-monitor-e4f6bad-v1.service`가 120초 주기로 감시한다. 첫 요청은 정확히
+    `workers=2|planner=MinST|workload=kmeans|profile=wan_light`, attempt `1`이고 launch receipt SHA-256은
+    `8208a6186c5ce74e36d60bb0abfc8bd2e75763bac2518dd7d7ffea438342132a`이다.
+  - 실행 직전 274셀 그래프/인증 CSV는
+    `docs/experiments/minst-continuation-2026-08-02-interim-274/`에 생성했다. four-planner matched `22`에서
+    exact 정렬 `0/22`, 5% tolerance 정렬 `1/22`, median ratio(DP=1)는 FedAll `1.184`, Heuristic
+    `1.182`, MinST `1.659`다. 여러 봉인 binary를 잇는 중간 진단값이므로 final 성능 근거가 아니다.
 - **잔여 이슈**:
-  - fresh package/JAR와 immutable Docker stage를 만들고 동일 KMeans LAN 셀을 attempt `1` canary로 검증한다.
-  - canary 성공분을 `273` 성공 registry에 승격한 뒤 overlap `0`인 remaining `62`셀만 새 campaign에서 실행한다.
+  - 현재 binary에서 remaining `62`셀을 각각 attempt `1`, retry 없이 완료한다. 실패하면 root를 봉인하고
+    같은 cell/binary를 재시도하지 않은 채 별도 원인을 분석한다.
   - 전체 `336` 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 만든다.
 - **잠재 회귀 위험**:
   - 여러 FOUT input이 동일 FType이지만 서로 다른 worker/range anchor를 가질 때 하나로 오인하면 잘못된 reuse가
