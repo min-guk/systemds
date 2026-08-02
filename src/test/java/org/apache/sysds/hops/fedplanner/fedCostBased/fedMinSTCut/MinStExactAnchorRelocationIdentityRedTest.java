@@ -14,6 +14,7 @@ import java.util.Map;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.BoundaryMode;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ContributionKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
@@ -153,14 +154,16 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 	}
 
 	private static AuxiliaryGroupFact uploadGroup() {
-		return new AuxiliaryGroupFact(-3L, Direction.UPLOAD, PRODUCER, 1L, FType.ROW,
+		return new AuxiliaryGroupFact(-3L, Direction.UPLOAD, BoundaryMode.ANCHOR_TRANSFER,
+			PRODUCER, 1L, FType.ROW,
 			Double.doubleToRawLongBits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L,
 				Double.doubleToRawLongBits(1.0))));
 	}
 
 	private static AuxiliaryGroupFact groupedUploadGroup() {
 		long price = Double.doubleToRawLongBits(1.0);
-		return new AuxiliaryGroupFact(-3L, Direction.UPLOAD, PRODUCER, 1L, FType.ROW, price,
+		return new AuxiliaryGroupFact(-3L, Direction.UPLOAD, BoundaryMode.ANCHOR_TRANSFER,
+			PRODUCER, 1L, FType.ROW, price,
 			List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, price),
 				new EndpointFact(PRODUCER, CONSUMER_B, 0, 3L, price)));
 	}

@@ -14,6 +14,7 @@ import java.util.Map;
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.BoundaryMode;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
@@ -212,7 +213,8 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 
 	private static AuxiliaryGroupFact group(Direction direction) {
 		long price = Double.doubleToRawLongBits(1.0);
-		return new AuxiliaryGroupFact(-3L, direction, PRODUCER, 1L, FType.ROW, price,
+		return new AuxiliaryGroupFact(-3L, direction, BoundaryMode.ANCHOR_TRANSFER,
+			PRODUCER, 1L, FType.ROW, price,
 			List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, price)));
 	}
 

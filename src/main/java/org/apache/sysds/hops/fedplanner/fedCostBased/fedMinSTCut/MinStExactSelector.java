@@ -257,8 +257,10 @@ public final class MinStExactSelector {
 		for(AuxiliaryGroupFact group : facts.auxiliaryGroupsInCanonicalOrder()) {
 			boolean auxSource = source.contains(group.auxiliaryNodeId());
 			boolean producerPlacementSource = source.contains(group.producerPlacementNodeId());
-			boolean compatibleProducerSource = producerPlacementSource
-				&& MinStExactCostFactsProducer.hasExactCompatibleDurableSource(facts.analysis(), group);
+			boolean compatibleProducerSource = group.direction() == Direction.UPLOAD
+				&& producerPlacementSource
+				&& MinStExactCostFactsProducer.uploadPriceTargetsProducerPlacement(
+					facts.analysis(), group);
 			if(group.direction() == Direction.UPLOAD && auxSource && !compatibleProducerSource)
 				addGroupReceipts(receipts, facts, group, selectedStates);
 			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)
@@ -278,10 +280,15 @@ public final class MinStExactSelector {
 				// One local input can have exact relocation actions for FED/LOUT and
 				// FED/FOUT. The cut has now selected the consumer's full two-bit state,
 				// so retain only the action whose obligation is active for that state.
-				.filter(authority -> group.direction() != Direction.UPLOAD
-					|| authority.actionOrNull() == null
-					|| authority.requiredPlacement().equals(selectedConsumer))
-				.toList();
+					.filter(authority -> group.direction() != Direction.UPLOAD
+						|| authority.actionOrNull() == null
+						|| authority.requiredPlacement().equals(selectedConsumer))
+					// A producer may own both CP/FOUT and FED/FOUT memberships backed by the
+					// same durable anchor.  A DOWNLOAD receipt must retain the authority for
+					// the exact execution membership selected by the cut, not both aliases.
+					.filter(authority -> group.direction() != Direction.DOWNLOAD
+						|| authority.requiredPlacement().equals(selectedProducer))
+					.toList();
 			if(matches.size() != 1)
 				throw new IllegalArgumentException("MINST_EXACT_OBLIGATION_AUTHORITY_"
 					+ (matches.isEmpty() ? "MISSING" : "AMBIGUOUS")

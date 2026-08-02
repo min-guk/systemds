@@ -27,6 +27,10 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 /** Immutable, owner-bound input to the exact MinST selector. */
 public final class MinStExactCostFacts {
 	public enum Direction { UPLOAD, DOWNLOAD }
+	public enum BoundaryMode {
+		ANCHOR_TRANSFER,
+		TWRITE_METADATA
+	}
 	public enum MembershipAuthorityKind {
 		LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, RELOCATION_SOURCE
 	}
@@ -282,26 +286,31 @@ public final class MinStExactCostFacts {
 	public static final class AuxiliaryGroupFact {
 		private final long auxiliaryNodeId;
 		private final Direction direction;
+		private final BoundaryMode boundaryMode;
 		private final CompiledHopKey producerKey;
 		private final long producerPlacementNodeId;
 		private final FType conversionType;
 		private final long priceBits;
 		private final List<EndpointFact> endpoints;
 
-		AuxiliaryGroupFact(long auxiliaryNodeId, Direction direction, CompiledHopKey producerKey,
-			long producerPlacementNodeId, FType conversionType, long priceBits,
-			List<EndpointFact> endpointsInCanonicalOrder) {
+		AuxiliaryGroupFact(long auxiliaryNodeId, Direction direction, BoundaryMode boundaryMode,
+			CompiledHopKey producerKey, long producerPlacementNodeId, FType conversionType,
+			long priceBits, List<EndpointFact> endpointsInCanonicalOrder) {
 			this.auxiliaryNodeId = auxiliaryNodeId;
 			this.direction = Objects.requireNonNull(direction, "direction");
+			this.boundaryMode = Objects.requireNonNull(boundaryMode, "boundaryMode");
 			this.producerKey = Objects.requireNonNull(producerKey, "producerKey");
 			this.producerPlacementNodeId = producerPlacementNodeId;
 			this.conversionType = Objects.requireNonNull(conversionType, "conversionType");
 			this.priceBits = priceBits;
 			this.endpoints = List.copyOf(endpointsInCanonicalOrder);
+			if(boundaryMode == BoundaryMode.TWRITE_METADATA && direction != Direction.UPLOAD)
+				throw new IllegalArgumentException("MINST_TWRITE_METADATA_DIRECTION_MISMATCH");
 		}
 
 		public long auxiliaryNodeId() { return auxiliaryNodeId; }
 		public Direction direction() { return direction; }
+		public BoundaryMode boundaryMode() { return boundaryMode; }
 		public CompiledHopKey producerKey() { return producerKey; }
 		public long producerPlacementNodeId() { return producerPlacementNodeId; }
 		public FType conversionType() { return conversionType; }

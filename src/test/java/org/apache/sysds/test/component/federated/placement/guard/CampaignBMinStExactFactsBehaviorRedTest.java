@@ -65,7 +65,7 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		"key", "computeNodeId", "placementNodeId", "legalStatesInCanonicalOrder"};
 	private static final String[] EDGE_ACCESSORS = {
 		"fromNodeId", "toNodeId", "capacityBits", "contributionsInDerivationOrder"};
-	private static final String[] GROUP_ACCESSORS = {"auxiliaryNodeId", "direction", "producerKey",
+	private static final String[] GROUP_ACCESSORS = {"auxiliaryNodeId", "direction", "boundaryMode", "producerKey",
 		"producerPlacementNodeId", "conversionType", "priceBits", "endpointsInCanonicalOrder"};
 
 	@Test
