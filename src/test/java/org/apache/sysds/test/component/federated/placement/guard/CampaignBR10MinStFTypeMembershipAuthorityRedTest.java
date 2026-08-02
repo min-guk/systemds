@@ -246,6 +246,35 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 	}
 
 	@Test
+	public void lmCgDerivedWorkerPoolClosesFedLoutToDerivedFedFout() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+			.buildDetachedAnalysis(compileLm());
+		CompiledHopKey key = decisionKey(analysis,
+			"scripts/builtin/lmCG.dml:129:24:org.apache.sysds.hops.AggBinaryOp:ba(+*):q");
+		List<PlacementState> legal = analysis.graph().node(key).orElseThrow().legalAlternatives();
+		PlacementState derived = legal.stream()
+			.filter(state -> state.execType() == ExecType.FED
+				&& state.output() == FederatedOutput.FOUT)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"BR10_LMCG_DERIVED_FED_FOUT_MISSING|legal=" + legal.stream()
+					.map(PlacementState::normalizedSignature).toList()));
+		Assert.assertTrue("BR10_LMCG_DERIVED_FED_FOUT_MUST_RETAIN_EXACT_CANDIDATE_AUTHORITY",
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == key)
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.anyMatch(emission -> emission.emissionState().placementState() == derived
+					&& emission.emissionState().derivedFedFout()
+					&& emission.executionFType() != null));
+
+		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+		Assert.assertTrue("BR10_LMCG_FIXTURE_MUST_EXERCISE_DOCKER_POLYNOMIAL_PATH",
+			usesPolynomialSolver(facts));
+		MinStExactSelection selection = MinStExactSelector.select(facts);
+		Assert.assertTrue("BR10_LMCG_SELECTED_Q_MUST_BE_LEGAL",
+			legal.contains(selectedState(facts, selection, decision(facts, key))));
+	}
+
+	@Test
 	public void kmeansForwardedFunctionInputRetainsLegacyDirectCallerChoice() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildDetachedAnalysis(compileKMeans(120));
@@ -697,6 +726,24 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		return compileKMeans(2);
 	}
 
+	private static DMLProgram compileLm() throws Exception {
+		String script = String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\"),"
+				+ "ranges=list(list(0,0),list(50000,2100)));",
+			"Y=federated(addresses=list(\"localhost:1234/Y1\"),"
+				+ "ranges=list(list(0,0),list(50000,1)));",
+			"m=lm(X=X,y=Y,verbose=FALSE,tol=1e-9);",
+			"write(m,\"out\",format=\"csv\");") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
 	private static DMLProgram compileKMeans(int maxIterations) throws Exception {
 		String script = String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
@@ -730,6 +777,13 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 
 	private static List<CompiledHopKey> scope(PlacementAnalysis analysis) {
 		return analysis.compiledHopOccurrences().stream().map(HopOccurrenceProjection::key).toList();
+	}
+
+	private static boolean usesPolynomialSolver(MinStExactCostFacts facts) throws Exception {
+		var method = MinStExactSelector.class.getDeclaredMethod("usesPolynomialSolver",
+			MinStExactCostFacts.class);
+		method.setAccessible(true);
+		return (boolean)method.invoke(null, facts);
 	}
 
 	private static String immutableSnapshot(PlacementAnalysis analysis) {

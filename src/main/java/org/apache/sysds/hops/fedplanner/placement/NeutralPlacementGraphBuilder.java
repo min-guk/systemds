@@ -2329,14 +2329,18 @@ public final class NeutralPlacementGraphBuilder {
 		List<CandidateRuleFact> candidateRuleFacts) { }
 
 	/**
-	 * Completes CP/FOUT candidate facts after the exact compiled-input graph is known.
+	 * Completes CP/FOUT and derived FED/FOUT candidate facts after the exact
+	 * compiled-input graph is known.
 	 *
 	 * <p>The first candidate pass can only see direct {@code Hop -> anchor} provenance. A legal
 	 * federated chain may instead carry the same durable worker pool through one or more exact
 	 * FED/FOUT candidates without making every intermediate value own the input's FederationMap.
 	 * Legacy DP/MinST could still compare local computation followed by an upload to that proven
-	 * worker pool. Preserve that candidate here, without inventing an anchor or mutating the Hop:
-	 * every contributing exact candidate must recursively resolve to one existing durable anchor.
+	 * worker pool. Preserve that candidate here, without inventing an anchor or mutating the Hop.
+	 * A native FED/LOUT candidate using that same pool must also retain the explicit
+	 * FED-&gt;LOUT-&gt;FOUT alternative; otherwise the two-bit MinST graph would expose CP/FOUT
+	 * and FED/LOUT independently while omitting their legal composed state. Every contributing
+	 * exact candidate must recursively resolve to one existing durable anchor.
 	 * Recompile and transient-access nodes remain closed by their global legality rules.</p>
 	 */
 	private static CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
@@ -2368,6 +2372,7 @@ public final class NeutralPlacementGraphBuilder {
 				continue;
 			List<Integer> indexes = factIndexesByNode.getOrDefault(node.key(), List.of());
 			Map<Integer,DurableAnchorKey> exactAnchors = new LinkedHashMap<>();
+			Map<Integer,CandidateEmissionFact> exactNativeFedLout = new LinkedHashMap<>();
 			Set<DurableAnchorKey> nodeAnchors = new java.util.TreeSet<>();
 			Set<Boolean> shapeDependencies = new LinkedHashSet<>();
 			for(int factIndex : indexes) {
@@ -2382,6 +2387,17 @@ public final class NeutralPlacementGraphBuilder {
 				DurableAnchorKey anchor = anchors.get(0);
 				exactAnchors.put(factIndex, anchor);
 				nodeAnchors.add(anchor);
+				List<CandidateEmissionFact> nativeFedLout = fact.allowedEmissionFacts().stream()
+					.filter(emission -> !emission.emissionState().derivedFedFout())
+					.filter(emission -> emission.emissionState().placementState().execType() == ExecType.FED
+						&& emission.emissionState().placementState().output() == FederatedOutput.LOUT)
+					.toList();
+				boolean alreadyHasFedFout = fact.allowedEmissionFacts().stream().anyMatch(emission ->
+					emission.emissionState().placementState().execType() == ExecType.FED
+						&& emission.emissionState().placementState().output() == FederatedOutput.FOUT);
+				if(!alreadyHasFedFout && nativeFedLout.size() == 1
+					&& nativeFedLout.get(0).executionFType() != null)
+					exactNativeFedLout.put(factIndex, nativeFedLout.get(0));
 				fact.allowedEmissionFacts().stream()
 					.map(CandidateEmissionFact::emissionState)
 					.map(PlacementEmissionState::placementState)
@@ -2404,11 +2420,20 @@ public final class NeutralPlacementGraphBuilder {
 				continue;
 			exclusions.removeIf(exclusion -> exclusion.state().equals(cpFout));
 			List<PlacementState> legal = new ArrayList<>(node.legalAlternatives());
-			legal.add(cpFout);
+			if(legal.stream().noneMatch(cpFout::equals))
+				legal.add(cpFout);
+			PlacementState derivedFout = exactNativeFedLout.isEmpty() ? null
+				: new PlacementState(ExecType.FED, FederatedOutput.FOUT,
+					materializationFType, shapeDependencies.iterator().next());
+			if(derivedFout != null && legal.stream().noneMatch(derivedFout::equals))
+				legal.add(derivedFout);
 			Node closedNode = new Node(node.key(), node.kind(), node.valueVersion(), true,
 				legal, exclusions, node.anchors());
-			PlacementState exactState = closedNode.legalAlternatives().stream()
+			PlacementState exactCpFout = closedNode.legalAlternatives().stream()
 				.filter(cpFout::equals).findFirst().orElseThrow();
+			PlacementState exactDerivedFout = derivedFout == null ? null
+				: closedNode.legalAlternatives().stream()
+					.filter(derivedFout::equals).findFirst().orElseThrow();
 			closedNodes.set(nodeIndex, closedNode);
 			for(Map.Entry<Integer,DurableAnchorKey> entry : exactAnchors.entrySet()) {
 				if(!entry.getValue().equals(nodeAnchors.iterator().next()))
@@ -2416,8 +2441,14 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateRuleFact fact = closedFacts.get(entry.getKey());
 				List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts());
 				if(emissions.stream().noneMatch(emission ->
-					emission.emissionState().placementState().equals(exactState)))
-					emissions.add(candidateEmissionFact(exactState, false, null));
+					emission.emissionState().placementState().equals(exactCpFout)))
+					emissions.add(candidateEmissionFact(exactCpFout, false, null));
+				CandidateEmissionFact nativeFedLout = exactNativeFedLout.get(entry.getKey());
+				if(nativeFedLout != null && exactDerivedFout != null
+					&& emissions.stream().noneMatch(emission ->
+					emission.emissionState().placementState().equals(exactDerivedFout)))
+					emissions.add(candidateEmissionFact(exactDerivedFout, true,
+						nativeFedLout.executionFType()));
 				closedFacts.set(entry.getKey(), new CandidateRuleFact(fact.key(), fact.status(),
 					fact.capability(), fact.shapeProof(), fact.profile(), emissions, fact.failureCode()));
 			}

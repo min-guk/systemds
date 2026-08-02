@@ -1,8 +1,101 @@
 # Session issues — 2026-08-02
 
+## MinST LM 1-worker에서 worker-pool closure가 derived FED/FOUT을 누락
+
+- **상태**: 진행중 — 구조 수정·RED/GREEN 회귀·package 완료, 새 immutable Docker canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 실패 binary commit/JAR:
+    `005c16e54341734ee6cfffffcdf5912d7020bd97` /
+    `54a82575b5611b469048999cfeaa61f912f81306a045f88544e9a548a39da5a6`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-minst-pca-upload-state-005c16e-d60da24-20260802-v1`
+  - 실패 cell: `workers=1|planner=MinST|workload=lm|profile=lan`, Docker-only
+    `run_LAN_docker.sh`, private-aggregate, seed `2026072701`, attempt `1`, retry 없음.
+- **재현 절차**:
+  - 위 campaign의 실패 response에 봉인된 stage-local `run_LAN_docker.sh` argv를 실행한다.
+  - 소스 회귀:
+    `mvn -q -DskipTests=false`
+    `-Dtest=CampaignBR10MinStFTypeMembershipAuthorityRedTest#lmCgDerivedWorkerPoolClosesFedLoutToDerivedFedFout test`.
+  - 정확한 fixture는 1-worker federated `50000 x 2100` X와 `50000 x 1` Y에
+    `lm(X=X,y=Y,verbose=FALSE,tol=1e-9)`를 컴파일하고 builtin `lmCG.dml`의 `AggBinaryOp ba(+*) q`
+    decision을 검사한다.
+- **관측 증상**:
+  - planner는 실행 전 `MINST_EXACT_SELECTED_STATE_NOT_LEGAL`로 fail-closed했다.
+  - 선택 상태는 builtin `lmCG.dml`의 `q`에 대한 `exec=FED|output=FOUT`이었다.
+  - 정확한 1-worker production shape에서 수정 전 legal membership은
+    `CP/FOUT/BROADCAST`, `CP/LOUT`, `FED/LOUT/FULL`뿐이었다. 두 MinST component bit는 각각
+    노출되어 Dinic이 `FED/FOUT` 조합을 선택할 수 있었지만 그 조합을 대표하는 exact candidate는 없었다.
+  - 실패 response SHA-256은
+    `489a9832d52776c4e535fd2f9fa8fa2113936d3819ec30632476a3f5fcf6dc0e`, raw coordinator
+    SHA-256은 `85c05f0a1bd29096665eac8b85235586ffaba457d640333714940a18e6eb45eb`다.
+  - campaign은 신규 PCA 2셀 성공 뒤 이 LM 실패 1회에서 봉인했다. `CAMPAIGN_FAILED.json` SHA-256은
+    `df8023ff1b8b08c7eed54595fd4e3956ad092e3a54740010aec4697cd802d293`, teardown은 zero resources이며
+    같은 binary로 재시도하지 않는다.
+- **원인 분석**:
+  1. 최초 candidate pass에서는 해당 `q`가 직접 FederationMap anchor를 소유하지 않아 direct FOUT
+     후보를 만들지 못한다.
+  2. `closeDerivedWorkerPoolMaterializationCandidates`는 exact predecessor chain에서 하나의 durable
+     worker pool을 재귀적으로 증명한 뒤 local computation + upload인 `CP/FOUT`만 뒤늦게 추가했다.
+  3. 같은 exact worker pool에서 native `FED/LOUT/FULL`로 계산한 뒤 `LOUT→FOUT`으로 재배치하는
+     합법 경로는 추가하지 않았다. 따라서 legal membership이 MinST의 compute/output 두 bit에 대해
+     닫혀 있지 않았고, cut은 표현 가능하지만 candidate authority가 없는 corner를 선택했다.
+  4. selector의 fail-closed 검사는 정상적으로 이 불일치를 차단했다. selector 검사를 완화하거나
+     runtime fallback을 넣는 것은 원인이 아니라 증상을 숨기므로 적용하지 않았다.
+- **해결 요약**:
+  - 기존 closure gate를 유지해, direct `CP/FOUT`이 없고 recompile/transient global legality를 통과하며
+    모든 exact candidate가 동일한 하나의 durable anchor로 수렴하는 노드만 다룬다.
+  - 각 exact candidate에서 native `FED/LOUT` emission이 정확히 하나이고 execution FType이 증명된
+    경우, 기존 `CP/FOUT`과 함께 동일 materialization FType의 `FED/FOUT` candidate를 추가한다.
+  - 새 `FED/FOUT` emission은 `derivedFedFout=true`와 원래 native `FED/LOUT`의 `executionFType`을 보존해
+    `FED→LOUT→FOUT` 경로와 비용을 planner가 명시적으로 모델링한다.
+  - native `FED/LOUT` authority가 없거나 여러 개로 모호하면 새 상태를 발명하지 않고 기존처럼
+    fail-closed한다. candidate를 닫는 opcode 가드, runtime fallback/repair, TRead/TWrite 완화,
+    recompile `<CP,FOUT>` 허용은 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR10MinStFTypeMembershipAuthorityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-02.md`
+- **검증**:
+  - clean baseline `005c16e`의 격리된 실제 target build에서 새 production-shape 회귀가 정확히 RED:
+    `/tmp/g007-minst-lm-derived-fout-red-005c16e-20260802.log`, SHA-256
+    `34f7a11536a12c64793fe1d96c8895098923c14989090eb25a7e2757530a74c9`.
+  - 수정 후 exact LM 회귀와 전체 `CampaignBR10MinStFTypeMembershipAuthorityRedTest`가 GREEN이다.
+  - exact solver/selector, placement emission, PCA authority를 포함한 집중 묶음이 GREEN:
+    `/tmp/g007-minst-lm-derived-fout-focused-green-20260802.log`, SHA-256
+    `57a3966d0d23c2cc6f0852f670eddc5dd24093e60ad1f47f7a22ba28c712f4f2`.
+  - broader impacted suite의 남은 세 실패는 clean baseline에서도 동일함을 별도 확인했다:
+    `/tmp/g007-minst-lm-baseline-known-failures-005c16e-20260802.log`, SHA-256
+    `508b2e1e6dc3840fbd12e7452b9cb8b594db8e0334cc31835bd4d14abf8a886c`.
+    하나는 기존 upload-relocation assertion이고 두 개는 의도적 BG014 RED/mutation fixture다.
+  - checkstyle/RAT 포함 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-minst-lm-derived-fout-package-20260802.log`, SHA-256
+    `1c79f730db8d289be1a2c4a11a1942890b424d6d407df7232062bf491af40c4e`.
+- **잔여 이슈**:
+  - 수정 commit/JAR을 새 immutable stage로 봉인하고 동일 실패 LM 셀을 새 root에서 attempt `1`,
+    retry 없음으로 Docker canary 실행한다.
+  - canary 성공 시에만 이전 exact 성공 258셀과 새 canary를 합쳐 중복 0의 259셀 registry를 만들고,
+    남은 MinST 77셀만 새 continuation root에서 실행한다.
+  - 새 구조 실패가 발생하면 해당 campaign을 다시 봉인하고 동일 binary 재시도 없이 RED→GREEN으로
+    수정한다. 전 셀 성공 후 exact 336-cell 및 execution-time 정렬/그래프를 감사한다.
+- **잠재 회귀 위험**:
+  - 한 candidate에 서로 다른 native `FED/LOUT` FType이 동시에 합법이면 어느 execution FType을 derived
+    FOUT에 부여할지 모호하다. 감지 방법: `nativeFedLout.size() == 1`일 때만 추가하고 나머지는
+    membership validation에서 fail-closed한다.
+  - 미래에 compute/output 두 bit가 또 다른 합법 corner를 누락하면 cut이 exact membership 밖을 선택할
+    수 있다. 감지 방법: selector의 `MINST_EXACT_SELECTED_STATE_NOT_LEGAL` 검사를 유지하고,
+    production-shape membership 회귀를 추가한다. selector 검사를 완화하지 않는다.
+  - closure 범위를 넓히면 direct FOUT을 이미 가진 노드의 후보/비용이 바뀔 수 있다. 감지 방법: 기존
+    `CP/FOUT`-absent gate와 recompile/transient gate를 유지하고 집중 selector/PCA 회귀를 함께 실행한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 지원하는 `FED→LOUT→FOUT` 경로를 planner의 exact candidate/비용 상태로 명시했다.
+    합법 후보를 닫거나 runtime에서 보정하지 않았고, 선택 전에 실행 가능성과 anchor authority를
+    증명한다는 최상위 원칙을 적용했다.
+
 ## MinST PCA의 derived FED/FOUT을 upload authority로 재사용하지 못함
 
-- **상태**: 진행중 — 구조 수정·회귀·package 완료, 새 immutable Docker canary 대기
+- **상태**: 해결 — 구조 수정·회귀·package·동일 실패 셀 Docker canary 완료,
+  이후 no-duplicate MinST continuation에서 PCA WAN 2셀 추가 성공
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 binary commit: `0cbd0a913a846c52fe76487bd1cdc2872d5f07af`
@@ -88,11 +181,15 @@
     `/tmp/g007-minst-pca-final-package-20260802.log`, SHA-256
     `f388f7242112852a1d90145fac752b3c315876f2fb1263156a89197ee4db0004`.
 - **잔여 이슈**:
-  - 수정 commit과 JAR을 새 immutable stage로 봉인하고, 실패했던 1-worker MinST PCA를 새 root에서
-    attempt `1`, retry 없음으로 Docker canary 실행한다.
-  - canary가 성공한 경우에만 기존 exact 성공 255셀과 합쳐 중복 없는 registry를 만들고 남은 MinST
-    80셀만 실행한다. 성공 셀은 재실행하지 않는다.
-  - 이후 exact 336 unique-cell, semantic/fallback/restart/teardown, execution-time 정렬과 그래프를 감사한다.
+  - PCA fix commit `005c16e54341734ee6cfffffcdf5912d7020bd97`의 동일 실패 셀 Docker canary는
+    attempt `1`, retry 없음으로 성공했다. canary root는
+    `/home/mchoi/g007-minst-pca-upload-state-canary-005c16e-d60da24-20260802-v1`, response SHA-256은
+    `c09490109bedcc27da419908486d1ff580735d2e5f356ad55cb060292d652565`, execution은
+    `194.197030914s`, full lifecycle은 `214.821493895s`다. semantic oracle/scan/restart/teardown을 모두 통과했다.
+  - 이후 no-duplicate continuation에서 동일 binary의 1-worker PCA `wan_light`와 `wan_mid`도 각각
+    `195.060929483s`, `202.334250429s`로 성공했다. PCA 관련 잔여 실패는 없다.
+  - 전체 campaign의 잔여 작업은 뒤이어 발견된 MinST LM 구조 실패를 해결한 뒤 exact 336 unique-cell,
+    semantic/fallback/restart/teardown, execution-time 정렬과 그래프를 감사하는 것이다.
 - **잠재 회귀 위험**:
   - 동일 compute/placement membership 안에 서로 다른 FType 재사용 가능성이 섞이면 현재 2-bit cut으로
     표현할 수 없다. 감지 방법: `MINST_UPLOAD_REUSE_PREDICATE_NOT_CUT_REPRESENTABLE`로 fail-closed하고,
