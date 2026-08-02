@@ -32,7 +32,8 @@ public final class MinStExactSelector {
 	/**
 	 * Exhaustive enumeration is retained only for bounded complete tie certificates.
 	 * The production objective is always the same directed min-cut; larger certificate
-	 * spaces use Push-Relabel and publish the inclusion-minimal/maximal exact minima.
+	 * spaces use a polynomial max-flow solver and publish the inclusion-minimal/maximal
+	 * exact minima.
 	 */
 	private static final long MAX_EXHAUSTIVE_CERTIFICATE_PARTITIONS = 1_048_576L;
 
@@ -65,7 +66,7 @@ public final class MinStExactSelector {
 	/**
 	 * The intersection of all minimum s-t source partitions is the unique
 	 * inclusion-minimal minimum cut. This is exactly the residual source-reachable
-	 * partition returned by the legacy Push-Relabel MinST implementation. The
+	 * partition returned by the polynomial MinST implementation. The
 	 * polynomial solver publishes the minimum/maximum extrema, so the same
 	 * intersection rule applies to both solver paths without changing the objective.
 	 */
@@ -91,7 +92,7 @@ public final class MinStExactSelector {
 		long fout = selected.selectedStatesInScopeOrder().stream()
 			.filter(state -> state.output() == FederatedOutput.FOUT).count();
 		FederatedPlannerTrace.logGlobal("MinST-ExactCut", "solver="
-			+ (polynomial ? "PUSH_RELABEL" : "BOUNDED_ENUMERATION")
+			+ (polynomial ? "DINIC" : "BOUNDED_ENUMERATION")
 			+ ", objective=" + Double.longBitsToDouble(objectiveBits)
 			+ ", decisions=" + facts.decisionFactsInScopeOrder().size()
 			+ ", selectedFed=" + fed + ", selectedFout=" + fout
@@ -258,9 +259,7 @@ public final class MinStExactSelector {
 			boolean auxSource = source.contains(group.auxiliaryNodeId());
 			boolean producerPlacementSource = source.contains(group.producerPlacementNodeId());
 			boolean compatibleProducerSource = group.direction() == Direction.UPLOAD
-				&& producerPlacementSource
-				&& MinStExactCostFactsProducer.uploadPriceTargetsProducerPlacement(
-					facts.analysis(), group);
+				&& MinStExactCostFactsProducer.isUploadReuseSelected(group, source);
 			if(group.direction() == Direction.UPLOAD && auxSource && !compatibleProducerSource)
 				addGroupReceipts(receipts, facts, group, selectedStates);
 			if(group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource)

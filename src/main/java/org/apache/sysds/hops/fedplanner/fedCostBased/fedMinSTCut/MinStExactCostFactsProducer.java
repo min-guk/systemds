@@ -45,6 +45,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ValidationException;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ValidationReason;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -1661,8 +1662,15 @@ public final class MinStExactCostFactsProducer {
 				}
 				price = requireCost(price, "MINST_GROUP_PRICE_UNPROVEN");
 				long aux = nextAux--;
+				UploadPriceTarget uploadPriceTarget = entry.getKey().direction == Direction.UPLOAD
+					? exactUploadPriceTarget(analysis, producerDecision, representatives,
+						entry.getKey().boundaryMode, entry.getKey().type, endpoints)
+					: UploadPriceTarget.NOT_APPLICABLE;
+				if(uploadPriceTarget == UploadPriceTarget.PRODUCER_FED_FOUT)
+					nextAux--;
 				AuxiliaryGroupFact group = new AuxiliaryGroupFact(aux, entry.getKey().direction,
-					entry.getKey().boundaryMode, producerKey, producerDecision.placementNodeId(), entry.getKey().type,
+					entry.getKey().boundaryMode, producerKey, producerDecision.computeNodeId(),
+					producerDecision.placementNodeId(), uploadPriceTarget, entry.getKey().type,
 					bits(price), endpoints);
 				result.add(group);
 				addGroupEdges(analysis, group, edges);
@@ -2136,8 +2144,7 @@ public final class MinStExactCostFactsProducer {
 				.thenComparing(endpoint -> endpoint.consumerKey().normalizedSignature()))
 			.orElseThrow();
 		if(group.direction() == Direction.UPLOAD)
-			edges.add(group.auxiliaryNodeId(), uploadPriceTargetsProducerPlacement(analysis, group)
-				? group.producerPlacementNodeId() : SINK,
+			edges.add(group.auxiliaryNodeId(), uploadPriceTargetNodeId(group),
 				Double.longBitsToDouble(group.priceBits()), ContributionKind.PRICE_UPLOAD_OR,
 				group.producerKey(), priceOwner.consumerKey(), priceOwner.inputPosition(),
 				"upload-or-price-max");
@@ -2146,18 +2153,102 @@ public final class MinStExactCostFactsProducer {
 				Double.longBitsToDouble(group.priceBits()), ContributionKind.PRICE_DOWNLOAD_OR,
 				group.producerKey(), priceOwner.consumerKey(), priceOwner.inputPosition(),
 				"download-or-price-max");
-	}
-
-	static boolean uploadPriceTargetsProducerPlacement(PlacementAnalysis analysis,
-		AuxiliaryGroupFact group) {
-		if(group.direction() != Direction.UPLOAD)
-			throw new IllegalArgumentException("MINST_UPLOAD_PRICE_DIRECTION_MISMATCH");
-		return group.boundaryMode() == BoundaryMode.TWRITE_METADATA
-			|| hasExactCompatibleDurableSource(analysis, group);
+		if(group.direction() == Direction.UPLOAD
+			&& group.uploadPriceTarget() == UploadPriceTarget.PRODUCER_FED_FOUT) {
+			long conjunction = uploadConjunctionNodeId(group);
+			edges.add(conjunction, group.producerComputeNodeId(), HARD_LEGALITY,
+				ContributionKind.HARD_UPLOAD_REUSE, group.producerKey(),
+				priceOwner.consumerKey(), priceOwner.inputPosition(), "upload-reuse-requires-fed-exec");
+			edges.add(conjunction, group.producerPlacementNodeId(), HARD_LEGALITY,
+				ContributionKind.HARD_UPLOAD_REUSE, group.producerKey(),
+				priceOwner.consumerKey(), priceOwner.inputPosition(), "upload-reuse-requires-fout");
+		}
 	}
 
 	static boolean hasExactCompatibleDurableSource(PlacementAnalysis analysis, AuxiliaryGroupFact group) {
-		NeutralPlacementGraph.Node producer = analysis.graph().node(group.producerKey()).orElseThrow();
+		return exactUploadAnchorCompatibility(analysis, group.producerKey(), group.conversionType(),
+			group.endpointsInCanonicalOrder()) == ExactAnchorCompatibility.COMPATIBLE;
+	}
+
+	private enum ExactAnchorCompatibility { UNCONSTRAINED, COMPATIBLE, INCOMPATIBLE }
+
+	private static UploadPriceTarget exactUploadPriceTarget(PlacementAnalysis analysis,
+		DecisionFact producerDecision, List<MembershipRepresentative> representatives,
+		BoundaryMode boundaryMode, FType conversionType, List<EndpointFact> endpoints) {
+		ExactAnchorCompatibility anchorCompatibility = boundaryMode == BoundaryMode.TWRITE_METADATA
+			? ExactAnchorCompatibility.UNCONSTRAINED
+			: exactUploadAnchorCompatibility(analysis, producerDecision.key(), conversionType, endpoints);
+		List<MembershipRepresentative> producerRepresentatives = representatives.stream()
+			.filter(representative -> representative.decisionKey() == producerDecision.key()).toList();
+		if(producerRepresentatives.isEmpty())
+			throw new IllegalArgumentException("MINST_UPLOAD_REUSE_MEMBERSHIP_MISSING|producer="
+				+ producerDecision.key().normalizedSignature());
+		List<Boolean> compatible = producerRepresentatives.stream().map(representative ->
+			representative.output() == FederatedOutput.FOUT
+				&& representative.state().fType() == conversionType
+				&& anchorCompatibility != ExactAnchorCompatibility.INCOMPATIBLE).toList();
+		if(compatible.stream().noneMatch(Boolean::booleanValue))
+			return UploadPriceTarget.SINK;
+		boolean matchesPlacement = true;
+		boolean matchesCompute = true;
+		boolean matchesFedFout = true;
+		for(int index = 0; index < producerRepresentatives.size(); index++) {
+			MembershipRepresentative representative = producerRepresentatives.get(index);
+			boolean reusable = compatible.get(index);
+			matchesPlacement &= reusable == (representative.output() == FederatedOutput.FOUT);
+			matchesCompute &= reusable == (representative.execType() == ExecType.FED);
+			matchesFedFout &= reusable == (representative.execType() == ExecType.FED
+				&& representative.output() == FederatedOutput.FOUT);
+		}
+		if(matchesPlacement)
+			return UploadPriceTarget.PRODUCER_PLACEMENT;
+		if(matchesCompute)
+			return UploadPriceTarget.PRODUCER_COMPUTE;
+		if(matchesFedFout)
+			return UploadPriceTarget.PRODUCER_FED_FOUT;
+		throw new IllegalArgumentException("MINST_UPLOAD_REUSE_PREDICATE_NOT_CUT_REPRESENTABLE|producer="
+			+ producerDecision.key().normalizedSignature() + "|type=" + conversionType
+			+ "|anchor=" + anchorCompatibility + "|memberships=" + producerRepresentatives.stream()
+				.map(representative -> representative.state().normalizedSignature()).toList()
+			+ "|compatible=" + compatible);
+	}
+
+	private static long uploadPriceTargetNodeId(AuxiliaryGroupFact group) {
+		if(group.direction() != Direction.UPLOAD)
+			throw new IllegalArgumentException("MINST_UPLOAD_PRICE_DIRECTION_MISMATCH");
+		return switch(group.uploadPriceTarget()) {
+			case SINK -> SINK;
+			case PRODUCER_COMPUTE -> group.producerComputeNodeId();
+			case PRODUCER_PLACEMENT -> group.producerPlacementNodeId();
+			case PRODUCER_FED_FOUT -> uploadConjunctionNodeId(group);
+			case NOT_APPLICABLE -> throw new IllegalArgumentException(
+				"MINST_UPLOAD_PRICE_TARGET_NOT_APPLICABLE");
+		};
+	}
+
+	private static long uploadConjunctionNodeId(AuxiliaryGroupFact group) {
+		return group.auxiliaryNodeId() - 1L;
+	}
+
+	static boolean isUploadReuseSelected(AuxiliaryGroupFact group, Set<Long> sourceNodeIds) {
+		Objects.requireNonNull(sourceNodeIds, "sourceNodeIds");
+		if(group.direction() != Direction.UPLOAD)
+			throw new IllegalArgumentException("MINST_UPLOAD_REUSE_DIRECTION_MISMATCH");
+		return switch(group.uploadPriceTarget()) {
+			case SINK -> false;
+			case PRODUCER_COMPUTE -> sourceNodeIds.contains(group.producerComputeNodeId());
+			case PRODUCER_PLACEMENT -> sourceNodeIds.contains(group.producerPlacementNodeId());
+			case PRODUCER_FED_FOUT -> sourceNodeIds.contains(group.producerComputeNodeId())
+				&& sourceNodeIds.contains(group.producerPlacementNodeId());
+			case NOT_APPLICABLE -> throw new IllegalArgumentException(
+				"MINST_UPLOAD_PRICE_TARGET_NOT_APPLICABLE");
+		};
+	}
+
+	private static ExactAnchorCompatibility exactUploadAnchorCompatibility(PlacementAnalysis analysis,
+		CompiledHopKey producerKey, FType conversionType, List<EndpointFact> endpoints) {
+		NeutralPlacementGraph.Node producer = analysis.graph().node(producerKey).orElseThrow();
+		Set<DurableAnchorKey> available = new LinkedHashSet<>(producer.anchors());
 		// A formal function TRead is a transparent alias of its caller argument.  Shared
 		// preprocessing keeps that relation logical (there is intentionally no physical
 		// Hop child and no copied anchor on the formal node), while legacy MinST saw the
@@ -2165,19 +2256,20 @@ public final class MinStExactCostFactsProducer {
 		// addLogicalFunctionInputEdges has already made the caller FOUT a hard prerequisite;
 		// therefore the caller's exact durable layout is also the transfer authority for
 		// FED consumers of the formal alias.
-		boolean logicalFunctionSource = effectiveLogicalFunctionInputs(analysis).stream()
-			.filter(input -> input.targetRead() == group.producerKey())
+		List<DurableAnchorKey> logicalFunctionAnchors = effectiveLogicalFunctionInputs(analysis).stream()
+			.filter(input -> input.targetRead() == producerKey)
 			.map(input -> analysis.graph().node(input.authority().sourceArgument()).orElseThrow())
-			.anyMatch(source -> source.anchors().stream()
-				.anyMatch(anchor -> anchor.fType() == group.conversionType()));
-		if(logicalFunctionSource)
-			return true;
+			.flatMap(source -> source.anchors().stream())
+			.filter(anchor -> anchor.fType() == conversionType).toList();
+		if(!logicalFunctionAnchors.isEmpty())
+			return ExactAnchorCompatibility.COMPATIBLE;
+		List<Set<DurableAnchorKey>> endpointRequirements = new ArrayList<>();
 		Set<DurableAnchorKey> required = new LinkedHashSet<>();
-		for(EndpointFact endpoint : group.endpointsInCanonicalOrder()) {
+		for(EndpointFact endpoint : endpoints) {
 			Set<DurableAnchorKey> endpointAnchors = new LinkedHashSet<>();
 			for(NeutralPlacementGraph.RelocationAction action : analysis.graph().relocationActions())
 				if(action.key().sourceValueVersion().equals(producer.valueVersion())
-					&& action.key().materializationFType() == group.conversionType()
+					&& action.key().materializationFType() == conversionType
 					&& action.obligations().stream().anyMatch(obligation ->
 						obligation.consumer() == endpoint.consumerKey()
 							&& obligation.inputPosition() == endpoint.inputPosition()))
@@ -2189,21 +2281,25 @@ public final class MinStExactCostFactsProducer {
 						continue;
 					NeutralPlacementGraph.Node siblingNode = analysis.graph().node(sibling.producer()).orElseThrow();
 					siblingNode.anchors().stream()
-						.filter(anchor -> anchor.fType() == group.conversionType())
+						.filter(anchor -> anchor.fType() == conversionType)
 						.forEach(endpointAnchors::add);
 					analysis.graph().relocationActions().stream()
 						.filter(action -> action.key().sourceValueVersion().equals(siblingNode.valueVersion())
-							&& action.key().materializationFType() == group.conversionType()
+							&& action.key().materializationFType() == conversionType
 							&& action.obligations().stream().anyMatch(obligation ->
 								obligation.consumer() == endpoint.consumerKey()
 									&& obligation.inputPosition() == sibling.inputPosition()))
 						.map(action -> action.key().durableAnchor()).forEach(endpointAnchors::add);
 				}
-			if(endpointAnchors.isEmpty())
-				return false;
+			endpointRequirements.add(Set.copyOf(endpointAnchors));
 			required.addAll(endpointAnchors);
 		}
-		return !required.isEmpty() && producer.anchors().containsAll(required);
+		if(endpointRequirements.stream().allMatch(Set::isEmpty))
+			return ExactAnchorCompatibility.UNCONSTRAINED;
+		if(endpointRequirements.stream().anyMatch(Set::isEmpty))
+			return ExactAnchorCompatibility.INCOMPATIBLE;
+		return available.containsAll(required) ? ExactAnchorCompatibility.COMPATIBLE
+			: ExactAnchorCompatibility.INCOMPATIBLE;
 	}
 
 	private static List<ObligationFact> deriveObligations(PlacementAnalysis analysis,
@@ -2764,7 +2860,9 @@ public final class MinStExactCostFactsProducer {
 			if(left.auxiliaryNodeId() != right.auxiliaryNodeId()
 				|| left.boundaryMode() != right.boundaryMode()
 				|| left.producerKey() != right.producerKey()
+				|| left.producerComputeNodeId() != right.producerComputeNodeId()
 				|| left.producerPlacementNodeId() != right.producerPlacementNodeId()
+				|| left.uploadPriceTarget() != right.uploadPriceTarget()
 				|| left.conversionType() != right.conversionType()
 				|| !sameEndpoints(left.endpointsInCanonicalOrder(), right.endpointsInCanonicalOrder()))
 				fail(ValidationReason.OR_GROUP_ENDPOINT_MISMATCH, "Auxiliary group endpoints differ");
@@ -3057,7 +3155,9 @@ public final class MinStExactCostFactsProducer {
 			normalized.append("|G:").append(group.auxiliaryNodeId()).append(':')
 				.append(group.direction()).append(':').append(group.boundaryMode()).append(':')
 				.append(group.producerKey().normalizedSignature())
+				.append(':').append(group.producerComputeNodeId())
 				.append(':').append(group.producerPlacementNodeId()).append(':')
+				.append(group.uploadPriceTarget()).append(':')
 				.append(group.conversionType()).append(':').append(group.priceBits());
 			for(EndpointFact endpoint : group.endpointsInCanonicalOrder())
 				normalized.append(':').append(endpoint.producerKey().normalizedSignature()).append(':')

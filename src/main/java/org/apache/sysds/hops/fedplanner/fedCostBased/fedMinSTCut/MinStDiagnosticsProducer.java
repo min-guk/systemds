@@ -152,7 +152,8 @@ public final class MinStDiagnosticsProducer {
 
 	private static boolean isNetwork(ContributionKind kind) {
 		return kind == ContributionKind.UPLOAD || kind == ContributionKind.DOWNLOAD
-			|| kind == ContributionKind.HARD_UPLOAD_OR || kind == ContributionKind.HARD_DOWNLOAD_OR
+			|| kind == ContributionKind.HARD_UPLOAD_OR || kind == ContributionKind.HARD_UPLOAD_REUSE
+			|| kind == ContributionKind.HARD_DOWNLOAD_OR
 			|| kind == ContributionKind.PRICE_UPLOAD_OR || kind == ContributionKind.PRICE_DOWNLOAD_OR;
 	}
 

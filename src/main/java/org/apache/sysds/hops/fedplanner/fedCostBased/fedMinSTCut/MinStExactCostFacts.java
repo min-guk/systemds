@@ -31,6 +31,13 @@ public final class MinStExactCostFacts {
 		ANCHOR_TRANSFER,
 		TWRITE_METADATA
 	}
+	public enum UploadPriceTarget {
+		NOT_APPLICABLE,
+		SINK,
+		PRODUCER_COMPUTE,
+		PRODUCER_PLACEMENT,
+		PRODUCER_FED_FOUT
+	}
 	public enum MembershipAuthorityKind {
 		LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, RELOCATION_SOURCE
 	}
@@ -40,7 +47,7 @@ public final class MinStExactCostFacts {
 	}
 	public enum ContributionKind {
 		CP_UNARY, FED_UNARY, UPLOAD, DOWNLOAD, HARD_EXEC, HARD_OUTPUT,
-		HARD_UPLOAD_OR, HARD_DOWNLOAD_OR, PRICE_UPLOAD_OR, PRICE_DOWNLOAD_OR
+		HARD_UPLOAD_OR, HARD_UPLOAD_REUSE, HARD_DOWNLOAD_OR, PRICE_UPLOAD_OR, PRICE_DOWNLOAD_OR
 	}
 	public enum ValidationReason {
 		FOREIGN_OWNER,
@@ -288,31 +295,41 @@ public final class MinStExactCostFacts {
 		private final Direction direction;
 		private final BoundaryMode boundaryMode;
 		private final CompiledHopKey producerKey;
+		private final long producerComputeNodeId;
 		private final long producerPlacementNodeId;
+		private final UploadPriceTarget uploadPriceTarget;
 		private final FType conversionType;
 		private final long priceBits;
 		private final List<EndpointFact> endpoints;
 
 		AuxiliaryGroupFact(long auxiliaryNodeId, Direction direction, BoundaryMode boundaryMode,
-			CompiledHopKey producerKey, long producerPlacementNodeId, FType conversionType,
-			long priceBits, List<EndpointFact> endpointsInCanonicalOrder) {
+			CompiledHopKey producerKey, long producerComputeNodeId, long producerPlacementNodeId,
+			UploadPriceTarget uploadPriceTarget, FType conversionType, long priceBits,
+			List<EndpointFact> endpointsInCanonicalOrder) {
 			this.auxiliaryNodeId = auxiliaryNodeId;
 			this.direction = Objects.requireNonNull(direction, "direction");
 			this.boundaryMode = Objects.requireNonNull(boundaryMode, "boundaryMode");
 			this.producerKey = Objects.requireNonNull(producerKey, "producerKey");
+			this.producerComputeNodeId = producerComputeNodeId;
 			this.producerPlacementNodeId = producerPlacementNodeId;
+			this.uploadPriceTarget = Objects.requireNonNull(uploadPriceTarget, "uploadPriceTarget");
 			this.conversionType = Objects.requireNonNull(conversionType, "conversionType");
 			this.priceBits = priceBits;
 			this.endpoints = List.copyOf(endpointsInCanonicalOrder);
 			if(boundaryMode == BoundaryMode.TWRITE_METADATA && direction != Direction.UPLOAD)
 				throw new IllegalArgumentException("MINST_TWRITE_METADATA_DIRECTION_MISMATCH");
+			if(direction == Direction.UPLOAD && uploadPriceTarget == UploadPriceTarget.NOT_APPLICABLE
+				|| direction == Direction.DOWNLOAD && uploadPriceTarget != UploadPriceTarget.NOT_APPLICABLE)
+				throw new IllegalArgumentException("MINST_UPLOAD_PRICE_TARGET_DIRECTION_MISMATCH");
 		}
 
 		public long auxiliaryNodeId() { return auxiliaryNodeId; }
 		public Direction direction() { return direction; }
 		public BoundaryMode boundaryMode() { return boundaryMode; }
 		public CompiledHopKey producerKey() { return producerKey; }
+		public long producerComputeNodeId() { return producerComputeNodeId; }
 		public long producerPlacementNodeId() { return producerPlacementNodeId; }
+		public UploadPriceTarget uploadPriceTarget() { return uploadPriceTarget; }
 		public FType conversionType() { return conversionType; }
 		public long priceBits() { return priceBits; }
 		public List<EndpointFact> endpointsInCanonicalOrder() { return endpoints; }

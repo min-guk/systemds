@@ -277,8 +277,8 @@ public final class MinStExactPlacementProjector {
 		AuxiliaryGroupFact group) {
 		boolean auxSource = source.contains(group.auxiliaryNodeId());
 		boolean producerPlacementSource = source.contains(group.producerPlacementNodeId());
-		boolean compatibleProducerSource = producerPlacementSource
-			&& MinStExactCostFactsProducer.hasExactCompatibleDurableSource(facts.analysis(), group);
+		boolean compatibleProducerSource = group.direction() == Direction.UPLOAD
+			&& MinStExactCostFactsProducer.isUploadReuseSelected(group, source);
 		return group.direction() == Direction.UPLOAD && auxSource && !compatibleProducerSource
 			|| group.direction() == Direction.DOWNLOAD && producerPlacementSource && !auxSource;
 	}

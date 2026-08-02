@@ -7,7 +7,9 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -84,6 +86,43 @@ public class MinStExactCutSolverTest {
 		Assert.assertFalse(source.contains("Runtime"));
 		Assert.assertFalse(source.contains("MAX_STATES"));
 		Assert.assertFalse(source.contains("STATE_CAP"));
+	}
+
+	@Test
+	public void polynomialSolverMatchesExhaustiveExtremaIncludingConjunctionGadget() {
+		assertPolynomialMatchesExhaustive(List.of(0L), List.of(
+			edge(SOURCE, 0L, 10.0), edge(0L, SINK, 1.0)));
+		assertPolynomialMatchesExhaustive(List.of(0L), List.of(
+			edge(SOURCE, 0L, 1.0), edge(0L, SINK, 1.0)));
+		assertPolynomialMatchesExhaustive(List.of(0L, 1L, 2L, 3L, 4L), List.of(
+			edge(SOURCE, 4L, 20.0), edge(4L, 2L, 100.0), edge(2L, 3L, 7.0),
+			edge(3L, 0L, 100.0), edge(3L, 1L, 100.0),
+			edge(0L, SINK, 1.0), edge(1L, SINK, 1.0)));
+		assertPolynomialMatchesExhaustive(List.of(0L, 1L, 2L, 3L, 4L), List.of(
+			edge(SOURCE, 4L, 8.0), edge(4L, 2L, 100.0), edge(2L, 3L, 7.0),
+			edge(3L, 0L, 100.0), edge(3L, 1L, 100.0),
+			edge(0L, SINK, 5.0), edge(1L, SINK, 5.0)));
+	}
+
+	private static void assertPolynomialMatchesExhaustive(List<Long> freeNodes,
+		List<MinStExactCutSolver.Edge> edges) {
+		MinStExactCutSolver.Result exhaustive = MinStExactCutSolver.solve(SOURCE, SINK,
+			List.of(), freeNodes, edges);
+		MinStExactCutSolver.Result polynomial = MinStPolynomialCutSolver.solve(SOURCE, SINK, edges);
+		Set<Long> intersection = new LinkedHashSet<>(exhaustive.minima().get(0).sourceNodeIds());
+		Set<Long> union = new LinkedHashSet<>();
+		for(MinStExactCutSolver.Minimum minimum : exhaustive.minima()) {
+			intersection.retainAll(minimum.sourceNodeIds());
+			union.addAll(minimum.sourceNodeIds());
+		}
+		Set<List<Long>> expectedExtrema = new LinkedHashSet<>();
+		expectedExtrema.add(intersection.stream().sorted().toList());
+		expectedExtrema.add(union.stream().sorted().toList());
+		Set<List<Long>> actualExtrema = new LinkedHashSet<>(polynomial.minima().stream()
+			.map(MinStExactCutSolver.Minimum::sourceNodeIds).toList());
+
+		Assert.assertEquals(exhaustive.objectiveBits(), polynomial.objectiveBits());
+		Assert.assertEquals(expectedExtrema, actualExtrema);
 	}
 
 	private static MinStExactCutSolver.Decision decision(MinStExactCutSolver.Choice... choices) {

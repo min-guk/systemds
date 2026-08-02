@@ -1,5 +1,113 @@
 # Session issues — 2026-08-02
 
+## MinST PCA의 derived FED/FOUT을 upload authority로 재사용하지 못함
+
+- **상태**: 진행중 — 구조 수정·회귀·package 완료, 새 immutable Docker canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 실패 binary commit: `0cbd0a913a846c52fe76487bd1cdc2872d5f07af`
+  - 실패 stage:
+    `/home/mchoi/g007-minst-pca-authority-stage-0cbd0a9-20260802-v2/g007-stage-8533e472199951ff3fe7fed25a4ecd7b8a2dfa03b5eb7c9a6ccac21ecd21ee69`
+  - 실패 canary:
+    `/home/mchoi/g007-minst-pca-authority-canary-0cbd0a9-d60da24-20260802-v1`
+  - cell: `workers=1|planner=MinST|workload=pca|profile=lan`, Docker-only
+    `run_LAN_docker.sh`, private-aggregate, seed `2026072701`, attempt `1`, retry 없음.
+- **재현 절차**:
+  - 위 canary의 `request.json`에 봉인된 stage-local `run_LAN_docker.sh` argv를 실행한다.
+  - 소스 회귀:
+    `mvn -q -DskipRat -Dcheckstyle.skip -Dspotless.check.skip=true`
+    `-Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStPcaAuthorityClosureAndTWriteMetadataTest test`.
+  - 정확한 harness shape는 1-worker federated `50000 x 2100` 입력에
+    `[Xout,Mout]=pca(X=X,K=10); write(Mout,...)`이다.
+- **관측 증상**:
+  - Docker planner가 실행 전에
+    `MINST_EXACT_OBLIGATION_AUTHORITY_MISSING`으로 fail-closed했다.
+  - 실패 edge는 builtin PCA의 `AggUnaryOp:ua(meanC):Centering` →
+    `ParameterizedBuiltinOp:REPLACE:Centering`, input `0`이다.
+  - 선택 상태는 producer `FED/FOUT/FULL`, consumer `FED/FOUT/FULL`인데도
+    upload authority `available=[]`로 판정됐다.
+  - 실패 response SHA-256은
+    `b209ca2933b76c466d7bed3560376944f9e47e4691b6326377446236537f986c`,
+    raw coordinator SHA-256은
+    `728a7e47e238bca1c00b8ac1a9331a2372c07af69ba69d616b3de081503941c`다.
+  - campaign은 실패 1회에서 봉인했고 같은 binary로 재시도하지 않았다. teardown 뒤 해당 canary의
+    Docker container/network는 0/0이었다.
+- **원인 분석**:
+  1. producer의 exact membership은
+     `CP/FOUT/BROADCAST`, `CP/LOUT`, `FED/FOUT/FULL`이었다.
+  2. 기존 upload OR 가격 edge는 producer에 exact durable anchor가 있을 때만 placement bit로 연결하고,
+     그 외에는 sink로 연결했다.
+  3. 이 모델은 derived `FED/FOUT/FULL`과 `CP/FOUT/BROADCAST`를 placement bit 하나로 구분할 수 없다.
+     따라서 실제 FED 연산이 만든 정확한 FULL FOUT도 항상 새 upload가 필요한 것으로 비용화되었고,
+     selector/projector가 존재하지 않는 relocation authority를 요구했다.
+  4. 단순히 anchor gate를 완화하면 `CP/FOUT/BROADCAST`까지 동일한 FULL FOUT으로 오인하므로,
+     문제는 후보 gate가 아니라 cut state 표현 부족이었다.
+- **해결 요약**:
+  - 각 upload group이 exact reusable producer membership의 불리언 predicate를 derivation 시점에 분류한다:
+    `SINK`, producer compute, producer placement, 또는 exact `FED && FOUT`.
+  - exact `FED && FOUT`은 별도 conjunction node와 두 hard implication edge로 그래프에 인코딩한다.
+    따라서 upload 비용은 오직 exact reusable membership이 선택된 경우에만 제거된다.
+  - selector와 projector는 더 이상 placement bit + 사후 anchor 추론을 사용하지 않고, group에 봉인된
+    exact price target과 선택된 source partition으로 동일한 receipt 의미를 계산한다.
+  - endpoint에 별도 exact anchor 요구가 없더라도 captured-rule/input-authority가 증명한 derived FOUT은
+    재사용할 수 있다. 반대로 distinct anchor 요구가 있으면 기존처럼 incompatible로 fail-closed한다.
+  - 새 conjunction graph에서 JGraphT `PushRelabelMFImpl`이 KMeans production-shape 테스트에서
+    2분 이상 CPU를 소모하며 진행하지 않아, 동일 directed min-cut 목적함수와 residual extrema 규칙을
+    유지하는 `DinicMFImpl`로 polynomial solver 구현만 교체했다. exhaustive parity 회귀로 목적값과
+    inclusion-minimum/maximum cut 동등성을 고정했다.
+  - candidate-space를 닫는 opcode 가드, runtime fallback/repair, TRead/TWrite 완화,
+    recompile `<CP,FOUT>` 허용은 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFacts.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactSelector.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactPlacementProjector.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStDiagnosticsProducer.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStPolynomialCutSolver.java`
+  - 관련 exact facts/selector/PCA 회귀 테스트.
+- **검증**:
+  - 새 harness-shape 회귀는 수정 전 동일 authority-missing RED를 재현했다:
+    `/tmp/g007-minst-pca-red-detail-20260802.log`, SHA-256
+    `eb2b69d800d75b10a6100bf07889ec6f0a34e6beefbf2562bc4bdac5e27cf73e`.
+  - PCA + exact facts 회귀 GREEN:
+    `/tmp/g007-minst-pca-green-2-20260802.log`,
+    `/tmp/g007-minst-pca-facts-green-2-20260802.log`.
+  - 이전에 정지했던 KMeans production-shape 단일 테스트는 Dinic에서 `38.20s`, exit `0`:
+    `/tmp/g007-minst-dinic-kmeans-20260802.log`, SHA-256
+    `7b0ceda068b5acc08bb43f4aa2965b8b8bf0444db0b9e65df88382069f104a36`.
+  - exact solver/selector/PCA/facts/diagnostics 묶음 GREEN:
+    `/tmp/g007-minst-pca-final-focused-20260802.log`, SHA-256
+    `57a3966d0d23c2cc6f0852f670eddc5dd24093e60ad1f47f7a22ba28c712f4f2`.
+  - exhaustive와 Dinic의 unique/tie/conjunction 목적값 및 extrema parity GREEN:
+    `/tmp/g007-minst-dinic-parity-20260802.log`.
+  - broad selector 집합은 더 이상 정지하지 않고 `26.92s`에 종료했다. 현재 실패는 수정 전부터 알려진
+    stale assertion/unsafe fixture 집합이며 PCA·exact facts·selector에는 신규 error가 없다:
+    `/tmp/g007-minst-dinic-broad-20260802.log`. 기존 기준은
+    `/tmp/g007-minst-exact-broad-green-20260802.log`의 71 tests / 6 known failures / 0 errors다.
+  - checkstyle/RAT 포함 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-minst-pca-final-package-20260802.log`, SHA-256
+    `f388f7242112852a1d90145fac752b3c315876f2fb1263156a89197ee4db0004`.
+- **잔여 이슈**:
+  - 수정 commit과 JAR을 새 immutable stage로 봉인하고, 실패했던 1-worker MinST PCA를 새 root에서
+    attempt `1`, retry 없음으로 Docker canary 실행한다.
+  - canary가 성공한 경우에만 기존 exact 성공 255셀과 합쳐 중복 없는 registry를 만들고 남은 MinST
+    80셀만 실행한다. 성공 셀은 재실행하지 않는다.
+  - 이후 exact 336 unique-cell, semantic/fallback/restart/teardown, execution-time 정렬과 그래프를 감사한다.
+- **잠재 회귀 위험**:
+  - 동일 compute/placement membership 안에 서로 다른 FType 재사용 가능성이 섞이면 현재 2-bit cut으로
+    표현할 수 없다. 감지 방법: `MINST_UPLOAD_REUSE_PREDICATE_NOT_CUT_REPRESENTABLE`로 fail-closed하고,
+    해당 경우 state 표현을 확장하지 후보를 닫지 않는다.
+  - auxiliary/conjunction node가 많아져 max-flow 성능 또는 tie partition fingerprint가 달라질 수 있다.
+    감지 방법: exhaustive parity 회귀, production KMeans 시간 제한, exact selected state/receipt 비교를
+    유지한다. solver 이름 외에 목적함수·tie 규칙은 변경하지 않는다.
+  - endpoint anchor가 비어 있는 derived FOUT 재사용은 반드시 captured rule 또는 relocation/durable
+    membership authority가 먼저 증명되어야 한다. 감지 방법: membership representative 검증과 PCA
+    production-shape 회귀를 유지한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 실행 가능한 exact derived FED/FOUT을 planner 비용 그래프가 상태별로 표현하도록 수정했다.
+    runtime fallback을 추가하거나 합법 후보를 닫지 않았고, planning 단계에서 비용과 authority를 함께
+    증명한다는 최상위 원칙을 적용했다.
+
 ## Heuristic LM policy projection retained a direct-source placement removed from its selector graph
 
 - **상태**: 해결 — 구조 수정·소스 회귀·package·동일 실패 셀 Docker canary 완료,

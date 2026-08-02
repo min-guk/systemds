@@ -34,9 +34,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
@@ -66,7 +64,8 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 	private static final String[] EDGE_ACCESSORS = {
 		"fromNodeId", "toNodeId", "capacityBits", "contributionsInDerivationOrder"};
 	private static final String[] GROUP_ACCESSORS = {"auxiliaryNodeId", "direction", "boundaryMode", "producerKey",
-		"producerPlacementNodeId", "conversionType", "priceBits", "endpointsInCanonicalOrder"};
+		"producerComputeNodeId", "producerPlacementNodeId", "uploadPriceTarget", "conversionType", "priceBits",
+		"endpointsInCanonicalOrder"};
 
 	@Test
 	public void neutralAnalysisOwnsExactCompiledInputEdgeFactsOnly() throws Exception {
@@ -649,8 +648,7 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 					observedConsumers);
 				exactConsumerNodes = observedConsumers;
 				Assert.assertTrue("MINST_OR_PREAD_UNMATCHED_CONSUMERS", unmatchedKeys.isEmpty());
-				long expectedUploadPriceTarget = hasExactCompatibleDurableSourceForTest(owner, group)
-					? producerP : SINK;
+				long expectedUploadPriceTarget = uploadPriceTarget(group);
 				assertPriceContributions(edges, aux, expectedUploadPriceTarget, priceBits,
 					persistentReadKey, expectedConsumerKeys);
 			}
@@ -666,11 +664,18 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 					"MINST_OR_HARD_EDGE");
 			}
 			Assert.assertEquals("MINST_OR_MAX_PRICE", priceBits, Double.doubleToRawLongBits(max));
-			long expectedPriceTarget = direction.equals("UPLOAD")
-				? (hasExactCompatibleDurableSourceForTest(owner, group) ? producerP : SINK)
-				: aux;
+			long expectedPriceTarget = direction.equals("UPLOAD") ? uploadPriceTarget(group) : aux;
 			assertEdgeCapacity(edges, direction.equals("UPLOAD") ? aux : producerP,
 				expectedPriceTarget, priceBits, "MINST_OR_PRICE_EDGE");
+			if(direction.equals("UPLOAD") && call(group, "uploadPriceTarget").toString()
+				.equals("PRODUCER_FED_FOUT")) {
+				long conjunction = aux - 1L;
+				assertEdgeCapacity(edges, conjunction,
+					((Number)call(group, "producerComputeNodeId")).longValue(),
+					HARD_LEGALITY_BITS, "MINST_OR_FED_FOUT_REQUIRES_COMPUTE");
+				assertEdgeCapacity(edges, conjunction, producerP,
+					HARD_LEGALITY_BITS, "MINST_OR_FED_FOUT_REQUIRES_PLACEMENT");
+			}
 		}
 		Assert.assertTrue("MINST_OR_MULTI_ENDPOINT_FIXTURE_MISSING", hasMultiEndpointGroup);
 		Assert.assertEquals("MINST_OR_PREAD_FANOUT_GROUP_COUNT", 1, boundFanoutGroups);
@@ -678,44 +683,15 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		return boundFanoutIndex;
 	}
 
-	private static boolean hasExactCompatibleDurableSourceForTest(PlacementAnalysis owner,
-		Object group) throws Exception {
-		CompiledHopKey producerKey = (CompiledHopKey)call(group, "producerKey");
-		FType conversionType = (FType)call(group, "conversionType");
-		NeutralPlacementGraph.Node producer = owner.graph().node(producerKey).orElseThrow();
-		Set<DurableAnchorKey> required = new LinkedHashSet<>();
-		for(Object rawEndpoint : list(group, "endpointsInCanonicalOrder")) {
-			CompiledHopKey consumerKey = (CompiledHopKey)call(rawEndpoint, "consumerKey");
-			int inputPosition = ((Number)call(rawEndpoint, "inputPosition")).intValue();
-			Set<DurableAnchorKey> endpointAnchors = new LinkedHashSet<>();
-			for(NeutralPlacementGraph.RelocationAction action : owner.graph().relocationActions())
-				if(action.key().sourceValueVersion().equals(producer.valueVersion())
-					&& action.key().targetPlacement().fType() == conversionType
-					&& action.obligations().stream().anyMatch(obligation ->
-						obligation.consumer() == consumerKey
-							&& obligation.inputPosition() == inputPosition))
-					endpointAnchors.add(action.key().durableAnchor());
-			if(endpointAnchors.isEmpty())
-				for(CompiledInputEdgeFact sibling : owner.compiledInputEdgesInCanonicalOrder()) {
-					if(sibling.consumer() != consumerKey || sibling.inputPosition() == inputPosition)
-						continue;
-					NeutralPlacementGraph.Node siblingNode = owner.graph().node(sibling.producer()).orElseThrow();
-					siblingNode.anchors().stream()
-						.filter(anchor -> anchor.fType() == conversionType)
-						.forEach(endpointAnchors::add);
-					owner.graph().relocationActions().stream()
-						.filter(action -> action.key().sourceValueVersion().equals(siblingNode.valueVersion())
-							&& action.key().targetPlacement().fType() == conversionType
-							&& action.obligations().stream().anyMatch(obligation ->
-								obligation.consumer() == consumerKey
-									&& obligation.inputPosition() == sibling.inputPosition()))
-						.map(action -> action.key().durableAnchor()).forEach(endpointAnchors::add);
-				}
-			if(endpointAnchors.isEmpty())
-				return false;
-			required.addAll(endpointAnchors);
-		}
-		return !required.isEmpty() && producer.anchors().containsAll(required);
+	private static long uploadPriceTarget(Object group) throws Exception {
+		return switch(call(group, "uploadPriceTarget").toString()) {
+			case "SINK" -> SINK;
+			case "PRODUCER_COMPUTE" -> ((Number)call(group, "producerComputeNodeId")).longValue();
+			case "PRODUCER_PLACEMENT" -> ((Number)call(group, "producerPlacementNodeId")).longValue();
+			case "PRODUCER_FED_FOUT" -> ((Number)call(group, "auxiliaryNodeId")).longValue() - 1L;
+			default -> throw new AssertionError("MINST_UPLOAD_PRICE_TARGET_UNKNOWN|"
+				+ call(group, "uploadPriceTarget"));
+		};
 	}
 
 	private static int assertB22PreSolveLegality(PlacementAnalysis owner, List<?> decisions,
@@ -919,8 +895,29 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 			replacement = reversed(original);
 			Assert.assertNotEquals("MINST_OR_ENDPOINT_ORDER_UNCHANGED", original, replacement);
 		}
-		copy.set(index, rebuildCarrier(value, GROUP_ACCESSORS, component, replacement));
+		copy.set(index, component.equals("direction")
+			? rebuildGroupDirection(value, replacement)
+			: rebuildCarrier(value, GROUP_ACCESSORS, component, replacement));
 		return List.copyOf(copy);
+	}
+
+	private static Object rebuildGroupDirection(Object value, Object direction) throws Exception {
+		Constructor<?> constructor = soleNonPublicConstructor(value.getClass());
+		Object[] arguments = new Object[GROUP_ACCESSORS.length];
+		for(int index = 0; index < GROUP_ACCESSORS.length; index++) {
+			String accessor = GROUP_ACCESSORS[index];
+			if(accessor.equals("direction"))
+				arguments[index] = direction;
+			else if(accessor.equals("uploadPriceTarget")) {
+				Object current = call(value, accessor);
+				String required = direction.toString().equals("UPLOAD") ? "SINK" : "NOT_APPLICABLE";
+				arguments[index] = Arrays.stream(current.getClass().getEnumConstants())
+					.filter(candidate -> candidate.toString().equals(required)).findFirst().orElseThrow();
+			}
+			else
+				arguments[index] = call(value, accessor);
+		}
+		return constructor.newInstance(arguments);
 	}
 
 	private static Object rebuildCarrier(Object value, String[] accessors, String changed,

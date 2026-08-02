@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.jgrapht.Graph;
-import org.jgrapht.alg.flow.PushRelabelMFImpl;
+import org.jgrapht.alg.flow.DinicMFImpl;
 import org.jgrapht.graph.DefaultDirectedWeightedGraph;
 import org.jgrapht.graph.DefaultWeightedEdge;
 
@@ -22,7 +22,7 @@ final class MinStPolynomialCutSolver {
 	static MinStExactCutSolver.Result solve(long sourceNodeId, long sinkNodeId,
 		List<MinStExactCutSolver.Edge> edges) {
 		Graph<Long, DefaultWeightedEdge> forward = graph(sourceNodeId, sinkNodeId, edges, false);
-		PushRelabelMFImpl<Long, DefaultWeightedEdge> forwardSolver = new PushRelabelMFImpl<>(forward);
+		DinicMFImpl<Long, DefaultWeightedEdge> forwardSolver = new DinicMFImpl<>(forward);
 		forwardSolver.calculateMinCut(sourceNodeId, sinkNodeId);
 		List<Long> minimumSource = canonicalNonTerminalSource(forwardSolver.getSourcePartition(),
 			sourceNodeId, sinkNodeId);
@@ -31,7 +31,7 @@ final class MinStPolynomialCutSolver {
 		// reversed graph. The source-reachable cut is inclusion-minimal, so this
 		// complement gives the inclusion-maximal source side among all minima.
 		Graph<Long, DefaultWeightedEdge> reverse = graph(sourceNodeId, sinkNodeId, edges, true);
-		PushRelabelMFImpl<Long, DefaultWeightedEdge> reverseSolver = new PushRelabelMFImpl<>(reverse);
+		DinicMFImpl<Long, DefaultWeightedEdge> reverseSolver = new DinicMFImpl<>(reverse);
 		reverseSolver.calculateMinCut(sinkNodeId, sourceNodeId);
 		Set<Long> maximumSourceSet = new LinkedHashSet<>(forward.vertexSet());
 		maximumSourceSet.removeAll(reverseSolver.getSourcePartition());

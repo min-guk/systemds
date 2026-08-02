@@ -23,6 +23,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -79,10 +80,12 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 			FED_ROW, selected.get(CONSUMER));
 		Assert.assertFalse("P4_MINST_MUST_NOT_TREAT_EQUAL_FTYPE_AS_EXACT_ANCHOR_COMPATIBILITY",
 			MinStExactCostFactsProducer.hasExactCompatibleDurableSource(
-				CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph), uploadGroup()));
+				CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph),
+				uploadGroup(UploadPriceTarget.SINK)));
 		Assert.assertEquals("P4_CROSS_ANCHOR_REQUIRES_ONE_UPLOAD", 1L,
 			graph.relocationActions().stream().filter(action -> graph.isRelocationActive(action, selected)).count());
-		MinStExactSelection selection = MinStExactSelector.select(facts(graph, uploadGroup()));
+		MinStExactSelection selection = MinStExactSelector.select(
+			facts(graph, uploadGroup(UploadPriceTarget.SINK)));
 		Assert.assertEquals("P4_MINST_CROSS_ANCHOR_EMITS_ONE_EXACT_UPLOAD_RECEIPT|source="
 			+ selection.sourcePartitionNodeIds() + "|objective=" + selection.objectiveBits(), 1L,
 			uploadReceipts(selection, CONSUMER));
@@ -103,10 +106,12 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 			ANCHOR_A, sameAnchor.key().durableAnchor());
 		Assert.assertTrue("P4_MINST_RECOGNIZES_EXACT_SAME_ANCHOR_COMPATIBILITY",
 			MinStExactCostFactsProducer.hasExactCompatibleDurableSource(
-				CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph), uploadGroup()));
+				CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph),
+				uploadGroup(UploadPriceTarget.PRODUCER_PLACEMENT)));
 		Assert.assertEquals("P4_SAME_ANCHOR_SUPPRESSES_REDUNDANT_UPLOAD", 0L,
 			graph.relocationActions().stream().filter(action -> graph.isRelocationActive(action, selected)).count());
-		MinStExactSelection selection = MinStExactSelector.select(facts(graph, uploadGroup()));
+		MinStExactSelection selection = MinStExactSelector.select(
+			facts(graph, uploadGroup(UploadPriceTarget.PRODUCER_PLACEMENT)));
 		Assert.assertEquals("P4_MINST_SAME_ANCHOR_EMITS_ZERO_UPLOAD_RECEIPTS", 0L,
 			uploadReceipts(selection, CONSUMER));
 		Assert.assertEquals("P4_MINST_SAME_ANCHOR_OBJECTIVE_EXCLUDES_UPLOAD_PRICE",
@@ -153,9 +158,9 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 				&& receipt.consumerKey() == consumer && receipt.inputPosition() == 0).count();
 	}
 
-	private static AuxiliaryGroupFact uploadGroup() {
+	private static AuxiliaryGroupFact uploadGroup(UploadPriceTarget target) {
 		return new AuxiliaryGroupFact(-3L, Direction.UPLOAD, BoundaryMode.ANCHOR_TRANSFER,
-			PRODUCER, 1L, FType.ROW,
+			PRODUCER, 0L, 1L, target, FType.ROW,
 			Double.doubleToRawLongBits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L,
 				Double.doubleToRawLongBits(1.0))));
 	}
@@ -163,7 +168,7 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 	private static AuxiliaryGroupFact groupedUploadGroup() {
 		long price = Double.doubleToRawLongBits(1.0);
 		return new AuxiliaryGroupFact(-3L, Direction.UPLOAD, BoundaryMode.ANCHOR_TRANSFER,
-			PRODUCER, 1L, FType.ROW, price,
+			PRODUCER, 0L, 1L, UploadPriceTarget.SINK, FType.ROW, price,
 			List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, price),
 				new EndpointFact(PRODUCER, CONSUMER_B, 0, 3L, price)));
 	}
@@ -220,7 +225,7 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 			group.auxiliaryNodeId(), price.fromNodeId());
 		Assert.assertEquals("P4_PRODUCTION_UPLOAD_PRICE_EDGE_HAS_EXACT_SHARED_PRICE",
 			group.priceBits(), price.capacityBits());
-		long expectedTarget = MinStExactCostFactsProducer.hasExactCompatibleDurableSource(analysis, group)
+		long expectedTarget = group.uploadPriceTarget() == UploadPriceTarget.PRODUCER_PLACEMENT
 			? group.producerPlacementNodeId() : -2L;
 		Assert.assertEquals("P4_PRODUCTION_UPLOAD_PRICE_EDGE_HAS_EXACT_ANCHOR_POLARITY",
 			expectedTarget, price.toNodeId());

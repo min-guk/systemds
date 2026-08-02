@@ -25,6 +25,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationEndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ObligationFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
@@ -60,7 +61,7 @@ public class MinStExactSelectorTest {
 	public void semanticEquivalentRawMinimaSelectSourceReachableMinimum() throws Exception {
 		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP));
 		AuxiliaryGroupFact inactiveDownload = new AuxiliaryGroupFact(-3L, Direction.DOWNLOAD,
-			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 1L,
+			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 0L, 1L, UploadPriceTarget.NOT_APPLICABLE,
 			FType.ROW, bits(2.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(2.0))));
 		MinStExactCostFacts facts = facts(graph(List.of()), List.of(decision), List.of(
 			edge(-1L, -2L, 1.0), edge(-1L, 2L, 10.0), edge(1L, -3L, 2.0),
@@ -101,7 +102,7 @@ public class MinStExactSelectorTest {
 		RelocationAction action = action(PRODUCER_VERSION, FF, CONSUMER);
 		DecisionFact decision = new DecisionFact(PRODUCER, 0L, 1L, List.of(CP));
 		AuxiliaryGroupFact activeUpload = new AuxiliaryGroupFact(-3L, Direction.UPLOAD,
-			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 1L,
+			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 0L, 1L, UploadPriceTarget.SINK,
 			FType.ROW, bits(2.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(2.0))));
 		ObligationFact obligation = obligationFact(action.normalizedSignature(), CONSUMER, 0, FF);
 		NeutralPlacementGraph graph = graph(List.of(action));
@@ -168,7 +169,8 @@ public class MinStExactSelectorTest {
 	@Test
 	public void foutTWriteMetadataBoundaryDoesNotCreateUploadReceipt() throws Exception {
 		AuxiliaryGroupFact metadata = new AuxiliaryGroupFact(-3L, Direction.UPLOAD,
-			BoundaryMode.TWRITE_METADATA, PRODUCER, 1L, FType.ROW, bits(1.0),
+			BoundaryMode.TWRITE_METADATA, PRODUCER, 0L, 1L,
+			UploadPriceTarget.PRODUCER_PLACEMENT, FType.ROW, bits(1.0),
 			List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 3L, bits(1.0))));
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(List.of(
 			node(PRODUCER, PRODUCER_VERSION, FF, List.of(anchor("producer-anchor"))),
@@ -275,7 +277,7 @@ public class MinStExactSelectorTest {
 	private static MinStExactCostFacts uploadFacts(List<RelocationAction> actions,
 		List<ObligationFact> obligations) throws Exception {
 		AuxiliaryGroupFact group = new AuxiliaryGroupFact(-3L, Direction.UPLOAD,
-			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 1L,
+			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 0L, 1L, UploadPriceTarget.SINK,
 			FType.ROW, bits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(1.0))));
 		NeutralPlacementGraph graph = uploadGraph(actions);
 		List<DecisionFact> decisions = List.of(
@@ -288,7 +290,7 @@ public class MinStExactSelectorTest {
 	private static MinStExactCostFacts downloadFacts(List<RelocationAction> actions,
 		List<ObligationFact> obligations) throws Exception {
 		AuxiliaryGroupFact group = new AuxiliaryGroupFact(-3L, Direction.DOWNLOAD,
-			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 1L,
+			BoundaryMode.ANCHOR_TRANSFER, PRODUCER, 0L, 1L, UploadPriceTarget.NOT_APPLICABLE,
 			FType.ROW, bits(1.0), List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, bits(1.0))));
 		NeutralPlacementGraph graph = downloadGraph(actions);
 		List<DecisionFact> decisions = List.of(

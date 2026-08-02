@@ -21,6 +21,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityKind;
 import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
@@ -214,7 +215,8 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 	private static AuxiliaryGroupFact group(Direction direction) {
 		long price = Double.doubleToRawLongBits(1.0);
 		return new AuxiliaryGroupFact(-3L, direction, BoundaryMode.ANCHOR_TRANSFER,
-			PRODUCER, 1L, FType.ROW, price,
+			PRODUCER, 0L, 1L, direction == Direction.UPLOAD ? UploadPriceTarget.SINK
+				: UploadPriceTarget.NOT_APPLICABLE, FType.ROW, price,
 			List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, price)));
 	}
 
