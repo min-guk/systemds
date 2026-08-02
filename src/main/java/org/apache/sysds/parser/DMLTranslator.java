@@ -961,10 +961,6 @@ public class DMLTranslator
 		// Keep federated init variables across statement blocks to avoid premature cleanup.
 		rmVars.removeIf(FederatedPlannerUtils::isFedInitVar);
 		rmVars.removeIf(FederatedPlannerUtils::isFedRmvarProtectedVar);
-		if (rmVars.contains("Y")) {
-			System.out.println("[DEBUG] deriveExitInstruction rmVars contains Y; protected="
-				+ FederatedPlannerUtils.isFedRmvarProtectedVar("Y"));
-		}
 		return rmVars.isEmpty() ? null :
 			VariableCPInstruction.prepareRemoveInstruction(rmVars.toArray(new String[0]));
 	}

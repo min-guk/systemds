@@ -20,9 +20,12 @@
 package org.apache.sysds.test.component.federated;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
@@ -96,6 +99,23 @@ public class VariableCPInstructionFederatedCleanupTest {
 		assertEquals(0, sourceMap.cleanupCalls);
 		assertEquals(1, targetMap.cleanupCalls);
 		assertEquals(List.of(22L), targetMap.cleanedIds);
+	}
+
+	@Test
+	public void removeVariableDoesNotWriteDebugOutputByDefault() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		PrintStream originalOut = System.out;
+		ByteArrayOutputStream captured = new ByteArrayOutputStream();
+		try {
+			System.setOut(new PrintStream(captured));
+			VariableCPInstruction.prepareRemoveInstruction("Y").processInstruction(ec);
+		}
+		finally {
+			System.setOut(originalOut);
+		}
+
+		assertFalse("Production rmvar execution must be silent unless an explicit trace flag is enabled",
+			captured.toString().contains("[DEBUG]"));
 	}
 
 	private static Instruction copy(String source, String target) {

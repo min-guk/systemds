@@ -1370,3 +1370,126 @@
     전체 campaign을 다시 정의해야 하므로, canary 24개에서 fail-fast 검증을 먼저 수행한다.
 - **의사결정 근거/적용 원칙**:
   - 데이터/seed 고정만으로는 부족한 JAR, network, metric phase, container lifecycle, plan fingerprint를 함께 고정했다.
+
+## 기본 실행에서 rmvar 진단 출력이 런타임 측정을 오염함
+
+- **상태**: 코드/회귀 해결, Docker 측정 재검증 대기
+- **환경/조건**:
+  - 모든 planner/workload. 특히 loop가 많은 workload에서 `rmvar X/Y`가 반복 실행되는 경우.
+  - 명시적 planner trace/debug property는 꺼진 기본 실행.
+- **재현 절차**:
+  - `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip \
+    -Dtest=VariableCPInstructionFederatedCleanupTest test`
+  - 과거 raw 예시:
+    `/home/mchoi/g007-selected-minst-6d4d852-74ee30f-20260729-v2/cells/042-f13fc97c5734/phases/cell-1/discovery-correctness/raw_coordinator.log`.
+- **관측 증상**:
+  - `VariableCPInstruction`, `DMLTranslator`, `Dag`가 trace flag와 무관하게
+    `[DEBUG] rmvar X/Y ...`를 stdout에 대량 출력했다.
+  - 같은 파일에는 loop workload에서 수천~수만 회의 rmvar 실행이 있어, terminal/file I/O가 SystemDS 실행 구간에
+    직접 포함되고 planner/worker별 실행 횟수 차이가 성능 차이로 오인될 수 있었다.
+- **원인 분석**:
+  - 과거 lifetime/rewire 진단을 위해 넣은 임시 `System.out`가 production 기본 경로에 남았다.
+  - CP→FOUT 진단 일부도 기존 `LOG_LOP_MAPPING` gate 밖에서 출력되고 있었다.
+- **해결 요약**:
+  - X/Y 전용 unconditional rmvar/exit-instruction 출력을 삭제했다.
+  - CP→FOUT anchor/skip 진단은 기존 explicit `LOG_LOP_MAPPING` property 아래로 이동했다.
+  - rmvar 기본 실행이 `[DEBUG]`를 쓰지 않는 stdout capture 회귀를 추가했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/runtime/instructions/cp/VariableCPInstruction.java`
+  - `src/main/java/org/apache/sysds/parser/DMLTranslator.java`
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/VariableCPInstructionFederatedCleanupTest.java`
+- **검증**:
+  - RED: `/tmp/g007-rmvar-debug-regression-red-20260802.log` — 신규 3개 중 1개 실패.
+  - GREEN: `/tmp/g007-rmvar-debug-regression-green-20260802.log` — 3/3 PASS.
+  - `git diff --check` PASS.
+- **잔여 이슈**:
+  - 새 JAR의 Docker canary에서 raw log에 unconditional `[DEBUG]`가 없고, warm execution time이 이전의 출력 I/O를
+    포함하지 않는지 확인한다.
+- **잠재 회귀 위험**:
+  - 실제 오류 진단 정보가 줄 수 있다. 감지 방법: 필요한 상세 정보는 이미 존재하는 explicit trace/debug property를
+    켠 진단 실행에서만 수집하고, primary 성능 실행에서는 항상 꺼진 상태를 receipt로 고정한다.
+- **의사결정 근거/적용 원칙**:
+  - planner 후보나 runtime semantics를 바꾸지 않고 측정 경로의 비의도적 I/O만 제거했다.
+
+## worker 수 증가 시 Docker JVM/BLAS CPU 과구독이 발생함
+
+- **상태**: 하네스/정적·단위 검증 해결, 실제 fluctuation 제거 여부는 Docker canary 대기
+- **환경/조건**:
+  - 48 logical CPU host, worker `1..4`, coordinator 1개 + worker JVM N개.
+  - 기존 manifest는 각 JVM에 `systemds/OMP/BLAS threads=48`을 부여했고 Compose CPU quota가 없었다.
+- **재현 절차**:
+  - 기존 `docker compose config`와 host `nproc/lscpu`를 비교한다.
+  - worker=4에서는 5 JVM × 48 thread까지 runnable해 host 48 CPU 대비 최대 240-way oversubscription이 가능했다.
+- **관측 증상**:
+  - worker 수가 늘수록 같은 coordinator CP work와 worker native work가 서로 더 심하게 경쟁한다.
+  - 따라서 worker scaling 곡선의 요동이 planner plan 변화인지 CPU scheduler contention인지 분리되지 않았다.
+- **원인 분석**:
+  - 데이터/seed/network만 고정하고 per-service CPU/thread resource contract는 고정하지 않았다.
+- **해결 요약**:
+  - coordinator와 각 worker를 동일하게 `8.0 CPU`, SystemDS `ActiveProcessorCount=8`,
+    OMP/MKL/OpenBLAS `8 threads`, dynamic thread adjustment off로 고정했다.
+  - 최대 동시 서비스 5개에 필요한 host affinity CPU를 40으로 계산해 미달 host에서는 fail-closed한다.
+  - one-pass runner가 inherited host tuning 값을 campaign contract로 덮어쓰도록 했다.
+- **수정 파일**:
+  - harness `experiments/docker/compose.yaml`
+  - harness `experiments/parameters.sh`
+  - harness `experiments/config/campaign_manifest_policy.json`
+  - harness `experiments/tools/run_one_pass_performance.py`
+  - harness `experiments/tests/test_one_pass_performance.py`
+  - harness `experiments/tests/test_g007_harness.py`
+- **검증**:
+  - RED: `/tmp/g007-resource-isolation-regression-red-20260802.log`.
+  - focused GREEN: `/tmp/g007-resource-isolation-regression-green-20260802.log`.
+  - 실제 `docker compose config --format json`에서 coordinator/worker1..8 모두 `cpus=8`, OMP/MKL/OpenBLAS `8`,
+    JVM `-XX:ActiveProcessorCount=8` 확인:
+    `/tmp/g007-compose-resource-config.json`.
+  - `parameters.sh` 중복 옵션 probe PASS: `/tmp/g007-parameters-resource-probe.txt`.
+- **잔여 이슈**:
+  - DP KMeans/PCA worker 1–4 canary로 runtime plan 변화와 execution-time scaling을 분리해 판정한다.
+  - 실제 알고리즘은 통신/작은 partition/GC 때문에 완전 단조일 필요는 없으므로, 요동을 인위적으로 보정하지 않는다.
+- **잠재 회귀 위험**:
+  - 8-thread contract는 이전 48-thread 절대 시간과 비교할 수 없다. 감지 방법: 새 336셀은 동일 새 commit/stage에서만
+    비교하고 과거 stitched graph와 섞지 않는다.
+- **의사결정 근거/적용 원칙**:
+  - planner 후보를 닫지 않고 동일 자원 조건을 만들어 측정 confounder를 제거했다.
+
+## heavy-hitter 개수만으로는 동일한 planner plan을 증명하지 못함
+
+- **상태**: 하네스/회귀 해결, 실제 Docker runtime-explain receipt 대기
+- **환경/조건**:
+  - one-pass cold/warm phase와 4 planner 비교.
+- **재현 절차**:
+  - 기존 `parse_instructions`는 `fed_opcode:executed_count`만 fingerprint로 저장한다.
+  - 서로 다른 operand, placement, FType, control-block 위치를 가진 plan도 opcode count가 같으면 동일하다고 판정된다.
+- **관측 증상**:
+  - “4개 planner가 다르게 작동하는가”, “DP/MinST cold/warm compile이 동일한가”를 기존 row만으로 증명할 수 없었다.
+- **원인 분석**:
+  - runtime plan 자체가 아니라 실행 후 heavy-hitter aggregate를 plan identity로 사용했다.
+- **해결 요약**:
+  - typed Docker lifecycle의 모든 SystemDS 실행에 `-explain runtime`을 추가한다.
+  - explain block 전체에서 phase directory와 scratch process/thread identity만 정규화하고 SHA-256을 계산한다.
+  - cold/warm의 heavy-hitter fingerprint와 exact normalized runtime-plan SHA가 모두 동일해야 cell을 accept한다.
+  - row에는 runtime-plan SHA와 compiled FED opcode fingerprint를 별도로 저장한다. Warm primary metric은 SystemDS가
+    보고한 execution time이며 explain 출력은 execution timer 시작 전 compile 단계에 발생한다.
+- **수정 파일**:
+  - harness `experiments/code/distributedExpNew.sh`
+  - harness `experiments/run_LAN_docker.sh`
+  - harness `experiments/tools/run_one_pass_performance.py`
+  - harness `experiments/tests/test_one_pass_performance.py`
+  - harness `experiments/tests/test_g007_harness.py`
+- **검증**:
+  - RED: `/tmp/g007-runtime-plan-fingerprint-red-20260802.log`.
+  - GREEN: `/tmp/g007-runtime-plan-fingerprint-green-r2-20260802.log` — 9/9 PASS.
+  - same heavy-hitter/different runtime plan fixture가 fail-closed하고, cold/warm phase path 및 scratch PID만 다른 plan은
+    동일 SHA로 정규화되는 것을 검증했다.
+  - 실제 local `-explain runtime` 출력 parser probe SHA:
+    `6ef2a829b4451d00c74d83a506fb0b90da4a74f919cf1d4aa21352affec46f3f`.
+- **잔여 이슈**:
+  - 새 Docker canary에서 phase-specific output path 외의 비결정적 토큰이 남는지 확인한다. 남는다면 의미 없는 정확한
+    run-local identity만 좁게 정규화하고 opcode/operand/placement/FType은 절대 지우지 않는다.
+- **잠재 회귀 위험**:
+  - runtime explain 형식 변경 시 parser가 실패한다. 감지 방법: marker cardinality 1, `PROGRAM`, `MAIN PROGRAM`,
+    blank terminator를 모두 요구하고 raw bundle을 보존한다.
+- **의사결정 근거/적용 원칙**:
+  - plan을 추측하거나 runtime에서 보정하지 않고 compiler가 실제 배출한 전체 runtime program을 증거로 사용한다.

@@ -833,8 +833,9 @@ public class Dag<N extends Lop>
 					Lop anchorByLabel = findAnchorByLabel(lops, spec.getAnchorLabel());
 					if (anchorByLabel != null) {
 						anchor = anchorByLabel;
-						System.out.printf("CP->FOUT anchor fallback: hop=%d anchorHop=%d anchorLabel=%s resolvedHop=%d%n",
-							hopId, anchorHopId, spec.getAnchorLabel(), anchorByLabel.getHopID());
+						if (LOG_LOP_MAPPING)
+							System.out.printf("CP->FOUT anchor fallback: hop=%d anchorHop=%d anchorLabel=%s resolvedHop=%d%n",
+								hopId, anchorHopId, spec.getAnchorLabel(), anchorByLabel.getHopID());
 					}
 				}
 				if (anchor != null && isTransientDataLop(anchor) && isConcreteAnchorKey(anchorKey)) {
@@ -849,25 +850,26 @@ public class Dag<N extends Lop>
 				}
 				boolean missingAnchor = (anchor == null && anchorKey == null);
 				if (local == null || missingAnchor) {
-					System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
-						hopId, anchorHopId, local == null, missingAnchor, sbId);
-				if (missingAnchor) {
-					List<Long> hopIds = new ArrayList<>(hopToLop.keySet());
-					Collections.sort(hopIds);
-					int limit = 200;
-					StringBuilder buf = new StringBuilder();
-					for (int i = 0; i < hopIds.size() && i < limit; i++) {
-						if (i > 0)
-							buf.append(',');
-						buf.append(hopIds.get(i));
+					if (LOG_LOP_MAPPING) {
+						System.out.printf("CP->FOUT insert skip: hop=%d anchor=%d missingLocal=%s missingAnchor=%s sbId=%d%n",
+							hopId, anchorHopId, local == null, missingAnchor, sbId);
+						if (missingAnchor) {
+							List<Long> hopIds = new ArrayList<>(hopToLop.keySet());
+							Collections.sort(hopIds);
+							int limit = 200;
+							StringBuilder buf = new StringBuilder();
+							for (int i = 0; i < hopIds.size() && i < limit; i++) {
+								if (i > 0)
+									buf.append(',');
+								buf.append(hopIds.get(i));
+							}
+							System.out.printf("CP->FOUT insert context: sbId=%d hopToLopSize=%d hopIds=%s%s%n",
+								sbId, hopIds.size(), buf.toString(), hopIds.size() > limit ? ",..." : "");
+						}
 					}
-					System.out.printf("CP->FOUT insert context: sbId=%d hopToLopSize=%d hopIds=%s%s%n",
-						sbId, hopIds.size(), buf.toString(), hopIds.size() > limit ? ",..." : "");
-				}
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
-						+ spec.getAnchorHopId() + " due to missing lops in current DAG");
-				}
+					if (LOG.isDebugEnabled())
+						LOG.debug("Skipping fout materialize insertion for hop=" + hopId + " anchor="
+							+ spec.getAnchorHopId() + " due to missing lops in current DAG");
 					continue;
 				}
 
@@ -881,8 +883,9 @@ public class Dag<N extends Lop>
 				if (isTransientWrite) {
 					List<Lop> inputs = local.getInputs();
 					if (inputs == null || inputs.isEmpty() || inputs.get(0) == null) {
-						System.out.printf("CP->FOUT insert skip: hop=%d transientWrite=true missingInput=true sbId=%d%n",
-							hopId, sbId);
+						if (LOG_LOP_MAPPING)
+							System.out.printf("CP->FOUT insert skip: hop=%d transientWrite=true missingInput=true sbId=%d%n",
+								hopId, sbId);
 						continue;
 					}
 					materializeInput = inputs.get(0);
@@ -1502,9 +1505,6 @@ public class Dag<N extends Lop>
 			String label = node.getOutputParameters().getLabel();
 			if (protectedLabels != null && label != null && protectedLabels.contains(label))
 				return;
-			if ("Y".equals(label) || "X".equals(label)) {
-				System.out.println("[DEBUG] rmvar " + label + " from processConsumers");
-			}
 			Instruction currInstr = VariableCPInstruction.prepareRemoveInstruction(label);
 			if (locationInfo != null)
 				currInstr.setLocation(locationInfo);
@@ -1695,10 +1695,6 @@ public class Dag<N extends Lop>
 						// Federated init outputs represent actual variables; do not treat them as temp labels.
 						if (!(node instanceof Federated)) {
 							String label = node.getOutputParameters().getLabel();
-							if ("X".equals(label) || "Y".equals(label)) {
-								System.out.println("[DEBUG] var_deletions add " + label + " from node " + node.getClass().getSimpleName()
-									+ " type=" + node.getType() + " exec=" + node.getExecType());
-							}
 							var_deletions.add(label);
 							var_deletionsLineNum.put(label, node);
 						}

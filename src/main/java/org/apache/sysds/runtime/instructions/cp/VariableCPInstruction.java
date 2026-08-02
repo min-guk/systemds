@@ -632,9 +632,6 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 
 		case RemoveVariable:
 			for( CPOperand input : inputs ) {
-				if ("Y".equals(input.getName()) || "X".equals(input.getName())) {
-					System.out.println("[DEBUG] rmvar " + input.getName() + " at " + getFilename() + ":" + getBeginLine());
-				}
 				processRmvarInstruction(ec, input.getName());
 			}
 			break;
@@ -1123,9 +1120,6 @@ public class VariableCPInstruction extends CPInstruction implements LineageTrace
 	 * @param varname variable name
 	 */
 	public static void processRmvarInstruction( ExecutionContext ec, String varname ) {
-		if ("Y".equals(varname)) {
-			System.out.println("[DEBUG] rmvar Y executed");
-		}
 		if (DEBUG_FEDREQ) {
 			Data peek = ec.getVariable(varname);
 			if (peek instanceof MatrixObject) {
