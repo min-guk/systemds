@@ -2,7 +2,8 @@
 
 ## MinST LM 1-worker에서 worker-pool closure가 derived FED/FOUT을 누락
 
-- **상태**: 진행중 — 구조 수정·RED/GREEN 회귀·package 완료, 새 immutable Docker canary 대기
+- **상태**: 해결 — 구조 수정·RED/GREEN 회귀·package·동일 실패 셀 Docker canary 완료,
+  exact no-duplicate MinST continuation 준비
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 binary commit/JAR:
@@ -71,11 +72,23 @@
   - checkstyle/RAT 포함 `mvn -q -DskipTests package` 성공:
     `/tmp/g007-minst-lm-derived-fout-package-20260802.log`, SHA-256
     `1c79f730db8d289be1a2c4a11a1942890b424d6d407df7232062bf491af40c4e`.
+  - 수정 commit/JAR은
+    `823bc4bd3d7a0849610fd05b89b0ca4e6141b7c0` /
+    `21edc924705f2ce81fd7d91a2ce945d2ffa339c540fa5aa3d30d8c14fb80d544`로 봉인했다.
+    immutable stage는
+    `/home/mchoi/g007-minst-lm-derived-fout-stage-823bc4b-20260802-v1/g007-stage-c9a1d7ac6078c4617ef82fc872f99e160b6e7d11e3e27a4abd0d1d9a47ea56e3`다.
+    harness/data/reference/lib hash는 직전 실험과 동일하고, 실행 가능한 `run_LAN_docker.sh`는 1개,
+    `run_LAN.sh`는 0개다. stage descriptor file SHA-256은
+    `6ca7819e19f9ab05a546047a3d32e7e648832fdf94e2dd6b0c2c8a64a9567ce7`이다.
+  - 동일 실패 LM 셀 Docker canary는 새 root에서 attempt `1`, retry 없음으로 성공했다:
+    `/home/mchoi/g007-minst-lm-derived-fout-canary-823bc4b-d60da24-20260802-v1`.
+    response SHA-256은 `89860fc19874cf1d11f3f21d87bdb075db2a174cd6ae27eb9cfc8dd93ae7d13e`,
+    execution은 `129.321465679s`, full lifecycle은 `149.862389625s`다.
+    semantic oracle 통과, scan의 error/fallback/resource-invalid/timeout 전부 false,
+    coordinator/worker restart `0/0`, teardown 후 해당 Compose container/network `0/0`이다.
 - **잔여 이슈**:
-  - 수정 commit/JAR을 새 immutable stage로 봉인하고 동일 실패 LM 셀을 새 root에서 attempt `1`,
-    retry 없음으로 Docker canary 실행한다.
-  - canary 성공 시에만 이전 exact 성공 258셀과 새 canary를 합쳐 중복 0의 259셀 registry를 만들고,
-    남은 MinST 77셀만 새 continuation root에서 실행한다.
+  - 이전 exact 성공 258셀과 새 canary를 합쳐 중복 0의 259셀 registry를 만들고,
+    남은 MinST 77셀만 새 continuation root에서 실행한다. 성공 셀은 재실행하지 않는다.
   - 새 구조 실패가 발생하면 해당 campaign을 다시 봉인하고 동일 binary 재시도 없이 RED→GREEN으로
     수정한다. 전 셀 성공 후 exact 336-cell 및 execution-time 정렬/그래프를 감사한다.
 - **잠재 회귀 위험**:
