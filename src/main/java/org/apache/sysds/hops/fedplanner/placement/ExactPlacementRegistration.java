@@ -215,7 +215,7 @@ public final class ExactPlacementRegistration {
 		FederatedLocalMaterializeRegistry.clear();
 		for(RegisteredUpload upload : uploads) {
 			FederatedRefedRegistry.register(upload.scopeId(), upload.hopId(), upload.anchorHopId(),
-				upload.anchorKey(), upload.consumerHopIds());
+				upload.anchorKey(), upload.fType(), upload.consumerHopIds());
 			FederatedFoutMaterializeRegistry.register(upload.scopeId(), upload.hopId(), upload.anchorHopId(),
 				upload.fType().name(), upload.anchorLabel(), upload.anchorKey());
 		}

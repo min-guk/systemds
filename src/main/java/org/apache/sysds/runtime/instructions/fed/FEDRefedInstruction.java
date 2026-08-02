@@ -37,23 +37,35 @@ public class FEDRefedInstruction extends FEDInstruction {
 	private final CPOperand _input;
 	private final CPOperand _anchor;
 	private final CPOperand _output;
+	private final FType _materializationFType;
 	private static final boolean DEBUG_KMEANS = Boolean.getBoolean("sysds.debug.kmeans");
 
-	private FEDRefedInstruction(CPOperand input, CPOperand anchor, CPOperand output, String opcode, String istr) {
+	private FEDRefedInstruction(CPOperand input, CPOperand anchor, CPOperand output,
+		FType materializationFType, String opcode, String istr) {
 		super(FEDType.Refed, opcode, istr);
 		_input = input;
 		_anchor = anchor;
 		_output = output;
+		_materializationFType = materializationFType;
 	}
 
 	public static FEDRefedInstruction parseInstruction(String str) {
 		String[] parts = InstructionUtils.getInstructionPartsWithValueType(str);
-		if (parts.length != 4)
+		if (parts.length != 4 && parts.length != 5)
 			throw new DMLRuntimeException("Invalid number of operands in federated refed instruction: " + str);
 		CPOperand input = new CPOperand(parts[1]);
 		CPOperand anchor = new CPOperand(parts[2]);
 		CPOperand output = new CPOperand(parts[3]);
-		return new FEDRefedInstruction(input, anchor, output, parts[0], str);
+		FType materializationFType = null;
+		if(parts.length == 5) {
+			try {
+				materializationFType = FType.valueOf(parts[4]);
+			}
+			catch(IllegalArgumentException ex) {
+				throw new DMLRuntimeException("Invalid fed_refed materialization type " + parts[4], ex);
+			}
+		}
+		return new FEDRefedInstruction(input, anchor, output, materializationFType, parts[0], str);
 	}
 
 	@Override
@@ -99,7 +111,8 @@ public class FEDRefedInstruction extends FEDInstruction {
 			}
 		}
 
-		FType fType = FEDLocalMaterializeUtil.declaredAnchorType(anchorMap);
+		FType anchorFType = FEDLocalMaterializeUtil.declaredAnchorType(anchorMap);
+		FType fType = _materializationFType != null ? _materializationFType : anchorFType;
 		if (fType == FType.PART || fType == FType.OTHER)
 			throw new DMLRuntimeException("fed_refed does not support anchor type " + fType);
 
@@ -184,8 +197,8 @@ public class FEDRefedInstruction extends FEDInstruction {
 		long maxCol = anchorMap.getMaxIndexInRange(1);
 		FType cacheMapType = fType;
 		String layoutSig;
-		if ((fType == FType.ROW || fType == FType.COL || fType == FType.FULL || fType == FType.BROADCAST)
-			&& maxRow == rlen && maxCol == clen) {
+		boolean preservesAnchorLayout = fType == anchorFType && maxRow == rlen && maxCol == clen;
+		if (preservesAnchorLayout) {
 			layoutSig = FederationUtils.deriveFedLayoutSignature(anchorMap);
 		}
 		else {
@@ -220,7 +233,7 @@ public class FEDRefedInstruction extends FEDInstruction {
 			return;
 		}
 
-		if (maxRow != rlen || maxCol != clen) {
+		if (!preservesAnchorLayout) {
 			FType materializeType = (fType == FType.ROW || fType == FType.COL) ? fType : FType.FULL;
 			FType mapType = fType == FType.BROADCAST ? FType.BROADCAST : materializeType;
 			out.setFedMapping(FEDLocalMaterializeUtil.materializeLocalToAnchor(getTID(), in, anchorMap,

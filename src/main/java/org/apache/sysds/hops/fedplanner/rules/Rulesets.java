@@ -2827,8 +2827,15 @@ public final class Rulesets {
       // This change is shared (Oracle) and therefore applies fairly to both DP and MinST.
       boolean rightLocalLike = (right == null) || (right == FType.BROADCAST);
       boolean leftLocalLike = (left == null) || (left == FType.BROADCAST);
-      if ((left == FType.FULL && rightLocalLike) || (right == FType.FULL && leftLocalLike))
-        return fedLocalCaps(sig, ReasonCode.OK);
+      if (left == FType.FULL && rightLocalLike) {
+        Guard.Result guard = Guard.eval(sig);
+        return guardAwareFout(sig, FType.FULL, ReasonCode.OK, guard);
+      }
+      if (right == FType.FULL && leftLocalLike) {
+        Guard.Result guard = Guard.eval(sig);
+        FType outputType = left == FType.BROADCAST ? FType.BROADCAST : FType.FULL;
+        return guardAwareFout(sig, outputType, ReasonCode.OK, guard);
+      }
 
       if (!eligible(left, right))
         return cpCaps(sig, ReasonCode.NOT_FEDERATED_INPUTS);

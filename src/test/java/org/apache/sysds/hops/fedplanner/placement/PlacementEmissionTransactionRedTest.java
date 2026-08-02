@@ -163,6 +163,8 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertNotNull("G007_REFED_REGISTRY_WRITE_PRESENT", spec);
 		Assert.assertEquals("G007_REFED_REGISTRY_PRESERVES_EXACT_COMPATIBLE_CONSUMERS",
 			expectedConsumerHopIds, spec.getConsumerHopIds());
+		Assert.assertEquals("G007_REFED_REGISTRY_PRESERVES_EXACT_MATERIALIZATION_FTYPE",
+			upload.key().materializationFType(), spec.getMaterializationFType());
 	}
 
 	@Test
@@ -243,6 +245,9 @@ public class PlacementEmissionTransactionRedTest {
 		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTION_USES_CONCRETE_LIVE_ANCHOR_OR_KEY: "
 			+ refedInstructions, refedInstructions.stream().anyMatch(instruction -> instruction.contains("°X·MATRIX")
 				|| (spec.getAnchorKey() != null && instruction.contains(spec.getAnchorKey()))));
+		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTION_PRESERVES_EXACT_MATERIALIZATION_FTYPE: "
+			+ refedInstructions, refedInstructions.stream().allMatch(instruction ->
+				instruction.endsWith("°" + spec.getMaterializationFType().name())));
 		Assert.assertTrue("G007_NORMAL_DAG_REFED_INSTRUCTIONS_MUST_NOT_SERIALIZE_NULL_ANCHOR: "
 			+ refedInstructions, refedInstructions.stream().noneMatch(instruction -> instruction.contains("null.UNKNOWN")));
 	}
@@ -476,6 +481,7 @@ public class PlacementEmissionTransactionRedTest {
 		for(long scope : scopes) {
 			FederatedRefedRegistry.snapshot(scope).forEach((hop, spec) -> rows.add("R|" + scope + '|' + hop
 				+ "|anchor=" + spec.getAnchorHopId() + "|anchorKey=" + spec.getAnchorKey()
+				+ "|type=" + spec.getMaterializationFType()
 				+ "|consumers=" + spec.getConsumerHopIds()));
 			FederatedFoutMaterializeRegistry.snapshot(scope).forEach((hop, spec) -> rows.add("F|" + scope + '|'
 				+ hop + "|anchor=" + spec.getAnchorHopId() + "|type=" + spec.getFTypeHint() + "|label="

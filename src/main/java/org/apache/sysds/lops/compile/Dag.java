@@ -511,7 +511,8 @@ public class Dag<N extends Lop>
 			RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
 				lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
 
-			plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority, consumers));
+			plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority,
+				spec.getMaterializationFType() == null ? null : spec.getMaterializationFType().name(), consumers));
 		}
 
 		boolean inserted = false;
@@ -532,9 +533,9 @@ public class Dag<N extends Lop>
 			}
 			FederatedRefed refed = plan.authority.anchor != null
 				? new FederatedRefed(refedInput, plan.authority.anchor,
-					refedInput.getDataType(), refedInput.getValueType())
+					refedInput.getDataType(), refedInput.getValueType(), plan.materializationFType)
 				: new FederatedRefed(refedInput, plan.authority.anchorKey,
-					refedInput.getDataType(), refedInput.getValueType());
+					refedInput.getDataType(), refedInput.getValueType(), plan.materializationFType);
 			refed.getOutputParameters().setLabel(getNextUniqueVarname(refed.getDataType()));
 			copyOutputParams(refed.getOutputParameters(), refedInput.getOutputParameters());
 			refed.setFederatedOutput(FederatedOutput.FOUT);
@@ -720,15 +721,17 @@ public class Dag<N extends Lop>
 		private final Lop local;
 		private final boolean requiresLocalMaterialization;
 		private final RefedAnchorAuthority authority;
+		private final String materializationFType;
 		private final List<RefedConsumerEdge> consumers;
 
 		private RefedInsertionPlan(long hopId, Lop local, boolean requiresLocalMaterialization,
-			RefedAnchorAuthority authority,
+			RefedAnchorAuthority authority, String materializationFType,
 			List<RefedConsumerEdge> consumers) {
 			this.hopId = hopId;
 			this.local = local;
 			this.requiresLocalMaterialization = requiresLocalMaterialization;
 			this.authority = authority;
+			this.materializationFType = materializationFType;
 			this.consumers = consumers;
 		}
 	}

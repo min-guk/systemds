@@ -1517,6 +1517,7 @@ public final class FederatedRefedPolicy {
 			else if (!anchorHopRuntimeFed && usableAnchorKey) {
 				FederatedRefedRegistry.remove(sbId, entry.getKey());
 				FederatedRefedRegistry.register(sbId, entry.getKey(), -1, anchorKey,
+					spec.getMaterializationFType(),
 					spec.getConsumerHopIds());
 				changed = true;
 			}
@@ -1793,7 +1794,8 @@ public final class FederatedRefedPolicy {
 				// Preserve the newly encountered exact required edge instead of treating the existing
 				// runtime-federated representation as a reason to skip registration.
 				FederatedRefedRegistry.register(sbId, input.getHopID(), registeredRefed.getAnchorHopId(),
-					registeredRefed.getAnchorKey(), List.of(hop.getHopID()));
+					registeredRefed.getAnchorKey(), registeredRefed.getMaterializationFType(),
+					List.of(hop.getHopID()));
 			}
 				if (req == InputRequirement.OPTIONAL) {
 					if (runtimeFed) {
@@ -3780,7 +3782,7 @@ public final class FederatedRefedPolicy {
 
 			if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
 				return;
-			FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey,
+			FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey, effective,
 				exactRefedConsumerHopIds(hop, selectedConsumers));
 			return;
 		}
@@ -3818,7 +3820,7 @@ public final class FederatedRefedPolicy {
 		if (LOG.isDebugEnabled())
 			LOG.debug("CP->FOUT decision: REFED hopID=" + hop.getHopID() + " op=" + hop.getOpString()
 				+ " anchor=" + anchorHop.getHopID());
-		FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey,
+		FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey, anchorType,
 			exactRefedConsumerHopIds(hop, selectedConsumers));
 	}
 

@@ -34,6 +34,7 @@ import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
@@ -473,7 +474,7 @@ public final class PlacementEmissionTransaction {
 			else {
 				List<Long> consumerIds = consumers.stream().map(o -> o.hop().getHopID()).distinct().sorted().toList();
 				write = RegistryWrite.refed(source.scopeId(), source.hop().getHopID(), anchor.hop().getHopID(),
-					anchorKey, consumerIds);
+					anchorKey, key.materializationFType().name(), consumerIds);
 			}
 			addRelocationRegistryWrite(writesBySlot, write);
 		}
@@ -502,9 +503,9 @@ public final class PlacementEmissionTransaction {
 		try {
 			merged = FederatedRefedRegistry.mergeCompatibleAuthority(
 				new FederatedRefedRegistry.AnchorSpec(existing.anchorHopId(), existing.anchorKey(),
-					existing.consumerHopIds()),
+					existing.fType() == null ? null : FType.valueOf(existing.fType()), existing.consumerHopIds()),
 				new FederatedRefedRegistry.AnchorSpec(incoming.anchorHopId(), incoming.anchorKey(),
-					incoming.consumerHopIds()),
+					incoming.fType() == null ? null : FType.valueOf(incoming.fType()), incoming.consumerHopIds()),
 				incoming.slot().scopeId(), incoming.slot().hopId());
 		}
 		catch(IllegalArgumentException ex) {
@@ -513,6 +514,7 @@ public final class PlacementEmissionTransaction {
 		}
 		writesBySlot.put(incoming.slot(), RegistryWrite.refed(incoming.slot().scopeId(),
 			incoming.slot().hopId(), merged.getAnchorHopId(), merged.getAnchorKey(),
+			merged.getMaterializationFType() == null ? null : merged.getMaterializationFType().name(),
 			merged.getConsumerHopIds()));
 	}
 
@@ -595,9 +597,9 @@ public final class PlacementEmissionTransaction {
 	private record RegistryWrite(RegistrySlot slot, long anchorHopId, List<Long> consumerHopIds,
 		String fType, String label, String anchorKey, String reason) {
 		private static RegistryWrite refed(long scopeId, long hopId, long anchorHopId, String anchorKey,
-			List<Long> consumers) {
+			String materializationFType, List<Long> consumers) {
 			return new RegistryWrite(new RegistrySlot(RegistryKind.REFED, scopeId, hopId), anchorHopId,
-				List.copyOf(consumers), null, null, anchorKey, null);
+				List.copyOf(consumers), materializationFType, null, anchorKey, null);
 		}
 
 		private static RegistryWrite fout(long scopeId, long hopId, long anchorHopId, String fType,
@@ -615,7 +617,7 @@ public final class PlacementEmissionTransaction {
 		private void apply() {
 			switch(slot.kind()) {
 				case REFED -> FederatedRefedRegistry.register(slot.scopeId(), slot.hopId(), anchorHopId,
-					anchorKey, consumerHopIds);
+					anchorKey, fType == null ? null : FType.valueOf(fType), consumerHopIds);
 				case FOUT -> FederatedFoutMaterializeRegistry.register(slot.scopeId(), slot.hopId(),
 					anchorHopId, fType, label, anchorKey);
 				case LOCAL -> FederatedLocalMaterializeRegistry.register(slot.scopeId(), slot.hopId(),

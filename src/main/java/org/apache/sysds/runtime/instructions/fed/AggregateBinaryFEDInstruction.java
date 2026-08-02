@@ -263,6 +263,22 @@ public class AggregateBinaryFEDInstruction extends BinaryFEDInstruction {
 				}
 			}
 		}
+		// A single FULL range contains the complete RHS on one worker.  For a planner-forced
+		// FOUT, broadcasting the local LHS to that exact worker therefore produces one complete
+		// output that can remain federated.  This is an exact supported execution path, not a
+		// fallback or partial-response repair.
+		else if(!mo1.isFederated() && mo2.getFedMapping() != null
+			&& mo2.getFedMapping().getType() == FType.FULL && mo2.getFedMapping().getSize() == 1
+			&& _fedOut.isForcedFederated()) {
+			FederatedRequest fr1 = mo2.getFedMapping().broadcast(mo1);
+			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1, input2},
+				new long[]{fr1.getID(), mo2.getFedMapping().getID()}, true);
+			FederatedRequest frC = mo2.getFedMapping().cleanup(getTID(), fr1.getID());
+			Future<FederatedResponse>[] ffr = mo2.getFedMapping().execute(getTID(), true, fr1, fr2, frC);
+			setOutputFedMapping(mo2.getFedMapping(), mo1, mo2,
+				FederationUtils.sumNonZeros(ffr), fr2.getID(), ec);
+		}
 			//#2 vector - federated matrix multiplication
 			else if (mo2.isFederated(FType.ROW)) {// VM + MM
 				if (DEBUG_KMEANS) {

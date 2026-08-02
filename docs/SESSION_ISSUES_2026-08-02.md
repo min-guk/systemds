@@ -1493,3 +1493,126 @@
     blank terminator를 모두 요구하고 raw bundle을 보존한다.
 - **의사결정 근거/적용 원칙**:
   - plan을 추측하거나 runtime에서 보정하지 않고 compiler가 실제 배출한 전체 runtime program을 증거로 사용한다.
+
+## worker=1 FULL matrix multiply의 planner/runtime FOUT 계약이 빠져 있었음
+
+- **상태**: 코드/회귀 해결, Docker canary 대기
+- **환경/조건**:
+  - 모든 planner가 공유하는 `BinaryMMRule` 및 `AggregateBinaryFEDInstruction`.
+  - worker `1`, 한 개의 complete range를 가진 `FType.FULL`, 반대편 입력은 local 또는 같은 worker-pool의
+    `BROADCAST`, planner-selected output은 `FOUT`.
+- **재현 절차**:
+  - `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip \
+    -Dtest=RulesetsGuardTest,AggregateBinaryFoutRuntimeTest test`
+- **관측 증상**:
+  - runtime은 `FULL`을 ROW/COL alias로 실행할 수 있었지만 oracle은 `FULL × local`, `local × FULL`을
+    `FED/LOUT`으로만 선언했다. 따라서 worker=1에서도 네 planner가 공통적으로 불필요한 download를 선택할 수 있었다.
+  - 특히 local-left × FULL-right에는 planner-forced FOUT을 보존하는 명시적 runtime branch가 없었다.
+- **원인 분석**:
+  - `FULL`의 물리 의미(한 worker에 완전한 객체)와 `FType.isType(ROW/COL)` alias에 기대는 runtime 분기 의미가
+    capability oracle에 동일하게 모델링되지 않았다.
+- **해결 요약**:
+  - oracle이 `FULL × local/BROADCAST`와 `local/BROADCAST × FULL`의 합법 FOUT type을 명시한다.
+  - local-left × single-worker FULL-right는 local LHS를 그 정확한 worker에 전송해 한 번 계산하고 결과 mapping을
+    `FULL/FOUT`으로 유지한다. partial response 채택이나 실패 후 보정은 없다.
+  - 같은 worker-pool의 `BROADCAST × FULL` 및 반대 순서와, 서로 다른 worker-pool의 양방향 fail-closed 회귀를 둔다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/rules/Rulesets.java`
+  - `src/main/java/org/apache/sysds/runtime/instructions/fed/AggregateBinaryFEDInstruction.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/rules/RulesetsGuardTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/AggregateBinaryFoutRuntimeTest.java`
+- **검증**:
+  - focused runtime suite는 새 대칭 worker-pool 회귀를 포함해 PASS.
+  - 전체 관련 gate `244/244`와 package build도 failure/error `0`; gate 로그 SHA-256은
+    `548ad48a2688a27876f4ea4500312fcdf11ce330697138577c31e9a038c6fa1d`이다.
+  - 실제 Docker KMeans worker=1 계획과 시간은 아직 미검증이다.
+- **잔여 이슈**:
+  - 새 immutable stage에서 DP KMeans worker=1 canary의 runtime explain이 실제 `ba+* ... FOUT`을 포함하고,
+    semantic oracle/cold-warm plan SHA/restart/fallback 검사가 모두 통과하는지 확인한다.
+- **잠재 회귀 위험**:
+  - FType만 같고 worker-pool이 다른 두 입력을 합성하면 안 된다. 감지: 서로 다른 worker endpoint의
+    `FULL × BROADCAST`와 `BROADCAST × FULL` 모두 fail-closed하는 runtime 회귀를 유지한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 정확히 실행 가능한 single-worker complete-object 조합을 oracle에 복원했으며, 후보 차단이나
+    runtime fallback을 추가하지 않았다.
+
+## planner-selected REFED materialization FType이 lowering에서 소실됨
+
+- **상태**: 코드/회귀 해결, 실패 셀 Docker 재검증 대기
+- **환경/조건**:
+  - DP PCA, worker `2`, LAN, local `1×2100` vector를 ROW-partitioned `50000×2100` anchor worker-pool에
+    planner가 `BROADCAST`로 materialize하도록 선택한 경로.
+  - 실패 campaign cell:
+    `/home/mchoi/g007-one-pass-83b1d35-7a72f59-20260802-v1/cells/010-c0a3abd6e207`.
+- **재현 절차**:
+  - 위 cell의 `response.json`과 raw coordinator log를 확인한다.
+  - 회귀: `mvn -q -DskipITs -Dcheckstyle.skip -Dspotbugs.skip \
+    -Dtest=PlacementEmissionTransactionRedTest,FEDLocalMaterializeUtilTest,CampaignBG014DpPcaRefedLoweringRedTest test`.
+- **관측 증상**:
+  - planner relocation key는 `materializationFType=BROADCAST`를 선택했지만 emitted instruction은
+    `FED fed_refed ...`에 type을 싣지 않았다.
+  - runtime은 anchor의 `ROW`를 재추론해 `1×2100`을 worker 2개에 ROW slice하려다
+    `ROW materialization requires at least one row per worker: rows=1 workers=2`로 실패했다.
+- **원인 분석**:
+  - `RelocationActionKey.materializationFType()`이 registry write, `AnchorSpec`, Lop, instruction operand를 통과하지
+    못해 planner의 exact physical decision이 lowering 경계에서 유실됐다.
+- **해결 요약**:
+  - exact transaction/legacy policy registration부터 registry, Lop, instruction까지 optional explicit FType을 전달한다.
+  - runtime은 explicit FType이 있으면 이를 계획 권한으로 사용한다. ROW anchor worker-pool 위의 BROADCAST는 동일한
+    정확한 worker endpoints에 전체 local value를 배치하며, anchor type을 임의로 재추론하지 않는다.
+  - 서로 다른 explicit FType registry write는 merge 시 fail-closed한다. legacy 4-operand instruction은 기존 추론을
+    유지하고 새 exact path는 5번째 type operand를 사용한다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/FederatedRefedPolicy.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/ExactPlacementRegistration.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/main/java/org/apache/sysds/lops/FederatedRefed.java`
+  - `src/main/java/org/apache/sysds/lops/compile/Dag.java`
+  - `src/main/java/org/apache/sysds/lops/compile/FederatedRefedRegistry.java`
+  - `src/main/java/org/apache/sysds/runtime/instructions/fed/FEDRefedInstruction.java`
+  - 관련 placement/runtime/PCA 회귀 테스트.
+- **검증**:
+  - `1×10` local vector + two-worker ROW anchor + explicit BROADCAST runtime 회귀가 두 complete ranges를 가진
+    `BROADCAST` map을 생성한다.
+  - placement transaction 회귀는 선택 type이 registry와 serialized instruction 끝까지 동일함을 검증한다.
+  - PCA planner 회귀는 선택된 모든 REFED relocation에 source owner가 정확히 하나이고 registry type이 선택 type과
+    같음을 검증한다.
+- **잔여 이슈**:
+  - 동일 PCA worker=2 LAN Docker cell을 새 JAR로 한 번 실행해 `fed_refed ... BROADCAST`, 오류 없음,
+    cold/warm plan SHA 동일성을 확인한다.
+- **잠재 회귀 위험**:
+  - explicit type과 worker/range authority가 불일치하면 잘못된 물리 map을 만들 수 있다. 감지: exact worker-pool
+    일치, FULL single-worker 제약, ROW/COL non-empty contiguous coverage 및 BROADCAST complete-range 검사를 유지한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 계획을 추측/보정하지 않고 planner가 선택한 placement를 명시적으로 실행하도록 lowering 계약을 복구했다.
+
+## PCA 회귀의 실행 순서 의존처럼 보인 현상은 static-final 비용 설정 test fixture 오류였음
+
+- **상태**: 회귀 fixture 해결, Docker fluctuation 해결의 증거로는 사용하지 않음
+- **환경/조건**:
+  - `CampaignBG014DpPcaRefedLoweringRedTest`를 단독 method로 실행하면 통과하지만 class 전체로 실행하면 선택된
+    relocation이 달라지던 현상.
+- **재현 절차**:
+  - 같은 JVM에서 첫 테스트가 `FederatedCostModel`을 먼저 로드한 뒤 두 번째 테스트가 Docker cost system property를
+    설정하는 순서와, 해당 property를 JVM startup에 전달하는 순서를 비교한다.
+- **관측 증상**:
+  - method 단독과 class 전체의 plan이 달랐지만, Docker 비용 property를 Maven JVM 시작 시 전달하면 전체 class가
+    통과했다.
+- **원인 분석**:
+  - 비용 상수는 class initialization 때 캡처되는 `static final`이다. 테스트 method 안에서 이후에 property를 바꾸는
+    코드는 비용 모델을 바꾸지 못했다. planner cache/Hop-ID 누수의 증거가 아니었다.
+- **해결 요약**:
+  - 회귀에서 늦은 global property mutation/restoration을 제거하고, 비용 선택에 의존하지 않는 구조적 계약으로 바꿨다:
+    선택된 REFED가 존재하고, source owner가 하나이며, emitted registry type이 선택 type과 동일해야 한다.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpPcaRefedLoweringRedTest.java`
+- **검증**:
+  - class 전체 실행 PASS; 관련 focused gate와 package build PASS.
+- **잔여 이슈**:
+  - 실제 worker scaling fluctuation은 이 테스트로 해결됐다고 간주하지 않는다. 고정 자원·fresh JVM·동일 plan SHA의
+    Docker 결과로 별도 검증한다.
+- **잠재 회귀 위험**:
+  - 구조 회귀가 특정 cost point에서만 나타날 수 있다. 감지: Docker cost property는 coordinator JVM 시작 전에
+    manifest로 고정하고 runtime plan SHA를 각 phase에서 비교한다.
+- **의사결정 근거/적용 원칙**:
+  - 잘못된 test setup을 planner 비결정성으로 오진하지 않고, plan lowering의 비용 독립 불변식을 검증한다.

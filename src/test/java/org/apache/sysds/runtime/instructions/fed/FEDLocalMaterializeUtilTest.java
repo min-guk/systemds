@@ -308,6 +308,42 @@ public class FEDLocalMaterializeUtilTest {
 	}
 
 	@Test
+	public void testRefedHonorsExplicitBroadcastLayoutOverRowAnchor() {
+		FederationUtils.clearRefedReuseCache();
+		try {
+			ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+			ec.setAutoCreateVars(true);
+			MatrixObject local = ExecutionContext.createMatrixObject(new MatrixBlock(1, 10, 1.0));
+			local.setFileName("ExplicitBroadcastRefedInput_20260802");
+			ec.setVariable("LocalRowVector", local);
+			ec.setVariable("SelectedRowAnchor", federatedAnchor(FType.ROW,
+				new long[][][] {{{0, 0}, {5, 10}}, {{5, 0}, {10, 10}}}));
+			ec.setVariable("BroadcastOut", ExecutionContext.createMatrixObject(new MatrixBlock()));
+
+			String inst = InstructionUtils.concatOperands("FED", "fed_refed",
+				InstructionUtils.concatOperandParts("LocalRowVector", DataType.MATRIX.name(), ValueType.FP64.name()),
+				InstructionUtils.concatOperandParts("SelectedRowAnchor", DataType.MATRIX.name(), ValueType.FP64.name()),
+				InstructionUtils.concatOperandParts("BroadcastOut", DataType.MATRIX.name(), ValueType.FP64.name()),
+				FType.BROADCAST.name());
+			FEDRefedInstruction.parseInstruction(inst).processInstruction(ec);
+
+			FederationMap out = ec.getMatrixObject("BroadcastOut").getFedMapping();
+			assertEquals("The runtime must execute the planner-selected materialization layout",
+				FType.BROADCAST, out.getType());
+			assertEquals(2, out.getSize());
+			for(FederatedRange range : out.getFederatedRanges()) {
+				assertEquals(0, range.getBeginDims()[0]);
+				assertEquals(0, range.getBeginDims()[1]);
+				assertEquals(1, range.getEndDims()[0]);
+				assertEquals(10, range.getEndDims()[1]);
+			}
+		}
+		finally {
+			FederationUtils.clearRefedReuseCache();
+		}
+	}
+
+	@Test
 	public void testDetectsMixedLocalFederatedData() {
 		List<Pair<FederatedRange, FederatedData>> entries = new ArrayList<>();
 		MatrixObject local = ExecutionContext.createMatrixObject(new MatrixBlock(10, 1, 1.0));

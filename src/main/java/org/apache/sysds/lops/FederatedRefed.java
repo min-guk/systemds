@@ -29,16 +29,23 @@ public class FederatedRefed extends Lop {
 	private final Lop _input;
 	private final Lop _anchor;
 	private final String _anchorKey;
+	private final String _materializationFType;
 
 	public FederatedRefed(Lop input, Lop anchor) {
 		this(input, anchor, input.getDataType(), input.getValueType());
 	}
 
 	public FederatedRefed(Lop input, Lop anchor, DataType dataType, ValueType valueType) {
+		this(input, anchor, dataType, valueType, null);
+	}
+
+	public FederatedRefed(Lop input, Lop anchor, DataType dataType, ValueType valueType,
+		String materializationFType) {
 		super(Type.FederatedRefed, dataType, valueType);
 		_input = input;
 		_anchor = anchor;
 		_anchorKey = null;
+		_materializationFType = materializationFType;
 		addInput(input);
 		input.addOutput(this);
 		addInput(anchor);
@@ -52,10 +59,16 @@ public class FederatedRefed extends Lop {
 	}
 
 	public FederatedRefed(Lop input, String anchorKey, DataType dataType, ValueType valueType) {
+		this(input, anchorKey, dataType, valueType, null);
+	}
+
+	public FederatedRefed(Lop input, String anchorKey, DataType dataType, ValueType valueType,
+		String materializationFType) {
 		super(Type.FederatedRefed, dataType, valueType);
 		_input = input;
 		_anchor = null;
 		_anchorKey = anchorKey;
+		_materializationFType = materializationFType;
 		addInput(input);
 		input.addOutput(this);
 		setLevel();
@@ -67,22 +80,26 @@ public class FederatedRefed extends Lop {
 		String anchorOperand = (_anchorKey != null)
 			? InstructionUtils.createLiteralOperand(_anchorKey, ValueType.STRING)
 			: _anchor.prepInputOperand(anchor);
-		return InstructionUtils.concatOperands(
+		String instruction = InstructionUtils.concatOperands(
 			"FED", "fed_refed",
 			_input.prepInputOperand(input),
 			anchorOperand,
 			prepOutputOperand(output));
+		return _materializationFType == null ? instruction
+			: InstructionUtils.concatOperands(instruction, _materializationFType);
 	}
 
 	@Override
 	public String getInstructions(String input, String output) {
 		if (_anchorKey == null)
 			throw new LopsException("FederatedRefed requires an anchor key when only one input is present.");
-		return InstructionUtils.concatOperands(
+		String instruction = InstructionUtils.concatOperands(
 			"FED", "fed_refed",
 			_input.prepInputOperand(input),
 			InstructionUtils.createLiteralOperand(_anchorKey, ValueType.STRING),
 			prepOutputOperand(output));
+		return _materializationFType == null ? instruction
+			: InstructionUtils.concatOperands(instruction, _materializationFType);
 	}
 
 	@Override

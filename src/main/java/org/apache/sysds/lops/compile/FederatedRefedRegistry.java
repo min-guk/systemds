@@ -28,6 +28,8 @@ import java.util.TreeSet;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+
 public final class FederatedRefedRegistry {
 	private static final Map<Long, Map<Long, AnchorSpec>> REFED_ANCHORS = new ConcurrentHashMap<>();
 
@@ -63,7 +65,12 @@ public final class FederatedRefedRegistry {
 	}
 
 	public static void register(long sbId, long hopId, long anchorHopId, String anchorKey, List<Long> consumerHopIds) {
-		AnchorSpec spec = new AnchorSpec(anchorHopId, anchorKey, consumerHopIds);
+		register(sbId, hopId, anchorHopId, anchorKey, null, consumerHopIds);
+	}
+
+	public static void register(long sbId, long hopId, long anchorHopId, String anchorKey,
+		FType materializationFType, List<Long> consumerHopIds) {
+		AnchorSpec spec = new AnchorSpec(anchorHopId, anchorKey, materializationFType, consumerHopIds);
 		REFED_ANCHORS.compute(sbId, (scopeId, existingScope) -> {
 			Map<Long, AnchorSpec> scope = existingScope != null ? existingScope : new ConcurrentHashMap<>();
 			scope.compute(hopId, (registeredHopId, existingSpec) ->
@@ -91,6 +98,13 @@ public final class FederatedRefedRegistry {
 		if(existingAnchorKey != null && incomingAnchorKey != null && !existingAnchorKey.equals(incomingAnchorKey))
 			throw conflictingAuthority(sbId, hopId, existing, incoming);
 		String mergedAnchorKey = existingAnchorKey != null ? existingAnchorKey : incomingAnchorKey;
+		FType existingMaterializationFType = existing.getMaterializationFType();
+		FType incomingMaterializationFType = incoming.getMaterializationFType();
+		if(existingMaterializationFType != null && incomingMaterializationFType != null
+			&& existingMaterializationFType != incomingMaterializationFType)
+			throw conflictingAuthority(sbId, hopId, existing, incoming);
+		FType mergedMaterializationFType = existingMaterializationFType != null
+			? existingMaterializationFType : incomingMaterializationFType;
 		boolean durableKeyProvesEquivalence = isDurableAnchorKey(existingAnchorKey)
 			&& existingAnchorKey.equals(incomingAnchorKey);
 		if(!durableKeyProvesEquivalence && existingAnchorHopId >= 0 && incomingAnchorHopId >= 0
@@ -103,14 +117,16 @@ public final class FederatedRefedRegistry {
 			mergedAnchorHopId = existingAnchorHopId >= 0 ? existingAnchorHopId : incomingAnchorHopId;
 		TreeSet<Long> mergedConsumers = new TreeSet<>(existing.getConsumerHopIds());
 		mergedConsumers.addAll(incoming.getConsumerHopIds());
-		return new AnchorSpec(mergedAnchorHopId, mergedAnchorKey, List.copyOf(mergedConsumers));
+		return new AnchorSpec(mergedAnchorHopId, mergedAnchorKey, mergedMaterializationFType,
+			List.copyOf(mergedConsumers));
 	}
 
 	private static IllegalArgumentException conflictingAuthority(long sbId, long hopId,
 		AnchorSpec existing, AnchorSpec incoming) {
 		return new IllegalArgumentException("conflicting fed_refed anchor authority for scope=" + sbId
 			+ " hop=" + hopId + " existing=(" + existing.getAnchorHopId() + "," + existing.getAnchorKey()
-			+ ") incoming=(" + incoming.getAnchorHopId() + "," + incoming.getAnchorKey() + ")");
+			+ "," + existing.getMaterializationFType() + ") incoming=(" + incoming.getAnchorHopId() + ","
+			+ incoming.getAnchorKey() + "," + incoming.getMaterializationFType() + ")");
 	}
 
 	private static String normalizeAnchorKey(String anchorKey) {
@@ -174,7 +190,8 @@ public final class FederatedRefedRegistry {
 
 	private static AnchorSpec copy(AnchorSpec spec) {
 		Objects.requireNonNull(spec, "anchorSpec");
-		return new AnchorSpec(spec.getAnchorHopId(), spec.getAnchorKey(), spec.getConsumerHopIds());
+		return new AnchorSpec(spec.getAnchorHopId(), spec.getAnchorKey(), spec.getMaterializationFType(),
+			spec.getConsumerHopIds());
 	}
 
 	private static List<Long> immutableConsumerIds(List<Long> consumerHopIds) {
@@ -193,11 +210,21 @@ public final class FederatedRefedRegistry {
 	public static final class AnchorSpec {
 		private final long _anchorHopId;
 		private final String _anchorKey;
+		private final FType _materializationFType;
 		private final List<Long> _consumerHopIds;
 
 		public AnchorSpec(long anchorHopId, String anchorKey, List<Long> consumerHopIds) {
+			this(anchorHopId, anchorKey, null, consumerHopIds);
+		}
+
+		public AnchorSpec(long anchorHopId, String anchorKey, FType materializationFType,
+			List<Long> consumerHopIds) {
 			_anchorHopId = anchorHopId;
 			_anchorKey = anchorKey;
+			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
+				throw new IllegalArgumentException("fed_refed does not support materialization type "
+					+ materializationFType);
+			_materializationFType = materializationFType;
 			_consumerHopIds = immutableConsumerIds(consumerHopIds);
 		}
 
@@ -207,6 +234,10 @@ public final class FederatedRefedRegistry {
 
 		public String getAnchorKey() {
 			return _anchorKey;
+		}
+
+		public FType getMaterializationFType() {
+			return _materializationFType;
 		}
 
 		public List<Long> getConsumerHopIds() {
@@ -220,12 +251,13 @@ public final class FederatedRefedRegistry {
 			if(!(obj instanceof AnchorSpec that))
 				return false;
 			return _anchorHopId == that._anchorHopId && Objects.equals(_anchorKey, that._anchorKey)
+				&& _materializationFType == that._materializationFType
 				&& Objects.equals(_consumerHopIds, that._consumerHopIds);
 		}
 
 		@Override
 		public int hashCode() {
-			return Objects.hash(_anchorHopId, _anchorKey, _consumerHopIds);
+			return Objects.hash(_anchorHopId, _anchorKey, _materializationFType, _consumerHopIds);
 		}
 	}
 }

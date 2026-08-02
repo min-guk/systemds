@@ -102,6 +102,52 @@ public class AggregateBinaryFoutRuntimeTest {
 	}
 
 	@Test
+	public void testSingleWorkerFullLeftLocalRightFoutStaysFederated() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setVariable("L", federatedMatrix("L", 2, 3, 13, FType.FULL, 1));
+		MatrixObject right = new MatrixObject(ValueType.FP64, "R",
+			new MetaData(new MatrixCharacteristics(3, 4, 1024, 12)));
+		right.acquireModify(new MatrixBlock(3, 4, 1.0));
+		right.release();
+		ec.setVariable("R", right);
+		ec.setVariable("O", new MatrixObject(ValueType.FP64, "O",
+			new MetaData(new MatrixCharacteristics(2, 4, 1024))));
+
+		runForcedFoutMatMult(ec);
+
+		MatrixObject out = ec.getMatrixObject("O");
+		assertTrue("A single-range FULL input can keep a complete matrix-multiply result on its worker",
+			out.isFederated());
+		assertEquals(FType.FULL, out.getFedMapping().getType());
+		assertEquals(1, out.getFedMapping().getSize());
+		assertEquals(2, out.getNumRows());
+		assertEquals(4, out.getNumColumns());
+	}
+
+	@Test
+	public void testSingleWorkerLocalLeftFullRightFoutStaysFederated() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		MatrixObject left = new MatrixObject(ValueType.FP64, "L",
+			new MetaData(new MatrixCharacteristics(2, 3, 1024, 6)));
+		left.acquireModify(new MatrixBlock(2, 3, 1.0));
+		left.release();
+		ec.setVariable("L", left);
+		ec.setVariable("R", federatedMatrix("R", 3, 4, 14, FType.FULL, 1));
+		ec.setVariable("O", new MatrixObject(ValueType.FP64, "O",
+			new MetaData(new MatrixCharacteristics(2, 4, 1024))));
+
+		runForcedFoutMatMult(ec);
+
+		MatrixObject out = ec.getMatrixObject("O");
+		assertTrue("A single-range FULL right input can keep a complete matrix-multiply result on its worker",
+			out.isFederated());
+		assertEquals(FType.FULL, out.getFedMapping().getType());
+		assertEquals(1, out.getFedMapping().getSize());
+		assertEquals(2, out.getNumRows());
+		assertEquals(4, out.getNumColumns());
+	}
+
+	@Test
 	public void testReplicatedMultiWorkerFoutMatMultStaysFederated() {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
 		ec.setVariable("L", federatedMatrix("L", 2, 3, 21, FType.BROADCAST, 2));
@@ -171,6 +217,18 @@ public class AggregateBinaryFoutRuntimeTest {
 			new MetaData(new MatrixCharacteristics(2, 4, 1024))));
 
 		assertThrows("Complete ranges are not sufficient when the operands are on different workers",
+			RuntimeException.class, () -> runForcedFoutMatMult(ec));
+	}
+
+	@Test
+	public void testBroadcastLeftAndFullRightOnDifferentWorkersCannotRetainFout() {
+		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());
+		ec.setVariable("L", federatedMatrix("L", 2, 3, 53, FType.BROADCAST, 1, 17000));
+		ec.setVariable("R", federatedMatrix("R", 3, 4, 54, FType.FULL, 1, 18000));
+		ec.setVariable("O", new MatrixObject(ValueType.FP64, "O",
+			new MetaData(new MatrixCharacteristics(2, 4, 1024))));
+
+		assertThrows("The worker-pool contract must be symmetric for BROADCAST x FULL",
 			RuntimeException.class, () -> runForcedFoutMatMult(ec));
 	}
 

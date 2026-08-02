@@ -36,7 +36,6 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 	public void pcaDpFourRowPartitionsKeepOneExactSelectionPerOccurrence() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
-		Map<String, String> oldCostProperties = installDockerLanCostProperties();
 		DMLConfig config = new DMLConfig(oldGlobal);
 		config.setTextValue(DMLConfig.FEDERATED_PLANNER, "compile_cost_based");
 		config.setTextValue(DMLConfig.NATIVE_BLAS, "mkl");
@@ -72,12 +71,33 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 					receipt.normalizedResult().selectedEmissionStates().get(occurrence.key())))
 				.count();
 			Assert.assertEquals("fixture must expose the Docker centered-X occurrence", 1, centeredXOccurrences);
+			var selectedRefedRelocations = receipt.normalizedResult().selectedRelocations().stream()
+				.filter(action -> action.targetPlacement().execType()
+					== org.apache.sysds.common.Types.ExecType.FED)
+				.filter(action -> action.targetPlacement().output()
+					== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT)
+				.toList();
+			Assert.assertFalse("PCA fixture must contain an exact selected REFED relocation",
+				selectedRefedRelocations.isEmpty());
+			for(var action : selectedRefedRelocations) {
+				var sourceOccurrences = receipt.analysis().occurrences().stream()
+					.filter(occurrence -> receipt.analysis().graph().node(occurrence.key()).orElseThrow()
+						.valueVersion().equals(action.sourceValueVersion()))
+					.toList();
+				Assert.assertEquals("A selected PCA relocation must have one emitted source owner",
+					1, sourceOccurrences.size());
+				HopOccurrenceProjection source = sourceOccurrences.get(0);
+				FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(source.scopeId())
+					.get(source.hop().getHopID());
+				Assert.assertNotNull("The selected PCA relocation must reach the refed registry", spec);
+				Assert.assertEquals("The registry must preserve the planner-selected materialization layout",
+					action.materializationFType(), spec.getMaterializationFType());
+			}
 			translator.getRuntimeProgram(program, config);
 		}
 		finally {
 			TestUtils.shutdownThreads(workers);
 			InfrastructureAnalyzer.setLocalMaxMemory(oldLocalMaxMemory);
-			restoreProperties(oldCostProperties);
 			ConfigurationManager.setGlobalConfig(oldGlobal);
 			ConfigurationManager.setLocalConfig(oldGlobal);
 			FederatedPlannerUtils.resetFederatedPlannerRunState();
@@ -215,32 +235,4 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 		return ports;
 	}
 
-	private static Map<String, String> installDockerLanCostProperties() {
-		Map<String, String> values = Map.of(
-			"SYSDS_FED_COST_MEM_BW", "25000",
-			"SYSDS_FED_COST_NET_BW", "1250",
-			"SYSDS_FED_COST_NET_BW_C2W", "1250",
-			"SYSDS_FED_COST_NET_BW_W2C", "1250",
-			"SYSDS_FED_COST_NET_SERDES_BW", "210",
-			"SYSDS_FED_COST_NET_SERDES_BW_C2W", "210",
-			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7",
-			"SYSDS_FED_COST_NET_LATENCY", "0.001",
-			"SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0",
-			"SYSDS_FED_COST_FLOPS", "2147483648");
-		Map<String, String> previous = new HashMap<>();
-		values.forEach((key, value) -> {
-			previous.put(key, System.getProperty(key));
-			System.setProperty(key, value);
-		});
-		return previous;
-	}
-
-	private static void restoreProperties(Map<String, String> previous) {
-		previous.forEach((key, value) -> {
-			if(value == null)
-				System.clearProperty(key);
-			else
-				System.setProperty(key, value);
-		});
-	}
 }
