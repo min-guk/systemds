@@ -1040,3 +1040,39 @@
     일관성을 위해 Docker campaign service는 `sg docker` 경로를 유지하고 시작 직후 `docker version`을 fail-fast한다.
 - **의사결정 근거/적용 원칙**:
   - 실험 셀을 재실행하거나 결과를 합성하지 않고, 셀 실행 전 인프라 권한 context만 바로잡았다.
+
+## 중간 성능 그래프가 실행환경×워크로드 3×7 비교 형식을 따르지 않음
+
+- **상태**: 해결 — 인증된 294-cell 스냅샷을 3행×7열 단일 그래프로 재생성
+- **환경/조건**:
+  - Docker-only stitched snapshot `294/336`: DP/FedAll/Heuristic 각 `84`, MinST `42`.
+  - campaign root:
+    `/home/mchoi/g007-all-planners-minst-native-local-e18d326-d60da24-20260802-v1`.
+- **재현 절차**:
+  - 기존 `docs/experiments/minst-continuation-2026-08-02-interim-284/` 그래프를 열면 profile별 파일과
+    ratio boxplot으로 분리되어 있어 실행환경 행과 workload 열을 한 화면에서 비교할 수 없다.
+- **관측 증상**:
+  - 사용자가 요구한 행=`LAN/WAN-light/WAN-mid`, 열=`7 workloads`, x=`workers`, y=`execution time` 구성이 아니었다.
+- **원인 분석**:
+  - 기존 plotter가 profile마다 `4×2` 별도 PNG를 생성하도록 고정되어 있었고 통합 facet 계약이 없었다.
+- **해결 요약**:
+  - 실행 중인 campaign의 성공 prefix 11개를 원자적으로 복사해 283개 historical registry와 결합했다.
+  - 모든 response descriptor/hash, attempt `1`, semantic oracle, fallback/timeout/error scan, restart `0/0`, clean
+    teardown 및 execution metric을 다시 검증한 뒤 `3×7` 단일 PNG를 생성했다.
+  - 같은 workload 열의 세 실행환경은 동일한 y축 범위를 사용한다. 미실행 MinST 지점은 0으로 채우지 않는다.
+- **수정 파일**:
+  - `docs/experiments/minst-continuation-2026-08-02-interim-294/build_interim_dataset.py`
+  - `docs/experiments/minst-continuation-2026-08-02-interim-294/plot_runtime_grid.R`
+  - `docs/experiments/minst-continuation-2026-08-02-interim-294/runtime_grid_3x7_interim_294.png`
+- **검증**:
+  - 출력은 `4200×1900` RGB PNG이며 SHA-256은
+    `c7cd1c0782545b05e1d178d2add10ea63490e65b70ccfff60e42772c528073a6`이다.
+  - 인증 CSV는 294개 unique canonical cell이고 SHA-256은
+    `d295b37a8313ef93709b3a467643994ad83c8c513314fff802cd9669fad6cf0d`이다.
+- **잔여 이슈**:
+  - 이 파일은 캠페인 진행 중 동결한 중간 스냅샷이다. 336개 성공 후 같은 3×7 형식으로 최종 그래프를 재생성한다.
+- **잠재 회귀 위험**:
+  - 실행 중인 rows 파일을 직접 읽으면 그래프 데이터와 제목 cardinality가 달라질 수 있다. 감지/방지: 먼저
+    immutable JSONL snapshot을 만들고 그 snapshot row 수와 CSV unique 수를 검증한다.
+- **의사결정 근거/적용 원칙**:
+  - 측정값이나 planner 결과는 변경하지 않고 인증된 Docker 결과의 시각화 구조만 바로잡았다.
