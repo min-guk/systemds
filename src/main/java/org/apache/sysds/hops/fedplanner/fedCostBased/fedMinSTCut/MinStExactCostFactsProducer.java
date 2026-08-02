@@ -2159,7 +2159,8 @@ public final class MinStExactCostFactsProducer {
 
 	static boolean hasExactCompatibleDurableSource(PlacementAnalysis analysis, AuxiliaryGroupFact group) {
 		return exactUploadAnchorCompatibility(analysis, group.producerKey(), group.conversionType(),
-			group.endpointsInCanonicalOrder()) == ExactAnchorCompatibility.COMPATIBLE;
+			group.endpointsInCanonicalOrder(), analysis.graph().node(group.producerKey()).orElseThrow().anchors())
+			== ExactAnchorCompatibility.COMPATIBLE;
 	}
 
 	private enum ExactAnchorCompatibility { UNCONSTRAINED, COMPATIBLE, INCOMPATIBLE }
@@ -2167,18 +2168,24 @@ public final class MinStExactCostFactsProducer {
 	private static UploadPriceTarget exactUploadPriceTarget(PlacementAnalysis analysis,
 		DecisionFact producerDecision, List<MembershipRepresentative> representatives,
 		BoundaryMode boundaryMode, FType conversionType, List<EndpointFact> endpoints) {
-		ExactAnchorCompatibility anchorCompatibility = boundaryMode == BoundaryMode.TWRITE_METADATA
-			? ExactAnchorCompatibility.UNCONSTRAINED
-			: exactUploadAnchorCompatibility(analysis, producerDecision.key(), conversionType, endpoints);
 		List<MembershipRepresentative> producerRepresentatives = representatives.stream()
 			.filter(representative -> representative.decisionKey() == producerDecision.key()).toList();
 		if(producerRepresentatives.isEmpty())
 			throw new IllegalArgumentException("MINST_UPLOAD_REUSE_MEMBERSHIP_MISSING|producer="
 				+ producerDecision.key().normalizedSignature());
-		List<Boolean> compatible = producerRepresentatives.stream().map(representative ->
-			representative.output() == FederatedOutput.FOUT
+		List<ExactAnchorCompatibility> anchorCompatibility = producerRepresentatives.stream()
+			.map(representative -> boundaryMode == BoundaryMode.TWRITE_METADATA
+				? ExactAnchorCompatibility.UNCONSTRAINED
+				: exactUploadAnchorCompatibility(analysis, producerDecision.key(), conversionType,
+					endpoints, exactRepresentativeAnchors(analysis, representatives, representative)))
+			.toList();
+		List<Boolean> compatible = new ArrayList<>(producerRepresentatives.size());
+		for(int index = 0; index < producerRepresentatives.size(); index++) {
+			MembershipRepresentative representative = producerRepresentatives.get(index);
+			compatible.add(representative.output() == FederatedOutput.FOUT
 				&& representative.state().fType() == conversionType
-				&& anchorCompatibility != ExactAnchorCompatibility.INCOMPATIBLE).toList();
+				&& anchorCompatibility.get(index) != ExactAnchorCompatibility.INCOMPATIBLE);
+		}
 		if(compatible.stream().noneMatch(Boolean::booleanValue))
 			return UploadPriceTarget.SINK;
 		boolean matchesPlacement = true;
@@ -2238,9 +2245,10 @@ public final class MinStExactCostFactsProducer {
 	}
 
 	private static ExactAnchorCompatibility exactUploadAnchorCompatibility(PlacementAnalysis analysis,
-		CompiledHopKey producerKey, FType conversionType, List<EndpointFact> endpoints) {
+		CompiledHopKey producerKey, FType conversionType, List<EndpointFact> endpoints,
+		List<DurableAnchorKey> representativeAnchors) {
 		NeutralPlacementGraph.Node producer = analysis.graph().node(producerKey).orElseThrow();
-		Set<DurableAnchorKey> available = new LinkedHashSet<>(producer.anchors());
+		Set<DurableAnchorKey> available = new LinkedHashSet<>(representativeAnchors);
 		// A formal function TRead is a transparent alias of its caller argument.  Shared
 		// preprocessing keeps that relation logical (there is intentionally no physical
 		// Hop child and no copied anchor on the formal node), while legacy MinST saw the
@@ -2253,8 +2261,7 @@ public final class MinStExactCostFactsProducer {
 			.map(input -> analysis.graph().node(input.authority().sourceArgument()).orElseThrow())
 			.flatMap(source -> source.anchors().stream())
 			.filter(anchor -> anchor.fType() == conversionType).toList();
-		if(!logicalFunctionAnchors.isEmpty())
-			return ExactAnchorCompatibility.COMPATIBLE;
+		available.addAll(logicalFunctionAnchors);
 		List<Set<DurableAnchorKey>> endpointRequirements = new ArrayList<>();
 		Set<DurableAnchorKey> required = new LinkedHashSet<>();
 		for(EndpointFact endpoint : endpoints) {
@@ -2288,10 +2295,117 @@ public final class MinStExactCostFactsProducer {
 		}
 		if(endpointRequirements.stream().allMatch(Set::isEmpty))
 			return ExactAnchorCompatibility.UNCONSTRAINED;
-		if(endpointRequirements.stream().anyMatch(Set::isEmpty))
-			return ExactAnchorCompatibility.INCOMPATIBLE;
+		// An endpoint without an exact anchor requirement is a wildcard: it can consume
+		// the materialization selected for a constrained sibling in this shared upload
+		// group. Treating a wildcard as a conflicting anchor made a derived FED/FOUT
+		// producer pay a second upload and left the wildcard endpoint without any
+		// relocation authority (KMeans D -> {D<=rowMins(D), rowMins(D)}).
 		return available.containsAll(required) ? ExactAnchorCompatibility.COMPATIBLE
 			: ExactAnchorCompatibility.INCOMPATIBLE;
+	}
+
+	/**
+	 * Recover the exact durable placement carried by one already-materialized FOUT
+	 * membership. Captured FED rules preserve the worker pool of their exact FOUT
+	 * inputs; the membership authority graph already proves those inputs recursively.
+	 * Keeping this proof here avoids both a redundant re-federation and a type-only
+	 * same-FType assumption. A true multi-anchor or cyclic proof remains unproven.
+	 */
+	private static List<DurableAnchorKey> exactRepresentativeAnchors(PlacementAnalysis analysis,
+		List<MembershipRepresentative> representatives, MembershipRepresentative representative) {
+		return exactRepresentativeAnchors(analysis, representatives, representative,
+			new IdentityHashMap<>());
+	}
+
+	private static List<DurableAnchorKey> exactRepresentativeAnchors(PlacementAnalysis analysis,
+		List<MembershipRepresentative> representatives, MembershipRepresentative representative,
+		IdentityHashMap<MembershipRepresentative,Boolean> visiting) {
+		if(representative.output() != FederatedOutput.FOUT)
+			return List.of();
+		if(representative.durableAnchorOrNull() != null)
+			return List.of(representative.durableAnchorOrNull());
+		if(representative.authorityKind() != MembershipAuthorityKind.CAPTURED_RULE
+			|| visiting.put(representative, Boolean.TRUE) != null)
+			return List.of();
+		try {
+			List<DurableAnchorKey> anchors = new ArrayList<>();
+			Set<Integer> resolvedPositions = new LinkedHashSet<>();
+			for(MembershipInputAuthorityFact authority : representative.inputAuthorityFacts()) {
+				List<DurableAnchorKey> inherited = exactRepresentativeAnchors(analysis, representatives,
+					authority.producerRepresentative(), visiting);
+				if(inherited.isEmpty())
+					return List.of();
+				anchors.addAll(inherited);
+				resolvedPositions.add(authority.inputPosition());
+			}
+			for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+				if(edge.consumer() != representative.decisionKey()
+					|| edge.inputPosition() >= representative.orderedInputs().size()
+					|| !representative.orderedInputs().get(edge.inputPosition()).present()
+					|| resolvedPositions.contains(edge.inputPosition()))
+					continue;
+				FType expected = representative.orderedInputs().get(edge.inputPosition()).fType();
+				List<DurableAnchorKey> direct = analysis.graph().node(edge.producer()).orElseThrow().anchors()
+					.stream().filter(anchor -> anchor.fType() == expected).toList();
+				if(direct.size() != 1)
+					return List.of();
+				anchors.add(direct.get(0));
+				resolvedPositions.add(edge.inputPosition());
+			}
+			for(LogicalTransientInputFact input : analysis.logicalTransientInputsInCanonicalOrder()) {
+				if(input.targetRead() != representative.decisionKey()
+					|| input.logicalPosition() >= representative.orderedInputs().size()
+					|| !representative.orderedInputs().get(input.logicalPosition()).present()
+					|| resolvedPositions.contains(input.logicalPosition()))
+					continue;
+				List<DurableAnchorKey> inherited = exactSourceAnchors(analysis, representatives,
+					input.sourceWrite(), input.federatedFType(), visiting);
+				if(inherited.isEmpty())
+					return List.of();
+				anchors.addAll(inherited);
+				resolvedPositions.add(input.logicalPosition());
+			}
+			for(LogicalFunctionInputFact input : analysis.logicalFunctionInputsInCanonicalOrder()) {
+				if(input.targetRead() != representative.decisionKey()
+					|| input.logicalPosition() >= representative.orderedInputs().size()
+					|| !representative.orderedInputs().get(input.logicalPosition()).present()
+					|| resolvedPositions.contains(input.logicalPosition()))
+					continue;
+				FType expected = representative.orderedInputs().get(input.logicalPosition()).fType();
+				List<DurableAnchorKey> inherited = exactSourceAnchors(analysis, representatives,
+					input.sourceArgument(), expected, visiting);
+				if(inherited.isEmpty())
+					return List.of();
+				anchors.addAll(inherited);
+				resolvedPositions.add(input.logicalPosition());
+			}
+			for(int position = 0; position < representative.orderedInputs().size(); position++)
+				if(representative.orderedInputs().get(position).present()
+					&& !resolvedPositions.contains(position))
+					return List.of();
+			List<DurableAnchorKey> unique = identityDistinct(anchors);
+			return unique.size() == 1 ? unique : List.of();
+		}
+		finally {
+			visiting.remove(representative);
+		}
+	}
+
+	private static List<DurableAnchorKey> exactSourceAnchors(PlacementAnalysis analysis,
+		List<MembershipRepresentative> representatives, CompiledHopKey source, FType type,
+		IdentityHashMap<MembershipRepresentative,Boolean> visiting) {
+		List<DurableAnchorKey> direct = analysis.graph().node(source).orElseThrow().anchors().stream()
+			.filter(anchor -> anchor.fType() == type).toList();
+		if(direct.size() == 1)
+			return direct;
+		List<MembershipRepresentative> matching = representatives.stream()
+			.filter(candidate -> candidate.decisionKey() == source
+				&& candidate.output() == FederatedOutput.FOUT
+				&& candidate.state().fType() == type)
+			.toList();
+		if(matching.size() != 1)
+			return List.of();
+		return exactRepresentativeAnchors(analysis, representatives, matching.get(0), visiting);
 	}
 
 	private static List<ObligationFact> deriveObligations(PlacementAnalysis analysis,

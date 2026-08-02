@@ -8,6 +8,7 @@ package org.apache.sysds.test.component.federated.placement.guard;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
@@ -24,6 +25,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityKind;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelection;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactSelector;
@@ -161,6 +163,42 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			CandidateInputState.present(FType.ROW), representative.orderedInputs().get(1));
 		Assert.assertEquals("BR10_KMEANS_CP_FOUT_MUST_RETAIN_ONE_EXACT_PRODUCER_AUTHORITY",
 			1, representative.inputAuthorityFacts().size());
+	}
+
+	@Test
+	public void kmeansHarnessDerivedFoutRetainsExactUploadAuthority() throws Exception {
+		Map<String,String> oldCostProperties = installDockerLanCostProperties();
+		try {
+			PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
+				.buildDetachedAnalysis(compileHarnessKMeans());
+			MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope(analysis));
+			List<CompiledInputEdgeFact> matches = analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.producer().normalizedSignature()
+					.contains("scripts/builtin/kmeans.dml:210:29:org.apache.sysds.hops.BinaryOp"))
+				.filter(edge -> edge.consumer().normalizedSignature()
+					.contains("scripts/builtin/kmeans.dml:211:14:org.apache.sysds.hops.AggUnaryOp"))
+				.toList();
+			Assert.assertEquals("BR10_KMEANS_HARNESS_FAILURE_EDGE_MUST_BE_UNIQUE", 1, matches.size());
+			CompiledInputEdgeFact input = matches.get(0);
+			AuxiliaryGroupFact group = facts.auxiliaryGroupsInCanonicalOrder().stream()
+				.filter(candidate -> candidate.direction() == Direction.UPLOAD
+					&& candidate.producerKey() == input.producer())
+				.filter(candidate -> candidate.endpointsInCanonicalOrder().stream().anyMatch(endpoint ->
+					endpoint.consumerKey() == input.consumer()
+						&& endpoint.inputPosition() == input.inputPosition()))
+				.findFirst().orElseThrow(() -> new AssertionError(
+					"BR10_KMEANS_HARNESS_UPLOAD_GROUP_MISSING"));
+			Assert.assertEquals("BR10_KMEANS_DERIVED_FOUT_MUST_OWN_EXACT_REUSE_PRICE",
+				UploadPriceTarget.PRODUCER_FED_FOUT, group.uploadPriceTarget());
+			MinStExactSelection selection = MinStExactSelector.select(facts);
+			Assert.assertEquals("BR10_KMEANS_DERIVED_FOUT_REUSE_MUST_NOT_EMIT_UPLOAD_RECEIPT", 0L,
+				selection.obligationReceiptsInOrder().stream().filter(receipt ->
+					receipt.direction() == Direction.UPLOAD
+						&& receipt.producerKey() == input.producer()).count());
+		}
+		finally {
+			restoreProperties(oldCostProperties);
+		}
 	}
 
 	@Test
@@ -812,6 +850,23 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		return compileKMeans(2);
 	}
 
+	private static DMLProgram compileHarnessKMeans() throws Exception {
+		String script = String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(25000,2100),list(25000,0),list(50000,2100)));",
+			"[C,Y]=kmeans(X=X,k=50,is_verbose=FALSE,runs=1,eps=1e-9,max_iter=60,"
+				+ "avg_sample_size_per_centroid=50,seed=133815928);",
+			"write(Y,\"out\",format=\"csv\");") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
+			script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
+	}
+
 	private static DMLProgram compileLm() throws Exception {
 		String script = String.join("\n",
 			"X=federated(addresses=list(\"localhost:1234/X1\"),"
@@ -899,5 +954,34 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		return analysis.analysisFingerprint() + "\n" + analysis.graph().normalizedSignature() + "\n"
 			+ analysis.occurrences().stream().map(HopOccurrenceProjection::normalizedSignature).toList() + "\n"
 			+ analysis.candidateRuleFacts().orderedFacts();
+	}
+
+	private static Map<String,String> installDockerLanCostProperties() {
+		Map<String,String> values = Map.of(
+			"SYSDS_FED_COST_MEM_BW", "25000",
+			"SYSDS_FED_COST_NET_BW", "1250",
+			"SYSDS_FED_COST_NET_BW_C2W", "1250",
+			"SYSDS_FED_COST_NET_BW_W2C", "1250",
+			"SYSDS_FED_COST_NET_SERDES_BW", "210",
+			"SYSDS_FED_COST_NET_SERDES_BW_C2W", "210",
+			"SYSDS_FED_COST_NET_SERDES_BW_W2C", "14.7",
+			"SYSDS_FED_COST_NET_LATENCY", "0.001",
+			"SYSDS_FED_COST_LOCAL_TO_FED_CTRL_MS", "0",
+			"SYSDS_FED_COST_FLOPS", "2147483648");
+		Map<String,String> previous = new HashMap<>();
+		values.forEach((key, value) -> {
+			previous.put(key, System.getProperty(key));
+			System.setProperty(key, value);
+		});
+		return previous;
+	}
+
+	private static void restoreProperties(Map<String,String> previous) {
+		previous.forEach((key, value) -> {
+			if(value == null)
+				System.clearProperty(key);
+			else
+				System.setProperty(key, value);
+		});
 	}
 }

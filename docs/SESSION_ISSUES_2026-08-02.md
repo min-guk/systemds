@@ -630,9 +630,9 @@
     cell attempt가 모두 `0`임을 봉인한 뒤, 기존 캠페인과 동일한 `sg docker` 경계로 실행했다. 이는 실험
     재시도가 아니며 증거는 continuation의 `control/infrastructure-preflight-failure-1/`에 있다.
 - **잔여 이슈**:
-  - 기존 성공 `271`셀과 overlap `0`인 remaining MinST `65`셀을 현재 fresh stage에서 실행한다.
-  - 새 실패가 발생하면 해당 binary/campaign을 즉시 동결하고 같은 셀을 재시도하지 않은 채 원인을
-    planner/runtime 원칙에 따라 수정한다.
+  - StepLM 수정 binary는 canary와 continuation의 추가 `2`셀까지 성공했으나, 다음 KMeans LAN 셀에서
+    별도 exact upload-authority 문제가 드러나 campaign을 `273/336`에서 동결했다. 아래 KMeans 이슈에서
+    새 binary/canary/remaining-only continuation으로 이어간다.
   - 전체 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 다시 만든다.
 - **잠재 회귀 위험**:
   - CP formal이 전체 payload가 아니라 FType별 부분 payload를 읽는 새 runtime semantics를 얻으면 현재
@@ -646,3 +646,87 @@
   - 합법 후보를 닫거나 runtime에서 복구하지 않고, local materialization이 실제로 소거하는 FType을 비용
     projection에서도 소거했다. 사용되지 않는 단일-layout 가정을 제거해 planner의 exact 상태 표현을
     runtime semantics와 맞춘 것이다.
+
+## MinST KMeans의 파생 FED/FOUT worker-pool 계보가 upload reuse에서 소실됨
+
+- **상태**: 해결, fresh Docker canary/remaining-only continuation 검증 대기
+- **환경/조건**:
+  - planner `MinST` (`compile_min_st_cut`), workload `kmeans`, workers `2`, profile `lan`.
+  - Docker-only `run_LAN_docker.sh`, private-aggregate frozen P2P2D, seed/data `2026072701`.
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-minst-steplm-layout-e36339d-d60da24-20260802-v1`.
+- **재현 절차**:
+  - Docker 실패 cell:
+    `workers=2|planner=MinST|workload=kmeans|profile=lan`, attempt `1`, retry 없음.
+  - 로컬 exact RED:
+    `mvn -q -Dcheckstyle.skip=true -Drat.skip=true \
+    -Dtest=CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest test`.
+  - 회귀는 Docker와 동일한 50,000x2,100, `k=50`, `runs=1`, `max_iter=60`,
+    builtin `kmeans`, compile-only, LAN cost profile을 테스트 내부에서 고정한다.
+- **관측 증상**:
+  - planner exception:
+    `MINST_EXACT_OBLIGATION_AUTHORITY_MISSING|direction=UPLOAD|...kmeans.dml:210:29:...b(+):D|consumer=...kmeans.dml:211:14:...ua(minR)|input=0|selectedProducer=FED/FOUT/ROW/...|selectedConsumer=FED/FOUT/ROW/...|available=[]`.
+  - Docker response SHA-256:
+    `5830bfc14fab96955746d93843a2a341a3668708e73fecd9457ef5df8aca682c`.
+  - coordinator log SHA-256:
+    `308ab07e38c2c0af424e202da9bfd70dda2d272d6af6d89b27ccb72f75ce1115`.
+  - 실패 campaign은 base `271` + 신규 성공 `2` = `273`에서 봉인했고 remaining은 `63`이다.
+    `CAMPAIGN_FAILED.json` SHA-256은
+    `aeb05154e802086a7c44b2327797f3dfb31c5a75aee74b42935d2502f4ff0b1c`, stop 후 validation
+    SHA-256은 `8d45acd41a1452642d84562593cfae8023c71f7db5c75cca7026e59e0e24f424`이다.
+- **원인 분석**:
+  1. KMeans의 `D = -2*(X %*% t(C)) + ...`는 exact captured-rule chain을 통해 원본 `X`의 ROW
+     FederationMap에서 계산되어 `FED/FOUT/ROW`를 만든다.
+  2. `D`는 `D <= rowMins(D)`의 input 0과 `rowMins(D)`의 input 0에서 함께 사용된다. 두 연산 모두
+     같은 파생 worker pool을 그대로 사용할 수 있다.
+  3. 기존 `exactUploadPriceTarget`은 producer Hop에 직접 붙은 `Node.anchors()`만 보았다. 파생 `D`에는
+     직접 durable anchor가 없으므로, 이미 exact membership input authority가 증명한 worker-pool 계보를
+     잃었다.
+  4. 같은 upload group의 endpoint 중 binary sibling anchor가 있는 endpoint와 unary처럼 anchor 제약이
+     없는 endpoint가 섞이면, `exactUploadAnchorCompatibility`는 빈 요구사항을 wildcard가 아닌 conflict로
+     처리했다.
+  5. 그 결과 이미 선택된 `D=FED/FOUT/ROW`를 재사용하지 않고 SINK upload를 가격화했으며, 실제 relocation
+     action이 필요 없는 unary endpoint에서 transfer authority가 비어 selector가 fail-closed했다.
+- **해결 요약**:
+  - `MembershipRepresentative`의 exact input-authority DAG를 재귀적으로 따라가
+    `DURABLE_ANCHOR`/`RELOCATION_SOURCE`까지 도달하는 단일 anchor 계보를 복원한다.
+  - 단일 exact anchor로 수렴할 때만 해당 FOUT membership의 worker-pool reuse를 인정한다. 서로 다른
+    anchor가 둘 이상이거나 순환/권한 공백이 있으면 기존처럼 unproven으로 남겨 같은-FType 추정은 하지 않는다.
+  - group endpoint의 빈 anchor 요구는 constrained sibling이 선택한 동일 materialization을 받을 수 있는
+    wildcard로 모델링한다. 모든 endpoint가 unconstrained이면 기존 `UNCONSTRAINED` 동작을 유지한다.
+  - KMeans `D` group은 `PRODUCER_FED_FOUT`으로 정확히 가격화되고, 선택된 `FED/FOUT`에서는 중복 upload
+    receipt를 만들지 않는다.
+  - runtime fallback/repair, candidate skip/continue guard, TRead/TWrite 완화, recompile `<CP,FOUT>` 허용은
+    추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStKMeansGroupedUploadAuthorityRedTest.java`
+  - `src/test/java/org/apache/sysds/test/component/federated/placement/guard/CampaignBR10MinStFTypeMembershipAuthorityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-02.md`
+- **검증**:
+  - Docker-equivalent LAN cost RED:
+    `/tmp/g007-minst-kmeans-lan-cost-red-20260802.log`, SHA-256
+    `bc75f6ec69227cbf06291855d00b80f7851e67ff89b8149a5945d0333e0f98c5`.
+  - self-contained exact CLI + structural GREEN:
+    `/tmp/g007-minst-kmeans-derived-anchor-green-self-contained-20260802.log`, SHA-256
+    `e7b681e6e7c311945390f0edc0e2f6f49be2564e9397473dd96a0fd662745424`.
+  - KMeans/StepLM/heavy-MM/BR10/forward/selector/PCA focused GREEN:
+    `/tmp/g007-minst-kmeans-derived-anchor-focused-green-final-20260802.log`, SHA-256
+    `ee406b613c7c36002cdb537f4a53c69c8066d0d1a6760fad5785fef1e802ccc8`.
+  - anchor/download/fingerprint fixture 6건은 수정 전 commit `93d91d6`에서도 동일하게 실패했다.
+    baseline 로그 `/tmp/g007-baseline-93d91d6-anchor-audit.log`, SHA-256
+    `81fda1fd4f507fa5ccc0e08db51f914c0c760143ecf365e3458e5c74d0d775f3`이므로 이번 변경의 신규 회귀가 아니다.
+- **잔여 이슈**:
+  - fresh package/JAR와 immutable Docker stage를 만들고 동일 KMeans LAN 셀을 attempt `1` canary로 검증한다.
+  - canary 성공분을 `273` 성공 registry에 승격한 뒤 overlap `0`인 remaining `62`셀만 새 campaign에서 실행한다.
+  - 전체 `336` 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 만든다.
+- **잠재 회귀 위험**:
+  - 여러 FOUT input이 동일 FType이지만 서로 다른 worker/range anchor를 가질 때 하나로 오인하면 잘못된 reuse가
+    생길 수 있다. 감지 방법: identity-distinct anchor가 정확히 하나일 때만 reuse하고 cross-anchor fixture와
+    Docker semantic oracle을 유지한다.
+  - 새 logical input 형태가 membership authority에는 present로 남지만 physical/logical edge proof가 없으면
+    reuse가 보수적으로 거부될 수 있다. 감지 방법: `resolvedPositions`가 모든 present input을 덮지 못하면
+    empty proof로 fail-closed하고 해당 경계를 별도 exact fact로 추가한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime이 지원하는 후보를 닫지 않고, 기존 exact membership authority가 이미 가진 placement 메타데이터를
+    upload 비용/재사용 모델까지 보존했다. 즉 비용 모델과 상태 표현을 고쳤으며 runtime fallback은 추가하지 않았다.
