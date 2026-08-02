@@ -83,6 +83,7 @@ public final class MinStExactPlacementProjector {
 		if(!facts.analysisFingerprint().equals(analysis.analysisFingerprint()))
 			throw new IllegalArgumentException("MINST_PROJECTOR_ANALYSIS_FINGERPRINT_STALE");
 		MinStExactCostFactsProducer.validate(analysis, facts.analysisFingerprint(), facts.orderedScope(),
+			facts.representativePreferences(),
 			facts.decisionFactsInScopeOrder(), facts.directedEdgesInDerivationOrder(),
 			facts.auxiliaryGroupsInCanonicalOrder(), facts.transferAuthoritiesInCanonicalOrder(),
 			facts.obligationFactsInCanonicalOrder(),

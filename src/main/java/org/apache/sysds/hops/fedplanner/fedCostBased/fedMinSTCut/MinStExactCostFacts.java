@@ -506,6 +506,7 @@ public final class MinStExactCostFacts {
 	private final PlacementAnalysis analysis;
 	private final String analysisFingerprint;
 	private final List<CompiledHopKey> orderedScope;
+	private final List<MinStExactCostFactsProducer.RepresentativePreference> representativePreferences;
 	private final List<DecisionFact> decisions;
 	private final List<MembershipRepresentative> membershipRepresentatives;
 	private final List<DirectedEdgeFact> edges;
@@ -515,12 +516,15 @@ public final class MinStExactCostFacts {
 	private final String derivationFingerprint;
 
 	MinStExactCostFacts(PlacementAnalysis analysis, String analysisFingerprint,
-		List<CompiledHopKey> orderedScope, List<DecisionFact> decisionFactsInScopeOrder,
+		List<CompiledHopKey> orderedScope,
+		List<MinStExactCostFactsProducer.RepresentativePreference> representativePreferences,
+		List<DecisionFact> decisionFactsInScopeOrder,
 		List<DirectedEdgeFact> directedEdgesInDerivationOrder,
 		List<AuxiliaryGroupFact> auxiliaryGroupsInCanonicalOrder,
 		List<TransferAuthorityFact> transferAuthoritiesInCanonicalOrder,
 		List<ObligationFact> obligationFactsInCanonicalOrder, String derivationFingerprint) {
 		MinStExactCostFactsProducer.validate(analysis, analysisFingerprint, orderedScope,
+			representativePreferences,
 			decisionFactsInScopeOrder, directedEdgesInDerivationOrder,
 			auxiliaryGroupsInCanonicalOrder, transferAuthoritiesInCanonicalOrder,
 			obligationFactsInCanonicalOrder,
@@ -528,9 +532,10 @@ public final class MinStExactCostFacts {
 		this.analysis = analysis;
 		this.analysisFingerprint = analysisFingerprint;
 		this.orderedScope = List.copyOf(orderedScope);
+		this.representativePreferences = List.copyOf(representativePreferences);
 		this.decisions = List.copyOf(decisionFactsInScopeOrder);
 		this.membershipRepresentatives = MinStExactCostFactsProducer.membershipRepresentatives(
-			analysis, this.decisions);
+			analysis, this.decisions, this.representativePreferences);
 		this.edges = List.copyOf(directedEdgesInDerivationOrder);
 		this.groups = List.copyOf(auxiliaryGroupsInCanonicalOrder);
 		this.transferAuthorities = List.copyOf(transferAuthoritiesInCanonicalOrder);
@@ -541,6 +546,9 @@ public final class MinStExactCostFacts {
 	public PlacementAnalysis analysis() { return analysis; }
 	public String analysisFingerprint() { return analysisFingerprint; }
 	public List<CompiledHopKey> orderedScope() { return orderedScope; }
+	List<MinStExactCostFactsProducer.RepresentativePreference> representativePreferences() {
+		return representativePreferences;
+	}
 	public long sourceNodeId() { return -1L; }
 	public long sinkNodeId() { return -2L; }
 	public List<DecisionFact> decisionFactsInScopeOrder() { return decisions; }

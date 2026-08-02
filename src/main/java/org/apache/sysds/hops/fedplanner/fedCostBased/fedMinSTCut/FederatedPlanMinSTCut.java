@@ -43,8 +43,10 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 
 		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
 			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope);
-		MinStExactSelection selection = MinStExactSelector.select(facts);
+		MinStExactCostFactsProducer.PlannedSelection planned =
+			MinStExactCostFactsProducer.deriveAndSelectBest(analysis, scope);
+		MinStExactCostFacts facts = planned.facts();
+		MinStExactSelection selection = planned.selection();
 		MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
 		adapter.select(analysis, input);
 		NormalizedPlannerResult normalized = Objects.requireNonNull(input.normalizedResult(),

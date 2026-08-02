@@ -185,6 +185,7 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 		set(facts, "analysis", analysis);
 		set(facts, "analysisFingerprint", "task16-analysis");
 		set(facts, "orderedScope", List.of(PRODUCER));
+		set(facts, "representativePreferences", List.of());
 		set(facts, "decisions", List.<DecisionFact>of());
 		set(facts, "membershipRepresentatives", List.of());
 		List<DirectedEdgeFact> edges = new ArrayList<>();

@@ -61,6 +61,7 @@ public final class MinStDiagnosticsProducer {
 			throw new IllegalArgumentException("MINST_DIAGNOSTICS_FINGERPRINT_MISMATCH");
 		validateScopeIdentity(analysis, facts);
 		MinStExactCostFactsProducer.validate(analysis, facts.analysisFingerprint(), facts.orderedScope(),
+			facts.representativePreferences(),
 			facts.decisionFactsInScopeOrder(), facts.directedEdgesInDerivationOrder(),
 			facts.auxiliaryGroupsInCanonicalOrder(), facts.transferAuthoritiesInCanonicalOrder(),
 			facts.obligationFactsInCanonicalOrder(),

@@ -1,6 +1,9 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -54,14 +57,26 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 			worker1 = AutomatedTestBase.startLocalFedWorkerThread(port1, 1000);
 			worker2 = AutomatedTestBase.startLocalFedWorkerThread(port2, 1000);
 			InfrastructureAnalyzer.setLocalMaxMemory(8L * 1024 * 1024 * 1024);
-			boolean success = DMLScript.executeScript(new String[] {
-				"-exec", "singlenode",
-				"-seed", "2026072701",
-				"-f", script.toString(),
-				"-stats", "100",
-				"-config", config.toString()
-			});
+			PrintStream originalOut = System.out;
+			ByteArrayOutputStream captured = new ByteArrayOutputStream();
+			boolean success;
+			try(PrintStream capture = new PrintStream(captured, true, StandardCharsets.UTF_8)) {
+				System.setOut(capture);
+				success = DMLScript.executeScript(new String[] {
+					"-exec", "singlenode",
+					"-seed", "2026072701",
+					"-f", script.toString(),
+					"-stats", "100",
+					"-explain", "runtime",
+					"-config", config.toString()
+				});
+			}
+			finally {
+				System.setOut(originalOut);
+			}
 			Assert.assertTrue("The Docker-equivalent L2SVM compile must complete", success);
+			Assert.assertEquals("DP must fuse the loop-invariant X transpose into the aggregate binary input",
+				1, count(captured.toString(StandardCharsets.UTF_8), "FED r' X.MATRIX"));
 		}
 		finally {
 			TestUtils.shutdownThreads(worker1, worker2);
@@ -81,6 +96,13 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedLocalMaterializeRegistry.clear();
 		}
+	}
+
+	private static int count(String value, String needle) {
+		int result = 0;
+		for(int offset = 0; (offset = value.indexOf(needle, offset)) >= 0; offset += needle.length())
+			result++;
+		return result;
 	}
 
 	private static String l2SvmScript(int port1, int port2, Path features1, Path features2,

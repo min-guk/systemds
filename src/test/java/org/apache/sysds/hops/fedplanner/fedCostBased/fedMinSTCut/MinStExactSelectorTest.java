@@ -333,6 +333,7 @@ public class MinStExactSelectorTest {
 		set(facts, "analysis", analysis);
 		set(facts, "analysisFingerprint", analysis.analysisFingerprint());
 		set(facts, "orderedScope", decisions.stream().map(DecisionFact::key).toList());
+		set(facts, "representativePreferences", List.of());
 		set(facts, "decisions", decisions);
 		set(facts, "membershipRepresentatives", representatives);
 		set(facts, "edges", edges);

@@ -147,6 +147,7 @@ public class MinStDownloadAuthorityAmbiguityRedTest {
 		set(facts, "analysis", analysis);
 		set(facts, "analysisFingerprint", analysis.analysisFingerprint());
 		set(facts, "orderedScope", List.of());
+		set(facts, "representativePreferences", List.of());
 		set(facts, "decisions", List.<DecisionFact>of());
 		set(facts, "membershipRepresentatives", List.of());
 		set(facts, "edges", List.of(edge(-1L, group.producerPlacementNodeId(), 5.0),

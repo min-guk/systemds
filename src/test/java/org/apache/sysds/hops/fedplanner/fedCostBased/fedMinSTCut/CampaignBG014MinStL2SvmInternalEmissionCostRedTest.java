@@ -1,6 +1,9 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -11,6 +14,8 @@ import org.apache.sysds.conf.CompilerConfig;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -50,10 +55,40 @@ public class CampaignBG014MinStL2SvmInternalEmissionCostRedTest {
 			"    <sysds.benchmark.compile_only>true</sysds.benchmark.compile_only>",
 			"</root>", ""));
 		try {
-			Assert.assertTrue(DMLScript.executeScript(new String[] {
-				"-exec", "singlenode", "-seed", "2026072701", "-f", script.toString(),
-				"-stats", "100", "-debug", "-config", config.toString()
-			}));
+			PrintStream originalOut = System.out;
+			ByteArrayOutputStream captured = new ByteArrayOutputStream();
+			boolean success;
+			try(PrintStream capture = new PrintStream(captured, true, StandardCharsets.UTF_8)) {
+				System.setOut(capture);
+				success = DMLScript.executeScript(new String[] {
+					"-exec", "singlenode", "-seed", "2026072701", "-f", script.toString(),
+					"-stats", "100", "-debug", "-explain", "runtime", "-config", config.toString()
+				});
+			}
+			finally {
+				System.setOut(originalOut);
+			}
+			Assert.assertTrue(success);
+			String runtimeProgram = captured.toString(StandardCharsets.UTF_8);
+			String outerLoop = between(runtimeProgram, "WHILE (lines 96-140)",
+				"GENERIC (lines 141-141)");
+			Assert.assertEquals("The stable federated X transpose must be materialized only once; boundaries="
+				+ boundaryRegistrySlots() + "; normalizedLocals=" + normalizedLocalSummary()
+				+ "; selectedRelocations=" + normalizedRelocationSummary()
+				+ "; variantTrace=" + runtimeProgram.lines()
+					.filter(line -> line.contains("MinST-ExactRowVariant")).toList(),
+				1, count(runtimeProgram, "FED r' X.MATRIX"));
+			Assert.assertFalse("The outer L2SVM loop must not rematerialize the stable X transpose",
+				outerLoop.contains("FED r' X.MATRIX"));
+			var normalized = committedResult();
+			Assert.assertFalse("MinST must not publish a relocation boundary on the loop-local X transpose",
+				normalized.selectedRelocations().stream().anyMatch(action -> {
+					var source = normalized.analysis().graph().nodes().stream()
+						.filter(node -> node.valueVersion().equals(action.sourceValueVersion()))
+						.findFirst().orElseThrow();
+					return normalized.analysis().hop(source.key()).orElseThrow().getBeginLine() == 124
+						&& "r(r')".equals(normalized.analysis().hop(source.key()).orElseThrow().getOpString());
+				}));
 		}
 		finally {
 			Files.deleteIfExists(script);
@@ -73,6 +108,67 @@ public class CampaignBG014MinStL2SvmInternalEmissionCostRedTest {
 			FederatedFoutMaterializeRegistry.clear();
 			FederatedLocalMaterializeRegistry.clear();
 		}
+	}
+
+	private static String between(String value, String start, String end) {
+		int from = value.indexOf(start);
+		Assert.assertTrue("Missing runtime-program start marker: " + start, from >= 0);
+		int to = value.indexOf(end, from + start.length());
+		Assert.assertTrue("Missing runtime-program end marker: " + end, to > from);
+		return value.substring(from, to);
+	}
+
+	private static int count(String value, String needle) {
+		int result = 0;
+		for(int offset = 0; (offset = value.indexOf(needle, offset)) >= 0; offset += needle.length())
+			result++;
+		return result;
+	}
+
+	private static String boundaryRegistrySlots() {
+		return "refed=" + FederatedRefedRegistry.snapshotAll().scopes().entrySet().stream()
+			.flatMap(scope -> scope.getValue().entrySet().stream().map(entry -> scope.getKey() + ":" + entry.getKey()
+				+ "->" + entry.getValue().getConsumerHopIds())).sorted().toList()
+			+ ",fout=" + FederatedFoutMaterializeRegistry.snapshotAll().scopes().entrySet().stream()
+			.flatMap(scope -> scope.getValue().keySet().stream().map(hop -> scope.getKey() + ":" + hop)).sorted().toList()
+			+ ",local=" + FederatedLocalMaterializeRegistry.snapshotAll().scopes().entrySet().stream()
+			.flatMap(scope -> scope.getValue().entrySet().stream().map(entry -> scope.getKey() + ":" + entry.getKey()
+				+ "->" + entry.getValue().getConsumerHopIds()
+				+ "[fType=" + entry.getValue().getFTypeHint()
+				+ ",reason=" + entry.getValue().getReason() + "]")).sorted().toList();
+	}
+
+	private static String normalizedLocalSummary() {
+		var result = committedResult();
+		return ((java.util.List<?>) result.selectedLocalMaterializations()).stream()
+			.map(value -> {
+				LocalMaterializationActionKey action = (LocalMaterializationActionKey) value;
+				long source = result.analysis().hop(action.sourceOccurrence()).orElseThrow().getHopID();
+				return source + "->" + action.obligations().stream().map(obligation -> {
+					long consumer = result.analysis().hop(obligation.consumerOccurrence()).orElseThrow().getHopID();
+					return consumer + "=" + result.selectedStates().get(obligation.consumerOccurrence());
+				}).toList();
+			}).toList().toString();
+	}
+
+	private static String normalizedRelocationSummary() {
+		var result = committedResult();
+		return result.selectedRelocations().stream().map(action -> {
+			var source = result.analysis().graph().nodes().stream()
+				.filter(node -> node.valueVersion().equals(action.sourceValueVersion())).findFirst().orElseThrow();
+			long sourceHop = result.analysis().hop(source.key()).orElseThrow().getHopID();
+			return sourceHop + "[" + result.selectedStates().get(source.key()) + "]->"
+				+ action.compatibleConsumers().stream()
+					.map(consumer -> Long.toString(result.analysis().hop(consumer).orElseThrow().getHopID())).toList()
+				+ " target=" + action.targetPlacement() + " materialization=" + action.materializationFType()
+				+ " anchor=" + action.durableAnchor().fType();
+		}).toList().toString();
+	}
+
+	private static org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult committedResult() {
+		var committed = PlacementEmissionTransaction.receiptSnapshotForTesting();
+		Assert.assertEquals("Expected one committed program", 1, committed.size());
+		return PlacementEmissionTransaction.currentNormalizedResult(committed.keySet().iterator().next());
 	}
 
 	private static Map<String,String> installDockerLanCostProperties() {

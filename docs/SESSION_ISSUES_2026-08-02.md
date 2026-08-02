@@ -762,7 +762,7 @@
 
 ## MinST L2SVM의 동일 FED/LOUT membership에 여러 exact execution emission이 존재함
 
-- **상태**: 진행중 — 구조 수정·exact/focused/package 검증 완료, fresh Docker canary와 remaining-only continuation 대기
+- **상태**: 해결 — compile ambiguity 구조 수정·exact/focused/package 검증 완료; fresh Docker canary에서 별도 runtime-plan 문제가 드러나 아래 이슈로 분리
 - **환경/조건**:
   - planner `MinST` (`compile_min_st_cut`), workload `l2svm`, workers `2`, profile `lan`.
   - Docker-only `run_LAN_docker.sh`, private-aggregate frozen P2P2D, seed/data `2026072701`.
@@ -846,10 +846,8 @@
     exact 정렬은 `0/30`, 5% tolerance 정렬은 `4/30`, median ratio(DP=1)는 FedAll `1.417`, Heuristic
     `1.395`, MinST `1.509`이며 여러 binary를 잇는 불완전 진단값이므로 final 성능 근거가 아니다.
 - **잔여 이슈**:
-  - 수정 commit에서 real target package를 다시 만들고 새 immutable Docker stage를 구성한다.
-  - 동일 실패 셀을 fresh binary의 canary attempt `1`로 한 번만 실행한다. 성공하면 historical `282`와 겹치지
-    않는 remaining `54`셀만 이어가고, 실패하면 새 root를 다시 봉인한다.
-  - 전체 `336` 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 만든다.
+  - compile ambiguity는 해소됐다. fresh Docker canary는 compile을 통과했지만 아래의 loop-invariant transpose
+    반복 재물질화 문제로 실패했으므로, 이 binary/cell은 봉인하고 재시도하지 않는다.
 - **잠재 회귀 위험**:
   - local input relocation이 포함된 arm을 같은 방식으로 축약하면 공유 upload 비용을 잘못 국소 최적화할 수 있다.
     감지 방법: 모든 matrix input의 exact PRESENT 검사를 유지하고, 해당 형태는 expanded cut 모델 없이 통과시키지 않는다.
@@ -860,3 +858,89 @@
 - **의사결정 근거/적용 원칙**:
   - runtime-supported 후보를 닫지 않고 neutral/DP 후보군을 보존했다. MinST cut에서 downstream에 관측되지 않는
     내부 실행 arm만 동일 공유 비용 모델로 부분 최소화했으며, 전역 배치 비용이 섞이는 경우는 fail-closed한다.
+
+## MinST L2SVM loop-invariant transpose를 매 반복마다 재물질화함
+
+- **상태**: production 구조 수정 및 focused/package 검증 완료 — 새 immutable Docker canary 대기
+- **환경/조건**:
+  - 실패 binary source commit `e79250e304d93975f705806a1985b52336011398`, clean packaged JAR SHA-256
+    `a8a21713b968eda8dfb44c85a25e6aa9272e1fdacbfd51a0660cafc1518ed0a1`.
+  - planner `MinST`, workload `l2svm`, workers `2`, profile `lan`, seed/data `2026072701`.
+  - Docker-only 실패 stage:
+    `/home/mchoi/g007-minst-l2svm-internal-emission-stage-e79250e-20260802-v1/g007-stage-d275e27e99b6e21f7b091d9ffde09556aff962811f1e7d4d1dec2dd7e2ae260d`.
+  - one-attempt 실패 canary root:
+    `/home/mchoi/g007-minst-l2svm-internal-emission-canary-e79250e-d60da24-20260802-v1`.
+- **재현 절차**:
+  - exact cell `workers=2|planner=MinST|workload=l2svm|profile=lan`을 immutable stage의
+    `run_LAN_docker.sh`로 attempt `1`만 실행했다. retry policy는 `NONE`이며 기존 binary/cell은
+    `CANARY_FAILED.json`으로 봉인해 다시 실행하지 않는다.
+  - compile/lowering 재현:
+    `mvn -q -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.CampaignBG014MinStL2SvmInternalEmissionCostRedTest test`.
+- **관측 증상**:
+  - 실패 Docker canary는 compile을 통과했지만 SystemDS return code `3`, semantic output 부재였다.
+    wrapper `2445.585992582s`, raw execution `2351.291s`였다.
+  - MinST heavy hitter는 `fed_ba+*` `2310.671s`/61회, `fed_fed_refed` `33.241s`/60회,
+    `fed_r'` `4.557s`/31회였고 PUT은 186회/`25,213,431,104` bytes였다.
+  - 동일 Docker 조건 DP는 `67.745744316s`, `fed_r'` 1회였다.
+  - compile-only 회귀에서도 MinST runtime explain에 `FED r' X.MATRIX`가 2회였고 loop 내부에 1회 남았다.
+    선택된 relocation은 hop 229 transpose와 hop 230 local vector를 hop 231 aggregate binary의
+    `FED/LOUT/ROW` 입력으로 각각 재배치했다.
+- **원인 분석**:
+  1. neutral candidate domain에는 hop 231에 대해 exact native row
+     `[COL, ABSENT_LOCAL] -> FED/LOUT/COL`이 존재한다. 이는 relocation이 아니라 runtime이 직접 지원하는
+     mixed federated/local 실행 후보다.
+  2. MinST는 동일한 `<FED,LOUT>` bit membership을 만드는 여러 exact input row를 한 대표로 축약했다.
+     기존 `strongestCoverage` 선택은 PRESENT authority가 많은 ROW 후보를 고정해, 실제 cut이 선택한 자식
+     `hop229=FED/FOUT/COL`, `hop230=CP/LOUT`과 정확히 일치하는 native row를 버렸다.
+  3. `ABSENT_LOCAL`도 무조건 relocation 입력으로 해석해 upload group/receipt를 만들었고, 그 결과 hop 229에
+     planner materialization boundary가 등록됐다. `AggBinaryOp.usesLeftTransposeRewrite`는 계획된 movement를
+     지우지 않기 위해 이 boundary가 있으면 transpose fusion을 금지하므로 loop마다 `r'`가 재실행됐다.
+  4. 따라서 이전의 “cross-occurrence durable placement reuse 누락” 진단은 직접 원인이 아니었다. 핵심은
+     **선택된 자식 상태와 무관한 exact-row 대표 고정 + native local 입력을 relocation으로 오분류**한 것이다.
+- **해결 요약**:
+  - canonical baseline cut은 그대로 보존하고, 선택된 자식 placement와 exact하게 일치하는 native
+    `FED/LOUT` candidate row를 immutable `RepresentativePreference` variant로 별도 재유도/재가격한다.
+  - variant는 facts에 포함되어 validation/projector/diagnostics에서 동일하게 재생된다. 선호 row의 PRESENT
+    입력은 정확한 producer FOUT layout/exec membership을, ABSENT 입력은 producer LOUT을 hard legality로
+    고정한다. 이로써 row와 cut 상태가 분리되는 것을 막는다.
+  - exact non-derived `FED/LOUT`의 `ABSENT_LOCAL`은 `computeMixedFedLocalCost`에 `null` input type으로 전달해
+    runtime의 mixed-local preparation cost를 사용하며, planner upload group/relocation receipt를 만들지 않는다.
+  - baseline과 variant의 완전한 min-cut objective를 비교해 더 싼 결과만 선택한다. 비용 동률이면 obligation이
+    더 적은 계획을 선택한다. 임의 예외를 삼키거나 runtime fallback/repair를 사용하지 않는다.
+  - 현재 2-bit cut으로 안전하게 표현 가능한 “consumer의 모든 FED membership이 LOUT인 경우”에만 이 variant를
+    생성한다. FED/LOUT와 FED/FOUT이 섞인 membership은 기존 baseline을 유지하며 향후 expanded-state 대상이다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/FederatedPlanMinSTCut.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFacts.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactPlacementProjector.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStDiagnosticsProducer.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStL2SvmInternalEmissionCostRedTest.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedDp/CampaignBG014DpL2SvmRefedSourceLoweringRedTest.java`
+  - Unsafe-fixture field initialization: `MinStExactSelectorTest`, `MinStExactAnchorRelocationIdentityRedTest`,
+    `MinStDownloadAuthorityAmbiguityRedTest`.
+- **검증**:
+  - MinST L2SVM runtime explain 회귀 GREEN: `FED r' X.MATRIX` 전체 1회, outer loop 0회, loop-local
+    transpose source의 selected relocation 0개.
+  - DP 대조 회귀도 `FED r' X.MATRIX` 1회로 GREEN.
+  - L2SVM/KMeans/StepLM/PCA/heavy-MM/BR10/forward/selector focused suite `37/37` pass:
+    `/tmp/g007-minst-native-local-focused-37-final-20260802.log`, SHA-256
+    `b558c5b98ef9c267400fdf5edaa40993d38a70d9e8824ae6e9fa6fac001e5807`.
+  - checkstyle/RAT/compile 포함 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-minst-native-local-package-final-20260802.log`, SHA-256
+    `fe6151829c6404e4fae6410a7576c1e1b3f8e9b0d2264ef5063f1431e6e0ffa5`.
+- **잔여 이슈**:
+  - 새 commit/JAR로 immutable Docker stage를 만들고, 기존 실패 cell과 중복되지 않는 **새 binary canary 1회**를
+    실행한다. 성공·정상 시간대일 때만 historical 282와 겹치지 않는 remaining MinST 54개 셀을 이어간다.
+  - FED/LOUT와 FED/FOUT이 동일 consumer에 함께 존재하면서 input-row mode가 다른 경우는 2-bit graph의
+    conditional upload 표현 한계가 있으므로 expanded exact-state cut이 장기 해결책이다.
+- **잠재 회귀 위험**:
+  - variant가 producer FType을 output bit만으로 고정하면 CP/FOUT과 FED/FOUT의 layout 차이를 놓칠 수 있다.
+    감지/방지: matching layout이 한 exec membership에만 있으면 compute bit도 hard constraint로 고정한다.
+  - native-local과 relocation-backed ABSENT를 혼동하면 BR10 KMeans/derived-FOUT upload가 사라질 수 있다.
+    감지/방지: non-derived `FED/LOUT` exact emission만 native-local로 분류하고 BR10/focused suite를 유지한다.
+  - 여러 preference가 같은 producer에 상충하는 LOUT/FOUT을 요구할 수 있다. 감지/방지: derivation에서
+    producer별 required output conflict를 fail-fast한다.
+- **의사결정 근거/적용 원칙**:
+  - runtime-supported 후보를 닫지 않고 baseline과 native-row variant를 모두 같은 MinST 비용 모델로 비교했다.
+    runtime fallback 금지, TRead/TWrite `<CP,LOUT>/<FED,FOUT>` 제한, recompile `<CP,FOUT>` 금지를 유지했다.
