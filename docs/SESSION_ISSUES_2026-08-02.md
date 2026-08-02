@@ -386,7 +386,7 @@
 ## MinST L2SVM에서 서로 다른 FULL 값 앵커의 동일 worker-pool 권한을 잃음
 
 - **상태**: 해결 — planner 구조 수정·양/음성 소스 회귀·package·동일 실패 셀 Docker canary 완료,
-  exact unfinished-only MinST continuation 실행 준비 완료
+  exact unfinished-only MinST continuation 실행중
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 기준 commit: `c3d42ec58b19e1847505b69a65692c2d8181e02b`
@@ -504,6 +504,10 @@
     `/home/mchoi/g007-all-planners-minst-l2svm-worker-pool-5126afc-d60da24-20260802-v1`,
     campaign manifest hash는
     `aef97f5532ced194b095d71dfe7889324e385e3bd2fa2c21d1548df3e228382a`다.
+  - continuation은 user-systemd `g007-minst-5126afc-v1.service`를 `sg docker` 경계로 실행했고,
+    `g007-monitor-5126afc-v1.service`가 120초 주기로 상태를 기록한다. 첫 unfinished 셀
+    `workers=1|planner=MinST|workload=l2svm|profile=wan_light`은 attempt `1`에서
+    `74.701532117s`로 성공했으며, semantic/fallback/restart/teardown 계약을 통과했다.
 - **잔여 이슈**:
   - 위 fresh continuation에서 이미 성공한 `262`셀은 재실행하지 않고 남은 MinST `74`셀만 각
     attempt `1`, retry 없음으로 실행한다. 첫 셀은
