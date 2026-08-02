@@ -861,7 +861,7 @@
 
 ## MinST L2SVM loop-invariant transpose를 매 반복마다 재물질화함
 
-- **상태**: production 구조 수정 및 focused/package 검증 완료 — 새 immutable Docker canary 대기
+- **상태**: 해결 — production 구조 수정·focused/package·fresh immutable Docker canary 검증 완료; unfinished-only continuation 진행중
 - **환경/조건**:
   - 실패 binary source commit `e79250e304d93975f705806a1985b52336011398`, clean packaged JAR SHA-256
     `a8a21713b968eda8dfb44c85a25e6aa9272e1fdacbfd51a0660cafc1518ed0a1`.
@@ -870,6 +870,10 @@
     `/home/mchoi/g007-minst-l2svm-internal-emission-stage-e79250e-20260802-v1/g007-stage-d275e27e99b6e21f7b091d9ffde09556aff962811f1e7d4d1dec2dd7e2ae260d`.
   - one-attempt 실패 canary root:
     `/home/mchoi/g007-minst-l2svm-internal-emission-canary-e79250e-d60da24-20260802-v1`.
+  - 수정 source commit `e18d326b3f091fdf3433e5347001f580077e6d79`, clean JAR SHA-256
+    `ed315ef65656861a6d8e2b8b2ccd83895120e3ac0f9091beb7ff17ccc6ab123f`.
+  - 수정 immutable stage:
+    `/home/mchoi/g007-minst-native-local-stage-e18d326-20260802-v1/g007-stage-43b9a97018e920b103c0e9b5f884208186b71ea6de1711ca81b98043df3433c8`.
 - **재현 절차**:
   - exact cell `workers=2|planner=MinST|workload=l2svm|profile=lan`을 immutable stage의
     `run_LAN_docker.sh`로 attempt `1`만 실행했다. retry policy는 `NONE`이며 기존 binary/cell은
@@ -929,9 +933,25 @@
   - checkstyle/RAT/compile 포함 `mvn -q -DskipTests package` 성공:
     `/tmp/g007-minst-native-local-package-final-20260802.log`, SHA-256
     `fe6151829c6404e4fae6410a7576c1e1b3f8e9b0d2264ef5063f1431e6e0ffa5`.
+  - canonical supervised lane(`--salg l2svm`) fresh Docker canary root:
+    `/home/mchoi/g007-minst-native-local-canary-e18d326-d60da24-20260802-v2`.
+    attempt `1`, retry 없음으로 성공했으며 discovery execution `29.532813713s`, SystemDS total execution
+    `5.857s`, full lifecycle `56.813738703s`였다. semantic oracle pass, scan error/fallback/resource-invalid/timeout
+    전부 false, coordinator/worker restart `0/0`, teardown container/network `0/0`이다.
+  - canary의 heavy hitter는 `fed_r'` 정확히 `1`회, `fed_ba+*` `61`회, `fed_fed_refed` `60`회였다.
+    response SHA-256은 `93957a489ab3ce5b613e809d0f9933cfe556f6ccaf1fb4deb80f59dabd4a9a9c`,
+    raw coordinator SHA-256은 `b878c48d86608514f35b0ad9ebc43364c2f163fd63153e89e3345d5a22da1785`다.
+  - canary를 historical success에 정확히 한 번 편입한 continuation root는
+    `/home/mchoi/g007-all-planners-minst-native-local-e18d326-d60da24-20260802-v1`이다. 독립 사전 감사에서
+    historical `283`(DP/FedAll/Heuristic 각 `84`, MinST `31`), remaining MinST `53`, overlap `0`, union
+    `336`을 확인했고 283개 모두 attempt `1`, oracle pass, fallback 없음, restart `0/0`, teardown 성공으로
+    재검증했다. 같은 seed `2026072701`, 셀당 한 번, retry `NONE`, stage-local `run_LAN_docker.sh`만 사용한다.
 - **잔여 이슈**:
-  - 새 commit/JAR로 immutable Docker stage를 만들고, 기존 실패 cell과 중복되지 않는 **새 binary canary 1회**를
-    실행한다. 성공·정상 시간대일 때만 historical 282와 겹치지 않는 remaining MinST 54개 셀을 이어간다.
+  - fresh canary 성공으로 historical은 `282`에서 `283`으로 증가했고, remaining은 `54`가 아니라 `53`이다.
+    현재 unfinished-only Docker continuation을 실행 중이며, 새 실패가 생기면 같은 binary/cell을 재시도하지 않고
+    campaign을 봉인한 뒤 planner/runtime 원인을 분리한다.
+  - 전체 `336` 성공 후 semantic/fallback/restart/teardown 감사를 다시 수행하고 최종 그래프 및
+    `MinST <= DP <= Heuristic, FedAll` 정렬을 검증한다.
   - FED/LOUT와 FED/FOUT이 동일 consumer에 함께 존재하면서 input-row mode가 다른 경우는 2-bit graph의
     conditional upload 표현 한계가 있으므로 expanded exact-state cut이 장기 해결책이다.
 - **잠재 회귀 위험**:
@@ -944,3 +964,79 @@
 - **의사결정 근거/적용 원칙**:
   - runtime-supported 후보를 닫지 않고 baseline과 native-row variant를 모두 같은 MinST 비용 모델로 비교했다.
     runtime fallback 금지, TRead/TWrite `<CP,LOUT>/<FED,FOUT>` 제한, recompile `<CP,FOUT>` 금지를 유지했다.
+
+## MinST L2SVM Docker canary가 supervised lane 대신 일반 algorithm lane으로 잘못 호출됨
+
+- **상태**: 해결 — malformed attempt 제외, canonical `--salg` canary를 별도 root에서 1회 실행해 성공
+- **환경/조건**:
+  - 잘못된 canary root:
+    `/home/mchoi/g007-minst-native-local-canary-e18d326-d60da24-20260802-v1`.
+  - 올바른 canary root:
+    `/home/mchoi/g007-minst-native-local-canary-e18d326-d60da24-20260802-v2`.
+  - 동일 immutable stage/commit/JAR/seed를 사용했으며 planner는 MinST, workers `2`, profile `lan`이다.
+- **재현 절차**:
+  - 잘못된 호출은 `run_LAN_docker.sh ... --alg l2svm`이었다.
+  - canonical 호출은 `run_LAN_docker.sh ... --salg l2svm`이다.
+- **관측 증상**:
+  - workload process 자체는 return code `0`, SystemDS execution `5.809s`, runtime scan clean이었지만,
+    일반 algorithm phase oracle은 `fed_P2P2D_2.res`를 기대했고 실제 supervised workload는
+    `l2svm-P2P2D.res`를 생성해 semantic oracle 단계에서 실패했다.
+  - 실제 출력 SHA-256은 올바른 canary와 같은
+    `18328c5d122f75439f654399ceb61660709e90eb919a794b0c587ca7a07615ce`였다.
+- **원인 분석**:
+  - `l2svm`, `lm`, `logreg`, `steplm`은 harness의 supervised/scalar lane으로 `--salg`를 사용해야 한다.
+    첫 수동 canary manifest만 이를 `--alg`로 잘못 분류했다. planner/runtime 실패가 아니다.
+- **해결 요약**:
+  - malformed root에 `INVALID_CANARY_INVOCATION.json`을 기록하고 status를
+    `excluded-not-a-canonical-cell-attempt`로 고정했다. 이 결과는 336-cell 완료 집합 및 성능 그래프에 포함하지 않는다.
+  - retry로 덮지 않고 새 root/새 manifest를 만들었으며 canonical `--salg` canary를 정확히 한 번 실행했다.
+  - continuation runner의 `SCALAR_WORKLOADS={lm,l2svm,logreg,steplm}` 분기와 남은 53개 cell argv를 사전 검증했다.
+- **수정 파일**:
+  - production source 수정 없음.
+  - 실험 artifact: 두 canary root의 manifest/verdict 및 `INVALID_CANARY_INVOCATION.json`.
+- **검증**:
+  - canonical canary semantic oracle NRMSE `5.558823931286871e-16`, objective relative error `0`,
+    response SHA-256 `93957a489ab3ce5b613e809d0f9933cfe556f6ccaf1fb4deb80f59dabd4a9a9c`.
+  - continuation preflight에서 malformed root occurrence `0`, canonical canary occurrence `1`을 검증했다.
+- **잔여 이슈**:
+  - 없음. 남은 supervised workload 셀은 공통 runner의 `SCALAR_WORKLOADS` 분기를 사용한다.
+- **잠재 회귀 위험**:
+  - 신규 supervised workload가 목록에 추가되지만 분기에 누락되면 같은 oracle-path 오분류가 재발할 수 있다.
+    감지 방법: workload→CLI lane 매핑을 manifest 사전 감사에 포함하고 실제 expected output basename을 확인한다.
+- **의사결정 근거/적용 원칙**:
+  - planner/runtime를 변경하지 않고 잘못된 실험 호출만 제외·정정했다. malformed 결과를 가짜 성공으로 승격하지 않았다.
+
+## systemd user 서비스에서 Docker 보조 그룹이 상속되지 않아 continuation이 셀 실행 전에 종료됨
+
+- **상태**: 해결 — pre-cell infrastructure failure로 분류하고 `sg docker` launcher로 정상 시작
+- **환경/조건**:
+  - campaign root:
+    `/home/mchoi/g007-all-planners-minst-native-local-e18d326-d60da24-20260802-v1`.
+  - 최초 unit `g007-minst-e18d326-v1.service`, 수정 unit `g007-minst-e18d326-v2.service`.
+- **재현 절차**:
+  - `systemd-run --user ... <root>/bin/service-wrapper.sh`로 직접 실행하면 service 내 `id`에 기본 그룹만 남고
+    `docker version`이 `/var/run/docker.sock` permission denied로 종료된다.
+- **관측 증상**:
+  - `run.sh` 진입 전 campaign exit code `1`; cell request `0`, response `0`, rows `0`, Docker resource `0`이었다.
+  - 증거는 `control/launch-v1-no-docker-group/INFRASTRUCTURE_FAILURE.json`과 보존된 stderr에 있다.
+- **원인 분석**:
+  - 현재 로그인 shell은 `docker` 보조 그룹을 가지지만 이미 실행 중인 systemd user manager가 해당 보조 그룹을
+    service process에 전달하지 않았다. full filesystem 권한이나 Codex 승인 문제와 무관한 OS group context 문제다.
+- **해결 요약**:
+  - cell plan/stage/binary/seed를 변경하지 않고 launcher만
+    `/usr/bin/sg docker -c <root>/bin/service-wrapper.sh`로 실행했다. monitor도 같은 그룹 context로 실행한다.
+  - 최초 종료는 cell attempt가 하나도 생성되지 않았으므로 실험 retry로 세지 않는다.
+- **수정 파일**:
+  - production source 수정 없음.
+  - campaign control receipts와 launch artifact만 추가.
+- **검증**:
+  - 수정 unit의 service identity는 gid `docker`, Docker server `29.6.1`이다.
+  - `run_remaining_discovery.py`와 첫 canonical request
+    `workers=2|planner=MinST|workload=l2svm|profile=wan_light` 실행을 확인했다.
+- **잔여 이슈**:
+  - campaign 종료까지 5분 monitor snapshot에서 unit 상태, rows/failures, Docker resource를 확인한다.
+- **잠재 회귀 위험**:
+  - 향후 systemd user manager가 재시작되거나 group 정책이 바뀌면 직접 launcher도 동작할 수 있지만,
+    일관성을 위해 Docker campaign service는 `sg docker` 경로를 유지하고 시작 직후 `docker version`을 fail-fast한다.
+- **의사결정 근거/적용 원칙**:
+  - 실험 셀을 재실행하거나 결과를 합성하지 않고, 셀 실행 전 인프라 권한 context만 바로잡았다.
