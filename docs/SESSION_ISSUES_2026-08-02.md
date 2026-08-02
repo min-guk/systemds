@@ -385,8 +385,8 @@
 
 ## MinST L2SVM에서 서로 다른 FULL 값 앵커의 동일 worker-pool 권한을 잃음
 
-- **상태**: 해결 — planner 구조 수정·양/음성 소스 회귀·package·동일 실패 셀 Docker canary 완료,
-  exact unfinished-only MinST continuation 실행중
+- **상태**: 해결 — planner 구조 수정·양/음성 소스 회귀·package·동일 실패 셀 Docker canary 완료.
+  후속 unfinished-only continuation은 별도 StepLM planner 오류에서 봉인했으며 아래 이슈로 이어진다.
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 기준 commit: `c3d42ec58b19e1847505b69a65692c2d8181e02b`
@@ -509,9 +509,9 @@
     `workers=1|planner=MinST|workload=l2svm|profile=wan_light`은 attempt `1`에서
     `74.701532117s`로 성공했으며, semantic/fallback/restart/teardown 계약을 통과했다.
 - **잔여 이슈**:
-  - 위 fresh continuation에서 이미 성공한 `262`셀은 재실행하지 않고 남은 MinST `74`셀만 각
-    attempt `1`, retry 없음으로 실행한다. 첫 셀은
-    `workers=1|planner=MinST|workload=l2svm|profile=wan_light`이다.
+  - 이 수정의 Docker canary는 완료됐다. 후속 continuation은 신규 성공 `8`셀 뒤
+    `workers=1|planner=MinST|workload=steplm|profile=lan`에서 다른 planner 오류로 중단·봉인했으며,
+    새 binary에서 그 셀을 canary로 검증한 뒤 성공 `270`셀을 제외한 `66`셀만 이어간다.
   - 전 `336` unique cell 성공 뒤 semantic/fallback/restart/teardown, execution-time 정렬 및 그래프를
     최종 감사한다.
 - **잠재 회귀 위험**:
@@ -527,3 +527,95 @@
   - runtime이 실제로 공유하는 worker endpoint와 exact value/range identity를 planner state에서 분리해
     모델링했다. 합법 후보를 닫거나 runtime에서 보정하지 않고, planner가 업로드 전 정확한 transient
     provenance와 worker-pool identity를 증명해 비용에 반영한다는 최상위 원칙을 적용했다.
+
+## MinST StepLM local formal 입력에서 복수 exact FOUT layout을 임의의 단일 FType으로 축약함
+
+- **상태**: 진행중 — planner 구조 수정, exact CLI RED/GREEN, 인접 회귀 및 package 검증 완료;
+  새 immutable Docker stage와 동일 실패 셀 canary 대기
+- **환경/조건**:
+  - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
+  - 실패 binary commit/JAR: `5126afca83ca6bfa972755fa22f2ba5e8ebeab50` /
+    `0865b63ffc59969e3fe2d8ed394f4ddbafa77d44dd7fd05c1f2a005564116531`
+  - 실패 campaign:
+    `/home/mchoi/g007-all-planners-minst-l2svm-worker-pool-5126afc-d60da24-20260802-v1`
+  - 실패 cell:
+    `workers=1|planner=MinST|workload=steplm|profile=lan`, attempt `1`, retry 없음
+  - Docker-only `run_LAN_docker.sh`, private-aggregate, seed/data `2026072701`.
+- **재현 절차**:
+  - 실패 cell의 `response.json`과 `raw_coordinator.log`를 확인한다. runtime instruction 실행 전
+    MinST exact-cost fact 생성에서 실패한다.
+  - exact CLI RED:
+    `mvn -q -Dcheckstyle.skip=true -Drat.skip=true -Dtest=CampaignBG014MinStStepLmFunctionSourceLayoutRedTest test`.
+    회귀는 Docker와 동일한 50,000×2,100 feature, 50,000×1 label metadata, builtin `steplm`,
+    `compile_min_st_cut`, compile-only, seed `2026072701`을 사용한다.
+- **관측 증상**:
+  - planner exception:
+    `MINST_LOGICAL_FUNCTION_SOURCE_LAYOUT_AMBIGUOUS|...scripts/builtin/steplm.dml:98:44:...IndexingOp:rix:X_orig|types=[BROADCAST, FULL]|formal=null`.
+  - 실패 response SHA-256:
+    `182ef6be0ed3d76333f065ec2a909418506d4bbd5ed24225c1751686bd3470dc`.
+  - continuation은 기존 exact 성공 `262`셀에 신규 MinST 성공 `8`셀을 더한 `270/336`에서 봉인했다.
+    실패 셀은 성공 집합에 포함하지 않았고 같은 binary로 재시도하지 않았다.
+    `CAMPAIGN_FAILED.json` SHA-256은
+    `91520770242085fe083f740d6baacf7c4a3fa028443af1e1b3ad65927eda37d7`, stop 후 validation SHA-256은
+    `b671c0bee2683eeacf60aad1e63f3a41d47346361bc31ff2a0ffa1a623304691`이며 remaining은 `66`이다.
+- **원인 분석**:
+  1. `MinStExactCostFactsProducer.addLogicalFunctionInputEdges`는 caller source가 FOUT이고 function formal이
+     CP일 때 exact membership의 FType을 수집했다.
+  2. StepLM의 `X_orig` source에는 합법한 exact `BROADCAST`와 `FULL` membership이 함께 존재한다.
+  3. 코드는 formal의 단일 FType을 유도하지 못하면 위 ambiguity 예외를 던졌지만, 그렇게 유도한
+     `sourceType`은 이후 edge cost나 상태 선택에 전혀 사용하지 않았다.
+  4. 이 edge는 local formal TRead가 coordinator에 전체 논리 행렬을 materialize하는 download이다.
+     따라서 source가 BROADCAST인지 partitioned FULL인지와 무관하게 layout이 소거되며 둘 다 동일한
+     full-payload download 비용을 낸다. 비용 계산도 이미
+     `getEffectiveTransientReadSourceMemEstimate(formalHop, sourceHop)`의 전체 bytes만 사용했다.
+- **해결 요약**:
+  - CP formal의 source에 exact FOUT membership이 하나 이상 있다는 증명은 유지했다.
+  - 이후 사용되지 않는 단일 `sourceType` 추론과 ambiguity 예외만 제거했다.
+  - local materialization이 federated layout을 소거하고 BROADCAST/FULL 모두 같은 전체 payload 비용을
+    낸다는 이유를 코드 주석으로 명시했다.
+  - 사용되지 않게 된 `workers` parameter를 해당 helper에서 제거했다.
+  - runtime fallback/repair, candidate skip/continue guard, TRead/TWrite 완화, recompile `<CP,FOUT>` 허용,
+    비용 우회는 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStStepLmFunctionSourceLayoutRedTest.java`
+  - `docs/experiments/minst-continuation-2026-08-02-interim-270/*`
+  - `docs/SESSION_ISSUES_2026-08-02.md`
+- **검증**:
+  - exact Docker-shape CLI RED:
+    `/tmp/g007-minst-steplm-function-source-layout-cli-red-5126afc-20260802.log`, SHA-256
+    `4f7f7848f33d7e117069a651e59497c9dbe7ce37c2fd0c21fde2be2f78137325`.
+  - 구조 수정 후 동일 CLI GREEN:
+    `/tmp/g007-minst-steplm-function-source-layout-green-20260802.log`, SHA-256
+    `05cf6a0ec88498fe1772295ff797101b8a91dec6bbec9844ad034b18e0af126d`.
+  - 최종 focused suite는 총 `30` test 중 `29` pass, 기존 조건부 `1` skip, failure/error `0`:
+    `/tmp/g007-minst-steplm-focused-green-final-20260802.log`, SHA-256
+    `cc63423c7fcb47256f00562ac681788439f7fad18c9d9a9151da82d4ed32f760`.
+  - 처음 포함한 `CampaignBR7MinStExactPlacementProjectorTest`의 `ACTUAL-ROOT` capabilityReason assertion은
+    수정본과 clean `e6e862b2fa` 임시 worktree에서 모두 같은 194줄로 실패했다. baseline 로그는
+    `/tmp/g007-br7-baseline-e6e862.log`, SHA-256
+    `1906a4b701773d5d7168d235e35b8342250e172f6fa755f7dbffa1edf8495be6`이므로 이번 수정의 신규 회귀가 아니다.
+  - checkstyle/RAT/compile을 포함한 `mvn -q -DskipTests package` 성공:
+    `/tmp/g007-minst-steplm-package-final-20260802.log`, SHA-256
+    `b4c9ec1a8f7639957299c90faa849423e30efbc0ae54141fad7d2fab2a3c40fe`.
+  - 중간 그래프/인증 CSV는
+    `docs/experiments/minst-continuation-2026-08-02-interim-270/`에 생성했다. unique `270`, overlap `0`,
+    DP/FedAll/Heuristic 각 `84`, MinST `18`, four-planner matched `18`이다. 현재 stitched binary 결과에서
+    exact 정렬은 `0/18`, 5% tolerance 정렬은 `1/18`이지만 homogeneous final run이 아니므로 진단용이다.
+- **잔여 이슈**:
+  - 수정본을 commit으로 봉인하고 fresh real JAR 및 immutable stage를 생성한다.
+  - 실패했던 exact StepLM LAN 셀을 새 stage에서 attempt `1` Docker canary로 실행한다.
+  - canary 성공 시 기존 성공 `270`셀과 overlap `0`, canonical union `336`인 remaining `66`셀만 실행한다.
+  - 전체 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 다시 만든다.
+- **잠재 회귀 위험**:
+  - CP formal이 전체 payload가 아니라 FType별 부분 payload를 읽는 새 runtime semantics를 얻으면 현재
+    layout-independent 비용이 부정확해질 수 있다. 감지 방법: function input runtime instruction과
+    transfer bytes를 비교하고, 그런 지원이 추가될 때 edge cost에 명시적 FType별 모델을 도입한다.
+  - exact FOUT membership 자체가 비어 있는 source까지 허용하면 planner proof가 약화된다. 감지 방법:
+    `!sourceFoutTypes.isEmpty()` 조건을 유지하고 exact CLI/authority 회귀에서 proof 부재를 계속 거부한다.
+  - 기존 BR7 failure를 이번 변경의 회귀로 오인할 수 있다. 감지 방법: clean commit baseline의 동일 method/
+    line failure hash와 수정본 failure 집합을 함께 비교한다.
+- **의사결정 근거/적용 원칙**:
+  - 합법 후보를 닫거나 runtime에서 복구하지 않고, local materialization이 실제로 소거하는 FType을 비용
+    projection에서도 소거했다. 사용되지 않는 단일-layout 가정을 제거해 planner의 exact 상태 표현을
+    runtime semantics와 맞춘 것이다.

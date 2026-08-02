@@ -176,7 +176,7 @@ public final class MinStExactCostFactsProducer {
 		addLogicalTransientInputEdges(analysis, decisionsByKey, representatives,
 			effectiveFunctionInputs, accumulator);
 		addLogicalFunctionInputEdges(analysis, decisionsByKey, representatives,
-			effectiveFunctionInputs, workers, occurrenceProfiles, accumulator);
+			effectiveFunctionInputs, occurrenceProfiles, accumulator);
 		List<AuxiliaryGroupFact> groups = deriveGroups(analysis, orderedScope,
 			decisionsByKey, representatives, effectiveFunctionInputs, workers,
 			occurrenceProfiles, accumulator);
@@ -1455,7 +1455,7 @@ public final class MinStExactCostFactsProducer {
 	private static void addLogicalFunctionInputEdges(PlacementAnalysis analysis,
 		IdentityHashMap<CompiledHopKey, DecisionFact> decisions,
 		List<MembershipRepresentative> representatives,
-		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs, int workers,
+		List<EffectiveLogicalFunctionInput> effectiveFunctionInputs,
 		Map<String,List<OccurrenceProfile>> occurrenceProfiles, EdgeAccumulator edges) {
 		for(EffectiveLogicalFunctionInput input : effectiveFunctionInputs) {
 			LogicalFunctionInputFact fact = input.authority();
@@ -1490,21 +1490,13 @@ public final class MinStExactCostFactsProducer {
 			}
 			List<FType> sourceFoutTypes = exactFoutLayoutTypes(source, representatives);
 			if(hasExec(formal, ExecType.CP) && !sourceFoutTypes.isEmpty()) {
-				FType sourceType = exactInputAuthorityType(analysis, source.key());
-				if(sourceType == null && formalFoutType != null && sourceFoutTypes.contains(formalFoutType))
-					sourceType = formalFoutType;
-				if(sourceType == null && sourceFoutTypes.size() == 1)
-					sourceType = sourceFoutTypes.get(0);
-				if(sourceType == null || !sourceFoutTypes.contains(sourceType))
-					throw new IllegalArgumentException("MINST_LOGICAL_FUNCTION_SOURCE_LAYOUT_AMBIGUOUS|key="
-						+ source.key().normalizedSignature() + "|types=" + sourceFoutTypes
-						+ "|formal=" + formalFoutType);
 				Hop sourceHop = analysis.hop(source.key()).orElseThrow();
 				Hop formalHop = analysis.hop(formal.key()).orElseThrow();
 				// A local formal TRead materializes the complete logical matrix at the
-				// coordinator.  Legacy MinST therefore charged the full payload, not the
-				// partition-parallel FED/LOUT result estimate.  Preserve that planner
-				// semantics while keeping the caller edge logical and mutation-free.
+				// coordinator, which erases the caller's federated layout. BROADCAST and
+				// partitioned FULL sources are therefore equally legal here and both pay
+				// the same full-payload download. Do not collapse their exact memberships
+				// to an invented single FType merely to price this layout-independent edge.
 				double bytes = FederatedCostModel.getEffectiveTransientReadSourceMemEstimate(
 					formalHop, sourceHop);
 				double callWeight = logicalFunctionCallWeight(occurrenceProfiles, fact);
