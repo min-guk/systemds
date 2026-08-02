@@ -530,14 +530,20 @@
 
 ## MinST StepLM local formal 입력에서 복수 exact FOUT layout을 임의의 단일 FType으로 축약함
 
-- **상태**: 진행중 — planner 구조 수정, exact CLI RED/GREEN, 인접 회귀 및 package 검증 완료;
-  새 immutable Docker stage와 동일 실패 셀 canary 대기
+- **상태**: 진행중 — planner 구조 수정, exact CLI RED/GREEN, 인접 회귀, package 및 동일 실패 셀
+  Docker canary 검증 완료; 중복 없는 잔여 MinST `65`셀 실행 중
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 실패 binary commit/JAR: `5126afca83ca6bfa972755fa22f2ba5e8ebeab50` /
     `0865b63ffc59969e3fe2d8ed394f4ddbafa77d44dd7fd05c1f2a005564116531`
   - 실패 campaign:
     `/home/mchoi/g007-all-planners-minst-l2svm-worker-pool-5126afc-d60da24-20260802-v1`
+  - 수정 commit/JAR: `e36339d3b7cfb01afce099bb32127e033504db29` /
+    `3eca30ec8cd1a4ab7193a107c3a242b4e9ce56fd0ab5554c723eebdbfe455b19`
+  - 수정 stage:
+    `/home/mchoi/g007-minst-steplm-layout-stage-e36339d-20260802-v1/g007-stage-8aeaee8a7175bfc81535f41d19209f9dc70d1d1978b6642534badcf256bca66c`
+  - continuation campaign:
+    `/home/mchoi/g007-all-planners-minst-steplm-layout-e36339d-d60da24-20260802-v1`
   - 실패 cell:
     `workers=1|planner=MinST|workload=steplm|profile=lan`, attempt `1`, retry 없음
   - Docker-only `run_LAN_docker.sh`, private-aggregate, seed/data `2026072701`.
@@ -602,10 +608,31 @@
     `docs/experiments/minst-continuation-2026-08-02-interim-270/`에 생성했다. unique `270`, overlap `0`,
     DP/FedAll/Heuristic 각 `84`, MinST `18`, four-planner matched `18`이다. 현재 stitched binary 결과에서
     exact 정렬은 `0/18`, 5% tolerance 정렬은 `1/18`이지만 homogeneous final run이 아니므로 진단용이다.
+  - real-target fresh build JAR SHA-256은
+    `3eca30ec8cd1a4ab7193a107c3a242b4e9ce56fd0ab5554c723eebdbfe455b19`이며 package 로그
+    `/tmp/g007-minst-steplm-package-real-target-e36339d-20260802.log` SHA-256은
+    `a85888f9359b97deed468feba3ee0aae06adb78973fa9e184b0a64a7583bf333`이다.
+  - 새 immutable stage는 executable `run_LAN_docker.sh`가 정확히 `1`개이고 `run_LAN.sh`는 `0`개다.
+    stage descriptor file SHA-256은
+    `63d3c129655e42a027fe37c2d0546f40989c778700e9ae7750c7dda54c296fd1`이다.
+  - 동일 실패 셀 `workers=1|planner=MinST|workload=steplm|profile=lan`의 fresh Docker canary는
+    attempt `1`, retry 없음으로 성공했다. execution `132.666106535s`, full lifecycle `153.313938249s`,
+    semantic oracle pass, fallback 없음, restart `0/0`, teardown resource `0/0`이다. response SHA-256은
+    `8febe37018e046d870d649a41e7558bf445cbd416838934adfa8e6f5cbe9315d`이다.
+  - canary 승격 후 사전 검증은 historical `271`, planned `65`, overlap `0`, union `336`이다.
+    validate-only receipt SHA-256은
+    `00c3a0ff9d0a34a4e65db23e4fce72fb1af43f03851499bae331753e052538e7`이다.
+  - continuation 첫 요청은
+    `workers=1|planner=MinST|workload=steplm|profile=wan_light`, attempt `1`로 확인했다.
+    launch receipt SHA-256은
+    `576ce115947dd0c058df0587633f11116bbb666af4da9bf78edd466d4a779f9e`이다.
+  - 최초 user-systemd 실행은 보조 `docker` 그룹이 상속되지 않아 셀 요청 전 종료됐다. request/response/
+    cell attempt가 모두 `0`임을 봉인한 뒤, 기존 캠페인과 동일한 `sg docker` 경계로 실행했다. 이는 실험
+    재시도가 아니며 증거는 continuation의 `control/infrastructure-preflight-failure-1/`에 있다.
 - **잔여 이슈**:
-  - 수정본을 commit으로 봉인하고 fresh real JAR 및 immutable stage를 생성한다.
-  - 실패했던 exact StepLM LAN 셀을 새 stage에서 attempt `1` Docker canary로 실행한다.
-  - canary 성공 시 기존 성공 `270`셀과 overlap `0`, canonical union `336`인 remaining `66`셀만 실행한다.
+  - 기존 성공 `271`셀과 overlap `0`인 remaining MinST `65`셀을 현재 fresh stage에서 실행한다.
+  - 새 실패가 발생하면 해당 binary/campaign을 즉시 동결하고 같은 셀을 재시도하지 않은 채 원인을
+    planner/runtime 원칙에 따라 수정한다.
   - 전체 성공 후 semantic/fallback/restart/teardown 감사와 최종 execution-time 정렬/그래프를 다시 만든다.
 - **잠재 회귀 위험**:
   - CP formal이 전체 payload가 아니라 FType별 부분 payload를 읽는 새 runtime semantics를 얻으면 현재
