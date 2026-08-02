@@ -385,11 +385,15 @@
 
 ## MinST L2SVM에서 서로 다른 FULL 값 앵커의 동일 worker-pool 권한을 잃음
 
-- **상태**: 진행중 — planner 구조 수정·양/음성 소스 회귀·package 완료, 새 immutable Docker canary 대기
+- **상태**: 해결 — planner 구조 수정·양/음성 소스 회귀·package·동일 실패 셀 Docker canary 완료,
+  exact unfinished-only MinST continuation 실행 준비 완료
 - **환경/조건**:
   - 소스: `/home/mchoi/g007-dp-minst-function-boundary-source-20260730-v1`
   - 수정 기준 commit: `c3d42ec58b19e1847505b69a65692c2d8181e02b`
   - 실패 binary commit: `823bc4bd3d7a0849610fd05b89b0ca4e6141b7c0`
+  - 수정 binary commit/JAR:
+    `5126afca83ca6bfa972755fa22f2ba5e8ebeab50` /
+    `0865b63ffc59969e3fe2d8ed394f4ddbafa77d44dd7fd05c1f2a005564116531`
   - 실패 campaign:
     `/home/mchoi/g007-all-planners-minst-lm-derived-fout-823bc4b-d60da24-20260802-v1`
   - 실패 cell: `workers=1|planner=MinST|workload=l2svm|profile=lan`
@@ -480,12 +484,30 @@
     `019d56727ca8abf8157221b9daaf58ad767d97d32f5dc8913e2fe6b562f861f9`,
     `/tmp/g007-minst-l2svm-package-final-20260802.log` SHA-256
     `d2e5b05f9989805d3b86bcbc5094a7aaaafed71ea2b5232f42e98719701bfab6`.
+  - 수정본은 commit `5126afca83ca6bfa972755fa22f2ba5e8ebeab50`으로 봉인했고, real target에서
+    생성한 JAR SHA-256은
+    `0865b63ffc59969e3fe2d8ed394f4ddbafa77d44dd7fd05c1f2a005564116531`이다.
+  - 새 immutable stage 검증 성공:
+    `/home/mchoi/g007-minst-l2svm-worker-pool-stage-5126afc-20260802-v1/g007-stage-dc67db84ab37461fa33200541bde7e48625bf1d83662ab23b562a1484f34cee8`.
+    harness commit은 `d60da243b22e3752183c37679013fde1232c9638`, data/reference tree는 각각
+    `0a7066c7dbb6964292d60820115b87f9368d3a6171bdc2dfbe1f5d599bf07e5f` /
+    `edc847fd4f53efb04d0468c221311a9f590debd20fd8703c6cd9b980e30afe85`로 기존 실험과
+    동일하다. stage 전체에서 executable `run_LAN_docker.sh`는 정확히 `1`, `run_LAN.sh`는 `0`이다.
+  - 동일 실패 셀 Docker canary를 새 root에서 attempt `1`, retry 없음으로 실행해 성공했다:
+    `/home/mchoi/g007-minst-l2svm-worker-pool-canary-5126afc-d60da24-20260802-v1`.
+    response SHA-256은 `88878ed4409e3e80b4037232900664a6d766f6deb51120a93f61a4a65b78e452`,
+    execution은 `71.020771038s`, full lifecycle은 `91.536015399s`다. semantic oracle 통과,
+    scan의 error/fallback/resource-invalid/timeout 전부 false, coordinator/worker restart `0/0`,
+    teardown 후 해당 Compose container/network `0/0`을 독립 확인했다.
+  - 기존 exact 성공 `261`셀과 위 canary를 합친 성공 registry `262`셀, 남은 MinST `74`셀의
+    overlap `0`, union `336`을 validate-only로 확인했다. 새 continuation root는
+    `/home/mchoi/g007-all-planners-minst-l2svm-worker-pool-5126afc-d60da24-20260802-v1`,
+    campaign manifest hash는
+    `aef97f5532ced194b095d71dfe7889324e385e3bd2fa2c21d1548df3e228382a`다.
 - **잔여 이슈**:
-  - 수정본을 commit하고 fresh real JAR/immutable stage를 생성한다. 이전 실패 binary/stage/campaign은
-    재사용하지 않는다.
-  - 동일 실패 L2SVM cell을 새 root에서 attempt `1`, retry 없음으로 Docker canary 실행한다.
-  - canary 성공 후 exact 성공 집합 `262`와 canonical remaining `74`의 overlap `0`, union `336`을
-    검증하고, 새 unfinished-only MinST continuation을 실행한다.
+  - 위 fresh continuation에서 이미 성공한 `262`셀은 재실행하지 않고 남은 MinST `74`셀만 각
+    attempt `1`, retry 없음으로 실행한다. 첫 셀은
+    `workers=1|planner=MinST|workload=l2svm|profile=wan_light`이다.
   - 전 `336` unique cell 성공 뒤 semantic/fallback/restart/teardown, execution-time 정렬 및 그래프를
     최종 감사한다.
 - **잠재 회귀 위험**:
