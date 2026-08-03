@@ -102,6 +102,14 @@ public class CampaignBHeuristicInvocationReceiptContractTest {
 			repeat.result().certificate().policyViewFingerprint());
 		Assert.assertEquals("HEURISTIC_FACTORY_EXCLUSIONS", first.result().policyExclusions(),
 			repeat.result().policyExclusions());
+		Assert.assertEquals("HEURISTIC_REVERSE_CANDIDATE_RECEIPTS",
+			first.result().selectedCandidateSelections(), reverse.result().selectedCandidateSelections());
+		Assert.assertEquals("HEURISTIC_REVERSE_RELOCATION_CHOICES",
+			first.result().selectedRelocationChoices(), reverse.result().selectedRelocationChoices());
+		Assert.assertEquals("HEURISTIC_REVERSE_RELOCATIONS",
+			first.result().selectedRelocations(), reverse.result().selectedRelocations());
+		Assert.assertEquals("HEURISTIC_REVERSE_OBJECTIVE_CERTIFICATE",
+			first.result().objectiveCertificate(), reverse.result().objectiveCertificate());
 		Assert.assertEquals("HEURISTIC_REVERSE_PLAN_FINGERPRINT",
 			first.result().normalizedPlanFingerprint(), reverse.result().normalizedPlanFingerprint());
 		Assert.assertEquals("HEURISTIC_REVERSE_PROVENANCE_FINGERPRINT",

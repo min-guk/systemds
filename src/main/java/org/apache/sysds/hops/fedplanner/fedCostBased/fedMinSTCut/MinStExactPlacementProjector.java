@@ -22,12 +22,24 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostF
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResults;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 
 /** Graph-free, fail-closed projection from exact MinST facts/selection into the placement carrier. */
@@ -58,12 +70,141 @@ public final class MinStExactPlacementProjector {
 			selection);
 		MinStPlacementInput.ProducerReceipt producer = new MinStPlacementInput.ProducerReceipt(
 			facts.analysisFingerprint(), selection.objectiveBits(), completeSourcePartition(facts, selection));
+		NormalizedPlannerResult normalized = normalizeExactSelection(facts, selection, selectedStates,
+			producer);
 		MinStPlacementInput input = MinStPlacementInput.createSelected(analysis, producer, occurrences,
-			obligations, selectedStates);
+			obligations, selectedStates, normalized);
 		analysis.assertProgramStructureUnchanged();
 		if(!facts.analysisFingerprint().equals(analysis.analysisFingerprint()))
 			throw new IllegalArgumentException("MINST_PROJECTOR_ANALYSIS_FINGERPRINT_STALE");
 		return input;
+	}
+
+	private static NormalizedPlannerResult normalizeExactSelection(MinStExactCostFacts facts,
+		MinStExactSelection selection, IdentityHashMap<CompiledHopKey,PlacementState> selectedStates,
+		MinStPlacementInput.ProducerReceipt producer) {
+		PlacementAnalysis analysis = facts.analysis();
+		Map<CompiledHopKey,PlacementEmissionState> emissions = new IdentityHashMap<>();
+		selectedStates.forEach((key, state) -> emissions.put(key, new PlacementEmissionState(state, false)));
+
+		Map<CompiledHopKey,MembershipRepresentative> selectedRepresentatives =
+			selectedRepresentatives(facts, selectedStates);
+		CandidateSelections.Selection canonical = CandidateSelections.selectNativeCanonical(
+			analysis, analysis.graph().relocationActions(), selectedStates);
+		Map<CompiledHopKey,CandidateSelectionReceipt> candidates = new IdentityHashMap<>();
+		for(CandidateSelectionReceipt receipt : canonical.candidates())
+			candidates.put(receipt.rule().parentOccurrence(), receipt);
+		for(MembershipRepresentative representative : selectedRepresentatives.values()) {
+			MembershipRepresentative candidateRepresentative = representative;
+			CandidateEmissionFact exactEmission;
+			if(representative.authorityKind() == MembershipAuthorityKind.CAPTURED_RULE)
+				exactEmission = exactCandidateEmission(representative);
+			else if(representative.authorityKind() == MembershipAuthorityKind.RELOCATION_SOURCE
+				&& representative.execType() == org.apache.sysds.common.Types.ExecType.FED) {
+				DecisionFact decision = facts.decisionFactsInScopeOrder().stream()
+					.filter(candidate -> candidate.key() == representative.decisionKey())
+					.findFirst().orElseThrow(() -> new IllegalArgumentException(
+						"MINST_PROJECTOR_DERIVED_FOUT_DECISION_MISSING"));
+				MinStExactCostFactsProducer.SelectedFedAuthority authority =
+					MinStExactCostFactsProducer.selectedFedAuthority(analysis, decision,
+						facts.membershipRepresentativesInCanonicalOrder(),
+						facts.representativePreferences());
+				if(authority.outputRepresentative() != representative
+					|| !authority.derivedFedFout()
+					|| authority.normalizedEmissionOrNull() == null)
+					throw new IllegalArgumentException(
+						"MINST_PROJECTOR_DERIVED_FOUT_AUTHORITY_IDENTITY_MISMATCH");
+				candidateRepresentative = authority.executionRepresentative();
+				exactEmission = authority.normalizedEmissionOrNull();
+			}
+			else
+				continue;
+			emissions.put(representative.decisionKey(), exactEmission.emissionState());
+			candidates.put(representative.decisionKey(), new CandidateSelectionReceipt(
+				candidateRepresentative.candidateRuleFactOrNull().key(), exactEmission, List.of()));
+		}
+		List<CandidateSelectionReceipt> candidateReceipts = candidates.values().stream().sorted().toList();
+		CandidateSelections.resolveAndValidate(analysis, selectedStates, candidateReceipts);
+
+		Map<RelocationDemandKey,RelocationActionKey> exactActions = exactSelectedRelocationActions(
+			facts, selection);
+		List<RelocationChoiceReceipt> relocationChoices = RelocationSelections.selectCanonical(
+			analysis, analysis.graph().relocationActions(), selectedStates, candidateReceipts,
+			(demand, action) -> !exactActions.containsKey(demand) || exactActions.get(demand).equals(action));
+		Map<RelocationDemandKey,RelocationChoiceReceipt> choicesByDemand = new LinkedHashMap<>();
+		for(RelocationChoiceReceipt choice : relocationChoices)
+			choicesByDemand.put(choice.demand(), choice);
+		for(Map.Entry<RelocationDemandKey,RelocationActionKey> exact : exactActions.entrySet()) {
+			RelocationChoiceReceipt choice = choicesByDemand.get(exact.getKey());
+			if(choice == null || !choice.action().equals(exact.getValue()))
+				throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_RELOCATION_AUTHORITY_LOST|demand="
+					+ exact.getKey().normalizedSignature());
+		}
+		return NormalizedPlannerResults.createWithEmissionStatesAndCandidateSelections(
+			analysis, "MinST", emissions, candidateReceipts, relocationChoices,
+			"cut=" + producer.cutObjectiveBits() + ";source=" + producer.sourcePartitionNodeIds());
+	}
+
+	private static Map<CompiledHopKey,MembershipRepresentative> selectedRepresentatives(
+		MinStExactCostFacts facts, Map<CompiledHopKey,PlacementState> selectedStates) {
+		Map<CompiledHopKey,MembershipRepresentative> result = new IdentityHashMap<>();
+		for(MembershipRepresentative representative : facts.membershipRepresentativesInCanonicalOrder()) {
+			if(selectedStates.get(representative.decisionKey()) != representative.state())
+				continue;
+			if(result.put(representative.decisionKey(), representative) != null)
+				throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_REPRESENTATIVE_AMBIGUOUS|key="
+					+ representative.decisionKey().normalizedSignature());
+		}
+		for(MinStExactCostFacts.DecisionFact decision : facts.decisionFactsInScopeOrder())
+			if(!result.containsKey(decision.key()))
+				throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_REPRESENTATIVE_MISSING|key="
+					+ decision.key().normalizedSignature());
+		return result;
+	}
+
+	private static CandidateEmissionFact exactCandidateEmission(MembershipRepresentative representative) {
+		CandidateEmissionFact exact = representative.candidateEmissionFactOrNull();
+		if(exact == null)
+			throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_CANDIDATE_EMISSION_MISSING|key="
+				+ representative.decisionKey().normalizedSignature());
+		return exact;
+	}
+
+	private static Map<RelocationDemandKey,RelocationActionKey> exactSelectedRelocationActions(
+		MinStExactCostFacts facts, MinStExactSelection selection) {
+		Map<RelocationDemandKey,RelocationActionKey> result = new LinkedHashMap<>();
+		for(MinStExactSelection.ObligationReceipt receipt : selection.obligationReceiptsInOrder()) {
+			TransferAuthorityFact authority = exactSelectedTransferAuthority(facts,
+				selection.sourcePartitionNodeIds(), receipt);
+			if(authority.actionOrNull() == null)
+				continue;
+			RelocationDemandKey demand = RelocationDemandKey.from(authority.obligationOrNull());
+			RelocationActionKey prior = result.putIfAbsent(demand, authority.actionOrNull().key());
+			if(prior != null && !prior.equals(authority.actionOrNull().key()))
+				throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_RELOCATION_AUTHORITY_AMBIGUOUS|demand="
+					+ demand.normalizedSignature());
+		}
+		return result;
+	}
+
+	private static TransferAuthorityFact exactSelectedTransferAuthority(MinStExactCostFacts facts,
+		List<Long> sourceNodeIds, MinStExactSelection.ObligationReceipt receipt) {
+		Set<Long> source = new LinkedHashSet<>(sourceNodeIds);
+		List<TransferAuthorityFact> matches = facts.transferAuthoritiesInCanonicalOrder().stream()
+			.filter(authority -> authority.direction() == receipt.direction())
+			.filter(authority -> authority.group().producerKey() == receipt.producerKey())
+			.filter(authority -> authority.endpoint().consumerKey() == receipt.consumerKey())
+			.filter(authority -> authority.endpoint().inputPosition() == receipt.inputPosition())
+			.filter(authority -> authority.requiredPlacement() == receipt.requiredPlacement())
+			.filter(authority -> authority.authoritySignature().equals(receipt.actionSignature()))
+			.filter(authority -> selectedGroup(facts, source, authority.group()))
+			.toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException("MINST_PROJECTOR_SELECTED_TRANSFER_AUTHORITY_"
+				+ (matches.isEmpty() ? "MISSING" : "AMBIGUOUS") + "|producer="
+				+ receipt.producerKey().normalizedSignature() + "|consumer="
+				+ receipt.consumerKey().normalizedSignature() + "|input=" + receipt.inputPosition());
+		return matches.get(0);
 	}
 
 	private static List<Long> completeSourcePartition(MinStExactCostFacts facts,

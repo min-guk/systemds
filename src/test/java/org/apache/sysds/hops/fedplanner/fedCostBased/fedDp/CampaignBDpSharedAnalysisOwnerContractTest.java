@@ -99,9 +99,9 @@ public class CampaignBDpSharedAnalysisOwnerContractTest {
 	private static final String SENTINEL_VAR = "__campaign_b_dp_owner_sentinel";
 	private static final String SENTINEL_SIGNATURE = "fed://campaign-b/dp-owner";
 	private static final String SENTINEL_ANCHOR = SENTINEL_SIGNATURE + "|ROW";
-	private static final long SENTINEL_SCOPE = -911L;
-	private static final long SENTINEL_HOP = -912L;
-	private static final long SENTINEL_ANCHOR_HOP = -913L;
+	private static final long SENTINEL_SCOPE = 9_110_000L;
+	private static final long SENTINEL_HOP = 9_120_000L;
+	private static final long SENTINEL_ANCHOR_HOP = 9_130_000L;
 
 	@Test
 	public void exactBuilderOwnerFlowsThroughMemoAdapterAndInvocationReceipt() {

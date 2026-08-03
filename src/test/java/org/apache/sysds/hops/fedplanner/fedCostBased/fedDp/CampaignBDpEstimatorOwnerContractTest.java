@@ -43,6 +43,10 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		Assert.assertEquals("self cost raw bits", bits(0x1.0p-4), receipt.selfCostBits());
 		Assert.assertEquals("forwarding cost raw bits", bits(0x1.0p-3), receipt.forwardingCostBits());
 		Assert.assertEquals("cumulative cost raw bits", bits(0x1.8p2), receipt.cumulativeCostBits());
+		Assert.assertEquals("embedded child recurrence raw bits", bits(0x1.8p1),
+			receipt.embeddedChildRecurrenceCostBits());
+		Assert.assertEquals("physical child boundary raw bits", bits(0d),
+			receipt.physicalChildBoundaryCostBits());
 		Assert.assertEquals("child receipt count", 2, receipt.childCosts().size());
 		assertChild(receipt.childCosts().get(0), fixture.children().get(0), graph.childPlans().get(0),
 			FederatedOutput.LOUT, 0x1.0p0, 0x1.0p-4);
@@ -88,6 +92,39 @@ public class CampaignBDpEstimatorOwnerContractTest {
 		assertSnapshotSame(before, snapshot(owner, graph));
 	}
 
+	@Test
+	public void capturedRecurrenceUsesAmortizedChildShareWithoutNegativeExclusiveCost() {
+		Fixture fixture = fixture("B-01");
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(fixture.analysis());
+		HopOccurrenceProjection childOccurrence = fixture.children().get(0);
+		FedPlan child = plan(childOccurrence.hop(), FederatedOutput.LOUT, ExecType.CP,
+			4d, 4d, 2d, 2, List.of());
+		register(memo, childOccurrence, child);
+
+		double cumulativeShare = FederatedPlannerDpCostEstimator
+			.computeCumulativeCostShareForParent(child.getCumulativeCost(), child);
+		double forwardingShare = FederatedPlannerDpCostEstimator
+			.computeCumulativeCostShareForParent(child.getForwardingCost(), child);
+		Assert.assertEquals(2d, cumulativeShare, 0d);
+		Assert.assertEquals(1d, forwardingShare, 0d);
+		FedPlan root = plan(fixture.root().hop(), FederatedOutput.LOUT, ExecType.CP,
+			10d + cumulativeShare + forwardingShare, 10d, 0d, 1,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.LOUT)));
+		root.bindExactChildPlanEdges(List.of(childOccurrence.hop()), memo);
+		root.setExactRecurrenceCosts(cumulativeShare + forwardingShare, forwardingShare);
+		register(memo, fixture.root(), root);
+
+		EstimatorReceipt rootReceipt = FederatedPlannerDpCostEstimator.estimateExact(
+			new EstimatorRequest(fixture.analysis(), fixture.root(), memo, root));
+		EstimatorReceipt childReceipt = FederatedPlannerDpCostEstimator.estimateExact(
+			new EstimatorRequest(fixture.analysis(), childOccurrence, memo, child));
+		FederatedPlannerDpCostEstimator.ExactRecurrenceTerm rootTerm =
+			FederatedPlannerDpCostEstimator.exactRecurrenceTerm(rootReceipt);
+		Assert.assertEquals(10d, Double.longBitsToDouble(rootTerm.exclusiveCostBits()), 0d);
+		Assert.assertEquals(15d, FederatedPlannerDpCostEstimator.exactForestObjective(List.of(
+			rootTerm, FederatedPlannerDpCostEstimator.exactRecurrenceTerm(childReceipt))), 0d);
+	}
+
 	private static PlanGraph planGraph(Fixture fixture) {
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(fixture.analysis());
 		FedPlan left = plan(fixture.children().get(0).hop(), FederatedOutput.LOUT, ExecType.CP,
@@ -101,19 +138,29 @@ public class CampaignBDpEstimatorOwnerContractTest {
 			Pair.of(fixture.children().get(1).hop().getHopID(), FederatedOutput.LOUT));
 		FedPlan root = plan(fixture.root().hop(), FederatedOutput.LOUT, ExecType.CP,
 			0x1.8p2, 0x1.0p-4, 0x1.0p-3, childEdges);
+		root.bindExactChildPlanEdges(fixture.children().stream()
+			.map(HopOccurrenceProjection::hop).toList(), memo);
+		root.setExactRecurrenceCosts(0x1.8p1, 0d);
 		register(memo, fixture.root(), root);
 		return new PlanGraph(memo, root, List.of(left, right));
 	}
 
 	private static FedPlan plan(Hop hop, FederatedOutput output, ExecType execType, double cumulativeCost,
 		double selfCost, double forwardingCost, List<Pair<Long, FederatedOutput>> childEdges) {
-		HopCommon common = new HopCommon(hop, 1, 1, 1, 1, List.of());
+		return plan(hop, output, execType, cumulativeCost, selfCost, forwardingCost, 1, childEdges);
+	}
+
+	private static FedPlan plan(Hop hop, FederatedOutput output, ExecType execType, double cumulativeCost,
+		double selfCost, double forwardingCost, int numParents,
+		List<Pair<Long, FederatedOutput>> childEdges) {
+		HopCommon common = new HopCommon(hop, 1, 1, 1, numParents, List.of());
 		common.setSelfCost(selfCost);
 		common.setForwardingCost(forwardingCost);
 		FedPlanVariants variants = new FedPlanVariants(common, output);
 		FedPlan plan = new FedPlan(cumulativeCost, variants, childEdges);
 		plan.setExecType(execType);
 		plan.setFType(FType.ROW);
+		plan.setExactRecurrenceCosts(0d, 0d);
 		variants.addFedPlan(plan);
 		return plan;
 	}

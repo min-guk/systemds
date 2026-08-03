@@ -11,14 +11,22 @@ import java.util.Objects;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 
 /** Immutable exact assignment and its proof. */
 public record PlacementSelection(Map<CompiledHopKey, PlacementState> assignment,
+	List<CandidateSelectionReceipt> selectedCandidateSelections,
+	List<RelocationChoiceReceipt> selectedRelocationChoices,
 	Set<RelocationActionKey> selectedRelocations, PlacementScore score, PlacementCertificate certificate) {
 	public PlacementSelection {
 		Objects.requireNonNull(assignment, "assignment");
+		selectedCandidateSelections = List.copyOf(Objects.requireNonNull(
+			selectedCandidateSelections, "selectedCandidateSelections"));
+		selectedRelocationChoices = List.copyOf(Objects.requireNonNull(
+			selectedRelocationChoices, "selectedRelocationChoices"));
 		Objects.requireNonNull(selectedRelocations, "selectedRelocations");
 		Objects.requireNonNull(score, "score");
 		Objects.requireNonNull(certificate, "certificate");

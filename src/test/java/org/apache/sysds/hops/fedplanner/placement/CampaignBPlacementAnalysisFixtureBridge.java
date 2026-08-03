@@ -18,7 +18,11 @@ import org.apache.sysds.hops.LiteralOp;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HeuristicPolicyFacts;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.NodeShapeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
 
 /** Test-owned analysis construction seam with a counter used to detect any visible rebuild. */
 public final class CampaignBPlacementAnalysisFixtureBridge {
@@ -64,8 +68,36 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		CONSTRUCTIONS.incrementAndGet();
 		List<HopOccurrenceProjection> projections = new ArrayList<>(source.occurrences());
 		if(order == ProjectionOrder.REVERSED) Collections.reverse(projections);
-		return new PlacementAnalysis(source.graph(), projections, programOwner,
-			copiedShapeFacts(source, projections), source.analysisFingerprint(), source.heuristicPolicyFacts());
+		// Reordering the occurrence projection must not silently erase the exact
+		// candidate/edge authority carried by the source analysis.  Doing so made
+		// reverse-order selector tests compare a row-aware plan with a graph-only
+		// plan and falsely appeared as planner nondeterminism.
+		return new PlacementAnalysis(source.graph(), projections, source.topLevelStatementBlocks(),
+			programOwner, copiedShapeFacts(source, projections), source.analysisFingerprint(),
+			source.heuristicPolicyFacts(), source.candidateRuleDomain().orderedRuleKeys(),
+			source.candidateRuleFacts().orderedFacts(),
+			source.candidateRuleDomain().orderedConsumerKeys(),
+			source.candidateConsumerProfileFacts().orderedFacts(),
+			source.detachedConsumerProfileFacts().orderedFacts(),
+			reorderedCompiledInputEdges(source, projections),
+			source.logicalTransientInputsInCanonicalOrder(), null);
+	}
+
+	private static List<PlacementAnalysis.CompiledInputEdgeFact> reorderedCompiledInputEdges(
+		PlacementAnalysis source, List<HopOccurrenceProjection> projections) {
+		Map<CompiledHopKey,List<PlacementAnalysis.CompiledInputEdgeFact>> byConsumer =
+			new java.util.IdentityHashMap<>();
+		for(PlacementAnalysis.CompiledInputEdgeFact edge : source.compiledInputEdgesInCanonicalOrder())
+			byConsumer.computeIfAbsent(edge.consumer(), ignored -> new ArrayList<>()).add(edge);
+		List<PlacementAnalysis.CompiledInputEdgeFact> ordered = new ArrayList<>();
+		for(HopOccurrenceProjection projection : projections)
+			byConsumer.getOrDefault(projection.key(), List.of()).stream()
+				.sorted(java.util.Comparator.comparingInt(
+					PlacementAnalysis.CompiledInputEdgeFact::inputPosition))
+				.forEach(ordered::add);
+		if(ordered.size() != source.compiledInputEdgesInCanonicalOrder().size())
+			throw new AssertionError("Projection reorder lost compiled input-edge authority");
+		return List.copyOf(ordered);
 	}
 
 	/** Returns an exact immutable occurrence prefix retaining source graph objects. */
@@ -171,6 +203,81 @@ public final class CampaignBPlacementAnalysisFixtureBridge {
 		Objects.requireNonNull(graph, "graph");
 		CONSTRUCTIONS.incrementAndGet();
 		return analysis(graph, source.occurrences(), copiedShapeFacts(source, source.occurrences()));
+	}
+
+	/** Restricts the exact candidate universe to one physical rule row without rebuilding oracle facts. */
+	public static PlacementAnalysis withOnlyCandidateFact(PlacementAnalysis source, CandidateRuleFact fact) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(fact, "fact");
+		if(source.candidateRuleFacts().orderedFacts().stream().noneMatch(candidate -> candidate == fact))
+			throw new IllegalArgumentException("candidate fact is not source-analysis owned");
+		List<PlacementAnalysis.CandidateConsumerProfileFact> profiles = source.candidateConsumerProfileFacts()
+			.orderedFacts().stream().filter(profile ->
+				profile.key().consumerOccurrence() == fact.key().parentOccurrence()).toList();
+		return new PlacementAnalysis(source.graph(), source.occurrences(), List.of(), null,
+			copiedShapeFacts(source, source.occurrences()), source.analysisFingerprint(),
+			new HeuristicPolicyFacts(List.of()), List.of(fact.key()), List.of(fact),
+			profiles.stream().map(PlacementAnalysis.CandidateConsumerProfileFact::key).toList(), profiles,
+			List.of(), source.compiledInputEdgesInCanonicalOrder(), List.of(), null);
+	}
+
+	/** Pins selected source/consumer states and adds independent decisions to force the production B&B path. */
+	public static PlacementAnalysis pinAndPadCandidateAnalysis(PlacementAnalysis source,
+		Map<CompiledHopKey,PlacementState> pinnedStates, int paddingDecisionCount,
+		List<PlacementState> paddingAlternatives) {
+		Objects.requireNonNull(source, "source");
+		Objects.requireNonNull(pinnedStates, "pinnedStates");
+		Objects.requireNonNull(paddingAlternatives, "paddingAlternatives");
+		if(paddingDecisionCount < 0 || paddingAlternatives.size() < 2)
+			throw new IllegalArgumentException("production selector padding requires two alternatives");
+		CONSTRUCTIONS.incrementAndGet();
+
+		List<NeutralPlacementGraph.Node> nodes = new ArrayList<>();
+		for(NeutralPlacementGraph.Node node : source.graph().nodes()) {
+			PlacementState pinned = pinnedStates.get(node.key());
+			if(pinned != null && !node.legalAlternatives().contains(pinned))
+				throw new IllegalArgumentException("pinned state is not legal for " + node.key());
+			nodes.add(pinned == null ? node : new NeutralPlacementGraph.Node(node.key(), node.kind(),
+				node.valueVersion(), node.emittedWork(), List.of(pinned), node.exclusions(), node.anchors()));
+		}
+		List<HopOccurrenceProjection> projections = new ArrayList<>(source.occurrences());
+		Map<CompiledHopKey,NodeShapeFact> shapes = new LinkedHashMap<>();
+		LinkedHashSet<CompiledHopKey> shapeKeys = new LinkedHashSet<>();
+		for(HopOccurrenceProjection occurrence : source.occurrences()) {
+			shapeKeys.add(occurrence.key());
+			shapes.put(occurrence.key(), source.shapeFact(occurrence.key()).orElseThrow());
+		}
+		CompiledHopKey first = source.graph().nodes().get(0).key();
+		for(int i = 0; i < paddingDecisionCount; i++) {
+			ControlRegionKey region = new ControlRegionKey(first.programFingerprint(), "selector-padding",
+				List.of("selector-padding", Integer.toString(i)), "selector-padding/" + i, "compiled");
+			CompiledHopKey key = new CompiledHopKey(first.programFingerprint(), "selector-padding",
+				"selector-padding/" + i, "compiled", region, "padding-hop-" + i, "padding-hop-" + i);
+			ValueVersionKey value = new ValueVersionKey(first.programFingerprint(), "padding-v" + i,
+				region, 1_000_000 + i, VersionKind.ORDINARY, List.of());
+			nodes.add(new NeutralPlacementGraph.Node(key, NeutralPlacementGraph.NodeKind.OPERATION, value,
+				true, paddingAlternatives, List.of(), List.of()));
+			LiteralOp hop = new LiteralOp(10_000L + i);
+			projections.add(new HopOccurrenceProjection(key, hop, -1L, 1_000_000 + i,
+				key.normalizedSignature()));
+			shapeKeys.add(key);
+			shapes.put(key, new NodeShapeFact(DataType.SCALAR, -1, -1));
+		}
+		List<NeutralPlacementGraph.RelocationAction> relocations = source.graph().relocationActions().stream()
+			.map(action -> new NeutralPlacementGraph.RelocationAction(action.key(), action.obligations(),
+				action.directSourcePlacements().stream().filter(state -> nodes.stream()
+					.filter(node -> node.valueVersion().equals(action.key().sourceValueVersion()))
+					.anyMatch(node -> node.legalAlternatives().contains(state))).toList()))
+			.toList();
+		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, source.graph().constraints(), relocations);
+		PlacementShapeFacts shapeFacts = new PlacementShapeFacts(shapes, shapeKeys);
+		return new PlacementAnalysis(graph, projections, List.of(), null, shapeFacts,
+			source.analysisFingerprint(), source.heuristicPolicyFacts(),
+			source.candidateRuleDomain().orderedRuleKeys(), source.candidateRuleFacts().orderedFacts(),
+			source.candidateRuleDomain().orderedConsumerKeys(),
+			source.candidateConsumerProfileFacts().orderedFacts(),
+			source.detachedConsumerProfileFacts().orderedFacts(),
+			source.compiledInputEdgesInCanonicalOrder(), source.logicalTransientInputsInCanonicalOrder(), null);
 	}
 
 	public static PlacementAnalysis replaceHop(PlacementAnalysis source, CompiledHopKey key, Hop hop) {

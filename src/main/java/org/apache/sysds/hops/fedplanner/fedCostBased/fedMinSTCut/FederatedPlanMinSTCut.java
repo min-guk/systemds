@@ -6,13 +6,11 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.util.List;
 import java.util.Objects;
 
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
 import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
@@ -41,13 +39,13 @@ public class FederatedPlanMinSTCut extends AFederatedPlanner {
 		analysis.assertCanonicalProgramAuthority(prog);
 		analysis.assertProgramStructureUnchanged();
 
-		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
-			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		MinStExactCostFactsProducer.PlannedSelection planned =
-			MinStExactCostFactsProducer.deriveAndSelectBest(analysis, scope);
-		MinStExactCostFacts facts = planned.facts();
-		MinStExactSelection selection = planned.selection();
-		MinStPlacementInput input = MinStExactPlacementProjector.project(facts, selection);
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		MinStExactPhysicalOptimizer.Result optimized = MinStExactPhysicalOptimizer.optimize(
+			model, surface, MinStExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		MinStExactPhysicalSelection selection = MinStExactPhysicalSelection.create(model, optimized);
+		MinStPlacementInput input = MinStExactPhysicalPlacementProjector.project(selection);
 		adapter.select(analysis, input);
 		NormalizedPlannerResult normalized = Objects.requireNonNull(input.normalizedResult(),
 			"MinST projector normalized result");

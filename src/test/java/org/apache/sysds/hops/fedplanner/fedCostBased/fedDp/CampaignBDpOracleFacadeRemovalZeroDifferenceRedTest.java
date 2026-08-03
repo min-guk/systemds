@@ -301,21 +301,26 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 				"enumerationResult", ".", "optimalPlan", "(", ")") >= 0
 			&& sequence(owner, 0, "String", "fingerprintAfter", "=", "analysis", ".",
 				"analysisFingerprint", "(", ")") >= 0
+			&& sequence(owner, 0, "FinalPlanCertificate", "finalPlanCertificate", "=",
+				"certifyFinalPlanForest", "(", "analysis", ",", "memoTable", ",", "selectedStates", ")") >= 0
 			&& sequence(owner, 0, "NormalizedPlannerResult", "normalized", "=", "normalizeDpSelection", "(",
-				"analysis", ",", "selectedStates", ",", "exactSelection", ",", "previous", ")") >= 0
+				"analysis", ",", "selectedStates", ",", "exactSelection", ",",
+				"finalPlanCertificate", ",", "previous", ")") >= 0
 			&& sequence(owner, 0, "PlacementEmissionReceipt", "emission", "=",
 				"PlacementEmissionTransaction", ".", "replaceCompleteProgram", "(", "prog", ",",
 				"normalized", ",", "PlacementEmissionTransaction", ".", "FailureInjector", ".",
 				"none", "(", ")", ")") >= 0
 			&& countSequence(owner, "new", "DpDynamicInvocationReceipt", "(") == 1
 			&& sequence(owner, 0, "return", "new", "DpDynamicInvocationReceipt", "(", "analysis", ",",
-				"memoTable", ",", "enumerationResult", ",", "fingerprintBefore", ",", "fingerprintAfter",
+				"memoTable", ",", "enumerationResult", ",", "finalPlanCertificate", ",",
+				"fingerprintBefore", ",", "fingerprintAfter",
 				",", "normalized", ",", "emission", ")") >= 0
 			&& sequence(owner, 0, "new", "FederatedPlannerDpMemoTable", "(", ")") < 0
 			&& sequence(owner, 0, "enumerateFunctionDynamic", "(") < 0
 			&& sequence(receiptHeader, 0, "PlacementAnalysis", "analysis") >= 0
 			&& sequence(receiptHeader, 0, "FederatedPlannerDpMemoTable", "memoTable") >= 0
 			&& sequence(receiptHeader, 0, "DpEnumerationResult", "enumerationResult") >= 0
+			&& sequence(receiptHeader, 0, "FinalPlanCertificate", "finalPlanCertificate") >= 0
 			&& sequence(receiptHeader, 0, "String", "fingerprintBefore") >= 0
 			&& sequence(receiptHeader, 0, "String", "fingerprintAfter") >= 0
 			&& sequence(receiptHeader, 0, "NormalizedPlannerResult", "normalizedResult") >= 0
@@ -468,8 +473,12 @@ public class CampaignBDpOracleFacadeRemovalZeroDifferenceRedTest {
 			if(close < 0 || sequence(source.subList(i + 2, close), 0, parameter) < 0)
 				continue;
 			int open = close + 1;
-			while(open < source.size() && !source.get(open).text().equals("{"))
+			while(open < source.size() && !source.get(open).text().equals("{")
+				&& !source.get(open).text().equals(";"))
 				open++;
+			// A call expression ends at ';'. Only a declaration may own the method body.
+			if(open >= source.size() || source.get(open).text().equals(";"))
+				continue;
 			int end = matching(source, open, "{", "}");
 			if(end > open)
 				return List.copyOf(source.subList(open + 1, end));

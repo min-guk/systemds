@@ -14,10 +14,14 @@ import java.util.Objects;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationObligation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 
 /** Public normalization bridge for planner roots whose native result is not a common adapter result. */
@@ -36,12 +40,43 @@ public final class NormalizedPlannerResults {
 		Objects.requireNonNull(analysis, "analysis");
 		Map<CompiledHopKey, PlacementState> selectedStates = new java.util.LinkedHashMap<>();
 		selectedEmissionStates.forEach((key, state) -> selectedStates.put(key, state.placementState()));
-		List<RelocationActionKey> relocations = analysis.graph().relocationActions().stream()
-			.filter(action -> analysis.graph().isRelocationActive(action, selectedStates))
-			.map(action -> action.key()).toList();
+		CandidateSelections.Selection selection = CandidateSelections.selectNativeCanonical(
+			analysis, analysis.graph().relocationActions(), selectedStates);
+		return createWithEmissionStatesAndCandidateSelections(analysis, plannerId, selectedEmissionStates,
+			selection.candidates(), selection.relocationChoices(), objectiveCertificate);
+	}
+
+	public static NormalizedPlannerResult createWithEmissionStatesAndRelocationChoices(
+		PlacementAnalysis analysis, String plannerId,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<RelocationChoiceReceipt> selectedRelocationChoices, String objectiveCertificate) {
+		Objects.requireNonNull(analysis, "analysis");
+		Map<CompiledHopKey, PlacementState> selectedStates = new java.util.LinkedHashMap<>();
+		selectedEmissionStates.forEach((key, state) -> selectedStates.put(key, state.placementState()));
+		CandidateSelections.Selection candidateSelection = CandidateSelections.selectNativeCanonical(
+			analysis, analysis.graph().relocationActions(), selectedStates);
+		return createWithEmissionStatesAndCandidateSelections(analysis, plannerId, selectedEmissionStates,
+			candidateSelection.candidates(), selectedRelocationChoices, objectiveCertificate);
+	}
+
+	public static NormalizedPlannerResult createWithEmissionStatesAndCandidateSelections(
+		PlacementAnalysis analysis, String plannerId,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices, String objectiveCertificate) {
+		Objects.requireNonNull(analysis, "analysis");
+		Map<CompiledHopKey, PlacementState> selectedStates = new java.util.LinkedHashMap<>();
+		selectedEmissionStates.forEach((key, state) -> selectedStates.put(key, state.placementState()));
+		List<CandidateSelectionReceipt> candidates = List.copyOf(Objects.requireNonNull(
+			selectedCandidateSelections, "selectedCandidateSelections"));
+		CandidateSelections.resolveAndValidate(analysis, selectedStates, candidates);
+		List<RelocationChoiceReceipt> choices = List.copyOf(Objects.requireNonNull(
+			selectedRelocationChoices, "selectedRelocationChoices"));
+		List<RelocationActionKey> relocations = RelocationSelections.emittedActions(
+			analysis, selectedStates, candidates, choices);
 		List<LocalMaterializationActionKey> locals = deriveLocalMaterializations(analysis, selectedStates);
 		NormalizedPlannerResult draft = new Draft(analysis, plannerId, analysis.analysisFingerprint(),
-			Map.copyOf(selectedStates), Map.copyOf(selectedEmissionStates), relocations, locals,
+			Map.copyOf(selectedStates), Map.copyOf(selectedEmissionStates), candidates, choices, relocations, locals,
 			objectiveCertificate);
 		return PlacementPlannerAdapter.normalize(analysis, draft);
 	}
@@ -97,9 +132,17 @@ public final class NormalizedPlannerResults {
 	private record Draft(PlacementAnalysis analysis, String plannerId, String analysisFingerprint,
 		Map<CompiledHopKey, PlacementState> selectedStates,
 		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices,
 		List<RelocationActionKey> selectedRelocations,
 		List<LocalMaterializationActionKey> selectedLocalMaterializations,
 		String objectiveCertificate) implements NormalizedPlannerResult {
+		@Override public List<CandidateSelectionReceipt> selectedCandidateSelections() {
+			return selectedCandidateSelections;
+		}
+		@Override public List<RelocationChoiceReceipt> selectedRelocationChoices() {
+			return selectedRelocationChoices;
+		}
 		@Override public String normalizedPlanFingerprint() { return "canonicalized-at-boundary"; }
 	}
 }

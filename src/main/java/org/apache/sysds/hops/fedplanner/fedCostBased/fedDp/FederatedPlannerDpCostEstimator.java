@@ -72,6 +72,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUti
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.ipa.FunctionCallGraph;
@@ -111,6 +112,12 @@ public class FederatedPlannerDpCostEstimator {
 		}
 	}
 
+	@FunctionalInterface
+	public interface ExactChildPlanResolver {
+		FederatedPlannerDpMemoTable.FedPlan resolve(
+			FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge edge);
+	}
+
 	public record ChildCostReceipt(HopOccurrenceProjection occurrence, CompiledHopKey key,
 		FederatedPlannerDpMemoTable.FedPlan plan, FederatedOutput output, long cumulativeCostBits,
 		long forwardingCostBits) {
@@ -120,9 +127,17 @@ public class FederatedPlannerDpCostEstimator {
 		}
 	}
 
+	/** Exact retained-arm edge term used by the final DP forest certificate. */
+	public static double exactChildContribution(ChildCostReceipt child) {
+		Objects.requireNonNull(child, "child");
+		return Double.longBitsToDouble(child.cumulativeCostBits())
+			+ Double.longBitsToDouble(child.forwardingCostBits());
+	}
+
 	public record EstimatorReceipt(PlacementAnalysis analysis, HopOccurrenceProjection occurrence,
 		CompiledHopKey key, FederatedPlannerDpMemoTable memo, FederatedPlannerDpMemoTable.FedPlan plan,
 		long selfCostBits, long forwardingCostBits, long cumulativeCostBits,
+		long embeddedChildRecurrenceCostBits, long physicalChildBoundaryCostBits,
 		List<ChildCostReceipt> childCosts) {
 		public EstimatorReceipt {
 			if (analysis == null || occurrence == null || key == null || memo == null || plan == null
@@ -130,6 +145,52 @@ public class FederatedPlannerDpCostEstimator {
 				throw new IllegalArgumentException("Estimator receipt fields must not be null");
 			childCosts = List.copyOf(childCosts);
 		}
+	}
+
+	/**
+	 * One occurrence-local recurrence term. The exclusive cost is charged once per
+	 * selected occurrence, while forwarding costs are charged once per actual
+	 * selected parent-child edge. Child cumulative costs are deliberately absent:
+	 * they are represented by the child's own occurrence term and must not be
+	 * multiplied when a DAG child is shared by multiple sinks.
+	 */
+	public record ExactRecurrenceTerm(long exclusiveCostBits, List<Long> edgeForwardingCostBits) {
+		public ExactRecurrenceTerm {
+			edgeForwardingCostBits = List.copyOf(edgeForwardingCostBits);
+		}
+	}
+
+	public static ExactRecurrenceTerm exactRecurrenceTerm(EstimatorReceipt receipt) {
+		Objects.requireNonNull(receipt, "receipt");
+		return exactPlanRecurrenceTerm(receipt.plan());
+	}
+
+	public static ExactRecurrenceTerm exactPlanRecurrenceTerm(
+		FederatedPlannerDpMemoTable.FedPlan plan) {
+		Objects.requireNonNull(plan, "plan");
+		if(!plan.hasExactRecurrenceCosts())
+			throw new IllegalArgumentException("Plan has no captured exact recurrence costs");
+		double embeddedChildren = plan.getEmbeddedChildRecurrenceCost();
+		double exclusive = plan.getCumulativeCost() - embeddedChildren;
+		double tolerance = 1e-9 * Math.max(1d,
+			Math.abs(plan.getCumulativeCost()));
+		if(exclusive < -tolerance)
+			throw new IllegalStateException("Exact DP recurrence has negative occurrence-exclusive cost: "
+				+ exclusive);
+		return new ExactRecurrenceTerm(Double.doubleToRawLongBits(Math.max(0d, exclusive)),
+			List.of(Double.doubleToRawLongBits(plan.getPhysicalChildBoundaryCost())));
+	}
+
+	public static double exactForestObjective(List<ExactRecurrenceTerm> terms) {
+		Objects.requireNonNull(terms, "terms");
+		double objective = 0d;
+		for(ExactRecurrenceTerm term : terms) {
+			Objects.requireNonNull(term, "term");
+			objective += Double.longBitsToDouble(term.exclusiveCostBits());
+			for(long edgeBits : term.edgeForwardingCostBits())
+				objective += Double.longBitsToDouble(edgeBits);
+		}
+		return objective;
 	}
 
 	public record TransientReadCostReceipt(double selfCost, double localMaterializationWeight,
@@ -245,8 +306,36 @@ public class FederatedPlannerDpCostEstimator {
 	}
 
 	public static EstimatorReceipt estimateExact(EstimatorRequest request) {
+		if(request == null)
+			throw new IllegalArgumentException("Estimator request must not be null");
+		return estimateExact(request, edge -> resolveRetainedEdgePlan(request.memo(), edge));
+	}
+
+	private static FederatedPlannerDpMemoTable.FedPlan resolveRetainedEdgePlan(
+		FederatedPlannerDpMemoTable memo,
+		FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge edge) {
+		FederatedPlannerDpMemoTable.FedPlan expected = edge.selectedPlan();
+		PlacementState expectedState = expected.getSelectedPlacementState();
+		HopOccurrenceProjection occurrence = memo.requirePlanCarrierOccurrence(edge.carrier());
+		FederatedPlannerDpMemoTable.FedPlan best = null;
+		for(FederatedPlannerDpMemoTable.OccurrencePlanArm arm :
+			memo.getAllExactPlanVariantsForOccurrence(occurrence)) {
+			FederatedPlannerDpMemoTable.FedPlan candidate = arm.plan();
+			if(candidate.getFedOutType() != edge.output()
+				|| candidate.getSelectedPlacementState() != expectedState
+				|| candidate.isDerivedFedFout() != expected.isDerivedFedFout())
+				continue;
+			if(best == null || candidate.getCumulativeCost() < best.getCumulativeCost())
+				best = candidate;
+		}
+		return best;
+	}
+
+	public static EstimatorReceipt estimateExact(EstimatorRequest request, ExactChildPlanResolver childResolver) {
 		if (request == null)
 			throw new IllegalArgumentException("Estimator request must not be null");
+		if(childResolver == null)
+			throw new IllegalArgumentException("Exact child plan resolver must not be null");
 
 		PlacementAnalysis analysis = request.analysis();
 		HopOccurrenceProjection occurrence = request.occurrence();
@@ -260,7 +349,7 @@ public class FederatedPlannerDpCostEstimator {
 			throw new IllegalArgumentException("Estimator plan does not bind the supplied occurrence");
 
 		FederatedPlannerDpMemoTable.FedPlanVariants variants = memo.getFedPlanVariants(
-			Pair.of(plan.getHopID(), plan.getFedOutType()));
+			plan.getHopRef(), plan.getFedOutType());
 		if (!retainsExactPlan(variants, plan))
 			throw new IllegalArgumentException("Estimator plan is not retained by the supplied memo");
 
@@ -268,17 +357,22 @@ public class FederatedPlannerDpCostEstimator {
 		if (childEdges == null)
 			throw new IllegalArgumentException("Estimator child edges must not be null");
 		List<ChildCostReceipt> childCosts = new ArrayList<>();
-		for (Pair<Long, FederatedOutput> childEdge : childEdges) {
+		List<FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge> exactChildEdges =
+			plan.getExactChildPlanEdges();
+		for (int childIndex = 0; childIndex < childEdges.size(); childIndex++) {
+			Pair<Long, FederatedOutput> childEdge = childEdges.get(childIndex);
 			if (childEdge == null || childEdge.getLeft() == null || childEdge.getRight() == null)
 				throw new IllegalArgumentException("Estimator child edge is incomplete");
-			FederatedPlannerDpMemoTable.FedPlan childPlan = memo.getFedPlanAfterPrune(
-				childEdge.getLeft(), childEdge.getRight());
-			if (childPlan == null || childPlan.getHopID() != childEdge.getLeft()
-				|| childPlan.getFedOutType() != childEdge.getRight())
+			FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge exactEdge = exactChildEdges.get(childIndex);
+			FederatedPlannerDpMemoTable.FedPlan childPlan = childResolver.resolve(exactEdge);
+			if (childPlan == null || childPlan.getFedOutType() != childEdge.getRight())
 				throw new IllegalArgumentException("Estimator child plan is missing from the supplied memo");
 
 			HopOccurrenceProjection childOccurrence = memo.requirePlanCarrierOccurrence(childPlan.getHopRef());
-			FederatedPlannerDpMemoTable.FedPlanVariants childVariants = memo.getFedPlanVariants(childEdge);
+			if(childOccurrence.key() != exactEdge.occurrence())
+				throw new IllegalArgumentException("Estimator child resolver returned a different exact occurrence");
+			FederatedPlannerDpMemoTable.FedPlanVariants childVariants = memo.getFedPlanVariants(
+				childPlan.getHopRef(), childPlan.getFedOutType());
 			if (!retainsExactPlan(childVariants, childPlan))
 				throw new IllegalArgumentException("Estimator child plan is not retained by the supplied memo");
 			childCosts.add(new ChildCostReceipt(childOccurrence, childOccurrence.key(), childPlan,
@@ -286,10 +380,14 @@ public class FederatedPlannerDpCostEstimator {
 				Double.doubleToRawLongBits(childPlan.getForwardingCost())));
 		}
 
+		if(!plan.hasExactRecurrenceCosts())
+			throw new IllegalArgumentException("Estimator plan has no captured exact recurrence costs");
 		return new EstimatorReceipt(analysis, occurrence, occurrence.key(), memo, plan,
 			Double.doubleToRawLongBits(plan.getSelfCost()),
 			Double.doubleToRawLongBits(plan.getForwardingCost()),
-			Double.doubleToRawLongBits(plan.getCumulativeCost()), List.copyOf(childCosts));
+			Double.doubleToRawLongBits(plan.getCumulativeCost()),
+			Double.doubleToRawLongBits(plan.getEmbeddedChildRecurrenceCost()),
+			Double.doubleToRawLongBits(plan.getPhysicalChildBoundaryCost()), List.copyOf(childCosts));
 	}
 
 	private static boolean retainsExactPlan(FederatedPlannerDpMemoTable.FedPlanVariants variants,
@@ -591,6 +689,12 @@ public class FederatedPlannerDpCostEstimator {
 
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
 		return FederatedCostModel.computeRefedNetworkCost(memSize, fType, numWorkers);
+	}
+
+	public static double computeRefedNetworkCost(double memSize, FType sourceFType,
+		FType targetFType, int numWorkers) {
+		return FederatedCostModel.computeRefedNetworkCost(
+			memSize, sourceFType, targetFType, numWorkers);
 	}
 
 	static double computeUploadCostWithFallback(Hop childHop, Hop parentHop, FType uploadType, int numWorkers) {

@@ -65,6 +65,9 @@ public final class PlacementAnalysis {
 			return new CandidateInputState(InputPresence.PRESENT, Objects.requireNonNull(fType, "fType"));
 		}
 		public boolean present() { return presence == InputPresence.PRESENT; }
+		public String normalizedSignature() {
+			return presence.name() + ':' + (fType == null ? "-" : fType.name());
+		}
 	}
 
 	/** Exact analysis-owned parent plus edge-position-ordered candidate input states. */
@@ -76,6 +79,10 @@ public final class PlacementAnalysis {
 			for(int i = 0; i < orderedInputs.size(); i++)
 				Objects.requireNonNull(orderedInputs.get(i), "orderedInputs[" + i + "]");
 			orderedInputs = List.copyOf(orderedInputs);
+		}
+		public String normalizedSignature() {
+			return parentOccurrence.normalizedSignature() + "|inputs=" + orderedInputs.stream()
+				.map(CandidateInputState::normalizedSignature).toList();
 		}
 	}
 
@@ -1313,6 +1320,33 @@ public final class PlacementAnalysis {
 
 	public List<CompiledInputEdgeFact> compiledInputEdgesInCanonicalOrder() {
 		return compiledInputEdgesInCanonicalOrder;
+	}
+
+	/**
+	 * Exact raw CFG reaching definitions for one occurrence.  This relation is
+	 * intentionally broader than {@link #logicalTransientInputsInCanonicalOrder()}:
+	 * the latter exists only when the writer/read candidate tuples can be replayed
+	 * as one physical planner decision, while shape and cost proofs may still need
+	 * the immutable value-flow source of a non-replayable read.
+	 */
+	public List<CompiledHopKey> cfgDefinitionSourcesInCanonicalOrder(CompiledHopKey key) {
+		NeutralPlacementGraph.Node target = graph.node(Objects.requireNonNull(key, "key"))
+			.orElseThrow(() -> new IllegalArgumentException("CFG definition target is outside the analysis"));
+		Set<String> references = target.valueVersion().predecessorVersions().stream()
+			.filter(value -> value.startsWith("cfg-definition:"))
+			.map(value -> value.substring("cfg-definition:".length()))
+			.collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
+		if(references.isEmpty())
+			return List.of();
+		List<CompiledHopKey> sources = graph.nodes().stream()
+			.filter(node -> references.contains(node.valueVersion().cfgReferenceSignature()))
+			.map(NeutralPlacementGraph.Node::key).sorted().toList();
+		Set<String> resolved = sources.stream()
+			.map(source -> graph.node(source).orElseThrow().valueVersion().cfgReferenceSignature())
+			.collect(java.util.stream.Collectors.toSet());
+		if(!resolved.equals(references))
+			throw new IllegalStateException("CFG definition reference has no exact placement owner");
+		return sources;
 	}
 
 	/**

@@ -1965,8 +1965,28 @@ public final class FederatedCostModel {
 		return latencyPenaltyMs + controlPenaltyMs;
 	}
 
+	/**
+	 * Cost of changing the federated placement of an already federated value.
+	 *
+	 * <p>The runtime contract is FED/FOUT -&gt; LOUT -&gt; FED/FOUT: collect the
+	 * source placement at the coordinator and then upload the materialized value
+	 * using the planner-selected target layout. Treating this as upload-only makes
+	 * cross-anchor relocation artificially cheap and can invert DP/MinST choices.</p>
+	 */
+	public static double computeRefedNetworkCost(double memSize, FType sourceFType,
+		FType targetFType, int numWorkers) {
+		return computeDownloadNetworkCost(memSize, sourceFType, numWorkers)
+			+ computeUploadNetworkCost(memSize, targetFType, numWorkers);
+	}
+
+	/**
+	 * Compatibility overload for estimates that do not yet carry an exact target
+	 * layout. It still models both physical transfer legs, using the source layout
+	 * as the conservative same-layout target. Exact placement enumeration replaces
+	 * this estimate with its selected action cost.
+	 */
 	public static double computeRefedNetworkCost(double memSize, FType fType, int numWorkers) {
-		return computeUploadNetworkCost(memSize, fType, numWorkers);
+		return computeRefedNetworkCost(memSize, fType, fType, numWorkers);
 	}
 
 	private static int estimateDownloadFanIn(FType fType, int numWorkers) {

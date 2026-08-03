@@ -16,6 +16,8 @@ import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.conf.ConfigurationManager;
 import org.apache.sysds.conf.DMLConfig;
 import org.apache.sysds.hops.DataOp;
+import org.apache.sysds.hops.AggBinaryOp;
+import org.apache.sysds.hops.BinaryOp;
 import org.apache.sysds.hops.FunctionOp;
 import org.apache.sysds.hops.FunctionOp.FunctionType;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner.PlannerInvocationReceipt;
@@ -40,6 +42,12 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 		X = federated(addresses=list("localhost:8001/X", "localhost:8002/X"),
 			ranges=list(list(0, 0), list(500, 100), list(500, 0), list(1000, 100)));
 		[C, Y] = kmeans(X=X, k=4, runs=1, max_iter=2, seed=93);
+		""";
+	private static final String KMEANS_DOCKER_SHAPE_SCRIPT = """
+		X = federated(addresses=list("localhost:8001/X"),
+			ranges=list(list(0, 0), list(50000, 2100)));
+		[C, Y] = kmeans(X=X, k=50, is_verbose=FALSE, runs=1, eps=1e-9, max_iter=60,
+			avg_sample_size_per_centroid=50, seed=133815928);
 		""";
 	private static final String SMALL_FUNCTION_SCRIPT = """
 		f = function(matrix[double] A) return (matrix[double] B) {
@@ -81,6 +89,29 @@ public class SharedPlannerFunctionPlanPropagationRedTest {
 		Assert.assertTrue("Each mapped formal read must have an exact caller-argument authority",
 			formalReads.stream().allMatch(node -> analysis.logicalFunctionInputsInCanonicalOrder().stream()
 				.anyMatch(fact -> fact.targetRead() == node.key())));
+	}
+
+	@Test
+	public void kmeansDistanceMultiplyProducerRemainsEmittedWithItsConsumer() throws Exception {
+		DMLProgram program = compile(KMEANS_DOCKER_SHAPE_SCRIPT);
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		List<PlacementAnalysis.CompiledInputEdgeFact> matrixMultiplyInputs =
+			analysis.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> analysis.hop(edge.producer()).orElseThrow() instanceof AggBinaryOp)
+				.filter(edge -> analysis.hop(edge.consumer()).orElseThrow() instanceof BinaryOp)
+				.toList();
+		Assert.assertFalse("The compiled m_kmeans distance expression must retain a physical matrix-multiply edge",
+			matrixMultiplyInputs.isEmpty());
+		for(PlacementAnalysis.CompiledInputEdgeFact edge : matrixMultiplyInputs) {
+			NeutralPlacementGraph.Node producer = analysis.graph().node(edge.producer()).orElseThrow();
+			NeutralPlacementGraph.Node consumer = analysis.graph().node(edge.consumer()).orElseThrow();
+			Assert.assertTrue("A physical AggBinary producer cannot be classified non-emitted while its consumer is emitted"
+				+ "|producer=" + producer.key().normalizedSignature()
+				+ "|producer-kind=" + producer.kind()
+				+ "|consumer=" + consumer.key().normalizedSignature()
+				+ "|consumer-emitted=" + consumer.emittedWork(),
+				!consumer.emittedWork() || producer.emittedWork());
+		}
 	}
 
 	@Test

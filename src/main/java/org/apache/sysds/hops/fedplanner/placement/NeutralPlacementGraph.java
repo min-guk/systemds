@@ -249,8 +249,9 @@ public final class NeutralPlacementGraph {
 			if(sourceState != null && action.directSourcePlacements().contains(sourceState))
 				return false;
 			if(sourceState != null && sourceState.output() == FederatedOutput.FOUT
-				&& Objects.equals(sourceState.fType(), action.key().durableAnchor().fType())
-				&& source.anchors().contains(action.key().durableAnchor()))
+				&& Objects.equals(sourceState.fType(), action.key().materializationFType())
+				&& source.anchors().stream().anyMatch(anchor ->
+					PlacementIdentity.samePhysicalWorkerPool(anchor, action.key().durableAnchor())))
 				return false;
 		}
 		return true;

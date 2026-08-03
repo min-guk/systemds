@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import org.apache.commons.logging.Log;
@@ -502,18 +503,20 @@ public class Dag<N extends Lop>
 			long hopId = e.getKey();
 			if (materializeEntries.containsKey(hopId))
 				continue;
-			FederatedRefedRegistry.AnchorSpec spec = e.getValue();
 			Lop local = hopToLop.get(hopId);
 			if (local == null)
 				throw new LopsException("fed_refed lowering requires a local lop for hop=" + hopId);
-			List<RefedConsumerEdge> consumers = resolveSelectedRefedConsumers(
-				lops, spec.getConsumerHopIds(), local, hopId, logicalHopRoots);
-			RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
-				lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
+			for(FederatedRefedRegistry.AuthoritySpec spec : e.getValue().getAuthorities()) {
+				List<RefedConsumerEdge> consumers = resolveSelectedRefedConsumers(
+					lops, spec.getConsumerInputs(), local, hopId, logicalHopRoots);
+				RefedAnchorAuthority authority = resolveRefedAnchorAuthority(
+					lops, spec.getAnchorHopId(), spec.getAnchorKey(), hopId);
 
-			plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority,
-				spec.getMaterializationFType() == null ? null : spec.getMaterializationFType().name(), consumers));
+				plans.add(new RefedInsertionPlan(hopId, local, isFederatedMatrixLop(local), authority,
+					spec.getMaterializationFType() == null ? null : spec.getMaterializationFType().name(), consumers));
+			}
 		}
+		validateDistinctRefedInputOwnership(plans);
 
 		boolean inserted = false;
 		for (RefedInsertionPlan plan : plans) {
@@ -542,13 +545,16 @@ public class Dag<N extends Lop>
 
 			int insertPos = -1;
 			for (RefedConsumerEdge edge : plan.consumers) {
-				for (int i = 0; i < edge.multiplicity; i++) {
-					edge.consumer.replaceInput(plan.local, refed);
+				for (int inputPosition : edge.inputPositions) {
+					if (edge.consumer.getInput(inputPosition) != plan.local)
+						throw new LopsException("fed_refed lowering lost selected exact input edge for hop="
+							+ plan.hopId + " consumer=" + edge.consumer.getHopID()
+							+ " input=" + inputPosition);
+					edge.consumer.getInputs().set(inputPosition, refed);
 					plan.local.removeOutput(edge.consumer);
 					refed.addOutput(edge.consumer);
 				}
-				assertRefedEdgeConsistency(plan.local, refed, edge.consumer,
-					edge.multiplicity, plan.hopId);
+				assertRefedEdgeConsistency(plan.local, refed, edge, plan.hopId);
 				int idx = lops.indexOf(edge.consumer);
 				if (idx >= 0 && (insertPos < 0 || idx < insertPos))
 					insertPos = idx;
@@ -573,26 +579,54 @@ public class Dag<N extends Lop>
 	}
 
 	private static List<RefedConsumerEdge> resolveSelectedRefedConsumers(List<Lop> lops,
-			List<Long> consumerHopIds, Lop local, long hopId, List<Hop> logicalHopRoots) {
-		if (consumerHopIds == null || consumerHopIds.isEmpty())
-			throw new LopsException("fed_refed lowering requires exact selected consumer hop ids for hop=" + hopId);
+			List<FederatedRefedRegistry.ConsumerInputSpec> consumerInputs, Lop local, long hopId,
+			List<Hop> logicalHopRoots) {
+		if (consumerInputs == null || consumerInputs.isEmpty())
+			throw new LopsException("fed_refed lowering requires exact selected consumer inputs for hop=" + hopId);
 		List<RefedConsumerEdge> consumers = new ArrayList<>();
 		Set<Lop> resolvedConsumers = Collections.newSetFromMap(new IdentityHashMap<>());
-		for (Long consumerHopId : consumerHopIds) {
-			if (consumerHopId == null)
-				throw new LopsException("fed_refed lowering encountered a null selected consumer for hop=" + hopId);
+		Map<Long,List<FederatedRefedRegistry.ConsumerInputSpec>> inputsByConsumer = new TreeMap<>();
+		for(FederatedRefedRegistry.ConsumerInputSpec input : consumerInputs)
+			inputsByConsumer.computeIfAbsent(input.consumerHopId(), ignored -> new ArrayList<>()).add(input);
+		for (Map.Entry<Long,List<FederatedRefedRegistry.ConsumerInputSpec>> selected : inputsByConsumer.entrySet()) {
+			long consumerHopId = selected.getKey();
+			List<FederatedRefedRegistry.ConsumerInputSpec> selectedInputs = selected.getValue();
+			boolean allInputs = selectedInputs.stream()
+				.anyMatch(FederatedRefedRegistry.ConsumerInputSpec::allInputs);
 			List<Lop> matchingConsumers = new ArrayList<>();
-			for (Lop candidate : lops) {
-				if (candidate != null && candidate.getHopID() == consumerHopId
-					&& countOccurrences(candidate.getInputs(), local) > 0)
-					matchingConsumers.add(candidate);
-			}
-			if (matchingConsumers.isEmpty())
-				matchingConsumers.addAll(resolveFusedSelectedRefedConsumers(
-					lops, logicalHopRoots, consumerHopId, local, hopId));
-			if (matchingConsumers.isEmpty())
-				throw new LopsException("fed_refed lowering could not resolve selected consumer hop="
-					+ consumerHopId + " for local hop=" + hopId);
+				for (Lop candidate : lops) {
+					if (candidate != null && candidate.getHopID() == consumerHopId
+						&& selectedInputPositions(candidate, local, selectedInputs,
+							logicalHopRoots, consumerHopId) != null)
+						matchingConsumers.add(candidate);
+				}
+				if (matchingConsumers.isEmpty()) {
+					List<RefedConsumerEdge> fused = resolveFusedSelectedRefedConsumerEdges(
+						lops, logicalHopRoots, consumerHopId, local, hopId, selectedInputs);
+					if(!fused.isEmpty()) {
+						if(fused.size() != 1)
+							throw new LopsException("fed_refed lowering found ambiguous fused selected consumer hop="
+								+ consumerHopId + " for local hop=" + hopId + " matches=" + fused.size());
+						RefedConsumerEdge edge = fused.get(0);
+						if(!resolvedConsumers.add(edge.consumer))
+							throw new LopsException("fed_refed lowering mapped multiple selected logical consumers to one"
+								+ " physical consumer hop=" + edge.consumer.getHopID() + " for local hop=" + hopId);
+						int inputMultiplicity = countOccurrences(edge.consumer.getInputs(), local);
+						int outputMultiplicity = countOccurrences(local.getOutputs(), edge.consumer);
+						if(inputMultiplicity != outputMultiplicity)
+							throw new LopsException("fed_refed lowering fused edge multiplicity mismatch for selected consumer hop="
+								+ consumerHopId + " local hop=" + hopId + " inputs=" + inputMultiplicity
+								+ " outputs=" + outputMultiplicity);
+						consumers.add(edge);
+						continue;
+					}
+				}
+				if (matchingConsumers.isEmpty())
+				throw new LopsException((allInputs
+					? "fed_refed lowering could not resolve selected consumer hop="
+					: "fed_refed lowering cannot project exact input authority through a fused or mismatched consumer hop=")
+					+ consumerHopId + " for local hop=" + hopId + " inputs=" + selectedInputs
+					+ describeRefedProjection(lops, logicalHopRoots, consumerHopId, local, hopId));
 			if (matchingConsumers.size() != 1)
 				throw new LopsException("fed_refed lowering found ambiguous selected consumer hop="
 					+ consumerHopId + " for local hop=" + hopId + " matches=" + matchingConsumers.size());
@@ -600,19 +634,90 @@ public class Dag<N extends Lop>
 			if (!resolvedConsumers.add(consumer))
 				throw new LopsException("fed_refed lowering mapped multiple selected logical consumers to one"
 					+ " physical consumer hop=" + consumer.getHopID() + " for local hop=" + hopId);
+			List<Integer> inputPositions = allInputs ? inputPositions(consumer.getInputs(), local)
+				: selectedInputPositions(consumer, local, selectedInputs, logicalHopRoots, consumerHopId);
+			if(inputPositions == null || inputPositions.isEmpty())
+				throw new LopsException("fed_refed lowering selected consumer has no authorized input edge for hop="
+					+ hopId + " consumer=" + consumerHopId);
 			int inputMultiplicity = countOccurrences(consumer.getInputs(), local);
 			int outputMultiplicity = countOccurrences(local.getOutputs(), consumer);
 			if (inputMultiplicity != outputMultiplicity)
 				throw new LopsException("fed_refed lowering edge multiplicity mismatch for selected consumer hop="
 					+ consumerHopId + " local hop=" + hopId + " inputs=" + inputMultiplicity
 					+ " outputs=" + outputMultiplicity);
-			consumers.add(new RefedConsumerEdge(consumer, inputMultiplicity));
+			consumers.add(new RefedConsumerEdge(consumer, inputPositions));
 		}
 		return consumers;
 	}
 
-	private static List<Lop> resolveFusedSelectedRefedConsumers(List<Lop> lops, List<Hop> logicalHopRoots,
-			long consumerHopId, Lop local, long hopId) {
+	private static List<Integer> selectedInputPositions(Lop consumer, Lop local,
+		List<FederatedRefedRegistry.ConsumerInputSpec> selectedInputs,
+		List<Hop> logicalHopRoots, long consumerHopId) {
+		if(selectedInputs.stream().anyMatch(FederatedRefedRegistry.ConsumerInputSpec::allInputs))
+			return inputPositions(consumer.getInputs(), local);
+		List<Integer> logicalSelectedPositions = selectedInputs.stream()
+			.map(FederatedRefedRegistry.ConsumerInputSpec::inputPosition).distinct().sorted().toList();
+		if(logicalHopRoots == null || logicalHopRoots.isEmpty()) {
+			for(int position : logicalSelectedPositions)
+				if(position >= consumer.getInputs().size() || consumer.getInput(position) != local)
+					return null;
+			return logicalSelectedPositions;
+		}
+
+		List<Hop> logicalConsumers = collectLogicalHops(logicalHopRoots).stream()
+			.filter(hop -> hop.getHopID() == consumerHopId).toList();
+		if(logicalConsumers.size() != 1)
+			return null;
+		Hop logicalConsumer = logicalConsumers.get(0);
+		List<Integer> allLogicalSourcePositions = new ArrayList<>();
+		for(int position = 0; position < logicalConsumer.getInput().size(); position++) {
+			Hop logicalInput = logicalConsumer.getInput().get(position);
+			if(logicalInput != null && logicalInput.getLops() == local)
+				allLogicalSourcePositions.add(position);
+		}
+		if(logicalSelectedPositions.isEmpty()
+			|| logicalSelectedPositions.stream().anyMatch(position -> !allLogicalSourcePositions.contains(position)))
+			return null;
+		List<Integer> physicalSourcePositions = inputPositions(consumer.getInputs(), local);
+		if(allLogicalSourcePositions.size() != physicalSourcePositions.size())
+			return null;
+		// A single exact source has a deterministic identity-based projection even
+		// when Lop construction reordered inputs. Duplicate identical sources have
+		// no one-to-one identity distinction, so only complete coverage is legal.
+		if(allLogicalSourcePositions.size() == 1)
+			return physicalSourcePositions;
+		return logicalSelectedPositions.size() == allLogicalSourcePositions.size()
+			? physicalSourcePositions : null;
+	}
+
+	private static List<Integer> inputPositions(List<Lop> inputs, Lop target) {
+		List<Integer> positions = new ArrayList<>();
+		for(int i = 0; i < inputs.size(); i++)
+			if(inputs.get(i) == target)
+				positions.add(i);
+		return List.copyOf(positions);
+	}
+
+	private static void validateDistinctRefedInputOwnership(List<RefedInsertionPlan> plans) {
+		Map<Lop,Map<Integer,RefedInsertionPlan>> owners = new IdentityHashMap<>();
+		for(RefedInsertionPlan plan : plans) {
+			for(RefedConsumerEdge edge : plan.consumers) {
+				Map<Integer,RefedInsertionPlan> byInput = owners.computeIfAbsent(
+					edge.consumer, ignored -> new HashMap<>());
+				for(int inputPosition : edge.inputPositions) {
+					RefedInsertionPlan prior = byInput.putIfAbsent(inputPosition, plan);
+					if(prior != null)
+						throw new LopsException("fed_refed lowering assigned one physical input to multiple authorities: "
+							+ "consumer=" + edge.consumer.getHopID() + " input=" + inputPosition
+							+ " sources=" + prior.hopId + "," + plan.hopId);
+				}
+			}
+		}
+	}
+
+	private static List<RefedConsumerEdge> resolveFusedSelectedRefedConsumerEdges(List<Lop> lops,
+			List<Hop> logicalHopRoots, long consumerHopId, Lop local, long hopId,
+			List<FederatedRefedRegistry.ConsumerInputSpec> selectedInputs) {
 		if (logicalHopRoots == null || logicalHopRoots.isEmpty())
 			return List.of();
 
@@ -627,21 +732,42 @@ public class Dag<N extends Lop>
 				+ consumerHopId + " for local hop=" + hopId + " matches=" + logicalConsumers.size());
 
 		Hop logicalConsumer = logicalConsumers.get(0);
-		if (logicalConsumer.getLops() != null)
+		List<Integer> logicalPositions = new ArrayList<>();
+		for(int position = 0; position < logicalConsumer.getInput().size(); position++) {
+			Hop input = logicalConsumer.getInput().get(position);
+			if(input != null && input.getHopID() == hopId && input.getLops() == local)
+				logicalPositions.add(position);
+		}
+		boolean allInputs = selectedInputs.stream()
+			.anyMatch(FederatedRefedRegistry.ConsumerInputSpec::allInputs);
+		List<Integer> selectedLogicalPositions = allInputs ? List.copyOf(logicalPositions)
+			: selectedInputs.stream().map(FederatedRefedRegistry.ConsumerInputSpec::inputPosition)
+				.distinct().sorted().toList();
+		if(selectedLogicalPositions.isEmpty()
+			|| selectedLogicalPositions.stream().anyMatch(position -> !logicalPositions.contains(position)))
 			return List.of();
-		int logicalMultiplicity = countLogicalInputs(logicalConsumer, local, hopId);
+		// A fused Lop erases the intermediate logical input numbering. Preserve exact authority
+		// only when the selected positions cover every occurrence of this source; otherwise
+		// mapping a subset to physical inputs would be ambiguous.
+		if(!allInputs && selectedLogicalPositions.size() != logicalPositions.size())
+			return List.of();
+		int logicalMultiplicity = selectedLogicalPositions.size();
 		Set<Hop> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-		Set<Lop> physicalConsumers = Collections.newSetFromMap(new IdentityHashMap<>());
-		ArrayDeque<Hop> pending = new ArrayDeque<>(logicalConsumer.getParent());
+		Map<Lop,List<Integer>> physicalConsumers = new IdentityHashMap<>();
+		// The selected logical consumer may already own a Lop whose Hop id was inherited
+		// from another Hop by fusion. Inspect it before walking to the first materialized
+		// parent; the direct lookup above intentionally requires an exact Hop id.
+		ArrayDeque<Hop> pending = new ArrayDeque<>();
+		pending.add(logicalConsumer);
 		while (!pending.isEmpty()) {
 			Hop candidate = pending.removeFirst();
 			if (candidate == null || !visited.add(candidate))
 				continue;
 			Lop candidateLop = candidate.getLops();
 			if (candidateLop != null) {
-				if (lops.contains(candidateLop)
-					&& countOccurrences(candidateLop.getInputs(), local) == logicalMultiplicity)
-					physicalConsumers.add(candidateLop);
+				List<Integer> physicalPositions = inputPositions(candidateLop.getInputs(), local);
+				if (lops.contains(candidateLop) && physicalPositions.size() == logicalMultiplicity)
+					physicalConsumers.put(candidateLop, physicalPositions);
 				// The first materialized Lop on each parent path owns that fused subgraph. If it
 				// does not consume the selected local Lop exactly, no later ancestor may be used
 				// as an implicit replacement for the planner-selected edge.
@@ -649,7 +775,8 @@ public class Dag<N extends Lop>
 			}
 			pending.addAll(candidate.getParent());
 		}
-		return List.copyOf(physicalConsumers);
+		return physicalConsumers.entrySet().stream()
+			.map(entry -> new RefedConsumerEdge(entry.getKey(), entry.getValue())).toList();
 	}
 
 	private static List<Hop> collectLogicalHops(List<Hop> roots) {
@@ -664,6 +791,33 @@ public class Dag<N extends Lop>
 			pending.addAll(hop.getInput());
 		}
 		return result;
+	}
+
+	private static String describeRefedProjection(List<Lop> lops, List<Hop> logicalHopRoots,
+		long consumerHopId, Lop local, long hopId) {
+		List<String> logical = new ArrayList<>();
+		if(logicalHopRoots != null)
+			for(Hop hop : collectLogicalHops(logicalHopRoots))
+				if(hop.getHopID() == consumerHopId || hop.getInput().stream()
+					.anyMatch(input -> input != null && input.getHopID() == hopId))
+					logical.add(hop.getHopID() + ":" + hop.getOpString() + ':' + hop.getName()
+						+ ":lop=" + lopIdentity(hop.getLops()) + ":inputs=" + hop.getInput().stream()
+							.map(input -> input == null ? "null" : input.getHopID() + "/" + lopIdentity(input.getLops()))
+							.toList() + ":parents=" + hop.getParent().stream()
+							.map(parent -> parent.getHopID() + "/" + lopIdentity(parent.getLops())).toList());
+		List<String> physical = new ArrayList<>();
+		for(Lop lop : lops) {
+			List<Integer> positions = inputPositions(lop.getInputs(), local);
+			if(lop.getHopID() == consumerHopId || !positions.isEmpty())
+				physical.add(lopIdentity(lop) + ":localInputs=" + positions);
+		}
+		return " projection={local=" + lopIdentity(local) + ",logical=" + logical
+			+ ",physical=" + physical + '}';
+	}
+
+	private static String lopIdentity(Lop lop) {
+		return lop == null ? "null" : lop.getClass().getSimpleName() + '#' + lop.getID()
+			+ "/hop=" + lop.getHopID() + '/' + lop.getExecType() + '/' + lop.getFederatedOutput();
 	}
 
 	private static int countLogicalInputs(Hop consumer, Lop local, long hopId) {
@@ -748,11 +902,11 @@ public class Dag<N extends Lop>
 
 	private static final class RefedConsumerEdge {
 		private final Lop consumer;
-		private final int multiplicity;
+		private final List<Integer> inputPositions;
 
-		private RefedConsumerEdge(Lop consumer, int multiplicity) {
+		private RefedConsumerEdge(Lop consumer, List<Integer> inputPositions) {
 			this.consumer = consumer;
-			this.multiplicity = multiplicity;
+			this.inputPositions = List.copyOf(inputPositions);
 		}
 	}
 
@@ -766,13 +920,22 @@ public class Dag<N extends Lop>
 		return count;
 	}
 
-	private static void assertRefedEdgeConsistency(Lop local, FederatedRefed refed, Lop consumer,
-		int rewiredEdges, long hopId) {
+	private static void assertRefedEdgeConsistency(Lop local, FederatedRefed refed,
+		RefedConsumerEdge edge, long hopId) {
+		Lop consumer = edge.consumer;
+		int rewiredEdges = edge.inputPositions.size();
 		if (rewiredEdges <= 0)
 			throw new LopsException("fed_refed lowering selected consumer had no local input edge for hop=" + hopId);
-		if (consumer.getInputs().contains(local) || local.getOutputs().contains(consumer))
-			throw new LopsException("fed_refed lowering left stale local edge for hop=" + hopId
-				+ " consumer=" + consumer.getHopID());
+		for(int inputPosition : edge.inputPositions)
+			if(consumer.getInput(inputPosition) != refed)
+				throw new LopsException("fed_refed lowering failed to rewire exact input edge for hop=" + hopId
+					+ " consumer=" + consumer.getHopID() + " input=" + inputPosition);
+		int remainingLocalInputs = countOccurrences(consumer.getInputs(), local);
+		int remainingLocalOutputs = countOccurrences(local.getOutputs(), consumer);
+		if(remainingLocalInputs != remainingLocalOutputs)
+			throw new LopsException("fed_refed lowering left inconsistent remaining local adjacency for hop=" + hopId
+				+ " consumer=" + consumer.getHopID() + " inputs=" + remainingLocalInputs
+				+ " outputs=" + remainingLocalOutputs);
 		int refedInputs = countOccurrences(consumer.getInputs(), refed);
 		int refedOutputs = countOccurrences(refed.getOutputs(), consumer);
 		if (refedInputs != rewiredEdges || refedOutputs != rewiredEdges)

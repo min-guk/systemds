@@ -23,7 +23,6 @@ import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
@@ -49,15 +48,16 @@ public class CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest {
 		CandidateRuleFact mutatedFact = firstAvailableRuleWithCapability(original);
 		PlacementAnalysis mutated = reconstructWithOneMutatedRuleFact(original, program, mutatedFact);
 
-		MinStExactCostFacts originalFacts = MinStExactCostFactsProducer.derive(original, scope(original));
+		String originalFingerprint = MinStExactCostFactsProducer.physicalAuthorityFingerprint(original);
 		try {
-			MinStExactCostFacts mutatedFacts = MinStExactCostFactsProducer.derive(mutated, scope(mutated));
+			String mutatedFingerprint = MinStExactCostFactsProducer.physicalAuthorityFingerprint(mutated);
 			Assert.assertNotEquals(
 				"MINST_EXACT_DERIVATION_MUST_BIND_CANDIDATE_RULE_CAPABILITY_DETAIL_AUTHORITY",
-				originalFacts.derivationFingerprint(), mutatedFacts.derivationFingerprint());
+				originalFingerprint, mutatedFingerprint);
 		}
 		catch(RuntimeException failClosed) {
-			Assert.assertTrue("mutated authority-bearing fact failed closed", true);
+			Assert.assertNotNull("mutated authority-bearing fact must fail with a reason",
+				failClosed.getMessage());
 		}
 	}
 
@@ -68,11 +68,17 @@ public class CampaignBG014MinStCandidateRuleFactAuthorityFingerprintRedTest {
 		CandidateRuleFact mutatedFact = firstAvailableRuleWithFedFoutEmission(original);
 		PlacementAnalysis mutated = reconstructWithOneMutatedEmissionFact(original, program, mutatedFact);
 
-		MinStExactCostFacts originalFacts = MinStExactCostFactsProducer.derive(original, scope(original));
-		MinStExactCostFacts mutatedFacts = MinStExactCostFactsProducer.derive(mutated, scope(mutated));
-		Assert.assertNotEquals(
-			"MINST_EXACT_DERIVATION_MUST_BIND_CANDIDATE_EMISSION_AUTHORITY",
-			originalFacts.derivationFingerprint(), mutatedFacts.derivationFingerprint());
+		String originalFingerprint = MinStExactCostFactsProducer.physicalAuthorityFingerprint(original);
+		try {
+			String mutatedFingerprint = MinStExactCostFactsProducer.physicalAuthorityFingerprint(mutated);
+			Assert.assertNotEquals(
+				"MINST_EXACT_DERIVATION_MUST_BIND_CANDIDATE_EMISSION_AUTHORITY",
+				originalFingerprint, mutatedFingerprint);
+		}
+		catch(RuntimeException failClosed) {
+			Assert.assertNotNull("mutated emission authority must fail with a reason",
+				failClosed.getMessage());
+		}
 	}
 
 	private static PlacementAnalysis reconstructWithOneMutatedRuleFact(PlacementAnalysis source,

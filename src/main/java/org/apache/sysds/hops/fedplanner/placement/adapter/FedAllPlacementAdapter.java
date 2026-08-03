@@ -38,7 +38,9 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
 import org.apache.sysds.hops.fedplanner.placement.selector.PlacementScore;
@@ -54,9 +56,11 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 	public Result select(PlannerPlacementContext context) {
 		Objects.requireNonNull(context, "context");
 		PlacementAnalysis analysis = context.analysis();
-		PlacementSelection selection = selector.select(analysis.graph());
+		PlacementSelection selection = selector.select(analysis);
 		validateProjection(analysis, selection);
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
+		List<CandidateSelectionReceipt> candidates = List.copyOf(selection.selectedCandidateSelections());
+		List<RelocationChoiceReceipt> choices = List.copyOf(selection.selectedRelocationChoices());
 		List<RelocationActionKey> relocations = immutableRelocations(selection.selectedRelocations());
 		Score score = score(analysis.graph(), assignment, relocations, selection.score());
 		List<Bound> bounds = componentBounds(analysis.graph());
@@ -67,9 +71,9 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 			score, score, bounds, analysis.graph().nodes().size(), analysis.graph().constraints().size(),
 			structuralComponentCount(analysis.graph()), selection.certificate().boundDerivation(),
 			selection.certificate().terminationReason().name(), false);
-		Result draft = new Result(analysis, assignment, relocations, score, certificate,
+		Result draft = new Result(analysis, assignment, candidates, choices, relocations, score, certificate,
 			context.analysisFingerprint(), "canonicalization-pending");
-		return new Result(analysis, assignment, relocations, score, certificate,
+		return new Result(analysis, assignment, candidates, choices, relocations, score, certificate,
 			context.analysisFingerprint(), PlacementEmissionTransaction.canonicalPlanHash(draft));
 	}
 
@@ -284,11 +288,15 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 
 	/** Immutable exact FedAll selection bound to the supplied analysis instance. */
 	public record Result(PlacementAnalysis analysis, Map<CompiledHopKey, PlacementState> assignment,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices,
 		List<RelocationActionKey> selectedRelocations, Score score, Certificate certificate,
 		String analysisFingerprint, String normalizedPlanFingerprint) implements NormalizedPlannerResult {
 		public Result {
 			Objects.requireNonNull(analysis, "analysis");
 			assignment = immutableAssignment(assignment);
+			selectedCandidateSelections = List.copyOf(selectedCandidateSelections);
+			selectedRelocationChoices = List.copyOf(selectedRelocationChoices);
 			selectedRelocations = List.copyOf(selectedRelocations);
 			Objects.requireNonNull(score, "score");
 			Objects.requireNonNull(certificate, "certificate");

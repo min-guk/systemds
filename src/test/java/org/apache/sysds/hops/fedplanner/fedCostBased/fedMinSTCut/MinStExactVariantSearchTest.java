@@ -31,6 +31,35 @@ public class MinStExactVariantSearchTest {
 		Assert.assertTrue(error.getMessage().startsWith("MINST_EXACT_ROW_VARIANT_SPACE_TOO_LARGE"));
 	}
 
+	@Test
+	public void exactly4096VariantsAreExhaustivelyAccepted() {
+		List<List<String>> groups = java.util.stream.IntStream.range(0, 12)
+			.mapToObj(index -> List.of("R" + index)).toList();
+		java.util.concurrent.atomic.AtomicInteger evaluations = new java.util.concurrent.atomic.AtomicInteger();
+		Result best = MinStExactVariantSearch.select(groups, 4096,
+			selected -> {
+				evaluations.incrementAndGet();
+				return Optional.of(new Result(selected, -selected.size()));
+			}, Comparator.comparingDouble(Result::objective));
+		Assert.assertEquals(4096, evaluations.get());
+		Assert.assertEquals(12, best.selected().size());
+	}
+
+	@Test
+	public void oneVariantBeyond4096FailsBeforeAnyEvaluation() {
+		List<List<String>> groups = java.util.stream.IntStream.range(0, 13)
+			.mapToObj(index -> List.of("R" + index)).toList();
+		java.util.concurrent.atomic.AtomicInteger evaluations = new java.util.concurrent.atomic.AtomicInteger();
+		IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+			() -> MinStExactVariantSearch.select(groups, 4096,
+				selected -> {
+					evaluations.incrementAndGet();
+					return Optional.of(new Result(selected, 0.0));
+				}, Comparator.comparingDouble(Result::objective)));
+		Assert.assertTrue(error.getMessage().startsWith("MINST_EXACT_ROW_VARIANT_SPACE_TOO_LARGE"));
+		Assert.assertEquals(0, evaluations.get());
+	}
+
 	private static double objective(List<String> selected) {
 		if(selected.contains("A") && selected.contains("B"))
 			return 5.0;

@@ -927,6 +927,20 @@ public class FederatedCostModelFallbackTest {
 			FederatedCostModel.computeDownloadNetworkCost(memSize), fourWorkerBroadcast, 1e-9);
 	}
 
+	@Test
+	public void testRefedNetworkCostModelsDownloadThenTargetUpload() {
+		double memSize = 32 * 1024 * 1024;
+		int workers = 4;
+		double expected = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.ROW, workers)
+			+ FederatedCostModel.computeUploadNetworkCost(memSize, FType.BROADCAST, workers);
+
+		Assert.assertEquals("FED/FOUT relocation is physically FED->LOUT->FOUT and must cost the source"
+			+ " download plus the selected target-layout upload",
+			expected,
+			FederatedCostModel.computeRefedNetworkCost(
+				memSize, FType.ROW, FType.BROADCAST, workers), 1e-9);
+	}
+
 	private static void assertOutputFallbackInjectedDefault(ValueType valueType, double expectedDefault) {
 		double[] injected = {-1.0};
 		LiteralOp hop = new LiteralOp(1.0) {

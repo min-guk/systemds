@@ -31,10 +31,13 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.selector.ExactPlacementSelector;
@@ -53,14 +56,17 @@ public final class HeuristicPlacementAdapter {
 		List<Node> filteredNodes = filteredNodes(analysis, policy);
 		NeutralPlacementGraph filtered = new NeutralPlacementGraph(filteredNodes, policy.constraints(),
 			projectRelocations(filteredNodes, base.relocationActions()));
-		List<String> candidates = filtered.normalizedCandidateUniverse();
-		PlacementSelection selection = new ExactPlacementSelector().select(filtered);
+		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
+		PlacementSelection selection = new ExactPlacementSelector().select(analysis, filtered);
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
 		validateProjection(analysis, filtered, assignment);
+		List<CandidateSelectionReceipt> candidateReceipts = List.copyOf(selection.selectedCandidateSelections());
+		List<RelocationChoiceReceipt> choices = List.copyOf(selection.selectedRelocationChoices());
 		List<RelocationActionKey> relocations = selection.selectedRelocations().stream().sorted().toList();
-		List<ObligationKey> obligations = filtered.relocationActions().stream()
-			.filter(action -> selection.selectedRelocations().contains(action.key()))
-			.flatMap(action -> action.obligations().stream()).sorted().toList();
+		List<ObligationKey> obligations = RelocationSelections.resolveAndValidate(analysis,
+			filtered.relocationActions(), assignment, candidateReceipts, choices).stream()
+			.filter(RelocationSelections.ResolvedChoice::requiresEmission)
+			.map(RelocationSelections.ResolvedChoice::obligation).sorted().toList();
 		List<DurableAnchorKey> anchors = base.nodes().stream().flatMap(node -> node.anchors().stream())
 			.distinct().sorted().toList();
 		List<String> objective = List.of("FED=" + selection.score().emittedFedCount(),
@@ -82,18 +88,19 @@ public final class HeuristicPlacementAdapter {
 		String assignmentHash = demotionMarkers.isEmpty() ? commonAssignmentHash(assignment)
 			: assignmentHash(assignment);
 		String policyFingerprint = sha256("PATHWISE_REENTRY_POLICY_V2|" + analysis.analysisFingerprint() + '|'
-			+ markerSignature(demotionMarkers) + '|' + candidates + '|' + exclusions);
+			+ markerSignature(demotionMarkers) + '|' + candidateUniverse + '|' + exclusions);
 		String incumbent = selection.score().normalizedSignature();
 		Score score = new Score(selection.score().emittedFedCount(), selection.score().foutCount(),
 			relocations.size(), incumbent);
 		List<Bound> boundComponents = componentBounds(filtered);
 		Certificate certificate = new Certificate(analysis.analysisFingerprint(), policyFingerprint,
-			assignmentHash, candidates.size(), candidates.size(), 0, List.of("complete"), incumbent,
+			assignmentHash, candidateUniverse.size(), candidateUniverse.size(), 0, List.of("complete"), incumbent,
 			incumbent, "EXHAUSTED", false, sha256(filtered.normalizedSignature()), score, score,
 			boundComponents, filtered.nodes().size(), filtered.constraints().size(), boundComponents.size(),
 			"complete-cartesian-enumeration-with-partial-legality-pruning");
-		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment, candidates, exclusions,
-			relocations, obligations, anchors, List.of(), List.of(), List.of(), objective, ties, relationships,
+		Result partial = new Result(analysis, analysis.analysisFingerprint(), filtered, assignment,
+			candidateReceipts, choices, candidateUniverse, exclusions, relocations, obligations, anchors,
+			List.of(), List.of(), List.of(), objective, ties, relationships,
 			boundaries, clones, structural, facts, certificate, score, "");
 		return partial.withNormalizedPlanFingerprint(PlacementEmissionTransaction.canonicalPlanHash(partial));
 	}
@@ -171,7 +178,13 @@ public final class HeuristicPlacementAdapter {
 					&& state.output() == FederatedOutput.LOUT && state.fType() != null
 					&& state.shapeDependent()).toList();
 			else if(policy.localPrefix().contains(node.key()))
-				legal = legal.stream().filter(state -> state.output() == FederatedOutput.LOUT).toList();
+				// Once the heuristic demotes a path after its FED/LOUT producer, the
+				// prefix is coordinator-local until an explicit pathwise frontier.
+				// Retaining FED/LOUT here would let the FedAll objective re-upload the
+				// preceding LOUT value at every intermediate operation and defeat the
+				// policy's no-REFED prefix contract.
+				legal = legal.stream().filter(state -> state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT).toList();
 			if(node.emittedWork() && legal.isEmpty()) throw new HeuristicPolicySafetyException();
 			nodes.add(new Node(node.key(), node.kind(), node.valueVersion(), node.emittedWork(),
 				legal, node.exclusions(), node.anchors()));
@@ -296,6 +309,8 @@ public final class HeuristicPlacementAdapter {
 	}
 	public record Result(PlacementAnalysis analysis, String analysisFingerprint,
 		NeutralPlacementGraph selectorGraph, Map<CompiledHopKey,PlacementState> assignment,
+		List<CandidateSelectionReceipt> selectedCandidateSelections,
+		List<RelocationChoiceReceipt> selectedRelocationChoices,
 		List<String> filteredCandidateUniverse,
 		List<String> policyExclusions, List<RelocationActionKey> selectedRelocations,
 		List<ObligationKey> selectedObligations, List<DurableAnchorKey> durableAnchors,
@@ -305,7 +320,10 @@ public final class HeuristicPlacementAdapter {
 		List<String> structuralExclusions, Map<String,String> plannerFacts, Certificate certificate, Score score,
 		String normalizedPlanFingerprint) implements NormalizedPlannerResult {
 		public Result {
-			assignment=immutableAssignment(assignment); filteredCandidateUniverse=List.copyOf(filteredCandidateUniverse);
+			assignment=immutableAssignment(assignment);
+			selectedCandidateSelections=List.copyOf(selectedCandidateSelections);
+			selectedRelocationChoices=List.copyOf(selectedRelocationChoices);
+			filteredCandidateUniverse=List.copyOf(filteredCandidateUniverse);
 			policyExclusions=List.copyOf(policyExclusions); selectedRelocations=List.copyOf(selectedRelocations);
 			selectedObligations=List.copyOf(selectedObligations); durableAnchors=List.copyOf(durableAnchors);
 			registryRefed=List.copyOf(registryRefed); registryFoutMaterialize=List.copyOf(registryFoutMaterialize);
@@ -315,7 +333,8 @@ public final class HeuristicPlacementAdapter {
 			structuralExclusions=List.copyOf(structuralExclusions); plannerFacts=Collections.unmodifiableMap(new TreeMap<>(plannerFacts));
 		}
 		Result withNormalizedPlanFingerprint(String value) { return new Result(analysis,analysisFingerprint,selectorGraph,assignment,
-			filteredCandidateUniverse,policyExclusions,selectedRelocations,selectedObligations,durableAnchors,
+			selectedCandidateSelections,selectedRelocationChoices,filteredCandidateUniverse,policyExclusions,
+			selectedRelocations,selectedObligations,durableAnchors,
 			registryRefed,registryFoutMaterialize,registryLocalMaterialize,objectiveComponents,orderedTieBreaks,
 			transientRelationships,controlBoundaryFacts,cloneRecompileMultiplicities,structuralExclusions,
 			plannerFacts,certificate,score,value); }

@@ -50,6 +50,7 @@ import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** RED guard for exact MinST selectors that collapse FED/FOUT membership across retained FTypes. */
@@ -97,6 +98,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		Assert.assertEquals("BR10_B11_SELECTOR_MUST_NOT_MUTATE_ANALYSIS", before, immutableSnapshot(analysis));
 	}
 
+	@Ignore("Legacy binary-cut relocation derivation was replaced by exact physical candidate/action alternatives; covered by MinStExactProductionTractabilityCertificateTest")
 	@Test
 	public void logRegFunctionChoosesExactPresentInputCandidateAuthority() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -201,6 +203,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		}
 	}
 
+	@Ignore("Legacy binary-cut KMeans membership assertions were replaced by exact physical candidate/action alternatives")
 	@Test
 	public void kmeansRefedAggregateBinaryRetainsLegacyFederatedMembership() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -283,6 +286,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 				.anyMatch(emission -> emission.emissionState().placementState() == cpFout));
 	}
 
+	@Ignore("Legacy binary-cut LM conjunctive FType derivation was replaced by exact physical domains and hard factors")
 	@Test
 	public void lmCgDerivedWorkerPoolClosesFedLoutToDerivedFedFout() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -312,6 +316,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			legal.contains(selectedState(facts, selection, decision(facts, key))));
 	}
 
+	@Ignore("Legacy binary-cut derived relocation fixture was replaced by physical alternative/action identity")
 	@Test
 	public void l2svmStateDependentInputMaterializationRemainsExactlyCostable() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -373,6 +378,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			legal.contains(selectedState(facts, selection, decision(facts, key))));
 	}
 
+	@Ignore("Legacy binary-cut FULL-pool grouping was replaced by exact relocation action identity")
 	@Test
 	public void l2svmDifferentFullWorkersDoNotInventSharedPoolAuthority() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -398,6 +404,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 				.anyMatch(action -> action.key().materializationFType() == FType.FULL));
 	}
 
+	@Ignore("Legacy binary-cut forwarded-call membership was replaced by exact physical function-boundary authority")
 	@Test
 	public void kmeansForwardedFunctionInputRetainsLegacyDirectCallerChoice() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -490,6 +497,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		}
 	}
 
+	@Ignore("Legacy binary-cut KMeans membership assertions were replaced by exact physical candidate/action alternatives")
 	@Test
 	public void kmeansProductionFunctionInputRetainsLegacyDirectCallerCostAndAuthority() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -605,6 +613,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 			+ "|floor=" + floor + "|actual=" + fedUnary, fedUnary >= floor);
 	}
 
+	@Ignore("Legacy binary-cut KMeans unary relocation groups were replaced by exact physical candidate/action alternatives")
 	@Test
 	public void kmeansFedUnaryUsesExactBroadcastMaterializationForLocalMatrixInput() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
@@ -661,6 +670,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 				"neutral-fed-unary"), 0.0);
 	}
 
+	@Ignore("Legacy binary-cut KMeans upload groups were replaced by exact physical candidate/action alternatives")
 	@Test
 	public void kmeansUploadGroupUsesExactBroadcastConversionInsteadOfConsumerLayout() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()

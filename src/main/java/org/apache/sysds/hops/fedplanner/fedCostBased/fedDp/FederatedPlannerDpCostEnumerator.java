@@ -72,10 +72,12 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateOccurrenceSnapshot;
@@ -88,6 +90,10 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.Pre
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.ReasonCode;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -190,6 +196,7 @@ public class FederatedPlannerDpCostEnumerator {
 			return activeFunctionCalls.get(functionNamespace);
 		}
 		private PreSelectionSemanticBlock semanticBlock() {
+			captureSchedulingOnlyTransientForwardReceipts();
 			Map<CompiledHopKey, Integer> parentOrder = new IdentityHashMap<>();
 			List<HopOccurrenceProjection> occurrences = context.analysis().occurrences();
 			for(int i = 0; i < occurrences.size(); i++)
@@ -211,6 +218,79 @@ public class FederatedPlannerDpCostEnumerator {
 				orderedDecisionReceipts, rawCandidateCount, orderedSnapshots.size(),
 				rawCandidateCount == candidates.size());
 		}
+
+		/**
+		 * A legacy transient-forward edge can be a pure scheduling dependency: it
+		 * preserves program order, but it is neither a compiled input nor a logical
+		 * transient value edge.  Such an edge must therefore remain absent from the
+		 * executable DP child list while still being represented in the semantic
+		 * receipt consumed by the exact-selection boundary.
+		 */
+		private void captureSchedulingOnlyTransientForwardReceipts() {
+			Set<RewireTransientForwardEdge> captured = Collections.newSetFromMap(new IdentityHashMap<>());
+			for(CapturedCandidate candidate : candidates)
+				candidate.snapshot().transientForwardDependencies().forEach(
+					dependency -> captured.add(dependency.forwardEdge()));
+			for(RewireTransientForwardEdge forward : context.rewireSnapshot().transientForwardEdges()) {
+				if(captured.contains(forward) || !isSchedulingOnlyTransientForward(forward))
+					continue;
+				// A scheduling edge is provenance, not an executable candidate input.  It can
+				// share the candidate receipt only when the neutral analysis explicitly owns
+				// the corresponding zero-input row.  Never fabricate an empty candidate row
+				// for TReads whose exact rows have real ABSENT/PRESENT input authority.
+				boolean ownsEmptyCandidateRow = context.analysis().candidateRuleFacts().orderedFacts()
+					.stream().anyMatch(fact -> fact.key().parentOccurrence() == forward.readOccurrence()
+						&& fact.key().orderedInputs().isEmpty()
+						&& fact.status() == PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE);
+				if(!ownsEmptyCandidateRow)
+					continue;
+				PlacementState selected = requireUniqueLocalSchedulingState(forward.writeOccurrence());
+				CandidateOccurrenceSnapshot snapshot = new CandidateOccurrenceSnapshot(context,
+					forward.readOccurrence(), List.of(), List.of(), List.of(),
+					List.of(new DpPlacementAdapter.TransientForwardDependencyEntry(
+						forward, forward.writeOccurrence(), 0, selected)),
+					List.of(), List.of(), DpPlacementAdapter.ConstructionDisposition.AVAILABLE, "AVAILABLE");
+				long variantOrdinal = nextVariantOrdinal(forward.readOccurrence());
+				capture(snapshot, variantOrdinal);
+				Hop schedulingCarrier = context.analysis().hop(forward.writeOccurrence()).orElseThrow();
+				DpPlacementAdapter.NormalizedCandidateInputs normalized =
+					new DpPlacementAdapter.NormalizedCandidateInputs(snapshot, Map.of(),
+						java.util.Arrays.asList((FType) null), List.of(schedulingCarrier));
+				captureDecisionReceipt(DpPlacementAdapter.resolveCandidateDecision(
+					context, normalized, variantOrdinal), variantOrdinal);
+				captured.add(forward);
+			}
+		}
+
+		private boolean isSchedulingOnlyTransientForward(RewireTransientForwardEdge forward) {
+			boolean compiledValueEdge = context.analysis().compiledInputEdgesInCanonicalOrder().stream()
+				.anyMatch(edge -> edge.producer() == forward.writeOccurrence()
+					&& edge.consumer() == forward.readOccurrence());
+			boolean logicalValueEdge = context.analysis().logicalTransientInputsInCanonicalOrder().stream()
+				.anyMatch(fact -> fact.sourceWrite() == forward.writeOccurrence()
+					&& fact.targetRead() == forward.readOccurrence());
+			return !compiledValueEdge && !logicalValueEdge;
+		}
+
+		private PlacementState requireUniqueLocalSchedulingState(CompiledHopKey source) {
+			List<PlacementState> states = context.analysis().graph().node(source).orElseThrow(() ->
+				new IllegalStateException("Scheduling source is absent from the neutral graph"))
+				.legalAlternatives().stream()
+				.filter(state -> state.execType() == ExecType.CP
+					&& state.output() == FederatedOutput.LOUT && state.fType() == null)
+				.toList();
+			if(states.size() != 1)
+				throw new IllegalStateException("Scheduling source lacks one exact CP/LOUT state: " + source);
+			return states.get(0);
+		}
+
+		private long nextVariantOrdinal(CompiledHopKey parent) {
+			long max = -1L;
+			for(CapturedCandidate candidate : candidates)
+				if(candidate.snapshot().parentOccurrence() == parent)
+					max = Math.max(max, candidate.variantOrdinal());
+			return Math.addExact(max, 1L);
+		}
 	}
 
 	private record CapturedCandidate(CandidateOccurrenceSnapshot snapshot, long variantOrdinal,
@@ -223,6 +303,23 @@ public class FederatedPlannerDpCostEnumerator {
 			// LOUT inputs are represented by null FTypes on the legacy dynamic path.
 			collectedFTypes = Collections.unmodifiableList(new ArrayList<>(collectedFTypes));
 			fedInputTypeMap = Collections.unmodifiableMap(new LinkedHashMap<>(fedInputTypeMap));
+		}
+	}
+
+	private record ExactInputBoundary(ValueVersionKey sourceValueVersion, int inputPosition) { }
+
+	private record SelectedRelocationSource(FederatedPlannerDpMemoTable.FedPlan plan,
+		Hop hop, PlacementState state) { }
+
+	private record ExactRelocationCost(List<RelocationChoiceReceipt> choices,
+		Map<RelocationActionKey,Double> actionCosts,
+		double legacyBoundaryCost, double selectedBoundaryCost) {
+		private ExactRelocationCost {
+			choices = List.copyOf(choices);
+			actionCosts = Collections.unmodifiableMap(new LinkedHashMap<>(actionCosts));
+			if(!Double.isFinite(legacyBoundaryCost) || legacyBoundaryCost < 0.0
+				|| !Double.isFinite(selectedBoundaryCost) || selectedBoundaryCost < 0.0)
+				throw new IllegalArgumentException("Exact relocation costs must be finite and non-negative");
 		}
 	}
 
@@ -776,6 +873,13 @@ public class FederatedPlannerDpCostEnumerator {
 			if (enumerateTransientReadDataOp((DataOp) hop, childHops, memoTable, hopCommon, numOfWorkers, capture)) {
 				return;
 			}
+			// The recursive DAG walk above already honored legacy rewire forwards as
+			// enumeration-order dependencies. If no exact transient input fact exists,
+			// do not let those scheduling-only TWrites fall through as ordinary executable
+			// inputs of the generic CP-only TRead arm.
+			childHops.removeIf(child -> child instanceof DataOp
+				&& ((DataOp) child).getOp() == Types.OpOpData.TRANSIENTWRITE
+				&& !hasExactTransientInputAuthority(hop, child, capture));
 		}
 
 		Set<Long> tWriteChildIds = collectHopIds(collectTransientWriteChildHops(hop, childHops, capture));
@@ -899,6 +1003,8 @@ public class FederatedPlannerDpCostEnumerator {
 			// Costs from children, split by the parent's ExecType semantics.
 			double childCostCPExec = 0; // Parent executes in CP; forwarding only from FOUT children.
 			double childCostFEDExec = 0; // Parent executes in FED; forwarding only from LOUT children.
+			double childBoundaryCPExec = 0;
+			double childBoundaryFEDExec = 0;
 
 				for (int j = 0; j < numBothOutInputs; j++) {
 					Hop inputHop = lOutfOutChildHops.get(j);
@@ -1025,17 +1131,26 @@ public class FederatedPlannerDpCostEnumerator {
 				double fedForwardingCost = childForwardingCostToFED[j] * (1 - bit)
 						+ childForwardingCostFOutToFED[j] * bit;
 				childCostFEDExec += childCumulativeCost[j][bit] + fedForwardingCost;
+				childBoundaryCPExec += childForwardingCostToCP[j] * bit;
+				childBoundaryFEDExec += fedForwardingCost;
 			}
 			for (int j = 0; j < numLoutOnlyInputs; j++) {
 				Hop inputHop = lOUTOnlyinputHops.get(j);
 				childCostCPExec += lOUTOnlychildCumulativeCost.get(j);
 				double fedForwardingCost = lOUTOnlychildForwardingCostToFED.get(j);
 				childCostFEDExec += lOUTOnlychildCumulativeCost.get(j) + fedForwardingCost;
+				childBoundaryFEDExec += fedForwardingCost;
 			}
 			for (int j = 0; j < numFoutOnlyInputs; j++) {
 				childCostCPExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToCP.get(j);
 				childCostFEDExec += fOUTOnlychildCumulativeCost.get(j) + fOUTOnlychildForwardingCostToFED.get(j);
+				childBoundaryCPExec += fOUTOnlychildForwardingCostToCP.get(j);
+				childBoundaryFEDExec += fOUTOnlychildForwardingCostToFED.get(j);
 			}
+			Map<ExactInputBoundary,Double> legacyFedBoundaryCosts = exactLegacyFedBoundaryCosts(
+				capture, hop, lOutfOutChildHops, selectedBits, childForwardingCostToFED,
+				childForwardingCostFOutToFED, lOUTOnlyinputHops, lOUTOnlychildForwardingCostToFED,
+				fOUTOnlyinputHops, fOUTOnlychildForwardingCostToFED);
 
 					boolean canSatisfyFedInputs = canSatisfyFederatedInputsFromFTypes(
 						candidateDecisionReceipt, effectiveNonNullFTypeMap);
@@ -1158,60 +1273,98 @@ public class FederatedPlannerDpCostEnumerator {
 						PlacementState exactState = emissionState.placementState();
 						if(exactState.execType() == ExecType.FED && exactState.output() == FederatedOutput.FOUT
 							&& allowFedFoutCandidate) {
+							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
+								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
+							ExactRelocationCost relocation = exactRelocationCost(capture,
+								candidateDecisionReceipt, candidateSelection, exactState, planChilds, exactCollectedHops,
+								memoTable, hopCommon, hopCommonTable, exactEstimator, hop, numOfWorkers,
+								legacyFedBoundaryCosts);
+							double exactChildCostFEDExec = replaceLegacyRelocationCost(
+								childCostFEDExec, relocation);
 							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
 								effectiveCollectedFTypes, exactEstimator, baseSelfCost, defaultFedComputeCost, outputMemEstimate,
 								cpUploadMemEstimate, fedOverhead, singleWorkerFedPenalty, fedExecWeight,
 								hopPlacementWeight, numOfWorkers, emissionFact.executionFType(), exactState.fType());
-							double entryFedFoutCost = entryCost.fedSelfCost() + childCostFEDExec
+							double entryFedFoutCost = entryCost.fedSelfCost() + exactChildCostFEDExec
 								+ derivedFedFoutBoundaryCost(emissionState.derivedFedFout(),
 									entryCost.uploadCost(), entryCost.resultDownloadCost());
 							FederatedPlannerDpMemoTable.FedPlan fedFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 								entryFedFoutCost, fOutFedPlanVariants, planChilds);
+							fedFOutPlan.bindExactChildPlanEdges(exactCollectedHops, memoTable);
 							fedFOutPlan.setExecType(ExecType.FED);
 							fedFOutPlan.setFType(exactState.fType());
 							fedFOutPlan.setCpFoutType(cpLogicalFType);
 							fedFOutPlan.setDerivedFedFout(emissionState.derivedFedFout());
 							fedFOutPlan.setSelectedPlacementState(exactState);
+							fedFOutPlan.setDirectCandidateSelection(candidateSelection);
+							fedFOutPlan.setDirectRelocationChoices(relocation.choices());
+							fedFOutPlan.setDirectRelocationActionCosts(relocation.actionCosts());
+							fedFOutPlan.setExactRecurrenceCosts(
+								exactChildCostFEDExec, relocation.selectedBoundaryCost());
 							fOutFedPlanVariants.addFedPlan(fedFOutPlan);
 						}
 						else if(exactState.execType() == ExecType.FED && exactState.output() == FederatedOutput.LOUT
 							&& allowFedLoutCandidate) {
+							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
+								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
+							ExactRelocationCost relocation = exactRelocationCost(capture,
+								candidateDecisionReceipt, candidateSelection, exactState, planChilds, exactCollectedHops,
+								memoTable, hopCommon, hopCommonTable, exactEstimator, hop, numOfWorkers,
+								legacyFedBoundaryCosts);
+							double exactChildCostFEDExec = replaceLegacyRelocationCost(
+								childCostFEDExec, relocation);
 							FedEntryCost entryCost = computeFedEntryCost(hop, exactCollectedHops,
 								effectiveCollectedFTypes, exactEstimator, baseSelfCost, defaultFedComputeCost, outputMemEstimate,
 								cpUploadMemEstimate, fedOverhead, singleWorkerFedPenalty, fedExecWeight,
 								hopPlacementWeight, numOfWorkers, emissionFact.executionFType(), exactState.fType());
 							FederatedPlannerDpMemoTable.FedPlan fedLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
-								entryCost.fedSelfCost() + childCostFEDExec + entryCost.resultDownloadCost(),
+								entryCost.fedSelfCost() + exactChildCostFEDExec + entryCost.resultDownloadCost(),
 								lOutFedPlanVariants, planChilds);
+							fedLOutPlan.bindExactChildPlanEdges(exactCollectedHops, memoTable);
 							fedLOutPlan.setExecType(ExecType.FED);
 							fedLOutPlan.setFType(exactState.fType());
 							fedLOutPlan.setCpFoutType(cpLogicalFType);
 							fedLOutPlan.setSelectedPlacementState(exactState);
+							fedLOutPlan.setDirectCandidateSelection(candidateSelection);
+							fedLOutPlan.setDirectRelocationChoices(relocation.choices());
+							fedLOutPlan.setDirectRelocationActionCosts(relocation.actionCosts());
+							fedLOutPlan.setExactRecurrenceCosts(
+								exactChildCostFEDExec, relocation.selectedBoundaryCost());
 							lOutFedPlanVariants.addFedPlan(fedLOutPlan);
 						}
 						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.LOUT
 							&& allowCpLoutCandidate) {
+							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
+								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
 							FederatedPlannerDpMemoTable.FedPlan cpLOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 								cpLoutCost, lOutFedPlanVariants, planChilds);
+							cpLOutPlan.bindExactChildPlanEdges(exactCollectedHops, memoTable);
 							cpLOutPlan.setExecType(ExecType.CP);
 							cpLOutPlan.setFType(exactState.fType());
 							cpLOutPlan.setCpFoutType(cpLogicalFType);
 							cpLOutPlan.setSelectedPlacementState(exactState);
+							cpLOutPlan.setDirectCandidateSelection(candidateSelection);
+							cpLOutPlan.setExactRecurrenceCosts(childCostCPExec, childBoundaryCPExec);
 							lOutFedPlanVariants.addFedPlan(cpLOutPlan);
 						}
 						else if(exactState.execType() == ExecType.CP && exactState.output() == FederatedOutput.FOUT
 							&& allowCpFoutCandidate) {
+							CandidateSelectionReceipt candidateSelection = new CandidateSelectionReceipt(
+								candidateDecisionReceipt.candidateRuleFact().key(), emissionFact, List.of());
 							double entryCpUploadCost = hopPlacementWeight
 								* exactEstimator.upload(cpUploadMemEstimate, exactState.fType(), numOfWorkers);
 							double entryCpFoutCost = cpLoutCost
 								+ (tWriteFoutMetadataPassThrough ? 0.0 : entryCpUploadCost);
 							FederatedPlannerDpMemoTable.FedPlan cpFOutPlan = new FederatedPlannerDpMemoTable.FedPlan(
 								entryCpFoutCost, fOutFedPlanVariants, planChilds);
+							cpFOutPlan.bindExactChildPlanEdges(exactCollectedHops, memoTable);
 							cpFOutPlan.setExecType(ExecType.CP);
 							cpFOutPlan.setFType(exactState.fType());
 							cpFOutPlan.setCpFoutType(exactState.fType());
 							cpFOutPlan.setFoutMaterializationAccounted(true);
 							cpFOutPlan.setSelectedPlacementState(exactState);
+							cpFOutPlan.setDirectCandidateSelection(candidateSelection);
+							cpFOutPlan.setExactRecurrenceCosts(childCostCPExec, childBoundaryCPExec);
 							fOutFedPlanVariants.addFedPlan(cpFOutPlan);
 						}
 					}
@@ -1275,7 +1428,292 @@ public class FederatedPlannerDpCostEnumerator {
 						+ ", allowFedFout=" + sawAllowFedFout
 						+ ", canSatisfyFedInputs=" + sawCanSatisfyFedInputs + ")");
 			}
+			}
+
+	private static Map<ExactInputBoundary,Double> exactLegacyFedBoundaryCosts(
+		EnumerationCapture capture, Hop parent,
+		List<Hop> bothOutputs, int[] selectedBits, double[] loutToFed, double[] foutToFed,
+		List<Hop> loutOnly, List<Double> loutOnlyToFed,
+		List<Hop> foutOnly, List<Double> foutOnlyToFed) {
+		Map<CompiledHopKey,ArrayDeque<Integer>> physicalPositions = new IdentityHashMap<>();
+		for(int inputPosition = 0; inputPosition < parent.getInput().size(); inputPosition++) {
+			CompiledHopKey source = findOccurrence(capture, parent.getInput().get(inputPosition)).key();
+			physicalPositions.computeIfAbsent(source, ignored -> new ArrayDeque<>()).add(inputPosition);
 		}
+		Map<ExactInputBoundary,Double> result = new LinkedHashMap<>();
+		for(int i = 0; i < bothOutputs.size(); i++)
+			addExactLegacyBoundaryCost(capture, bothOutputs.get(i), physicalPositions,
+				selectedBits[i] == 0 ? loutToFed[i] : foutToFed[i], result);
+		for(int i = 0; i < loutOnly.size(); i++)
+			addExactLegacyBoundaryCost(capture, loutOnly.get(i), physicalPositions,
+				loutOnlyToFed.get(i), result);
+		for(int i = 0; i < foutOnly.size(); i++)
+			addExactLegacyBoundaryCost(capture, foutOnly.get(i), physicalPositions,
+				foutOnlyToFed.get(i), result);
+		return Map.copyOf(result);
+	}
+
+	private static void addExactLegacyBoundaryCost(EnumerationCapture capture, Hop sourceHop,
+		Map<CompiledHopKey,ArrayDeque<Integer>> physicalPositions, double cost,
+		Map<ExactInputBoundary,Double> result) {
+		HopOccurrenceProjection occurrence = findOccurrence(capture, sourceHop);
+		ArrayDeque<Integer> positions = physicalPositions.get(occurrence.key());
+		// Rewire-only/function-output dependencies are scheduled as children but are not
+		// physical consumer inputs and therefore own no exact relocation demand here.
+		if(positions == null || positions.isEmpty())
+			return;
+		int inputPosition = positions.removeFirst();
+		ValueVersionKey sourceValue = capture.context.analysis().graph().node(occurrence.key())
+			.orElseThrow().valueVersion();
+		ExactInputBoundary key = new ExactInputBoundary(sourceValue, inputPosition);
+		if(result.putIfAbsent(key, cost) != null)
+			throw new IllegalStateException("DP legacy boundary cost duplicated exact input: " + key);
+	}
+
+	private static ExactRelocationCost exactRelocationCost(EnumerationCapture capture,
+		CandidateDecisionReceipt candidate, CandidateSelectionReceipt candidateSelection,
+		PlacementState target,
+		List<Pair<Long,FederatedOutput>> childEdges, List<Hop> selectedChildHops,
+		FederatedPlannerDpMemoTable memoTable, FederatedPlannerDpMemoTable.HopCommon parentCommon,
+		Map<Long,FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator,
+		Hop parentHop, int numWorkers, Map<ExactInputBoundary,Double> legacyBoundaryCosts) {
+		if(candidate.candidateSnapshot().parentOccurrence() != findOccurrence(capture, parentHop).key())
+			throw new IllegalArgumentException("DP relocation candidate belongs to a different parent occurrence");
+		if(candidateSelection.rule() != candidate.candidateRuleFact().key()
+			|| !candidateSelection.emission().emissionState().placementState().equals(target))
+			throw new IllegalArgumentException("DP exact candidate-row receipt differs from the relocation target");
+		if(childEdges.size() != selectedChildHops.size())
+			throw new IllegalArgumentException("DP relocation child edge and Hop counts differ");
+
+		Map<CompiledHopKey,PlacementState> assignment = new LinkedHashMap<>();
+		assignment.put(candidate.candidateSnapshot().parentOccurrence(), target);
+		Map<ValueVersionKey,SelectedRelocationSource> selectedSources = new LinkedHashMap<>();
+		Map<CompiledHopKey,SelectedRelocationSource> selectedSourcesByOccurrence = new IdentityHashMap<>();
+		Set<FederatedPlannerDpMemoTable.FedPlan> visitedPlans =
+			Collections.newSetFromMap(new IdentityHashMap<>());
+		// Candidate reachability is defined by exact compiled input positions, while the
+		// legacy enumeration list may contain rewired carriers. Bind every PRESENT
+		// physical input (not ABSENT_LOCAL siblings) to the selected plan's analysis
+		// occurrence before asking the exact relocation selector to validate the partial
+		// parent assignment.
+		for(int inputPosition = 0; inputPosition < candidateSelection.rule().orderedInputs().size(); inputPosition++) {
+			if(!candidateSelection.rule().orderedInputs().get(inputPosition).present())
+				continue;
+			final int exactInputPosition = inputPosition;
+			List<PlacementAnalysis.CompiledInputEdgeFact> physicalEdges = capture.context.analysis()
+				.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == candidate.candidateSnapshot().parentOccurrence()
+					&& edge.inputPosition() == exactInputPosition).toList();
+			if(physicalEdges.isEmpty())
+				continue; // logical function/transient input: validated by its exact semantic fact
+			if(physicalEdges.size() != 1)
+				throw new IllegalStateException("DP exact relocation physical input edge is ambiguous: parent="
+					+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature()
+					+ " input=" + inputPosition);
+			CompiledHopKey producer = physicalEdges.get(0).producer();
+			FederatedPlannerDpMemoTable.FedPlan producerPlan = null;
+			for(int childIndex = 0; childIndex < childEdges.size(); childIndex++) {
+				Pair<Long,FederatedOutput> childEdge = childEdges.get(childIndex);
+				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(
+					selectedChildHops.get(childIndex), childEdge.getRight());
+				if(childPlan == null || childPlan.getSelectedPlacementState() == null)
+					throw new IllegalStateException("DP exact relocation source has no selected plan/state: edge="
+						+ childEdge);
+				if(memoTable.requirePlanCarrierOccurrence(childPlan.getHopRef()).key() != producer)
+					continue;
+				if(producerPlan != null && producerPlan != childPlan)
+					throw new IllegalStateException("DP exact relocation physical producer has duplicate selected arms: "
+						+ producer.normalizedSignature());
+				producerPlan = childPlan;
+			}
+			if(producerPlan == null)
+				throw new IllegalStateException("DP exact relocation candidate input has no selected physical plan: parent="
+					+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature()
+					+ " input=" + inputPosition + " producer=" + producer.normalizedSignature());
+			addSelectedPlanClosure(capture.context.analysis(), producerPlan, memoTable, assignment,
+				selectedSources, selectedSourcesByOccurrence, visitedPlans);
+			SelectedRelocationSource source = selectedSourcesByOccurrence.get(producer);
+			if(source == null)
+				throw new IllegalStateException("DP exact relocation candidate input has no selected physical source: parent="
+					+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature()
+					+ " input=" + inputPosition + " producer=" + producer.normalizedSignature());
+			PlacementState previous = assignment.putIfAbsent(producer, source.state());
+			if(previous != null && !previous.equals(source.state()))
+				throw new IllegalStateException("DP exact relocation candidate input has conflicting exact state: "
+					+ producer.normalizedSignature());
+		}
+
+		List<RelocationAction> candidateActions = capture.context.analysis().graph().relocationActions().stream()
+			.filter(action -> action.obligations().stream().anyMatch(obligation ->
+				obligation.consumer() == candidate.candidateSnapshot().parentOccurrence()
+					&& obligation.requiredPlacement().equals(target)))
+			.toList();
+		if(candidateActions.isEmpty())
+			return new ExactRelocationCost(List.of(), Map.of(), 0.0, 0.0);
+		// CandidateSelections validates every assigned operation consumer, including an
+		// immediate child whose already-costed memo arm may itself require relocation.
+		// Keep the complete graph-owned universe for that reachability validation.  The
+		// explicit candidate receipt below still limits the generated demands (and hence
+		// the objective delta) to this parent only, so child relocations are not charged
+		// twice while their selected plan remains source-reachable.
+		List<RelocationAction> actionUniverse = capture.context.analysis().graph().relocationActions();
+
+		RelocationSelections.Selection selection;
+		try {
+			selection = RelocationSelections.selectMinimumCost(
+				capture.context.analysis(), actionUniverse, assignment, List.of(candidateSelection),
+					action -> exactRelocationActionCost(action, selectedSources, exactEstimator,
+						parentHop, parentCommon, hopCommonTable, memoTable, numWorkers));
+		}
+		catch(IllegalStateException ex) {
+			throw new IllegalStateException("DP exact relocation selection failed for parent="
+				+ candidate.candidateSnapshot().parentOccurrence().normalizedSignature(), ex);
+		}
+		Map<RelocationActionKey,Double> actionCosts = new LinkedHashMap<>();
+		Set<String> costedPhysicalEmissions = new LinkedHashSet<>();
+		double selectedCost = 0.0;
+		for(RelocationActionKey action : selection.emittedActions()) {
+			double cost = exactRelocationActionCost(action, selectedSources, exactEstimator,
+				parentHop, parentCommon, hopCommonTable, memoTable, numWorkers);
+			boolean firstPhysicalEmission = costedPhysicalEmissions.add(
+				RelocationSelections.physicalEmissionIdentity(action));
+			actionCosts.put(action, firstPhysicalEmission ? cost : 0.0);
+			if(firstPhysicalEmission)
+				selectedCost += cost;
+		}
+		double selectedTolerance = 1e-9 * Math.max(1.0, Math.abs(selection.cost()));
+		if(Math.abs(selectedCost - selection.cost()) > selectedTolerance)
+			throw new IllegalStateException("DP exact relocation action-cost receipt differs from selection: selected="
+				+ selection.cost() + " receipt=" + selectedCost);
+		double legacyCost = 0.0;
+		for(RelocationChoiceReceipt choice : selection.choices()) {
+			ExactInputBoundary boundary = new ExactInputBoundary(
+				choice.demand().sourceValueVersion(), choice.demand().inputPosition());
+			Double cost = legacyBoundaryCosts.get(boundary);
+			if(cost == null)
+				throw new IllegalStateException("DP exact relocation demand has no physical legacy boundary: "
+					+ choice.demand().normalizedSignature());
+			legacyCost += cost;
+		}
+		return new ExactRelocationCost(selection.choices(), actionCosts, legacyCost, selection.cost());
+	}
+
+	private static void addSelectedPlanClosure(PlacementAnalysis analysis,
+		FederatedPlannerDpMemoTable.FedPlan plan, FederatedPlannerDpMemoTable memoTable,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Map<ValueVersionKey,SelectedRelocationSource> selectedSources,
+		Map<CompiledHopKey,SelectedRelocationSource> selectedSourcesByOccurrence,
+		Set<FederatedPlannerDpMemoTable.FedPlan> visitedPlans) {
+		if(!visitedPlans.add(plan))
+			return;
+		PlacementState state = plan.getSelectedPlacementState();
+		if(state == null)
+			throw new IllegalStateException("DP exact relocation plan closure contains an unselected arm");
+		HopOccurrenceProjection occurrence = memoTable.requirePlanCarrierOccurrence(plan.getHopRef());
+		PlacementState previousState = assignment.putIfAbsent(occurrence.key(), state);
+		if(previousState != null && !previousState.equals(state))
+			throw new IllegalStateException("DP exact relocation plan closure has conflicting occurrence states: "
+				+ occurrence.key().normalizedSignature() + " previous=" + previousState.normalizedSignature()
+				+ " proposed=" + state.normalizedSignature() + " proposedPlan=" + plan.getHopRef());
+		Hop exactHop = analysis.hop(occurrence.key()).orElseThrow(() ->
+			new IllegalStateException("DP exact relocation plan closure has no analysis Hop"));
+		ValueVersionKey sourceValue = analysis.graph().node(occurrence.key()).orElseThrow().valueVersion();
+		SelectedRelocationSource proposed = new SelectedRelocationSource(plan, exactHop, state);
+		SelectedRelocationSource previousOccurrence =
+			selectedSourcesByOccurrence.putIfAbsent(occurrence.key(), proposed);
+		if(previousOccurrence != null && !previousOccurrence.state().equals(state))
+			throw new IllegalStateException("DP exact relocation occurrence has conflicting source states: "
+				+ occurrence.key().normalizedSignature());
+		SelectedRelocationSource previous = selectedSources.putIfAbsent(sourceValue, proposed);
+		if(previous != null && !previous.state().equals(state))
+			throw new IllegalStateException("DP exact relocation value version has conflicting source states: "
+				+ sourceValue.normalizedSignature());
+		CandidateSelectionReceipt direct = plan.getDirectCandidateSelection();
+		if(direct == null)
+			return;
+		for(int inputPosition = 0; inputPosition < direct.rule().orderedInputs().size(); inputPosition++) {
+			if(!direct.rule().orderedInputs().get(inputPosition).present())
+				continue;
+			final int exactInputPosition = inputPosition;
+			List<PlacementAnalysis.CompiledInputEdgeFact> edges = analysis
+				.compiledInputEdgesInCanonicalOrder().stream()
+				.filter(edge -> edge.consumer() == occurrence.key()
+					&& edge.inputPosition() == exactInputPosition).toList();
+			if(edges.isEmpty())
+				continue;
+			if(edges.size() != 1)
+				throw new IllegalStateException("DP exact relocation plan closure input is ambiguous: "
+					+ occurrence.key().normalizedSignature() + " input=" + inputPosition);
+			FType requiredType = direct.rule().orderedInputs().get(inputPosition).fType();
+			boolean hasRelocationAlternative = analysis.graph().relocationActions().stream()
+				.anyMatch(action -> action.key().materializationFType() == requiredType
+					&& action.key().targetPlacement().equals(state)
+					&& action.obligations().stream().anyMatch(obligation ->
+						obligation.consumer() == occurrence.key()
+							&& obligation.inputPosition() == exactInputPosition));
+			if(hasRelocationAlternative)
+				continue;
+			CompiledHopKey requiredProducer = edges.get(0).producer();
+			FederatedPlannerDpMemoTable.FedPlan requiredChild = null;
+			for(FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge childEdge
+				: plan.getExactChildPlanEdges()) {
+				FederatedPlannerDpMemoTable.FedPlan childPlan = childEdge.selectedPlan();
+				if(childPlan == null)
+					throw new IllegalStateException("DP exact relocation plan closure has no selected child arm: "
+						+ childEdge);
+				if(childEdge.occurrence() != requiredProducer)
+					continue;
+				if(requiredChild != null && requiredChild != childPlan)
+					throw new IllegalStateException("DP exact relocation plan closure has duplicate producer arms: "
+						+ requiredProducer.normalizedSignature());
+				requiredChild = childPlan;
+			}
+			if(requiredChild == null)
+				throw new IllegalStateException("DP exact relocation plan closure omits PRESENT producer: "
+					+ requiredProducer.normalizedSignature());
+			addSelectedPlanClosure(analysis, requiredChild, memoTable, assignment, selectedSources,
+				selectedSourcesByOccurrence, visitedPlans);
+		}
+	}
+
+	private static double exactRelocationActionCost(RelocationActionKey action,
+		Map<ValueVersionKey,SelectedRelocationSource> selectedSources,
+		FederatedPlannerDpCostEstimator.ExactEstimator exactEstimator, Hop parentHop,
+		FederatedPlannerDpMemoTable.HopCommon parentCommon,
+		Map<Long,FederatedPlannerDpMemoTable.HopCommon> hopCommonTable,
+		FederatedPlannerDpMemoTable memoTable, int numWorkers) {
+		SelectedRelocationSource source = selectedSources.get(action.sourceValueVersion());
+		if(source == null)
+			throw new IllegalStateException("DP exact relocation action has no selected source plan: "
+				+ action.normalizedSignature());
+		if(!FederatedCostModel.requiresExplicitMatrixBoundaryTransfer(source.hop()))
+			return 0.0;
+		double transferCost = exactEstimator.upload(source.hop(), parentHop,
+			action.materializationFType(), numWorkers);
+		if(source.state().output() == FederatedOutput.FOUT) {
+			FType sourceType = Objects.requireNonNull(source.state().fType(),
+				"FOUT relocation source has no exact FType");
+			transferCost += exactEstimator.download(
+				FederatedCostModel.getEffectiveOutputMemEstimate(source.hop()), sourceType, numWorkers);
+		}
+		else if(source.state().output() != FederatedOutput.LOUT)
+			throw new IllegalStateException("DP relocation source has no materializable value placement: "
+				+ source.state().normalizedSignature());
+		return FederatedPlannerDpCostEstimator.computeBoundaryTransferShareForParent(
+			transferCost, source.plan(), parentCommon, hopCommonTable, memoTable);
+	}
+
+	private static double replaceLegacyRelocationCost(double childCost,
+		ExactRelocationCost relocation) {
+		double result = childCost - relocation.legacyBoundaryCost() + relocation.selectedBoundaryCost();
+		double tolerance = 1e-9 * Math.max(1.0, Math.abs(childCost));
+		if(result < -tolerance)
+			throw new IllegalStateException("DP exact relocation replacement produced a negative child cost: child="
+				+ childCost + " legacy=" + relocation.legacyBoundaryCost()
+				+ " selected=" + relocation.selectedBoundaryCost());
+		return Math.max(0.0, result);
+	}
 
 	private static int adjustNumParentHopsForFunctionOutputBoundary(Hop hop, int numParentHops) {
 		if (hop == null || numParentHops <= 1)
@@ -1339,7 +1777,7 @@ public class FederatedPlannerDpCostEnumerator {
 	private static void appendMemoSupportedEdge(Hop child, FederatedOutput output,
 			FederatedPlannerDpMemoTable memoTable, List<Pair<Long, FederatedOutput>> planChilds,
 			List<Hop> selectedChildHops) {
-		FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(child.getHopID(), output);
+		FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(child, output);
 		if(childPlan == null)
 			throw new DMLRuntimeException("Missing " + output + " federated plan for child hop "
 				+ child.getHopID());
@@ -1363,7 +1801,8 @@ public class FederatedPlannerDpCostEnumerator {
 		for(int edgeIndex = 0; edgeIndex < childEdges.size(); edgeIndex++) {
 			Pair<Long, FederatedOutput> edge = childEdges.get(edgeIndex);
 			Hop child = Objects.requireNonNull(selectedChildHops.get(edgeIndex), "selected child hop");
-			FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(edge);
+			FederatedPlannerDpMemoTable.FedPlan childPlan =
+				memoTable.getFedPlanAfterPrune(child, edge.getRight());
 			if(childPlan == null)
 				throw new DMLRuntimeException("Missing " + edge.getRight() + " federated plan for child hop "
 					+ edge.getLeft());
@@ -1409,6 +1848,7 @@ public class FederatedPlannerDpCostEnumerator {
 			fedPlan.setFType(sourceFType);
 			fedPlan.setCpFoutType(sourceFType);
 			fedPlan.setSelectedPlacementState(exactSourceState);
+			fedPlan.setExactRecurrenceCosts(0d, 0d);
 			fOutFedPlanVariants.addFedPlan(fedPlan);
 			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), sourceOccurrence,
 				FederatedOutput.FOUT, fOutFedPlanVariants);
@@ -1474,21 +1914,35 @@ public class FederatedPlannerDpCostEnumerator {
 		FType foutFType = null;
 		double loutCost = baseSelfCost;
 		double loutAcquireCost = 0.0;
+		boolean needsFoutMaterialization = false;
 		boolean hasFederatedSourcePlan = false;
 		List<Pair<Long, FederatedOutput>> loutChilds = new ArrayList<>();
 		List<Hop> loutSelectedChildHops = new ArrayList<>();
+		List<FederatedPlannerDpMemoTable.FedPlan> loutSelectedChildPlans = new ArrayList<>();
 		List<Pair<Long, FederatedOutput>> foutChilds = new ArrayList<>();
 		List<Hop> foutSelectedChildHops = new ArrayList<>();
+		List<FederatedPlannerDpMemoTable.FedPlan> foutSelectedChildPlans = new ArrayList<>();
 		double foutCost = baseSelfCost;
 
 		for (Hop sourceChildHop : sourceChildHops) {
-			Long childId = sourceChildHop.getHopID();
-			FederatedPlannerDpMemoTable.FedPlan loutPlan = memoTable.getFedPlanAfterPrune(childId,
-					FederatedOutput.LOUT);
-			if (loutPlan == null) {
-				allowLOUT = false;
-			}
-			else {
+			HopOccurrenceProjection sourceOccurrence = capture.context.rewireSnapshot()
+				.projectExactCarrier(sourceChildHop);
+			if(sourceOccurrence == null)
+				throw new IllegalStateException("Transient-read source lacks exact occurrence authority: "
+					+ sourceChildHop.getHopID());
+			// A recompile carrier may retain only the arm needed by its local traversal,
+			// while another carrier of the same exact TWrite occurrence owns the matching
+			// FED/FOUT arm. TRead/TWrite consistency is occurrence-scoped, not clone-id
+			// scoped, so enumerate from the complete exact source occurrence domain and
+			// retain the selected executable carrier on the child edge.
+			FederatedPlannerDpMemoTable.FedPlan loutPlan = memoTable.getFedPlanAfterPrune(
+				sourceOccurrence, FederatedOutput.LOUT);
+			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(
+				sourceOccurrence, FederatedOutput.FOUT);
+			boolean mayMaterializeFout = loutPlan == null && foutPlan != null
+				&& foutPlan.getFType() != null
+				&& isExactMaterializableTransientSource(dataOp, sourceOccurrence, capture);
+			if (loutPlan != null) {
 				FType childFType = loutPlan.getFType();
 				if (childFType != null) {
 					if (loutFType == null) {
@@ -1499,15 +1953,32 @@ public class FederatedPlannerDpCostEnumerator {
 					}
 				}
 				loutCost += loutPlan.getCumulativeCostPerParents();
-				loutChilds.add(Pair.of(childId, FederatedOutput.LOUT));
-				loutSelectedChildHops.add(sourceChildHop);
+				loutChilds.add(Pair.of(loutPlan.getHopID(), FederatedOutput.LOUT));
+				loutSelectedChildHops.add(loutPlan.getHopRef());
+				loutSelectedChildPlans.add(loutPlan);
 			}
+			else if(mayMaterializeFout) {
+				// A logical function argument or an immutable federated initializer may
+				// cross into a CP/LOUT formal read through an explicit, costed download.
+				// A logical TWrite->TRead value edge is deliberately excluded: that edge
+				// retains strict TRead/TWrite tuple equality.
+				hasFederatedSourcePlan = true;
+				needsFoutMaterialization = true;
+				if(foutFType == null)
+					foutFType = foutPlan.getFType();
+				else if(foutFType != foutPlan.getFType())
+					allowLOUT = false;
+				loutCost += foutPlan.getCumulativeCostPerParents();
+				loutChilds.add(Pair.of(foutPlan.getHopID(), FederatedOutput.FOUT));
+				loutSelectedChildHops.add(foutPlan.getHopRef());
+				loutSelectedChildPlans.add(foutPlan);
+			}
+			else
+				allowLOUT = false;
 
-			FederatedPlannerDpMemoTable.FedPlan foutPlan = memoTable.getFedPlanAfterPrune(childId,
-					FederatedOutput.FOUT);
 			if (foutPlan == null || foutPlan.getFType() == null
 					|| !hasFederatedTransientInputAuthority(dataOp, sourceChildHop, capture)
-					|| !canTransientReadReuseMatchedFoutWrite(dataOp, childId, memoTable)) {
+					|| !canTransientReadReuseMatchedFoutWrite(dataOp, foutPlan.getHopID(), memoTable)) {
 				allowFOUT = false;
 			}
 			else {
@@ -1520,8 +1991,9 @@ public class FederatedPlannerDpCostEnumerator {
 					allowFOUT = false;
 				}
 				foutCost += foutPlan.getCumulativeCostPerParents();
-				foutChilds.add(Pair.of(childId, FederatedOutput.FOUT));
-				foutSelectedChildHops.add(sourceChildHop);
+				foutChilds.add(Pair.of(foutPlan.getHopID(), FederatedOutput.FOUT));
+				foutSelectedChildHops.add(foutPlan.getHopRef());
+				foutSelectedChildPlans.add(foutPlan);
 			}
 		}
 
@@ -1533,8 +2005,7 @@ public class FederatedPlannerDpCostEnumerator {
 		// local materialization/download cost in the producer cumulative cost. Charging a
 		// second synthetic local-acquire download here double-counts the CP/LOUT path and
 		// can incorrectly bias parent transitions toward FED/FOUT (e.g., ALS mask W).
-		boolean hasLocalTransientWriteSourcePlan = allowLOUT && !loutChilds.isEmpty();
-		if (!hasLocalTransientWriteSourcePlan && hasFederatedSourcePlan && dataOp.getDim1() > 0
+		if (needsFoutMaterialization && hasFederatedSourcePlan && dataOp.getDim1() > 0
 				&& dataOp.getDim2() > 0) {
 			double hopPlacementWeight = placementTransferWeight(hopCommon);
 			double outputMemEstimate = FederatedCostModel.getEffectiveOutputMemEstimate(dataOp);
@@ -1559,11 +2030,14 @@ public class FederatedPlannerDpCostEnumerator {
 					new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.LOUT);
 				FederatedPlannerDpMemoTable.FedPlan loutPlan =
 						new FederatedPlannerDpMemoTable.FedPlan(loutCost, lOutFedPlanVariants, loutChilds);
+				loutPlan.bindExactChildPlanEdges(
+					loutSelectedChildHops, loutSelectedChildPlans, memoTable);
 				loutPlan.setExecType(ExecType.CP);
 				loutPlan.setFType(loutFType);
 				loutPlan.setCpFoutType(loutFType);
 				loutPlan.setSelectedPlacementState(
 					loutReceipt.requireExactState(ExecType.CP, FederatedOutput.LOUT));
+				loutPlan.setExactRecurrenceCosts(loutCost - baseSelfCost - loutAcquireCost, 0d);
 				lOutFedPlanVariants.addFedPlan(loutPlan);
 				lOutFedPlanVariants.pruneFedPlans();
 				if(capture == null)
@@ -1579,11 +2053,14 @@ public class FederatedPlannerDpCostEnumerator {
 					new FederatedPlannerDpMemoTable.FedPlanVariants(hopCommon, FederatedOutput.FOUT);
 				FederatedPlannerDpMemoTable.FedPlan foutPlan =
 						new FederatedPlannerDpMemoTable.FedPlan(foutCost, fOutFedPlanVariants, foutChilds);
+				foutPlan.bindExactChildPlanEdges(
+					foutSelectedChildHops, foutSelectedChildPlans, memoTable);
 				foutPlan.setExecType(ExecType.FED);
 				foutPlan.setFType(foutFType);
 				foutPlan.setCpFoutType(foutFType);
 				foutPlan.setSelectedPlacementState(
 					foutReceipt.requireExactState(ExecType.FED, FederatedOutput.FOUT));
+				foutPlan.setExactRecurrenceCosts(foutCost - baseSelfCost, 0d);
 				fOutFedPlanVariants.addFedPlan(foutPlan);
 				fOutFedPlanVariants.pruneFedPlans();
 				if(capture == null)
@@ -1595,6 +2072,20 @@ public class FederatedPlannerDpCostEnumerator {
 		}
 
 		return true;
+	}
+
+	private static boolean isExactMaterializableTransientSource(DataOp transientRead,
+		HopOccurrenceProjection source, EnumerationCapture capture) {
+		HopOccurrenceProjection read = findOccurrence(capture, transientRead);
+		boolean logicalFunction = capture.context.analysis().logicalFunctionInputsInCanonicalOrder().stream()
+			.anyMatch(fact -> fact.sourceArgument() == source.key()
+				&& fact.targetRead() == read.key() && fact.logicalPosition() == 0);
+		Hop sourceHop = capture.context.analysis().hop(source.key()).orElseThrow();
+		boolean federatedInitializer = sourceHop instanceof DataOp
+			&& ((DataOp) sourceHop).getOp() == Types.OpOpData.FEDERATED
+			&& capture.context.analysis().compiledInputEdgesInCanonicalOrder().stream()
+				.anyMatch(edge -> edge.producer() == source.key() && edge.consumer() == read.key());
+		return logicalFunction || federatedInitializer;
 	}
 
 	private static List<LogicalFunctionInputFact> logicalFunctionInputsForFormal(DataOp formalRead,
@@ -1684,41 +2175,14 @@ public class FederatedPlannerDpCostEnumerator {
 		for(PlacementState formalState : formalStates) {
 			if(!isLegalTransientReadState(formalState))
 				continue;
-			double cumulativeCost = baseSelfCost;
-			List<Pair<Long,FederatedOutput>> childEdges = new ArrayList<>(facts.size());
-			boolean feasible = true;
-			for(List<SharedLogicalInputArm> factArms : armsByFact) {
-				SharedLogicalInputArm selected = null;
-				for(SharedLogicalInputArm arm : factArms) {
-					if(!supportsSharedFormalState(arm, formalState))
-						continue;
-					if(selected == null || arm.costFor(formalState) < selected.costFor(formalState))
-						selected = arm;
-				}
-				if(selected == null) {
-					feasible = false;
-					break;
-				}
-				cumulativeCost += selected.costFor(formalState);
-				childEdges.add(Pair.of(selected.source().getHopID(), selected.sourceOutput()));
-			}
-			if(!feasible)
-				continue;
-
 			FederatedPlannerDpMemoTable.FedPlanVariants variants =
 				formalState.output() == FederatedOutput.LOUT ? loutVariants : foutVariants;
-			FederatedPlannerDpMemoTable.FedPlan plan = new FederatedPlannerDpMemoTable.FedPlan(
-				cumulativeCost, variants, childEdges);
-			plan.setExecType(formalState.execType());
-			plan.setFType(formalState.fType());
-			plan.setCpFoutType(formalState.output() == FederatedOutput.FOUT
-				? formalState.fType() : cpFoutType);
-			plan.setSelectedPlacementState(formalState);
-			variants.addFedPlan(plan);
+			enumerateSharedLogicalInputRepresentativePlans(armsByFact, formalState,
+				variants, memoTable, cpFoutType, baseSelfCost);
 		}
 
-		boolean hasLout = loutVariants.pruneFedPlans();
-		boolean hasFout = foutVariants.pruneFedPlans();
+		boolean hasLout = loutVariants.pruneExactBoundaryRepresentatives();
+		boolean hasFout = foutVariants.pruneExactBoundaryRepresentatives();
 		if(!hasLout && !hasFout)
 			throw new DMLRuntimeException("No common exact DP placement can satisfy every caller of shared function input "
 				+ formalOccurrence.key().normalizedSignature());
@@ -1729,6 +2193,85 @@ public class FederatedPlannerDpCostEnumerator {
 			memoTable.addFedPlanVariants(capture.context.rewireSnapshot(), formalOccurrence,
 				FederatedOutput.FOUT, foutVariants);
 		return true;
+	}
+
+	private static void enumerateSharedLogicalInputRepresentativePlans(
+		List<List<SharedLogicalInputArm>> armsByFact, PlacementState formalState,
+		FederatedPlannerDpMemoTable.FedPlanVariants variants,
+		FederatedPlannerDpMemoTable memoTable, FType cpFoutType, double baseSelfCost) {
+		List<List<SharedLogicalInputArm>> compatible = new ArrayList<>(armsByFact.size());
+		List<SharedLogicalInputArm> baseline = new ArrayList<>(armsByFact.size());
+		for(List<SharedLogicalInputArm> factArms : armsByFact) {
+			List<SharedLogicalInputArm> allowed = factArms.stream()
+				.filter(arm -> supportsSharedFormalState(arm, formalState))
+				.sorted(Comparator.comparingDouble((SharedLogicalInputArm arm) -> arm.costFor(formalState))
+					.thenComparing(arm -> arm.sourceOutput().name()))
+				.toList();
+			if(allowed.isEmpty())
+				return;
+			compatible.add(allowed);
+			baseline.add(allowed.get(0));
+		}
+
+		addSharedLogicalInputPlan(baseline, formalState, variants, memoTable,
+			cpFoutType, baseSelfCost);
+		// Preserve the cheapest representative for every individual caller boundary
+		// state.  This is the DP factorized frontier: it avoids the 2^N Cartesian
+		// materialization of independent call sites while ensuring no single later
+		// boundary lock loses its legal LOUT/FOUT alternative.
+		for(int factIndex = 0; factIndex < compatible.size(); factIndex++)
+			for(SharedLogicalInputArm arm : compatible.get(factIndex)) {
+				if(arm == baseline.get(factIndex))
+					continue;
+				List<SharedLogicalInputArm> representative = new ArrayList<>(baseline);
+				representative.set(factIndex, arm);
+				addSharedLogicalInputPlan(representative, formalState, variants,
+					memoTable, cpFoutType, baseSelfCost);
+			}
+		for(FederatedOutput uniformOutput : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+			List<SharedLogicalInputArm> uniform = new ArrayList<>(compatible.size());
+			for(List<SharedLogicalInputArm> factArms : compatible) {
+				SharedLogicalInputArm arm = factArms.stream()
+					.filter(candidate -> candidate.sourceOutput() == uniformOutput).findFirst().orElse(null);
+				if(arm == null) {
+					uniform.clear();
+					break;
+				}
+				uniform.add(arm);
+			}
+			if(!uniform.isEmpty())
+				addSharedLogicalInputPlan(uniform, formalState, variants,
+					memoTable, cpFoutType, baseSelfCost);
+		}
+	}
+
+	private static void addSharedLogicalInputPlan(List<SharedLogicalInputArm> selectedArms,
+		PlacementState formalState, FederatedPlannerDpMemoTable.FedPlanVariants variants,
+		FederatedPlannerDpMemoTable memoTable, FType cpFoutType, double baseSelfCost) {
+		List<Pair<Long,FederatedOutput>> childEdges = new ArrayList<>(selectedArms.size());
+		List<Hop> childCarriers = new ArrayList<>(selectedArms.size());
+		List<FederatedPlannerDpMemoTable.FedPlan> childPlans = new ArrayList<>(selectedArms.size());
+		double embedded = 0d;
+		double boundary = 0d;
+		for(SharedLogicalInputArm arm : selectedArms) {
+			double armCost = arm.costFor(formalState);
+			embedded += armCost;
+			if(formalState.execType() == ExecType.CP)
+				boundary += arm.localBoundaryShare();
+			childEdges.add(Pair.of(arm.source().getHopID(), arm.sourceOutput()));
+			childCarriers.add(arm.source());
+			childPlans.add(arm.sourcePlan());
+		}
+		FederatedPlannerDpMemoTable.FedPlan plan = new FederatedPlannerDpMemoTable.FedPlan(
+			baseSelfCost + embedded, variants, childEdges);
+		plan.bindExactChildPlanEdges(childCarriers, childPlans, memoTable);
+		plan.setExecType(formalState.execType());
+		plan.setFType(formalState.fType());
+		plan.setCpFoutType(formalState.output() == FederatedOutput.FOUT
+			? formalState.fType() : cpFoutType);
+		plan.setSelectedPlacementState(formalState);
+		plan.setExactRecurrenceCosts(embedded, boundary);
+		variants.addFedPlan(plan);
 	}
 
 	private static double sharedLogicalFunctionInputDownloadShare(DataOp formalRead, Hop source,
@@ -1926,11 +2469,25 @@ public class FederatedPlannerDpCostEnumerator {
 		if(capture == null || transientWrites.isEmpty())
 			return transientWrites;
 
+		// A legacy rewire forward is sufficient to enumerate the producer before the
+		// read, but it is not necessarily the read's logical value source. In particular,
+		// a TRead after a loop can have several reaching TWrite definitions while the
+		// rewire table exposes only the last physical carrier. Turning that scheduling
+		// edge into an executable plan child incorrectly binds the read to one definition
+		// and can force CP/LOUT against an independently selected FED/FOUT writer.
+		// Only analysis-owned physical/logical/function input facts may enter a TRead arm.
 		List<Hop> exactWrites = new ArrayList<>();
 		for(Hop transientWrite : transientWrites)
-			if(isTransientForwardCandidateCarrier(hop, transientWrite, capture))
+			if(hasExactTransientInputAuthority(hop, transientWrite, capture))
 				exactWrites.add(transientWrite);
 		return exactWrites;
+	}
+
+	private static boolean hasExactTransientInputAuthority(Hop readHop, Hop sourceHop,
+		EnumerationCapture capture) {
+		if(!(readHop instanceof DataOp) || capture == null || sourceHop == null)
+			return false;
+		return hasFederatedTransientInputAuthority((DataOp) readHop, sourceHop, capture);
 	}
 
 	// Rewire forwards are scheduling dependencies, not automatic candidate inputs. Only an exact
@@ -1997,10 +2554,10 @@ public class FederatedPlannerDpCostEnumerator {
 		if (tWriteExec == null || tWriteOut == null) {
 			return false;
 		}
-		if (tWriteOut == FederatedOutput.LOUT) {
+		if (tWriteExec == ExecType.CP && tWriteOut == FederatedOutput.LOUT) {
 			return execType == ExecType.CP && fedOutType == FederatedOutput.LOUT;
 		}
-		if (tWriteOut == FederatedOutput.FOUT) {
+		if (tWriteExec == ExecType.FED && tWriteOut == FederatedOutput.FOUT) {
 			return execType == ExecType.FED && fedOutType == FederatedOutput.FOUT;
 		}
 		return false;
@@ -2279,12 +2836,19 @@ public class FederatedPlannerDpCostEnumerator {
 
 		double cumulativeCost = 0;
 		List<Pair<Long, FederatedOutput>> rootFedPlanChilds = new ArrayList<>();
+		List<Hop> exactRootCarriers = new ArrayList<>();
+		List<FederatedPlannerDpMemoTable.FedPlan> exactRootPlans = new ArrayList<>();
 		for (RootChoice choice : rootChoices) {
 			cumulativeCost += choice.selectedPlan().getCumulativeCost();
 			rootFedPlanChilds.add(Pair.of(choice.rootHop().getHopID(), choice.selectedOutput()));
+			exactRootCarriers.add(choice.selectedPlan().getHopRef());
+			exactRootPlans.add(choice.selectedPlan());
 		}
 
-		return new FederatedPlannerDpMemoTable.FedPlan(cumulativeCost, null, rootFedPlanChilds);
+		FederatedPlannerDpMemoTable.FedPlan rootPlan =
+			new FederatedPlannerDpMemoTable.FedPlan(cumulativeCost, null, rootFedPlanChilds);
+		rootPlan.bindExactChildPlanEdges(exactRootCarriers, exactRootPlans, memoTable);
+		return rootPlan;
 	}
 
 	private static String rootOccurrenceSignature(FederatedPlannerDpMemoTable memoTable, Hop root) {
@@ -2391,12 +2955,13 @@ public class FederatedPlannerDpCostEnumerator {
 
 			Hop currentHop = current.getHopRef();
 
-			for (Pair<Long, FederatedOutput> childEdge : current.getChildFedPlans()) {
-				long childHopID = childEdge.getKey();
+			for (FederatedPlannerDpMemoTable.FedPlan.ExactChildPlanEdge childEdge
+				: current.getExactChildPlanEdges()) {
+				long childHopID = childEdge.carrier().getHopID();
 				long childOrigHopID = memoTable.resolveOriginalHopId(childHopID);
-				FederatedOutput childOut = childEdge.getValue();
+				FederatedOutput childOut = childEdge.output();
 
-				FederatedPlannerDpMemoTable.FedPlan childPlan = memoTable.getFedPlanAfterPrune(childEdge);
+				FederatedPlannerDpMemoTable.FedPlan childPlan = childEdge.selectedPlan();
 				if (childPlan == null) {
 					String msg = "NULL FedPlan for hop " + childHopID
 							+ " as child of hop " + (currentHop != null ? currentHop.getHopID() : -1)

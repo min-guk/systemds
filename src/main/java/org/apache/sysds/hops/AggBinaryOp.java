@@ -635,6 +635,7 @@ public class AggBinaryOp extends MultiThreadedHop {
 		return (et == ExecType.CP || et == ExecType.FED)
 			&& !cla.equals("true") && !cla.equals("cost")
 			&& !hasPlannerMaterializationBoundary(getInput().get(0))
+			&& !hasPlannerMaterializationBoundary(getInput().get(1))
 			&& isLeftTransposeRewriteApplicable(true);
 	}
 

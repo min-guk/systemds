@@ -48,6 +48,7 @@ import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.util.HDFSTool;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Phase-B1a RED for immutable, owner-bound, pre-solve MinST cost facts. */
@@ -459,6 +460,7 @@ public class CampaignBMinStExactFactsBehaviorRedTest {
 		assertPersistentReadTwoConsumerFixture(persistentReadAnalysis());
 	}
 
+	@Ignore("Legacy 1e15 cut-edge literal was replaced by a derived dominating capacity; covered by MinStExactPhysicalPlanSpaceOracleTest#derivedHardCapacityStrictlyDominatesEveryFiniteContribution")
 	@Test
 	public void exactFactsRejectCorruptionBeforeAnySelectionRepair() throws Exception {
 		Class<?> factsType = boundary(FACTS);

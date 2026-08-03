@@ -4,7 +4,9 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.sysds.api.DMLScript;
@@ -17,7 +19,9 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireTransientForwardEdge;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.CandidateDecisionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
@@ -73,7 +77,7 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 	}
 
 	@Test
-	public void logRegDpTwoWorkersCoalescesCompatibleRelocationRegistryAuthority() throws Exception {
+	public void logRegDpTwoWorkersEmitsExactSortedRelocationRegistryAuthorities() throws Exception {
 		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
 		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
 		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
@@ -111,18 +115,64 @@ public class CampaignBG014DpLogRegTransientForwardRedTest {
 				"-config", config.toString()
 			});
 			Assert.assertTrue("The Docker-equivalent two-worker LogReg compile must complete", success);
-			List<FederatedRefedRegistry.AnchorSpec> mergedAuthorities =
+			Assert.assertEquals("The DP CLI fixture must publish one exact placement authority", 1,
+				PlacementEmissionTransaction.receiptSnapshotForTesting().size());
+			NormalizedPlannerResult result = PlacementEmissionTransaction.currentNormalizedResult(
+				PlacementEmissionTransaction.receiptSnapshotForTesting().keySet().iterator().next());
+			Assert.assertEquals("DP", result.plannerId());
+			int checkedPresentInputs = 0;
+			Map<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey,
+				PlacementState> assignment = new LinkedHashMap<>();
+			result.selectedEmissionStates().forEach((key, state) ->
+				assignment.put(key, state.placementState()));
+			for(var selection : result.selectedCandidateSelections()) {
+				for(int inputPosition = 0; inputPosition < selection.rule().orderedInputs().size(); inputPosition++) {
+					var input = selection.rule().orderedInputs().get(inputPosition);
+					if(!input.present())
+						continue;
+					final int exactInputPosition = inputPosition;
+					var edges = result.analysis().compiledInputEdgesInCanonicalOrder().stream()
+						.filter(edge -> edge.consumer() == selection.rule().parentOccurrence()
+							&& edge.inputPosition() == exactInputPosition).toList();
+					if(edges.isEmpty())
+						continue;
+					Assert.assertEquals("A physical LogReg candidate input must have one exact producer",
+						1, edges.size());
+					PlacementState source = assignment.get(edges.get(0).producer());
+					Assert.assertNotNull("A physical LogReg candidate input must have an emitted source state",
+						source);
+					boolean direct = source.output()
+						== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& source.fType() == input.fType();
+					boolean relocated = result.selectedRelocationChoices().stream()
+						.anyMatch(choice -> choice.demand().consumer() == selection.rule().parentOccurrence()
+							&& choice.demand().inputPosition() == exactInputPosition
+							&& choice.action().materializationFType() == input.fType());
+					Assert.assertTrue("A PRESENT LogReg input must be direct or have one exact relocation",
+						direct || relocated);
+					checkedPresentInputs++;
+				}
+			}
+			Assert.assertTrue("The two-worker LogReg fixture must exercise a physical PRESENT input",
+				checkedPresentInputs > 0);
+			List<FederatedRefedRegistry.AnchorSpec> authorities =
 				FederatedRefedRegistry.snapshotAll().scopes().values().stream()
 					.flatMap(scope -> scope.values().stream())
-					.filter(spec -> spec.getAnchorKey() != null && spec.getAnchorKey().endsWith("|ROW"))
-					.filter(spec -> spec.getConsumerHopIds().size() >= 2)
 					.toList();
-			Assert.assertFalse("Compatible consumer-specific relocations must be represented by one exact "
-				+ "REFED source authority", mergedAuthorities.isEmpty());
-			for(FederatedRefedRegistry.AnchorSpec spec : mergedAuthorities)
-				Assert.assertEquals("Merged REFED consumers must remain sorted and deduplicated",
+			Assert.assertEquals("Only planner-selected physical relocations may publish REFED owners",
+				result.selectedRelocations().isEmpty(), authorities.isEmpty());
+			for(FederatedRefedRegistry.AnchorSpec spec : authorities) {
+				Assert.assertNotNull("Exact REFED authority must retain a durable anchor key", spec.getAnchorKey());
+				Assert.assertNotNull("Exact REFED authority must retain its materialization FType",
+					spec.getMaterializationFType());
+				Assert.assertEquals("REFED consumers must remain sorted and deduplicated",
 					spec.getConsumerHopIds().stream().distinct().sorted().toList(),
 					spec.getConsumerHopIds());
+			}
+			Assert.assertEquals("Runtime fallback remains forbidden", 0L,
+				PlacementEmissionTransaction.observabilitySnapshot().runtimeFallbackCount());
+			Assert.assertEquals("Runtime repair remains forbidden", 0L,
+				PlacementEmissionTransaction.observabilitySnapshot().runtimeRepairCount());
 		}
 		finally {
 			TestUtils.shutdownThreads(worker1, worker2);

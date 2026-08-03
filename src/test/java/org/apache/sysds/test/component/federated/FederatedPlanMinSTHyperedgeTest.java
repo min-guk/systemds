@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.apache.sysds.common.Types.AggOp;
 import org.apache.sysds.common.Types.ExecType;
@@ -393,6 +394,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 		}
 	}
 
+	@Ignore("Legacy graph obligation registrar was removed at the exact-physical cutover; covered by MinStExactPhysicalModelCertificateTest#physicalSelectionAndProjectorPreserveExactReceipts")
 	@Test
 	public void testSelectedUObligationExtractedForCpLoutChildWithFedConsumers() throws Exception {
 		FederatedPlannerUtils.registerFedInitVar("X_anchor", FType.ROW,
@@ -471,6 +473,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 		}
 	}
 
+	@Ignore("Legacy graph obligation registrar was removed at the exact-physical cutover; covered by MinStExactProjectionAuthorityPreservationRedTest")
 	@Test
 	public void testSelectedDObligationRegistersLocalMaterialize() throws Exception {
 		FederatedLocalMaterializeRegistry.clear();
@@ -1462,6 +1465,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 			uploadBase + penalty, g.getEdgeWeight(uploadEdge), 1e-9);
 	}
 
+	@Ignore("Legacy graph FType-map builder was removed at the exact-physical cutover; selected physical states now carry FType identity directly")
 	@Test
 	@SuppressWarnings("unchecked")
 	public void testBuildPlannedFTypeMapKeepsLoutHintWhenCpFoutTypeMissing() throws Exception {

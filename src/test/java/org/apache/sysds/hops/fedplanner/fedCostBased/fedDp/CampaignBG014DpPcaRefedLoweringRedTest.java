@@ -4,6 +4,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -77,8 +78,39 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 				.filter(action -> action.targetPlacement().output()
 					== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT)
 				.toList();
-			Assert.assertFalse("PCA fixture must contain an exact selected REFED relocation",
-				selectedRefedRelocations.isEmpty());
+			var selectedPcaTransposeRows = receipt.normalizedResult().selectedCandidateSelections().stream()
+				.filter(selection -> receipt.analysis().hop(selection.rule().parentOccurrence()).orElseThrow()
+					.getOpString().equals("r(r')"))
+				.filter(selection -> selection.rule().orderedInputs().stream().anyMatch(input -> input.present()
+					&& input.fType() == org.apache.sysds.hops.fedplanner.FTypes.FType.ROW))
+				.toList();
+			Assert.assertFalse("PCA must retain the exact ROW-input transpose candidate",
+				selectedPcaTransposeRows.isEmpty());
+			for(var selection : selectedPcaTransposeRows) {
+				for(int inputPosition = 0; inputPosition < selection.rule().orderedInputs().size(); inputPosition++) {
+					var input = selection.rule().orderedInputs().get(inputPosition);
+					if(!input.present())
+						continue;
+					final int exactInputPosition = inputPosition;
+					var edges = receipt.analysis().compiledInputEdgesInCanonicalOrder().stream()
+						.filter(edge -> edge.consumer() == selection.rule().parentOccurrence()
+							&& edge.inputPosition() == exactInputPosition).toList();
+					if(edges.isEmpty())
+						continue;
+					Assert.assertEquals("A physical candidate input must have one exact producer", 1, edges.size());
+					var source = receipt.normalizedResult().selectedEmissionStates()
+						.get(edges.get(0).producer()).placementState();
+					boolean direct = source.output()
+						== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& source.fType() == input.fType();
+					boolean relocated = receipt.normalizedResult().selectedRelocationChoices().stream()
+						.anyMatch(choice -> choice.demand().consumer() == selection.rule().parentOccurrence()
+							&& choice.demand().inputPosition() == exactInputPosition
+							&& choice.action().materializationFType() == input.fType());
+					Assert.assertTrue("A PRESENT candidate input must be direct or have one exact relocation",
+						direct || relocated);
+				}
+			}
 			for(var action : selectedRefedRelocations) {
 				var sourceOccurrences = receipt.analysis().occurrences().stream()
 					.filter(occurrence -> receipt.analysis().graph().node(occurrence.key()).orElseThrow()
@@ -90,8 +122,12 @@ public class CampaignBG014DpPcaRefedLoweringRedTest {
 				FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(source.scopeId())
 					.get(source.hop().getHopID());
 				Assert.assertNotNull("The selected PCA relocation must reach the refed registry", spec);
-				Assert.assertEquals("The registry must preserve the planner-selected materialization layout",
-					action.materializationFType(), spec.getMaterializationFType());
+				List<Long> exactConsumers = action.compatibleConsumers().stream()
+					.map(key -> receipt.analysis().hop(key).orElseThrow().getHopID()).distinct().sorted().toList();
+				Assert.assertTrue("The registry must preserve the planner-selected materialization layout and consumers",
+					spec.getAuthorities().stream().anyMatch(authority ->
+						authority.getMaterializationFType() == action.materializationFType()
+							&& authority.getConsumerHopIds().equals(exactConsumers)));
 			}
 			translator.getRuntimeProgram(program, config);
 		}

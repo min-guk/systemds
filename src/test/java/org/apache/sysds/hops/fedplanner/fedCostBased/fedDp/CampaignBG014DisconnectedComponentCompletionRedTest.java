@@ -73,17 +73,46 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		for(var applied : receipt.appliedPlans())
 			collectTraversedPlanCarriers(receipt.memo(), applied.plan(), traversed, visitedPlans);
 
-		List<CompiledHopKey> exactNeutralDecisions = traversed.stream()
-			.filter(decisions::contains).sorted().toList();
-		Assert.assertEquals("concrete traversal must retain exact neutral-decision identity",
-			decisions.stream().sorted().toList(), exactNeutralDecisions);
-		Assert.assertTrue("all exact neutral decisions must still be reached by concrete plan traversal",
-			traversed.containsAll(decisions));
+		Assert.assertFalse("DP receipt must publish at least one concrete applied-plan traversal",
+			traversed.isEmpty());
+		Set<CompiledHopKey> certified = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(var term : receipt.finalPlanCertificate().terms()) {
+			if(term.retainedPlan() == null)
+				continue;
+			Assert.assertSame("certificate term retained a foreign exact plan carrier",
+				term.occurrence(), receipt.memo().requirePlanCarrierOccurrence(
+					term.retainedPlan().getHopRef()).key());
+			certified.add(term.occurrence());
+		}
+		Assert.assertEquals("final plan forest must retain every exact neutral-decision carrier",
+			decisions, certified);
 		Assert.assertEquals("component capture published traversal-only carriers as placement decisions",
 			decisions, receipt.normalizedResult().selectedEmissionStates().keySet());
 		Assert.assertSame(receipt.analysis(), receipt.exactSelection().analysis());
 		Assert.assertSame(receipt.memo(), receipt.exactSelection().memo());
 		Assert.assertSame(receipt.legacyOptimalPlan(), receipt.exactSelection().legacyOptimalPlan());
+		Assert.assertSame("the final objective certificate must bind the same analysis",
+			receipt.analysis(), receipt.finalPlanCertificate().analysis());
+		Assert.assertSame("the final objective certificate must bind the retained memo",
+			receipt.memo(), receipt.finalPlanCertificate().memo());
+		Assert.assertEquals("normalized DP metadata must certify the emitted final forest, not the legacy root",
+			"objectiveBits=" + receipt.finalPlanCertificate().objectiveCostBits(),
+			receipt.normalizedResult().objectiveCertificate());
+		Assert.assertEquals("every normalized decision must have one exact retained-plan term",
+			receipt.normalizedResult().selectedStates().size(),
+			receipt.finalPlanCertificate().terms().size());
+		double independentlyFoldedFinalCost = 0;
+		for(var term : receipt.finalPlanCertificate().terms())
+			independentlyFoldedFinalCost += Double.longBitsToDouble(term.exclusiveRecurrenceCostBits());
+		for(var term : receipt.finalPlanCertificate().terms())
+			if(term.retainedPlan() != null)
+				independentlyFoldedFinalCost += term.retainedPlan().getPhysicalChildBoundaryCost();
+		Assert.assertEquals("final certificate bits must equal an independent canonical term fold",
+			Double.doubleToRawLongBits(independentlyFoldedFinalCost),
+			receipt.finalPlanCertificate().objectiveCostBits());
+		assertEnumeratorCapturedAmortizedLoutRecurrence(receipt);
+		Assert.assertNotEquals("disconnected completion must not keep publishing the legacy aggregate objective",
+			receipt.exactSelection().objectiveCostBits(), receipt.finalPlanCertificate().objectiveCostBits());
 		Assert.assertEquals(Double.doubleToRawLongBits(receipt.legacyOptimalPlan().getCumulativeCost()),
 			receipt.exactSelection().objectiveCostBits());
 		Assert.assertEquals(receipt.analysisFingerprintBefore(), receipt.analysisFingerprintAfter());
@@ -91,6 +120,35 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		Assert.assertEquals(0, receipt.counters().repairCount());
 		Assert.assertEquals(0, receipt.counters().reenumerationCount());
 		Assert.assertEquals(0, receipt.counters().doubleApplicationCount());
+	}
+
+	private static void assertEnumeratorCapturedAmortizedLoutRecurrence(DpInvocationReceipt receipt) {
+		boolean verifiedSharedChild = false;
+		for(var term : receipt.finalPlanCertificate().terms()) {
+			FedPlan parent = term.retainedPlan();
+			if(parent == null || parent.getExecType() != ExecType.CP
+				|| parent.getFedOutType() != FederatedOutput.LOUT
+				|| parent.getChildFedPlans().isEmpty()
+				|| parent.getPhysicalChildBoundaryCost() != 0d
+				|| parent.getChildFedPlans().stream().anyMatch(edge -> edge.getValue() != FederatedOutput.LOUT))
+				continue;
+			double independentlyComputedEmbedded = 0d;
+			boolean hasMultiParentChild = false;
+			for(var edge : parent.getChildFedPlans()) {
+				FedPlan child = receipt.memo().getFedPlanAfterPrune(edge);
+				Assert.assertNotNull(child);
+				independentlyComputedEmbedded += FederatedPlannerDpCostEstimator
+					.computeCumulativeCostShareForParent(child.getCumulativeCost(), child);
+				hasMultiParentChild |= child.getNumOfParents() >= 2;
+			}
+			if(!hasMultiParentChild)
+				continue;
+			Assert.assertEquals("production enumerator must retain the exact amortized child recurrence",
+				independentlyComputedEmbedded, parent.getEmbeddedChildRecurrenceCost(), 0d);
+			verifiedSharedChild = true;
+		}
+		Assert.assertTrue("B-05 must exercise an enumerated CP/LOUT arm with numParents>=2 child",
+			verifiedSharedChild);
 	}
 
 	private static void collectTraversedPlanCarriers(FederatedPlannerDpMemoTable memo, FedPlan plan,
@@ -107,7 +165,8 @@ public class CampaignBG014DisconnectedComponentCompletionRedTest {
 		IllegalStateException failure) {
 		String prefix = "DP disconnected component coverage differs: expected=";
 		String message = String.valueOf(failure.getMessage());
-		Assert.assertTrue("focused RED must reach disconnected-component capture", message.startsWith(prefix));
+		Assert.assertTrue("focused RED must reach disconnected-component capture; actual=" + message,
+			message.startsWith(prefix));
 		int actualOffset = message.indexOf(" actual=", prefix.length());
 		Assert.assertTrue("coverage RED must expose the current component and observed source delta",
 			actualOffset > prefix.length());

@@ -91,7 +91,6 @@ import org.apache.sysds.parser.StatementBlock.InlinedFunctionInputBoundary;
 import org.apache.sysds.parser.StatementBlock.InlinedFunctionOutputBoundary;
 import org.apache.sysds.parser.WhileStatement;
 import org.apache.sysds.parser.WhileStatementBlock;
-import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
@@ -294,7 +293,7 @@ public final class NeutralPlacementGraphBuilder {
 			ordinalsByBlock);
 		CandidateMaterializationClosure materializationClosure =
 			closeDerivedWorkerPoolMaterializationCandidates(nodes, candidateRuleFacts,
-				compiledInputEdges, logicalTransientInputs, origins, factsByHop);
+				compiledInputEdges, logicalTransientInputs, constraints, origins, factsByHop);
 		nodes = materializationClosure.nodes();
 		candidateRuleFacts = materializationClosure.candidateRuleFacts();
 		boolean functionClosureConverged = false;
@@ -319,22 +318,15 @@ public final class NeutralPlacementGraphBuilder {
 			candidateRuleDomainKeys = functionReplay.domainKeys();
 			candidateRuleFacts = functionReplay.facts();
 			materializationClosure = closeDerivedWorkerPoolMaterializationCandidates(nodes,
-				candidateRuleFacts, compiledInputEdges, logicalTransientInputs, origins, factsByHop);
+				candidateRuleFacts, compiledInputEdges, logicalTransientInputs, constraints, origins, factsByHop);
 			nodes = materializationClosure.nodes();
 			candidateRuleFacts = materializationClosure.candidateRuleFacts();
 		}
 		if(!functionClosureConverged)
 			throw new IllegalStateException("Logical function input candidate closure did not converge");
 		nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
-		Map<CompiledHopKey,NodeShapeFact> relocationShapes = new IdentityHashMap<>();
-		for(Node node : nodes) {
-			Hop origin = origins.get(node.key());
-			NodeShapeFact shape = origin == null ? null : factsByHop.get(origin);
-			if(shape != null)
-				relocationShapes.put(node.key(), shape);
-		}
 		List<NeutralPlacementGraph.RelocationAction> relocations = relocations(compiledInputEdges, candidateRuleFacts,
-			nodes, logicalTransientInputs, scopes, relocationShapes);
+			nodes, logicalTransientInputs, constraints, origins, scopes);
 		NeutralPlacementGraph graph = new NeutralPlacementGraph(nodes, constraints, relocations);
 		List<HopOccurrenceProjection> projections = new ArrayList<>(graph.nodes().size());
 		for(int ordinal = 0; ordinal < graph.nodes().size(); ordinal++) {
@@ -461,8 +453,19 @@ public final class NeutralPlacementGraphBuilder {
 							continue;
 						}
 					}
-					if(!supportedLocalPathNode(graph, shapeFacts, edge.consumer()))
+					if(!supportedLocalPathNode(graph, shapeFacts, edge.consumer())) {
+						// A dependent consumer that cannot participate in the vector
+						// re-entry analysis is still a local terminal when no exact
+						// frontier was proven. Otherwise FedAll could synthesize an
+						// unapproved upload at that very edge (for example local vector
+						// -> scalar aggregate). Compiler/function boundaries remain
+						// excluded because they require their own explicit path contract.
+						if(supportedLocalTerminalNode(graph, edge.consumer())) {
+							usedEdges.add(edge);
+							localPrefix.add(edge.consumer());
+						}
 						continue;
+					}
 					usedEdges.add(edge);
 					if(localPrefix.add(edge.consumer()))
 						pending.addLast(edge.consumer());
@@ -549,7 +552,12 @@ public final class NeutralPlacementGraphBuilder {
 			|| !candidate.profile().available()
 			|| !candidate.profile().producerOutputs().contains(action.key().durableAnchor().fType())
 			|| inputPosition >= candidate.key().orderedInputs().size()
-			|| !candidate.key().orderedInputs().get(inputPosition).equals(CandidateInputState.absentLocal()))
+			// Re-entry is an explicit planner-owned LOUT->FOUT relocation.  The
+			// selected runtime row must therefore consume the relocated federated
+			// value as PRESENT; ABSENT_LOCAL would describe native coordinator-local
+			// execution and cannot justify emitting this relocation obligation.
+			|| !candidate.key().orderedInputs().get(inputPosition).equals(
+				CandidateInputState.present(action.key().materializationFType())))
 			return;
 		PlacementState consumerState = action.key().targetPlacement();
 		Node consumerNode = graph.node(consumer).orElseThrow();
@@ -590,6 +598,15 @@ public final class NeutralPlacementGraphBuilder {
 		return supportedPathOccurrence(key) && node.kind() != NodeKind.FUNCTION_CALL
 			&& node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT
 			&& node.kind() != NodeKind.FUNCTION_BODY_NON_EMITTED && isVector(shapeFacts.shapeFact(key).orElse(null));
+	}
+
+	private static boolean supportedLocalTerminalNode(NeutralPlacementGraph graph,
+		CompiledHopKey key) {
+		Node node = graph.node(key).orElseThrow();
+		return supportedPathOccurrence(key) && node.emittedWork()
+			&& node.kind() != NodeKind.FUNCTION_CALL && node.kind() != NodeKind.FUNCTION_INPUT
+			&& node.kind() != NodeKind.FUNCTION_OUTPUT
+			&& node.kind() != NodeKind.FUNCTION_BODY_NON_EMITTED;
 	}
 
 	private static boolean supportedPathOccurrence(CompiledHopKey key) {
@@ -788,8 +805,10 @@ public final class NeutralPlacementGraphBuilder {
 	private static String registrySentinel(DMLProgram program) {
 		List<String> rows = new ArrayList<>();
 		for(long sbId : PlacementGraphFingerprint.statementBlockIds(program)) {
-			FederatedRefedRegistry.snapshot(sbId).forEach((hop, spec) -> rows.add("R|" + sbId + '|' + hop + '|'
-				+ spec.getAnchorHopId() + '|' + spec.getAnchorKey()));
+			FederatedRefedRegistry.snapshot(sbId).forEach((hop, spec) -> spec.getAuthorities().forEach(authority ->
+				rows.add("R|" + sbId + '|' + hop + '|' + authority.getAnchorHopId() + '|'
+					+ authority.getAnchorKey() + '|' + authority.getMaterializationFType() + '|'
+					+ authority.getConsumerInputs())));
 			FederatedFoutMaterializeRegistry.snapshot(sbId).forEach((hop, spec) -> rows.add("F|" + sbId + '|' + hop
 				+ '|' + spec.getAnchorHopId() + '|' + spec.getFTypeHint() + '|' + spec.getAnchorLabel() + '|' + spec.getAnchorKey()));
 			FederatedLocalMaterializeRegistry.snapshotScopes(sbId).forEach((scope, entries) -> entries.forEach((hop, spec) ->
@@ -1891,8 +1910,7 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	private static String valueReference(ValueVersionKey value) {
-		return value.lexicalVariable() + '#' + value.definitionOrdinal() + '@'
-			+ value.definingControlRegion().callSitePath() + ':' + value.versionKind();
+		return value.cfgReferenceSignature();
 	}
 
 	private Node buildNode(Hop hop, CompiledHopKey key, ValueVersionKey value, List<DurableAnchorKey> anchors,
@@ -2347,6 +2365,7 @@ public final class NeutralPlacementGraphBuilder {
 	private static CandidateMaterializationClosure closeDerivedWorkerPoolMaterializationCandidates(
 		List<Node> nodes, List<CandidateRuleFact> candidateRuleFacts,
 		List<CompiledInputEdgeFact> compiledInputEdges, List<LogicalTransientInputFact> logicalTransientInputs,
+		java.util.Collection<Constraint> constraints,
 		Map<CompiledHopKey,Hop> origins,
 		Map<Hop,NodeShapeFact> factsByHop) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
@@ -2355,7 +2374,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer =
 			matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
 		WorkerPoolAnchorResolver resolver = new WorkerPoolAnchorResolver(nodesByKey,
-			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs);
+			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs, constraints, origins);
 		Map<CompiledHopKey,List<Integer>> factIndexesByNode = new IdentityHashMap<>();
 		for(int index = 0; index < candidateRuleFacts.size(); index++)
 			factIndexesByNode.computeIfAbsent(candidateRuleFacts.get(index).key().parentOccurrence(),
@@ -2478,15 +2497,15 @@ public final class NeutralPlacementGraphBuilder {
 	private static List<NeutralPlacementGraph.RelocationAction> relocations(
 		List<CompiledInputEdgeFact> compiledInputEdges, List<CandidateRuleFact> candidateRuleFacts,
 		List<Node> nodes, List<LogicalTransientInputFact> logicalTransientInputs,
-		Map<CompiledHopKey,Long> scopes,
-		Map<CompiledHopKey,NodeShapeFact> shapeFacts) {
+		java.util.Collection<Constraint> constraints,
+		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes) {
 		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
 		for(Node node : nodes)
 			nodesByKey.put(node.key(), node);
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer =
 			matrixEdgesByConsumer(compiledInputEdges, nodesByKey);
 		WorkerPoolAnchorResolver workerPoolAnchors = new WorkerPoolAnchorResolver(nodesByKey,
-			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs);
+			matrixEdgesByConsumer, candidateRuleFacts, logicalTransientInputs, constraints, origins);
 		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByConsumer = new IdentityHashMap<>();
 		for(CandidateRuleFact fact : candidateRuleFacts)
 			candidateFactsByConsumer.computeIfAbsent(fact.key().parentOccurrence(),
@@ -2495,7 +2514,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<RelocationGroup,Set<InputUse>> directUses = new java.util.TreeMap<>();
 		for(CandidateRuleFact fact : candidateRuleFacts)
 			addRelocationUsesFromExactCandidateFact(fact, nodesByKey, matrixEdgesByConsumer,
-				workerPoolAnchors, candidateFactsByConsumer, scopes, shapeFacts, uses, directUses);
+				workerPoolAnchors, candidateFactsByConsumer, origins, scopes, uses, directUses);
 		List<NeutralPlacementGraph.RelocationAction> result = new ArrayList<>();
 		for(Map.Entry<RelocationGroup,Set<InputUse>> entry : uses.entrySet()) {
 			RelocationGroup group = entry.getKey();
@@ -2522,8 +2541,7 @@ public final class NeutralPlacementGraphBuilder {
 		Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
 		WorkerPoolAnchorResolver workerPoolAnchors,
 		Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByConsumer,
-		Map<CompiledHopKey,Long> scopes,
-		Map<CompiledHopKey,NodeShapeFact> shapeFacts,
+		Map<CompiledHopKey,Hop> origins, Map<CompiledHopKey,Long> scopes,
 		Map<RelocationGroup,Set<InputUse>> uses,
 		Map<RelocationGroup,Set<InputUse>> directUses) {
 		// Relocations are planner feasibility edges proven by an exact AVAILABLE candidate-rule fact:
@@ -2543,6 +2561,10 @@ public final class NeutralPlacementGraphBuilder {
 		// for already-federated arguments and lower them as an illegal single-leg fed_refed operation.
 		if(consumer.kind() == NodeKind.FUNCTION_CALL)
 			return;
+		Hop consumerHop = origins.get(consumer.key());
+		if(consumerHop == null)
+			throw new IllegalStateException("Relocation candidate has no compiled Hop origin: "
+				+ consumer.key());
 		Map<Integer,CompiledInputEdgeFact> matrixEdges = matrixEdgesByConsumer.getOrDefault(consumer.key(), Map.of());
 		Set<DurableAnchorKey> anchors = new java.util.TreeSet<>();
 		List<InputUseSeed> absentMatrixInputs = new ArrayList<>();
@@ -2552,18 +2574,32 @@ public final class NeutralPlacementGraphBuilder {
 			CandidateInputState input = inputs.get(inputPosition);
 			CompiledInputEdgeFact edge = matrixEdges.get(inputPosition);
 			if(input.present()) {
+				// Candidate rules include scalar/broadcast inputs as PRESENT, but scalar
+				// values are shipped as instruction operands and do not own a matrix
+				// FederationMap receipt. They must not suppress receipts for the other
+				// physical matrix inputs of the same exact row.
+				if(edge == null && inputPosition < consumerHop.getInput().size()
+					&& !consumerHop.getInput(inputPosition).getDataType().isMatrix())
+					continue;
 				if(edge == null)
 					return;
-				List<DurableAnchorKey> matching = workerPoolAnchors.resolve(edge.producer(), input.fType())
-					.stream().toList();
-				if(matching.size() != 1)
-					return;
-				anchors.add(matching.get(0));
-				Node source = nodesByKey.get(edge.producer());
-				if(source.legalAlternatives().stream().anyMatch(state ->
-					state.output() == FederatedOutput.LOUT))
-					presentMatrixInputs.add(new PresentInputUseSeed(source.valueVersion(), consumer.key(),
-						edge.inputPosition(), input.fType()));
+			List<DurableAnchorKey> matching = workerPoolAnchors.resolve(edge.producer(), input.fType())
+				.stream().toList();
+			// A PRESENT input without its own durable anchor is still legal when a
+			// sibling PRESENT input supplies an exact worker-pool anchor: this input
+			// can be CP->FOUT or FED->LOUT->FOUT relocated to that pool.  Requiring
+			// every input to resolve an anchor here incorrectly closed mixed-layout
+			// rows such as t(X) %*% X.  Retain every real anchor we can prove and
+			// publish an exact action for every PRESENT input below; if none of the
+			// inputs proves an anchor, the existing anchors.isEmpty() gate still
+			// rejects the row without inventing placement metadata.
+			anchors.addAll(matching);
+			Node source = nodesByKey.get(edge.producer());
+				// Every physical PRESENT input needs an explicit receipt, including an exact
+				// direct-only federated source.  Otherwise equal FType alone could make inputs
+				// from different worker pools look jointly executable with no relocation.
+				presentMatrixInputs.add(new PresentInputUseSeed(source.valueVersion(), consumer.key(),
+					edge.inputPosition(), input.fType()));
 			}
 			else if(edge != null) {
 				Node source = nodesByKey.get(edge.producer());
@@ -2571,9 +2607,17 @@ public final class NeutralPlacementGraphBuilder {
 					edge.inputPosition()));
 			}
 		}
-		if(anchors.size() != 1 || absentMatrixInputs.isEmpty())
+		// A PRESENT input still needs an exact relocation alternative when its producer is
+		// selected LOUT.  Requiring an unrelated ABSENT_LOCAL sibling here dropped that
+		// legal FED->LOUT->FOUT path for single-input forwarding nodes such as TWrite and
+		// made the physical MinST domain strictly smaller than the runtime-supported space.
+		if(anchors.isEmpty() || absentMatrixInputs.isEmpty() && presentMatrixInputs.isEmpty())
 			return;
-		DurableAnchorKey anchor = anchors.iterator().next();
+		List<DurableAnchorKey> targetAnchors = new ArrayList<>();
+		for(DurableAnchorKey anchor : anchors)
+			if(targetAnchors.stream().noneMatch(existing ->
+				PlacementIdentity.samePhysicalWorkerPool(existing, anchor)))
+				targetAnchors.add(anchor);
 		Long scopeId = scopes.get(consumer.key());
 		if(scopeId == null)
 			throw new IllegalStateException("Relocation consumer has no statement-block scope: " + consumer.key());
@@ -2585,36 +2629,30 @@ public final class NeutralPlacementGraphBuilder {
 		// source decision remains FOUT. If the cut selects that source LOUT, an existing exact
 		// anchor permits the documented FED->LOUT->FOUT rematerialization. Publish that obligation
 		// explicitly so the solver can price and emit it instead of accepting an unauthorised edge.
-		for(PresentInputUseSeed seed : presentMatrixInputs)
-			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
-				PlacementState target = emission.emissionState().placementState();
-				if(target.execType() != ExecType.FED || !consumer.legalAlternatives().contains(target)
-					|| seed.materializationFType() == FType.PART
-					|| seed.materializationFType() == FType.OTHER)
-					continue;
-				RelocationGroup group = new RelocationGroup(seed.source(), target,
-					seed.materializationFType(), anchor, scope);
-				InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
-				uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
-				directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
-			}
-		for(InputUseSeed seed : absentMatrixInputs) {
-			List<PostMaterializationCandidate> materializedCandidates = exactPostMaterializationCandidates(fact,
-				seed.position(), candidateFactsByConsumer.getOrDefault(consumer.key(), List.of()),
-				workerPoolAnchors, anchor, consumer);
-			boolean exactPresentInputProof = !materializedCandidates.isEmpty();
-			if(materializedCandidates.isEmpty()) {
-				CompiledInputEdgeFact edge = matrixEdges.get(seed.position());
-				NodeShapeFact sourceShape = edge == null ? null : shapeFacts.get(edge.producer());
-				materializedCandidates = exactPreMaterializationFallback(fact, anchor, consumer, sourceShape);
-			}
-			for(PostMaterializationCandidate materialized : materializedCandidates) {
-				RelocationGroup group = new RelocationGroup(seed.source(), materialized.target(),
-					materialized.materializationFType(), anchor, scope);
-				InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
-				uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
-				if(exactPresentInputProof)
+		for(DurableAnchorKey anchor : targetAnchors) {
+			for(PresentInputUseSeed seed : presentMatrixInputs)
+				for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
+					PlacementState target = emission.emissionState().placementState();
+					if(target.execType() != ExecType.FED || !consumer.legalAlternatives().contains(target)
+						|| seed.materializationFType() == FType.PART
+						|| seed.materializationFType() == FType.OTHER)
+						continue;
+					RelocationGroup group = new RelocationGroup(seed.source(), target,
+						seed.materializationFType(), anchor, scope);
+					InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
+					uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
 					directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
+				}
+			for(InputUseSeed seed : absentMatrixInputs) {
+				List<PostMaterializationCandidate> materializedCandidates = exactPostMaterializationCandidates(fact,
+					seed.position(), candidateFactsByConsumer.getOrDefault(consumer.key(), List.of()), consumer);
+				for(PostMaterializationCandidate materialized : materializedCandidates) {
+					RelocationGroup group = new RelocationGroup(seed.source(), materialized.target(),
+						materialized.materializationFType(), anchor, scope);
+					InputUse use = new InputUse(seed.consumer(), seed.position(), scope);
+					uses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
+					directUses.computeIfAbsent(group, ignored -> new java.util.TreeSet<>()).add(use);
+				}
 			}
 		}
 	}
@@ -2629,7 +2667,8 @@ public final class NeutralPlacementGraphBuilder {
 		Node source = sources.get(0);
 		Set<DurableAnchorKey> provenPools = workerPoolAnchors.resolve(source.key(),
 			group.materializationFType());
-		if(provenPools.size() != 1 || !provenPools.contains(group.anchor()))
+		if(provenPools.isEmpty() || provenPools.stream().noneMatch(anchor ->
+			PlacementIdentity.samePhysicalWorkerPool(anchor, group.anchor())))
 			return List.of();
 		return source.legalAlternatives().stream()
 			.filter(state -> state.output() == FederatedOutput.FOUT)
@@ -2647,7 +2686,7 @@ public final class NeutralPlacementGraphBuilder {
 	 */
 	private static List<PostMaterializationCandidate> exactPostMaterializationCandidates(
 		CandidateRuleFact seed, int inputPosition, List<CandidateRuleFact> candidates,
-		WorkerPoolAnchorResolver workerPoolAnchors, DurableAnchorKey anchor, Node consumer) {
+		Node consumer) {
 		List<PostMaterializationCandidate> result = new ArrayList<>();
 		List<CandidateInputState> seedInputs = seed.key().orderedInputs();
 		if(inputPosition < 0 || inputPosition >= seedInputs.size()
@@ -2668,10 +2707,10 @@ public final class NeutralPlacementGraphBuilder {
 			FType materializationFType = materializedInputs.get(inputPosition).fType();
 			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
 				continue;
-			Set<DurableAnchorKey> resolved = workerPoolAnchors
-				.resolveSameFullWorkerPoolCandidateInputs(candidate);
-			if(resolved.size() != 1 || !resolved.contains(anchor))
-				continue;
+			// The seed's other PRESENT operands already proved the unique target
+			// anchor.  The excluded operand is precisely the value being relocated,
+			// so requiring its pre-relocation worker pool to equal that target would
+			// reject the legal cross-anchor REFED path we are constructing.
 			for(CandidateEmissionFact emission : candidate.allowedEmissionFacts()) {
 				PlacementState target = emission.emissionState().placementState();
 				if(target.execType() == ExecType.FED && consumer.legalAlternatives().contains(target))
@@ -2690,28 +2729,6 @@ public final class NeutralPlacementGraphBuilder {
 	}
 
 	/**
-	 * Some oracle domains intentionally omit PRESENT states for upload-only local inputs. In that
-	 * case the AVAILABLE pre-upload fact remains the exact runtime authority, while matrix geometry
-	 * proves the conversion layout. This is a conservative compatibility path for those sparse
-	 * domains; it is used only when no exact post-materialization candidate exists.
-	 */
-	private static List<PostMaterializationCandidate> exactPreMaterializationFallback(
-		CandidateRuleFact seed, DurableAnchorKey anchor, Node consumer, NodeShapeFact sourceShape) {
-		FType materializationFType = sourceShape == null ? null
-			: PlacementCostSemantics.exactMaterializationFType(sourceShape, anchor);
-		if(materializationFType == null)
-			return List.of();
-		List<PostMaterializationCandidate> result = new ArrayList<>();
-		for(CandidateEmissionFact emission : seed.allowedEmissionFacts()) {
-			PlacementState target = emission.emissionState().placementState();
-			if(target.execType() == ExecType.FED && emission.executionFType() == anchor.fType()
-				&& consumer.legalAlternatives().contains(target))
-				result.add(new PostMaterializationCandidate(target, materializationFType));
-		}
-		return result.stream().distinct().sorted().toList();
-	}
-
-	/**
 	 * Proves the unique durable worker pool behind a derived FOUT without claiming that the derived value has
 	 * the source value's exact range identity. A direct {@link Node#anchors()} entry remains the stronger exact
 	 * value/FederationMap authority. Otherwise, an AVAILABLE exact candidate may carry worker-pool authority
@@ -2724,15 +2741,25 @@ public final class NeutralPlacementGraphBuilder {
 		private final Map<CompiledHopKey,List<CandidateRuleFact>> candidateFactsByProducer = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Map<FType,List<LogicalTransientInputFact>>> logicalTransientInputsByRead =
 			new IdentityHashMap<>();
+		private final Map<CompiledHopKey,List<CompiledHopKey>> functionInputsByRead = new IdentityHashMap<>();
+		private final Map<String,List<CompiledHopKey>> cfgDefinitionSourcesByReference = new LinkedHashMap<>();
+		private final Map<CompiledHopKey,Hop> origins;
 		private final Map<CompiledHopKey,Map<FType,Set<DurableAnchorKey>>> memo = new IdentityHashMap<>();
 		private final Map<CompiledHopKey,Set<FType>> active = new IdentityHashMap<>();
 
 		private WorkerPoolAnchorResolver(Map<CompiledHopKey,Node> nodesByKey,
 			Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> matrixEdgesByConsumer,
 			List<CandidateRuleFact> candidateRuleFacts,
-			List<LogicalTransientInputFact> logicalTransientInputs) {
+			List<LogicalTransientInputFact> logicalTransientInputs,
+			java.util.Collection<Constraint> constraints,
+			Map<CompiledHopKey,Hop> origins) {
 			this.nodesByKey = nodesByKey;
 			this.matrixEdgesByConsumer = matrixEdgesByConsumer;
+			this.origins = origins;
+			for(Node node : nodesByKey.values())
+				cfgDefinitionSourcesByReference.computeIfAbsent(
+					node.valueVersion().cfgReferenceSignature(), ignored -> new ArrayList<>()).add(node.key());
+			cfgDefinitionSourcesByReference.values().forEach(keys -> keys.sort(null));
 			for(CandidateRuleFact fact : candidateRuleFacts)
 				candidateFactsByProducer.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>())
 					.add(fact);
@@ -2742,6 +2769,29 @@ public final class NeutralPlacementGraphBuilder {
 					.computeIfAbsent(fact.federatedFType(), ignored -> new ArrayList<>()).add(fact);
 			logicalTransientInputsByRead.values().forEach(byType ->
 				byType.values().forEach(facts -> facts.sort(null)));
+			Map<CompiledHopKey,List<CompiledHopKey>> argumentsByBoundary = new IdentityHashMap<>();
+			for(Constraint constraint : constraints)
+				if(constraint.kind() == ConstraintKind.CONJUNCTIVE
+					&& (constraint.evidence().startsWith("function-argument:")
+						|| constraint.evidence().startsWith("inlined-function-argument:")))
+					argumentsByBoundary.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+						.add(constraint.left());
+			for(Constraint constraint : constraints) {
+				if(constraint.kind() != ConstraintKind.SAME_PLACEMENT
+					|| !"function-formal-input".equals(constraint.evidence()))
+					continue;
+				List<CompiledHopKey> arguments = argumentsByBoundary.getOrDefault(constraint.left(), List.of());
+				if(arguments.isEmpty())
+					continue;
+				functionInputsByRead.computeIfAbsent(constraint.right(), ignored -> new ArrayList<>())
+					.addAll(arguments);
+			}
+			functionInputsByRead.values().forEach(keys -> {
+				keys.sort(null);
+				for(int index = keys.size() - 1; index > 0; index--)
+					if(keys.get(index).equals(keys.get(index - 1)))
+						keys.remove(index);
+			});
 		}
 
 		private Set<DurableAnchorKey> resolve(CompiledHopKey producer, FType fType) {
@@ -2758,8 +2808,14 @@ public final class NeutralPlacementGraphBuilder {
 				Set<DurableAnchorKey> resolved = directAnchors(producer, fType);
 				if(resolved.isEmpty())
 					resolved = derivedAnchors(producer, fType);
+				if(resolved.isEmpty())
+					resolved = resolveLogicalTransientInput(producer, fType);
+				if(resolved.isEmpty())
+					resolved = resolveFunctionInput(producer, fType);
+				if(resolved.isEmpty())
+					resolved = resolveCfgDefinitionInputs(producer, fType);
 				Set<DurableAnchorKey> immutable = Collections.unmodifiableSet(
-					new java.util.TreeSet<>(resolved));
+					canonicalWorkerPools(resolved));
 				byType.put(fType, immutable);
 				return immutable;
 			}
@@ -2794,6 +2850,9 @@ public final class NeutralPlacementGraphBuilder {
 		private Set<DurableAnchorKey> resolveCandidateInputs(CandidateRuleFact fact) {
 			Map<Integer,CompiledInputEdgeFact> inputsByPosition = matrixEdgesByConsumer
 				.getOrDefault(fact.key().parentOccurrence(), Map.of());
+			Hop owner = origins.get(fact.key().parentOccurrence());
+			if(owner == null)
+				return Set.of();
 			Set<DurableAnchorKey> candidate = null;
 			boolean hasPresentMatrixInput = false;
 			List<CandidateInputState> inputs = fact.key().orderedInputs();
@@ -2801,17 +2860,32 @@ public final class NeutralPlacementGraphBuilder {
 				CandidateInputState input = inputs.get(inputPosition);
 				if(!input.present())
 					continue;
-				hasPresentMatrixInput = true;
 				CompiledInputEdgeFact edge = inputsByPosition.get(inputPosition);
-				if(edge == null)
-					return Set.of();
-				Set<DurableAnchorKey> inputAnchors = resolve(edge.producer(), input.fType());
+				Set<DurableAnchorKey> inputAnchors;
+				if(edge == null) {
+					// Exact CFG TWrite->TRead forwarding is a logical matrix input,
+					// not a fabricated physical Hop edge. Reuse its recorded anchor
+					// authority when resolving a downstream direct receipt.
+					inputAnchors = resolveLogicalTransientInput(
+						fact.key().parentOccurrence(), input.fType());
+					if(inputAnchors.isEmpty() && inputPosition < owner.getInput().size()
+						&& !owner.getInput(inputPosition).getDataType().isMatrix())
+						continue;
+				}
+				else
+					inputAnchors = resolve(edge.producer(), input.fType());
 				if(inputAnchors.isEmpty())
 					return Set.of();
+				hasPresentMatrixInput = true;
 				if(candidate == null)
-					candidate = new java.util.TreeSet<>(inputAnchors);
-				else
-					candidate.retainAll(inputAnchors);
+					candidate = canonicalWorkerPools(inputAnchors);
+				else {
+					Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
+					for(DurableAnchorKey current : candidate)
+						if(inputAnchors.stream().anyMatch(inputAnchor -> sameWorkerPool(current, inputAnchor)))
+							compatible.add(current);
+					candidate = compatible;
+				}
 				if(candidate.isEmpty())
 					return Set.of();
 			}
@@ -2878,27 +2952,83 @@ public final class NeutralPlacementGraphBuilder {
 			return result;
 		}
 
-		private static boolean sameWorkerPool(DurableAnchorKey left, DurableAnchorKey right) {
-			if(left.equals(right))
-				return true;
-			// FULL means the complete logical input resides on one worker. Different variables
-			// legitimately have different placement ids and matrix ranges, but are directly
-			// composable when their canonical worker endpoint is identical. The oracle still
-			// owns operation/FType legality; this check only proves the shared runtime pool.
-			List<String> leftWorkers = canonicalWorkers(left);
-			return left.fType() == FType.FULL && right.fType() == FType.FULL
-				&& !leftWorkers.isEmpty() && leftWorkers.equals(canonicalWorkers(right));
+		private Set<DurableAnchorKey> resolveFunctionInput(CompiledHopKey producer, FType fType) {
+			List<CompiledHopKey> arguments = functionInputsByRead.getOrDefault(producer, List.of());
+			if(arguments.isEmpty())
+				return Set.of();
+			Set<DurableAnchorKey> common = null;
+			for(CompiledHopKey argument : arguments) {
+				Set<DurableAnchorKey> argumentPools = canonicalWorkerPools(resolve(argument, fType));
+				if(argumentPools.isEmpty())
+					return Set.of();
+				if(common == null)
+					common = argumentPools;
+				else {
+					Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
+					for(DurableAnchorKey current : common)
+						if(argumentPools.stream().anyMatch(candidate -> sameWorkerPool(current, candidate)))
+							compatible.add(current);
+					common = compatible;
+				}
+				if(common.isEmpty())
+					return Set.of();
+			}
+			return common == null ? Set.of() : common;
 		}
 
-		private static List<String> canonicalWorkers(DurableAnchorKey anchor) {
-			List<String> workers = new ArrayList<>(anchor.partitions().size());
-			for(AnchorPartition partition : anchor.partitions()) {
-				String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
-				if(worker == null)
-					return List.of();
-				workers.add(worker);
+		/**
+		 * Resolves a branch/loop transient read only when every explicit CFG reaching
+		 * definition proves the same physical worker-pool layout.  The returned key is
+		 * merely a deterministic representative for that pool; it does not collapse the
+		 * distinct value/range identities of the reaching definitions.
+		 */
+		private Set<DurableAnchorKey> resolveCfgDefinitionInputs(CompiledHopKey producer,
+			FType fType) {
+			Node node = nodesByKey.get(producer);
+			if(node == null)
+				return Set.of();
+			List<String> references = node.valueVersion().predecessorVersions().stream()
+				.filter(value -> value.startsWith("cfg-definition:"))
+				.map(value -> value.substring("cfg-definition:".length())).sorted().toList();
+			if(references.isEmpty())
+				return Set.of();
+			Set<DurableAnchorKey> common = null;
+			for(String reference : references) {
+				List<CompiledHopKey> sources = cfgDefinitionSourcesByReference.getOrDefault(reference, List.of());
+				if(sources.isEmpty())
+					return Set.of();
+				Set<DurableAnchorKey> referencePools = new java.util.TreeSet<>();
+				for(CompiledHopKey source : sources)
+					referencePools.addAll(resolve(source, fType));
+				referencePools = canonicalWorkerPools(referencePools);
+				if(referencePools.isEmpty())
+					return Set.of();
+				if(common == null)
+					common = referencePools;
+				else {
+					Set<DurableAnchorKey> compatible = new java.util.TreeSet<>();
+					for(DurableAnchorKey current : common)
+						if(referencePools.stream().anyMatch(candidate -> sameWorkerPool(current, candidate)))
+							compatible.add(current);
+					common = compatible;
+				}
+				if(common.isEmpty())
+					return Set.of();
 			}
-			return List.copyOf(workers);
+			return common == null ? Set.of() : common;
+		}
+
+		private static Set<DurableAnchorKey> canonicalWorkerPools(
+			java.util.Collection<DurableAnchorKey> anchors) {
+			Set<DurableAnchorKey> result = new java.util.TreeSet<>();
+			for(DurableAnchorKey anchor : new java.util.TreeSet<>(anchors))
+				if(result.stream().noneMatch(existing -> sameWorkerPool(existing, anchor)))
+					result.add(anchor);
+			return result;
+		}
+
+		private static boolean sameWorkerPool(DurableAnchorKey left, DurableAnchorKey right) {
+			return PlacementIdentity.samePhysicalWorkerPool(left, right);
 		}
 
 		private static boolean emitsFout(CandidateRuleFact fact, FType fType) {
@@ -2907,6 +3037,7 @@ public final class NeutralPlacementGraphBuilder {
 				.anyMatch(state -> state.execType() == ExecType.FED
 					&& state.output() == FederatedOutput.FOUT && state.fType() == fType);
 		}
+
 	}
 
 	private record PostMaterializationCandidate(PlacementState target, FType materializationFType)

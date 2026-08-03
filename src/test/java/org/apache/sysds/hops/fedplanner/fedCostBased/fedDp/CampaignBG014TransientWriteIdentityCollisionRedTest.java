@@ -29,7 +29,6 @@ import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.DpS
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter.NeutralEnumerationContext;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
-import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
@@ -69,7 +68,7 @@ public class CampaignBG014TransientWriteIdentityCollisionRedTest {
 	}
 
 	@Test
-	public void captureNullPreservesAmbiguityFailureAndExactRepeatedReferenceIsAllowed() throws Exception {
+	public void captureNullPreservesFailureAndRepeatedIdentityIsNotAmbiguous() throws Exception {
 		Fixture ambiguous = fixture("B-09");
 		DataOp read = first(ambiguous.receipt(), OpOpData.TRANSIENTREAD);
 		DataOp write = first(ambiguous.receipt(), OpOpData.TRANSIENTWRITE);
@@ -77,17 +76,17 @@ public class CampaignBG014TransientWriteIdentityCollisionRedTest {
 		try {
 			invoke(read, List.of(write, sameIdClone), ambiguous.receipt().memo(),
 				common(ambiguous.receipt().memo(), read), null);
-			Assert.fail("capture-null ambiguity was accepted");
+			Assert.fail("capture-null transient enumeration was accepted");
 		}
-		catch(DMLRuntimeException expected) {
-			Assert.assertEquals("Ambiguous transient-write child hop " + write.getHopID(), expected.getMessage());
+		catch(IllegalStateException expected) {
+			Assert.assertEquals("Transient-read DP enumeration requires exact neutral capture", expected.getMessage());
 		}
 
 		Fixture repeated = fixture("B-09");
 		DataOp repeatedRead = first(repeated.receipt(), OpOpData.TRANSIENTREAD);
 		DataOp repeatedWrite = first(repeated.receipt(), OpOpData.TRANSIENTWRITE);
-		Assert.assertTrue(invoke(repeatedRead, List.of(repeatedWrite, repeatedWrite), repeated.receipt().memo(),
-			common(repeated.receipt().memo(), repeatedRead), null));
+		Object repeatedCapture = capture(repeated.receipt(), repeated.receipt().memo());
+		invokeAmbiguityGate(repeatedRead, List.of(repeatedWrite, repeatedWrite), repeatedCapture);
 	}
 
 	private static DataOp sameIdClone(DataOp original) throws CloneNotSupportedException {
@@ -121,6 +120,14 @@ public class CampaignBG014TransientWriteIdentityCollisionRedTest {
 			new DpEnumerationObserver() { });
 	}
 
+	private static void invokeAmbiguityGate(DataOp read, List<Hop> children, Object capture)
+		throws Exception {
+		Method method = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod(
+			"rejectAmbiguousTransientWriteHopIds", DataOp.class, List.class, captureClass());
+		method.setAccessible(true);
+		method.invoke(null, read, children, capture);
+	}
+
 	private static Class<?> captureClass() {
 		return java.util.Arrays.stream(FederatedPlannerDpCostEnumerator.class.getDeclaredClasses())
 			.filter(value -> value.getSimpleName().equals("EnumerationCapture")).findFirst().orElseThrow();
@@ -151,6 +158,7 @@ public class CampaignBG014TransientWriteIdentityCollisionRedTest {
 			.filter(DataOp.class::isInstance).map(DataOp.class::cast).filter(value -> value.getOp() == op)
 			.findFirst().orElseThrow(() -> new AssertionError("Fixture lacks " + op));
 	}
+
 
 	private static Fixture fixture(String id) {
 		try {

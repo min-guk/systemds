@@ -1,7 +1,12 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.List;
+
+import org.apache.commons.lang3.tuple.Pair;
 
 import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
@@ -19,6 +24,7 @@ import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 /** Compile-time RED contract for transferring DP memo ownership to exact analysis occurrences. */
 public class CampaignBDpMemoOwnerContractTest {
@@ -86,6 +92,50 @@ public class CampaignBDpMemoOwnerContractTest {
 	}
 
 	@Test
+	public void sameLegacyCoordinatePreservesBothExactCarriersAndRejectsAmbiguousRead() throws Exception {
+		Fixture owner = fixture(ExecType.CP, FederatedOutput.LOUT, false);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
+		Hop firstCarrier = owner.occurrence().hop();
+		Hop secondCarrier = Mockito.spy((Hop) firstCarrier.clone());
+		Mockito.doReturn(firstCarrier.getHopID()).when(secondCarrier).getHopID();
+		Assert.assertNotSame(firstCarrier, secondCarrier);
+		Assert.assertEquals(firstCarrier.getHopID(), secondCarrier.getHopID());
+
+		FedPlanVariants first = variants(firstCarrier, FederatedOutput.LOUT);
+		FedPlanVariants second = variants(secondCarrier, FederatedOutput.LOUT);
+		invokeExactPublication(memo, firstCarrier, first);
+		invokeExactPublication(memo, secondCarrier, second);
+
+		Assert.assertSame(first, memo.getFedPlanVariants(firstCarrier, FederatedOutput.LOUT));
+		Assert.assertSame(second, memo.getFedPlanVariants(secondCarrier, FederatedOutput.LOUT));
+		Assert.assertThrows(IllegalStateException.class,
+			() -> memo.getFedPlanVariants(Pair.of(firstCarrier.getHopID(), FederatedOutput.LOUT)));
+	}
+
+	@Test
+	public void incompatibleChildDecisionHasNoFallbackToFirstVariant() throws Exception {
+		Fixture owner = fixture(ExecType.CP, FederatedOutput.LOUT, false);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
+		FedPlanVariants variants = variants(owner.occurrence().hop(), FederatedOutput.LOUT);
+		long childId = Long.MAX_VALUE - 17;
+		FedPlan incompatible = new FedPlan(1.0, variants,
+			List.of(Pair.of(childId, FederatedOutput.LOUT)));
+		incompatible.setExecType(owner.state().execType());
+		incompatible.setFType(owner.state().fType());
+		incompatible.setSelectedPlacementState(owner.state());
+		variants.addFedPlan(incompatible);
+		memo.addFedPlanVariants(owner.occurrence().hop().getHopID(), FederatedOutput.LOUT, variants);
+
+		Method selector = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"selectCompatiblePlanVariant", FederatedPlannerDpMemoTable.class, long.class,
+			FederatedOutput.class, Map.class);
+		selector.setAccessible(true);
+		Object selected = selector.invoke(null, memo, owner.occurrence().hop().getHopID(),
+			FederatedOutput.LOUT, Map.of(childId, FederatedOutput.FOUT));
+		Assert.assertNull("incompatible first variant must not be used as a fallback", selected);
+	}
+
+	@Test
 	public void copiedAndForeignOccurrencesRejectWithoutChangingSelection() {
 		Fixture owner = fixture(ExecType.FED, FederatedOutput.FOUT, true);
 		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(owner.analysis());
@@ -149,6 +199,21 @@ public class CampaignBDpMemoOwnerContractTest {
 		common.setSelfCost(0x1.0p-4);
 		common.setForwardingCost(0x1.0p-3);
 		return new FedPlanVariants(common, output);
+	}
+
+	private static void invokeExactPublication(FederatedPlannerDpMemoTable memo, Hop carrier,
+		FedPlanVariants variants) throws Exception {
+		Method method = FederatedPlannerDpMemoTable.class.getDeclaredMethod("addExactFedPlanVariants",
+			Hop.class, FederatedOutput.class, FedPlanVariants.class);
+		method.setAccessible(true);
+		try {
+			method.invoke(memo, carrier, FederatedOutput.LOUT, variants);
+		}
+		catch(InvocationTargetException ex) {
+			if(ex.getCause() instanceof Exception cause)
+				throw cause;
+			throw ex;
+		}
 	}
 
 	private static FedPlan plan(FedPlanVariants variants, PlacementState exact, double cost) {

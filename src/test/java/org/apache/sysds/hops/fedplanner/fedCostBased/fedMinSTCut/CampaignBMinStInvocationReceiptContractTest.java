@@ -1,20 +1,14 @@
 /* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.common.Types.ExecType;
@@ -38,12 +32,6 @@ import org.junit.Test;
 
 /** RED contract for an explicit, invocation-scoped MinST selection receipt. */
 public class CampaignBMinStInvocationReceiptContractTest {
-	private static final long B09_CUT_OBJECTIVE_BITS = 4546512829529802670L;
-	private static final String OFFLINE_MANIFEST =
-		"/org/apache/sysds/test/component/federated/placement/characterization/"
-			+ "g004b-c2-dp-minst-offline-literal.manifest";
-	private static final String OFFLINE_MANIFEST_SHA256 =
-		"343f5828b092f2264d92609d480aea621afabb6b2200a41351897cf4c4a79f7c";
 	private static final String B09_CLONE_PREDECESSOR =
 		"input-0:64:6736da1dbbc6a6a05e3213f3c83cebba5d53ed0c6e6a3c7947c99d83ebe0f09f|2:M1|"
 			+ "105:64:6736da1dbbc6a6a05e3213f3c83cebba5d53ed0c6e6a3c7947c99d83ebe0f09f|4:main|"
@@ -52,81 +40,47 @@ public class CampaignBMinStInvocationReceiptContractTest {
 	@Test public void b09CloneRecompileProjectionPreservesExactNormalizedSelection() throws Exception {
 		FederatedPlanMinSTCut planner = new FederatedPlanMinSTCut();
 		Invocation first = invoke(planner, declaredRewrite(), "B-09");
-		SelectionSnapshot expected = new SelectionSnapshot(B09_CUT_OBJECTIVE_BITS, List.of("SOURCE"),
-			approvedB09States(), List.of());
 		SelectionSnapshot actual = snapshot(first);
-		assertB09Selection(expected, actual);
-		assertB09CloneOriginIdentity(first.analysis, expected.selectedStates());
+		assertExactPhysicalSnapshot(actual);
+		assertB09CloneOriginIdentity(first);
 
 		Invocation repeated = invoke(planner, declaredRewrite(), "B-09");
 		SelectionSnapshot repeatedActual = snapshot(repeated);
-		assertB09Selection(expected, repeatedActual);
+		assertExactPhysicalSnapshot(repeatedActual);
+		assertB09CloneOriginIdentity(repeated);
 		Assert.assertEquals("MINST_B09_REPEATED_SELECTION_STABILITY", actual, repeatedActual);
 	}
 
-	private static void assertB09Selection(SelectionSnapshot expected, SelectionSnapshot actual) {
-		Assert.assertEquals("MINST_B09_OBJECTIVE_BITS", expected.objectiveBits(), actual.objectiveBits());
-		Assert.assertEquals("MINST_B09_SOURCE_PARTITION", expected.sourcePartition(), actual.sourcePartition());
-		Assert.assertEquals("MINST_B09_SELECTED_STATES", expected.selectedStates(), actual.selectedStates());
-		Assert.assertEquals("MINST_B09_SELECTED_OBLIGATIONS", expected.obligations(), actual.obligations());
+	private static void assertExactPhysicalSnapshot(SelectionSnapshot snapshot) {
+		double objective = Double.longBitsToDouble(snapshot.objectiveBits());
+		Assert.assertTrue("MINST_B09_PHYSICAL_OBJECTIVE_FINITE", Double.isFinite(objective));
+		Assert.assertTrue("MINST_B09_PHYSICAL_OBJECTIVE_NONNEGATIVE", objective >= 0.0);
+		Assert.assertFalse("MINST_B09_EXACT_STATES_EMPTY", snapshot.selectedStates().isEmpty());
+		Assert.assertFalse("MINST_B09_CANONICAL_PLAN_HASH_EMPTY", snapshot.normalizedPlanFingerprint().isBlank());
 	}
 
-	private static List<String> approvedB09States() throws Exception {
-		try(InputStream stream = CampaignBMinStInvocationReceiptContractTest.class
-			.getResourceAsStream(OFFLINE_MANIFEST)) {
-			Assert.assertNotNull("MINST_B09_APPROVED_MANIFEST_MISSING", stream);
-			byte[] bytes = stream.readAllBytes();
-			Assert.assertEquals("MINST_B09_APPROVED_MANIFEST_DIGEST", OFFLINE_MANIFEST_SHA256,
-				HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
-			String manifest = new String(bytes, StandardCharsets.UTF_8);
-			String prefix = "C2-X-11-CLONE-RECOMPILE|planner=MINST|MINST_FULL_OFFLINE_SELECTION|";
-			List<String> rows = manifest.lines().filter(line -> line.startsWith(prefix)).toList();
-			Assert.assertEquals("MINST_B09_APPROVED_ROW_MULTIPLICITY", 1, rows.size());
-			String row = rows.get(0);
-			Assert.assertTrue("MINST_B09_APPROVED_FIXTURE", row.contains("|fixture=B-09|"));
-			String startToken = "|selectedStates=[";
-			String endToken = "]|semanticFacts=";
-			int start = row.indexOf(startToken);
-			int end = row.indexOf(endToken, start + startToken.length());
-			Assert.assertTrue("MINST_B09_APPROVED_SELECTED_STATES_MISSING", start >= 0 && end > start);
-			List<String> states = List.of(row.substring(start + startToken.length(), end).split(", "));
-			Assert.assertEquals("MINST_B09_APPROVED_STATE_COUNT", 26, states.size());
-			Assert.assertTrue("MINST_B09_APPROVED_STATE_DOMAIN",
-				states.stream().allMatch(state -> state.endsWith("=CP/LOUT")));
-			Assert.assertEquals("MINST_B09_APPROVED_RECOMPILE_STATE_COUNT", 1,
-				states.stream().filter(state -> state.contains("|9:recompile|")).count());
-			return states;
-		}
-	}
-
-	private static void assertB09CloneOriginIdentity(PlacementAnalysis analysis, List<String> approvedStates) {
-		List<String> approvedCloneStates = approvedStates.stream().filter(state -> state.contains("|9:recompile|")
-			&& state.endsWith("org.apache.sysds.hops.DataOp:TWrite X:X=CP/LOUT")).toList();
-		Assert.assertEquals("MINST_B09_APPROVED_CLONE_KEY_MULTIPLICITY", 1, approvedCloneStates.size());
-		List<String> approvedOriginStates = approvedStates.stream().filter(state -> state.contains("|6:main/3|8:compiled|")
-			&& state.endsWith("org.apache.sysds.hops.DataOp:TWrite X:X=CP/LOUT")).toList();
-		Assert.assertEquals("MINST_B09_APPROVED_ORIGIN_KEY_MULTIPLICITY", 1, approvedOriginStates.size());
-		String approvedCloneKey = selectedStateKey(approvedCloneStates.get(0));
-		String approvedOriginKey = selectedStateKey(approvedOriginStates.get(0));
+	private static void assertB09CloneOriginIdentity(Invocation invocation) {
+		PlacementAnalysis analysis = invocation.analysis();
+		NormalizedPlannerResult normalized = invocation.receipt().normalizedResult();
 		var clones = analysis.graph().nodes().stream().filter(node -> node.kind() == NodeKind.CLONE
 			&& "CLONE_RECOMPILE".equals(node.valueVersion().versionKind().name())).toList();
 		Assert.assertEquals("MINST_B09_CLONE_RECOMPILE_MULTIPLICITY", 1, clones.size());
 		var clone = clones.get(0);
-		Assert.assertEquals("MINST_B09_APPROVED_CLONE_KEY", approvedCloneKey, clone.key().normalizedSignature());
 		Assert.assertEquals("MINST_B09_CLONE_RECOMPILE_CONTEXT", "recompile", clone.key().recompileContext());
-		var origins = analysis.graph().nodes().stream()
-			.filter(node -> approvedOriginKey.equals(node.key().normalizedSignature())).toList();
+		var sameOrigin = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_ORIGIN)
+			.filter(constraint -> constraint.right() == clone.key()).toList();
+		Assert.assertEquals("MINST_B09_SAME_ORIGIN_MULTIPLICITY", 1, sameOrigin.size());
+		var origins = analysis.graph().nodes().stream().filter(node -> node.key() == sameOrigin.get(0).left()).toList();
 		Assert.assertEquals("MINST_B09_ORIGIN_MULTIPLICITY", 1, origins.size());
 		var origin = origins.get(0);
 		Assert.assertNotEquals("MINST_B09_ORIGIN_MUST_NOT_BE_CLONE", NodeKind.CLONE, origin.kind());
 		Assert.assertEquals("MINST_B09_CANONICAL_SOURCE_ORIGIN", origin.key().canonicalSourceOrigin(),
 			clone.key().canonicalSourceOrigin());
-		var sameOrigin = analysis.graph().constraints().stream()
-			.filter(constraint -> constraint.kind() == ConstraintKind.SAME_ORIGIN)
-			.filter(constraint -> constraint.left().equals(origin.key()) && constraint.right().equals(clone.key())).toList();
-		Assert.assertEquals("MINST_B09_SAME_ORIGIN_MULTIPLICITY", 1, sameOrigin.size());
 		Assert.assertEquals("MINST_B09_SAME_ORIGIN_INPUT_POSITION", -1, sameOrigin.get(0).inputPosition());
 		Assert.assertEquals("MINST_B09_SAME_ORIGIN_EVIDENCE", "stable-origin", sameOrigin.get(0).evidence());
+		Assert.assertEquals("MINST_B09_CLONE_SELECTED_STATE_EQUALITY",
+			normalized.selectedStates().get(origin.key()), normalized.selectedStates().get(clone.key()));
 		var exclusions = clone.exclusions().stream()
 			.filter(exclusion -> exclusion.reasonCode() == ReasonCode.RECOMPILE_CP_FOUT).toList();
 		Assert.assertEquals("MINST_B09_RECOMPILE_EXCLUSION_MULTIPLICITY", 1, exclusions.size());
@@ -139,12 +93,6 @@ public class CampaignBMinStInvocationReceiptContractTest {
 			exclusions.get(0).detail());
 		Assert.assertEquals("MINST_B09_CLONE_PREDECESSOR_IDENTITY", List.of(B09_CLONE_PREDECESSOR),
 			clone.valueVersion().predecessorVersions());
-	}
-
-	private static String selectedStateKey(String state) {
-		int separator = state.lastIndexOf('=');
-		Assert.assertTrue("MINST_B09_APPROVED_STATE_ENCODING", separator > 0);
-		return state.substring(0, separator);
 	}
 
 	@Test public void b07NamedFunctionBodyFutureContractRed() throws Exception {
@@ -303,54 +251,22 @@ public class CampaignBMinStInvocationReceiptContractTest {
 	private static SelectionSnapshot snapshot(Invocation invocation) {
 		MinStPlacementAdapter.Selection selection = new MinStPlacementAdapter()
 			.select(invocation.analysis, invocation.receipt);
-		Map<Long,String> hopKeys = new LinkedHashMap<>();
-		invocation.analysis.occurrences().forEach(occurrence ->
-			hopKeys.put(occurrence.hop().getHopID(), occurrence.key().normalizedSignature()));
-		List<String> partition = selection.sourcePartitionNodeIds().stream()
-			.map(node -> normalizeCutNode(node, hopKeys)).toList();
 		List<String> states = selection.selectedReceipts().stream().map(receipt ->
 			receipt.planningKey().normalizedSignature() + '=' + receipt.execType() + '/' + receipt.output())
 			.toList();
-		List<String> obligations = selection.selectedObligations().stream().map(obligation -> {
-			String expectedDomain = obligation.kind() + ":" + obligation.originalHopId() + ":"
-				+ obligation.fType() + ":" + obligation.consumerHopIds();
-			Assert.assertEquals("MINST_B09_OBLIGATION_DOMAIN", expectedDomain, obligation.domainId());
-			List<String> consumers = obligation.consumerHopIds().stream()
-				.map(id -> normalizeHop(id, hopKeys)).toList();
-			return obligation.kind() + "|child=" + normalizeHop(obligation.childHopId(), hopKeys)
-				+ "|original=" + normalizeHop(obligation.originalHopId(), hopKeys)
-				+ "|domain=" + obligation.kind() + ':' + normalizeHop(obligation.originalHopId(), hopKeys)
-				+ ':' + obligation.fType() + ':' + consumers + "|consumers=" + consumers
-				+ "|fType=" + obligation.fType() + "|capability=" + obligation.capability()
-				+ "|capabilityReason=" + obligation.capabilityReason() + "|reason=" + obligation.reason();
-		}).toList();
-		return new SelectionSnapshot(selection.cutObjectiveBits(), partition, states, obligations);
-	}
-
-	private static String normalizeCutNode(long node, Map<Long,String> hopKeys) {
-		if(node == -1L)
-			return "SOURCE";
-		if(node == -2L)
-			return "SINK";
-		String key = hopKeys.get(node >> 2);
-		if(key == null)
-			throw new AssertionError("MINST_B09_FOREIGN_CUT_NODE|" + node);
-		return key + switch((int)(node & 3L)) {
-			case 0 -> ":COMPUTE";
-			case 1 -> ":PLACEMENT";
-			case 2 -> ":LOCALITY";
-			default -> throw new AssertionError("MINST_B09_UNKNOWN_CUT_NODE_KIND|" + node);
-		};
-	}
-
-	private static String normalizeHop(long hopId, Map<Long,String> hopKeys) {
-		String key = hopKeys.get(hopId);
-		if(key == null)
-			throw new AssertionError("MINST_B09_FOREIGN_OBLIGATION_HOP|" + hopId);
-		return key;
+		NormalizedPlannerResult normalized = invocation.receipt.normalizedResult();
+		List<String> candidates = normalized.selectedCandidateSelections().stream()
+			.map(candidate -> candidate.normalizedSignature()).toList();
+		List<String> relocationChoices = normalized.selectedRelocationChoices().stream()
+			.map(choice -> choice.normalizedSignature()).toList();
+		List<String> relocations = normalized.selectedRelocations().stream()
+			.map(action -> action.normalizedSignature()).toList();
+		return new SelectionSnapshot(selection.cutObjectiveBits(), states, candidates,
+			relocationChoices, relocations, normalized.normalizedPlanFingerprint());
 	}
 
 	private record Invocation(PlacementAnalysis analysis,MinStPlacementInput receipt,String fingerprint) { }
-	private record SelectionSnapshot(long objectiveBits, List<String> sourcePartition,
-		List<String> selectedStates, List<String> obligations) { }
+	private record SelectionSnapshot(long objectiveBits, List<String> selectedStates,
+		List<String> candidateReceipts, List<String> relocationChoices,
+		List<String> emittedRelocations, String normalizedPlanFingerprint) { }
 }

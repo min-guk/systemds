@@ -25,8 +25,12 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmissionFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleKey;
+import org.apache.sysds.runtime.controlprogram.federated.FederationUtils;
 
 /** Structural identities used by the immutable neutral placement graph. */
 public final class PlacementIdentity {
@@ -164,6 +168,12 @@ public final class PlacementIdentity {
 				versionKind.name(), list(predecessorVersions));
 		}
 
+		/** Stable compact identity used by builder-owned CFG definition references. */
+		public String cfgReferenceSignature() {
+			return lexicalVariable + '#' + definitionOrdinal + '@'
+				+ definingControlRegion.callSitePath() + ':' + versionKind;
+		}
+
 		@Override
 		public int compareTo(ValueVersionKey that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
@@ -213,6 +223,42 @@ public final class PlacementIdentity {
 		public int compareTo(DurableAnchorKey that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
 		}
+	}
+
+	/**
+	 * Returns whether two durable anchors describe the same runtime worker-pool layout.
+	 * The placement id names the value that supplied the metadata, not a different physical
+	 * pool. ROW/COL compare the partitioned axis, while FULL/BROADCAST compare the worker
+	 * endpoints because every listed worker owns a complete local operand in those layouts.
+	 */
+	public static boolean samePhysicalWorkerPool(DurableAnchorKey left, DurableAnchorKey right) {
+		Objects.requireNonNull(left, "left anchor");
+		Objects.requireNonNull(right, "right anchor");
+		if(left.equals(right))
+			return true;
+		if(left.fType() != right.fType() || left.fType() == FType.PART || left.fType() == FType.OTHER)
+			return false;
+		List<String> leftLayout = physicalWorkerPoolLayout(left);
+		return !leftLayout.isEmpty() && leftLayout.equals(physicalWorkerPoolLayout(right));
+	}
+
+	private static List<String> physicalWorkerPoolLayout(DurableAnchorKey anchor) {
+		List<String> layout = new ArrayList<>(anchor.partitions().size());
+		for(AnchorPartition partition : anchor.partitions()) {
+			String worker = FederationUtils.canonicalFederatedWorkerAddress(partition.workerId());
+			if(worker == null || worker.isBlank())
+				return List.of();
+			if(anchor.fType() == FType.ROW || anchor.fType() == FType.COL) {
+				int axis = anchor.fType() == FType.ROW ? 0 : 1;
+				if(partition.begin().size() <= axis || partition.end().size() <= axis)
+					return List.of();
+				layout.add(worker + '|' + partition.begin().get(axis) + ':' + partition.end().get(axis));
+			}
+			else
+				layout.add(worker);
+		}
+		Collections.sort(layout);
+		return List.copyOf(layout);
 	}
 
 	public record RelocationActionKey(ValueVersionKey sourceValueVersion,
@@ -279,6 +325,114 @@ public final class PlacementIdentity {
 
 		@Override
 		public int compareTo(ObligationKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Action-independent identity of one exact input materialization demand. */
+	public record RelocationDemandKey(ValueVersionKey sourceValueVersion,
+		CompiledHopKey consumer, int inputPosition, PlacementState requiredPlacement,
+		String callRecompileContext) implements Comparable<RelocationDemandKey> {
+		public RelocationDemandKey {
+			Objects.requireNonNull(sourceValueVersion, "sourceValueVersion");
+			Objects.requireNonNull(consumer, "consumer");
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("inputPosition must be non-negative");
+			Objects.requireNonNull(requiredPlacement, "requiredPlacement");
+			callRecompileContext = requireText(callRecompileContext, "callRecompileContext");
+		}
+
+		public static RelocationDemandKey from(ObligationKey obligation) {
+			Objects.requireNonNull(obligation, "obligation");
+			return new RelocationDemandKey(obligation.sourceValueVersion(), obligation.consumer(),
+				obligation.inputPosition(), obligation.requiredPlacement(),
+				obligation.callRecompileContext());
+		}
+
+		public String normalizedSignature() {
+			return fields(sourceValueVersion.normalizedSignature(), consumer.normalizedSignature(),
+				Integer.toString(inputPosition), requiredPlacement.normalizedSignature(),
+				callRecompileContext);
+		}
+
+		@Override
+		public int compareTo(RelocationDemandKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/** Exact planner choice of one legal materialization alternative for one input demand. */
+	public record RelocationChoiceReceipt(RelocationDemandKey demand,
+		RelocationActionKey action) implements Comparable<RelocationChoiceReceipt> {
+		public RelocationChoiceReceipt {
+			Objects.requireNonNull(demand, "demand");
+			Objects.requireNonNull(action, "action");
+			if(!demand.sourceValueVersion().equals(action.sourceValueVersion())
+				|| !demand.requiredPlacement().equals(action.targetPlacement())
+				|| !action.compatibleConsumers().contains(demand.consumer()))
+				throw new IllegalArgumentException("Relocation choice and demand identities differ");
+		}
+
+		public String normalizedSignature() {
+			return fields(demand.normalizedSignature(), action.normalizedSignature());
+		}
+
+		@Override
+		public int compareTo(RelocationChoiceReceipt that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Legacy serialized shape for the removed sparse-domain fallback authority. New candidate
+	 * receipts reject these entries; an upload must be represented by an exact PRESENT oracle row.
+	 */
+	public record CandidateFallbackMaterialization(int inputPosition, FType materializationFType)
+		implements Comparable<CandidateFallbackMaterialization> {
+		public CandidateFallbackMaterialization {
+			if(inputPosition < 0)
+				throw new IllegalArgumentException("Fallback input position must be non-negative");
+			Objects.requireNonNull(materializationFType, "materializationFType");
+			if(materializationFType == FType.PART || materializationFType == FType.OTHER)
+				throw new IllegalArgumentException("Fallback materialization FType is unsupported");
+		}
+
+		public String normalizedSignature() {
+			return fields(Integer.toString(inputPosition), materializationFType.name());
+		}
+
+		@Override
+		public int compareTo(CandidateFallbackMaterialization that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
+	/**
+	 * Exact candidate row selected for one consumer occurrence. Final placement alone cannot
+	 * distinguish a native ABSENT_LOCAL operand from an explicitly materialized PRESENT operand,
+	 * so every production plan retains the exact oracle row through lowering. The legacy fallback
+	 * list is retained in the record shape for compatibility but must always be empty.
+	 */
+	public record CandidateSelectionReceipt(CandidateRuleKey rule,
+		CandidateEmissionFact emission, List<CandidateFallbackMaterialization> fallbackMaterializations)
+		implements Comparable<CandidateSelectionReceipt> {
+		public CandidateSelectionReceipt {
+			Objects.requireNonNull(rule, "rule");
+			Objects.requireNonNull(emission, "emission");
+			fallbackMaterializations = sorted(fallbackMaterializations, "fallbackMaterializations");
+			if(!fallbackMaterializations.isEmpty())
+				throw new IllegalArgumentException(
+					"ABSENT_LOCAL candidates cannot own post-materialization authority; select an exact PRESENT row");
+		}
+
+		public String normalizedSignature() {
+			return fields(rule.normalizedSignature(), emission.normalizedSignature(),
+				fallbackMaterializations.stream().map(CandidateFallbackMaterialization::normalizedSignature)
+					.reduce((left, right) -> left + ',' + right).orElse(""));
+		}
+
+		@Override
+		public int compareTo(CandidateSelectionReceipt that) {
 			return normalizedSignature().compareTo(that.normalizedSignature());
 		}
 	}

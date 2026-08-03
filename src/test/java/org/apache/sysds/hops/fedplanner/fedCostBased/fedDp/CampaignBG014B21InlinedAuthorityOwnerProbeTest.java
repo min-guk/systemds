@@ -3,15 +3,20 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.List;
 
+import org.apache.sysds.common.Types.ExecType;
 import org.apache.sysds.common.Types.OpOpData;
 import org.apache.sysds.hops.DataOp;
 import org.apache.sysds.hops.Hop;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEvaluationStatus;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,7 +55,20 @@ public class CampaignBG014B21InlinedAuthorityOwnerProbeTest {
 			+ "; EXCLUSIONS=" + exclusionsDump;
 		System.out.println("TASK82 " + dump);
 
-		Assert.fail("TASK82_OWNER_PROBE " + dump);
+		Assert.assertEquals("TWrite A input must have one exact occurrence owner", 1,
+			inputOccurrences.size());
+		CandidateRuleFact rowFact = facts.stream()
+			.filter(fact -> fact.key().orderedInputs().equals(
+				List.of(CandidateInputState.present(FType.ROW))))
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"TWrite A lacks its exact PRESENT ROW authority: " + dump));
+		Assert.assertSame(CandidateEvaluationStatus.AVAILABLE, rowFact.status());
+		Assert.assertNotNull(rowFact.capability());
+		Assert.assertSame(ExecType.FED, rowFact.capability().nativeExec());
+		Assert.assertSame(FederatedOutput.FOUT, rowFact.capability().nativeOutput());
+		Assert.assertSame(FType.ROW, rowFact.capability().nativeFoutFType());
+		Assert.assertTrue("exact input occurrence must be graph-owned",
+			analysis.graph().node(inputOccurrences.get(0).key()).isPresent());
 	}
 
 	private static String occurrence(PlacementAnalysis analysis, HopOccurrenceProjection occurrence) {

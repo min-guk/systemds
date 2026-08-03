@@ -43,10 +43,12 @@ import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.util.HDFSTool;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Focused guard for exact MinST selection-to-carrier projection. */
 public class CampaignBR7MinStExactPlacementProjectorTest {
+	@Ignore("Legacy binary-cut projector is not used by FederatedPlanMinSTCut; covered by MinStExactPhysicalModelCertificateTest and MinStExactProjectionAuthorityPreservationRedTest")
 	@Test
 	public void projectsActualCampaignAnalysesAndReplaysThroughAdapter() throws Exception {
 		int fixtures = 0;

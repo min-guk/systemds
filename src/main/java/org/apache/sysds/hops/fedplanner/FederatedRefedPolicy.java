@@ -67,6 +67,7 @@ import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry.ConsumerInputSpec;
 import org.apache.sysds.parser.DataExpression;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.ForStatement;
@@ -423,6 +424,10 @@ public final class FederatedRefedPolicy {
 				FederatedPlannerUtils.clearFedAnchorKeys();
 			if (roots == null || roots.isEmpty())
 				return;
+			// Anchor discovery may append planner-owned synthetic roots. Never mutate the
+			// caller's root collection: production callers and immutable test fixtures are
+			// both entitled to retain their exact compilation root list.
+			roots = new ArrayList<>(roots);
 			Set<String> runtimeLocalTransientReads = null;
 			Map<Hop, RuntimePlannerPlacement> runtimePlannerPlacements = Collections.emptyMap();
 			if (runtimeContext) {
@@ -602,28 +607,50 @@ public final class FederatedRefedPolicy {
 				// TWrite. This is handled safely by the fed_fout materialization path during
 				// lop insertion (see Dag.insertFoutMaterializeLops special handling).
 				if (hop.getFederatedOutput() == FederatedOutput.FOUT) {
+					ExecType writeExec = getPlannedExecType(hop);
+					if (writeExec == null)
+						writeExec = ExecType.CP;
+					if (runtimeContext && writeExec != ExecType.FED)
+						throw invalidRuntimePlan(hop,
+							"TWrite permits only <CP,LOUT> or <FED,FOUT>; recompile CP/FOUT is forbidden");
 					List<Hop> inputs = hop.getInput();
 					Hop input = (inputs != null && !inputs.isEmpty()) ? inputs.get(0) : null;
-						if (input != null && input.getDataType() != null && input.getDataType().isMatrix()) {
-							ExecType inExec = getPlannedExecType(input);
-							if (inExec == null)
-								inExec = ExecType.CP;
-							boolean inputLocal = inExec == ExecType.CP || (inExec == ExecType.FED && input.hasLocalOutput());
-							if (inputLocal) {
-								AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, true, false, blockAnchor);
-								if (selection == null || selection.key == null) {
-									if (runtimeContext)
-										throw invalidRuntimePlan(hop,
-											"selected FOUT TWrite has a local input but no valid federated anchor");
-									hop.setFederatedOutput(FederatedOutput.LOUT);
-									if (hop.getForcedExecType() == ExecType.FED)
-										hop.setForcedExecType(ExecType.CP);
-									if (fTypeMap != null)
-										fTypeMap.remove(hop.getHopID());
-							} else {
+					if (input != null && input.getDataType() != null && input.getDataType().isMatrix()) {
+						ExecType inExec = getPlannedExecType(input);
+						if (inExec == null)
+							inExec = ExecType.CP;
+						boolean inputLocal = inExec == ExecType.CP
+							|| (inExec == ExecType.FED && input.hasLocalOutput());
+						if (inputLocal) {
+							AnchorSelection selection = selectAnchorWithinBlock(hop, fTypeMap, true, false, blockAnchor);
+							if (selection == null || selection.key == null) {
+								if (runtimeContext)
+									throw invalidRuntimePlan(hop,
+										"selected FOUT TWrite has a local input but no valid federated anchor");
+								hop.setFederatedOutput(FederatedOutput.LOUT);
+								if (hop.getForcedExecType() == ExecType.FED)
+									hop.setForcedExecType(ExecType.CP);
+								if (fTypeMap != null)
+									fTypeMap.remove(hop.getHopID());
+							}
+							else {
+								// A selected federated TWrite is legal only after an exact anchor has
+								// justified the local-input materialization. Do not represent it as CP/FOUT.
+								hop.setForcedExecType(ExecType.FED);
 								// Register materialization for the TWrite itself (not the input hop),
 								// so the lop compiler can wire the federated value into the write.
 								registerCpfoutWithSelection(hop, fTypeMap, sbId, selection, List.of());
+							}
+						}
+						else if (writeExec != ExecType.FED) {
+							AnchorKey inputAnchor = buildAnchorKey(input, fTypeMap);
+							if (inputAnchor == null || inputAnchor.value == null) {
+								hop.setFederatedOutput(FederatedOutput.LOUT);
+								if (fTypeMap != null)
+									fTypeMap.remove(hop.getHopID());
+							}
+							else {
+								hop.setForcedExecType(ExecType.FED);
 							}
 						}
 					}
@@ -826,6 +853,7 @@ public final class FederatedRefedPolicy {
 				registerTransientWriteAnchor((DataOp) hop, fTypeMap, blockAnchor, sbId, conditionalContext);
 			}
 		}
+		assertTransientBoundaryPlacements(all);
 		if (runtimeContext)
 			assertRuntimePlannerPlacementsUnchanged(runtimePlannerPlacements);
 		}
@@ -834,6 +862,26 @@ public final class FederatedRefedPolicy {
 				LOCAL_TR_VARS.remove();
 				RUNTIME_PLAN_LOCKED.remove();
 			}
+		}
+	}
+
+	private static void assertTransientBoundaryPlacements(List<Hop> hops) {
+		if (hops == null)
+			return;
+		for (Hop hop : hops) {
+			if (!(hop instanceof DataOp))
+				continue;
+			OpOpData op = ((DataOp) hop).getOp();
+			if (op != OpOpData.TRANSIENTREAD && op != OpOpData.TRANSIENTWRITE)
+				continue;
+			ExecType exec = getPlannedExecType(hop);
+			if (exec == null)
+				exec = ExecType.CP;
+			FederatedOutput output = hop.getFederatedOutput();
+			boolean legal = (exec == ExecType.CP && output != FederatedOutput.FOUT)
+				|| (exec == ExecType.FED && output == FederatedOutput.FOUT);
+			if (!legal)
+				throw invalidRuntimePlan(hop, "TRead/TWrite permits only <CP,LOUT> or <FED,FOUT>");
 		}
 	}
 
@@ -913,6 +961,21 @@ public final class FederatedRefedPolicy {
 			if (global != null && !isVarAnchor(global))
 				selection = new AnchorSelection(global, null);
 		}
+		boolean transientRead = hop instanceof DataOp
+			&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTREAD;
+		boolean transientWrite = hop instanceof DataOp
+			&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE;
+		ExecType currentExec = getPlannedExecType(hop);
+		if (currentExec == null)
+			currentExec = ExecType.CP;
+		if ((transientRead || transientWrite)
+			&& !((currentExec == ExecType.CP && hop.getFederatedOutput() != FederatedOutput.FOUT)
+				|| (currentExec == ExecType.FED && hop.getFederatedOutput() == FederatedOutput.FOUT)))
+			throw invalidRuntimePlan(hop,
+				"Transient FOUT obligation requires an existing <CP,LOUT> or <FED,FOUT> placement");
+		if ((transientRead || transientWrite) && !hasConcreteAnchorSelection(selection, fTypeMap))
+			throw new DMLRuntimeException("Transient FOUT obligation requires an exact typed federated anchor for hop "
+				+ hop.getHopID() + " (" + hop.getOpString() + ")");
 		ExecType oldExec = hop.getForcedExecType();
 		FederatedOutput oldOut = hop.getFederatedOutput();
 		try {
@@ -921,14 +984,41 @@ public final class FederatedRefedPolicy {
 			// consumers.  Register the runtime rewrite from that selected state,
 			// even if earlier policy phases temporarily marked the same hop as FED
 			// while enforcing upstream transient-read/fed-init feasibility.
-			hop.setForcedExecType(ExecType.CP);
-			hop.setFederatedOutput(FederatedOutput.FOUT);
+			if (transientWrite) {
+				// A selected TWrite materialization is represented only as FED/FOUT, even
+				// temporarily. The original legal planner placement is restored below.
+				hop.setForcedExecType(ExecType.FED);
+				hop.setFederatedOutput(FederatedOutput.FOUT);
+			}
+			else if (!transientRead) {
+				// General local producers retain the existing CP/FOUT obligation path.
+				hop.setForcedExecType(ExecType.CP);
+				hop.setFederatedOutput(FederatedOutput.FOUT);
+			}
 			validateAndRegisterRequired(hop, fTypeMap, sbId, selection, consumers);
 		}
 		finally {
 			hop.setForcedExecType(oldExec);
 			hop.setFederatedOutput(oldOut);
 		}
+	}
+
+	private static boolean hasConcreteAnchorSelection(AnchorSelection selection,
+			java.util.Map<Long, FType> fTypeMap) {
+		if (selection == null || selection.key == null)
+			return false;
+		String literalKey = toAnchorKeyString(selection);
+		if (literalKey != null) {
+			FType literalType = getFTypeFromAnchorKey(literalKey);
+			if (literalType != null && literalType != FType.PART && literalType != FType.OTHER)
+				return true;
+		}
+		if (selection.anchorHop == null)
+			return false;
+		FType type = getKnownFType(selection.anchorHop, fTypeMap);
+		if (type != null)
+			return type != FType.PART && type != FType.OTHER;
+		return FederatedPlannerUtils.getVectorAxis(selection.anchorHop) != null;
 	}
 
 	private static List<Hop> collectObligationAnchorScope(Hop hop, List<Hop> consumers) {
@@ -1504,21 +1594,35 @@ public final class FederatedRefedPolicy {
 				continue;
 			}
 			FederatedRefedRegistry.AnchorSpec spec = entry.getValue();
-			long anchorHopId = spec.getAnchorHopId();
-			Hop anchorHop = hopById.get(anchorHopId);
-			boolean anchorHopRuntimeFed = anchorHop != null && isRuntimeFederatedInput(anchorHop, null, null);
-			String anchorKey = spec.getAnchorKey();
-			boolean usableAnchorKey = isNonVarAnchorKey(anchorKey);
-			if (!anchorHopRuntimeFed && !usableAnchorKey) {
-				FederatedRefedRegistry.remove(sbId, entry.getKey());
-				CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
-				changed = true;
+			List<FederatedRefedRegistry.AuthoritySpec> retained = new ArrayList<>();
+			boolean authorityChanged = false;
+			for(FederatedRefedRegistry.AuthoritySpec authority : spec.getAuthorities()) {
+				long anchorHopId = authority.getAnchorHopId();
+				Hop anchorHop = hopById.get(anchorHopId);
+				boolean anchorHopRuntimeFed = anchorHop != null && isRuntimeFederatedInput(anchorHop, null, null);
+				String anchorKey = authority.getAnchorKey();
+				boolean usableAnchorKey = isNonVarAnchorKey(anchorKey)
+					&& getFTypeFromAnchorKey(anchorKey) != null;
+				if(!anchorHopRuntimeFed && !usableAnchorKey) {
+					authorityChanged = true;
+					continue;
+				}
+				retained.add(authority);
+				if(!anchorHopRuntimeFed)
+					authorityChanged = true;
 			}
-			else if (!anchorHopRuntimeFed && usableAnchorKey) {
+			if(authorityChanged) {
 				FederatedRefedRegistry.remove(sbId, entry.getKey());
-				FederatedRefedRegistry.register(sbId, entry.getKey(), -1, anchorKey,
-					spec.getMaterializationFType(),
-					spec.getConsumerHopIds());
+				for(FederatedRefedRegistry.AuthoritySpec authority : retained) {
+					long anchorHopId = hopById.containsKey(authority.getAnchorHopId())
+						&& isRuntimeFederatedInput(hopById.get(authority.getAnchorHopId()), null, null)
+						? authority.getAnchorHopId() : -1L;
+					FederatedRefedRegistry.registerConsumerInputs(sbId, entry.getKey(), anchorHopId,
+						authority.getAnchorKey(), authority.getMaterializationFType(),
+						authority.getConsumerInputs());
+				}
+				if(retained.isEmpty())
+					CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
 				changed = true;
 			}
 		}
@@ -1551,7 +1655,8 @@ public final class FederatedRefedPolicy {
 				Hop anchorHop = hopById.get(anchorHopId);
 				boolean anchorHopRuntimeFed = anchorHop != null && isRuntimeFederatedInput(anchorHop, null, null);
 				String anchorKey = spec.getAnchorKey();
-				boolean usableAnchorKey = isNonVarAnchorKey(anchorKey);
+				boolean usableAnchorKey = isNonVarAnchorKey(anchorKey)
+					&& getFTypeFromAnchorKey(anchorKey) != null;
 				if (!anchorHopRuntimeFed && !usableAnchorKey) {
 					FederatedFoutMaterializeRegistry.remove(sbId, entry.getKey());
 					CPFOUT_ANCHOR_CACHE.remove(entry.getKey());
@@ -1773,6 +1878,7 @@ public final class FederatedRefedPolicy {
 			return true;
 		}
 		AnchorKey globalAnchorKey = selectGlobalAnchorKey(fTypeMap);
+		AnchorSelection selectedConsumerAnchor = findRequiredRuntimeInputAnchorSelection(hop, fTypeMap, blockAnchor);
 
 		AnchorSelection requiredAnchor = null;
 			AnchorSelection consumerAnchor = null;
@@ -1786,17 +1892,10 @@ public final class FederatedRefedPolicy {
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
 				continue;
 			InputRequirement req = resolveTargetRequirement(hop, input, i, fTypeMap, blockAnchor);
-			boolean runtimeFed = isRuntimeFederatedInput(input, materialize, refed);
-			boolean sourceFed = runtimeFed && isRuntimeFederatedInput(input, null, null);
 			FederatedRefedRegistry.AnchorSpec registeredRefed = refed.get(input.getHopID());
-			if (req != InputRequirement.OPTIONAL && registeredRefed != null) {
-				// A prior traversal may already have established this producer's upload authority.
-				// Preserve the newly encountered exact required edge instead of treating the existing
-				// runtime-federated representation as a reason to skip registration.
-				FederatedRefedRegistry.register(sbId, input.getHopID(), registeredRefed.getAnchorHopId(),
-					registeredRefed.getAnchorKey(), registeredRefed.getMaterializationFType(),
-					List.of(hop.getHopID()));
-			}
+			boolean runtimeFed = isRuntimeFederatedInputForConsumer(input, hop, i, materialize,
+				registeredRefed, selectedConsumerAnchor, fTypeMap);
+			boolean sourceFed = isRuntimeFederatedInput(input, null, null);
 				if (req == InputRequirement.OPTIONAL) {
 					if (runtimeFed) {
 						// Do not use planned CP->FOUT candidates as anchors; only accept true runtime
@@ -1828,7 +1927,8 @@ public final class FederatedRefedPolicy {
 					Hop other = hop.getInput().get(j);
 					if (other == null || other.getDataType() == null || !other.getDataType().isMatrix())
 						continue;
-					if (isRuntimeFederatedInput(other, materialize, refed)) {
+					if (isRuntimeFederatedInputForConsumer(other, hop, j, materialize,
+						refed.get(other.getHopID()), selectedConsumerAnchor, fTypeMap)) {
 						hasAnchorInput = true;
 						break;
 					}
@@ -1907,7 +2007,8 @@ public final class FederatedRefedPolicy {
 			Hop input = hop.getInput().get(i);
 			if (input == null || input.getDataType() == null || !input.getDataType().isMatrix())
 				continue;
-			boolean runtimeFed = isRuntimeFederatedInput(input, materialize, refed);
+			boolean runtimeFed = isRuntimeFederatedInputForConsumer(input, hop, i, materialize,
+				refed.get(input.getHopID()), selectedConsumerAnchor, fTypeMap);
 			if (runtimeFed)
 				hasAnyRuntimeFederatedMatrixInput = true;
 			InputRequirement req = resolveTargetRequirement(hop, input, i, fTypeMap, blockAnchor);
@@ -1922,6 +2023,109 @@ public final class FederatedRefedPolicy {
 		if (!hasAnyRuntimeFederatedMatrixInput)
 			return false;
 		return true;
+	}
+
+	private static boolean isRuntimeFederatedInputForConsumer(Hop input, Hop consumer, int inputPosition,
+			java.util.Map<Long, FederatedFoutMaterializeRegistry.MaterializeSpec> materialize,
+			FederatedRefedRegistry.AnchorSpec registeredRefed, AnchorSelection selectedConsumerAnchor,
+			java.util.Map<Long, FType> fTypeMap) {
+		// A native FED/FOUT value is a physical source, not a REFED receipt, and is
+		// reusable by every legal consumer edge.
+		if(isRuntimeFederatedInput(input, null, null))
+			return true;
+		FederatedFoutMaterializeRegistry.MaterializeSpec materializeSpec = materialize != null
+			? materialize.get(input.getHopID()) : null;
+		if(materializeSpec != null
+			&& materializeMatchesSelectedConsumerAnchor(materializeSpec, selectedConsumerAnchor, fTypeMap))
+			return true;
+		if(registeredRefed == null)
+			return false;
+		ConsumerInputSpec edge = new ConsumerInputSpec(consumer.getHopID(), inputPosition);
+		for(FederatedRefedRegistry.AuthoritySpec authority : registeredRefed.getAuthorities()) {
+			boolean coversEdge = authority.getConsumerInputs().stream().anyMatch(candidate ->
+				candidate.equals(edge) || (candidate.allInputs()
+					&& candidate.consumerHopId() == edge.consumerHopId()));
+			if(coversEdge && authorityMatchesSelectedConsumerAnchor(authority, selectedConsumerAnchor, fTypeMap))
+				return true;
+		}
+		return false;
+	}
+
+	private static boolean materializeMatchesSelectedConsumerAnchor(
+			FederatedFoutMaterializeRegistry.MaterializeSpec materialize,
+			AnchorSelection selectedConsumerAnchor, java.util.Map<Long, FType> fTypeMap) {
+		if(selectedConsumerAnchor == null || selectedConsumerAnchor.key == null)
+			return true;
+		String selectedKey = toAnchorKeyString(selectedConsumerAnchor);
+		String materializeKey = materialize.getAnchorKey();
+		if(isNonVarAnchorKey(selectedKey) && isNonVarAnchorKey(materializeKey)) {
+			if(!selectedKey.equals(materializeKey))
+				return false;
+		}
+		FType selectedType = selectedConsumerAnchor.anchorHop != null
+			? getKnownFType(selectedConsumerAnchor.anchorHop, fTypeMap) : getFTypeFromAnchorKey(selectedKey);
+		FType materializedType = parseMaterializationFType(materialize.getFTypeHint());
+		return selectedType == null || selectedType == FType.BROADCAST || materializedType == null
+			|| materializedType == FType.BROADCAST || selectedType == materializedType;
+	}
+
+	private static FType parseMaterializationFType(String fTypeHint) {
+		if(fTypeHint == null || fTypeHint.isBlank())
+			return null;
+		try {
+			return FType.valueOf(fTypeHint);
+		}
+		catch(IllegalArgumentException ignored) {
+			return null;
+		}
+	}
+
+	private static boolean authorityMatchesSelectedConsumerAnchor(
+			FederatedRefedRegistry.AuthoritySpec authority, AnchorSelection selectedConsumerAnchor,
+			java.util.Map<Long, FType> fTypeMap) {
+		if(selectedConsumerAnchor == null || selectedConsumerAnchor.key == null)
+			return true;
+		String selectedKey = toAnchorKeyString(selectedConsumerAnchor);
+		String authorityKey = authority.getAnchorKey();
+		if(isNonVarAnchorKey(selectedKey)) {
+			if(!selectedKey.equals(authorityKey))
+				return false;
+		}
+		FType selectedType = selectedConsumerAnchor.anchorHop != null
+			? getKnownFType(selectedConsumerAnchor.anchorHop, fTypeMap) : getFTypeFromAnchorKey(selectedKey);
+		return selectedType == null || selectedType == FType.BROADCAST
+			|| authority.getMaterializationFType() == FType.BROADCAST
+			|| authority.getMaterializationFType() == selectedType;
+	}
+
+	private static AnchorSelection findRequiredRuntimeInputAnchorSelection(Hop consumer,
+			java.util.Map<Long, FType> fTypeMap, AnchorSelection blockAnchor) {
+		if(consumer == null || consumer.getInput() == null)
+			return null;
+		AnchorKey selectedKey = null;
+		Hop selectedAnchor = null;
+		for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
+			Hop input = consumer.getInput().get(inputPosition);
+			if(input == null || input.getDataType() == null || !input.getDataType().isMatrix()
+				|| !isRuntimeFederatedInput(input, null, null))
+				continue;
+			if(resolveTargetRequirement(consumer, input, inputPosition, fTypeMap, blockAnchor)
+				== InputRequirement.OPTIONAL)
+				continue;
+			AnchorKey key = buildAnchorKey(input, fTypeMap);
+			if(key == null)
+				key = deriveFallbackAnchorKeyForRuntimeSource(input, fTypeMap);
+			if(key == null)
+				continue;
+			if(selectedKey == null) {
+				selectedKey = key;
+				selectedAnchor = input;
+			}
+			else if(!anchorsCompatible(selectedKey, key)) {
+				return null;
+			}
+		}
+		return selectedKey != null ? new AnchorSelection(selectedKey, selectedAnchor) : null;
 	}
 
 	private static InputRequirement resolveTargetRequirement(Hop parent, Hop input, int index,
@@ -2462,7 +2666,7 @@ public final class FederatedRefedPolicy {
 							anchorKey = (String) sigKey.value;
 					}
 				}
-				if (anchorKey != null && !anchorKey.isEmpty()) {
+				if (anchorKey != null && getFTypeFromAnchorKey(anchorKey) != null) {
 					FederatedPlannerUtils.registerFedAnchorKey(varName, anchorKey);
 					if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
 						System.out.println("[TransReadRefedDebug] tWrite local->fed anchor=" + anchorKey);
@@ -2504,7 +2708,7 @@ public final class FederatedRefedPolicy {
 			anchorKey = (String) blockAnchor.key.value;
 		}
 
-		if (anchorKey != null) {
+		if (anchorKey != null && getFTypeFromAnchorKey(anchorKey) != null) {
 			String existing = FederatedPlannerUtils.getFedAnchorKey(varName);
 			if (existing == null || existing.equals(anchorKey))
 				FederatedPlannerUtils.registerFedAnchorKey(varName, anchorKey);
@@ -2546,9 +2750,9 @@ public final class FederatedRefedPolicy {
 			if (axis != null)
 				fType = axis;
 		}
-		String varKey = "VAR:" + varName;
-		if (fType != null)
-			varKey = varKey + "|" + fType.name();
+		if (fType == null)
+			return;
+		String varKey = "VAR:" + varName + "|" + fType.name();
 		FederatedPlannerUtils.registerFedAnchorKey(varName, varKey);
 		if (ENABLE_TRANSREAD_DEBUG && "Y".equals(varName)) {
 			System.out.println("[TransReadRefedDebug] tWrite set VAR anchor=" + varKey);
@@ -2873,11 +3077,12 @@ public final class FederatedRefedPolicy {
 				Hop input = (inputs != null && !inputs.isEmpty()) ? inputs.get(0) : null;
 				if (input != null && isFederatedInput(input, fTypeMap)) {
 					FType fType = getKnownFType(input, fTypeMap);
+					if (fType == null)
+						continue;
 					String name = dataOp.getName();
 					if (name != null && !name.isEmpty()) {
 						String varKey = "VAR:" + name;
-						if (fType != null)
-							varKey = varKey + "|" + fType.name();
+						varKey = varKey + "|" + fType.name();
 						AnchorKey key = new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, varKey);
 						if (selectedKey == null) {
 							selectedKey = key;
@@ -2967,12 +3172,13 @@ public final class FederatedRefedPolicy {
 		if (signature != null)
 			return buildAnchorKeyFromSignature(signature, fType);
 		if (dataOp.getOp() == OpOpData.TRANSIENTREAD || dataOp.getOp() == OpOpData.FEDERATED) {
+			if (fType == null)
+				return null;
 			String name = dataOp.getName();
 			if (name == null || name.isEmpty())
 				return null;
 			String varKey = "VAR:" + name;
-			if (fType != null)
-				varKey = varKey + "|" + fType.name();
+			varKey = varKey + "|" + fType.name();
 			return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, varKey);
 		}
 		return buildAnchorKey(dataOp, fTypeMap);
@@ -3600,6 +3806,20 @@ public final class FederatedRefedPolicy {
 			// and materializes against the concrete federated source signature.
 			effectiveSelection = new AnchorSelection(effectiveSelection.key, null);
 		}
+		String anchorKey = toAnchorKeyString(effectiveSelection);
+		Hop anchorHop = (effectiveSelection != null) ? effectiveSelection.anchorHop : null;
+		if (anchorHop == null && anchorKey != null && getFTypeFromAnchorKey(anchorKey) == null)
+			throw new DMLRuntimeException("CP->FOUT literal anchor requires a concrete encoded FType: "
+				+ anchorKey + " (hop " + hop.getHopID() + ")");
+		boolean isTransientWrite = hop instanceof DataOp
+			&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE;
+		if (isTransientWrite) {
+			ExecType writeExec = getPlannedExecType(hop);
+			if (isRuntimePlanLocked() && (writeExec != ExecType.FED
+				|| hop.getFederatedOutput() != FederatedOutput.FOUT))
+				throw invalidRuntimePlan(hop,
+					"TWrite materialization requires planner-selected <FED,FOUT>; recompile CP/FOUT is forbidden");
+		}
 
 		if (ENABLE_TRANSREAD_DEBUG && hop instanceof DataOp
 				&& ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE
@@ -3643,11 +3863,9 @@ public final class FederatedRefedPolicy {
 				CPFOUT_ANCHOR_CACHE.put(hop.getHopID(), effectiveSelection.key);
 		}
 
-		String anchorKey = toAnchorKeyString(effectiveSelection);
-		Hop anchorHop = (effectiveSelection != null) ? effectiveSelection.anchorHop : null;
 		long anchorHopId = (anchorHop != null) ? anchorHop.getHopID() : -1;
 
-		// AnchorKey-only fallback: allow CP->FOUT even when the concrete anchor hop is not visible in this block.
+		// A typed literal anchor allows CP->FOUT even when its concrete hop is not visible in this block.
 		if (anchorHop == null && anchorKey == null)
 			throw new DMLRuntimeException("CP->FOUT refed requires an anchor for hop " + hop.getHopID()
 				+ " (" + hop.getOpString() + ")");
@@ -3655,9 +3873,9 @@ public final class FederatedRefedPolicy {
 		// If a transient write is planned/promoted to produce a federated output (FOUT), ensure its variable
 		// name is associated with a concrete anchor key. This allows subsequent transient reads to be treated
 		// as runtime-federated inputs during recompile, avoiding CP fallback due to VAR/self anchors.
-		if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE
+		if (isTransientWrite
 			&& hop.getFederatedOutput() == FederatedOutput.FOUT
-			&& isNonVarAnchorKey(anchorKey)) {
+			&& isNonVarAnchorKey(anchorKey) && getFTypeFromAnchorKey(anchorKey) != null) {
 			String varName = ((DataOp) hop).getName();
 			if (varName != null && !varName.isEmpty())
 				FederatedPlannerUtils.registerFedAnchorKey(varName, anchorKey);
@@ -3682,21 +3900,22 @@ public final class FederatedRefedPolicy {
 		// TransientWrite must never be handled via fed_refed insertion: the written variable does not exist at the
 		// time the refed would execute. Always materialize the TWrite input via fed_fout and wire it into the TWrite
 		// during lop insertion.
-			if (hop instanceof DataOp && ((DataOp) hop).getOp() == OpOpData.TRANSIENTWRITE) {
+			if (isTransientWrite) {
 				Hop tWriteInput = null;
 				List<Hop> inputs = hop.getInput();
 				if (inputs != null && !inputs.isEmpty())
 					tWriteInput = inputs.get(0);
 
-				// IMPORTANT: Prefer the planner-selected FType hint (if available) over
-				// anchor-derived fallbacks. Otherwise, we may silently degrade to FULL when
-				// the anchor type cannot be derived (e.g., signature-only anchors), which
-				// then disables FED execution for downstream elementwise ops (kmeans regression).
+				// Prefer a planner-selected FType hint over the exact encoded anchor type.
+				// Signature-only anchors without either provenance are rejected below.
 				FType plannedHint = getKnownFType(hop, fTypeMap);
 				if (plannedHint == FType.PART || plannedHint == FType.OTHER)
 					plannedHint = null;
 
-				FType effective = plannedHint != null ? plannedHint : (anchorType != null ? anchorType : FType.FULL);
+				FType effective = plannedHint != null ? plannedHint : anchorType;
+				if (effective == null)
+					throw new DMLRuntimeException("CP->FOUT TWrite requires a concrete observed or encoded FType "
+						+ "for anchor " + anchorKey + " (hop " + hop.getHopID() + ")");
 				String fTypeHint = (effective == FType.BROADCAST) ? "BROADCAST" : toFTypeHint(effective);
 				if (anchorHop != null && tWriteInput != null && tWriteInput.getDataType() != null
 					&& tWriteInput.getDataType().isMatrix() && hasDimMismatch(tWriteInput, anchorHop, fTypeMap)) {
@@ -3712,6 +3931,12 @@ public final class FederatedRefedPolicy {
 					effective = adjustCpFoutFTypeForAnchorKey(probe, effective);
 					fTypeHint = (effective == FType.BROADCAST) ? "BROADCAST" : toFTypeHint(effective);
 				}
+			if (!isRuntimePlanLocked()) {
+				// Validation above established exact anchor and FType provenance. Commit the
+				// legal transient-boundary pair atomically; never encode this as CP/FOUT.
+				hop.setForcedExecType(ExecType.FED);
+				hop.setFederatedOutput(FederatedOutput.FOUT);
+			}
 
 			if (fTypeMap != null)
 				fTypeMap.put(hop.getHopID(), effective);
@@ -3763,12 +3988,15 @@ public final class FederatedRefedPolicy {
 			// If we only have an anchorKey, we can still choose between aligned upload and broadcast based on
 			// vector axis / axis length mismatch inferred from the signature.
 			if (anchorHop == null) {
-				// Preserve planner-selected CP->FOUT upload shape hints when anchor type is unknown.
-				// Otherwise we default to FULL and may unnecessarily disable FED execution downstream.
+				// Preserve planner-selected CP->FOUT upload shape hints when available;
+				// otherwise require an exact type encoded in the literal anchor.
 				FType plannedHint = getKnownFType(hop, fTypeMap);
 				if (plannedHint == FType.PART || plannedHint == FType.OTHER)
 					plannedHint = null;
-				FType effective = plannedHint != null ? plannedHint : (anchorType != null ? anchorType : FType.FULL);
+				FType effective = plannedHint != null ? plannedHint : anchorType;
+				if (effective == null)
+					throw new DMLRuntimeException("CP->FOUT requires a concrete observed or encoded FType for anchor "
+						+ anchorKey + " (hop " + hop.getHopID() + ")");
 				effective = adjustCpFoutFTypeForAnchorKey(hop, effective);
 				if (fTypeMap != null)
 					fTypeMap.put(hop.getHopID(), effective);
@@ -3782,8 +4010,8 @@ public final class FederatedRefedPolicy {
 
 			if (FederatedFoutMaterializeRegistry.snapshot(scopeId).containsKey(hop.getHopID()))
 				return;
-			FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey, effective,
-				exactRefedConsumerHopIds(hop, selectedConsumers));
+			FederatedRefedRegistry.registerConsumerInputs(scopeId, hop.getHopID(), anchorHopId, anchorKey, effective,
+				exactRefedConsumerInputs(hop, selectedConsumers));
 			return;
 		}
 
@@ -3820,24 +4048,32 @@ public final class FederatedRefedPolicy {
 		if (LOG.isDebugEnabled())
 			LOG.debug("CP->FOUT decision: REFED hopID=" + hop.getHopID() + " op=" + hop.getOpString()
 				+ " anchor=" + anchorHop.getHopID());
-		FederatedRefedRegistry.register(scopeId, hop.getHopID(), anchorHopId, anchorKey, anchorType,
-			exactRefedConsumerHopIds(hop, selectedConsumers));
+		FederatedRefedRegistry.registerConsumerInputs(scopeId, hop.getHopID(), anchorHopId, anchorKey, anchorType,
+			exactRefedConsumerInputs(hop, selectedConsumers));
 	}
 
-	private static List<Long> exactRefedConsumerHopIds(Hop producer, List<Hop> selectedConsumers) {
+	private static List<ConsumerInputSpec> exactRefedConsumerInputs(Hop producer, List<Hop> selectedConsumers) {
 		if (producer == null || selectedConsumers == null || selectedConsumers.isEmpty())
 			throw new DMLRuntimeException("CP->FOUT refed requires exact selected consumers for hop "
 				+ (producer != null ? producer.getHopID() : -1));
-		List<Long> consumerHopIds = new ArrayList<>();
+		List<ConsumerInputSpec> consumerInputs = new ArrayList<>();
 		for (Hop consumer : selectedConsumers) {
-			if (consumer == null || consumer.getInput() == null
-				|| consumer.getInput().stream().noneMatch(input -> input == producer))
+			if (consumer == null || consumer.getInput() == null)
 				throw new DMLRuntimeException("CP->FOUT refed selected consumer is not a direct producer consumer: "
 					+ "producer=" + producer.getHopID() + " consumer="
 					+ (consumer != null ? consumer.getHopID() : -1));
-			consumerHopIds.add(consumer.getHopID());
+			boolean found = false;
+			for(int inputPosition = 0; inputPosition < consumer.getInput().size(); inputPosition++) {
+				if(consumer.getInput().get(inputPosition) != producer)
+					continue;
+				consumerInputs.add(new ConsumerInputSpec(consumer.getHopID(), inputPosition));
+				found = true;
+			}
+			if(!found)
+				throw new DMLRuntimeException("CP->FOUT refed selected consumer is not a direct producer consumer: "
+					+ "producer=" + producer.getHopID() + " consumer=" + consumer.getHopID());
 		}
-		return consumerHopIds.stream().distinct().sorted().toList();
+		return consumerInputs.stream().distinct().sorted().toList();
 	}
 
 	private static AnchorSelection selectAnchor(Hop hop, java.util.Map<Long, FType> fTypeMap,
@@ -4228,11 +4464,12 @@ public final class FederatedRefedPolicy {
 	private static AnchorKey buildAnchorKeyFromSignature(String signature, FType fType) {
 		if (signature == null)
 			return null;
-		String sig = signature;
-		if (fType != null)
-			sig = sig + "|" + fType.name();
-		else if (getFTypeFromAnchorKey(sig) == null)
-			sig = sig + "|" + FType.FULL.name();
+		FType encodedType = getFTypeFromAnchorKey(signature);
+		if(fType == null && encodedType == null)
+			return null;
+		if(fType != null && encodedType != null && fType != encodedType)
+			return null;
+		String sig = encodedType != null ? signature : signature + "|" + fType.name();
 		return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, sig);
 	}
 
@@ -4253,9 +4490,9 @@ public final class FederatedRefedPolicy {
 			if (axis != null)
 				fType = axis;
 		}
-		String key = "VAR:" + varName;
-		if (fType != null)
-			key = key + "|" + fType.name();
+		if (fType == null)
+			return null;
+		String key = "VAR:" + varName + "|" + fType.name();
 		return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, key);
 	}
 
@@ -4273,7 +4510,7 @@ public final class FederatedRefedPolicy {
 		String varName = FederatedPlannerUtils.getUniqueFedInitVarName();
 		if (varName != null && !varName.isEmpty()) {
 			String anchorKey = FederatedPlannerUtils.getFedAnchorKey(varName);
-			if (isNonVarAnchorKey(anchorKey))
+			if (isNonVarAnchorKey(anchorKey) && getFTypeFromAnchorKey(anchorKey) != null)
 				return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
 			String signature = FederatedPlannerUtils.getFedInitSignature(varName);
 			FType fType = FederatedPlannerUtils.getFedInitFType(varName);
@@ -4292,35 +4529,32 @@ public final class FederatedRefedPolicy {
 			java.util.Map<String, FType> runtimeTypes) {
 		if (runtimeSignatures == null || runtimeSignatures.isEmpty())
 			return null;
-		FType preferredType = FType.ROW;
-		String signature = selectUniqueSignature(runtimeSignatures, runtimeTypes, preferredType);
-		if (signature == null) {
-			preferredType = FType.COL;
-			signature = selectUniqueSignature(runtimeSignatures, runtimeTypes, preferredType);
-		}
-		if (signature == null) {
-			preferredType = FType.FULL;
-			signature = selectUniqueSignature(runtimeSignatures, runtimeTypes, preferredType);
-		}
+		AnchorKey selectedKey = null;
 		String anchorVar = null;
-		if (signature != null)
-			anchorVar = selectVarForSignature(runtimeSignatures, runtimeTypes, preferredType, signature);
-		if (signature == null || anchorVar == null || anchorVar.isEmpty()) {
-			// Best-effort fallback: pick the first runtime federated variable to anchor CP->FOUT
-			// when multiple signatures are present in the same block.
-			for (java.util.Map.Entry<String, String> entry : runtimeSignatures.entrySet()) {
-				if (entry.getValue() == null)
-					continue;
-				signature = entry.getValue();
-				anchorVar = entry.getKey();
-				break;
-			}
-			if (signature == null || anchorVar == null || anchorVar.isEmpty())
+		FType fType = null;
+		for(java.util.Map.Entry<String, String> entry : runtimeSignatures.entrySet()) {
+			String varName = entry.getKey();
+			String signature = entry.getValue();
+			if(varName == null || varName.isEmpty() || signature == null || signature.isEmpty())
 				return null;
-			FType runtimeType = (runtimeTypes != null) ? runtimeTypes.get(anchorVar) : null;
-			if (runtimeType != null)
-				preferredType = runtimeType;
+			FType observedType = runtimeTypes != null ? runtimeTypes.get(varName) : null;
+			AnchorKey candidateKey = buildAnchorKeyFromSignature(signature, observedType);
+			if(candidateKey == null)
+				return null;
+			FType candidateType = getFTypeFromAnchorKey((String) candidateKey.value);
+			if(candidateType == null)
+				return null;
+			if(selectedKey == null) {
+				selectedKey = candidateKey;
+				anchorVar = varName;
+				fType = candidateType;
+			}
+			else if(!selectedKey.equals(candidateKey)) {
+				return null;
+			}
 		}
+		if(selectedKey == null || anchorVar == null || fType == null)
+			return null;
 
 		Hop anchorHop = findHopByName(all, anchorVar);
 		if (anchorHop == null) {
@@ -4328,50 +4562,9 @@ public final class FederatedRefedPolicy {
 			anchorHop = new DataOp(anchorVar, DataType.MATRIX, ValueType.FP64,
 				OpOpData.TRANSIENTREAD, anchorVar, -1, -1, -1, blen);
 		}
-		FType fType = (runtimeTypes != null) ? runtimeTypes.get(anchorVar) : preferredType;
 		if (fType != null && fTypeMap != null)
 			fTypeMap.put(anchorHop.getHopID(), fType);
-		AnchorKey key = buildAnchorKeyFromSignature(signature, fType);
-		return new AnchorSelection(key, anchorHop);
-	}
-
-	private static String selectUniqueSignature(java.util.Map<String, String> runtimeSignatures,
-			java.util.Map<String, FType> runtimeTypes, FType desiredType) {
-		if (runtimeSignatures == null || runtimeSignatures.isEmpty())
-			return null;
-		String signature = null;
-		for (java.util.Map.Entry<String, String> entry : runtimeSignatures.entrySet()) {
-			String sig = entry.getValue();
-			if (sig == null)
-				continue;
-			if (runtimeTypes != null && desiredType != null) {
-				FType fType = runtimeTypes.get(entry.getKey());
-				if (fType != desiredType)
-					continue;
-			}
-			if (signature == null)
-				signature = sig;
-			else if (!signature.equals(sig))
-				return null;
-		}
-		return signature;
-	}
-
-	private static String selectVarForSignature(java.util.Map<String, String> runtimeSignatures,
-			java.util.Map<String, FType> runtimeTypes, FType desiredType, String signature) {
-		if (runtimeSignatures == null || runtimeSignatures.isEmpty() || signature == null)
-			return null;
-		for (java.util.Map.Entry<String, String> entry : runtimeSignatures.entrySet()) {
-			if (!signature.equals(entry.getValue()))
-				continue;
-			if (runtimeTypes != null && desiredType != null) {
-				FType fType = runtimeTypes.get(entry.getKey());
-				if (fType != desiredType)
-					continue;
-			}
-			return entry.getKey();
-		}
-		return null;
+		return new AnchorSelection(selectedKey, anchorHop);
 	}
 
 	private static Hop findHopByName(List<Hop> hops, String name) {
@@ -4458,7 +4651,9 @@ public final class FederatedRefedPolicy {
 					FType optionalType = getKnownFType(input, fTypeMap);
 					if (optionalType == null) {
 						FType axis = FederatedPlannerUtils.getVectorAxis(input);
-						optionalType = (axis != null) ? axis : FType.FULL;
+						if (axis == null)
+							continue;
+						optionalType = axis;
 					}
 					optionalCandidates.add(new InputCandidate(input, optionalType));
 				}
@@ -4468,12 +4663,12 @@ public final class FederatedRefedPolicy {
 				continue;
 			FType fType = getKnownFType(input, fTypeMap);
 			if (fType == null) {
-				// If the anchor input is federated but its logical FType is unknown (e.g., intermediate
-				// FED output without propagated type), still accept it as an anchor candidate.
-				// Default to a safe type for candidate bookkeeping; the runtime anchor carries the
-				// concrete FederationMap (and thus effective type and worker pool).
+				// A runtime-federated input without exact placement metadata is not authority
+				// for FULL. Accept only a shape-proven vector axis; otherwise fail closed.
 				FType axis = FederatedPlannerUtils.getVectorAxis(input);
-				fType = (axis != null) ? axis : FType.FULL;
+				if (axis == null)
+					continue;
+				fType = axis;
 			}
 			hasPartitioned |= (fType == FType.ROW || fType == FType.COL);
 			candidates.add(new InputCandidate(input, fType));
@@ -5297,9 +5492,8 @@ public final class FederatedRefedPolicy {
 	 * overwriting {@code X} inside a recompile region). If the referenced variable still has a
 	 * fed-init signature or a concrete (non-VAR) anchor key, prefer that over the VAR anchor.
 	 *
-	 * <p>If no concrete anchor can be resolved, ensure the returned VAR anchor carries an FType
-	 * suffix so downstream CP-&gt;FOUT materialization can preserve ROW/COL alignment instead of
-	 * silently defaulting to FULL.
+	 * <p>If no concrete anchor can be resolved, only return a VAR anchor when an exact FType can
+	 * be appended from planner metadata or a shape-proven vector axis. Unknown placement fails closed.
 	 */
 	private static AnchorKey resolveTransientReadAnchorKey(DataOp transientRead, String anchorKey,
 			java.util.Map<Long, FType> fTypeMap) {
@@ -5319,7 +5513,7 @@ public final class FederatedRefedPolicy {
 				break;
 
 			String refAnchor = FederatedPlannerUtils.getFedAnchorKey(ref);
-			if (isNonVarAnchorKey(refAnchor))
+			if (isNonVarAnchorKey(refAnchor) && getFTypeFromAnchorKey(refAnchor) != null)
 				return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, refAnchor);
 
 			String sig = FederatedPlannerUtils.getFedInitSignature(ref);
@@ -5327,8 +5521,6 @@ public final class FederatedRefedPolicy {
 				FType fType = FederatedPlannerUtils.getFedInitFType(ref);
 				if (fType == null)
 					fType = getFTypeFromAnchorKey(refAnchor);
-				if (fType == null)
-					fType = FType.FULL;
 				AnchorKey sigKey = buildAnchorKeyFromSignature(sig, fType);
 				if (sigKey != null && sigKey.value instanceof String && !isVarAnchor(sigKey))
 					return sigKey;
@@ -5348,9 +5540,8 @@ public final class FederatedRefedPolicy {
 				if (axis != null)
 					fType = axis;
 			}
-			if (fType == null)
-				fType = FType.FULL;
-			return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey + "|" + fType.name());
+			if (fType != null)
+				return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey + "|" + fType.name());
 		}
 
 		return null;
@@ -5370,7 +5561,9 @@ public final class FederatedRefedPolicy {
 						AnchorKey resolved = resolveTransientReadAnchorKey(dataOp, anchorKey, fTypeMap);
 						if (resolved != null)
 							return resolved;
-						return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
+						if (getFTypeFromAnchorKey(anchorKey) != null)
+							return new AnchorKey(AnchorKeyType.FEDINIT_SIGNATURE, anchorKey);
+						return null;
 					}
 					if (isRuntimeFederatedInput(hop, null, null)) {
 						AnchorKey fallback = deriveFallbackAnchorKeyForRuntimeSource(hop, fTypeMap);
@@ -5406,8 +5599,7 @@ public final class FederatedRefedPolicy {
 			// output type for the signature can therefore rewrite a ROW anchor as FULL
 			// during runtime recompile and replicate an aligned local input to every
 			// worker.  Prefer the exact runtime-federated source key whenever it is
-			// reachable; only use the conservative legacy fallback when no typed source
-			// is available.
+			// reachable; without a typed source, literal anchor construction fails closed.
 			AnchorSelection sourceAnchor = findInputAnchorSelection(hop, fTypeMap);
 			if (sourceAnchor != null && sourceAnchor.key != null)
 				return sourceAnchor.key;

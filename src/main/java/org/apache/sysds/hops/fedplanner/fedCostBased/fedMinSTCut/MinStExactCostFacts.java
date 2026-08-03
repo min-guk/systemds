@@ -137,6 +137,7 @@ public final class MinStExactCostFacts {
 		private final MembershipAuthorityKind authorityKind;
 		private final DurableAnchorKey durableAnchor;
 		private final CandidateRuleFact candidateRuleFact;
+		private final PlacementAnalysis.CandidateEmissionFact candidateEmissionFact;
 		private final List<CandidateInputState> orderedInputs;
 		private final List<MembershipInputAuthorityFact> inputAuthorityFacts;
 		private final CapturedInvocationEvidence invocationEvidence;
@@ -146,6 +147,7 @@ public final class MinStExactCostFacts {
 		MembershipRepresentative(CompiledHopKey decisionKey, ExecType execType,
 			FederatedOutput output, PlacementState state, MembershipAuthorityKind authorityKind,
 			DurableAnchorKey durableAnchorOrNull, CandidateRuleFact candidateRuleFactOrNull,
+			PlacementAnalysis.CandidateEmissionFact candidateEmissionFactOrNull,
 			List<CandidateInputState> orderedInputs, List<MembershipInputAuthorityFact> inputAuthorityFacts,
 			CapturedInvocationEvidence invocationEvidenceOrNull,
 			RelocationAction relocationActionOrNull, String authoritySignatureOrNull) {
@@ -156,6 +158,7 @@ public final class MinStExactCostFacts {
 			this.authorityKind = Objects.requireNonNull(authorityKind, "authorityKind");
 			this.durableAnchor = durableAnchorOrNull;
 			this.candidateRuleFact = candidateRuleFactOrNull;
+			this.candidateEmissionFact = candidateEmissionFactOrNull;
 			this.orderedInputs = List.copyOf(Objects.requireNonNull(orderedInputs, "orderedInputs"));
 			this.inputAuthorityFacts = List.copyOf(Objects.requireNonNull(inputAuthorityFacts, "inputAuthorityFacts"));
 			this.invocationEvidence = invocationEvidenceOrNull;
@@ -174,13 +177,15 @@ public final class MinStExactCostFacts {
 				|| state.fType() == FType.OTHER || state.fType() == FType.PART))
 				throw new IllegalArgumentException("MINST_EXACT_MEMBERSHIP_FTYPE_NONCONCRETE");
 			if(authorityKind == MembershipAuthorityKind.LEGAL_SINGLETON) {
-				if(durableAnchor != null || candidateRuleFact != null || invocationEvidence != null
+				if(durableAnchor != null || candidateRuleFact != null || candidateEmissionFact != null
+					|| invocationEvidence != null
 					|| relocationAction != null || authoritySignature != null
 					|| !this.orderedInputs.isEmpty() || !this.inputAuthorityFacts.isEmpty())
 					throw new IllegalArgumentException("MINST_EXACT_SINGLETON_AUTHORITY_MIXED");
 			}
 			else if(authorityKind == MembershipAuthorityKind.DURABLE_ANCHOR) {
-				if(durableAnchor == null || candidateRuleFact != null || invocationEvidence != null
+				if(durableAnchor == null || candidateRuleFact != null || candidateEmissionFact != null
+					|| invocationEvidence != null
 					|| relocationAction != null || authoritySignature != null
 					|| !this.orderedInputs.isEmpty() || !this.inputAuthorityFacts.isEmpty()
 					|| state.fType() != durableAnchor.fType())
@@ -191,11 +196,19 @@ public final class MinStExactCostFacts {
 					|| relocationAction != null || authoritySignature != null
 					|| candidateRuleFact.key().parentOccurrence() != decisionKey
 					|| !candidateRuleFact.key().orderedInputs().equals(this.orderedInputs)
+					|| candidateEmissionFact != null
+						&& (candidateEmissionFact.emissionState().placementState() != state
+							|| candidateRuleFact.allowedEmissionFacts().stream()
+								.noneMatch(emission -> emission == candidateEmissionFact))
+					|| candidateEmissionFact == null
+						&& candidateRuleFact.allowedEmissionFacts().stream().anyMatch(emission ->
+							emission.emissionState().placementState() == state)
 					|| this.inputAuthorityFacts.stream().anyMatch(fact -> fact.inputEdge().consumer() != decisionKey))
 					throw new IllegalArgumentException("MINST_EXACT_RULE_AUTHORITY_MISMATCH");
 			}
 			else if(authorityKind == MembershipAuthorityKind.RELOCATION_SOURCE) {
-				if(candidateRuleFact != null || invocationEvidence != null || durableAnchor == null
+				if(candidateRuleFact != null || candidateEmissionFact != null
+					|| invocationEvidence != null || durableAnchor == null
 					|| relocationAction == null || authoritySignature != null || !this.orderedInputs.isEmpty()
 					|| !this.inputAuthorityFacts.isEmpty()
 					|| relocationAction.key().durableAnchor() != durableAnchor
@@ -214,6 +227,9 @@ public final class MinStExactCostFacts {
 		public MembershipAuthorityKind authorityKind() { return authorityKind; }
 		public DurableAnchorKey durableAnchorOrNull() { return durableAnchor; }
 		public CandidateRuleFact candidateRuleFactOrNull() { return candidateRuleFact; }
+		public PlacementAnalysis.CandidateEmissionFact candidateEmissionFactOrNull() {
+			return candidateEmissionFact;
+		}
 		public List<CandidateInputState> orderedInputs() { return orderedInputs; }
 		public List<MembershipInputAuthorityFact> inputAuthorityFacts() { return inputAuthorityFacts; }
 		public CapturedInvocationEvidence invocationEvidenceOrNull() { return invocationEvidence; }

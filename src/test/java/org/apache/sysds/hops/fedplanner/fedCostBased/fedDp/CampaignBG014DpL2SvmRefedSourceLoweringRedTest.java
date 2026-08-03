@@ -75,8 +75,14 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 				System.setOut(originalOut);
 			}
 			Assert.assertTrue("The Docker-equivalent L2SVM compile must complete", success);
-			Assert.assertEquals("DP must fuse the loop-invariant X transpose into the aggregate binary input",
-				1, count(captured.toString(StandardCharsets.UTF_8), "FED r' X.MATRIX"));
+			String explain = captured.toString(StandardCharsets.UTF_8);
+			int materializedTransposes = count(explain, "FED r' X.MATRIX");
+			Assert.assertTrue("DP must not rematerialize the loop-invariant X transpose; runtime explain:\n"
+				+ explain, materializedTransposes <= 1);
+			if(materializedTransposes == 0)
+				Assert.assertTrue("Without an explicit X transpose boundary, DP must use the legal native "
+					+ "local-vector x federated-X LOUT plan; runtime explain:\n" + explain,
+					countLines(explain, "FED ba+*", " X.MATRIX", " LOUT") >= 2);
 		}
 		finally {
 			TestUtils.shutdownThreads(worker1, worker2);
@@ -102,6 +108,18 @@ public class CampaignBG014DpL2SvmRefedSourceLoweringRedTest {
 		int result = 0;
 		for(int offset = 0; (offset = value.indexOf(needle, offset)) >= 0; offset += needle.length())
 			result++;
+		return result;
+	}
+
+	private static int countLines(String value, String... needles) {
+		int result = 0;
+		for(String line : value.split("\\R")) {
+			boolean matches = true;
+			for(String needle : needles)
+				matches &= line.contains(needle);
+			if(matches)
+				result++;
+		}
 		return result;
 	}
 

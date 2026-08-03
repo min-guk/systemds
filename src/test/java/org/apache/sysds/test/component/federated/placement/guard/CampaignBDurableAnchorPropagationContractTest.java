@@ -45,16 +45,37 @@ public class CampaignBDurableAnchorPropagationContractTest {
 
 	@Test public void h10ScalarAndMatrixFromSumDoNotInheritDurableAnchor() throws Exception {
 		PlacementAnalysis analysis = analysis(fed() + "s=sum(A);X=matrix(s,4,2);print(sum(X));");
-		assertNoAnchor(onlySourceContains(analysis, "AggUnaryOp:ua(+RC):s"), "sum(A) scalar must not carry durable anchor");
-		assertNoAnchor(onlySourceContains(analysis, "DataGenOp:dg(rand):X"), "matrix(sum(A),...) must not carry durable anchor");
-		Assert.assertTrue("H10 scalar/scalar-derived matrix must not expose relocation", analysis.graph().relocationActions().isEmpty());
+		Node scalar = onlySourceContains(analysis, "AggUnaryOp:ua(+RC):s");
+		Node matrix = onlySourceContains(analysis, "DataGenOp:dg(rand):X");
+		assertNoAnchor(scalar, "sum(A) scalar must not carry durable anchor");
+		assertNoAnchor(matrix, "matrix(sum(A),...) must not carry durable anchor");
+		Assert.assertTrue("H10 direct source receipts may exist, but scalar/scalar-derived values must not own relocation",
+			analysis.graph().relocationActions().stream().noneMatch(action ->
+				action.key().sourceValueVersion().equals(scalar.valueVersion())
+					|| action.key().sourceValueVersion().equals(matrix.valueVersion())));
 	}
 
-	@Test public void h08FullLocalMatrixOperandDoesNotInheritDurableAnchor() throws Exception {
+	@Test public void h08FullLocalMatrixOperandUsesExactNativeAbsentWithoutSyntheticUpload() throws Exception {
 		var fixture = CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
 		Node y = onlySourceContains(fixture.analysis(), "BinaryOp:b(+):Y");
 		assertNoAnchor(y, "A+Z with full local Z must not inherit A anchor");
-		assertOnePotentialRelocation(fixture.analysis(), y, "A+Z should expose exact potential upload of local Z to existing A anchor");
+		var zEdge = fixture.analysis().compiledInputEdgesInCanonicalOrder().stream()
+			.filter(edge -> edge.consumer() == y.key() && edge.inputPosition() == 1)
+			.findFirst().orElseThrow();
+		Node z = fixture.analysis().graph().node(zEdge.producer()).orElseThrow();
+		Assert.assertTrue("A+Z must retain an AVAILABLE native ABSENT_LOCAL row rather than inventing PRESENT authority",
+			fixture.analysis().candidateRuleFacts().orderedFacts().stream().anyMatch(fact ->
+				fact.key().parentOccurrence() == y.key()
+					&& fact.status() == CandidateEvaluationStatus.AVAILABLE
+					&& fact.key().orderedInputs().size() > 1
+					&& !fact.key().orderedInputs().get(1).present()
+					&& fact.allowedEmissionFacts().stream().anyMatch(emission ->
+						emission.emissionState().placementState().execType() == ExecType.FED
+							&& emission.emissionState().placementState().output() == FederatedOutput.FOUT)));
+		Assert.assertTrue("native ABSENT_LOCAL must not synthesize a CP-to-FOUT relocation for Z",
+			fixture.analysis().graph().relocationActions().stream().noneMatch(action ->
+				action.key().sourceValueVersion().equals(z.valueVersion())
+					&& action.key().compatibleConsumers().contains(y.key())));
 	}
 
 	@Test public void h09ScalarBroadcastPreservesDurableAnchor() throws Exception {
@@ -70,7 +91,7 @@ public class CampaignBDurableAnchorPropagationContractTest {
 		assertOneAnchor(onlySourceContains(analysis, "BinaryOp:b(+):Y"), "A+row-vector broadcast should preserve ROW anchor");
 	}
 
-	@Test public void columnChangingRowFoutRetainsWorkerPoolAuthorityForDownstreamUpload() throws Exception {
+	@Test public void columnChangingRowFoutRetainsWorkerPoolReceiptWhileLocalVectorStaysNativeAbsent() throws Exception {
 		PlacementAnalysis analysis = analysis(fed()
 			+ "C=rand(rows=2,cols=3,seed=7);M=A%*%C;v=rand(rows=1,cols=3,seed=8);"
 			+ "Y=M+v;write(Y,\"out\",format=\"binary\");");
@@ -80,15 +101,36 @@ public class CampaignBDurableAnchorPropagationContractTest {
 		Node local = exactInputNode(analysis, consumer, 1);
 		assertOneAnchor(source, "federated source owns the exact durable value anchor");
 		assertNoAnchor(product, "column-changing ROW output must not claim the source's exact value identity");
+		Assert.assertTrue("exact oracle keeps the local vector as native ABSENT_LOCAL",
+			analysis.candidateRuleFacts().orderedFacts().stream().anyMatch(fact ->
+				fact.key().parentOccurrence() == consumer.key()
+					&& fact.status() == CandidateEvaluationStatus.AVAILABLE
+					&& fact.key().orderedInputs().size() == 2
+					&& fact.key().orderedInputs().get(0).present()
+					&& fact.key().orderedInputs().get(0).fType() == FType.ROW
+					&& !fact.key().orderedInputs().get(1).present()
+					&& fact.allowedEmissionFacts().stream().anyMatch(emission ->
+						emission.emissionState().placementState().execType() == ExecType.FED
+							&& emission.emissionState().placementState().output() == FederatedOutput.FOUT)));
+		Assert.assertTrue("without an exact PRESENT counterpart, the local vector must not gain synthetic upload authority",
+			analysis.graph().relocationActions().stream().noneMatch(action ->
+				action.key().sourceValueVersion().equals(local.valueVersion())
+					&& action.key().compatibleConsumers().contains(consumer.key())));
 		List<RelocationAction> actions = analysis.graph().relocationActions().stream()
-			.filter(action -> action.key().sourceValueVersion().equals(local.valueVersion()))
-			.filter(action -> action.key().compatibleConsumers().contains(consumer.key())).toList();
-		Assert.assertEquals("derived ROW FOUT must retain one exact worker-pool authority for local upload",
+			.filter(action -> action.key().sourceValueVersion().equals(product.valueVersion()))
+			.filter(action -> action.key().compatibleConsumers().contains(consumer.key()))
+			.filter(action -> action.key().targetPlacement().execType() == ExecType.FED)
+			.filter(action -> action.key().targetPlacement().output() == FederatedOutput.FOUT).toList();
+		Assert.assertEquals("derived ROW FOUT must retain one exact worker-pool receipt authority",
 			1, actions.size());
-		Assert.assertEquals("downstream upload reuses the original durable worker pool",
+		Assert.assertEquals("downstream receipt reuses the original durable worker pool",
 			source.anchors().get(0), actions.get(0).key().durableAnchor());
-		Assert.assertEquals("downstream upload targets the consumer's ROW FOUT state",
+		Assert.assertEquals("downstream receipt targets the consumer's ROW FOUT state",
 			"FED/FOUT/ROW/SHAPE_DEPENDENT", actions.get(0).key().targetPlacement().normalizedSignature());
+		Assert.assertTrue("the producer's existing ROW FOUT is the direct, non-emitting receipt path",
+			actions.get(0).directSourcePlacements().stream().anyMatch(state ->
+				state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
+					&& state.fType() == FType.ROW));
 	}
 
 	@Test public void aggregateBinaryFedFoutAlsoRetainsRuntimeSupportedFedLout() throws Exception {
@@ -125,8 +167,13 @@ public class CampaignBDurableAnchorPropagationContractTest {
 
 	@Test public void vectorTimesFederatedMatrixLocalOnlyDoesNotInheritDurableAnchor() throws Exception {
 		PlacementAnalysis analysis = analysis(fed() + "v=matrix(1,1,4);Y=v%*%A;print(sum(Y));");
-		assertNoAnchor(onlySourceContains(analysis, "AggBinaryOp:ba(+*)"), "vector x federated-MM local-only output must not inherit A anchor");
-		Assert.assertTrue("vector x federated-MM local-only output must not expose relocation", analysis.graph().relocationActions().isEmpty());
+		Node product = onlySourceContains(analysis, "AggBinaryOp:ba(+*)");
+		Node vector = onlyNameOp(analysis, "v", "dg(rand)");
+		assertNoAnchor(product, "vector x federated-MM local-only output must not inherit A anchor");
+		Assert.assertTrue("direct A receipts may exist, but the local vector and local-only result must not own relocation",
+			analysis.graph().relocationActions().stream().noneMatch(action ->
+				action.key().sourceValueVersion().equals(vector.valueVersion())
+					|| action.key().sourceValueVersion().equals(product.valueVersion())));
 	}
 
 	@Test public void h03RecurringTWriteTReadPreservesSameDurableAnchor() throws Exception {

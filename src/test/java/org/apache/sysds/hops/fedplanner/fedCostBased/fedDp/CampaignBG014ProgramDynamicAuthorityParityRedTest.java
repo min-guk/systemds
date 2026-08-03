@@ -119,24 +119,10 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 				}
 
 				FederatedPlannerUtils.resetFederatedPlannerRunState();
-				PlannerInvocationReceipt control;
-				if("compile_min_st_cut".equals(planner)) {
-					DMLProgram identicalControl = compile("B-21");
-					try {
-						invokeStaticProgramPlanning(planner, identicalControl);
-						Assert.fail("clean MinST B-21 unexpectedly bypassed its established profile owner");
-					}
-					catch(IllegalArgumentException expectedDownstream) {
-						Assert.assertEquals("MINST_CONSUMER_LAYOUT_UNPROVEN|unconstrained-profile",
-							expectedDownstream.getMessage());
-						Assert.assertNotNull("clean MinST B-21 must bind analysis before its downstream owner",
-							identicalControl.requirePlacementAnalysisAuthority());
-					}
-					FederatedPlannerUtils.resetFederatedPlannerRunState();
-					control = invokeStaticProgramPlanning(planner, compile("B-01"));
-				}
-				else
-					control = invokeStaticProgramPlanning(planner, compile("B-21"));
+				// Exact MinST now proves the inlined function result's output shape and
+				// synthetic boundary authority, so B-21 is a supported clean control rather
+				// than an expected downstream profile failure.
+				PlannerInvocationReceipt control = invokeStaticProgramPlanning(planner, compile("B-21"));
 				Assert.assertNotNull(planner + " explicit-reset control receipt", control);
 				Assert.assertNotNull(planner + " explicit-reset control analysis", control.analysis());
 				Assert.assertFalse(planner + " restored stale fed-init sentinel",
@@ -449,13 +435,13 @@ public class CampaignBG014ProgramDynamicAuthorityParityRedTest {
 		FedPlanVariants variants = memo.getFedPlanVariants(Pair.of(readHop.getHopID(), FederatedOutput.LOUT));
 		Assert.assertNotNull("matrix read must retain a LOUT memo arm", variants);
 		FedPlan readPlan = variants.getFedPlanVariants().stream().filter(plan ->
-			plan.getChildFedPlans().contains(Pair.of(sourceHop.getHopID(), FederatedOutput.LOUT)))
+			plan.getChildFedPlans().isEmpty())
 			.findFirst().orElseThrow(() -> new AssertionError(
-				"matrix read memo arm discarded its exact transient-write dependency"));
-		FedPlan sourcePlan = memo.getFedPlanAfterPrune(sourceHop.getHopID(), FederatedOutput.LOUT);
-		Assert.assertNotNull("matrix transient write must retain a LOUT memo arm", sourcePlan);
-		Assert.assertEquals("matrix read cumulative cost must include the exact source dependency",
-			readPlan.getSelfCost() + sourcePlan.getCumulativeCostPerParents(), readPlan.getCumulativeCost(), 1e-12);
+				"matrix scheduling-only read acquired an executable transient-write child"));
+		Assert.assertFalse("ordering provenance must not become an executable child",
+			readPlan.getChildFedPlans().contains(Pair.of(sourceHop.getHopID(), FederatedOutput.LOUT)));
+		Assert.assertEquals("scheduling-only read recurrence must remain child-free",
+			readPlan.getSelfCost(), readPlan.getCumulativeCost(), 1e-12);
 	}
 
 	private static List<?> transientForwardDependencies(CandidateOccurrenceSnapshot snapshot) {

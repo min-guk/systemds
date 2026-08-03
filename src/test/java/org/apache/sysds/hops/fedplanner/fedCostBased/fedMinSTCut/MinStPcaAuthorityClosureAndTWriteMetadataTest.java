@@ -10,16 +10,13 @@ import java.util.List;
 
 import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.BoundaryMode;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.ContributionKind;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalModel.AuthorityKind;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalModel.InputAuthorityKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
@@ -27,82 +24,99 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Production-shape PCA guards for authority closure and TWrite transfer pricing. */
+/** Production-shape PCA guards for exact physical authority and TWrite transfer pricing. */
 public class MinStPcaAuthorityClosureAndTWriteMetadataTest {
 	@Test
-	public void pcaClosesUngroundedFedMembershipAndPricesTWriteAsMetadata() throws Exception {
+	public void pcaGroundsEveryFedContainsAlternativeAndPricesTWriteAsMetadata() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildDetachedAnalysis(compilePca());
-		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
-			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope);
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
 
 		CompiledInputEdgeFact containsInput = uniqueEdge(analysis,
 			"AggBinaryOp:ba(+*):XReduced", "ParameterizedBuiltinOp:CONTAINS:containsInf");
-		DecisionFact containsDecision = decision(facts, containsInput.consumer());
-		Assert.assertTrue("PCA_UNGROUNDED_CONTAINS_FED_MEMBERSHIP_MUST_BE_CLOSED",
-			containsDecision.legalStatesInCanonicalOrder().stream()
-				.noneMatch(state -> state.execType() == ExecType.FED));
+		var containsDomain = domain(model, containsInput.consumer());
+		List<MinStExactPhysicalModel.Alternative> federated = containsDomain.alternatives().stream()
+			.filter(alternative -> alternative.state().execType() == ExecType.FED).toList();
+		Assert.assertFalse("PCA_CONTAINS_FED_ALTERNATIVE_EXPECTED", federated.isEmpty());
+		for(var alternative : federated) {
+			Assert.assertNotEquals("PCA_CONTAINS_FED_MUST_NOT_BE_UNGROUNDED_SINGLETON",
+				AuthorityKind.LEGAL_SINGLETON, alternative.authorityKind());
+			Assert.assertFalse("PCA_CONTAINS_FED_MUST_RETAIN_RUNTIME_INPUT_ROW",
+				alternative.orderedInputs().isEmpty());
+			for(int position = 0; position < alternative.orderedInputs().size(); position++) {
+				if(!alternative.orderedInputs().get(position).present())
+					continue;
+				int inputPosition = position;
+				Assert.assertEquals("PCA_CONTAINS_PRESENT_INPUT_HAS_ONE_EXACT_AUTHORITY|input=" + position,
+					1L, alternative.inputAuthorities().stream()
+						.filter(authority -> authority.inputPosition() == inputPosition).count());
+			}
+		}
 
 		CompiledInputEdgeFact tWriteInput = uniqueEdge(analysis,
 			"BinaryOp:b(/):X", "DataOp:TWrite X:X");
-		AuxiliaryGroupFact group = uniqueGroup(facts, tWriteInput);
-		Assert.assertEquals("PCA_TWRITE_UPLOAD_DIRECTION", Direction.UPLOAD, group.direction());
-		Assert.assertEquals("PCA_TWRITE_MUST_NOT_SHARE_ANCHOR_TRANSFER_GROUP",
-			BoundaryMode.TWRITE_METADATA, group.boundaryMode());
-		Assert.assertTrue("PCA_TWRITE_PRICE_MUST_TARGET_PRODUCER_PLACEMENT",
-			facts.directedEdgesInDerivationOrder().stream().anyMatch(edge ->
-				edge.fromNodeId() == group.auxiliaryNodeId()
-					&& edge.toNodeId() == group.producerPlacementNodeId()
-					&& edge.contributionsInDerivationOrder().stream()
-						.anyMatch(contribution -> contribution.kind() == ContributionKind.PRICE_UPLOAD_OR)));
-		Assert.assertFalse("PCA_TWRITE_PRICE_MUST_NOT_BE_UNCONDITIONALLY_SUNK",
-			facts.directedEdgesInDerivationOrder().stream().anyMatch(edge ->
-				edge.fromNodeId() == group.auxiliaryNodeId()
-					&& edge.toNodeId() == facts.sinkNodeId()
-					&& edge.contributionsInDerivationOrder().stream()
-						.anyMatch(contribution -> contribution.kind() == ContributionKind.PRICE_UPLOAD_OR)));
+		var sourceVersion = analysis.graph().node(tWriteInput.producer()).orElseThrow().valueVersion();
+		Assert.assertTrue("PCA_TWRITE_TRANSFER_KEY_MUST_USE_METADATA_BOUNDARY|producer="
+			+ sourceVersion.normalizedSignature(),
+			surface.transferKeys().stream().anyMatch(key ->
+				key.sourceValueVersion().equals(sourceVersion)
+					&& key.direction() == Direction.UPLOAD
+					&& key.boundaryMode() == BoundaryMode.TWRITE_METADATA
+					&& key.endpoints().stream().anyMatch(endpoint ->
+						endpoint.producer() == tWriteInput.producer()
+							&& endpoint.consumer() == tWriteInput.consumer()
+							&& endpoint.inputPosition() == tWriteInput.inputPosition())));
 
-		MinStExactSelector.select(facts);
+		MinStExactPhysicalSelection selected = optimize(model, surface);
+		MinStExactPhysicalPlacementProjector.project(selected);
+		var tWriteState = selected.selectedStates().get(tWriteInput.consumer());
+		Assert.assertTrue("PCA_TWRITE_STRICT_CP_LOUT_OR_FED_FOUT",
+			tWriteState.execType() == ExecType.CP && tWriteState.output() == FederatedOutput.LOUT
+				|| tWriteState.execType() == ExecType.FED && tWriteState.output() == FederatedOutput.FOUT);
 	}
 
 	@Test
-	public void pcaWrittenSecondOutputReusesExactFoutProducerWithoutUploadReceipt() throws Exception {
+	public void pcaWrittenSecondOutputReusesExactFoutProducerWithoutUpload() throws Exception {
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildDetachedAnalysis(compileHarnessShapePca());
-		List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
-			.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-		MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope);
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		MinStExactPhysicalSelection selected = optimize(model, surface);
+		MinStExactPhysicalPlacementProjector.project(selected);
 
-		CompiledInputEdgeFact meanCenteringInput = uniqueEdge(analysis,
+		CompiledInputEdgeFact input = uniqueEdge(analysis,
 			"AggUnaryOp:ua(meanC):Centering", "ParameterizedBuiltinOp:REPLACE:Centering");
-		AuxiliaryGroupFact group = uniqueUploadGroup(facts, meanCenteringInput,
-			BoundaryMode.ANCHOR_TRANSFER);
-		Assert.assertTrue("PCA_MEANC_MUST_RETAIN_AN_EXACT_COMPATIBLE_FOUT_MEMBERSHIP",
-			facts.membershipRepresentativesInCanonicalOrder().stream().anyMatch(representative ->
-				representative.decisionKey() == meanCenteringInput.producer()
-					&& representative.output() == FederatedOutput.FOUT
-					&& representative.state().fType() == group.conversionType()));
-		Assert.assertTrue("PCA_DERIVED_FOUT_MUST_SATISFY_FED_CONSUMER_WITHOUT_UPLOAD|producerMemberships="
-			+ facts.membershipRepresentativesInCanonicalOrder().stream()
-				.filter(representative -> representative.decisionKey() == meanCenteringInput.producer())
-				.map(representative -> representative.state().normalizedSignature() + '/'
-					+ representative.authorityKind()).toList()
-			+ "|groupType=" + group.conversionType(),
-			group.uploadPriceTarget() == UploadPriceTarget.PRODUCER_COMPUTE
-				&& facts.directedEdgesInDerivationOrder().stream().anyMatch(edge ->
-				edge.fromNodeId() == group.auxiliaryNodeId()
-					&& edge.toNodeId() == group.producerComputeNodeId()
-					&& edge.contributionsInDerivationOrder().stream()
-						.anyMatch(contribution -> contribution.kind() == ContributionKind.PRICE_UPLOAD_OR)));
-		Assert.assertFalse("PCA_DERIVED_FOUT_UPLOAD_PRICE_MUST_NOT_BE_UNCONDITIONALLY_SUNK",
-			facts.directedEdgesInDerivationOrder().stream().anyMatch(edge ->
-				edge.fromNodeId() == group.auxiliaryNodeId()
-					&& edge.toNodeId() == facts.sinkNodeId()
-					&& edge.contributionsInDerivationOrder().stream()
-						.anyMatch(contribution -> contribution.kind() == ContributionKind.PRICE_UPLOAD_OR)));
+		var producerState = selected.selectedStates().get(input.producer());
+		Assert.assertEquals("PCA_MEANC_SELECTED_FOUT", FederatedOutput.FOUT, producerState.output());
+		var consumerAlternative = selected.alternativesInDecisionOrder().stream()
+			.filter(alternative -> alternative.decision() == input.consumer()).findFirst().orElseThrow();
+		var authority = consumerAlternative.inputAuthorities().stream()
+			.filter(candidate -> candidate.inputPosition() == input.inputPosition())
+			.findFirst().orElseThrow();
+		Assert.assertEquals("PCA_MEANC_DIRECT_FOUT_AUTHORITY", InputAuthorityKind.DIRECT_FOUT,
+			authority.kind());
+		Assert.assertEquals("PCA_MEANC_DIRECT_FOUT_FTYPE", producerState.fType(), authority.expectedFType());
+		var sourceVersion = analysis.graph().node(input.producer()).orElseThrow().valueVersion();
+		Assert.assertFalse("PCA_MEANC_DIRECT_FOUT_MUST_NOT_EMIT_UPLOAD",
+			selected.emittedRelocations().stream().anyMatch(action ->
+				action.sourceValueVersion().equals(sourceVersion)
+					&& action.compatibleConsumers().contains(input.consumer())));
+	}
 
-		MinStExactSelector.select(facts);
+	private static MinStExactPhysicalSelection optimize(MinStExactPhysicalModel model,
+		MinStExactCostFactsProducer.PhysicalCostSurface surface) {
+		return MinStExactPhysicalSelection.create(model, MinStExactPhysicalOptimizer.optimize(
+			model, surface, MinStExactPhysicalOptimizer.PRODUCTION_LIMITS));
+	}
+
+	private static MinStExactPhysicalModel.DecisionDomain domain(MinStExactPhysicalModel model,
+		org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey key) {
+		return model.domains().stream().filter(candidate -> candidate.node().key() == key)
+			.findFirst().orElseThrow(() -> new AssertionError(
+				"PCA_PHYSICAL_DOMAIN_MISSING|" + key.normalizedSignature()));
 	}
 
 	private static DMLProgram compilePca() throws Exception {
@@ -111,14 +125,7 @@ public class MinStPcaAuthorityClosureAndTWriteMetadataTest {
 				+ "ranges=list(list(0,0),list(500,100),list(500,0),list(1000,100)));",
 			"[PC,V]=pca(X=X,K=5,scale=TRUE,center=TRUE);",
 			"write(PC,\"out\",format=\"binary\");") + "\n";
-		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
-			script, new HashMap<>());
-		DMLTranslator translator = new DMLTranslator(program);
-		translator.liveVariableAnalysis(program);
-		translator.validateParseTree(program);
-		translator.constructHops(program);
-		translator.rewriteHopsDAG(program);
-		return program;
+		return compile(script);
 	}
 
 	private static DMLProgram compileHarnessShapePca() throws Exception {
@@ -127,6 +134,10 @@ public class MinStPcaAuthorityClosureAndTWriteMetadataTest {
 				+ "ranges=list(list(0,0),list(50000,2100)));",
 			"[Xout,Mout]=pca(X=X,K=10);",
 			"write(Mout,\"out\",format=\"csv\");") + "\n";
+		return compile(script);
+	}
+
+	private static DMLProgram compile(String script) throws Exception {
 		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
 			script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
@@ -147,29 +158,4 @@ public class MinStPcaAuthorityClosureAndTWriteMetadataTest {
 			+ "|consumer=" + consumerSignature, 1, matches.size());
 		return matches.get(0);
 	}
-
-	private static DecisionFact decision(MinStExactCostFacts facts, CompiledHopKey key) {
-		return facts.decisionFactsInScopeOrder().stream().filter(candidate -> candidate.key() == key)
-			.findFirst().orElseThrow(() -> new AssertionError("PCA_DECISION_MISSING|" + key.normalizedSignature()));
-	}
-
-	private static AuxiliaryGroupFact uniqueGroup(MinStExactCostFacts facts,
-		CompiledInputEdgeFact input) {
-		return uniqueUploadGroup(facts, input, BoundaryMode.TWRITE_METADATA);
-	}
-
-	private static AuxiliaryGroupFact uniqueUploadGroup(MinStExactCostFacts facts,
-		CompiledInputEdgeFact input, BoundaryMode mode) {
-		List<AuxiliaryGroupFact> matches = facts.auxiliaryGroupsInCanonicalOrder().stream()
-			.filter(group -> group.direction() == Direction.UPLOAD
-				&& group.boundaryMode() == mode
-				&& group.producerKey() == input.producer()
-				&& group.endpointsInCanonicalOrder().stream().anyMatch(endpoint ->
-					endpoint.consumerKey() == input.consumer()
-						&& endpoint.inputPosition() == input.inputPosition()))
-			.toList();
-		Assert.assertEquals("PCA_UPLOAD_GROUP_MUST_BE_UNIQUE|mode=" + mode, 1, matches.size());
-		return matches.get(0);
-	}
-
 }

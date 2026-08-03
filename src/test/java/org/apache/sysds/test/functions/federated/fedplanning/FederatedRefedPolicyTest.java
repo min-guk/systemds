@@ -58,6 +58,7 @@ import org.apache.sysds.lops.FederatedRefed;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.compile.Dag;
 import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry.ConsumerInputSpec;
 import org.apache.sysds.runtime.DMLRuntimeException;
 import org.apache.sysds.runtime.instructions.Instruction;
 import org.apache.sysds.runtime.instructions.fed.FEDFoutInstruction;
@@ -142,6 +143,9 @@ public class FederatedRefedPolicyTest {
 		assertEquals("Anchor hop mismatch in registry", anchor.getHopID(), snapshot.get(target.getHopID()).getAnchorHopId());
 		assertEquals("Policy registry must preserve the exact FED consumer",
 			List.of(parent.getHopID()), snapshot.get(target.getHopID()).getConsumerHopIds());
+		assertEquals("Policy registry must preserve the exact FED consumer input",
+			List.of(new ConsumerInputSpec(parent.getHopID(), parent.getInput().indexOf(target))),
+			snapshot.get(target.getHopID()).getConsumerInputs());
 	}
 
 	@Test
@@ -182,6 +186,100 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
+	public void testDisjointConsumerSpecificRefedLayoutsRemainExact() {
+		String fullAnchor = "worker1:8001;|0,0,50000,2100;|FULL";
+		FederatedRefedRegistry.register(-1L, 100L, 200L, fullAnchor, FType.FULL, List.of(301L));
+		FederatedRefedRegistry.register(-1L, 100L, 200L, fullAnchor, FType.BROADCAST, List.of(302L));
+
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(-1L).get(100L);
+		assertEquals("One source must retain both selected consumer-specific uploads", 2,
+			spec.getAuthorities().size());
+		assertEquals(List.of(FType.FULL, FType.BROADCAST), spec.getAuthorities().stream()
+			.map(FederatedRefedRegistry.AuthoritySpec::getMaterializationFType).sorted().toList());
+		assertEquals(List.of(301L, 302L), spec.getConsumerHopIds());
+		assertEquals(List.of(List.of(302L), List.of(301L)), spec.getAuthorities().stream()
+			.map(FederatedRefedRegistry.AuthoritySpec::getConsumerHopIds).toList());
+
+		Map<Long, FederatedRefedRegistry.AnchorSpec> before = FederatedRefedRegistry.snapshot(-1L);
+		try {
+			FederatedRefedRegistry.register(-1L, 100L, 200L, fullAnchor,
+				FType.BROADCAST, List.of(301L));
+			throw new AssertionError("Expected one consumer with two incompatible layouts to fail closed");
+		}
+		catch(IllegalArgumentException ex) {
+			assertTrue("Expected exact consumer-authority conflict: " + ex.getMessage(),
+				ex.getMessage().contains("conflicting fed_refed anchor authority"));
+		}
+		assertEquals("Rejected overlapping authority must not mutate registry", before,
+			FederatedRefedRegistry.snapshot(-1L));
+	}
+
+	@Test
+	public void testExactRegistrationCannotBeAbsorbedByLegacyConsumerWildcard() {
+		FederatedRefedRegistry.register(-1L, 100L, 200L, "fedinit://workers|ROW",
+			FType.ROW, List.of(301L));
+		Map<Long, FederatedRefedRegistry.AnchorSpec> before = FederatedRefedRegistry.snapshot(-1L);
+
+		assertThrows("An exact input occurrence must not be canonicalized into a legacy consumer wildcard",
+			IllegalArgumentException.class,
+			() -> FederatedRefedRegistry.registerConsumerInputs(-1L, 100L, 200L,
+				"fedinit://workers|ROW", FType.ROW, List.of(new ConsumerInputSpec(301L, 0))));
+		assertEquals("Rejected wildcard/exact overlap must be atomic", before,
+			FederatedRefedRegistry.snapshot(-1L));
+
+		assertThrows("The exact API itself must reject ALL_INPUTS",
+			IllegalArgumentException.class,
+			() -> FederatedRefedRegistry.registerConsumerInputs(-1L, 101L, 200L,
+				"fedinit://workers|ROW", FType.ROW,
+				List.of(new ConsumerInputSpec(302L, ConsumerInputSpec.ALL_INPUTS))));
+		assertEquals("Rejected exact-API wildcard must not mutate any registry slot", before,
+			FederatedRefedRegistry.snapshot(-1L));
+	}
+
+	@Test
+	public void testExactRefedEdgeDoesNotSuppressCrossAnchorRelocation() {
+		DataOp localLhs = createLocalMatrix("L", 10, 10);
+		DataOp localRhs = createLocalMatrix("R", 10, 10);
+		Hop target = HopRewriteUtils.createBinary(localLhs, localRhs, OpOp2.PLUS);
+		target.setDim1(10);
+		target.setDim2(10);
+		target.setForcedExecType(ExecType.CP);
+		target.setFederatedOutput(FederatedOutput.FOUT);
+
+		DataOp firstAnchor = createFederatedInput("A1", 10, 10);
+		BinaryOp firstConsumer = HopRewriteUtils.createBinary(target, firstAnchor, OpOp2.PLUS);
+		firstConsumer.setForcedExecType(ExecType.FED);
+		DataOp secondAnchor = createFederatedInput("A2", 10, 10);
+		BinaryOp secondConsumer = HopRewriteUtils.createBinary(target, secondAnchor, OpOp2.MINUS);
+		secondConsumer.setForcedExecType(ExecType.FED);
+
+		String firstDurableAnchor = "fedinit://pool-a|ROW";
+		String secondDurableAnchor = "fedinit://pool-b|COL";
+		FederatedPlannerUtils.registerFedAnchorKey("A1", firstDurableAnchor);
+		FederatedPlannerUtils.registerFedAnchorKey("A2", secondDurableAnchor);
+		FederatedRefedRegistry.registerConsumerInputs(-1L, target.getHopID(), firstAnchor.getHopID(),
+			firstDurableAnchor, FType.ROW,
+			List.of(new ConsumerInputSpec(firstConsumer.getHopID(), firstConsumer.getInput().indexOf(target))));
+
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(firstAnchor.getHopID(), FType.ROW);
+		fTypeMap.put(secondAnchor.getHopID(), FType.COL);
+		FederatedRefedPolicy.registerFromHops(List.of(secondConsumer), false, fTypeMap, -1L);
+
+		FederatedRefedRegistry.AnchorSpec spec = FederatedRefedRegistry.snapshot(-1L).get(target.getHopID());
+		assertEquals("The two exact edges require distinct physical relocations", 2,
+			spec.getAuthorities().size());
+		assertTrue("The original exact edge must retain its ROW authority",
+			spec.getAuthorities().stream().anyMatch(authority -> firstDurableAnchor.equals(authority.getAnchorKey())
+				&& authority.getMaterializationFType() == FType.ROW
+				&& authority.getConsumerInputs().contains(new ConsumerInputSpec(firstConsumer.getHopID(), 0))));
+		assertTrue("The new edge must relocate to its COL consumer anchor instead of reusing ROW authority",
+			spec.getAuthorities().stream().anyMatch(authority -> secondDurableAnchor.equals(authority.getAnchorKey())
+				&& authority.getMaterializationFType() == FType.COL
+				&& authority.getConsumerInputs().contains(new ConsumerInputSpec(secondConsumer.getHopID(), 0))));
+	}
+
+	@Test
 	public void testEquivalentDurableAuthorityMergesConsumersWithoutStaleHopOverride() {
 		FederatedRefedRegistry.register(-1L, 100L, 200L, "fedinit://workers|ROW", List.of(301L));
 		FederatedRefedRegistry.register(-1L, 100L, 201L, "fedinit://workers|ROW", List.of(302L));
@@ -211,6 +309,8 @@ public class FederatedRefedPolicyTest {
 		FederatedRefedPolicy.registerFromHops(List.of(firstParent), true, fTypeMap, -1L);
 		assertEquals(List.of(firstParent.getHopID()), FederatedRefedRegistry.snapshot(-1L)
 			.get(target.getHopID()).getConsumerHopIds());
+		assertEquals(List.of(new ConsumerInputSpec(firstParent.getHopID(), firstParent.getInput().indexOf(target))),
+			FederatedRefedRegistry.snapshot(-1L).get(target.getHopID()).getConsumerInputs());
 
 		BinaryOp secondParent = HopRewriteUtils.createBinary(target, anchor, OpOp2.MINUS);
 		secondParent.setForcedExecType(ExecType.FED);
@@ -219,6 +319,12 @@ public class FederatedRefedPolicyTest {
 		assertEquals("Repeated policy registration must merge the newly selected exact consumer",
 			List.of(firstParent.getHopID(), secondParent.getHopID()).stream().sorted().toList(),
 			FederatedRefedRegistry.snapshot(-1L).get(target.getHopID()).getConsumerHopIds());
+		assertEquals("Repeated policy registration must merge exact consumer inputs without a wildcard",
+			List.of(
+				new ConsumerInputSpec(firstParent.getHopID(), firstParent.getInput().indexOf(target)),
+				new ConsumerInputSpec(secondParent.getHopID(), secondParent.getInput().indexOf(target)))
+				.stream().sorted().toList(),
+			FederatedRefedRegistry.snapshot(-1L).get(target.getHopID()).getConsumerInputs());
 	}
 
 	@Test
@@ -227,7 +333,7 @@ public class FederatedRefedPolicyTest {
 		Map<Long, FederatedRefedRegistry.AnchorSpec> before = FederatedRefedRegistry.snapshot(-1L);
 
 		try {
-			FederatedRefedRegistry.register(-1L, 100L, 201L, "fedinit://workers-b|ROW", List.of(302L));
+			FederatedRefedRegistry.register(-1L, 100L, 201L, "fedinit://workers-b|ROW", List.of(301L));
 			throw new AssertionError("Expected conflicting repeated anchor authority to fail closed");
 		}
 		catch (IllegalArgumentException ex) {
@@ -866,10 +972,12 @@ public class FederatedRefedPolicyTest {
 			FederatedOutput.FOUT, tRead.getFederatedOutput());
 		assertEquals("Expected matching TWrite to be materialized as FOUT",
 			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertEquals("A materialized TWrite must use the legal FED/FOUT boundary pair",
+			ExecType.FED, tWrite.getForcedExecType());
 	}
 
 	@Test
-	public void testCpFoutTransientWriteMaterializationSurvivesLiveFedTransientReadCleanup() throws Exception {
+	public void testFedFoutTransientWriteMaterializationSurvivesLiveFedTransientReadCleanup() throws Exception {
 		long sbId = 17017L;
 		FederatedRefedRegistry.clear();
 		FederatedFoutMaterializeRegistry.clear();
@@ -901,19 +1009,21 @@ public class FederatedRefedPolicyTest {
 
 		FederatedRefedPolicy.registerFromHops(Arrays.asList(fedParent, tWrite, fedAnchor), true, fTypeMap, sbId);
 
-		assertEquals("Live FED transient read must not be demoted after its CP/FOUT TWrite materialization is kept",
+		assertEquals("Live FED transient read must not be demoted after its FED/FOUT TWrite materialization is kept",
 			ExecType.FED, tRead.getForcedExecType());
 		assertEquals("Live FED transient read must remain FOUT",
 			FederatedOutput.FOUT, tRead.getFederatedOutput());
-		assertEquals("CP/FOUT transient write must remain a materialized federated source for the live TRead",
+		assertEquals("FED/FOUT transient write must remain a materialized federated source for the live TRead",
 			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertEquals("Planner must repair the illegal CP/FOUT seed to FED/FOUT",
+			ExecType.FED, tWrite.getForcedExecType());
 		assertTrue("Expected materialize registry entry to survive cleanup for the live transient-read consumer",
 			FederatedFoutMaterializeRegistry.snapshot(sbId).containsKey(tWrite.getHopID()));
 
 		java.lang.reflect.Method stillNeeds = FederatedRefedPolicy.class.getDeclaredMethod(
 			"stillNeedsRegisteredFederatedUpload", Hop.class, Map.class, java.util.List.class);
 		stillNeeds.setAccessible(true);
-		assertTrue("Prune pass must defer CP/FOUT TWrite materialization liveness to stale-TWrite cleanup",
+		assertTrue("Prune pass must defer FED/FOUT TWrite materialization liveness to stale-TWrite cleanup",
 			(Boolean) stillNeeds.invoke(null, tWrite, fTypeMap, Arrays.asList(tWrite, fedAnchor)));
 		java.lang.reflect.Method hasMaterialize = FederatedRefedPolicy.class.getDeclaredMethod(
 			"hasRegisteredTransientWriteMaterialize", long.class, DataOp.class, Map.class);
@@ -963,6 +1073,85 @@ public class FederatedRefedPolicyTest {
 		assertTrue("The FED parent must receive an explicit planner-compatible upload input",
 			FederatedRefedRegistry.snapshot(-1).containsKey(tRead.getHopID())
 				|| FederatedFoutMaterializeRegistry.snapshot(-1).containsKey(tRead.getHopID()));
+	}
+
+	@Test
+	public void testRuntimeRecompileRejectsIllegalCpFoutTWriteWithoutRepair() {
+		DataOp local = createLocalMatrix("local", 10, 10);
+		local.setForcedExecType(ExecType.CP);
+		local.setFederatedOutput(FederatedOutput.LOUT);
+		DataOp tWrite = createTransientWrite("Y", local, 10, 10);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.FOUT);
+		Map<String, String> signatures = new HashMap<>();
+		signatures.put("X", "worker1:8001/data/X;||FULL");
+
+		assertThrows("Runtime recompile must reject, not repair, an illegal CP/FOUT TWrite",
+			DMLRuntimeException.class,
+			() -> FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(List.of(tWrite)), true,
+				new HashMap<>(), 72L, signatures, new HashMap<>()));
+		assertEquals("Rejected runtime plan must keep its original exec marker for diagnostics",
+			ExecType.CP, tWrite.getForcedExecType());
+		assertEquals("Rejected runtime plan must keep its original output marker for diagnostics",
+			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertFalse("Rejected runtime plan must not publish materialization",
+			FederatedFoutMaterializeRegistry.snapshot(72L).containsKey(tWrite.getHopID()));
+		assertFalse("Rejected runtime plan must not populate the CP/FOUT anchor cache",
+			FederatedRefedPolicy.snapshotCpfoutAnchorCache().containsKey(tWrite.getHopID()));
+	}
+
+	@Test
+	public void testTransientFoutObligationNeverExposesCpFoutBoundary() {
+		DataOp anchor = createFederatedInput("X", 10, 10);
+		DataOp tRead = createLocalMatrix("R", 10, 10);
+		tRead.setForcedExecType(ExecType.CP);
+		tRead.setFederatedOutput(FederatedOutput.LOUT);
+		BinaryOp readConsumer = HopRewriteUtils.createBinary(tRead, anchor, OpOp2.PLUS);
+		readConsumer.setForcedExecType(ExecType.FED);
+		readConsumer.setFederatedOutput(FederatedOutput.FOUT);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(anchor.getHopID(), FType.ROW);
+
+		FederatedRefedPolicy.registerFoutMaterializeObligation(tRead, List.of(readConsumer), fTypeMap, 73L);
+		assertEquals("TRead obligation must retain the legal CP/LOUT boundary", ExecType.CP,
+			tRead.getForcedExecType());
+		assertEquals(FederatedOutput.LOUT, tRead.getFederatedOutput());
+		assertTrue("TRead obligation must be represented by an exact REFED edge, not CP/FOUT",
+			FederatedRefedRegistry.snapshot(73L).containsKey(tRead.getHopID()));
+
+		DataOp local = createLocalMatrix("local", 10, 10);
+		local.setForcedExecType(ExecType.CP);
+		local.setFederatedOutput(FederatedOutput.LOUT);
+		DataOp tWrite = createTransientWrite("W", local, 10, 10);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.LOUT);
+		BinaryOp writeConsumer = HopRewriteUtils.createBinary(tWrite, anchor, OpOp2.PLUS);
+		writeConsumer.setForcedExecType(ExecType.FED);
+		writeConsumer.setFederatedOutput(FederatedOutput.FOUT);
+		FederatedRefedPolicy.registerFoutMaterializeObligation(tWrite, List.of(writeConsumer), fTypeMap, 74L);
+		assertEquals("TWrite obligation must restore the legal selected CP/LOUT boundary", ExecType.CP,
+			tWrite.getForcedExecType());
+		assertEquals(FederatedOutput.LOUT, tWrite.getFederatedOutput());
+		assertTrue("TWrite obligation must record its exact materialization without CP/FOUT markers",
+			FederatedFoutMaterializeRegistry.snapshot(74L).containsKey(tWrite.getHopID()));
+	}
+
+	@Test
+	public void testTransientFoutObligationFailsAtomicallyWithoutExactAnchor() {
+		DataOp local = createLocalMatrix("local", 10, 10);
+		DataOp tWrite = createTransientWrite("W", local, 10, 10);
+		tWrite.setForcedExecType(ExecType.CP);
+		tWrite.setFederatedOutput(FederatedOutput.LOUT);
+
+		assertThrows("Missing exact anchor must fail before any transient-boundary mutation",
+			DMLRuntimeException.class,
+			() -> FederatedRefedPolicy.registerFoutMaterializeObligation(
+				tWrite, List.of(), new HashMap<>(), 75L));
+		assertEquals(ExecType.CP, tWrite.getForcedExecType());
+		assertEquals(FederatedOutput.LOUT, tWrite.getFederatedOutput());
+		assertFalse(FederatedRefedPolicy.snapshotCpfoutAnchorCache().containsKey(tWrite.getHopID()));
+		assertFalse(FederatedRefedRegistry.snapshot(75L).containsKey(tWrite.getHopID()));
+		assertFalse(FederatedFoutMaterializeRegistry.snapshot(75L).containsKey(tWrite.getHopID()));
 	}
 
 	@Test
@@ -1047,7 +1236,7 @@ public class FederatedRefedPolicyTest {
 	}
 
 	@Test
-	public void testRuntimeSignatureWithoutTypeRegistersCompleteConservativeAnchorKey() {
+	public void testRuntimeSignatureWithoutTypeDoesNotFabricateFullAnchorKey() {
 		DataOp local = createLocalMatrix("local", 10, 10);
 		Map<String, String> runtimeSignatures = new HashMap<>();
 		runtimeSignatures.put("X", "worker1:8001/data/X;|");
@@ -1055,13 +1244,32 @@ public class FederatedRefedPolicyTest {
 		FederatedRefedPolicy.registerFromHops(new java.util.ArrayList<>(Arrays.asList(local)), true,
 			new HashMap<>(), -1L, runtimeSignatures, new HashMap<>());
 
-		assertEquals("A runtime worker-pool signature without an FType must not be registered as an"
-				+ " incomplete literal fed_refed anchor",
-			"worker1:8001/data/X;||FULL", FederatedPlannerUtils.getFedAnchorKey("X"));
+		assertTrue("Unknown runtime FType must not publish a fabricated FULL literal anchor",
+			FederatedPlannerUtils.getFedAnchorKey("X") == null);
+		assertTrue("Unknown runtime FType must not publish REFED authority",
+			FederatedRefedRegistry.isEmpty());
 	}
 
 	@Test
-	public void testDerivedFederatedHopWithoutTypeBuildsCompleteConservativeAnchorKey() throws Exception {
+	public void testRegisterFedInitVarClearsStaleTypeAndAcceptsEncodedFull() {
+		String oldSignature = "worker1:8001/data/old;|";
+		String unknownSignature = "worker1:8001/data/unknown;|";
+		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW, oldSignature);
+		FederatedPlannerUtils.registerFedInitVar("X", null, unknownSignature);
+		assertTrue("An explicit untyped signature must clear stale placement type",
+			FederatedPlannerUtils.getFedInitFType("X") == null);
+		assertTrue("An explicit untyped signature must clear stale literal authority",
+			FederatedPlannerUtils.getFedAnchorKey("X") == null);
+
+		String encodedFull = "worker1:8001/data/X;||FULL";
+		FederatedPlannerUtils.registerFedInitVar("X", null, encodedFull);
+		assertEquals("Encoded worker=1 FULL provenance remains exact", FType.FULL,
+			FederatedPlannerUtils.getFedInitFType("X"));
+		assertEquals(encodedFull, FederatedPlannerUtils.getFedAnchorKey("X"));
+	}
+
+	@Test
+	public void testDerivedFederatedHopWithoutTypeDoesNotBuildLiteralAnchorKey() throws Exception {
 		String signature = "worker1:8001/data/X;|";
 		FederatedPlannerUtils.registerFedInitVar("X", null, signature);
 		DataOp source = createFederatedInput("X", 10, 10);
@@ -1075,11 +1283,103 @@ public class FederatedRefedPolicyTest {
 			"buildAnchorKey", Hop.class, Map.class, Set.class);
 		buildAnchorKey.setAccessible(true);
 		Object anchorKey = buildAnchorKey.invoke(null, derived, new HashMap<>(), new java.util.HashSet<Long>());
+		assertTrue("A signature without observed or encoded FType cannot authorize literal refederation",
+			anchorKey == null);
+	}
+
+	@Test
+	public void testKnownSingleWorkerFullStillPublishesExactLiteralAnchor() throws Exception {
+		String signature = "worker1:8001/data/X;|";
+		FederatedPlannerUtils.registerFedInitVar("X", FType.FULL, signature);
+		assertEquals("Known worker=1 FULL provenance must remain supported",
+			signature + "|FULL", FederatedPlannerUtils.getFedAnchorKey("X"));
+
+		DataOp source = createFederatedInput("X", 10, 10);
+		UnaryOp derived = HopRewriteUtils.createUnary(source, OpOp1.EXP);
+		derived.setForcedExecType(ExecType.FED);
+		derived.setFederatedOutput(FederatedOutput.FOUT);
+		Map<Long, FType> fTypeMap = new HashMap<>();
+		fTypeMap.put(source.getHopID(), FType.FULL);
+		java.lang.reflect.Method buildAnchorKey = FederatedRefedPolicy.class.getDeclaredMethod(
+			"buildAnchorKey", Hop.class, Map.class, Set.class);
+		buildAnchorKey.setAccessible(true);
+		Object anchorKey = buildAnchorKey.invoke(null, derived, fTypeMap, new java.util.HashSet<Long>());
 		java.lang.reflect.Field value = anchorKey.getClass().getDeclaredField("value");
 		value.setAccessible(true);
+		assertEquals(signature + "|FULL", value.get(anchorKey));
+	}
 
-		assertEquals("A derived federated hop must not bypass runtime anchor-key normalization",
-			"worker1:8001/data/X;||FULL", value.get(anchorKey));
+	@Test
+	public void testEncodedSingleWorkerFullRuntimeSignaturePublishesExactAnchor() {
+		String encodedFull = "worker1:8001/data/X;||FULL";
+		Map<String, String> signatures = new HashMap<>();
+		signatures.put("X", encodedFull);
+		FederatedRefedPolicy.registerFromHops(List.of(createLocalMatrix("local", 10, 10)), true,
+			new HashMap<>(), -1L, signatures, new HashMap<>());
+		assertEquals("A concrete encoded FULL is valid even without a separate runtime type map",
+			encodedFull, FederatedPlannerUtils.getFedAnchorKey("X"));
+	}
+
+	@Test
+	public void testConflictingEncodedAndObservedTypeFailsClosed() {
+		String encodedFull = "worker1:8001/data/X;||FULL";
+		FederatedPlannerUtils.registerFedInitVar("X", FType.ROW, encodedFull);
+		assertTrue("Conflicting encoded and observed types must clear the stored type",
+			FederatedPlannerUtils.getFedInitFType("X") == null);
+		assertTrue("Conflicting encoded and observed types must not publish literal authority",
+			FederatedPlannerUtils.getFedAnchorKey("X") == null);
+	}
+
+	@Test
+	public void testSyntheticRuntimeAnchorDoesNotPickArbitraryFirstPlacement() throws Exception {
+		Map<String, String> signatures = new HashMap<>();
+		signatures.put("A", "worker1:8001/data/A;|0,10;");
+		signatures.put("B", "worker2:8002/data/B;|0,10;");
+		Map<String, FType> types = new HashMap<>();
+		types.put("A", FType.ROW);
+		types.put("B", FType.ROW);
+		java.lang.reflect.Method synthetic = FederatedRefedPolicy.class.getDeclaredMethod(
+			"buildSyntheticAnchorSelection", List.class, Map.class, Map.class, Map.class);
+		synthetic.setAccessible(true);
+		Object selection = synthetic.invoke(null, List.of(), new HashMap<Long, FType>(), signatures, types);
+		assertTrue("Distinct runtime placements must not be reduced to map iteration order", selection == null);
+	}
+
+	@Test
+	public void testRawUntypedTransientAnchorIsNotReturnedAsLiteralAuthority() throws Exception {
+		FederatedPlannerUtils.registerFedInitVar("X");
+		FederatedPlannerUtils.registerFedAnchorKey("X", "worker1:8001/data/X;|");
+		DataOp source = createFederatedInput("X", 10, 10);
+		java.lang.reflect.Method buildAnchorKey = FederatedRefedPolicy.class.getDeclaredMethod(
+			"buildAnchorKey", Hop.class, Map.class, Set.class);
+		buildAnchorKey.setAccessible(true);
+		Object anchorKey = buildAnchorKey.invoke(null, source, new HashMap<>(), new java.util.HashSet<Long>());
+		assertTrue("An untyped raw transient anchor must not re-enter literal REFED authority", anchorKey == null);
+	}
+
+	@Test
+	public void testSignatureOnlyCpfoutRejectsTWriteAndNonTWriteWithoutMutation() throws Exception {
+		String untypedSignature = "worker1:8001/data/X;|";
+		DataOp local = createLocalMatrix("local", 10, 10);
+		assertCpfoutLiteralAnchorRejected(local, untypedSignature);
+
+		DataOp tWrite = createTransientWrite("Y", local, 10, 10);
+		assertCpfoutLiteralAnchorRejected(tWrite, untypedSignature);
+		assertTrue("Rejected TWrite must not publish an untyped anchor",
+			FederatedPlannerUtils.getFedAnchorKey("Y") == null);
+	}
+
+	@Test
+	public void testUnknownRequiredAndOptionalParentAnchorsDoNotBecomeFull() throws Exception {
+		DataOp unknown = createFederatedInput("unknown", 10, 10);
+		DataOp local = createLocalMatrix("local", 10, 10);
+		BinaryOp requiredParent = HopRewriteUtils.createBinary(local, unknown, OpOp2.PLUS);
+		assertTrue("Unknown required matrix anchor must fail closed",
+			invokeDetermineParentAnchor(requiredParent, local) == null);
+
+		UnaryOp optionalParent = HopRewriteUtils.createUnary(unknown, OpOp1.BROADCAST);
+		assertTrue("Unknown optional matrix anchor must fail closed",
+			invokeDetermineParentAnchor(optionalParent, local) == null);
 	}
 
 	@Test
@@ -1220,6 +1520,8 @@ public class FederatedRefedPolicyTest {
 			new java.util.ArrayList<>(Arrays.asList(tWrite, futureTRead, fedAnchor)), true, fTypeMap, 85);
 		assertEquals("Expected initial planner pass to keep transient write materialization",
 			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertEquals("Initial planner pass must encode the materialized write as FED/FOUT",
+			ExecType.FED, tWrite.getForcedExecType());
 
 		Map<String, String> runtimeSignatures = new HashMap<>();
 		runtimeSignatures.put("X",
@@ -1228,14 +1530,16 @@ public class FederatedRefedPolicyTest {
 		runtimeTypes.put("X", FType.ROW);
 
 		// Runtime recompile of the TWrite block is narrower than the future TRead block.
-		// The stale-write pass must still preserve the CP/FOUT materialization because the
+		// The stale-write pass must still preserve the FED/FOUT materialization because the
 		// already-approved planner state has a matching future FED/FOUT TRead for the same variable.
 		FederatedRefedPolicy.registerFromHops(
 			new java.util.ArrayList<>(Arrays.asList(tWrite, fedAnchor)), true, fTypeMap, 85,
 			runtimeSignatures, runtimeTypes);
 
-		assertEquals("Expected runtime stale-write cleanup to preserve CP/FOUT TWrite for future FED TRead",
+		assertEquals("Expected runtime stale-write cleanup to preserve FED/FOUT TWrite for future FED TRead",
 			FederatedOutput.FOUT, tWrite.getFederatedOutput());
+		assertEquals("Runtime recompile must preserve the planner-selected legal FED/FOUT pair",
+			ExecType.FED, tWrite.getForcedExecType());
 		assertTrue("Expected runtime TWrite materialization registry entry to remain",
 			FederatedFoutMaterializeRegistry.snapshot(85).containsKey(tWrite.getHopID()));
 
@@ -1514,5 +1818,49 @@ public class FederatedRefedPolicyTest {
 		tWrite.setDim1(rows);
 		tWrite.setDim2(cols);
 		return tWrite;
+	}
+
+	@SuppressWarnings({"rawtypes", "unchecked"})
+	private static void assertCpfoutLiteralAnchorRejected(Hop hop, String anchorValue) throws Exception {
+		ExecType originalExec = hop.getForcedExecType();
+		FederatedOutput originalOutput = hop.getFederatedOutput();
+		Class<?> keyTypeClass = Class.forName(FederatedRefedPolicy.class.getName() + "$AnchorKeyType");
+		Object literalType = Enum.valueOf((Class) keyTypeClass, "FEDINIT_SIGNATURE");
+		Class<?> keyClass = Class.forName(FederatedRefedPolicy.class.getName() + "$AnchorKey");
+		java.lang.reflect.Constructor<?> keyConstructor = keyClass.getDeclaredConstructor(keyTypeClass, Object.class);
+		keyConstructor.setAccessible(true);
+		Object key = keyConstructor.newInstance(literalType, anchorValue);
+		Class<?> selectionClass = Class.forName(FederatedRefedPolicy.class.getName() + "$AnchorSelection");
+		java.lang.reflect.Constructor<?> selectionConstructor =
+			selectionClass.getDeclaredConstructor(keyClass, Hop.class);
+		selectionConstructor.setAccessible(true);
+		Object selection = selectionConstructor.newInstance(key, null);
+		java.lang.reflect.Method register = FederatedRefedPolicy.class.getDeclaredMethod(
+			"registerCpfoutWithSelection", Hop.class, Map.class, long.class, selectionClass, List.class);
+		register.setAccessible(true);
+		try {
+			register.invoke(null, hop, new HashMap<Long, FType>(), 71L, selection, List.of());
+			throw new AssertionError("Expected untyped literal anchor rejection");
+		}
+		catch(java.lang.reflect.InvocationTargetException ex) {
+			assertTrue("Untyped literal anchor rejection must be a planner error",
+				ex.getCause() instanceof DMLRuntimeException);
+		}
+		assertEquals("Prevalidation must not mutate exec placement", originalExec, hop.getForcedExecType());
+		assertEquals("Prevalidation must not mutate output placement", originalOutput, hop.getFederatedOutput());
+		assertFalse("Prevalidation must not populate the CP/FOUT anchor cache",
+			FederatedRefedPolicy.snapshotCpfoutAnchorCache().containsKey(hop.getHopID()));
+		assertFalse("Prevalidation must not publish REFED work",
+			FederatedRefedRegistry.snapshot(71L).containsKey(hop.getHopID()));
+		assertFalse("Prevalidation must not publish FOUT materialization",
+			FederatedFoutMaterializeRegistry.snapshot(71L).containsKey(hop.getHopID()));
+	}
+
+	private static Object invokeDetermineParentAnchor(Hop parent, Hop target) throws Exception {
+		java.lang.reflect.Method determine = FederatedRefedPolicy.class.getDeclaredMethod(
+			"determineParentAnchor", Hop.class, Hop.class, Map.class,
+			boolean.class, boolean.class, boolean.class);
+		determine.setAccessible(true);
+		return determine.invoke(null, parent, target, new HashMap<Long, FType>(), true, false, false);
 	}
 }

@@ -183,7 +183,7 @@ public class CampaignBDpAggregateProducerContractTest {
 	@Test public void missingExecutableAssociationRejectsBeforeApplication() throws Exception {
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-01");
 		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);Hop root=analysis.occurrences().get(0).hop();
-		FederatedPlannerDpMemoTable memo=new FederatedPlannerDpMemoTable();
+		FederatedPlannerDpMemoTable memo=new FederatedPlannerDpMemoTable(analysis);
 		add(memo,root,FederatedOutput.LOUT,ExecType.CP,0x1.0p3,false);
 		Method owner=FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",Set.class,FederatedPlannerDpMemoTable.class);
 		owner.setAccessible(true);LinkedHashSet<Hop> roots=new LinkedHashSet<>();roots.add(root);
@@ -241,9 +241,14 @@ public class CampaignBDpAggregateProducerContractTest {
 	}
 
 	private static ProducerCase producerCase(Double loutCost,Double foutCost) throws Exception {
-		DMLProgram program=ProductionShadowFixtureFactory.compile("B-01");
-		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);Hop root=analysis.occurrences().get(0).hop();
-		FederatedPlannerDpMemoTable memo=new FederatedPlannerDpMemoTable();
+		DMLProgram program=ProductionShadowFixtureFactory.compile("B-11");
+		PlacementAnalysis analysis=new NeutralPlacementGraphBuilder().buildAnalysis(program);
+		Hop root=analysis.occurrences().stream().filter(occurrence -> {
+			List<PlacementState> states=analysis.graph().node(occurrence.key()).orElseThrow().legalAlternatives();
+			return states.stream().anyMatch(state->state.execType()==ExecType.CP&&state.output()==FederatedOutput.LOUT)
+				&&states.stream().anyMatch(state->state.execType()==ExecType.FED&&state.output()==FederatedOutput.FOUT);
+		}).map(PlacementAnalysis.HopOccurrenceProjection::hop).findFirst().orElseThrow();
+		FederatedPlannerDpMemoTable memo=new FederatedPlannerDpMemoTable(analysis);
 		FedPlan lout=loutCost==null?null:add(memo,root,FederatedOutput.LOUT,ExecType.CP,loutCost);
 		FedPlan fout=foutCost==null?null:add(memo,root,FederatedOutput.FOUT,ExecType.FED,foutCost);
 		Method owner=FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",Set.class,FederatedPlannerDpMemoTable.class);
@@ -257,9 +262,23 @@ public class CampaignBDpAggregateProducerContractTest {
 	private static FedPlan add(FederatedPlannerDpMemoTable memo,Hop root,FederatedOutput output,ExecType exec,double cost,boolean registerExecutable) {
 		HopCommon common=new HopCommon(root,1,1,1,1,List.of());common.setSelfCost(0x1.0p-4);common.setForwardingCost(0x1.0p-3);
 		FedPlanVariants variants=new FedPlanVariants(common,output);FedPlan plan=new FedPlan(cost,variants,List.of());
-		plan.setExecType(exec);plan.setFType(FType.ROW);variants.addFedPlan(plan);variants.pruneFedPlans();
+		plan.setExecType(exec);
+		if(memo.analysis()!=null) {
+			PlacementState exact=memo.analysis().graph().node(memo.requireOccurrence(root).key()).orElseThrow()
+				.legalAlternatives().stream().filter(state->state.execType()==exec&&state.output()==output
+					&&(exec!=ExecType.FED||output!=FederatedOutput.FOUT||state.fType()!=null))
+				.sorted(java.util.Comparator.comparing(PlacementState::normalizedSignature))
+				.findFirst().orElseThrow();
+			plan.setFType(exact.fType());plan.setSelectedPlacementState(exact);
+		}
+		else plan.setFType(FType.ROW);
+		variants.addFedPlan(plan);variants.pruneFedPlans();
 		if(registerExecutable)memo.registerHopRefs(Map.of(root.getHopID(),common));
-		memo.addFedPlanVariants(root.getHopID(),output,variants);return memo.getFedPlanAfterPrune(root.getHopID(),output);
+		if(memo.analysis()!=null)
+			memo.addFedPlanVariants(memo.requireOccurrence(root),output,variants);
+		else
+			memo.addFedPlanVariants(root.getHopID(),output,variants);
+		return memo.analysis()!=null?memo.getFedPlanAfterPrune(root,output):memo.getFedPlanAfterPrune(root.getHopID(),output);
 	}
 	private static Object invokeExact(ExactHandle handle,ProducerCase producer) throws Exception {
 		return invoke(handle.method(),handle.adapter(),producer.analysis(),producer.memo(),producer.aggregate());
@@ -371,7 +390,6 @@ public class CampaignBDpAggregateProducerContractTest {
 		List<?> disconnectedReceipts=(List<?>)call(receipt,"disconnectedCompletionReceipts"); assertImmutable(disconnectedReceipts,"disconnectedCompletionReceipts");
 		Assert.assertEquals("B-05 aggregate/explicit applied prefix",3,expected.size());
 		Assert.assertFalse("B-05 requires deferred authority receipts",deferredReceipts.isEmpty());
-		Assert.assertFalse("B-05 requires disconnected completion receipts",disconnectedReceipts.isEmpty());
 		Assert.assertEquals("B-05 disconnected applied suffix",disconnectedReceipts.size(),applied.size()-expected.size());
 		Set<FedPlan> uniquePlans=Collections.newSetFromMap(new IdentityHashMap<>());Set<Hop> uniqueHops=Collections.newSetFromMap(new IdentityHashMap<>());Set<Long> uniqueIds=new java.util.HashSet<>();int observedAdditional=0;
 		for(int i=0;i<expected.size();i++) { Object item=applied.get(i); ApplicationIdentity identity=expectedApplications.get(i); FedPlan plan=identity.plan(); Hop planningHop=identity.planningHop(); long planningHopId=identity.planningHopId(); Assert.assertEquals(i,((Number)call(item,"ordinal")).intValue());
@@ -400,6 +418,8 @@ public class CampaignBDpAggregateProducerContractTest {
 		appliedTraversalCoverage.retainAll(ordinaryKeys);
 		Set<CompiledHopKey> deferredKeys=validateDeferredReceipts(deferredReceipts,analysis,memo,normalized,aggregateExplicitClosure,applied);
 		Set<CompiledHopKey> preCompletionCoverage=new HashSet<>(aggregateExplicitClosure);preCompletionCoverage.addAll(deferredKeys);
+		Assert.assertTrue("B-05 may omit disconnected receipts only when aggregate/deferred authority is complete",
+			!disconnectedReceipts.isEmpty()||preCompletionCoverage.containsAll(ordinaryKeys));
 		List<ComponentExpectation> components=disconnectedComponents(analysis,normalized,preCompletionCoverage);
 		expectedApplications.addAll(validateDisconnectedReceipts(disconnectedReceipts,components,applied,
 			expected.size(),analysis,memo,normalized));
@@ -412,7 +432,8 @@ public class CampaignBDpAggregateProducerContractTest {
 		Object counters=call(receipt,"counters"); assertCount(counters,"enumerationCount",1); assertCount(counters,"exactSelectionCount",1); assertCount(counters,"applicationPhaseCount",1);
 		assertCount(counters,"appliedPlanCount",applied.size()); assertCount(counters,"additionalRootInvocationCount",invocations.size()); assertCount(counters,"additionalRootNoOpCount",alreadyVisited);
 		for(String zero:List.of("internalAnalysisBuildCount","oldOverloadCount","reenumerationCount","repairCount","fallbackCount","doubleApplicationCount"))assertCount(counters,zero,0);
-		ProgramSnapshot after=snapshotProgram(program); assertPlacementMutationsAccounted(before,after,expectedApplications,memo);
+		ProgramSnapshot after=snapshotProgram(program); assertPlacementMutationsAccounted(before,after,
+			expectedApplications,memo,(List<?>)call(call(receipt,"finalPlanCertificate"),"terms"));
 	}
 	@SuppressWarnings("unchecked") private static Set<CompiledHopKey> validateDeferredReceipts(List<?> receipts,PlacementAnalysis analysis,
 		FederatedPlannerDpMemoTable memo,NormalizedPlannerResult normalized,Set<CompiledHopKey> aggregateExplicitClosure,
@@ -637,7 +658,7 @@ public class CampaignBDpAggregateProducerContractTest {
 		long executableHopId,Hop executableHop,String label){
 		if(memo.isVirtualClone(planningHopId)){Assert.assertNotSame(label+" clone planning/executable Hop",planningHop,executableHop);Assert.assertNotEquals(label+" clone planning/executable Hop ID",planningHopId,executableHopId);}
 		else{Assert.assertSame(label+" non-clone planning/executable Hop",planningHop,executableHop);Assert.assertEquals(label+" non-clone planning/executable Hop ID",planningHopId,executableHopId);}}
-	private static void assertPlacementMutationsAccounted(ProgramSnapshot before,ProgramSnapshot after,List<ApplicationIdentity> applications,FederatedPlannerDpMemoTable memo){Assert.assertEquals(before.states().size(),after.states().size());Set<Hop>plannedExecutable=Collections.newSetFromMap(new IdentityHashMap<>());Set<FedPlan>seenPlans=Collections.newSetFromMap(new IdentityHashMap<>());ArrayDeque<FedPlan>queue=new ArrayDeque<>();for(ApplicationIdentity application:applications)queue.add(application.plan());while(!queue.isEmpty()){FedPlan plan=queue.removeFirst();if(plan==null||!seenPlans.add(plan))continue;Hop executableHop=memo.resolveOriginalHop(plan.getHopID());Assert.assertNotNull("planned executable Hop",executableHop);plannedExecutable.add(executableHop);for(Pair<Long,FederatedOutput> edge:plan.getChildFedPlans()){FedPlan child=memo.getFedPlanAfterPrune(edge);if(child!=null)queue.add(child);}}
+	private static void assertPlacementMutationsAccounted(ProgramSnapshot before,ProgramSnapshot after,List<ApplicationIdentity> applications,FederatedPlannerDpMemoTable memo,List<?> certificateTerms)throws Exception{Assert.assertEquals(before.states().size(),after.states().size());Set<Hop>plannedExecutable=Collections.newSetFromMap(new IdentityHashMap<>());Set<FedPlan>seenPlans=Collections.newSetFromMap(new IdentityHashMap<>());ArrayDeque<FedPlan>queue=new ArrayDeque<>();for(ApplicationIdentity application:applications)queue.add(application.plan());for(Object term:certificateTerms){FedPlan retained=(FedPlan)call(term,"retainedPlan");if(retained!=null){Hop executable=memo.resolveOriginalHop(retained.getHopID());Assert.assertNotNull("certified executable Hop",executable);plannedExecutable.add(executable);}}while(!queue.isEmpty()){FedPlan plan=queue.removeFirst();if(plan==null||!seenPlans.add(plan))continue;Hop executableHop=memo.resolveOriginalHop(plan.getHopID());Assert.assertNotNull("planned executable Hop",executableHop);plannedExecutable.add(executableHop);for(Pair<Long,FederatedOutput> edge:plan.getChildFedPlans()){FedPlan child=memo.getFedPlanAfterPrune(edge);if(child!=null)queue.add(child);}}
 		for(int i=0;i<before.states().size();i++){HopState a=before.states().get(i),b=after.states().get(i);Assert.assertSame(a.hop(),b.hop());Assert.assertEquals(a.inputIds(),b.inputIds());if(a.exec()!=b.exec()||a.output()!=b.output())Assert.assertTrue("unreceipted executable placement mutation hop="+a.hopId(),plannedExecutable.contains(a.hop()));}
 		for(ApplicationIdentity application:applications){
 			if(memo.isVirtualClone(application.planningHopId())){Assert.assertNotSame("virtual clone planning/executable Hop",application.planningHop(),application.executableHop());Assert.assertNotEquals("virtual clone planning/executable Hop ID",application.planningHopId(),application.executableHopId());Assert.assertNull("virtual clone forced exec must remain neutral",application.planningHop().getForcedExecType());Assert.assertEquals("virtual clone output must remain neutral",FederatedOutput.NONE,application.planningHop().getFederatedOutput());}

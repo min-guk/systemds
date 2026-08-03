@@ -5,263 +5,172 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 
+import org.apache.sysds.api.DMLScript;
 import org.apache.sysds.common.Types.ExecType;
-import org.apache.sysds.hops.fedplanner.FTypes.FType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.BoundaryMode;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DecisionFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.DirectedEdgeFact;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.EndpointFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipRepresentative;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.UploadPriceTarget;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.TransferAuthorityKind;
-import org.apache.sysds.hops.fedplanner.placement.CampaignBPlacementAnalysisFixtureBridge;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
-import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalModel.InputAuthorityKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.AnchorPartition;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.VersionKind;
-import org.apache.sysds.hops.fedplanner.placement.PlacementState;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.parser.DMLProgram;
+import org.apache.sysds.parser.DMLTranslator;
+import org.apache.sysds.parser.ParserFactory;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.junit.Assert;
 import org.junit.Test;
 
-import sun.misc.Unsafe;
-
-/** RED contract preventing relocation authority from shadowing a DOWNLOAD's durable source. */
+/** Exact physical contract preventing upload authority from shadowing download authority. */
 public class MinStDownloadAuthorityAmbiguityRedTest {
-	private static final PlacementState CP =
-		new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
-	private static final PlacementState FED_ROW =
-		new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, true);
-	private static final CompiledHopKey PRODUCER = key("producer");
-	private static final CompiledHopKey CONSUMER = key("consumer");
-	private static final ValueVersionKey PRODUCER_VERSION = version("producer-version");
-	private static final ValueVersionKey CONSUMER_VERSION = version("consumer-version");
-	private static final DurableAnchorKey ANCHOR_A = anchor("anchor-a", "worker-a");
-	private static final DurableAnchorKey ANCHOR_B = anchor("anchor-b", "worker-b");
+	@Test
+	public void downloadIsCostedFromDurableFoutSourceAndNeverEncodedAsRelocationDemand() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildDetachedAnalysis(pca());
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+
+		DownloadCase exact = downloadCase(analysis, model, surface);
+		var assignment = new IdentityHashMap<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey,
+			org.apache.sysds.hops.fedplanner.placement.PlacementState>();
+		assignment.put(exact.endpoint().producer(), exact.sourceState());
+		assignment.put(exact.endpoint().consumer(), exact.consumerState());
+		Assert.assertTrue("MINST_DOWNLOAD_DURABLE_SOURCE_MUST_DEACTIVATE_UPLOAD_ALTERNATIVES",
+			exact.competingRelocations().stream().noneMatch(action ->
+				analysis.graph().isRelocationActive(action, assignment)));
+
+		MinStExactPhysicalSelection selected = MinStExactPhysicalSelection.create(model,
+			MinStExactPhysicalOptimizer.optimize(model, surface,
+				MinStExactPhysicalOptimizer.PRODUCTION_LIMITS));
+		MinStExactPhysicalPlacementProjector.project(selected);
+	}
+
+	private static DownloadCase downloadCase(PlacementAnalysis analysis,
+		MinStExactPhysicalModel model, MinStExactCostFactsProducer.PhysicalCostSurface surface) {
+		for(var key : surface.transferKeys()) {
+			if(key.direction() != Direction.DOWNLOAD)
+				continue;
+			for(var endpoint : key.endpoints()) {
+				var sourceNode = analysis.graph().node(endpoint.producer()).orElseThrow();
+				if(sourceNode.anchors().stream().noneMatch(anchor -> anchor.fType() == key.fType()))
+					continue;
+				var sourceDomain = model.domains().stream()
+					.filter(domain -> domain.node().key() == endpoint.producer()).findFirst().orElse(null);
+				var consumerDomain = model.domains().stream()
+					.filter(domain -> domain.node().key() == endpoint.consumer()).findFirst().orElse(null);
+				if(sourceDomain == null || consumerDomain == null)
+					continue;
+				var sourceState = sourceDomain.alternatives().stream().map(alternative -> alternative.state())
+					.filter(state -> state.output() == FederatedOutput.FOUT && state.fType() == key.fType())
+					.findFirst().orElse(null);
+				var consumerState = consumerDomain.alternatives().stream().map(alternative -> alternative.state())
+					.filter(state -> state.execType() == ExecType.CP).findFirst().orElse(null);
+				if(sourceState == null || consumerState == null)
+					continue;
+				var competing = analysis.graph().relocationActions().stream().filter(action ->
+					action.key().sourceValueVersion().equals(key.sourceValueVersion())
+						&& action.obligations().stream().anyMatch(obligation ->
+							obligation.consumer() == endpoint.consumer()
+								&& obligation.inputPosition() == endpoint.inputPosition())).toList();
+				if(!competing.isEmpty())
+					return new DownloadCase(endpoint, sourceState, consumerState, competing);
+			}
+		}
+		throw new AssertionError("MINST_EXACT_DURABLE_DOWNLOAD_WITH_COMPETING_UPLOAD_MISSING");
+	}
 
 	@Test
-	public void downloadPublishesOnlyExactDurableSourceAuthority() throws Exception {
-		Fixture fixture = fixture();
-		AuxiliaryGroupFact download = group(Direction.DOWNLOAD);
-		List<TransferAuthorityFact> authorities = productionAuthorities(fixture.analysis, download);
-
-		assertExactFixture(fixture);
-		Assert.assertEquals("P4_DOWNLOAD_HAS_ONE_EXACT_DURABLE_SOURCE_AUTHORITY", 1L,
-			count(authorities, TransferAuthorityKind.DURABLE_SOURCE));
-		Assert.assertEquals("P4_DOWNLOAD_MUST_NOT_PUBLISH_RELOCATION_AUTHORITY", 0L,
-			count(authorities, TransferAuthorityKind.RELOCATION_OBLIGATION));
-		Assert.assertEquals("P4_DOWNLOAD_MUST_NOT_PUBLISH_SELECTED_SOURCE_FALLBACK", 0L,
-			count(authorities, TransferAuthorityKind.SELECTED_SOURCE_LOCAL_MATERIALIZATION));
-		Assert.assertEquals("P4_DOWNLOAD_TRANSFER_AUTHORITY_IS_UNAMBIGUOUS", 1, authorities.size());
-		TransferAuthorityFact authority = authorities.get(0);
-		Assert.assertSame("P4_DOWNLOAD_AUTHORITY_RETAINS_EXACT_INPUT", fixture.input, authority.inputEdge());
-		Assert.assertSame("P4_DOWNLOAD_AUTHORITY_RETAINS_EXACT_ANCHOR_A",
-			ANCHOR_A, authority.independentAnchorOrNull());
-		Assert.assertSame("P4_DOWNLOAD_AUTHORITY_RETAINS_EXACT_FOUT_STATE",
-			FED_ROW, authority.requiredPlacement());
-		Assert.assertNull("P4_DOWNLOAD_DURABLE_SOURCE_AUTHORITY_IS_ANCHOR_OWNED",
-			authority.producerMembershipProofOrNull());
-		validateProductionOwnership(fixture.analysis, download, authorities);
-		MinStExactCostFacts facts = facts(fixture.analysis, download, authorities);
-		MinStExactSelection selection = MinStExactSelector.select(facts);
-		Assert.assertEquals("P4_DOWNLOAD_SELECTOR_EMITS_ONE_EXACT_RECEIPT", 1,
-			selection.obligationReceiptsInOrder().size());
-		Assert.assertSame("P4_DOWNLOAD_RECEIPT_RETAINS_EXACT_PRODUCER", PRODUCER,
-			selection.obligationReceiptsInOrder().get(0).producerKey());
-		Assert.assertSame("P4_DOWNLOAD_RECEIPT_RETAINS_EXACT_CONSUMER", CONSUMER,
-			selection.obligationReceiptsInOrder().get(0).consumerKey());
-		Assert.assertEquals("P4_DOWNLOAD_RECEIPT_RETAINS_EXACT_INPUT_POSITION", 0,
-			selection.obligationReceiptsInOrder().get(0).inputPosition());
-		validateProjectorReceipt(facts, selection);
+	public void uploadRetainsExactRelocationActionWithoutFallback() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(kmeans());
+		ForcedRelocation forced = forceOneRelocation(analysis);
+		MinStExactPhysicalSelection selected = forced.selection();
+		Assert.assertTrue("MINST_EXACT_CANDIDATES_MUST_NOT_REINTRODUCE_FALLBACK",
+			selected.candidateReceipts().stream().allMatch(receipt ->
+				receipt.fallbackMaterializations().isEmpty()));
+		var matching = selected.relocationChoices().stream()
+			.filter(choice -> choice.action().equals(forced.action())).toList();
+		Assert.assertFalse("MINST_EXACT_RELOCATION_ACTION_RECEIPT_MISSING", matching.isEmpty());
+		Assert.assertEquals("MINST_SHARED_RELOCATION_ACTION_EMITTED_ONCE", 1L,
+			selected.emittedRelocations().stream().filter(forced.action()::equals).count());
+		var resolved = RelocationSelections.resolveAndValidate(analysis,
+			analysis.graph().relocationActions(), selected.selectedStates(),
+			selected.candidateReceipts(), selected.relocationChoices());
+		Assert.assertTrue("MINST_EXACT_RELOCATION_ACTION_MUST_RESOLVE",
+			resolved.stream().anyMatch(choice -> choice.receipt().action().equals(forced.action())));
 	}
 
-	@Test
-	public void uploadStillPrefersExactRelocationOverIndependentFallback() throws Exception {
-		Fixture fixture = fixture();
-		AuxiliaryGroupFact upload = group(Direction.UPLOAD);
-		List<TransferAuthorityFact> authorities = productionAuthorities(fixture.analysis, upload);
-
-		Assert.assertEquals("P4_UPLOAD_RETAINS_ONE_EXACT_RELOCATION_AUTHORITY", 1L,
-			count(authorities, TransferAuthorityKind.RELOCATION_OBLIGATION));
-		Assert.assertEquals("P4_UPLOAD_SKIPS_INDEPENDENT_FALLBACK_WHEN_RELOCATION_EXISTS", 0L,
-			count(authorities, TransferAuthorityKind.INDEPENDENT_ANCHOR));
-		Assert.assertEquals("P4_UPLOAD_MUST_NOT_PUBLISH_DURABLE_SOURCE_AUTHORITY", 0L,
-			count(authorities, TransferAuthorityKind.DURABLE_SOURCE));
-		Assert.assertEquals("P4_UPLOAD_MUST_NOT_PUBLISH_SELECTED_SOURCE_FALLBACK", 0L,
-			count(authorities, TransferAuthorityKind.SELECTED_SOURCE_LOCAL_MATERIALIZATION));
-		Assert.assertEquals("P4_UPLOAD_TRANSFER_AUTHORITY_IS_UNAMBIGUOUS", 1, authorities.size());
-		TransferAuthorityFact authority = authorities.get(0);
-		Assert.assertSame("P4_UPLOAD_AUTHORITY_RETAINS_EXACT_ACTION",
-			fixture.action, authority.actionOrNull());
-		Assert.assertSame("P4_UPLOAD_AUTHORITY_RETAINS_EXACT_ANCHOR_B",
-			ANCHOR_B, authority.actionOrNull().key().durableAnchor());
-		validateProductionOwnership(fixture.analysis, upload, authorities);
+	private static ForcedRelocation forceOneRelocation(PlacementAnalysis analysis) {
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		for(var domain : model.domains())
+			for(int value = 0; value < domain.alternatives().size(); value++) {
+				var relocation = domain.alternatives().get(value).inputAuthorities().stream()
+					.filter(authority -> authority.kind() == InputAuthorityKind.RELOCATION)
+					.findFirst().orElse(null);
+				if(relocation == null)
+					continue;
+				int required = value;
+				List<MinStExactCategoricalSolver.Factor> factors = new ArrayList<>(model.hardFactors());
+				factors.addAll(surface.factors());
+				factors.add(MinStExactCategoricalSolver.Factor.lazy(List.of(domain.variable()),
+					values -> values[0] == required ? 0.0 : Double.POSITIVE_INFINITY));
+				try {
+					var solved = MinStExactCategoricalSolver.solve(model.variables(), factors,
+						MinStExactPhysicalOptimizer.PRODUCTION_LIMITS);
+					long objective = surface.evaluateCanonical(solved.assignmentInVariableOrder());
+					var selected = MinStExactPhysicalSelection.create(model,
+						new MinStExactPhysicalOptimizer.Result(solved, objective,
+							surface.contributionFingerprint()));
+					if(selected.relocationChoices().stream().anyMatch(choice ->
+						choice.action().equals(relocation.relocationAction().key())))
+						return new ForcedRelocation(selected, relocation.relocationAction().key());
+				}
+				catch(IllegalArgumentException infeasible) {
+					if(!infeasible.getMessage().startsWith("MINST_VE_NO_FEASIBLE_ASSIGNMENT"))
+						throw infeasible;
+				}
+			}
+		throw new AssertionError("MINST_EXACT_RELOCATION_ALTERNATIVE_MISSING");
 	}
 
-	private static long count(List<TransferAuthorityFact> authorities, TransferAuthorityKind kind) {
-		return authorities.stream().filter(authority -> authority.authorityKind() == kind).count();
+	private static DMLProgram pca() throws Exception {
+		return compile(String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(500,100),list(500,0),list(1000,100)));",
+			"[PC,V]=pca(X=X,K=5,scale=TRUE,center=TRUE);",
+			"write(PC,\"out\",format=\"binary\");") + "\n");
 	}
 
-	private static void validateProductionOwnership(PlacementAnalysis analysis,
-		AuxiliaryGroupFact group, List<TransferAuthorityFact> authorities) throws Exception {
-		List<MembershipRepresentative> representatives = producerRepresentatives(analysis, group);
-		Method method = MinStExactCostFactsProducer.class.getDeclaredMethod(
-			"validateTransferAuthorityOwnership", PlacementAnalysis.class, List.class,
-			List.class, List.class);
-		method.setAccessible(true);
-		method.invoke(null, analysis, List.of(group), authorities, representatives);
+	private static DMLProgram kmeans() throws Exception {
+		return compile(String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(25000,2100),list(25000,0),list(50000,2100)));",
+			"[C,Y]=kmeans(X=X,k=50,is_verbose=FALSE,runs=1,eps=1e-9,max_iter=60,"
+				+ "avg_sample_size_per_centroid=50,seed=133815928);",
+			"write(Y,\"out\",format=\"csv\");") + "\n");
 	}
 
-	private static void validateProjectorReceipt(MinStExactCostFacts facts,
-		MinStExactSelection selection) throws Exception {
-		Method method = MinStExactPlacementProjector.class.getDeclaredMethod("validateObligation",
-			MinStExactCostFacts.class, List.class, MinStExactSelection.ObligationReceipt.class);
-		method.setAccessible(true);
-		Object validated = method.invoke(null, facts, selection.sourcePartitionNodeIds(),
-			selection.obligationReceiptsInOrder().get(0));
-		Assert.assertNotNull("P4_DOWNLOAD_PROJECTOR_ACCEPTS_EXACT_DURABLE_SOURCE_RECEIPT", validated);
+	private static DMLProgram compile(String script) throws Exception {
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
+		DMLTranslator translator = new DMLTranslator(program);
+		translator.liveVariableAnalysis(program);
+		translator.validateParseTree(program);
+		translator.constructHops(program);
+		translator.rewriteHopsDAG(program);
+		return program;
 	}
 
-	private static MinStExactCostFacts facts(PlacementAnalysis analysis, AuxiliaryGroupFact group,
-		List<TransferAuthorityFact> authorities) throws Exception {
-		MinStExactCostFacts facts = allocate(MinStExactCostFacts.class);
-		set(facts, "analysis", analysis);
-		set(facts, "analysisFingerprint", analysis.analysisFingerprint());
-		set(facts, "orderedScope", List.of());
-		set(facts, "representativePreferences", List.of());
-		set(facts, "decisions", List.<DecisionFact>of());
-		set(facts, "membershipRepresentatives", List.of());
-		set(facts, "edges", List.of(edge(-1L, group.producerPlacementNodeId(), 5.0),
-			edge(group.auxiliaryNodeId(), -2L, 5.0), edge(-1L, -2L, 1.0)));
-		set(facts, "groups", List.of(group));
-		set(facts, "transferAuthorities", authorities);
-		set(facts, "obligations", List.of());
-		set(facts, "derivationFingerprint", "task18-download-authority");
-		return facts;
-	}
-
-	private static DirectedEdgeFact edge(long from, long to, double capacity) {
-		return new DirectedEdgeFact(from, to, Double.doubleToRawLongBits(capacity), List.of());
-	}
-
-	private static void assertExactFixture(Fixture fixture) {
-		Assert.assertSame("P4_DOWNLOAD_EXACT_INPUT_PRODUCER", PRODUCER, fixture.input.producer());
-		Assert.assertSame("P4_DOWNLOAD_EXACT_INPUT_CONSUMER", CONSUMER, fixture.input.consumer());
-		Assert.assertEquals("P4_DOWNLOAD_EXACT_INPUT_POSITION", 0, fixture.input.inputPosition());
-		Assert.assertNotEquals("P4_DOWNLOAD_REQUIRES_DISTINCT_SAME_FTYPE_ANCHORS", ANCHOR_A, ANCHOR_B);
-		Assert.assertEquals("P4_DOWNLOAD_ANCHORS_SHARE_FTYPE", ANCHOR_A.fType(), ANCHOR_B.fType());
-		Assert.assertEquals("P4_DOWNLOAD_NEUTRAL_GRAPH_HAS_COMPILED_OWNERS_ONLY", 2,
-			fixture.analysis.graph().nodes().size());
-		Assert.assertTrue("P4_DOWNLOAD_NEUTRAL_GRAPH_EXCLUDES_DP_CLONE_AND_MINST_AUXILIARY",
-			fixture.analysis.graph().nodes().stream().allMatch(node -> node.kind() == NodeKind.OPERATION
-				&& node.anchors().size() <= 1));
-	}
-
-	@SuppressWarnings("unchecked")
-	private static List<TransferAuthorityFact> productionAuthorities(PlacementAnalysis analysis,
-		AuxiliaryGroupFact group) throws Exception {
-		List<MembershipRepresentative> representatives = producerRepresentatives(analysis, group);
-		Method method = MinStExactCostFactsProducer.class.getDeclaredMethod("transferAuthorities",
-			PlacementAnalysis.class, List.class, List.class);
-		method.setAccessible(true);
-		return (List<TransferAuthorityFact>)method.invoke(null, analysis, List.of(group), representatives);
-	}
-
-	private static List<MembershipRepresentative> producerRepresentatives(PlacementAnalysis analysis,
-		AuxiliaryGroupFact group) {
-		Node producer = analysis.graph().node(group.producerKey()).orElseThrow();
-		DecisionFact decision = new DecisionFact(group.producerKey(), 0L,
-			group.producerPlacementNodeId(), producer.legalAlternatives());
-		return MinStExactCostFactsProducer.membershipRepresentatives(analysis, List.of(decision));
-	}
-
-	private static Fixture fixture() throws Exception {
-		RelocationActionKey actionKey = new RelocationActionKey(PRODUCER_VERSION, FED_ROW, ANCHOR_B,
-			"scope", List.of(CONSUMER));
-		ObligationKey obligation = new ObligationKey(CONSUMER, 0, PRODUCER_VERSION, FED_ROW,
-			actionKey, "scope");
-		RelocationAction action = new RelocationAction(actionKey, List.of(obligation));
-		Node producer = new Node(PRODUCER, NodeKind.OPERATION, PRODUCER_VERSION, true,
-			List.of(FED_ROW), List.of(), List.of(ANCHOR_A));
-		Node consumer = new Node(CONSUMER, NodeKind.OPERATION, CONSUMER_VERSION, true,
-			List.of(CP, FED_ROW), List.of(), List.of(ANCHOR_B));
-		NeutralPlacementGraph graph = new NeutralPlacementGraph(List.of(producer, consumer),
-			List.of(), List.of(action));
-		PlacementAnalysis analysis = CampaignBPlacementAnalysisFixtureBridge.fromSelectorGraph(graph);
-		CompiledInputEdgeFact input = CampaignBPlacementAnalysisFixtureBridge
-			.compiledInputEdge(PRODUCER, CONSUMER, 0);
-		installExactInput(analysis, input);
-		return new Fixture(analysis, input, action);
-	}
-
-	private static AuxiliaryGroupFact group(Direction direction) {
-		long price = Double.doubleToRawLongBits(1.0);
-		return new AuxiliaryGroupFact(-3L, direction, BoundaryMode.ANCHOR_TRANSFER,
-			PRODUCER, 0L, 1L, direction == Direction.UPLOAD ? UploadPriceTarget.SINK
-				: UploadPriceTarget.NOT_APPLICABLE, FType.ROW, price,
-			List.of(new EndpointFact(PRODUCER, CONSUMER, 0, 2L, price)));
-	}
-
-	private static void installExactInput(PlacementAnalysis analysis, CompiledInputEdgeFact input)
-		throws Exception {
-		IdentityHashMap<CompiledHopKey,Map<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>>> index =
-			new IdentityHashMap<>();
-		IdentityHashMap<CompiledHopKey,Map<Integer,CompiledInputEdgeFact>> consumers = new IdentityHashMap<>();
-		consumers.put(CONSUMER, Map.of(0, input));
-		index.put(PRODUCER, consumers);
-		set(analysis, "compiledInputEdgesInCanonicalOrder", List.of(input));
-		set(analysis, "inputEdgesByIdentity", index);
-	}
-
-	private static void set(Object target, String name, Object value) throws Exception {
-		Field field = target.getClass().getDeclaredField(name);
-		field.setAccessible(true);
-		field.set(target, value);
-	}
-
-	@SuppressWarnings("unchecked")
-	private static <T> T allocate(Class<T> type) throws Exception {
-		Field field = Unsafe.class.getDeclaredField("theUnsafe");
-		field.setAccessible(true);
-		return (T)((Unsafe)field.get(null)).allocateInstance(type);
-	}
-
-	private static DurableAnchorKey anchor(String placement, String worker) {
-		return new DurableAnchorKey(placement, FType.ROW,
-			List.of(new AnchorPartition(worker, List.of(0L, 0L), List.of(4L, 2L))));
-	}
-
-	private static CompiledHopKey key(String id) {
-		return new CompiledHopKey("program", "ns", "call", "rc", region(), id, id);
-	}
-
-	private static ValueVersionKey version(String id) {
-		return new ValueVersionKey("program", id, region(), 0, VersionKind.ORDINARY, List.of());
-	}
-
-	private static ControlRegionKey region() {
-		return new ControlRegionKey("program", "ns", List.of("main/0"), "call", "rc");
-	}
-
-	private record Fixture(PlacementAnalysis analysis, CompiledInputEdgeFact input,
-		RelocationAction action) { }
+	private record ForcedRelocation(MinStExactPhysicalSelection selection,
+		RelocationActionKey action) { }
+	private record DownloadCase(MinStExactCostFactsProducer.PhysicalTransferEndpoint endpoint,
+		org.apache.sysds.hops.fedplanner.placement.PlacementState sourceState,
+		org.apache.sysds.hops.fedplanner.placement.PlacementState consumerState,
+		List<org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction>
+			competingRelocations) { }
 }

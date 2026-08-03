@@ -63,7 +63,10 @@ final class R4SharedFedAllSemanticValidator {
 
 	static void fedAll(Expected expected, Selection actual) {
 		require(actual.assignment().equals(expected.assignment()), "R4_ASSIGNMENT_STATE");
-		require(actual.relocations().equals(expected.relocations()), "R4_RELOCATION_KEY");
+		require(actual.relocations().equals(expected.relocations()), "R4_RELOCATION_KEY|expected="
+			+ expected.relocations().stream().map(RelocationActionKey::normalizedSignature).toList()
+			+ "|actual=" + actual.relocations().stream()
+				.map(RelocationActionKey::normalizedSignature).toList());
 		require(actual.score().fed() == expected.score().fed() && actual.score().fout() == expected.score().fout()
 			&& actual.score().relocations() == expected.score().relocations(), "R4_SCORE_COUNTS");
 		require(actual.score().signature().equals(expected.score().signature()), "R4_SCORE_SIGNATURE");

@@ -36,6 +36,7 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFed
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ReasonCode;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.parser.DMLProgram;
@@ -70,27 +71,47 @@ public final class LegacyDpOfflineSelectedCapture {
 	}
 	public static List<String> capture() throws Exception {
 		FederatedPlannerUtils.resetFederatedPlannerRunState();
-		DMLProgram program = ProductionShadowFixtureFactory.compile("B-01");
+		DMLProgram program = ProductionShadowFixtureFactory.compile("B-11");
 		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder()
 			.buildAnalysis(program);
 		List<PlacementAnalysis.HopOccurrenceProjection> occurrences = analysis.occurrences();
-		Hop rootHop = occurrences.get(0).hop();
-		String rootKey = occurrences.get(0).key().normalizedSignature();
+		PlacementAnalysis.HopOccurrenceProjection fourWay = occurrenceSupporting(analysis,
+			ExecType.CP, FederatedOutput.LOUT, ExecType.CP, FederatedOutput.FOUT,
+			ExecType.FED, FederatedOutput.LOUT, ExecType.FED, FederatedOutput.FOUT);
+		PlacementAnalysis.HopOccurrenceProjection fedLocal = occurrenceSupporting(analysis,
+			ExecType.CP, FederatedOutput.LOUT, ExecType.FED, FederatedOutput.LOUT);
 		List<String> rows = new ArrayList<>();
 		rows.add(captureCompiledFixture("C2-DP-05-SHARED-DIAMOND", "B-10"));
-		rows.add(rootChoice("C2-DP-01-ROOT-EQUAL-LOUT", rootHop, rootKey, 0x1.0p3, 0x1.0p3));
-		rows.add(rootChoice("C2-DP-02-ROOT-ONEULP-FOUT", rootHop, rootKey,
+		rows.add(rootChoice("C2-DP-01-ROOT-EQUAL-LOUT", analysis, fourWay, 0x1.0p3, 0x1.0p3));
+		rows.add(rootChoice("C2-DP-02-ROOT-ONEULP-FOUT", analysis, fourWay,
 			Double.longBitsToDouble(Double.doubleToLongBits(0x1.0p3) + 1), 0x1.0p3));
-		rows.add(stableVariant(occurrences.get(1).hop(), occurrences.get(1).key().normalizedSignature(),
+		rows.add(stableVariant(analysis, fourWay,
 			occurrences.get(2).hop(), occurrences.get(3).hop()));
-		rows.add(anchorContrast(occurrences.get(1).hop(), occurrences.get(1).key().normalizedSignature()));
-		rows.add(fedLocalOutput(occurrences.get(2).hop(), occurrences.get(2).key().normalizedSignature()));
+		rows.add(anchorContrast(analysis, fourWay));
+		rows.add(fedLocalOutput(analysis, fedLocal));
 		rows.add(captureCompiledFixture("C2-DP-06-TRTW-EXACT", "B-09"));
 		rows.add(captureCompiledFixture("C2-X-09-BRANCH-JOIN", "B-02"));
 		rows.add(captureCompiledFixture("C2-X-10-FUNCTION-CALLSITE", "B-07"));
 		rows.add(captureCompiledFixture("C2-X-11-CLONE-RECOMPILE", "B-09"));
 		rows.add(captureGraphExclusion());
 		return rows;
+	}
+
+	private static PlacementAnalysis.HopOccurrenceProjection occurrenceSupporting(PlacementAnalysis analysis,
+		Object... coordinates) {
+		if(coordinates.length == 0 || coordinates.length % 2 != 0)
+			throw new IllegalArgumentException("exec/output coordinates");
+		return analysis.occurrences().stream().filter(occurrence -> {
+			var alternatives = analysis.graph().node(occurrence.key()).orElseThrow().legalAlternatives();
+			for(int i = 0; i < coordinates.length; i += 2) {
+				ExecType exec = (ExecType) coordinates[i];
+				FederatedOutput output = (FederatedOutput) coordinates[i + 1];
+				if(alternatives.stream().noneMatch(state -> state.execType() == exec && state.output() == output))
+					return false;
+			}
+			return true;
+		}).findFirst().orElseThrow(() -> new IllegalStateException(
+			"NO_CANONICAL_OCCURRENCE_SUPPORTS_SYNTHETIC_DP_COORDINATES"));
 	}
 	private static String captureGraphExclusion() throws Exception {
 		DMLProgram program=ProductionShadowFixtureFactory.compile("B-21");
@@ -111,23 +132,30 @@ public final class LegacyDpOfflineSelectedCapture {
 			+"|reason="+receipt.exclusion().reasonCode();
 	}
 
-	private static String anchorContrast(Hop hop, String key) throws Exception {
+	private static String anchorContrast(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence) throws Exception {
+		Hop hop = occurrence.hop();
 		FederatedPlannerUtils.clearFedInitVars();
 		boolean missing = FederatedPlannerUtils.isFedInitVar("X_anchor");
 		FederatedPlannerUtils.registerFedInitVar("X_anchor", FType.ROW,
 			"localhost:1234/X1@0:0-2:2;localhost:1235/X2@2:0-4:2");
 		boolean concrete = FederatedPlannerUtils.isFedInitVar("X_anchor")
 			&& FederatedPlannerUtils.getFedInitSignature("X_anchor") != null;
-		String selected = rootChoice("C2-DP-04-ANCHOR-CONTRAST", hop, key, 0x1.8p2, 0x1.0p2);
+		String selected = rootChoice("C2-DP-04-ANCHOR-CONTRAST", analysis, occurrence, 0x1.8p2, 0x1.0p2);
 		hop.setForcedExecType(ExecType.CP); hop.setFederatedOutput(FederatedOutput.FOUT);
 		Map<Long,FType> fTypes = new HashMap<>(); fTypes.put(hop.getHopID(), FType.BROADCAST);
-		FederatedRefedPolicy.registerFoutMaterializeCandidates(List.of(hop), fTypes, -1L);
-		boolean registered = FederatedFoutMaterializeRegistry.hasEntry(hop.getHopID());
+		List<Hop> exactConsumers = hop.getParent().stream()
+			.filter(parent -> parent.getInput().stream().anyMatch(input -> input == hop)).toList();
+		FederatedRefedPolicy.registerFoutMaterializeObligation(hop, exactConsumers, fTypes, -1L);
+		boolean materialized = FederatedFoutMaterializeRegistry.hasEntry(hop.getHopID());
+		boolean refed = FederatedRefedRegistry.hasEntry(hop.getHopID());
+		String selectedRegistry = materialized ? "FOUT_MATERIALIZE" : refed ? "REFED" : "NONE";
 		FederatedPlannerUtils.clearFedInitVars();
 		return selected.replace("|DP_ROOT_OBJECTIVE|", "|DP_ANCHOR_CAPABILITY|")
 			+ "|missingAnchorCapable=" + missing + "|concreteAnchorCapable=" + concrete
 			+ "|missingSelection=CP/LOUT|concreteSelection=CP/FOUT"
-			+ "|selectedRegistry=FOUT_MATERIALIZE|registryProducedByFrozenPolicy=" + registered;
+			+ "|selectedRegistry=" + selectedRegistry
+			+ "|registryProducedByFrozenPolicy=" + (materialized || refed);
 	}
 
 	private static String captureCompiledFixture(String rowId, String fixture) throws Exception {
@@ -379,14 +407,18 @@ public final class LegacyDpOfflineSelectedCapture {
 		return id < 0 ? "SIGNATURE_ONLY" : mapped(keys, id);
 	}
 
-	private static String fedLocalOutput(Hop hop, String key) {
+	private static String fedLocalOutput(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence) {
+		Hop hop = occurrence.hop();
+		String key = occurrence.key().normalizedSignature();
 		FedPlan cp = plan(hop, FederatedOutput.LOUT, ExecType.CP, 0x1.8p3, List.of());
 		FedPlan fed = plan(hop, FederatedOutput.LOUT, ExecType.FED, 0x1.0p2, List.of());
 		FedPlanVariants candidates = variants(cp, fed);
+		bindExactStates(analysis, occurrence, candidates);
 		candidates.pruneFedPlans();
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		memo.addFedPlanVariants(hop.getHopID(), FederatedOutput.LOUT, candidates);
-		FedPlan selected = memo.getFedPlanAfterPrune(hop.getHopID(), FederatedOutput.LOUT);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		memo.addFedPlanVariants(occurrence, FederatedOutput.LOUT, candidates);
+		FedPlan selected = memo.getFedPlanAfterPrune(occurrence, FederatedOutput.LOUT);
 		return "C2-DP-07-FED-LOCAL-OUTPUT|DP_VARIANT_ORDER|evidence=SYNTHETIC_SELECTOR_FIXTURE|seed=-1|key="
 			+ key + "|cp=" + Double.toHexString(cp.getCumulativeCost()) + "|fed="
 			+ Double.toHexString(fed.getCumulativeCost()) + "|selectedExec=" + selected.getExecType()
@@ -403,13 +435,20 @@ public final class LegacyDpOfflineSelectedCapture {
 		throw new IllegalStateException("Missing frozen DP method " + name + "/" + count);
 	}
 
-	private static String rootChoice(String fixture, Hop hop, String key, double lCost, double fCost)
+	private static String rootChoice(String fixture, PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence, double lCost, double fCost)
 		throws Exception {
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
+		Hop hop = occurrence.hop();
+		String key = occurrence.key().normalizedSignature();
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
 		FedPlan l = plan(hop, FederatedOutput.LOUT, ExecType.CP, lCost, List.of());
 		FedPlan f = plan(hop, FederatedOutput.FOUT, ExecType.FED, fCost, List.of());
-		memo.addFedPlanVariants(hop.getHopID(), FederatedOutput.LOUT, variants(l));
-		memo.addFedPlanVariants(hop.getHopID(), FederatedOutput.FOUT, variants(f));
+		FedPlanVariants lVariants = variants(l);
+		FedPlanVariants fVariants = variants(f);
+		bindExactStates(analysis, occurrence, lVariants);
+		bindExactStates(analysis, occurrence, fVariants);
+		memo.addFedPlanVariants(occurrence, FederatedOutput.LOUT, lVariants);
+		memo.addFedPlanVariants(occurrence, FederatedOutput.FOUT, fVariants);
 		Method select = FederatedPlannerDpCostEnumerator.class.getDeclaredMethod("getMinCostRootFedPlan",
 			Set.class, FederatedPlannerDpMemoTable.class);
 		select.setAccessible(true);
@@ -421,16 +460,20 @@ public final class LegacyDpOfflineSelectedCapture {
 			+ "|tieRule=LOUT_LE_FOUT";
 	}
 
-	private static String stableVariant(Hop hop, String key, Hop child1, Hop child2) {
+	private static String stableVariant(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence, Hop child1, Hop child2) {
+		Hop hop = occurrence.hop();
+		String key = occurrence.key().normalizedSignature();
 		FedPlan first = plan(hop, FederatedOutput.FOUT, ExecType.CP, 0x1.4p2,
 			List.of(Pair.of(child1.getHopID(), FederatedOutput.LOUT)));
 		FedPlan second = plan(hop, FederatedOutput.FOUT, ExecType.CP, 0x1.4p2,
 			List.of(Pair.of(child2.getHopID(), FederatedOutput.FOUT)));
 		FedPlanVariants variants = variants(first, second);
+		bindExactStates(analysis, occurrence, variants);
 		variants.pruneFedPlans();
-		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable();
-		memo.addFedPlanVariants(hop.getHopID(), FederatedOutput.FOUT, variants);
-		FedPlan chosen = memo.getFedPlanAfterPrune(hop.getHopID(), FederatedOutput.FOUT);
+		FederatedPlannerDpMemoTable memo = new FederatedPlannerDpMemoTable(analysis);
+		memo.addFedPlanVariants(occurrence, FederatedOutput.FOUT, variants);
+		FedPlan chosen = memo.getFedPlanAfterPrune(occurrence, FederatedOutput.FOUT);
 		return "C2-DP-03-STABLE-VARIANT|DP_VARIANT_ORDER|evidence=SYNTHETIC_SELECTOR_FIXTURE|key=" + key
 			+ "|seed=-1|rank0Cost=" + Double.toHexString(variants.getFedPlanVariants().get(0).getCumulativeCost())
 			+ "|rank1Cost=" + Double.toHexString(variants.getFedPlanVariants().get(1).getCumulativeCost())
@@ -449,6 +492,23 @@ public final class LegacyDpOfflineSelectedCapture {
 			variants.addFedPlan(rebound);
 		}
 		return variants;
+	}
+
+	private static void bindExactStates(PlacementAnalysis analysis,
+		PlacementAnalysis.HopOccurrenceProjection occurrence, FedPlanVariants variants) {
+		var node = analysis.graph().node(occurrence.key()).orElseThrow();
+		for(FedPlan plan : variants.getFedPlanVariants()) {
+			PlacementState state = node.legalAlternatives().stream()
+				.filter(candidate -> candidate.execType() == plan.getExecType()
+					&& candidate.output() == plan.getFedOutType())
+				.findFirst().orElseThrow(() -> new IllegalStateException(
+					"SYNTHETIC_DP_STATE_NOT_LEGAL_FOR_CANONICAL_OCCURRENCE|key="
+						+ occurrence.key().normalizedSignature() + "|exec=" + plan.getExecType()
+						+ "|output=" + plan.getFedOutType() + "|fType=" + plan.getFType()));
+			if(state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT)
+				plan.setFType(state.fType());
+			plan.setSelectedPlacementState(state);
+		}
 	}
 
 	private static FedPlanVariants planVariants(Hop hop, FederatedOutput output) {

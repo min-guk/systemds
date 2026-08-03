@@ -21,6 +21,7 @@ package org.apache.sysds.hops.fedplanner.fedCostBased.fedDp;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -70,9 +71,14 @@ import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireDagWalker;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.RewireConstants;
 import org.apache.sysds.hops.fedplanner.fedCostBased.commons.TransTableRewireUtils;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpRewireTransTable.RewireOccurrenceSnapshot;
 import org.apache.sysds.hops.fedplanner.rules.RulesApi.OpCaps;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
@@ -100,6 +106,8 @@ import org.apache.sysds.runtime.DMLRuntimeException;
 public class FederatedPlannerDpMemoTable {
 	// Maps Hop ID and fedOutType pairs to their plan variants
 	private final Map<Pair<Long, FederatedOutput>, FedPlanVariants> hopMemoTable = new HashMap<>();
+	private final Map<Hop, Map<FederatedOutput, FedPlanVariants>> exactMemoByCarrier = new IdentityHashMap<>();
+	private final Map<Pair<Long, FederatedOutput>, Set<Hop>> carriersByLegacyCoordinate = new HashMap<>();
 	private final PlacementAnalysis analysis;
 	private final Map<Hop, HopOccurrenceProjection> occurrenceByPlanCarrier = new IdentityHashMap<>();
 	private final Map<Long, Hop> hopRefMap = new HashMap<>();
@@ -138,7 +146,7 @@ public class FederatedPlannerDpMemoTable {
 			throw new IllegalArgumentException("Plan variants do not bind the supplied occurrence");
 		occurrenceByPlanCarrier.put(carrier, occurrence);
 		validateExactPlacementStates(occurrence, fedPlanVariants);
-		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
+		addExactFedPlanVariants(carrier, fedOutType, fedPlanVariants);
 	}
 
 	public void addFedPlanVariants(RewireOccurrenceSnapshot snapshot, HopOccurrenceProjection occurrence,
@@ -152,7 +160,22 @@ public class FederatedPlannerDpMemoTable {
 			throw new IllegalArgumentException("Plan variants do not bind the supplied rewire occurrence");
 		occurrenceByPlanCarrier.put(carrier, occurrence);
 		validateExactPlacementStates(occurrence, fedPlanVariants);
-		addFedPlanVariants(carrier.getHopID(), fedOutType, fedPlanVariants);
+		addExactFedPlanVariants(carrier, fedOutType, fedPlanVariants);
+	}
+
+	private void addExactFedPlanVariants(Hop carrier, FederatedOutput output, FedPlanVariants variants) {
+		Map<FederatedOutput,FedPlanVariants> byOutput = exactMemoByCarrier.computeIfAbsent(
+			carrier, ignored -> new java.util.EnumMap<>(FederatedOutput.class));
+		byOutput.put(output, variants);
+		Pair<Long,FederatedOutput> legacy = Pair.of(carrier.getHopID(), output);
+		carriersByLegacyCoordinate.computeIfAbsent(legacy,
+			ignored -> Collections.newSetFromMap(new IdentityHashMap<>())).add(carrier);
+		// Preserve a legacy representative for old ID-based callers, but never overwrite
+		// a distinct occurrence-owned plan. Ambiguous legacy reads fail closed below.
+		FedPlanVariants representative = hopMemoTable.get(legacy);
+		if(representative == null || representative.hopCommon != null
+			&& representative.hopCommon.getHopRef() == carrier)
+			hopMemoTable.put(legacy, variants);
 	}
 
 	private void validateExactPlacementStates(HopOccurrenceProjection occurrence, FedPlanVariants variants) {
@@ -177,20 +200,47 @@ public class FederatedPlannerDpMemoTable {
 		for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
 			Pair<Long,FederatedOutput> coordinate = Pair.of(carrier.getHopID(), output);
 			FedPlanVariants existing = hopMemoTable.get(coordinate);
-			if(existing == null)
-				continue;
-			if(existing.hopCommon == null || existing.hopCommon.getHopRef() != carrier)
-				throw new IllegalStateException("Cannot replace a DP memo coordinate owned by another carrier");
-			hopMemoTable.remove(coordinate);
+			Map<FederatedOutput,FedPlanVariants> exact = exactMemoByCarrier.get(carrier);
+			if(exact != null) {
+				exact.remove(output);
+				if(exact.isEmpty())
+					exactMemoByCarrier.remove(carrier);
+			}
+			Set<Hop> carriers = carriersByLegacyCoordinate.get(coordinate);
+			if(carriers != null) {
+				carriers.remove(carrier);
+				if(carriers.isEmpty()) {
+					carriersByLegacyCoordinate.remove(coordinate);
+					hopMemoTable.remove(coordinate);
+				}
+				else if(existing != null && existing.hopCommon != null
+					&& existing.hopCommon.getHopRef() == carrier) {
+					Hop replacement = carriers.iterator().next();
+					hopMemoTable.put(coordinate, getFedPlanVariants(replacement, output));
+				}
+			}
+			else if(existing != null && existing.hopCommon != null
+				&& existing.hopCommon.getHopRef() == carrier)
+				hopMemoTable.remove(coordinate);
 		}
 	}
 
 	public FedPlanVariants getFedPlanVariants(Pair<Long, FederatedOutput> fedPlanPair) {
+		Set<Hop> carriers = carriersByLegacyCoordinate.get(fedPlanPair);
+		if(carriers != null && carriers.size() > 1)
+			throw new IllegalStateException("Ambiguous legacy DP memo coordinate " + fedPlanPair
+				+ " spans " + carriers.size() + " occurrence carriers");
 		return hopMemoTable.get(fedPlanPair);
 	}
 
+	public FedPlanVariants getFedPlanVariants(Hop carrier, FederatedOutput output) {
+		Map<FederatedOutput,FedPlanVariants> byOutput = exactMemoByCarrier.get(carrier);
+		return byOutput == null ? null : byOutput.get(output);
+	}
+
 	public FedPlan getFedPlanAfterPrune(long hopID, FederatedOutput federatedOutput) {
-		FedPlanVariants fedPlanVariantList = hopMemoTable.get(new ImmutablePair<>(hopID, federatedOutput));
+		FedPlanVariants fedPlanVariantList = getFedPlanVariants(
+			new ImmutablePair<>(hopID, federatedOutput));
 		if (fedPlanVariantList == null || fedPlanVariantList.isEmpty()) {
 			return null;
 		}
@@ -198,11 +248,16 @@ public class FederatedPlannerDpMemoTable {
 	}
 
 	public FedPlan getFedPlanAfterPrune(Pair<Long, FederatedOutput> fedPlanPair) {
-		FedPlanVariants fedPlanVariantList = hopMemoTable.get(fedPlanPair);
+		FedPlanVariants fedPlanVariantList = getFedPlanVariants(fedPlanPair);
 		if (fedPlanVariantList == null || fedPlanVariantList.isEmpty()) {
 			return null;
 		}
 		return selectPrimaryVariantAfterPrune(fedPlanVariantList);
+	}
+
+	public FedPlan getFedPlanAfterPrune(Hop carrier, FederatedOutput output) {
+		FedPlanVariants variants = getFedPlanVariants(carrier, output);
+		return variants == null || variants.isEmpty() ? null : selectPrimaryVariantAfterPrune(variants);
 	}
 
 	public FedPlan getFedPlanAfterPrune(HopOccurrenceProjection occurrence, FederatedOutput federatedOutput) {
@@ -213,7 +268,7 @@ public class FederatedPlannerDpMemoTable {
 			if(entry.getValue() != occurrence)
 				continue;
 			hasExplicitCarrier = true;
-			FedPlan candidate = getFedPlanAfterPrune(entry.getKey().getHopID(), federatedOutput);
+			FedPlan candidate = getFedPlanAfterPrune(entry.getKey(), federatedOutput);
 			if(candidate != null && (best == null || candidate.getCumulativeCost() < best.getCumulativeCost()
 				|| candidate.getCumulativeCost() == best.getCumulativeCost()
 					&& candidate.getHopID() < best.getHopID()))
@@ -272,12 +327,37 @@ public class FederatedPlannerDpMemoTable {
 		Set<FedPlan> seenPlans = Collections.newSetFromMap(new IdentityHashMap<>());
 		for(Hop carrier : carriers)
 			for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
-				FedPlan plan = getFedPlanAfterPrune(carrier.getHopID(), output);
+				FedPlan plan = getFedPlanAfterPrune(carrier, output);
 				if(plan == null || !seenPlans.add(plan))
 					continue;
 				if(plan.getHopRef() != carrier || requirePlanCarrierOccurrence(plan.getHopRef()) != occurrence)
 					throw new IllegalStateException("Foreign exact memo carrier for " + occurrence.key());
 				arms.add(new OccurrencePlanArm(occurrence, carrier, output, plan));
+			}
+		return List.copyOf(arms);
+	}
+
+	/** Returns every retained plan variant for one exact occurrence in canonical carrier/output order. */
+	public List<OccurrencePlanArm> getAllExactPlanVariantsForOccurrence(HopOccurrenceProjection occurrence) {
+		assertOwnedOccurrence(occurrence);
+		List<Hop> carriers = occurrenceByPlanCarrier.entrySet().stream()
+			.filter(entry -> entry.getValue() == occurrence).map(Map.Entry::getKey)
+			.sorted(Comparator.comparingLong(Hop::getHopID)).toList();
+		List<OccurrencePlanArm> arms = new ArrayList<>();
+		Set<FedPlan> seenPlans = Collections.newSetFromMap(new IdentityHashMap<>());
+		for(Hop carrier : carriers)
+			for(FederatedOutput output : List.of(FederatedOutput.LOUT, FederatedOutput.FOUT)) {
+				FedPlanVariants variants = getFedPlanVariants(carrier, output);
+				if(variants == null || variants.hopCommon == null
+					|| variants.hopCommon.getHopRef() != carrier)
+					continue;
+				for(FedPlan plan : variants.getFedPlanVariants()) {
+					if(plan == null || !seenPlans.add(plan))
+						continue;
+					if(plan.getHopRef() != carrier || requirePlanCarrierOccurrence(plan.getHopRef()) != occurrence)
+						throw new IllegalStateException("Foreign exact memo variant for " + occurrence.key());
+					arms.add(new OccurrencePlanArm(occurrence, carrier, output, plan));
+				}
 			}
 		return List.copyOf(arms);
 	}
@@ -302,6 +382,63 @@ public class FederatedPlannerDpMemoTable {
 			if(entry.getValue() == occurrence)
 				descriptions.add(entry.getKey().getHopID() + ":" + entry.getKey().getOpString());
 		return descriptions.toString();
+	}
+
+	/** Exact retained DP dependency between two analysis-owned occurrences. */
+	public record OccurrencePlanEdge(HopOccurrenceProjection producer,
+		HopOccurrenceProjection consumer) {
+		public OccurrencePlanEdge {
+			Objects.requireNonNull(producer, "producer");
+			Objects.requireNonNull(consumer, "consumer");
+		}
+	}
+
+	/**
+	 * Canonical intersection of the exact child edges present in every retained DP
+	 * plan arm for an occurrence.
+	 * The compiled Hop graph can contain construction-only inputs which deliberately
+	 * are not part of a planner arm (for example the local-matrix argument of a
+	 * literal FEDERATED source whose runtime FederationMap is represented as a fixed
+	 * leaf).  Conversely, rewire/loop plans can contain exact logical child edges not
+	 * present in the raw compiled-input graph.  Component closure must therefore use
+	 * this executable plan graph rather than approximating it with raw Hop edges.
+	 * Optional child edges must not merge traversal-owner components: one selected
+	 * arm can omit them, in which case no component root could cover the merged node.
+	 */
+	public List<OccurrencePlanEdge> mandatoryExactPlanChildEdges() {
+		List<OccurrencePlanEdge> edges = new ArrayList<>();
+		List<HopOccurrenceProjection> consumers = occurrenceByPlanCarrier.values().stream()
+			.distinct().sorted(Comparator.comparing(HopOccurrenceProjection::key)).toList();
+		for(HopOccurrenceProjection consumer : consumers) {
+			Set<HopOccurrenceProjection> mandatory = null;
+			for(OccurrencePlanArm arm : getAllExactPlanVariantsForOccurrence(consumer)) {
+				Set<HopOccurrenceProjection> producers =
+					Collections.newSetFromMap(new IdentityHashMap<>());
+				for(Pair<Long,FederatedOutput> child : arm.plan().getChildFedPlans()) {
+					FedPlanVariants childVariants = hopMemoTable.get(child);
+					Hop childCarrier = childVariants == null || childVariants.hopCommon == null
+						? null : childVariants.hopCommon.getHopRef();
+					HopOccurrenceProjection producer = childCarrier == null
+						? null : occurrenceByPlanCarrier.get(childCarrier);
+					if(producer == null)
+						throw new IllegalStateException("Retained DP plan has no exact child occurrence: consumer="
+							+ consumer.key() + " child=" + child);
+					producers.add(producer);
+				}
+				if(mandatory == null) {
+					mandatory = Collections.newSetFromMap(new IdentityHashMap<>());
+					mandatory.addAll(producers);
+				}
+				else
+					mandatory.retainAll(producers);
+			}
+			if(mandatory != null)
+				for(HopOccurrenceProjection producer : mandatory)
+					edges.add(new OccurrencePlanEdge(producer, consumer));
+		}
+		edges.sort(Comparator.comparing((OccurrencePlanEdge edge) -> edge.producer().key())
+			.thenComparing(edge -> edge.consumer().key()));
+		return List.copyOf(edges);
 	}
 
 	private void assertOwnedOccurrence(HopOccurrenceProjection occurrence) {
@@ -579,15 +716,31 @@ public class FederatedPlannerDpMemoTable {
 	 * common properties and costs.
 	 */
 		public static class FedPlan {
+			public record ExactChildPlanEdge(CompiledHopKey occurrence, Hop carrier,
+				FederatedOutput output, FedPlan selectedPlan) {
+				public ExactChildPlanEdge {
+					Objects.requireNonNull(occurrence, "occurrence");
+					Objects.requireNonNull(carrier, "carrier");
+					Objects.requireNonNull(output, "output");
+					Objects.requireNonNull(selectedPlan, "selectedPlan");
+				}
+			}
+
 			private double cumulativeCost; // Total cost = sum of selfCost + cumulativeCost of child plans
 			private final FedPlanVariants fedPlanVariants; // Reference to variant list
 			private final List<Pair<Long, FederatedOutput>> childFedPlans; // Child plan references
+			private List<ExactChildPlanEdge> exactChildPlanEdges = List.of();
 				private ExecType execType;
 				private FType fType;
 				private FType cpFoutType;
 				private boolean derivedFedFout;
 				private PlacementState selectedPlacementState;
 				private boolean foutMaterializationAccounted;
+				private CandidateSelectionReceipt directCandidateSelection;
+				private List<RelocationChoiceReceipt> directRelocationChoices = List.of();
+				private Map<RelocationActionKey,Double> directRelocationActionCosts = Map.of();
+				private double embeddedChildRecurrenceCost = Double.NaN;
+				private double physicalChildBoundaryCost = Double.NaN;
 
 		public FedPlan(double cumulativeCost, FedPlanVariants fedPlanVariants,
 				List<Pair<Long, FederatedOutput>> childFedPlans) {
@@ -638,6 +791,34 @@ public class FederatedPlannerDpMemoTable {
 			return forwardingCostPerParents;
 		}
 
+		public void setExactRecurrenceCosts(double embeddedChildRecurrenceCost,
+			double physicalChildBoundaryCost) {
+			if(!Double.isFinite(embeddedChildRecurrenceCost) || embeddedChildRecurrenceCost < 0d
+				|| !Double.isFinite(physicalChildBoundaryCost) || physicalChildBoundaryCost < 0d
+				|| physicalChildBoundaryCost > embeddedChildRecurrenceCost + 1e-9)
+				throw new IllegalArgumentException("Invalid exact DP recurrence costs: embedded="
+					+ embeddedChildRecurrenceCost + " boundary=" + physicalChildBoundaryCost);
+			this.embeddedChildRecurrenceCost = embeddedChildRecurrenceCost;
+			this.physicalChildBoundaryCost = physicalChildBoundaryCost;
+		}
+
+		public boolean hasExactRecurrenceCosts() {
+			return Double.isFinite(embeddedChildRecurrenceCost)
+				&& Double.isFinite(physicalChildBoundaryCost);
+		}
+
+		public double getEmbeddedChildRecurrenceCost() {
+			if(!hasExactRecurrenceCosts())
+				throw new IllegalStateException("FedPlan has no captured exact recurrence costs");
+			return embeddedChildRecurrenceCost;
+		}
+
+		public double getPhysicalChildBoundaryCost() {
+			if(!hasExactRecurrenceCosts())
+				throw new IllegalStateException("FedPlan has no captured exact recurrence costs");
+			return physicalChildBoundaryCost;
+		}
+
 		public double getComputeWeight() {
 			return fedPlanVariants.hopCommon.getComputeWeight();
 		}
@@ -669,6 +850,55 @@ public class FederatedPlannerDpMemoTable {
 
 		public List<Pair<Long, FederatedOutput>> getChildFedPlans() {
 			return childFedPlans;
+		}
+
+		public void bindExactChildPlanEdges(List<Hop> childCarriers,
+			FederatedPlannerDpMemoTable memo) {
+			Objects.requireNonNull(childCarriers, "childCarriers");
+			Objects.requireNonNull(memo, "memo");
+			if(childCarriers.size() != childFedPlans.size())
+				throw new IllegalArgumentException("Exact DP child carrier count differs from child edge count");
+			List<FedPlan> selectedPlans = new ArrayList<>(childFedPlans.size());
+			for(int i = 0; i < childFedPlans.size(); i++) {
+				Pair<Long,FederatedOutput> legacy = childFedPlans.get(i);
+				Hop carrier = Objects.requireNonNull(childCarriers.get(i), "exact child carrier");
+				FedPlan selected = memo.getFedPlanAfterPrune(carrier, legacy.getRight());
+				if(selected == null)
+					throw new IllegalArgumentException("Exact DP child carrier has no selected memo arm " + legacy);
+				selectedPlans.add(selected);
+			}
+			bindExactChildPlanEdges(childCarriers, selectedPlans, memo);
+		}
+
+		public void bindExactChildPlanEdges(List<Hop> childCarriers,
+			List<FedPlan> selectedPlans, FederatedPlannerDpMemoTable memo) {
+			Objects.requireNonNull(childCarriers, "childCarriers");
+			Objects.requireNonNull(selectedPlans, "selectedPlans");
+			Objects.requireNonNull(memo, "memo");
+			if(childCarriers.size() != childFedPlans.size()
+				|| selectedPlans.size() != childFedPlans.size())
+				throw new IllegalArgumentException("Exact DP child carrier count differs from child edge count");
+			List<ExactChildPlanEdge> exact = new ArrayList<>(childFedPlans.size());
+			for(int i = 0; i < childFedPlans.size(); i++) {
+				Pair<Long,FederatedOutput> legacy = childFedPlans.get(i);
+				Hop carrier = Objects.requireNonNull(childCarriers.get(i), "exact child carrier");
+				FedPlan selected = Objects.requireNonNull(selectedPlans.get(i), "exact selected child plan");
+				if(carrier.getHopID() != legacy.getLeft())
+					throw new IllegalArgumentException("Exact DP child carrier differs from legacy edge " + legacy);
+				HopOccurrenceProjection occurrence = memo.requirePlanCarrierOccurrence(carrier);
+				FedPlanVariants retained = memo.getFedPlanVariants(carrier, legacy.getRight());
+				if(selected.getHopRef() != carrier || selected.getFedOutType() != legacy.getRight()
+					|| retained == null || retained.getFedPlanVariants().stream().noneMatch(plan -> plan == selected))
+					throw new IllegalArgumentException("Exact DP child carrier has no memo arm " + legacy);
+				exact.add(new ExactChildPlanEdge(occurrence.key(), carrier, legacy.getRight(), selected));
+			}
+			exactChildPlanEdges = List.copyOf(exact);
+		}
+
+		public List<ExactChildPlanEdge> getExactChildPlanEdges() {
+			if(!childFedPlans.isEmpty() && exactChildPlanEdges.size() != childFedPlans.size())
+				throw new IllegalStateException("DP plan lacks exact occurrence-aware child coordinates");
+			return exactChildPlanEdges;
 		}
 
 			public void setFederatedOutput(FederatedOutput fedOutType) {
@@ -735,6 +965,54 @@ public class FederatedPlannerDpMemoTable {
 				public void setFoutMaterializationAccounted(boolean foutMaterializationAccounted) {
 					this.foutMaterializationAccounted = foutMaterializationAccounted;
 				}
+
+				public CandidateSelectionReceipt getDirectCandidateSelection() {
+					return directCandidateSelection;
+				}
+
+				public void setDirectCandidateSelection(CandidateSelectionReceipt candidateSelection) {
+					directCandidateSelection = Objects.requireNonNull(candidateSelection, "candidateSelection");
+					if(selectedPlacementState != null && !candidateSelection.emission().emissionState()
+						.placementState().equals(selectedPlacementState))
+						throw new IllegalArgumentException("DP candidate selection placement differs from FedPlan state");
+				}
+
+				public List<RelocationChoiceReceipt> getDirectRelocationChoices() {
+					return directRelocationChoices;
+				}
+
+				public void setDirectRelocationChoices(Collection<RelocationChoiceReceipt> choices) {
+					List<RelocationChoiceReceipt> ordered = Objects.requireNonNull(choices, "choices")
+						.stream().map(choice -> Objects.requireNonNull(choice, "choice")).sorted().toList();
+					Set<RelocationDemandKey> demands = new HashSet<>();
+					for(RelocationChoiceReceipt choice : ordered)
+						if(!demands.add(choice.demand()))
+							throw new IllegalArgumentException("DP FedPlan has duplicate exact relocation demand: "
+								+ choice.demand().normalizedSignature());
+					directRelocationChoices = List.copyOf(ordered);
+				}
+
+				public Map<RelocationActionKey,Double> getDirectRelocationActionCosts() {
+					return directRelocationActionCosts;
+				}
+
+				public void setDirectRelocationActionCosts(Map<RelocationActionKey,Double> costs) {
+					Set<RelocationActionKey> selectedActions = directRelocationChoices.stream()
+						.map(RelocationChoiceReceipt::action).collect(java.util.stream.Collectors.toSet());
+					Map<RelocationActionKey,Double> ordered = new LinkedHashMap<>();
+					Objects.requireNonNull(costs, "costs").entrySet().stream()
+						.sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+							RelocationActionKey action = Objects.requireNonNull(entry.getKey(), "action");
+							Double cost = Objects.requireNonNull(entry.getValue(), "cost");
+							if(!selectedActions.contains(action))
+								throw new IllegalArgumentException("DP relocation action cost is not selected: "
+									+ action.normalizedSignature());
+							if(!Double.isFinite(cost) || cost < 0.0)
+								throw new IllegalArgumentException("DP relocation action cost must be finite and non-negative");
+							ordered.put(action, cost);
+						});
+					directRelocationActionCosts = Collections.unmodifiableMap(ordered);
+				}
 			}
 
 	/**
@@ -744,20 +1022,6 @@ public class FederatedPlannerDpMemoTable {
 	 * It uses HopCommon to store common properties and costs related to the Hop.
 	 */
 		public static class FedPlanVariants {
-		/**
-		 * Maximum number of plan variants to retain per output type (LOUT/FOUT) after pruning.
-		 *
-		 * <p>DP enumerates multiple variants that differ in (a) exec type (CP vs FED) and
-		 * (b) child output signatures (which children are LOUT vs FOUT). Downstream rewrite
-		 * stages (e.g., clone-set output conflict resolution) may later select a different
-		 * child-output decision than the cheapest variant. If pruning retains only a single
-		 * CP and single FED plan, the cheapest CP plan can become incompatible with the
-		 * chosen child decisions, forcing selection of a more expensive FED plan and
-		 * causing performance regressions (observed in kmeans WAN-mid at hop 364).</p>
-		 *
-		 * <p>We therefore retain the top-K cheapest variants (bounded), while still ensuring
-		 * at least one CP and one FED variant remain available for conflict resolution.</p>
-		 */
 		private static final int MAX_PRUNED_VARIANTS_PER_OUTPUT = 8;
 		private static final int MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS = 4;
 
@@ -800,130 +1064,136 @@ public class FederatedPlannerDpMemoTable {
 			if (_fedPlanVariants.isEmpty())
 				return false;
 
-			// Sort once by cumulative cost (stable in Java's TimSort implementation).
 			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
 
 			FedPlan bestCP = null;
 			FedPlan bestFED = null;
-			for (FedPlan plan : _fedPlanVariants) {
-				if (bestCP == null && plan.getExecType() == ExecType.CP)
+			for(FedPlan plan : _fedPlanVariants) {
+				if(bestCP == null && plan.getExecType() == ExecType.CP)
 					bestCP = plan;
-				if (bestFED == null && plan.getExecType() == ExecType.FED)
+				if(bestFED == null && plan.getExecType() == ExecType.FED)
 					bestFED = plan;
-				if (bestCP != null && bestFED != null)
+				if(bestCP != null && bestFED != null)
 					break;
 			}
 
-			// Keep the top-K cheapest variants, plus ensure one CP and one FED remain.
-			// Also retain a small bounded set of CP variants with the broadest FED/FOUT
-			// child signatures. These variants can look expensive before global output
-			// decisions are known because their FOUT->CP materialization edges are charged
-			// locally; selected-plan rewrite may later prove that the same stable
-			// federated-origin value was already materialized by another CP consumer.
-			// Dropping these variants here makes that cost/state correction impossible.
 			LinkedHashSet<FedPlan> kept = new LinkedHashSet<>();
-			int cap = Math.max(2, MAX_PRUNED_VARIANTS_PER_OUTPUT);
-			for (FedPlan plan : _fedPlanVariants) {
-				if (kept.size() >= cap)
+			for(FedPlan plan : _fedPlanVariants) {
+				if(kept.size() >= MAX_PRUNED_VARIANTS_PER_OUTPUT)
 					break;
 				kept.add(plan);
 			}
-			if (bestCP != null)
+			if(bestCP != null)
 				kept.add(bestCP);
-			if (bestFED != null)
+			if(bestFED != null)
 				kept.add(bestFED);
-			for (FedPlan plan : selectMaterializationSensitiveCpVariants(_fedPlanVariants))
-				kept.add(plan);
-
+			kept.addAll(selectMaterializationSensitiveCpVariants(_fedPlanVariants));
 			_fedPlanVariants.clear();
 			_fedPlanVariants.addAll(kept);
 			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
 			return true;
 		}
 
+		/**
+		 * Deduplicates the already-factorized shared-function-input frontier without
+		 * applying the ordinary top-K cap.  Its producer emits only the cheapest
+		 * baseline, one representative per caller boundary alternative, and uniform
+		 * extremes, so retaining this set is linear rather than Cartesian.
+		 */
+		public boolean pruneExactBoundaryRepresentatives() {
+			_fedPlanVariants.removeIf(plan -> plan == null || plan.getExecType() == null);
+			if(_fedPlanVariants.isEmpty())
+				return false;
+			_fedPlanVariants.sort(Comparator.comparingDouble(FedPlan::getCumulativeCost));
+			Map<String,FedPlan> unique = new LinkedHashMap<>();
+			for(FedPlan plan : _fedPlanVariants)
+				unique.putIfAbsent(exactBoundarySignature(plan), plan);
+			_fedPlanVariants.clear();
+			_fedPlanVariants.addAll(unique.values());
+			return true;
+		}
+
+		private static String exactBoundarySignature(FedPlan plan) {
+			PlacementState state = plan.getSelectedPlacementState();
+			StringBuilder signature = new StringBuilder(state == null
+				? plan.getExecType() + "/" + plan.getFedOutType() + "/" + plan.getFType()
+				: state.normalizedSignature());
+			if(plan.getExactChildPlanEdges().isEmpty())
+				return signature.append('|').append(plan.getChildFedPlans()).toString();
+			for(FedPlan.ExactChildPlanEdge edge : plan.getExactChildPlanEdges()) {
+				FedPlan child = edge.selectedPlan();
+				PlacementState childState = child.getSelectedPlacementState();
+				signature.append('|').append(edge.occurrence().normalizedSignature()).append('=')
+					.append(childState == null
+						? child.getExecType() + "/" + child.getFedOutType() + "/" + child.getFType()
+						: childState.normalizedSignature())
+					.append(":derived=").append(child.isDerivedFedFout());
+			}
+			return signature.toString();
+		}
+
 		private static List<FedPlan> selectMaterializationSensitiveCpVariants(List<FedPlan> variants) {
-			if (variants == null || variants.isEmpty())
-				return Collections.emptyList();
 			List<FedPlan> candidates = new ArrayList<>();
 			Set<String> seenSignatures = new LinkedHashSet<>();
-			for (FedPlan plan : variants) {
-				if (plan == null || plan.getExecType() != ExecType.CP)
+			for(FedPlan plan : variants) {
+				if(plan == null || plan.getExecType() != ExecType.CP || countFoutChildren(plan) <= 0)
 					continue;
-				int foutChildCount = countFoutChildren(plan);
-				if (foutChildCount <= 0)
-					continue;
-				String signature = buildFoutChildSignature(plan);
-				if (!seenSignatures.add(signature))
-					continue;
-				candidates.add(plan);
+				if(seenSignatures.add(buildFoutChildSignature(plan)))
+					candidates.add(plan);
 			}
-			if (candidates.isEmpty())
-				return Collections.emptyList();
-			candidates.sort((a, b) -> {
-				int cmp = Double.compare(estimateFoutChildMemEstimate(b), estimateFoutChildMemEstimate(a));
-				if (cmp != 0)
-					return cmp;
-				cmp = Integer.compare(countFoutChildren(b), countFoutChildren(a));
-				if (cmp != 0)
-					return cmp;
-				return Double.compare(a.getCumulativeCost(), b.getCumulativeCost());
+			candidates.sort((left, right) -> {
+				int order = Double.compare(estimateFoutChildMemEstimate(right),
+					estimateFoutChildMemEstimate(left));
+				if(order != 0)
+					return order;
+				order = Integer.compare(countFoutChildren(right), countFoutChildren(left));
+				return order != 0 ? order
+					: Double.compare(left.getCumulativeCost(), right.getCumulativeCost());
 			});
-			if (candidates.size() <= MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS)
-				return candidates;
-			return new ArrayList<>(candidates.subList(0, MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS));
+			return candidates.size() <= MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS ? candidates
+				: new ArrayList<>(candidates.subList(0, MAX_MATERIALIZATION_SENSITIVE_CP_VARIANTS));
 		}
 
 		private static int countFoutChildren(FedPlan plan) {
-			if (plan == null || plan.getChildFedPlans() == null)
-				return 0;
 			int count = 0;
-			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
-				if (childEdge != null && childEdge.getValue() == FederatedOutput.FOUT)
+			for(Pair<Long,FederatedOutput> child : plan.getChildFedPlans())
+				if(child != null && child.getValue() == FederatedOutput.FOUT)
 					count++;
-			}
 			return count;
 		}
 
 		private static double estimateFoutChildMemEstimate(FedPlan plan) {
-			if (plan == null || plan.getChildFedPlans() == null)
-				return 0.0;
-			double total = 0.0;
-			Hop parentHop = plan.getHopRef();
-			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
-				if (childEdge == null || childEdge.getValue() != FederatedOutput.FOUT)
+			double total = 0d;
+			for(Pair<Long,FederatedOutput> child : plan.getChildFedPlans()) {
+				if(child == null || child.getValue() != FederatedOutput.FOUT)
 					continue;
-				Hop childHop = findInputByHopID(parentHop, childEdge.getKey());
-				if (childHop == null)
-					continue;
-				double mem = FederatedCostModel.getEffectiveOutputMemEstimate(childHop);
-				if (Double.isFinite(mem) && mem > 0.0)
-					total += mem;
+				Hop input = findInputByHopID(plan.getHopRef(), child.getKey());
+				if(input != null) {
+					double memory = FederatedCostModel.getEffectiveOutputMemEstimate(input);
+					if(Double.isFinite(memory) && memory > 0d)
+						total += memory;
+				}
 			}
 			return total;
 		}
 
-		private static Hop findInputByHopID(Hop parentHop, long childHopID) {
-			if (parentHop == null || parentHop.getInput() == null)
-				return null;
-			for (Hop input : parentHop.getInput()) {
-				if (input != null && input.getHopID() == childHopID)
-					return input;
-			}
+		private static Hop findInputByHopID(Hop parent, long childHopId) {
+			if(parent != null && parent.getInput() != null)
+				for(Hop input : parent.getInput())
+					if(input != null && input.getHopID() == childHopId)
+						return input;
 			return null;
 		}
 
 		private static String buildFoutChildSignature(FedPlan plan) {
-			if (plan == null || plan.getChildFedPlans() == null)
-				return "";
-			StringBuilder sb = new StringBuilder();
-			for (Pair<Long, FederatedOutput> childEdge : plan.getChildFedPlans()) {
-				if (childEdge == null || childEdge.getValue() != FederatedOutput.FOUT)
-					continue;
-				if (sb.length() > 0)
-					sb.append(',');
-				sb.append(childEdge.getKey());
-			}
-			return sb.toString();
+			StringBuilder signature = new StringBuilder();
+			for(Pair<Long,FederatedOutput> child : plan.getChildFedPlans())
+				if(child != null && child.getValue() == FederatedOutput.FOUT) {
+					if(signature.length() > 0)
+						signature.append(',');
+					signature.append(child.getKey());
+				}
+			return signature.toString();
 		}
 	}
 

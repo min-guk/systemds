@@ -445,18 +445,40 @@ public class FederatedPlannerUtils {
 	public static void registerFedInitVar(String varName, FType fedInitFType, String signature) {
 		if (varName != null && !varName.isEmpty()) {
 			FED_INIT_VARS.add(varName);
-			if (fedInitFType != null)
-				FED_INIT_FTYPES.put(varName, fedInitFType);
 			if (signature != null)
 				FED_INIT_SIGNATURES.put(varName, signature);
-			if (signature != null) {
+			FType encodedType = getEncodedSignatureFType(signature);
+			boolean conflictingTypes = fedInitFType != null && encodedType != null && fedInitFType != encodedType;
+			FType effectiveType = fedInitFType != null ? fedInitFType : encodedType;
+			if (effectiveType != null && !conflictingTypes)
+				FED_INIT_FTYPES.put(varName, effectiveType);
+			else if(signature != null)
+				FED_INIT_FTYPES.remove(varName);
+			if (signature != null && effectiveType != null && !conflictingTypes) {
 				// Signature-based anchor keys must carry a concrete FType suffix so runtime
 				// refederation can rebuild a worker-pool anchor from the literal key.
-				// If the fType is unknown at planning time, default to FULL (safe fallback).
-				FType effectiveType = (fedInitFType != null) ? fedInitFType : FType.FULL;
-				String key = signature + "|" + effectiveType.name();
+				String key = encodedType != null ? signature : signature + "|" + effectiveType.name();
 				registerFedAnchorKey(varName, key);
 			}
+			else if(signature != null) {
+				// A worker/range signature without placement type is incomplete provenance,
+				// not evidence of a one-worker FULL map. Remove any stale literal authority.
+				removeFedAnchorKey(varName);
+			}
+		}
+	}
+
+	private static FType getEncodedSignatureFType(String signature) {
+		if(signature == null)
+			return null;
+		int separator = signature.lastIndexOf('|');
+		if(separator < 0 || separator + 1 >= signature.length())
+			return null;
+		try {
+			return FType.valueOf(signature.substring(separator + 1));
+		}
+		catch(IllegalArgumentException ignored) {
+			return null;
 		}
 	}
 

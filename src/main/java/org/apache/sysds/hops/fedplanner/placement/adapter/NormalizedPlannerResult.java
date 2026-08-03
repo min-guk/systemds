@@ -20,8 +20,12 @@ import java.util.Map;
 import java.util.List;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationChoiceReceipt;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.hops.fedplanner.placement.CandidateSelections;
 import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -42,6 +46,16 @@ public interface NormalizedPlannerResult {
 	}
 
 	List<RelocationActionKey> selectedRelocations();
+
+	default List<CandidateSelectionReceipt> selectedCandidateSelections() {
+		return CandidateSelections.selectNativeCanonical(analysis(), analysis().graph().relocationActions(),
+			selectedStates()).candidates();
+	}
+
+	default List<RelocationChoiceReceipt> selectedRelocationChoices() {
+		return CandidateSelections.selectNativeCanonical(analysis(), analysis().graph().relocationActions(),
+			selectedStates()).relocationChoices();
+	}
 
 	@SuppressWarnings("rawtypes")
 	default List selectedLocalMaterializations() {

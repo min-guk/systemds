@@ -5,115 +5,86 @@
  */
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
 import org.apache.sysds.api.DMLScript;
-import org.apache.sysds.common.Types.DataType;
-import org.apache.sysds.common.Types.FileFormat;
-import org.apache.sysds.common.Types.ValueType;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.AuxiliaryGroupFact;
-import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.Direction;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactPhysicalModel.InputAuthorityKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
-import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
 import org.apache.sysds.parser.ParserFactory;
-import org.apache.sysds.runtime.io.MatrixWriterFactory;
-import org.apache.sysds.runtime.matrix.data.MatrixBlock;
-import org.apache.sysds.runtime.meta.MatrixCharacteristics;
-import org.apache.sysds.runtime.util.HDFSTool;
 import org.junit.Assert;
 import org.junit.Test;
 
-/** Structural RED for the real persistent-read heavy-MM upload authority boundary. */
+/** Exact physical receipt contract: one relocation demand has exactly one selected authority. */
 public class CampaignBMinStDuplicateObligationRedTest {
 	@Test
-	public void duplicateSelectedObligationIsRejected() throws Exception {
-		Path directory = Files.createTempDirectory("minst-g014-heavy-mm-");
-		String input = directory.resolve("S").toString();
-		writePersistentMatrix(input);
-		try {
-			PlacementAnalysis analysis = buildAnalysis(script(input));
-			List<CompiledHopKey> scope = analysis.compiledHopOccurrences().stream()
-				.map(PlacementAnalysis.HopOccurrenceProjection::key).toList();
-			MinStExactCostFacts facts = MinStExactCostFactsProducer.derive(analysis, scope);
-			AuxiliaryGroupFact upload = facts.auxiliaryGroupsInCanonicalOrder().stream()
-				.filter(group -> isPersistentReadUpload(analysis, group)).findFirst()
-				.orElseThrow(() -> new AssertionError("G014_HEAVY_MM_UPLOAD_GROUP_MISSING"));
-			var endpoint = upload.endpointsInCanonicalOrder().stream()
-				.filter(candidate -> candidate.inputPosition() == 1).findFirst()
-				.orElseThrow(() -> new AssertionError("G014_HEAVY_MM_INPUT1_ENDPOINT_MISSING"));
-			MinStExactSelection selection = MinStExactSelector.select(facts);
-			Assert.assertEquals("UNIQUE", selection.tieCertificate());
-			long selected = selection.obligationReceiptsInOrder().stream()
-				.filter(receipt -> receipt.direction() == Direction.UPLOAD
-					&& receipt.producerKey().equals(upload.producerKey())
-					&& receipt.consumerKey().equals(endpoint.consumerKey())
-					&& receipt.inputPosition() == endpoint.inputPosition()).count();
-			Assert.assertEquals("G014_HEAVY_MM_SELECTED_UPLOAD_COUNT", 1L, selected);
-			var receipt = selection.obligationReceiptsInOrder().stream()
-				.filter(candidate -> candidate.direction() == Direction.UPLOAD
-					&& candidate.producerKey() == upload.producerKey()
-					&& candidate.consumerKey() == endpoint.consumerKey()
-					&& candidate.inputPosition() == endpoint.inputPosition())
-				.findFirst().orElseThrow();
-			List<MinStExactSelection.ObligationReceipt> duplicated =
-				new java.util.ArrayList<>(selection.obligationReceiptsInOrder());
-			duplicated.add(receipt);
-			MinStExactSelection duplicateCertificate = new MinStExactSelection(selection.objectiveBits(),
-				selection.sourcePartitionNodeIds(), selection.selectedStatesInScopeOrder(), duplicated,
-				selection.tieCertificate(), selection.minimumSourcePartitionCertificates());
-			IllegalArgumentException failure = Assert.assertThrows(
-				"duplicate endpoint must be rejected", IllegalArgumentException.class,
-				() -> MinStExactPlacementProjector.project(facts, duplicateCertificate));
-			Assert.assertTrue(failure.getMessage(), failure.getMessage()
-				.startsWith("MINST_PROJECTOR_DUPLICATE_OBLIGATION_ENDPOINT"));
-		}
-		finally {
-			HDFSTool.deleteFileIfExistOnHDFS(input);
-			HDFSTool.deleteFileIfExistOnHDFS(input + ".mtd");
-			Files.deleteIfExists(directory);
-		}
+	public void duplicateSelectedRelocationIsRejected() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(kmeans());
+		MinStExactPhysicalSelection selection = forceOneRelocation(analysis);
+		Assert.assertFalse("G014_EXACT_RELOCATION_RECEIPT_MISSING", selection.relocationChoices().isEmpty());
+
+		var duplicated = new ArrayList<>(selection.relocationChoices());
+		duplicated.add(selection.relocationChoices().get(0));
+		IllegalArgumentException failure = Assert.assertThrows(
+			"duplicate exact demand must be rejected", IllegalArgumentException.class,
+			() -> RelocationSelections.resolveAndValidate(analysis,
+				analysis.graph().relocationActions(), selection.selectedStates(),
+				selection.candidateReceipts(), duplicated));
+		Assert.assertTrue(failure.getMessage(), failure.getMessage()
+			.startsWith("Relocation demand has multiple selected alternatives"));
 	}
 
-	private static boolean isPersistentReadUpload(PlacementAnalysis analysis, AuxiliaryGroupFact group) {
-		if(group.direction() != Direction.UPLOAD || group.endpointsInCanonicalOrder().stream()
-			.noneMatch(endpoint -> endpoint.inputPosition() == 1))
-			return false;
-		return analysis.hop(group.producerKey()).map(hop -> hop.getName().equals("S")
-			&& hop.getClass().getSimpleName().equals("DataOp"))
-			.orElse(false);
+	private static MinStExactPhysicalSelection forceOneRelocation(PlacementAnalysis analysis) {
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		for(var domain : model.domains())
+			for(int value = 0; value < domain.alternatives().size(); value++) {
+				if(domain.alternatives().get(value).inputAuthorities().stream().noneMatch(authority ->
+					authority.kind() == InputAuthorityKind.RELOCATION))
+					continue;
+				int required = value;
+				List<MinStExactCategoricalSolver.Factor> factors = new ArrayList<>(model.hardFactors());
+				factors.addAll(surface.factors());
+				factors.add(MinStExactCategoricalSolver.Factor.lazy(List.of(domain.variable()),
+					values -> values[0] == required ? 0.0 : Double.POSITIVE_INFINITY));
+				try {
+					var solved = MinStExactCategoricalSolver.solve(model.variables(), factors,
+						MinStExactPhysicalOptimizer.PRODUCTION_LIMITS);
+					long objective = surface.evaluateCanonical(solved.assignmentInVariableOrder());
+					MinStExactPhysicalSelection selection = MinStExactPhysicalSelection.create(model,
+						new MinStExactPhysicalOptimizer.Result(solved, objective,
+							surface.contributionFingerprint()));
+					if(!selection.relocationChoices().isEmpty())
+						return selection;
+				}
+				catch(IllegalArgumentException infeasible) {
+					if(!infeasible.getMessage().startsWith("MINST_VE_NO_FEASIBLE_ASSIGNMENT"))
+						throw infeasible;
+				}
+			}
+		throw new AssertionError("G014_EXACT_RELOCATION_ALTERNATIVE_MISSING");
 	}
 
-	private static PlacementAnalysis buildAnalysis(String script) throws Exception {
-		DMLProgram program = ParserFactory.createParser().parse(DMLScript.DML_FILE_PATH_ANTLR_PARSER,
-			script, new HashMap<>());
+	private static DMLProgram kmeans() throws Exception {
+		String script = String.join("\n",
+			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
+				+ "ranges=list(list(0,0),list(25000,2100),list(25000,0),list(50000,2100)));",
+			"[C,Y]=kmeans(X=X,k=50,is_verbose=FALSE,runs=1,eps=1e-9,max_iter=60,"
+				+ "avg_sample_size_per_centroid=50,seed=133815928);",
+			"write(Y,\"out\",format=\"csv\");") + "\n";
+		DMLProgram program = ParserFactory.createParser().parse(
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER, script, new HashMap<>());
 		DMLTranslator translator = new DMLTranslator(program);
 		translator.liveVariableAnalysis(program);
 		translator.validateParseTree(program);
 		translator.constructHops(program);
 		translator.rewriteHopsDAG(program);
-		return new NeutralPlacementGraphBuilder().buildAnalysis(program);
-	}
-
-	private static String script(String input) {
-		return String.join("\n",
-			"S=read(\"" + input + "\",data_type=\"matrix\",value_type=\"double\",rows=10000,cols=2,format=\"binary\");",
-			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),ranges=list(list(0,0),list(5000,10000),list(5000,0),list(10000,10000)));",
-			"Y=X%*%S;", "write(Y,\"g014-heavy-mm-out\",format=\"binary\");") + "\n";
-	}
-
-	private static void writePersistentMatrix(String input) throws Exception {
-		MatrixBlock block = new MatrixBlock(10000, 2, 3.0);
-		MatrixCharacteristics characteristics = new MatrixCharacteristics(10000, 2, 1024,
-			block.getNonZeros());
-		MatrixWriterFactory.createMatrixWriter(FileFormat.BINARY).writeMatrixToHDFS(block, input,
-			10000, 2, 1024, block.getNonZeros());
-		HDFSTool.writeMetaDataFile(input + ".mtd", ValueType.FP64, null,
-			DataType.MATRIX, characteristics, FileFormat.BINARY, null, "private");
+		return program;
 	}
 }

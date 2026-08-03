@@ -39,6 +39,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEmi
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateCapabilityFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
+import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalCandidateInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalFunctionInputFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.LogicalTransientInputFact;
@@ -536,6 +537,7 @@ public final class DpPlacementAdapter {
 		ReasonCode reasonCode, ConstructionDisposition disposition,
 		CapturedInvocationEvidence invocationEvidence, Privacy privacy,
 			boolean allowCPLOUT, boolean allowCPFOUT, boolean allowFEDLOUT, boolean allowFEDFOUT,
+			CandidateRuleFact candidateRuleFact,
 			CandidateCapabilityFact capabilityFact,
 			Map<CandidatePlacementArm, CandidateEmissionFact> candidateStateCatalog) {
 		public CandidateDecisionReceipt {
@@ -548,12 +550,20 @@ public final class DpPlacementAdapter {
 			Objects.requireNonNull(disposition, "disposition");
 			Objects.requireNonNull(invocationEvidence, "invocationEvidence");
 			Objects.requireNonNull(privacy, "privacy");
+			Objects.requireNonNull(candidateRuleFact, "candidateRuleFact");
 			Objects.requireNonNull(capabilityFact, "capabilityFact");
 			candidateStateCatalog = Collections.unmodifiableMap(new LinkedHashMap<>(
 				Objects.requireNonNull(candidateStateCatalog, "candidateStateCatalog")));
 			if(context != candidateSnapshot.context() || variantOrdinal < 0
 				|| !orderedOracleInputs.equals(candidateSnapshot.orderedOracleInputs()))
 				throw new IllegalArgumentException("Candidate decision receipt identity or order differs");
+			List<CandidateInputState> exactInputs = orderedOracleInputs.stream()
+				.map(input -> input == OracleInputState.ABSENT_LOCAL ? CandidateInputState.absentLocal()
+					: CandidateInputState.present(FType.valueOf(input.name()))).toList();
+			if(candidateRuleFact.key().parentOccurrence() != candidateSnapshot.parentOccurrence()
+				|| !candidateRuleFact.key().orderedInputs().equals(exactInputs)
+				|| candidateRuleFact.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE)
+				throw new IllegalArgumentException("Candidate decision exact rule-row authority differs");
 		}
 
 		public List<PlacementEmissionState> allowedEmissionStates() {
@@ -936,7 +946,7 @@ public final class DpPlacementAdapter {
 			caps.nativeExec(), caps.nativeOutput(), caps.nativeFoutFType(), resolved.logicalFType(),
 			caps.reasonCode(), ConstructionDisposition.AVAILABLE, invocationEvidence, privacy,
 			placement.allowCP_LOUT, placement.allowCP_FOUT, placement.allowFED_LOUT, placement.allowFED_FOUT,
-			caps, catalog);
+			resolved.fact(), caps, catalog);
 	}
 
 

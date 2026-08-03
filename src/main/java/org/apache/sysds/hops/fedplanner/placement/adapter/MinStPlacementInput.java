@@ -96,6 +96,15 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 			exactSelectedStates, normalized, null);
 	}
 
+	/** Builds a selected carrier from an exact, already-normalized MinST projection. */
+	public static MinStPlacementInput createSelected(PlacementAnalysis owner, ProducerReceipt producer,
+		List<OccurrenceReceipt> occurrences, List<ObligationReceipt> obligations,
+		Map<CompiledHopKey, PlacementState> exactSelectedStates,
+		NormalizedPlannerResult exactNormalizedResult) {
+		return new MinStPlacementInput(owner, producer, occurrences, obligations, false,
+			exactSelectedStates, Objects.requireNonNull(exactNormalizedResult, "exactNormalizedResult"), null);
+	}
+
 	public MinStPlacementInput withEmissionReceipt(PlacementEmissionReceipt receipt) {
 		return new MinStPlacementInput(owner, producer, occurrences, obligations, false,
 			exactSelectedStates, normalizedResult, Objects.requireNonNull(receipt, "receipt"));
@@ -156,6 +165,14 @@ public final class MinStPlacementInput implements AFederatedPlanner.PlannerInvoc
 			if(normalizedResult == null || normalizedResult.analysis() != owner
 				|| !normalizedResult.selectedStates().keySet().equals(decisionKeys))
 				throw new IllegalArgumentException("MinST normalized result differs from exact selection");
+			for(var node : owner.graph().decisionNodes()) {
+				PlacementState exact = exactSelectedStates.get(node.key());
+				PlacementState normalized = normalizedResult.selectedStates().get(node.key());
+				if(normalized != exact || normalizedResult.selectedEmissionStates().get(node.key()) == null
+					|| normalizedResult.selectedEmissionStates().get(node.key()).placementState() != exact)
+					throw new IllegalArgumentException(
+						"MinST normalized selection changed an exact analysis-owned state");
+			}
 		}
 	}
 }

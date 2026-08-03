@@ -21,10 +21,12 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopK
 import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
 import org.apache.sysds.test.component.federated.placement.shadow.ProductionShadowFixtureFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** RED guard for MinST exact placement decisions that must be scoped to emitted occurrences. */
 public class CampaignBR9MinStEmittedDecisionRedTest {
+	@Ignore("Legacy binary source-partition certificates were replaced by exact categorical assignments over emitted physical domains")
 	@Test
 	public void derivesOnlyEmittedDecisionsAndFailsClosedOnAmbiguousProjection() throws Exception {
 		PlacementAnalysis analysis = federatedFunctionAnalysis();

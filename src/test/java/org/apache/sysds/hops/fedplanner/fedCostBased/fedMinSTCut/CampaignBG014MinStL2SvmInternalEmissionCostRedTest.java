@@ -72,14 +72,20 @@ public class CampaignBG014MinStL2SvmInternalEmissionCostRedTest {
 			String runtimeProgram = captured.toString(StandardCharsets.UTF_8);
 			String outerLoop = between(runtimeProgram, "WHILE (lines 96-140)",
 				"GENERIC (lines 141-141)");
-			Assert.assertEquals("The stable federated X transpose must be materialized only once; boundaries="
+			Assert.assertEquals("MinST must retain the cheaper direct local-left/FED-right matmul plan "
+				+ "instead of materializing the full X transpose; boundaries="
 				+ boundaryRegistrySlots() + "; normalizedLocals=" + normalizedLocalSummary()
 				+ "; selectedRelocations=" + normalizedRelocationSummary()
 				+ "; variantTrace=" + runtimeProgram.lines()
 					.filter(line -> line.contains("MinST-ExactRowVariant")).toList(),
-				1, count(runtimeProgram, "FED r' X.MATRIX"));
-			Assert.assertFalse("The outer L2SVM loop must not rematerialize the stable X transpose",
+				0, count(runtimeProgram, "FED r' X.MATRIX"));
+			Assert.assertFalse("The outer L2SVM loop must not materialize the stable X transpose",
 				outerLoop.contains("FED r' X.MATRIX"));
+			Assert.assertTrue("The outer loop must keep X-times-s federated",
+				outerLoop.contains("FED ba+* X.MATRIX"));
+			Assert.assertTrue("The outer loop must keep local-left-times-X on the federated workers",
+				outerLoop.lines().anyMatch(line -> line.contains("FED ba+*")
+					&& line.contains(" X.MATRIX") && line.contains(" LOUT")));
 			var normalized = committedResult();
 			Assert.assertFalse("MinST must not publish a relocation boundary on the loop-local X transpose",
 				normalized.selectedRelocations().stream().anyMatch(action -> {

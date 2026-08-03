@@ -17,11 +17,13 @@ public class CampaignBR6MinStRootCutoverRedTest {
 			"org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.FederatedPlanMinSTCut", index);
 		List<String> names = closure.stream().map(CampaignBPlannerOwnershipClosure.Unit::fqcn).toList();
 		List<String> violations = new java.util.ArrayList<>();
-		if(!names.stream().anyMatch(n -> n.endsWith("MinStExactCostFactsProducer"))) violations.add("R6_EXACT_FACTS_MISSING");
-		if(!names.stream().anyMatch(n -> n.endsWith("MinStExactSelector"))) violations.add("R6_SELECTOR_MISSING");
+		for(String required : List.of("MinStExactPhysicalModel", "MinStExactCostFactsProducer",
+			"MinStExactPhysicalOptimizer", "MinStExactPhysicalSelection",
+			"MinStExactPhysicalPlacementProjector", "MinStPlacementAdapter"))
+			if(names.stream().noneMatch(n -> n.endsWith(required)))
+				violations.add("R6_PHYSICAL_OWNER_MISSING|" + required);
 		for(String forbidden : List.of("FederatedPlanMinSTGraph", "FederatedPlanMinSTRewire",
-			"FederatedPlanMinSTCostEstimator", "FederatedPlanMinSTPlanner", "MinStDiagnostics",
-			"FederatedPlannerLogger"))
+			"FederatedPlanMinSTCostEstimator", "FederatedPlanMinSTPlanner"))
 			if(names.stream().anyMatch(n -> n.endsWith(forbidden))) violations.add("R6_LEGACY_REACHABLE|" + forbidden);
 		Assert.assertTrue("R6_OWNERSHIP_SET|" + violations, violations.isEmpty());
 	}

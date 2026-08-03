@@ -55,11 +55,22 @@ public class CampaignBR4Heuristic2SelfTest {
 		var b=CampaignBProvenanceFixtureBridge.fresh("H-08-LATER-ANCHOR-NO-REFED");
 		Assert.assertEquals(a.structuralDigest(),b.structuralDigest());
 		Assert.assertEquals(CampaignBProvenanceFixtureBridge.literalDescription(a),CampaignBProvenanceFixtureBridge.literalDescription(b));
-		Assert.assertEquals("H-08 Y remains anchorless but local Z has one exact raw no-refed relocation",1,
+		Assert.assertEquals("H-08 has one exact Y-output no-refed relocation after the native local Z input",1,
 			a.removedRelocations().size());
-		String relocation = a.removedRelocations().iterator().next();
-		Assert.assertTrue(relocation.contains("BinaryOp:b(+):Y"));
-		Assert.assertTrue(relocation.contains("FED/FOUT/ROW/SHAPE_DEPENDENT"));
+		var y=a.analysis().graph().nodes().stream()
+			.filter(n->n.key().canonicalSourceOrigin().contains("BinaryOp:b(+):Y"))
+			.findFirst().orElseThrow();
+		var relocation=a.analysis().graph().relocationActions().stream()
+			.filter(r->r.key().sourceValueVersion().equals(y.valueVersion()))
+			.filter(r->r.key().compatibleConsumers().stream().allMatch(k->
+				k.canonicalSourceOrigin().contains("AggUnaryOp:ua(+RC)")))
+			.findFirst().orElseThrow();
+		Assert.assertEquals("H-08 raw relocation is the exact Y LOUT-to-FOUT receipt consumed by sum",
+			"FED/LOUT/ROW/SHAPE_INDEPENDENT",relocation.key().targetPlacement().normalizedSignature());
+		Assert.assertEquals(1,relocation.obligations().size());
+		Assert.assertEquals(0,relocation.obligations().get(0).inputPosition());
+		Assert.assertTrue("the pathwise no-refed fixture removes that exact graph-owned action",
+			a.removedRelocations().contains(relocation.key().normalizedSignature()));
 	}
 
 	@Test public void positionalAmbiguityIsRejected(){try{CampaignBProvenanceFixtureBridge.requireUnique("H-X","ROLE",List.of(1,2));Assert.fail();}catch(AssertionError e){Assert.assertTrue(String.valueOf(e.getMessage()).contains("FIXTURE_ROLE_AMBIGUOUS"));}}

@@ -31,10 +31,12 @@ import org.apache.sysds.runtime.matrix.data.MatrixBlock;
 import org.apache.sysds.runtime.meta.MatrixCharacteristics;
 import org.apache.sysds.runtime.util.HDFSTool;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /** Structural RED for the real persistent-read heavy-MM upload authority boundary. */
 public class CampaignBG014MinStHeavyMmUploadAuthorityRedTest {
+	@Ignore("Legacy binary-cut upload groups are not production authority; KMeans physical candidates/actions are covered by MinStExactProductionTractabilityCertificateTest")
 	@Test
 	public void heavyMmRealUploadSelectsPersistentReadUploadObligation() throws Exception {
 		Path directory = Files.createTempDirectory("minst-g014-heavy-mm-");
