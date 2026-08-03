@@ -216,3 +216,104 @@
   exact `coordinator, worker1..N` 순서와 exact rendered service set 비교로 fail-closed 감지한다.
 - **의사결정 근거**: immutable historical identity는 생성 시 계약으로 재현하되, 새 performance result는
   별도의 명시적 현재 자원 계약을 반드시 충족시킨다.
+
+## 8. 새 DP 24-cell 관문은 KMeans 비용 문제를 닫았지만 PCA raw-total 단조성을 증명하지 못했다
+
+- **상태**: 부분 해결 / 전체 campaign 진행중
+- **환경/조건**: source commit `8e3d57a7b6713336465161a0c2d38183d6b064f4`, harness commit
+  `c1492832794c045e9cca65acd7c128e9cf21af79`, JAR SHA-256
+  `ba2ad01628517460f1367cb03c19d32b2b47d2be2fa40e1f0e7042633da93dfc`, Docker-only
+  one-pass output `/home/mchoi/g007-one-pass-8e3d57a-c149283-20260803-v2`.
+- **재현 절차**:
+  - `cat <output>/progress.json` (`completed=24`, `last_cell=workers=4|planner=DP|workload=pca|profile=wan_mid`)
+  - 각 row의 `cold_bundle`/`warm_bundle`에 있는 `raw_coordinator.log`, `metric.json`,
+    `semantic_oracle.json`, `scan.json` 및 cell-bound resource/worker evidence를 비교한다.
+- **관측 증상**:
+  - 24/24 모두 attempt 1, semantic oracle 성공, runtime scan clean, fallback false, restart 0,
+    teardown zero resources였고 같은 셀의 cold/warm runtime-plan SHA-256은 동일했다.
+  - DP KMeans warm total은 worker 1→4에서 LAN `20.703→18.221→15.764→12.613`,
+    WAN-light `50.154→33.096→28.430→25.845`, WAN-mid
+    `115.839→74.841→71.748→62.615 s`로 모두 단조 감소했다. 이전 W2C cost 과소평가로 보였던
+    병적 PCA WAN-mid CP materialization도 사라졌다.
+  - DP PCA warm total은 LAN `54.372→57.583→55.245→50.018`, WAN-light
+    `54.038→54.355→58.155→50.780`, WAN-mid `57.814→69.189→61.282→53.606 s`로
+    여전히 단조적이지 않다.
+  - 그러나 PCA의 planner-sensitive `fed_tsmm`은 대체로 worker 수와 함께 감소하고, total 요동은
+    동일한 coordinator-local `eigen` 1회가 `44.986–59.966 s`로 변한 것이 지배한다. 동일 worker 수에서는
+    profile/cold/warm 사이 output SHA-256과 runtime-plan SHA-256이 정확히 같으므로 seed/data/plan 차이가 아니다.
+    builtin PCA는 1050×1050 Commons Math `EigenDecomposition`을 CP에서 수행하며 이 단계는 MinST/DP의
+    worker placement 선택 대상이 아니다.
+- **원인 분석**:
+  1. 수정된 partitioned W2C 비용은 실제 plan 병리를 제거했고 KMeans scaling도 개선했다.
+  2. 남은 PCA raw-total fluctuation은 single-run coordinator-local eigen의 주파수/스케줄링 변동이다.
+     서비스 cpuset은 겹치지 않지만 host CPU governor는 `schedutil`, boost enabled이고 host task/IRQ는 해당
+     코어에서 배제되지 않는다. cpuset은 container 간 격리이지 host-wide exclusive-core 예약이 아니다.
+  3. 따라서 이 결과만으로 planner worker-scaling 결함을 주장할 수도, 반대로 모든 fluctuation이 해결됐다고
+     주장할 수도 없다. raw total과 planner-sensitive decomposition을 함께 보고해야 한다.
+- **해결 요약**:
+  - planner 후보를 닫거나 PCA를 다른 workload로 바꾸지 않는다. canonical builtin PCA와 raw SystemDS total을
+    유지한다.
+  - current stage의 24개 결과를 중복 실행하지 않고 DP 나머지 셀을 이어서 수행한다. 전체 결과에서는 동일
+    plan hash/output hash, FED/boundary heavy hitters, CP-only fixed kernels를 함께 분해해 구현 오류와 측정 잡음을
+    구분한다.
+- **수정 파일**: 이 문서만 추가 수정. 이 관측 때문에 production planner/runtime 코드는 변경하지 않았다.
+- **검증**: 12개 PCA cell의 cold/warm 24개 로그를 재파싱했고, 각 cell에서 plan hash 일치 및 각
+  worker/profile 내부 output SHA-256 일치를 확인했다. 모든 24개 row의 인증/오라클/teardown 조건도 재확인했다.
+- **잔여 이슈**: DP의 나머지 60개와 FedAll/Heuristic/MinST 252개가 아직 없다. worker=1 FULL 전체,
+  네 planner ordering, MinST encoded-objective/runtime 관계는 미검증이다.
+- **잠재 회귀 위험**: raw total만 보고 CP 고정 병목을 planner regression으로 오판하거나, 반대로 decomposition만
+  보고 사용자-visible total 요동을 숨길 수 있다. 최종 그래프는 raw total을 유지하고 별도 표에 CP/FED 분해와
+  plan fingerprint를 같이 기록한다.
+- **의사결정 근거**: runtime-supported 후보를 인위적으로 닫지 않으며, cost/model 결함과 환경 노이즈를
+  동일 현상으로 취급하지 않는다.
+
+## 9. worker=1 FULL append FOUT이 local-backed 혼합 map을 만들어 downstream FED MM이 실패한다
+
+- **상태**: runtime 단위 회귀 해결 / Docker 및 전체 campaign 검증 진행중
+- **환경/조건**: source `8e3d57a7b6713336465161a0c2d38183d6b064f4`, harness
+  `c1492832794c045e9cca65acd7c128e9cf21af79`, Docker-only one-pass DP, worker=1,
+  workload `logreg`, profile `lan`, attempt 1.
+- **재현 절차**:
+  - campaign output: `/home/mchoi/g007-one-pass-8e3d57a-c149283-20260803-v2`
+  - failed cell: `cells/031-3fa104ff0d8d`
+  - log: `phases/cell-1/cold-docker-e2e/raw_coordinator.log`
+  - `rg -n "_mVar12[789]|local-backed" <log>`
+- **관측 증상**:
+  - 30/336 성공 후 `workers=1|planner=DP|workload=logreg|profile=lan` cold phase에서
+    `FED aggregate binary cannot repair local-backed federated input _mVar129`로 fail-fast 중단했다.
+  - 계획은 `FED ba+* X ... -> _mVar127 FOUT`, `FED append _mVar127 zeros_N1 -> _mVar128 FOUT`,
+    `FED uarmax _mVar128 -> _mVar129 FOUT`, `FED ba+* _mVar129 ones_1K1 -> ... FOUT` 순서다.
+  - runtime fallback/partial-response 수용은 없었고 teardown 후 project Docker resource는 0개다.
+- **원인 분석**:
+  - worker=1의 완전한 federated object는 exact `FType.FULL`이다. 그러나
+    `FType.FULL.isType(ROW)`와 `isType(COL)`이 둘 다 true이므로 `AppendFEDInstruction`의 기존
+    축 판정은 FULL+local cbind를 axis-misaligned branch로 먼저 분류한다.
+  - 그 branch는 local operand를 `FederationUtils.federateLocalData(...)`로 감싸고 원격 FULL map과
+    bind해, planner가 요구한 resident FOUT 대신 `FederatedLocalData`가 섞인 map을 만든다.
+  - `uarmax`는 그 잘못된 map을 그대로 복사하고, 다음 aggregate-binary의 fail-fast guard가 암묵적
+    업로드/repair를 거부하면서 오류가 드러난다. 따라서 aggregate-unary output capability가 아니라
+    선행 append의 worker=1 FULL 물리 실행 경로가 원인이다.
+- **해결 요약**: 먼저 FULL+local forced-FOUT append가 정확히 한 원격 worker에서 실행되고 FULL map을
+  유지해야 한다는 RED runtime regression을 추가했다. 이후 append에 명시적 single-worker FULL 실행
+  경로를 추가해 local operand를 그 worker로 계획된 broadcast하고, 결과 map에는 원격 worker entry만
+  남긴다. 이는 fallback이 아니라 planner가 이미 선택한 FED/FOUT의 누락된 runtime 지원이다.
+- **수정 파일**:
+  - `src/test/java/org/apache/sysds/test/component/federated/AppendFoutRuntimeTest.java` (예정)
+  - `src/main/java/org/apache/sysds/runtime/instructions/fed/AppendFEDInstruction.java` (예정)
+  - 이 문서.
+- **검증**:
+  - RED: `AppendFoutRuntimeTest`가 `expected:<1> but was:<2>`로 실패
+    (`/tmp/g014_append_full_red_20260803.log`).
+  - GREEN: FULL-left/local-right cbind, local-left/FULL-right cbind, FULL-left/local-right rbind 3개와
+    인접 `AggregateBinaryFoutRuntimeTest` 9개, no-fallback aggregate-unary 1개가 모두 성공
+    (`/tmp/g014_append_adjacent_green2_20260803.log`).
+  - 후속: package → 새 immutable stage의 동일 Docker logreg canary → artifact가 바뀌므로 기존
+    30개는 진단 전용으로 봉인하고 새 336-cell campaign.
+- **잔여 이슈**: 새 Docker canary/336-cell 전체 검증이 아직 완료되지 않았다.
+- **잠재 회귀 위험**: FULL을 일반 ROW/COL처럼 취급하는 다른 append 조합이나 BROADCAST append까지
+  잘못 변경할 수 있다. exact map type, worker count, operand locality, FOUT flag를 테스트로 분리하고
+  기존 ROW/COL 경로는 건드리지 않는다.
+- **의사결정 근거**: planner 후보를 닫거나 runtime에서 local-backed input을 암묵적으로 고치지 않고,
+  planner-selected single-worker FULL append를 런타임이 실제 원격 FOUT으로 실행하도록 지원한다.
+- **적용 원칙/제약**: runtime fallback 금지, partial-response 채택 금지, 후보 임의 축소 금지,
+  TRead/TWrite 및 recompile CP/FOUT 규칙 변경 없음.

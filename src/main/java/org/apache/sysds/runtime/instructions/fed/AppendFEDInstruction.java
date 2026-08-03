@@ -113,9 +113,31 @@ public class AppendFEDInstruction extends BinaryFEDInstruction {
 		//prepare output
 		MatrixObject out = ec.getMatrixObject(output);
 		MetaDataUtils.updateAppendDataCharacteristics(dc1, dc2, out.getDataCharacteristics(), _cbind);
-		
+
+		// FULL is both row-like and column-like in FType.isType(), so the generic axis
+		// branches below cannot distinguish a complete single-worker object from a
+		// partitioned object.  For a forced FOUT, execute FULL+local append on that
+		// exact worker instead of building a mixed remote/FederatedLocalData map.
+		if(_fedOut.isForcedFederated()
+			&& ((isRemoteSingleWorkerFull(mo1) && !mo2.isFederated())
+				|| (!mo1.isFederated() && isRemoteSingleWorkerFull(mo2)))) {
+			boolean isFed1 = mo1.isFederated();
+			MatrixLineagePair moFed = isFed1 ? mo1 : mo2;
+			MatrixLineagePair moLoc = isFed1 ? mo2 : mo1;
+			FederationMap fedMap = moFed.getFedMapping();
+			FederatedRequest fr1 = fedMap.broadcast(moLoc);
+			FederatedRequest fr2 = FederationUtils.callInstruction(instString, output,
+				new CPOperand[]{input1, input2}, isFed1
+					? new long[]{fedMap.getID(), fr1.getID()}
+					: new long[]{fr1.getID(), fedMap.getID()});
+			FederatedRequest frC = fedMap.cleanup(getTID(), fr1.getID());
+			Future<FederatedResponse>[] ret = fedMap.execute(getTID(), true, fr1, fr2, frC);
+			out.setFedMapping(fedMap.copyWithNewIDAndRange(
+				out.getNumRows(), out.getNumColumns(), fr2.getID(), FType.FULL));
+			out.getDataCharacteristics().setNonZeros(FederationUtils.sumNonZeros(ret));
+		}
 		// federated/federated aligned
-		if( ((mo1.isFederated(FType.ROW) && mo2.isFederated(FType.ROW) && _cbind)
+		else if( ((mo1.isFederated(FType.ROW) && mo2.isFederated(FType.ROW) && _cbind)
 				|| (mo1.isFederated(FType.COL) && mo2.isFederated(FType.COL) && !_cbind))
 			&& mo1.getFedMapping().isAligned(mo2.getFedMapping(), mo1.isFederated(FType.ROW) ? AlignType.ROW : AlignType.COL)) {
 			boolean isSpark = instString.contains("SPARK");
@@ -193,5 +215,12 @@ public class AppendFEDInstruction extends BinaryFEDInstruction {
 				+ ", input 2 FType is " + (mo2.isFederated() ? mo2.getFedMapping().getType().name():"LOCAL")
 				+ ", and column bind is " + _cbind);
 		}
+	}
+
+	private static boolean isRemoteSingleWorkerFull(MatrixLineagePair input) {
+		return input != null && input.isFederated() && input.getFedMapping() != null
+			&& input.getFedMapping().getType() == FType.FULL
+			&& input.getFedMapping().getSize() == 1
+			&& !FEDLocalMaterializeUtil.hasLocalFederatedData(input.getFedMapping());
 	}
 }
