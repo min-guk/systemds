@@ -1904,14 +1904,24 @@ public final class FederatedCostModel {
 		if (memSize <= 0)
 			return 0.0;
 		int fanIn = estimateDownloadFanIn(fType, numWorkers);
-		double baseCost = computeDownloadNetworkCost(estimateParallelDownloadPayload(memSize, fanIn));
-		if (baseCost <= 0.0)
-			return baseCost;
-		if (fanIn <= 1)
-			return baseCost;
-		double latencyPenaltyMs = (fanIn - 1) * MBS_NETWORK_LATENCY * TO_MS;
-		double controlPenaltyMs = (fanIn - 1) * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		return baseCost + latencyPenaltyMs + controlPenaltyMs;
+		return computeParallelDownloadCost(memSize, fanIn,
+			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C,
+			MBS_NETWORK_LATENCY, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
+	}
+
+	private static double computeParallelDownloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) {
+		if (totalMemSize <= 0.0)
+			return 0.0;
+		int workers = Math.max(1, fanIn);
+		double effectiveBw = bandwidthMBps > 0.0 ? bandwidthMBps : MBS_NETWORK_BANDWIDTH;
+		double parallelPayloadMb = estimateParallelDownloadPayload(totalMemSize, workers) / (1024 * 1024);
+		double totalPayloadMb = totalMemSize / (1024 * 1024);
+		double payloadSec = parallelPayloadMb / effectiveBw;
+		if (serdesBwMBps > 0.0)
+			payloadSec += totalPayloadMb / serdesBwMBps;
+		double fixedStageMs = latencySec * TO_MS + Math.max(0.0, controlMs);
+		return payloadSec * TO_MS + workers * fixedStageMs;
 	}
 
 	public static boolean requiresExplicitMatrixBoundaryTransfer(Hop hop) {
@@ -2004,12 +2014,10 @@ public final class FederatedCostModel {
 		if (fanIn <= 1)
 			return totalMemSize;
 		// ROW/COL/PART federated matrices are materialized by collecting disjoint
-		// partitions from multiple workers. The logical matrix size is the sum of
-		// those partitions, but the runtime issues the worker requests together; the
-		// wall-clock payload term is therefore bounded by the largest worker partition
-		// plus fan-in latency/control, not by serializing the full logical matrix
-		// through one link. This keeps CP materialization legal and costed instead of
-		// over-pricing it into an artificial FED/LOUT choice.
+		// partitions from multiple workers. The worker requests overlap, so the wire
+		// critical path is bounded by the largest partition. Coordinator-side
+		// deserialization still processes all logical bytes and is therefore charged
+		// separately by computeParallelDownloadCost.
 		return totalMemSize / fanIn;
 	}
 

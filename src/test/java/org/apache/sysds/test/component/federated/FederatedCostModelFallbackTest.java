@@ -917,14 +917,51 @@ public class FederatedCostModelFallbackTest {
 		double fourWorkerFull = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.FULL, 4);
 		double fourWorkerBroadcast = FederatedCostModel.computeDownloadNetworkCost(memSize, FType.BROADCAST, 4);
 
+		Assert.assertEquals("A one-worker partitioned download must equal the legacy directional download",
+			FederatedCostModel.computeDownloadNetworkCost(memSize), singleWorker, 1e-9);
 		Assert.assertTrue("Partitioned downloads should include worker fan-in latency/control overhead",
 			fourWorkerRow > fourWorkerParallelPayload);
-		Assert.assertTrue("Parallel partition collection should not serialize the full logical payload",
+		Assert.assertTrue("Parallel partition collection should not send the full logical payload on one wire path",
 			fourWorkerRow < singleWorker);
 		Assert.assertEquals("Single-source FULL downloads should not pay multi-worker fan-in overhead",
 			FederatedCostModel.computeDownloadNetworkCost(memSize), fourWorkerFull, 1e-9);
 		Assert.assertEquals("Replicated BROADCAST downloads materialize one local copy and should not pay full fan-in",
 			FederatedCostModel.computeDownloadNetworkCost(memSize), fourWorkerBroadcast, 1e-9);
+	}
+
+	@Test
+	public void testPartitionedDownloadUsesParallelWireAndFullLogicalSerdesForWorkersOneToFour()
+			throws Exception {
+		double totalBytes = 256d * 1024 * 1024;
+		double networkBwMBps = 25.0;
+		double serdesBwMBps = 14.7;
+		double latencySec = 0.080;
+		double controlMs = 0.0;
+		for (int workers = 1; workers <= 4; workers++) {
+			double expected = ((256.0 / workers) / networkBwMBps + 256.0 / serdesBwMBps) * 1000.0
+				+ workers * latencySec * 1000.0;
+			double actual = invokeParallelDownloadCost(totalBytes, workers,
+				networkBwMBps, serdesBwMBps, latencySec, controlMs);
+			Assert.assertEquals("Partitioned download must parallelize only wire bytes for workers=" + workers,
+				expected, actual, 1e-9);
+		}
+	}
+
+	@Test
+	public void testPartitionedDownloadPreservesLegacyParallelPayloadWhenSerdesDisabled()
+			throws Exception {
+		double totalBytes = 256d * 1024 * 1024;
+		double networkBwMBps = 25.0;
+		double latencySec = 0.080;
+		double controlMs = 1.5;
+		for (int workers = 1; workers <= 4; workers++) {
+			double expected = ((256.0 / workers) / networkBwMBps) * 1000.0
+				+ workers * (latencySec * 1000.0 + controlMs);
+			double actual = invokeParallelDownloadCost(totalBytes, workers,
+				networkBwMBps, 0.0, latencySec, controlMs);
+			Assert.assertEquals("Disabled serdes must retain the legacy parallel wire model for workers=" + workers,
+				expected, actual, 1e-9);
+		}
 	}
 
 	@Test
@@ -1013,6 +1050,15 @@ public class FederatedCostModelFallbackTest {
 		Field field = FederatedCostModel.class.getDeclaredField(fieldName);
 		field.setAccessible(true);
 		return field.getDouble(null);
+	}
+
+	private static double invokeParallelDownloadCost(double totalMemSize, int fanIn,
+			double bandwidthMBps, double serdesBwMBps, double latencySec, double controlMs) throws Exception {
+		Method method = FederatedCostModel.class.getDeclaredMethod("computeParallelDownloadCost",
+			double.class, int.class, double.class, double.class, double.class, double.class);
+		method.setAccessible(true);
+		return (double) method.invoke(null, totalMemSize, fanIn,
+			bandwidthMBps, serdesBwMBps, latencySec, controlMs);
 	}
 
 	private static final class TestMatrixHop extends DataOp {
