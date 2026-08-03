@@ -68,7 +68,7 @@
   - cost model: `FederatedCostModelFallbackTest` 40/40, targeted integration 1/1 성공
     (`/tmp/g014_cost_model_final_20260803.log`). workers=1은 기존 directional formula와 같고,
     workers=2..4는 wire bytes만 fan-in으로 나누며 coordinator serdes는 total bytes를 유지한다.
-  - harness: 144 tests 성공 (`/tmp/g014_harness_full_resource_20260803.log`).
+  - harness: 최종 146/146 tests 성공 (`/tmp/g014_harness_full_c149283_20260803.log`).
   - 실제 Docker resource canary: coordinator `0-3,24-27`, worker1 `4-7,28-31`, 양쪽 모두
     `NanoCpus=0`, `CpuQuota=0`, restart 0 (`/tmp/g014-resource-canary-2208456.json`).
 - **잔여 이슈**: 새 JAR의 PCA worker=1..4 Docker 24-cell 관문 실험이 아직 없으므로,
@@ -98,7 +98,7 @@
 - **검증**:
   - 4-worker 실제 federated sum canary `/home/mchoi/g007-worker4-evidence-canary-success-1785777059`:
     결과 24.0, worker CSV 425/426/425/425 bytes, 모든 worker instruction row 1 (`uak+`).
-  - 새 validator 포함 harness 144 tests 성공.
+  - 새 validator 포함 harness 최종 146/146 tests 성공.
 - **잔여 이슈**: 336-cell의 모든 active worker에서 instruction row가 남는지는 새 campaign에서 검증한다.
 - **잠재 회귀 위험**: stop timeout 증가가 lifecycle만 늘릴 수 있다. primary metric은 SystemDS execution time이므로
   성능 수치에는 포함되지 않지만 전체 campaign 소요시간은 기록한다.
@@ -169,8 +169,50 @@
   렌더링하고 cpuset/thread/no-quota를 검증한다. 실제 container inspect manifest를 exact run-id와 response SHA에 결합한다.
 - **수정 파일**: harness `tools/run_one_pass_performance.py`, `tools/worker_evidence.py`,
   `tools/container_resource_evidence.py`, `tools/stage_campaign.py`, `run_LAN_docker.sh` 및 대응 테스트.
-- **검증**: harness 144 tests, rendered Compose resource validation, 실제 2-container Docker inspect canary 성공.
+- **검증**: harness 최종 146/146 tests, rendered Compose resource validation, 실제 2-container Docker inspect canary 성공.
 - **잔여 이슈**: 새 immutable stage 생성과 첫 실제 performance cell response validation은 아직 수행 전이다.
 - **잠재 회귀 위험**: deterministic run token이 같은 실패 campaign의 mutable evidence와 충돌할 수 있다.
   per-run runtime receipt exact-count와 evidence exclusive publication으로 재사용을 fail-closed 감지한다.
 - **의사결정 근거**: 성능 결과가 주장하는 실행환경과 worker 실행을 cell별 인증하며, 결과 없는 실행을 성공 처리하지 않는다.
+
+## 7. Historical stage replay was incorrectly coupled to the current four-worker resource policy
+
+- **상태**: 하네스 해결, 새 production stage 재검증 예정
+- **환경/조건**: historical CP/reference producer stage는 coordinator + worker1..8을 고정해 생성됐고,
+  현재 performance campaign은 coordinator + worker1..4 및 service별 cpuset/no-CFS-quota 계약을 사용한다.
+- **재현 절차**:
+  - historical descriptor:
+    `/home/mchoi/g007-critical-validation-b403404-7a72f59-20260803-v1/g007-stage-07c9e88eee72b868a71dfec6fa9bffd0c25594420fadbc74e405b608e7253632/stage-descriptor.json`
+  - current `tools/stage_campaign.py validate --descriptor <descriptor>`를 실행한다.
+  - 실패 수정 전 새 stage 생성 시 `compose stage override diverged from exact descriptor mounts` 또는
+    current resource service inventory 오류가 발생했다.
+- **관측 증상**: 변경된 verifier가 historical stage의 overlay를 현재 4-worker 목록으로 다시 생성하고,
+  generic descriptor replay에도 현재 cpuset/resource 정책을 적용했다. 따라서 producer 당시에 정확했던
+  8-worker immutable descriptor가 현재 정책 변경만으로 invalid가 됐다. 실패한 stage 생성 시도는
+  fail-closed로 중단됐고 final content-addressed stage는 publication되지 않았다.
+- **원인 분석**: (1) immutable artifact 자체의 과거 계약 재현과 (2) 새 성능 캠페인이 반드시 따라야 하는
+  현재 resource 계약을 하나의 검증 단계로 취급했다.
+- **해결 요약**:
+  - overlay와 generic mount replay는 각 stage의 frozen base Compose에서 exact canonical service inventory를
+    추출해 사용한다.
+  - generic `validate`는 historical descriptor 자체만 검증한다.
+  - 현재 resource 정책은 명시적 `--require-current-resource-contract`로 분리하고 one-pass runner가 이를
+    항상 요구한다. 새 production stage 생성/재사용도 current contract를 강제한다.
+  - non-production `/tmp` stage fixture는 Snap Docker가 접근할 수 없으므로 실제 Compose render를 생략하되,
+    production path와 explicit current-contract validation은 생략하지 않는다.
+- **수정 파일**:
+  - harness `tools/stage_campaign.py`
+  - harness `tools/run_one_pass_performance.py`
+  - harness `tests/test_cp_stage_lifecycle.py`
+  - harness `tests/test_cpu_topology.py`
+- **검증**:
+  - historical descriptor generic replay 성공; 출력은
+    `/tmp/g014_old_stage_generic_replay_20260803.json`에 보존했다.
+  - focused stage/manifest/topology tests 49/49 및 추가 topology test 8/8 성공.
+  - harness commit `c1492832794c045e9cca65acd7c128e9cf21af79`.
+  - 전체 suite 146/146 성공; `/tmp/g014_harness_full_c149283_20260803.log`.
+- **잔여 이슈**: 새 4-worker production stage가 current resource flag와 실제 Docker render를 모두 통과해야 한다.
+- **잠재 회귀 위험**: service parser가 noncanonical/추가 service를 누락하면 stage overlay가 부분 생성될 수 있다.
+  exact `coordinator, worker1..N` 순서와 exact rendered service set 비교로 fail-closed 감지한다.
+- **의사결정 근거**: immutable historical identity는 생성 시 계약으로 재현하되, 새 performance result는
+  별도의 명시적 현재 자원 계약을 반드시 충족시킨다.
