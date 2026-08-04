@@ -519,7 +519,7 @@
 
 ## 9. FedAll LM의 derived FOUT left-transpose rewrite가 local 결과를 federated로 오표기함
 
-- **상태**: 진행중 — 코드/단위·통합 테스트 해결, 동일 Docker 실패 cell canary 대기
+- **상태**: 해결 — 코드/단위·통합 테스트 및 동일 Docker 실패 cell canary 통과
 - **환경/조건**:
   - 실패 campaign: `/home/mchoi/g014-one-pass-results-1f7fbce-cac3730-20260804-v1`
   - logical cell: `workers=3|planner=FedAll|workload=lm|profile=wan_light`
@@ -554,8 +554,23 @@
   - `FederatedRefedPolicyTest` 전체 통과.
   - LM privacy-none integration이 성공했으며 LOP mapping에서 left-transpose multiply는 `FED ba+* ... LOUT`,
     결과 transpose는 `CP r'`로 생성됐다. 실행시간 `1.075 s`, fallback/error 0.
+  - source commit `96858a152a0a6adec0a7e8cae70a3d5addf0d3fc`, JAR SHA-256
+    `7d812e31f220b41e2d734235dbba8aa20905ce2736c3cbfff06cd5e5356c88f3`, immutable stage
+    `268670c1927b77d7bcfffe47f254230556976f2c1986baaf20d429ec5654285c`에서 과거와 동일한
+    `WAN-light/worker=3/FedAll/LM` Docker canary를 exactly-once 실행했다.
+  - cold `13.219 s`, warm `12.509 s`로 모두 성공했다. cold/warm runtime plan SHA-256은 동일한
+    `8716c339d846790f9a1347bc765b9f96a6000e58fc4988207fac915b3613d12d`이고 instruction fingerprint도
+    `fed_ba+*:1;fed_fedinit:2;fed_r':1`로 동일하다.
+  - runtime plan에서 입력 `y` transpose만 `FED r' ... FOUT`, native multiply는 `FED ba+* ... LOUT`,
+    그 결과 transpose는 `CP r'`임을 확인했다. 과거 오류의 `_mVar17` 대상 `FED r'`는 존재하지 않는다.
+  - 두 phase 모두 semantic oracle/runtime scan, zero fallback/timeout/error, coordinator/worker restart 0,
+    container/network/volume teardown 0을 검증했다.
+  - canary receipt:
+    `/home/mchoi/g014-fixed-canary-results-96858a1-7d812e31-20260804-v1/canary-receipt.json`
+    (SHA-256 `df7dda0ae25d8909b9244559de76d68f5c6ce7b0da6864f4cfb4224b10b2f44c`).
 - **잔여 이슈**:
-  - 새 immutable JAR로 실패 조건 `WAN-light/worker=3/FedAll/LM` Docker canary를 exactly-once 실행한다.
+  - 이 canary는 정확한 실패 셀의 해결 증거다. 새 336-cell campaign 전체에서 다른 worker/profile과
+    모든 workload의 FedAll 실행 가능성 및 정렬을 별도로 검증한다.
 - **잠재 회귀 위험**:
   - native FOUT이 가능한 비-derived rewrite까지 CP로 낮추면 불필요한 download가 생길 수 있다. 회귀 테스트는
     derived bit가 있을 때만 native LOUT으로 낮아지는지와 planner-selected 최종 FOUT authority 보존을 함께 확인한다.
@@ -565,7 +580,7 @@
 
 ## 10. MinST PCA worker=1이 unknown-dimension sentinel을 실제 broadcast 크기로 사용함
 
-- **상태**: 진행중 — 비용모델/회귀 테스트 해결, Docker 성능 canary 대기
+- **상태**: 해결 — 비용모델/회귀 테스트 및 Docker 성능 canary 통과
 - **환경/조건**:
   - campaign: `/home/mchoi/g014-one-pass-results-1f7fbce-cac3730-20260804-v1`
   - `WAN-light/PCA/worker=1`, 고정 seed/data/JAR
@@ -598,9 +613,19 @@
   - unknown raw estimate가 공통 effective estimate보다 큼을 fixture에서 직접 검증한다.
   - `MinStPcaAuthorityClosureAndTWriteMetadataTest` 3/3, `MinStExactPhysicalModelCertificateTest` 8/8,
     `MinStExactPhysicalPlanSpaceOracleTest` 9/9 및 legacy-representable small-fixture parity 2/2가 통과했다.
+  - source/JAR/stage는 issue 9와 같은 `96858a1...` / `7d812e31...` / `268670c...`이며,
+    동일 seed/data/reference의 `WAN-light/worker=1/MinST/PCA` Docker canary를 exactly-once 실행했다.
+  - cold `57.145 s`, warm `54.483 s`로 성공했다. 과거 실패 계획의 warm `106.830 s`보다
+    `52.347 s` (`49.000%`) 감소했고, 같은 과거 campaign의 DP `54.857 s`와 동등한 범위로 복구됐다.
+  - cold/warm runtime plan SHA-256은 동일한
+    `da76cc5e34b8ea51340b7e827a96e48bf900c8b85c1386cba546099d61cb3e23`이다.
+    실제 plan은 covariance를 `FED tsmm ... LOUT`, final projection을 `FED ba+* X ... FOUT`으로 실행하며,
+    전체 `X`의 `CP prefetch`는 없다. 작은 1x2100 mean만 CP로 prefetch한다.
+  - 두 phase 모두 semantic oracle/runtime scan, zero fallback/timeout/error, coordinator/worker restart 0,
+    container/network/volume teardown 0을 검증했다. canary receipt와 SHA-256은 issue 9에 기록했다.
 - **잔여 이슈**:
-  - 새 immutable JAR로 `WAN-light/worker=1/MinST/PCA` Docker canary를 실행해 FED TSMM/최종 projection과
-    warm 실행시간 개선을 확인한다.
+  - 단일 canary는 이 PCA worker=1 결함의 해결 증거다. 새 336-cell campaign에서 모든 worker/profile의
+    MinST plan과 실행시간 정렬을 별도로 검증한다.
 - **잠재 회귀 위험**:
   - 실제 크기가 immutable fact로 알려진 큰 source를 generic 256 MiB로 축소하면 반대로 upload를 과소평가할 수 있다.
     따라서 exact immutable shape가 effective fallback보다 먼저 적용되며 테스트가 이 순서를 보호한다.
