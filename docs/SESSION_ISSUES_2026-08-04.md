@@ -387,3 +387,45 @@
 - **의사결정 근거**: semantic oracle이나 자원 기준을 완화하지 않고, 동일 계약을 실행 전 경계로 승격했다.
 - **적용 원칙/제약**: Docker-only 실험, one attempt per logical cell, 실패 campaign in-place retry/stitching 금지,
   동일 seed/data/JAR 유지, runtime fallback 금지.
+
+## 7. 사용자가 실험 profile 순서를 wan_light → wan_mid → LAN으로 변경함
+
+- **상태**: 해결 — 기존 LAN-first campaign 폐기 및 profile-major harness 구현 완료
+- **환경/조건**:
+  - 폐기 campaign `/home/mchoi/g014-one-pass-results-97f792b-d2f4fa4-20260804-v1`
+  - 폐기 시점: 11/336 완료, 12번째 `DP/KMeans/LAN/worker=4` 실행 중
+- **재현 절차**:
+  - 기존 manifest의 첫 cell과 `run_one_pass_performance.campaign_schedule()` loop 순서를 확인한다.
+- **관측 증상**:
+  - 기존 workload-major schedule은 KMeans의 LAN을 먼저 실행했으나, 새 요구사항은 모든 workload의
+    wan_light를 먼저 완료하고 wan_mid, LAN 순서로 진행하는 것이다.
+- **원인 분석**:
+  - 기존 `PROFILES`와 workload-outer loop가 LAN-first/workload-major 순서를 인증 manifest에 고정했다.
+- **해결 요약**:
+  - 실행 중 campaign에 새 순서를 덮어쓰거나 11개 행을 재사용하지 않았다.
+  - Ctrl-C 후 남은 Docker project `g007-op-6f55e9cac31f8c44`를 정확한 compose configuration으로 내려
+    container/network 0개를 확인했다.
+  - 기존 output에 `operator-cancelled.json`을 기록하고 `final_campaign_adoption=false`,
+    `stitch_into_replacement_campaign=false`를 명시했다.
+  - harness는 첫 112개 wan_light, 다음 112개 wan_mid, 마지막 112개 LAN이 되도록 변경했으며
+    336 unique cell과 workload/profile 내부 Williams counterbalancing을 유지했다.
+- **수정 파일**:
+  - SystemDS 실행 코드 변경 없음
+  - harness `experiments/tools/run_one_pass_performance.py`
+  - harness `experiments/tests/test_one_pass_performance.py`
+  - `docs/SESSION_ISSUES_2026-08-04.md`
+- **검증**:
+  - profile-major RED test가 기존 코드에서 실패하고 변경 후 통과했다.
+  - schedule 경계 1–112 wan_light, 113–224 wan_mid, 225–336 LAN 및 336/336 unique를 확인했다.
+  - harness commit `cac37301b4303aa186b2327fdbc1ac290ba655ed`에서 focused 11/11 및 전체
+    harness 147/147 테스트가 통과했다.
+  - 변경 Python 파일 `py_compile` 및 `basedpyright` 0 errors/0 warnings/0 notes, `git diff --check`가 통과했다.
+- **잔여 이슈**:
+  - harness commit `cac3730` 기반 새 immutable stage와 output으로 campaign을 처음부터 시작하고 첫 cell/profile을
+    manifest와 live request 양쪽에서 검증한다.
+- **잠재 회귀 위험**:
+  - profile 순서만 바꾸되 planner/worker period 균형이 깨질 수 있으므로 전체 harness period-count test와
+    manifest 검증으로 감지한다.
+- **의사결정 근거**: 과거 행을 결과에 재배열하지 않고 authenticated 실행 순서 자체를 변경했다.
+- **적용 원칙/제약**: Docker-only, immutable stage/manifest, exactly once, 과거 행 stitching 금지,
+  runtime fallback 금지.
