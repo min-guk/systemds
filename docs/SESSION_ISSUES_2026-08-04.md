@@ -706,3 +706,50 @@
     probe를 실행하고 첫 실제 project 생성 및 teardown 영수증으로 감지한다.
 - **의사결정 근거**: 실행되지 않은 실패 attempt를 성공으로 덮지 않고 새 authenticated manifest/output을 사용했다.
 - **적용 원칙/제약**: Docker-only, exactly-once, retry/stitching 금지, 동일 immutable stage/seed/data 유지.
+
+## 13. WAN-light LogReg worker=2–4에서 MinST가 CP-dominant plan을 선택해 DP보다 유의하게 느림
+
+- **상태**: 진행중 — 현상과 physical plan 차이 확인, exact 목적함수 원인 분석 대기
+- **환경/조건**:
+  - campaign: `/home/mchoi/g014-one-pass-results-96858a1-cac3730-20260804-v2`
+  - source/JAR/stage: `96858a1...` / `7d812e31...` / `268670c...`
+  - profile/workload: WAN-light / LogReg, worker=1..4, warm fresh coordinator JVM
+- **재현 절차**:
+  - worker=2 DP/MinST raw logs:
+    `cells/071-660343543aa0/phases/cell-1/warm-fresh-coordinator-jvm/raw_coordinator.log`,
+    `cells/072-d9d4994cdd78/phases/cell-1/warm-fresh-coordinator-jvm/raw_coordinator.log`
+  - worker=3 DP/MinST: `cells/078-90ea5970d010`, `cells/077-be4d3f47a75c`
+  - worker=4 DP/MinST: `cells/076-f0416edecc5c`, `cells/074-2a19c719bdd7`
+- **관측 증상**:
+  - worker=1은 MinST `16.043 s`, DP `16.124 s`로 동등하다.
+  - worker=2는 MinST `25.873 s` 대 DP `18.711 s`로 MinST가 `38.3%` 느리고,
+    worker=3은 `18.387 s` 대 `16.620 s` (`10.6%`), worker=4는 `15.122 s` 대 `12.828 s`
+    (`17.9%`) 느리다.
+  - MinST worker=2–4 runtime plan은 초기 `FED contains/replace` 뒤 주 반복 계산을 CP로 수행하며
+    `ba+*` heavy hitter가 623회다. DP는 반복 핵심을 `FED ba+*` 335회로 수행한다.
+  - MinST 자체 worker scaling도 worker=1 `16.043 s` → worker=2 `25.873 s`로 `61.3%` 역행한다.
+- **원인 분석**:
+  - 합법성/runtime 오류는 아니다. 두 planner 모두 semantic output이 정확하고 fallback 없이 실행됐다.
+  - MinST exact 목적함수가 worker=2 이상에서 반복 CP materialization/compute와 FED 반복 실행의 실제 비용을
+    다르게 평가해 CP-dominant 해를 선택한 정황이다. 누락된 factor인지 compute/size/occurrence 추정 문제인지는
+    아직 확정하지 않았다.
+- **해결 요약**:
+  - 아직 production 수정 없음. 실행 중 campaign은 유효한 exactly-once 관측을 계속 수집한다.
+  - 후속 분석은 candidate를 닫지 않고 LogReg 반복 HOP별 compute, size/memory, upload/download 및 occurrence
+    factor를 DP와 MinST 사이에서 대조한다.
+- **수정 파일**:
+  - 본 관측 문서만 갱신; production code 변경 없음
+- **검증**:
+  - 현재 83개 완료 row 전체에서 oracle failure 0, fallback 0, dirty runtime scan 0, restart 0,
+    teardown failure 0이다.
+  - LogReg DP/MinST는 worker=1–4 모두 서로 다른 authenticated runtime-plan SHA를 가지며, 단순 실행 순서의
+    동일 plan 잡음이 아니라 실제 plan 선택 차이임을 확인했다.
+- **잔여 이슈**:
+  - exact cost facts를 추출하는 focused regression을 만들고 CP/FED 두 해의 목적함수 항목을 실제 heavy-hitter와
+    대조한다. 원인 수정 후 새 immutable stage와 fresh campaign이 필요하다면 현재 campaign과 절대 합치지 않는다.
+- **잠재 회귀 위험**:
+  - 실제 실행시간만 보고 FED 후보를 강제하거나 CP 후보를 닫으면 다른 profile/worker에서 global objective를
+    훼손할 수 있다. exact objective oracle과 Docker plan/transfer evidence로 비용 수정만 검증해야 한다.
+- **의사결정 근거**: candidate guard가 아니라 비용/메모리/경계/occurrence 측정 오류를 먼저 찾는다.
+- **적용 원칙/제약**: MinST 전역 최적성은 인코딩된 합법 physical objective 기준, 후보 임의 축소 금지,
+  runtime fallback 금지, Docker-only 검증, 실행 중 결과와 수정 후 결과 stitching 금지.
