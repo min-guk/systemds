@@ -239,6 +239,8 @@ public final class MinStExactCostFactsProducer {
 		List<EffectiveLogicalFunctionInput> logicalInputs = effectiveLogicalFunctionInputs(analysis);
 		addPhysicalCompiledTransferFactors(analysis, model.domains(), domains, workers, profiles,
 			logicalInputs, factors, transferKeys);
+		addPhysicalNativeLocalInputTransferFactors(analysis, domains, workers,
+			profiles, factors);
 		addPhysicalLogicalFunctionFactors(analysis, domains, workers, profiles, factors, transferKeys);
 		List<PhysicalContribution> contributions = new ArrayList<>(factors.size());
 		StringBuilder normalized = new StringBuilder(analysis.analysisFingerprint());
@@ -487,6 +489,101 @@ public final class MinStExactCostFactsProducer {
 					key.physicalEmissionIdentity()));
 			}
 		}
+	}
+
+	/**
+	 * Prices runtime-owned coordinator-local matrix inputs of FED instructions.
+	 *
+	 * <p>An exact {@code ABSENT_LOCAL} candidate is deliberately not a planner relocation: lowering
+	 * retains a local operand and the selected FED instruction broadcasts (or sliced-broadcasts)
+	 * that operand when it executes.  Consequently it must not create a relocation receipt or an
+	 * auxiliary upload group.  It does, however, perform a physical C2W transfer on every dynamic
+	 * execution.  The categorical objective therefore owns one edge-local factor whose activation
+	 * is the exact {@link MinStExactPhysicalModel.InputAuthorityKind#NATIVE_LOCAL} authority.</p>
+	 *
+	 * <p>Special mixed FED/local runtime stages (for example aggregate-binary and WDivMM) already
+	 * publish their complete input-preparation cost through {@link FederatedCostModel.MixedFedLocalCost};
+	 * this factor only supplies the generic transfer when that canonical stage has no preparation
+	 * charge.  A FOUT producer additionally pays the required FED-to-local materialization before
+	 * the runtime-owned local input transfer.</p>
+	 */
+	private static void addPhysicalNativeLocalInputTransferFactors(PlacementAnalysis analysis,
+		IdentityHashMap<CompiledHopKey,MinStExactPhysicalModel.DecisionDomain> domains,
+		int workers, Map<String,List<OccurrenceProfile>> profiles,
+		List<MinStExactCategoricalSolver.Factor> factors) {
+		for(CompiledInputEdgeFact edge : analysis.compiledInputEdgesInCanonicalOrder()) {
+			MinStExactPhysicalModel.DecisionDomain producer = domains.get(edge.producer());
+			MinStExactPhysicalModel.DecisionDomain consumer = domains.get(edge.consumer());
+			if(producer == null || consumer == null
+				|| analysis.graph().node(edge.consumer()).orElseThrow().kind() == NodeKind.FUNCTION_CALL)
+				continue;
+			Hop producerHop = analysis.hop(edge.producer()).orElseThrow();
+			Hop consumerHop = analysis.hop(edge.consumer()).orElseThrow();
+			if(producerHop.getDataType() == null || !producerHop.getDataType().isMatrix())
+				continue;
+			boolean hasNativeLocalFedAlternative = consumer.alternatives().stream().anyMatch(alternative ->
+				alternative.state().execType() == ExecType.FED
+					&& alternative.inputAuthorities().stream().anyMatch(authority ->
+						authority.inputPosition() == edge.inputPosition()
+							&& authority.kind()
+								== MinStExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL));
+			if(!hasNativeLocalFedAlternative)
+				continue;
+			double bytes = estimatedBytes(analysis, edge.producer(), producerHop);
+			double weight = forwardingWeight(profiles, edge.consumer(), edge.producer());
+			factors.add(MinStExactCategoricalSolver.Factor.lazy(
+				List.of(producer.variable(), consumer.variable()), values -> {
+					MinStExactPhysicalModel.Alternative source = producer.alternatives().get(values[0]);
+					MinStExactPhysicalModel.Alternative target = consumer.alternatives().get(values[1]);
+					if(target.state().execType() != ExecType.FED
+						|| target.inputAuthorities().stream().noneMatch(authority ->
+							authority.inputPosition() == edge.inputPosition()
+								&& authority.kind()
+									== MinStExactPhysicalModel.InputAuthorityKind.NATIVE_LOCAL))
+						return 0.0;
+					CandidateEmissionFact emission = target.captured()
+						? target.candidateEmission() : target.executionEmission();
+					FType executionFType = emission == null ? target.state().fType()
+						: emission.executionFType();
+					List<FType> inputFTypes = target.orderedInputs().stream()
+						.map(input -> input.present() ? input.fType() : null).toList();
+					FederatedCostModel.MixedFedLocalCost mixed =
+						FederatedCostModel.computeMixedFedLocalCost(consumerHop,
+							new ArrayList<>(consumerHop.getInput()), inputFTypes, executionFType,
+							unitLocalCost(consumerHop),
+							effectiveOutputBytes(analysis, edge.consumer(), consumerHop), workers);
+					double cost = mixed.hasInputPreparation() ? 0.0
+						: nativeLocalInputUploadCost(consumerHop, producerHop, bytes,
+							executionFType, workers);
+					if(source.state().output() == FederatedOutput.FOUT) {
+						FType sourceType = Objects.requireNonNull(source.state().fType(),
+							"FOUT native-local source has no exact FType");
+						cost += FederatedCostModel.computeDownloadNetworkCost(bytes, sourceType, workers);
+					}
+					return requireCost(weight * cost,
+						"MINST_PHYSICAL_NATIVE_LOCAL_INPUT_COST_UNPROVEN");
+				}));
+		}
+	}
+
+	private static double nativeLocalInputUploadCost(Hop consumer, Hop input, double bytes,
+		FType executionFType, int workers) {
+		if(executionFType == null)
+			throw new IllegalArgumentException("MINST_NATIVE_LOCAL_EXECUTION_LAYOUT_UNPROVEN");
+		FType transferType = nativeLocalInputTransferType(consumer, input, executionFType);
+		return FederatedCostModel.computeUploadNetworkCost(bytes, transferType, workers)
+			+ FederatedCostModel.computeLocalToFedForwardingPenalty(transferType, workers);
+	}
+
+	private static FType nativeLocalInputTransferType(Hop consumer, Hop input,
+		FType executionFType) {
+		// ROW/COL runtime instructions can sliced-broadcast an equally shaped matrix, so
+		// total payload is one logical input. Shape-broadcast operands and FULL/PART worker
+		// branches use a replicated broadcast to every participating worker.
+		boolean sameShape = input.getDim1() > 0 && input.getDim2() > 0
+			&& input.getDim1() == consumer.getDim1() && input.getDim2() == consumer.getDim2();
+		return sameShape && (executionFType == FType.ROW || executionFType == FType.COL)
+			? executionFType : FType.BROADCAST;
 	}
 
 	private static void addPhysicalLogicalFunctionFactors(PlacementAnalysis analysis,

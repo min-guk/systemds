@@ -437,3 +437,68 @@
 - **의사결정 근거**: 과거 행을 결과에 재배열하지 않고 authenticated 실행 순서 자체를 변경했다.
 - **적용 원칙/제약**: Docker-only, immutable stage/manifest, exactly once, 과거 행 stitching 금지,
   runtime fallback 금지.
+
+## 8. MinST가 KMeans 반복 로컬 입력 전송을 목적함수에서 누락해 DP보다 느린 계획을 선택함
+
+- **상태**: 진행중 — 비용모델 수정과 targeted/exhaustive 회귀는 통과, 동일 Docker WAN-light 실측 검증 대기
+- **환경/조건**:
+  - 실패 source commit `97f792bdbef8ea63aa2727b4f8d26e571be515f7`
+  - 실패 campaign `/home/mchoi/g014-one-pass-results-97f792b-cac3730-20260804-v1`
+  - profile/workload/worker: WAN-light / KMeans / worker=1
+  - 고정 seed `2026072701`, 동일 frozen data/reference/JAR, warm-primary 비교
+- **재현 절차**:
+  - 실패 MinST raw log:
+    `/home/mchoi/g014-one-pass-results-97f792b-cac3730-20260804-v1/cells/003-34c16bf0f605/phases/cell-1/warm-fresh-coordinator-jvm/raw_coordinator.log`
+  - 회귀 테스트:
+    `mvn -q -DskipTests=false -Dtest=org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.CampaignBG014MinStKMeansWanRepeatedUploadRedTest test`
+- **관측 증상**:
+  - 동일 조건 warm 실행시간이 DP `52.495 s`, FedAll `62.803 s`, MinST `90.468 s`로 MinST가 가장 느렸다.
+  - MinST는 `Fed Put Bytes=2,558,734,200`과 `fed_fed_refed=37.019 s` 50회를 기록했다. DP는
+    `Fed Put Bytes=77,741,040`, `fed_fed_refed=1.077 s` 50회였다.
+  - KMeans loop에서 `FED ba+*`가 만든 local 3000×2100 행렬(약 50.4 MB)을 뒤의 `FED b(*)`가
+    `ABSENT_LOCAL` 입력으로 받아 매 iteration runtime broadcast했다.
+- **원인 분석**:
+  - `MinStExactPhysicalModel`은 이 경로를 합법적인 `NATIVE_LOCAL` authority로 정확히 보존했다. 문제는
+    후보 합법성이 아니라 물리 목적함수였다.
+  - `MinStExactCostFactsProducer.addPhysicalCompiledTransferFactors`는 FOUT→CP download와 명시적
+    `RELOCATION` upload만 가격에 포함했다. FED instruction이 local matrix를 직접
+    `broadcast`/`broadcastSliced`하는 `NATIVE_LOCAL` 물리 전송은 누락됐다.
+  - occurrence profile은 이 edge의 loop 실행 가중치를 정확히 50으로 계산했지만, 곱할 전송 factor가 없어
+    MinST가 반복 50.4 MB upload를 사실상 무료로 비교했다.
+- **해결 요약**:
+  - exact compiled input edge마다 선택된 FED alternative의 해당 input authority가 `NATIVE_LOCAL`일 때만
+    활성화되는 categorical factor를 추가했다.
+  - factor는 실제 runtime 전송 형태에 맞춰 동일 shape ROW/COL은 sliced transfer, 그 외 FULL/PART/shape
+    broadcast는 replicated broadcast로 계산하고, occurrence 가중치(본 재현에서는 50)를 적용한다.
+  - producer가 FOUT이면 local operand로 사용하기 위한 download도 함께 가격에 포함한다.
+  - aggregate-binary/WDivMM처럼 공통 mixed FED/local stage가 이미 전체 input preparation 비용을 소유한
+    경우 generic upload를 중복 계산하지 않는다.
+  - planner relocation action/receipt를 만들거나 후보를 닫지 않았고 runtime fallback도 추가하지 않았다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/MinStExactCostFactsProducer.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedCostBased/fedMinSTCut/CampaignBG014MinStKMeansWanRepeatedUploadRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-04.md`
+- **검증**:
+  - 신규 CLI RED는 수정 전 실제 KMeans plan에서
+    `G014_MINST_CLI_SELECTED_50X_50MB_NATIVE_LOCAL_BROADCAST`로 실패했고, 수정 후 동일 명령이 통과했다.
+  - direct exact-surface 회귀는 반복 edge 가중치가 정확히 `50.0`임과 수정 후 bad plan을 선택하지 않음을 확인했다.
+  - `MinStExactPhysicalPlanSpaceOracleTest#outerRowsComposeWithIndependentAllBitAssignmentObjectiveOracle` 통과:
+    새 factor를 포함한 variable-elimination 결과가 bounded exhaustive objective oracle과 일치했다.
+  - `MinStExactPhysicalModelCertificateTest` 전체 통과 및 `mvn -q -DskipTests package` 성공.
+  - 전체 `MinStExactPhysicalPlanSpaceOracleTest`의 다른 두 fixture 실패는 수정 전 HEAD에서도 동일하게 재현했다.
+    하나는 현재 합법인 function FOUT→LOUT download를 불법으로 가정하는 stale assertion이고, 다른 하나는
+    required derived action 없이 derived emission을 생성하는 stale fixture라 본 이슈의 factor와 무관하다.
+- **잔여 이슈**:
+  - 새 immutable source/JAR/stage에서 KMeans worker=1 WAN-light DP와 MinST를 각각 한 번만 Docker 실행한다.
+  - MinST의 2.56 GB/37 s 반복 refed 제거, semantic oracle/runtime scan/zero fallback/zero restart 및
+    `MinST <= DP`를 실측한 뒤에만 해결 상태로 바꾼다.
+  - 성공한 뒤 폐기 campaign 행을 재사용하지 않고 새 profile-major 336-cell campaign을 처음부터 실행한다.
+- **잠재 회귀 위험**:
+  - runtime branch와 shape 기반 sliced-vs-replicated 추론이 달라지면 전송비를 과대/과소평가할 수 있다.
+    exact objective oracle과 Docker `Fed Put Bytes`/heavy-hitter 횟수로 감지한다.
+  - mixed FED/local stage가 일부 입력만 가격에 포함하는 새 opcode를 추가하면 현재 stage-level 중복 방지로
+    다른 local input이 누락될 수 있다. opcode별 mixed-stage 테스트와 Docker stats로 감지한다.
+- **의사결정 근거**: 합법 candidate를 임의로 닫지 않고, 실제 runtime-owned 전송을 전역 MinST 목적함수에
+  포함해 MinST가 최적화하는 값과 실행 비용의 불일치를 바로잡았다.
+- **적용 원칙/제약**: MinST 전역 최적성은 인코딩된 합법 plan space/물리 목적함수 기준, DP의 국소 탐색 한계는
+  유지, 후보 임의 축소 금지, 비용/shape/boundary 우선 수정, runtime fallback 금지, Docker-only 성능 검증.
