@@ -250,7 +250,7 @@
 
 ## 5. runtime recompile이 DP exact state의 derived-FOUT 비트를 잃고 업로드를 건너뜀
 
-- **상태**: 해결 — 단위/인접 회귀 및 실제 worker=2 KMeans runtime 재현 통과, 새 immutable Docker canary 대기
+- **상태**: 해결 — 단위/인접 회귀, 실제 worker=2 KMeans runtime 재현 및 새 immutable Docker canary 통과
 - **환경/조건**:
   - planner: FedAll (`compile_fed_all`)
   - workload: KMeans, worker=2 ROW, LAN profile
@@ -308,11 +308,18 @@
   - derived-FOUT recompile snapshot, FedAll ALS runtime recompile, KMeans derived authority,
     DP disconnected exact-conflict completion, DP program/dynamic authority parity,
     captured feasibility authority, placement transaction 인접 회귀를 함께 실행해 모두 통과했다.
+  - code commit `97f792bdbef8ea63aa2727b4f8d26e571be515f7`, JAR SHA-256
+    `715ffc8f516b543be858c64ccfb6580594d156d126eda00569b8d6ab7e80cc4f`로 immutable stage
+    `e103158650b2d2eeed9ec7868954a6b2b679a5f7ab747b83001693e03a8d6084`를 생성했다.
+  - 과거 실패와 동일한 `workers=2|planner=FedAll|workload=kmeans|profile=lan` Docker canary가 성공했다.
+    warm `18.353 s`, cold `22.007 s`, `fed_uarsqk+` 1회, `fed_fed_fout` 48회이며
+    fallback 0, coordinator/worker restart 0, runtime scan clean, teardown zero resources를 확인했다.
+  - canary receipt:
+    `/home/mchoi/g014-docker-canary-results-97f792b-715ffc8f-20260804-v1/canary-receipt.json`
 - **잔여 이슈**:
-  - source를 clean commit과 immutable build/stage로 고정한 뒤, 정확히 실패했던 worker=2 FedAll KMeans를
-    `run_LAN_docker.sh` canary로 재검증한다.
-  - canary 성공 뒤에만 새 336-cell campaign을 처음부터 한 번 실행한다. 이전 artifact의 4개 성공 row는
-    진단 자료로만 보존하고 새 결과와 합치지 않는다.
+  - 새 336-cell campaign을 이 immutable stage에서 처음부터 한 번 실행하고, 모든 workload/planner/worker/profile의
+    runtime 성공과 성능 정렬을 검증한다. 이전 artifact의 4개 성공 row 및 이번 canary는 진단 자료로만 보존하고
+    새 campaign row와 합치지 않는다.
 - **잠재 회귀 위험**:
   - 새 runtime classifier가 receipt 등록 전 derived 출력을 local로 보는 것이므로, 등록 순서가 바뀌면
     upload가 누락되거나 중복될 수 있다. 정책 회귀가 receipt 전/후 상태를 검증하고, 실제 KMeans/ALS
