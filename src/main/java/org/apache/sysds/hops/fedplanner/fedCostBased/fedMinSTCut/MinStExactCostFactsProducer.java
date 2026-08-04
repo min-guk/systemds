@@ -571,8 +571,7 @@ public final class MinStExactCostFactsProducer {
 		if(executionFType == null)
 			throw new IllegalArgumentException("MINST_NATIVE_LOCAL_EXECUTION_LAYOUT_UNPROVEN");
 		FType transferType = nativeLocalInputTransferType(consumer, input, executionFType);
-		return FederatedCostModel.computeUploadNetworkCost(bytes, transferType, workers)
-			+ FederatedCostModel.computeLocalToFedForwardingPenalty(transferType, workers);
+		return FederatedCostModel.computeInBandUploadPayloadCost(bytes, transferType, workers);
 	}
 
 	private static FType nativeLocalInputTransferType(Hop consumer, Hop input,

@@ -88,8 +88,8 @@ public class CampaignBG011DpEstimatorNaNFallbackOwnerProofTest {
 
 		Assert.assertTrue("independent network cost must be finite and positive",
 			Double.isFinite(independentNetworkCost) && independentNetworkCost > 0.0);
-		Assert.assertTrue("independent forwarding penalty must be finite and positive",
-			Double.isFinite(independentForwardingPenalty) && independentForwardingPenalty > 0.0);
+		Assert.assertEquals("base upload owns the one parallel dispatch, so forwarding adds no fixed stage",
+			0.0, independentForwardingPenalty, 0.0);
 		Assert.assertTrue("finite input must yield a finite independent expected total",
 			Double.isFinite(independentExpected) && independentExpected > 0.0);
 		Assert.assertEquals("independent expected raw bits must preserve primitive composition",

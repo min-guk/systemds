@@ -142,7 +142,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
-	public void testRepeatedCpfoutIntrinsicUploadIncludesRemainingFanoutControl() {
+	public void testRepeatedCpfoutIntrinsicUploadUsesOneParallelDispatchStage() {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		graph.setNumOfWorkers(4);
 		double occurrences = 3.0;
@@ -159,13 +159,13 @@ public class FederatedPlanMinSTHyperedgeTest {
 		graph.addVertex(vertex);
 		graph.addExecPlacementResultEdge(vertex);
 
-		double remainingFanoutControl =
+		double additionalFanoutControl =
 			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
-		Assert.assertTrue("Regression setup requires a non-zero remaining worker fan-out charge",
-			remainingFanoutControl > 0.0);
+		Assert.assertEquals("The base PUT owns the one parallel fanout stage",
+			0.0, additionalFanoutControl, 0.0);
 		Assert.assertEquals(
-			"Repeated CP/FOUT refed must charge the base PUT plus every remaining worker fan-out stage",
-			occurrences * (uploadCost + remainingFanoutControl),
+			"Repeated CP/FOUT refed must charge exactly one base PUT per occurrence",
+			occurrences * uploadCost,
 			computeCutCost(graph.getGraph(), setOf(placementId(hop.getHopID()))), 1e-9);
 	}
 
@@ -326,7 +326,7 @@ public class FederatedPlanMinSTHyperedgeTest {
 	}
 
 	@Test
-	public void testParentChildUploadIncludesRemainingFanoutControlBoundary() {
+	public void testParentChildUploadDoesNotDuplicateParallelFanoutBoundary() {
 		FederatedPlanMinSTGraph graph = new FederatedPlanMinSTGraph();
 		graph.setNumOfWorkers(4);
 		double uploadCost = 8.0;
@@ -343,13 +343,13 @@ public class FederatedPlanMinSTHyperedgeTest {
 		graph.addParentChildNetEdge(child, child.getHopID(), parent, parent.getHopID(), true);
 
 		long parentC = computeId(parent.getHopID());
-		Assert.assertTrue("The standalone forwarding penalty must be non-zero for this regression setup",
-			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4) > 0.0);
 		double forwardingPenalty =
 			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
+		Assert.assertEquals("The base upload already owns the parallel request stage",
+			0.0, forwardingPenalty, 0.0);
 		Assert.assertEquals(
-			"Parent-child U boundary must include the remaining PUT fanout control stages",
-			uploadCost + forwardingPenalty,
+			"Parent-child U boundary must charge one upload without worker-count RTT duplication",
+			uploadCost,
 			computeCutCostWithHardClosure(graph.getGraph(), setOf(parentC)), 1e-9);
 	}
 

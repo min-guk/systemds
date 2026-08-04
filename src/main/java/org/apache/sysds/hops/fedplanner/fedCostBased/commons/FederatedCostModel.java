@@ -533,36 +533,27 @@ public final class FederatedCostModel {
 	}
 
 	/**
-	 * Control-path latency floor for FED instructions whose runtime is dominated by
-	 * worker fanout/scheduling instead of arithmetic-heavy partitioned compute.
+	 * Network-latency fallback for one logical FED instruction batch.
 	 *
-	 * <p>The ordinary FED compute model can legitimately divide arithmetic-heavy,
-	 * partition-preserving operators by worker count.  For slicing, transpose, cell
-	 * operations, and fully-broadcast-only FED compute, that linear speedup is not
-	 * enough: each logical FED instruction still has to be dispatched to the worker
-	 * set even when the payload is tiny.  Runtime traces for these families show the
-	 * missing term as repeated small {@code fed_rightIndex}, {@code fed_r'}, and
-	 * cell-op instructions.  Keep the candidates open.  When an explicitly calibrated
-	 * local-to-FED control cost is configured, the generic coordination term already
-	 * accounts for one logical instruction dispatch; native FED indexing still needs
-	 * the remaining worker fanout because a slice request is issued against each
-	 * participating federated partition.</p>
+	 * <p>Arithmetic-heavy and control-dominated instructions both cross the same remote
+	 * request boundary. Compute may scale by worker count, but the request batch still
+	 * owns one fixed dispatch stage. When an explicitly calibrated local-to-FED control
+	 * cost is configured, {@link #computeFedCoordinationCost(int)} already owns that
+	 * stage. Otherwise this method supplies one network-latency fallback. It never
+	 * multiplies the fixed stage by worker count because {@code FederationMap} submits
+	 * all worker requests as futures before waiting. Mapping-preserving transpose is
+	 * metadata-only and remains exempt.</p>
 	 */
 	public static double computeControlDominatedFederatedInstructionCost(Hop hop,
 			FType logicalFType, double execWeight, int numWorkers, boolean broadcastOnlyFedCompute) {
 		if (hop == null || hop instanceof DataOp)
 			return 0.0;
-		if (!shouldUseUnscaledFederatedComputeCost(hop, broadcastOnlyFedCompute))
-			return 0.0;
 		if (isMappingPreservingFederatedTranspose(hop, logicalFType))
 			return 0.0;
-		double fanout = Math.max(1, numWorkers);
 		double boundedWeight = Math.max(1.0, execWeight);
 		if (LOCAL_TO_FED_CTRL_OVERHEAD_MS > 0.0)
-			return hop instanceof IndexingOp
-				? boundedWeight * Math.max(0, fanout - 1) * LOCAL_TO_FED_CTRL_OVERHEAD_MS
-				: 0.0;
-		return boundedWeight * fanout * MBS_NETWORK_LATENCY * TO_MS;
+			return 0.0;
+		return boundedWeight * MBS_NETWORK_LATENCY * TO_MS;
 	}
 
 	/**
@@ -932,11 +923,10 @@ public final class FederatedCostModel {
 		if (memEstimate <= 0.0)
 			return 0.0;
 
-		// broadcastSliced over ROW/COL maps sends disjoint slices whose total payload
-		// is approximately the input size. Add fan-out latency/control overhead without
-		// multiplying the payload as a full BROADCAST would.
-		return computeUploadNetworkCost(memEstimate, FType.ROW, numWorkers)
-			+ computeLocalToFedForwardingPenalty(FType.ROW, numWorkers);
+		// broadcastSliced is part of the same FederationMap.execute request batch as
+		// the instruction. The FED unary owns the one fixed dispatch stage, so this
+		// preparation term is payload/serdes only.
+		return computeInBandUploadPayloadCost(memEstimate, FType.ROW, numWorkers);
 	}
 
 	private static double computeFullBroadcastInputCost(Hop inputHop, int numWorkers) {
@@ -947,8 +937,7 @@ public final class FederatedCostModel {
 			memEstimate = getEffectiveInputMemEstimate(inputHop);
 		if (memEstimate <= 0.0)
 			return 0.0;
-		return computeUploadNetworkCost(memEstimate, FType.BROADCAST, numWorkers)
-			+ computeLocalToFedForwardingPenalty(FType.BROADCAST, numWorkers);
+		return computeInBandUploadPayloadCost(memEstimate, FType.BROADCAST, numWorkers);
 	}
 
 	private static FType typeAt(List<FType> types, int index) {
@@ -963,14 +952,7 @@ public final class FederatedCostModel {
 
 	private static double computeReplicatedWorkerResultDownloadCost(double memSizePerWorker, int fanIn) {
 		int workers = Math.max(1, fanIn);
-		double payloadMem = memSizePerWorker * workers;
-		double baseCost = computeDirectionalNetworkCost(payloadMem,
-			MBS_NETWORK_BANDWIDTH_W2C, MBS_NETWORK_SERDES_BANDWIDTH_W2C);
-		if (workers <= 1)
-			return baseCost;
-		double latencyPenaltyMs = (workers - 1) * MBS_NETWORK_LATENCY * TO_MS;
-		double controlPenaltyMs = (workers - 1) * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		return baseCost + latencyPenaltyMs + controlPenaltyMs;
+		return computeDownloadPayloadCost(memSizePerWorker * workers);
 	}
 
 	private static double computeInBandWorkerResultDownloadCost(double resultMem, int fanIn,
@@ -979,26 +961,17 @@ public final class FederatedCostModel {
 			return 0.0;
 		int workers = Math.max(1, fanIn);
 		double payloadMem = replicatedResultPerWorker ? resultMem * workers : resultMem;
-		double payloadCost = computeDownloadPayloadCost(payloadMem);
-		if (workers <= 1)
-			return payloadCost;
-		double latencyPenaltyMs = (workers - 1) * MBS_NETWORK_LATENCY * TO_MS;
-		double controlPenaltyMs = (workers - 1) * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		return payloadCost + latencyPenaltyMs + controlPenaltyMs;
+		return computeDownloadPayloadCost(payloadMem);
 	}
 
 	private static double computeLocalAggregationCleanupControlCost(int fanIn) {
 		int workers = Math.max(1, fanIn);
 		if (workers <= 1)
 			return 0.0;
-		// Local-aggregation FED instructions do not end at GET_VAR. Runtime also
-		// sends a cleanup request for the worker-side temporary output produced by the
-		// federated compute request (for example QuaternaryWDivMMFEDInstruction and
-		// AggregateBinaryFEDInstruction.aggregateLocally). The payload is negligible,
-		// but the request is a separate worker fan-out stage after the partial-result
-		// GET_VAR, so charge its control/latency cost explicitly instead of hiding it
-		// in the generic FED compute term or closing the legal FED candidate.
-		return computeLocalToFedForwardingPenalty(FType.BROADCAST, workers);
+		// AggregateBinaryFEDInstruction and the other local-aggregation paths append
+		// GET_VAR and cleanup to the same FederationMap.execute batch as worker compute.
+		// Cleanup therefore adds no separate fixed network stage.
+		return 0.0;
 	}
 
 	private static double computeCoordinatorAggregationCost(Hop hop, double partialResultMem, int fanIn) {
@@ -1921,7 +1894,7 @@ public final class FederatedCostModel {
 		if (serdesBwMBps > 0.0)
 			payloadSec += totalPayloadMb / serdesBwMBps;
 		double fixedStageMs = latencySec * TO_MS + Math.max(0.0, controlMs);
-		return payloadSec * TO_MS + workers * fixedStageMs;
+		return payloadSec * TO_MS + fixedStageMs;
 	}
 
 	public static boolean requiresExplicitMatrixBoundaryTransfer(Hop hop) {
@@ -1939,6 +1912,25 @@ public final class FederatedCostModel {
 		return computeDirectionalNetworkCost(memSize * multiplier, MBS_NETWORK_BANDWIDTH_C2W, MBS_NETWORK_SERDES_BANDWIDTH_C2W);
 	}
 
+	/**
+	 * Payload-only C2W cost for an input carried inside an existing FED instruction
+	 * request batch. The enclosing FED unary owns the batch's one latency/control
+	 * stage; this helper accounts only for wire payload and serialization.
+	 */
+	public static double computeInBandUploadPayloadCost(double memSize, FType fType, int numWorkers) {
+		if (memSize <= 0.0)
+			return 0.0;
+		double multiplier = fType != null && (fType == FType.FULL || fType == FType.BROADCAST)
+			? Math.max(1, numWorkers) : 1.0;
+		double effectiveBw = MBS_NETWORK_BANDWIDTH_C2W > 0.0
+			? MBS_NETWORK_BANDWIDTH_C2W : MBS_NETWORK_BANDWIDTH;
+		double payloadMb = memSize * multiplier / (1024 * 1024);
+		double payloadSec = payloadMb / effectiveBw;
+		if (MBS_NETWORK_SERDES_BANDWIDTH_C2W > 0.0)
+			payloadSec += payloadMb / MBS_NETWORK_SERDES_BANDWIDTH_C2W;
+		return payloadSec * TO_MS;
+	}
+
 	private static double computeDirectionalNetworkCost(double memSize, double bandwidthMBps, double serdesBwMBps) {
 		double ctrlMs = Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
 		if (memSize <= 0)
@@ -1954,25 +1946,16 @@ public final class FederatedCostModel {
 	}
 
 	/**
-	 * Additional latency-only penalty for local-to-federated forwarding
+	 * Compatibility term for local-to-federated forwarding
 	 * (CP/LOUT -> FOUT -> FED).
 	 *
-	 * <p>The base upload model accounts for payload size and a single transfer latency.
-	 * For forwarding into federated execution, data is typically sent to multiple
-	 * workers. The base directional upload already includes one latency/control
-	 * stage, so this penalty captures only the remaining fan-out stages
-	 * ((numWorkers - 1) * (latency + control)) without changing the shared
-	 * bandwidth model.
+	 * <p>The base upload already accounts for the one logical latency/control stage.
+	 * {@code FederationMap.execute} submits every worker request before waiting, so
+	 * no additional fixed stage is charged per worker. Payload fanout remains in
+	 * {@link #computeUploadNetworkCost(double, FType, int)}.
 	 */
 	public static double computeLocalToFedForwardingPenalty(FType fType, int numWorkers) {
-		if (fType == null)
-			return 0.0;
-		int fanout = Math.max(1, numWorkers);
-		if (fanout <= 1)
-			return 0.0;
-		double latencyPenaltyMs = (fanout - 1) * MBS_NETWORK_LATENCY * TO_MS;
-		double controlPenaltyMs = (fanout - 1) * Math.max(0.0, LOCAL_TO_FED_CTRL_OVERHEAD_MS);
-		return latencyPenaltyMs + controlPenaltyMs;
+		return 0.0;
 	}
 
 	/**

@@ -74,7 +74,7 @@ public class CampaignBR4MinStOccurrenceDemandRedTest {
 		double expectedLoop = expectedUploadDemand(analysis, loopGroup, 2.0);
 
 		List<String> failures = new ArrayList<>();
-		checkBits(failures, "R4_MINST_OUTSIDE_FORWARDING_PENALTY_MISSING",
+		checkBits(failures, "R4_MINST_OUTSIDE_UPLOAD_COST_MISSING",
 			expectedOutside, outsideDemand);
 		checkBits(failures, "R4_MINST_LOOP_OCCURRENCE_WEIGHT_MISSING",
 			expectedLoop, loopDemand);
@@ -272,12 +272,38 @@ public class CampaignBR4MinStOccurrenceDemandRedTest {
 	private static double estimatedBytes(PlacementAnalysis analysis, AuxiliaryGroupFact group) {
 		Hop producer = analysis.hop(group.producerKey()).orElseThrow();
 		double bytes = producer.getOutputMemEstimate();
-		if(Double.isFinite(bytes) && bytes > 0.0)
+		boolean concreteShape = producer.dimsKnown()
+			&& producer.getDim1() > 0 && producer.getDim2() > 0;
+		if(concreteShape && Double.isFinite(bytes) && bytes > 0.0)
 			return bytes;
-		return analysis.shapeFact(group.producerKey())
+		double immutableShapeBytes = analysis.shapeFact(group.producerKey())
 			.filter(shape -> shape.rows() > 0 && shape.cols() > 0)
 			.map(shape -> (double)shape.rows() * shape.cols() * 8.0)
-			.orElseThrow(() -> new AssertionError("R4_MINST_PRODUCER_BYTES_UNPROVEN"));
+			.orElse(Double.NaN);
+		if(Double.isFinite(immutableShapeBytes) && immutableShapeBytes > 0.0)
+			return immutableShapeBytes;
+		var anchors = analysis.graph().node(group.producerKey()).orElseThrow().anchors();
+		if(anchors.size() == 1) {
+			long rows = 0L;
+			long cols = 0L;
+			for(var partition : anchors.get(0).partitions()) {
+				if(partition.end().size() < 2) {
+					rows = 0L;
+					cols = 0L;
+					break;
+				}
+				rows = Math.max(rows, partition.end().get(0));
+				cols = Math.max(cols, partition.end().get(1));
+			}
+			if(rows > 0L && cols > 0L)
+				return (double)rows * cols * 8.0;
+		}
+		double effectiveBytes = FederatedCostModel.getEffectiveOutputMemEstimate(producer);
+		if(Double.isFinite(effectiveBytes) && effectiveBytes > 0.0)
+			return effectiveBytes;
+		if(Double.isFinite(bytes) && bytes > 0.0)
+			return bytes;
+		throw new AssertionError("R4_MINST_PRODUCER_BYTES_UNPROVEN");
 	}
 
 	private static int workerCount(PlacementAnalysis analysis) {

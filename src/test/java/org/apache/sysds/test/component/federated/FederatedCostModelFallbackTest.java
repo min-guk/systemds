@@ -758,9 +758,10 @@ public class FederatedCostModelFallbackTest {
 
 		double expected = ctrlMs > 0.0
 			? execWeight * ctrlMs
-			: execWeight * workers * latencySec * toMs;
+			: execWeight * latencySec * toMs;
 		Assert.assertEquals("A calibrated local-to-FED control value is already per logical dispatch;"
-			+ " it must not be multiplied by worker fanout and then charged again as latency",
+			+ " the network-latency fallback represents the same parallel logical dispatch and"
+			+ " must not be multiplied by worker fanout either",
 			expected, totalControlCost, 1e-9);
 	}
 
@@ -791,7 +792,31 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testIndexingControlDominatedCostAddsCalibratedWorkerFanout() throws Exception {
+	public void testArithmeticHeavyFederatedInstructionStillOwnsOneParallelDispatchStage()
+			throws Exception {
+		TestMatrixHop left = new TestMatrixHop("mmLeft", 50000, 2100,
+			16 * 1024 * 1024, 16 * 1024 * 1024);
+		TestMatrixHop right = new TestMatrixHop("mmRight", 2100, 1,
+			1024 * 1024, 1024 * 1024);
+		AggBinaryOp matrixMultiply = new AggBinaryOp("mm", DataType.MATRIX, ValueType.FP64,
+			OpOp2.MULT, AggOp.SUM, left, right);
+		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
+		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
+			* getFederatedCostModelConstant("TO_MS");
+		double execWeight = 7.0;
+		double expected = execWeight * (ctrlMs > 0.0 ? ctrlMs : latencyMs);
+
+		for(int workers = 1; workers <= 4; workers++) {
+			double actual = execWeight * FederatedCostModel.computeFedCoordinationCost(workers)
+				+ FederatedCostModel.computeControlDominatedFederatedInstructionCost(
+					matrixMultiply, FType.ROW, execWeight, workers, false);
+			Assert.assertEquals("Every remote instruction batch pays one critical-path dispatch stage,"
+				+ " independent of worker fanout", expected, actual, 1e-9);
+		}
+	}
+
+	@Test
+	public void testIndexingControlDominatedCostUsesOneParallelDispatch() throws Exception {
 		TestMatrixHop input = new TestMatrixHop("idxInput", 50000, 2100,
 			16 * 1024 * 1024, 16 * 1024 * 1024);
 		IndexingOp slice = createUnknownDimIndexingHop("rightIndex",
@@ -806,11 +831,12 @@ public class FederatedCostModelFallbackTest {
 		double controlDominatedTopup = FederatedCostModel.computeControlDominatedFederatedInstructionCost(
 			slice, FType.ROW, execWeight, workers, false);
 		double expected = ctrlMs > 0.0
-			? execWeight * (workers - 1) * ctrlMs
-			: execWeight * workers * latencySec * toMs;
+			? 0.0
+			: execWeight * latencySec * toMs;
 
-		Assert.assertEquals("Native FED indexing dispatches the slice request to every participating worker;"
-			+ " calibrated coordination covers one logical dispatch, so indexing pays the remaining fanout",
+		Assert.assertEquals("Native FED indexing submits all worker requests before waiting; calibrated"
+			+ " coordination already owns the logical dispatch, while the uncalibrated fallback is one"
+			+ " parallel critical-path round trip",
 			expected, controlDominatedTopup, 1e-9);
 	}
 
@@ -882,29 +908,24 @@ public class FederatedCostModelFallbackTest {
 	}
 
 	@Test
-	public void testLocalToFedForwardingPenaltyScalesWithWorkerFanout() {
+	public void testLocalToFedForwardingPenaltyDoesNotDuplicateParallelDispatchStage() {
 		double rowPenaltyOneWorker = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 1);
 		double rowPenaltyFourWorkers = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.ROW, 4);
 		double broadcastPenaltyFourWorkers = FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, 4);
 
 		Assert.assertEquals(0.0, rowPenaltyOneWorker, 0.0);
-		Assert.assertTrue("Forwarding penalty should increase with worker fan-out",
-				rowPenaltyFourWorkers > rowPenaltyOneWorker);
-		Assert.assertEquals("Forwarding penalty is latency-fanout based and independent of FType payload multiplier",
+		Assert.assertEquals("The base upload owns the one parallel request stage; forwarding must not"
+			+ " duplicate fixed latency/control by worker count", 0.0, rowPenaltyFourWorkers, 0.0);
+		Assert.assertEquals("Additional fixed forwarding cost is independent of FType payload multiplier",
 				rowPenaltyFourWorkers, broadcastPenaltyFourWorkers, 0.0);
 	}
 
 	@Test
-	public void testLocalToFedForwardingPenaltyChargesOnlyAdditionalWorkerStages() throws Exception {
+	public void testLocalToFedForwardingPenaltyChargesNoAdditionalParallelWorkerStages() {
 		int workers = 4;
-		double latencyMs = getFederatedCostModelConstant("MBS_NETWORK_LATENCY")
-			* getFederatedCostModelConstant("TO_MS");
-		double ctrlMs = getFederatedCostModelConstant("LOCAL_TO_FED_CTRL_OVERHEAD_MS");
-		double expectedAdditionalStages = (workers - 1) * (latencyMs + ctrlMs);
-
-		Assert.assertEquals("The base upload already includes one latency/control stage; the forwarding penalty"
-			+ " must charge only the remaining worker stages",
-			expectedAdditionalStages,
+		Assert.assertEquals("FederationMap submits worker futures before waiting, so the base upload's one"
+			+ " latency/control stage covers the complete parallel worker fanout",
+			0.0,
 			FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, workers), 1e-9);
 	}
 
@@ -919,8 +940,9 @@ public class FederatedCostModelFallbackTest {
 
 		Assert.assertEquals("A one-worker partitioned download must equal the legacy directional download",
 			FederatedCostModel.computeDownloadNetworkCost(memSize), singleWorker, 1e-9);
-		Assert.assertTrue("Partitioned downloads should include worker fan-in latency/control overhead",
-			fourWorkerRow > fourWorkerParallelPayload);
+		Assert.assertTrue("Partitioned downloads must not be cheaper than one parallel wire partition;"
+			+ " full logical serdes may add cost, but fixed latency is one shared stage",
+			fourWorkerRow >= fourWorkerParallelPayload);
 		Assert.assertTrue("Parallel partition collection should not send the full logical payload on one wire path",
 			fourWorkerRow < singleWorker);
 		Assert.assertEquals("Single-source FULL downloads should not pay multi-worker fan-in overhead",
@@ -939,7 +961,7 @@ public class FederatedCostModelFallbackTest {
 		double controlMs = 0.0;
 		for (int workers = 1; workers <= 4; workers++) {
 			double expected = ((256.0 / workers) / networkBwMBps + 256.0 / serdesBwMBps) * 1000.0
-				+ workers * latencySec * 1000.0;
+				+ latencySec * 1000.0;
 			double actual = invokeParallelDownloadCost(totalBytes, workers,
 				networkBwMBps, serdesBwMBps, latencySec, controlMs);
 			Assert.assertEquals("Partitioned download must parallelize only wire bytes for workers=" + workers,
@@ -956,7 +978,7 @@ public class FederatedCostModelFallbackTest {
 		double controlMs = 1.5;
 		for (int workers = 1; workers <= 4; workers++) {
 			double expected = ((256.0 / workers) / networkBwMBps) * 1000.0
-				+ workers * (latencySec * 1000.0 + controlMs);
+				+ latencySec * 1000.0 + controlMs;
 			double actual = invokeParallelDownloadCost(totalBytes, workers,
 				networkBwMBps, 0.0, latencySec, controlMs);
 			Assert.assertEquals("Disabled serdes must retain the legacy parallel wire model for workers=" + workers,

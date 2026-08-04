@@ -96,8 +96,8 @@ public class CampaignBG014CanonicalDpEnumeratorProjectedUploadRedTest {
 		double rawDelta = cpFout.getCumulativeCost() - cpLout.getCumulativeCost();
 		Assert.assertTrue("expected projected upload boundary must be finite", Double.isFinite(expectedBoundary));
 		Assert.assertTrue("expected projected upload boundary must be positive", expectedBoundary > 0.0);
-		Assert.assertFalse("CP/FOUT must not add the LOUT-to-FED forwarding penalty",
-			Double.compare(rawDelta, expectedBoundary + forwarding) == 0);
+		Assert.assertEquals("the base upload already owns the one parallel dispatch stage",
+			0.0, forwarding, 0.0);
 
 		Assert.assertTrue("G014_RED4_CANONICAL_CP_FOUT_RAW_BOUNDARY_MUST_BE_FINITE",
 			Double.isFinite(rawDelta));

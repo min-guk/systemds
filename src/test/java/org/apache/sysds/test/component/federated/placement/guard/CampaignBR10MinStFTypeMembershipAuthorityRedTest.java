@@ -586,7 +586,7 @@ public class CampaignBR10MinStFTypeMembershipAuthorityRedTest {
 		Assert.assertEquals("BR10_KMEANS_NATIVE_RESULT_DOWNLOAD_MUST_KEEP_LOOP_WEIGHT",
 			expectedDownload, contribution(facts, decision.computeNodeId(),
 				decision.placementNodeId(), "native-fed-lout-download"), 0.0);
-		Assert.assertEquals("BR10_KMEANS_CP_FOUT_UPLOAD_MUST_KEEP_LOOP_WEIGHT_AND_FORWARDING",
+		Assert.assertEquals("BR10_KMEANS_CP_FOUT_UPLOAD_MUST_KEEP_LOOP_WEIGHT_AND_SINGLE_PARALLEL_DISPATCH",
 			expectedUpload, contribution(facts, decision.placementNodeId(),
 				decision.computeNodeId(), "native-cp-fout-upload"), 0.0);
 	}

@@ -4640,18 +4640,18 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedCostModel.requiresFederatedWdivmmLocalAggregation(rightWdivmm, FType.ROW));
 
 		double resultMem = ROWS * 2 * (double) OptimizerUtils.DOUBLE_SIZE;
-		double ordinaryDownload = FederatedCostModel.computeDownloadNetworkCost(resultMem, FType.ROW, 4);
+		double oneWorkerLocalAggCost = FederatedCostModel.computeWdivmmLocalAggregationCost(
+			leftWdivmm, FType.ROW, resultMem, 1);
 			double localAggCost = FederatedCostModel.computeWdivmmLocalAggregationCost(
 				leftWdivmm, FType.ROW, resultMem, 4);
 			assertTrue("Local aggregation must charge one full partial result per worker plus coordinator aggregation",
-				localAggCost > ordinaryDownload);
+				localAggCost > oneWorkerLocalAggCost);
 			FederatedCostModel.MixedFedLocalCost tinyLocalAggCost =
 				FederatedCostModel.computeMixedFedLocalCost(leftWdivmm, leftWdivmm.getInput(),
 					Arrays.asList(FType.ROW, FType.ROW, FType.FULL, null), FType.ROW,
 					100.0, OptimizerUtils.DOUBLE_SIZE, 4);
-			assertTrue("Local aggregation must also charge the runtime cleanup fan-out after GET_VAR",
-				tinyLocalAggCost.getCoordinatorLocalCost()
-					>= FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, 4));
+			assertTrue("Local aggregation must charge coordinator-side partial-result aggregation",
+				tinyLocalAggCost.getCoordinatorLocalCost() > 0.0);
 			assertEquals("ROW-X WDIVMM local aggregation should not apply generic linear FED compute speedup",
 				100.0, FederatedCostModel.adjustFederatedComputeCostForWdivmmLocalAggregation(
 					leftWdivmm, FType.ROW, 100.0, 25.0), 0.0);
@@ -4738,18 +4738,18 @@ public class FederatedPlannerFallbackIntegrationTest {
 				Arrays.asList(FType.ROW, FType.BROADCAST)));
 
 		double resultMem = ROWS * 2 * (double) OptimizerUtils.DOUBLE_SIZE;
-		double ordinaryDownload = FederatedCostModel.computeDownloadNetworkCost(resultMem, FType.ROW, 4);
+		double oneWorkerLocalAggCost = FederatedCostModel.computeAggBinaryAddAggregationCost(ba,
+			Arrays.asList(FType.BROADCAST, FType.ROW), resultMem, 1);
 			double localAggCost = FederatedCostModel.computeAggBinaryAddAggregationCost(ba,
 				Arrays.asList(FType.BROADCAST, FType.ROW), resultMem, 4);
 			assertTrue("AggBinary aggAdd must charge one full partial result per worker plus coordinator aggregation",
-				localAggCost > ordinaryDownload);
+				localAggCost > oneWorkerLocalAggCost);
 			FederatedCostModel.MixedFedLocalCost aggAddStageCost =
 				FederatedCostModel.computeMixedFedLocalCost(ba, Arrays.asList(left, right),
 					Arrays.asList(FType.BROADCAST, FType.ROW), FType.ROW,
 					100.0, OptimizerUtils.DOUBLE_SIZE, 4);
-			assertTrue("AggBinary aggAdd must also charge cleanup fan-out for worker-side partial outputs",
-				aggAddStageCost.getCoordinatorLocalCost()
-					>= FederatedCostModel.computeLocalToFedForwardingPenalty(FType.BROADCAST, 4));
+			assertTrue("AggBinary aggAdd must charge coordinator-side partial-result aggregation",
+				aggAddStageCost.getCoordinatorLocalCost() > 0.0);
 			double localLeftPrepCost = FederatedCostModel.computeAggBinarySlicedInputBroadcastCost(ba,
 				Arrays.asList(left, right), Arrays.asList(null, FType.ROW), 4);
 			double fullLeftPrepCost = FederatedCostModel.computeAggBinarySlicedInputBroadcastCost(ba,
