@@ -329,3 +329,54 @@
 - **적용 원칙/제약**: planner가 runtime 가능성을 사전 검증, runtime fallback 금지, exact receipt authority,
   후보 임의 축소 금지, TRead/TWrite `<CP,LOUT>`/`<FED,FOUT>` 유지, recompile `<CP,FOUT>` 금지,
   Docker-only 성능 검증.
+
+## 6. 새 one-pass campaign이 실행 후 host disk floor에서 중단됨
+
+- **상태**: 해결 — 외부 자원 복구 및 logical cell 생성 전 fail-closed preflight를 harness에 반영
+- **환경/조건**:
+  - code commit `97f792bdbef8ea63aa2727b4f8d26e571be515f7`, JAR SHA-256
+    `715ffc8f516b543be858c64ccfb6580594d156d126eda00569b8d6ab7e80cc4f`
+  - 기존 harness commit `44750a4ae656271916dad3b19f55e376e4fcdbe0`
+  - logical cell `workers=1|planner=DP|workload=kmeans|profile=lan`
+- **재현 절차**:
+  - 실패 campaign:
+    `/home/mchoi/g014-one-pass-results-97f792b-44750a4-20260804-v1`
+  - semantic oracle:
+    `cells/001-0d7aac79d30b/phases/cell-1/cold-docker-e2e/semantic_oracle.json`
+- **관측 증상**:
+  - SystemDS 실행은 `26.009 s`에 정상 종료됐고 출력 SHA-256
+    `64dbc45ba999e58166060dda9bfd9b4c992414c7676cdd1d5d920d22774fd6ed`가 reference와 일치했다.
+  - runtime scan/fallback도 clean이었으나 실행 후 semantic oracle이 frozen 5 GiB free-space floor 미달로 실패했다.
+  - 즉 DP 계획/실행 실패가 아니라 host의 재생성 가능한 build 산출물이 root filesystem을 소진한 외부 자원 실패였다.
+- **원인 분석**:
+  - campaign runner는 시작 전에 CPU 격리 조건만 검사했고, semantic oracle의 동일 disk/inode floor를 logical cell
+    디렉터리 생성 전에 검사하지 않았다. 그 결과 실행할 수 없는 host 상태가 attempt 하나를 소비했다.
+- **해결 요약**:
+  - 비활성 임시 worktree의 재생성 가능한 Maven `target/` 72개만 제거해 free space를 약 `2.6 GiB`에서
+    `25 GiB`로 복구했다. source/Git/실험 evidence는 보존했으며 삭제 영수증은
+    `/home/mchoi/g014-resource-cleanup-generated-targets-20260804.json`에 기록했다.
+  - harness commit `d2f4fa494842464d8ff6203e7f57fd97bc4a6e9c`에서 campaign/oracle의 frozen floor가 같은지
+    검증하고, output/results/tmp의 고유 filesystem별 free bytes/inodes를 manifest 생성 전과 각 cell 생성 직전에
+    검사하도록 수정했다.
+  - floor 미달은 cell directory/request를 만들기 전에 중단되므로 attempt를 소비하지 않으며, floor 자체를
+    campaign manifest의 resource-isolation 계약에도 포함한다.
+- **수정 파일**:
+  - SystemDS 소스 변경 없음
+  - harness `experiments/tools/run_one_pass_performance.py`
+  - harness `experiments/tests/test_one_pass_performance.py`
+  - harness `experiments/docs/SESSION_ISSUES_2026-08-04.md`
+  - `docs/SESSION_ISSUES_2026-08-04.md`
+- **검증**:
+  - 실패 cell의 semantic output/reference hash 일치, zero fallback, runtime scan clean을 재확인했다.
+  - harness focused test 11/11, 전체 test 147/147, `py_compile`, changed-file basedpyright 0 errors/warnings,
+    `git diff --check`가 통과했다.
+  - cleanup 후 root filesystem은 약 25 GiB free, free inode 약 22.7M으로 frozen floor를 충족한다.
+- **잔여 이슈**:
+  - 실패 campaign은 재시도하거나 성공 row와 합치지 않는다. 새 harness commit으로 immutable stage와 output을
+    새로 생성해 336-cell Docker campaign을 처음부터 실행한다.
+- **잠재 회귀 위험**:
+  - 장시간 실행 중 공간이 다시 floor 아래로 내려가면 다음 cell 전에 campaign이 중단된다. 이는 실험 row를
+    오염시키지 않는 의도된 fail-closed 동작이며 pre-cell resource snapshot/error로 감지한다.
+- **의사결정 근거**: semantic oracle이나 자원 기준을 완화하지 않고, 동일 계약을 실행 전 경계로 승격했다.
+- **적용 원칙/제약**: Docker-only 실험, one attempt per logical cell, 실패 campaign in-place retry/stitching 금지,
+  동일 seed/data/JAR 유지, runtime fallback 금지.
