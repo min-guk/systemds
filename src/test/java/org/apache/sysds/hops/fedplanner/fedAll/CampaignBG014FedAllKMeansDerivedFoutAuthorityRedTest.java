@@ -1,0 +1,117 @@
+/* Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. */
+package org.apache.sysds.hops.fedplanner.fedAll;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.conf.CompilerConfig;
+import org.apache.sysds.conf.ConfigurationManager;
+import org.apache.sysds.conf.DMLConfig;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.lops.compile.FederatedFoutMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedLocalMaterializeRegistry;
+import org.apache.sysds.lops.compile.FederatedRefedRegistry;
+import org.apache.sysds.test.AutomatedTestBase;
+import org.apache.sysds.test.TestUtils;
+import org.apache.sysds.utils.stats.InfrastructureAnalyzer;
+import org.junit.Assert;
+import org.junit.Test;
+
+/** Docker-shaped KMeans regression for exact graph-owned derived FOUT emission authority. */
+@net.jcip.annotations.NotThreadSafe
+public class CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest {
+	@Test
+	public void oneWorkerFedAllKMeansCommitsEveryDerivedFoutAuthority() throws Exception {
+		DMLConfig oldGlobal = ConfigurationManager.getDMLConfig();
+		CompilerConfig oldCompiler = ConfigurationManager.getCompilerConfig();
+		long oldLocalMaxMemory = InfrastructureAnalyzer.getLocalMaxMemory();
+		int oldLocalParallelism = InfrastructureAnalyzer.getLocalParallelism();
+		boolean oldStatistics = DMLScript.STATISTICS;
+		int oldStatisticsCount = DMLScript.STATISTICS_COUNT;
+		int oldSeed = DMLScript.SEED;
+		boolean oldLocalSpark = DMLScript.USE_LOCAL_SPARK_CONFIG;
+		String oldParserPath = DMLScript.DML_FILE_PATH_ANTLR_PARSER;
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		PlacementEmissionTransaction.resetForTesting();
+		int port = AutomatedTestBase.getRandomAvailablePort();
+		Thread worker = null;
+		Path root = Path.of("target/g014-fedall-kmeans-single-full-worker");
+		try {
+			InfrastructureAnalyzer.setLocalMaxMemory(8L * 1024 * 1024 * 1024);
+			InfrastructureAnalyzer.setLocalPar(8);
+			Path input = matrixMetadata(root.resolve("features.data"));
+			Path script = root.resolve("kmeans.dml");
+			Path config = root.resolve("SystemDS-config.xml");
+			Files.writeString(script, script(port, input, root.resolve("result.csv")));
+			Files.writeString(config, config(root));
+			worker = AutomatedTestBase.startLocalFedWorkerThread(port, 1000);
+			boolean success = DMLScript.executeScript(new String[] {
+				"-exec", "singlenode", "-seed", "2026072701", "-f", script.toString(),
+				"-stats", "100", "-config", config.toString()
+			});
+			Assert.assertTrue("The Docker-shaped FedAll KMeans compile and lowering must complete", success);
+			Assert.assertEquals("FedAll must publish one exact placement authority", 1,
+				PlacementEmissionTransaction.receiptSnapshotForTesting().size());
+			var program = PlacementEmissionTransaction.receiptSnapshotForTesting().keySet().iterator().next();
+			var result = PlacementEmissionTransaction.currentNormalizedResult(program);
+			Assert.assertEquals("FED_ALL", result.plannerId());
+			Assert.assertFalse("KMeans must exercise derived FOUT authority",
+				result.analysis().graph().derivedFoutMaterializationActions().isEmpty());
+			for(var action : result.analysis().graph().derivedFoutMaterializationActions()) {
+				var producer = result.analysis().graph().node(action.key().producer()).orElseThrow();
+				Assert.assertSame("Every derived FOUT action must retain the final graph-owned value version",
+					producer.valueVersion(), action.key().producerValueVersion());
+			}
+		}
+		finally {
+			TestUtils.shutdownThreads(worker);
+			InfrastructureAnalyzer.setLocalMaxMemory(oldLocalMaxMemory);
+			InfrastructureAnalyzer.setLocalPar(oldLocalParallelism);
+			ConfigurationManager.setGlobalConfig(oldGlobal);
+			ConfigurationManager.setLocalConfig(oldGlobal);
+			ConfigurationManager.setGlobalConfig(oldCompiler);
+			ConfigurationManager.setLocalConfig(oldCompiler);
+			DMLScript.STATISTICS = oldStatistics;
+			DMLScript.STATISTICS_COUNT = oldStatisticsCount;
+			DMLScript.SEED = oldSeed;
+			DMLScript.USE_LOCAL_SPARK_CONFIG = oldLocalSpark;
+			DMLScript.DML_FILE_PATH_ANTLR_PARSER = oldParserPath;
+			FederatedPlannerUtils.resetFederatedPlannerRunState();
+			PlacementEmissionTransaction.resetForTesting();
+			FederatedRefedRegistry.clear();
+			FederatedFoutMaterializeRegistry.clear();
+			FederatedLocalMaterializeRegistry.clear();
+		}
+	}
+
+	private static String script(int port, Path input, Path output) {
+		return "X=federated(addresses=list(\"" + TestUtils.federatedAddress(port, input.toString()) + "\"),"
+			+ "ranges=list(list(0,0),list(50000,2100)));\n"
+			+ "[C_n,Y_n]=kmeans(X=X,k=50,is_verbose=FALSE,runs=1,eps=1e-9,max_iter=60,"
+			+ "avg_sample_size_per_centroid=50,seed=133815928);\n"
+			+ "write(Y_n,\"" + output + "\",format=\"csv\");\n";
+	}
+
+	private static String config(Path root) {
+		return "<root>\n"
+			+ "  <sysds.native.blas>mkl</sysds.native.blas>\n"
+			+ "  <sysds.local.spark>true</sysds.local.spark>\n"
+			+ "  <sysds.federated.planner>compile_fed_all</sysds.federated.planner>\n"
+			+ "  <sysds.benchmark.compile_only>true</sysds.benchmark.compile_only>\n"
+			+ "  <sysds.scratch>" + root.resolve("scratch") + "</sysds.scratch>\n"
+			+ "  <sysds.localtmpdir>" + root.resolve("localtmp") + "</sysds.localtmpdir>\n"
+			+ "</root>\n";
+	}
+
+	private static Path matrixMetadata(Path data) throws Exception {
+		Files.createDirectories(data.getParent());
+		Files.writeString(data, "");
+		Files.writeString(Path.of(data + ".mtd"), "{\"data_type\":\"matrix\","
+			+ "\"value_type\":\"double\",\"format\":\"binary\",\"rows\":50000,"
+			+ "\"cols\":2100,\"rows_in_block\":1000,\"cols_in_block\":1000,"
+			+ "\"nnz\":100050000,\"privacy\":\"private-aggregate\"}");
+		return data;
+	}
+}

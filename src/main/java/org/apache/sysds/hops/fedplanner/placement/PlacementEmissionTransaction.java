@@ -635,7 +635,19 @@ public final class PlacementEmissionTransaction {
 				|| action.candidateRule() != candidate.rule()
 				|| action.targetPlacement() != selectedState.placementState())
 				throw new PlacementEmissionException(
-					"Selected derived FOUT action is not the exact graph-owned producer authority");
+					"Selected derived FOUT action is not the exact graph-owned producer authority: "
+						+ "graphIdentityCount=" + graphIdentityCount
+						+ ", producerIdentity=" + (action.producer() == node.key())
+						+ ", producerValueVersionIdentity="
+						+ (action.producerValueVersion() == node.valueVersion())
+						+ ", producerValueVersionEqual="
+						+ action.producerValueVersion().equals(node.valueVersion())
+						+ ", candidateRuleIdentity=" + (action.candidateRule() == candidate.rule())
+						+ ", targetPlacementIdentity="
+						+ (action.targetPlacement() == selectedState.placementState())
+						+ ", targetPlacementEqual="
+						+ action.targetPlacement().equals(selectedState.placementState())
+						+ ", producer=" + node.key().normalizedSignature());
 			HopOccurrenceProjection producer = exactOccurrence(occurrences, node.key());
 			if(producer == null)
 				throw new PlacementEmissionException("Derived FOUT producer occurrence is not compiled");

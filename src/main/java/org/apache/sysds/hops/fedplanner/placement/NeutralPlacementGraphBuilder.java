@@ -331,7 +331,7 @@ public final class NeutralPlacementGraphBuilder {
 		if(!functionClosureConverged)
 			throw new IllegalStateException("Logical function input candidate closure did not converge");
 			nodes = refreshFunctionOutputBoundaryAlternatives(nodes, functionExpansion.constraints());
-			candidateRuleFacts = bindExactDerivedFoutScopes(candidateRuleFacts, scopes);
+			candidateRuleFacts = bindExactDerivedFoutAuthorities(candidateRuleFacts, scopes, nodes);
 			logicalTransientInputs = bindExactLogicalTransientSourceStates(logicalTransientInputs, nodes);
 			// TRead/TWrite is a planner-wide legality boundary, not a MinST-only factor:
 			// the runtime accepts only the exact CP/LOUT or FED/FOUT tuple carried by
@@ -2171,8 +2171,12 @@ public final class NeutralPlacementGraphBuilder {
 			materializationFType, producer.controlRegion().normalizedSignature());
 	}
 
-	private static List<CandidateRuleFact> bindExactDerivedFoutScopes(List<CandidateRuleFact> facts,
-		Map<CompiledHopKey,Long> scopes) {
+	private static List<CandidateRuleFact> bindExactDerivedFoutAuthorities(List<CandidateRuleFact> facts,
+		Map<CompiledHopKey,Long> scopes, List<Node> nodes) {
+		Map<CompiledHopKey,Node> nodesByKey = new IdentityHashMap<>();
+		for(Node node : nodes)
+			if(nodesByKey.put(node.key(), node) != null)
+				throw new IllegalStateException("Duplicate final node identity while binding derived FOUT authority");
 		List<CandidateRuleFact> bound = new ArrayList<>(facts.size());
 		for(CandidateRuleFact fact : facts) {
 			List<CandidateEmissionFact> emissions = new ArrayList<>(fact.allowedEmissionFacts().size());
@@ -2185,9 +2189,14 @@ public final class NeutralPlacementGraphBuilder {
 				Long scopeId = scopes.get(fact.key().parentOccurrence());
 				if(scopeId == null)
 					throw new IllegalStateException("Derived FOUT candidate has no exact statement-block scope");
+				Node producer = nodesByKey.get(fact.key().parentOccurrence());
+				if(producer == null || provisional.producer() != producer.key()
+					|| !provisional.producerValueVersion().equals(producer.valueVersion()))
+					throw new IllegalStateException(
+						"Derived FOUT candidate has no structurally matching final producer authority");
 				String exactScope = scopeId + ":" + fact.key().parentOccurrence().functionNamespace();
 				DerivedFoutMaterializationActionKey exact = new DerivedFoutMaterializationActionKey(
-					provisional.producer(), provisional.producerValueVersion(), fact.key(),
+					producer.key(), producer.valueVersion(), fact.key(),
 					provisional.sourcePlacement(), provisional.targetPlacement(),
 					provisional.durableAnchor(), provisional.durableAnchorOwner(),
 					provisional.durableAnchorOwnerFType(),

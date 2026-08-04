@@ -141,3 +141,105 @@
   analysis bind 이전 lifecycle owner를 production과 동일하게 맞췄다.
 - **적용 원칙/제약**: runtime fallback 금지, exact occurrence/state authority 유지, worker 수별 dataset/range 고정,
   순서 의존 global state 제거.
+
+## 3. 추적된 `target` symlink의 공유 build tree가 기존 immutable CP stage hardlink를 변경함
+
+- **상태**: 해결 — 새 artifact snapshot 분리 및 기존 CP stage source 복구/검증 완료
+- **환경/조건**:
+  - source worktree들의 추적된 `target`이 공통 `/tmp/g007-bb30-fresh-target-20260727`을 가리킴
+  - Maven package가 동일 target의 `SystemDS.jar`, `classes`, `lib`를 갱신
+  - 기존 CP/reference stage는 이 target의 dependency tree를 hardlink로 소유
+- **재현 절차**:
+  - clean source worktree에서 package 후 기존 CP stage validator를 실행한다.
+  - 수정 당시 package 로그: `/tmp/g014_source_package_71fe725_20260804.log`
+  - 복구 후 검증 로그: `/tmp/g014_cp_base_stage_validate_restored2.out`
+- **관측 증상**:
+  - 새 source package 자체는 성공했지만, 공유 target의 dependency inode가 갱신되면서 과거 immutable CP stage의
+    source-tree hash가 달라졌다. 데이터와 reference output bytes는 바뀌지 않았지만 stage validator는 이를
+    정확히 거부했다.
+- **원인 분석**:
+  - 여러 worktree가 독립 build tree가 아니라 하나의 추적된 target symlink를 공유했다.
+  - CP stage가 dependency 파일을 hardlink한 상태에서 Maven이 그 inode를 갱신해, 논리적으로 과거 stage인
+    디렉터리의 content-addressed 입력이 사후 변경됐다.
+- **해결 요약**:
+  - 새 build 결과를 `/home/mchoi/g014-systemds-build-71fe725-1cd9add9`에 별도 snapshot으로 복사하고
+    `SystemDS.jar` SHA-256 `1cd9add98f5673ecda2f319524586b42a109ccd91c8aa596d00bc4ff77cb7ab3`을 고정했다.
+  - 갱신된 dependency tree는
+    `/tmp/g007-bb30-fresh-target-20260727/lib.build-71fe725-1cd9add9-20260804`에 보존했다.
+  - 공유 target의 기존 `lib`는 원래 CP stage source와 다시 hardlink하고 디렉터리 권한을 `755`로 복구했다.
+  - 새 실험 stage는 공유 target을 직접 참조하지 않고 artifact snapshot만 소비하도록 구성했다.
+- **수정 파일**:
+  - 소스 변경 없음; build/stage 운영 경계 수정
+  - `docs/SESSION_ISSUES_2026-08-04.md`
+- **검증**:
+  - 기존 CP base stage validator 재실행 RC `0` (`/tmp/g014_cp_base_stage_validate_restored2.out`).
+  - canonical reference bundle validator 통과.
+  - 새 stage
+    `/home/mchoi/g014-one-pass-71fe725-44750a4-20260804-v1/g007-stage-20780b5451e957480f8fb210803b8621e251fe4875ae90d3c9a88b9286da7d13`
+    의 source/harness/data/reference/runtime resource 계약 검증 통과.
+- **잔여 이슈**:
+  - 다음 package도 공유 target을 갱신하므로, build 직후 새 snapshot을 만들고 CP source를 동일 절차로 복구해야 한다.
+- **잠재 회귀 위험**:
+  - snapshot 전에 다른 Maven 실행이 target을 덮으면 artifact/source correspondence가 깨질 수 있다.
+    package 종료 직후 JAR hash와 clean source commit을 함께 기록하고 stage validator로 감지한다.
+- **의사결정 근거**: 과거 실험 입력을 재라벨하거나 validator를 완화하지 않고, mutable build output과 immutable
+  stage input의 소유권을 분리했다.
+- **적용 원칙/제약**: immutable stage/content addressing, 동일 frozen data/reference 유지, Docker-only 실험,
+  과거 결과와 새 artifact 결과의 stitching 금지.
+
+## 4. FedAll worker=1 KMeans에서 파생 FOUT action이 이전 세대 value-version identity를 보유함
+
+- **상태**: 진행 중 — 원인 수정 및 Docker-shaped 회귀 통과, 새 immutable Docker stage 재검증 대기
+- **환경/조건**:
+  - planner: FedAll (`compile_fed_all`)
+  - workload: KMeans, worker=1 FULL, LAN profile
+  - source commit `71fe7251caaa5f204da14d8693d468f945a836d0`, harness commit
+    `44750a4ae656271916dad3b19f55e376e4fcdbe0`, JAR `1cd9add9...ab3`
+  - Docker-only one-pass campaign의 두 번째 logical cell
+- **재현 절차**:
+  - Docker 실패 로그:
+    `/home/mchoi/g014-one-pass-results-71fe725-44750a4-20260804-v1/cells/002-4ca6f7687f8b/phases/cell-1/cold-docker-e2e/raw_coordinator.log`
+  - 최소 production-path 회귀:
+    `mvn -DskipCheckstyle -DskipSpotlessCheck -Dtest=org.apache.sysds.hops.fedplanner.fedAll.CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest test`
+  - 수정 전 로그: `/tmp/g014_fedall_kmeans_docker_shaped_red.log`
+  - 수정 후 로그: `/tmp/g014_fedall_kmeans_docker_shaped_green.log`
+- **관측 증상**:
+  - Docker cold compile가
+    `Selected derived FOUT action is not the exact graph-owned producer authority`로 fail-closed 종료했다.
+  - 필드별 진단 결과는 `graphIdentityCount=1`, producer/candidateRule/targetPlacement identity 모두 `true`였고,
+    `producerValueVersionIdentity=false`, `producerValueVersionEqual=true`만 달랐다.
+  - 실패 producer는 builtin KMeans loop 내부 `AggBinaryOp ba(+*)`였다.
+- **원인 분석**:
+  - 파생 FOUT 후보는 materialization closure 시점의 node `ValueVersionKey`를 action에 보관했다.
+  - 이후 function-input/post-CFG replay가 producer node를 동등한 새 `ValueVersionKey` 객체로 재구축할 수 있었다.
+  - 두 번째 materialization closure는 이미 CP/FOUT이 열린 node를 다시 만들지 않아 기존 action을 보존했고,
+    마지막 scope bind도 오래된 value-version 객체를 그대로 복사했다.
+  - 따라서 구조 값과 graph action identity는 맞지만 최종 graph node가 소유한 exact value-version identity만 stale했다.
+- **해결 요약**:
+  - 마지막 scope-only bind를 `bindExactDerivedFoutAuthorities`로 확장해 최종 node identity map을 입력으로 받는다.
+  - provisional producer/value-version이 최종 node와 구조적으로 동일한지 먼저 fail-closed 검증한 뒤,
+    action을 최종 `producer.key()`와 `producer.valueVersion()` 객체로 다시 생성한다.
+  - emission의 identity 검증은 완화하지 않았고, 진단 메시지만 필드별로 세분화했다.
+- **수정 파일**:
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/NeutralPlacementGraphBuilder.java`
+  - `src/main/java/org/apache/sysds/hops/fedplanner/placement/PlacementEmissionTransaction.java`
+  - `src/test/java/org/apache/sysds/hops/fedplanner/fedAll/CampaignBG014FedAllKMeansDerivedFoutAuthorityRedTest.java`
+  - `docs/SESSION_ISSUES_2026-08-04.md`
+- **검증**:
+  - Docker-shaped KMeans worker=1 production compile/lowering 회귀: 수정 전 정확히 재현, 수정 후 성공.
+  - 회귀는 모든 graph-owned derived action에 대해
+    `action.producerValueVersion() == graph.node(action.producer()).valueVersion()`을 확인한다.
+  - 인접 derived-FOUT/emission/FedAll receipt 테스트 29개 통과
+    (`/tmp/g014_fedall_derived_fout_adjacent_green.log`).
+  - FedAll Docker-shaped ALS/KMeans/L2SVM/StepLM/LogReg 5개 통과
+    (`/tmp/g014_fedall_docker_shaped_suite_green.log`).
+- **잔여 이슈**:
+  - 수정 source를 clean commit/JAR/stage로 고정하고, 실패한 FedAll KMeans cell을 포함한 새 336-cell one-pass
+    Docker campaign에서 실제 cold/warm 실행을 재검증해야 한다. 이전 DP 성공 1건과 새 artifact 결과는 합치지 않는다.
+- **잠재 회귀 위험**:
+  - 향후 node replay가 value-version을 구조적으로도 변경한다면 final bind가 예외를 내야 한다. 구조 동일성 guard와
+    Docker-shaped 회귀가 이를 감지한다.
+- **의사결정 근거**: identity 검증을 `.equals()`로 완화하거나 runtime fallback을 넣지 않고, graph builder가
+  최종 소유 객체를 action에 게시하도록 authority 생성 순서를 바로잡았다.
+- **적용 원칙/제약**: exact graph-owned authority, planner 선검증, runtime fallback 금지, 후보군 축소 금지,
+  worker=1 FULL 유지, Docker-only 성능 근거.
