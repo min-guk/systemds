@@ -371,9 +371,16 @@
   - harness focused test 11/11, 전체 test 147/147, `py_compile`, changed-file basedpyright 0 errors/warnings,
     `git diff --check`가 통과했다.
   - cleanup 후 root filesystem은 약 25 GiB free, free inode 약 22.7M으로 frozen floor를 충족한다.
+  - 새 harness로 immutable stage
+    `e5ad92a4c21121de198bb78447caece934b06255bdd83b7cdb8983b6fc37ffd9`를 생성·검증했다.
+    stage는 code commit `97f792b...`, harness commit `d2f4fa4...`, 동일 JAR/data/reference hash를 인증한다.
+  - 새 campaign `/home/mchoi/g014-one-pass-results-97f792b-d2f4fa4-20260804-v1`의 초기 5/336 셀이
+    연속 성공했다. KMeans/LAN/worker=1은 MinST `19.937 s` ≤ DP `20.655 s` ≤ FedAll `21.444 s`
+    ≈ Heuristic `21.491 s`였고, 과거 실패 지점인 FedAll/KMeans/LAN/worker=2도 `18.958 s`,
+    oracle/runtime scan/zero fallback/zero restart/clean teardown로 통과했다.
 - **잔여 이슈**:
-  - 실패 campaign은 재시도하거나 성공 row와 합치지 않는다. 새 harness commit으로 immutable stage와 output을
-    새로 생성해 336-cell Docker campaign을 처음부터 실행한다.
+  - 실패 campaign은 재시도하거나 성공 row와 합치지 않는다. 새 336-cell Docker campaign의 남은 셀을 계속
+    실행하고, 완료 후 3×7 그래프와 planner ordering/worker scaling을 검증한다.
 - **잠재 회귀 위험**:
   - 장시간 실행 중 공간이 다시 floor 아래로 내려가면 다음 cell 전에 campaign이 중단된다. 이는 실험 row를
     오염시키지 않는 의도된 fail-closed 동작이며 pre-cell resource snapshot/error로 감지한다.
