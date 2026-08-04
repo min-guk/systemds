@@ -32,7 +32,9 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
@@ -199,16 +201,37 @@ public final class NeutralPlacementGraph {
 		}
 	}
 
+	/** Physical output materialization authority; deliberately separate from consumer-input relocation. */
+	public record DerivedFoutMaterializationAction(DerivedFoutMaterializationActionKey key)
+		implements Comparable<DerivedFoutMaterializationAction> {
+		public DerivedFoutMaterializationAction {
+			Objects.requireNonNull(key, "key");
+		}
+		public String normalizedSignature() { return key.normalizedSignature(); }
+		@Override public int compareTo(DerivedFoutMaterializationAction that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
 	private final List<Node> nodes;
 	private final List<Constraint> constraints;
 	private final List<RelocationAction> relocationActions;
+	private final List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions;
 	private final Map<CompiledHopKey, Node> nodesByKey;
 
 	public NeutralPlacementGraph(Collection<Node> nodes, Collection<Constraint> constraints,
 		Collection<RelocationAction> relocationActions) {
+		this(nodes, constraints, relocationActions, List.of());
+	}
+
+	public NeutralPlacementGraph(Collection<Node> nodes, Collection<Constraint> constraints,
+		Collection<RelocationAction> relocationActions,
+		Collection<DerivedFoutMaterializationAction> derivedFoutMaterializationActions) {
 		this.nodes = sorted(nodes, "nodes");
 		this.constraints = sorted(constraints, "constraints");
 		this.relocationActions = sorted(relocationActions, "relocationActions");
+		this.derivedFoutMaterializationActions = sorted(derivedFoutMaterializationActions,
+			"derivedFoutMaterializationActions");
 		nodesByKey = indexNodes(this.nodes);
 		validateReferences();
 	}
@@ -225,6 +248,10 @@ public final class NeutralPlacementGraph {
 		return relocationActions;
 	}
 
+	public List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions() {
+		return derivedFoutMaterializationActions;
+	}
+
 	public Optional<Node> node(CompiledHopKey key) {
 		return Optional.ofNullable(nodesByKey.get(Objects.requireNonNull(key, "key")));
 	}
@@ -232,8 +259,21 @@ public final class NeutralPlacementGraph {
 	/** Returns whether an exact assignment requires this relocation action. */
 	public boolean isRelocationActive(RelocationAction action,
 		Map<CompiledHopKey, PlacementState> assignment) {
+		return isRelocationActive(action, assignment, List.of());
+	}
+
+	/**
+	 * Returns whether an exact assignment requires this relocation action. A selected
+	 * FED/FOUT tuple suppresses relocation only when it is a graph-declared direct
+	 * source or when an exact selected derived-output receipt owns the materialization.
+	 * Placement/FType equality by itself is not physical residency authority.
+	 */
+	public boolean isRelocationActive(RelocationAction action,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> selectedCandidates) {
 		Objects.requireNonNull(action, "action");
 		Objects.requireNonNull(assignment, "assignment");
+		Objects.requireNonNull(selectedCandidates, "selectedCandidates");
 		boolean requiredByConsumer = action.obligations().stream().anyMatch(obligation ->
 			obligation.requiredPlacement().equals(assignment.get(obligation.consumer())));
 		if(!requiredByConsumer)
@@ -242,17 +282,23 @@ public final class NeutralPlacementGraph {
 			if(!source.valueVersion().equals(action.key().sourceValueVersion()))
 				continue;
 			PlacementState sourceState = assignment.get(source.key());
-			// A derived FOUT does not own the anchor value's exact ranges, but the builder may
-			// still prove that its selected layout is already resident on the same durable
-			// worker pool and is accepted directly by every compatible consumer. In that case
-			// emitting FED->LOUT->FOUT/refed would be redundant and contradict the selected plan.
 			if(sourceState != null && action.directSourcePlacements().contains(sourceState))
 				return false;
-			if(sourceState != null && sourceState.output() == FederatedOutput.FOUT
-				&& Objects.equals(sourceState.fType(), action.key().materializationFType())
-				&& source.anchors().stream().anyMatch(anchor ->
-					PlacementIdentity.samePhysicalWorkerPool(anchor, action.key().durableAnchor())))
-				return false;
+			if(sourceState == null)
+				continue;
+			for(CandidateSelectionReceipt selected : selectedCandidates) {
+				DerivedFoutMaterializationActionKey derived = selected.emission().derivedFoutAction();
+				if(derived == null || derived.producerValueVersion() != source.valueVersion()
+					|| derived.producer() != source.key() || assignment.get(source.key()) != derived.targetPlacement()
+					|| derived.materializationFType() != action.key().materializationFType()
+					|| !PlacementIdentity.samePhysicalWorkerPool(
+						derived.durableAnchor(), action.key().durableAnchor()))
+					continue;
+				long owned = derivedFoutMaterializationActions.stream()
+					.filter(graphAction -> graphAction.key() == derived).count();
+				if(owned == 1)
+					return false;
+			}
 		}
 		return true;
 	}
@@ -298,6 +344,9 @@ public final class NeutralPlacementGraph {
 		for(RelocationAction action : relocationActions)
 			normalized.add(fields("RELOCATION", action.key().normalizedSignature(),
 				action.key().durableAnchor().normalizedSignature()));
+		for(DerivedFoutMaterializationAction action : derivedFoutMaterializationActions)
+			normalized.add(fields("DERIVED_FOUT", action.key().normalizedSignature(),
+				action.key().durableAnchor().normalizedSignature()));
 		return immutableSortedStrings(normalized);
 	}
 
@@ -321,6 +370,11 @@ public final class NeutralPlacementGraph {
 		for(RelocationAction action : relocationActions)
 			normalized.add(action.normalizedSignature());
 		return immutableSortedStrings(normalized);
+	}
+
+	public List<String> normalizedDerivedFoutMaterializationActions() {
+		return immutableSortedStrings(derivedFoutMaterializationActions.stream()
+			.map(DerivedFoutMaterializationAction::normalizedSignature).toList());
 	}
 
 	public List<String> normalizedObligations() {
@@ -351,6 +405,7 @@ public final class NeutralPlacementGraph {
 			+ section("CONSTRAINTS", normalizedConstraints())
 			+ section("EXCLUSIONS", normalizedExclusions())
 			+ section("RELOCATIONS", normalizedRelocationActions())
+			+ section("DERIVED_FOUT_MATERIALIZATIONS", normalizedDerivedFoutMaterializationActions())
 			+ section("OBLIGATIONS", normalizedObligations());
 	}
 
@@ -379,18 +434,61 @@ public final class NeutralPlacementGraph {
 			PlacementState right = assignment.get(constraint.right());
 			if(left == null || right == null)
 				continue;
-			if(constraint.kind() == ConstraintKind.SAME_PLACEMENT && !left.equals(right))
-				return false;
-			if(constraint.kind() == ConstraintKind.SAME_FTYPE
-				&& !Objects.equals(left.fType(), right.fType()))
-				return false;
-			if(constraint.kind() == ConstraintKind.CONJUNCTIVE && right.output() ==
-				org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
-				&& (left.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
-					|| !Objects.equals(left.fType(), right.fType())))
+			if(!constraintSatisfied(constraint, left, right))
 				return false;
 		}
 		return true;
+	}
+
+	/** Shared exact legality semantics used by every neutral-graph planner. */
+	public static boolean constraintSatisfied(Constraint constraint,
+		PlacementState left, PlacementState right) {
+		Objects.requireNonNull(constraint, "constraint");
+		Objects.requireNonNull(left, "left");
+		Objects.requireNonNull(right, "right");
+		if(constraint.kind() == ConstraintKind.SAME_PLACEMENT)
+			return left.equals(right);
+		if(constraint.kind() == ConstraintKind.SAME_FTYPE)
+			return Objects.equals(left.fType(), right.fType());
+		if(constraint.kind() != ConstraintKind.CONJUNCTIVE)
+			return true;
+		String forbiddenPrefix = "forbid-pair:";
+		if(constraint.evidence().startsWith(forbiddenPrefix)) {
+			String[] pair = constraint.evidence().substring(forbiddenPrefix.length()).split("=>", -1);
+			if(pair.length != 2)
+				throw new IllegalArgumentException(
+					"invalid conjunctive forbid-pair evidence: " + constraint.evidence());
+			return !left.normalizedSignature().equals(pair[0])
+				|| !right.normalizedSignature().equals(pair[1]);
+		}
+		if(isFunctionValueBoundary(constraint.evidence())) {
+			// A function boundary is a value-transfer boundary, not an execution alias.
+			// Any LOUT boundary can materialize either a local or federated source at the
+			// coordinator (with the planner charging the download). A FOUT boundary, on
+			// the other hand, may only forward an already-resident exact layout. Shape
+			// dependence is oracle provenance for how an opcode's FType was established;
+			// it is not part of the runtime layout carried across a function boundary.
+			// This is deliberately asymmetric and preserves the legal FOUT -> LOUT call.
+			if(right.execType() == org.apache.sysds.common.Types.ExecType.CP
+				&& right.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
+				&& right.fType() == null && !right.shapeDependent())
+				return left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT
+					|| left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT;
+			return right.execType() == org.apache.sysds.common.Types.ExecType.FED
+				&& right.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& left.fType() != null && left.fType() == right.fType();
+		}
+		return right.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+			|| left.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				&& Objects.equals(left.fType(), right.fType());
+	}
+
+	private static boolean isFunctionValueBoundary(String evidence) {
+		return evidence.startsWith("function-argument:")
+			|| evidence.startsWith("function-result:")
+			|| evidence.startsWith("inlined-function-argument:")
+			|| evidence.startsWith("inlined-function-result:");
 	}
 
 	private static String normalizeAssignment(Map<CompiledHopKey, PlacementState> assignment) {
@@ -438,6 +536,49 @@ public final class NeutralPlacementGraph {
 				if(!key.targetPlacement().equals(obligation.requiredPlacement()))
 					throw new IllegalArgumentException("Obligation target differs from relocation target");
 			}
+		}
+		Set<DerivedFoutMaterializationActionKey> derivedKeys = new LinkedHashSet<>();
+		for(DerivedFoutMaterializationAction action : derivedFoutMaterializationActions) {
+			DerivedFoutMaterializationActionKey key = action.key();
+			if(!derivedKeys.add(key))
+				throw new IllegalArgumentException("Duplicate derived FOUT materialization action key: " + key);
+			Node producer = nodesByKey.get(key.producer());
+			if(producer == null)
+				throw new IllegalArgumentException("Derived FOUT producer is absent from graph: " + key.producer());
+			if(!producer.valueVersion().equals(key.producerValueVersion()))
+				throw new IllegalArgumentException("Derived FOUT producer value version is foreign to graph");
+			if(!producer.legalAlternatives().contains(key.sourcePlacement())
+				|| !producer.legalAlternatives().contains(key.targetPlacement()))
+				throw new IllegalArgumentException("Derived FOUT action placement is absent from producer node");
+			Node anchorOwner = nodesByKey.get(key.durableAnchorOwner());
+			if(anchorOwner == null)
+				throw new IllegalArgumentException("Derived FOUT anchor owner is absent from graph");
+			boolean exactFoutOwner = anchorOwner.legalAlternatives().stream().anyMatch(state ->
+				state.output() == org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+					&& state.fType() == key.durableAnchorOwnerFType());
+			if(!exactFoutOwner)
+				throw new IllegalArgumentException(
+					"Derived FOUT anchor owner cannot expose the required exact FOUT layout: owner="
+						+ anchorOwner.key().normalizedSignature() + " legal="
+						+ anchorOwner.legalAlternatives().stream()
+							.map(PlacementState::normalizedSignature).toList()
+						+ " anchor=" + key.durableAnchor().normalizedSignature()
+						+ " action=" + key.normalizedSignature());
+			boolean exactAnchorAuthority = anchorOwner.anchors().stream()
+				.anyMatch(anchor -> PlacementIdentity.samePhysicalWorkerPool(anchor, key.durableAnchor()))
+				|| derivedFoutMaterializationActions.stream().anyMatch(ownerAction ->
+					ownerAction.key().producer() == anchorOwner.key()
+						&& PlacementIdentity.samePhysicalWorkerPool(
+							ownerAction.key().durableAnchor(), key.durableAnchor()))
+				|| relocationActions.stream().anyMatch(relocation ->
+					relocation.key().sourceValueVersion().equals(anchorOwner.valueVersion())
+						&& relocation.key().targetPlacement().output()
+							== org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+						&& PlacementIdentity.samePhysicalWorkerPool(
+							relocation.key().durableAnchor(), key.durableAnchor()));
+			if(!exactAnchorAuthority)
+				throw new IllegalArgumentException(
+					"Derived FOUT anchor owner has no exact graph-owned worker-pool authority");
 		}
 	}
 

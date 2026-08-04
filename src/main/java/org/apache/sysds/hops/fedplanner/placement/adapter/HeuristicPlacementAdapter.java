@@ -55,7 +55,9 @@ public final class HeuristicPlacementAdapter {
 		List<String> exclusions = policy.exclusions();
 		List<Node> filteredNodes = filteredNodes(analysis, policy);
 		NeutralPlacementGraph filtered = new NeutralPlacementGraph(filteredNodes, policy.constraints(),
-			projectRelocations(filteredNodes, base.relocationActions()));
+			projectRelocations(filteredNodes, base.relocationActions()),
+			projectDerivedFoutMaterializations(filteredNodes,
+				base.derivedFoutMaterializationActions()));
 		List<String> candidateUniverse = filtered.normalizedCandidateUniverse();
 		PlacementSelection selection = new ExactPlacementSelector().select(analysis, filtered);
 		Map<CompiledHopKey, PlacementState> assignment = immutableAssignment(selection.assignment());
@@ -63,7 +65,7 @@ public final class HeuristicPlacementAdapter {
 		List<CandidateSelectionReceipt> candidateReceipts = List.copyOf(selection.selectedCandidateSelections());
 		List<RelocationChoiceReceipt> choices = List.copyOf(selection.selectedRelocationChoices());
 		List<RelocationActionKey> relocations = selection.selectedRelocations().stream().sorted().toList();
-		List<ObligationKey> obligations = RelocationSelections.resolveAndValidate(analysis,
+		List<ObligationKey> obligations = RelocationSelections.resolveAndValidate(analysis, filtered,
 			filtered.relocationActions(), assignment, candidateReceipts, choices).stream()
 			.filter(RelocationSelections.ResolvedChoice::requiresEmission)
 			.map(RelocationSelections.ResolvedChoice::obligation).sorted().toList();
@@ -214,6 +216,22 @@ public final class HeuristicPlacementAdapter {
 		return List.copyOf(projected);
 	}
 
+	private static List<NeutralPlacementGraph.DerivedFoutMaterializationAction>
+		projectDerivedFoutMaterializations(List<Node> nodes,
+			List<NeutralPlacementGraph.DerivedFoutMaterializationAction> actions) {
+		Map<CompiledHopKey, Node> byKey = new java.util.IdentityHashMap<>();
+		for(Node node : nodes)
+			byKey.put(node.key(), node);
+		return actions.stream().filter(action -> {
+			Node producer = byKey.get(action.key().producer());
+			return producer != null
+				&& producer.legalAlternatives().stream()
+					.anyMatch(state -> state == action.key().sourcePlacement())
+				&& producer.legalAlternatives().stream()
+					.anyMatch(state -> state == action.key().targetPlacement());
+		}).toList();
+	}
+
 	private static boolean isTransient(NeutralPlacementGraph graph, CompiledHopKey key) {
 		NodeKind kind = graph.node(key).orElseThrow().kind();
 		return kind == NodeKind.TRANSIENT_READ || kind == NodeKind.TRANSIENT_WRITE;
@@ -224,8 +242,9 @@ public final class HeuristicPlacementAdapter {
 			.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
 		if(!assignment.keySet().equals(decisionKeys)) throw new IllegalStateException("Incomplete Heuristic assignment");
 		for(var entry : assignment.entrySet()) {
-			if(!graph.node(entry.getKey()).orElseThrow().legalAlternatives().contains(entry.getValue()))
-				throw new IllegalStateException("State outside filtered universe");
+			if(graph.node(entry.getKey()).orElseThrow().legalAlternatives().stream()
+				.noneMatch(state -> state == entry.getValue()))
+				throw new IllegalStateException("State outside exact filtered node-owned universe");
 			Hop hop = analysis.hop(entry.getKey()).orElseThrow();
 			if(analysis.occurrences().stream().noneMatch(o -> o.key().equals(entry.getKey()) && o.hop() == hop))
 				throw new IllegalStateException("Concrete Hop alias lost");

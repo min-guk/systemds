@@ -81,6 +81,11 @@ public class AppendFoutRuntimeTest {
 		assertSingleWorkerFullLocalAppend(true, false, 2, 3, 2, 3, 4, 3);
 	}
 
+	@Test
+	public void singleWorkerLocalPlusFullRbindFoutStaysRemoteFull() {
+		assertSingleWorkerFullLocalAppend(false, false, 2, 3, 2, 3, 4, 3);
+	}
+
 	private static void assertSingleWorkerFullLocalAppend(boolean federatedLeft, boolean cbind,
 		int leftRows, int leftCols, int rightRows, int rightCols, int outRows, int outCols) {
 		ExecutionContext ec = new ExecutionContext(new LocalVariableMap());

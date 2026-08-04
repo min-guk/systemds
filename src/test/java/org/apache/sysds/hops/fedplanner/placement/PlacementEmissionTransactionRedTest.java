@@ -373,8 +373,13 @@ public class PlacementEmissionTransactionRedTest {
 			.filter(action -> action.key().materializationFType() == FType.FULL)
 			.filter(action -> action.key().targetPlacement().execType() == ExecType.FED)
 			.filter(action -> action.key().targetPlacement().output() == FederatedOutput.FOUT)
+			.filter(action -> baseline.graph().nodes().stream()
+				.filter(node -> node.emittedWork()
+					&& node.valueVersion().equals(action.key().sourceValueVersion()))
+				.anyMatch(node -> node.legalAlternatives().stream().anyMatch(state ->
+					state.execType() == ExecType.CP && state.output() == FederatedOutput.LOUT)))
 			.findFirst().orElseThrow(() -> new AssertionError(
-				"P4 fixture requires an exact PRESENT-backed FULL relocation"));
+				"P4 fixture requires a FULL relocation whose exact source has a CP/LOUT arm"));
 		Map<CompiledHopKey, PlacementState> selected = new LinkedHashMap<>(baselinePlan.selectedStates());
 		for(var obligation : upload.obligations())
 			selected.put(obligation.consumer(), obligation.requiredPlacement());

@@ -311,8 +311,10 @@ public class MinStExactAnchorRelocationIdentityRedTest {
 		CompiledHopKey consumer, int inputPosition) {
 		RelocationActionKey key = new RelocationActionKey(source, FED_ROW, targetAnchor,
 			"scope", List.of(consumer));
+		boolean direct = source.equals(PRODUCER_VERSION) && targetAnchor.equals(ANCHOR_A)
+			|| "producer-b-version".equals(source.lexicalVariable()) && targetAnchor.equals(ANCHOR_B);
 		return new RelocationAction(key, List.of(new ObligationKey(consumer, inputPosition, source,
-			FED_ROW, key, "scope")));
+			FED_ROW, key, "scope")), direct ? List.of(FED_ROW) : List.of());
 	}
 
 	private static DurableAnchorKey anchor(String placementId, String worker) {

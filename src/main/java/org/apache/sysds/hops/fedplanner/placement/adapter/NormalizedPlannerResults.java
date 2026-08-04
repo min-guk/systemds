@@ -28,6 +28,77 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 public final class NormalizedPlannerResults {
 	private NormalizedPlannerResults() { }
 
+	/**
+	 * Reconstructs the exact per-occurrence emission state retained by selected
+	 * candidate receipts.  PlacementState alone cannot distinguish a native
+	 * FED/FOUT result from FED/LOUT followed by a planner-selected refederation.
+	 */
+	public static Map<CompiledHopKey, PlacementEmissionState> exactEmissionStates(
+		PlacementAnalysis analysis, Map<CompiledHopKey, PlacementState> selectedStates,
+		List<CandidateSelectionReceipt> selectedCandidates) {
+		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(selectedStates, "selectedStates");
+		List<CandidateSelectionReceipt> candidates = List.copyOf(Objects.requireNonNull(
+			selectedCandidates, "selectedCandidates"));
+		Map<CompiledHopKey, PlacementEmissionState> result = new java.util.LinkedHashMap<>();
+		for(var node : analysis.graph().decisionNodes()) {
+			PlacementState selected = exactSelectedState(selectedStates, node.key());
+			if(selected == null)
+				throw new IllegalArgumentException("Selected placement is missing a decision node");
+			if(node.kind() != org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+				&& node.kind() != org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+				result.put(node.key(), new PlacementEmissionState(selected, false));
+		}
+		for(CandidateSelectionReceipt candidate : candidates) {
+			CompiledHopKey consumer = candidate.rule().parentOccurrence();
+			PlacementEmissionState selected = exactEmissionState(result, consumer);
+			if(selected == null)
+				throw new IllegalArgumentException("Candidate selection has a foreign consumer");
+			PlacementEmissionState candidateEmission = candidate.emission().emissionState();
+			if(candidateEmission.placementState() != selected.placementState())
+				throw new IllegalArgumentException(
+					"Candidate emission differs from the exact selected placement");
+			result.put(consumer, candidateEmission);
+		}
+		boolean progressed;
+		do {
+			progressed = false;
+			for(var node : analysis.graph().decisionNodes()) {
+				if(result.containsKey(node.key())
+					|| node.kind() != org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+						&& node.kind() != org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT)
+					continue;
+				DpPlacementAdapter.SyntheticBoundaryReceipt projection =
+					DpPlacementAdapter.projectSyntheticBoundary(analysis, node, result,
+						exactSelectedState(selectedStates, node.key()));
+				if(projection == null)
+					continue;
+				result.put(node.key(), projection.selectedEmissionState());
+				progressed = true;
+			}
+		}
+		while(progressed);
+		if(result.size() != analysis.graph().decisionNodes().size())
+			throw new IllegalArgumentException("Selected emission projection omitted a synthetic boundary");
+		return java.util.Collections.unmodifiableMap(result);
+	}
+
+	private static PlacementState exactSelectedState(Map<CompiledHopKey, PlacementState> selected,
+		CompiledHopKey expected) {
+		for(Map.Entry<CompiledHopKey, PlacementState> entry : selected.entrySet())
+			if(entry.getKey() == expected)
+				return Objects.requireNonNull(entry.getValue(), "selected placement");
+		return null;
+	}
+
+	private static PlacementEmissionState exactEmissionState(
+		Map<CompiledHopKey, PlacementEmissionState> selected, CompiledHopKey expected) {
+		for(Map.Entry<CompiledHopKey, PlacementEmissionState> entry : selected.entrySet())
+			if(entry.getKey() == expected)
+				return entry.getValue();
+		return null;
+	}
+
 	public static NormalizedPlannerResult create(PlacementAnalysis analysis, String plannerId,
 		Map<CompiledHopKey, PlacementState> selectedStates, String objectiveCertificate) {
 		Map<CompiledHopKey, PlacementEmissionState> emission = new java.util.LinkedHashMap<>();

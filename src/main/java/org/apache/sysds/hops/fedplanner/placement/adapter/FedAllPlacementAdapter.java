@@ -89,8 +89,9 @@ public final class FedAllPlacementAdapter implements PlacementPlannerAdapter<Fed
 			throw new IllegalStateException("FedAll selector did not return a total graph assignment");
 		for(Map.Entry<CompiledHopKey, PlacementState> entry : selection.assignment().entrySet()) {
 			Node node = analysis.graph().node(entry.getKey()).orElseThrow();
-			if(!node.legalAlternatives().contains(entry.getValue()))
-				throw new IllegalStateException("FedAll selector returned a state outside the legal universe");
+			if(node.legalAlternatives().stream().noneMatch(state -> state == entry.getValue()))
+				throw new IllegalStateException(
+					"FedAll selector returned a state outside the exact node-owned legal universe");
 			Hop hop = analysis.hop(entry.getKey()).orElseThrow(() ->
 				new IllegalStateException("FedAll assignment has no concrete Hop projection"));
 			boolean exactAlias = analysis.occurrences().stream().anyMatch(occurrence ->

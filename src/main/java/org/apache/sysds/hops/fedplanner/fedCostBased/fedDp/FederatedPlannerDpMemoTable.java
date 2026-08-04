@@ -183,11 +183,22 @@ public class FederatedPlannerDpMemoTable {
 		for(FedPlan plan : variants.getFedPlanVariants()) {
 			PlacementState exact = Objects.requireNonNull(plan.getSelectedPlacementState(),
 				"DP plan lacks an exact analysis-owned placement carrier for " + occurrence.key());
-			if(node.legalAlternatives().stream().noneMatch(state -> state == exact)
-				|| exact.execType() != plan.getExecType() || exact.output() != plan.getFedOutType()
-				|| exact.execType() == ExecType.FED && exact.output() == FederatedOutput.FOUT
-					&& exact.fType() != plan.getFType())
-				throw new IllegalStateException("DP plan has a foreign exact placement carrier for " + occurrence.key());
+			boolean exactOwner = node.legalAlternatives().stream().anyMatch(state -> state == exact);
+			boolean execMatches = exact.execType() == plan.getExecType();
+			boolean outputMatches = exact.output() == plan.getFedOutType();
+			boolean fTypeMatches = exact.execType() != ExecType.FED || exact.output() != FederatedOutput.FOUT
+				|| exact.fType() == plan.getFType();
+			if(!exactOwner || !execMatches || !outputMatches || !fTypeMatches)
+				throw new IllegalStateException("DP plan has an invalid exact placement carrier for " + occurrence.key()
+					+ ": exactOwner=" + exactOwner + ", execMatches=" + execMatches
+					+ ", outputMatches=" + outputMatches + ", fTypeMatches=" + fTypeMatches
+					+ ", plan=[hop=" + plan.getHopID() + ",exec=" + plan.getExecType()
+					+ ",output=" + plan.getFedOutType() + ",fType=" + plan.getFType() + "]"
+					+ ", selected=" + exact.normalizedSignature() + "@"
+					+ Integer.toHexString(System.identityHashCode(exact))
+					+ ", legal=" + node.legalAlternatives().stream()
+						.map(state -> state.normalizedSignature() + "@"
+							+ Integer.toHexString(System.identityHashCode(state))).toList());
 		}
 	}
 

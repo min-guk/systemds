@@ -37,6 +37,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ControlRegionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey;
@@ -269,7 +270,11 @@ public final class PlacementAnalysis {
 	}
 
 	/** One exact immutable rule/profile fact captured by the canonical builder pass. */
-	public record CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType) {
+	public record CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType,
+		DerivedFoutMaterializationActionKey derivedFoutAction) {
+		public CandidateEmissionFact(PlacementEmissionState emissionState, FType executionFType) {
+			this(emissionState, executionFType, null);
+		}
 		public CandidateEmissionFact {
 			Objects.requireNonNull(emissionState, "emissionState");
 			PlacementState state = emissionState.placementState();
@@ -281,11 +286,17 @@ public final class PlacementAnalysis {
 			if(emissionState.derivedFedFout()
 				&& (state.execType() != ExecType.FED || state.output() != FederatedOutput.FOUT))
 				throw new IllegalArgumentException("Derived FOUT authority requires a FED/FOUT emission state");
+			if(emissionState.derivedFedFout() != (derivedFoutAction != null))
+				throw new IllegalArgumentException("Derived FOUT emission requires one exact materialization action");
+			if(derivedFoutAction != null && (derivedFoutAction.targetPlacement() != state
+				|| derivedFoutAction.materializationFType() != state.fType()))
+				throw new IllegalArgumentException("Derived FOUT action and emission identities differ");
 		}
 
 		public String normalizedSignature() {
 			return emissionState.normalizedSignature() + "|executionFType="
-				+ (executionFType == null ? "-" : executionFType.name());
+				+ (executionFType == null ? "-" : executionFType.name()) + "|derivedAction="
+				+ (derivedFoutAction == null ? "-" : derivedFoutAction.normalizedSignature());
 		}
 	}
 

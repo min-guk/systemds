@@ -84,9 +84,16 @@ import org.apache.sysds.hops.recompile.Recompiler;
 import org.apache.sysds.hops.rewrite.HopRewriteUtils;
 import org.apache.sysds.hops.rewrite.ProgramRewriter;
 import org.apache.sysds.hops.fedplanner.AFederatedPlanner;
+import org.apache.sysds.hops.fedplanner.fedAll.FederatedPlannerFedAll.FedAllInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased.DpInvocationReceipt;
+import org.apache.sysds.hops.fedplanner.fedHeuristic.FederatedPlannerFedHeuristic.HeuristicInvocationReceipt;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraphBuilder;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionTransaction.PlacementEmissionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.adapter.MinStPlacementInput;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
 import org.apache.sysds.lops.Lop;
 import org.apache.sysds.lops.LopsException;
 import org.apache.sysds.lops.compile.Dag;
@@ -351,6 +358,7 @@ public class DMLTranslator
 				FederatedPlannerFactory.create(fedPlanner).rewriteProgram(dmlp, fgraph, null, analysis);
 			if(receipt.analysis() != analysis)
 				throw new IllegalStateException("Planner receipt does not retain supplied analysis identity");
+			verifyFinalBoundaryEmission(dmlp, receipt);
 			if( DMLScript.STATISTICS )
 				Statistics.addCompilePhaseFedPlannerTime(System.nanoTime() - tFedPlanner);
 			registerFedInitVarsFromProgram(dmlp);
@@ -358,6 +366,33 @@ public class DMLTranslator
 			registerFedRmvarProtectedVarsFromProgram(dmlp);
 			receiptConsumer.accept(receipt);
 		}
+	}
+
+	private static void verifyFinalBoundaryEmission(DMLProgram program,
+		AFederatedPlanner.PlannerInvocationReceipt plannerReceipt) {
+		NormalizedPlannerResult result;
+		PlacementEmissionReceipt emissionReceipt;
+		if(plannerReceipt instanceof FedAllInvocationReceipt receipt) {
+			result = receipt.normalizedResult();
+			emissionReceipt = receipt.emissionReceipt();
+		}
+		else if(plannerReceipt instanceof HeuristicInvocationReceipt receipt) {
+			result = receipt.normalizedResult();
+			emissionReceipt = receipt.emissionReceipt();
+		}
+		else if(plannerReceipt instanceof DpInvocationReceipt receipt) {
+			result = receipt.normalizedResult();
+			emissionReceipt = receipt.emissionReceipt();
+		}
+		else if(plannerReceipt instanceof MinStPlacementInput receipt) {
+			result = receipt.normalizedResult();
+			emissionReceipt = receipt.emissionReceipt();
+		}
+		else {
+			throw new IllegalStateException("Compiled planner did not return an exact emission receipt: "
+				+ plannerReceipt.getClass().getName());
+		}
+		PlacementEmissionTransaction.verifyFinalBoundaryCommit(program, result, emissionReceipt);
 	}
 
 	private static void registerFedInitVarsFromProgram(DMLProgram dmlp) {

@@ -313,6 +313,12 @@ public final class MinStExactCostFactsProducer {
 		MinStExactPhysicalModel.DecisionDomain domain, int workers,
 		Map<String,List<OccurrenceProfile>> profiles,
 		List<MinStExactCategoricalSolver.Factor> factors) {
+		if(domain.node().kind() == NodeKind.FUNCTION_INPUT
+			|| domain.node().kind() == NodeKind.FUNCTION_OUTPUT) {
+			double[] zero = new double[domain.alternatives().size()];
+			factors.add(MinStExactCategoricalSolver.Factor.dense(List.of(domain.variable()), zero));
+			return;
+		}
 		Hop hop = analysis.hop(domain.node().key()).orElseThrow();
 		double weight = executionWeight(profiles, domain.node().key());
 		double[] execution = new double[domain.alternatives().size()];
@@ -378,6 +384,9 @@ public final class MinStExactCostFactsProducer {
 		record Key(Direction direction, FType type, BoundaryMode boundary,
 			String physicalEmissionIdentity) { }
 		for(MinStExactPhysicalModel.DecisionDomain producer : orderedDomains) {
+			if(producer.node().kind() == NodeKind.FUNCTION_INPUT
+				|| producer.node().kind() == NodeKind.FUNCTION_OUTPUT)
+				continue;
 			Hop producerHop = analysis.hop(producer.node().key()).orElseThrow();
 			if(producerHop.getDataType() == null || !producerHop.getDataType().isMatrix())
 				continue;
@@ -2573,10 +2582,34 @@ public final class MinStExactCostFactsProducer {
 					+ transientFact.targetRead().normalizedSignature());
 			for(LogicalFunctionInputFact authority : authorities) {
 				FType sourceType = exactInputAuthorityType(analysis, authority.sourceArgument());
-				if(sourceType == null || sourceType != transientFact.federatedFType())
+				List<FType> sourcePlanTypes = analysis.graph().node(authority.sourceArgument()).orElseThrow()
+					.legalAlternatives().stream()
+					.filter(state -> state.execType() == ExecType.FED
+						&& state.output() == FederatedOutput.FOUT && state.fType() != null)
+					.map(PlacementState::fType).distinct().toList();
+				// A nested function actual can itself be a formal TRead. Such an alias has no
+				// durable anchor on the Hop, but its exact FOUT authority is carried by the
+				// selected function-boundary state. Requiring a static anchor here rejected the
+				// valid m_lm(X)->m_lmCG(X) forwarding chain. A durable source must still match
+				// exactly; a parametric source must publish the forwarded layout in its plan domain.
+				boolean compatible = sourceType == null
+					? sourcePlanTypes.contains(transientFact.federatedFType())
+					: sourceType == transientFact.federatedFType();
+				if(!compatible)
 					throw new IllegalArgumentException("MINST_FUNCTION_INPUT_FORWARD_LAYOUT_MISMATCH|source="
 						+ authority.sourceArgument().normalizedSignature() + "|read="
-						+ transientFact.targetRead().normalizedSignature());
+						+ transientFact.targetRead().normalizedSignature() + "|sourceType=" + sourceType
+						+ "|sourcePlanTypes=" + sourcePlanTypes + "|forwardedType="
+						+ transientFact.federatedFType() + "|binding="
+						+ binding.normalizedSignature() + "|sourceStates="
+						+ analysis.graph().node(authority.sourceArgument()).orElseThrow()
+							.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList()
+						+ "|forwardedWriteStates="
+						+ analysis.graph().node(transientFact.sourceWrite()).orElseThrow()
+							.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList()
+						+ "|targetReadStates="
+						+ analysis.graph().node(transientFact.targetRead()).orElseThrow()
+							.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
 				result.add(new EffectiveLogicalFunctionInput(authority, transientFact,
 					transientFact.targetRead()));
 			}

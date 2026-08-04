@@ -41,6 +41,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Relocati
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.HopOccurrenceProjection;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DerivedFoutMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationActionKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.LocalMaterializationObligation;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
@@ -195,6 +196,37 @@ public final class PlacementEmissionTransaction {
 		}
 	}
 
+	/**
+	 * Proves that a planner invocation performed exactly one atomic emission before
+	 * the compiler crosses the final Hop boundary.  The identity checks are
+	 * intentional: a second {@link #emit} call returns a distinct no-op receipt and
+	 * must not be accepted as evidence for the original commit.
+	 */
+	public static void verifyFinalBoundaryCommit(DMLProgram program, NormalizedPlannerResult result,
+		PlacementEmissionReceipt receipt) {
+		Objects.requireNonNull(program, "program");
+		Objects.requireNonNull(result, "result");
+		Objects.requireNonNull(receipt, "receipt");
+		synchronized(LOCK) {
+			CommittedPlan committed = COMMITTED.get(program);
+			if(committed == null)
+				throw new PlacementEmissionException(
+					"Planner returned without committing a complete placement authority");
+			if(committed.result() != result)
+				throw new PlacementEmissionException(
+					"Planner receipt does not own the committed normalized placement result");
+			if(committed.receipt() != receipt)
+				throw new PlacementEmissionException(
+					"Planner receipt is not the receipt of the atomic placement commit");
+			if(!receipt.applied() || receipt.noOp())
+				throw new PlacementEmissionException(
+					"Final Hop boundary requires one applied emission, not a no-op");
+			if(!canonicalPlanHash(result).equals(receipt.planHash()))
+				throw new PlacementEmissionException(
+					"Committed placement receipt differs from the normalized result");
+		}
+	}
+
 	public static ObservabilitySnapshot observabilitySnapshot() {
 		synchronized(LOCK) {
 			return new ObservabilitySnapshot(runtimeFallbackCount, runtimeRepairCount);
@@ -315,10 +347,12 @@ public final class PlacementEmissionTransaction {
 
 		List<SelectedRelocation> relocations = exactRelocations(
 			analysis, selectedStates, selectedCandidates, selectedChoices, selectedRelocations);
+		List<SelectedDerivedFout> derivedFoutMaterializations = exactDerivedFoutMaterializations(
+			analysis, occurrences, selected, selectedCandidates);
 		List<LocalMaterializationActionKey> locals = exactLocalMaterializations(analysis, occurrences,
 			selected, selectedLocals);
 		List<RegistryWrite> registryWrites = prepareRegistryWrites(
-			analysis, occurrences, selected, relocations, locals);
+			analysis, occurrences, selected, relocations, derivedFoutMaterializations, locals);
 		return new PreparedEmission(planHash, List.copyOf(writesByHop.values()), List.copyOf(registryWrites));
 	}
 
@@ -456,6 +490,8 @@ public final class PlacementEmissionTransaction {
 		Map<CompiledHopKey, PlacementState> selected,
 		List<CandidateSelectionReceipt> candidates,
 		List<RelocationChoiceReceipt> choices, List<RelocationActionKey> emittedActions) {
+		if(analysis.graph().relocationActions().isEmpty() && choices.isEmpty() && emittedActions.isEmpty())
+			return List.of();
 		List<RelocationSelections.ResolvedChoice> resolved;
 		try {
 			resolved = RelocationSelections.resolveAndValidate(analysis, selected, candidates, choices);
@@ -487,8 +523,19 @@ public final class PlacementEmissionTransaction {
 	private static List<RegistryWrite> prepareRegistryWrites(PlacementAnalysis analysis,
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
 		Map<CompiledHopKey, PlacementEmissionState> selected, List<SelectedRelocation> relocations,
+		List<SelectedDerivedFout> derivedFoutMaterializations,
 		List<LocalMaterializationActionKey> locals) {
 		Map<RegistrySlot, RegistryWrite> writesBySlot = new LinkedHashMap<>();
+		for(SelectedDerivedFout selectedDerived : derivedFoutMaterializations) {
+			DerivedFoutMaterializationActionKey action = selectedDerived.action();
+			HopOccurrenceProjection producer = selectedDerived.producer();
+			HopOccurrenceProjection anchor = selectedDerived.anchor();
+			RegistryWrite write = RegistryWrite.fout(producer.scopeId(), producer.hop().getHopID(),
+				anchor.hop().getHopID(), action.materializationFType().name(),
+				action.durableAnchor().placementId(),
+				ExactPlacementRegistration.runtimeAnchorKey(action.durableAnchor()));
+			addRelocationRegistryWrite(writesBySlot, write);
+		}
 		for(SelectedRelocation selectedRelocation : relocations) {
 			RelocationAction action = selectedRelocation.action();
 			RelocationActionKey key = action.key();
@@ -550,6 +597,66 @@ public final class PlacementEmissionTransaction {
 		return List.copyOf(writesBySlot.values());
 	}
 
+	private static List<SelectedDerivedFout> exactDerivedFoutMaterializations(PlacementAnalysis analysis,
+		Map<CompiledHopKey, HopOccurrenceProjection> occurrences,
+		Map<CompiledHopKey, PlacementEmissionState> selected,
+		List<CandidateSelectionReceipt> selectedCandidates) {
+		List<SelectedDerivedFout> resolved = new ArrayList<>();
+		for(Node node : analysis.graph().decisionNodes()) {
+			PlacementEmissionState selectedState = exactEmissionState(selected, node.key());
+			if(selectedState == null || !selectedState.derivedFedFout()
+				|| !analysis.isCompiledHopOccurrence(node.key()))
+				continue;
+			List<CandidateSelectionReceipt> exactCandidates = selectedCandidates.stream()
+				.filter(candidate -> candidate.rule().parentOccurrence() == node.key())
+				.filter(candidate -> candidate.emission().emissionState().equals(selectedState))
+				.filter(candidate -> candidate.emission().derivedFoutAction() != null).toList();
+			if(exactCandidates.size() != 1)
+				throw new PlacementEmissionException(
+					"Compiled derived FED/FOUT state requires exactly one selected derived candidate action");
+			CandidateSelectionReceipt candidate = exactCandidates.get(0);
+			PlacementAnalysis.CandidateRuleFact exactFact;
+			try {
+				exactFact = analysis.candidateRuleFacts().requireExact(
+					candidate.rule().parentOccurrence(), candidate.rule().orderedInputs());
+			}
+			catch(IllegalArgumentException ex) {
+				throw new PlacementEmissionException("Selected derived candidate is not analysis-owned", ex);
+			}
+			if(exactFact.key() != candidate.rule() || exactFact.allowedEmissionFacts().stream()
+				.filter(emission -> emission == candidate.emission()).count() != 1)
+				throw new PlacementEmissionException(
+					"Selected derived candidate is not the exact analysis-owned emission fact");
+			DerivedFoutMaterializationActionKey action = candidate.emission().derivedFoutAction();
+			long graphIdentityCount = analysis.graph().derivedFoutMaterializationActions().stream()
+				.filter(graphAction -> graphAction.key() == action).count();
+			if(graphIdentityCount != 1 || action.producer() != node.key()
+				|| action.producerValueVersion() != node.valueVersion()
+				|| action.candidateRule() != candidate.rule()
+				|| action.targetPlacement() != selectedState.placementState())
+				throw new PlacementEmissionException(
+					"Selected derived FOUT action is not the exact graph-owned producer authority");
+			HopOccurrenceProjection producer = exactOccurrence(occurrences, node.key());
+			if(producer == null)
+				throw new PlacementEmissionException("Derived FOUT producer occurrence is not compiled");
+			String expectedScope = producer.scopeId() + ":" + node.key().functionNamespace();
+			if(!expectedScope.equals(action.statementBlockScope()))
+				throw new PlacementEmissionException("Derived FOUT statement-block scope differs");
+			Node anchorOwnerNode = analysis.graph().node(action.durableAnchorOwner()).orElse(null);
+			HopOccurrenceProjection anchorOwner = exactOccurrence(occurrences,
+				action.durableAnchorOwner());
+			PlacementEmissionState selectedAnchorState = exactEmissionState(selected,
+				action.durableAnchorOwner());
+			if(anchorOwnerNode == null || anchorOwner == null || selectedAnchorState == null
+				|| selectedAnchorState.placementState().output() != FederatedOutput.FOUT
+				|| selectedAnchorState.placementState().fType() != action.durableAnchorOwnerFType())
+				throw new PlacementEmissionException(
+					"Derived FOUT action does not name one selected exact compiled FOUT anchor owner");
+			resolved.add(new SelectedDerivedFout(action, producer, anchorOwner));
+		}
+		return List.copyOf(resolved);
+	}
+
 	private static HopOccurrenceProjection exactConsumerOccurrence(
 		Map<CompiledHopKey, HopOccurrenceProjection> occurrences, ObligationKey obligation) {
 		HopOccurrenceProjection consumer = exactOccurrence(occurrences, obligation.consumer());
@@ -562,6 +669,8 @@ public final class PlacementEmissionTransaction {
 		RegistryWrite incoming) {
 		RegistryWrite existing = writesBySlot.putIfAbsent(incoming.slot(), incoming);
 		if(existing == null)
+			return;
+		if(existing.equals(incoming))
 			return;
 		if(incoming.slot().kind() != RegistryKind.REFED)
 			throw new PlacementEmissionException("Multiple relocations target one registry slot: prior="
@@ -656,6 +765,8 @@ public final class PlacementEmissionTransaction {
 
 	private record RegistrySlot(RegistryKind kind, long scopeId, long hopId) { }
 	private record SelectedRelocation(RelocationAction action, List<ObligationKey> obligations) { }
+	private record SelectedDerivedFout(DerivedFoutMaterializationActionKey action,
+		HopOccurrenceProjection producer, HopOccurrenceProjection anchor) { }
 
 	private record RegistryWrite(RegistrySlot slot, long anchorHopId, List<Long> consumerHopIds,
 		String fType, String label, String anchorKey, String reason,

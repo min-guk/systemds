@@ -81,6 +81,30 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 	}
 
 	@Test
+	public void samePlacementGroupCanonicalizesEveryMemberToItsOwnStateIdentity() {
+		String fingerprint = "exact-selector-node-owned-state";
+		Node leftTemplate = decisionNode(fingerprint, "left", 0);
+		Node rightTemplate = decisionNode(fingerprint, "right", 1);
+		PlacementState leftLocal = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState leftFed = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		PlacementState rightLocal = new PlacementState(ExecType.CP, FederatedOutput.LOUT, null, false);
+		PlacementState rightFed = new PlacementState(ExecType.FED, FederatedOutput.FOUT, FType.ROW, false);
+		Node left = new Node(leftTemplate.key(), leftTemplate.kind(), leftTemplate.valueVersion(), true,
+			List.of(leftLocal, leftFed), List.of(), List.of());
+		Node right = new Node(rightTemplate.key(), rightTemplate.kind(), rightTemplate.valueVersion(), true,
+			List.of(rightLocal, rightFed), List.of(), List.of());
+		Constraint same = new Constraint(ConstraintKind.SAME_PLACEMENT,
+			left.key(), right.key(), 0, "node-owned-state");
+
+		PlacementSelection selection = new ExactPlacementSelector().select(
+			new NeutralPlacementGraph(List.of(left, right), List.of(same), List.of()));
+
+		Assert.assertSame(leftFed, selection.assignment().get(left.key()));
+		Assert.assertSame(rightFed, selection.assignment().get(right.key()));
+		Assert.assertNotSame(selection.assignment().get(left.key()), selection.assignment().get(right.key()));
+	}
+
+	@Test
 	public void productionSizeEqualObjectiveTiesUseTheStableSignatureBound() {
 		List<Node> nodes = equalObjectiveNodes("exact-selector-equal-ties");
 
@@ -203,7 +227,7 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 
 	@Test
 	public void activeCandidateCannotDisappearWhenItsPhysicalSourceAssignmentIsUnavailable() throws Exception {
-		CandidateDependency dependency = directCandidateDependencyOutsideLegacyComponents();
+		CandidateDependency dependency = directCandidateDependency();
 		Map<CompiledHopKey,PlacementState> incomplete = new IdentityHashMap<>();
 		incomplete.put(dependency.fact().key().parentOccurrence(),
 			dependency.emission().emissionState().placementState());
@@ -215,7 +239,7 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 
 	@Test
 	public void productionComponentsIncludeDirectCandidateReachabilityDependencies() throws Exception {
-		CandidateDependency dependency = directCandidateDependencyOutsideLegacyComponents();
+		CandidateDependency dependency = directCandidateDependency();
 		PlacementAnalysis padded = CampaignBPlacementAnalysisFixtureBridge.pinAndPadCandidateAnalysis(
 			dependency.analysis(), dependency.pinnedStates(), 17, List.of(LOCAL, FED));
 
@@ -231,7 +255,7 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 			selection.assignment(), selection.selectedCandidateSelections());
 	}
 
-	private static CandidateDependency directCandidateDependencyOutsideLegacyComponents() throws Exception {
+	private static CandidateDependency directCandidateDependency() throws Exception {
 		PlacementAnalysis source = new NeutralPlacementGraphBuilder().buildAnalysis(
 			ProductionShadowFixtureFactory.compile("B-11"));
 		for(CandidateRuleFact fact : source.candidateRuleFacts().orderedFacts()) {
@@ -240,12 +264,12 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 			Node consumer = source.graph().node(fact.key().parentOccurrence()).orElseThrow();
 			for(CandidateEmissionFact emission : fact.allowedEmissionFacts()) {
 				PlacementState consumerState = emission.emissionState().placementState();
-				if(!consumer.legalAlternatives().contains(consumerState))
+				if(consumerState.execType() != ExecType.FED
+					|| !consumer.legalAlternatives().contains(consumerState))
 					continue;
 				Map<CompiledHopKey,PlacementState> pins = new IdentityHashMap<>();
 				pins.put(consumer.key(), consumerState);
 				boolean physical = false;
-				boolean outsideLegacyComponent = false;
 				boolean feasible = true;
 				for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
 					var input = fact.key().orderedInputs().get(position);
@@ -272,17 +296,19 @@ public class ExactPlacementSelectorBranchAndBoundTest {
 						break;
 					}
 					pins.put(producer.key(), direct);
-					outsideLegacyComponent |= !legacyComponentCoupled(source.graph(), producer.key(), consumer.key());
 				}
-				if(feasible && physical && outsideLegacyComponent) {
+				if(feasible && physical) {
 					PlacementAnalysis restricted = CampaignBPlacementAnalysisFixtureBridge
 						.withOnlyCandidateFact(source, fact);
+					Assert.assertTrue("exact relocation/candidate edges must now couple source and consumer",
+						pins.keySet().stream().filter(key -> key != consumer.key())
+							.allMatch(key -> legacyComponentCoupled(source.graph(), key, consumer.key())));
 					return new CandidateDependency(restricted, fact, emission,
 						java.util.Collections.unmodifiableMap(pins));
 				}
 			}
 		}
-		throw new AssertionError("B-11 must expose a direct candidate dependency omitted by legacy components");
+		throw new AssertionError("B-11 must expose one exact direct physical candidate dependency");
 	}
 
 	private static boolean legacyComponentCoupled(NeutralPlacementGraph graph,

@@ -3410,6 +3410,30 @@ public class FederatedPlannerFallbackIntegrationTest {
 		assertTrue("The accepted context bundle must improve the complete root-plan score:"
 			+ " local=" + localScore + ", refined=" + refinedScore,
 			refinedScore + 1e-9 < localScore);
+
+		Map<Long, FederatedOutput> lockedRefined = invokeRefineTransientFamilyDecisions(
+			memoTable, rootPlan, conflictMap, localDecisions,
+			Map.of(tRead.getHopID(), FederatedOutput.LOUT));
+		assertEquals("A cheaper transient-family alternative must not override a committed"
+			+ " family-member output boundary", FederatedOutput.LOUT,
+			lockedRefined.get(tRead.getHopID()));
+		assertEquals("The producer family must remain coherent with its locked read",
+			FederatedOutput.LOUT, lockedRefined.get(tWrite.getHopID()));
+		assertEquals("Dependent consumers must not be switched into a structurally incompatible"
+			+ " FOUT bundle behind a locked local read", FederatedOutput.LOUT,
+			lockedRefined.get(consumer.getHopID()));
+
+		Map<Long, FederatedOutput> misalignedFamily = new HashMap<>(localDecisions);
+		misalignedFamily.put(tWrite.getHopID(), FederatedOutput.FOUT);
+		Map<Long, FederatedOutput> alignedWithoutLock = invokeAlignTransientReadsWithProducerDecisions(
+			memoTable, conflictMap, misalignedFamily, Map.of());
+		assertEquals("Ordinary transient alignment must still follow the selected producer output",
+			FederatedOutput.FOUT, alignedWithoutLock.get(tRead.getHopID()));
+		Map<Long, FederatedOutput> alignedWithLock = invokeAlignTransientReadsWithProducerDecisions(
+			memoTable, conflictMap, misalignedFamily,
+			Map.of(tRead.getHopID(), FederatedOutput.LOUT));
+		assertEquals("The final producer/read alignment pass must not overwrite a committed read boundary",
+			FederatedOutput.LOUT, alignedWithLock.get(tRead.getHopID()));
 	}
 
 	@Test
@@ -3851,6 +3875,50 @@ public class FederatedPlannerFallbackIntegrationTest {
 
 		assertEquals("FOUT closure search must reuse its active state across recursive plan selection",
 			leftPlan, selected);
+	}
+
+	@Test
+	public void testDpRequiredOutputClosureDoesNotOverrideLockedChildBoundary() throws Exception {
+		DataOp child = transientRead("XclosureLockedChild", ROWS, COLS);
+		UnaryOp parent = new UnaryOp("parentClosureLockedChild", DataType.MATRIX, ValueType.FP64,
+			OpOp1.EXP, child);
+		DataOp dummyRoot = transientRead("RootClosureLockedChild", 1, 1);
+
+		Map<Long, HopCommon> hopCommonTable = new HashMap<>();
+		HopCommon childCommon = registerHopCommon(hopCommonTable, child);
+		HopCommon parentCommon = registerHopCommon(hopCommonTable, parent);
+		HopCommon dummyRootCommon = registerHopCommon(hopCommonTable, dummyRoot);
+
+		FederatedPlannerDpMemoTable memoTable = new FederatedPlannerDpMemoTable();
+		addCustomPlan(memoTable, childCommon, FederatedOutput.LOUT, ExecType.CP, FType.ROW, 1.0);
+		addCustomPlan(memoTable, childCommon, FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0);
+		addPlanWithChildren(memoTable, parentCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 2.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.LOUT)));
+		addPlanWithChildren(memoTable, parentCommon,
+			FederatedOutput.FOUT, ExecType.FED, FType.ROW, 1.0,
+			List.of(Pair.of(child.getHopID(), FederatedOutput.FOUT)));
+		FedPlan rootPlan = addPlanWithChildren(memoTable, dummyRootCommon,
+			FederatedOutput.LOUT, ExecType.CP, FType.ROW, 0.0,
+			List.of(Pair.of(parent.getHopID(), FederatedOutput.LOUT)));
+		memoTable.registerHopRefs(hopCommonTable);
+
+		Map<Long, FederatedOutput> decisions = new HashMap<>();
+		decisions.put(parent.getHopID(), FederatedOutput.LOUT);
+		decisions.put(child.getHopID(), FederatedOutput.LOUT);
+		Map<Long, ?> conflictMap = invokeCollectConflictsSingleBfs(memoTable, rootPlan, decisions);
+		invokeRefreshConflictChoiceFeasibility(conflictMap, memoTable);
+		LinkedHashSet<Long> closureHopIDs = new LinkedHashSet<>();
+
+		invokeApplyRequiredOutputDecisionClosure(memoTable, parent.getHopID(), FederatedOutput.FOUT,
+			conflictMap, decisions, closureHopIDs,
+			Map.of(child.getHopID(), FederatedOutput.LOUT));
+
+		assertEquals("A required-output refinement must preserve the already committed child boundary",
+			FederatedOutput.LOUT, decisions.get(child.getHopID()));
+		assertEquals("An infeasible FOUT subtree must not overwrite the resolver's legal LOUT decision",
+			FederatedOutput.LOUT, decisions.get(parent.getHopID()));
+		assertTrue("The rejected subtree must not leave a partial closure", closureHopIDs.isEmpty());
 	}
 
 	@Test
@@ -7267,6 +7335,17 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FedPlan rootPlan,
 			Map<Long, ?> conflictCheckMap,
 			Map<Long, FederatedOutput> decisions) throws Exception {
+		return invokeRefineTransientFamilyDecisions(
+			memoTable, rootPlan, conflictCheckMap, decisions, Map.of());
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Long, FederatedOutput> invokeRefineTransientFamilyDecisions(
+			FederatedPlannerDpMemoTable memoTable,
+			FedPlan rootPlan,
+			Map<Long, ?> conflictCheckMap,
+			Map<Long, FederatedOutput> decisions,
+			Map<Long, FederatedOutput> lockedDecisions) throws Exception {
 		Class<?> simulationCacheClass = Class.forName(
 			FederatedPlannerDpFedCostBased.class.getName() + "$SimulationDecisionCache");
 		Class<?> scoreCacheClass = Class.forName(
@@ -7277,12 +7356,34 @@ public class FederatedPlannerFallbackIntegrationTest {
 			FederatedPlannerDpMemoTable.FedPlan.class,
 			Map.class,
 			Map.class,
+			Map.class,
 			int.class,
 			simulationCacheClass,
 			scoreCacheClass);
 		method.setAccessible(true);
 		return (Map<Long, FederatedOutput>) method.invoke(
-			null, memoTable, rootPlan, conflictCheckMap, decisions, 1, null, null);
+			null, memoTable, rootPlan, conflictCheckMap, decisions, lockedDecisions, 1, null, null);
+	}
+
+	@SuppressWarnings("unchecked")
+	private static Map<Long, FederatedOutput> invokeAlignTransientReadsWithProducerDecisions(
+			FederatedPlannerDpMemoTable memoTable,
+			Map<Long, ?> conflictCheckMap,
+			Map<Long, FederatedOutput> decisions,
+			Map<Long, FederatedOutput> lockedDecisions) throws Exception {
+		Class<?> transientReadParentsCacheClass = Class.forName(
+			FederatedPlannerDpFedCostBased.class.getName() + "$TransientReadParentsCache");
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"alignTransientReadsWithProducerDecisions",
+			FederatedPlannerDpMemoTable.class,
+			Map.class,
+			Map.class,
+			Map.class,
+			transientReadParentsCacheClass,
+			int.class);
+		method.setAccessible(true);
+		return (Map<Long, FederatedOutput>) method.invoke(
+			null, memoTable, conflictCheckMap, decisions, lockedDecisions, null, 1);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -7325,6 +7426,29 @@ public class FederatedPlannerFallbackIntegrationTest {
 		method.setAccessible(true);
 		method.invoke(null, memoTable, hopID, desiredOut, conflictMap, decisions,
 			closureHopIDs, new HashSet<String>());
+	}
+
+	private static void invokeApplyRequiredOutputDecisionClosure(
+			FederatedPlannerDpMemoTable memoTable,
+			long hopID,
+			FederatedOutput desiredOut,
+			Map<Long, ?> conflictMap,
+			Map<Long, FederatedOutput> decisions,
+			LinkedHashSet<Long> closureHopIDs,
+			Map<Long, FederatedOutput> lockedDecisions) throws Exception {
+		Method method = FederatedPlannerDpFedCostBased.class.getDeclaredMethod(
+			"applyRequiredOutputDecisionClosure",
+			FederatedPlannerDpMemoTable.class,
+			long.class,
+			FederatedOutput.class,
+			Map.class,
+			Map.class,
+			LinkedHashSet.class,
+			Set.class,
+			Map.class);
+		method.setAccessible(true);
+		method.invoke(null, memoTable, hopID, desiredOut, conflictMap, decisions,
+			closureHopIDs, new HashSet<String>(), lockedDecisions);
 	}
 
 	private static FedPlan invokeSelectRequiredOutputClosurePlanVariant(

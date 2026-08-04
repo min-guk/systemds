@@ -131,6 +131,22 @@ public class CampaignBDurableAnchorPropagationContractTest {
 			actions.get(0).directSourcePlacements().stream().anyMatch(state ->
 				state.execType() == ExecType.FED && state.output() == FederatedOutput.FOUT
 					&& state.fType() == FType.ROW));
+		var derivedFacts = analysis.candidateRuleFacts().orderedFacts().stream()
+			.filter(fact -> fact.key().parentOccurrence() == product.key())
+			.flatMap(fact -> fact.allowedEmissionFacts().stream())
+			.filter(emission -> emission.emissionState().derivedFedFout()).toList();
+		Assert.assertTrue("aggregate-binary already emits native FED/FOUT; it must not invent a derived action",
+			derivedFacts.isEmpty());
+		Assert.assertTrue("aggregate-binary native FED/FOUT receipt must remain exact",
+			analysis.candidateRuleFacts().orderedFacts().stream()
+				.filter(fact -> fact.key().parentOccurrence() == product.key())
+				.flatMap(fact -> fact.allowedEmissionFacts().stream())
+				.anyMatch(emission -> !emission.emissionState().derivedFedFout()
+					&& emission.emissionState().placementState().execType() == ExecType.FED
+					&& emission.emissionState().placementState().output() == FederatedOutput.FOUT));
+		Assert.assertTrue("native aggregate-binary output must not publish a duplicate derived graph action",
+			analysis.graph().derivedFoutMaterializationActions().stream()
+				.noneMatch(action -> action.key().producer() == product.key()));
 	}
 
 	@Test public void aggregateBinaryFedFoutAlsoRetainsRuntimeSupportedFedLout() throws Exception {

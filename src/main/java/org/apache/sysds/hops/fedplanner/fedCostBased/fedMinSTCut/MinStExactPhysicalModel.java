@@ -21,6 +21,7 @@ import org.apache.sysds.hops.fedplanner.FTypes.FType;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Constraint;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.ConstraintKind;
+import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.DerivedFoutMaterializationAction;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.Node;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
@@ -29,6 +30,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateEva
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateInputState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CandidateRuleFact;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis.CompiledInputEdgeFact;
+import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.DurableAnchorKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
@@ -43,7 +45,9 @@ import org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput;
  * producer supplies canonical cost factors.</p>
  */
 final class MinStExactPhysicalModel {
-	enum AuthorityKind { LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, RELOCATION_SOURCE }
+	enum AuthorityKind {
+		LEGAL_SINGLETON, DURABLE_ANCHOR, CAPTURED_RULE, RELOCATION_SOURCE, SYNTHETIC_BOUNDARY
+	}
 	enum InputAuthorityKind { NATIVE_LOCAL, DIRECT_FOUT, RELOCATION }
 	private enum LinkKind { COMPILED, LOGICAL_TRANSIENT, LOGICAL_FUNCTION }
 
@@ -71,6 +75,7 @@ final class MinStExactPhysicalModel {
 		CandidateRuleFact candidateRule, CandidateEmissionFact candidateEmission,
 		CandidateRuleFact executionRule, CandidateEmissionFact executionEmission,
 		DurableAnchorKey durableAnchor, RelocationAction relocationAction,
+		DerivedFoutMaterializationAction derivedFoutAction,
 		List<CandidateInputState> orderedInputs, List<InputAuthority> inputAuthorities,
 		String signature) {
 		Alternative {
@@ -79,6 +84,11 @@ final class MinStExactPhysicalModel {
 			Objects.requireNonNull(authorityKind, "authorityKind");
 			orderedInputs = List.copyOf(orderedInputs);
 			inputAuthorities = List.copyOf(inputAuthorities);
+			boolean derivedCandidate = candidateEmission != null
+				&& candidateEmission.emissionState().derivedFedFout();
+			if(derivedCandidate != (derivedFoutAction != null)
+				|| derivedFoutAction != null && relocationAction != null)
+				throw new IllegalArgumentException("MINST_PHYSICAL_DERIVED_OUTPUT_AUTHORITY_INVALID");
 			if(signature == null || signature.isBlank())
 				throw new IllegalArgumentException("MINST_PHYSICAL_ALTERNATIVE_SIGNATURE_INVALID");
 		}
@@ -91,6 +101,9 @@ final class MinStExactPhysicalModel {
 			alternatives = List.copyOf(alternatives);
 			if(alternatives.isEmpty() || variable.domainSize() != alternatives.size())
 				throw new IllegalArgumentException("MINST_PHYSICAL_DOMAIN_INVALID");
+			if(alternatives.stream().anyMatch(alternative -> alternative.decision() != node.key()
+				|| node.legalAlternatives().stream().noneMatch(state -> state == alternative.state())))
+				throw new IllegalArgumentException("MINST_PHYSICAL_DOMAIN_STATE_IDENTITY");
 		}
 	}
 
@@ -127,9 +140,11 @@ final class MinStExactPhysicalModel {
 	static MinStExactPhysicalModel build(PlacementAnalysis analysis) {
 		Objects.requireNonNull(analysis, "analysis");
 		analysis.assertProgramStructureUnchanged();
-		List<Node> nodes = analysis.compiledHopOccurrences().stream()
-			.map(occurrence -> analysis.graph().node(occurrence.key()).orElseThrow())
-			.filter(Node::emittedWork).toList();
+		// Synthetic function boundaries are planner-visible legality variables even
+		// though they have no concrete Hop mutation. Omitting them dropped the
+		// source->boundary->formal constraints and let the optimizer accept assignments
+		// that no shared planner could project (notably StepLM's shared y formal).
+		List<Node> nodes = analysis.graph().decisionNodes();
 		Map<CompiledHopKey,List<Link>> incoming = incomingLinks(analysis);
 		List<DecisionDomain> domains = new ArrayList<>(nodes.size());
 		for(Node node : nodes) {
@@ -203,17 +218,25 @@ final class MinStExactPhysicalModel {
 
 	private static List<Alternative> alternatives(PlacementAnalysis analysis, Node node, List<Link> incoming) {
 		List<Alternative> alternatives = new ArrayList<>();
+		if(node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_INPUT
+			|| node.kind() == NeutralPlacementGraph.NodeKind.FUNCTION_OUTPUT) {
+			for(PlacementState state : node.legalAlternatives())
+				alternatives.add(nonCandidate(node, state, AuthorityKind.SYNTHETIC_BOUNDARY,
+					null, null, null, null));
+			return alternatives;
+		}
 		for(CandidateRuleFact rule : analysis.candidateRuleFacts().orderedFacts()) {
 			if(rule.key().parentOccurrence() != node.key()
 				|| rule.status() != CandidateEvaluationStatus.AVAILABLE)
 				continue;
 			for(CandidateEmissionFact emission : rule.allowedEmissionFacts()) {
 				PlacementState state = emission.emissionState().placementState();
-				if(node.legalAlternatives().stream().noneMatch(legal -> legal == state || legal.equals(state)))
+				if(node.legalAlternatives().stream().noneMatch(legal -> legal == state))
 					continue;
-				List<RelocationAction> outputActions = outputMaterializationActions(analysis, node, emission);
+				List<DerivedFoutMaterializationAction> outputActions =
+					derivedFoutMaterializationActions(analysis, node, rule, emission);
 				if(emission.emissionState().derivedFedFout()) {
-					for(RelocationAction outputAction : outputActions)
+					for(DerivedFoutMaterializationAction outputAction : outputActions)
 						for(List<InputAuthority> bindings : inputAuthorityProducts(
 							analysis, rule, state, incoming))
 							alternatives.add(candidate(node, state, rule, emission, outputAction, bindings));
@@ -266,13 +289,15 @@ final class MinStExactPhysicalModel {
 		return unique.values().stream().sorted(Comparator.comparing(Alternative::signature)).toList();
 	}
 
-	private static List<RelocationAction> outputMaterializationActions(PlacementAnalysis analysis, Node node,
-		CandidateEmissionFact emission) {
+	private static List<DerivedFoutMaterializationAction> derivedFoutMaterializationActions(
+		PlacementAnalysis analysis, Node node, CandidateRuleFact rule, CandidateEmissionFact emission) {
 		if(!emission.emissionState().derivedFedFout())
 			return List.of();
-		return analysis.graph().relocationActions().stream()
-			.filter(action -> action.key().sourceValueVersion().equals(node.valueVersion())
-				&& action.key().targetPlacement().equals(emission.emissionState().placementState()))
+		return analysis.graph().derivedFoutMaterializationActions().stream()
+			.filter(action -> action.key().equals(emission.derivedFoutAction()))
+			.filter(action -> action.key().producer() == node.key()
+				&& action.key().candidateRule() == rule.key()
+				&& action.key().targetPlacement() == emission.emissionState().placementState())
 			.sorted().toList();
 	}
 
@@ -288,13 +313,14 @@ final class MinStExactPhysicalModel {
 	}
 
 	private static Alternative candidate(Node node, PlacementState state, CandidateRuleFact rule,
-		CandidateEmissionFact emission, RelocationAction outputAction, List<InputAuthority> bindings) {
+		CandidateEmissionFact emission, DerivedFoutMaterializationAction outputAction,
+		List<InputAuthority> bindings) {
 		String signature = "CAPTURED|" + state.normalizedSignature() + "|rule="
 			+ rule.key().normalizedSignature() + "|emission=" + emission.normalizedSignature()
-			+ "|outputAction=" + (outputAction == null ? "-" : outputAction.normalizedSignature())
+			+ "|derivedFoutAction=" + (outputAction == null ? "-" : outputAction.normalizedSignature())
 			+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
 		return new Alternative(node.key(), state, AuthorityKind.CAPTURED_RULE, rule, emission,
-			null, null, null, outputAction, rule.key().orderedInputs(), bindings, signature);
+			null, null, null, null, outputAction, rule.key().orderedInputs(), bindings, signature);
 	}
 
 	private static Alternative nonCandidate(Node node, PlacementState state, AuthorityKind kind,
@@ -313,7 +339,7 @@ final class MinStExactPhysicalModel {
 			+ "|executionEmission=" + (executionEmission == null ? "-" : executionEmission.normalizedSignature())
 			+ "|inputs=" + bindings.stream().map(InputAuthority::signature).toList();
 		return new Alternative(node.key(), state, kind, null, null, executionRule, executionEmission,
-			anchor, action, executionRule == null ? List.of() : executionRule.key().orderedInputs(), bindings,
+			anchor, action, null, executionRule == null ? List.of() : executionRule.key().orderedInputs(), bindings,
 			signature);
 	}
 
@@ -476,22 +502,7 @@ final class MinStExactPhysicalModel {
 
 	static boolean constraintSatisfied(Constraint constraint, PlacementState left,
 		PlacementState right) {
-		ConstraintKind kind = constraint.kind();
-		if(kind == ConstraintKind.SAME_PLACEMENT)
-			return left.equals(right);
-		if(kind == ConstraintKind.SAME_FTYPE)
-			return Objects.equals(left.fType(), right.fType());
-		String prefix = "forbid-pair:";
-		if(constraint.evidence().startsWith(prefix)) {
-			String[] pair = constraint.evidence().substring(prefix.length()).split("=>", -1);
-			if(pair.length != 2)
-				throw new IllegalArgumentException("MINST_PHYSICAL_CONJUNCTIVE_EVIDENCE_INVALID|evidence="
-					+ constraint.evidence());
-			return !left.normalizedSignature().equals(pair[0])
-				|| !right.normalizedSignature().equals(pair[1]);
-		}
-		return right.output() != FederatedOutput.FOUT
-			|| left.output() == FederatedOutput.FOUT && Objects.equals(left.fType(), right.fType());
+		return NeutralPlacementGraph.constraintSatisfied(constraint, left, right);
 	}
 
 	private static void addStrictTransientFactors(PlacementAnalysis analysis,
@@ -562,9 +573,11 @@ final class MinStExactPhysicalModel {
 			return inputAuthorityPlacementSatisfied(authority, source.state()) ? 0.0
 				: Double.POSITIVE_INFINITY;
 		Map<CompiledHopKey,PlacementState> assignment = selectedStates(scope, values);
+		List<CandidateSelectionReceipt> selectedCandidates = selectedCandidateReceipts(scope, values);
 		if(authority.kind() == InputAuthorityKind.DIRECT_FOUT)
 			return directFoutSatisfied(graph, link.sourceNode, consumer.node().key(), link.position,
-				selectedConsumer.state(), authority.expectedFType(), authority.relocationAction(), assignment) ? 0.0
+				selectedConsumer.state(), authority.expectedFType(), authority.relocationAction(), assignment,
+				selectedCandidates) ? 0.0
 				: Double.POSITIVE_INFINITY;
 		RelocationAction action = authority.relocationAction();
 		if(!action.key().sourceValueVersion().equals(link.sourceNode.valueVersion()))
@@ -574,7 +587,7 @@ final class MinStExactPhysicalModel {
 				&& obligation.requiredPlacement().equals(selectedConsumer.state()));
 		if(!required)
 			return Double.POSITIVE_INFINITY;
-		if(!graph.isRelocationActive(action, assignment))
+		if(!graph.isRelocationActive(action, assignment, selectedCandidates))
 			return Double.POSITIVE_INFINITY;
 		return source.state().output() == FederatedOutput.LOUT
 			|| source.state().output() == FederatedOutput.FOUT ? 0.0 : Double.POSITIVE_INFINITY;
@@ -590,13 +603,14 @@ final class MinStExactPhysicalModel {
 		CompiledHopKey consumer, int inputPosition, PlacementState consumerState,
 		FType expectedFType, Map<CompiledHopKey,PlacementState> assignment) {
 		return directFoutSatisfied(graph, source, consumer, inputPosition, consumerState,
-			expectedFType, null, assignment);
+			expectedFType, null, assignment, List.of());
 	}
 
 	private static boolean directFoutSatisfied(NeutralPlacementGraph graph, Node source,
 		CompiledHopKey consumer, int inputPosition, PlacementState consumerState,
 		FType expectedFType, RelocationAction exactAction,
-		Map<CompiledHopKey,PlacementState> assignment) {
+		Map<CompiledHopKey,PlacementState> assignment,
+		List<CandidateSelectionReceipt> selectedCandidates) {
 		Objects.requireNonNull(graph, "graph");
 		Objects.requireNonNull(source, "source");
 		Objects.requireNonNull(consumer, "consumer");
@@ -616,9 +630,9 @@ final class MinStExactPhysicalModel {
 			.toList();
 		if(exactAction != null)
 			return matching.stream().anyMatch(action -> action == exactAction)
-				&& !graph.isRelocationActive(exactAction, assignment);
+				&& !graph.isRelocationActive(exactAction, assignment, selectedCandidates);
 		return matching.isEmpty() || matching.stream().anyMatch(action ->
-			!graph.isRelocationActive(action, assignment));
+			!graph.isRelocationActive(action, assignment, selectedCandidates));
 	}
 
 	private static Map<CompiledHopKey,PlacementState> selectedStates(
@@ -628,6 +642,21 @@ final class MinStExactPhysicalModel {
 			result.put(scope.get(index).node().key(),
 				scope.get(index).alternatives().get(values[index]).state());
 		return result;
+	}
+
+	private static List<CandidateSelectionReceipt> selectedCandidateReceipts(
+		List<DecisionDomain> scope, int[] values) {
+		List<CandidateSelectionReceipt> result = new ArrayList<>();
+		for(int index = 0; index < scope.size(); index++) {
+			Alternative alternative = scope.get(index).alternatives().get(values[index]);
+			CandidateRuleFact rule = alternative.captured()
+				? alternative.candidateRule() : alternative.executionRule();
+			CandidateEmissionFact emission = alternative.captured()
+				? alternative.candidateEmission() : alternative.executionEmission();
+			if(rule != null && emission != null)
+				result.add(new CandidateSelectionReceipt(rule.key(), emission, List.of()));
+		}
+		return List.copyOf(result);
 	}
 
 	static boolean inputAuthorityPlacementSatisfied(InputAuthority authority, PlacementState source) {

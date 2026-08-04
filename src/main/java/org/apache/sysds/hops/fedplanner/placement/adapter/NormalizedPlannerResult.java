@@ -40,9 +40,8 @@ public interface NormalizedPlannerResult {
 	Map<CompiledHopKey, PlacementState> selectedStates();
 
 	default Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates() {
-		Map<CompiledHopKey, PlacementEmissionState> result = new java.util.LinkedHashMap<>();
-		selectedStates().forEach((key, state) -> result.put(key, new PlacementEmissionState(state, false)));
-		return Map.copyOf(result);
+		return NormalizedPlannerResults.exactEmissionStates(
+			analysis(), selectedStates(), selectedCandidateSelections());
 	}
 
 	List<RelocationActionKey> selectedRelocations();

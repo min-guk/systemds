@@ -383,6 +383,52 @@ public final class PlacementIdentity {
 		}
 	}
 
+	/** Exact graph-owned authority for materializing one derived FED/FOUT producer result. */
+	public record DerivedFoutMaterializationActionKey(CompiledHopKey producer, ValueVersionKey producerValueVersion,
+		CandidateRuleKey candidateRule, PlacementState sourcePlacement, PlacementState targetPlacement,
+		DurableAnchorKey durableAnchor, CompiledHopKey durableAnchorOwner,
+		FType durableAnchorOwnerFType, FType materializationFType, String statementBlockScope)
+		implements Comparable<DerivedFoutMaterializationActionKey> {
+		public DerivedFoutMaterializationActionKey {
+			Objects.requireNonNull(producer, "producer");
+			Objects.requireNonNull(producerValueVersion, "producerValueVersion");
+			Objects.requireNonNull(candidateRule, "candidateRule");
+			Objects.requireNonNull(sourcePlacement, "sourcePlacement");
+			Objects.requireNonNull(targetPlacement, "targetPlacement");
+			Objects.requireNonNull(durableAnchor, "durableAnchor");
+			Objects.requireNonNull(durableAnchorOwner, "durableAnchorOwner");
+			Objects.requireNonNull(durableAnchorOwnerFType, "durableAnchorOwnerFType");
+			Objects.requireNonNull(materializationFType, "materializationFType");
+			statementBlockScope = requireText(statementBlockScope, "statementBlockScope");
+			if(candidateRule.parentOccurrence() != producer)
+				throw new IllegalArgumentException("Derived FOUT action candidate and producer identities differ");
+			if(!producer.programFingerprint().equals(producerValueVersion.programFingerprint()))
+				throw new IllegalArgumentException("Derived FOUT producer and value-version fingerprints differ");
+			if(!producer.programFingerprint().equals(durableAnchorOwner.programFingerprint()))
+				throw new IllegalArgumentException("Derived FOUT producer and anchor-owner fingerprints differ");
+			if(sourcePlacement.execType() != org.apache.sysds.common.Types.ExecType.FED
+				|| sourcePlacement.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.LOUT)
+				throw new IllegalArgumentException("Derived FOUT action source must be FED/LOUT");
+			if(targetPlacement.execType() != org.apache.sysds.common.Types.ExecType.FED
+				|| targetPlacement.output() != org.apache.sysds.runtime.instructions.fed.FEDInstruction.FederatedOutput.FOUT
+				|| targetPlacement.fType() != materializationFType)
+				throw new IllegalArgumentException("Derived FOUT action target must be exact FED/FOUT materialization type");
+		}
+
+		public String normalizedSignature() {
+			return fields(producer.normalizedSignature(), producerValueVersion.normalizedSignature(),
+				candidateRule.normalizedSignature(),
+				sourcePlacement.normalizedSignature(), targetPlacement.normalizedSignature(),
+				durableAnchor.normalizedSignature(), durableAnchorOwner.normalizedSignature(),
+				durableAnchorOwnerFType.name(), materializationFType.name(), statementBlockScope);
+		}
+
+		@Override
+		public int compareTo(DerivedFoutMaterializationActionKey that) {
+			return normalizedSignature().compareTo(that.normalizedSignature());
+		}
+	}
+
 	/**
 	 * Legacy serialized shape for the removed sparse-domain fallback authority. New candidate
 	 * receipts reject these entries; an upload must be represented by an exact PRESENT oracle row.

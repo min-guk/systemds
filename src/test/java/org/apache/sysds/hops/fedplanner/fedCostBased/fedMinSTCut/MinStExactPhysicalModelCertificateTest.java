@@ -47,13 +47,13 @@ public class MinStExactPhysicalModelCertificateTest {
 				+ "|maxDomain=" + model.domains().stream()
 					.mapToInt(domain -> domain.alternatives().size()).max().orElse(0)
 				+ "|stats=" + statistics;
-			long emittedCompiled = analysis.compiledHopOccurrences().stream()
-				.filter(occurrence -> analysis.graph().node(occurrence.key()).orElseThrow().emittedWork()).count();
-			Assert.assertEquals(certificate, emittedCompiled, model.domains().size());
+			Assert.assertEquals(certificate + "|synthetic boundaries are exact legality variables",
+				analysis.graph().decisionNodes().size(), model.domains().size());
 			Assert.assertTrue(certificate, model.domains().stream().allMatch(domain ->
 				domain.alternatives().stream().allMatch(alternative ->
 					alternative.decision() == domain.node().key()
-						&& domain.node().legalAlternatives().contains(alternative.state()))));
+						&& domain.node().legalAlternatives().stream()
+							.anyMatch(state -> state == alternative.state()))));
 			Assert.assertFalse(certificate, model.costSurfaceComplete());
 			Assert.assertEquals(certificate, 0.0, feasible.objective(), 0.0);
 			Assert.assertEquals(certificate, model.domains().size(),
@@ -64,6 +64,26 @@ public class MinStExactPhysicalModelCertificateTest {
 				projected.normalizedResult().selectedStates());
 			Assert.assertEquals(certificate, exact.candidateReceipts(),
 				projected.normalizedResult().selectedCandidateSelections());
+			for(var rule : analysis.candidateRuleFacts().orderedFacts()) {
+				if(rule.status() != PlacementAnalysis.CandidateEvaluationStatus.AVAILABLE)
+					continue;
+				var domain = model.domains().stream()
+					.filter(candidate -> candidate.node().key() == rule.key().parentOccurrence())
+					.findFirst().orElse(null);
+				if(domain == null)
+					continue;
+				for(var emission : rule.allowedEmissionFacts()) {
+					PlacementState state = emission.emissionState().placementState();
+					if(!emission.emissionState().derivedFedFout()
+						|| domain.node().legalAlternatives().stream().noneMatch(state::equals))
+						continue;
+					Assert.assertTrue(workload.name() + "|derived candidate silently removed|rule="
+						+ rule.key().normalizedSignature() + "|emission=" + emission.normalizedSignature(),
+						domain.alternatives().stream().anyMatch(alternative -> alternative.captured()
+							&& alternative.candidateRule() == rule
+							&& alternative.candidateEmission() == emission));
+				}
+			}
 			Assert.assertTrue(certificate, physical.candidates().stream().allMatch(candidate ->
 				candidate.rule().key().parentOccurrence() == candidate.decision()
 					&& candidate.rule().allowedEmissionFacts().stream()
@@ -94,11 +114,12 @@ public class MinStExactPhysicalModelCertificateTest {
 					else if(alternative.authorityKind()
 						== MinStExactPhysicalModel.AuthorityKind.CAPTURED_RULE
 						&& alternative.candidateEmission().emissionState().derivedFedFout()) {
-						Assert.assertNotNull(certificate, alternative.relocationAction());
-						Assert.assertSame(certificate, domain.node().valueVersion(),
-							alternative.relocationAction().key().sourceValueVersion());
+						Assert.assertNull(certificate, alternative.relocationAction());
+						Assert.assertNotNull(certificate, alternative.derivedFoutAction());
+						Assert.assertSame(certificate, domain.node().key(),
+							alternative.derivedFoutAction().key().producer());
 						Assert.assertSame(certificate, alternative.state(),
-							alternative.relocationAction().key().targetPlacement());
+							alternative.derivedFoutAction().key().targetPlacement());
 						Assert.assertTrue(certificate, domain.alternatives().stream().noneMatch(candidate ->
 							candidate.authorityKind()
 								== MinStExactPhysicalModel.AuthorityKind.RELOCATION_SOURCE
@@ -106,6 +127,18 @@ public class MinStExactPhysicalModelCertificateTest {
 					}
 			Assert.assertTrue(certificate, statistics.maximumFactorCells() <= 10_000_000);
 		}
+	}
+
+	@Test
+	public void everyPhysicalAlternativeRetainsItsTargetNodeStateIdentity() throws Exception {
+		PlacementAnalysis analysis = new NeutralPlacementGraphBuilder().buildAnalysis(kmeans());
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		for(var domain : model.domains())
+			for(var alternative : domain.alternatives())
+				Assert.assertTrue("foreign value-equal state for "
+					+ domain.node().key().normalizedSignature(),
+					domain.node().legalAlternatives().stream()
+						.anyMatch(state -> state == alternative.state()));
 	}
 
 	@Test

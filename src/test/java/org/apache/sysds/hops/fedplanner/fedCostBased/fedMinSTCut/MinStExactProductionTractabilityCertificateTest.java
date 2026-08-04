@@ -2,6 +2,8 @@
 package org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut;
 
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -11,6 +13,9 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.sysds.api.DMLScript;
+import org.apache.sysds.hops.fedplanner.FTypes.FType;
+import org.apache.sysds.hops.fedplanner.fedCostBased.FederatedPlannerUtils;
+import org.apache.sysds.hops.fedplanner.fedCostBased.fedDp.FederatedPlannerDpFedCostBased;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer.RepresentativePreference;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFactsProducer.SelectedFedAuthority;
 import org.apache.sysds.hops.fedplanner.fedCostBased.fedMinSTCut.MinStExactCostFacts.MembershipAuthorityKind;
@@ -24,6 +29,9 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSel
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.adapter.FedAllPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.HeuristicPlacementAdapter;
+import org.apache.sysds.hops.fedplanner.placement.adapter.NormalizedPlannerResult;
+import org.apache.sysds.hops.fedplanner.placement.adapter.PlacementPlannerAdapter;
 import org.apache.sysds.parser.CampaignBG014PlacementAuthorityTestBridge;
 import org.apache.sysds.parser.DMLProgram;
 import org.apache.sysds.parser.DMLTranslator;
@@ -158,13 +166,14 @@ public class MinStExactProductionTractabilityCertificateTest {
 
 	@Test
 	public void sevenCampaignWorkloadsPublishExactPhysicalTractabilityCertificate() throws Exception {
-		for(Workload workload : List.of(
-			new Workload("KMEANS", kmeans()), new Workload("PCA", pca()),
-			new Workload("LM", lm()), new Workload("L2SVM", l2svm()),
-			new Workload("LOGREG", logreg()), new Workload("ALS", als()),
-			new Workload("STEPLM", steplm()))) {
-				PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
-					.bindAtFinalHopBoundary(workload.program());
+		for(int workers = 1; workers <= 4; workers++)
+		for(Workload workload : campaignWorkloads(workers)) {
+				// Mirror DMLTranslator.runFederatedPlannerAtFinalHopBoundary: the analysis
+				// must be bound only after clearing metadata published by the preceding
+				// compiled program in this same JVM.
+				FederatedPlannerUtils.resetFederatedPlannerRunState();
+					PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+						.bindAtFinalHopBoundary(workload.program());
 			MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
 			MinStExactCostFactsProducer.PhysicalCostSurface surface =
 				MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
@@ -173,15 +182,15 @@ public class MinStExactProductionTractabilityCertificateTest {
 			MinStExactPhysicalSelection selected = MinStExactPhysicalSelection.create(model, optimized);
 			var projected = MinStExactPhysicalPlacementProjector.project(selected);
 			var statistics = optimized.solverResult().statistics();
-			String certificate = workload.name() + "|decisions=" + model.domains().size()
+			String certificate = workload.name() + "|workers=" + workers
+				+ "|decisions=" + model.domains().size()
 				+ "|domainSizes=" + model.domains().stream()
 					.map(domain -> domain.alternatives().size()).toList()
 				+ "|stats=" + statistics + "|objective="
 				+ Double.longBitsToDouble(optimized.canonicalObjectiveBits());
 
-			Assert.assertEquals(certificate, analysis.compiledHopOccurrences().stream()
-				.filter(occurrence -> analysis.graph().node(occurrence.key()).orElseThrow().emittedWork())
-				.count(), model.domains().size());
+			Assert.assertEquals(certificate + "|the exact model must include synthetic boundary variables",
+				analysis.graph().decisionNodes().size(), model.domains().size());
 			Assert.assertEquals(certificate, analysis.graph().decisionNodes().size(),
 				selected.selectedStates().size());
 			Assert.assertEquals(certificate, selected.selectedStates(),
@@ -192,57 +201,134 @@ public class MinStExactProductionTractabilityCertificateTest {
 				projected.normalizedResult().selectedRelocationChoices());
 			Assert.assertTrue(certificate, statistics.maximumFactorCells()
 				<= MinStExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumFactorCells());
-				Assert.assertTrue(certificate, statistics.materializedFactorCells()
-					<= MinStExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumMaterializedCells());
+			Assert.assertTrue(certificate, statistics.materializedFactorCells()
+				<= MinStExactPhysicalOptimizer.PRODUCTION_LIMITS.maximumMaterializedCells());
+			Assert.assertEquals(certificate, workers, workerCount(analysis));
+			if(workers == 1)
+				Assert.assertTrue(certificate + "|missing-single-worker-FULL-anchor",
+					analysis.graph().decisionNodes().stream().flatMap(node -> node.anchors().stream())
+						.anyMatch(anchor -> anchor.fType() == FType.FULL));
 
-				// Exercise the actual production root, not only its component chain.  The
-				// root must reproduce the exact physical selection and commit that same
-				// normalized authority without a repair or fallback layer.
-				var receipt = new FederatedPlanMinSTCut().rewriteProgram(
-					workload.program(), null, null, analysis);
-				Assert.assertEquals(certificate, selected.selectedStates(),
-					receipt.normalizedResult().selectedStates());
-				Assert.assertEquals(certificate, selected.candidateReceipts(),
-					receipt.normalizedResult().selectedCandidateSelections());
-				Assert.assertEquals(certificate, selected.relocationChoices(),
-					receipt.normalizedResult().selectedRelocationChoices());
-				Assert.assertNotNull(certificate, receipt.emissionReceipt());
-				Assert.assertTrue(certificate, receipt.emissionReceipt().applied());
-				Assert.assertFalse(certificate, receipt.emissionReceipt().noOp());
-
-				// Every runtime-available candidate emission that is itself a legal neutral
-			// placement must remain represented.  The exact model may add distinct direct
-			// and relocation bindings, but it must never silently close the candidate row.
-			for(var rule : analysis.candidateRuleFacts().orderedFacts()) {
-				if(rule.status() != org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis
-					.CandidateEvaluationStatus.AVAILABLE)
-					continue;
-				var domain = model.domains().stream()
-					.filter(candidate -> candidate.node().key() == rule.key().parentOccurrence())
-					.findFirst().orElse(null);
-				if(domain == null)
-					continue;
-				for(var emission : rule.allowedEmissionFacts()) {
-					PlacementState state = emission.emissionState().placementState();
-					if(domain.node().legalAlternatives().stream().noneMatch(legal -> legal.equals(state)))
-						continue;
-					boolean outputAuthorityExists = !emission.emissionState().derivedFedFout()
-						|| analysis.graph().relocationActions().stream().anyMatch(action ->
-							action.key().sourceValueVersion() == domain.node().valueVersion()
-								&& action.key().targetPlacement().equals(state));
-					if(!outputAuthorityExists)
-						continue;
-					Assert.assertTrue(certificate + "|missing=" + emission.normalizedSignature()
-						+ "|rule=" + rule.key().normalizedSignature()
-						+ "|capability=" + rule.capability() + "|profile=" + rule.profile()
-						+ "|hop=" + analysis.hop(rule.key().parentOccurrence()).orElseThrow()
-						+ "|actions=" + candidateActionDiagnostics(analysis, rule, state),
-						domain.alternatives().stream().anyMatch(alternative -> alternative.captured()
-							&& alternative.candidateRule() == rule
-							&& alternative.candidateEmission() == emission));
+			// Compare all three baseline policies against the exact MinST optimum on
+			// this same pre-emission analysis and physical cost surface.  This proves
+			// modeled-cost dominance, not wall-clock dominance.
+				NormalizedPlannerResult dp;
+				try {
+					dp = new FederatedPlannerDpFedCostBased()
+						.selectProgram(workload.program(), null, null, analysis).normalizedResult();
 				}
+				catch(RuntimeException ex) {
+					throw new IllegalStateException(certificate + "|dp-baseline-selection", ex);
+				}
+			NormalizedPlannerResult fedAll = PlacementPlannerAdapter.normalize(analysis,
+				new FedAllPlacementAdapter().select(analysis));
+			Set<org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ValueVersionKey> markers =
+				new LinkedHashSet<>(analysis.heuristicPolicyFacts().demotions().stream()
+					.map(fact -> fact.valueVersion()).toList());
+			NormalizedPlannerResult heuristic = PlacementPlannerAdapter.normalize(analysis,
+				new HeuristicPlacementAdapter().select(analysis, markers));
+			for(NormalizedPlannerResult baseline : List.of(dp, fedAll, heuristic)) {
+				MinStExactPhysicalBaselineEvaluator.Evaluation evaluated;
+				try {
+					evaluated = MinStExactPhysicalBaselineEvaluator.evaluate(model, surface,
+						baseline, MinStExactPhysicalOptimizer.PRODUCTION_LIMITS);
+				}
+				catch(IllegalArgumentException ex) {
+					throw new AssertionError(certificate + "|baseline=" + baseline.plannerId()
+						+ "|baseline physical authority is outside the MinST model", ex);
+				}
+				Assert.assertTrue(certificate + "|baseline=" + baseline.plannerId()
+					+ "|minst=" + Double.longBitsToDouble(optimized.canonicalObjectiveBits())
+					+ "|baselineCost=" + Double.longBitsToDouble(evaluated.canonicalObjectiveBits()),
+					Double.compare(Double.longBitsToDouble(optimized.canonicalObjectiveBits()),
+						Double.longBitsToDouble(evaluated.canonicalObjectiveBits())) <= 0);
 			}
+
+			// Exercise the actual production root after all cross-planner comparisons;
+			// the one and only mutation must reproduce the pre-emission exact result.
+			var receipt = new FederatedPlanMinSTCut().rewriteProgram(
+				workload.program(), null, null, analysis);
+			Assert.assertEquals(certificate, selected.selectedStates(),
+				receipt.normalizedResult().selectedStates());
+			Assert.assertEquals(certificate, selected.candidateReceipts(),
+				receipt.normalizedResult().selectedCandidateSelections());
+			Assert.assertEquals(certificate, selected.relocationChoices(),
+				receipt.normalizedResult().selectedRelocationChoices());
+			Assert.assertNotNull(certificate, receipt.emissionReceipt());
+			Assert.assertTrue(certificate, receipt.emissionReceipt().applied());
+			Assert.assertFalse(certificate, receipt.emissionReceipt().noOp());
+
+			// AVAILABLE is an oracle capability fact, not by itself proof that every
+			// PRESENT matrix input has an exact worker-pool receipt.  Require coverage
+			// for the source-reachable variants under each complete normalized assignment.
+			for(NormalizedPlannerResult normalized : List.of(projected.normalizedResult(), dp, fedAll, heuristic))
+				for(var variants : CandidateSelections.feasibleVariants(analysis,
+					analysis.graph().relocationActions(), normalized.selectedStates()).values())
+					for(CandidateSelectionReceipt reachable : variants) {
+						var domain = model.domains().stream().filter(candidate ->
+							candidate.node().key() == reachable.rule().parentOccurrence()).findFirst().orElseThrow();
+						Assert.assertTrue(certificate + "|planner=" + normalized.plannerId()
+							+ "|source-reachable candidate missing=" + reachable.normalizedSignature(),
+							domain.alternatives().stream().anyMatch(alternative -> alternative.captured()
+								&& alternative.candidateRule().key() == reachable.rule()
+								&& alternative.candidateEmission() == reachable.emission()));
+					}
 		}
+	}
+
+	@Test
+	public void kmeansWorkerCountTransitionRetainsExactDpPlacementCarriers() throws Exception {
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram warmupProgram = kmeans(1);
+		PlacementAnalysis warmupAnalysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(warmupProgram);
+		MinStExactPhysicalModel warmupModel = MinStExactPhysicalModel.build(warmupAnalysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface warmupSurface =
+			MinStExactCostFactsProducer.physicalCostSurface(warmupAnalysis, warmupModel);
+		MinStExactPhysicalOptimizer.Result warmupOptimized = MinStExactPhysicalOptimizer.optimize(
+			warmupModel, warmupSurface, MinStExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		MinStExactPhysicalPlacementProjector.project(
+			MinStExactPhysicalSelection.create(warmupModel, warmupOptimized));
+		new FederatedPlannerDpFedCostBased().selectProgram(
+			warmupProgram, null, null, warmupAnalysis);
+		new FederatedPlanMinSTCut().rewriteProgram(warmupProgram, null, null, warmupAnalysis);
+		Assert.assertEquals("one-worker warmup must publish its actual FULL source metadata",
+			FType.FULL, FederatedPlannerUtils.getFedInitFType("X"));
+
+		// Production owns this reset before binding the next immutable analysis. Without
+		// it, a direct test bridge can replay X=FULL into the two-worker ROW program.
+		FederatedPlannerUtils.resetFederatedPlannerRunState();
+		DMLProgram program = kmeans(2);
+		PlacementAnalysis analysis = CampaignBG014PlacementAuthorityTestBridge
+			.bindAtFinalHopBoundary(program);
+		MinStExactPhysicalModel model = MinStExactPhysicalModel.build(analysis);
+		MinStExactCostFactsProducer.PhysicalCostSurface surface =
+			MinStExactCostFactsProducer.physicalCostSurface(analysis, model);
+		MinStExactPhysicalOptimizer.Result optimized = MinStExactPhysicalOptimizer.optimize(
+			model, surface, MinStExactPhysicalOptimizer.PRODUCTION_LIMITS);
+		MinStExactPhysicalPlacementProjector.project(
+			MinStExactPhysicalSelection.create(model, optimized));
+		NormalizedPlannerResult dp = new FederatedPlannerDpFedCostBased()
+			.selectProgram(program, null, null, analysis).normalizedResult();
+		Assert.assertEquals("DP must select one exact state for every neutral decision node",
+			analysis.graph().decisionNodes().size(), dp.selectedStates().size());
+	}
+
+	private static int workerCount(PlacementAnalysis analysis) {
+		Set<Integer> partitionCounts = analysis.graph().decisionNodes().stream()
+			.flatMap(node -> node.anchors().stream()).distinct()
+			.map(anchor -> anchor.partitions().size()).collect(java.util.stream.Collectors.toSet());
+		if(partitionCounts.size() != 1)
+			throw new AssertionError("durable anchors disagree on the campaign worker count: "
+				+ partitionCounts);
+		return partitionCounts.iterator().next();
+	}
+
+	private static List<Workload> campaignWorkloads(int workers) throws Exception {
+		return List.of(new Workload("KMEANS", kmeans(workers)), new Workload("PCA", pca(workers)),
+			new Workload("LM", lm(workers)), new Workload("L2SVM", l2svm(workers)),
+			new Workload("LOGREG", logreg(workers)), new Workload("ALS", als(workers)),
+			new Workload("STEPLM", steplm(workers)));
 	}
 
 	private static List<String> candidateActionDiagnostics(PlacementAnalysis analysis,
@@ -526,36 +612,54 @@ public class MinStExactProductionTractabilityCertificateTest {
 	}
 
 	private static DMLProgram kmeans() throws Exception {
+		return kmeans(2);
+	}
+
+	private static DMLProgram kmeans(int workers) throws Exception {
 		return compile(String.join("\n",
-			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
-				+ "ranges=list(list(0,0),list(25000,2100),list(25000,0),list(50000,2100)));",
+			federated("X", 50000, 2100, workers),
 			"[C,Y]=kmeans(X=X,k=50,is_verbose=FALSE,runs=1,eps=1e-9,max_iter=60,"
 				+ "avg_sample_size_per_centroid=50,seed=133815928);",
 			"write(Y,\"out\",format=\"csv\");") + "\n");
 	}
 
 	private static DMLProgram pca() throws Exception {
+		return pca(2);
+	}
+
+	private static DMLProgram pca(int workers) throws Exception {
 		return compile(String.join("\n",
-			"X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
-				+ "ranges=list(list(0,0),list(25000,2100),list(25000,0),list(50000,2100)));",
+			federated("X", 50000, 2100, workers),
 			"[Xout,Mout]=pca(X=X,K=10);",
 			"write(Mout,\"out\",format=\"csv\");") + "\n");
 	}
 
 	private static DMLProgram lm() throws Exception {
-		return compile(dataPrelude() + String.join("\n",
+		return lm(2);
+	}
+
+	private static DMLProgram lm(int workers) throws Exception {
+		return compile(dataPrelude(workers) + String.join("\n",
 			"B=lm(X=X,y=Y,icpt=0,reg=1e-7,tol=1e-7,maxi=20,verbose=FALSE);",
 			"write(B,\"out\",format=\"csv\");") + "\n");
 	}
 
 	private static DMLProgram l2svm() throws Exception {
-		return compile(dataPrelude() + String.join("\n",
+		return l2svm(2);
+	}
+
+	private static DMLProgram l2svm(int workers) throws Exception {
+		return compile(dataPrelude(workers) + String.join("\n",
 			"B=l2svm(X=X,Y=Y,verbose=FALSE,epsilon=1e-22,maxIterations=30);",
 			"write(B,\"out\",format=\"csv\");") + "\n");
 	}
 
 	private static DMLProgram logreg() throws Exception {
-		return compile(dataPrelude() + String.join("\n",
+		return logreg(2);
+	}
+
+	private static DMLProgram logreg(int workers) throws Exception {
+		return compile(dataPrelude(workers) + String.join("\n",
 			"Y=(Y<0)+1;",
 			"B=multiLogReg(X=X,Y=Y,verbose=FALSE,maxi=30,maxii=5,tol=1e-9,icpt=0,"
 				+ "numclasses=2,numrows=50000,numcols=2100);",
@@ -563,27 +667,72 @@ public class MinStExactProductionTractabilityCertificateTest {
 	}
 
 	private static DMLProgram als() throws Exception {
-		return compile(featuresPrelude() + String.join("\n",
+		return als(2);
+	}
+
+	private static DMLProgram als(int workers) throws Exception {
+		return compile(featuresPrelude(workers) + String.join("\n",
 			"[U,V]=als(X=X,rank=10,regType=\"L2\",reg=0.000001,maxi=2,"
 				+ "check=FALSE,thr=0.0001,seed=1389632218,verbose=FALSE);",
 			"write(V,\"out\",format=\"csv\");") + "\n");
 	}
 
 	private static DMLProgram steplm() throws Exception {
-		return compile(dataPrelude() + String.join("\n",
+		return steplm(2);
+	}
+
+	private static DMLProgram steplm(int workers) throws Exception {
+		return compile(dataPrelude(workers) + String.join("\n",
 			"[B,S]=steplm(X=X,y=Y,icpt=0,reg=1e-7,tol=1e-7,maxi=20,verbose=FALSE);",
 			"write(B,\"out\",format=\"csv\");") + "\n");
 	}
 
-	private static String dataPrelude() {
-		return featuresPrelude()
-			+ "Y=federated(addresses=list(\"localhost:1234/Y1\",\"localhost:1235/Y2\"),"
-			+ "ranges=list(list(0,0),list(25000,1),list(25000,0),list(50000,1)));\n";
+	private static String dataPrelude() throws Exception {
+		return dataPrelude(2);
 	}
 
-	private static String featuresPrelude() {
-		return "X=federated(addresses=list(\"localhost:1234/X1\",\"localhost:1235/X2\"),"
-			+ "ranges=list(list(0,0),list(25000,2100),list(25000,0),list(50000,2100)));\n";
+	private static String featuresPrelude() throws Exception {
+		return featuresPrelude(2);
+	}
+
+	private static String dataPrelude(int workers) throws Exception {
+		return featuresPrelude(workers) + federated("Y", 50000, 1, workers) + "\n";
+	}
+
+	private static String featuresPrelude(int workers) throws Exception {
+		return federated("X", 50000, 2100, workers) + "\n";
+	}
+
+	private static String federated(String name, long rows, long cols, int workers) throws Exception {
+		if(workers < 1 || workers > 4)
+			throw new IllegalArgumentException("workers must be in [1,4]");
+		List<String> addresses = new ArrayList<>();
+		List<String> ranges = new ArrayList<>();
+		for(int worker = 0; worker < workers; worker++) {
+			long begin = rows * worker / workers;
+			long end = rows * (worker + 1L) / workers;
+			Path data = Files.createTempFile("minst-campaign-" + name.toLowerCase() + "-w"
+				+ workers + "-p" + (worker + 1) + "-", ".data");
+			Path metadata = Path.of(data + ".mtd");
+			Files.writeString(data, "");
+			Files.writeString(metadata, "{\"data_type\":\"matrix\","
+				+ "\"value_type\":\"double\",\"format\":\"binary\","
+				+ "\"rows\":" + (end - begin) + ",\"cols\":" + cols + ","
+				+ "\"rows_in_block\":1000,\"cols_in_block\":1000,"
+				+ "\"nnz\":" + ((end - begin) * cols) + ","
+				+ "\"privacy\":\"private-aggregate\"}");
+			data.toFile().deleteOnExit();
+			metadata.toFile().deleteOnExit();
+			String path = data.toString().replace("\\", "\\\\").replace("\"", "\\\"");
+			// The doubled slash preserves an absolute worker path.  The metadata is
+			// read locally by the privacy resolver, so this compile-only certificate
+			// retains the production remote-fedinit graph without contacting workers.
+			addresses.add("\"localhost:" + (1234 + worker) + "/" + path + "\"");
+			ranges.add("list(" + begin + ",0)");
+			ranges.add("list(" + end + "," + cols + ")");
+		}
+		return name + "=federated(addresses=list(" + String.join(",", addresses)
+			+ "),ranges=list(" + String.join(",", ranges) + "));";
 	}
 
 	private static DMLProgram compile(String script) throws Exception {

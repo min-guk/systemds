@@ -2,14 +2,16 @@
 
 ## 1. 336-cell campaign was started before the four user-raised claims were proven
 
-- **상태**: 진행중
-- **환경/조건**: commit `b4034041643e990c13d61b75438e859b7abe0da2`, JAR SHA-256
-  `3834c659d9c572262e32f93cf6b3a7117a5a95486d536654d9904dd29972da70`, Docker-only
+- **상태**: 새 단일-artifact 336-cell campaign 진행중
+- **환경/조건**: commit `6356d7c8ca54031066a23a7076e3faebfc373293`, JAR SHA-256
+  `2dd636d96319e54022d9b2e85f522e1c0c4dab61f2b6d39f08f4ab448b0b4ba0`, Docker-only
   one-pass campaign, DP → FedAll → Heuristic → MinST.
 - **재현 절차**:
   - campaign output: `/home/mchoi/g007-one-pass-b403404-7a72f59-20260803-v1`
   - runner log: `/tmp/g014_one_pass_b403404_20260803.log`
   - inspect: `cat progress.json && wc -l rows.jsonl`
+  - current replacement campaign:
+    `/home/mchoi/g007-one-pass-6356d7c-c149283-20260803-v1`
 - **관측 증상**: campaign을 28/336에서 중단했다. 완료된 28개 셀은 모두 DP이며,
   FedAll/Heuristic/MinST의 최신 동일-JAR Docker 결과는 0개였다. 따라서 worker=1 FULL의
   7-workload × 4-planner 범위, planner ordering, MinST runtime behavior를 완료로 주장할 수 없다.
@@ -18,9 +20,12 @@
   실험 격리를 수정·검증한 뒤 새 immutable stage/JAR/output으로 336셀을 처음부터
   한 번만 실행한다. 이전 output은 새 캠페인에 stitch/resume하지 않는다.
 - **수정 파일**: 이 문서. 후속 수정 파일은 아래 이슈에 누적한다.
-- **검증**: 중단 시 `progress.json`은 `completed=28`, `failed=false`; 관련 Docker container와
-  `run_one_pass_performance.py` process가 0개임을 확인했다.
-- **잔여 이슈**: 새 stage와 336/336 결과가 아직 없다.
+- **검증**: superseded campaign 중단 시 `progress.json`은 `completed=28`, `failed=false`; 관련 Docker
+  resource는 0개였다. 새 stage의 descriptor/current resource contract가 통과했고, replacement campaign의
+  manifest는 336 unique cells, attempts-per-cell=1, retry=NONE, 고정 source/JAR/harness/data/reference/seed를
+  인증한다. 첫 셀 DP/KMeans/worker=1/LAN은 warm `20.948s`, oracle/scan/no-fallback/plan-stability/worker
+  evidence/teardown 검증을 모두 통과했다.
+- **잔여 이슈**: replacement campaign은 아직 1/336이므로 335개가 남아 있다.
 - **잠재 회귀 위험**: 이전 28개 또는 superseded 결과가 새 그래프에 섞일 수 있다.
   새 그래프 생성기는 단일 manifest/JAR/stage identity와 정확히 336 unique cells를 fail-closed 검증해야 한다.
 - **의사결정 근거**: runtime 결과를 planner 정당성의 증거로 사용하기 전에 동일 artifact와 완전한 셀 집합을 요구한다.
@@ -269,8 +274,9 @@
 
 ## 9. worker=1 FULL append FOUT이 local-backed 혼합 map을 만들어 downstream FED MM이 실패한다
 
-- **상태**: runtime 단위 회귀 해결 / Docker 및 전체 campaign 검증 진행중
-- **환경/조건**: source `8e3d57a7b6713336465161a0c2d38183d6b064f4`, harness
+- **상태**: runtime 단위 회귀 및 동일 실패 셀 Docker canary 해결 / 새 336-cell campaign 진행중
+- **환경/조건**: 실패 source `8e3d57a7b6713336465161a0c2d38183d6b064f4`, 수정 source
+  `6356d7c8ca54031066a23a7076e3faebfc373293`, harness
   `c1492832794c045e9cca65acd7c128e9cf21af79`, Docker-only one-pass DP, worker=1,
   workload `logreg`, profile `lan`, attempt 1.
 - **재현 절차**:
@@ -298,8 +304,8 @@
   경로를 추가해 local operand를 그 worker로 계획된 broadcast하고, 결과 map에는 원격 worker entry만
   남긴다. 이는 fallback이 아니라 planner가 이미 선택한 FED/FOUT의 누락된 runtime 지원이다.
 - **수정 파일**:
-  - `src/test/java/org/apache/sysds/test/component/federated/AppendFoutRuntimeTest.java` (예정)
-  - `src/main/java/org/apache/sysds/runtime/instructions/fed/AppendFEDInstruction.java` (예정)
+  - `src/test/java/org/apache/sysds/test/component/federated/AppendFoutRuntimeTest.java`
+  - `src/main/java/org/apache/sysds/runtime/instructions/fed/AppendFEDInstruction.java`
   - 이 문서.
 - **검증**:
   - RED: `AppendFoutRuntimeTest`가 `expected:<1> but was:<2>`로 실패
@@ -307,9 +313,21 @@
   - GREEN: FULL-left/local-right cbind, local-left/FULL-right cbind, FULL-left/local-right rbind 3개와
     인접 `AggregateBinaryFoutRuntimeTest` 9개, no-fallback aggregate-unary 1개가 모두 성공
     (`/tmp/g014_append_adjacent_green2_20260803.log`).
-  - 후속: package → 새 immutable stage의 동일 Docker logreg canary → artifact가 바뀌므로 기존
-    30개는 진단 전용으로 봉인하고 새 336-cell campaign.
-- **잔여 이슈**: 새 Docker canary/336-cell 전체 검증이 아직 완료되지 않았다.
+  - package 성공 및 JAR SHA-256
+    `2dd636d96319e54022d9b2e85f522e1c0c4dab61f2b6d39f08f4ab448b0b4ba0`
+    (`/tmp/g014_source_package_append_full_20260803.log`).
+  - 새 immutable stage
+    `/home/mchoi/g007-critical-validation-6356d7c-c149283-20260803-v1/g007-stage-934312eac55cd6b32c460c63ccf0f99cce836fa761f0f83ce1e6709c5d3e47cc`
+    의 current resource contract 검증 성공.
+  - 동일 실패 셀 Docker canary의 cold/warm가 모두 성공했다. warm `9.579s`, semantic oracle 통과,
+    runtime scan clean, fallback=false, cold/warm runtime plan hash 동일, container restart 0,
+    teardown resource 0이다. 검증 요약은
+    `/home/mchoi/g007-canary-6356d7c-dp-logreg-w1-lan-v1/validated-summary.json`, 전체 실행 로그는
+    `/tmp/g014_canary_dp_logreg_w1_lan_6356d7c_20260803.log`이다.
+  - artifact가 바뀌었으므로 이전 30개는 진단 전용으로 봉인하고, 새 단일 stage만 사용하는 336-cell
+    one-pass를 `/home/mchoi/g007-one-pass-6356d7c-c149283-20260803-v1`에서 시작했다.
+- **잔여 이슈**: 동일 실패 셀은 해결됐지만 worker=1의 나머지 workload/planner 조합과 전체 336-cell
+  검증은 아직 완료되지 않았다. 이 canary만으로 사용자 제기 4항목 전체 해결을 주장하지 않는다.
 - **잠재 회귀 위험**: FULL을 일반 ROW/COL처럼 취급하는 다른 append 조합이나 BROADCAST append까지
   잘못 변경할 수 있다. exact map type, worker count, operand locality, FOUT flag를 테스트로 분리하고
   기존 ROW/COL 경로는 건드리지 않는다.

@@ -20,6 +20,7 @@ import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.NodeKind;
 import org.apache.sysds.hops.fedplanner.placement.NeutralPlacementGraph.RelocationAction;
 import org.apache.sysds.hops.fedplanner.placement.PlacementAnalysis;
+import org.apache.sysds.hops.fedplanner.placement.PlacementEmissionState;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CandidateSelectionReceipt;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.CompiledHopKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.ObligationKey;
@@ -28,6 +29,7 @@ import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationCh
 import org.apache.sysds.hops.fedplanner.placement.PlacementIdentity.RelocationDemandKey;
 import org.apache.sysds.hops.fedplanner.placement.PlacementState;
 import org.apache.sysds.hops.fedplanner.placement.RelocationSelections;
+import org.apache.sysds.hops.fedplanner.placement.adapter.DpPlacementAdapter;
 
 /**
  * Lossless physical MinST certificate.
@@ -46,6 +48,7 @@ final class MinStExactPhysicalSelection {
 	private final List<Integer> assignmentInDecisionOrder;
 	private final List<Alternative> alternativesInDecisionOrder;
 	private final Map<CompiledHopKey,PlacementState> selectedStates;
+	private final Map<CompiledHopKey,PlacementEmissionState> selectedEmissionStates;
 	private final List<CandidateSelectionReceipt> candidateReceipts;
 	private final List<RelocationChoiceReceipt> relocationChoices;
 	private final List<RelocationActionKey> emittedRelocations;
@@ -56,6 +59,7 @@ final class MinStExactPhysicalSelection {
 		double solverObjective, List<Integer> assignmentInDecisionOrder,
 		List<Alternative> alternativesInDecisionOrder,
 		Map<CompiledHopKey,PlacementState> selectedStates,
+		Map<CompiledHopKey,PlacementEmissionState> selectedEmissionStates,
 		List<CandidateSelectionReceipt> candidateReceipts,
 		List<RelocationChoiceReceipt> relocationChoices,
 		List<RelocationActionKey> emittedRelocations,
@@ -73,6 +77,12 @@ final class MinStExactPhysicalSelection {
 		IdentityHashMap<CompiledHopKey,PlacementState> states = new IdentityHashMap<>();
 		states.putAll(selectedStates);
 		this.selectedStates = Collections.unmodifiableMap(states);
+		IdentityHashMap<CompiledHopKey,PlacementEmissionState> emissions = new IdentityHashMap<>();
+		emissions.putAll(selectedEmissionStates);
+		if(emissions.size() != states.size() || emissions.entrySet().stream().anyMatch(entry ->
+			states.get(entry.getKey()) != entry.getValue().placementState()))
+			throw new IllegalArgumentException("MINST_PHYSICAL_SELECTION_EMISSION_AUTHORITY_MISMATCH");
+		this.selectedEmissionStates = Collections.unmodifiableMap(emissions);
 		this.candidateReceipts = List.copyOf(candidateReceipts);
 		this.relocationChoices = List.copyOf(relocationChoices);
 		this.emittedRelocations = List.copyOf(emittedRelocations);
@@ -91,16 +101,26 @@ final class MinStExactPhysicalSelection {
 			throw new IllegalArgumentException("MINST_PHYSICAL_SELECTION_DECISION_CARDINALITY");
 
 		IdentityHashMap<CompiledHopKey,PlacementState> selected = new IdentityHashMap<>();
+		IdentityHashMap<CompiledHopKey,PlacementEmissionState> selectedEmissions = new IdentityHashMap<>();
 		for(int index = 0; index < model.domains().size(); index++) {
 			var domain = model.domains().get(index);
 			Alternative alternative = physical.alternativesInDecisionOrder().get(index);
 			if(alternative.decision() != domain.node().key()
 				|| domain.alternatives().get(result.assignmentInVariableOrder().get(index)) != alternative
-				|| !domain.node().legalAlternatives().contains(alternative.state())
+				|| domain.node().legalAlternatives().stream()
+					.noneMatch(state -> state == alternative.state())
 				|| selected.put(alternative.decision(), alternative.state()) != null)
 				throw new IllegalArgumentException("MINST_PHYSICAL_SELECTION_ALTERNATIVE_IDENTITY");
+			PlacementEmissionState emission = alternative.captured()
+				? alternative.candidateEmission().emissionState()
+				: alternative.executionEmission() != null
+					? alternative.executionEmission().emissionState()
+					: new PlacementEmissionState(alternative.state(), false);
+			if(emission.placementState() != alternative.state()
+				|| selectedEmissions.put(alternative.decision(), emission) != null)
+				throw new IllegalArgumentException("MINST_PHYSICAL_SELECTION_EMISSION_IDENTITY");
 		}
-		completeSyntheticBoundaryStates(analysis, selected);
+		completeSyntheticBoundaryStates(analysis, selected, selectedEmissions);
 
 		List<CandidateSelectionReceipt> candidates = exactCandidateReceipts(
 			analysis, physical, selected);
@@ -111,7 +131,7 @@ final class MinStExactPhysicalSelection {
 		return new MinStExactPhysicalSelection(analysis, optimized.contributionFingerprint(),
 			optimized.canonicalObjectiveBits(),
 			result.objective(), result.assignmentInVariableOrder(),
-			physical.alternativesInDecisionOrder(), selected, candidates, choices,
+			physical.alternativesInDecisionOrder(), selected, selectedEmissions, candidates, choices,
 			emitted, result.statistics());
 	}
 
@@ -224,7 +244,8 @@ final class MinStExactPhysicalSelection {
 	}
 
 	private static void completeSyntheticBoundaryStates(PlacementAnalysis analysis,
-		IdentityHashMap<CompiledHopKey,PlacementState> selected) {
+		IdentityHashMap<CompiledHopKey,PlacementState> selected,
+		IdentityHashMap<CompiledHopKey,PlacementEmissionState> selectedEmissions) {
 		boolean progressed;
 			do {
 			progressed = false;
@@ -233,25 +254,19 @@ final class MinStExactPhysicalSelection {
 					continue;
 				if(node.kind() != NodeKind.FUNCTION_INPUT && node.kind() != NodeKind.FUNCTION_OUTPUT)
 					continue;
-				List<CompiledHopKey> authorities = analysis.graph().constraints().stream()
-					.filter(constraint -> constraint.kind() == NeutralPlacementGraph.ConstraintKind.CONJUNCTIVE
-						&& constraint.right() == node.key())
-					.map(NeutralPlacementGraph.Constraint::left).toList();
-				if(authorities.size() != 1)
-					throw new IllegalArgumentException("MINST_PHYSICAL_BOUNDARY_AUTHORITY_CARDINALITY|key="
-						+ node.key().normalizedSignature());
-				PlacementState source = selected.get(authorities.get(0));
-				if(source == null)
+				DpPlacementAdapter.SyntheticBoundaryReceipt projection =
+					DpPlacementAdapter.projectSyntheticBoundary(analysis, node, selectedEmissions);
+				if(projection == null)
 					continue;
-				if(node.legalAlternatives().stream().noneMatch(legal -> legal == source))
-					throw new IllegalArgumentException("MINST_PHYSICAL_BOUNDARY_STATE_IDENTITY|key="
-						+ node.key().normalizedSignature());
-				selected.put(node.key(), source);
+				PlacementEmissionState boundaryEmission = projection.selectedEmissionState();
+				selected.put(node.key(), boundaryEmission.placementState());
+				selectedEmissions.put(node.key(), boundaryEmission);
 				progressed = true;
 			}
 		}
 		while(progressed);
-		if(selected.size() != analysis.graph().decisionNodes().size())
+		if(selected.size() != analysis.graph().decisionNodes().size()
+			|| selectedEmissions.size() != selected.size())
 			throw new IllegalArgumentException("MINST_PHYSICAL_TOTAL_DECISION_AUTHORITY|missing="
 				+ analysis.graph().decisionNodes().stream().filter(node -> !selected.containsKey(node.key()))
 					.map(node -> node.kind() + ":" + node.key().normalizedSignature()).toList());
@@ -272,6 +287,7 @@ final class MinStExactPhysicalSelection {
 	List<Integer> assignmentInDecisionOrder() { return assignmentInDecisionOrder; }
 	List<Alternative> alternativesInDecisionOrder() { return alternativesInDecisionOrder; }
 	Map<CompiledHopKey,PlacementState> selectedStates() { return selectedStates; }
+	Map<CompiledHopKey,PlacementEmissionState> selectedEmissionStates() { return selectedEmissionStates; }
 	List<CandidateSelectionReceipt> candidateReceipts() { return candidateReceipts; }
 	List<RelocationChoiceReceipt> relocationChoices() { return relocationChoices; }
 	List<RelocationActionKey> emittedRelocations() { return emittedRelocations; }

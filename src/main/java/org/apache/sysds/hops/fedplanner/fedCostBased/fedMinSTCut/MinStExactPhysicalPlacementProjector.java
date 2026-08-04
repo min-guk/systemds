@@ -65,8 +65,7 @@ final class MinStExactPhysicalPlacementProjector {
 	private static Map<CompiledHopKey,PlacementEmissionState> emissionStates(
 		MinStExactPhysicalSelection selection) {
 		Map<CompiledHopKey,PlacementEmissionState> result = new IdentityHashMap<>();
-		selection.selectedStates().forEach((key, state) ->
-			result.put(key, new PlacementEmissionState(state, false)));
+		result.putAll(selection.selectedEmissionStates());
 		Map<CompiledHopKey,CandidateSelectionReceipt> candidates = new IdentityHashMap<>();
 		for(CandidateSelectionReceipt candidate : selection.candidateReceipts())
 			candidates.put(candidate.rule().parentOccurrence(), candidate);
@@ -75,12 +74,12 @@ final class MinStExactPhysicalPlacementProjector {
 			if(candidate == null)
 				continue;
 			PlacementEmissionState exact = candidate.emission().emissionState();
-			if(exact.placementState() != alternative.state())
+			if(exact.placementState() != alternative.state()
+				|| result.get(alternative.decision()) != exact)
 				throw new IllegalArgumentException("MINST_PHYSICAL_PROJECTOR_EMISSION_STATE_CHANGED|key="
 					+ alternative.decision().normalizedSignature());
-			result.put(alternative.decision(), exact);
 		}
-		return result;
+		return java.util.Collections.unmodifiableMap(result);
 	}
 
 	private static List<MinStPlacementInput.OccurrenceReceipt> occurrenceReceipts(

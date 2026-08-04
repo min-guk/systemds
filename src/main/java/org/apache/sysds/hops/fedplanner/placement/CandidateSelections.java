@@ -42,10 +42,22 @@ public final class CandidateSelections {
 	public static boolean canStillBeReachable(PlacementAnalysis analysis,
 		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> partialAssignment) {
+		return canStillBeReachable(analysis, analysis.graph(), actionUniverse, partialAssignment);
+	}
+
+	/**
+	 * Variant whose graph is the exact policy projection that owns the supplied
+	 * action universe.  Heuristic projections must not consult the unfiltered base
+	 * graph for derived-output authority.
+	 */
+	public static boolean canStillBeReachable(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> partialAssignment) {
 		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
 		Objects.requireNonNull(partialAssignment, "partialAssignment");
-		for(NeutralPlacementGraph.Node consumer : analysis.graph().decisionNodes()) {
+		for(NeutralPlacementGraph.Node consumer : authorityGraph.decisionNodes()) {
 			PlacementState selectedConsumer = partialAssignment.get(consumer.key());
 			if(selectedConsumer == null)
 				continue;
@@ -58,7 +70,7 @@ public final class CandidateSelections {
 			if(active.isEmpty())
 				continue;
 			boolean reachable = active.stream().anyMatch(fact -> candidateRowCanStillBeReachable(
-				analysis, actionUniverse, partialAssignment, selectedConsumer, fact));
+				analysis, authorityGraph, actionUniverse, partialAssignment, selectedConsumer, fact));
 			if(!reachable)
 				return false;
 		}
@@ -66,8 +78,15 @@ public final class CandidateSelections {
 	}
 
 	private static boolean candidateRowCanStillBeReachable(PlacementAnalysis analysis,
-		Collection<RelocationAction> actions, Map<CompiledHopKey,PlacementState> partial,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actions,
+		Map<CompiledHopKey,PlacementState> partial,
 		PlacementState selectedConsumer, CandidateRuleFact fact) {
+		boolean exactEmissionReachable = fact.allowedEmissionFacts().stream()
+			.filter(emission -> emission.emissionState().placementState().equals(selectedConsumer))
+			.map(emission -> new CandidateSelectionReceipt(fact.key(), emission, List.of()))
+			.anyMatch(receipt -> derivedFoutActionReachable(authorityGraph, fact, receipt));
+		if(!exactEmissionReachable)
+			return false;
 		// A DML FunctionOp is only a coordinator-side forwarding placeholder. Its
 		// actual/formal placement contract is validated by the explicit function
 		// boundary facts; requiring a physical receipt action here would invent a
@@ -123,7 +142,16 @@ public final class CandidateSelections {
 	public static Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasibleVariants(
 		PlacementAnalysis analysis, Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment) {
+		return feasibleVariants(analysis, analysis.graph(), actionUniverse, assignment);
+	}
+
+	/** Exact candidate rows under a policy-projected graph authority. */
+	public static Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasibleVariants(
+		PlacementAnalysis analysis, NeutralPlacementGraph authorityGraph,
+		Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment) {
 		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
 		Objects.requireNonNull(assignment, "assignment");
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> result = new IdentityHashMap<>();
@@ -142,12 +170,13 @@ public final class CandidateSelections {
 				CandidateSelectionReceipt base = new CandidateSelectionReceipt(
 					fact.key(), emission, List.of());
 				activeRows.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
-				if(receiptReachable(analysis, actionUniverse, assignment, base))
+				if(derivedFoutActionReachable(authorityGraph, fact, base)
+					&& receiptReachable(analysis, actionUniverse, assignment, base))
 					result.computeIfAbsent(fact.key().parentOccurrence(), ignored -> new ArrayList<>()).add(base);
 			}
 		}
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> ordered = new LinkedHashMap<>();
-		analysis.graph().decisionNodes().stream().map(NeutralPlacementGraph.Node::key).forEach(key -> {
+		authorityGraph.decisionNodes().stream().map(NeutralPlacementGraph.Node::key).forEach(key -> {
 			List<CandidateSelectionReceipt> variants = result.getOrDefault(key, List.of()).stream()
 				.distinct().sorted().toList();
 			if(activeConsumers.containsKey(key) && variants.isEmpty())
@@ -165,12 +194,19 @@ public final class CandidateSelections {
 	public static Selection selectMaterializationMaximal(PlacementAnalysis analysis,
 		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment) {
+		return selectMaterializationMaximal(analysis, analysis.graph(), actionUniverse, assignment);
+	}
+
+	/** FedAll/Heuristic candidate policy under an exact projected graph. */
+	public static Selection selectMaterializationMaximal(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment) {
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> byConsumer =
-			materializationMaximalVariants(analysis, actionUniverse, assignment,
-				feasibleVariants(analysis, actionUniverse, assignment));
+			materializationMaximalVariants(analysis, authorityGraph, actionUniverse, assignment,
+				feasibleVariants(analysis, authorityGraph, actionUniverse, assignment));
 		List<CompiledHopKey> consumers = new ArrayList<>(byConsumer.keySet());
 		Collections.sort(consumers);
-		Search search = new Search(analysis, List.copyOf(actionUniverse), assignment,
+		Search search = new Search(analysis, authorityGraph, List.copyOf(actionUniverse), assignment,
 			consumers, byConsumer, true);
 		search.solve(0, 0);
 		return search.requireBest();
@@ -185,7 +221,8 @@ public final class CandidateSelections {
 	 * exact lexicographic reduction, not a runtime-capability gate.
 	 */
 	private static Map<CompiledHopKey,List<CandidateSelectionReceipt>> materializationMaximalVariants(
-		PlacementAnalysis analysis, Collection<RelocationAction> actionUniverse,
+		PlacementAnalysis analysis, NeutralPlacementGraph authorityGraph,
+		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment,
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible) {
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> maximal = new LinkedHashMap<>();
@@ -202,7 +239,7 @@ public final class CandidateSelections {
 			Map<String,CandidateSelectionReceipt> byRelocationEffect = new LinkedHashMap<>();
 			entry.getValue().stream().filter(receipt -> presentInputCount(receipt) == optimum)
 				.sorted().forEach(receipt -> byRelocationEffect.putIfAbsent(
-					relocationEffectSignature(analysis, actionUniverse, assignment, receipt), receipt));
+					relocationEffectSignature(analysis, authorityGraph, actionUniverse, assignment, receipt), receipt));
 			maximal.put(entry.getKey(), List.copyOf(byRelocationEffect.values()));
 		}
 		return Collections.unmodifiableMap(maximal);
@@ -216,13 +253,14 @@ public final class CandidateSelections {
 	 * strictly dominates the others.
 	 */
 	private static String relocationEffectSignature(PlacementAnalysis analysis,
-		Collection<RelocationAction> actionUniverse,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey,PlacementState> assignment, CandidateSelectionReceipt receipt) {
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
 		selected.put(receipt.rule().parentOccurrence(), receipt);
 		List<String> options = new ArrayList<>();
 		for(RelocationAction action : actionUniverse) {
-			boolean requiresEmission = analysis.graph().isRelocationActive(action, assignment);
+			boolean requiresEmission = authorityGraph.isRelocationActive(
+				action, assignment, selected.values());
 			for(PlacementIdentity.ObligationKey obligation : action.obligations()) {
 				if(!obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))
 					|| !actionMatchesSelectedCandidate(action, obligation, selected))
@@ -259,11 +297,19 @@ public final class CandidateSelections {
 	public static List<CandidateSelectionReceipt> resolveAndValidate(PlacementAnalysis analysis,
 		Collection<RelocationAction> actionUniverse, Map<CompiledHopKey,PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> selections) {
+		return resolveAndValidate(analysis, analysis.graph(), actionUniverse, assignment, selections);
+	}
+
+	public static List<CandidateSelectionReceipt> resolveAndValidate(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> selections) {
 		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
 		Objects.requireNonNull(assignment, "assignment");
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible =
-			feasibleVariants(analysis, actionUniverse, assignment);
+			feasibleVariants(analysis, authorityGraph, actionUniverse, assignment);
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
 		for(CandidateSelectionReceipt receipt : Objects.requireNonNull(selections, "selections")) {
 			Objects.requireNonNull(receipt, "candidate selection");
@@ -271,7 +317,8 @@ public final class CandidateSelections {
 			if(selected.put(consumer, receipt) != null)
 				throw new IllegalArgumentException("Candidate consumer has multiple selected rows: "
 					+ consumer.normalizedSignature());
-			if(feasible.getOrDefault(consumer, List.of()).stream().noneMatch(receipt::equals))
+			if(feasible.getOrDefault(consumer, List.of()).stream().noneMatch(candidate ->
+				candidate.rule() == receipt.rule() && candidate.emission() == receipt.emission()))
 				throw new IllegalArgumentException("Candidate selection is foreign, inactive, or unreachable: "
 					+ receipt.normalizedSignature() + " feasible=" + feasible.getOrDefault(consumer, List.of())
 						.stream().map(CandidateSelectionReceipt::normalizedSignature).toList()
@@ -286,15 +333,23 @@ public final class CandidateSelections {
 	static List<CandidateSelectionReceipt> resolveAndValidatePartial(PlacementAnalysis analysis,
 		Collection<RelocationAction> actionUniverse, Map<CompiledHopKey,PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> selections) {
+		return resolveAndValidatePartial(analysis, analysis.graph(), actionUniverse, assignment, selections);
+	}
+
+	static List<CandidateSelectionReceipt> resolveAndValidatePartial(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey,PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> selections) {
 		Map<CompiledHopKey,List<CandidateSelectionReceipt>> feasible =
-			feasibleVariants(analysis, actionUniverse, assignment);
+			feasibleVariants(analysis, authorityGraph, actionUniverse, assignment);
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected = new IdentityHashMap<>();
 		for(CandidateSelectionReceipt receipt : Objects.requireNonNull(selections, "selections")) {
 			Objects.requireNonNull(receipt, "candidate selection");
 			CompiledHopKey consumer = receipt.rule().parentOccurrence();
 			if(selected.put(consumer, receipt) != null)
 				throw new IllegalArgumentException("Candidate consumer has multiple selected rows");
-			if(feasible.getOrDefault(consumer, List.of()).stream().noneMatch(receipt::equals))
+			if(feasible.getOrDefault(consumer, List.of()).stream().noneMatch(candidate ->
+				candidate.rule() == receipt.rule() && candidate.emission() == receipt.emission()))
 				throw new IllegalArgumentException("Candidate selection is foreign, inactive, or unreachable: "
 					+ receipt.normalizedSignature() + " feasible=" + feasible.getOrDefault(consumer, List.of())
 						.stream().map(CandidateSelectionReceipt::normalizedSignature).toList()
@@ -367,6 +422,29 @@ public final class CandidateSelections {
 				return false;
 		}
 		return true;
+	}
+
+	static boolean derivedFoutActionReachable(NeutralPlacementGraph graph,
+		CandidateSelectionReceipt receipt) {
+		return derivedFoutActionReachable(graph, null, receipt);
+	}
+
+	private static boolean derivedFoutActionReachable(NeutralPlacementGraph graph,
+		CandidateRuleFact exactRule, CandidateSelectionReceipt receipt) {
+		if(!receipt.emission().emissionState().derivedFedFout())
+			return receipt.emission().derivedFoutAction() == null;
+		var expected = receipt.emission().derivedFoutAction();
+		if(expected == null || expected.candidateRule() != receipt.rule()
+			|| expected.producer() != receipt.rule().parentOccurrence()
+			|| expected.targetPlacement() != receipt.emission().emissionState().placementState())
+			return false;
+		if(exactRule != null && (exactRule.key() != receipt.rule()
+			|| exactRule.allowedEmissionFacts().stream().noneMatch(source ->
+				!source.emissionState().derivedFedFout()
+					&& source.emissionState().placementState() == expected.sourcePlacement())))
+			return false;
+		return graph.derivedFoutMaterializationActions().stream()
+			.filter(action -> action.key() == expected).count() == 1;
 	}
 
 	/**
@@ -487,6 +565,7 @@ public final class CandidateSelections {
 
 	private static final class Search {
 		private final PlacementAnalysis analysis;
+		private final NeutralPlacementGraph authorityGraph;
 		private final List<RelocationAction> actions;
 		private final Map<CompiledHopKey,PlacementState> assignment;
 		private final List<CompiledHopKey> consumers;
@@ -496,11 +575,13 @@ public final class CandidateSelections {
 		private Selection best;
 		private String bestSignature;
 
-		private Search(PlacementAnalysis analysis, List<RelocationAction> actions,
+		private Search(PlacementAnalysis analysis, NeutralPlacementGraph authorityGraph,
+			List<RelocationAction> actions,
 			Map<CompiledHopKey,PlacementState> assignment, List<CompiledHopKey> consumers,
 			Map<CompiledHopKey,List<CandidateSelectionReceipt>> variants,
 			boolean maximizeMaterialization) {
 			this.analysis = analysis;
+			this.authorityGraph = authorityGraph;
 			this.actions = actions;
 			this.assignment = assignment;
 			this.consumers = consumers;
@@ -514,7 +595,7 @@ public final class CandidateSelections {
 				RelocationSelections.Selection relocationSelection;
 				try {
 					relocationSelection = RelocationSelections.selectCanonicalPrevalidated(
-						analysis, actions, assignment, selected,
+						analysis, authorityGraph, actions, assignment, selected,
 						(demand, action) -> true);
 				}
 				catch(IllegalArgumentException | IllegalStateException unavailable) {

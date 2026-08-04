@@ -447,21 +447,16 @@ public final class DpPlacementAdapter {
 						+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
 			PlacementState sourceState = sourceEmissionState.placementState();
 			PlacementState boundaryState = selectedEmissionState.placementState();
-			ExecType expectedExec = sourceState.output() == FederatedOutput.LOUT
-				? ExecType.CP : ExecType.FED;
-			FType expectedFType = sourceState.output() == FederatedOutput.FOUT
-				? sourceState.fType() : null;
-			boolean expectedShapeDependent = sourceState.output() == FederatedOutput.FOUT
-				&& sourceState.shapeDependent();
-			boolean expectedDerivedFedFout = sourceState.output() == FederatedOutput.FOUT
+			boolean legalTransientTuple = boundaryState.execType() == ExecType.CP
+				&& boundaryState.output() == FederatedOutput.LOUT
+				&& boundaryState.fType() == null && !boundaryState.shapeDependent()
+				|| boundaryState.execType() == ExecType.FED
+					&& boundaryState.output() == FederatedOutput.FOUT
+					&& boundaryState.fType() != null;
+			boolean expectedDerivedFedFout = boundaryState.output() == FederatedOutput.FOUT
 				&& sourceEmissionState.derivedFedFout();
-			if(sourceState.output() != FederatedOutput.LOUT
-				&& sourceState.output() != FederatedOutput.FOUT
-				|| sourceState.output() == FederatedOutput.FOUT && sourceState.fType() == null
-				|| boundaryState.execType() != expectedExec
-				|| boundaryState.output() != sourceState.output()
-				|| boundaryState.fType() != expectedFType
-				|| boundaryState.shapeDependent() != expectedShapeDependent
+			if(!legalTransientTuple
+				|| !NeutralPlacementGraph.constraintSatisfied(authority, sourceState, boundaryState)
 				|| selectedEmissionState.derivedFedFout() != expectedDerivedFedFout)
 				throw new IllegalArgumentException("DP synthetic boundary projection semantics differ: source="
 					+ sourceEmissionState.normalizedSignature() + ", boundary="
@@ -476,6 +471,16 @@ public final class DpPlacementAdapter {
 	public static SyntheticBoundaryReceipt projectSyntheticBoundary(PlacementAnalysis analysis,
 		NeutralPlacementGraph.Node boundary,
 		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates) {
+		PlacementState selected = selectedFunctionInputState(
+			analysis, boundary, selectedEmissionStates);
+		return projectSyntheticBoundary(analysis, boundary, selectedEmissionStates, selected);
+	}
+
+	/** Projects and validates an already selected exact synthetic-boundary placement. */
+	public static SyntheticBoundaryReceipt projectSyntheticBoundary(PlacementAnalysis analysis,
+		NeutralPlacementGraph.Node boundary,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates,
+		PlacementState selectedBoundaryState) {
 		Objects.requireNonNull(analysis, "analysis");
 		Objects.requireNonNull(boundary, "boundary");
 		Objects.requireNonNull(selectedEmissionStates, "selectedEmissionStates");
@@ -492,8 +497,27 @@ public final class DpPlacementAdapter {
 		PlacementEmissionState source = selectedEmissionStates.get(authority.left());
 		if(source == null)
 			return null;
-		PlacementEmissionState selected = normalizeSyntheticBoundaryEmission(boundary, source);
+		PlacementEmissionState selected = selectedBoundaryState == null
+			? normalizeSyntheticBoundaryEmission(boundary, source)
+			: normalizeSyntheticBoundaryEmission(boundary, source, selectedBoundaryState);
 		return new SyntheticBoundaryReceipt(analysis, boundary, authority, authority.left(), source, selected);
+	}
+
+	private static PlacementState selectedFunctionInputState(PlacementAnalysis analysis,
+		NeutralPlacementGraph.Node boundary,
+		Map<CompiledHopKey, PlacementEmissionState> selectedEmissionStates) {
+		if(boundary.kind() != NeutralPlacementGraph.NodeKind.FUNCTION_INPUT)
+			return null;
+		List<PlacementState> selected = analysis.graph().constraints().stream()
+			.filter(constraint -> constraint.kind() == NeutralPlacementGraph.ConstraintKind.SAME_PLACEMENT
+				&& constraint.left() == boundary.key()
+				&& "function-formal-input".equals(constraint.evidence()))
+			.map(constraint -> selectedEmissionStates.get(constraint.right()))
+			.filter(Objects::nonNull).map(PlacementEmissionState::placementState).distinct().toList();
+		if(selected.size() > 1)
+			throw new IllegalArgumentException("DP synthetic function input has conflicting selected formals: "
+				+ boundary.key().normalizedSignature());
+		return selected.isEmpty() ? null : selected.get(0);
 	}
 
 	/**
@@ -528,6 +552,21 @@ public final class DpPlacementAdapter {
 				+ boundary.legalAlternatives().stream().map(PlacementState::normalizedSignature).toList());
 		return new PlacementEmissionState(matches.get(0),
 			source.output() == FederatedOutput.FOUT && sourceEmission.derivedFedFout());
+	}
+
+	private static PlacementEmissionState normalizeSyntheticBoundaryEmission(
+		NeutralPlacementGraph.Node boundary, PlacementEmissionState sourceEmission,
+		PlacementState selectedBoundaryState) {
+		Objects.requireNonNull(selectedBoundaryState, "selectedBoundaryState");
+		List<PlacementState> matches = boundary.legalAlternatives().stream()
+			.filter(state -> state == selectedBoundaryState || state.equals(selectedBoundaryState)).toList();
+		if(matches.size() != 1)
+			throw new IllegalArgumentException("DP synthetic boundary selected tuple has no unique exact owner: kind="
+				+ boundary.kind() + ", boundary=" + boundary.key().normalizedSignature()
+				+ ", selected=" + selectedBoundaryState.normalizedSignature());
+		boolean derived = selectedBoundaryState.output() == FederatedOutput.FOUT
+			&& sourceEmission.derivedFedFout();
+		return new PlacementEmissionState(matches.get(0), derived);
 	}
 
 	public record CandidateDecisionReceipt(NeutralEnumerationContext context,

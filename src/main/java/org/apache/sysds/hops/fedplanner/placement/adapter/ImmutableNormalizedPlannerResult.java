@@ -71,6 +71,13 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 			candidates.add(Objects.requireNonNull(candidate, "candidate selection"));
 		candidates.sort(Comparator.naturalOrder());
 		CandidateSelections.resolveAndValidate(analysis, selectedStates, candidates);
+		for(CandidateSelectionReceipt candidate : candidates) {
+			PlacementEmissionState selectedEmission = exactEmissionState(
+				selectedEmissionStates, candidate.rule().parentOccurrence());
+			if(selectedEmission == null || !selectedEmission.equals(candidate.emission().emissionState()))
+				throw new IllegalArgumentException(
+					"candidate receipt and selected emission state differ");
+		}
 		selectedCandidateSelections = Collections.unmodifiableList(candidates);
 		List<RelocationChoiceReceipt> choices = new ArrayList<>();
 		for(RelocationChoiceReceipt choice : Objects.requireNonNull(
@@ -121,6 +128,14 @@ final class ImmutableNormalizedPlannerResult implements NormalizedPlannerResult 
 			if(!found) return false;
 		}
 		return true;
+	}
+
+	private static PlacementEmissionState exactEmissionState(
+		Map<CompiledHopKey, PlacementEmissionState> selected, CompiledHopKey expected) {
+		for(Map.Entry<CompiledHopKey, PlacementEmissionState> entry : selected.entrySet())
+			if(entry.getKey() == expected)
+				return entry.getValue();
+		return null;
 	}
 
 	static NormalizedPlannerResult of(PlannerPlacementContext context, NormalizedPlannerResult draft) {

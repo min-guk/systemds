@@ -67,6 +67,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 			throw new IllegalStateException("neutral placement graph has no legal total assignment");
 		if(result.assignment().size() != decisions.size() || !canStillBeLegal(graph.constraints(), result.assignment()))
 			throw new IllegalStateException("exact component solver produced an incomplete or illegal assignment");
+		validateAssignmentStateIdentity(decisions, result.assignment());
 		List<ComponentBound> componentBounds = componentBounds(analysis, graph);
 		String derivation = branchAndBound
 			? "exact-independent-component-branch-and-bound-with-partial-legality-pruning"
@@ -85,7 +86,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				selectedRelocations(graph, result.assignment()), result.score(), certificate);
 		}
 		CandidateSelections.Selection exact = CandidateSelections.selectMaterializationMaximal(
-			analysis, graph.relocationActions(), result.assignment());
+			analysis, graph, graph.relocationActions(), result.assignment());
 		return new PlacementSelection(result.assignment(), exact.candidates(), exact.relocationChoices(),
 			new LinkedHashSet<>(exact.emittedActions()), result.score(), certificate);
 	}
@@ -127,6 +128,16 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				throw new IllegalStateException("selectable graph node has no legal alternatives: " + node.key());
 	}
 
+	private static void validateAssignmentStateIdentity(List<Node> decisions,
+		Map<CompiledHopKey, PlacementState> assignment) {
+		for(Node node : decisions) {
+			PlacementState selected = assignment.get(node.key());
+			if(selected == null || node.legalAlternatives().stream().noneMatch(state -> state == selected))
+				throw new IllegalStateException(
+					"exact selector assignment did not retain the target node's state identity: " + node.key());
+		}
+	}
+
 	private record SearchResult(Map<CompiledHopKey, PlacementState> assignment, PlacementScore score,
 		long explored, long pruned) { }
 
@@ -158,10 +169,23 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				for(DecisionGroup group : equalityGroups)
 					if(group.legalAlternatives().size() == 1)
 						group.assign(current, group.legalAlternatives().get(0));
-				if(!canStillBeLegal(constraints, current)
-					|| analysis != null && !CandidateSelections.canStillBeReachable(
-						analysis, relocationActions, current))
-					throw new IllegalStateException("neutral placement graph has incompatible fixed states");
+				boolean structurallyLegal = canStillBeLegal(constraints, current);
+				boolean candidatesReachable = analysis == null || CandidateSelections.canStillBeReachable(
+					analysis, graph, relocationActions, current);
+				if(!structurallyLegal || !candidatesReachable) {
+					List<String> violated = constraints.stream().filter(constraint -> {
+						PlacementState left = current.get(constraint.left());
+						PlacementState right = current.get(constraint.right());
+						return left != null && right != null
+							&& !NeutralPlacementGraph.constraintSatisfied(constraint, left, right);
+					}).map(Constraint::normalizedSignature).toList();
+					throw new IllegalStateException("neutral placement graph has incompatible fixed states"
+						+ "|structurallyLegal=" + structurallyLegal
+						+ "|candidatesReachable=" + candidatesReachable
+						+ "|violated=" + violated + "|fixed=" + current.entrySet().stream()
+							.map(entry -> entry.getKey().normalizedSignature() + '='
+								+ entry.getValue().normalizedSignature()).sorted().toList());
+				}
 				groups = equalityGroups.stream().filter(group -> group.legalAlternatives().size() > 1)
 					.sorted((left, right) -> {
 						int degree = Integer.compare(constraintDegree(constraints, right),
@@ -193,7 +217,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				group.assign(current, state);
 				if(canStillBeLegal(constraints, current)
 					&& (analysis == null || CandidateSelections.canStillBeReachable(
-						analysis, relocationActions, current)))
+						analysis, graph, relocationActions, current)))
 					enumerateCartesian(index + 1);
 				else
 					pruned++;
@@ -276,7 +300,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 					group.assign(current, state);
 					boolean completable = canStillBeLegal(constraints, current)
 						&& (analysis == null || CandidateSelections.canStillBeReachable(
-							analysis, relocationActions, current));
+							analysis, graph, relocationActions, current));
 					group.remove(current);
 					if(completable)
 						feasible.add(state);
@@ -376,8 +400,14 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				throw new IllegalStateException("SAME_PLACEMENT group has no common legal state");
 		}
 		private void assign(Map<CompiledHopKey,PlacementState> assignment, PlacementState state) {
-			for(Node member : members)
-				assignment.put(member.key(), state);
+			for(Node member : members) {
+				List<PlacementState> exact = member.legalAlternatives().stream()
+					.filter(candidate -> candidate.equals(state)).toList();
+				if(exact.size() != 1)
+					throw new IllegalStateException(
+						"SAME_PLACEMENT member has no unique node-owned state identity: " + member.key());
+				assignment.put(member.key(), exact.get(0));
+			}
 		}
 		private void remove(Map<CompiledHopKey,PlacementState> assignment) {
 			for(Node member : members)
@@ -518,26 +548,10 @@ public final class ExactPlacementSelector implements PlacementSelector {
 			PlacementState right = partial.get(constraint.right());
 			if(left == null || right == null)
 				continue;
-			if(constraint.kind() == ConstraintKind.SAME_PLACEMENT && !left.equals(right))
-				return false;
-			if(constraint.kind() == ConstraintKind.SAME_FTYPE && !Objects.equals(left.fType(), right.fType()))
-				return false;
-			if(constraint.kind() == ConstraintKind.CONJUNCTIVE && violatesConjunctive(constraint, left, right))
+			if(!NeutralPlacementGraph.constraintSatisfied(constraint, left, right))
 				return false;
 		}
 		return true;
-	}
-
-	private static boolean violatesConjunctive(Constraint constraint, PlacementState left, PlacementState right) {
-		String prefix = "forbid-pair:";
-		if(constraint.evidence().startsWith(prefix)) {
-			String[] pair = constraint.evidence().substring(prefix.length()).split("=>", -1);
-			if(pair.length != 2)
-				throw new IllegalArgumentException("invalid conjunctive forbid-pair evidence: " + constraint.evidence());
-			return left.normalizedSignature().equals(pair[0]) && right.normalizedSignature().equals(pair[1]);
-		}
-		return right.output() == FederatedOutput.FOUT
-			&& (left.output() != FederatedOutput.FOUT || !Objects.equals(left.fType(), right.fType()));
 	}
 
 	private static PlacementScore score(PlacementAnalysis analysis, NeutralPlacementGraph graph, List<Node> decisions,
@@ -563,7 +577,7 @@ public final class ExactPlacementSelector implements PlacementSelector {
 				normalizedSignature(assignment, relocations, List.of(), choices));
 		}
 		CandidateSelections.Selection exact = CandidateSelections.selectMaterializationMaximal(
-			analysis, relocationActions, assignment);
+			analysis, graph, relocationActions, assignment);
 		Set<RelocationActionKey> relocations = new LinkedHashSet<>(exact.emittedActions());
 		return new PlacementScore(fed, fout,
 			RelocationSelections.physicalEmissionCount(relocations), normalizedSignature(
@@ -749,7 +763,8 @@ public final class ExactPlacementSelector implements PlacementSelector {
 			Node consumer = nodes.get(fact.key().parentOccurrence());
 			if(consumer == null || fact.status() != CandidateEvaluationStatus.AVAILABLE
 				|| fact.allowedEmissionFacts().stream().noneMatch(emission ->
-					consumer.legalAlternatives().contains(emission.emissionState().placementState())))
+					consumer.legalAlternatives().stream()
+						.anyMatch(state -> state == emission.emissionState().placementState())))
 				continue;
 			for(int position = 0; position < fact.key().orderedInputs().size(); position++) {
 				if(!fact.key().orderedInputs().get(position).present())

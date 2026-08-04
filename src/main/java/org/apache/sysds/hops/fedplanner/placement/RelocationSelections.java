@@ -145,8 +145,18 @@ public final class RelocationSelections {
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections,
 		BiPredicate<RelocationDemandKey, RelocationActionKey> allowed) {
+		return selectCanonicalPrevalidated(analysis, analysis.graph(), actionUniverse, assignment,
+			candidateSelections, allowed);
+	}
+
+	static Selection selectCanonicalPrevalidated(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> candidateSelections,
+		BiPredicate<RelocationDemandKey, RelocationActionKey> allowed) {
 		Objects.requireNonNull(allowed, "allowed");
-		Problem problem = problemPrevalidated(analysis, actionUniverse, assignment, candidateSelections);
+		Problem problem = problemPrevalidated(analysis, authorityGraph, actionUniverse, assignment,
+			candidateSelections);
 		List<DemandOptions> filtered = filtered(problem, allowed);
 		Search search = new Search(filtered, null);
 		search.solve(0);
@@ -222,7 +232,16 @@ public final class RelocationSelections {
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections,
 		Collection<RelocationChoiceReceipt> choices) {
-		Problem problem = problem(analysis, actionUniverse, assignment, candidateSelections);
+		return resolveAndValidate(analysis, analysis.graph(), actionUniverse, assignment,
+			candidateSelections, choices);
+	}
+
+	public static List<ResolvedChoice> resolveAndValidate(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> candidateSelections,
+		Collection<RelocationChoiceReceipt> choices) {
+		Problem problem = problem(analysis, authorityGraph, actionUniverse, assignment, candidateSelections);
 		return resolveAndValidate(problem, choices);
 	}
 
@@ -359,19 +378,36 @@ public final class RelocationSelections {
 		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections) {
+		return problem(analysis, analysis.graph(), actionUniverse, assignment, candidateSelections);
+	}
+
+	private static Problem problem(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> candidateSelections) {
 		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
 		Objects.requireNonNull(assignment, "assignment");
 		List<CandidateSelectionReceipt> validated = CandidateSelections.resolveAndValidatePartial(
-			analysis, actionUniverse, assignment, candidateSelections);
-		return problemPrevalidated(analysis, actionUniverse, assignment, validated);
+			analysis, authorityGraph, actionUniverse, assignment, candidateSelections);
+		return problemPrevalidated(analysis, authorityGraph, actionUniverse, assignment, validated);
 	}
 
 	private static Problem problemPrevalidated(PlacementAnalysis analysis,
 		Collection<RelocationAction> actionUniverse,
 		Map<CompiledHopKey, PlacementState> assignment,
 		Collection<CandidateSelectionReceipt> candidateSelections) {
+		return problemPrevalidated(analysis, analysis.graph(), actionUniverse, assignment,
+			candidateSelections);
+	}
+
+	private static Problem problemPrevalidated(PlacementAnalysis analysis,
+		NeutralPlacementGraph authorityGraph, Collection<RelocationAction> actionUniverse,
+		Map<CompiledHopKey, PlacementState> assignment,
+		Collection<CandidateSelectionReceipt> candidateSelections) {
 		Objects.requireNonNull(analysis, "analysis");
+		Objects.requireNonNull(authorityGraph, "authorityGraph");
 		Objects.requireNonNull(actionUniverse, "actionUniverse");
 		Objects.requireNonNull(assignment, "assignment");
 		// A graph-only analysis (the exact selector seam and its independent
@@ -381,12 +417,13 @@ public final class RelocationSelections {
 		// receipts to filter them through.  Real compiler analyses carry candidate
 		// facts and continue through the stricter row-aware path below.
 		if(analysis.candidateRuleFacts().orderedFacts().isEmpty())
-			return problem(analysis.graph(), actionUniverse, assignment);
+			return problem(authorityGraph, actionUniverse, assignment);
 		Map<CompiledHopKey,CandidateSelectionReceipt> selected =
 			CandidateSelections.indexByConsumer(candidateSelections);
 		Map<RelocationDemandKey,List<Option>> options = new LinkedHashMap<>();
 		for(RelocationAction action : actionUniverse) {
-			boolean requiresEmission = analysis.graph().isRelocationActive(action, assignment);
+			boolean requiresEmission = authorityGraph.isRelocationActive(
+				action, assignment, candidateSelections);
 			for(ObligationKey obligation : action.obligations()) {
 				if(!obligation.requiredPlacement().equals(assignment.get(obligation.consumer()))
 					|| !CandidateSelections.actionMatchesSelectedCandidate(action, obligation, selected))
